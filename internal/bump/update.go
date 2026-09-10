@@ -14,6 +14,10 @@ import (
 
 // ApplyUpdate updates a single dependency in repoPath according to its candidate spec.
 func ApplyUpdate(ctx context.Context, repoPath string, cand UpgradeCandidate) error {
+	return applyUpdateInternal(ctx, repoPath, cand, true)
+}
+
+func applyUpdateInternal(ctx context.Context, repoPath string, cand UpgradeCandidate, tidy bool) error {
 	targetDir := repoPath
 	if cand.ModuleDir != "" && cand.ModuleDir != "." {
 		targetDir = filepath.Join(repoPath, cand.ModuleDir)
@@ -21,7 +25,7 @@ func ApplyUpdate(ctx context.Context, repoPath string, cand UpgradeCandidate) er
 
 	switch cand.ManifestType {
 	case "go.mod":
-		return applyGoUpdate(ctx, targetDir, cand)
+		return applyGoUpdate(ctx, targetDir, cand, tidy)
 	case "package.json":
 		return applyNodeUpdate(ctx, targetDir, cand)
 	default:
@@ -29,7 +33,7 @@ func ApplyUpdate(ctx context.Context, repoPath string, cand UpgradeCandidate) er
 	}
 }
 
-func applyGoUpdate(ctx context.Context, targetDir string, cand UpgradeCandidate) error {
+func applyGoUpdate(ctx context.Context, targetDir string, cand UpgradeCandidate, tidy bool) error {
 	targetSpec := fmt.Sprintf("%s@%s", cand.Package, cand.TargetVersion)
 	cmd := exec.CommandContext(ctx, "go", "get", targetSpec)
 	cmd.Dir = targetDir
@@ -40,11 +44,12 @@ func applyGoUpdate(ctx context.Context, targetDir string, cand UpgradeCandidate)
 		}
 	}
 
-	// Always run go mod tidy to re-align go.sum
-	tidyCmd := exec.CommandContext(ctx, "go", "mod", "tidy")
-	tidyCmd.Dir = targetDir
-	if tidyErr := tidyCmd.Run(); tidyErr != nil {
-		return fmt.Errorf("go mod tidy in %s: %w", targetDir, tidyErr)
+	if tidy {
+		tidyCmd := exec.CommandContext(ctx, "go", "mod", "tidy")
+		tidyCmd.Dir = targetDir
+		if tidyErr := tidyCmd.Run(); tidyErr != nil {
+			return fmt.Errorf("go mod tidy in %s: %w", targetDir, tidyErr)
+		}
 	}
 	return nil
 }
@@ -120,7 +125,7 @@ func UpdateAll(ctx context.Context, repoPath string, candidates []UpgradeCandida
 	modulesToTidy := make(map[string]bool)
 
 	for _, c := range candidates {
-		if err := ApplyUpdate(ctx, repoPath, c); err != nil {
+		if err := applyUpdateInternal(ctx, repoPath, c, false); err != nil {
 			continue
 		}
 		applied++
