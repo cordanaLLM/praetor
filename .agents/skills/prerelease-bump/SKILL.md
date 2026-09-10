@@ -36,3 +36,4 @@ Speculatively test dependency upgrades against upstream `alpha`, `beta`, `rc`, a
      praetorctl bump apply <package-name> --version=<stable-version> --patch=.standards/patches/<patch-file>
      make verify-all
      ```
+

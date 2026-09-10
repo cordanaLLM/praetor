@@ -37,3 +37,4 @@ Adopt any codebase—greenfield, partially setup, or legacy brownfield—into th
      ```bash
      cd /path/to/repo && make verify-all
      ```
+

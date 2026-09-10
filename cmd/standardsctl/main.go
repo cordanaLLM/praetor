@@ -29,6 +29,7 @@ func printUsage() {
 	fmt.Println("  harvest            Audit fleet repositories, workstation worktrees, and agent skills")
 	fmt.Println("  adopt              Adopt and bootstrap any repository to 100% template compliance (alias: conform, bootstrap)")
 	fmt.Println("  bump               Proactive prerelease bump train and ephemeral canary testing")
+	fmt.Println("  paperclip          Paperclip agent harness synthesis and Rule 0 terminal disposition")
 	fmt.Println("  version            Print CLI version information")
 	fmt.Println("\nRun 'standardsctl <command> -h' for more information on a command.")
 }
@@ -78,6 +79,8 @@ func main() {
 		err = runAdopt(args)
 	case "bump":
 		err = runBump(args)
+	case "paperclip":
+		err = runPaperclip(args)
 	case "version":
 		fmt.Printf("standardsctl version %s\n", version)
 	case "-h", "--help", "help":

@@ -19,8 +19,8 @@ import (
 
 // Invariant bounds.
 const (
-	maxFilesScan  = 2000
-	maxLoopBound  = 500
+	maxFilesScan   = 2000
+	maxLoopBound   = 500
 	defaultTimeout = 30 * time.Second
 )
 
@@ -30,7 +30,7 @@ type RepositoryState string
 const (
 	StateGreenfield RepositoryState = "greenfield"
 	StatePartial    RepositoryState = "partial"
-	StateBrownfield  RepositoryState = "brownfield"
+	StateBrownfield RepositoryState = "brownfield"
 )
 
 // AdoptOptions controls repository adoption and template compliance.
@@ -45,14 +45,14 @@ type AdoptOptions struct {
 
 // AdoptReport details the actions executed or simulated during adoption.
 type AdoptReport struct {
-	State            RepositoryState `json:"state"`
-	Archetype        string          `json:"archetype"`
-	Facets           []string        `json:"facets"`
-	CreatedFiles     []string        `json:"created_files"`
-	ReconciledFiles  []string        `json:"reconciled_files"`
-	LegacyDebtCount  int             `json:"legacy_debt_count"`
-	DryRun           bool            `json:"dry_run"`
-	Errors           []string        `json:"errors,omitempty"`
+	State           RepositoryState `json:"state"`
+	Archetype       string          `json:"archetype"`
+	Facets          []string        `json:"facets"`
+	CreatedFiles    []string        `json:"created_files"`
+	ReconciledFiles []string        `json:"reconciled_files"`
+	LegacyDebtCount int             `json:"legacy_debt_count"`
+	DryRun          bool            `json:"dry_run"`
+	Errors          []string        `json:"errors,omitempty"`
 }
 
 // Adopt brings any repository to 100% template and governance compliance.
