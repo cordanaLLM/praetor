@@ -1,0 +1,35 @@
+/* Core Web Vitals (CWV) and Performance Stylesheet */
+
+:root {
+  --sl-font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  --sl-font-mono: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace;
+}
+
+/* 1. Largest Contentful Paint (LCP) Optimization */
+img, svg, video {
+  max-width: 100%;
+  height: auto;
+  font-display: swap;
+}
+
+/* 2. Cumulative Layout Shift (CLS) Prevention */
+.hero-image, .diagram-container {
+  aspect-ratio: 16 / 9;
+  min-height: 200px;
+  contain: layout;
+}
+
+/* 3. Interaction to Next Paint (INP) & Rendering Performance */
+article, section {
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 500px;
+}
+
+/* Font Display Swap for zero FOIT (Flash of Invisible Text) */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: local('Inter');
+}

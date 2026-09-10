@@ -1,0 +1,56 @@
+name: "Breaking Change RFC"
+description: "Formally propose a breaking change requiring HISS-14 migration footers and ABI evolution"
+title: "[BREAKING]: "
+labels: ["breaking-change", "rfc", "api-review"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## HISS-14 Breaking Change RFC Gate
+        Under **HISS-14**, public application binary interfaces and declarative schemas are append-only.
+        Any breaking change requires explicit architectural review, a conventional commit breaking indicator (`!`), and a mandatory `Migration:` footer.
+  - type: textarea
+    id: summary
+    attributes:
+      label: "Breaking Change Summary"
+      description: "Concise summary of the proposed breaking alteration."
+    validations:
+      required: true
+  - type: textarea
+    id: rationale
+    attributes:
+      label: "Why is an Append-Only Addition Insufficient?"
+      description: "Explain why standard additive evolution (new method, optional field, alias) cannot achieve the engineering goal."
+    validations:
+      required: true
+  - type: textarea
+    id: impacted-contracts
+    attributes:
+      label: "Impacted Public Contracts"
+      description: "List all Go package symbols, CLI flags, schema keys, or agent tools altered."
+      placeholder: |
+        - Go symbol: `config.Manifest.Profiles` type changed
+        - CLI flag: `standardsctl compile-context --verify`
+        - Schema: `.standards.yaml` v1 -> v2
+    validations:
+      required: true
+  - type: textarea
+    id: migration-footer
+    attributes:
+      label: "Draft HISS-14 Migration Footer"
+      description: "The exact copy-pasteable migration guide to be included in PR and commit footers."
+      placeholder: |
+        Migration:
+        1. Update .standards.yaml: replace 'old_key' with 'new_key'.
+        2. Run 'standardsctl sync --force'.
+        3. Execute 'make verify-all'.
+    validations:
+      required: true
+  - type: input
+    id: deprecation-timeline
+    attributes:
+      label: "Deprecation Window"
+      description: "Release track and timeline (e.g. Deprecated in v1.4, removed in v2.0)"
+      placeholder: "LTS-supported until 2027-01-01"
+    validations:
+      required: true

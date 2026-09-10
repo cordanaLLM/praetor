@@ -94,14 +94,14 @@ type DiagnosticPointer struct {
 
 // DistillResult contains the capped distillation summary and ephemeral storage pointer.
 type DistillResult struct {
-	Summary        string            `json:"summary"`
-	FullReportPath string            `json:"full_report_path"`
-	TotalResults   int               `json:"total_results"`
-	TotalErrors    int               `json:"total_errors"`
-	Categories     map[string]int    `json:"categories"`
+	Summary        string              `json:"summary"`
+	FullReportPath string              `json:"full_report_path"`
+	TotalResults   int                 `json:"total_results"`
+	TotalErrors    int                 `json:"total_errors"`
+	Categories     map[string]int      `json:"categories"`
 	TopFailures    []DiagnosticPointer `json:"top_failures"`
-	LineCount      int               `json:"line_count"`
-	TokenEstimate  int               `json:"token_estimate"`
+	LineCount      int                 `json:"line_count"`
+	TokenEstimate  int                 `json:"token_estimate"`
 }
 
 // readContextLines reads +/-2 lines of context around targetLine from filePath.

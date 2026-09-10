@@ -1,0 +1,66 @@
+site_name: "cordanaLLM/standards"
+site_url: "https://standards.cordana.ai"
+site_description: "Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine"
+site_author: "cordanaLLM"
+repo_url: "https://github.com/cordanaLLM/standards"
+repo_name: "cordanaLLM/standards"
+
+theme:
+  name: material
+  custom_dir: overrides
+  language: en
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+  - sitemap:
+      changefreq: daily
+      priority: 0.8
+  - minify:
+      minify_html: true
+      minify_js: true
+      minify_css: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - tables
+  - attr_list
+
+nav:
+  - Overview: index.md
+  - Standards:
+      - HISS-16 Specification: standards/hiss-16-spec.md
+  - Guides:
+      - Onboarding: guides/onboarding.md
+      - Archetype Authoring: guides/archetype-authoring.md

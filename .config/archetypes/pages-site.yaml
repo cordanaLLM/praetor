@@ -1,0 +1,31 @@
+id: "pages-site"
+name: "Pages & Documentation Site"
+description: "High-performance static documentation, developer portals, and marketing sites with automated SEO and Core Web Vitals optimization"
+runtime: "node"
+
+complexity:
+  max_cyclomatic: 10
+  max_cognitive: 12
+  max_func_loc: 75
+  max_statements: 40
+
+branch_protection:
+  enforce_linear_history: true
+  require_signed_commits: true
+  required_approving_reviewers: 1
+  dismiss_stale_reviews: true
+
+supply_chain:
+  slsa_level: 2
+  enforce_cosign: true
+  require_sbom: true
+
+linters:
+  - "eslint"
+  - "markdownlint"
+  - "prettier"
+  - "axe-core"
+
+devcontainer_features:
+  - "ghcr.io/devcontainers/features/node:1"
+  - "ghcr.io/devcontainers/features/common-utils:2"

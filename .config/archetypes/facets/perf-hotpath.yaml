@@ -1,0 +1,17 @@
+id: "perf:hotpath"
+name: "Performance & Hot-Path Invariants"
+description: "Enforces strict zero frame malloc in inner loops (HISS-03), tighter cyclomatic complexity bounds, and zero-allocation assertions"
+
+complexity:
+  max_cyclomatic: 8
+  max_cognitive: 10
+  max_func_loc: 50
+  max_statements: 35
+
+memory:
+  zero_frame_malloc: true
+  banned_alloc_in_ticks: true
+
+linters:
+  - "semgrep"
+  - "benchstat"

@@ -1,0 +1,52 @@
+---
+interface Props {
+  title?: string;
+  description?: string;
+  canonicalUrl?: string;
+  image?: string;
+  type?: 'TechArticle' | 'SoftwareSourceCode';
+}
+
+const {
+  title = 'cordanaLLM/standards Documentation',
+  description = 'Universal High-Integrity Repository Governance and Autonomous Agent Harnesses.',
+  canonicalUrl = Astro.url.href,
+  image = '/og-image.png',
+  type = 'TechArticle'
+} = Astro.props;
+
+const jsonLd = type === 'TechArticle' ? {
+  '@context': 'https://schema.org',
+  '@type': 'TechArticle',
+  'headline': title,
+  'description': description,
+  'url': canonicalUrl,
+  'image': image,
+  'author': {
+    '@type': 'Organization',
+    'name': 'cordanaLLM',
+    'url': 'https://standards.cordana.ai'
+  },
+  'dateModified': new Date().toISOString(),
+  'inLanguage': 'en'
+} : {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareSourceCode',
+  'name': title,
+  'description': description,
+  'codeRepository': 'https://github.com/cordanaLLM/standards',
+  'programmingLanguage': 'Go'
+};
+---
+
+<!-- Canonical & OpenGraph -->
+<link rel="canonical" href={canonicalUrl} />
+<meta property="og:title" content={title} />
+<meta property="og:description" content={description} />
+<meta property="og:url" content={canonicalUrl} />
+<meta property="og:image" content={image} />
+<meta property="og:type" content="article" />
+<meta name="twitter:card" content="summary_large_image" />
+
+<!-- Schema.org JSON-LD Structured Data Injection -->
+<script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />

@@ -1,0 +1,78 @@
+name: "Bug Report"
+description: "File an issue describing a defect, invariant failure, or regression in standards tooling"
+title: "[BUG]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please ensure you have verified the failure against current live state (`make verify-all`).
+  - type: textarea
+    id: summary
+    attributes:
+      label: "Bug Summary"
+      description: "A clear and concise description of what the bug is."
+      placeholder: "standardsctl audit fails unexpectedly on valid .standards.yaml..."
+    validations:
+      required: true
+  - type: dropdown
+    id: hiss-invariant
+    attributes:
+      label: "Affected HISS Invariant"
+      description: "If this bug violates or fails to enforce a High-Integrity Systems Standard, select it below:"
+      options:
+        - "None / General Tooling"
+        - "HISS-01: Acyclic DAG Control Flow"
+        - "HISS-02: Bounded Loops & Mandatory I/O Timeouts"
+        - "HISS-03: Zero Frame Malloc in Hot Paths"
+        - "HISS-04: Complexity Bounds (McCabe <= 10, LOC <= 75)"
+        - "HISS-07: Checked Errors & Zero Unwrap"
+        - "HISS-08: Static Determinism & Banned Functions"
+        - "HISS-09: Mandatory // SAFETY: Proofs"
+        - "HISS-10: 5-Layer Zero-Warning Cascade"
+        - "HISS-11: Hermetic Supply Chain (SLSA-3)"
+        - "HISS-14: Append-Only ABI & Migration Footers"
+        - "HISS-15: 3D Test Discipline"
+        - "HISS-16: Canonical AGENTS.md & Server Gates"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: "Steps to Reproduce"
+      description: "Deterministic steps to reproduce the behavior."
+      placeholder: |
+        1. Run `standardsctl ...`
+        2. Inspect output
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected vs Actual Behavior"
+      description: "What did you expect to happen, and what happened instead?"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Terminal Logs / SARIF Diagnostic Trace"
+      description: "Paste relevant command output (please limit to <= 1500 tokens)."
+      render: shell
+  - type: input
+    id: environment
+    attributes:
+      label: "Environment"
+      description: "OS, Go version, architecture (e.g. Linux x86_64, Go 1.24)"
+      placeholder: "Linux 6.8, go version go1.24.0 linux/amd64"
+    validations:
+      required: true
+  - type: checkboxes
+    id: affirmations
+    attributes:
+      label: "Integrity Checklist"
+      options:
+        - label: "I have verified this against latest `main` using `make verify-all`."
+          required: true
+        - label: "No evasions (`--no-verify`, `LEFTHOOK=0`) were attempted during reproduction."
+          required: true

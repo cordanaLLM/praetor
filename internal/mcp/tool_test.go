@@ -248,7 +248,7 @@ func TestTool_Boundary_EmptyBatch(t *testing.T) {
 func TestTool_Boundary_MaxPropertiesAndDescriptions(t *testing.T) {
 	props := make(map[string]PropertySchema, 50)
 	for i := 0; i < 50; i++ {
-		key := string(rune('a' + (i % 26))) + string(rune('0' + (i / 26)))
+		key := string(rune('a'+(i%26))) + string(rune('0'+(i/26)))
 		props[key] = PropertySchema{
 			Type:        "string",
 			Description: "Property " + key,

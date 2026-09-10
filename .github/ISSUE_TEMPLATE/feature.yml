@@ -1,0 +1,50 @@
+name: "Feature Request"
+description: "Propose a new archetype, facet, compiler target, or governance tool for cordanaLLM/standards"
+title: "[FEATURE]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Propose enhancements to `cordanaLLM/standards`. All new features must maintain strict join-semilattice properties and zero-warning hygiene.
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Problem Statement"
+      description: "Is your feature request related to a problem? Please provide a clear and concise description."
+      placeholder: "When onboarding Python-based ML training repositories..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "Proposed Solution & Design"
+      description: "Describe the architecture, CLI commands, archetypes, or facets to introduce."
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: "Target Subsystem"
+      options:
+        - "Archetypes & Facets (.config/archetypes)"
+        - "Context Transpiler (internal/compiler)"
+        - "CLI & Scaffolding (cmd/standardsctl)"
+        - "Agent Protocols (MCP / LSP)"
+        - "Brownfield Baselining (internal/baseline)"
+        - "SEO & Documentation Presets (internal/seo, docs/presets)"
+        - "Hermetic Supply Chain & DevContainers"
+    validations:
+      required: true
+  - type: textarea
+    id: hiss-impact
+    attributes:
+      label: "HISS Invariant Considerations"
+      description: "How does this proposal maintain compliance with HISS-01 (acyclic call graph), HISS-02 (bounded loops), and HISS-04 (McCabe <= 10)?"
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Alternatives Considered"
+      description: "Any alternative solutions or features you've evaluated."

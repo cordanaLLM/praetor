@@ -1,0 +1,60 @@
+name: Sync AI Model Catalog
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # Daily at 03:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-models:
+    name: Reconcile Frontier & Open Model Catalog
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go Toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Sync AI Model Catalog
+        run: go run ./cmd/standardsctl models sync
+
+      - name: Verify Model Routing & Headroom Integrity
+        run: go test -v -race ./internal/router/...
+
+      - name: Check for Catalog Drift
+        id: git-check
+        run: |
+          if [ -n "$(git status --porcelain .config/models/)" ]; then
+            echo "drift_detected=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift_detected=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure Git Bot Identity
+        if: steps.git-check.outputs.drift_detected == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit and Push Model Catalog Updates
+        if: steps.git-check.outputs.drift_detected == 'true'
+        run: |
+          git add .config/models/
+          git commit -m "chore(models): automated sync of frontier and open model catalog [skip ci]"
+          git push origin main

@@ -1,0 +1,31 @@
+id: "container-image"
+name: "Hermetic Container Image"
+description: "Minimal, non-root, multi-arch container image recipes with vulnerability scanning and cryptographic provenance attestations"
+runtime: "container"
+
+complexity:
+  max_cyclomatic: 8
+  max_cognitive: 10
+  max_func_loc: 50
+  max_statements: 30
+
+branch_protection:
+  enforce_linear_history: true
+  require_signed_commits: true
+  required_approving_reviewers: 1
+  dismiss_stale_reviews: true
+
+supply_chain:
+  slsa_level: 3
+  enforce_cosign: true
+  require_sbom: true
+
+linters:
+  - "hadolint"
+  - "trivy"
+  - "grype"
+  - "dockle"
+
+devcontainer_features:
+  - "ghcr.io/devcontainers/features/docker-in-docker:2"
+  - "ghcr.io/devcontainers/features/common-utils:2"

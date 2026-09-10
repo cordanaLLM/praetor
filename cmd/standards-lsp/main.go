@@ -1,13 +1,23 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 const lspVersion = "v1.0.0"
 
 func main() {
-	// Language Server Protocol daemon placeholder for Phase 3 implementation
-	fmt.Fprintf(os.Stderr, "standards-lsp %s initialized on stdio transport.\n", lspVersion)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	srv := NewServer(os.Stdin, os.Stdout, lspVersion)
+	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		fmt.Fprintf(os.Stderr, "standards-lsp daemon error: %v\n", err)
+		os.Exit(1)
+	}
 }

@@ -12,11 +12,13 @@ func printUsage() {
 	fmt.Println("\nUsage:")
 	fmt.Println("  standardsctl <command> [arguments]")
 	fmt.Println("\nAvailable Commands:")
+	fmt.Println("  init               Scaffold configuration, baseline, and agent context for new repo")
 	fmt.Println("  compile-context    Transpile canonical AGENTS.md to vendor-native formats (< 300 LOC)")
 	fmt.Println("  audit              Audit repository against declared HISS-16 invariants and lockfile")
 	fmt.Println("  baseline           Inspect or record technical debt infractions")
 	fmt.Println("  devcontainer       Synthesize or verify .devcontainer/devcontainer.json")
 	fmt.Println("  flavors            Plan or sync moving version flavor tags (bleeding, latest, lts)")
+	fmt.Println("  models             Sync or list active model tiers and benchmark limits")
 	fmt.Println("  plan               Dry-run comparison of repository settings against policy")
 	fmt.Println("  sync               Reconcile repository settings, labels, and branch rulesets")
 	fmt.Println("  version            Print CLI version information")
@@ -34,6 +36,8 @@ func main() {
 
 	var err error
 	switch cmd {
+	case "init":
+		err = runInit(args)
 	case "compile-context":
 		err = runCompileContext(args)
 	case "audit":
@@ -44,6 +48,8 @@ func main() {
 		err = runDevContainer(args)
 	case "flavors":
 		err = runFlavors(args)
+	case "models":
+		err = runModels(args)
 	case "plan":
 		err = runPlan(args)
 	case "sync":

@@ -1,0 +1,213 @@
+version: 1
+tiers:
+    frontier:
+        description: Tier 1 Frontier Reasoning (Arena ELO >= 1300, formal proofs, AST collisions)
+        target_tasks:
+            - architecture_synthesis
+            - hiss_proof_verification
+            - ast_semantic_collision
+            - waiver_signoff
+        models:
+            - id: claude-3-7-sonnet-20250219
+              family: anthropic
+              rpm_limit: 1000
+              tpm_limit: 80000
+              cost_per_m_in: 3
+              cost_per_m_out: 15
+            - id: claude-3-5-sonnet-20241022
+              family: anthropic
+              rpm_limit: 1000
+              tpm_limit: 80000
+              cost_per_m_in: 3
+              cost_per_m_out: 15
+            - id: claude-3-opus-20240229
+              family: anthropic
+              rpm_limit: 50
+              tpm_limit: 40000
+              cost_per_m_in: 15
+              cost_per_m_out: 75
+            - id: gemini-2.5-pro-preview-03-25
+              family: google
+              rpm_limit: 300
+              tpm_limit: 2000000
+              cost_per_m_in: 1.25
+              cost_per_m_out: 5
+            - id: gemini-2.5-flash-preview-03-25
+              family: google
+              rpm_limit: 2000
+              tpm_limit: 4000000
+              cost_per_m_in: 0.075
+              cost_per_m_out: 0.3
+            - id: gpt-4.5-preview-2025-02-27
+              family: openai
+              rpm_limit: 200
+              tpm_limit: 100000
+              cost_per_m_in: 75
+              cost_per_m_out: 150
+            - id: o3-mini
+              family: openai
+              rpm_limit: 500
+              tpm_limit: 1000000
+              cost_per_m_in: 1.1
+              cost_per_m_out: 4.4
+            - id: o1
+              family: openai
+              rpm_limit: 500
+              tpm_limit: 100000
+              cost_per_m_in: 15
+              cost_per_m_out: 60
+            - id: grok-3
+              family: xai
+              rpm_limit: 100
+              tpm_limit: 200000
+              cost_per_m_in: 5
+              cost_per_m_out: 15
+            - id: grok-3-mini
+              family: xai
+              rpm_limit: 500
+              tpm_limit: 500000
+              cost_per_m_in: 0.5
+              cost_per_m_out: 2
+            - id: deepseek-reasoner
+              family: deepseek
+              rpm_limit: 5000
+              tpm_limit: 5000000
+              cost_per_m_in: 0.55
+              cost_per_m_out: 2.19
+            - id: qwen-2.5-max
+              family: qwen
+              rpm_limit: 2000
+              tpm_limit: 1000000
+              cost_per_m_in: 1.6
+              cost_per_m_out: 6.4
+        fallback_tier: workhorse
+    oss-fast:
+        description: Tier 3 Best Open-Weights & Local OSS (High-throughput mechanical sweeps)
+        target_tasks:
+            - ast_skeletonization
+            - markdown_linting
+            - seo_jsonld_validation
+            - boilerplate_scaffolding
+        models:
+            - id: gpt-oss-small
+              family: openai
+              rpm_limit: 50000
+              tpm_limit: 20000000
+              cost_per_m_in: 0
+              cost_per_m_out: 0
+            - id: hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M
+              family: open-weights
+              rpm_limit: 50000
+              tpm_limit: 20000000
+              cost_per_m_in: 0
+              cost_per_m_out: 0
+            - id: hf.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF:Q8_0
+              family: open-weights
+              rpm_limit: 50000
+              tpm_limit: 20000000
+              cost_per_m_in: 0
+              cost_per_m_out: 0
+            - id: qwen3:30b
+              family: open-weights
+              rpm_limit: 50000
+              tpm_limit: 20000000
+              cost_per_m_in: 0
+              cost_per_m_out: 0
+            - id: gpt-oss:20b
+              family: open-weights
+              rpm_limit: 50000
+              tpm_limit: 20000000
+              cost_per_m_in: 0
+              cost_per_m_out: 0
+            - id: qwen3-coder:30b
+              family: open-weights
+              rpm_limit: 50000
+              tpm_limit: 20000000
+              cost_per_m_in: 0
+              cost_per_m_out: 0
+            - id: qwen2.5-coder:32b
+              family: open-weights
+              rpm_limit: 50000
+              tpm_limit: 20000000
+              cost_per_m_in: 0
+              cost_per_m_out: 0
+            - id: qwen3-vl:30b
+              family: open-weights
+              rpm_limit: 50000
+              tpm_limit: 20000000
+              cost_per_m_in: 0
+              cost_per_m_out: 0
+            - id: qwen3-vl:8b
+              family: open-weights
+              rpm_limit: 50000
+              tpm_limit: 20000000
+              cost_per_m_in: 0
+              cost_per_m_out: 0
+            - id: qwen2.5-coder:7b
+              family: open-weights
+              rpm_limit: 50000
+              tpm_limit: 20000000
+              cost_per_m_in: 0
+              cost_per_m_out: 0
+        fallback_tier: ""
+    workhorse:
+        description: Tier 2 Workhorse Engineering (Arena ELO >= 1220, code generation, test suites)
+        target_tasks:
+            - implementation_code
+            - unit_test_authoring
+            - cli_commands
+            - protocol_transports
+        models:
+            - id: claude-3-5-haiku-20241022
+              family: anthropic
+              rpm_limit: 2000
+              tpm_limit: 100000
+              cost_per_m_in: 0.8
+              cost_per_m_out: 4
+            - id: gemini-2.0-flash
+              family: google
+              rpm_limit: 2000
+              tpm_limit: 4000000
+              cost_per_m_in: 0.1
+              cost_per_m_out: 0.4
+            - id: gpt-4o-2024-11-20
+              family: openai
+              rpm_limit: 2000
+              tpm_limit: 450000
+              cost_per_m_in: 2.5
+              cost_per_m_out: 10
+            - id: deepseek-chat
+              family: deepseek
+              rpm_limit: 10000
+              tpm_limit: 10000000
+              cost_per_m_in: 0.14
+              cost_per_m_out: 0.28
+            - id: mistral-large-2411
+              family: mistral
+              rpm_limit: 500
+              tpm_limit: 250000
+              cost_per_m_in: 2
+              cost_per_m_out: 6
+            - id: codestral-2501
+              family: mistral
+              rpm_limit: 1000
+              tpm_limit: 500000
+              cost_per_m_in: 0.3
+              cost_per_m_out: 0.9
+            - id: qwen-2.5-coder-32b-instruct
+              family: qwen
+              rpm_limit: 5000
+              tpm_limit: 5000000
+              cost_per_m_in: 0.2
+              cost_per_m_out: 0.6
+            - id: meta-llama/llama-3.3-70b-instruct
+              family: open-weights
+              rpm_limit: 5000
+              tpm_limit: 5000000
+              cost_per_m_in: 0.35
+              cost_per_m_out: 0.4
+        fallback_tier: oss-fast
+governance:
+    max_concurrent_same_model: 2
+    exhaustion_threshold_percent: 80
+    orthogonal_audit_required: true

@@ -1,0 +1,22 @@
+{
+  "name": "@cordana/docs-preset-starlight",
+  "version": "1.0.0",
+  "description": "Astro Starlight documentation preset with pre-wired Schema.org JSON-LD and Core Web Vitals optimization",
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/sitemap": "^3.2.1",
+    "@astrojs/starlight": "^0.32.1",
+    "astro": "^5.4.2",
+    "sharp": "^0.33.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

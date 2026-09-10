@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+  <!-- Canonical URL -->
+  <link rel="canonical" href="{{ page.canonical_url or config.site_url ~ '/' ~ page.url }}" />
+
+  <!-- Pre-wired Schema.org JSON-LD structured data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "{{ page.title | default(config.site_name) }}",
+    "description": "{{ page.meta.description | default(config.site_description) }}",
+    "url": "{{ page.canonical_url or config.site_url ~ '/' ~ page.url }}",
+    "author": {
+      "@type": "Organization",
+      "name": "cordanaLLM",
+      "url": "https://standards.cordana.ai"
+    },
+    "inLanguage": "en",
+    "proficiencyLevel": "Expert"
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareSourceCode",
+    "name": "cordanaLLM/standards",
+    "programmingLanguage": "Go",
+    "codeRepository": "https://github.com/cordanaLLM/standards",
+    "runtimePlatform": "Linux / POSIX",
+    "license": "https://spdx.org/licenses/Apache-2.0.html"
+  }
+  </script>
+{% endblock %}
