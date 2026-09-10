@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/standards/internal/lockdown"
+	"github.com/cordanaLLM/standards/internal/util"
 	"github.com/cordanaLLM/standards/internal/worktree"
 )
 
@@ -65,25 +66,30 @@ func RunCanary(ctx context.Context, opts CanaryOptions) (*CanaryResult, error) {
 
 	defer func() {
 		if !opts.Retention {
-			_ = wtManager.Remove(context.Background(), taskID, true)
+			if rmErr := wtManager.Remove(context.Background(), taskID, true); rmErr != nil {
+				res.ExecutionLog += fmt.Sprintf("\nwarning: failed removing worktree %s: %v", taskID, rmErr)
+			}
 		}
 	}()
 
 	// Apply candidate version modification in worktree
-	if err := applyCandidateInWorktree(wt.Path, opts.Candidate); err != nil {
+	if err := ApplyUpdate(ctx, wt.Path, opts.Candidate); err != nil {
 		res.ExecutionLog = fmt.Sprintf("failed updating manifest in worktree: %v", err)
 		return res, nil
 	}
 
-	// Run test verification
-	testCmdStr := opts.TestCmd
+	executeCanaryTest(ctx, wt.Path, opts.TestCmd, opts.RepoPath, taskID, res)
+	return res, nil
+}
+
+func executeCanaryTest(ctx context.Context, wtPath, testCmdStr, repoPath, taskID string, res *CanaryResult) {
 	if testCmdStr == "" {
 		testCmdStr = "go test -v ./..."
 	}
 
 	parts := strings.Fields(testCmdStr)
 	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-	cmd.Dir = wt.Path
+	cmd.Dir = wtPath
 	out, err := cmd.CombinedOutput()
 	res.ExecutionLog = string(out)
 
@@ -91,36 +97,7 @@ func RunCanary(ctx context.Context, opts CanaryOptions) (*CanaryResult, error) {
 		res.Success = true
 		res.CanaryCertified = true
 	} else {
-		distillBreakage(ctx, opts.RepoPath, taskID, string(out), res)
-	}
-
-	return res, nil
-}
-
-func applyCandidateInWorktree(wtPath string, c UpgradeCandidate) error {
-	switch c.ManifestType {
-	case "go.mod":
-		goModPath := filepath.Join(wtPath, "go.mod")
-		data, err := os.ReadFile(goModPath)
-		if err != nil {
-			return err
-		}
-		oldLine := fmt.Sprintf("%s %s", c.Package, c.CurrentVersion)
-		newLine := fmt.Sprintf("%s %s", c.Package, c.TargetVersion)
-		replaced := strings.Replace(string(data), oldLine, newLine, 1)
-		return os.WriteFile(goModPath, []byte(replaced), 0644)
-
-	case "package.json":
-		pkgPath := filepath.Join(wtPath, "package.json")
-		data, err := os.ReadFile(pkgPath)
-		if err != nil {
-			return err
-		}
-		replaced := strings.Replace(string(data), c.CurrentVersion, c.TargetVersion, 1)
-		return os.WriteFile(pkgPath, []byte(replaced), 0644)
-
-	default:
-		return nil
+		distillBreakage(ctx, repoPath, taskID, string(out), res)
 	}
 }
 
@@ -138,11 +115,12 @@ func distillBreakage(ctx context.Context, repoPath, taskID, output string, res *
 
 	// Stage an adaptation patch stub in .standards/patches/
 	patchDir := filepath.Join(repoPath, ".standards", "patches")
-	_ = os.MkdirAll(patchDir, 0755)
-	patchFile := filepath.Join(patchDir, fmt.Sprintf("%s.patch", taskID))
-	patchContent := fmt.Sprintf("# Canary Breakage Adaptation Patch for %s\n# Target: %s\n# Output:\n%s\n", res.Candidate.Package, res.Candidate.TargetVersion, output)
-	if err := os.WriteFile(patchFile, []byte(patchContent), 0644); err == nil {
-		res.StagedPatchPath = patchFile
+	if mkErr := os.MkdirAll(patchDir, 0755); mkErr == nil {
+		patchFile := filepath.Join(patchDir, fmt.Sprintf("%s.patch", taskID))
+		patchContent := fmt.Sprintf("# Canary Breakage Adaptation Patch for %s\n# Target: %s\n# Output:\n%s\n", res.Candidate.Package, res.Candidate.TargetVersion, output)
+		if err := os.WriteFile(patchFile, []byte(patchContent), 0644); err == nil {
+			res.StagedPatchPath = patchFile
+		}
 	}
 }
 
@@ -155,14 +133,16 @@ func ApplyBump(ctx context.Context, repoPath string, c UpgradeCandidate, patchPa
 		return fmt.Errorf("apply cancelled: %w", err)
 	}
 
-	if err := applyCandidateInWorktree(repoPath, c); err != nil {
+	if err := ApplyUpdate(ctx, repoPath, c); err != nil {
 		return fmt.Errorf("failed applying bump: %w", err)
 	}
 
-	if patchPath != "" && fileExists(patchPath) {
+	if patchPath != "" && util.FileExists(patchPath) {
 		cmd := exec.CommandContext(ctx, "git", "apply", "--ignore-whitespace", patchPath)
 		cmd.Dir = repoPath
-		_ = cmd.Run()
+		if applyErr := cmd.Run(); applyErr != nil {
+			return fmt.Errorf("apply patch %s: %w", patchPath, applyErr)
+		}
 	}
 
 	return nil

@@ -15,6 +15,8 @@ import (
 	"github.com/cordanaLLM/standards/internal/config"
 	"github.com/cordanaLLM/standards/internal/devcontainer"
 	"github.com/cordanaLLM/standards/internal/editor"
+	"github.com/cordanaLLM/standards/internal/hiss"
+	"github.com/cordanaLLM/standards/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -168,26 +170,12 @@ func resolveOwner(repoPath string) string {
 }
 
 func cleanGitURL(url string) string {
-	trimmed := strings.TrimSpace(url)
-	trimmed = strings.TrimSuffix(trimmed, "/")
-	trimmed = strings.TrimSuffix(trimmed, ".git")
-	return strings.TrimSuffix(trimmed, "/")
+	return util.CleanGitURL(url)
 }
 
 func extractOwnerFromURL(url string) string {
-	trimmed := cleanGitURL(url)
-	if idx := strings.LastIndex(trimmed, ":"); idx != -1 && !strings.HasPrefix(trimmed, "http") {
-		pathPart := trimmed[idx+1:]
-		parts := strings.Split(pathPart, "/")
-		if len(parts) >= 2 {
-			return parts[len(parts)-2]
-		}
-	}
-	parts := strings.Split(trimmed, "/")
-	if len(parts) >= 2 {
-		return parts[len(parts)-2]
-	}
-	return ""
+	owner, _ := util.ExtractOwnerAndRepo(url)
+	return owner
 }
 
 func resolveRepoName(repoPath string) string {
@@ -203,19 +191,8 @@ func resolveRepoName(repoPath string) string {
 }
 
 func extractRepoFromURL(url string) string {
-	trimmed := cleanGitURL(url)
-	if idx := strings.LastIndex(trimmed, ":"); idx != -1 && !strings.HasPrefix(trimmed, "http") {
-		pathPart := trimmed[idx+1:]
-		parts := strings.Split(pathPart, "/")
-		if len(parts) >= 1 && parts[len(parts)-1] != "" {
-			return parts[len(parts)-1]
-		}
-	}
-	parts := strings.Split(trimmed, "/")
-	if len(parts) >= 1 && parts[len(parts)-1] != "" {
-		return parts[len(parts)-1]
-	}
-	return ""
+	_, repo := util.ExtractOwnerAndRepo(url)
+	return repo
 }
 
 func resolveFacets(input []string) []string {
@@ -385,283 +362,30 @@ func scanLegacyDebt(repoPath string, base *baseline.Baseline, report *AdoptRepor
 		report.DebtBreakdown = make(map[string]int)
 	}
 
-	filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-		if len(base.Infractions) >= maxInfractionsCap {
-			return filepath.SkipDir
-		}
-		rel, err := filepath.Rel(repoPath, path)
-		if err != nil {
-			return nil
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
 
-		// Skip common vendor, build, and version-control trees
-		if strings.HasPrefix(rel, "vendor/") || strings.HasPrefix(rel, ".standards/") ||
-			strings.HasPrefix(rel, ".git/") || strings.HasPrefix(rel, "node_modules/") ||
-			strings.HasPrefix(rel, ".venv/") || strings.HasPrefix(rel, "build/") ||
-			strings.HasPrefix(rel, "core/build/") || strings.HasPrefix(rel, "libvmaf/build/") ||
-			strings.HasPrefix(rel, "target/") || strings.HasPrefix(rel, ".cache/") ||
-			strings.HasPrefix(rel, ".idea/") || strings.HasPrefix(rel, ".vscode/") ||
-			strings.HasPrefix(rel, "compat/") || strings.HasPrefix(rel, "third_party/") {
-			return nil
-		}
-
-		ext := strings.ToLower(filepath.Ext(path))
-		isGo := ext == ".go"
-		isNative := ext == ".c" || ext == ".cpp" || ext == ".cc" || ext == ".cxx" || ext == ".h" || ext == ".hpp" || ext == ".cu" || ext == ".hip"
-		isPython := ext == ".py"
-		isRust := ext == ".rs"
-
-		if !isGo && !isNative && !isPython && !isRust {
-			return nil
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		lines := strings.Split(string(data), "\n")
-
-		// C / C++ / CUDA checks
-		if isNative {
-			inNativeFunc := false
-			nativeFuncStart := 0
-			nativeFuncName := ""
-			nativeBraceLevel := 0
-
-			for lineIdx, line := range lines {
-				if lineIdx >= maxFilesScan || len(base.Infractions) >= maxInfractionsCap {
-					break
-				}
-				trimmed := strings.TrimSpace(line)
-
-				if strings.Contains(line, "while (1)") || strings.Contains(line, "while(1)") ||
-					strings.Contains(line, "while (true)") || strings.Contains(line, "while(true)") ||
-					strings.Contains(line, "for (;;)") || strings.Contains(line, "for(;;)") {
-					recordInfraction(base, report, "HISS-02", rel, lineIdx+1, "Legacy unbounded loop in native code")
-				}
-				if strings.Contains(line, "gets(") {
-					recordInfraction(base, report, "HISS-09", rel, lineIdx+1, "Banned unsafe gets() invocation")
-				}
-				if strings.Contains(line, "strcpy(") {
-					recordInfraction(base, report, "HISS-09", rel, lineIdx+1, "Banned unsafe strcpy() invocation; bounded string copy required")
-				}
-				if strings.Contains(line, "sprintf(") {
-					recordInfraction(base, report, "HISS-09", rel, lineIdx+1, "Banned unsafe sprintf() invocation; snprintf required")
-				}
-				if strings.HasPrefix(trimmed, "goto ") {
-					recordInfraction(base, report, "HISS-01", rel, lineIdx+1, "Legacy non-DAG control flow jump (goto)")
-				}
-
-				// Function length tracking (HISS-04 / NASA JPL Power of 10 Rule 4)
-				if !inNativeFunc {
-					if strings.Contains(line, "{") && !strings.HasPrefix(trimmed, "//") && !strings.HasPrefix(trimmed, "/*") &&
-						!strings.HasPrefix(trimmed, "struct ") && !strings.HasPrefix(trimmed, "enum ") &&
-						!strings.HasPrefix(trimmed, "union ") && !strings.HasPrefix(trimmed, "typedef ") &&
-						!strings.HasPrefix(trimmed, "class ") && !strings.HasPrefix(trimmed, "#") {
-						inNativeFunc = true
-						nativeFuncStart = lineIdx + 1
-						nativeBraceLevel = strings.Count(line, "{") - strings.Count(line, "}")
-						nativeFuncName = trimmed
-						if idx := strings.Index(nativeFuncName, "("); idx > 0 {
-							parts := strings.Fields(nativeFuncName[:idx])
-							if len(parts) > 0 {
-								nativeFuncName = parts[len(parts)-1]
-								nativeFuncName = strings.TrimPrefix(nativeFuncName, "*")
-							}
-						} else if lineIdx > 0 {
-							prev := strings.TrimSpace(lines[lineIdx-1])
-							if idx2 := strings.Index(prev, "("); idx2 > 0 {
-								parts := strings.Fields(prev[:idx2])
-								if len(parts) > 0 {
-									nativeFuncName = parts[len(parts)-1]
-									nativeFuncName = strings.TrimPrefix(nativeFuncName, "*")
-								}
-							}
-						}
-					}
-				} else {
-					nativeBraceLevel += strings.Count(line, "{") - strings.Count(line, "}")
-					if nativeBraceLevel <= 0 {
-						funcLen := (lineIdx + 1) - nativeFuncStart + 1
-						if funcLen > defaultMaxFuncLOC {
-							recordInfraction(base, report, "HISS-04", rel, nativeFuncStart, fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", nativeFuncName, funcLen, defaultMaxFuncLOC))
-						}
-						inNativeFunc = false
-					}
-				}
-			}
-		}
-
-		// Python checks
-		if isPython {
-			inPyFunc := false
-			pyFuncStart := 0
-			pyFuncName := ""
-			pyIndent := 0
-
-			for lineIdx, line := range lines {
-				if lineIdx >= maxFilesScan || len(base.Infractions) >= maxInfractionsCap {
-					break
-				}
-				trimmed := strings.TrimSpace(line)
-
-				if strings.HasPrefix(trimmed, "while True:") {
-					recordInfraction(base, report, "HISS-02", rel, lineIdx+1, "Legacy unbounded while True loop in Python")
-				}
-				if strings.Contains(line, "eval(") || strings.Contains(line, "exec(") {
-					recordInfraction(base, report, "HISS-09", rel, lineIdx+1, "Unsafe dynamic eval/exec execution in Python")
-				}
-				if trimmed == "except:" || strings.HasPrefix(trimmed, "except: ") || strings.HasPrefix(trimmed, "except:#") {
-					recordInfraction(base, report, "HISS-07", rel, lineIdx+1, "Bare except catches and suppresses unhandled exceptions")
-				}
-
-				if strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "async def ") {
-					if inPyFunc {
-						funcLen := lineIdx - pyFuncStart
-						if funcLen > defaultMaxFuncLOC {
-							recordInfraction(base, report, "HISS-04", rel, pyFuncStart, fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", pyFuncName, funcLen, defaultMaxFuncLOC))
-						}
-					}
-					inPyFunc = true
-					pyFuncStart = lineIdx + 1
-					pyFuncName = strings.TrimPrefix(trimmed, "async ")
-					pyFuncName = strings.TrimPrefix(pyFuncName, "def ")
-					if idx := strings.Index(pyFuncName, "("); idx > 0 {
-						pyFuncName = pyFuncName[:idx]
-					}
-					pyIndent = len(line) - len(strings.TrimLeft(line, " \t"))
-				} else if inPyFunc && trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-					currentIndent := len(line) - len(strings.TrimLeft(line, " \t"))
-					if currentIndent <= pyIndent && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-						funcLen := lineIdx - pyFuncStart
-						if funcLen > defaultMaxFuncLOC {
-							recordInfraction(base, report, "HISS-04", rel, pyFuncStart, fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", pyFuncName, funcLen, defaultMaxFuncLOC))
-						}
-						inPyFunc = false
-					}
-				}
-			}
-			if inPyFunc {
-				funcLen := len(lines) - pyFuncStart
-				if funcLen > defaultMaxFuncLOC {
-					recordInfraction(base, report, "HISS-04", rel, pyFuncStart, fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", pyFuncName, funcLen, defaultMaxFuncLOC))
-				}
-			}
-		}
-
-		// Go checks
-		if isGo {
-			inGoFunc := false
-			goFuncStart := 0
-			goFuncName := ""
-			goBraceLevel := 0
-
-			for lineIdx, line := range lines {
-				if lineIdx >= maxFilesScan || len(base.Infractions) >= maxInfractionsCap {
-					break
-				}
-				trimmed := strings.TrimSpace(line)
-
-				if strings.Contains(line, "_ = ") {
-					recordInfraction(base, report, "HISS-07", rel, lineIdx+1, "Legacy unchecked error assignment")
-				}
-				if strings.HasPrefix(trimmed, "for {") {
-					recordInfraction(base, report, "HISS-02", rel, lineIdx+1, "Legacy unbounded loop (for { ... })")
-				}
-
-				if strings.HasPrefix(line, "func ") || strings.HasPrefix(line, "func (") {
-					if inGoFunc && goBraceLevel > 0 {
-						funcLen := lineIdx - goFuncStart
-						if funcLen > defaultMaxFuncLOC {
-							recordInfraction(base, report, "HISS-04", rel, goFuncStart, fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", goFuncName, funcLen, defaultMaxFuncLOC))
-						}
-					}
-					inGoFunc = true
-					goFuncStart = lineIdx + 1
-					goBraceLevel = strings.Count(line, "{") - strings.Count(line, "}")
-					goFuncName = trimmed
-					if idx := strings.Index(goFuncName, "{"); idx > 0 {
-						goFuncName = strings.TrimSpace(goFuncName[:idx])
-					}
-				} else if inGoFunc {
-					goBraceLevel += strings.Count(line, "{") - strings.Count(line, "}")
-					if goBraceLevel <= 0 {
-						funcLen := (lineIdx + 1) - goFuncStart + 1
-						if funcLen > defaultMaxFuncLOC {
-							recordInfraction(base, report, "HISS-04", rel, goFuncStart, fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", goFuncName, funcLen, defaultMaxFuncLOC))
-						}
-						inGoFunc = false
-					}
-				}
-			}
-		}
-
-		// Rust checks
-		if isRust {
-			inRustFunc := false
-			rustFuncStart := 0
-			rustFuncName := ""
-			rustBraceLevel := 0
-
-			for lineIdx, line := range lines {
-				if lineIdx >= maxFilesScan || len(base.Infractions) >= maxInfractionsCap {
-					break
-				}
-				trimmed := strings.TrimSpace(line)
-
-				if strings.Contains(line, ".unwrap()") {
-					recordInfraction(base, report, "HISS-07", rel, lineIdx+1, "Legacy .unwrap() invocation in production Rust code")
-				}
-				if strings.Contains(line, ".expect(") {
-					recordInfraction(base, report, "HISS-07", rel, lineIdx+1, "Legacy .expect() invocation in production Rust code")
-				}
-				if strings.HasPrefix(trimmed, "unsafe {") {
-					recordInfraction(base, report, "HISS-09", rel, lineIdx+1, "Unaudited unsafe block in Rust code")
-				}
-
-				if strings.HasPrefix(trimmed, "fn ") || strings.HasPrefix(trimmed, "pub fn ") ||
-					strings.HasPrefix(trimmed, "async fn ") || strings.HasPrefix(trimmed, "pub async fn ") {
-					inRustFunc = true
-					rustFuncStart = lineIdx + 1
-					rustBraceLevel = strings.Count(line, "{") - strings.Count(line, "}")
-					rustFuncName = trimmed
-					if idx := strings.Index(rustFuncName, "("); idx > 0 {
-						rustFuncName = strings.TrimSpace(rustFuncName[:idx])
-					}
-				} else if inRustFunc {
-					rustBraceLevel += strings.Count(line, "{") - strings.Count(line, "}")
-					if rustBraceLevel <= 0 {
-						funcLen := (lineIdx + 1) - rustFuncStart + 1
-						if funcLen > defaultMaxFuncLOC {
-							recordInfraction(base, report, "HISS-04", rel, rustFuncStart, fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", rustFuncName, funcLen, defaultMaxFuncLOC))
-						}
-						inRustFunc = false
-					}
-				}
-			}
-		}
-
-		return nil
+	scanRep, err := hiss.Scan(ctx, repoPath, hiss.ScanOptions{
+		MaxFuncLOC: defaultMaxFuncLOC,
+		Cap:        maxInfractionsCap,
 	})
-	base.TotalInfractions = len(base.Infractions)
-}
-
-func recordInfraction(base *baseline.Baseline, report *AdoptReport, ruleID, rel string, line int, msg string) {
-	if len(base.Infractions) >= maxInfractionsCap {
+	if err != nil {
 		return
 	}
-	base.Infractions = append(base.Infractions, baseline.Infraction{
-		RuleID:      ruleID,
-		FilePath:    rel,
-		LineNumber:  line,
-		Message:     msg,
-		Fingerprint: fmt.Sprintf("%s:%d:%s", rel, line, ruleID),
-	})
-	if report.DebtBreakdown != nil {
-		report.DebtBreakdown[ruleID]++
+
+	for _, v := range scanRep.Violations {
+		base.Infractions = append(base.Infractions, baseline.Infraction{
+			RuleID:      v.RuleID,
+			FilePath:    v.FilePath,
+			LineNumber:  v.LineNumber,
+			Symbol:      v.Symbol,
+			Message:     v.Message,
+			Fingerprint: fmt.Sprintf("%s:%d:%s", v.FilePath, v.LineNumber, v.RuleID),
+		})
+	}
+	base.TotalInfractions = len(base.Infractions)
+	for k, count := range scanRep.Breakdown {
+		report.DebtBreakdown[k] = count
 	}
 }
 
@@ -1234,6 +958,5 @@ Describe the decision taken and the architectural rationale.
 }
 
 func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return util.PathExists(path)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -176,3 +177,64 @@ func TestClassifyChannel_Boundary_EmptyAndComplex(t *testing.T) {
 		t.Fatalf("expected rc channel for complex metadata, got: %s", ch2)
 	}
 }
+
+func TestReconcileCatalog_Positive(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	goMod := `module test-catalog
+go 1.24
+require (
+	gopkg.in/yaml.v3 v3.0.0
+	github.com/google/uuid v1.3.0
+)
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goMod), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := ReconcileCatalog(ctx, tmpDir)
+	if err != nil {
+		t.Fatalf("ReconcileCatalog failed: %v", err)
+	}
+
+	if len(candidates) != 2 {
+		t.Fatalf("expected 2 candidates to reconcile against FleetCatalog, got: %d", len(candidates))
+	}
+}
+
+func TestApplyUpdate_NodeFallback(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	pkgJSON := `{
+  "name": "sample",
+  "dependencies": {
+    "typescript": "^5.0.0"
+  }
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "package.json"), []byte(pkgJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cand := UpgradeCandidate{
+		Package:        "typescript",
+		CurrentVersion: "^5.0.0",
+		TargetVersion:  "^5.7.3",
+		ManifestType:   "package.json",
+	}
+
+	if err := ApplyUpdate(ctx, tmpDir, cand); err != nil {
+		t.Fatalf("ApplyUpdate failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "^5.7.3") {
+		t.Fatalf("expected package.json to contain ^5.7.3, got: %s", string(data))
+	}
+}
+

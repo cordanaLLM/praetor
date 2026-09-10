@@ -5,11 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/cordanaLLM/standards/internal/baseline"
 	"github.com/cordanaLLM/standards/internal/compiler"
 	"github.com/cordanaLLM/standards/internal/config"
 	"github.com/cordanaLLM/standards/internal/devcontainer"
+	"github.com/cordanaLLM/standards/internal/hiss"
 )
 
 func runAudit(args []string) error {
@@ -38,12 +40,39 @@ func runAudit(args []string) error {
 	}
 	fmt.Println("[PASS] SemVer lockfile .standards.lock verified.")
 
-	// 3. Audit Baseline Debt
+	// 3. Audit Baseline Debt & Active HISS Invariants
 	base, err := baseline.LoadBaseline(*baselinePath)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
-	fmt.Printf("[PASS] Technical debt baseline verified: %d recorded legacy infractions.\n", base.TotalInfractions)
+
+	ctx := context.Background()
+	scanRep, err := hiss.Scan(ctx, ".", hiss.ScanOptions{})
+	if err != nil {
+		return fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
+	}
+
+	currentViolations := hiss.ConvertToBaseline(scanRep.Violations)
+	for i := range currentViolations {
+		currentViolations[i].Fingerprint = fmt.Sprintf("%s:%d:%s", currentViolations[i].FilePath, currentViolations[i].LineNumber, currentViolations[i].RuleID)
+	}
+
+	ratchet := baseline.EvaluateRatchet(base, currentViolations, nil)
+	if !ratchet.Passed {
+		limit := 3
+		if len(ratchet.NewViolations) < limit {
+			limit = len(ratchet.NewViolations)
+		}
+		var msgs []string
+		for i := 0; i < limit; i++ {
+			v := ratchet.NewViolations[i]
+			msgs = append(msgs, fmt.Sprintf("  [%s] %s:%d - %s", v.RuleID, v.FilePath, v.LineNumber, v.Message))
+		}
+		return fmt.Errorf("[FAIL] HISS invariant violations introduced (%d total infractions, %d new unbaselined violations):\n%s",
+			ratchet.CurrentCount, len(ratchet.NewViolations), strings.Join(msgs, "\n"))
+	}
+	fmt.Printf("[PASS] HISS invariant scan verified: %d active violations within %d baselined limit.\n",
+		ratchet.CurrentCount, base.TotalInfractions)
 
 	// 4. Audit Cross-Agent Context Synchronization
 	tr := compiler.NewTranspiler()

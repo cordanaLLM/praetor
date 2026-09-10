@@ -30,6 +30,8 @@ func printUsage() {
 	fmt.Println("  adopt              Adopt and bootstrap any repository to 100% template compliance (alias: conform, bootstrap)")
 	fmt.Println("  bump               Proactive prerelease bump train and ephemeral canary testing")
 	fmt.Println("  paperclip          Paperclip agent harness synthesis and Rule 0 terminal disposition")
+	fmt.Println("  changelog          Manage Keep-a-Changelog fragments and release sections")
+	fmt.Println("  release            Execute release verification gates and render changelog")
 	fmt.Println("  version            Print CLI version information")
 	fmt.Println("\nRun 'standardsctl <command> -h' for more information on a command.")
 }
@@ -43,56 +45,63 @@ func main() {
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
-	var err error
-	switch cmd {
-	case "init":
-		err = runInit(args)
-	case "compile-context":
-		err = runCompileContext(args)
-	case "audit":
-		err = runAudit(args)
-	case "baseline":
-		err = runBaseline(args)
-	case "devcontainer":
-		err = runDevContainer(args)
-	case "flavors":
-		err = runFlavors(args)
-	case "models":
-		err = runModels(args)
-	case "plan":
-		err = runPlan(args)
-	case "sync":
-		err = runSync(args)
-	case "sentinel":
-		err = runSentinel(args)
-	case "worktree":
-		err = runWorktree(args)
-	case "gc":
-		err = runGC(args)
-	case "editors":
-		err = runEditors(args)
-	case "forge":
-		err = runForge(args)
-	case "harvest":
-		err = runHarvest(args)
-	case "adopt", "conform", "bootstrap":
-		err = runAdopt(args)
-	case "bump":
-		err = runBump(args)
-	case "paperclip":
-		err = runPaperclip(args)
-	case "version":
-		fmt.Printf("standardsctl version %s\n", version)
-	case "-h", "--help", "help":
-		printUsage()
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
-		printUsage()
-		os.Exit(1)
-	}
-
-	if err != nil {
+	if err := dispatchCommand(cmd, args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
+
+func dispatchCommand(cmd string, args []string) error {
+	switch cmd {
+	case "init":
+		return runInit(args)
+	case "compile-context":
+		return runCompileContext(args)
+	case "audit":
+		return runAudit(args)
+	case "baseline":
+		return runBaseline(args)
+	case "devcontainer":
+		return runDevContainer(args)
+	case "flavors":
+		return runFlavors(args)
+	case "models":
+		return runModels(args)
+	case "plan":
+		return runPlan(args)
+	case "sync":
+		return runSync(args)
+	case "sentinel":
+		return runSentinel(args)
+	case "worktree":
+		return runWorktree(args)
+	case "gc":
+		return runGC(args)
+	case "editors":
+		return runEditors(args)
+	case "forge":
+		return runForge(args)
+	case "harvest":
+		return runHarvest(args)
+	case "adopt", "conform", "bootstrap":
+		return runAdopt(args)
+	case "bump":
+		return runBump(args)
+	case "paperclip":
+		return runPaperclip(args)
+	case "changelog":
+		return runChangelog(args)
+	case "release":
+		return runRelease(args)
+	case "version":
+		fmt.Printf("standardsctl version %s\n", version)
+		return nil
+	case "-h", "--help", "help":
+		printUsage()
+		return nil
+	default:
+		printUsage()
+		return fmt.Errorf("unknown command: %s", cmd)
+	}
+}
+

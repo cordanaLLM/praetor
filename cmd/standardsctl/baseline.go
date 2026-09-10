@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"path/filepath"
 
 	"github.com/cordanaLLM/standards/internal/baseline"
+	"github.com/cordanaLLM/standards/internal/hiss"
 )
 
 func runBaseline(args []string) error {
@@ -22,8 +25,29 @@ func runBaseline(args []string) error {
 	}
 
 	if *record {
-		// In Phase 1 & 2 dogfooding, infractions are zero
-		b.Infractions = []baseline.Infraction{}
+		ctx := context.Background()
+		repoDir := filepath.Dir(*baselinePath)
+		if repoDir == "" || repoDir == "." {
+			repoDir = "."
+		}
+		scanRep, err := hiss.Scan(ctx, repoDir, hiss.ScanOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to scan for baseline infractions: %w", err)
+		}
+
+		b.Infractions = make([]baseline.Infraction, 0, len(scanRep.Violations))
+		for _, v := range scanRep.Violations {
+			b.Infractions = append(b.Infractions, baseline.Infraction{
+				RuleID:      v.RuleID,
+				FilePath:    v.FilePath,
+				LineNumber:  v.LineNumber,
+				Symbol:      v.Symbol,
+				Message:     v.Message,
+				Fingerprint: fmt.Sprintf("%s:%d:%s", v.FilePath, v.LineNumber, v.RuleID),
+			})
+		}
+		b.TotalInfractions = len(b.Infractions)
+
 		if err := baseline.SaveBaseline(*baselinePath, b); err != nil {
 			return fmt.Errorf("failed to save baseline: %w", err)
 		}

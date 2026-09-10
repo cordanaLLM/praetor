@@ -9,6 +9,34 @@ import (
 	"github.com/cordanaLLM/standards/internal/flavors"
 )
 
+func fetchCurrentTags() map[string]string {
+	currentTags := make(map[string]string)
+	tagOut, err := exec.Command("git", "tag", "-l").Output()
+	if err == nil {
+		for _, tag := range strings.Split(string(tagOut), "\n") {
+			tag = strings.TrimSpace(tag)
+			if tag != "" {
+				currentTags[tag] = tag
+			}
+		}
+	}
+	return currentTags
+}
+
+func applyFlavorTransitions(transitions []flavors.TagTransition) error {
+	for _, tr := range transitions {
+		if tr.Action == "create" || tr.Action == "update" {
+			cmd := exec.Command("git", "tag", "-f", tr.FlavorName, tr.TargetRef)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("failed to apply flavor tag %s: %w (%s)", tr.FlavorName, err, strings.TrimSpace(string(out)))
+			}
+			fmt.Printf("Updated tag %s -> %s\n", tr.FlavorName, tr.TargetRef)
+		}
+	}
+	fmt.Println("Flavors synchronized successfully.")
+	return nil
+}
+
 func runFlavors(args []string) error {
 	fs := flag.NewFlagSet("flavors", flag.ContinueOnError)
 	configPath := fs.String("config", ".config/flavors.yaml", "Path to flavors configuration")
@@ -17,10 +45,9 @@ func runFlavors(args []string) error {
 		return err
 	}
 
-	subArgs := fs.Args()
 	action := "plan"
-	if len(subArgs) > 0 {
-		action = subArgs[0]
+	if len(fs.Args()) > 0 {
+		action = fs.Args()[0]
 	}
 
 	cfg, err := flavors.LoadConfig(*configPath)
@@ -28,18 +55,13 @@ func runFlavors(args []string) error {
 		return fmt.Errorf("failed to load flavors config: %w", err)
 	}
 
-	// Fetch current commit short sha
 	commitBytes, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
 	commit := "HEAD"
 	if err == nil {
 		commit = strings.TrimSpace(string(commitBytes))
 	}
 
-	currentTags := map[string]string{
-		"latest": "v1.0.0",
-	}
-
-	transitions := flavors.PlanTransitions(cfg, currentTags, commit, "1.0.0")
+	transitions := flavors.PlanTransitions(cfg, fetchCurrentTags(), commit, "1.0.0")
 
 	fmt.Println("=== cordanaLLM/standards Release Flavor Reconciler ===")
 	for _, tr := range transitions {
@@ -47,10 +69,8 @@ func runFlavors(args []string) error {
 	}
 
 	if action == "sync" {
-		fmt.Println("Flavors synchronized successfully.")
-	} else {
-		fmt.Println("\nRun 'standardsctl flavors sync' to apply tag updates.")
+		return applyFlavorTransitions(transitions)
 	}
-
+	fmt.Println("\nRun 'standardsctl flavors sync' to apply tag updates.")
 	return nil
 }

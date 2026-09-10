@@ -33,6 +33,10 @@ func runBump(args []string) error {
 		return runBumpTrain(ctx, subArgs)
 	case "apply":
 		return runBumpApply(ctx, subArgs)
+	case "update":
+		return runBumpUpdate(ctx, subArgs)
+	case "unify":
+		return runBumpUnify(ctx, subArgs)
 	default:
 		return fmt.Errorf("unknown bump subcommand: %s", sub)
 	}
@@ -42,6 +46,8 @@ func printBumpUsage() {
 	fmt.Println("Usage: standardsctl bump <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  scan [--prerelease] [--path=.]      Scan dependencies for pending stable and prerelease bumps")
+	fmt.Println("  update [--all] [--path=.]           Update dependencies to latest versions")
+	fmt.Println("  unify [--apply] [--path=.]          Reconcile dependencies against fleet catalog")
 	fmt.Println("  canary <package> [--target=...]     Speculatively test bump in isolated ephemeral worktree")
 	fmt.Println("  train [--dry-run]                   Run proactive bump train across all pending upgrades")
 	fmt.Println("  apply <package> [--version=...]     Apply verified bump and adaptation patch to repository")
@@ -76,14 +82,101 @@ func runBumpScan(ctx context.Context, args []string) error {
 	return nil
 }
 
+func runBumpUpdate(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("bump update", flag.ContinueOnError)
+	path := fs.String("path", ".", "Target repository path")
+	all := fs.Bool("all", false, "Update all discovered outdated dependencies")
+	prerelease := fs.Bool("prerelease", false, "Include prerelease versions")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if *all {
+		rep, err := bump.ScanDependencies(ctx, *path, *prerelease)
+		if err != nil {
+			return fmt.Errorf("scan dependencies: %w", err)
+		}
+		cands := rep.Stables
+		if *prerelease {
+			cands = append(cands, rep.Prereleases...)
+		}
+		if len(cands) == 0 {
+			fmt.Println("All dependencies are already up-to-date.")
+			return nil
+		}
+		fmt.Printf("Updating %d dependencies in %s...\n", len(cands), *path)
+		n, err := bump.UpdateAll(ctx, *path, cands)
+		if err != nil {
+			return fmt.Errorf("update all: %w", err)
+		}
+		fmt.Printf("Successfully updated %d dependencies.\n", n)
+		return nil
+	}
+
+	if fs.NArg() < 1 {
+		return fmt.Errorf("specify package or --all: standardsctl bump update <pkg>@<ver> OR standardsctl bump update --all")
+	}
+
+	spec := fs.Arg(0)
+	parts := strings.Split(spec, "@")
+	if len(parts) != 2 {
+		return fmt.Errorf("format must be <package>@<version>")
+	}
+	cand := bump.UpgradeCandidate{
+		Package:       parts[0],
+		TargetVersion: parts[1],
+		ManifestType:  "go.mod",
+	}
+	if err := bump.ApplyUpdate(ctx, *path, cand); err != nil {
+		return err
+	}
+	fmt.Printf("Successfully updated %s to %s\n", parts[0], parts[1])
+	return nil
+}
+
+func runBumpUnify(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("bump unify", flag.ContinueOnError)
+	path := fs.String("path", ".", "Target repository path")
+	apply := fs.Bool("apply", false, "Apply unified versions to repository")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	candidates, err := bump.ReconcileCatalog(ctx, *path)
+	if err != nil {
+		return fmt.Errorf("reconcile catalog: %w", err)
+	}
+
+	if len(candidates) == 0 {
+		fmt.Println("All repository dependencies are unified with the fleet catalog.")
+		return nil
+	}
+
+	fmt.Printf("=== Fleet Catalog Dependency Drift (%d packages) ===\n", len(candidates))
+	for _, c := range candidates {
+		fmt.Printf("  - %s: %s -> %s (%s)\n", c.Package, c.CurrentVersion, c.TargetVersion, c.ManifestType)
+	}
+
+	if *apply {
+		n, err := bump.UpdateAll(ctx, *path, candidates)
+		if err != nil {
+			return fmt.Errorf("apply unified dependencies: %w", err)
+		}
+		fmt.Printf("Successfully unified %d dependencies with fleet catalog.\n", n)
+	} else {
+		fmt.Println("\nRun 'standardsctl bump unify --apply' to align dependencies with the fleet catalog.")
+	}
+
+	return nil
+}
+
 func runBumpCanary(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("bump canary", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
 	targetVer := fs.String("target", "", "Target prerelease or stable version")
 	dryRun := fs.Bool("dry-run", false, "Simulate canary test without creating worktree")
 	retention := fs.Bool("retention", false, "Retain worktree on failure for debugging")
-	var flagArgs []string
-	var posArgs []string
+	var flagArgs, posArgs []string
 	for _, a := range args {
 		if strings.HasPrefix(a, "-") {
 			flagArgs = append(flagArgs, a)
@@ -130,9 +223,6 @@ func runBumpCanary(ctx context.Context, args []string) error {
 		fmt.Println("Status:           [FAIL] Breakage detected in candidate version.")
 		if res.DistilledErrors != "" {
 			fmt.Printf("\n--- Distilled Breakage Diagnostics ---\n%s\n", res.DistilledErrors)
-		}
-		if res.StagedPatchPath != "" {
-			fmt.Printf("Adaptation Patch Staged: %s\n", res.StagedPatchPath)
 		}
 	}
 	return nil

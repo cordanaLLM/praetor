@@ -3,8 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"strings"
 
 	"github.com/cordanaLLM/standards/internal/config"
+	"github.com/cordanaLLM/standards/internal/util"
 )
 
 func runPlan(args []string) error {
@@ -36,6 +38,22 @@ func runPlan(args []string) error {
 	fmt.Printf("  - SLSA Provenance Level:     %d\n", policy.SupplyChain.SLSALevel)
 	fmt.Printf("  - Cosign Attestation:        %t\n", policy.SupplyChain.EnforceCosign)
 
-	fmt.Println("\nStatus: Local state matches declared policy. No changes required.")
+	var missing []string
+	if !util.FileExists(".standards.lock") {
+		missing = append(missing, ".standards.lock")
+	}
+	if !util.FileExists("AGENTS.md") {
+		missing = append(missing, "AGENTS.md")
+	}
+	if !util.FileExists(".config/labels.yaml") {
+		missing = append(missing, ".config/labels.yaml")
+	}
+
+	if len(missing) > 0 {
+		fmt.Printf("\nStatus: Missing governance files detected: %s. Run 'standardsctl adopt' to reconcile.\n", strings.Join(missing, ", "))
+	} else {
+		fmt.Println("\nStatus: Local state matches declared policy. No changes required.")
+	}
+
 	return nil
 }
