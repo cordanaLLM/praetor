@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -130,26 +129,19 @@ func scanGoModuleDir(ctx context.Context, modDir, modRel string, opts ScanOption
 	cmd.Dir = modDir
 	cmd.Env = append(os.Environ(), "GOPROXY=https://proxy.golang.org,direct")
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	if err := cmd.Start(); err != nil {
+	out, err := cmd.Output()
+	if err != nil && len(out) == 0 {
 		return nil, err
 	}
 
 	var candidates []UpgradeCandidate
-	decoder := json.NewDecoder(stdout)
+	decoder := json.NewDecoder(strings.NewReader(string(out)))
 
-	for {
+	for i := 0; i < 10000; i++ {
 		var mod goModuleJSON
-		if err := decoder.Decode(&mod); err != nil {
-			if err == io.EOF {
-				break
-			}
+		if decErr := decoder.Decode(&mod); decErr != nil {
 			break
 		}
-
 		if mod.Main {
 			continue
 		}
@@ -164,7 +156,6 @@ func scanGoModuleDir(ctx context.Context, modDir, modRel string, opts ScanOption
 			continue
 		}
 
-		// Include if there is an update OR it is an active prerelease candidate
 		if mod.Update != nil || ch != ChannelStable {
 			candidates = append(candidates, UpgradeCandidate{
 				Package:        mod.Path,
@@ -181,9 +172,6 @@ func scanGoModuleDir(ctx context.Context, modDir, modRel string, opts ScanOption
 		}
 	}
 
-	if waitErr := cmd.Wait(); waitErr != nil {
-		return candidates, nil
-	}
 	return candidates, nil
 }
 
