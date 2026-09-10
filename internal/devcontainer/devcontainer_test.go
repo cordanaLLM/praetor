@@ -286,8 +286,9 @@ func TestDogfoodingSynthesis(t *testing.T) {
 		t.Fatalf("failed to synthesize devcontainer from root manifest: %v", err)
 	}
 
-	if dc.Name != "cordanaLLM/standards" {
-		t.Fatalf("expected name cordanaLLM/standards, got: %s", dc.Name)
+	expectedName := manifest.Repository.Owner + "/" + manifest.Repository.Name
+	if dc.Name != expectedName {
+		t.Fatalf("expected name %s, got: %s", expectedName, dc.Name)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

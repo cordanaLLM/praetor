@@ -48,6 +48,7 @@ func (t *Transpiler) Compile(agentsMdPath string) (*CompileResult, error) {
 	copilotContent := generateCopilotMD(content)
 	windsurfContent := generateWindsurfRules(content)
 	geminiContent := generateGeminiMD(content)
+	codexContent := generateCodexMD(content)
 
 	files := []TargetFile{
 		{RelativePath: "CLAUDE.md", Content: claudeContent},
@@ -55,6 +56,7 @@ func (t *Transpiler) Compile(agentsMdPath string) (*CompileResult, error) {
 		{RelativePath: ".github/copilot-instructions.md", Content: copilotContent},
 		{RelativePath: ".windsurfrules", Content: windsurfContent},
 		{RelativePath: ".gemini/GEMINI.md", Content: geminiContent},
+		{RelativePath: ".codex/rules.md", Content: codexContent},
 	}
 
 	for i := range files {
@@ -186,5 +188,23 @@ func generateGeminiMD(src string) string {
 	b.WriteString("- Run `make verify-all` to assert invariant compliance.\n")
 	b.WriteString("- Cap diagnostic outputs at <= 1500 tokens.\n")
 	b.WriteString("- Reconcile context changes via `standardsctl compile-context`.\n")
+	return b.String()
+}
+
+func generateCodexMD(src string) string {
+	var b strings.Builder
+	b.WriteString("# OpenAI Codex Context & Operating Rules\n")
+	b.WriteString("<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n")
+	b.WriteString("## Directives & Invariants\n\n")
+	b.WriteString("- Act on verified state, not assumption.\n")
+	b.WriteString("- Zero tolerance for destructive or un-revertible actions without authorization.\n")
+	b.WriteString("- Maintain strict DAG call graphs (zero recursion, HISS-01).\n")
+	b.WriteString("- Enforce scalar loop bounds and context timeouts on all I/O (HISS-02).\n")
+	b.WriteString("- Zero unchecked errors and zero unwrap/expect calls (HISS-07).\n")
+	b.WriteString("- Positive, negative, and boundary tests mandatory for all public interfaces (HISS-15).\n\n")
+	b.WriteString("## Verification Commands\n\n")
+	b.WriteString("```bash\n")
+	b.WriteString("make verify-all\n")
+	b.WriteString("```\n")
 	return b.String()
 }

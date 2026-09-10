@@ -23,7 +23,27 @@ func runAdopt(args []string) error {
 	allMissing := fs.Bool("all-missing", false, "Adopt all detected unmanaged repositories in ~/dev")
 	path := fs.String("path", ".", "Target repository path to adopt")
 
-	if err := fs.Parse(args); err != nil {
+	var flagArgs []string
+	var posArgs []string
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			flagArgs = append(flagArgs, args[i])
+			if !strings.Contains(args[i], "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				if args[i] != "-dry-run" && args[i] != "--dry-run" &&
+					args[i] != "-force" && args[i] != "--force" &&
+					args[i] != "-record-baseline" && args[i] != "--record-baseline" &&
+					args[i] != "-all-missing" && args[i] != "--all-missing" {
+					i++
+					flagArgs = append(flagArgs, args[i])
+				}
+			}
+		} else {
+			posArgs = append(posArgs, args[i])
+		}
+	}
+	combined := append(flagArgs, posArgs...)
+
+	if err := fs.Parse(combined); err != nil {
 		return err
 	}
 

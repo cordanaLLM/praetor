@@ -3,7 +3,7 @@
 version: 1
 repository:
   owner: "cordanaLLM"
-  name: "standards"
+  name: "praetor"
   visibility: "public"
   description: "Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine"
   homepage: "https://standards.cordana.ai"

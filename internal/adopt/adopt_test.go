@@ -233,3 +233,33 @@ func TestDetectState_Boundary(t *testing.T) {
 		t.Fatalf("expected brownfield for dir with all files, got: %s", state3)
 	}
 }
+
+func TestResolveArchetype_Meson(t *testing.T) {
+	tmpDir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(tmpDir, "meson.build"), []byte("project('vmaf')"), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module vmaf"), 0644)
+
+	arch := resolveArchetype(tmpDir, "")
+	if arch != "native-gpu-systems" {
+		t.Fatalf("expected native-gpu-systems for meson project, got: %s", arch)
+	}
+}
+
+func TestExtractOwnerFromURL(t *testing.T) {
+	tests := []struct {
+		url      string
+		expected string
+	}{
+		{"https://github.com/VMAFx/vmafx.git", "VMAFx"},
+		{"git@github.com:VMAFx/pelorus.git", "VMAFx"},
+		{"https://git.dev.cauda.dev/cordanaLLM/praetor.git", "cordanaLLM"},
+		{"https://github.com/lusoris/home-zeus", "lusoris"},
+	}
+
+	for _, tc := range tests {
+		got := extractOwnerFromURL(tc.url)
+		if got != tc.expected {
+			t.Errorf("for %s: expected %s, got %s", tc.url, tc.expected, got)
+		}
+	}
+}

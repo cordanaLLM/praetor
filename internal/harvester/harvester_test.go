@@ -69,6 +69,39 @@ func TestScanLocalWorkstation_Positive(t *testing.T) {
 	}
 }
 
+func TestScanLocalWorkstation_NestedOrgLayout(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// Nested org repo: org1/repo-c with AGENTS.md
+	repoC := filepath.Join(tmpDir, "vmafx", "vmafx")
+	if err := os.MkdirAll(filepath.Join(repoC, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoC, "AGENTS.md"), []byte("# Rules"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nested org repo: org2/repo-d missing rules
+	repoD := filepath.Join(tmpDir, "vmafx", "pelorus")
+	if err := os.MkdirAll(filepath.Join(repoD, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := ScanLocalWorkstation(ctx, tmpDir)
+	if err != nil {
+		t.Fatalf("ScanLocalWorkstation failed: %v", err)
+	}
+
+	if rep.DevReposCount != 2 {
+		t.Fatalf("expected 2 dev repos in nested layout, got: %d", rep.DevReposCount)
+	}
+	expectedMissing := filepath.Join("vmafx", "pelorus")
+	if len(rep.MissingRulesRepos) != 1 || rep.MissingRulesRepos[0] != expectedMissing {
+		t.Fatalf("expected %s in missing rules, got: %v", expectedMissing, rep.MissingRulesRepos)
+	}
+}
+
 func TestAuditSkills_Positive(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()

@@ -20,12 +20,12 @@ const (
 
 // Disposition represents an immutable Rule 0 terminal disposition record (ADR-0087).
 type Disposition struct {
-	IssueID       string            `json:"issue_id"`
-	Status        DispositionStatus `json:"status"`
-	Note          string            `json:"note"`
-	Proof         string            `json:"proof,omitempty"`
-	RecoveryOwner string            `json:"recovery_owner,omitempty"`
-	Actor         string            `json:"actor"`
+	IssueID       string                     `json:"issue_id"`
+	Status        DispositionStatus          `json:"status"`
+	Note          string                     `json:"note"`
+	Proof         string                     `json:"proof,omitempty"`
+	RecoveryOwner string                     `json:"recovery_owner,omitempty"`
+	Actor         string                     `json:"actor"`
 	Receipt       *lockdown.ExecutionReceipt `json:"receipt,omitempty"`
 	Timestamp     time.Time                  `json:"timestamp"`
 }

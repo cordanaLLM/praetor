@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -114,6 +115,12 @@ func resolveArchetype(repoPath, explicitProfile string) string {
 	if explicitProfile != "" {
 		return explicitProfile
 	}
+	if fileExists(filepath.Join(repoPath, "meson.build")) ||
+		fileExists(filepath.Join(repoPath, "core", "meson.build")) ||
+		fileExists(filepath.Join(repoPath, "libvmaf", "meson.build")) ||
+		fileExists(filepath.Join(repoPath, "CMakeLists.txt")) {
+		return "native-gpu-systems"
+	}
 	if fileExists(filepath.Join(repoPath, "go.mod")) {
 		return "framework"
 	}
@@ -130,6 +137,39 @@ func resolveArchetype(repoPath, explicitProfile string) string {
 		return "container-image"
 	}
 	return "template-seed"
+}
+
+func resolveOwner(repoPath string) string {
+	cmd := exec.Command("git", "-C", repoPath, "config", "--get", "remote.origin.url")
+	out, err := cmd.Output()
+	if err == nil {
+		url := strings.TrimSpace(string(out))
+		if owner := extractOwnerFromURL(url); owner != "" {
+			return owner
+		}
+	}
+	parent := filepath.Base(filepath.Dir(repoPath))
+	if parent != "" && parent != "." && parent != "/" && parent != "dev" {
+		return parent
+	}
+	return "cordanaLLM"
+}
+
+func extractOwnerFromURL(url string) string {
+	trimmed := strings.TrimSuffix(url, ".git")
+	trimmed = strings.TrimSuffix(trimmed, "/")
+	if idx := strings.LastIndex(trimmed, ":"); idx != -1 && !strings.HasPrefix(trimmed, "http") {
+		pathPart := trimmed[idx+1:]
+		parts := strings.Split(pathPart, "/")
+		if len(parts) >= 2 {
+			return parts[len(parts)-2]
+		}
+	}
+	parts := strings.Split(trimmed, "/")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2]
+	}
+	return ""
 }
 
 func resolveFacets(input []string) []string {
@@ -183,10 +223,11 @@ func executeAdoptSteps(ctx context.Context, repoPath, arch string, facets []stri
 func reconcileManifest(repoPath, repoName, arch string, facets []string, opts AdoptOptions, report *AdoptReport) error {
 	manifestPath := filepath.Join(repoPath, ".standards.yaml")
 	if !fileExists(manifestPath) || opts.Force {
+		owner := resolveOwner(repoPath)
 		manifest := config.Manifest{
 			Version: 1,
 			Repository: config.RepositoryMetadata{
-				Owner:      "cordanaLLM",
+				Owner:      owner,
 				Name:       repoName,
 				Visibility: "public",
 			},

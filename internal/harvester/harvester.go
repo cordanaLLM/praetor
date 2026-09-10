@@ -108,20 +108,61 @@ func ScanLocalWorkstation(ctx context.Context, devDir string) (*WorkstationRepor
 		fullPath := filepath.Join(devDir, name)
 
 		// Check for worktree container directories
-		if strings.HasSuffix(name, "-worktrees") {
+		if strings.HasSuffix(name, "-worktrees") || name == "worktrees" {
 			scanWorktreeDir(fullPath, report)
 			continue
 		}
 
-		// Inspect git repos
+		if isIgnoredDevDir(name) {
+			continue
+		}
+
+		// Inspect git repos (flat layout)
 		gitPath := filepath.Join(fullPath, ".git")
 		if _, err := os.Stat(gitPath); err == nil {
 			report.DevReposCount++
 			inspectRepoGovernance(fullPath, name, report)
+			continue
 		}
+
+		// Inspect nested git repos (org/repo or bucket/repo layout)
+		scanSubDir(fullPath, name, report)
 	}
 
 	return report, nil
+}
+
+func isIgnoredDevDir(name string) bool {
+	switch name {
+	case ".git", ".github", ".agents", ".gemini", ".claude", ".codex", "node_modules", "vendor", ".venv", ".cargo", "scratch", "build", "target", ".cache", "tmp":
+		return true
+	default:
+		return strings.HasPrefix(name, ".")
+	}
+}
+
+func scanSubDir(parentPath, parentName string, report *WorkstationReport) {
+	subEntries, err := os.ReadDir(parentPath)
+	if err != nil {
+		return
+	}
+	subCount := 0
+	for _, sub := range subEntries {
+		if subCount >= MaxDevScanEntries {
+			break
+		}
+		subCount++
+		if !sub.IsDir() || isIgnoredDevDir(sub.Name()) {
+			continue
+		}
+		subFullPath := filepath.Join(parentPath, sub.Name())
+		gitPath := filepath.Join(subFullPath, ".git")
+		if _, err := os.Stat(gitPath); err == nil {
+			report.DevReposCount++
+			relPath := filepath.Join(parentName, sub.Name())
+			inspectRepoGovernance(subFullPath, relPath, report)
+		}
+	}
 }
 
 func scanWorktreeDir(path string, report *WorkstationReport) {
@@ -145,6 +186,8 @@ func inspectRepoGovernance(path, name string, report *WorkstationReport) {
 	hasAgents := fileExists(filepath.Join(path, "AGENTS.md"))
 	hasClaude := fileExists(filepath.Join(path, "CLAUDE.md"))
 	hasWindsurf := fileExists(filepath.Join(path, ".windsurfrules"))
+	hasGemini := fileExists(filepath.Join(path, ".gemini/GEMINI.md"))
+	hasCodex := fileExists(filepath.Join(path, ".codex/rules.md"))
 
 	if hasAgents {
 		report.DiscoveredAgentDoc = append(report.DiscoveredAgentDoc, filepath.Join(name, "AGENTS.md"))
@@ -152,8 +195,11 @@ func inspectRepoGovernance(path, name string, report *WorkstationReport) {
 	if hasClaude {
 		report.DiscoveredAgentDoc = append(report.DiscoveredAgentDoc, filepath.Join(name, "CLAUDE.md"))
 	}
+	if hasCodex {
+		report.DiscoveredAgentDoc = append(report.DiscoveredAgentDoc, filepath.Join(name, ".codex/rules.md"))
+	}
 
-	if !hasAgents && !hasClaude && !hasWindsurf {
+	if !hasAgents && !hasClaude && !hasWindsurf && !hasGemini && !hasCodex {
 		report.MissingRulesRepos = append(report.MissingRulesRepos, name)
 	}
 }

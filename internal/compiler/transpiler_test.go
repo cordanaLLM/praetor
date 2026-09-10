@@ -26,8 +26,8 @@ Run verification:
 		t.Fatalf("unexpected compile error: %v", err)
 	}
 
-	if len(res.Files) != 5 {
-		t.Fatalf("expected 5 compiled files, got %d", len(res.Files))
+	if len(res.Files) != 6 {
+		t.Fatalf("expected 6 compiled files, got %d", len(res.Files))
 	}
 
 	for _, f := range res.Files {
