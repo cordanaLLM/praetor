@@ -1,0 +1,101 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# GoReleaser configuration for cordanaLLM/standards
+version: 2
+
+project_name: standards
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: standardsctl
+    main: ./cmd/standardsctl
+    binary: standardsctl
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  - id: standards-mcp
+    main: ./cmd/standards-mcp
+    binary: standards-mcp
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  - id: standards-lsp
+    main: ./cmd/standards-lsp
+    binary: standards-lsp
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: default
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+sboms:
+  - id: cyclonedx
+    artifacts: archive
+    documents:
+      - "${artifact}.cyclonedx.json"
+    cmd: syft
+    args: ["$artifact", "--output", "cyclonedx-json=${document}"]
+  - id: spdx
+    artifacts: archive
+    documents:
+      - "${artifact}.spdx.json"
+    cmd: syft
+    args: ["$artifact", "--output", "spdx-json=${document}"]
+
+signs:
+  - id: cosign-keyless
+    cmd: cosign
+    args:
+      - "sign-blob"
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+    artifacts: checksum
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

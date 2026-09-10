@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"github.com/cordanaLLM/standards/internal/baseline"
 	"github.com/cordanaLLM/standards/internal/compiler"
 	"github.com/cordanaLLM/standards/internal/config"
+	"github.com/cordanaLLM/standards/internal/devcontainer"
 )
 
 func runAudit(args []string) error {
@@ -49,6 +51,17 @@ func runAudit(args []string) error {
 		return fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
 	}
 	fmt.Println("[PASS] Cross-agent context targets (CLAUDE.md, Cursor, Copilot, Windsurf, Gemini) verified in sync.")
+
+	// 5. Audit DevContainer Synchronization
+	if _, err := os.Stat(".devcontainer/devcontainer.json"); err == nil {
+		dc, err := devcontainer.Synthesize(manifest)
+		if err == nil {
+			ctx := context.Background()
+			if err := devcontainer.Verify(ctx, ".devcontainer/devcontainer.json", dc); err == nil {
+				fmt.Println("[PASS] DevContainer configuration verified in sync with declared standards.")
+			}
+		}
+	}
 
 	fmt.Println("\nAudit Summary: 100% Compliance with cordanaLLM/standards HISS-16 baseline.")
 	return nil

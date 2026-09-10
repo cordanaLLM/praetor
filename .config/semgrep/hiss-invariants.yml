@@ -47,3 +47,4 @@ rules:
     message: "[HISS-02] Direct http.Get/Post without context timeout violates bounded I/O invariant. Use http.NewRequestWithContext."
     languages: [go]
     severity: ERROR
+

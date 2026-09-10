@@ -18,7 +18,7 @@ type Label struct {
 type CheckRun struct {
 	Name       string `json:"name"`
 	HeadSHA    string `json:"head_sha"`
-	Status     string `json:"status"` // "in_progress", "completed"
+	Status     string `json:"status"`     // "in_progress", "completed"
 	Conclusion string `json:"conclusion"` // "success", "failure", "neutral"
 	Summary    string `json:"summary"`
 	DetailsURL string `json:"details_url,omitempty"`

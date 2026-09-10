@@ -42,3 +42,4 @@ overrides:
     slsa_level: 3
     enforce_cosign: true
     require_sbom: true
+

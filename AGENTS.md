@@ -67,3 +67,4 @@ go run ./cmd/standardsctl audit
 # Run all formatting, linting, and security gates
 make verify-all
 ```
+

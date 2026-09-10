@@ -28,3 +28,4 @@ flavors:
     tag_pattern: "v{{lts_version}}"
     update_frequency: "on_patch"
     stability: "enterprise-stable"
+

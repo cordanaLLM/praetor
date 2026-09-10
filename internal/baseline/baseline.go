@@ -29,11 +29,11 @@ type Baseline struct {
 
 // RatchetResult details the evaluation of a commit/PR against the baseline.
 type RatchetResult struct {
-	PreviousCount int
-	CurrentCount  int
-	NewViolations []Infraction
+	PreviousCount          int
+	CurrentCount           int
+	NewViolations          []Infraction
 	TouchedCleanViolations []Infraction
-	Passed        bool
+	Passed                 bool
 }
 
 // LoadBaseline reads and parses .standards-baseline.json.

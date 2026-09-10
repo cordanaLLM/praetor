@@ -1,0 +1,64 @@
+name: Sync Moving Flavor Tags
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync-tags:
+    name: Reconcile Moving Flavor Tags
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go Toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Reconcile Declared Flavors
+        run: go run ./cmd/standardsctl flavors sync
+
+      - name: Configure Git Bot Identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update Bleeding Flavor Tag
+        run: |
+          COMMIT_SHORT=$(git rev-parse --short HEAD)
+          echo "Updating bleeding tag to commit $COMMIT_SHORT"
+          git tag -fa bleeding -m "Flavor: bleeding (${COMMIT_SHORT})"
+          git push origin bleeding --force
+
+      - name: Update Latest Flavor Tag
+        run: |
+          # Locate highest stable semantic version tag (excluding release candidates and bleeding builds)
+          LATEST_RELEASE=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+          if [ -n "$LATEST_RELEASE" ]; then
+            echo "Pointing latest tag to stable release $LATEST_RELEASE"
+            git tag -fa latest -m "Flavor: latest (${LATEST_RELEASE})" "$LATEST_RELEASE"
+            git push origin latest --force
+          else
+            echo "No stable tag found; falling back to current HEAD"
+            COMMIT_SHORT=$(git rev-parse --short HEAD)
+            git tag -fa latest -m "Flavor: latest (${COMMIT_SHORT})"
+            git push origin latest --force
+          fi

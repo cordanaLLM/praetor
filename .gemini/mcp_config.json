@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "standards": {
+      "command": "./bin/standards-mcp",
+      "args": ["-transport=stdio"]
+    }
+  }
+}

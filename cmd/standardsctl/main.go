@@ -15,6 +15,10 @@ func printUsage() {
 	fmt.Println("  compile-context    Transpile canonical AGENTS.md to vendor-native formats (< 300 LOC)")
 	fmt.Println("  audit              Audit repository against declared HISS-16 invariants and lockfile")
 	fmt.Println("  baseline           Inspect or record technical debt infractions")
+	fmt.Println("  devcontainer       Synthesize or verify .devcontainer/devcontainer.json")
+	fmt.Println("  flavors            Plan or sync moving version flavor tags (bleeding, latest, lts)")
+	fmt.Println("  plan               Dry-run comparison of repository settings against policy")
+	fmt.Println("  sync               Reconcile repository settings, labels, and branch rulesets")
 	fmt.Println("  version            Print CLI version information")
 	fmt.Println("\nRun 'standardsctl <command> -h' for more information on a command.")
 }
@@ -34,6 +38,16 @@ func main() {
 		err = runCompileContext(args)
 	case "audit":
 		err = runAudit(args)
+	case "baseline":
+		err = runBaseline(args)
+	case "devcontainer":
+		err = runDevContainer(args)
+	case "flavors":
+		err = runFlavors(args)
+	case "plan":
+		err = runPlan(args)
+	case "sync":
+		err = runSync(args)
 	case "version":
 		fmt.Printf("standardsctl version %s\n", version)
 	case "-h", "--help", "help":

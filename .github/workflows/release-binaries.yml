@@ -1,0 +1,76 @@
+name: Release Binaries (SLSA Level 3)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+jobs:
+  goreleaser:
+    name: Build, SBOM Generation & Keyless Signing
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go Toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.8.1
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0.18.0
+
+      - name: Run GoReleaser (Multi-Arch Binaries & Syft SBOMs)
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Repository CycloneDX SBOM
+        run: syft dir:. -o cyclonedx-json=cordana-standards-cyclonedx.json
+
+      - name: Generate Repository SPDX SBOM
+        run: syft dir:. -o spdx-json=cordana-standards-spdx.json
+
+      - name: Cosign Keyless Sign Repository SBOMs via OIDC (SLSA Level 3)
+        run: |
+          cosign sign-blob --yes \
+            --output-certificate cordana-standards-cyclonedx.json.cert \
+            --output-signature cordana-standards-cyclonedx.json.sig \
+            cordana-standards-cyclonedx.json
+          cosign sign-blob --yes \
+            --output-certificate cordana-standards-spdx.json.cert \
+            --output-signature cordana-standards-spdx.json.sig \
+            cordana-standards-spdx.json
+
+      - name: Upload Signed SBOM Artifacts to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            cordana-standards-cyclonedx.json \
+            cordana-standards-cyclonedx.json.cert \
+            cordana-standards-cyclonedx.json.sig \
+            cordana-standards-spdx.json \
+            cordana-standards-spdx.json.cert \
+            cordana-standards-spdx.json.sig \
+            --clobber

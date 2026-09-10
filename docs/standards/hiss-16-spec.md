@@ -111,3 +111,4 @@ All public methods require three-dimensional test coverage:
 Agent instructions originate from a single canonical source (`AGENTS.md`):
 - All vendor harnesses (`CLAUDE.md`, Cursor rules, Copilot) are compiled via `standardsctl compile-context`.
 - Authoritative verification executes inside non-root ephemeral sandboxes with cgroup limits and default-deny egress.
+

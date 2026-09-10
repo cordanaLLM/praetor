@@ -1,0 +1,40 @@
+{
+  "name": "cordanaLLM/standards",
+  "build": {
+    "dockerfile": "../docker/dev/Dockerfile",
+    "context": ".."
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": false,
+      "upgradePackages": true
+    },
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.24"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "GitHub.vscode-pull-request-github",
+        "aquasecurity.trivy-vulnerability-scanner",
+        "davidanson.vscode-markdownlint",
+        "eamodio.gitlens",
+        "github.copilot",
+        "golang.go",
+        "ms-azuretools.vscode-docker",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "go.lintOnSave": "package",
+        "go.lintTool": "golangci-lint",
+        "go.toolsManagement.autoUpdate": true,
+        "go.useLanguageServer": true,
+        "security.workspace.trust.enabled": true
+      }
+    }
+  },
+  "remoteUser": "vscode",
+  "postCreateCommand": "go run ./cmd/standardsctl compile-context && make verify-all"
+}

@@ -1,0 +1,64 @@
+name: CI Enforcement
+
+on:
+  push:
+    branches:
+      - main
+      - 'lts-*'
+  pull_request:
+    branches:
+      - main
+      - 'lts-*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Standards & Invariant Verification Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go Toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Verify Go Formatting (gofmt)
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "Formatting error: Unformatted Go files detected:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+          echo "Go formatting clean."
+
+      - name: Verify Cross-Agent Context Synchronization (HISS-16)
+        run: go run ./cmd/standardsctl compile-context --verify
+
+      - name: Run Race Detection & Unit Tests (HISS-15)
+        run: go test -v -race ./...
+
+      - name: Run Repository Governance Audit (HISS Invariants)
+        run: go run ./cmd/standardsctl audit
+
+      - name: Run Linter & Static Analysis (HISS-10)
+        run: go vet ./...
+
+      - name: Full Verification Harness Gate
+        run: make verify-all
+
+      - name: Verify Binary Compilation
+        run: make build

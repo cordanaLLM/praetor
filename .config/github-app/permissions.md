@@ -20,3 +20,4 @@
 3. Upload or paste `.config/github-app/manifest.json`.
 4. Generate and download the private RSA key (`cordana-standards.pem`).
 5. Record the `App ID` and `Installation ID` in your organization secrets as `STANDARDS_BOT_APP_ID` and `STANDARDS_BOT_PRIVATE_KEY`.
+
