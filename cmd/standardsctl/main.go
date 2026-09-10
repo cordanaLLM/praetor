@@ -27,6 +27,8 @@ func printUsage() {
 	fmt.Println("  editors            Synthesize or verify IDE configurations (VSCode, Cursor, JetBrains, Neovim)")
 	fmt.Println("  forge              Synchronize git provider wiki, issues, or validate PRs")
 	fmt.Println("  harvest            Audit fleet repositories, workstation worktrees, and agent skills")
+	fmt.Println("  adopt              Adopt and bootstrap any repository to 100% template compliance (alias: conform, bootstrap)")
+	fmt.Println("  bump               Proactive prerelease bump train and ephemeral canary testing")
 	fmt.Println("  version            Print CLI version information")
 	fmt.Println("\nRun 'standardsctl <command> -h' for more information on a command.")
 }
@@ -72,6 +74,10 @@ func main() {
 		err = runForge(args)
 	case "harvest":
 		err = runHarvest(args)
+	case "adopt", "conform", "bootstrap":
+		err = runAdopt(args)
+	case "bump":
+		err = runBump(args)
 	case "version":
 		fmt.Printf("standardsctl version %s\n", version)
 	case "-h", "--help", "help":
