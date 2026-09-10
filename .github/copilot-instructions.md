@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD013 -->
 # GitHub Copilot Instructions: cordanaLLM/standards
 <!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->
 

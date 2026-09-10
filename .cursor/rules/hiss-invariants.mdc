@@ -8,6 +8,7 @@ alwaysApply: true
 <!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->
 
 ## Mandatory Invariants
+
 1. Bounded loops and explicit context timeouts on all I/O (HISS-02).
 2. Max McCabe cyclomatic complexity <= 10, function length <= 75 LOC (HISS-04).
 3. Zero unchecked errors and zero unwraps in production code (HISS-07).
@@ -15,4 +16,5 @@ alwaysApply: true
 5. All agent instructions originate from AGENTS.md (HISS-16).
 
 ## Verification Entrypoint
+
 Before concluding, always run: `make verify-all`

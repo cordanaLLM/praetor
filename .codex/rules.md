@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD013 -->
 # OpenAI Codex Context & Operating Rules
 <!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->
 

@@ -113,6 +113,7 @@ func countLines(s string) int {
 
 func generateClaudeMD(src string) string {
 	var b strings.Builder
+	b.WriteString("<!-- markdownlint-disable MD013 -->\n")
 	b.WriteString("# Claude Code Guidelines: cordanaLLM/standards\n")
 	b.WriteString("<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n")
 	b.WriteString("## Commands\n\n")
@@ -146,19 +147,20 @@ func generateCursorMDC(src string) string {
 	b.WriteString("---\n\n")
 	b.WriteString("# Cursor Rules: cordanaLLM/standards\n")
 	b.WriteString("<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n")
-	b.WriteString("## Mandatory Invariants\n")
+	b.WriteString("## Mandatory Invariants\n\n")
 	b.WriteString("1. Bounded loops and explicit context timeouts on all I/O (HISS-02).\n")
 	b.WriteString("2. Max McCabe cyclomatic complexity <= 10, function length <= 75 LOC (HISS-04).\n")
 	b.WriteString("3. Zero unchecked errors and zero unwraps in production code (HISS-07).\n")
 	b.WriteString("4. Positive, negative, and boundary tests for all public APIs (HISS-15).\n")
 	b.WriteString("5. All agent instructions originate from AGENTS.md (HISS-16).\n\n")
-	b.WriteString("## Verification Entrypoint\n")
+	b.WriteString("## Verification Entrypoint\n\n")
 	b.WriteString("Before concluding, always run: `make verify-all`\n")
 	return b.String()
 }
 
 func generateCopilotMD(src string) string {
 	var b strings.Builder
+	b.WriteString("<!-- markdownlint-disable MD013 -->\n")
 	b.WriteString("# GitHub Copilot Instructions: cordanaLLM/standards\n")
 	b.WriteString("<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n")
 	b.WriteString("- Ensure all Go code passes `go test -v -race ./...`.\n")
@@ -181,9 +183,10 @@ func generateWindsurfRules(src string) string {
 
 func generateGeminiMD(src string) string {
 	var b strings.Builder
+	b.WriteString("<!-- markdownlint-disable MD013 -->\n")
 	b.WriteString("# Google Antigravity / Gemini Instructions: cordanaLLM/standards\n")
 	b.WriteString("<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n")
-	b.WriteString("## Operating Directives\n")
+	b.WriteString("## Operating Directives\n\n")
 	b.WriteString("- Canonical harness is `AGENTS.md`.\n")
 	b.WriteString("- Run `make verify-all` to assert invariant compliance.\n")
 	b.WriteString("- Cap diagnostic outputs at <= 1500 tokens.\n")
@@ -193,6 +196,7 @@ func generateGeminiMD(src string) string {
 
 func generateCodexMD(src string) string {
 	var b strings.Builder
+	b.WriteString("<!-- markdownlint-disable MD013 -->\n")
 	b.WriteString("# OpenAI Codex Context & Operating Rules\n")
 	b.WriteString("<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n")
 	b.WriteString("## Directives & Invariants\n\n")
