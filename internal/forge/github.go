@@ -67,3 +67,14 @@ func (g *GitHubDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*P
 		State:  "open",
 	}, nil
 }
+
+func (g *GitHubDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueResponse, error) {
+	if err := g.Authenticate(ctx); err != nil {
+		return nil, err
+	}
+	return &IssueResponse{
+		Number: 1,
+		URL:    fmt.Sprintf("%s/issues/1", g.Endpoint),
+		State:  "open",
+	}, nil
+}

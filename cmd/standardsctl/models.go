@@ -51,12 +51,13 @@ func runModels(args []string) error {
 		}
 
 		fmt.Printf("Catalog synchronized cleanly to %s:\n", *configPath)
-		fmt.Printf("  - Total Models:    %d\n", res.TotalModels)
-		fmt.Printf("  - Tier 1 Frontier: %d models (Opus, Pro, O3, Grok 3, DeepSeek-R1)\n", res.FrontierTier)
-		fmt.Printf("  - Tier 2 Workhorse:%d models (Sonnet, GPT-4o, Flash, Mistral)\n", res.Workhorse)
-		fmt.Printf("  - Tier 3 Open OSS: %d models (Qwen, Llama 3.3, gpt-oss)\n", res.OSSFast)
+		fmt.Printf("  - Total Models:        %d\n", res.TotalModels)
+		fmt.Printf("  - Tier 3 Frontier:     %d models (Opus, Pro, O3, Grok 3, DeepSeek-R1)\n", res.HeavyFrontier)
+		fmt.Printf("  - Tier 2 Mid-Weight:   %d models (Qwen3.8-27B, Qwen3-30B, Coder-32B, Codestral)\n", res.MidWeight)
+		fmt.Printf("  - Tier 1 Lightweight:  %d models (9B Qwythos/Gemma, 7B/14B Qwen, Phi-4)\n", res.LightWeight)
+		fmt.Printf("  - Tier 0 Micro/Nano:   %d models (SmolLM2, 1.5B/3B Qwen, Phi-3.5-mini)\n", res.Nano)
 		if res.LocalModels > 0 {
-			fmt.Printf("  - Local Discovered:%d models\n", res.LocalModels)
+			fmt.Printf("  - Local Discovered:    %d models\n", res.LocalModels)
 		}
 		return nil
 

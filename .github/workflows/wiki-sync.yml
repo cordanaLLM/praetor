@@ -1,0 +1,58 @@
+name: Wiki Sync
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/wiki/**'
+      - '.github/workflows/wiki-sync.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-wiki:
+    name: Mirror docs/wiki to GitHub Wiki
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Repository
+        uses: actions/checkout@v4
+
+      - name: Sync Wiki
+        env:
+          WIKI_PAT: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "Configuring Git credentials for wiki mirror..."
+          git config --global user.name "cordana-standards[bot]"
+          git config --global user.email "standards-bot@cordana.ai"
+
+          WIKI_REPO="https://x-access-token:${WIKI_PAT}@github.com/${{ github.repository }}.wiki.git"
+          CLONE_DIR="/tmp/wiki"
+
+          echo "Cloning wiki repository..."
+          if git clone "$WIKI_REPO" "$CLONE_DIR"; then
+            echo "Successfully cloned wiki."
+          else
+            echo "Wiki repo does not exist or requires initialization. Initializing..."
+            mkdir -p "$CLONE_DIR"
+            cd "$CLONE_DIR"
+            git init
+            git remote add origin "$WIKI_REPO"
+          fi
+
+          echo "Synchronizing markdown files from docs/wiki..."
+          cp -rf docs/wiki/* "$CLONE_DIR"/
+          cd "$CLONE_DIR"
+
+          git add -A
+          if git diff-index --quiet HEAD; then
+            echo "Wiki is already up to date. No changes to commit."
+          else
+            echo "Committing wiki updates..."
+            git commit -m "docs(wiki): synchronize wiki from docs/wiki [skip ci]"
+            git push origin master || git push origin main
+            echo "Wiki sync completed successfully."
+          fi

@@ -1,0 +1,68 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="standards" />
+
+    <!-- HISS-01: Acyclic DAG Control Flow (Banned Recursion) -->
+    <inspection_tool class="HISS01DAGControlFlow" enabled="true" level="ERROR" enabled_by_default="true">
+      <option name="description" value="Direct and mutual recursion strictly prohibited; call graph must be an acyclic DAG." />
+    </inspection_tool>
+
+    <!-- HISS-02: Bounded Loops & Mandatory I/O Timeouts -->
+    <inspection_tool class="GoInfiniteFor" enabled="true" level="ERROR" enabled_by_default="true" />
+    <inspection_tool class="HISS02BoundedLoops" enabled="true" level="ERROR" enabled_by_default="true">
+      <option name="requireScalarBound" value="true" />
+      <option name="mandatoryContextDeadline" value="true" />
+    </inspection_tool>
+
+    <!-- HISS-03: Zero Frame Malloc in Hot Paths -->
+    <inspection_tool class="HISS03ZeroFrameMalloc" enabled="true" level="ERROR" enabled_by_default="true">
+      <option name="banDynamicAllocationsInHotPaths" value="true" />
+    </inspection_tool>
+
+    <!-- HISS-04: Complexity Bounds & Modular Sizing -->
+    <inspection_tool class="GoCyclomaticComplexity" enabled="true" level="ERROR" enabled_by_default="true">
+      <option name="m_limit" value="10" />
+    </inspection_tool>
+    <inspection_tool class="HISS04ComplexityLOC" enabled="true" level="ERROR" enabled_by_default="true">
+      <option name="maxCyclomatic" value="10" />
+      <option name="maxCognitive" value="15" />
+      <option name="maxFuncLOC" value="75" />
+      <option name="maxStatements" value="50" />
+    </inspection_tool>
+
+    <!-- HISS-07: Checked Errors & Zero Unwrap / Panic -->
+    <inspection_tool class="GoUnhandledErrorResult" enabled="true" level="ERROR" enabled_by_default="true" />
+    <inspection_tool class="HISS07ZeroUnwrap" enabled="true" level="ERROR" enabled_by_default="true">
+      <option name="banBlankErrorAssignment" value="true" />
+      <option name="banDirectPanic" value="true" />
+      <option name="banUnwrapExpect" value="true" />
+    </inspection_tool>
+
+    <!-- HISS-08: Static Determinism & Banned Functions -->
+    <inspection_tool class="HISS08StaticDeterminism" enabled="true" level="ERROR" enabled_by_default="true">
+      <option name="bannedFunctions" value="eval,exec,gets,strcpy,sprintf" />
+    </inspection_tool>
+
+    <!-- HISS-09: Mandatory // SAFETY: Justifications -->
+    <inspection_tool class="HISS09ReferenceSafety" enabled="true" level="ERROR" enabled_by_default="true">
+      <option name="requireSafetyComment" value="true" />
+    </inspection_tool>
+
+    <!-- HISS-10: 5-Layer Zero-Warning Cascade -->
+    <inspection_tool class="GoStandardCompliance" enabled="true" level="ERROR" enabled_by_default="true" />
+
+    <!-- HISS-14: Append-Only ABI & Migration Footers -->
+    <inspection_tool class="HISS14AppendOnlyABI" enabled="true" level="ERROR" enabled_by_default="true" />
+
+    <!-- HISS-15: 3D Test Discipline (Pos/Neg/Boundary) -->
+    <inspection_tool class="HISS153DTesting" enabled="true" level="ERROR" enabled_by_default="true">
+      <option name="requirePositiveNegativeBoundary" value="true" />
+      <option name="minChecksPerTest" value="2" />
+    </inspection_tool>
+
+    <!-- HISS-16: Canonical AGENTS.md & Server Gates -->
+    <inspection_tool class="HISS16ContextIntegrity" enabled="true" level="ERROR" enabled_by_default="true">
+      <option name="singleCanonicalAGENTS" value="true" />
+    </inspection_tool>
+  </profile>
+</component>

@@ -66,3 +66,14 @@ func (gl *GitLabDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*
 		State:  "opened",
 	}, nil
 }
+
+func (gl *GitLabDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueResponse, error) {
+	if err := gl.Authenticate(ctx); err != nil {
+		return nil, err
+	}
+	return &IssueResponse{
+		Number: 1,
+		URL:    fmt.Sprintf("%s/issues/1", gl.Endpoint),
+		State:  "opened",
+	}, nil
+}

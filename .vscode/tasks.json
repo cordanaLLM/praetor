@@ -1,0 +1,41 @@
+{
+  "tasks": [
+    {
+      "command": "make verify-all",
+      "group": {
+        "isDefault": true,
+        "kind": "test"
+      },
+      "label": "Standards: Verify All",
+      "problemMatcher": [
+        "$go"
+      ],
+      "type": "shell"
+    },
+    {
+      "command": "make build",
+      "group": {
+        "isDefault": true,
+        "kind": "build"
+      },
+      "label": "Standards: Build Binaries",
+      "problemMatcher": [
+        "$go"
+      ],
+      "type": "shell"
+    },
+    {
+      "command": "go run ./cmd/standardsctl compile-context",
+      "label": "Standards: Compile Context",
+      "problemMatcher": [],
+      "type": "shell"
+    },
+    {
+      "command": "go run ./cmd/standardsctl audit",
+      "label": "Standards: Audit Invariants",
+      "problemMatcher": [],
+      "type": "shell"
+    }
+  ],
+  "version": "2.0.0"
+}

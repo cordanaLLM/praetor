@@ -47,6 +47,7 @@ type Forge interface {
 	ReconcileLabels(ctx context.Context, labels []Label) error
 	PostStatusCheck(ctx context.Context, commitSHA string, check CheckRun) error
 	CreatePullRequest(ctx context.Context, req PRRequest) (*PRResponse, error)
+	CreateIssue(ctx context.Context, spec IssueSpec) (*IssueResponse, error)
 }
 
 // NewForge returns the appropriate forge implementation based on provider identifier.

@@ -90,7 +90,7 @@ func (a *ModelCapacityArbiter) SelectModel(targetTier string) (*ModelDescriptor,
 func (a *ModelCapacityArbiter) SelectOrthogonalAuditor(authorFamily ModelFamily, preferredTier string) (*ModelDescriptor, error) {
 	tier, exists := a.Config.Tiers[preferredTier]
 	if !exists {
-		tier = a.Config.Tiers["frontier"]
+		tier = a.Config.Tiers["heavy-frontier"]
 	}
 
 	for _, m := range tier.Models {

@@ -8,9 +8,9 @@ import (
 const version = "v1.0.0"
 
 func printUsage() {
-	fmt.Println("standardsctl - Enterprise Fleet Governance & Autonomous Agent CLI (" + version + ")")
+	fmt.Println("praetorctl (formerly standardsctl) - Autonomous Fleet Governance & Workstation Sentinel (" + version + ")")
 	fmt.Println("\nUsage:")
-	fmt.Println("  standardsctl <command> [arguments]")
+	fmt.Println("  praetorctl <command> [arguments]  (alias: standardsctl)")
 	fmt.Println("\nAvailable Commands:")
 	fmt.Println("  init               Scaffold configuration, baseline, and agent context for new repo")
 	fmt.Println("  compile-context    Transpile canonical AGENTS.md to vendor-native formats (< 300 LOC)")
@@ -21,6 +21,12 @@ func printUsage() {
 	fmt.Println("  models             Sync or list active model tiers and benchmark limits")
 	fmt.Println("  plan               Dry-run comparison of repository settings against policy")
 	fmt.Println("  sync               Reconcile repository settings, labels, and branch rulesets")
+	fmt.Println("  sentinel           Inspect workstation RAM/disk health and model headroom")
+	fmt.Println("  worktree           Manage isolated ephemeral git worktrees")
+	fmt.Println("  gc                 Garbage collect stale worktrees, caches, and logs")
+	fmt.Println("  editors            Synthesize or verify IDE configurations (VSCode, Cursor, JetBrains, Neovim)")
+	fmt.Println("  forge              Synchronize git provider wiki, issues, or validate PRs")
+	fmt.Println("  harvest            Audit fleet repositories, workstation worktrees, and agent skills")
 	fmt.Println("  version            Print CLI version information")
 	fmt.Println("\nRun 'standardsctl <command> -h' for more information on a command.")
 }
@@ -54,6 +60,18 @@ func main() {
 		err = runPlan(args)
 	case "sync":
 		err = runSync(args)
+	case "sentinel":
+		err = runSentinel(args)
+	case "worktree":
+		err = runWorktree(args)
+	case "gc":
+		err = runGC(args)
+	case "editors":
+		err = runEditors(args)
+	case "forge":
+		err = runForge(args)
+	case "harvest":
+		err = runHarvest(args)
 	case "version":
 		fmt.Printf("standardsctl version %s\n", version)
 	case "-h", "--help", "help":

@@ -66,3 +66,14 @@ func (gt *GiteaDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*P
 		State:  "open",
 	}, nil
 }
+
+func (gt *GiteaDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueResponse, error) {
+	if err := gt.Authenticate(ctx); err != nil {
+		return nil, err
+	}
+	return &IssueResponse{
+		Number: 1,
+		URL:    fmt.Sprintf("%s/issues/1", gt.Endpoint),
+		State:  "open",
+	}, nil
+}

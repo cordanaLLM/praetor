@@ -9,6 +9,9 @@
 /standardsctl
 /standards-mcp
 /standards-lsp
+/praetorctl
+/praetor-mcp
+/praetor-lsp
 
 # Test and coverage artifacts
 *.out

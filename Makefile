@@ -1,17 +1,23 @@
 .PHONY: all build test audit compile-context compile-context-verify lint verify-all clean
 
 BIN_DIR := bin
+PRAETORCTL := $(BIN_DIR)/praetorctl
 STANDARDSCTL := $(BIN_DIR)/standardsctl
+PRAETOR_MCP := $(BIN_DIR)/praetor-mcp
 STANDARDS_MCP := $(BIN_DIR)/standards-mcp
+PRAETOR_LSP := $(BIN_DIR)/praetor-lsp
 STANDARDS_LSP := $(BIN_DIR)/standards-lsp
 
 all: build
 
 build:
 	@mkdir -p $(BIN_DIR)
-	go build -v -o $(STANDARDSCTL) ./cmd/standardsctl
-	go build -v -o $(STANDARDS_MCP) ./cmd/standards-mcp
-	go build -v -o $(STANDARDS_LSP) ./cmd/standards-lsp
+	go build -v -o $(PRAETORCTL) ./cmd/standardsctl
+	@ln -sf praetorctl $(STANDARDSCTL)
+	go build -v -o $(PRAETOR_MCP) ./cmd/standards-mcp
+	@ln -sf praetor-mcp $(STANDARDS_MCP)
+	go build -v -o $(PRAETOR_LSP) ./cmd/standards-lsp
+	@ln -sf praetor-lsp $(STANDARDS_LSP)
 
 test:
 	go test -v -race ./...

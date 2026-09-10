@@ -1,4 +1,4 @@
-# cordanaLLM/standards Agent Operating Harness
+# cordanaLLM/praetor Agent Operating Harness
 
 Run verification before concluding any turn:
 ```bash

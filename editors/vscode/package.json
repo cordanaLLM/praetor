@@ -1,0 +1,99 @@
+{
+  "name": "standards-vscode",
+  "displayName": "cordanaLLM Standards & Fleet Governance",
+  "description": "Hermetic High-Integrity Systems Standards (HISS-16) and AI Agent Governance for VS Code, Cursor, and Windsurf",
+  "version": "1.0.0",
+  "publisher": "cordanaLLM",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:go",
+    "workspaceContains:.standards.yaml",
+    "workspaceContains:AGENTS.md"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "standards.audit",
+        "title": "Standards: Audit Repository Invariants",
+        "category": "Standards"
+      },
+      {
+        "command": "standards.compileContext",
+        "title": "Standards: Compile Context (AGENTS.md)",
+        "category": "Standards"
+      },
+      {
+        "command": "standards.runGC",
+        "title": "Standards: Run Garbage Collection & Ratchet Sweep",
+        "category": "Standards"
+      },
+      {
+        "command": "standards.checkSentinel",
+        "title": "Standards: Check Sentinel Host Headroom",
+        "category": "Standards"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "cordanaLLM Standards Configuration",
+      "properties": {
+        "standards.lsp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable standards-lsp language server daemon for real-time HISS invariant checking."
+        },
+        "standards.lsp.path": {
+          "type": "string",
+          "default": "${workspaceFolder}/bin/standards-lsp",
+          "description": "Path to the standards-lsp executable binary."
+        },
+        "standards.lsp.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "messages",
+          "description": "LSP trace communication level."
+        },
+        "standards.mcp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Model Context Protocol (standards-mcp) integration."
+        },
+        "standards.mcp.path": {
+          "type": "string",
+          "default": "${workspaceFolder}/bin/standards-mcp",
+          "description": "Path to the standards-mcp executable binary."
+        },
+        "standards.sentinel.headroomMB": {
+          "type": "number",
+          "default": 1024,
+          "description": "Minimum required host RAM headroom in megabytes."
+        },
+        "standards.modelTier": {
+          "type": "string",
+          "default": "gemini-2.5-pro",
+          "description": "Default active LLM router model tier."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.4.0",
+    "vscode-languageclient": "^9.0.1"
+  }
+}

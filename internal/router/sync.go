@@ -34,42 +34,71 @@ type SyncOptions struct {
 
 // SyncResult details models updated during catalog synchronization.
 type SyncResult struct {
-	TotalModels  int
-	FrontierTier int
-	Workhorse    int
-	OSSFast      int
-	LocalModels  int
+	TotalModels   int
+	HeavyFrontier int
+	MidWeight     int
+	LightWeight   int
+	Nano          int
+	LocalModels   int
 }
 
-// ClassifyTier dynamically assigns a cognitive tier based on model family and benchmark score.
+// matchParamTag safely matches model parameter tags with boundary assertions (e.g. 2b won't match 32b).
+func matchParamTag(s string, tags ...string) bool {
+	for _, tag := range tags {
+		idx := strings.Index(s, tag)
+		for idx != -1 {
+			prefixOk := (idx == 0) || (s[idx-1] < '0' || s[idx-1] > '9')
+			endIdx := idx + len(tag)
+			suffixOk := (endIdx == len(s)) || ((s[endIdx] < 'a' || s[endIdx] > 'z') && (s[endIdx] < '0' || s[endIdx] > '9'))
+			if prefixOk && suffixOk {
+				return true
+			}
+			next := strings.Index(s[idx+1:], tag)
+			if next == -1 {
+				break
+			}
+			idx += 1 + next
+		}
+	}
+	return false
+}
+
+// ClassifyTier dynamically assigns a cognitive tier based on model family, parameter weight, and benchmark score.
 func ClassifyTier(modelID string, family ModelFamily, benchmarkELO float64) string {
 	lowerID := strings.ToLower(modelID)
 
-	// Explicit Tier 1 frontier reasoning criteria
-	if benchmarkELO >= 1300.0 ||
-		strings.Contains(lowerID, "opus") ||
-		strings.Contains(lowerID, "o3") ||
-		strings.Contains(lowerID, "o1") ||
-		strings.Contains(lowerID, "2.5-pro") ||
-		strings.Contains(lowerID, "grok-3") ||
-		strings.Contains(lowerID, "reasoner") ||
-		strings.Contains(lowerID, "r1") {
-		return "frontier"
+	// 1. Nano & Micro (<= 4B): Pre-commit, instant micro-linting, inline completions
+	if matchParamTag(lowerID, "0.5b", "1b", "1.5b", "1.7b", "2b", "3b", "3.8b", "4b") ||
+		strings.Contains(lowerID, "smollm") ||
+		strings.Contains(lowerID, "tiny") ||
+		strings.Contains(lowerID, "nano") ||
+		strings.Contains(lowerID, "micro") ||
+		strings.Contains(lowerID, "phi-3-mini") ||
+		strings.Contains(lowerID, "phi-3.5-mini") {
+		return "nano"
 	}
 
-	// Explicit Tier 2 workhorse engineering criteria
-	if benchmarkELO >= 1220.0 ||
-		strings.Contains(lowerID, "sonnet") ||
-		strings.Contains(lowerID, "gpt-4o") ||
-		strings.Contains(lowerID, "2.5-flash") ||
-		strings.Contains(lowerID, "mistral-large") ||
+	// 2. Mid-Weight Workhorse (20B - 35B: 20B, 22B, 27B, 30B, 32B)
+	if matchParamTag(lowerID, "20b", "22b", "27b", "30b", "32b", "35b") ||
+		strings.Contains(lowerID, "qwen3.8") ||
+		strings.Contains(lowerID, "qwen3") ||
 		strings.Contains(lowerID, "codestral") ||
-		strings.Contains(lowerID, "2.5-max") {
-		return "workhorse"
+		strings.Contains(lowerID, "gpt-oss:20b") ||
+		strings.Contains(lowerID, "gpt-oss-small") {
+		return "midweight"
 	}
 
-	// Default fallback: Tier 3 open-weights or fast mechanical
-	return "oss-fast"
+	// 3. Lightweight (5B - 16B: 7B, 8B, 9B, 14B): Fast local GPU / consumer hardware
+	if matchParamTag(lowerID, "5b", "6b", "7b", "8b", "9b", "14b", "16b") ||
+		strings.Contains(lowerID, "qwythos") ||
+		strings.Contains(lowerID, "gemma-2-9b") ||
+		strings.Contains(lowerID, "phi-4") ||
+		strings.Contains(lowerID, "haiku") {
+		return "lightweight"
+	}
+
+	// 4. Heavy & Frontier Reasoning (70B+ & Cloud Frontier APIs)
+	return "heavy-frontier"
 }
 
 // DetectFamily identifies provider family from model naming.
@@ -99,39 +128,42 @@ func DetectFamily(modelID string) ModelFamily {
 
 // DiscoverLocalModels queries local Ollama/vLLM daemon endpoints.
 func DiscoverLocalModels(ctx context.Context, endpoints []string) ([]ModelDescriptor, error) {
-	var discovered []ModelDescriptor
-	client := &http.Client{Timeout: 2 * time.Second}
+	discovered := make([]ModelDescriptor, 0)
+	client := &http.Client{Timeout: 3 * time.Second}
 
 	for _, ep := range endpoints {
-		select {
-		case <-ctx.Done():
-			return discovered, ctx.Err()
-		default:
-		}
+		if strings.Contains(ep, "11434") { // Ollama API
+			req, err := http.NewRequestWithContext(ctx, "GET", ep+"/api/tags", nil)
+			if err != nil {
+				continue
+			}
 
-		// Check Ollama tags endpoint
-		url := fmt.Sprintf("%s/api/tags", strings.TrimRight(ep, "/"))
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			continue
-		}
+			resp, err := client.Do(req)
+			if err != nil {
+				continue
+			}
+			defer resp.Body.Close()
 
-		resp, err := client.Do(req)
-		if err != nil {
-			continue
-		}
+			if resp.StatusCode != http.StatusOK {
+				continue
+			}
 
-		var ollamaResp struct {
-			Models []struct {
-				Name string `json:"name"`
-			} `json:"models"`
-		}
+			body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+			if err != nil {
+				continue
+			}
 
-		body, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
+			var payload struct {
+				Models []struct {
+					Name string `json:"name"`
+				} `json:"models"`
+			}
 
-		if err := json.Unmarshal(body, &ollamaResp); err == nil {
-			for _, m := range ollamaResp.Models {
+			if err := json.Unmarshal(body, &payload); err != nil {
+				continue
+			}
+
+			for _, m := range payload.Models {
 				discovered = append(discovered, ModelDescriptor{
 					ID:          m.Name,
 					Family:      FamilyOpenWeights,
@@ -149,7 +181,7 @@ func DiscoverLocalModels(ctx context.Context, endpoints []string) ([]ModelDescri
 
 // SyncCatalog reconciles and updates .config/models/routing.yaml with live model metadata.
 func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*SyncResult, error) {
-	// Baseline catalog of verified models spanning all premier frontier and top open-weights models
+	// Baseline catalog of verified models spanning all premier frontier, workhorse, and open-weights models
 	verifiedCatalog := []struct {
 		id      string
 		elo     float64
@@ -158,50 +190,69 @@ func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*Syn
 		costIn  float64
 		costOut float64
 	}{
-		// Anthropic
+		// Nano / Micro (<= 4B)
+		{"smollm2:1.7b", 1120, 50000, 20000000, 0.0, 0.0},
+		{"qwen2.5-coder:1.5b", 1150, 50000, 20000000, 0.0, 0.0},
+		{"qwen2.5:3b", 1160, 50000, 20000000, 0.0, 0.0},
+		{"phi-3.5-mini:3.8b", 1180, 50000, 20000000, 0.0, 0.0},
+		{"llama-3.2:1b", 1100, 50000, 20000000, 0.0, 0.0},
+		{"llama-3.2:3b", 1165, 50000, 20000000, 0.0, 0.0},
+		{"gemma-2-2b", 1155, 50000, 20000000, 0.0, 0.0},
+
+		// Lightweight (5B - 16B: 7B, 8B, 9B, 14B)
+		{"hf.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF:Q8_0", 1240, 50000, 20000000, 0.0, 0.0},
+		{"gemma-2-9b", 1235, 5000, 2000000, 0.20, 0.20},
+		{"qwen-2.5-coder-7b-instruct", 1225, 50000, 20000000, 0.0, 0.0},
+		{"qwen-2.5-coder-14b-instruct", 1245, 50000, 20000000, 0.0, 0.0},
+		{"meta-llama/llama-3.1-8b-instruct", 1210, 5000, 5000000, 0.15, 0.15},
+		{"phi-4:14b", 1250, 50000, 20000000, 0.0, 0.0},
+		{"claude-3-5-haiku-20241022", 1230, 2000, 100000, 0.80, 4.0},
+
+		// Mid-Weight Workhorses (20B - 35B: 20B, 22B, 27B, 30B, 32B)
+		{"hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M", 1280, 50000, 20000000, 0.0, 0.0},
+		{"qwen-2.5-coder-32b-instruct", 1260, 5000, 5000000, 0.20, 0.60},
+		{"codestral-2501", 1270, 1000, 500000, 0.30, 0.90},
+		{"gpt-oss-small", 1200, 50000, 20000000, 0.0, 0.0},
+
+		// Heavy & Frontier Reasoning (70B+ & Cloud APIs)
 		{"claude-3-7-sonnet-20250219", 1340, 1000, 80000, 3.0, 15.0},
 		{"claude-3-5-sonnet-20241022", 1315, 1000, 80000, 3.0, 15.0},
 		{"claude-3-opus-20240229", 1305, 50, 40000, 15.0, 75.0},
-		{"claude-3-5-haiku-20241022", 1230, 2000, 100000, 0.80, 4.0},
-		// Google
 		{"gemini-2.5-pro-preview-03-25", 1360, 300, 2000000, 1.25, 5.0},
 		{"gemini-2.5-flash-preview-03-25", 1320, 2000, 4000000, 0.075, 0.30},
 		{"gemini-2.0-flash", 1290, 2000, 4000000, 0.10, 0.40},
-		// OpenAI
 		{"gpt-4.5-preview-2025-02-27", 1355, 200, 100000, 75.0, 150.0},
 		{"o3-mini", 1345, 500, 1000000, 1.10, 4.40},
 		{"o1", 1335, 500, 100000, 15.0, 60.0},
 		{"gpt-4o-2024-11-20", 1295, 2000, 450000, 2.50, 10.0},
-		// xAI
 		{"grok-3", 1350, 100, 200000, 5.0, 15.0},
 		{"grok-3-mini", 1280, 500, 500000, 0.50, 2.0},
-		// DeepSeek
 		{"deepseek-reasoner", 1340, 5000, 5000000, 0.55, 2.19},
 		{"deepseek-chat", 1285, 10000, 10000000, 0.14, 0.28},
-		// Mistral
 		{"mistral-large-2411", 1290, 500, 250000, 2.0, 6.0},
-		{"codestral-2501", 1270, 1000, 500000, 0.30, 0.90},
-		// Top Open-Weights
 		{"qwen-2.5-max", 1325, 2000, 1000000, 1.60, 6.40},
-		{"qwen-2.5-coder-32b-instruct", 1260, 5000, 5000000, 0.20, 0.60},
 		{"meta-llama/llama-3.3-70b-instruct", 1275, 5000, 5000000, 0.35, 0.40},
-		{"gpt-oss-small", 1200, 50000, 20000000, 0.0, 0.0},
 	}
 
 	tiers := map[string]Tier{
-		"frontier": {
-			Description:  "Tier 1 Frontier Reasoning (Arena ELO >= 1300, formal proofs, AST collisions)",
+		"heavy-frontier": {
+			Description:  "Tier 3 Heavy & Frontier Reasoning (70B+ & Frontier APIs: Claude, Gemini, GPT, O3, R1)",
 			TargetTasks:  []string{"architecture_synthesis", "hiss_proof_verification", "ast_semantic_collision", "waiver_signoff"},
-			FallbackTier: "workhorse",
+			FallbackTier: "midweight",
 		},
-		"workhorse": {
-			Description:  "Tier 2 Workhorse Engineering (Arena ELO >= 1220, code generation, test suites)",
-			TargetTasks:  []string{"implementation_code", "unit_test_authoring", "cli_commands", "protocol_transports"},
-			FallbackTier: "oss-fast",
+		"midweight": {
+			Description:  "Tier 2 Mid-Weight Workhorses (20B-35B: 27B Qwen3.8, 30B Qwen3, 32B Coder, Codestral)",
+			TargetTasks:  []string{"feature_implementation", "multi_file_refactors", "unit_test_suites", "ci_debugging"},
+			FallbackTier: "lightweight",
 		},
-		"oss-fast": {
-			Description:  "Tier 3 Best Open-Weights & Local OSS (High-throughput mechanical sweeps)",
-			TargetTasks:  []string{"ast_skeletonization", "markdown_linting", "seo_jsonld_validation", "boilerplate_scaffolding"},
+		"lightweight": {
+			Description:  "Tier 1 Lightweight Models (5B-16B: 9B Qwythos/Gemma, 7B/14B Qwen, Phi-4, Haiku)",
+			TargetTasks:  []string{"function_docstrings", "single_file_audits", "test_case_stubbing", "fast_cli_tools"},
+			FallbackTier: "nano",
+		},
+		"nano": {
+			Description:  "Tier 0 Micro & Nano Models (<= 4B: SmolLM2, 1.5B/3B Qwen, Phi-3.5-mini, Llama 3.2)",
+			TargetTasks:  []string{"pre_commit_hooks", "commit_message_synthesis", "secret_entropy_scan", "ast_skeleton_filter"},
 			FallbackTier: "",
 		},
 	}
@@ -227,12 +278,14 @@ func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*Syn
 
 		result.TotalModels++
 		switch tierName {
-		case "frontier":
-			result.FrontierTier++
-		case "workhorse":
-			result.Workhorse++
-		case "oss-fast":
-			result.OSSFast++
+		case "heavy-frontier":
+			result.HeavyFrontier++
+		case "midweight":
+			result.MidWeight++
+		case "lightweight":
+			result.LightWeight++
+		case "nano":
+			result.Nano++
 		}
 	}
 
@@ -240,12 +293,23 @@ func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*Syn
 	if opts.DiscoverLocal && len(opts.LocalEndpoints) > 0 {
 		localModels, _ := DiscoverLocalModels(ctx, opts.LocalEndpoints)
 		for _, lm := range localModels {
-			currentTier := tiers["oss-fast"]
+			tierName := ClassifyTier(lm.ID, lm.Family, 0.0)
+			currentTier := tiers[tierName]
 			currentTier.Models = append(currentTier.Models, lm)
-			tiers["oss-fast"] = currentTier
+			tiers[tierName] = currentTier
+
 			result.LocalModels++
 			result.TotalModels++
-			result.OSSFast++
+			switch tierName {
+			case "heavy-frontier":
+				result.HeavyFrontier++
+			case "midweight":
+				result.MidWeight++
+			case "lightweight":
+				result.LightWeight++
+			case "nano":
+				result.Nano++
+			}
 		}
 	}
 
