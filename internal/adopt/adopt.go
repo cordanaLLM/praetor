@@ -155,9 +155,15 @@ func resolveOwner(repoPath string) string {
 	return "cordanaLLM"
 }
 
-func extractOwnerFromURL(url string) string {
-	trimmed := strings.TrimSuffix(url, ".git")
+func cleanGitURL(url string) string {
+	trimmed := strings.TrimSpace(url)
 	trimmed = strings.TrimSuffix(trimmed, "/")
+	trimmed = strings.TrimSuffix(trimmed, ".git")
+	return strings.TrimSuffix(trimmed, "/")
+}
+
+func extractOwnerFromURL(url string) string {
+	trimmed := cleanGitURL(url)
 	if idx := strings.LastIndex(trimmed, ":"); idx != -1 && !strings.HasPrefix(trimmed, "http") {
 		pathPart := trimmed[idx+1:]
 		parts := strings.Split(pathPart, "/")
@@ -172,6 +178,34 @@ func extractOwnerFromURL(url string) string {
 	return ""
 }
 
+func resolveRepoName(repoPath string) string {
+	cmd := exec.Command("git", "-C", repoPath, "config", "--get", "remote.origin.url")
+	out, err := cmd.Output()
+	if err == nil {
+		url := strings.TrimSpace(string(out))
+		if name := extractRepoFromURL(url); name != "" {
+			return name
+		}
+	}
+	return filepath.Base(repoPath)
+}
+
+func extractRepoFromURL(url string) string {
+	trimmed := cleanGitURL(url)
+	if idx := strings.LastIndex(trimmed, ":"); idx != -1 && !strings.HasPrefix(trimmed, "http") {
+		pathPart := trimmed[idx+1:]
+		parts := strings.Split(pathPart, "/")
+		if len(parts) >= 1 && parts[len(parts)-1] != "" {
+			return parts[len(parts)-1]
+		}
+	}
+	parts := strings.Split(trimmed, "/")
+	if len(parts) >= 1 && parts[len(parts)-1] != "" {
+		return parts[len(parts)-1]
+	}
+	return ""
+}
+
 func resolveFacets(input []string) []string {
 	if len(input) > 0 {
 		return input
@@ -180,7 +214,7 @@ func resolveFacets(input []string) []string {
 }
 
 func executeAdoptSteps(ctx context.Context, repoPath, arch string, facets []string, opts AdoptOptions, report *AdoptReport) error {
-	repoName := filepath.Base(repoPath)
+	repoName := resolveRepoName(repoPath)
 
 	// 1. Scaffold / reconcile .standards.yaml
 	if err := reconcileManifest(repoPath, repoName, arch, facets, opts, report); err != nil {

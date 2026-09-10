@@ -263,3 +263,28 @@ func TestExtractOwnerFromURL(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractRepoFromURL(t *testing.T) {
+	tests := []struct {
+		url      string
+		expected string
+	}{
+		// Positive
+		{"https://github.com/VMAFx/vmafx.git", "vmafx"},
+		{"git@github.com:VMAFx/pelorus.git", "pelorus"},
+		{"https://github.com/lusoris/home-zeus", "home-zeus"},
+		{"https://git.dev.cauda.dev/cordanaLLM/praetor.git/", "praetor"},
+		// Negative & Boundary
+		{"", ""},
+		{"/", ""},
+		{"invalid", "invalid"},
+	}
+
+	for _, tc := range tests {
+		got := extractRepoFromURL(tc.url)
+		if got != tc.expected {
+			t.Errorf("for %s: expected %s, got %s", tc.url, tc.expected, got)
+		}
+	}
+}
+
