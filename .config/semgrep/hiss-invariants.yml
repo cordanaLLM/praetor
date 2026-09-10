@@ -1,0 +1,49 @@
+rules:
+  - id: hiss-07-banned-unwrap
+    patterns:
+      - pattern: $X.unwrap()
+      - pattern-not-inside: |
+          #[cfg(test)]
+          ...
+      - pattern-not-inside: |
+          mod tests { ... }
+    message: "[HISS-07] Direct .unwrap() is strictly banned in production code. Use pattern matching or ? propagation."
+    languages: [rust]
+    severity: ERROR
+
+  - id: hiss-07-banned-expect
+    patterns:
+      - pattern: $X.expect(...)
+      - pattern-not-inside: |
+          #[cfg(test)]
+          ...
+      - pattern-not-inside: |
+          mod tests { ... }
+    message: "[HISS-07] Direct .expect() is strictly banned in production code. Use pattern matching or ? propagation."
+    languages: [rust]
+    severity: ERROR
+
+  - id: hiss-08-banned-eval
+    patterns:
+      - pattern: eval(...)
+    message: "[HISS-08] Dynamic runtime eval() is strictly prohibited."
+    languages: [javascript, typescript, python]
+    severity: ERROR
+
+  - id: hiss-08-banned-c-memory
+    patterns:
+      - pattern-either:
+          - pattern: gets(...)
+          - pattern: strcpy(...)
+          - pattern: sprintf(...)
+    message: "[HISS-08] Insecure legacy C runtime memory functions are strictly prohibited. Use bounded variants (fgets, strncpy, snprintf)."
+    languages: [c, cpp]
+    severity: ERROR
+
+  - id: hiss-02-go-http-without-context
+    patterns:
+      - pattern: http.Get(...)
+      - pattern: http.Post(...)
+    message: "[HISS-02] Direct http.Get/Post without context timeout violates bounded I/O invariant. Use http.NewRequestWithContext."
+    languages: [go]
+    severity: ERROR

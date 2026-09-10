@@ -1,0 +1,30 @@
+# Global Version Flavors and Track Definitions
+version: 1
+flavors:
+  bleeding:
+    description: "Continuous development builds tracking main branch commits"
+    source_ref: "refs/heads/main"
+    tag_pattern: "v{{version}}-bleeding.{{commit_short}}"
+    update_frequency: "on_push"
+    stability: "experimental"
+
+  edge:
+    description: "Release candidates undergoing integration and canary validation"
+    source_ref: "refs/heads/main"
+    tag_pattern: "v{{version}}-rc.{{rc_number}}"
+    update_frequency: "manual"
+    stability: "pre-release"
+
+  latest:
+    description: "Highest validated stable semantic release"
+    source_ref: "refs/tags/v*"
+    tag_pattern: "v{{version}}"
+    update_frequency: "on_release"
+    stability: "stable"
+
+  lts:
+    description: "Long-Term Support release channel receiving security and invariant patches"
+    source_ref: "refs/heads/lts-*"
+    tag_pattern: "v{{lts_version}}"
+    update_frequency: "on_patch"
+    stability: "enterprise-stable"

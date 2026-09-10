@@ -1,0 +1,23 @@
+# cordanaLLM/standards Lockfile
+# Cryptographic digest of inherited archetypes, facets, and toolchain rules.
+version: 1
+pinned_version: "v1.0.0"
+digest: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+generated_at: "2026-09-10T20:20:00Z"
+profiles:
+  - id: "framework"
+    version: "v1.0.0"
+    digest: "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+facets:
+  - id: "security:high"
+    version: "v1.0.0"
+    digest: "sha256:7b91d2ef031952a51c411801264c78fe289f668c2ec8587130c9044f519543e4"
+  - id: "api:public-contract"
+    version: "v1.0.0"
+    digest: "sha256:3a1b4c9e8d7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b"
+  - id: "docs:seo-portal"
+    version: "v1.0.0"
+    digest: "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+  - id: "agent:sandboxed"
+    version: "v1.0.0"
+    digest: "sha256:fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321"

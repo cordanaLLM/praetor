@@ -1,0 +1,24 @@
+# Lefthook Configuration for cordanaLLM/standards
+# Fast, parallel local Git hook runner
+pre-commit:
+  parallel: true
+  commands:
+    gofmt:
+      glob: "*.go"
+      run: gofmt -l -w {staged_files} && git add {staged_files}
+    govet:
+      glob: "*.go"
+      run: go vet ./...
+    context-check:
+      glob: "AGENTS.md"
+      run: go run ./cmd/standardsctl compile-context --verify
+    block-evasion:
+      run: python3 .config/agent/hooks/block_evasion.py
+
+pre-push:
+  parallel: false
+  commands:
+    test:
+      run: go test -race ./...
+    audit:
+      run: go run ./cmd/standardsctl audit

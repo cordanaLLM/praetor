@@ -1,0 +1,7 @@
+# Windsurf Cascade Rules: cordanaLLM/standards
+<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->
+
+- Lead with direct code edits and executable commands.
+- Follow HISS-16 invariants: cyclomatic complexity <= 10, function LOC <= 75.
+- Run verification: `make verify-all`.
+- Limit diagnostic feedback to <= 1500 tokens with file/line pointers.

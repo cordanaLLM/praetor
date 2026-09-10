@@ -1,0 +1,38 @@
+# Binaries and build artifacts
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/standardsctl
+/standards-mcp
+/standards-lsp
+
+# Test and coverage artifacts
+*.out
+*.test
+coverage.txt
+coverage.html
+/tmp/
+
+# Dependency directories
+/vendor/
+
+# IDE and OS files
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+*.swp
+*.swo
+*~
+
+# Temporary scratch and research files
+*.rtf
+extracted_plan.txt
+plan_clean.md
+all_github_repos.json
