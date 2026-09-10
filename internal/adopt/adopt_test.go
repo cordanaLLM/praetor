@@ -402,3 +402,137 @@ func TestAdopt_ExistingMakefileAppended(t *testing.T) {
 	}
 }
 
+func TestAdopt_NASARule4_FunctionLengthLimit(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// Write C file with a function longer than 60 lines
+	var cCode strings.Builder
+	cCode.WriteString("void long_c_function() {\n")
+	for i := 0; i < 70; i++ {
+		cCode.WriteString("    int x = 1;\n")
+	}
+	cCode.WriteString("}\n")
+	_ = os.WriteFile(filepath.Join(tmpDir, "long.c"), []byte(cCode.String()), 0644)
+
+	// Write Python file with a function longer than 60 lines
+	var pyCode strings.Builder
+	pyCode.WriteString("def long_python_function():\n")
+	for i := 0; i < 70; i++ {
+		pyCode.WriteString("    x = 1\n")
+	}
+	_ = os.WriteFile(filepath.Join(tmpDir, "long.py"), []byte(pyCode.String()), 0644)
+
+	opts := AdoptOptions{
+		Path:           tmpDir,
+		Profile:        "framework",
+		RecordBaseline: true,
+		DryRun:         true,
+	}
+
+	rep, err := Adopt(ctx, opts)
+	if err != nil {
+		t.Fatalf("Adopt failed: %v", err)
+	}
+
+	if rep.DebtBreakdown["HISS-04"] < 2 {
+		t.Errorf("expected at least 2 HISS-04 infractions for functions > 60 LOC, got: %d", rep.DebtBreakdown["HISS-04"])
+	}
+}
+
+func TestAdopt_GovernanceTextsScaffolded(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	readmeContent := "# My Awesome Project\nSome description here.\n"
+	_ = os.WriteFile(filepath.Join(tmpDir, "README.md"), []byte(readmeContent), 0644)
+
+	opts := AdoptOptions{
+		Path:    tmpDir,
+		Profile: "framework",
+		DryRun:  false,
+	}
+
+	_, err := Adopt(ctx, opts)
+	if err != nil {
+		t.Fatalf("Adopt failed: %v", err)
+	}
+
+	// Verify CONTRIBUTING.md created
+	if !fileExists(filepath.Join(tmpDir, "CONTRIBUTING.md")) {
+		t.Errorf("expected CONTRIBUTING.md to be created")
+	}
+
+	// Verify PR template created
+	if !fileExists(filepath.Join(tmpDir, ".github", "pull_request_template.md")) {
+		t.Errorf("expected .github/pull_request_template.md to be created")
+	}
+
+	// Verify SECURITY.md created
+	if !fileExists(filepath.Join(tmpDir, "SECURITY.md")) {
+		t.Errorf("expected SECURITY.md to be created")
+	}
+
+	// Verify ADR directory and template created
+	if !fileExists(filepath.Join(tmpDir, "docs", "adr", "README.md")) {
+		t.Errorf("expected docs/adr/README.md to be created")
+	}
+	if !fileExists(filepath.Join(tmpDir, "docs", "adr", "0000-template.md")) {
+		t.Errorf("expected docs/adr/0000-template.md to be created")
+	}
+
+	// Verify README.md patched with badge and table
+	readmeData, err := os.ReadFile(filepath.Join(tmpDir, "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	content := string(readmeData)
+	if !strings.Contains(content, "HISS--16%20Compliant") {
+		t.Errorf("expected README.md to contain HISS-16 badge")
+	}
+	if !strings.Contains(content, "## Standards & Governance") {
+		t.Errorf("expected README.md to contain Standards & Governance section")
+	}
+	if !strings.Contains(content, "# My Awesome Project") {
+		t.Errorf("expected README.md to preserve original content")
+	}
+}
+
+func TestAdopt_AgentsMD_ForcePreservesCustomInstructions(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	initialAgents := "<!-- markdownlint-disable -->\n# old Agent Operating Harness\n\n## Core Directives & Invariants\nold table\n\n---\n\n# Custom Repo Instructions\nDon't touch this proprietary text!\n"
+	_ = os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte(initialAgents), 0644)
+
+	opts := AdoptOptions{
+		Path:    tmpDir,
+		Profile: "framework",
+		Force:   true,
+		DryRun:  false,
+	}
+
+	_, err := Adopt(ctx, opts)
+	if err != nil {
+		t.Fatalf("Adopt failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	content := string(data)
+
+	// Verify new harness was generated (contains modernized NASA JPL rules)
+	if !strings.Contains(content, "Modernized NASA JPL Power-of-10") {
+		t.Errorf("expected updated harness with NASA JPL Power-of-10")
+	}
+
+	// Verify custom repo instructions were preserved
+	if !strings.Contains(content, "# Custom Repo Instructions") || !strings.Contains(content, "Don't touch this proprietary text!") {
+		t.Errorf("expected custom repo instructions to be preserved, got:\n%s", content)
+	}
+}
+
+
+

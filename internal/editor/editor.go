@@ -20,11 +20,18 @@ const (
 
 // Supported editor identifiers.
 const (
-	EditorVSCode    = "vscode"
-	EditorCursor    = "cursor"
-	EditorWindsurf  = "windsurf"
-	EditorJetBrains = "jetbrains"
-	EditorNeovim    = "neovim"
+	EditorVSCode       = "vscode"
+	EditorCursor       = "cursor"
+	EditorWindsurf     = "windsurf"
+	EditorJetBrains    = "jetbrains"
+	EditorNeovim       = "neovim"
+	EditorUniversal    = "universal"
+	EditorZed          = "zed"
+	EditorHelix        = "helix"
+	EditorEmacs        = "emacs"
+	EditorFleet        = "fleet"
+	EditorSublime      = "sublime"
+	EditorVisualStudio = "visualstudio"
 )
 
 // Options configures editor generation.
@@ -57,11 +64,18 @@ func DefaultOptions() Options {
 		BinaryDir:     "bin",
 		Archetype:     "framework",
 		Editors: []string{
+			EditorUniversal,
 			EditorVSCode,
 			EditorCursor,
 			EditorWindsurf,
 			EditorJetBrains,
 			EditorNeovim,
+			EditorZed,
+			EditorHelix,
+			EditorEmacs,
+			EditorFleet,
+			EditorSublime,
+			EditorVisualStudio,
 		},
 		IncludeMCP: true,
 		IncludeLSP: true,
@@ -97,6 +111,10 @@ func Synthesize(opts Options) (*EditorConfigSet, error) {
 		editorMap[e] = true
 	}
 
+	if editorMap[EditorUniversal] {
+		files = append(files, generateUniversalEditorConfig()...)
+	}
+
 	if editorMap[EditorVSCode] || editorMap[EditorCursor] || editorMap[EditorWindsurf] {
 		files = append(files, generateVSCodeFamily(binDir, opts.IncludeMCP, opts.IncludeLSP, arch)...)
 	}
@@ -107,6 +125,30 @@ func Synthesize(opts Options) (*EditorConfigSet, error) {
 
 	if editorMap[EditorNeovim] {
 		files = append(files, generateNeovim(binDir, arch)...)
+	}
+
+	if editorMap[EditorZed] {
+		files = append(files, generateZed(arch)...)
+	}
+
+	if editorMap[EditorHelix] {
+		files = append(files, generateHelix(arch)...)
+	}
+
+	if editorMap[EditorEmacs] {
+		files = append(files, generateEmacs(arch)...)
+	}
+
+	if editorMap[EditorFleet] {
+		files = append(files, generateFleet(arch)...)
+	}
+
+	if editorMap[EditorSublime] {
+		files = append(files, generateSublime(arch)...)
+	}
+
+	if editorMap[EditorVisualStudio] {
+		files = append(files, generateVisualStudio(arch)...)
 	}
 
 	return &EditorConfigSet{
@@ -130,6 +172,8 @@ func normalizeEditors(input []string) []string {
 	for i := 0; i < limit; i++ {
 		e := strings.ToLower(strings.TrimSpace(input[i]))
 		switch e {
+		case "universal", "editorconfig":
+			e = EditorUniversal
 		case "vscode", "code":
 			e = EditorVSCode
 		case "cursor":
@@ -140,6 +184,18 @@ func normalizeEditors(input []string) []string {
 			e = EditorJetBrains
 		case "neovim", "nvim":
 			e = EditorNeovim
+		case "zed":
+			e = EditorZed
+		case "helix", "hx":
+			e = EditorHelix
+		case "emacs":
+			e = EditorEmacs
+		case "fleet":
+			e = EditorFleet
+		case "sublime", "sublimetext":
+			e = EditorSublime
+		case "visualstudio", "vs":
+			e = EditorVisualStudio
 		default:
 			continue
 		}
@@ -425,6 +481,309 @@ end
 	}
 }
 
+func generateUniversalEditorConfig() []GeneratedFile {
+	content := `# http://editorconfig.org
+root = true
+
+[*]
+indent_style = space
+indent_size = 4
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+max_line_length = 120
+
+[*.{c,cpp,cc,cxx,h,hpp,cu,hip}]
+indent_style = space
+indent_size = 4
+
+[*.py]
+indent_style = space
+indent_size = 4
+
+[*.go]
+indent_style = tab
+indent_size = 4
+
+[*.rs]
+indent_style = space
+indent_size = 4
+
+[*.{json,yaml,yml}]
+indent_style = space
+indent_size = 2
+
+[*.md]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false
+
+[Makefile]
+indent_style = tab
+`
+	return []GeneratedFile{
+		{
+			Path:    ".editorconfig",
+			Content: content,
+			Editor:  EditorUniversal,
+		},
+	}
+}
+
+func generateZed(arch string) []GeneratedFile {
+	settings := `{
+  "format_on_save": "on",
+  "buffer_font_size": 14,
+  "tab_size": 4,
+  "hard_tabs": false,
+  "preferred_line_length": 120,
+  "languages": {
+    "C": {
+      "tab_size": 4,
+      "preferred_line_length": 100
+    },
+    "C++": {
+      "tab_size": 4,
+      "preferred_line_length": 100
+    },
+    "Python": {
+      "tab_size": 4
+    },
+    "Go": {
+      "hard_tabs": true,
+      "tab_size": 4
+    }
+  },
+  "lsp": {
+    "clangd": {
+      "binary": {
+        "path_lookup": true
+      }
+    }
+  }
+}
+`
+	tasks := `[
+  {
+    "label": "Standards: Verify All",
+    "command": "make",
+    "args": ["verify-all"],
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "Standards: Audit",
+    "command": "standardsctl",
+    "args": ["audit"],
+    "use_new_terminal": false
+  },
+  {
+    "label": "Standards: Compile Context",
+    "command": "standardsctl",
+    "args": ["compile-context", "--verify"],
+    "use_new_terminal": false
+  }
+]
+`
+	return []GeneratedFile{
+		{
+			Path:    filepath.Join(".zed", "settings.json"),
+			Content: settings,
+			Editor:  EditorZed,
+		},
+		{
+			Path:    filepath.Join(".zed", "tasks.json"),
+			Content: tasks,
+			Editor:  EditorZed,
+		},
+	}
+}
+
+func generateHelix(arch string) []GeneratedFile {
+	config := `theme = "default"
+
+[editor]
+line-number = "relative"
+cursorline = true
+color-modes = true
+auto-format = true
+
+[editor.whitespace.render]
+space = "all"
+tab = "all"
+newline = "none"
+
+[editor.indent-guides]
+render = true
+character = "│"
+`
+	languages := `# Language configurations for Helix
+[[language]]
+name = "c"
+auto-format = true
+formatter = { command = "clang-format" }
+
+[[language]]
+name = "cpp"
+auto-format = true
+formatter = { command = "clang-format" }
+
+[[language]]
+name = "python"
+auto-format = true
+formatter = { command = "ruff", args = ["format", "-"] }
+
+[[language]]
+name = "go"
+auto-format = true
+formatter = { command = "gofmt" }
+`
+	return []GeneratedFile{
+		{
+			Path:    filepath.Join(".helix", "config.toml"),
+			Content: config,
+			Editor:  EditorHelix,
+		},
+		{
+			Path:    filepath.Join(".helix", "languages.toml"),
+			Content: languages,
+			Editor:  EditorHelix,
+		},
+	}
+}
+
+func generateEmacs(arch string) []GeneratedFile {
+	content := `;;; Directory Local Variables
+;;; For more information see (info "(emacs) Directory Variables")
+
+((nil . ((indent-tabs-mode . nil)
+         (fill-column . 100)
+         (compile-command . "make verify-all")))
+ (c-mode . ((c-basic-offset . 4)
+            (c-file-style . "linux")))
+ (c++-mode . ((c-basic-offset . 4)
+              (c-file-style . "linux")))
+ (python-mode . ((python-indent-offset . 4)))
+ (go-mode . ((indent-tabs-mode . t)
+             (tab-width . 4))))
+`
+	return []GeneratedFile{
+		{
+			Path:    ".dir-locals.el",
+			Content: content,
+			Editor:  EditorEmacs,
+		},
+	}
+}
+
+func generateFleet(arch string) []GeneratedFile {
+	settings := `{
+  "editor.tabSize": 4,
+  "editor.insertSpaces": true,
+  "editor.formatOnSave": true
+}
+`
+	run := `{
+  "configurations": [
+    {
+      "type": "command",
+      "name": "Standards: Verify All",
+      "program": "make",
+      "args": ["verify-all"]
+    },
+    {
+      "type": "command",
+      "name": "Standards: Audit",
+      "program": "standardsctl",
+      "args": ["audit"]
+    }
+  ]
+}
+`
+	return []GeneratedFile{
+		{
+			Path:    filepath.Join(".fleet", "settings.json"),
+			Content: settings,
+			Editor:  EditorFleet,
+		},
+		{
+			Path:    filepath.Join(".fleet", "run.json"),
+			Content: run,
+			Editor:  EditorFleet,
+		},
+	}
+}
+
+func generateSublime(arch string) []GeneratedFile {
+	content := `{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "build_systems": [
+    {
+      "name": "Standards: Verify All",
+      "shell_cmd": "make verify-all",
+      "working_dir": "$project_path"
+    },
+    {
+      "name": "Standards: Audit",
+      "shell_cmd": "standardsctl audit",
+      "working_dir": "$project_path"
+    }
+  ],
+  "settings": {
+    "tab_size": 4,
+    "translate_tabs_to_spaces": true,
+    "trim_trailing_white_space_on_save": true,
+    "ensure_newline_at_eof_on_save": true
+  }
+}
+`
+	return []GeneratedFile{
+		{
+			Path:    "standards.sublime-project",
+			Content: content,
+			Editor:  EditorSublime,
+		},
+	}
+}
+
+func generateVisualStudio(arch string) []GeneratedFile {
+	tidy := `# cordanaLLM/praetor High-Integrity Systems Standards (HISS-16) Clang-Tidy Configuration
+---
+Checks: >
+  -*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  -readability-identifier-length
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*'
+FormatStyle: file
+...
+`
+	return []GeneratedFile{
+		{
+			Path:    ".clang-tidy",
+			Content: tidy,
+			Editor:  EditorVisualStudio,
+		},
+	}
+}
+
+func fileExists(path string) bool {
+	stat, err := os.Stat(path)
+	return err == nil && !stat.IsDir()
+}
+
 // Write writes all generated files to the target workspace root directory.
 func Write(set *EditorConfigSet, rootDir string) error {
 	if set == nil {
@@ -445,6 +804,11 @@ func Write(set *EditorConfigSet, rootDir string) error {
 	for i := 0; i < limit; i++ {
 		f := set.Files[i]
 		fullPath := filepath.Join(rootDir, f.Path)
+
+		// For .clang-tidy or existing custom .editorconfig, preserve existing file if present
+		if (f.Path == ".clang-tidy" || f.Path == ".editorconfig") && fileExists(fullPath) {
+			continue
+		}
 
 		if err := writeSingleFileWithContext(ctx, fullPath, f.Content); err != nil {
 			return fmt.Errorf("failed writing %s: %w", fullPath, err)
@@ -491,6 +855,10 @@ func Verify(set *EditorConfigSet, rootDir string) error {
 			return fmt.Errorf("missing expected configuration file %s: %w", f.Path, err)
 		}
 
+		if f.Path == ".clang-tidy" || f.Path == ".editorconfig" {
+			continue
+		}
+
 		if string(existingBytes) != f.Content {
 			return fmt.Errorf("configuration file %s is out of sync with standards policy", f.Path)
 		}
@@ -507,3 +875,4 @@ func readSingleFileWithContext(ctx context.Context, path string) ([]byte, error)
 	}
 	return os.ReadFile(path)
 }
+

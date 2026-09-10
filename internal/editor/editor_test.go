@@ -70,6 +70,47 @@ func TestEditor_Positive_SynthesizeAllEditors(t *testing.T) {
 	if !strings.Contains(nvimLua, "StandardsAudit") {
 		t.Errorf("lua/standards.lua missing user commands")
 	}
+
+	// 4. Universal EditorConfig
+	if _, ok := fileMap[".editorconfig"]; !ok {
+		t.Errorf("missing .editorconfig")
+	}
+
+	// 5. Zed checks
+	if _, ok := fileMap[filepath.Join(".zed", "settings.json")]; !ok {
+		t.Errorf("missing .zed/settings.json")
+	}
+	if _, ok := fileMap[filepath.Join(".zed", "tasks.json")]; !ok {
+		t.Errorf("missing .zed/tasks.json")
+	}
+
+	// 6. Helix checks
+	if _, ok := fileMap[filepath.Join(".helix", "config.toml")]; !ok {
+		t.Errorf("missing .helix/config.toml")
+	}
+	if _, ok := fileMap[filepath.Join(".helix", "languages.toml")]; !ok {
+		t.Errorf("missing .helix/languages.toml")
+	}
+
+	// 7. Emacs checks
+	if _, ok := fileMap[".dir-locals.el"]; !ok {
+		t.Errorf("missing .dir-locals.el")
+	}
+
+	// 8. Fleet checks
+	if _, ok := fileMap[filepath.Join(".fleet", "settings.json")]; !ok {
+		t.Errorf("missing .fleet/settings.json")
+	}
+
+	// 9. Sublime checks
+	if _, ok := fileMap["standards.sublime-project"]; !ok {
+		t.Errorf("missing standards.sublime-project")
+	}
+
+	// 10. Visual Studio checks
+	if _, ok := fileMap[".clang-tidy"]; !ok {
+		t.Errorf("missing .clang-tidy")
+	}
 }
 
 func TestEditor_Positive_WriteAndVerify(t *testing.T) {
@@ -125,7 +166,7 @@ func TestEditor_Negative_EmptyOrInvalidEditors(t *testing.T) {
 
 	// 2. Only unsupported editor names
 	_, err = Synthesize(Options{
-		Editors: []string{"emacs", "nano", "gedit"},
+		Editors: []string{"notepad", "nano", "gedit"},
 	})
 	if err == nil {
 		t.Errorf("expected error when no supported editors matched")

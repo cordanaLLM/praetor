@@ -20,9 +20,10 @@ import (
 
 // Invariant bounds.
 const (
-	maxFilesScan   = 2000
-	maxLoopBound   = 500
-	defaultTimeout = 30 * time.Second
+	maxFilesScan      = 10000
+	maxInfractionsCap = 10000
+	defaultTimeout    = 30 * time.Second
+	defaultMaxFuncLOC = 60
 )
 
 // RepositoryState describes the adoption state of a target codebase.
@@ -262,6 +263,11 @@ func executeAdoptSteps(ctx context.Context, repoPath, arch string, facets []stri
 		return err
 	}
 
+	// 8. Repository governance texts & documentation
+	if err := reconcileGovernanceTexts(repoPath, repoName, arch, opts, report); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -383,7 +389,7 @@ func scanLegacyDebt(repoPath string, base *baseline.Baseline, report *AdoptRepor
 		if err != nil || info.IsDir() {
 			return nil
 		}
-		if len(base.Infractions) >= maxLoopBound {
+		if len(base.Infractions) >= maxInfractionsCap {
 			return filepath.SkipDir
 		}
 		rel, err := filepath.Rel(repoPath, path)
@@ -398,7 +404,7 @@ func scanLegacyDebt(repoPath string, base *baseline.Baseline, report *AdoptRepor
 			strings.HasPrefix(rel, "core/build/") || strings.HasPrefix(rel, "libvmaf/build/") ||
 			strings.HasPrefix(rel, "target/") || strings.HasPrefix(rel, ".cache/") ||
 			strings.HasPrefix(rel, ".idea/") || strings.HasPrefix(rel, ".vscode/") ||
-			strings.HasPrefix(rel, "third_party/") {
+			strings.HasPrefix(rel, "compat/") || strings.HasPrefix(rel, "third_party/") {
 			return nil
 		}
 
@@ -417,24 +423,20 @@ func scanLegacyDebt(repoPath string, base *baseline.Baseline, report *AdoptRepor
 			return nil
 		}
 		lines := strings.Split(string(data), "\n")
-		for lineIdx, line := range lines {
-			if lineIdx >= maxFilesScan {
-				break
-			}
-			trimmed := strings.TrimSpace(line)
 
-			// Go checks
-			if isGo {
-				if strings.Contains(line, "_ = ") {
-					recordInfraction(base, report, "HISS-07", rel, lineIdx+1, "Legacy unchecked error assignment")
-				}
-				if strings.HasPrefix(trimmed, "for {") {
-					recordInfraction(base, report, "HISS-02", rel, lineIdx+1, "Legacy unbounded loop (for { ... })")
-				}
-			}
+		// C / C++ / CUDA checks
+		if isNative {
+			inNativeFunc := false
+			nativeFuncStart := 0
+			nativeFuncName := ""
+			nativeBraceLevel := 0
 
-			// C / C++ / CUDA checks
-			if isNative {
+			for lineIdx, line := range lines {
+				if lineIdx >= maxFilesScan || len(base.Infractions) >= maxInfractionsCap {
+					break
+				}
+				trimmed := strings.TrimSpace(line)
+
 				if strings.Contains(line, "while (1)") || strings.Contains(line, "while(1)") ||
 					strings.Contains(line, "while (true)") || strings.Contains(line, "while(true)") ||
 					strings.Contains(line, "for (;;)") || strings.Contains(line, "for(;;)") {
@@ -452,10 +454,60 @@ func scanLegacyDebt(repoPath string, base *baseline.Baseline, report *AdoptRepor
 				if strings.HasPrefix(trimmed, "goto ") {
 					recordInfraction(base, report, "HISS-01", rel, lineIdx+1, "Legacy non-DAG control flow jump (goto)")
 				}
-			}
 
-			// Python checks
-			if isPython {
+				// Function length tracking (HISS-04 / NASA JPL Power of 10 Rule 4)
+				if !inNativeFunc {
+					if strings.Contains(line, "{") && !strings.HasPrefix(trimmed, "//") && !strings.HasPrefix(trimmed, "/*") &&
+						!strings.HasPrefix(trimmed, "struct ") && !strings.HasPrefix(trimmed, "enum ") &&
+						!strings.HasPrefix(trimmed, "union ") && !strings.HasPrefix(trimmed, "typedef ") &&
+						!strings.HasPrefix(trimmed, "class ") && !strings.HasPrefix(trimmed, "#") {
+						inNativeFunc = true
+						nativeFuncStart = lineIdx + 1
+						nativeBraceLevel = strings.Count(line, "{") - strings.Count(line, "}")
+						nativeFuncName = trimmed
+						if idx := strings.Index(nativeFuncName, "("); idx > 0 {
+							parts := strings.Fields(nativeFuncName[:idx])
+							if len(parts) > 0 {
+								nativeFuncName = parts[len(parts)-1]
+								nativeFuncName = strings.TrimPrefix(nativeFuncName, "*")
+							}
+						} else if lineIdx > 0 {
+							prev := strings.TrimSpace(lines[lineIdx-1])
+							if idx2 := strings.Index(prev, "("); idx2 > 0 {
+								parts := strings.Fields(prev[:idx2])
+								if len(parts) > 0 {
+									nativeFuncName = parts[len(parts)-1]
+									nativeFuncName = strings.TrimPrefix(nativeFuncName, "*")
+								}
+							}
+						}
+					}
+				} else {
+					nativeBraceLevel += strings.Count(line, "{") - strings.Count(line, "}")
+					if nativeBraceLevel <= 0 {
+						funcLen := (lineIdx + 1) - nativeFuncStart + 1
+						if funcLen > defaultMaxFuncLOC {
+							recordInfraction(base, report, "HISS-04", rel, nativeFuncStart, fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", nativeFuncName, funcLen, defaultMaxFuncLOC))
+						}
+						inNativeFunc = false
+					}
+				}
+			}
+		}
+
+		// Python checks
+		if isPython {
+			inPyFunc := false
+			pyFuncStart := 0
+			pyFuncName := ""
+			pyIndent := 0
+
+			for lineIdx, line := range lines {
+				if lineIdx >= maxFilesScan || len(base.Infractions) >= maxInfractionsCap {
+					break
+				}
+				trimmed := strings.TrimSpace(line)
+
 				if strings.HasPrefix(trimmed, "while True:") {
 					recordInfraction(base, report, "HISS-02", rel, lineIdx+1, "Legacy unbounded while True loop in Python")
 				}
@@ -465,10 +517,101 @@ func scanLegacyDebt(repoPath string, base *baseline.Baseline, report *AdoptRepor
 				if trimmed == "except:" || strings.HasPrefix(trimmed, "except: ") || strings.HasPrefix(trimmed, "except:#") {
 					recordInfraction(base, report, "HISS-07", rel, lineIdx+1, "Bare except catches and suppresses unhandled exceptions")
 				}
-			}
 
-			// Rust checks
-			if isRust {
+				if strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "async def ") {
+					if inPyFunc {
+						funcLen := lineIdx - pyFuncStart
+						if funcLen > defaultMaxFuncLOC {
+							recordInfraction(base, report, "HISS-04", rel, pyFuncStart, fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", pyFuncName, funcLen, defaultMaxFuncLOC))
+						}
+					}
+					inPyFunc = true
+					pyFuncStart = lineIdx + 1
+					pyFuncName = strings.TrimPrefix(trimmed, "async ")
+					pyFuncName = strings.TrimPrefix(pyFuncName, "def ")
+					if idx := strings.Index(pyFuncName, "("); idx > 0 {
+						pyFuncName = pyFuncName[:idx]
+					}
+					pyIndent = len(line) - len(strings.TrimLeft(line, " \t"))
+				} else if inPyFunc && trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+					currentIndent := len(line) - len(strings.TrimLeft(line, " \t"))
+					if currentIndent <= pyIndent && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+						funcLen := lineIdx - pyFuncStart
+						if funcLen > defaultMaxFuncLOC {
+							recordInfraction(base, report, "HISS-04", rel, pyFuncStart, fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", pyFuncName, funcLen, defaultMaxFuncLOC))
+						}
+						inPyFunc = false
+					}
+				}
+			}
+			if inPyFunc {
+				funcLen := len(lines) - pyFuncStart
+				if funcLen > defaultMaxFuncLOC {
+					recordInfraction(base, report, "HISS-04", rel, pyFuncStart, fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", pyFuncName, funcLen, defaultMaxFuncLOC))
+				}
+			}
+		}
+
+		// Go checks
+		if isGo {
+			inGoFunc := false
+			goFuncStart := 0
+			goFuncName := ""
+			goBraceLevel := 0
+
+			for lineIdx, line := range lines {
+				if lineIdx >= maxFilesScan || len(base.Infractions) >= maxInfractionsCap {
+					break
+				}
+				trimmed := strings.TrimSpace(line)
+
+				if strings.Contains(line, "_ = ") {
+					recordInfraction(base, report, "HISS-07", rel, lineIdx+1, "Legacy unchecked error assignment")
+				}
+				if strings.HasPrefix(trimmed, "for {") {
+					recordInfraction(base, report, "HISS-02", rel, lineIdx+1, "Legacy unbounded loop (for { ... })")
+				}
+
+				if strings.HasPrefix(line, "func ") || strings.HasPrefix(line, "func (") {
+					if inGoFunc && goBraceLevel > 0 {
+						funcLen := lineIdx - goFuncStart
+						if funcLen > defaultMaxFuncLOC {
+							recordInfraction(base, report, "HISS-04", rel, goFuncStart, fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", goFuncName, funcLen, defaultMaxFuncLOC))
+						}
+					}
+					inGoFunc = true
+					goFuncStart = lineIdx + 1
+					goBraceLevel = strings.Count(line, "{") - strings.Count(line, "}")
+					goFuncName = trimmed
+					if idx := strings.Index(goFuncName, "{"); idx > 0 {
+						goFuncName = strings.TrimSpace(goFuncName[:idx])
+					}
+				} else if inGoFunc {
+					goBraceLevel += strings.Count(line, "{") - strings.Count(line, "}")
+					if goBraceLevel <= 0 {
+						funcLen := (lineIdx + 1) - goFuncStart + 1
+						if funcLen > defaultMaxFuncLOC {
+							recordInfraction(base, report, "HISS-04", rel, goFuncStart, fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", goFuncName, funcLen, defaultMaxFuncLOC))
+						}
+						inGoFunc = false
+					}
+				}
+			}
+		}
+
+		// Rust checks
+		if isRust {
+			inRustFunc := false
+			rustFuncStart := 0
+			rustFuncName := ""
+			rustBraceLevel := 0
+
+			for lineIdx, line := range lines {
+				if lineIdx >= maxFilesScan || len(base.Infractions) >= maxInfractionsCap {
+					break
+				}
+				trimmed := strings.TrimSpace(line)
+
 				if strings.Contains(line, ".unwrap()") {
 					recordInfraction(base, report, "HISS-07", rel, lineIdx+1, "Legacy .unwrap() invocation in production Rust code")
 				}
@@ -478,19 +621,36 @@ func scanLegacyDebt(repoPath string, base *baseline.Baseline, report *AdoptRepor
 				if strings.HasPrefix(trimmed, "unsafe {") {
 					recordInfraction(base, report, "HISS-09", rel, lineIdx+1, "Unaudited unsafe block in Rust code")
 				}
-			}
 
-			if len(base.Infractions) >= maxLoopBound {
-				break
+				if strings.HasPrefix(trimmed, "fn ") || strings.HasPrefix(trimmed, "pub fn ") ||
+					strings.HasPrefix(trimmed, "async fn ") || strings.HasPrefix(trimmed, "pub async fn ") {
+					inRustFunc = true
+					rustFuncStart = lineIdx + 1
+					rustBraceLevel = strings.Count(line, "{") - strings.Count(line, "}")
+					rustFuncName = trimmed
+					if idx := strings.Index(rustFuncName, "("); idx > 0 {
+						rustFuncName = strings.TrimSpace(rustFuncName[:idx])
+					}
+				} else if inRustFunc {
+					rustBraceLevel += strings.Count(line, "{") - strings.Count(line, "}")
+					if rustBraceLevel <= 0 {
+						funcLen := (lineIdx + 1) - rustFuncStart + 1
+						if funcLen > defaultMaxFuncLOC {
+							recordInfraction(base, report, "HISS-04", rel, rustFuncStart, fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", rustFuncName, funcLen, defaultMaxFuncLOC))
+						}
+						inRustFunc = false
+					}
+				}
 			}
 		}
+
 		return nil
 	})
 	base.TotalInfractions = len(base.Infractions)
 }
 
 func recordInfraction(base *baseline.Baseline, report *AdoptReport, ruleID, rel string, line int, msg string) {
-	if len(base.Infractions) >= maxLoopBound {
+	if len(base.Infractions) >= maxInfractionsCap {
 		return
 	}
 	base.Infractions = append(base.Infractions, baseline.Infraction{
@@ -524,17 +684,20 @@ Run verification before concluding any turn:
     CHECK --> GATE{"All checks Pass?"}
     GATE -- Yes --> RECEIPT["Ed25519 Exit-0 Receipt"]
     GATE -- No --> DISTILL["SARIF Diagnostic Distillation (<= 1500 tokens)"]
-`+"```\n\n"+`## Core Directives & Invariants
+`+"```\n\n"+`## Core Directives & Invariants (Modernized NASA JPL Power-of-10)
 
-| Invariant | Scope | Enforcement Mechanism | Failure Action |
-| :--- | :--- | :--- | :--- |
-| **HISS-01** | Control Flow | Recursion strictly prohibited; call graph must be DAG. | Immediate build failure |
-| **HISS-02** | Loops & I/O | Scalar upper bound on all loops; explicit `+"`context.Context`"+` timeout on all I/O. | Semgrep / AST error |
-| **HISS-04** | Complexity | McCabe Cyclomatic $\le 10$, Cognitive $\le 15$, Func LOC $\le 75$, Statements $\le 50$. | AST sweep blocker |
-| **HISS-07** | Error Handling | Zero `+"`.unwrap()` / `.expect()`"+`; all errors handled or wrapped with context. | Linter / Compiler error |
-| **HISS-10** | Warning Hygiene | Zero-warning tolerance across compiler, linter, and format sweeps. | Exit code 1 |
-| **HISS-15** | 3D Testing | Positive, negative, and boundary tests mandatory for all public interfaces. | CI coverage gate |
-| **HISS-16** | Context Integrity | Single canonical `+"`AGENTS.md`"+`; vendor files compiled via `+"`standardsctl compile-context`"+`. | Pre-commit blocker |
+| Invariant | Scope | NASA Rule | Enforcement Mechanism | Failure Action |
+| :--- | :--- | :--- | :--- | :--- |
+| **HISS-01** | Control Flow | Rule 1 | Recursion strictly prohibited; call graph must be DAG; zero `+"`goto`"+`. | Immediate build failure |
+| **HISS-02** | Loops & I/O | Rule 2 | Scalar upper bound on all loops; explicit `+"`context.Context`"+` timeout on all I/O. | Semgrep / AST error |
+| **HISS-03** | Memory | Rule 3 | Zero dynamic heap allocation (`+"`malloc` / `free`"+`) in hot simulation/tick loops. | Allocation audit sweep |
+| **HISS-04** | Complexity | Rule 4 | Function length $\le 60$ LOC, McCabe Cyclomatic $\le 10$, Statements $\le 50$. | AST sweep blocker |
+| **HISS-07** | Error Handling | Rule 7 | Zero `+"`.unwrap()` / `.expect()`"+`; all errors handled or wrapped with context. | Linter / Compiler error |
+| **HISS-08** | Determinism | Rule 8 | Zero dynamic execution (`+"`eval` / `exec`"+`); zero banned unsafe libc (`+"`gets` / `strcpy` / `sprintf`"+`). | AST / Linter error |
+| **HISS-09** | Reference Safety | Rule 9 | Mandatory `+"`// SAFETY:`"+` proofs for all pointer arithmetic and `+"`unsafe`"+` blocks. | AST check blocker |
+| **HISS-10** | Warning Hygiene | Rule 10 | Zero-warning tolerance across compiler, linter, and format sweeps. | Exit code 1 |
+| **HISS-15** | 3D Testing | Rule 5 | Positive, negative, and boundary tests mandatory for all public interfaces. | CI coverage gate |
+| **HISS-16** | Context Integrity | Fleet | Single canonical `+"`AGENTS.md`"+`; vendor files compiled via `+"`standardsctl compile-context`"+`. | Pre-commit blocker |
 
 ## Operational Rules
 
@@ -596,13 +759,34 @@ func reconcileAgentHarness(repoPath, repoName, arch string, opts AdoptOptions, r
 		}
 		existing := string(existingBytes)
 		if strings.Contains(existing, "Agent Operating Harness") || strings.Contains(existing, "## Core Directives & Invariants") {
-			agentsContent = existing
-			report.ReconciledFiles = append(report.ReconciledFiles, "AGENTS.md")
-			report.ActionDetails = append(report.ActionDetails, ActionDetail{
-				Path:    "AGENTS.md",
-				Action:  "reconcile",
-				Details: "Existing Praetor Agent Operating Harness verified in sync",
-			})
+			if opts.Force {
+				harness := strings.TrimSpace(buildAgentHarness(repoName, arch))
+				parts := strings.SplitN(existing, "\n---\n", 2)
+				if len(parts) > 1 {
+					agentsContent = harness + "\n\n---\n\n" + strings.TrimSpace(parts[1]) + "\n"
+				} else {
+					agentsContent = harness + "\n"
+				}
+				if !opts.DryRun {
+					if err := os.WriteFile(agentsPath, []byte(agentsContent), 0644); err != nil {
+						return fmt.Errorf("write %s: %w", agentsPath, err)
+					}
+				}
+				report.ReconciledFiles = append(report.ReconciledFiles, "AGENTS.md")
+				report.ActionDetails = append(report.ActionDetails, ActionDetail{
+					Path:    "AGENTS.md",
+					Action:  "reconcile",
+					Details: "Updated Praetor Agent Operating Harness while preserving repository-specific instructions",
+				})
+			} else {
+				agentsContent = existing
+				report.ReconciledFiles = append(report.ReconciledFiles, "AGENTS.md")
+				report.ActionDetails = append(report.ActionDetails, ActionDetail{
+					Path:    "AGENTS.md",
+					Action:  "reconcile",
+					Details: "Existing Praetor Agent Operating Harness verified in sync",
+				})
+			}
 		} else {
 			harness := buildAgentHarness(repoName, arch)
 			agentsContent = harness + "\n---\n\n" + existing
@@ -791,6 +975,262 @@ func reconcileMakefileAndGit(repoPath, arch string, opts AdoptOptions, report *A
 		})
 	}
 	return nil
+}
+
+func reconcileGovernanceTexts(repoPath, repoName, arch string, opts AdoptOptions, report *AdoptReport) error {
+	// 1. CONTRIBUTING.md
+	contribPath := filepath.Join(repoPath, "CONTRIBUTING.md")
+	if !fileExists(contribPath) {
+		contrib := buildContributingGuide(repoName)
+		if !opts.DryRun {
+			if err := os.WriteFile(contribPath, []byte(contrib), 0644); err != nil {
+				return fmt.Errorf("write %s: %w", contribPath, err)
+			}
+		}
+		report.CreatedFiles = append(report.CreatedFiles, "CONTRIBUTING.md")
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    "CONTRIBUTING.md",
+			Action:  "create",
+			Details: "Scaffolded contributor governance guide with HISS-16 & NASA rules",
+		})
+	} else {
+		report.ReconciledFiles = append(report.ReconciledFiles, "CONTRIBUTING.md")
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    "CONTRIBUTING.md",
+			Action:  "reconcile",
+			Details: "Existing contributor guide verified present",
+		})
+	}
+
+	// 2. .github/pull_request_template.md
+	prTmplPath := filepath.Join(repoPath, ".github", "pull_request_template.md")
+	prTmplUpperPath := filepath.Join(repoPath, ".github", "PULL_REQUEST_TEMPLATE.md")
+	if !fileExists(prTmplPath) && !fileExists(prTmplUpperPath) {
+		prTmpl := buildPullRequestTemplate(repoName)
+		if !opts.DryRun {
+			_ = os.MkdirAll(filepath.Dir(prTmplPath), 0755)
+			if err := os.WriteFile(prTmplPath, []byte(prTmpl), 0644); err != nil {
+				return fmt.Errorf("write %s: %w", prTmplPath, err)
+			}
+		}
+		report.CreatedFiles = append(report.CreatedFiles, ".github/pull_request_template.md")
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    ".github/pull_request_template.md",
+			Action:  "create",
+			Details: "Scaffolded pull request template with HISS verification checklist",
+		})
+	} else {
+		targetName := ".github/pull_request_template.md"
+		if fileExists(prTmplUpperPath) {
+			targetName = ".github/PULL_REQUEST_TEMPLATE.md"
+		}
+		report.ReconciledFiles = append(report.ReconciledFiles, targetName)
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    targetName,
+			Action:  "reconcile",
+			Details: "Existing pull request template verified present",
+		})
+	}
+
+	// 3. SECURITY.md
+	secPath := filepath.Join(repoPath, "SECURITY.md")
+	if !fileExists(secPath) {
+		sec := buildSecurityPolicy(repoName)
+		if !opts.DryRun {
+			if err := os.WriteFile(secPath, []byte(sec), 0644); err != nil {
+				return fmt.Errorf("write %s: %w", secPath, err)
+			}
+		}
+		report.CreatedFiles = append(report.CreatedFiles, "SECURITY.md")
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    "SECURITY.md",
+			Action:  "create",
+			Details: "Scaffolded security policy and vulnerability disclosure standards",
+		})
+	} else {
+		report.ReconciledFiles = append(report.ReconciledFiles, "SECURITY.md")
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    "SECURITY.md",
+			Action:  "reconcile",
+			Details: "Existing security policy verified present",
+		})
+	}
+
+	// 4. docs/adr/ (index and template)
+	adrDir := filepath.Join(repoPath, "docs", "adr")
+	adrIndexPath := filepath.Join(adrDir, "README.md")
+	adrTmplPath := filepath.Join(adrDir, "0000-template.md")
+	if !fileExists(adrIndexPath) {
+		if !opts.DryRun {
+			_ = os.MkdirAll(adrDir, 0755)
+			_ = os.WriteFile(adrIndexPath, []byte(buildADRIndex(repoName)), 0644)
+			_ = os.WriteFile(adrTmplPath, []byte(buildADRTemplate(repoName)), 0644)
+		}
+		report.CreatedFiles = append(report.CreatedFiles, "docs/adr/README.md")
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    "docs/adr/README.md",
+			Action:  "create",
+			Details: "Scaffolded Architectural Decision Records (ADR) directory and template",
+		})
+	} else {
+		report.ReconciledFiles = append(report.ReconciledFiles, "docs/adr/README.md")
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    "docs/adr/README.md",
+			Action:  "reconcile",
+			Details: "Architectural Decision Records directory verified present",
+		})
+	}
+
+	// 5. README.md badge and verification table
+	readmePath := filepath.Join(repoPath, "README.md")
+	if fileExists(readmePath) {
+		data, err := os.ReadFile(readmePath)
+		if err == nil {
+			content := string(data)
+			modified := false
+			if !strings.Contains(content, "HISS--16%20Compliant") && !strings.Contains(content, "HISS-16") {
+				badge := "[![HISS-16 Compliant](https://img.shields.io/badge/Standards-HISS--16%20Compliant-brightgreen)](AGENTS.md)\n"
+				trimmed := strings.TrimSpace(content)
+				if strings.HasPrefix(trimmed, "# ") {
+					nlIdx := strings.Index(content, "\n")
+					if nlIdx != -1 {
+						content = content[:nlIdx+1] + "\n" + badge + content[nlIdx+1:]
+					} else {
+						content = content + "\n\n" + badge
+					}
+				} else {
+					content = badge + "\n" + content
+				}
+				modified = true
+			}
+			if !strings.Contains(content, "Standards & Governance") && !strings.Contains(content, "make verify-all") {
+				table := "\n\n## Standards & Governance\n\nThis repository conforms to High-Integrity Systems Standards (HISS-16)\nand modernized NASA JPL Power-of-10 rules.\n\n| Gate | Command | Description |\n| :--- | :--- | :--- |\n| **Verification** | `make verify-all` | Runs full audit, test suite, and context integrity check |\n| **HISS Audit** | `standardsctl audit` | Enforces zero technical debt regression against baseline |\n| **Context Sync** | `standardsctl compile-context` | Transpiles canonical `AGENTS.md` to all AI targets |\n"
+				content = strings.TrimRight(content, "\r\n") + table
+				modified = true
+			}
+			if modified {
+				if !opts.DryRun {
+					_ = os.WriteFile(readmePath, []byte(content), 0644)
+				}
+				report.ReconciledFiles = append(report.ReconciledFiles, "README.md")
+				report.ActionDetails = append(report.ActionDetails, ActionDetail{
+					Path:    "README.md",
+					Action:  "reconcile",
+					Details: "Non-destructively injected HISS-16 compliance badge and verification gate table",
+				})
+			}
+		}
+	}
+
+	return nil
+}
+
+func buildContributingGuide(repoName string) string {
+	return fmt.Sprintf(`<!-- markdownlint-disable MD013 -->
+# Contributing to %s
+
+Thank you for contributing! This repository adheres strictly to the **High-Integrity Systems Standards (HISS-16)** and modernized **NASA JPL Power-of-10** rules.
+
+## Core Directives & Verification
+
+All changes must pass local verification before submitting:
+
+`+"```bash\nmake verify-all\n```\n\n"+`### Modernized NASA JPL Power-of-10 Rules
+
+1. **Simple Control Flow (HISS-01)**: Recursion is strictly banned; call graph must be an acyclic DAG; zero `+"`goto`"+`.
+2. **Bounded Loops (HISS-02)**: All loops must have a statically verifiable scalar upper bound. Network and disk I/O require `+"`context.Context`"+` timeout.
+3. **Deterministic Memory (HISS-03)**: Zero dynamic heap allocations (`+"`malloc` / `free`"+`) in hot simulation or rendering loops.
+4. **Function Length Cap (HISS-04)**: No function may exceed **60 lines of code** ($\le 60$ LOC).
+5. **Assertion Density (HISS-15)**: Functions must assert preconditions, state invariants, and postconditions.
+6. **Data Scope**: Variables must be declared at the smallest possible scope.
+7. **Checked Errors (HISS-07)**: Check return values of all non-void functions; zero `+"`.unwrap()`"+` or unchecked errors.
+8. **Static Execution (HISS-08)**: Dynamic code evaluation (`+"`eval` / `exec`"+`) and banned unsafe libc calls (`+"`gets` / `strcpy` / `sprintf`"+`) are prohibited.
+9. **Pointer Safety (HISS-09)**: Pointer arithmetic must be bounded; all `+"`unsafe`"+` blocks require `+"`// SAFETY:`"+` justifications.
+10. **Zero-Warning Hygiene (HISS-10)**: Zero compiler, linter, or formatting warnings tolerated across all builds.
+
+### 3D Testing Discipline (HISS-15)
+
+Every public function requires:
+
+- **Positive tests**: Expected valid operational inputs.
+- **Negative tests**: Invalid inputs, expected error returns.
+- **Boundary tests**: Zero, one, max limits, off-by-one bounds.
+
+### Commit Messages
+
+We enforce Conventional Commits:
+
+- `+"`feat:`"+` New features
+- `+"`fix:`"+` Bug fixes
+- `+"`chore:`"+` Maintenance and governance
+- `+"`feat!:` / `fix!:`"+` Breaking API changes (must include `+"`Migration:`"+` footer)
+`, repoName)
+}
+
+func buildPullRequestTemplate(repoName string) string {
+	return `<!-- markdownlint-disable MD013 -->
+## Description
+
+<!-- Provide a concise summary of the changes and the architectural rationale. -->
+
+## Pre-Merge Verification Checklist
+
+- [ ] Local verification passed: ` + "`make verify-all`" + `
+- [ ] No new HISS-16 / NASA Power-of-10 infractions (all new/modified functions $\le 60$ LOC)
+- [ ] 3D Tests included (Positive, Negative, Boundary) for public APIs
+- [ ] Agent contexts in sync: ` + "`standardsctl compile-context --verify`" + `
+- [ ] Commit messages adhere to Conventional Commits format
+`
+}
+
+func buildSecurityPolicy(repoName string) string {
+	return `<!-- markdownlint-disable MD013 -->
+# Security Policy
+
+## Supported Versions
+
+Only the latest release and current default branch receive security updates.
+
+## Reporting a Vulnerability
+
+Please report security vulnerabilities privately to the maintainers rather than opening a public issue.
+Reports are investigated promptly under responsible disclosure guidelines.
+`
+}
+
+func buildADRIndex(repoName string) string {
+	return `<!-- markdownlint-disable MD013 -->
+# Architectural Decision Records (ADRs)
+
+This directory documents key architectural decisions following the HISS-14 immutable numbering lattice.
+
+| Number | Date | Title | Status |
+| :--- | :--- | :--- | :--- |
+| [0000](0000-template.md) | 2026-09-11 | ADR Architecture Decision Template | Accepted |
+`
+}
+
+func buildADRTemplate(repoName string) string {
+	return `<!-- markdownlint-disable MD013 -->
+# ADR-0000: Title of Decision
+
+- **Status**: Proposed | Accepted | Deprecated | Superseded
+- **Date**: YYYY-MM-DD
+- **Authors**: Team
+
+## Context
+
+Describe the context, problem statement, and forces at play.
+
+## Decision
+
+Describe the decision taken and the architectural rationale.
+
+## Consequences
+
+- **Positive**: Benefits and capabilities gained.
+- **Negative**: Trade-offs, migration burden, or constraints imposed.
+`
 }
 
 func fileExists(path string) bool {
