@@ -13,6 +13,7 @@ func runGC(args []string) error {
 	fs := flag.NewFlagSet("gc", flag.ContinueOnError)
 	dryRun := fs.Bool("dry-run", false, "Simulate garbage collection without deleting files")
 	rootDir := fs.String("path", ".", "Root repository directory")
+	worktreesDir := fs.String("worktrees-dir", "", "Custom worktrees directory to prune (e.g. ~/dev/k8s-worktrees)")
 	maxAge := fs.Duration("max-age", 24*time.Hour, "Maximum age for ephemeral worktrees")
 
 	if err := fs.Parse(args); err != nil {
@@ -24,6 +25,7 @@ func runGC(args []string) error {
 
 	opts := gc.Options{
 		RootDir:        *rootDir,
+		WorktreesDir:   *worktreesDir,
 		MaxWorktreeAge: *maxAge,
 		DryRun:         *dryRun,
 	}

@@ -107,3 +107,80 @@ func scanGeminiBackups(geminiDir string, report *SkillAuditReport) {
 		}
 	}
 }
+
+// DedupeReport summarizes removed duplicate skills and purged backups.
+type DedupeReport struct {
+	DryRun           bool     `json:"dry_run"`
+	PrunedSkills     []string `json:"pruned_skills"`
+	PurgedBackups    []string `json:"purged_backups"`
+	ReclaimedEntries int      `json:"reclaimed_entries"`
+	Errors           []string `json:"errors,omitempty"`
+}
+
+// DeduplicateSkills removes shadowed duplicate skills preferring gemini-config over gemini-root.
+func DeduplicateSkills(ctx context.Context, report *SkillAuditReport, dryRun bool) (*DedupeReport, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("context cancelled before skill deduplication: %w", err)
+	}
+
+	dedupeRep := &DedupeReport{
+		DryRun:        dryRun,
+		PrunedSkills:  make([]string, 0),
+		PurgedBackups: make([]string, 0),
+		Errors:        make([]string, 0),
+	}
+
+	count := 0
+	for _, paths := range report.Duplicates {
+		if count >= MaxSkillsScan {
+			break
+		}
+		count++
+
+		hasConfig := false
+		var rootSkillDir string
+		for _, p := range paths {
+			if strings.Contains(p, "/config/skills/") {
+				hasConfig = true
+			} else if strings.Contains(p, "/.gemini/skills/") {
+				rootSkillDir = filepath.Dir(p)
+			}
+		}
+
+		if hasConfig && rootSkillDir != "" {
+			dedupeRep.PrunedSkills = append(dedupeRep.PrunedSkills, rootSkillDir)
+			if !dryRun {
+				if err := os.RemoveAll(rootSkillDir); err != nil {
+					dedupeRep.Errors = append(dedupeRep.Errors, fmt.Sprintf("failed removing %s: %v", rootSkillDir, err))
+				}
+			}
+		}
+	}
+
+	dedupeRep.ReclaimedEntries = len(dedupeRep.PrunedSkills)
+	return dedupeRep, nil
+}
+
+// PurgeBackups purges stale GEMINI.md backup files from the gemini directory.
+func PurgeBackups(ctx context.Context, geminiDir string, backups []string, dryRun bool) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("context cancelled before purging backups: %w", err)
+	}
+
+	purged := make([]string, 0, len(backups))
+	count := 0
+	for _, b := range backups {
+		if count >= MaxSkillsScan {
+			break
+		}
+		count++
+
+		target := filepath.Join(geminiDir, b)
+		purged = append(purged, target)
+		if !dryRun {
+			_ = os.Remove(target)
+		}
+	}
+
+	return purged, nil
+}
