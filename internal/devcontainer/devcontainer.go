@@ -127,9 +127,27 @@ func synthesizeFeatures(profiles []string, facets []string) map[string]interface
 // synthesizeExtensions constructs deduplicated IDE extensions based on profiles and facets.
 func synthesizeExtensions(profiles []string, facets []string) []string {
 	extList := []string{
-		"golang.go",
 		"GitHub.vscode-pull-request-github",
 		"eamodio.gitlens",
+	}
+
+	hasNativeGPU := false
+	for _, p := range profiles {
+		if strings.ToLower(strings.TrimSpace(p)) == "native-gpu-systems" {
+			hasNativeGPU = true
+			break
+		}
+	}
+
+	if hasNativeGPU {
+		extList = append(extList,
+			"llvm-vs-code-extensions.vscode-clangd",
+			"mesonbuild.mesonbuild",
+			"ms-vscode.cmake-tools",
+			"ms-python.python",
+		)
+	} else {
+		extList = append(extList, "golang.go")
 	}
 
 	for i := 0; i < len(facets) && i < MaxLoopLimit; i++ {
@@ -152,11 +170,28 @@ func synthesizeExtensions(profiles []string, facets []string) []string {
 // synthesizeSettings builds standard and facet-driven editor settings.
 func synthesizeSettings(profiles []string, facets []string) map[string]interface{} {
 	settings := map[string]interface{}{
-		"go.toolsManagement.autoUpdate": true,
-		"go.useLanguageServer":          true,
-		"go.lintTool":                   "golangci-lint",
-		"go.lintOnSave":                 "package",
-		"editor.formatOnSave":           true,
+		"editor.formatOnSave": true,
+	}
+
+	hasNativeGPU := false
+	for _, p := range profiles {
+		if strings.ToLower(strings.TrimSpace(p)) == "native-gpu-systems" {
+			hasNativeGPU = true
+			break
+		}
+	}
+
+	if hasNativeGPU {
+		settings["clangd.path"] = "clangd"
+		settings["clangd.arguments"] = []string{
+			"--compile-commands-dir=core/build",
+			"--header-insertion=never",
+		}
+	} else {
+		settings["go.toolsManagement.autoUpdate"] = true
+		settings["go.useLanguageServer"] = true
+		settings["go.lintTool"] = "golangci-lint"
+		settings["go.lintOnSave"] = "package"
 	}
 
 	for i := 0; i < len(facets) && i < MaxLoopLimit; i++ {

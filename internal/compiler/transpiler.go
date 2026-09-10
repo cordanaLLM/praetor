@@ -41,8 +41,16 @@ func (t *Transpiler) Compile(agentsMdPath string) (*CompileResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read source %s: %w", agentsMdPath, err)
 	}
-	content := string(contentBytes)
+	res, err := t.CompileContent(string(contentBytes))
+	if err != nil {
+		return nil, err
+	}
+	res.SourcePath = agentsMdPath
+	return res, nil
+}
 
+// CompileContent synthesizes vendor-specific files directly from in-memory markdown content.
+func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 	claudeContent := generateClaudeMD(content)
 	cursorContent := generateCursorMDC(content)
 	copilotContent := generateCopilotMD(content)
@@ -68,7 +76,7 @@ func (t *Transpiler) Compile(agentsMdPath string) (*CompileResult, error) {
 	}
 
 	return &CompileResult{
-		SourcePath: agentsMdPath,
+		SourcePath: "AGENTS.md",
 		Files:      files,
 	}, nil
 }

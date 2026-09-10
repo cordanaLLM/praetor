@@ -211,3 +211,36 @@ func TestEditor_Boundary_CustomBinaryDirAndFlags(t *testing.T) {
 		t.Errorf("expected standards.mcp.enabled to be false: %s", settingsContent)
 	}
 }
+
+func TestEditor_Positive_ArchetypeNativeGPUSystems(t *testing.T) {
+	opts := DefaultOptions()
+	opts.Archetype = "native-gpu-systems"
+	set, err := Synthesize(opts)
+	if err != nil {
+		t.Fatalf("Synthesize failed: %v", err)
+	}
+
+	fileMap := make(map[string]string)
+	for _, f := range set.Files {
+		fileMap[f.Path] = f.Content
+	}
+
+	// Verify clangd in VSCode settings
+	vsSettings := fileMap[filepath.Join(".vscode", "settings.json")]
+	if !strings.Contains(vsSettings, "clangd") {
+		t.Errorf("expected clangd in VSCode settings for native-gpu-systems: %s", vsSettings)
+	}
+
+	// Verify ClangTidy in JetBrains
+	ideaXML := fileMap[filepath.Join(".idea", "inspectionProfiles", "standards.xml")]
+	if !strings.Contains(ideaXML, "ClangTidyInspection") {
+		t.Errorf("expected ClangTidyInspection in JetBrains XML for native-gpu-systems")
+	}
+
+	// Verify Neovim filetypes
+	nvimLua := fileMap[filepath.Join("lua", "standards.lua")]
+	if !strings.Contains(nvimLua, "cuda") || !strings.Contains(nvimLua, "cpp") {
+		t.Errorf("expected cpp and cuda in Neovim filetypes for native-gpu-systems")
+	}
+}
+

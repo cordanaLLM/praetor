@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -285,6 +286,119 @@ func TestExtractRepoFromURL(t *testing.T) {
 		if got != tc.expected {
 			t.Errorf("for %s: expected %s, got %s", tc.url, tc.expected, got)
 		}
+	}
+}
+
+func TestAdopt_MultiLanguageLegacyDebt(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// Write C file with while (1) and strcpy
+	cCode := "#include <stdio.h>\nvoid test() {\n    while (1) {}\n    strcpy(dst, src);\n}\n"
+	_ = os.WriteFile(filepath.Join(tmpDir, "kernel.c"), []byte(cCode), 0644)
+
+	// Write Python file with while True and bare except
+	pyCode := "while True:\n    try:\n        pass\n    except:\n        pass\n"
+	_ = os.WriteFile(filepath.Join(tmpDir, "script.py"), []byte(pyCode), 0644)
+
+	// Write Rust file with unwrap
+	rsCode := "fn main() {\n    let val = Some(1).unwrap();\n}\n"
+	_ = os.WriteFile(filepath.Join(tmpDir, "lib.rs"), []byte(rsCode), 0644)
+
+	opts := AdoptOptions{
+		Path:           tmpDir,
+		Profile:        "native-gpu-systems",
+		RecordBaseline: true,
+		DryRun:         true,
+	}
+
+	rep, err := Adopt(ctx, opts)
+	if err != nil {
+		t.Fatalf("Adopt failed: %v", err)
+	}
+
+	if rep.LegacyDebtCount < 5 {
+		t.Fatalf("expected at least 5 legacy infractions across C, Python, and Rust, got: %d", rep.LegacyDebtCount)
+	}
+	if rep.DebtBreakdown["HISS-02"] == 0 {
+		t.Errorf("expected HISS-02 infractions, got none")
+	}
+	if rep.DebtBreakdown["HISS-07"] == 0 {
+		t.Errorf("expected HISS-07 infractions, got none")
+	}
+	if rep.DebtBreakdown["HISS-09"] == 0 {
+		t.Errorf("expected HISS-09 infractions, got none")
+	}
+}
+
+func TestAdopt_ExistingAgentsMDMerged(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	customInstructions := "# Custom Project Guidelines\n- Rule 1: Always check tests\n- Rule 2: Keep commits clean\n"
+	_ = os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte(customInstructions), 0644)
+
+	opts := AdoptOptions{
+		Path:    tmpDir,
+		Profile: "framework",
+		DryRun:  false,
+	}
+
+	_, err := Adopt(ctx, opts)
+	if err != nil {
+		t.Fatalf("Adopt failed: %v", err)
+	}
+
+	merged, err := os.ReadFile(filepath.Join(tmpDir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	content := string(merged)
+
+	// Verify both Praetor harness and custom instructions exist
+	if !strings.Contains(content, "Agent Operating Harness") {
+		t.Errorf("expected AGENTS.md to contain Agent Operating Harness")
+	}
+	if !strings.Contains(content, "## Core Directives & Invariants") {
+		t.Errorf("expected AGENTS.md to contain Core Directives & Invariants")
+	}
+	if !strings.Contains(content, "# Custom Project Guidelines") {
+		t.Errorf("expected AGENTS.md to preserve original custom instructions")
+	}
+}
+
+func TestAdopt_ExistingMakefileAppended(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	existingMakefile := "all:\n\t@echo \"Building...\"\n"
+	_ = os.WriteFile(filepath.Join(tmpDir, "Makefile"), []byte(existingMakefile), 0644)
+
+	opts := AdoptOptions{
+		Path:    tmpDir,
+		Profile: "framework",
+		DryRun:  false,
+	}
+
+	_, err := Adopt(ctx, opts)
+	if err != nil {
+		t.Fatalf("Adopt failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "verify-all:") {
+		t.Errorf("expected Makefile to contain appended verify-all target")
+	}
+	if !strings.Contains(content, "compile-context:") {
+		t.Errorf("expected Makefile to contain appended compile-context target")
+	}
+	if !strings.Contains(content, "all:\n\t@echo \"Building...\"") {
+		t.Errorf("expected Makefile to preserve existing all target")
 	}
 }
 

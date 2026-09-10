@@ -31,6 +31,7 @@ const (
 type Options struct {
 	WorkspaceRoot string   `json:"workspace_root"`
 	BinaryDir     string   `json:"binary_dir"`
+	Archetype     string   `json:"archetype"`
 	Editors       []string `json:"editors"`
 	IncludeMCP    bool     `json:"include_mcp"`
 	IncludeLSP    bool     `json:"include_lsp"`
@@ -54,6 +55,7 @@ func DefaultOptions() Options {
 	return Options{
 		WorkspaceRoot: ".",
 		BinaryDir:     "bin",
+		Archetype:     "framework",
 		Editors: []string{
 			EditorVSCode,
 			EditorCursor,
@@ -78,6 +80,11 @@ func Synthesize(opts Options) (*EditorConfigSet, error) {
 		binDir = "bin"
 	}
 
+	arch := opts.Archetype
+	if arch == "" {
+		arch = "framework"
+	}
+
 	var files []GeneratedFile
 	editorMap := make(map[string]bool)
 	limit := len(editors)
@@ -91,15 +98,15 @@ func Synthesize(opts Options) (*EditorConfigSet, error) {
 	}
 
 	if editorMap[EditorVSCode] || editorMap[EditorCursor] || editorMap[EditorWindsurf] {
-		files = append(files, generateVSCodeFamily(binDir, opts.IncludeMCP, opts.IncludeLSP)...)
+		files = append(files, generateVSCodeFamily(binDir, opts.IncludeMCP, opts.IncludeLSP, arch)...)
 	}
 
 	if editorMap[EditorJetBrains] {
-		files = append(files, generateJetBrains()...)
+		files = append(files, generateJetBrains(arch)...)
 	}
 
 	if editorMap[EditorNeovim] {
-		files = append(files, generateNeovim(binDir)...)
+		files = append(files, generateNeovim(binDir, arch)...)
 	}
 
 	return &EditorConfigSet{
@@ -146,9 +153,9 @@ func normalizeEditors(input []string) []string {
 	return normalized
 }
 
-func generateVSCodeFamily(binDir string, includeMCP, includeLSP bool) []GeneratedFile {
-	settings := buildVSCodeSettings(binDir, includeMCP, includeLSP)
-	extensions := buildVSCodeExtensions()
+func generateVSCodeFamily(binDir string, includeMCP, includeLSP bool, arch string) []GeneratedFile {
+	settings := buildVSCodeSettings(binDir, includeMCP, includeLSP, arch)
+	extensions := buildVSCodeExtensions(arch)
 	tasks := buildVSCodeTasks()
 
 	return []GeneratedFile{
@@ -170,7 +177,7 @@ func generateVSCodeFamily(binDir string, includeMCP, includeLSP bool) []Generate
 	}
 }
 
-func buildVSCodeSettings(binDir string, includeMCP, includeLSP bool) string {
+func buildVSCodeSettings(binDir string, includeMCP, includeLSP bool, arch string) string {
 	data := map[string]any{
 		"standards.lsp.enabled":        includeLSP,
 		"standards.lsp.path":           fmt.Sprintf("${workspaceFolder}/%s/standards-lsp", binDir),
@@ -179,14 +186,31 @@ func buildVSCodeSettings(binDir string, includeMCP, includeLSP bool) string {
 		"standards.mcp.path":           fmt.Sprintf("${workspaceFolder}/%s/standards-mcp", binDir),
 		"standards.sentinel.headroomMB": 1024,
 		"standards.modelTier":          "gemini-2.5-pro",
-		"go.useLanguageServer":         true,
-		"[go]": map[string]any{
+	}
+
+	if arch == "native-gpu-systems" {
+		data["clangd.path"] = "clangd"
+		data["clangd.arguments"] = []string{
+			"--compile-commands-dir=core/build",
+			"--header-insertion=never",
+		}
+		data["[c]"] = map[string]any{
+			"editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+			"editor.formatOnSave":     true,
+		}
+		data["[cpp]"] = map[string]any{
+			"editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+			"editor.formatOnSave":     true,
+		}
+	} else {
+		data["go.useLanguageServer"] = true
+		data["[go]"] = map[string]any{
 			"editor.defaultFormatter": "golang.go",
 			"editor.formatOnSave":     true,
 			"editor.codeActionsOnSave": map[string]any{
 				"source.organizeImports": "always",
 			},
-		},
+		}
 	}
 
 	bytes, err := json.MarshalIndent(data, "", "  ")
@@ -196,14 +220,19 @@ func buildVSCodeSettings(binDir string, includeMCP, includeLSP bool) string {
 	return string(bytes) + "\n"
 }
 
-func buildVSCodeExtensions() string {
+func buildVSCodeExtensions(arch string) string {
+	recs := []string{
+		"cordanaLLM.standards-vscode",
+		"github.copilot",
+		"eamodio.gitlens",
+	}
+	if arch == "native-gpu-systems" {
+		recs = append(recs, "llvm-vs-code-extensions.vscode-clangd", "mesonbuild.mesonbuild")
+	} else {
+		recs = append(recs, "golang.go")
+	}
 	data := map[string]any{
-		"recommendations": []string{
-			"golang.go",
-			"cordanaLLM.standards-vscode",
-			"github.copilot",
-			"eamodio.gitlens",
-		},
+		"recommendations": recs,
 	}
 	bytes, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
@@ -239,13 +268,13 @@ func buildVSCodeTasks() string {
 			{
 				"label":          "Standards: Compile Context",
 				"type":           "shell",
-				"command":        "go run ./cmd/standardsctl compile-context",
+				"command":        "standardsctl compile-context",
 				"problemMatcher": []string{},
 			},
 			{
 				"label":          "Standards: Audit Invariants",
 				"type":           "shell",
-				"command":        "go run ./cmd/standardsctl audit",
+				"command":        "standardsctl audit",
 				"problemMatcher": []string{},
 			},
 		},
@@ -257,8 +286,24 @@ func buildVSCodeTasks() string {
 	return string(bytes) + "\n"
 }
 
-func generateJetBrains() []GeneratedFile {
-	inspectionProfile := `<?xml version="1.0" encoding="UTF-8"?>
+func generateJetBrains(arch string) []GeneratedFile {
+	var extraTools string
+	if arch == "native-gpu-systems" {
+		extraTools = `
+    <inspection_tool class="ClangTidyInspection" enabled="true" level="ERROR" enabled_by_default="true" />
+    <inspection_tool class="OCUnusedGlobalDeclarationInspection" enabled="true" level="WARNING" enabled_by_default="true" />
+    <inspection_tool class="OCUnusedMacroInspection" enabled="true" level="WARNING" enabled_by_default="true" />
+    <inspection_tool class="OCDFAInspection" enabled="true" level="ERROR" enabled_by_default="true" />
+    <inspection_tool class="PyUnresolvedReferencesInspection" enabled="true" level="ERROR" enabled_by_default="true" />
+    <inspection_tool class="PyPep8Inspection" enabled="true" level="WARNING" enabled_by_default="true" />
+    <inspection_tool class="PyBroadExceptionInspection" enabled="true" level="ERROR" enabled_by_default="true" />`
+	} else if arch == "app-service" {
+		extraTools = `
+    <inspection_tool class="PyUnresolvedReferencesInspection" enabled="true" level="ERROR" enabled_by_default="true" />
+    <inspection_tool class="PyPep8Inspection" enabled="true" level="WARNING" enabled_by_default="true" />
+    <inspection_tool class="PyBroadExceptionInspection" enabled="true" level="ERROR" enabled_by_default="true" />`
+	}
+	inspectionProfile := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <component name="InspectionProjectProfileManager">
   <profile version="1.0">
     <option name="myName" value="standards" />
@@ -273,10 +318,10 @@ func generateJetBrains() []GeneratedFile {
       <option name="maxLoc" value="75" />
       <option name="maxStatements" value="50" />
     </inspection_tool>
-    <inspection_tool class="HISS07ZeroUnwrap" enabled="true" level="ERROR" enabled_by_default="true" />
+    <inspection_tool class="HISS07ZeroUnwrap" enabled="true" level="ERROR" enabled_by_default="true" />%s
   </profile>
 </component>
-`
+`, extraTools)
 
 	workspaceHooks := `<?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
@@ -312,7 +357,11 @@ func generateJetBrains() []GeneratedFile {
 	}
 }
 
-func generateNeovim(binDir string) []GeneratedFile {
+func generateNeovim(binDir, arch string) []GeneratedFile {
+	ft := `"go"`
+	if arch == "native-gpu-systems" {
+		ft = `"c", "cpp", "cuda", "go", "python"`
+	}
 	luaConfig := fmt.Sprintf(`-- cordanaLLM/standards Neovim LSP and Tool Configuration
 local lspconfig = require("lspconfig")
 local configs = require("lspconfig.configs")
@@ -321,9 +370,9 @@ if not configs.standards_lsp then
   configs.standards_lsp = {
     default_config = {
       cmd = { "./%s/standards-lsp" },
-      filetypes = { "go" },
+      filetypes = { %s },
       root_dir = function(fname)
-        return lspconfig.util.root_pattern(".standards.yaml", "go.mod", ".git")(fname)
+        return lspconfig.util.root_pattern(".standards.yaml", "meson.build", "go.mod", ".git")(fname)
       end,
       settings = {
         standards = {
@@ -339,17 +388,17 @@ end
 lspconfig.standards_lsp.setup({})
 
 vim.api.nvim_create_user_command("StandardsAudit", function()
-  vim.cmd("!go run ./cmd/standardsctl audit")
+  vim.cmd("!standardsctl audit")
 end, { desc = "Audit repository against declared HISS invariants" })
 
 vim.api.nvim_create_user_command("StandardsCompileContext", function()
-  vim.cmd("!go run ./cmd/standardsctl compile-context")
+  vim.cmd("!standardsctl compile-context")
 end, { desc = "Compile AGENTS.md cross-agent contexts" })
 
 vim.api.nvim_create_user_command("StandardsVerifyAll", function()
   vim.cmd("!make verify-all")
 end, { desc = "Run full standards verification pipeline" })
-`, binDir)
+`, binDir, ft)
 
 	nvimRootLua := `-- Load project-level standards configuration
 local status_ok, _ = pcall(require, "standards")

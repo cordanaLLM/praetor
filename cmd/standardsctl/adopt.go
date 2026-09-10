@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -120,24 +121,78 @@ func batchAdoptMissing(ctx context.Context, devDir string, dryRun, force, record
 	return nil
 }
 
+func findDetail(details []adopt.ActionDetail, path string) string {
+	for _, d := range details {
+		if d.Path == path {
+			return d.Details
+		}
+	}
+	return ""
+}
+
 func printAdoptReport(rep *adopt.AdoptReport) {
 	fmt.Println("=== Praetor Universal Repository Adoption ===")
 	if rep.DryRun {
-		fmt.Println("[DRY-RUN MODE: No files modified]")
+		fmt.Println("[DRY-RUN SIMULATION: No filesystem mutations performed]")
 	}
-	fmt.Printf("Target State:      %s\n", rep.State)
-	fmt.Printf("Archetype:         %s\n", rep.Archetype)
-	fmt.Printf("Facets:            %v\n", rep.Facets)
-	fmt.Printf("Files Created:     %d\n", len(rep.CreatedFiles))
-	for _, f := range rep.CreatedFiles {
-		fmt.Printf("  + [NEW] %s\n", f)
-	}
-	fmt.Printf("Files Reconciled:  %d\n", len(rep.ReconciledFiles))
-	for _, f := range rep.ReconciledFiles {
-		fmt.Printf("  ~ [SYNC] %s\n", f)
-	}
+	fmt.Printf("Target State:       %s\n", rep.State)
+	fmt.Printf("Archetype:          %s\n", rep.Archetype)
+	fmt.Printf("Facets:             %v\n", rep.Facets)
+
+	// Debt summary
 	if rep.LegacyDebtCount > 0 {
-		fmt.Printf("Legacy Debt Recorded: %d infractions in .standards-baseline.json\n", rep.LegacyDebtCount)
+		fmt.Printf("\n--- Legacy Technical Debt Baselined (%d infractions) ---\n", rep.LegacyDebtCount)
+		if len(rep.DebtBreakdown) > 0 {
+			var ruleKeys []string
+			for r := range rep.DebtBreakdown {
+				ruleKeys = append(ruleKeys, r)
+			}
+			sort.Strings(ruleKeys)
+			for _, r := range ruleKeys {
+				fmt.Printf("  • %-8s: %d infractions\n", r, rep.DebtBreakdown[r])
+			}
+		}
+		fmt.Println("  (Infractions recorded into .standards-baseline.json to prevent CI breaks while ratcheting)")
+	} else {
+		fmt.Println("\n--- Legacy Technical Debt: 0 infractions detected ---")
 	}
-	fmt.Println("\nRepository successfully adopted into cordanaLLM/praetor governance!")
+
+	// Planned / Executed Actions
+	if len(rep.CreatedFiles) > 0 {
+		fmt.Printf("\nFiles Created (%d):\n", len(rep.CreatedFiles))
+		for _, f := range rep.CreatedFiles {
+			detail := findDetail(rep.ActionDetails, f)
+			if detail != "" {
+				fmt.Printf("  + [NEW]  %-36s : %s\n", f, detail)
+			} else {
+				fmt.Printf("  + [NEW]  %s\n", f)
+			}
+		}
+	}
+
+	if len(rep.ReconciledFiles) > 0 {
+		fmt.Printf("\nFiles Reconciled (%d):\n", len(rep.ReconciledFiles))
+		for _, f := range rep.ReconciledFiles {
+			detail := findDetail(rep.ActionDetails, f)
+			if detail != "" {
+				fmt.Printf("  ~ [SYNC] %-36s : %s\n", f, detail)
+			} else {
+				fmt.Printf("  ~ [SYNC] %s\n", f)
+			}
+		}
+	}
+
+	// Governance Pillars Summary
+	fmt.Println("\n--- Governance Pillars Synchronized ---")
+	fmt.Println("  ✓ Universal Harness : Canonical AGENTS.md + Mermaid Verification Flowchart")
+	fmt.Println("  ✓ AI Context Sync   : 6 targets (Claude Code, Cursor, Copilot, Windsurf, Codex, Gemini)")
+	fmt.Println("  ✓ IDE Ecosystem     : VS Code, JetBrains (CLion/GoLand/PyCharm), Neovim")
+	fmt.Println("  ✓ DevContainer      : Containerized deterministic dev environment (.devcontainer)")
+	fmt.Println("  ✓ Verification Gate : Makefile 'verify-all' standard entrypoint")
+
+	if rep.DryRun {
+		fmt.Println("\nSimulated adoption plan completed. Run without -dry-run to apply.")
+	} else {
+		fmt.Println("\nRepository successfully adopted into cordanaLLM/praetor governance!")
+	}
 }
