@@ -43,8 +43,8 @@ type IssueResponse struct {
 	State  string `json:"state"`
 }
 
-// Compiled regex for Depends-On tags: "Depends-On: [owner/repo]#123"
-var dependsOnRegex = regexp.MustCompile(`(?i)depends-on:\s*(([a-zA-Z0-9_\-\.]+)/([a-zA-Z0-9_\-\.]+))?#(\d+)`)
+// Compiled regex for Depends-On tags: "Depends-On: [owner/repo]#123" or "Depends-On: [repo]#123" or "Depends-On: #123"
+var dependsOnRegex = regexp.MustCompile(`(?i)depends-on:\s*(?:([a-zA-Z0-9_\-\.]+)/)?([a-zA-Z0-9_\-\.]+)?#(\d+)`)
 
 // ParseIssueDependencies extracts cross-reference dependency tags from text.
 func ParseIssueDependencies(body string) []IssueRef {
@@ -66,14 +66,14 @@ func ParseIssueDependencies(body string) []IssueRef {
 			if len(refs) >= MaxDependenciesLimit {
 				break
 			}
-			num, err := strconv.Atoi(m[4])
+			num, err := strconv.Atoi(m[3])
 			if err != nil {
 				continue
 			}
 
 			refs = append(refs, IssueRef{
-				Owner:  m[2],
-				Repo:   m[3],
+				Owner:  m[1],
+				Repo:   m[2],
 				Number: num,
 				Raw:    m[0],
 			})

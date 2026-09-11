@@ -27,10 +27,10 @@ type UnblockAction struct {
 
 // BlockedSummary describes an issue that remains blocked by open dependencies.
 type BlockedSummary struct {
-	Repo            string   `json:"repo"`
-	IssueNumber     int      `json:"issue_number"`
-	PendingPrereqs  []string `json:"pending_prereqs"`
-	PendingBoxes    []string `json:"pending_boxes"`
+	Repo           string   `json:"repo"`
+	IssueNumber    int      `json:"issue_number"`
+	PendingPrereqs []string `json:"pending_prereqs"`
+	PendingBoxes   []string `json:"pending_boxes"`
 }
 
 // ReconciliationReport records the result of multi-repo dependency reconciliation.
@@ -236,6 +236,20 @@ func (e *ReconcileEngine) resolveTargetState(repo string, number int) string {
 	if repoStates, ok := e.states[repo]; ok {
 		if state, sOk := repoStates[number]; sOk {
 			return state
+		}
+	}
+	if !strings.Contains(repo, "/") && e.defaultOwner != "" {
+		if repoStates, ok := e.states[e.defaultOwner+"/"+repo]; ok {
+			if state, sOk := repoStates[number]; sOk {
+				return state
+			}
+		}
+	}
+	for r, repoStates := range e.states {
+		if strings.HasSuffix(r, "/"+repo) {
+			if state, sOk := repoStates[number]; sOk {
+				return state
+			}
 		}
 	}
 	return "open"

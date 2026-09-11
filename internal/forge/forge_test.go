@@ -33,17 +33,21 @@ func TestIssueDependencyParsing_Positive(t *testing.T) {
 Resolves core architecture.
 Depends-On: cordanaLLM/praetor#42
 Some other context.
+Depends-On: sveltesentio#232
 Depends-On: #15
 `
 	refs := ParseIssueDependencies(body)
-	if len(refs) != 2 {
-		t.Fatalf("expected 2 dependency refs, got %d", len(refs))
+	if len(refs) != 3 {
+		t.Fatalf("expected 3 dependency refs, got %d", len(refs))
 	}
 	if refs[0].Owner != "cordanaLLM" || refs[0].Repo != "praetor" || refs[0].Number != 42 {
 		t.Errorf("ref 0 mismatch: %+v", refs[0])
 	}
-	if refs[1].Number != 15 || refs[1].Owner != "" {
+	if refs[1].Owner != "" || refs[1].Repo != "sveltesentio" || refs[1].Number != 232 {
 		t.Errorf("ref 1 mismatch: %+v", refs[1])
+	}
+	if refs[2].Number != 15 || refs[2].Owner != "" || refs[2].Repo != "" {
+		t.Errorf("ref 2 mismatch: %+v", refs[2])
 	}
 }
 

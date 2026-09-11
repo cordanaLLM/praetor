@@ -1,5 +1,9 @@
 {
   "mcpServers": {
+    "praetor": {
+      "command": "./bin/praetor-mcp",
+      "args": ["-transport=stdio"]
+    },
     "standards": {
       "command": "./bin/standards-mcp",
       "args": ["-transport=stdio"]
