@@ -48,6 +48,8 @@ type Forge interface {
 	PostStatusCheck(ctx context.Context, commitSHA string, check CheckRun) error
 	CreatePullRequest(ctx context.Context, req PRRequest) (*PRResponse, error)
 	CreateIssue(ctx context.Context, spec IssueSpec) (*IssueResponse, error)
+	ListIssues(ctx context.Context, state string) ([]IssueSpec, error)
+	UpdateIssue(ctx context.Context, number int, labels []string, state string) error
 }
 
 // NewForge returns the appropriate forge implementation based on provider identifier.

@@ -5,9 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/needs"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -225,6 +229,9 @@ func runNeedsEpic(ctx context.Context, args []string) error {
 	path := fs.String("path", ".", "Target repository path")
 	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Target framework repository path")
 	output := fs.String("output", "", "Optional markdown file path to write pre-migration epic")
+	publish := fs.Bool("publish", false, "Publish pre-migration parent epic and child tasks to remote forge")
+	token := fs.String("token", "", "Forge API token (default: GITHUB_TOKEN or gh auth token)")
+	endpoint := fs.String("endpoint", "", "Forge API endpoint (default: https://api.github.com)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -239,8 +246,86 @@ func runNeedsEpic(ctx context.Context, args []string) error {
 			return fmt.Errorf("failed to write epic markdown: %w", err)
 		}
 		fmt.Printf("[PASS] Pre-migration epic written to %s\n", *output)
-	} else {
+	} else if !*publish {
 		fmt.Println(epic.ChecklistMarkdown)
 	}
+
+	if *publish {
+		return publishEpicToForge(ctx, *path, *token, *endpoint, epic)
+	}
 	return nil
+}
+
+func publishEpicToForge(ctx context.Context, path, token, endpoint string, epic *needs.PreMigrationEpic) error {
+	tok := resolveForgeAuthToken(ctx, token)
+	if tok == "" {
+		return fmt.Errorf("epic publishing requires GITHUB_TOKEN, GH_TOKEN, or an authenticated 'gh' CLI session")
+	}
+
+	owner, repo, err := resolveRepoCoordinates(path)
+	if err != nil {
+		return fmt.Errorf("failed resolving repository coordinates for %s: %w", path, err)
+	}
+
+	ghDriver := forge.NewGitHubDriver(tok, endpoint)
+	ghDriver.SetRepository(owner, repo)
+
+	fmt.Printf("[INFO] Publishing Pre-Migration Epic to %s/%s...\n", owner, repo)
+	parentRes, childResults, err := needs.PublishPreMigrationEpic(ctx, ghDriver, epic)
+	if err != nil {
+		return fmt.Errorf("failed to publish epic to %s/%s: %w", owner, repo, err)
+	}
+
+	fmt.Printf("[PASS] Parent Epic created: %s#%d (%s)\n", owner+"/"+repo, parentRes.Number, parentRes.URL)
+	for i, c := range childResults {
+		fmt.Printf("       Task %d/%d: %s#%d (%s)\n", i+1, len(childResults), owner+"/"+repo, c.Number, c.URL)
+	}
+	return nil
+}
+
+func resolveForgeAuthToken(ctx context.Context, explicitToken string) string {
+	if explicitToken != "" {
+		return explicitToken
+	}
+	if tok := os.Getenv("GITHUB_TOKEN"); tok != "" {
+		return tok
+	}
+	if tok := os.Getenv("GH_TOKEN"); tok != "" {
+		return tok
+	}
+	cmd := exec.CommandContext(ctx, "gh", "auth", "token")
+	out, err := cmd.Output()
+	if err == nil {
+		return strings.TrimSpace(string(out))
+	}
+	return ""
+}
+
+func resolveRepoCoordinates(path string) (string, string, error) {
+	manifestPath := filepath.Join(path, ".standards.yaml")
+	if util.FileExists(manifestPath) {
+		m, err := config.LoadManifest(manifestPath)
+		if err == nil && m.Repository.Owner != "" && m.Repository.Name != "" {
+			return m.Repository.Owner, m.Repository.Name, nil
+		}
+	}
+
+	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
+	out, err := cmd.Output()
+	if err == nil {
+		cleanURL := strings.TrimSpace(string(out))
+		cleanURL = strings.TrimSuffix(cleanURL, ".git")
+		parts := strings.Split(cleanURL, "/")
+		if len(parts) >= 2 {
+			owner := parts[len(parts)-2]
+			if colonIdx := strings.LastIndex(owner, ":"); colonIdx != -1 {
+				owner = owner[colonIdx+1:]
+			}
+			repo := parts[len(parts)-1]
+			return owner, repo, nil
+		}
+	}
+
+	base := filepath.Base(filepath.Clean(path))
+	return "cordanaLLM", base, nil
 }

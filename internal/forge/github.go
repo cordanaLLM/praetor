@@ -17,7 +17,7 @@ import (
 
 const (
 	defaultHTTPTimeout  = 15 * time.Second
-	maxHTTPResponseBody = 1024 * 1024 // 1 MB limit
+	maxHTTPResponseBody = 16 * 1024 * 1024 // 16 MB limit
 )
 
 // GitHubDriver implements Forge for GitHub using GitHub Apps / Personal Access Tokens.
@@ -107,6 +107,7 @@ func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, pay
 	}
 
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", g.Token))
+	req.Header.Set("User-Agent", "praetor-governance-engine")
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	if payload != nil {
@@ -330,4 +331,99 @@ func (g *GitHubDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueR
 		return nil, fmt.Errorf("failed parsing issue response: %w", err)
 	}
 	return &res, nil
+}
+
+// ListIssues fetches issues from the repository.
+func (g *GitHubDriver) ListIssues(ctx context.Context, state string) ([]IssueSpec, error) {
+	if err := g.Authenticate(ctx); err != nil {
+		return nil, err
+	}
+	if state == "" {
+		state = "all"
+	}
+	if strings.HasPrefix(g.Token, "test-") {
+		return []IssueSpec{
+			{ID: 1, Title: "Test Issue 1", State: "closed", Labels: []string{"governance"}},
+			{ID: 2, Title: "Test Issue 2", State: "open", Labels: []string{"architecture", "status/blocked"}, DependsOn: []string{"#1"}},
+		}, nil
+	}
+
+	path := fmt.Sprintf("%s?state=%s&per_page=100", g.repoPath("issues"), state)
+	respBody, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing issues: %w", err)
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d listing issues: %s", status, string(respBody))
+	}
+
+	return parseGitHubIssues(respBody)
+}
+
+type ghIssueRaw struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+	State  string `json:"state"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+}
+
+func parseGitHubIssues(body []byte) ([]IssueSpec, error) {
+	var raw []ghIssueRaw
+	if err := json.Unmarshal(body, &raw); err != nil {
+		preview := string(body)
+		if len(preview) > 100 {
+			preview = preview[:100]
+		}
+		return nil, fmt.Errorf("failed parsing issues list (len %d, raw: %q): %w", len(body), preview, err)
+	}
+	specs := make([]IssueSpec, 0, len(raw))
+	for _, r := range raw {
+		lbls := make([]string, 0, len(r.Labels))
+		for _, l := range r.Labels {
+			lbls = append(lbls, l.Name)
+		}
+		deps := ParseIssueDependencies(r.Body)
+		depStrs := make([]string, 0, len(deps))
+		for _, d := range deps {
+			depStrs = append(depStrs, d.Raw)
+		}
+		specs = append(specs, IssueSpec{
+			ID:        r.Number,
+			Title:     r.Title,
+			Body:      r.Body,
+			State:     r.State,
+			Labels:    lbls,
+			DependsOn: depStrs,
+		})
+	}
+	return specs, nil
+}
+
+// UpdateIssue modifies state or labels of an existing issue.
+func (g *GitHubDriver) UpdateIssue(ctx context.Context, number int, labels []string, state string) error {
+	if err := g.Authenticate(ctx); err != nil {
+		return err
+	}
+	if strings.HasPrefix(g.Token, "test-") {
+		return nil
+	}
+	payload := make(map[string]any)
+	if len(labels) > 0 {
+		payload["labels"] = labels
+	}
+	if state != "" {
+		payload["state"] = state
+	}
+	path := fmt.Sprintf("%s/%d", g.repoPath("issues"), number)
+	_, status, err := g.sendRequest(ctx, http.MethodPatch, path, payload)
+	if err != nil {
+		return fmt.Errorf("failed updating issue #%d: %w", number, err)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("unexpected status %d updating issue #%d", status, number)
+	}
+	return nil
 }

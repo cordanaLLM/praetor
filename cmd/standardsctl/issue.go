@@ -35,39 +35,106 @@ func runIssue(args []string) error {
 func printIssueUsage() {
 	fmt.Println("Usage: standardsctl issue <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  reconcile [--owner=cordanaLLM] [--dry-run] Reconcile cross-repo issue dependencies and tasklists")
+	fmt.Println("  reconcile [--repos=...] [--owner=cordanaLLM] [--dry-run] Reconcile cross-repo issue dependencies and tasklists")
 }
 
 func runIssueReconcile(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("issue reconcile", flag.ContinueOnError)
 	owner := fs.String("owner", "cordanaLLM", "Default organization owner")
+	reposFlag := fs.String("repos", "golusoris/golusoris,golusoris/sveltesentio,cordanaLLM/praetor", "Comma-separated repositories to reconcile")
 	dryRun := fs.Bool("dry-run", true, "Simulate dependency resolution without applying changes")
+	tokenFlag := fs.String("token", "", "Forge API token (default: GITHUB_TOKEN or gh auth token)")
+	endpoint := fs.String("endpoint", "", "Forge API endpoint (default: https://api.github.com)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
+	tok := resolveForgeAuthToken(ctx, *tokenFlag)
 	engine := forge.NewReconcileEngine(*owner)
-	sampleRepo := *owner + "/praetor"
-	engine.TrackIssue(sampleRepo, forge.IssueSpec{
-		ID:     1,
-		Title:  "Governance Baseline Foundation",
-		State:  "closed",
-		Labels: []string{"governance", "closed"},
-	})
-	engine.TrackIssue(sampleRepo, forge.IssueSpec{
-		ID:        2,
-		Title:     "Decoupled Fleet Architecture",
-		State:     "open",
-		Labels:    []string{"architecture", "status/blocked"},
-		DependsOn: []string{fmt.Sprintf("%s#1", sampleRepo)},
-	})
+	targetRepos := parseTargetRepos(*reposFlag, *owner)
+
+	if err := loadFleetIssues(ctx, tok, *endpoint, targetRepos, engine); err != nil {
+		return fmt.Errorf("failed loading fleet issues: %w", err)
+	}
 
 	rep, err := engine.Reconcile(ctx)
 	if err != nil {
 		return fmt.Errorf("issue reconciliation failed: %w", err)
 	}
 
-	fmt.Printf("=== Cross-Repo Dependency Reconciliation: %s ===\n", *owner)
+	printReconciliationSummary(*owner, rep, *dryRun)
+
+	if !*dryRun && tok != "" {
+		return applyUnblockTransitions(ctx, tok, *endpoint, rep.UnblockedIssues)
+	}
+	return nil
+}
+
+func parseTargetRepos(reposFlag, defaultOwner string) []string {
+	parts := strings.Split(reposFlag, ",")
+	res := make([]string, 0, len(parts))
+	for _, p := range parts {
+		clean := strings.TrimSpace(p)
+		if clean == "" {
+			continue
+		}
+		if !strings.Contains(clean, "/") {
+			clean = defaultOwner + "/" + clean
+		}
+		res = append(res, clean)
+	}
+	return res
+}
+
+func loadFleetIssues(ctx context.Context, token, endpoint string, repos []string, engine *forge.ReconcileEngine) error {
+	for _, r := range repos {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		parts := strings.SplitN(r, "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		ghDriver := forge.NewGitHubDriver(token, endpoint)
+		ghDriver.SetRepository(parts[0], parts[1])
+
+		issues, err := ghDriver.ListIssues(ctx, "all")
+		if err != nil {
+			// Non-fatal if offline or unauthenticated, proceed with best-effort
+			fmt.Printf("[WARN] Could not fetch issues for %s: %v\n", r, err)
+			continue
+		}
+		for _, issue := range issues {
+			engine.TrackIssue(r, issue)
+		}
+	}
+	return nil
+}
+
+func applyUnblockTransitions(ctx context.Context, token, endpoint string, unblocked []forge.UnblockAction) error {
+	for _, u := range unblocked {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		parts := strings.SplitN(u.Repo, "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		ghDriver := forge.NewGitHubDriver(token, endpoint)
+		ghDriver.SetRepository(parts[0], parts[1])
+
+		newLabels := []string{"status/ready-for-work"}
+		if err := ghDriver.UpdateIssue(ctx, u.IssueNumber, newLabels, ""); err != nil {
+			fmt.Printf("[WARN] Failed updating issue %s#%d: %v\n", u.Repo, u.IssueNumber, err)
+		} else {
+			fmt.Printf("[APPLIED] %s#%d transitioned to status/ready-for-work\n", u.Repo, u.IssueNumber)
+		}
+	}
+	return nil
+}
+
+func printReconciliationSummary(owner string, rep *forge.ReconciliationReport, dryRun bool) {
+	fmt.Printf("=== Cross-Repo Dependency Reconciliation: %s ===\n", owner)
 	fmt.Printf("Evaluated Issues: %d | Unblocked: %d | Still Blocked: %d\n\n",
 		rep.EvaluatedCount, len(rep.UnblockedIssues), len(rep.StillBlocked))
 
@@ -81,11 +148,9 @@ func runIssueReconcile(ctx context.Context, args []string) error {
 			blocked.Repo, blocked.IssueNumber, strings.Join(blocked.PendingPrereqs, ", "))
 	}
 
-	if *dryRun {
+	if dryRun {
 		fmt.Println("\n[INFO] Dry-run complete. Pass --dry-run=false to persist status transitions.")
 	} else {
 		fmt.Println("\n[PASS] Status transitions successfully applied across forge issue trackers.")
 	}
-
-	return nil
 }

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
 func TestGeneratePreMigrationEpic_Positive(t *testing.T) {
@@ -28,8 +30,8 @@ require (
 		t.Fatalf("epic generation failed: %v", err)
 	}
 
-	if epic.RepoName != "github.com/test/epic-target" {
-		t.Errorf("expected repo name github.com/test/epic-target, got %s", epic.RepoName)
+	if epic.RepoName != "test/epic-target" {
+		t.Errorf("expected repo name test/epic-target, got %s", epic.RepoName)
 	}
 	if len(epic.ChildIssues) != 5 {
 		t.Fatalf("expected 5 child tasks, got %d", len(epic.ChildIssues))
@@ -66,9 +68,9 @@ func TestWriteEpicMarkdown_Boundary(t *testing.T) {
 	tempFile := filepath.Join(t.TempDir(), "epics", "TARGET_EPIC.md")
 
 	epic := &PreMigrationEpic{
-		RepoName:        "sample-repo",
-		TargetFramework: "github.com/golusoris/golusoris",
-		ReadinessScore:  75.0,
+		RepoName:          "sample-repo",
+		TargetFramework:   "github.com/golusoris/golusoris",
+		ReadinessScore:    75.0,
 		ChecklistMarkdown: "# Sample Epic Checklist",
 		ChildIssues: createChildTasks("sample-repo", &RepoNeeds{
 			Readiness: ReadinessMetrics{Score: 75.0},
@@ -85,5 +87,45 @@ func TestWriteEpicMarkdown_Boundary(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "[TASK 1/5]") {
 		t.Errorf("missing [TASK 1/5] in markdown output: %s", string(data))
+	}
+}
+
+func TestPublishPreMigrationEpic_Positive(t *testing.T) {
+	ctx := context.Background()
+	gh := forge.NewGitHubDriver("test-token", "https://api.github.com/repos/test/repo")
+
+	epic := &PreMigrationEpic{
+		RepoName: "test/repo",
+		ParentEpic: forge.IssueSpec{
+			Title: "[EPIC] Pre-Migration",
+			Body:  "Checklist",
+		},
+		ChildIssues: []forge.IssueSpec{
+			{Title: "[TASK 1/5] Invariants", Body: "Task body"},
+			{Title: "[TASK 2/5] Decoupling", Body: "Task body"},
+		},
+	}
+
+	parentRes, childResults, err := PublishPreMigrationEpic(ctx, gh, epic)
+	if err != nil {
+		t.Fatalf("failed to publish epic: %v", err)
+	}
+	if parentRes.Number != 1 {
+		t.Errorf("expected parent issue number 1, got %d", parentRes.Number)
+	}
+	if len(childResults) != 2 {
+		t.Fatalf("expected 2 child results, got %d", len(childResults))
+	}
+}
+
+func TestPublishPreMigrationEpic_Negative(t *testing.T) {
+	ctx := context.Background()
+	if _, _, err := PublishPreMigrationEpic(ctx, nil, nil); err == nil {
+		t.Fatal("expected error for nil forge and nil epic")
+	}
+
+	gh := forge.NewGitHubDriver("test-token", "")
+	if _, _, err := PublishPreMigrationEpic(ctx, gh, nil); err == nil {
+		t.Fatal("expected error for nil epic")
 	}
 }

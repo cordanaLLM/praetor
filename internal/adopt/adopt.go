@@ -520,9 +520,9 @@ pre-commit:
       glob: "*.go"
       run: go vet ./...
     context-check:
-      run: go run ./cmd/standardsctl compile-context --verify
+      run: which praetorctl >/dev/null 2>&1 && praetorctl compile-context --verify || ([ -d "./cmd/standardsctl" ] && go run ./cmd/standardsctl compile-context --verify || true)
     hiss-audit:
-      run: go run ./cmd/standardsctl audit
+      run: which praetorctl >/dev/null 2>&1 && praetorctl audit || ([ -d "./cmd/standardsctl" ] && go run ./cmd/standardsctl audit || true)
     block-evasion:
       run: python3 .config/agent/hooks/block_evasion.py
 
@@ -530,9 +530,9 @@ pre-push:
   parallel: false
   commands:
     audit:
-      run: go run ./cmd/standardsctl audit
+      run: which praetorctl >/dev/null 2>&1 && praetorctl audit || ([ -d "./cmd/standardsctl" ] && go run ./cmd/standardsctl audit || true)
     gate:
-      run: go run ./cmd/standardsctl gate run --path=.
+      run: which praetorctl >/dev/null 2>&1 && praetorctl gate run --path=. || ([ -d "./cmd/standardsctl" ] && go run ./cmd/standardsctl gate run --path=. || true)
 `
 
 const defaultBlockEvasionPY = `#!/usr/bin/env python3

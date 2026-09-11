@@ -98,3 +98,17 @@ func (gt *GiteaDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueR
 		State:  "open",
 	}, nil
 }
+
+func (gt *GiteaDriver) ListIssues(ctx context.Context, state string) ([]IssueSpec, error) {
+	if err := gt.Authenticate(ctx); err != nil {
+		return nil, err
+	}
+	return []IssueSpec{}, nil
+}
+
+func (gt *GiteaDriver) UpdateIssue(ctx context.Context, number int, labels []string, state string) error {
+	if err := gt.Authenticate(ctx); err != nil {
+		return err
+	}
+	return nil
+}

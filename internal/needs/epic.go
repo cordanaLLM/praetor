@@ -51,6 +51,7 @@ func buildEpicStructure(repoPath string, needs *RepoNeeds, plan *MigrationPlan) 
 	if repoName == "" || repoName == "unknown" {
 		repoName = filepath.Base(filepath.Clean(repoPath))
 	}
+	repoName = strings.TrimPrefix(repoName, "github.com/")
 
 	tasks := createChildTasks(repoName, needs, plan)
 	checklistMD := renderEpicChecklistMarkdown(repoName, needs, plan, tasks)
@@ -135,6 +136,40 @@ func renderEpicChecklistMarkdown(repoName string, needs *RepoNeeds, plan *Migrat
 	sb.WriteString("1. All changes must pass `make verify-all` with zero warnings.\n")
 	sb.WriteString("2. Direct commits to `main` are prohibited; changes must traverse `standardsctl gate run`.\n")
 	return sb.String()
+}
+
+// PublishPreMigrationEpic synchronizes the pre-migration parent epic and decomposed tasks to the target forge.
+func PublishPreMigrationEpic(ctx context.Context, f forge.Forge, epic *PreMigrationEpic) (*forge.IssueResponse, []*forge.IssueResponse, error) {
+	if f == nil {
+		return nil, nil, fmt.Errorf("forge driver cannot be nil")
+	}
+	if epic == nil {
+		return nil, nil, fmt.Errorf("epic cannot be nil")
+	}
+	if ctx.Err() != nil {
+		return nil, nil, ctx.Err()
+	}
+
+	parentRes, err := f.CreateIssue(ctx, epic.ParentEpic)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create parent epic issue: %w", err)
+	}
+
+	childResults := make([]*forge.IssueResponse, 0, len(epic.ChildIssues))
+	for i, child := range epic.ChildIssues {
+		if ctx.Err() != nil {
+			return parentRes, childResults, ctx.Err()
+		}
+		taskSpec := child
+		taskSpec.Body = fmt.Sprintf("%s\n\n---\n*Part of Epic #%d (%s)*\n", taskSpec.Body, parentRes.Number, parentRes.URL)
+		res, err := f.CreateIssue(ctx, taskSpec)
+		if err != nil {
+			return parentRes, childResults, fmt.Errorf("failed to create child task %d: %w", i+1, err)
+		}
+		childResults = append(childResults, res)
+	}
+
+	return parentRes, childResults, nil
 }
 
 // WriteEpicMarkdown exports the pre-migration epic to the specified file path.

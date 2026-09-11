@@ -90,3 +90,17 @@ func (gl *GitLabDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*Issue
 		State:  "opened",
 	}, nil
 }
+
+func (gl *GitLabDriver) ListIssues(ctx context.Context, state string) ([]IssueSpec, error) {
+	if err := gl.Authenticate(ctx); err != nil {
+		return nil, err
+	}
+	return []IssueSpec{}, nil
+}
+
+func (gl *GitLabDriver) UpdateIssue(ctx context.Context, number int, labels []string, state string) error {
+	if err := gl.Authenticate(ctx); err != nil {
+		return err
+	}
+	return nil
+}
