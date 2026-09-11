@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
 	"testing"
@@ -124,5 +125,129 @@ func TestDispatchCommand_ForgeSubcommands(t *testing.T) {
 	}
 	if err := dispatchCommand("forge", []string{"validate-pr", badPRFile}); err == nil {
 		t.Fatal("expected error on non-compliant PR validation")
+	}
+}
+
+func TestDispatchCommand_AuditAndBaseline(t *testing.T) {
+	// Audit pass with real files
+	if err := dispatchCommand("audit", []string{
+		"--config=../../.standards.yaml",
+		"--baseline=../../.standards-baseline.json",
+		"--agents=../../AGENTS.md",
+	}); err != nil {
+		t.Fatalf("audit failed: %v", err)
+	}
+
+	// Audit fail with nonexistent manifest
+	if err := dispatchCommand("audit", []string{"--config=nonexistent.yaml"}); err == nil {
+		t.Fatal("expected audit to fail with nonexistent config")
+	}
+
+	// Baseline inspect
+	if err := dispatchCommand("baseline", []string{"--file=../../.standards-baseline.json"}); err != nil {
+		t.Fatalf("baseline inspect failed: %v", err)
+	}
+}
+
+func TestDispatchCommand_ContextAndDevcontainer(t *testing.T) {
+	// Compile-context verify
+	if err := dispatchCommand("compile-context", []string{"--verify", "--source=../../AGENTS.md", "--target-dir=../.."}); err != nil {
+		t.Fatalf("compile-context verify failed: %v", err)
+	}
+
+	// Devcontainer verify
+	if err := dispatchCommand("devcontainer", []string{"--verify", "--config=../../.standards.yaml", "--output=../../.devcontainer/devcontainer.json"}); err != nil {
+		t.Fatalf("devcontainer verify failed: %v", err)
+	}
+
+	// Devcontainer help
+	if err := dispatchCommand("devcontainer", []string{"-h"}); err != nil && err != flag.ErrHelp {
+		t.Fatalf("devcontainer -h failed: %v", err)
+	}
+}
+
+func TestDispatchCommand_EditorsAndFlavors(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Editors synthesize in temp dir
+	if err := dispatchCommand("editors", []string{"generate", "--path=" + tmpDir}); err != nil {
+		t.Fatalf("editors failed: %v", err)
+	}
+
+	// Flavors list and help
+	if err := dispatchCommand("flavors", []string{"-h"}); err != nil && err != flag.ErrHelp {
+		t.Fatalf("flavors -h failed: %v", err)
+	}
+	if err := dispatchCommand("flavors", []string{"--config=../../.config/flavors.yaml", "list"}); err != nil {
+		t.Fatalf("flavors list failed: %v", err)
+	}
+}
+
+func TestDispatchCommand_ModelsAndHarvest(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Models list with existing routing config
+	if err := dispatchCommand("models", []string{"--config=../../.config/models/routing.yaml", "list"}); err != nil {
+		t.Fatalf("models list failed: %v", err)
+	}
+
+	// Harvest help and dry run on empty dev dir
+	if err := dispatchCommand("harvest", []string{"-h"}); err != nil && err != flag.ErrHelp {
+		t.Fatalf("harvest -h failed: %v", err)
+	}
+	if err := dispatchCommand("harvest", []string{"fleet", "--dev-dir=" + tmpDir}); err != nil {
+		t.Fatalf("harvest fleet failed: %v", err)
+	}
+}
+
+func TestDispatchCommand_AdoptPlanSyncInit(t *testing.T) {
+	// Adopt help
+	if err := dispatchCommand("adopt", []string{"-h"}); err != nil && err != flag.ErrHelp {
+		t.Fatalf("adopt -h failed: %v", err)
+	}
+
+	// Plan and Sync help
+	if err := dispatchCommand("plan", []string{"-h"}); err != nil && err != flag.ErrHelp {
+		t.Fatalf("plan -h failed: %v", err)
+	}
+	if err := dispatchCommand("sync", []string{"-h"}); err != nil && err != flag.ErrHelp {
+		t.Fatalf("sync -h failed: %v", err)
+	}
+
+	// Init help
+	if err := dispatchCommand("init", []string{"-h"}); err != nil && err != flag.ErrHelp {
+		t.Fatalf("init -h failed: %v", err)
+	}
+}
+
+func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Paperclip help
+	if err := dispatchCommand("paperclip", []string{"-h"}); err != nil && err != flag.ErrHelp {
+		t.Fatalf("paperclip -h failed: %v", err)
+	}
+
+	// Paperclip harness synthesis
+	if err := dispatchCommand("paperclip", []string{"harness", "--path=" + tmpDir}); err != nil {
+		t.Fatalf("paperclip harness failed: %v", err)
+	}
+
+	// Paperclip disposition
+	dispArgs := []string{
+		"disposition",
+		"--issue=ISS-42",
+		"--status=in_review",
+		"--output=" + filepath.Join(tmpDir, "disposition.json"),
+		"--note=Completed task",
+		"--proof=receipt:ed25519:abcdef1234567890",
+	}
+	if err := dispatchCommand("paperclip", dispArgs); err != nil {
+		t.Fatalf("paperclip disposition failed: %v", err)
+	}
+
+	// Adopt dry-run
+	if err := dispatchCommand("adopt", []string{"--dry-run", "--path=" + tmpDir, "--profile=framework"}); err != nil {
+		t.Fatalf("adopt dry-run failed: %v", err)
 	}
 }

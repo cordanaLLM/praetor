@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/cordanaLLM/standards/internal/baseline"
@@ -51,7 +52,8 @@ func auditManifestAndLockfile(manifestPath string) (*config.Manifest, error) {
 	fmt.Printf("[PASS] Manifest verified: %s/%s (Version %d)\n", manifest.Repository.Owner, manifest.Repository.Name, manifest.Version)
 	fmt.Printf("       Profiles: %v | Facets: %v\n", manifest.Profiles, manifest.Facets)
 
-	if _, err := os.Stat(".standards.lock"); os.IsNotExist(err) {
+	lockPath := filepath.Join(filepath.Dir(manifestPath), ".standards.lock")
+	if _, err := os.Stat(lockPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("[FAIL] .standards.lock is missing")
 	}
 	fmt.Println("[PASS] SemVer lockfile .standards.lock verified.")
@@ -65,7 +67,8 @@ func auditBaselineAndInvariants(baselinePath string) error {
 	}
 
 	ctx := context.Background()
-	scanRep, err := hiss.Scan(ctx, ".", hiss.ScanOptions{})
+	root := filepath.Dir(baselinePath)
+	scanRep, err := hiss.Scan(ctx, root, hiss.ScanOptions{})
 	if err != nil {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}
@@ -95,17 +98,19 @@ func auditBaselineAndInvariants(baselinePath string) error {
 }
 
 func auditAgentContextAndDevcontainer(manifest *config.Manifest, agentsPath string) error {
+	root := filepath.Dir(agentsPath)
 	tr := compiler.NewTranspiler()
-	if err := tr.Verify(agentsPath, "."); err != nil {
+	if err := tr.Verify(agentsPath, root); err != nil {
 		return fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
 	}
 	fmt.Println("[PASS] Cross-agent context targets (CLAUDE.md, Cursor, Copilot, Windsurf, Gemini) verified in sync.")
 
-	if _, err := os.Stat(".devcontainer/devcontainer.json"); err == nil {
+	dcPath := filepath.Join(root, ".devcontainer", "devcontainer.json")
+	if _, err := os.Stat(dcPath); err == nil {
 		dc, err := devcontainer.Synthesize(manifest)
 		if err == nil {
 			ctx := context.Background()
-			if err := devcontainer.Verify(ctx, ".devcontainer/devcontainer.json", dc); err == nil {
+			if err := devcontainer.Verify(ctx, dcPath, dc); err == nil {
 				fmt.Println("[PASS] DevContainer configuration verified in sync with declared standards.")
 			}
 		}

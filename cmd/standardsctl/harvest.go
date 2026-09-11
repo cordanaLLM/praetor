@@ -23,6 +23,9 @@ func runHarvest(args []string) error {
 	homeDir, _ := os.UserHomeDir()
 
 	switch args[0] {
+	case "help", "-h", "--help":
+		printHarvestUsage()
+		return nil
 	case "workstation":
 		return runHarvestWorkstation(ctx, homeDir, args[1:])
 	case "skills":

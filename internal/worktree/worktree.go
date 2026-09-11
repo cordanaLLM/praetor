@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,9 +30,8 @@ var (
 	ErrInvalidTaskID     = errors.New("taskID contains invalid characters")
 	ErrEmptyBaseBranch   = errors.New("baseBranch cannot be empty")
 	ErrInvalidBaseBranch = errors.New("baseBranch contains invalid characters")
-	ErrLimitExceeded     = errors.New("output limit exceeded")
-
-	validTaskIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	ErrLimitExceeded     = errors.New("line count exceeds limit")
+	validTaskIDRegex     = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 )
 
 // Worktree represents an ephemeral isolated git worktree workspace.
@@ -59,6 +59,7 @@ type WorktreeInfo struct {
 // Manager manages ephemeral git worktrees under .standards/worktrees/<task-id>.
 type Manager struct {
 	rootDir string
+	mu      sync.Mutex
 }
 
 // NewManager constructs a Manager instance rooted at the specified repository directory.
@@ -93,6 +94,9 @@ func (m *Manager) Create(ctx context.Context, taskID, baseBranch string) (*Workt
 	if m == nil {
 		return nil, ErrNilManager
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if err := validateTaskID(taskID); err != nil {
 		return nil, fmt.Errorf("invalid taskID for create: %w", err)
 	}
@@ -125,6 +129,9 @@ func (m *Manager) Remove(ctx context.Context, taskID string, force bool) error {
 	if m == nil {
 		return ErrNilManager
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if err := validateTaskID(taskID); err != nil {
 		return fmt.Errorf("invalid taskID for remove: %w", err)
 	}
@@ -155,6 +162,8 @@ func (m *Manager) List(ctx context.Context) ([]WorktreeInfo, error) {
 	if m == nil {
 		return nil, ErrNilManager
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	out, err := m.runGit(ctx, "worktree", "list", "--porcelain")
 	if err != nil {
@@ -169,6 +178,8 @@ func (m *Manager) Prune(ctx context.Context) error {
 	if m == nil {
 		return ErrNilManager
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if _, err := m.runGit(ctx, "worktree", "prune"); err != nil {
 		return fmt.Errorf("failed pruning worktrees: %w", err)

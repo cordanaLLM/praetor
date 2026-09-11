@@ -316,3 +316,68 @@ func TestServer_SSE_Transport(t *testing.T) {
 		t.Errorf("unexpected SSE initial payload: %s", msg)
 	}
 }
+
+func TestServer_ToolCalls_AuditAndCompileContext(t *testing.T) {
+	srv, err := NewServer("../..", "v1.0.0")
+	if err != nil {
+		t.Fatalf("server setup error: %v", err)
+	}
+	ctx := context.Background()
+
+	// Positive audit
+	auditP, _ := json.Marshal(map[string]any{
+		"name":      "standards_audit",
+		"arguments": map[string]any{},
+	})
+	res := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 30, Method: "tools/call", Params: auditP})
+	if res == nil || res.Error != nil {
+		t.Fatalf("standards_audit failed: %+v", res)
+	}
+
+	// Negative audit: invalid manifest path
+	badAuditP, _ := json.Marshal(map[string]any{
+		"name":      "standards_audit",
+		"arguments": map[string]any{"config_path": "nonexistent.yaml"},
+	})
+	resBad := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 31, Method: "tools/call", Params: badAuditP})
+	if resBad == nil || !resBad.Result.(*mcp.ToolResult).IsError {
+		t.Fatalf("expected error result for nonexistent manifest")
+	}
+
+	// Positive compile-context with verify_only
+	compileP, _ := json.Marshal(map[string]any{
+		"name":      "standards_compile_context",
+		"arguments": map[string]any{"verify_only": true},
+	})
+	resComp := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 32, Method: "tools/call", Params: compileP})
+	if resComp == nil || resComp.Error != nil {
+		t.Fatalf("standards_compile_context failed: %+v", resComp)
+	}
+}
+
+func TestServer_JSONRPC_NegativeCases(t *testing.T) {
+	srv, err := NewServer("../..", "v1.0.0")
+	if err != nil {
+		t.Fatalf("server setup error: %v", err)
+	}
+	ctx := context.Background()
+
+	// Unknown method
+	unkRes := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 40, Method: "unknown_method"})
+	if unkRes == nil || unkRes.Error == nil || unkRes.Error.Code != -32601 {
+		t.Fatalf("expected method not found error, got: %+v", unkRes)
+	}
+
+	// tools/call with malformed params JSON
+	malRes := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 41, Method: "tools/call", Params: []byte(`not-json`)})
+	if malRes == nil || malRes.Error == nil || malRes.Error.Code != -32602 {
+		t.Fatalf("expected invalid params error, got: %+v", malRes)
+	}
+
+	// tools/call with unregistered tool name
+	badToolP, _ := json.Marshal(map[string]any{"name": "nonexistent_tool"})
+	badRes := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 42, Method: "tools/call", Params: badToolP})
+	if badRes == nil || badRes.Error == nil || badRes.Error.Code != -32601 {
+		t.Fatalf("expected tool not found error (-32601), got: %+v", badRes)
+	}
+}
