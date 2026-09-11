@@ -161,7 +161,15 @@ func PublishPreMigrationEpic(ctx context.Context, f forge.Forge, epic *PreMigrat
 			return parentRes, childResults, ctx.Err()
 		}
 		taskSpec := child
-		taskSpec.Body = fmt.Sprintf("%s\n\n---\n*Part of Epic #%d (%s)*\n", taskSpec.Body, parentRes.Number, parentRes.URL)
+		if i > 0 && len(childResults) > 0 {
+			prevIssue := childResults[i-1]
+			taskSpec.DependsOn = []string{fmt.Sprintf("%s#%d", epic.RepoName, prevIssue.Number)}
+		}
+		body := taskSpec.Body
+		if len(taskSpec.DependsOn) > 0 {
+			body = fmt.Sprintf("%s\n\nDepends-On: %s", body, strings.Join(taskSpec.DependsOn, ", "))
+		}
+		taskSpec.Body = fmt.Sprintf("%s\n\n---\n*Part of Epic #%d (%s)*\n", body, parentRes.Number, parentRes.URL)
 		res, err := f.CreateIssue(ctx, taskSpec)
 		if err != nil {
 			return parentRes, childResults, fmt.Errorf("failed to create child task %d: %w", i+1, err)
