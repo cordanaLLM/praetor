@@ -29,6 +29,8 @@ func runState(args []string) error {
 		return runStateStatus(subArgs)
 	case "audit":
 		return runStateAudit(subArgs)
+	case "task":
+		return runStateTask(subArgs)
 	case "bug":
 		return runStateBug(subArgs)
 	case "question":
@@ -48,6 +50,7 @@ func printStateUsage() {
 	fmt.Println("  sync [dir] [--log=\"message\"]     Synchronize git & working state into STATE.md")
 	fmt.Println("  status [dir]                   Inspect active session state and pending items")
 	fmt.Println("  audit [dir]                    Audit .workingdir/ for required files and P0 blockers")
+	fmt.Println("  task [add|complete|list|archive] Manage active tasks in OPEN.md & BACKLOG.md")
 	fmt.Println("  bug [add|list|resolve] [args]  Manage bugs ledger (BUGS.md)")
 	fmt.Println("  question [add|list|decide]     Manage user questions and decisions (QUESTIONS.md)")
 }
@@ -111,6 +114,7 @@ func runStateStatus(args []string) error {
 	fmt.Printf("  Branch:            %s\n", snap.Branch)
 	fmt.Printf("  Head SHA:          %s\n", snap.HeadSHA)
 	fmt.Printf("  Working Tree:      %v (%d dirty)\n", snap.Clean, snap.DirtyCount)
+	fmt.Printf("  Tasks:             %d open, %d completed\n", snap.OpenTasks, snap.CompletedTasks)
 	fmt.Printf("  Open Bugs:         %d\n", snap.OpenBugs)
 	fmt.Printf("  Pending Questions: %d\n", snap.PendingQs)
 	fmt.Printf("  Last Synced:       %s\n", snap.LastUpdated.Format(time.RFC3339))
@@ -318,5 +322,102 @@ func runStateQuestionDecide(args []string) error {
 		return err
 	}
 	fmt.Printf("Recorded decision for question %s: %s\n", id, dec)
+	return nil
+}
+
+func runStateTask(args []string) error {
+	if len(args) == 0 {
+		return printTaskUsage()
+	}
+
+	action := args[0]
+	subArgs := args[1:]
+
+	switch action {
+	case "add":
+		return runTaskAdd(subArgs)
+	case "complete", "done":
+		return runTaskComplete(subArgs)
+	case "list":
+		return runTaskList(subArgs)
+	case "archive":
+		return runTaskArchive(subArgs)
+	default:
+		return fmt.Errorf("unknown task action: %s", action)
+	}
+}
+
+func printTaskUsage() error {
+	fmt.Println("Usage: praetorctl state task <action> [args]")
+	fmt.Println("\nActions:")
+	fmt.Println("  add <description> [--dir=.]     Add a pending task to OPEN.md")
+	fmt.Println("  complete <index|text> [--dir=.] Mark a task as completed in OPEN.md")
+	fmt.Println("  list [--dir=.]                  List all tasks from OPEN.md")
+	fmt.Println("  archive [--dir=.]               Move completed tasks to BACKLOG.md")
+	return nil
+}
+
+func runTaskAdd(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: praetorctl state task add <description> [--dir=.]")
+	}
+	desc := args[0]
+	dir := "."
+	if len(args) > 1 {
+		dir = args[1]
+	}
+	if err := state.AddTask(dir, desc); err != nil {
+		return err
+	}
+	fmt.Printf("[PASS] Task added to %s: %s\n", filepath.Join(dir, state.WorkingDirName, "OPEN.md"), desc)
+	return nil
+}
+
+func runTaskComplete(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: praetorctl state task complete <index|text> [--dir=.]")
+	}
+	selector := args[0]
+	dir := "."
+	if len(args) > 1 {
+		dir = args[1]
+	}
+	if err := state.CompleteTask(dir, selector); err != nil {
+		return err
+	}
+	fmt.Printf("[PASS] Task marked completed in %s: %s\n", filepath.Join(dir, state.WorkingDirName, "OPEN.md"), selector)
+	return nil
+}
+
+func runTaskList(args []string) error {
+	dir := "."
+	if len(args) > 0 {
+		dir = args[0]
+	}
+	tasks, err := state.ListTasks(dir)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("=== Tasks in %s: %d total ===\n", filepath.Join(dir, state.WorkingDirName, "OPEN.md"), len(tasks))
+	for _, t := range tasks {
+		status := "[ ]"
+		if t.Completed {
+			status = "[x]"
+		}
+		fmt.Printf("  %d. %s %s\n", t.Index, status, t.Description)
+	}
+	return nil
+}
+
+func runTaskArchive(args []string) error {
+	dir := "."
+	if len(args) > 0 {
+		dir = args[0]
+	}
+	count, err := state.ArchiveCompletedTasks(dir, "")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("[PASS] Archived %d completed tasks from OPEN.md to BACKLOG.md\n", count)
 	return nil
 }

@@ -109,3 +109,20 @@ func ResolveRepoIdentity(ctx context.Context, repoPath string) (owner, repo stri
 	}
 	return owner, repo, nil
 }
+
+// ResolveAuthToken resolves an authentication token from explicit string, environment variables, or gh CLI session.
+func ResolveAuthToken(explicitToken string) string {
+	if explicitToken != "" {
+		return explicitToken
+	}
+	if tok := os.Getenv("GITHUB_TOKEN"); tok != "" {
+		return tok
+	}
+	if tok := os.Getenv("GH_TOKEN"); tok != "" {
+		return tok
+	}
+	if out, err := RunCommand(context.Background(), "", "gh", "auth", "token"); err == nil {
+		return strings.TrimSpace(out)
+	}
+	return ""
+}

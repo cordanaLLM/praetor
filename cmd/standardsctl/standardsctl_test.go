@@ -403,3 +403,50 @@ func TestDispatchCommand_TopologySubcommands(t *testing.T) {
 		t.Fatal("expected error for invalid topology subcommand")
 	}
 }
+
+func TestDispatchCommand_MilestoneAndProject(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Milestone subcommands
+	if err := dispatchCommand("milestone", []string{}); err != nil {
+		t.Fatalf("milestone empty args failed: %v", err)
+	}
+	if err := dispatchCommand("milestone", []string{"-h"}); err != nil {
+		t.Fatalf("milestone -h failed: %v", err)
+	}
+	if err := dispatchCommand("milestone", []string{"create", "--title=TestMilestone", "--dir=" + tmpDir}); err != nil {
+		t.Fatalf("milestone create failed: %v", err)
+	}
+	if err := dispatchCommand("milestone", []string{"list", "--dir=" + tmpDir}); err != nil {
+		t.Fatalf("milestone list failed: %v", err)
+	}
+	if err := dispatchCommand("milestone", []string{"status", tmpDir}); err != nil {
+		t.Fatalf("milestone status failed: %v", err)
+	}
+	if err := dispatchCommand("milestone", []string{"close", "1", tmpDir}); err != nil {
+		t.Fatalf("milestone close failed: %v", err)
+	}
+	if err := dispatchCommand("milestone", []string{"invalid"}); err == nil {
+		t.Fatal("expected error for invalid milestone subcommand")
+	}
+
+	// Project subcommands
+	if err := dispatchCommand("project", []string{}); err != nil {
+		t.Fatalf("project empty args failed: %v", err)
+	}
+	if err := dispatchCommand("project", []string{"-h"}); err != nil {
+		t.Fatalf("project -h failed: %v", err)
+	}
+	if err := dispatchCommand("project", []string{"status", tmpDir}); err != nil {
+		t.Fatalf("project status failed: %v", err)
+	}
+	if err := dispatchCommand("project", []string{"add", "--dir=" + tmpDir, "1", "https://github.com/cordanaLLM/praetor/issues/1"}); err != nil {
+		t.Fatalf("project add failed: %v", err)
+	}
+	if err := dispatchCommand("project", []string{"list", "--dir=" + tmpDir}); err != nil {
+		t.Fatalf("project list failed: %v", err)
+	}
+	if err := dispatchCommand("project", []string{"invalid"}); err == nil {
+		t.Fatal("expected error for invalid project subcommand")
+	}
+}

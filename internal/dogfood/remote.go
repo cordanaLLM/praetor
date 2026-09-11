@@ -21,6 +21,9 @@ const (
 var PopularBenchmarks = []string{
 	"https://github.com/gin-gonic/gin",
 	"https://github.com/spf13/cobra",
+	"https://github.com/pallets/flask",
+	"https://github.com/sveltejs/template",
+	"https://github.com/google/googletest",
 }
 
 // RemoteAdoptionResult records adoption and HISS governance simulation for an external repository.
