@@ -130,3 +130,112 @@ func TestAuditFlavor_Boundary_EmptyDir(t *testing.T) {
 		t.Fatalf("unexpected score on empty dir: %f", report.Score)
 	}
 }
+
+func TestDetectFlavor_ExpandedArchetypes(t *testing.T) {
+	// 1. Rust systems detection
+	tmpRust := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpRust, "Cargo.toml"), []byte("[package]\nname = \"rg\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := flavor.DetectFlavor(tmpRust); got != "rust-systems" {
+		t.Fatalf("expected rust-systems, got %s", got)
+	}
+
+	// 2. TypeScript Node detection
+	tmpTS := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpTS, "package.json"), []byte("{\"name\": \"svc\"}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpTS, "tsconfig.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := flavor.DetectFlavor(tmpTS); got != "typescript-node" {
+		t.Fatalf("expected typescript-node, got %s", got)
+	}
+
+	// 3. JVM Service detection
+	tmpJVM := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpJVM, "pom.xml"), []byte("<project></project>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := flavor.DetectFlavor(tmpJVM); got != "jvm-service" {
+		t.Fatalf("expected jvm-service, got %s", got)
+	}
+
+	// 4. Mobile Flutter detection
+	tmpFlutter := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpFlutter, "pubspec.yaml"), []byte("name: app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := flavor.DetectFlavor(tmpFlutter); got != "mobile-flutter" {
+		t.Fatalf("expected mobile-flutter, got %s", got)
+	}
+}
+
+func TestListFlavors_CompleteRegistry(t *testing.T) {
+	flavors := flavor.List()
+	if len(flavors) < 11 {
+		t.Fatalf("expected at least 11 registered flavors, got %d", len(flavors))
+	}
+
+	expected := map[string]bool{
+		"go-service":         false,
+		"go-library":         false,
+		"native-gpu-systems": false,
+		"frontend-svelte":    false,
+		"python-ml":          false,
+		"infra-k8s":          false,
+		"agentic-autonomous": false,
+		"rust-systems":       false,
+		"typescript-node":    false,
+		"jvm-service":        false,
+		"mobile-flutter":     false,
+	}
+
+	for _, f := range flavors {
+		expected[f.Name()] = true
+		if f.Description() == "" {
+			t.Errorf("flavor %s has empty description", f.Name())
+		}
+		if f.HISSProfile() == "" {
+			t.Errorf("flavor %s has empty HISS profile", f.Name())
+		}
+		if len(f.RequiredTemplates()) == 0 {
+			t.Errorf("flavor %s has no required templates", f.Name())
+		}
+	}
+
+	for name, found := range expected {
+		if !found {
+			t.Errorf("expected flavor %s to be registered", name)
+		}
+	}
+}
+
+func TestApplyFlavor_NewArchetypes(t *testing.T) {
+	ctx := context.Background()
+	targets := []struct {
+		flavorName   string
+		expectedFile string
+	}{
+		{"rust-systems", "rustfmt.toml"},
+		{"typescript-node", "tsconfig.json"},
+		{"jvm-service", "checkstyle.xml"},
+		{"mobile-flutter", "analysis_options.yaml"},
+	}
+
+	for _, tc := range targets {
+		tmp := t.TempDir()
+		rep, err := flavor.ApplyFlavor(ctx, tmp, tc.flavorName, false)
+		if err != nil {
+			t.Fatalf("failed applying flavor %s: %v", tc.flavorName, err)
+		}
+		if rep.Flavor != tc.flavorName {
+			t.Fatalf("expected report flavor %s, got %s", tc.flavorName, rep.Flavor)
+		}
+		targetPath := filepath.Join(tmp, tc.expectedFile)
+		if _, err := os.Stat(targetPath); err != nil {
+			t.Fatalf("expected template %s to be created for flavor %s: %v", tc.expectedFile, tc.flavorName, err)
+		}
+	}
+}

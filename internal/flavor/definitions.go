@@ -12,6 +12,10 @@ func init() {
 	Register(&PythonMLFlavor{})
 	Register(&InfraK8sFlavor{})
 	Register(&AgenticAutonomousFlavor{})
+	Register(&RustSystemsFlavor{})
+	Register(&TypeScriptNodeFlavor{})
+	Register(&JVMServiceFlavor{})
+	Register(&MobileFlutterFlavor{})
 }
 
 // --- 1. Go Service Flavor ---
@@ -292,5 +296,166 @@ func (f *AgenticAutonomousFlavor) RequiredToolchains() []ToolchainItem {
 	return []ToolchainItem{
 		{Binary: "praetorctl", Purpose: "Universal Fleet Governance CLI", InstallGuide: "make build && cp bin/praetorctl ~/.local/bin/"},
 		{Binary: "git", Purpose: "Distributed version control system", InstallGuide: "sudo apt-get install git"},
+	}
+}
+
+// --- 8. Rust Systems Flavor ---
+
+type RustSystemsFlavor struct{}
+
+func (f *RustSystemsFlavor) Name() string        { return "rust-systems" }
+func (f *RustSystemsFlavor) Description() string { return "Rust CLI, Systems Engine, or Daemon" }
+func (f *RustSystemsFlavor) HISSProfile() string { return "native-gpu-systems" }
+
+func (f *RustSystemsFlavor) Detect(repoPath string) bool {
+	return CheckFileExists(filepath.Join(repoPath, "Cargo.toml"))
+}
+
+func (f *RustSystemsFlavor) RequiredTemplates() []TemplateItem {
+	return []TemplateItem{
+		{Path: "rustfmt.toml", Description: "Rust formatting and style guidelines"},
+		{Path: "clippy.toml", Description: "Rust AST and idiomatic static linting configuration"},
+		{Path: ".github/workflows/ci.yml", Description: "Continuous integration cargo build, test, and clippy"},
+		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
+		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
+		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
+	}
+}
+
+func (f *RustSystemsFlavor) RequiredSettings() []SettingItem {
+	return []SettingItem{
+		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Pre-commit clippy and rustfmt enforcement"},
+		{Name: "VSCode Rust Settings", Path: ".vscode/settings.json", Description: "Rust-analyzer and clippy editor configuration"},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+	}
+}
+
+func (f *RustSystemsFlavor) RequiredToolchains() []ToolchainItem {
+	return []ToolchainItem{
+		{Binary: "cargo", Purpose: "Rust package manager & compiler frontend", InstallGuide: "https://rustup.rs/"},
+		{Binary: "rustc", Purpose: "Rust compiler", InstallGuide: "https://rustup.rs/"},
+		{Binary: "cargo-clippy", Purpose: "Rust compiler linting harness", InstallGuide: "rustup component add clippy"},
+		{Binary: "cargo-audit", Purpose: "Rust security vulnerability scanner", InstallGuide: "cargo install cargo-audit"},
+	}
+}
+
+// --- 9. TypeScript Node Flavor ---
+
+type TypeScriptNodeFlavor struct{}
+
+func (f *TypeScriptNodeFlavor) Name() string { return "typescript-node" }
+func (f *TypeScriptNodeFlavor) Description() string {
+	return "Node.js / TypeScript Backend API, CLI, or Service"
+}
+func (f *TypeScriptNodeFlavor) HISSProfile() string { return "app-service" }
+
+func (f *TypeScriptNodeFlavor) Detect(repoPath string) bool {
+	hasPackage := CheckFileExists(filepath.Join(repoPath, "package.json"))
+	hasSvelte := CheckFileExists(filepath.Join(repoPath, "svelte.config.js")) ||
+		CheckFileExists(filepath.Join(repoPath, "src", "routes"))
+	return hasPackage && !hasSvelte
+}
+
+func (f *TypeScriptNodeFlavor) RequiredTemplates() []TemplateItem {
+	return []TemplateItem{
+		{Path: "tsconfig.json", Description: "TypeScript compiler options and strict type checking"},
+		{Path: ".eslintrc.json", Description: "TypeScript / Node.js static analysis rules"},
+		{Path: ".github/workflows/ci.yml", Description: "Node.js CI test and build matrix"},
+		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
+		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
+		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
+	}
+}
+
+func (f *TypeScriptNodeFlavor) RequiredSettings() []SettingItem {
+	return []SettingItem{
+		{Name: "VSCode TypeScript Settings", Path: ".vscode/settings.json", Description: "TypeScript language server and formatter configuration"},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+	}
+}
+
+func (f *TypeScriptNodeFlavor) RequiredToolchains() []ToolchainItem {
+	return []ToolchainItem{
+		{Binary: "node", Purpose: "Node.js JavaScript runtime", InstallGuide: "https://nodejs.org/"},
+		{Binary: "npm", Purpose: "Node package manager", InstallGuide: "https://nodejs.org/"},
+		{Binary: "tsc", Purpose: "TypeScript compiler", InstallGuide: "npm install -g typescript"},
+	}
+}
+
+// --- 10. JVM Service Flavor ---
+
+type JVMServiceFlavor struct{}
+
+func (f *JVMServiceFlavor) Name() string        { return "jvm-service" }
+func (f *JVMServiceFlavor) Description() string { return "Java / Kotlin Maven or Gradle Microservice" }
+func (f *JVMServiceFlavor) HISSProfile() string { return "app-service" }
+
+func (f *JVMServiceFlavor) Detect(repoPath string) bool {
+	return CheckFileExists(filepath.Join(repoPath, "pom.xml")) ||
+		CheckFileExists(filepath.Join(repoPath, "build.gradle")) ||
+		CheckFileExists(filepath.Join(repoPath, "build.gradle.kts")) ||
+		CheckFileExists(filepath.Join(repoPath, "mvnw")) ||
+		CheckFileExists(filepath.Join(repoPath, "gradlew"))
+}
+
+func (f *JVMServiceFlavor) RequiredTemplates() []TemplateItem {
+	return []TemplateItem{
+		{Path: "checkstyle.xml", Description: "JVM code style and static analysis rules"},
+		{Path: ".github/workflows/ci.yml", Description: "Java / Kotlin build, test, and verification matrix"},
+		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
+		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
+		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
+	}
+}
+
+func (f *JVMServiceFlavor) RequiredSettings() []SettingItem {
+	return []SettingItem{
+		{Name: "VSCode Java Settings", Path: ".vscode/settings.json", Description: "Java language server and build tool config"},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+	}
+}
+
+func (f *JVMServiceFlavor) RequiredToolchains() []ToolchainItem {
+	return []ToolchainItem{
+		{Binary: "java", Purpose: "Java Virtual Machine & Development Kit", InstallGuide: "https://adoptium.net/"},
+		{Binary: "mvn", Purpose: "Apache Maven build tool", InstallGuide: "sudo apt-get install maven"},
+	}
+}
+
+// --- 11. Mobile Flutter Flavor ---
+
+type MobileFlutterFlavor struct{}
+
+func (f *MobileFlutterFlavor) Name() string { return "mobile-flutter" }
+func (f *MobileFlutterFlavor) Description() string {
+	return "Flutter / Dart Multiplatform Mobile and Desktop Application"
+}
+func (f *MobileFlutterFlavor) HISSProfile() string { return "app-service" }
+
+func (f *MobileFlutterFlavor) Detect(repoPath string) bool {
+	return CheckFileExists(filepath.Join(repoPath, "pubspec.yaml"))
+}
+
+func (f *MobileFlutterFlavor) RequiredTemplates() []TemplateItem {
+	return []TemplateItem{
+		{Path: "analysis_options.yaml", Description: "Dart and Flutter analyzer linter configuration"},
+		{Path: ".github/workflows/ci.yml", Description: "Flutter test and build validation matrix"},
+		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
+		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
+		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
+	}
+}
+
+func (f *MobileFlutterFlavor) RequiredSettings() []SettingItem {
+	return []SettingItem{
+		{Name: "VSCode Dart Settings", Path: ".vscode/settings.json", Description: "Dart and Flutter editor workspace configuration"},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+	}
+}
+
+func (f *MobileFlutterFlavor) RequiredToolchains() []ToolchainItem {
+	return []ToolchainItem{
+		{Binary: "flutter", Purpose: "Flutter SDK & build tool", InstallGuide: "https://docs.flutter.dev/get-started/install"},
+		{Binary: "dart", Purpose: "Dart language SDK", InstallGuide: "https://dart.dev/get-dart"},
 	}
 }

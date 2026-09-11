@@ -24,6 +24,9 @@ var PopularBenchmarks = []string{
 	"https://github.com/pallets/flask",
 	"https://github.com/sveltejs/template",
 	"https://github.com/google/googletest",
+	"https://github.com/BurntSushi/ripgrep",
+	"https://github.com/fastify/fastify",
+	"https://github.com/spring-projects/spring-petclinic",
 }
 
 // RemoteAdoptionResult records adoption and HISS governance simulation for an external repository.

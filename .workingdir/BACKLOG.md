@@ -27,3 +27,13 @@
 ### Discharged Tasks [2026-09-11 20:07:51 UTC, commit `local`]
 - [x] Execute full verification suite (make verify-all) (completed: 2026-09-11)
 - [x] Mint cryptographic Ed25519 Exit-0 receipt via standardsctl gate (completed: 2026-09-11)
+
+### Discharged Tasks [2026-09-11 20:13:24 UTC, commit `local`]
+- [x] Open Pull Request on cordanaLLM/praetor and mirror to lusoris/praetor (completed: 2026-09-11)
+
+### Discharged Tasks [2026-09-11 20:18:30 UTC, commit `local`]
+- [x] Define and register 4 new archetypes: rust-systems, typescript-node, jvm-service, mobile-flutter in internal/flavor (completed: 2026-09-11)
+- [x] Update archetype autodetection in internal/adopt/adopt.go (completed: 2026-09-11)
+- [x] Implement comprehensive tests for new flavors in internal/flavor/flavor_test.go (completed: 2026-09-11)
+- [x] Expand remote dogfooding benchmarks in internal/dogfood/remote.go and run dogfooding simulation (completed: 2026-09-11)
+- [x] Verify full test suite with race detector and standards audit (completed: 2026-09-11)

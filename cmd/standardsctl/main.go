@@ -17,7 +17,7 @@ func printUsage() {
 	fmt.Println("  audit              Audit repository against declared HISS-16 invariants and lockfile")
 	fmt.Println("  baseline           Inspect or record technical debt infractions")
 	fmt.Println("  devcontainer       Synthesize or verify .devcontainer/devcontainer.json")
-	fmt.Println("  flavor             Inspect, audit, and scaffold engineering flavors (7 archetypes)")
+	fmt.Println("  flavor             Inspect, audit, and scaffold engineering flavors (11 archetypes)")
 	fmt.Println("  flavors            Plan or sync moving version flavor tags (bleeding, latest, lts)")
 	fmt.Println("  docs               Harvest, compress, and audit package documentation sheets")
 	fmt.Println("  hindsight          Manage local zero-token memory cache and sync with Hindsight server")

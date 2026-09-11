@@ -80,7 +80,19 @@ func DetectFlavor(repoPath string) string {
 	defer registryMu.RUnlock()
 
 	// High-precedence checks
-	for _, name := range []string{"native-gpu-systems", "frontend-svelte", "python-ml", "go-service", "go-library", "infra-k8s", "agentic-autonomous"} {
+	for _, name := range []string{
+		"native-gpu-systems",
+		"rust-systems",
+		"frontend-svelte",
+		"typescript-node",
+		"python-ml",
+		"jvm-service",
+		"mobile-flutter",
+		"go-service",
+		"go-library",
+		"infra-k8s",
+		"agentic-autonomous",
+	} {
 		if f, ok := registry[name]; ok && f.Detect(repoPath) {
 			return f.Name()
 		}
