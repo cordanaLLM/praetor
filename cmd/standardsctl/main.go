@@ -34,6 +34,10 @@ func printUsage() {
 	fmt.Println("  changelog          Manage Keep-a-Changelog fragments and release sections")
 	fmt.Println("  release            Execute release verification gates and render changelog")
 	fmt.Println("  gate               Execute 4-stage anti-direct-merge gating pipeline")
+	fmt.Println("  agent              Manage and dispatch autonomous Praetor agent helpers (list, run)")
+	fmt.Println("  serve              Run cloud-native container daemon with HTTP health probes")
+	fmt.Println("  sbom               Generate CycloneDX 1.5 Software Bill of Materials")
+	fmt.Println("  provenance         Generate SLSA v1.0 provenance attestation statement")
 	fmt.Println("  needs              Declare and report repository capabilities and demand to Golusoris")
 	fmt.Println("  version            Print CLI version information")
 	fmt.Println("\nRun 'standardsctl <command> -h' for more information on a command.")
@@ -55,33 +59,47 @@ func main() {
 }
 
 func dispatchCommand(cmd string, args []string) error {
+	if err, ok := dispatchCoreCommand(cmd, args); ok {
+		return err
+	}
+	return dispatchOperationsCommand(cmd, args)
+}
+
+func dispatchCoreCommand(cmd string, args []string) (error, bool) {
 	switch cmd {
 	case "init":
-		return runInit(args)
+		return runInit(args), true
 	case "compile-context":
-		return runCompileContext(args)
+		return runCompileContext(args), true
 	case "audit":
-		return runAudit(args)
+		return runAudit(args), true
 	case "baseline":
-		return runBaseline(args)
+		return runBaseline(args), true
 	case "devcontainer":
-		return runDevContainer(args)
+		return runDevContainer(args), true
 	case "flavors":
-		return runFlavors(args)
+		return runFlavors(args), true
 	case "models":
-		return runModels(args)
+		return runModels(args), true
 	case "plan":
-		return runPlan(args)
+		return runPlan(args), true
 	case "sync":
-		return runSync(args)
+		return runSync(args), true
 	case "sentinel":
-		return runSentinel(args)
+		return runSentinel(args), true
 	case "worktree":
-		return runWorktree(args)
+		return runWorktree(args), true
 	case "gc":
-		return runGC(args)
+		return runGC(args), true
 	case "editors":
-		return runEditors(args)
+		return runEditors(args), true
+	default:
+		return nil, false
+	}
+}
+
+func dispatchOperationsCommand(cmd string, args []string) error {
+	switch cmd {
 	case "forge":
 		return runForge(args)
 	case "harvest":
@@ -100,6 +118,14 @@ func dispatchCommand(cmd string, args []string) error {
 		return runRelease(args)
 	case "gate":
 		return runGate(args)
+	case "agent":
+		return runAgent(args)
+	case "serve":
+		return runServe(args)
+	case "sbom":
+		return runSBOM(args)
+	case "provenance":
+		return runProvenance(args)
 	case "needs":
 		return runNeeds(args)
 	case "version":

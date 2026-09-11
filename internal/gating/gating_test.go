@@ -68,8 +68,11 @@ func TestRunGatedPipeline_Positive_And_Negative(t *testing.T) {
 	if rep.Status != StatusAdmitted {
 		t.Fatalf("expected StatusAdmitted, got %s", rep.Status)
 	}
-	if len(rep.Stages) != 3 {
-		t.Errorf("expected 3 stages, got %d", len(rep.Stages))
+	if len(rep.Stages) != 4 {
+		t.Errorf("expected 4 stages, got %d", len(rep.Stages))
+	}
+	if rep.ReceiptSignature == "" {
+		t.Error("expected non-empty ReceiptSignature on admitted gate run, got empty")
 	}
 
 	// Negative: Invalid directory missing lockfiles

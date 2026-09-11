@@ -2,11 +2,17 @@ package gating
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/standards/internal/hiss"
+	"github.com/cordanaLLM/standards/internal/lockdown"
+	"github.com/cordanaLLM/standards/internal/worktree"
 )
 
 // GatingStatus represents the disposition of a gated check.
@@ -27,10 +33,11 @@ type StageResult struct {
 
 // PipelineReport aggregates the entire gated pre-merge verification.
 type PipelineReport struct {
-	Status       GatingStatus  `json:"status"`
-	RepoDir      string        `json:"repo_dir"`
-	Stages       []StageResult `json:"stages"`
-	TotalElapsed time.Duration `json:"total_elapsed"`
+	Status           GatingStatus  `json:"status"`
+	RepoDir          string        `json:"repo_dir"`
+	ReceiptSignature string        `json:"receipt_signature,omitempty"`
+	Stages           []StageResult `json:"stages"`
+	TotalElapsed     time.Duration `json:"total_elapsed"`
 }
 
 // RunGatedPipeline executes the 4-stage anti-direct-merge gating pipeline.
@@ -49,29 +56,32 @@ func RunGatedPipeline(ctx context.Context, repoDir string, dryRun bool) (*Pipeli
 		Stages:  make([]StageResult, 0, 4),
 	}
 
-	if err := executeStage(ctx, "Prefetch & Lockfiles", func(sCtx context.Context) error {
-		return runPrefetchStage(sCtx, repoDir)
-	}, rep); err != nil {
-		rep.Status = StatusRejected
-		return rep, nil
-	}
-
-	if err := executeStage(ctx, "HISS Invariant Scan", func(sCtx context.Context) error {
-		return runHissStage(sCtx, repoDir)
-	}, rep); err != nil {
-		rep.Status = StatusRejected
-		return rep, nil
-	}
-
-	if err := executeStage(ctx, "Race-Detector Tests", func(sCtx context.Context) error {
-		return runTestStage(sCtx, repoDir, dryRun)
-	}, rep); err != nil {
+	if err := executeStages(ctx, repoDir, dryRun, rep); err != nil {
 		rep.Status = StatusRejected
 		return rep, nil
 	}
 
 	rep.TotalElapsed = time.Since(start)
 	return rep, nil
+}
+
+func executeStages(ctx context.Context, repoDir string, dryRun bool, rep *PipelineReport) error {
+	stages := []struct {
+		name string
+		fn   func(context.Context) error
+	}{
+		{"Prefetch & Lockfiles", func(c context.Context) error { return runPrefetchStage(c, repoDir) }},
+		{"HISS Invariant Scan", func(c context.Context) error { return runHissStage(c, repoDir) }},
+		{"Race-Detector Tests", func(c context.Context) error { return runTestStage(c, repoDir, dryRun) }},
+		{"Ed25519 Exit-0 Receipt", func(c context.Context) error { return runReceiptStage(c, repoDir, rep) }},
+	}
+
+	for _, s := range stages {
+		if err := executeStage(ctx, s.name, s.fn, rep); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func executeStage(ctx context.Context, name string, fn func(context.Context) error, rep *PipelineReport) error {
@@ -118,13 +128,65 @@ func runTestStage(ctx context.Context, repoDir string, dryRun bool) error {
 	if dryRun {
 		return nil
 	}
-	tCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	tCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(tCtx, "go", "test", "-race", "./internal/gating/...")
-	cmd.Dir = repoDir
+	testDir := repoDir
+	wtMgr := worktree.NewManager(repoDir)
+	if wtMgr != nil {
+		taskID := fmt.Sprintf("gate-%d", time.Now().UnixNano()%1000000)
+		wt, createErr := wtMgr.Create(tCtx, taskID, "HEAD")
+		if createErr == nil {
+			testDir = wt.Path
+			defer func() {
+				if cleanErr := wtMgr.Remove(context.Background(), taskID, true); cleanErr != nil {
+					return
+				}
+			}()
+		}
+	}
+
+	cmd := exec.CommandContext(tCtx, "go", "test", "-race", "./...")
+	cmd.Dir = testDir
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("tests failed: %s (%w)", string(out), err)
+		return fmt.Errorf("tests failed in %s: %s (%w)", testDir, string(out), err)
 	}
 	return nil
+}
+
+func runReceiptStage(ctx context.Context, repoDir string, rep *PipelineReport) error {
+	_, priv, err := lockdown.GenerateKeyPair()
+	if err != nil {
+		return fmt.Errorf("generate Ed25519 keypair: %w", err)
+	}
+
+	commit := getGitCommitSHA(ctx, repoDir)
+	payload := []byte("ALL_GATED_CHECKS_PASSED")
+	receipt, err := lockdown.CreateReceipt("standardsctl gate", 0, payload, commit, filepath.Base(repoDir), priv)
+	if err != nil {
+		return fmt.Errorf("create exit-0 receipt: %w", err)
+	}
+
+	data, err := json.MarshalIndent(receipt, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal receipt: %w", err)
+	}
+
+	receiptPath := filepath.Join(repoDir, ".standards-receipt.json")
+	if err := os.WriteFile(receiptPath, data, 0644); err != nil {
+		return fmt.Errorf("write receipt: %w", err)
+	}
+
+	rep.ReceiptSignature = receipt.Signature
+	return nil
+}
+
+func getGitCommitSHA(ctx context.Context, repoDir string) string {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
+	cmd.Dir = repoDir
+	out, err := cmd.Output()
+	if err != nil {
+		return "uncommitted"
+	}
+	return strings.TrimSpace(string(out))
 }

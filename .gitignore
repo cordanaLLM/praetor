@@ -19,6 +19,7 @@
 coverage.txt
 coverage.html
 /tmp/
+/.standards-receipt.json
 
 # Dependency directories
 /vendor/

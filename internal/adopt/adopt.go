@@ -389,31 +389,24 @@ func scanLegacyDebt(repoPath string, base *baseline.Baseline, report *AdoptRepor
 	}
 }
 
-func buildAgentHarness(repoName, arch string) string {
-	verifyCmd := "make verify-all"
-	testCmd := "go test -v -race ./..."
-	if arch == "native-gpu-systems" {
-		testCmd = "meson test -C core/build --suite=fast"
-	}
-
-	header := fmt.Sprintf(`<!-- markdownlint-disable MD013 MD025 -->
-# %s Agent Operating Harness
+const agentHarnessTemplate = `<!-- markdownlint-disable MD013 MD025 -->
+# {{ .RepoName }} Agent Operating Harness
 
 Run verification before concluding any turn:
 
-`+"```bash\n%s\n```\n\n```mermaid\n"+`flowchart LR
-    AGENT["Autonomous Agent"] --> CHECK["%s"]
+` + "```bash\n{{ .VerifyCmd }}\n```\n\n```mermaid\n" + `flowchart LR
+    AGENT["Autonomous Agent"] --> CHECK["{{ .VerifyCmd }}"]
     CHECK --> AUDIT["standardsctl audit"]
     CHECK --> COMPILER["standardsctl compile-context --verify"]
     CHECK --> GATE{"All checks Pass?"}
     GATE -- Yes --> RECEIPT["Ed25519 Exit-0 Receipt"]
     GATE -- No --> DISTILL["SARIF Diagnostic Distillation (<= 1500 tokens)"]
-`+"```\n\n", repoName, verifyCmd, verifyCmd)
+` + "```\n\n"
 
-	footer := fmt.Sprintf(`## Primary Verification Commands
+const agentHarnessFooterTemplate = `## Primary Verification Commands
 
-`+"```bash\n"+`# Fast local test suite
-%s
+` + "```bash\n" + `# Fast local test suite
+{{ .TestCmd }}
 
 # Recompile and verify cross-agent context outputs
 standardsctl compile-context --verify
@@ -422,8 +415,32 @@ standardsctl compile-context --verify
 standardsctl audit
 
 # Run all formatting, linting, and security gates
-%s
-`+"```\n", testCmd, verifyCmd)
+{{ .VerifyCmd }}
+` + "```\n"
+
+func buildAgentHarness(repoName, arch string) string {
+	verifyCmd := "make verify-all"
+	testCmd := "go test -v -race ./..."
+	if arch == "native-gpu-systems" {
+		testCmd = "meson test -C core/build --suite=fast"
+	}
+
+	tCtx := TemplateContext{
+		RepoName:  repoName,
+		Archetype: arch,
+		VerifyCmd: verifyCmd,
+		TestCmd:   testCmd,
+	}
+
+	header, err := RenderTemplate("harness_header", agentHarnessTemplate, tCtx)
+	if err != nil {
+		header = fmt.Sprintf("# %s Agent Operating Harness\n", repoName)
+	}
+
+	footer, err := RenderTemplate("harness_footer", agentHarnessFooterTemplate, tCtx)
+	if err != nil {
+		footer = "## Primary Verification Commands\n"
+	}
 
 	return header + buildAgentHarnessDirectives() + footer
 }

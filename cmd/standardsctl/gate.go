@@ -57,4 +57,7 @@ func printGatingReport(rep *gating.PipelineReport) {
 			fmt.Printf("     Reason: %s\n", s.Message)
 		}
 	}
+	if rep.ReceiptSignature != "" {
+		fmt.Printf("\nExit-0 Receipt: .standards-receipt.json (Ed25519 signature: %s...)\n", rep.ReceiptSignature[:16])
+	}
 }
