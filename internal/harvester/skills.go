@@ -27,7 +27,34 @@ type SkillAuditReport struct {
 }
 
 // AuditSkills scans the provided directories for skill definitions and redundancy.
-func AuditSkills(ctx context.Context, geminiDir, repoSkillsDir string) (*SkillAuditReport, error) {
+func scanAllAgentSkillRoots(baseDir string, skillPaths map[string][]string) {
+	home := baseDir
+	if strings.HasSuffix(baseDir, ".gemini") || strings.HasSuffix(baseDir, ".gemini"+string(filepath.Separator)) {
+		home = filepath.Dir(baseDir)
+	}
+
+	roots := []struct {
+		dir    string
+		origin string
+	}{
+		{filepath.Join(home, ".copilot", "skills"), "copilot"},
+		{filepath.Join(home, ".codex", "skills"), "codex"},
+		{filepath.Join(home, ".claude", "skills"), "claude"},
+		{filepath.Join(home, ".gemini", "skills"), "gemini-root"},
+		{filepath.Join(home, ".gemini", "config", "skills"), "gemini-config"},
+		{filepath.Join(home, ".agents", "skills"), "universal"},
+	}
+
+	scanSkillDir(filepath.Join(baseDir, "skills"), "direct-root", skillPaths)
+	scanSkillDir(filepath.Join(baseDir, "config", "skills"), "direct-config", skillPaths)
+
+	for _, r := range roots {
+		scanSkillDir(r.dir, r.origin, skillPaths)
+	}
+}
+
+// AuditSkills scans all agent skill roots across Copilot, Codex, Claude, Gemini, and Universal agents.
+func AuditSkills(ctx context.Context, baseDir, repoSkillsDir string) (*SkillAuditReport, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context cancelled before skill audit: %w", err)
 	}
@@ -39,9 +66,7 @@ func AuditSkills(ctx context.Context, geminiDir, repoSkillsDir string) (*SkillAu
 
 	skillPaths := make(map[string][]string)
 
-	// Scan global gemini skills
-	scanSkillDir(filepath.Join(geminiDir, "skills"), "gemini-root", skillPaths)
-	scanSkillDir(filepath.Join(geminiDir, "config", "skills"), "gemini-config", skillPaths)
+	scanAllAgentSkillRoots(baseDir, skillPaths)
 
 	// Scan repo skills
 	if repoSkillsDir != "" {
@@ -57,9 +82,7 @@ func AuditSkills(ctx context.Context, geminiDir, repoSkillsDir string) (*SkillAu
 		}
 	}
 
-	// Scan stale GEMINI.md backups
-	scanGeminiBackups(geminiDir, report)
-
+	scanGeminiBackups(baseDir, report)
 	return report, nil
 }
 
@@ -140,9 +163,10 @@ func DeduplicateSkills(ctx context.Context, report *SkillAuditReport, dryRun boo
 		hasConfig := false
 		var rootSkillDir string
 		for _, p := range paths {
-			if strings.Contains(p, "/config/skills/") {
+			slashP := filepath.ToSlash(p)
+			if strings.Contains(slashP, "/config/skills/") {
 				hasConfig = true
-			} else if strings.Contains(p, "/.gemini/skills/") {
+			} else if strings.Contains(slashP, "/.gemini/skills/") || strings.Contains(slashP, "/skills/") {
 				rootSkillDir = filepath.Dir(p)
 			}
 		}

@@ -202,7 +202,8 @@ func (m *Manager) runGit(ctx context.Context, args ...string) ([]byte, error) {
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(execCtx, "git", args...)
+	gitArgs := append([]string{"-c", "core.longpaths=true"}, args...)
+	cmd := exec.CommandContext(execCtx, "git", gitArgs...)
 	cmd.Dir = m.rootDir
 
 	out, err := cmd.CombinedOutput()

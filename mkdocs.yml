@@ -1,0 +1,82 @@
+site_name: Praetor
+site_url: https://standards.cordana.ai
+site_description: Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine
+site_author: CordanaLLM Community
+
+theme:
+  name: material
+  favicon: assets/praetor-favicon.svg
+  logo: assets/praetor-mkdocs-logo.svg
+  palette:
+    - scheme: slate
+      primary: cyan
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: cyan
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - header.autohide
+    - content.code.copy
+    - content.code.annotate
+
+extra:
+  announcement: >
+    🎯 <strong>Polar.sh Feature Bounties:</strong> Earn rewards for solved issues or sponsor upcoming roadmap features!
+    <a href="sponsoring/"><strong>Learn more &amp; view bounties &rarr;</strong></a>
+
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/CordanaLLM/praetor
+      name: GitHub Repository
+    - icon: fontawesome/solid/bolt
+      link: https://polar.sh/CordanaLLM
+      name: Feature Bounties & Rewards on Polar.sh
+    - icon: fontawesome/solid/heart
+      link: https://github.com/sponsors/CordanaLLM
+      name: Sponsor on GitHub Sponsors
+    - icon: fontawesome/solid/mug-hot
+      link: https://ko-fi.com/cordana
+      name: Support on Ko-fi
+    - icon: fontawesome/solid/hand-holding-dollar
+      link: https://opencollective.com/cordanallm
+      name: Open Collective
+
+plugins:
+  - search
+  - llmstxt-md:
+      enable_markdown_urls: true
+      enable_llms_txt: true
+      enable_llms_full: true
+      enable_copy_button: true
+
+markdown_extensions:
+  - attr_list
+  - md_in_html
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Governance & Standards:
+      - HISS-16 Formal Specification: standards/hiss-16-spec.md
+      - Model Routing & Capacity Arbiter: standards/model-routing-and-fanout.md
+      - Archetype Authoring: guides/archetype-authoring.md
+      - Developer Onboarding: guides/onboarding.md
+      - Architectural Decisions (ADR): adr/README.md
+  - Funding & Community:
+      - Sponsoring & Bounties: sponsoring.md
+      - Monetization Strategy: monetization.md

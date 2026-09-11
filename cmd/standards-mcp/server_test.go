@@ -381,3 +381,49 @@ func TestServer_JSONRPC_NegativeCases(t *testing.T) {
 		t.Fatalf("expected tool not found error (-32601), got: %+v", badRes)
 	}
 }
+
+func TestServer_ToolCalls_AdoptAndDogfood(t *testing.T) {
+	srv, err := NewServer("../..", "v1.0.0")
+	if err != nil {
+		t.Fatalf("server setup error: %v", err)
+	}
+	ctx := context.Background()
+
+	// 1. standards_adopt (dry-run)
+	adoptP, _ := json.Marshal(map[string]any{
+		"name": "standards_adopt",
+		"arguments": map[string]any{
+			"path":    "../..",
+			"dry_run": true,
+		},
+	})
+	adoptRes := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 50, Method: "tools/call", Params: adoptP})
+	if adoptRes == nil || adoptRes.Error != nil {
+		t.Fatalf("standards_adopt failed: %+v", adoptRes)
+	}
+
+	// 2. standards_dogfood
+	dfP, _ := json.Marshal(map[string]any{
+		"name": "standards_dogfood",
+		"arguments": map[string]any{
+			"host_path": "../..",
+		},
+	})
+	dfRes := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 51, Method: "tools/call", Params: dfP})
+	if dfRes == nil || dfRes.Error != nil {
+		t.Fatalf("standards_dogfood failed: %+v", dfRes)
+	}
+
+	// 3. standards_harvest_workstation
+	hP, _ := json.Marshal(map[string]any{
+		"name": "standards_harvest_workstation",
+		"arguments": map[string]any{
+			"dev_dir": t.TempDir(),
+		},
+	})
+	hRes := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 52, Method: "tools/call", Params: hP})
+	if hRes == nil || hRes.Error != nil {
+		t.Fatalf("standards_harvest_workstation failed: %+v", hRes)
+	}
+}
+

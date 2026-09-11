@@ -16,6 +16,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   verify:
@@ -32,7 +33,7 @@ jobs:
       - name: Setup Go Toolchain
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.27'
           cache: true
 
       - name: Verify Go Formatting (gofmt)
@@ -45,13 +46,32 @@ jobs:
           fi
           echo "Go formatting clean."
 
+      - name: Enforce Linear History (HISS-16 & Branch Protection)
+        if: github.event_name == 'pull_request'
+        run: |
+          MERGE_COMMITS=$(git rev-list --min-parents=2 HEAD ^origin/${{ github.base_ref }} || true)
+          if [ -n "$MERGE_COMMITS" ]; then
+            echo "::error::Merge commits detected in PR branch. Linear history is enforced by .standards.yaml policy."
+            echo "$MERGE_COMMITS"
+            exit 1
+          fi
+          echo "Linear history verified: zero merge commits."
+
+      - name: Validate PR Governance Checklist & Exit-0 Receipts
+        if: github.event_name == 'pull_request' && github.event.pull_request.body != ''
+        run: |
+          cat << 'EOF' > /tmp/pr_body.txt
+          ${{ github.event.pull_request.body }}
+          EOF
+          go run ./cmd/standardsctl forge validate-pr /tmp/pr_body.txt
+
       - name: Verify Cross-Agent Context Synchronization (HISS-16)
         run: go run ./cmd/standardsctl compile-context --verify
 
       - name: Run Race Detection & Unit Tests (HISS-15)
         run: go test -v -race ./...
 
-      - name: Run Repository Governance Audit (HISS Invariants)
+      - name: Run Repository Governance Audit (HISS Invariants & Rulesets)
         run: go run ./cmd/standardsctl audit
 
       - name: Run Linter & Static Analysis (HISS-10)

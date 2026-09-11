@@ -106,11 +106,19 @@ func TestRunCommand(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	out, err := RunCommand(ctx, ".", "echo", "hello-world")
+	cmdName := "echo"
+	args := []string{"hello-world"}
+	expected := "hello-world"
+	if os.PathSeparator == '\\' {
+		cmdName = "cmd"
+		args = []string{"/c", "echo", "hello-world"}
+	}
+
+	out, err := RunCommand(ctx, ".", cmdName, args...)
 	if err != nil {
 		t.Fatalf("RunCommand failed: %v", err)
 	}
-	if out != "hello-world" {
-		t.Errorf("got %q, want %q", out, "hello-world")
+	if out != expected {
+		t.Errorf("got %q, want %q", out, expected)
 	}
 }

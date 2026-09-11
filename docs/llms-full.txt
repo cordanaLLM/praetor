@@ -1,0 +1,137 @@
+# Praetor Complete Machine-Readable Specifications (llms-full.txt)
+> Autonomous Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine.
+
+---
+
+## 1. High-Integrity Systems Standards (HISS-16) Formal Specification
+
+| Invariant | Scope | Rule Description | Enforcement | Failure Action |
+| :--- | :--- | :--- | :--- | :--- |
+| **HISS-01** | Control Flow | Recursion strictly prohibited; call graph must be a strict Directed Acyclic Graph (DAG). | AST scanner | Immediate build failure |
+| **HISS-02** | Loops & I/O | All loops must possess static scalar upper bounds (`MaxLoopLimit`). All I/O operations require explicit `context.Context` timeout/deadline. | Semgrep / AST error | Compile-time blocker |
+| **HISS-03** | Hot-Path Allocations | Hot-path simulation and processing loops must maintain zero heap allocations ($\Delta \text{HeapAlloc} = 0$). | Allocation profiler | Benchmark regression gate |
+| **HISS-04** | Complexity Bounds | McCabe Cyclomatic Complexity $\le 10$, Cognitive Complexity $\le 15$, Func LOC $\le 75$, Statements $\le 50$. | AST static analysis | Pre-commit check failure |
+| **HISS-07** | Error Integrity | Zero `.unwrap()` / `.expect()`; zero unchecked error returns (`_ = err`). All errors must be handled or wrapped with domain context. | Linter / Compiler check | CI exit code 1 |
+| **HISS-08** | Determinism | Dynamic code evaluation (`eval()`, dynamic code loading) and banned unsafe libc calls (`gets`, `strcpy`, `sprintf`) are prohibited. | AST rule sweep | Build rejection |
+| **HISS-09** | Reference Safety | Pointer arithmetic must be bounded; all `unsafe` blocks require an explicit `// SAFETY:` rationale proof. | AST scanner | Merge blocker |
+| **HISS-10** | Warning Hygiene | Zero-warning tolerance across compiler, `go vet`, and all configured static analysis sweeps. | Compiler / Linter | Exit code 1 |
+| **HISS-11** | Hermetic Supply Chain | Pinned dependency versions, strict cryptographic hash verification (`go.sum`), SLSA Level 3 attestations, Cosign signatures. | SLSA / Syft | Release blocker |
+| **HISS-12** | Semantic Versioning | Strict SemVer 2.0.0 adherence; zero floating or unpinned dependency ranges. | SemVer analyzer | Audit check failure |
+| **HISS-13** | Monotonic Debt Ratcheting | Technical debt recorded in `.standards-baseline.json` can only decrease over time. The Touched-File Clean Rule is strictly enforced. | Ratchet engine | CI gate failure |
+| **HISS-14** | Append-Only ABI | Public API surface changes must be append-only. Any breaking change must include `!` in conventional commit and a mandatory `Migration:` footer. | ABI diff scanner | PR check failure |
+| **HISS-15** | 3D Testing Discipline | Every public interface must implement automated tests across 3 dimensions: Positive, Negative, and Boundary ($\ge 2$ checks/dim). | Coverage gate | PR merge blocker |
+| **HISS-16** | Context Integrity | Single canonical `AGENTS.md` operating harness transpiled to vendor formats (< 300 LOC budget). Manual edits to vendor files prohibited. | `standardsctl compile-context --verify` | Pre-commit blocker |
+
+---
+
+## 2. Canonical Declarative Configurations
+
+### `.standards.yaml` Manifest Specification
+```yaml
+version: 1
+repository:
+  owner: "cordanaLLM"
+  name: "praetor"
+  visibility: "public"
+  description: "Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine"
+  homepage: "https://standards.cordana.ai"
+  topics:
+    - "governance"
+    - "repository-as-code"
+    - "ai-agent-governance"
+    - "mcp-server"
+    - "hiss-16"
+    - "devcontainers"
+    - "slsa-level-3"
+    - "renovate-presets"
+
+profiles:
+  - "framework"
+
+facets:
+  - "security:high"
+  - "api:public-contract"
+  - "docs:seo-portal"
+  - "agent:sandboxed"
+
+overrides:
+  complexity:
+    max_cyclomatic: 10
+    max_cognitive: 15
+    max_func_loc: 75
+    max_statements: 50
+  branch_protection:
+    enforce_linear_history: true
+    require_signed_commits: true
+    required_approving_reviewers: 1
+    dismiss_stale_reviews: true
+  supply_chain:
+    slsa_level: 3
+    enforce_cosign: true
+    require_sbom: true
+```
+
+### Declarative Branch Protection Ruleset (`.github/rulesets/main.json`)
+```json
+{
+  "name": "praetor-main-protection",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/main", "refs/heads/lts-*"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {"type": "deletion"},
+    {"type": "non_fast_forward"},
+    {"type": "required_linear_history"},
+    {"type": "required_signatures"},
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 1,
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": true,
+        "required_review_thread_resolution": true
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": true,
+        "required_status_checks": [
+          {"context": "verify"},
+          {"context": "Standards & Invariant Verification Gate"},
+          {"context": "DCO 1.1 & REUSE Compliance Gate"}
+        ]
+      }
+    }
+  ]
+}
+```
+
+---
+
+## 3. Universal Multi-Agent Parity & Schema Matrix
+
+Praetor guarantees 100% co-equal parity across the frontier AI agent engineering ecosystem, supporting all major platforms without single-vendor preference:
+
+### Multi-Agent Context Transpilation Targets
+| Agent Ecosystem | Target File | Line Budget | Syntax / Directives |
+| :--- | :--- | :--- | :--- |
+| **Anthropic Claude** | `CLAUDE.md` | $\le 300$ LOC | Markdown, verified state, concise command references |
+| **Cursor** | `.cursor/rules/hiss-invariants.mdc` | $\le 300$ LOC | MDC XML metadata (`description`, `globs: *`), markdown rules |
+| **GitHub Copilot** | `.github/copilot-instructions.md` | $\le 300$ LOC | System instruction markdown, prompt directives |
+| **Windsurf** | `.windsurfrules` | $\le 300$ LOC | Plain markdown operational constraints |
+| **Gemini / Antigravity** | `.gemini/GEMINI.md` | $\le 300$ LOC | System rule directives, verification commands |
+| **OpenAI Codex** | `.codex/rules.md` | $\le 300$ LOC | System instructions, operating parameters |
+
+### MCP Tool Schema Serializers
+| Agent Platform | Wire Serializer | Wire Schema Format |
+| :--- | :--- | :--- |
+| **OpenAI / Codex** | `ToOpenAITool` / `ToOpenAITools` | `{"type": "function", "function": {"name": "...", "parameters": {...}}}` |
+| **Anthropic / Claude** | `ToAnthropicTool` / `ToAnthropicTools` | `{"name": "...", "description": "...", "input_schema": {...}}}` |
+| **Gemini / Antigravity** | `ToGeminiFunction` / `ToGeminiFunctions` | `{"name": "...", "description": "...", "parameters": {...}}}` |
+

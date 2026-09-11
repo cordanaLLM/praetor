@@ -1,12 +1,60 @@
-# cordanaLLM/standards
+<div align="center">
 
-[![CI Enforcement](https://img.shields.io/badge/CI-HISS--16%20Compliant-brightgreen)](https://github.com/cordanaLLM/standards)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/cordanaLLM/standards)](https://goreportcard.com/report/github.com/cordanaLLM/standards)
-[![SLSA Level 3](https://img.shields.io/badge/SLSA-Level%203-blueviolet)](https://slsa.dev)
-[![Standards Lock](https://img.shields.io/badge/SemVer-v1.0.0-informational)](.standards.lock)
+  <img src="docs/assets/praetor-readme-banner.svg" alt="Praetor Header Banner" width="100%" />
 
-Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine.
+  # ⚖️ Praetor
+
+  **Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine**
+
+  *Part of the [CordanaLLM](https://github.com/CordanaLLM) Deterministic Infrastructure Ecosystem*
+
+  [![Go Version](https://img.shields.io/badge/Go-1.27%2B-00ADD8?style=for-the-badge&logo=go)](https://golang.org)
+  [![HISS-16 Compliance](https://img.shields.io/badge/Standard-HISS--16_Lattice-06B6D4?style=for-the-badge&logo=nasa)](https://standards.cordana.ai/standards/hiss-16/)
+  [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub_Sponsors-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/CordanaLLM)
+  [![Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white)](https://ko-fi.com/cordana)
+  [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP_Server-10B981?style=for-the-badge)](https://modelcontextprotocol.io)
+  [![Dual-Surface Docs](https://img.shields.io/badge/llms.txt-Enabled-06B6D4?style=for-the-badge)](https://standards.cordana.ai/llms.txt)
+  [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge)](LICENSE)
+
+</div>
+
+---
+
+## 🏛️ Executive Summary
+
+**Praetor** is the flagship execution and governance engine of the **CordanaLLM** ecosystem. Built in Go 1.27+, Praetor transforms repository governance into a deterministic, active platform capability by combining **Repository-as-Code** orchestration, **context transpilation** across vendor-specific AI tools, and unbypassable **HISS-16 (High-Integrity Systems Standard)** invariant enforcement.
+
+While traditional repositories suffer from configuration drift and agentic fragmentation, Praetor maintains a single canonical source of truth—**`AGENTS.md`**—and compiles it into vendor-specific harnesses (`.claude`, `.cursor/rules/*.mdc`, `.windsurfrules`, `.gemini/GEMINI.md`, `.github/copilot-instructions.md`, `.codex/rules.md`) while ensuring mathematical code quality and debt ratcheting.
+
+---
+
+## 💖 Support & Sponsorship
+
+Praetor and the CordanaLLM ecosystem are open-source, high-integrity infrastructure projects built to bring mathematical rigor to autonomous AI agents. If Praetor saves you engineering hours, secures your AI fleet, or powers your workflows, consider supporting further development!
+
+<div align="center">
+
+  <a href="https://github.com/sponsors/CordanaLLM">
+    <img src="https://img.shields.io/badge/Sponsor_on_GitHub_Sponsors-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Sponsor on GitHub Sponsors" />
+  </a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://polar.sh/CordanaLLM">
+    <img src="https://img.shields.io/badge/Bounties_on_Polar.sh-000000?style=for-the-badge&logo=polar&logoColor=white" alt="Feature Bounties on Polar.sh" />
+  </a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://opencollective.com/cordanallm">
+    <img src="https://img.shields.io/badge/Donate_on_Open_Collective-7FADF2?style=for-the-badge&logo=opencollective&logoColor=white" alt="Donate on Open Collective" />
+  </a>
+
+</div>
+
+*Every contribution directly fuels independent AI safety research, Go toolchain development, and HISS-16 verification engines.*
+
+---
+
+## 📐 Architecture & Transpilation Flow
+
+Praetor resolves context compilation and lattice configuration through a single-pass DAG pipeline:
 
 ```mermaid
 flowchart LR
@@ -16,42 +64,92 @@ flowchart LR
     COMP --> C3[".github/copilot-instructions.md"]
     COMP --> C4[".windsurfrules"]
     COMP --> C5[".gemini/GEMINI.md"]
+    COMP --> C6[".codex/rules.md"]
     
     STANDARDS[".standards.yaml"] --> LATTICE["Lattice Supremum\n(Highest Standard Wins)"]
     LATTICE --> DEV[".devcontainer & Toolchain"]
     LATTICE --> AUDIT["standardsctl audit"]
+    LATTICE --> BASE["standardsctl baseline"]
 ```
 
 ---
 
-## Key Capabilities
+## 🚀 Key Capabilities & Architectural Pillars
 
-| Architectural Pillar | Core Functionality | Primary Tool |
+| Architectural Pillar | Technical Functionality | Primary Tooling |
 | :--- | :--- | :--- |
-| **Context Transpiler** | Single canonical `AGENTS.md` compiled into vendor targets ($< 300$ lines). | `standardsctl compile-context` |
-| **Multi-Transport MCP** | `stdio`, `HTTP`, and `SSE` MCP server with native tool schema translation. | `standards-mcp` |
-| **HISS-16 Lattice** | Composable archetypes resolved via Join-Semilattice supremum ("Highest Standard Wins"). | `internal/config` |
-| **Hermetic Devcontainers** | Reproducible multi-architecture development environments pre-wiring toolchains. | `standardsctl devcontainer` |
-| **Debt Ratcheting** | Baselined legacy debt with monotonic decrease invariant and touched-file clean rule. | `standardsctl baseline` |
-| **Supply Chain Provenance**| SLSA Level 3 in-toto attestations, Syft SBOMs, and Sigstore Cosign keyless signatures. | GoReleaser + Actions OIDC |
+| **Universal Context Transpiler** | Single canonical `AGENTS.md` compiled into vendor targets ($\le 300$ lines for `CLAUDE.md`). | `standardsctl compile-context` |
+| **Multi-Transport MCP Bridge** | `stdio`, Streamable HTTP, and SSE Model Context Protocol server with tool schema translation. | `standards-mcp` |
+| **HISS-16 Lattice Engine** | Composable archetypes resolved via Join-Semilattice supremum ("Highest Standard Wins"). | `internal/config` |
+| **Hermetic Devcontainers** | Reproducible multi-architecture dev environments pre-wiring toolchains and Editor setups. | `standardsctl devcontainer` |
+| **Monotonic Debt Ratcheting** | Baselined legacy debt with non-increasing debt invariants and touched-file clean rules. | `standardsctl baseline` |
+| **Supply Chain Provenance** | SLSA Level 3 attestations, Syft SBOMs, and Sigstore Cosign keyless signatures. | GoReleaser + Actions OIDC |
+| **Dual-Surface Documentation** | Material-for-MkDocs human UI paired with token-efficient `/llms.txt` and `/llms-full.txt` endpoints. | `mkdocs-llmstxt-md` |
 
 ---
 
-## Quickstart
+## 🛡️ HISS-16 Architectural Invariants
 
-### 1. Verification Entrypoint
-Run the universal verification gate across your repository:
+Praetor enforces the **High-Integrity Systems Standard (HISS-16)**—adapting NASA-JPL flight-software rigor to modern Go engineering:
+
+* **HISS-01 (Acyclic Control Flow)**: Recursion is strictly prohibited; call graph must be a DAG.
+* **HISS-02 (Bounded Loops & Timeouts)**: Bounded iterations and explicit context deadlines on all network and disk I/O.
+* **HISS-04 (Complexity & Function Length Caps)**: Maximum McCabe cyclomatic complexity $M \le 10$, function length $\le 75$ LOC.
+* **HISS-07 (Zero Unchecked Errors)**: Zero unchecked error values and zero `.unwrap()` or unhandled panic calls in production.
+* **HISS-10 (Zero-Warning Cascade)**: 5-layer zero-warning cascade from editor to deployment admission controller.
+* **HISS-15 (3D Testing Discipline)**: Positive, negative, and boundary tests mandatory for all public APIs.
+* **HISS-16 (Canonical Operating Harness)**: Single canonical `AGENTS.md` harness with unbypassable server-authoritative verification.
+
+---
+
+## 📂 Repository Layout
+
+```text
+.
+├── .agents/skills/             # Universal agent skill declarations
+├── .claude/                    # Target compilation for Claude Code (CLAUDE.md)
+├── .codex/                     # Target compilation for OpenAI Codex
+├── .config/                    # System & linter configurations
+├── .cursor/rules/              # Compiled Cursor MDC rulesets
+├── .devcontainer/              # Hermetic multi-arch devcontainer definitions
+├── .gemini/                    # Target compilation for Gemini CLI / Antigravity IDE
+├── .github/                    # Workflows, Copilot instructions, and release configs
+├── .vscode/                    # Shared editor settings and launch profiles
+├── cmd/                        # Go application entrypoints
+│   ├── standardsctl/           # Governance CLI (compile, audit, baseline)
+│   └── standards-mcp/          # Multi-transport MCP server
+├── docker/dev/                 # Developer environment container builds
+├── docs/                       # Dual-Surface MkDocs documentation & assets
+│   └── assets/                 # Branding assets (banners, logos, icons, favicons)
+├── editors/                    # Vendor editor integrations & LSP configs
+├── internal/                   # Core Go packages (config, lattice, AST transpiler)
+├── lua/ & .nvim.lua            # Neovim native governance integrations
+├── .needs.yaml                 # Golusoris framework capability declarations
+├── .standards.yaml             # Primary repository governance specification
+├── .standards.lock             # Immutable locked dependency & profile state
+├── .standards-baseline.json    # Debt ratcheting baseline state
+├── AGENTS.md                   # Canonical AI Agent harness (Source of Truth)
+├── Makefile                    # Universal verification & build entrypoint
+└── go.mod & go.sum             # Go module dependencies (Go 1.27+)
+```
+
+---
+
+## ⚡ Quickstart & Developer Workflow
+
+### 1. Universal Verification Gate
+Run the universal verification pipeline across the entire Go codebase and governance rules:
 ```bash
 make verify-all
 ```
 
 ### 2. Context Transpilation
-Update agent instructions in `AGENTS.md` and transpile all vendor targets:
+Update agent instructions in `AGENTS.md` and transpile to all vendor targets (`.claude`, `.cursor`, `.windsurf`, `.gemini`, `.codex`, `.github`):
 ```bash
 # Transpile context files
 go run ./cmd/standardsctl compile-context
 
-# Assert that all targets are 100% in sync
+# Assert that all target context files are 100% in sync (CI check)
 go run ./cmd/standardsctl compile-context --verify
 ```
 
@@ -61,21 +159,16 @@ Inspect repository compliance against declared profiles and the HISS-16 baseline
 go run ./cmd/standardsctl audit
 ```
 
----
-
-## Architectural Invariants (HISS-16)
-
-- **HISS-01**: Acyclic control flow. Recursion is strictly prohibited; call graph must be a DAG.
-- **HISS-02**: Bounded loops and explicit context deadlines on all network and disk I/O.
-- **HISS-04**: Maximum McCabe cyclomatic complexity $\le 10$, function length $\le 75$ LOC.
-- **HISS-07**: Zero unchecked errors and zero `.unwrap()` in production code.
-- **HISS-10**: 5-layer zero-warning cascade from editor to deployment admission controller.
-- **HISS-15**: 3D testing discipline: positive, negative, and boundary tests mandatory for all public APIs.
-- **HISS-16**: Single canonical `AGENTS.md` operating harness; unbypassable server-authoritative verification.
+### 4. Technical Debt Ratcheting
+Freeze current debt baselines to enforce monotonic debt reduction on touched files:
+```bash
+go run ./cmd/standardsctl baseline
+```
 
 ---
 
-## License
+## 📜 License & Compliance
 
-Apache License 2.0. See [LICENSE](LICENSE) for details.
+Distributed under the **Apache License 2.0**. See [`LICENSE`](LICENSE) for details.
 
+Part of the **[CordanaLLM](https://github.com/CordanaLLM)** project.

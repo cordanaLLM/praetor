@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 // Invariant configuration constants for host resource protection.
@@ -25,7 +24,6 @@ const (
 var (
 	meminfoPath = "/proc/meminfo"
 	loadavgPath = "/proc/loadavg"
-	statfsFunc  = syscall.Statfs
 )
 
 // HostStats holds measured system metrics for memory, disk, and CPU load.
@@ -282,16 +280,6 @@ func parseMeminfo(r io.Reader) (uint64, uint64, error) {
 	return memTotal, freeBytes, nil
 }
 
-// readHostDisk inspects disk metrics via statfsFunc.
-func readHostDisk(path string) (uint64, uint64, error) {
-	var stat syscall.Statfs_t
-	if err := statfsFunc(path, &stat); err != nil {
-		return 0, 0, fmt.Errorf("statfs failed for path %q: %w", path, err)
-	}
-	total := stat.Blocks * uint64(stat.Bsize)
-	free := stat.Bavail * uint64(stat.Bsize)
-	return total, free, nil
-}
 
 // readHostCPULoad inspects /proc/loadavg or returns safe fallback zero metrics.
 func readHostCPULoad() (float64, float64, float64, error) {

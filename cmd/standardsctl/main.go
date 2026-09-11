@@ -28,6 +28,7 @@ func printUsage() {
 	fmt.Println("  forge              Synchronize git provider wiki, issues, or validate PRs")
 	fmt.Println("  harvest            Audit fleet repositories, workstation worktrees, and agent skills")
 	fmt.Println("  adopt              Adopt and bootstrap any repository to 100% template compliance (alias: conform, bootstrap)")
+	fmt.Println("  dogfood            Execute self-governance verification, local adoption simulations, and public repo benchmarks")
 	fmt.Println("  bump               Proactive prerelease bump train and ephemeral canary testing")
 	fmt.Println("  paperclip          Paperclip agent harness synthesis and Rule 0 terminal disposition")
 	fmt.Println("  changelog          Manage Keep-a-Changelog fragments and release sections")
@@ -86,6 +87,8 @@ func dispatchCommand(cmd string, args []string) error {
 		return runHarvest(args)
 	case "adopt", "conform", "bootstrap":
 		return runAdopt(args)
+	case "dogfood":
+		return runDogfood(args)
 	case "bump":
 		return runBump(args)
 	case "paperclip":

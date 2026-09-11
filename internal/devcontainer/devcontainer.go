@@ -17,7 +17,7 @@ import (
 const (
 	MaxLoopLimit          = 1000
 	DefaultRemoteUser     = "vscode"
-	DefaultGoVersion      = "1.24"
+	DefaultGoVersion      = "1.27"
 	DefaultContextDir     = ".."
 	DefaultDockerfilePath = "../docker/dev/Dockerfile"
 	GoFeatureRef          = "ghcr.io/devcontainers/features/go:1"

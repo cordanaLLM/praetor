@@ -87,6 +87,9 @@ func (s *Server) registerStandardTools() error {
 		s.createExplainRuleTool,
 		s.createInspectSymbolsTool,
 		s.createNeedsReportTool,
+		s.createAdoptTool,
+		s.createDogfoodTool,
+		s.createHarvestWorkstationTool,
 	}
 
 	limit := len(tools)

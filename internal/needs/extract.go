@@ -51,7 +51,7 @@ func ScanRepo(ctx context.Context, repoPath string) (*RepoNeeds, error) {
 // parseGoMod extracts the module path, go version, and direct dependencies from go.mod.
 func parseGoMod(goModPath string) (string, string, map[string]string, error) {
 	if !util.FileExists(goModPath) {
-		return "unknown", "1.24", make(map[string]string), nil
+		return "unknown", "1.27", make(map[string]string), nil
 	}
 
 	file, err := os.Open(goModPath)

@@ -26,6 +26,10 @@ func runHarvest(args []string) error {
 	case "help", "-h", "--help":
 		printHarvestUsage()
 		return nil
+	case "bundle":
+		return runHarvestBundle(ctx, homeDir, args[1:])
+	case "ingest":
+		return runHarvestIngest(ctx, homeDir, args[1:])
 	case "workstation":
 		return runHarvestWorkstation(ctx, homeDir, args[1:])
 	case "skills":
@@ -44,6 +48,8 @@ func runHarvest(args []string) error {
 func printHarvestUsage() {
 	fmt.Println("Usage: standardsctl harvest <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
+	fmt.Println("  bundle [--name=name] [--out=dir]            Capture workstation state bundle (memories, skills, logs, patches)")
+	fmt.Println("  ingest [--bundle=dir] [--dry-run]           Analyze or ingest workstation bundle into local agent harness")
 	fmt.Println("  workstation [--dir=path]                    Audit local dev directory and worktree sprawl")
 	fmt.Println("  skills [--gemini=path] [--dedupe] [--dry-run] Audit and deduplicate agent skills")
 	fmt.Println("  fleet                                       Display multi-org remote fleet topology")
@@ -201,3 +207,74 @@ func runHarvestOnboard(ctx context.Context, homeDir string, args []string) error
 	}
 	return nil
 }
+
+func runHarvestBundle(ctx context.Context, homeDir string, args []string) error {
+	fs := flag.NewFlagSet("harvest bundle", flag.ContinueOnError)
+	name := fs.String("name", "", "Workstation name identifier (e.g. --name=office-1)")
+	outDir := fs.String("out", "", "Output destination directory for bundle (required)")
+	devDir := fs.String("dev", filepath.Join(homeDir, "dev"), "Path to local development directory")
+	vaultDir := fs.String("vault", "", "Optional path to workstation vault containing patches/inventory")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if *name == "" || *outDir == "" {
+		return fmt.Errorf("both --name=<id> and --out=<path> are required flags")
+	}
+
+	opts := harvester.BundleOptions{
+		WorkstationName: *name,
+		OutputDir:       *outDir,
+		HomeDir:         homeDir,
+		DevDir:          *devDir,
+		VaultDir:        *vaultDir,
+	}
+
+	fmt.Printf("=== Harvesting Workstation Bundle (%s) ===\n", *name)
+	fmt.Printf("Output directory: %s\n", *outDir)
+
+	rep, err := harvester.BundleWorkstation(ctx, opts)
+	if err != nil {
+		return fmt.Errorf("failed bundling workstation: %w", err)
+	}
+
+	fmt.Printf("Harvest Complete: %d files bundled (%d bytes)\n", rep.TotalFiles, rep.TotalBytes)
+	fmt.Println("Categories:")
+	for cat, count := range rep.Categories {
+		fmt.Printf("  - %s: %d files\n", cat, count)
+	}
+	fmt.Printf("Cryptographic manifest: %s\n", rep.ManifestPath)
+	return nil
+}
+
+func runHarvestIngest(ctx context.Context, homeDir string, args []string) error {
+	fs := flag.NewFlagSet("harvest ingest", flag.ContinueOnError)
+	bundleDir := fs.String("bundle", "", "Path to bundle directory containing manifest.json (required)")
+	dryRun := fs.Bool("dry-run", true, "Analyze without copying files")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if *bundleDir == "" {
+		return fmt.Errorf("--bundle=<path> is required")
+	}
+
+	localSkills := filepath.Join(homeDir, ".gemini", "config", "skills")
+	rep, err := harvester.IngestBundle(ctx, *bundleDir, localSkills, *dryRun)
+	if err != nil {
+		return fmt.Errorf("failed ingesting bundle: %w", err)
+	}
+
+	fmt.Printf("=== Ingesting Bundle from %s (DryRun: %v) ===\n", rep.WorkstationName, *dryRun)
+	fmt.Printf("Novel Skills to Ingest (%d):\n", len(rep.NovelSkills))
+	for _, s := range rep.NovelSkills {
+		fmt.Printf("  - [NEW] %s\n", s)
+	}
+	fmt.Printf("Overlapping Existing Skills (%d):\n", len(rep.ExistingSkills))
+	fmt.Printf("Project Memories Discovered (%d):\n", len(rep.NovelMemories))
+	fmt.Printf("Design Patches Discovered (%d):\n", len(rep.NovelPatches))
+	return nil
+}
+

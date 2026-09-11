@@ -13,6 +13,7 @@ import (
 	"github.com/cordanaLLM/standards/internal/config"
 	"github.com/cordanaLLM/standards/internal/devcontainer"
 	"github.com/cordanaLLM/standards/internal/hiss"
+	"github.com/cordanaLLM/standards/internal/util"
 )
 
 func runAudit(args []string) error {
@@ -37,6 +38,10 @@ func runAudit(args []string) error {
 	}
 
 	if err := auditAgentContextAndDevcontainer(manifest, *agentsPath); err != nil {
+		return err
+	}
+
+	if err := auditBranchProtectionAndSupplyChain(manifest, filepath.Dir(*manifestPath)); err != nil {
 		return err
 	}
 
@@ -103,7 +108,7 @@ func auditAgentContextAndDevcontainer(manifest *config.Manifest, agentsPath stri
 	if err := tr.Verify(agentsPath, root); err != nil {
 		return fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
 	}
-	fmt.Println("[PASS] Cross-agent context targets (CLAUDE.md, Cursor, Copilot, Windsurf, Gemini) verified in sync.")
+	fmt.Println("[PASS] Cross-agent context targets (Claude, Cursor, Copilot, Windsurf, Gemini, Codex) verified in sync.")
 
 	dcPath := filepath.Join(root, ".devcontainer", "devcontainer.json")
 	if _, err := os.Stat(dcPath); err == nil {
@@ -115,5 +120,28 @@ func auditAgentContextAndDevcontainer(manifest *config.Manifest, agentsPath stri
 			}
 		}
 	}
+	return nil
+}
+
+func auditBranchProtectionAndSupplyChain(manifest *config.Manifest, rootDir string) error {
+	policy := config.DefaultPolicy()
+	policy.ApplyOverrides(manifest.Overrides)
+
+	// Verify .github/rulesets/main.json if linear history or signed commits required
+	rulesetPath := filepath.Join(rootDir, ".github", "rulesets", "main.json")
+	if policy.BranchProtection.EnforceLinearHistory || policy.BranchProtection.RequireSignedCommits {
+		if !util.FileExists(rulesetPath) {
+			return fmt.Errorf("[FAIL] Branch protection ruleset .github/rulesets/main.json is missing while policy requires linear history and signed commits. Run 'standardsctl sync' to reconcile.")
+		}
+		fmt.Println("[PASS] Branch protection & merge ruleset .github/rulesets/main.json verified.")
+	}
+
+	// Verify .config/labels.yaml
+	labelsPath := filepath.Join(rootDir, ".config", "labels.yaml")
+	if !util.FileExists(labelsPath) {
+		return fmt.Errorf("[FAIL] Required label taxonomy .config/labels.yaml is missing.")
+	}
+	fmt.Println("[PASS] Repository label taxonomy .config/labels.yaml verified.")
+
 	return nil
 }

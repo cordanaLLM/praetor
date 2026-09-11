@@ -1,0 +1,78 @@
+name: "Praetor Fast Adoption & Dogfooding"
+description: "Automatically adopt any repository into Praetor governance or execute dry-run dogfooding benchmarks."
+author: "cordanaLLM"
+
+inputs:
+  path:
+    description: "Path to repository to adopt or dogfood"
+    required: false
+    default: "."
+  mode:
+    description: "Execution mode: 'adopt' or 'dogfood'"
+    required: false
+    default: "adopt"
+  dry-run:
+    description: "Run in dry-run simulation mode without writing files"
+    required: false
+    default: "false"
+  force:
+    description: "Force overwrite existing configurations"
+    required: false
+    default: "false"
+  record-baseline:
+    description: "Record existing debt infractions into .standards-baseline.json"
+    required: false
+    default: "true"
+  go-version:
+    description: "Go version to install"
+    required: false
+    default: "1.24"
+
+outputs:
+  report:
+    description: "JSON or text summary of adoption / dogfooding run"
+    value: ${{ steps.run-praetor.outputs.report }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
+        check-latest: true
+
+    - name: Build standardsctl
+      shell: bash
+      run: |
+        go install github.com/cordanaLLM/standards/cmd/standardsctl@latest || go build -o /tmp/standardsctl ./cmd/standardsctl
+
+    - name: Execute Praetor Action
+      id: run-praetor
+      shell: bash
+      run: |
+        CMD="standardsctl"
+        if [ -f /tmp/standardsctl ]; then
+          CMD="/tmp/standardsctl"
+        fi
+
+        if [ "${{ inputs.mode }}" = "dogfood" ]; then
+          DRY_FLAG=""
+          if [ "${{ inputs.dry-run }}" = "true" ]; then
+            DRY_FLAG="--dry-run"
+          fi
+          $CMD dogfood --path="${{ inputs.path }}" $DRY_FLAG
+        else
+          FLAGS="--path=${{ inputs.path }}"
+          if [ "${{ inputs.dry-run }}" = "true" ]; then
+            FLAGS="$FLAGS --dry-run"
+          fi
+          if [ "${{ inputs.force }}" = "true" ]; then
+            FLAGS="$FLAGS --force"
+          fi
+          if [ "${{ inputs.record-baseline }}" = "true" ]; then
+            FLAGS="$FLAGS --record-baseline"
+          fi
+          $CMD adopt $FLAGS
+          $CMD compile-context --verify
+        fi

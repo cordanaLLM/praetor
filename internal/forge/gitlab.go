@@ -9,8 +9,9 @@ import (
 
 // GitLabDriver implements Forge for GitLab using Project Access Tokens.
 type GitLabDriver struct {
-	Token    string
-	Endpoint string
+	Token     string
+	Endpoint  string
+	ProjectID string
 }
 
 // NewGitLabDriver initializes a GitLab driver.
@@ -22,6 +23,18 @@ func NewGitLabDriver(token string, endpoint string) *GitLabDriver {
 		Token:    token,
 		Endpoint: endpoint,
 	}
+}
+
+// SetProject sets the target GitLab project ID or URL-encoded path.
+func (gl *GitLabDriver) SetProject(projectID string) {
+	gl.ProjectID = projectID
+}
+
+func (gl *GitLabDriver) targetProject() string {
+	if gl.ProjectID != "" {
+		return gl.ProjectID
+	}
+	return "default-project"
 }
 
 func (gl *GitLabDriver) Name() string {
@@ -62,7 +75,7 @@ func (gl *GitLabDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*
 	}
 	return &PRResponse{
 		Number: 1,
-		URL:    fmt.Sprintf("%s/merge_requests/1", gl.Endpoint),
+		URL:    fmt.Sprintf("%s/projects/%s/merge_requests/1", gl.Endpoint, gl.targetProject()),
 		State:  "opened",
 	}, nil
 }
@@ -73,7 +86,7 @@ func (gl *GitLabDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*Issue
 	}
 	return &IssueResponse{
 		Number: 1,
-		URL:    fmt.Sprintf("%s/issues/1", gl.Endpoint),
+		URL:    fmt.Sprintf("%s/projects/%s/issues/1", gl.Endpoint, gl.targetProject()),
 		State:  "opened",
 	}, nil
 }

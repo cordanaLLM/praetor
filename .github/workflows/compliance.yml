@@ -1,0 +1,62 @@
+name: Compliance & Licensing Verification Gate
+
+on:
+  push:
+    branches:
+      - main
+      - 'lts-*'
+  pull_request:
+    branches:
+      - main
+      - 'lts-*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  compliance:
+    name: DCO 1.1 & REUSE Compliance Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go Toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: true
+
+      - name: Verify DCO 1.1 Sign-Off on Commits
+        if: github.event_name == 'pull_request'
+        run: |
+          COMMITS_WITHOUT_DCO=0
+          for commit in $(git rev-list origin/${{ github.base_ref }}..HEAD); do
+            if ! git log -1 --format='%B' "$commit" | grep -q "Signed-off-by:"; then
+              echo "Error: Commit $commit is missing 'Signed-off-by:' signature required by DCO 1.1"
+              COMMITS_WITHOUT_DCO=$((COMMITS_WITHOUT_DCO + 1))
+            fi
+          done
+          if [ "$COMMITS_WITHOUT_DCO" -gt 0 ]; then
+            echo "DCO check failed: $COMMITS_WITHOUT_DCO commits without DCO signature."
+            exit 1
+          fi
+          echo "All PR commits have valid DCO 1.1 signatures."
+
+      - name: REUSE Compliance Check
+        uses: fsfe/reuse-action@v5
+
+      - name: Verify Cross-Agent Context Synchronization (HISS-16)
+        run: go run ./cmd/standardsctl compile-context --verify
+
+      - name: Verify Governance Audit (HISS Invariants & Rulesets)
+        run: go run ./cmd/standardsctl audit

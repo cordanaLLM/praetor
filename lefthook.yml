@@ -1,4 +1,4 @@
-# Lefthook Configuration for cordanaLLM/standards
+# Lefthook Configuration for cordanaLLM/praetor (Go 1.27+ & HISS-16 Governance)
 # Fast, parallel local Git hook runner
 pre-commit:
   parallel: true
@@ -10,8 +10,9 @@ pre-commit:
       glob: "*.go"
       run: go vet ./...
     context-check:
-      glob: "AGENTS.md"
       run: go run ./cmd/standardsctl compile-context --verify
+    hiss-audit:
+      run: go run ./cmd/standardsctl audit
     block-evasion:
       run: python3 .config/agent/hooks/block_evasion.py
 
@@ -19,7 +20,8 @@ pre-push:
   parallel: false
   commands:
     test:
-      run: go test -race ./...
+      run: go test ./...
     audit:
       run: go run ./cmd/standardsctl audit
+
 

@@ -1,0 +1,68 @@
+name: Praetor Fast Adoption Bot
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_path:
+        description: "Target path to adopt"
+        required: false
+        default: "."
+      dry_run:
+        description: "Dry run simulation"
+        required: false
+        default: "false"
+        type: boolean
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  adopt:
+    name: Execute Fast Adoption
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request && contains(github.event.comment.body, '/adopt')) ||
+      (github.event.issue.pull_request && contains(github.event.comment.body, '/dogfood'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          check-latest: true
+
+      - name: Build Praetor CLI
+        run: |
+          go build -o /usr/local/bin/standardsctl ./cmd/standardsctl
+
+      - name: Execute Dogfood Benchmark
+        if: contains(github.event.comment.body, '/dogfood')
+        run: |
+          standardsctl dogfood --path=.
+
+      - name: Execute Fast Adoption
+        if: "!contains(github.event.comment.body, '/dogfood')"
+        run: |
+          standardsctl adopt --path=. --force --record-baseline
+          standardsctl compile-context --verify
+
+      - name: Commit & Push Adoption Changes
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run != true
+        run: |
+          git config --global user.name "cordana-standards[bot]"
+          git config --global user.email "standards-bot@cordana.ai"
+          git add -A
+          if ! git diff-index --quiet HEAD; then
+            git commit -m "chore(governance): adopt repository into Praetor baseline"
+            git push
+          fi

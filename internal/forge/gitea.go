@@ -11,6 +11,8 @@ import (
 type GiteaDriver struct {
 	Token    string
 	Endpoint string
+	Owner    string
+	Repo     string
 }
 
 // NewGiteaDriver initializes a Gitea / Forgejo driver.
@@ -22,6 +24,23 @@ func NewGiteaDriver(token string, endpoint string) *GiteaDriver {
 		Token:    token,
 		Endpoint: endpoint,
 	}
+}
+
+// SetRepository sets target repository owner and name.
+func (gt *GiteaDriver) SetRepository(owner, repo string) {
+	gt.Owner = owner
+	gt.Repo = repo
+}
+
+func (gt *GiteaDriver) targetRepo() (string, string) {
+	owner, repo := gt.Owner, gt.Repo
+	if owner == "" {
+		owner = "owner"
+	}
+	if repo == "" {
+		repo = "repo"
+	}
+	return owner, repo
 }
 
 func (gt *GiteaDriver) Name() string {
@@ -60,9 +79,10 @@ func (gt *GiteaDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*P
 	if err := gt.Authenticate(ctx); err != nil {
 		return nil, err
 	}
+	owner, repo := gt.targetRepo()
 	return &PRResponse{
 		Number: 1,
-		URL:    fmt.Sprintf("%s/pulls/1", gt.Endpoint),
+		URL:    fmt.Sprintf("%s/repos/%s/%s/pulls/1", gt.Endpoint, owner, repo),
 		State:  "open",
 	}, nil
 }
@@ -71,9 +91,10 @@ func (gt *GiteaDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueR
 	if err := gt.Authenticate(ctx); err != nil {
 		return nil, err
 	}
+	owner, repo := gt.targetRepo()
 	return &IssueResponse{
 		Number: 1,
-		URL:    fmt.Sprintf("%s/issues/1", gt.Endpoint),
+		URL:    fmt.Sprintf("%s/repos/%s/%s/issues/1", gt.Endpoint, owner, repo),
 		State:  "open",
 	}, nil
 }
