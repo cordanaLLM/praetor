@@ -73,8 +73,8 @@ func setupMockDevEnvironment(t *testing.T) string {
 	initTestGit(t, goenvoyRepo)
 
 	// Symlink in dev root (DEV-02)
-	symlinkPath := filepath.Join(devRoot, "vmaf")
-	if err := os.Symlink(vmafxCore, symlinkPath); err != nil {
+	symlinkPath := filepath.Join(devRoot, "pelorus")
+	if err := os.Symlink(pelorusRepo, symlinkPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -95,8 +95,8 @@ func TestAuditWorkstationTopology_Positive(t *testing.T) {
 		t.Errorf("expected 3 valid repos, got %d: %v", len(report.ValidRepos), report.ValidRepos)
 	}
 
-	if len(report.Symlinks) != 1 || report.Symlinks[0] != "vmaf" {
-		t.Errorf("expected symlink 'vmaf', got %v", report.Symlinks)
+	if len(report.Symlinks) != 1 || report.Symlinks[0] != "pelorus" {
+		t.Errorf("expected symlink 'pelorus', got %v", report.Symlinks)
 	}
 
 	// Verify stray files detected
@@ -181,7 +181,7 @@ func TestCleanWorkstationTopology_Apply(t *testing.T) {
 	}
 
 	// Verify symlink is intact
-	symlinkPath := filepath.Join(devRoot, "vmaf")
+	symlinkPath := filepath.Join(devRoot, "pelorus")
 	if !isSymlink(symlinkPath) {
 		t.Errorf("symlink %s was corrupted or deleted", symlinkPath)
 	}
@@ -246,7 +246,7 @@ func TestVerifyDeletionSafety_Protections(t *testing.T) {
 	}
 
 	// 3. Cannot delete symlink
-	symlinkPath := filepath.Join(devRoot, "vmaf")
+	symlinkPath := filepath.Join(devRoot, "pelorus")
 	if err := os.Symlink(orgDir, symlinkPath); err != nil {
 		t.Fatal(err)
 	}

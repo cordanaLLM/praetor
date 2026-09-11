@@ -84,7 +84,7 @@ func TestReconcileEngine_StillBlocked(t *testing.T) {
 	// Downstream issue
 	engine.TrackIssue("vmafx", IssueSpec{
 		ID:        20,
-		Title:     "Integrate CUDA VMAF",
+		Title:     "Integrate CUDA VMAFx",
 		State:     "open",
 		Labels:    []string{"status/blocked"},
 		DependsOn: []string{"golusoris#50"},
