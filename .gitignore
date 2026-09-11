@@ -40,5 +40,5 @@ coverage.html
 extracted_plan.txt
 plan_clean.md
 all_github_repos.json
-.workingdir/evidence/
-.workingdir/*.tmp
+# Local developer session state (.workingdir concept)
+.workingdir/
