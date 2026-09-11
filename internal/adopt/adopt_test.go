@@ -252,8 +252,8 @@ func TestDetectState_Boundary(t *testing.T) {
 
 func TestResolveArchetype_Meson(t *testing.T) {
 	tmpDir := t.TempDir()
-	_ = os.WriteFile(filepath.Join(tmpDir, "meson.build"), []byte("project('vmaf')"), 0644)
-	_ = os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module vmaf"), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, "meson.build"), []byte("project('vmafx')"), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module vmafx"), 0644)
 
 	arch := resolveArchetype(tmpDir, "")
 	if arch != "native-gpu-systems" {

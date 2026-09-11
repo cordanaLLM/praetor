@@ -384,7 +384,7 @@ func lookupNativeCatalog(pkg string) (CatalogMapping, bool) {
 		"libavcodec":  {Capability: "media.ffmpeg", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/ffmpeg", Notes: "FFmpeg audio/video decoding and encoding library"},
 		"libavformat": {Capability: "media.ffmpeg", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/ffmpeg", Notes: "FFmpeg container demuxing and muxing library"},
 		"libavfilter": {Capability: "media.ffmpeg", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/ffmpeg", Notes: "FFmpeg audio/video graph filtering library"},
-		"libvmaf":     {Capability: "media.vmaf", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/vmaf", Notes: "Video Multi-Method Assessment Fusion quality metric"},
+		"libvmaf":     {Capability: "media.vmafx", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/vmafx", Notes: "VMAFx video quality metric engine"},
 		"cuda":        {Capability: "gpu.cuda", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/cuda", Notes: "NVIDIA CUDA compute acceleration library"},
 		"vulkan":      {Capability: "gpu.vulkan", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/vulkan", Notes: "Cross-platform 3D graphics and compute API"},
 		"opencl":      {Capability: "gpu.opencl", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/opencl", Notes: "Heterogeneous parallel computing framework"},

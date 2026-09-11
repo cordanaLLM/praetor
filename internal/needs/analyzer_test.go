@@ -148,7 +148,7 @@ func TestNativeAnalyzer(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	meson := `project('vmaf-accelerator', 'c', 'cpp',
+	meson := `project('vmafx-accelerator', 'c', 'cpp',
   version: '1.0.0',
   default_options: ['c_std=c23', 'cpp_std=c++20'])
 
@@ -175,18 +175,18 @@ dep_custom = dependency('custom_dsp')
 		t.Errorf("expected language native, got %s", needs.Language)
 	}
 
-	foundVmaf := false
+	foundVmafx := false
 	foundCuda := false
 	for _, dep := range needs.Dependencies {
 		if dep.Package == "libvmaf" && dep.Status == StatusCovered {
-			foundVmaf = true
+			foundVmafx = true
 		}
 		if dep.Package == "cuda" && dep.Status == StatusCovered {
 			foundCuda = true
 		}
 	}
-	if !foundVmaf || !foundCuda {
-		t.Errorf("expected libvmaf and cuda covered, got vmaf=%v, cuda=%v", foundVmaf, foundCuda)
+	if !foundVmafx || !foundCuda {
+		t.Errorf("expected libvmaf and cuda covered, got vmafx=%v, cuda=%v", foundVmafx, foundCuda)
 	}
 }
 
