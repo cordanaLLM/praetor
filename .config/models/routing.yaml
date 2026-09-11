@@ -161,18 +161,6 @@ tiers:
               tpm_limit: 100000
               cost_per_m_in: 0.8
               cost_per_m_out: 4
-            - id: hf.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF:Q8_0
-              family: open-weights
-              rpm_limit: 50000
-              tpm_limit: 20000000
-              cost_per_m_in: 0
-              cost_per_m_out: 0
-            - id: qwen2.5-coder:7b
-              family: open-weights
-              rpm_limit: 50000
-              tpm_limit: 20000000
-              cost_per_m_in: 0
-              cost_per_m_out: 0
         fallback_tier: nano
     midweight:
         description: 'Tier 2 Mid-Weight Workhorses (20B-35B: 27B Qwen3.8, 30B Qwen3, 32B Coder, Codestral)'
@@ -202,48 +190,6 @@ tiers:
               cost_per_m_out: 0.9
             - id: gpt-oss-small
               family: openai
-              rpm_limit: 50000
-              tpm_limit: 20000000
-              cost_per_m_in: 0
-              cost_per_m_out: 0
-            - id: hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M
-              family: open-weights
-              rpm_limit: 50000
-              tpm_limit: 20000000
-              cost_per_m_in: 0
-              cost_per_m_out: 0
-            - id: qwen3:30b
-              family: open-weights
-              rpm_limit: 50000
-              tpm_limit: 20000000
-              cost_per_m_in: 0
-              cost_per_m_out: 0
-            - id: gpt-oss:20b
-              family: open-weights
-              rpm_limit: 50000
-              tpm_limit: 20000000
-              cost_per_m_in: 0
-              cost_per_m_out: 0
-            - id: qwen3-coder:30b
-              family: open-weights
-              rpm_limit: 50000
-              tpm_limit: 20000000
-              cost_per_m_in: 0
-              cost_per_m_out: 0
-            - id: qwen2.5-coder:32b
-              family: open-weights
-              rpm_limit: 50000
-              tpm_limit: 20000000
-              cost_per_m_in: 0
-              cost_per_m_out: 0
-            - id: qwen3-vl:30b
-              family: open-weights
-              rpm_limit: 50000
-              tpm_limit: 20000000
-              cost_per_m_in: 0
-              cost_per_m_out: 0
-            - id: qwen3-vl:8b
-              family: open-weights
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0
