@@ -261,6 +261,28 @@ func TestResolveArchetype_Meson(t *testing.T) {
 	}
 }
 
+func TestResolveArchetype_Expanded(t *testing.T) {
+	tests := []struct {
+		filename string
+		expected string
+	}{
+		{"Cargo.toml", "native-gpu-systems"},
+		{"pubspec.yaml", "app-service"},
+		{"pom.xml", "app-service"},
+		{"build.gradle", "app-service"},
+		{"package.json", "app-service"},
+	}
+
+	for _, tc := range tests {
+		tmpDir := t.TempDir()
+		_ = os.WriteFile(filepath.Join(tmpDir, tc.filename), []byte("dummy"), 0644)
+		arch := resolveArchetype(tmpDir, "")
+		if arch != tc.expected {
+			t.Errorf("for marker %s: expected %s, got %s", tc.filename, tc.expected, arch)
+		}
+	}
+}
+
 func TestExtractOwnerFromURL(t *testing.T) {
 	tests := []struct {
 		url      string

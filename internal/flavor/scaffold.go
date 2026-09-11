@@ -85,6 +85,18 @@ func defaultTemplateContent(path, repoName, owner string) string {
 		return "{\n  \"global\": {\n    \"exclude\": \"G104,G301,G302,G304,G306,G204,G703\"\n  }\n}\n"
 	case "Dockerfile":
 		return "FROM gcr.io/distroless/static:nonroot\nWORKDIR /\nCOPY " + repoName + " /\nUSER 65532:65532\nENTRYPOINT [\"/" + repoName + "\"]\n"
+	case "rustfmt.toml":
+		return "edition = \"2021\"\nmax_width = 100\nnewline_style = \"Unix\"\nuse_small_heuristics = \"Default\"\n"
+	case "clippy.toml":
+		return "# Clippy linting configuration\navoid-breaking-exported-api = true\n"
+	case "tsconfig.json":
+		return "{\n  \"compilerOptions\": {\n    \"target\": \"es2022\",\n    \"module\": \"commonjs\",\n    \"strict\": true,\n    \"esModuleInterop\": true,\n    \"skipLibCheck\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"outDir\": \"./dist\"\n  },\n  \"include\": [\"src/**/*\"]\n}\n"
+	case ".eslintrc.json":
+		return "{\n  \"env\": {\n    \"node\": true,\n    \"es2022\": true\n  },\n  \"extends\": [\"eslint:recommended\"],\n  \"parserOptions\": {\n    \"ecmaVersion\": \"latest\",\n    \"sourceType\": \"module\"\n  }\n}\n"
+	case "checkstyle.xml":
+		return "<?xml version=\"1.0\"?>\n<!DOCTYPE module PUBLIC\n  \"-//Checkstyle//DTD Checkstyle Configuration 1.3//EN\"\n  \"https://checkstyle.org/dtds/configuration_1_3.dtd\">\n<module name=\"Checker\">\n  <module name=\"TreeWalker\">\n    <module name=\"AvoidStarImport\"/>\n    <module name=\"NeedBraces\"/>\n  </module>\n</module>\n"
+	case "analysis_options.yaml":
+		return "include: package:lints/recommended.yaml\n\nlinter:\n  rules:\n    - prefer_const_constructors\n    - prefer_final_fields\n    - unawaited_futures\n"
 	default:
 		return fmt.Sprintf("# %s configuration for %s/%s\n", filepath.Base(path), owner, repoName)
 	}

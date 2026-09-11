@@ -69,6 +69,15 @@ func detectRepoArchetype(repoPath string) string {
 	if _, err := os.Stat(filepath.Join(repoPath, "Cargo.toml")); err == nil {
 		return "native-gpu-systems"
 	}
+	if _, err := os.Stat(filepath.Join(repoPath, "pubspec.yaml")); err == nil {
+		return "app-service"
+	}
+	if _, err := os.Stat(filepath.Join(repoPath, "pom.xml")); err == nil {
+		return "app-service"
+	}
+	if _, err := os.Stat(filepath.Join(repoPath, "build.gradle")); err == nil {
+		return "app-service"
+	}
 	if _, err := os.Stat(filepath.Join(repoPath, "package.json")); err == nil {
 		return "app-service"
 	}

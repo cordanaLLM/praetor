@@ -71,7 +71,8 @@ func DetectArchetype(lang, desc string) string {
 	if lowerLang == "astro" || strings.Contains(lowerDesc, "static") || strings.Contains(lowerDesc, "pages") {
 		return "pages-site"
 	}
-	if lowerLang == "rust" || lowerLang == "go" || lowerLang == "python" || lowerLang == "typescript" {
+	if lowerLang == "rust" || lowerLang == "go" || lowerLang == "python" || lowerLang == "typescript" ||
+		lowerLang == "dart" || lowerLang == "flutter" || lowerLang == "java" || lowerLang == "kotlin" {
 		return "app-service"
 	}
 	return "template-seed"

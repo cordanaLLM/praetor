@@ -151,6 +151,14 @@ func resolveArchetype(repoPath, explicitProfile string) string {
 	if fileExists(filepath.Join(repoPath, "Cargo.toml")) {
 		return "native-gpu-systems"
 	}
+	if fileExists(filepath.Join(repoPath, "pubspec.yaml")) {
+		return "app-service"
+	}
+	if fileExists(filepath.Join(repoPath, "pom.xml")) ||
+		fileExists(filepath.Join(repoPath, "build.gradle")) ||
+		fileExists(filepath.Join(repoPath, "build.gradle.kts")) {
+		return "app-service"
+	}
 	if fileExists(filepath.Join(repoPath, "package.json")) {
 		return "app-service"
 	}
