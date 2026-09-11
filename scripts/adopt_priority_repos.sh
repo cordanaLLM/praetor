@@ -31,16 +31,17 @@ for repo in "${PRIORITY_REPOS[@]}"; do
         # 2. Scan needs and write .needs.yaml
         "${STANDARDSCTL}" needs scan --path="${repo}" --write || true
         
-        # 3. Generate Pre-Migration Epic
-        "${STANDARDSCTL}" needs epic --path="${repo}" --output="${repo}/PRE_MIGRATION_EPIC.md" || true
+        # 3. Generate and publish Pre-Migration Epic
+        "${STANDARDSCTL}" needs epic --path="${repo}" --output="${repo}/PRE_MIGRATION_EPIC.md" --publish=true || true
         
-        echo "    [PASS] ${repo} adopted and PRE_MIGRATION_EPIC.md generated."
+        echo "    [PASS] ${repo} adopted and PRE_MIGRATION_EPIC.md published to remote."
     else
         echo "    [WARN] Repository ${repo} not found on disk, skipping."
     fi
 done
 
 echo "=== Reconciling Cross-Repo Issue Dependencies ==="
-"${STANDARDSCTL}" issue reconcile --owner="golusoris" --repos="golusoris/golusoris,golusoris/sveltesentio,golusoris/goenvoy" --dry-run=true || true
+"${STANDARDSCTL}" issue reconcile --owner="golusoris" --repos="golusoris/golusoris,golusoris/sveltesentio,golusoris/goenvoy" --dry-run=false || true
+"${STANDARDSCTL}" issue reconcile --owner="VMAFx" --repos="VMAFx/vmafx" --dry-run=false || true
 
 echo "=== Priority Adoption Sweep Complete ==="
