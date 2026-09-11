@@ -1,12 +1,14 @@
 # Lefthook Configuration for cordanaLLM/praetor (Go 1.27+ & HISS-16 Governance)
 # Fast, parallel local Git hook runner
 pre-commit:
-  parallel: true
+  parallel: false
   commands:
     gofmt:
       glob: "*.go"
       run: gofmt -w {staged_files}
       stage_fixed: true
+    state-sync:
+      run: go run ./cmd/standardsctl state sync . && git add .workingdir/
     govet:
       glob: "*.go"
       run: go vet ./...
@@ -19,8 +21,6 @@ pre-commit:
 
 post-commit:
   commands:
-    state-sync:
-      run: go run ./cmd/standardsctl state sync .
     dedupe-cadence:
       run: go run ./cmd/standardsctl dedupe cadence --threshold=20 --record .
 

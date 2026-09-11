@@ -40,5 +40,7 @@ coverage.html
 extracted_plan.txt
 plan_clean.md
 all_github_repos.json
-# Local developer session state (.workingdir concept)
-.workingdir/
+# Local working directory evidence and scratch
+.workingdir/evidence/
+.workingdir/*.tmp
+.workingdir/cadence.json
