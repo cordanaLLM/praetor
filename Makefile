@@ -48,10 +48,24 @@ lint:
 	go vet ./...
 
 vuln:
-	govulncheck ./...
+	@if command -v govulncheck >/dev/null 2>&1; then \
+		govulncheck ./...; \
+	elif [ -x "$$(go env GOPATH)/bin/govulncheck" ]; then \
+		"$$(go env GOPATH)/bin/govulncheck" ./...; \
+	else \
+		echo "govulncheck not found; installing..."; \
+		go install golang.org/x/vuln/cmd/govulncheck@latest && "$$(go env GOPATH)/bin/govulncheck" ./...; \
+	fi
 
 sec:
-	gosec -exclude=G104,G301,G302,G304,G306,G204,G703 ./...
+	@if command -v gosec >/dev/null 2>&1; then \
+		gosec -exclude=G104,G301,G302,G304,G306,G204,G703 ./...; \
+	elif [ -x "$$(go env GOPATH)/bin/gosec" ]; then \
+		"$$(go env GOPATH)/bin/gosec" -exclude=G104,G301,G302,G304,G306,G204,G703 ./...; \
+	else \
+		echo "gosec not found; installing..."; \
+		go install github.com/securego/gosec/v2/cmd/gosec@latest && "$$(go env GOPATH)/bin/gosec" -exclude=G104,G301,G302,G304,G306,G204,G703 ./...; \
+	fi
 
 flavor-audit:
 	go run ./cmd/standardsctl flavor audit .
