@@ -16,14 +16,16 @@ const WorkingDirName = ".workingdir"
 
 // StateSnapshot captures the active git and working directory state.
 type StateSnapshot struct {
-	RepoPath    string    `json:"repo_path"`
-	Branch      string    `json:"branch"`
-	HeadSHA     string    `json:"head_sha"`
-	Clean       bool      `json:"clean"`
-	DirtyCount  int       `json:"dirty_count"`
-	OpenBugs    int       `json:"open_bugs"`
-	PendingQs   int       `json:"pending_questions"`
-	LastUpdated time.Time `json:"last_updated"`
+	RepoPath       string    `json:"repo_path"`
+	Branch         string    `json:"branch"`
+	HeadSHA        string    `json:"head_sha"`
+	Clean          bool      `json:"clean"`
+	DirtyCount     int       `json:"dirty_count"`
+	OpenTasks      int       `json:"open_tasks"`
+	CompletedTasks int       `json:"completed_tasks"`
+	OpenBugs       int       `json:"open_bugs"`
+	PendingQs      int       `json:"pending_questions"`
+	LastUpdated    time.Time `json:"last_updated"`
 }
 
 // InitWorkingDir scaffolds the canonical .workingdir directory lattice if missing.
@@ -79,6 +81,19 @@ func SyncState(ctx context.Context, rootPath string, sessionSummary string) (*St
 		snap.DirtyCount = len(strings.Split(strings.TrimSpace(statusOut), "\n"))
 	}
 
+	tasks, _ := ListTasks(rootPath)
+	openTasks := 0
+	doneTasks := 0
+	for _, t := range tasks {
+		if t.Completed {
+			doneTasks++
+		} else {
+			openTasks++
+		}
+	}
+	snap.OpenTasks = openTasks
+	snap.CompletedTasks = doneTasks
+
 	bugs, _ := ListBugs(rootPath, "open")
 	snap.OpenBugs = len(bugs)
 
@@ -105,8 +120,8 @@ func appendStateLog(rootPath string, snap *StateSnapshot, summary string) error 
 		logMsg = "Automated state synchronization"
 	}
 
-	entry := fmt.Sprintf("\n### [%s] Commit `%s` on `%s`\n- **Activity**: %s\n- **Open Bugs**: %d | **Pending Questions**: %d\n",
-		timeStr, snap.HeadSHA, snap.Branch, logMsg, snap.OpenBugs, snap.PendingQs)
+	entry := fmt.Sprintf("\n### [%s] Commit `%s` on `%s`\n- **Activity**: %s\n- **Tasks**: %d open, %d completed | **Open Bugs**: %d | **Pending Questions**: %d\n",
+		timeStr, snap.HeadSHA, snap.Branch, logMsg, snap.OpenTasks, snap.CompletedTasks, snap.OpenBugs, snap.PendingQs)
 
 	updated := string(content) + entry
 	return os.WriteFile(stateFile, []byte(updated), 0644)

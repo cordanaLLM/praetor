@@ -1,0 +1,28 @@
+{
+  "milestones": [
+    {
+      "number": 1,
+      "title": "v1.0.0-GA Fleet Adoption \u0026 Sentinel",
+      "description": "Core fleet adoption, HISS invariants, and DEV topology sentinel",
+      "state": "open",
+      "due_on": "2026-10-01T00:00:00Z",
+      "open_issues": 0,
+      "closed_issues": 0,
+      "progress": 0,
+      "created_at": "2026-09-11T20:05:08.262825298Z",
+      "updated_at": "2026-09-11T20:05:08.262825298Z"
+    },
+    {
+      "number": 2,
+      "title": "v1.1.0 Multi-Arch Container \u0026 Forge Scaling",
+      "description": "Distroless multi-arch containerization, advanced K8s admission, and Forge scaling",
+      "state": "open",
+      "due_on": "2026-11-15T00:00:00Z",
+      "open_issues": 0,
+      "closed_issues": 0,
+      "progress": 0,
+      "created_at": "2026-09-11T20:05:14.647567011Z",
+      "updated_at": "2026-09-11T20:05:14.647567011Z"
+    }
+  ]
+}

@@ -45,6 +45,8 @@ func printUsage() {
 	fmt.Println("  provenance         Generate SLSA v1.0 provenance attestation statement")
 	fmt.Println("  needs              Declare and report repository capabilities and demand to Golusoris")
 	fmt.Println("  issue              Reconcile cross-repo dependencies and unblock ready tasks")
+	fmt.Println("  milestone          Manage local and remote GitHub milestones and progress")
+	fmt.Println("  project            Manage GitHub Projects v2 boards and track epic issues")
 	fmt.Println("  build              Compile polyglot targets with universal builder and pre-build optimizer")
 	fmt.Println("  topology           Audit and clean workstation directory topology (DEV-01 to DEV-05)")
 	fmt.Println("  version            Print CLI version information")
@@ -148,6 +150,10 @@ func dispatchOperationsCommand(cmd string, args []string) error {
 		return runNeeds(args)
 	case "issue":
 		return runIssue(args)
+	case "milestone":
+		return runMilestone(args)
+	case "project":
+		return runProject(args)
 	case "build":
 		return runBuild(args)
 	case "topology":

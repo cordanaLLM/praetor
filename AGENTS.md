@@ -28,6 +28,7 @@ flowchart LR
 | **HISS-10** | Warning Hygiene | Zero-warning tolerance across compiler, linter, and format sweeps. | Exit code 1 |
 | **HISS-15** | 3D Testing | Positive, negative, and boundary tests mandatory for all public interfaces. | CI coverage gate |
 | **HISS-16** | Context Integrity | Single canonical `AGENTS.md`; vendor files compiled via `standardsctl compile-context`. | Pre-commit blocker |
+| **HISS-17** | State Ledger Discipline | Agent turn-start inspects `.workingdir/STATE.md` & `.workingdir/OPEN.md`; tasks tracked via `standardsctl state task`; turn-end `standardsctl state sync .` required. | Pre-commit / CI gate |
 
 ## Operational Rules
 
@@ -51,6 +52,12 @@ flowchart LR
 
 6. **Anti-Loop Interception**:
    If the same AST diff and error category repeats $\ge 3$ times, halt execution immediately. Re-evaluate the underlying design instead of making micro-textual retries.
+
+7. **State Ledger Discipline (HISS-17)**:
+   Agents MUST maintain the local `.workingdir` session state ledger on every turn:
+   - **Turn Start**: Inspect `.workingdir/STATE.md` and `.workingdir/OPEN.md` (or run `praetorctl state status`).
+   - **During Work**: Register discrete tasks via `praetorctl state task add "<desc>"`, mark progress with `praetorctl state task complete "<selector>"`, and archive finished items with `praetorctl state task archive`.
+   - **Turn End**: Execute `praetorctl state sync .` to record working tree status, dirty count, open tasks, and cryptographic state hash into `STATE.md`.
 
 ## Primary Verification Commands
 
