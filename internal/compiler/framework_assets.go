@@ -11,13 +11,13 @@ import (
 
 // FrameworkKitConfig defines metadata and assets to compile for a language builder kit.
 type FrameworkKitConfig struct {
-	KitName     string   `json:"kit_name" yaml:"kit_name"`         // e.g. "sveltesentio", "template-native-gpu"
-	Language    string   `json:"language" yaml:"language"`         // e.g. "svelte", "c", "python", "rust"
-	Version     string   `json:"version" yaml:"version"`           // e.g. "1.0.0"
+	KitName     string   `json:"kit_name" yaml:"kit_name"` // e.g. "sveltesentio", "template-native-gpu"
+	Language    string   `json:"language" yaml:"language"` // e.g. "svelte", "c", "python", "rust"
+	Version     string   `json:"version" yaml:"version"`   // e.g. "1.0.0"
 	Description string   `json:"description" yaml:"description"`
-	Rules       []string `json:"rules" yaml:"rules"`               // Agent behavior rules
-	Skills      []string `json:"skills" yaml:"skills"`             // Recommended agent skills
-	Components  []string `json:"components" yaml:"components"`     // Exported modules/components
+	Rules       []string `json:"rules" yaml:"rules"`           // Agent behavior rules
+	Skills      []string `json:"skills" yaml:"skills"`         // Recommended agent skills
+	Components  []string `json:"components" yaml:"components"` // Exported modules/components
 }
 
 // CompiledFrameworkAssets captures the paths and generated files from kit compilation.

@@ -333,18 +333,18 @@ type CatalogMapping struct {
 
 func lookupNodeCatalog(pkg string) (CatalogMapping, bool) {
 	nodeMappings := map[string]CatalogMapping{
-		"svelte":          {Capability: "ui.framework", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Core Svelte reactive UI framework"},
-		"@sveltejs/kit":   {Capability: "ui.framework", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "SvelteKit application framework"},
-		"tailwindcss":     {Capability: "ui.styling", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Utility-first CSS styling engine"},
-		"clsx":            {Capability: "ui.styling", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Class name construction helper"},
-		"tailwind-merge":  {Capability: "ui.styling", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Conflict-free Tailwind class merger"},
-		"lucide-svelte":   {Capability: "ui.icons", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/icons", Notes: "Clean SVG icons for Svelte"},
-		"@lucide/svelte":  {Capability: "ui.icons", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/icons", Notes: "Scoped Lucide SVG icons"},
-		"bits-ui":         {Capability: "ui.components", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/components", Notes: "Headless primitives for Svelte"},
-		"shadcn-svelte":   {Capability: "ui.components", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/components", Notes: "Accessible styled UI components"},
-		"zod":             {Capability: "ui.forms", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/forms", Notes: "TypeScript schema validation with type inference"},
-		"svelte-sonner":   {Capability: "ui.toast", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/toast", Notes: "Toast notification component"},
-		"axios":           {Capability: "http.client", Status: StatusAdapterAvailable, Replacement: "github.com/golusoris/sveltesentio/fetch", Notes: "HTTP client; migrate to native fetch with SvelteSentio interceptors"},
+		"svelte":         {Capability: "ui.framework", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Core Svelte reactive UI framework"},
+		"@sveltejs/kit":  {Capability: "ui.framework", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "SvelteKit application framework"},
+		"tailwindcss":    {Capability: "ui.styling", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Utility-first CSS styling engine"},
+		"clsx":           {Capability: "ui.styling", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Class name construction helper"},
+		"tailwind-merge": {Capability: "ui.styling", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Conflict-free Tailwind class merger"},
+		"lucide-svelte":  {Capability: "ui.icons", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/icons", Notes: "Clean SVG icons for Svelte"},
+		"@lucide/svelte": {Capability: "ui.icons", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/icons", Notes: "Scoped Lucide SVG icons"},
+		"bits-ui":        {Capability: "ui.components", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/components", Notes: "Headless primitives for Svelte"},
+		"shadcn-svelte":  {Capability: "ui.components", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/components", Notes: "Accessible styled UI components"},
+		"zod":            {Capability: "ui.forms", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/forms", Notes: "TypeScript schema validation with type inference"},
+		"svelte-sonner":  {Capability: "ui.toast", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/toast", Notes: "Toast notification component"},
+		"axios":          {Capability: "http.client", Status: StatusAdapterAvailable, Replacement: "github.com/golusoris/sveltesentio/fetch", Notes: "HTTP client; migrate to native fetch with SvelteSentio interceptors"},
 	}
 	m, ok := nodeMappings[pkg]
 	return m, ok

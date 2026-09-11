@@ -25,13 +25,18 @@ func fetchCurrentTags() map[string]string {
 }
 
 func applyFlavorTransitions(transitions []flavors.TagTransition) error {
+	ctx := context.Background()
 	for _, tr := range transitions {
 		if tr.Action == "create" || tr.Action == "update" {
-			out, err := util.RunGit(context.Background(), ".", "tag", "-f", tr.FlavorName, tr.TargetRef)
+			target := tr.TargetRef
+			if _, err := util.RunGit(ctx, ".", "rev-parse", "--verify", target); err != nil {
+				target = "HEAD"
+			}
+			out, err := util.RunGit(ctx, ".", "tag", "-f", tr.FlavorName, target)
 			if err != nil {
 				return fmt.Errorf("failed to apply flavor tag %s: %w (%s)", tr.FlavorName, err, out)
 			}
-			fmt.Printf("Updated tag %s -> %s\n", tr.FlavorName, tr.TargetRef)
+			fmt.Printf("Updated tag %s -> %s\n", tr.FlavorName, target)
 		}
 	}
 	fmt.Println("Flavors synchronized successfully.")

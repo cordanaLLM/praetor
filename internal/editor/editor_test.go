@@ -279,4 +279,3 @@ func TestEditor_Positive_ArchetypeNativeGPUSystems(t *testing.T) {
 		t.Errorf("expected cpp and cuda in Neovim filetypes for native-gpu-systems")
 	}
 }
-

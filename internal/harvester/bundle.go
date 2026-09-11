@@ -691,4 +691,3 @@ func IngestBundle(ctx context.Context, bundleDir, localSkillsDir string, dryRun 
 
 	return ingest, nil
 }
-

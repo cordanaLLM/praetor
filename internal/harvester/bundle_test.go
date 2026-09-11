@@ -178,5 +178,3 @@ func TestIngestBundle_DeduplicationAndSystemFilter(t *testing.T) {
 		t.Fatalf("expected copied file at %s", copiedSkillMD)
 	}
 }
-
-

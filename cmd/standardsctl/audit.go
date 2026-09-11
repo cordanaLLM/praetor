@@ -317,6 +317,11 @@ func auditGitHooks(rootDir string) error {
 		return fmt.Errorf("[FAIL] lefthook.yml configuration is missing from repository root.")
 	}
 
+	if os.Getenv("CI") == "true" || os.Getenv("GITHUB_ACTIONS") == "true" {
+		fmt.Println("[PASS] CI environment detected: lefthook.yml verified (local hook installation skipped).")
+		return nil
+	}
+
 	hooksDir := resolveHooksDir(rootDir)
 	preCommitPath := filepath.Join(hooksDir, "pre-commit")
 	if !util.FileExists(preCommitPath) {

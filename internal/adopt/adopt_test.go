@@ -533,6 +533,3 @@ func TestAdopt_AgentsMD_ForcePreservesCustomInstructions(t *testing.T) {
 		t.Errorf("expected custom repo instructions to be preserved, got:\n%s", content)
 	}
 }
-
-
-
