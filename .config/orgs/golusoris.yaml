@@ -1,0 +1,30 @@
+# golusoris - Universal Fleet Frameworks & Builder Kits Hub
+org: "golusoris"
+role: "Universal Fleet Frameworks & Builder Kits Hub"
+description: "Central home for fleet-wide reusable framework libraries, builder kits, and pre-build optimizers."
+
+builder_kits:
+  - name: "golusoris"
+    language: "go"
+    description: "Universal Go framework, HTTP/gRPC routing, and cluster primitives"
+    repo: "https://github.com/golusoris/golusoris"
+  - name: "sveltesentio"
+    language: "svelte"
+    description: "Universal Svelte 5 frontend component harness and state system"
+    repo: "https://github.com/golusoris/sveltesentio"
+  - name: "pykit"
+    language: "python"
+    description: "Hermetic Python AI/ML microservice framework and wheel packager"
+    repo: "https://github.com/golusoris/pykit"
+  - name: "rustkit"
+    language: "rust"
+    description: "High-performance safe systems and async runtime kit"
+    repo: "https://github.com/golusoris/rustkit"
+  - name: "template-native-gpu"
+    language: "c"
+    description: "Hardened C23/C++20 Native GPU kernel engine (Vulkan, CUDA, ROCm, FFmpeg, libvmaf)"
+    repo: "https://github.com/golusoris/template-native-gpu"
+
+runners:
+  default: "arc-runner-set-linux-amd64"
+  native_gpu: "arc-runner-set-gpu-xpu"

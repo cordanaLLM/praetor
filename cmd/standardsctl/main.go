@@ -39,6 +39,8 @@ func printUsage() {
 	fmt.Println("  sbom               Generate CycloneDX 1.5 Software Bill of Materials")
 	fmt.Println("  provenance         Generate SLSA v1.0 provenance attestation statement")
 	fmt.Println("  needs              Declare and report repository capabilities and demand to Golusoris")
+	fmt.Println("  issue              Reconcile cross-repo dependencies and unblock ready tasks")
+	fmt.Println("  build              Compile polyglot targets with universal builder and pre-build optimizer")
 	fmt.Println("  version            Print CLI version information")
 	fmt.Println("\nRun 'standardsctl <command> -h' for more information on a command.")
 }
@@ -128,6 +130,10 @@ func dispatchOperationsCommand(cmd string, args []string) error {
 		return runProvenance(args)
 	case "needs":
 		return runNeeds(args)
+	case "issue":
+		return runIssue(args)
+	case "build":
+		return runBuild(args)
 	case "version":
 		fmt.Printf("standardsctl version %s\n", version)
 		return nil

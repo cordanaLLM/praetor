@@ -322,3 +322,78 @@ func MapCapabilityToReplacement(capKey CapabilityKey) string {
 	}
 	return ""
 }
+
+// CatalogMapping defines the framework mapping for a non-Go dependency.
+type CatalogMapping struct {
+	Capability  CapabilityKey
+	Status      CapabilityStatus
+	Replacement string
+	Notes       string
+}
+
+func lookupNodeCatalog(pkg string) (CatalogMapping, bool) {
+	nodeMappings := map[string]CatalogMapping{
+		"svelte":          {Capability: "ui.framework", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Core Svelte reactive UI framework"},
+		"@sveltejs/kit":   {Capability: "ui.framework", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "SvelteKit application framework"},
+		"tailwindcss":     {Capability: "ui.styling", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Utility-first CSS styling engine"},
+		"clsx":            {Capability: "ui.styling", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Class name construction helper"},
+		"tailwind-merge":  {Capability: "ui.styling", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Conflict-free Tailwind class merger"},
+		"lucide-svelte":   {Capability: "ui.icons", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/icons", Notes: "Clean SVG icons for Svelte"},
+		"@lucide/svelte":  {Capability: "ui.icons", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/icons", Notes: "Scoped Lucide SVG icons"},
+		"bits-ui":         {Capability: "ui.components", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/components", Notes: "Headless primitives for Svelte"},
+		"shadcn-svelte":   {Capability: "ui.components", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/components", Notes: "Accessible styled UI components"},
+		"zod":             {Capability: "ui.forms", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/forms", Notes: "TypeScript schema validation with type inference"},
+		"svelte-sonner":   {Capability: "ui.toast", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/toast", Notes: "Toast notification component"},
+		"axios":           {Capability: "http.client", Status: StatusAdapterAvailable, Replacement: "github.com/golusoris/sveltesentio/fetch", Notes: "HTTP client; migrate to native fetch with SvelteSentio interceptors"},
+	}
+	m, ok := nodeMappings[pkg]
+	return m, ok
+}
+
+func lookupPythonCatalog(pkg string) (CatalogMapping, bool) {
+	pythonMappings := map[string]CatalogMapping{
+		"fastapi":    {Capability: "http.router", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/httpx", Notes: "Async web framework for building APIs"},
+		"pydantic":   {Capability: "data.validation", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/schema", Notes: "Data validation and settings management"},
+		"httpx":      {Capability: "http.client", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/client", Notes: "Async HTTP client for Python"},
+		"requests":   {Capability: "http.client", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/client", Notes: "HTTP library; migrate to PyKit async client"},
+		"redis":      {Capability: "cache.redis", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/cache", Notes: "Redis in-memory data store client"},
+		"sqlalchemy": {Capability: "db.orm", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/db", Notes: "Python SQL toolkit and Object Relational Mapper"},
+		"asyncpg":    {Capability: "db.postgres", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/db", Notes: "Fast PostgreSQL driver for Python asyncio"},
+		"click":      {Capability: "clikit", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/cli", Notes: "Composable command line interface kit"},
+		"litellm":    {Capability: "ai.llm_client", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/ai", Notes: "Unified multi-provider LLM gateway client"},
+	}
+	m, ok := pythonMappings[pkg]
+	return m, ok
+}
+
+func lookupRustCatalog(pkg string) (CatalogMapping, bool) {
+	rustMappings := map[string]CatalogMapping{
+		"tokio":   {Capability: "runtime.async", Status: StatusCovered, Replacement: "github.com/golusoris/rustkit/runtime", Notes: "Asynchronous runtime for Rust"},
+		"serde":   {Capability: "data.serialization", Status: StatusCovered, Replacement: "github.com/golusoris/rustkit/serde", Notes: "Generic serialization/deserialization framework"},
+		"axum":    {Capability: "http.router", Status: StatusCovered, Replacement: "github.com/golusoris/rustkit/http", Notes: "Ergonomic and modular web framework"},
+		"reqwest": {Capability: "http.client", Status: StatusCovered, Replacement: "github.com/golusoris/rustkit/client", Notes: "Higher level HTTP client library"},
+		"clap":    {Capability: "clikit", Status: StatusCovered, Replacement: "github.com/golusoris/rustkit/cli", Notes: "Command Line Argument Parser for Rust"},
+		"tracing": {Capability: "telemetry.logging", Status: StatusCovered, Replacement: "github.com/golusoris/rustkit/tracing", Notes: "Application-level tracing and diagnostic instrumentation"},
+	}
+	m, ok := rustMappings[pkg]
+	return m, ok
+}
+
+func lookupNativeCatalog(pkg string) (CatalogMapping, bool) {
+	nativeMappings := map[string]CatalogMapping{
+		"libavcodec":  {Capability: "media.ffmpeg", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/ffmpeg", Notes: "FFmpeg audio/video decoding and encoding library"},
+		"libavformat": {Capability: "media.ffmpeg", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/ffmpeg", Notes: "FFmpeg container demuxing and muxing library"},
+		"libavfilter": {Capability: "media.ffmpeg", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/ffmpeg", Notes: "FFmpeg audio/video graph filtering library"},
+		"libvmaf":     {Capability: "media.vmaf", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/vmaf", Notes: "Video Multi-Method Assessment Fusion quality metric"},
+		"cuda":        {Capability: "gpu.cuda", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/cuda", Notes: "NVIDIA CUDA compute acceleration library"},
+		"vulkan":      {Capability: "gpu.vulkan", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/vulkan", Notes: "Cross-platform 3D graphics and compute API"},
+		"opencl":      {Capability: "gpu.opencl", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/opencl", Notes: "Heterogeneous parallel computing framework"},
+	}
+	m, ok := nativeMappings[pkg]
+	return m, ok
+}
+
+func cleanDepKey(pkg string) string {
+	replacer := strings.NewReplacer("@", "", "/", "_", ".", "_", "-", "_")
+	return replacer.Replace(pkg)
+}

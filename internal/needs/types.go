@@ -21,9 +21,12 @@ const (
 type DependencyDemand struct {
 	Package              string           `json:"package" yaml:"package"`
 	Version              string           `json:"version,omitempty" yaml:"version,omitempty"`
+	Language             string           `json:"language,omitempty" yaml:"language,omitempty"`
+	Ecosystem            string           `json:"ecosystem,omitempty" yaml:"ecosystem,omitempty"`
 	Capability           CapabilityKey    `json:"capability" yaml:"capability"`
 	Status               CapabilityStatus `json:"status" yaml:"status"`
 	GolusorisReplacement string           `json:"golusoris_replacement,omitempty" yaml:"golusoris_replacement,omitempty"`
+	TargetBuilderKit     string           `json:"target_builder_kit,omitempty" yaml:"target_builder_kit,omitempty"`
 	Notes                string           `json:"notes,omitempty" yaml:"notes,omitempty"`
 }
 
@@ -46,8 +49,10 @@ type RepoNeeds struct {
 	Version      int                   `json:"version" yaml:"version"`
 	Repository   string                `json:"repository" yaml:"repository"`
 	Language     string                `json:"language" yaml:"language"`
+	Languages    []string              `json:"languages,omitempty" yaml:"languages,omitempty"`
 	GoVersion    string                `json:"go_version,omitempty" yaml:"go_version,omitempty"`
 	Framework    string                `json:"framework" yaml:"framework"`
+	BuilderKits  []string              `json:"builder_kits,omitempty" yaml:"builder_kits,omitempty"`
 	Capabilities CapabilityDeclaration `json:"capabilities" yaml:"capabilities"`
 	Dependencies []DependencyDemand    `json:"dependencies" yaml:"dependencies"`
 	Readiness    ReadinessMetrics      `json:"readiness" yaml:"readiness"`

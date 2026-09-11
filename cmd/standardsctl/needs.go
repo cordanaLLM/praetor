@@ -35,6 +35,10 @@ func runNeeds(args []string) error {
 		return runNeedsAggregate(ctx, subArgs)
 	case "migrate":
 		return runNeedsMigrate(ctx, subArgs)
+	case "requests":
+		return runNeedsRequests(ctx, subArgs)
+	case "epic":
+		return runNeedsEpic(ctx, subArgs)
 	default:
 		return fmt.Errorf("unknown needs subcommand: %s", sub)
 	}
@@ -46,6 +50,8 @@ func printNeedsUsage() {
 	fmt.Println("  scan [--path=.] [--write]           Scan repo AST and go.mod, emit .needs.yaml")
 	fmt.Println("  report [--path=.]                   Evaluate compatibility and replacement matrix against Golusoris")
 	fmt.Println("  aggregate [--dev-dir=...] [--output=...] Aggregate fleet-wide demand and output gap report")
+	fmt.Println("  requests [--dev-dir=...] [--output-dir=...] Synthesize and emit deduplicated Framework Demand Requests")
+	fmt.Println("  epic [--path=.] [--framework=...] [--output=...] Generate pre-migration hardening epic")
 	fmt.Println("  migrate [--path=.] [--dry-run|--apply]  Automated import and dependency rewrite to Golusoris")
 }
 
@@ -179,6 +185,62 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 		fmt.Printf("[PASS] Migration guide generated at %s/MIGRATION.md\n", *path)
 	} else {
 		fmt.Println("\n[INFO] Dry-run complete. Pass --apply --dry-run=false to execute migration.")
+	}
+	return nil
+}
+
+func runNeedsRequests(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("needs requests", flag.ContinueOnError)
+	devDir := fs.String("dev-dir", "/home/kilian/dev", "Fleet dev root directory")
+	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Framework repository path")
+	outputDir := fs.String("output-dir", "", "Optional output directory to write demand requests")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	report, err := needs.AggregateFleet(ctx, *devDir, *framework)
+	if err != nil {
+		return fmt.Errorf("fleet aggregation failed: %w", err)
+	}
+
+	requests := needs.SynthesizeDemands(report)
+	fmt.Printf("=== Framework Demand Requests: %d Synthesized ===\n\n", len(requests))
+	for _, req := range requests {
+		fmt.Printf("  [%s] %s\n", req.RequestID, req.Title)
+		fmt.Printf("    Target Kit: %s | Consuming Repos: %d | ROI: %s\n\n",
+			req.TargetBuilderKit, req.ConsumerCount, req.MaintenanceROI)
+	}
+
+	if *outputDir != "" {
+		if err := needs.EmitDemandRequests(requests, *outputDir); err != nil {
+			return fmt.Errorf("failed to emit demand requests: %w", err)
+		}
+		fmt.Printf("[PASS] Emitted %d demand requests and FRAMEWORK_DEMAND.yaml to %s\n", len(requests), *outputDir)
+	}
+	return nil
+}
+
+func runNeedsEpic(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("needs epic", flag.ContinueOnError)
+	path := fs.String("path", ".", "Target repository path")
+	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Target framework repository path")
+	output := fs.String("output", "", "Optional markdown file path to write pre-migration epic")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	epic, err := needs.GeneratePreMigrationEpic(ctx, *path, *framework)
+	if err != nil {
+		return fmt.Errorf("failed to generate pre-migration epic: %w", err)
+	}
+
+	if *output != "" {
+		if err := needs.WriteEpicMarkdown(epic, *output); err != nil {
+			return fmt.Errorf("failed to write epic markdown: %w", err)
+		}
+		fmt.Printf("[PASS] Pre-migration epic written to %s\n", *output)
+	} else {
+		fmt.Println(epic.ChecklistMarkdown)
 	}
 	return nil
 }

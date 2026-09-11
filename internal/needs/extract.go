@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/cordanaLLM/standards/internal/util"
 	"gopkg.in/yaml.v3"
@@ -22,30 +21,12 @@ func ScanRepo(ctx context.Context, repoPath string) (*RepoNeeds, error) {
 		return nil, ctx.Err()
 	}
 
-	modulePath, goVer, directDeps, err := parseGoMod(filepath.Join(repoPath, "go.mod"))
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse go.mod: %w", err)
+	needs, err := DefaultRegistry().AnalyzePolyglot(ctx, repoPath)
+	if err == nil {
+		return needs, nil
 	}
 
-	astImports, err := scanASTImports(ctx, repoPath, modulePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to scan AST imports: %w", err)
-	}
-
-	repoNeeds := &RepoNeeds{
-		Version:    1,
-		Repository: modulePath,
-		Language:   "go",
-		GoVersion:  goVer,
-		Framework:  defaultFrameworkModule,
-		UpdatedAt:  time.Now().UTC(),
-	}
-
-	loadExistingDeclarations(repoPath, repoNeeds)
-	buildDependencyDemands(directDeps, astImports, repoNeeds)
-	calculateReadiness(repoNeeds)
-
-	return repoNeeds, nil
+	return NewGoAnalyzer().Analyze(ctx, repoPath)
 }
 
 // parseGoMod extracts the module path, go version, and direct dependencies from go.mod.

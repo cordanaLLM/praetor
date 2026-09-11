@@ -251,3 +251,52 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 		t.Fatalf("adopt dry-run failed: %v", err)
 	}
 }
+
+func TestDispatchCommand_IssueAndBuild(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Issue help and reconcile
+	if err := dispatchCommand("issue", []string{}); err != nil {
+		t.Fatalf("issue with no args failed: %v", err)
+	}
+	if err := dispatchCommand("issue", []string{"-h"}); err != nil {
+		t.Fatalf("issue -h failed: %v", err)
+	}
+	if err := dispatchCommand("issue", []string{"reconcile", "--owner=cordanaLLM", "--dry-run"}); err != nil {
+		t.Fatalf("issue reconcile failed: %v", err)
+	}
+	if err := dispatchCommand("issue", []string{"invalid"}); err == nil {
+		t.Fatal("expected error for invalid issue subcommand")
+	}
+
+	// Needs requests and epic
+	if err := dispatchCommand("needs", []string{"requests", "--dev-dir=../.."}); err != nil {
+		t.Fatalf("needs requests failed: %v", err)
+	}
+	epicOut := filepath.Join(tmpDir, "EPIC.md")
+	if err := dispatchCommand("needs", []string{"epic", "--path=../..", "--output=" + epicOut}); err != nil {
+		t.Fatalf("needs epic failed: %v", err)
+	}
+
+	// Build with temporary config
+	buildCfgPath := filepath.Join(tmpDir, ".framework-build.yaml")
+	cfgContent := `
+version: 1
+project: cli-test
+output_dir: ` + filepath.Join(tmpDir, "dist") + `
+targets:
+  cli:
+    runtime: go
+    entrypoint: ./cmd/standardsctl
+`
+	if err := os.WriteFile(buildCfgPath, []byte(cfgContent), 0644); err != nil {
+		t.Fatalf("failed to write build config: %v", err)
+	}
+
+	if err := dispatchCommand("build", []string{"-h"}); err != nil && err != flag.ErrHelp {
+		t.Fatalf("build -h failed: %v", err)
+	}
+	if err := dispatchCommand("build", []string{"--config=" + buildCfgPath, "--target=cli"}); err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+}

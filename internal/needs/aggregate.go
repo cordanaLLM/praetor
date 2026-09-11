@@ -12,8 +12,13 @@ import (
 	"github.com/cordanaLLM/standards/internal/util"
 )
 
-// AggregateFleet scans all Go repositories in fleetRoot and produces a FleetDemandReport.
+// AggregateFleet scans all repositories in fleetRoot and produces a FleetDemandReport.
 func AggregateFleet(ctx context.Context, fleetRoot, frameworkPath string) (*FleetDemandReport, error) {
+	return AggregateFleetWithHarvest(ctx, fleetRoot, frameworkPath, "")
+}
+
+// AggregateFleetWithHarvest scans all repositories and incorporates harvested state.
+func AggregateFleetWithHarvest(ctx context.Context, fleetRoot, frameworkPath, harvestPath string) (*FleetDemandReport, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -23,9 +28,9 @@ func AggregateFleet(ctx context.Context, fleetRoot, frameworkPath string) (*Flee
 		return nil, fmt.Errorf("failed to inspect framework: %w", err)
 	}
 
-	repoDirs, err := discoverGoRepos(ctx, fleetRoot)
+	repoDirs, err := discoverFleetRepos(ctx, fleetRoot)
 	if err != nil {
-		return nil, fmt.Errorf("failed to discover Go repositories: %w", err)
+		return nil, fmt.Errorf("failed to discover fleet repositories: %w", err)
 	}
 
 	report := &FleetDemandReport{
@@ -42,13 +47,23 @@ func AggregateFleet(ctx context.Context, fleetRoot, frameworkPath string) (*Flee
 		processRepoForAggregate(ctx, dir, report, gapPackages)
 	}
 
+	if harvestPath != "" && util.DirExists(harvestPath) {
+		harvestNeeds, hErr := CodifyHarvestedInventory(ctx, harvestPath)
+		if hErr == nil {
+			for _, hn := range harvestNeeds {
+				incorporateNeedsIntoReport(&hn, report, gapPackages)
+			}
+		}
+	}
+
 	compileGapsAndLeaderboard(report, gapPackages)
 	return report, nil
 }
 
-// discoverGoRepos searches up to depth 5 for directories containing go.mod.
-func discoverGoRepos(ctx context.Context, root string) ([]string, error) {
+// discoverFleetRepos searches up to depth 5 for repositories across all supported languages.
+func discoverFleetRepos(ctx context.Context, root string) ([]string, error) {
 	var repoDirs []string
+	seen := make(map[string]struct{})
 	maxDepth := 5
 
 	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
@@ -62,13 +77,44 @@ func discoverGoRepos(ctx context.Context, root string) ([]string, error) {
 		if shouldSkipDir(info, path) {
 			return filepath.SkipDir
 		}
-		if !info.IsDir() && info.Name() == "go.mod" {
-			repoDirs = append(repoDirs, filepath.Dir(path))
+		if isManifestFile(info) {
+			dir := filepath.Dir(path)
+			if _, exists := seen[dir]; !exists {
+				seen[dir] = struct{}{}
+				repoDirs = append(repoDirs, dir)
+			}
 		}
 		return nil
 	})
 
 	return repoDirs, err
+}
+
+func isManifestFile(info os.FileInfo) bool {
+	if info.IsDir() {
+		return false
+	}
+	name := info.Name()
+	return name == "go.mod" || name == "package.json" || name == "pyproject.toml" ||
+		name == "requirements.txt" || name == "Cargo.toml" || name == "meson.build"
+}
+
+func incorporateNeedsIntoReport(needs *RepoNeeds, report *FleetDemandReport, gapPackages map[CapabilityKey]map[string]struct{}) {
+	report.TotalRepositories++
+	report.ScannedRepositories++
+	report.Leaderboard = append(report.Leaderboard, *needs)
+
+	for _, dep := range needs.Dependencies {
+		report.DemandFrequency[dep.Capability]++
+		report.CapabilityConsumers[dep.Capability] = appendUnique(report.CapabilityConsumers[dep.Capability], needs.Repository)
+
+		if dep.Status == StatusGap {
+			if _, ok := gapPackages[dep.Capability]; !ok {
+				gapPackages[dep.Capability] = make(map[string]struct{})
+			}
+			gapPackages[dep.Capability][dep.Package] = struct{}{}
+		}
+	}
 }
 
 // processRepoForAggregate scans an individual repo and updates fleet aggregation counters.
