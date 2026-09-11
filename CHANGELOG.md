@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Continuous fuzzing battery spanning 8 subsystems (`hiss`, `compiler`, `baseline`, `seo`, `astmerge`, `changelog`, `lsp`) passing > 21M executions
 - Concurrency stress and generative property validation suite in `internal/stress/stress_test.go`
 - Dedicated `fuzz` and `stress` targets in `Makefile`
+- Dogfooded framework demand declarations (`.needs.yaml`) in `praetor` targeting upstream Golusoris capabilities
+- Expanded canonical catalog in `internal/needs/catalog.go` for YAML serialization and community MCP servers
 
 ### Changed
 

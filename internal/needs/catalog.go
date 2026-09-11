@@ -262,6 +262,38 @@ var CanonicalCatalog = []CatalogEntry{
 		GolusorisReplacement: "github.com/golusoris/golusoris/clikit",
 		Notes:                "Dependency injection container mapped to Golusoris clikit",
 	},
+
+	// Serialization & Configuration Formats
+	{
+		Package:              "gopkg.in/yaml.v3",
+		Capability:           "config.yaml",
+		Status:               StatusGap,
+		GolusorisReplacement: "github.com/golusoris/golusoris/config",
+		Notes:                "YAML parser and serializer; use Golusoris config or await zero-dependency codec",
+	},
+	{
+		Package:              "gopkg.in/yaml.v2",
+		Capability:           "config.yaml",
+		Status:               StatusGap,
+		GolusorisReplacement: "github.com/golusoris/golusoris/config",
+		Notes:                "Legacy YAML v2 parser; upgrade to v3 or Golusoris config",
+	},
+
+	// Model Context Protocol (MCP)
+	{
+		Package:              "github.com/mark3labs/mcp-go",
+		Capability:           "mcp.server",
+		Status:               StatusCovered,
+		GolusorisReplacement: "github.com/golusoris/golusoris/mcp",
+		Notes:                "Migrate community mcp-go server to Golusoris mcp module",
+	},
+	{
+		Package:              "github.com/modelcontextprotocol/go-sdk",
+		Capability:           "mcp.server",
+		Status:               StatusCovered,
+		GolusorisReplacement: "github.com/golusoris/golusoris/mcp",
+		Notes:                "Official MCP Go SDK wrapped in Golusoris mcp module",
+	},
 }
 
 // MatchPackage searches the catalog for the best prefix match for a given import path.

@@ -27,11 +27,20 @@ func TestCatalogMatching(t *testing.T) {
 
 	// Positive: Gin web framework
 	entry, found = MatchPackage("github.com/gin-gonic/gin")
-	if !found {
-		t.Fatal("expected to find gin in catalog")
+	if !found || entry.Capability != "http.router" {
+		t.Fatalf("expected http.router for gin, got %v", entry)
 	}
-	if entry.Capability != "http.router" {
-		t.Fatalf("expected http.router, got %s", entry.Capability)
+
+	// Positive: YAML serialization
+	entry, found = MatchPackage("gopkg.in/yaml.v3")
+	if !found || entry.Capability != "config.yaml" || entry.Status != StatusGap {
+		t.Fatalf("expected config.yaml gap for yaml.v3, got %v", entry)
+	}
+
+	// Positive: MCP community server
+	entry, found = MatchPackage("github.com/mark3labs/mcp-go/server")
+	if !found || entry.Capability != "mcp.server" || entry.Status != StatusCovered {
+		t.Fatalf("expected mcp.server for mark3labs/mcp-go, got %v", entry)
 	}
 
 	// Negative: Unknown package

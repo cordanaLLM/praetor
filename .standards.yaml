@@ -43,3 +43,16 @@ overrides:
     enforce_cosign: true
     require_sbom: true
 
+# Framework capability demand declarations towards upstream Golusoris
+needs:
+  required:
+    - "config.yaml"
+  optional:
+    - "clikit.cli"
+    - "mcp.server"
+    - "crypto.receipt"
+    - "git.worktree"
+    - "ast.analyzer"
+    - "telemetry.logging"
+
+
