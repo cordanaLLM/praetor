@@ -8,15 +8,25 @@ import (
 
 // TemplateContext holds variables for synthesizing repository assets across archetypes.
 type TemplateContext struct {
-	RepoName  string `json:"repo_name"`
-	Owner     string `json:"owner"`
-	Archetype string `json:"archetype"`
-	Runtime   string `json:"runtime"`
-	VerifyCmd string `json:"verify_cmd"`
-	TestCmd   string `json:"test_cmd"`
-	RunnerTag string `json:"runner_tag"`
-	HasGPU    bool   `json:"has_gpu"`
-	SLSALevel int    `json:"slsa_level"`
+	RepoName          string `json:"repo_name"`
+	Owner             string `json:"owner"`
+	Archetype         string `json:"archetype"`
+	Runtime           string `json:"runtime"`
+	VerifyCmd         string `json:"verify_cmd"`
+	TestCmd           string `json:"test_cmd"`
+	RunnerTag         string `json:"runner_tag"`
+	HasGPU            bool   `json:"has_gpu"`
+	SLSALevel         int    `json:"slsa_level"`
+	CopyrightHolder   string `json:"copyright_holder"`
+	LicenseIdentifier string `json:"license_identifier"`
+}
+
+// DefaultCopyrightHolder returns the configured copyright holder or defaults to Lusoris.
+func DefaultCopyrightHolder(owner string) string {
+	if owner != "" {
+		return owner
+	}
+	return "Lusoris"
 }
 
 // RenderTemplate parses and executes a Go template string with the provided context.
