@@ -205,63 +205,48 @@ func resolveFacets(input []string) []string {
 
 func executeAdoptSteps(ctx context.Context, repoPath, arch string, facets []string, opts AdoptOptions, report *AdoptReport) error {
 	repoName := resolveRepoName(repoPath)
+	if err := executeCoreAdoptSteps(ctx, repoPath, repoName, arch, facets, opts, report); err != nil {
+		return err
+	}
+	return executeGovernanceAndHookSteps(ctx, repoPath, repoName, arch, opts, report)
+}
 
-	// 1. Scaffold / reconcile .standards.yaml
+func executeCoreAdoptSteps(ctx context.Context, repoPath, repoName, arch string, facets []string, opts AdoptOptions, report *AdoptReport) error {
 	if err := reconcileManifest(repoPath, repoName, arch, facets, opts, report); err != nil {
 		return err
 	}
-
-	// 2. Scaffold / reconcile .standards.lock
 	if err := reconcileLockfile(repoPath, opts, report); err != nil {
 		return err
 	}
-
-	// 3. Technical debt baseline & ratcheting
 	if err := reconcileBaseline(repoPath, opts, report); err != nil {
 		return err
 	}
-
-	// 4. Universal AGENTS.md & vendor transpilation
 	if err := reconcileAgentHarness(repoPath, repoName, arch, opts, report); err != nil {
 		return err
 	}
-
-	// 5. DevContainer platform
 	if err := reconcileDevContainer(repoPath, repoName, arch, facets, opts, report); err != nil {
 		return err
 	}
+	return reconcileEditors(repoPath, arch, opts, report)
+}
 
-	// 6. IDE ecosystem
-	if err := reconcileEditors(repoPath, arch, opts, report); err != nil {
-		return err
-	}
-
-	// 7. Makefile & Git hygiene
+func executeGovernanceAndHookSteps(ctx context.Context, repoPath, repoName, arch string, opts AdoptOptions, report *AdoptReport) error {
 	if err := reconcileMakefileAndGit(repoPath, arch, opts, report); err != nil {
 		return err
 	}
-
-	// 8. Repository governance texts & documentation
 	if err := reconcileGovernanceTexts(repoPath, repoName, arch, opts, report); err != nil {
 		return err
 	}
-
-	// 9. Branch protection rulesets & label taxonomy
 	if err := reconcileBranchRulesetsAndLabels(repoPath, opts, report); err != nil {
 		return err
 	}
-
-	// 10. Paperclip agent harness
 	if err := reconcilePaperclip(repoPath, opts, report); err != nil {
 		return err
 	}
-
-	// 11. Agent definitions
 	if err := reconcileAgentDefinitions(repoPath, opts, report); err != nil {
 		return err
 	}
-
-	return nil
+	return reconcileGitHooks(repoPath, opts, report)
 }
 
 func reconcileBranchRulesetsAndLabels(repoPath string, opts AdoptOptions, report *AdoptReport) error {
@@ -451,6 +436,133 @@ You are the repository gatekeeper. Your mission is to strictly enforce the anti-
 
 ## Execution Command
 ` + "```bash\nstandardsctl gate run --target=. --dry-run\n```\n"
+
+func reconcileGitHooks(repoPath string, opts AdoptOptions, report *AdoptReport) error {
+	lhPath := filepath.Join(repoPath, "lefthook.yml")
+	if opts.Force || !fileExists(lhPath) {
+		report.CreatedFiles = append(report.CreatedFiles, "lefthook.yml")
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    "lefthook.yml",
+			Action:  "create",
+			Details: "Scaffolded Lefthook configuration for local pre-commit and pre-push enforcement",
+		})
+		if !opts.DryRun {
+			if err := os.WriteFile(lhPath, []byte(defaultLefthookYAML), 0644); err != nil {
+				return err
+			}
+		}
+	}
+
+	evasionHookPath := filepath.Join(repoPath, ".config", "agent", "hooks", "block_evasion.py")
+	if opts.Force || !fileExists(evasionHookPath) {
+		report.CreatedFiles = append(report.CreatedFiles, ".config/agent/hooks/block_evasion.py")
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    ".config/agent/hooks/block_evasion.py",
+			Action:  "create",
+			Details: "Scaffolded anti-evasion hook interceptor",
+		})
+		if !opts.DryRun {
+			if err := os.MkdirAll(filepath.Dir(evasionHookPath), 0755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(evasionHookPath, []byte(defaultBlockEvasionPY), 0755); err != nil {
+				return err
+			}
+		}
+	}
+
+	gitDir := filepath.Join(repoPath, ".git")
+	if util.DirExists(gitDir) && !opts.DryRun {
+		cmd := exec.Command("lefthook", "install")
+		cmd.Dir = repoPath
+		if err := cmd.Run(); err != nil {
+			if err := installFallbackHooks(repoPath); err != nil {
+				return err
+			}
+		}
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    ".git/hooks/pre-commit",
+			Action:  "create",
+			Details: "Installed and activated local Git hooks",
+		})
+	}
+	return nil
+}
+
+func installFallbackHooks(repoPath string) error {
+	hooksDir := filepath.Join(repoPath, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		return err
+	}
+	preCommitScript := `#!/usr/bin/env bash
+set -e
+if command -v standardsctl >/dev/null 2>&1; then
+    standardsctl compile-context --verify
+    standardsctl audit
+elif [ -f "./bin/standardsctl" ]; then
+    ./bin/standardsctl compile-context --verify
+    ./bin/standardsctl audit
+fi
+`
+	preCommitPath := filepath.Join(hooksDir, "pre-commit")
+	return os.WriteFile(preCommitPath, []byte(preCommitScript), 0755)
+}
+
+const defaultLefthookYAML = `# Lefthook Configuration (Go 1.27+ & HISS-16 Governance)
+pre-commit:
+  parallel: true
+  commands:
+    gofmt:
+      glob: "*.go"
+      run: gofmt -l -w {staged_files} && git add {staged_files}
+    govet:
+      glob: "*.go"
+      run: go vet ./...
+    context-check:
+      run: go run ./cmd/standardsctl compile-context --verify
+    hiss-audit:
+      run: go run ./cmd/standardsctl audit
+    block-evasion:
+      run: python3 .config/agent/hooks/block_evasion.py
+
+pre-push:
+  parallel: false
+  commands:
+    test:
+      run: go test ./...
+    audit:
+      run: go run ./cmd/standardsctl audit
+    gate:
+      run: python3 .config/agent/hooks/pre_push_gating.py
+`
+
+const defaultBlockEvasionPY = `#!/usr/bin/env python3
+import sys, os, re
+
+BLOCKED_PATTERNS = [
+    r"--no-verify\b",
+    r"-n\b(?=.*git\s+commit)",
+    r"LEFTHOOK=0\b",
+    r"SKIP=.*git",
+    r"core\.hooksPath\s*=\s*/dev/null",
+    r"rm\s+(-rf?\s+)?\.git/hooks",
+]
+
+def main():
+    if os.environ.get("LEFTHOOK") == "0":
+        sys.stderr.write("[BLOCKED BY HISS-16] LEFTHOOK=0 detected in environment.\n")
+        sys.exit(1)
+    if len(sys.argv) > 1:
+        cmd = " ".join(sys.argv[1:])
+        for p in BLOCKED_PATTERNS:
+            if re.search(p, cmd):
+                sys.stderr.write(f"[BLOCKED BY HISS-16] Verification evasion prohibited: {p}\n")
+                sys.exit(1)
+    sys.exit(0)
+
+if __name__ == "__main__":
+    main()
+`
 
 func reconcileManifest(repoPath, repoName, arch string, facets []string, opts AdoptOptions, report *AdoptReport) error {
 	manifestPath := filepath.Join(repoPath, ".standards.yaml")
@@ -654,16 +766,16 @@ func buildAgentHarnessDirectives() string {
 
 | Invariant | Scope | NASA Rule | Enforcement Mechanism | Failure Action |
 | :--- | :--- | :--- | :--- | :--- |
-| **HISS-01** | Control Flow | Rule 1 | Recursion strictly prohibited; call graph must be DAG; zero `+"`goto`"+`. | Immediate build failure |
-| **HISS-02** | Loops & I/O | Rule 2 | Scalar upper bound on all loops; explicit `+"`context.Context`"+` timeout on all I/O. | Semgrep / AST error |
-| **HISS-03** | Memory | Rule 3 | Zero dynamic heap allocation (`+"`malloc` / `free`"+`) in hot simulation/tick loops. | Allocation audit sweep |
+| **HISS-01** | Control Flow | Rule 1 | Recursion strictly prohibited; call graph must be DAG; zero ` + "`goto`" + `. | Immediate build failure |
+| **HISS-02** | Loops & I/O | Rule 2 | Scalar upper bound on all loops; explicit ` + "`context.Context`" + ` timeout on all I/O. | Semgrep / AST error |
+| **HISS-03** | Memory | Rule 3 | Zero dynamic heap allocation (` + "`malloc` / `free`" + `) in hot simulation/tick loops. | Allocation audit sweep |
 | **HISS-04** | Complexity | Rule 4 | Function length $\le 60$ LOC, McCabe Cyclomatic $\le 10$, Statements $\le 50$. | AST sweep blocker |
-| **HISS-07** | Error Handling | Rule 7 | Zero `+"`.unwrap()` / `.expect()`"+`; all errors handled or wrapped with context. | Linter / Compiler error |
-| **HISS-08** | Determinism | Rule 8 | Zero dynamic execution (`+"`eval` / `exec`"+`); zero banned unsafe libc (`+"`gets` / `strcpy` / `sprintf`"+`). | AST / Linter error |
-| **HISS-09** | Reference Safety | Rule 9 | Mandatory `+"`// SAFETY:`"+` proofs for all pointer arithmetic and `+"`unsafe`"+` blocks. | AST check blocker |
+| **HISS-07** | Error Handling | Rule 7 | Zero ` + "`.unwrap()` / `.expect()`" + `; all errors handled or wrapped with context. | Linter / Compiler error |
+| **HISS-08** | Determinism | Rule 8 | Zero dynamic execution (` + "`eval` / `exec`" + `); zero banned unsafe libc (` + "`gets` / `strcpy` / `sprintf`" + `). | AST / Linter error |
+| **HISS-09** | Reference Safety | Rule 9 | Mandatory ` + "`// SAFETY:`" + ` proofs for all pointer arithmetic and ` + "`unsafe`" + ` blocks. | AST check blocker |
 | **HISS-10** | Warning Hygiene | Rule 10 | Zero-warning tolerance across compiler, linter, and format sweeps. | Exit code 1 |
 | **HISS-15** | 3D Testing | Rule 5 | Positive, negative, and boundary tests mandatory for all public interfaces. | CI coverage gate |
-| **HISS-16** | Context Integrity | Fleet | Single canonical `+"`AGENTS.md`"+`; vendor files compiled via `+"`standardsctl compile-context`"+`. | Pre-commit blocker |
+| **HISS-16** | Context Integrity | Fleet | Single canonical ` + "`AGENTS.md`" + `; vendor files compiled via ` + "`standardsctl compile-context`" + `. | Pre-commit blocker |
 
 ## Operational Rules
 
@@ -674,13 +786,13 @@ func buildAgentHarnessDirectives() string {
    Provide direct answers, diffs, and commands. Avoid filler preambles, "Based on", restatements, or conversational chatter.
 
 3. **Context Transpiler First**:
-   Never edit `+"`CLAUDE.md`"+`, `+"`.cursor/rules/*.mdc`"+`, `+"`.windsurfrules`"+`, or `+"`.github/copilot-instructions.md`"+` manually. Make all agent instruction updates in `+"`AGENTS.md`"+` and execute:
+   Never edit ` + "`CLAUDE.md`" + `, ` + "`.cursor/rules/*.mdc`" + `, ` + "`.windsurfrules`" + `, or ` + "`.github/copilot-instructions.md`" + ` manually. Make all agent instruction updates in ` + "`AGENTS.md`" + ` and execute:
 
-   `+"```bash\n   standardsctl compile-context\n   ```\n\n"+`4. **SARIF Diagnostic Distillation**:
+   ` + "```bash\n   standardsctl compile-context\n   ```\n\n" + `4. **SARIF Diagnostic Distillation**:
    When reporting compiler or linter errors, distill output to $\le 1,500$ tokens ($< 60$ lines). Print the top 3 root-cause failures with file/line pointers and write full SARIF logs to ephemeral storage.
 
 5. **No Evasion Tolerated**:
-   Do not attempt `+"`--no-verify`"+`, `+"`LEFTHOOK=0`"+`, or modifying `+"`.git/hooks`"+`. All pull requests are authoritatively re-checked in an ephemeral isolated sandbox by `+"`cordana-standards[bot]`"+`.
+   Do not attempt ` + "`--no-verify`" + `, ` + "`LEFTHOOK=0`" + `, or modifying ` + "`.git/hooks`" + `. All pull requests are authoritatively re-checked in an ephemeral isolated sandbox by ` + "`cordana-standards[bot]`" + `.
 
 6. **Anti-Loop Interception**:
    If the same AST diff and error category repeats $\ge 3$ times, halt execution immediately. Re-evaluate the underlying design instead of making micro-textual retries.

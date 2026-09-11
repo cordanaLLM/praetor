@@ -1,4 +1,4 @@
-.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint verify-all clean
+.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint verify-all clean hooks setup
 
 BIN_DIR := bin
 PRAETORCTL := $(BIN_DIR)/praetorctl
@@ -49,6 +49,11 @@ lint:
 
 verify-all: compile-context-verify test audit lint
 	@echo "All standards verification gates passed cleanly."
+
+hooks:
+	@lefthook install
+
+setup: build hooks compile-context
 
 clean:
 	rm -rf $(BIN_DIR)

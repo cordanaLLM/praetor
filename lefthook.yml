@@ -19,8 +19,8 @@ pre-commit:
 pre-push:
   parallel: false
   commands:
-    test:
-      run: go test ./...
+    gate:
+      run: go run ./cmd/standardsctl gate run --path=.
     audit:
       run: go run ./cmd/standardsctl audit
 

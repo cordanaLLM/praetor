@@ -3,9 +3,16 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [Unreleased] - 2026-09-11
 
 ### Added
+
+- Codify automated git hooks, pre-commit enforcement, and anti-direct-push gating
+- Universal runner matrix routing (self-hosted ARC, Darwin/macOS GitHub-hosted, GPU/XPU targets)
+- Paperclip agent runtime harness (`.paperclip/harness.json`, Rule 0 terminal disposition, AGit protocol)
+- 5-stage pre-migration epics generation and cross-repo issue dependency DAG reconciliation
+- Polyglot needs extraction (Go, Svelte/Node, Python, Rust, Native GPU) and demand deduplicator
+- Universal builder and pre-build optimizer with framework asset compilation
 
 - Framework demand & needs reporting platform (`standardsctl needs`) with Golusoris catalog and automated AST migration engine
 - Adoption and governance lattice bootstrapping for `cordanaLLM/imago` and `cordanaLLM/nucleus`

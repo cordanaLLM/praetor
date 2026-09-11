@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -61,6 +62,10 @@ func runAudit(args []string) error {
 	}
 
 	if err := auditAgentDefinitions(rootDir); err != nil {
+		return err
+	}
+
+	if err := auditGitHooks(rootDir); err != nil {
 		return err
 	}
 
@@ -256,4 +261,39 @@ func auditAgentDefinitions(rootDir string) error {
 		fmt.Printf("[PASS] Agent definitions verified (%d agents registered).\n", count)
 	}
 	return nil
+}
+
+func auditGitHooks(rootDir string) error {
+	gitDir := filepath.Join(rootDir, ".git")
+	if !util.DirExists(gitDir) && !util.FileExists(gitDir) {
+		return nil
+	}
+
+	lhPath := filepath.Join(rootDir, "lefthook.yml")
+	if !util.FileExists(lhPath) {
+		return fmt.Errorf("[FAIL] lefthook.yml configuration is missing from repository root.")
+	}
+
+	hooksDir := resolveHooksDir(rootDir)
+	preCommitPath := filepath.Join(hooksDir, "pre-commit")
+	if !util.FileExists(preCommitPath) {
+		return fmt.Errorf("[FAIL] Pre-commit hook %s is missing or inactive. Run 'lefthook install' or 'standardsctl adopt' to activate.", preCommitPath)
+	}
+
+	fmt.Println("[PASS] Local Git hooks (.git/hooks/pre-commit via lefthook) verified active.")
+	return nil
+}
+
+func resolveHooksDir(rootDir string) string {
+	cmd := exec.Command("git", "rev-parse", "--git-path", "hooks")
+	cmd.Dir = rootDir
+	out, err := cmd.Output()
+	if err == nil {
+		path := strings.TrimSpace(string(out))
+		if filepath.IsAbs(path) {
+			return path
+		}
+		return filepath.Join(rootDir, path)
+	}
+	return filepath.Join(rootDir, ".git", "hooks")
 }
