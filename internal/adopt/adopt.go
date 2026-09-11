@@ -42,12 +42,13 @@ const (
 
 // AdoptOptions controls repository adoption and template compliance.
 type AdoptOptions struct {
-	Path           string   `json:"path"`
-	Profile        string   `json:"profile"`
-	Facets         []string `json:"facets"`
-	DryRun         bool     `json:"dry_run"`
-	Force          bool     `json:"force"`
-	RecordBaseline bool     `json:"record_baseline"`
+	Path              string   `json:"path"`
+	Profile           string   `json:"profile"`
+	Facets            []string `json:"facets"`
+	DryRun            bool     `json:"dry_run"`
+	Force             bool     `json:"force"`
+	RecordBaseline    bool     `json:"record_baseline"`
+	SkipGitValidation bool     `json:"skip_git_validation"`
 }
 
 // ActionDetail describes a specific planned or executed action on a target file.
@@ -84,9 +85,15 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve repo path %q: %w", opts.Path, err)
 	}
-	info, err := os.Stat(normPath)
-	if err != nil || !info.IsDir() {
-		return nil, fmt.Errorf("target path %q must be an existing directory", normPath)
+	if !opts.SkipGitValidation {
+		if err := ValidateAdoptionTarget(normPath); err != nil {
+			return nil, fmt.Errorf("adoption validation failed: %w", err)
+		}
+	} else {
+		info, err := os.Stat(normPath)
+		if err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("target path %q must be an existing directory", normPath)
+		}
 	}
 
 	state := DetectState(normPath)

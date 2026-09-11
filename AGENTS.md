@@ -64,6 +64,9 @@ go run ./cmd/standardsctl compile-context --verify
 # Audit repository against declared HISS-16 standards
 go run ./cmd/standardsctl audit
 
+# Audit workstation directory topology compliance (DEV-01 to DEV-05)
+go run ./cmd/standardsctl topology audit /home/kilian/dev
+
 # Run all formatting, linting, and security gates
 make verify-all
 ```

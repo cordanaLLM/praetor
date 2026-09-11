@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/needs"
@@ -66,6 +67,10 @@ func runNeedsScan(ctx context.Context, args []string) error {
 		return err
 	}
 
+	if err := adopt.ValidateAdoptionTarget(*path); err != nil {
+		return fmt.Errorf("invalid repository target: %w", err)
+	}
+
 	report, err := needs.ScanRepo(ctx, *path)
 	if err != nil {
 		return fmt.Errorf("failed to scan repository needs: %w", err)
@@ -100,6 +105,10 @@ func runNeedsReport(ctx context.Context, args []string) error {
 	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Target framework repository path")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if err := adopt.ValidateAdoptionTarget(*path); err != nil {
+		return fmt.Errorf("invalid repository target: %w", err)
 	}
 
 	fwIndex, err := needs.InspectFramework(ctx, *framework)
@@ -163,6 +172,10 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 	apply := fs.Bool("apply", false, "Apply migration changes and create branch")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if err := adopt.ValidateAdoptionTarget(*path); err != nil {
+		return fmt.Errorf("invalid repository target: %w", err)
 	}
 
 	plan, err := needs.PlanMigration(ctx, *path, *framework)
@@ -233,6 +246,10 @@ func runNeedsEpic(ctx context.Context, args []string) error {
 	endpoint := fs.String("endpoint", "", "Forge API endpoint (default: https://api.github.com)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if err := adopt.ValidateAdoptionTarget(*path); err != nil {
+		return fmt.Errorf("invalid repository target: %w", err)
 	}
 
 	epic, err := needs.GeneratePreMigrationEpic(ctx, *path, *framework)

@@ -1,4 +1,4 @@
-.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec flavor-audit state-audit dedupe verify-all clean hooks setup
+.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec flavor-audit state-audit dedupe topology-audit verify-all clean hooks setup
 
 BIN_DIR := bin
 PRAETORCTL := $(BIN_DIR)/praetorctl
@@ -76,7 +76,10 @@ state-audit:
 dedupe:
 	go run ./cmd/standardsctl dedupe scan .
 
-verify-all: compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe
+topology-audit:
+	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
+
+verify-all: compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe topology-audit
 	@echo "All standards verification gates passed cleanly."
 
 hooks:
