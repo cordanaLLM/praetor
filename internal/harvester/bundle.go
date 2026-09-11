@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -111,7 +112,7 @@ func bundleSkills(ctx context.Context, srcDir, dstDir, cat, baseDir string, reco
 		}
 		count++
 
-		if !entry.IsDir() {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 
@@ -558,6 +559,82 @@ func BundleWorkstation(ctx context.Context, opts BundleOptions) (*WorkstationBun
 	return report, nil
 }
 
+func extractSkillInfo(relPath string) (string, string) {
+	parts := strings.Split(filepath.ToSlash(relPath), "/")
+	if len(parts) >= 4 && parts[0] == "agent-skills" {
+		name := parts[2]
+		if strings.HasPrefix(name, ".") {
+			return "", ""
+		}
+		return name, strings.Join(parts[3:], "/")
+	}
+	base := filepath.Base(filepath.Dir(relPath))
+	if strings.HasPrefix(base, ".") {
+		return "", ""
+	}
+	return base, filepath.Base(relPath)
+}
+
+func copyFileSimple(src, dst string) error {
+	sFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sFile.Close()
+
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+
+	dFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dFile.Close()
+
+	_, err = io.Copy(dFile, sFile)
+	return err
+}
+
+func copySkillFile(src, dst string, ingest *IngestReport) {
+	if err := copyFileSimple(src, dst); err != nil {
+		ingest.ValidIntegrity = false
+	}
+}
+
+func processSkillRecord(r BundleFileRecord, bundleDir, localSkillsDir string, dryRun bool, ingest *IngestReport, seenNovel, seenExisting map[string]bool) {
+	skillName, subPath := extractSkillInfo(r.RelativePath)
+	if skillName == "" {
+		return
+	}
+
+	targetDir := filepath.Join(localSkillsDir, skillName)
+	if seenNovel[skillName] {
+		if !dryRun && subPath != "" {
+			src := filepath.Join(bundleDir, r.RelativePath)
+			dst := filepath.Join(targetDir, subPath)
+			copySkillFile(src, dst, ingest)
+		}
+		return
+	}
+	if seenExisting[skillName] {
+		return
+	}
+
+	if _, sErr := os.Stat(targetDir); os.IsNotExist(sErr) {
+		seenNovel[skillName] = true
+		ingest.NovelSkills = append(ingest.NovelSkills, skillName)
+		if !dryRun && subPath != "" {
+			src := filepath.Join(bundleDir, r.RelativePath)
+			dst := filepath.Join(targetDir, subPath)
+			copySkillFile(src, dst, ingest)
+		}
+	} else {
+		seenExisting[skillName] = true
+		ingest.ExistingSkills = append(ingest.ExistingSkills, skillName)
+	}
+}
+
 // IngestBundle parses a bundle manifest and cross-references against local workstation skills.
 func IngestBundle(ctx context.Context, bundleDir, localSkillsDir string, dryRun bool) (*IngestReport, error) {
 	if err := ctx.Err(); err != nil {
@@ -585,20 +662,33 @@ func IngestBundle(ctx context.Context, bundleDir, localSkillsDir string, dryRun 
 		ValidIntegrity:  true,
 	}
 
+	seenNovel := make(map[string]bool)
+	seenExisting := make(map[string]bool)
+	seenMem := make(map[string]bool)
+	seenPatch := make(map[string]bool)
+
 	for _, r := range rep.Records {
-		if r.Category == "skill" {
-			skillName := filepath.Base(filepath.Dir(r.RelativePath))
-			if _, sErr := os.Stat(filepath.Join(localSkillsDir, skillName)); os.IsNotExist(sErr) {
-				ingest.NovelSkills = append(ingest.NovelSkills, skillName)
-			} else {
-				ingest.ExistingSkills = append(ingest.ExistingSkills, skillName)
+		switch r.Category {
+		case "skill":
+			processSkillRecord(r, bundleDir, localSkillsDir, dryRun, ingest, seenNovel, seenExisting)
+		case "project-memory":
+			if !seenMem[r.RelativePath] {
+				seenMem[r.RelativePath] = true
+				ingest.NovelMemories = append(ingest.NovelMemories, r.RelativePath)
 			}
-		} else if r.Category == "project-memory" {
-			ingest.NovelMemories = append(ingest.NovelMemories, r.RelativePath)
-		} else if r.Category == "patch" {
-			ingest.NovelPatches = append(ingest.NovelPatches, r.RelativePath)
+		case "patch":
+			if !seenPatch[r.RelativePath] {
+				seenPatch[r.RelativePath] = true
+				ingest.NovelPatches = append(ingest.NovelPatches, r.RelativePath)
+			}
 		}
 	}
 
+	sort.Strings(ingest.NovelSkills)
+	sort.Strings(ingest.ExistingSkills)
+	sort.Strings(ingest.NovelMemories)
+	sort.Strings(ingest.NovelPatches)
+
 	return ingest, nil
 }
+

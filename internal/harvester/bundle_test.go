@@ -2,8 +2,10 @@ package harvester
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -106,3 +108,75 @@ func TestBundleWorkstation_Boundary_EmptyInputs(t *testing.T) {
 		t.Fatalf("expected 0 files, got: %d", rep.TotalFiles)
 	}
 }
+
+func createMockBundleRecords(bundleDir string) []BundleFileRecord {
+	skillFiles := []string{
+		"agent-skills/copilot/novel-skill/SKILL.md",
+		"agent-skills/copilot/novel-skill/LICENSE.txt",
+		"agent-skills/codex/.system/.marker",
+		"agent-skills/gemini/existing-skill/SKILL.md",
+		"agent-memories/claude/p1/mem.md",
+		"agent-memories/claude/p1/mem.md",
+		"dev-patches/fix.patch",
+		"dev-patches/fix.patch",
+	}
+	records := make([]BundleFileRecord, 0, len(skillFiles))
+	for _, rel := range skillFiles {
+		fullPath := filepath.Join(bundleDir, rel)
+		_ = os.MkdirAll(filepath.Dir(fullPath), 0755)
+		_ = os.WriteFile(fullPath, []byte("content"), 0644)
+
+		cat := "skill"
+		if strings.Contains(rel, "memories") {
+			cat = "project-memory"
+		} else if strings.Contains(rel, "patches") {
+			cat = "patch"
+		}
+		records = append(records, BundleFileRecord{
+			RelativePath: rel,
+			SizeBytes:    7,
+			Category:     cat,
+		})
+	}
+	return records
+}
+
+func TestIngestBundle_DeduplicationAndSystemFilter(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	bundleDir := filepath.Join(tmpDir, "bundle")
+	localSkillsDir := filepath.Join(tmpDir, "local-skills")
+	_ = os.MkdirAll(bundleDir, 0755)
+	_ = os.MkdirAll(filepath.Join(localSkillsDir, "existing-skill"), 0755)
+
+	records := createMockBundleRecords(bundleDir)
+	report := WorkstationBundleReport{
+		WorkstationName: "mock-box",
+		Records:         records,
+	}
+	data, _ := json.Marshal(report)
+	_ = os.WriteFile(filepath.Join(bundleDir, "manifest.json"), data, 0644)
+
+	ingest, err := IngestBundle(ctx, bundleDir, localSkillsDir, false)
+	if err != nil {
+		t.Fatalf("IngestBundle failed: %v", err)
+	}
+
+	if len(ingest.NovelSkills) != 1 || ingest.NovelSkills[0] != "novel-skill" {
+		t.Fatalf("expected 1 novel skill 'novel-skill', got: %v", ingest.NovelSkills)
+	}
+	if len(ingest.ExistingSkills) != 1 || ingest.ExistingSkills[0] != "existing-skill" {
+		t.Fatalf("expected 1 existing skill 'existing-skill', got: %v", ingest.ExistingSkills)
+	}
+	if len(ingest.NovelMemories) != 1 || len(ingest.NovelPatches) != 1 {
+		t.Fatalf("expected 1 deduped memory and patch, got %d and %d", len(ingest.NovelMemories), len(ingest.NovelPatches))
+	}
+
+	copiedSkillMD := filepath.Join(localSkillsDir, "novel-skill", "SKILL.md")
+	if _, err := os.Stat(copiedSkillMD); os.IsNotExist(err) {
+		t.Fatalf("expected copied file at %s", copiedSkillMD)
+	}
+}
+
+
