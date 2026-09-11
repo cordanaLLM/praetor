@@ -20,6 +20,8 @@ func TestShouldIgnorePath(t *testing.T) {
 		{"src/main.go", false},
 		{"internal/util/util.go", false},
 		{"core/build/output.o", true},
+		{"harvest/office-kcromm/script.py", true},
+		{".harvest/bundle.json", true},
 	}
 
 	for _, tt := range tests {

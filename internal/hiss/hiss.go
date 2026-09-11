@@ -85,14 +85,16 @@ func Scan(ctx context.Context, repoPath string, opts ScanOptions) (*ScanReport, 
 
 // ShouldIgnorePath filters out build, dependency, and tool directories.
 func ShouldIgnorePath(rel string) bool {
+	norm := filepath.ToSlash(rel)
 	prefixes := []string{
 		"vendor/", ".standards/", ".git/", "node_modules/",
 		".venv/", "build/", "core/build/", "libvmaf/build/",
 		"target/", ".cache/", ".idea/", ".vscode/",
 		"compat/", "third_party/", ".claude/", ".workingdir/",
+		"harvest/", ".harvest/",
 	}
 	for _, p := range prefixes {
-		if strings.HasPrefix(rel, p) {
+		if strings.HasPrefix(norm, p) {
 			return true
 		}
 	}
