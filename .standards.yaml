@@ -42,6 +42,9 @@ overrides:
     slsa_level: 3
     enforce_cosign: true
     require_sbom: true
+  ci:
+    diff_aware_filtering: true
+    skip_heavy_gates_on_docs_or_state: true
 
 # Framework capability demand declarations towards upstream Golusoris
 needs:

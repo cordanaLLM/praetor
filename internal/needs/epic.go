@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // PreMigrationEpic captures the parent epic and child task issues for repo modernization.
@@ -99,7 +100,7 @@ func createChildTasks(repoName string, needs *RepoNeeds, plan *MigrationPlan) []
 
 	t4 := forge.IssueSpec{
 		Title:     fmt.Sprintf("[TASK 4/5] Gated Verification & Ed25519 Receipt: %s", repoName),
-		Body:      "## Scope\n- Run `standardsctl gate run --target=.` in isolated worktree.\n- Verify all 5 gates (prefetch, SCA, HISS-16, tests, receipts).\n- Sign Ed25519 Exit-0 receipt and submit fast-forward PR.",
+		Body:      "## Scope\n- Run diff-aware CI verification via `standardsctl ci filter`.\n- Run `standardsctl gate run --target=.` in isolated worktree.\n- Verify all 5 gates (prefetch, SCA, HISS-16, tests, receipts).\n- Sign Ed25519 Exit-0 receipt and submit fast-forward PR.",
 		State:     "open",
 		Labels:    []string{"task", "verification", "gating"},
 		DependsOn: []string{fmt.Sprintf("%s#3", repoName)},
@@ -135,6 +136,8 @@ func renderEpicChecklistMarkdown(repoName string, needs *RepoNeeds, plan *Migrat
 	sb.WriteString("\n## Execution Directives\n")
 	sb.WriteString("1. All changes must pass `make verify-all` with zero warnings.\n")
 	sb.WriteString("2. Direct commits to `main` are prohibited; changes must traverse `standardsctl gate run`.\n")
+	sb.WriteString("3. Diff-aware CI efficiency: CI runs targeted gates on changed paths; docs-only and state-only changes skip heavy test/fuzz suites.\n")
+	sb.WriteString("4. Ed25519 Exit-0 receipts mandatory on all pull requests.\n")
 	return sb.String()
 }
 
@@ -202,4 +205,43 @@ func WriteEpicMarkdown(epic *PreMigrationEpic, outputPath string) error {
 	}
 
 	return os.WriteFile(outputPath, []byte(sb.String()), 0644)
+}
+
+// RegenerateFleetEpics discovers all prepared repositories in fleetRoot and regenerates their pre-migration epics.
+func RegenerateFleetEpics(ctx context.Context, fleetRoot, frameworkPath string) ([]*PreMigrationEpic, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	repos, err := discoverFleetRepos(ctx, fleetRoot)
+	if err != nil {
+		return nil, fmt.Errorf("failed discovering fleet repos: %w", err)
+	}
+
+	var epics []*PreMigrationEpic
+	for i := 0; i < len(repos); i++ {
+		if ctx.Err() != nil {
+			return epics, ctx.Err()
+		}
+		repoDir := repos[i]
+		hasGit := util.DirExists(filepath.Join(repoDir, ".git"))
+		hasStandards := util.FileExists(filepath.Join(repoDir, ".standards.yaml"))
+		hasNeeds := util.FileExists(filepath.Join(repoDir, ".needs.yaml"))
+		if !hasGit && !hasStandards && !hasNeeds {
+			continue
+		}
+
+		epic, genErr := GeneratePreMigrationEpic(ctx, repoDir, frameworkPath)
+		if genErr != nil {
+			continue
+		}
+
+		epicPath := filepath.Join(repoDir, ".workingdir", "PRE_MIGRATION_EPIC.md")
+		if wErr := WriteEpicMarkdown(epic, epicPath); wErr != nil {
+			continue
+		}
+		epics = append(epics, epic)
+	}
+
+	return epics, nil
 }

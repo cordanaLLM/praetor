@@ -48,6 +48,7 @@ func printUsage() {
 	fmt.Println("  milestone          Manage local and remote GitHub milestones and progress")
 	fmt.Println("  project            Manage GitHub Projects v2 boards and track epic issues")
 	fmt.Println("  build              Compile polyglot targets with universal builder and pre-build optimizer")
+	fmt.Println("  ci                 Analyze git diff and filter CI verification gates")
 	fmt.Println("  topology           Audit and clean workstation directory topology (DEV-01 to DEV-05)")
 	fmt.Println("  version            Print CLI version information")
 	fmt.Println("\nRun 'standardsctl <command> -h' for more information on a command.")
@@ -156,6 +157,8 @@ func dispatchOperationsCommand(cmd string, args []string) error {
 		return runProject(args)
 	case "build":
 		return runBuild(args)
+	case "ci":
+		return runCI(args)
 	case "topology":
 		return runTopology(args)
 	case "version":

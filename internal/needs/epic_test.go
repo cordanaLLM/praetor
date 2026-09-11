@@ -129,3 +129,43 @@ func TestPublishPreMigrationEpic_Negative(t *testing.T) {
 		t.Fatal("expected error for nil epic")
 	}
 }
+
+func TestRegenerateFleetEpics_3D(t *testing.T) {
+	ctx := context.Background()
+	tempDevDir := t.TempDir()
+
+	// Positive: directory with 2 mock repos
+	repo1 := filepath.Join(tempDevDir, "org1", "repo1")
+	repo2 := filepath.Join(tempDevDir, "org2", "repo2")
+	_ = os.MkdirAll(filepath.Join(repo1, ".git"), 0755)
+	_ = os.MkdirAll(filepath.Join(repo1, ".workingdir"), 0755)
+	_ = os.MkdirAll(filepath.Join(repo2, ".workingdir"), 0755)
+	_ = os.WriteFile(filepath.Join(repo1, "go.mod"), []byte("module github.com/org1/repo1\ngo 1.27\n"), 0644)
+	_ = os.WriteFile(filepath.Join(repo2, "package.json"), []byte("{\"name\": \"repo2\", \"version\": \"1.0.0\"}\n"), 0644)
+	_ = os.WriteFile(filepath.Join(repo2, ".standards.yaml"), []byte("repository:\n  name: repo2\n  owner: org2\n"), 0644)
+
+	epics, err := RegenerateFleetEpics(ctx, tempDevDir, "github.com/golusoris/golusoris")
+	if err != nil {
+		t.Fatalf("regenerate fleet epics failed: %v", err)
+	}
+	if len(epics) != 2 {
+		t.Fatalf("expected 2 regenerated epics, got %d", len(epics))
+	}
+
+	// Boundary: empty directory
+	emptyDir := t.TempDir()
+	emptyEpics, err := RegenerateFleetEpics(ctx, emptyDir, "github.com/golusoris/golusoris")
+	if err != nil {
+		t.Fatalf("regenerate on empty dir failed: %v", err)
+	}
+	if len(emptyEpics) != 0 {
+		t.Fatalf("expected 0 epics for empty directory, got %d", len(emptyEpics))
+	}
+
+	// Negative: cancelled context
+	cancCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := RegenerateFleetEpics(cancCtx, tempDevDir, "github.com/golusoris/golusoris"); err == nil {
+		t.Fatal("expected error for cancelled context")
+	}
+}

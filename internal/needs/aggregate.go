@@ -96,7 +96,8 @@ func isManifestFile(info os.FileInfo) bool {
 	}
 	name := info.Name()
 	return name == "go.mod" || name == "package.json" || name == "pyproject.toml" ||
-		name == "requirements.txt" || name == "Cargo.toml" || name == "meson.build"
+		name == "requirements.txt" || name == "Cargo.toml" || name == "meson.build" ||
+		name == ".standards.yaml" || name == ".needs.yaml"
 }
 
 func incorporateNeedsIntoReport(needs *RepoNeeds, report *FleetDemandReport, gapPackages map[CapabilityKey]map[string]struct{}) {

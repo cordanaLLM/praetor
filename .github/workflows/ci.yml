@@ -38,12 +38,24 @@ jobs:
           go-version: '1.27'
           cache: true
 
+      - name: Detect Changed Paths & Evaluate CI Filter
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_REF="origin/${{ github.base_ref }}"
+          else
+            BASE_REF="HEAD~1"
+          fi
+          go run ./cmd/standardsctl ci filter --base="$BASE_REF" --head=HEAD --env
+
       - name: Install Security Toolchains (govulncheck & gosec)
+        if: steps.filter.outputs.run_security != 'false' || github.event_name == 'push'
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           go install github.com/securego/gosec/v2/cmd/gosec@latest
 
       - name: Verify Go Formatting (gofmt)
+        if: steps.filter.outputs.run_linters != 'false' || github.event_name == 'push'
         run: |
           UNFORMATTED=$(gofmt -l .)
           if [ -n "$UNFORMATTED" ]; then
@@ -73,19 +85,31 @@ jobs:
           go run ./cmd/standardsctl forge validate-pr /tmp/pr_body.txt
 
       - name: Verify Cross-Agent Context Synchronization (HISS-16)
+        if: steps.filter.outputs.run_context_sync != 'false' || github.event_name == 'push'
         run: go run ./cmd/standardsctl compile-context --verify
 
+      - name: Documentation Integrity Audit
+        if: steps.filter.outputs.docs_only == 'true' && github.event_name == 'pull_request'
+        run: |
+          echo "Pure documentation change detected. Running docs verification."
+          go run ./cmd/standardsctl docs audit --all
+
       - name: Run Race Detection & Unit Tests (HISS-15)
+        if: steps.filter.outputs.run_tests != 'false' || github.event_name == 'push'
         run: go test -v -race ./...
 
       - name: Run Repository Governance Audit (HISS Invariants & Rulesets)
+        if: steps.filter.outputs.run_audit != 'false' || github.event_name == 'push'
         run: go run ./cmd/standardsctl audit
 
       - name: Run Linter & Static Analysis (HISS-10)
+        if: steps.filter.outputs.run_linters != 'false' || github.event_name == 'push'
         run: go vet ./...
 
       - name: Full Verification Harness Gate
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
         run: make verify-all
 
       - name: Verify Binary Compilation
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
         run: make build
