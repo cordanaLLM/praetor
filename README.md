@@ -9,14 +9,19 @@
   *Part of the [CordanaLLM](https://github.com/CordanaLLM) Deterministic Infrastructure Ecosystem*
 
   [![Go Version](https://img.shields.io/badge/Go-1.27%2B-00ADD8?style=for-the-badge&logo=go)](https://golang.org)
-  [![HISS-16 Compliance](https://img.shields.io/badge/Standard-HISS--16_Lattice-06B6D4?style=for-the-badge&logo=nasa)](https://standards.cordana.ai/standards/hiss-16/)
+  [![HISS-16 Compliance](https://img.shields.io/badge/Standard-HISS--16_Lattice-06B6D4?style=for-the-badge&logo=nasa)](https://cordanallm.github.io/praetor/standards/hiss-16-spec/)
   [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub_Sponsors-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/CordanaLLM)
   [![Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white)](https://ko-fi.com/cordana)
   [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP_Server-10B981?style=for-the-badge)](https://modelcontextprotocol.io)
-  [![Dual-Surface Docs](https://img.shields.io/badge/llms.txt-Enabled-06B6D4?style=for-the-badge)](https://standards.cordana.ai/llms.txt)
-  [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge)](LICENSE)
+  [![Dual-Surface Docs](https://img.shields.io/badge/llms.txt-Enabled-06B6D4?style=for-the-badge)](https://cordanallm.github.io/praetor/llms.txt)
+  [![License: EUPL 1.2](https://img.shields.io/badge/License-EUPL_1.2-blue.svg?style=for-the-badge)](LICENSES/EUPL-1.2.txt)
+
+  <br />
+
+  <img src="docs/assets/praetor-mkdocs-icons.svg" alt="Praetor Core Capabilities: Invariants, Transpilation, MCP Protocol, llms.txt Surface" width="70%" />
 
 </div>
+
 
 ---
 

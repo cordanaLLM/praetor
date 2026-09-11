@@ -20,6 +20,10 @@ title: Praetor - Fleet Governance Engine
 
 **Praetor** is the high-integrity autonomous fleet governance and universal AI agent engineering engine powering the CordanaLLM ecosystem. It enforces strict determinism, hermetic supply chain provenance (SLSA Level 3), bounded complexity, and cross-agent instruction synchronization across diverse software engineering organizations.
 
+<div align="center">
+  <img src="assets/praetor-mkdocs-icons.svg" alt="Praetor Architecture Pillars" width="100%" />
+</div>
+
 ---
 
 ## 🏛️ Core Capabilities

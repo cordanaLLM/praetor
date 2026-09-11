@@ -28,7 +28,7 @@ Want to contribute to Praetor and get compensated for resolved issues?
 
 1. Browse the **[Active Polar.sh Bounties](https://polar.sh/CordanaLLM)**.
 2. Pick an issue with active funding.
-3. Submit your PR following our [Contribution Guidelines](../CONTRIBUTING.md) (DCO `Signed-off-by:` signature & HISS-16 Quality Gates).
+3. Submit your PR following our [Contribution Guidelines](guides/contributing.md) (DCO `Signed-off-by:` signature & HISS-16 Quality Gates).
 4. Upon PR merge, the bounty reward is credited directly to your Polar.sh account balance.
 
 ---
