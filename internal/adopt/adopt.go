@@ -15,8 +15,10 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/editor"
+	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
+	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
@@ -155,17 +157,9 @@ func resolveArchetype(repoPath, explicitProfile string) string {
 }
 
 func resolveOwner(repoPath string) string {
-	cmd := exec.Command("git", "-C", repoPath, "config", "--get", "remote.origin.url")
-	out, err := cmd.Output()
-	if err == nil {
-		url := strings.TrimSpace(string(out))
-		if owner := extractOwnerFromURL(url); owner != "" {
-			return owner
-		}
-	}
-	parent := filepath.Base(filepath.Dir(repoPath))
-	if parent != "" && parent != "." && parent != "/" && parent != "dev" {
-		return parent
+	owner, _, _ := util.ResolveRepoIdentity(context.Background(), repoPath)
+	if owner != "" {
+		return owner
 	}
 	return "cordanaLLM"
 }
@@ -180,13 +174,9 @@ func extractOwnerFromURL(url string) string {
 }
 
 func resolveRepoName(repoPath string) string {
-	cmd := exec.Command("git", "-C", repoPath, "config", "--get", "remote.origin.url")
-	out, err := cmd.Output()
-	if err == nil {
-		url := strings.TrimSpace(string(out))
-		if name := extractRepoFromURL(url); name != "" {
-			return name
-		}
+	_, repo, _ := util.ResolveRepoIdentity(context.Background(), repoPath)
+	if repo != "" {
+		return repo
 	}
 	return filepath.Base(repoPath)
 }
@@ -246,7 +236,28 @@ func executeGovernanceAndHookSteps(ctx context.Context, repoPath, repoName, arch
 	if err := reconcileAgentDefinitions(repoPath, opts, report); err != nil {
 		return err
 	}
+	if err := reconcileWorkingDirAndFlavor(ctx, repoPath, opts, report); err != nil {
+		return err
+	}
 	return reconcileGitHooks(repoPath, opts, report)
+}
+
+func reconcileWorkingDirAndFlavor(ctx context.Context, repoPath string, opts AdoptOptions, report *AdoptReport) error {
+	if !opts.DryRun {
+		if err := state.InitWorkingDir(repoPath); err != nil {
+			report.Errors = append(report.Errors, fmt.Sprintf("workingdir init: %v", err))
+		}
+		detectedFlv := flavor.DetectFlavor(repoPath)
+		if _, err := flavor.ApplyFlavor(ctx, repoPath, detectedFlv, false); err != nil {
+			report.Errors = append(report.Errors, fmt.Sprintf("apply flavor %s: %v", detectedFlv, err))
+		}
+	}
+	report.ActionDetails = append(report.ActionDetails, ActionDetail{
+		Path:    ".workingdir",
+		Action:  "create",
+		Details: "Initialized canonical session state ledger and bug/question journals",
+	})
+	return nil
 }
 
 func reconcileBranchRulesetsAndLabels(repoPath string, opts AdoptOptions, report *AdoptReport) error {
@@ -526,9 +537,20 @@ pre-commit:
     block-evasion:
       run: python3 .config/agent/hooks/block_evasion.py
 
+post-commit:
+  commands:
+    state-sync:
+      run: which praetorctl >/dev/null 2>&1 && praetorctl state sync . || ([ -d "./cmd/standardsctl" ] && go run ./cmd/standardsctl state sync . || true)
+    dedupe-cadence:
+      run: which praetorctl >/dev/null 2>&1 && praetorctl dedupe cadence --threshold=20 --record . || ([ -d "./cmd/standardsctl" ] && go run ./cmd/standardsctl dedupe cadence --threshold=20 --record . || true)
+
 pre-push:
   parallel: false
   commands:
+    security:
+      run: which govulncheck >/dev/null 2>&1 && govulncheck ./... || true
+    flavor-audit:
+      run: which praetorctl >/dev/null 2>&1 && praetorctl flavor audit . || ([ -d "./cmd/standardsctl" ] && go run ./cmd/standardsctl flavor audit . || true)
     audit:
       run: which praetorctl >/dev/null 2>&1 && praetorctl audit || ([ -d "./cmd/standardsctl" ] && go run ./cmd/standardsctl audit || true)
     gate:

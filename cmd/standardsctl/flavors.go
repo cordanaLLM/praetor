@@ -1,19 +1,20 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/flavors"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func fetchCurrentTags() map[string]string {
 	currentTags := make(map[string]string)
-	tagOut, err := exec.Command("git", "tag", "-l").Output()
+	tagOut, err := util.RunGit(context.Background(), ".", "tag", "-l")
 	if err == nil {
-		for _, tag := range strings.Split(string(tagOut), "\n") {
+		for _, tag := range strings.Split(tagOut, "\n") {
 			tag = strings.TrimSpace(tag)
 			if tag != "" {
 				currentTags[tag] = tag
@@ -26,9 +27,9 @@ func fetchCurrentTags() map[string]string {
 func applyFlavorTransitions(transitions []flavors.TagTransition) error {
 	for _, tr := range transitions {
 		if tr.Action == "create" || tr.Action == "update" {
-			cmd := exec.Command("git", "tag", "-f", tr.FlavorName, tr.TargetRef)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("failed to apply flavor tag %s: %w (%s)", tr.FlavorName, err, strings.TrimSpace(string(out)))
+			out, err := util.RunGit(context.Background(), ".", "tag", "-f", tr.FlavorName, tr.TargetRef)
+			if err != nil {
+				return fmt.Errorf("failed to apply flavor tag %s: %w (%s)", tr.FlavorName, err, out)
 			}
 			fmt.Printf("Updated tag %s -> %s\n", tr.FlavorName, tr.TargetRef)
 		}
@@ -55,10 +56,9 @@ func runFlavors(args []string) error {
 		return fmt.Errorf("failed to load flavors config: %w", err)
 	}
 
-	commitBytes, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
-	commit := "HEAD"
-	if err == nil {
-		commit = strings.TrimSpace(string(commitBytes))
+	commit, err := util.RunGit(context.Background(), ".", "rev-parse", "--short", "HEAD")
+	if err != nil || commit == "" {
+		commit = "HEAD"
 	}
 
 	transitions := flavors.PlanTransitions(cfg, fetchCurrentTags(), commit, "1.0.0")

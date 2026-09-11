@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -78,4 +79,33 @@ func RunCommand(ctx context.Context, dir string, name string, args ...string) (s
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+// RunGit executes a git command with context timeout and returns trimmed output.
+func RunGit(ctx context.Context, dir string, args ...string) (string, error) {
+	return RunCommand(ctx, dir, "git", args...)
+}
+
+// ResolveRepoIdentity extracts owner and repository name using git remote or directory path.
+func ResolveRepoIdentity(ctx context.Context, repoPath string) (owner, repo string, err error) {
+	out, gitErr := RunGit(ctx, repoPath, "config", "--get", "remote.origin.url")
+	if gitErr == nil && out != "" {
+		o, r := ExtractOwnerAndRepo(out)
+		if r != "" {
+			if o == "" {
+				o = "cordanaLLM"
+			}
+			return o, r, nil
+		}
+	}
+
+	normPath := filepath.Clean(repoPath)
+	repo = filepath.Base(normPath)
+	parent := filepath.Base(filepath.Dir(normPath))
+	if parent != "" && parent != "." && parent != "/" && parent != "dev" {
+		owner = parent
+	} else {
+		owner = "cordanaLLM"
+	}
+	return owner, repo, nil
 }

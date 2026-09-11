@@ -1,0 +1,18 @@
+# {{.Repo}} Agent Operating Harness
+
+Run verification before concluding any turn:
+```bash
+make verify-all
+```
+
+## Core Directives & Invariants
+
+| Invariant | Scope | Enforcement Mechanism | Failure Action |
+| :--- | :--- | :--- | :--- |
+| **HISS-01** | Control Flow | Recursion strictly prohibited; call graph must be DAG. | Immediate build failure |
+| **HISS-02** | Loops & I/O | Scalar upper bound on all loops; explicit `context.Context` timeout on all I/O. | Semgrep / AST error |
+| **HISS-04** | Complexity | McCabe Cyclomatic <= 10, Cognitive <= 15, Func LOC <= 60. | AST sweep blocker |
+| **HISS-07** | Error Handling | Zero `.unwrap()` / `.expect()`; all errors handled or wrapped with context. | Linter / Compiler error |
+| **HISS-10** | Warning Hygiene | Zero-warning tolerance across compiler, linter, and format sweeps. | Exit code 1 |
+| **HISS-15** | 3D Testing | Positive, negative, and boundary tests mandatory for all public interfaces. | CI coverage gate |
+| **HISS-16** | Context Integrity | Single canonical `AGENTS.md`; vendor files compiled via `standardsctl compile-context`. | Pre-commit blocker |

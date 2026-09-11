@@ -300,3 +300,81 @@ targets:
 		t.Fatalf("build failed: %v", err)
 	}
 }
+
+func TestDispatchCommand_StateSubcommands(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	if err := dispatchCommand("state", []string{}); err != nil {
+		t.Fatalf("state with no args failed: %v", err)
+	}
+	if err := dispatchCommand("state", []string{"init", tmpDir}); err != nil {
+		t.Fatalf("state init failed: %v", err)
+	}
+	if err := dispatchCommand("state", []string{"status", tmpDir}); err != nil {
+		t.Fatalf("state status failed: %v", err)
+	}
+	if err := dispatchCommand("state", []string{"bug", "add", "--title=Test bug", "--dir=" + tmpDir}); err != nil {
+		t.Fatalf("state bug add failed: %v", err)
+	}
+	if err := dispatchCommand("state", []string{"bug", "list", tmpDir}); err != nil {
+		t.Fatalf("state bug list failed: %v", err)
+	}
+	if err := dispatchCommand("state", []string{"bug", "resolve", "BUG-001", "Fixed", tmpDir}); err != nil {
+		t.Fatalf("state bug resolve failed: %v", err)
+	}
+	if err := dispatchCommand("state", []string{"question", "add", "--prompt=Test Q", "--options=A,B", "--dir=" + tmpDir}); err != nil {
+		t.Fatalf("state question add failed: %v", err)
+	}
+	if err := dispatchCommand("state", []string{"question", "list", tmpDir}); err != nil {
+		t.Fatalf("state question list failed: %v", err)
+	}
+	if err := dispatchCommand("state", []string{"question", "decide", "Q-001", "A", tmpDir}); err != nil {
+		t.Fatalf("state question decide failed: %v", err)
+	}
+	if err := dispatchCommand("state", []string{"sync", tmpDir, "--log=test execution"}); err != nil {
+		t.Fatalf("state sync failed: %v", err)
+	}
+	if err := dispatchCommand("state", []string{"audit", tmpDir}); err != nil {
+		t.Fatalf("state audit failed: %v", err)
+	}
+	if err := dispatchCommand("state", []string{"invalid"}); err == nil {
+		t.Fatal("expected error for invalid state subcommand")
+	}
+}
+
+func TestDispatchCommand_FlavorSubcommands(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	if err := dispatchCommand("flavor", []string{}); err != nil {
+		t.Fatalf("flavor with no args failed: %v", err)
+	}
+	if err := dispatchCommand("flavor", []string{"list"}); err != nil {
+		t.Fatalf("flavor list failed: %v", err)
+	}
+	if err := dispatchCommand("flavor", []string{"inspect", "go-service"}); err != nil {
+		t.Fatalf("flavor inspect failed: %v", err)
+	}
+	if err := dispatchCommand("flavor", []string{"apply", tmpDir, "--flavor=go-service"}); err != nil {
+		t.Fatalf("flavor apply failed: %v", err)
+	}
+	if err := dispatchCommand("flavor", []string{"invalid"}); err == nil {
+		t.Fatal("expected error for invalid flavor subcommand")
+	}
+}
+
+func TestDispatchCommand_DedupeSubcommands(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	if err := dispatchCommand("dedupe", []string{}); err != nil {
+		t.Fatalf("dedupe with no args failed: %v", err)
+	}
+	if err := dispatchCommand("dedupe", []string{"scan", tmpDir}); err != nil {
+		t.Fatalf("dedupe scan failed: %v", err)
+	}
+	if err := dispatchCommand("dedupe", []string{"cadence", "--threshold=20", tmpDir}); err != nil {
+		t.Fatalf("dedupe cadence failed: %v", err)
+	}
+	if err := dispatchCommand("dedupe", []string{"invalid"}); err == nil {
+		t.Fatal("expected error for invalid dedupe subcommand")
+	}
+}

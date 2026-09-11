@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -329,11 +328,9 @@ func auditGitHooks(rootDir string) error {
 }
 
 func resolveHooksDir(rootDir string) string {
-	cmd := exec.Command("git", "rev-parse", "--git-path", "hooks")
-	cmd.Dir = rootDir
-	out, err := cmd.Output()
+	out, err := util.RunGit(context.Background(), rootDir, "rev-parse", "--git-path", "hooks")
 	if err == nil {
-		path := strings.TrimSpace(string(out))
+		path := strings.TrimSpace(out)
 		if filepath.IsAbs(path) {
 			return path
 		}

@@ -17,7 +17,10 @@ func printUsage() {
 	fmt.Println("  audit              Audit repository against declared HISS-16 invariants and lockfile")
 	fmt.Println("  baseline           Inspect or record technical debt infractions")
 	fmt.Println("  devcontainer       Synthesize or verify .devcontainer/devcontainer.json")
+	fmt.Println("  flavor             Inspect, audit, and scaffold engineering flavors (7 archetypes)")
 	fmt.Println("  flavors            Plan or sync moving version flavor tags (bleeding, latest, lts)")
+	fmt.Println("  state              Manage .workingdir/ session state, bugs ledger, and questions")
+	fmt.Println("  dedupe             Scan for AST clones, utility sprawl, and cadence enforcement")
 	fmt.Println("  models             Sync or list active model tiers and benchmark limits")
 	fmt.Println("  plan               Dry-run comparison of repository settings against policy")
 	fmt.Println("  sync               Reconcile repository settings, labels, and branch rulesets")
@@ -79,8 +82,14 @@ func dispatchCoreCommand(cmd string, args []string) (error, bool) {
 		return runBaseline(args), true
 	case "devcontainer":
 		return runDevContainer(args), true
+	case "flavor":
+		return runFlavor(args), true
 	case "flavors":
 		return runFlavors(args), true
+	case "state":
+		return runState(args), true
+	case "dedupe":
+		return runDedupe(args), true
 	case "models":
 		return runModels(args), true
 	case "plan":
@@ -145,4 +154,3 @@ func dispatchOperationsCommand(cmd string, args []string) error {
 		return fmt.Errorf("unknown command: %s", cmd)
 	}
 }
-

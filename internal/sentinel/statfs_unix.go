@@ -14,7 +14,11 @@ func readHostDisk(path string) (uint64, uint64, error) {
 	if err := statfsFunc(path, &stat); err != nil {
 		return 0, 0, fmt.Errorf("statfs failed for path %q: %w", path, err)
 	}
-	total := stat.Blocks * uint64(stat.Bsize)
-	free := stat.Bavail * uint64(stat.Bsize)
+	if stat.Bsize <= 0 {
+		return 0, 0, fmt.Errorf("invalid statfs block size: %d", stat.Bsize)
+	}
+	bsize := uint64(stat.Bsize)
+	total := stat.Blocks * bsize
+	free := stat.Bavail * bsize
 	return total, free, nil
 }

@@ -65,11 +65,14 @@ func TestRunGatedPipeline_Positive_And_Negative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunGatedPipeline dry-run error: %v", err)
 	}
+	for _, s := range rep.Stages {
+		t.Logf("Stage %s: passed=%v, message=%s", s.Name, s.Passed, s.Message)
+	}
 	if rep.Status != StatusAdmitted {
 		t.Fatalf("expected StatusAdmitted, got %s", rep.Status)
 	}
-	if len(rep.Stages) != 4 {
-		t.Errorf("expected 4 stages, got %d", len(rep.Stages))
+	if len(rep.Stages) != 6 {
+		t.Errorf("expected 6 stages, got %d", len(rep.Stages))
 	}
 	if rep.ReceiptSignature == "" {
 		t.Error("expected non-empty ReceiptSignature on admitted gate run, got empty")

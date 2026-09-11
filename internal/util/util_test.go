@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -120,5 +121,46 @@ func TestRunCommand(t *testing.T) {
 	}
 	if out != expected {
 		t.Errorf("got %q, want %q", out, expected)
+	}
+}
+
+func TestRunGit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	out, err := RunGit(ctx, ".", "version")
+	if err != nil {
+		t.Fatalf("RunGit failed: %v", err)
+	}
+	if !strings.HasPrefix(out, "git version") {
+		t.Errorf("expected git version string, got %q", out)
+	}
+}
+
+func TestResolveRepoIdentity(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Positive: current repo
+	owner, repo, err := ResolveRepoIdentity(ctx, ".")
+	if err != nil {
+		t.Fatalf("ResolveRepoIdentity on current repo failed: %v", err)
+	}
+	if owner == "" || repo == "" {
+		t.Errorf("expected non-empty owner/repo, got %s/%s", owner, repo)
+	}
+
+	// Boundary: temporary empty directory without git remote
+	tmp := t.TempDir()
+	nested := filepath.Join(tmp, "cordanaLLM", "my-test-repo")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	o, r, err := ResolveRepoIdentity(ctx, nested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o != "cordanaLLM" || r != "my-test-repo" {
+		t.Errorf("expected cordanaLLM/my-test-repo, got %s/%s", o, r)
 	}
 }

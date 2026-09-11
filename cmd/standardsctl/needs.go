@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -293,10 +292,8 @@ func resolveForgeAuthToken(ctx context.Context, explicitToken string) string {
 	if tok := os.Getenv("GH_TOKEN"); tok != "" {
 		return tok
 	}
-	cmd := exec.CommandContext(ctx, "gh", "auth", "token")
-	out, err := cmd.Output()
-	if err == nil {
-		return strings.TrimSpace(string(out))
+	if out, err := util.RunCommand(ctx, "", "gh", "auth", "token"); err == nil {
+		return strings.TrimSpace(out)
 	}
 	return ""
 }
@@ -309,23 +306,5 @@ func resolveRepoCoordinates(path string) (string, string, error) {
 			return m.Repository.Owner, m.Repository.Name, nil
 		}
 	}
-
-	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
-	out, err := cmd.Output()
-	if err == nil {
-		cleanURL := strings.TrimSpace(string(out))
-		cleanURL = strings.TrimSuffix(cleanURL, ".git")
-		parts := strings.Split(cleanURL, "/")
-		if len(parts) >= 2 {
-			owner := parts[len(parts)-2]
-			if colonIdx := strings.LastIndex(owner, ":"); colonIdx != -1 {
-				owner = owner[colonIdx+1:]
-			}
-			repo := parts[len(parts)-1]
-			return owner, repo, nil
-		}
-	}
-
-	base := filepath.Base(filepath.Clean(path))
-	return "cordanaLLM", base, nil
+	return util.ResolveRepoIdentity(context.Background(), path)
 }

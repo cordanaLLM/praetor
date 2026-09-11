@@ -1,12 +1,11 @@
 package paperclip
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
@@ -68,19 +67,12 @@ func resolvePlatform(repoPath string) string {
 		}
 	}
 
-	cmd := exec.Command("git", "-C", repoPath, "config", "--get", "remote.origin.url")
-	if out, err := cmd.Output(); err == nil {
-		url := strings.TrimSpace(string(out))
-		if owner, repo := util.ExtractOwnerAndRepo(url); owner != "" && repo != "" {
-			return fmt.Sprintf("%s/%s", owner, repo)
-		}
+	owner, repo, err := util.ResolveRepoIdentity(context.Background(), repoPath)
+	if err == nil && owner != "" && repo != "" {
+		return fmt.Sprintf("%s/%s", owner, repo)
 	}
 
 	base := filepath.Base(repoPath)
-	parent := filepath.Base(filepath.Dir(repoPath))
-	if parent != "" && parent != "." && parent != "/" && parent != "dev" {
-		return fmt.Sprintf("%s/%s", parent, base)
-	}
 	return fmt.Sprintf("cordanaLLM/%s", base)
 }
 

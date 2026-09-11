@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -790,8 +792,7 @@ FormatStyle: file
 }
 
 func fileExists(path string) bool {
-	stat, err := os.Stat(path)
-	return err == nil && !stat.IsDir()
+	return util.FileExists(path)
 }
 
 // Write writes all generated files to the target workspace root directory.

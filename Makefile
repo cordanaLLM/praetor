@@ -1,4 +1,4 @@
-.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint verify-all clean hooks setup
+.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec flavor-audit state-audit dedupe verify-all clean hooks setup
 
 BIN_DIR := bin
 PRAETORCTL := $(BIN_DIR)/praetorctl
@@ -47,7 +47,22 @@ audit:
 lint:
 	go vet ./...
 
-verify-all: compile-context-verify test audit lint
+vuln:
+	govulncheck ./...
+
+sec:
+	gosec -exclude=G104,G301,G302,G304,G306,G204,G703 ./...
+
+flavor-audit:
+	go run ./cmd/standardsctl flavor audit .
+
+state-audit:
+	go run ./cmd/standardsctl state audit .
+
+dedupe:
+	go run ./cmd/standardsctl dedupe scan .
+
+verify-all: compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe
 	@echo "All standards verification gates passed cleanly."
 
 hooks:

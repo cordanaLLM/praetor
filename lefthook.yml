@@ -17,13 +17,23 @@ pre-commit:
     block-evasion:
       run: python3 .config/agent/hooks/block_evasion.py
 
+post-commit:
+  commands:
+    state-sync:
+      run: go run ./cmd/standardsctl state sync .
+    dedupe-cadence:
+      run: go run ./cmd/standardsctl dedupe cadence --threshold=20 --record .
+
 pre-push:
   parallel: false
   commands:
+    security:
+      run: govulncheck ./... && gosec -exclude=G104,G301,G302,G304,G306,G204,G703 ./...
+    flavor-audit:
+      run: go run ./cmd/standardsctl flavor audit .
+    state-audit:
+      run: go run ./cmd/standardsctl state audit .
     audit:
       run: go run ./cmd/standardsctl audit
     gate:
       run: go run ./cmd/standardsctl gate run --path=.
-
-
-

@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/worktree"
 )
 
@@ -72,6 +74,8 @@ func executeStages(ctx context.Context, repoDir string, dryRun bool, rep *Pipeli
 	}{
 		{"Prefetch & Lockfiles", func(c context.Context) error { return runPrefetchStage(c, repoDir) }},
 		{"HISS Invariant Scan", func(c context.Context) error { return runHissStage(c, repoDir) }},
+		{"Security & SCA Scan", func(c context.Context) error { return runSecurityStage(c, repoDir) }},
+		{"Flavor Conformance", func(c context.Context) error { return runFlavorStage(c, repoDir) }},
 		{"Race-Detector Tests", func(c context.Context) error { return runTestStage(c, repoDir, dryRun) }},
 		{"Ed25519 Exit-0 Receipt", func(c context.Context) error { return runReceiptStage(c, repoDir, rep) }},
 	}
@@ -120,6 +124,35 @@ func runHissStage(ctx context.Context, repoDir string) error {
 	}
 	if scanRep.TotalInfractions > 0 {
 		return fmt.Errorf("hiss violations detected: %d infractions", scanRep.TotalInfractions)
+	}
+	return nil
+}
+
+func runSecurityStage(ctx context.Context, repoDir string) error {
+	if !util.FileExists(filepath.Join(repoDir, "go.mod")) {
+		return nil
+	}
+	if _, err := exec.LookPath("govulncheck"); err == nil {
+		if out, err := util.RunCommand(ctx, repoDir, "govulncheck", "./..."); err != nil {
+			return fmt.Errorf("govulncheck found vulnerabilities: %s", out)
+		}
+	}
+	if _, err := exec.LookPath("gosec"); err == nil {
+		args := []string{"-exclude=G104,G301,G302,G304,G306,G204,G703", "./..."}
+		if out, err := util.RunCommand(ctx, repoDir, "gosec", args...); err != nil {
+			return fmt.Errorf("gosec found security infractions: %s", out)
+		}
+	}
+	return nil
+}
+
+func runFlavorStage(ctx context.Context, repoDir string) error {
+	rep, err := flavor.AuditFlavor(repoDir, "auto")
+	if err != nil {
+		return fmt.Errorf("flavor audit failed: %w", err)
+	}
+	if !rep.Passed {
+		return fmt.Errorf("flavor audit failed (score: %.1f%%, %d missing templates)", rep.Score, len(rep.MissingTemplates))
 	}
 	return nil
 }

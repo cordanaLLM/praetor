@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -205,6 +207,5 @@ func inspectRepoGovernance(path, name string, report *WorkstationReport) {
 }
 
 func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return util.PathExists(path)
 }
