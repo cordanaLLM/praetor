@@ -25,6 +25,8 @@ func runBump(args []string) error {
 	case "-h", "--help", "help":
 		printBumpUsage()
 		return nil
+	case "audit":
+		return runBumpAudit(ctx, subArgs)
 	case "scan":
 		return runBumpScan(ctx, subArgs)
 	case "canary":
@@ -45,6 +47,7 @@ func runBump(args []string) error {
 func printBumpUsage() {
 	fmt.Println("Usage: standardsctl bump <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
+	fmt.Println("  audit [--prerelease] [--path=.]     Audit all dependencies and workflow actions for drift")
 	fmt.Println("  scan [--prerelease] [--path=.]      Scan dependencies for pending stable and prerelease bumps")
 	fmt.Println("  update [--all] [--path=.]           Update dependencies to latest versions")
 	fmt.Println("  unify [--apply] [--path=.]          Reconcile dependencies against fleet catalog")
@@ -291,5 +294,58 @@ func runBumpApply(ctx context.Context, args []string) error {
 	if *patch != "" {
 		fmt.Printf("[PATCHED] Applied adaptation patch from %s\n", *patch)
 	}
+	return nil
+}
+
+func runBumpAudit(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("bump audit", flag.ContinueOnError)
+	path := fs.String("path", ".", "Target repository path")
+	prerelease := fs.Bool("prerelease", false, "Include prerelease channels")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	report, err := bump.AuditCodebaseVersions(ctx, *path, *prerelease)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("=== Codebase Version Modernization Audit: %s ===\n", *path)
+	fmt.Printf("  Modernization Score: %.1f%%\n", report.ModernizationScore)
+	fmt.Printf("  Total Scanned:       %d components\n", report.TotalScanned)
+	fmt.Printf("  Up To Date:          %d components\n", report.UpToDate)
+	fmt.Printf("  Pending Upgrades:    %d\n", len(report.PendingUpgrades))
+	fmt.Printf("  Deprecations:        %d\n\n", len(report.Deprecations))
+
+	if len(report.Actions) > 0 {
+		fmt.Println("GitHub Actions Inventory:")
+		for _, a := range report.Actions {
+			status := "[UP-TO-DATE]"
+			if a.Deprecated {
+				status = "[DEPRECATED]"
+			} else if a.CurrentVersion != a.LatestVersion {
+				status = "[DRIFT]"
+			}
+			fmt.Printf("  %-12s %-32s %s -> %s (%s)\n", status, a.Action, a.CurrentVersion, a.LatestVersion, a.WorkflowFile)
+		}
+		fmt.Println()
+	}
+
+	if len(report.PendingUpgrades) > 0 {
+		fmt.Println("Pending Dependency Upgrades:")
+		for _, u := range report.PendingUpgrades {
+			fmt.Printf("  - [%s] %-32s %s -> %s (%s)\n", u.Channel, u.Package, u.CurrentVersion, u.TargetVersion, u.ManifestType)
+		}
+		fmt.Println()
+	}
+
+	if len(report.Deprecations) > 0 {
+		fmt.Println("Deprecation Warnings & Breaking Advisories:")
+		for _, d := range report.Deprecations {
+			fmt.Printf("  ! [%s] %s: %s\n", d.Kind, d.Component, d.Details)
+		}
+		fmt.Println()
+	}
+
 	return nil
 }
