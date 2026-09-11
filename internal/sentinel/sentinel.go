@@ -13,11 +13,11 @@ import (
 // Invariant configuration constants for host resource protection.
 const (
 	MinReservedRAMBytes  uint64  = 4 * 1024 * 1024 * 1024  // 4 GB
-	RAMReserveRatio      float64 = 0.20                   // 20% of total RAM
+	RAMReserveRatio      float64 = 0.20                    // 20% of total RAM
 	MinReservedDiskBytes uint64  = 10 * 1024 * 1024 * 1024 // 10 GB
-	DiskReserveRatio     float64 = 0.15                   // 15% of total disk
-	RAMPressureThreshold float64 = 0.85                   // 85% RAM utilization
-	MaxScanLines         int     = 1000                   // Upper bound for bounded loops
+	DiskReserveRatio     float64 = 0.15                    // 15% of total disk
+	RAMPressureThreshold float64 = 0.85                    // 85% RAM utilization
+	MaxScanLines         int     = 1000                    // Upper bound for bounded loops
 )
 
 // Package-level configurable paths and hooks for testability and cross-platform execution.
@@ -279,7 +279,6 @@ func parseMeminfo(r io.Reader) (uint64, uint64, error) {
 	}
 	return memTotal, freeBytes, nil
 }
-
 
 // readHostCPULoad inspects /proc/loadavg or returns safe fallback zero metrics.
 func readHostCPULoad() (float64, float64, float64, error) {

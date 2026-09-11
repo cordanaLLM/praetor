@@ -8,12 +8,12 @@ import (
 
 // NativeGPUConfig holds toolchain, standard, and accelerator settings.
 type NativeGPUConfig struct {
-	CStandard    string   `json:"c_standard" yaml:"c_standard"`         // "c11", "c17", "c23"
-	CppStandard  string   `json:"cpp_standard" yaml:"cpp_standard"`     // "c++17", "c++20", "c++23"
-	Accelerators []string `json:"accelerators" yaml:"accelerators"`     // "cuda", "rocm", "vulkan"
-	Libraries    []string `json:"libraries" yaml:"libraries"`           // "ffmpeg", "libvmaf"
-	Sanitizers   []string `json:"sanitizers" yaml:"sanitizers"`         // "address", "undefined", "thread"
-	BuildSystem  string   `json:"build_system" yaml:"build_system"`     // "meson", "cmake"
+	CStandard    string   `json:"c_standard" yaml:"c_standard"`     // "c11", "c17", "c23"
+	CppStandard  string   `json:"cpp_standard" yaml:"cpp_standard"` // "c++17", "c++20", "c++23"
+	Accelerators []string `json:"accelerators" yaml:"accelerators"` // "cuda", "rocm", "vulkan"
+	Libraries    []string `json:"libraries" yaml:"libraries"`       // "ffmpeg", "libvmaf"
+	Sanitizers   []string `json:"sanitizers" yaml:"sanitizers"`     // "address", "undefined", "thread"
+	BuildSystem  string   `json:"build_system" yaml:"build_system"` // "meson", "cmake"
 	EnableLTO    bool     `json:"enable_lto" yaml:"enable_lto"`
 }
 

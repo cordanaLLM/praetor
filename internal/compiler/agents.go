@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	MaxAgentFiles   = 50
+	MaxAgentFiles       = 50
 	DefaultAgentTimeout = 10 * time.Second
 )
 

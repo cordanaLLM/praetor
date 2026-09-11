@@ -349,4 +349,3 @@ func TestEvaluateHostStats_Boundary_ZeroAndMax(t *testing.T) {
 		t.Errorf("expected false for extreme vram requirement")
 	}
 }
-

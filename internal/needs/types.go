@@ -86,16 +86,16 @@ type GapDetail struct {
 
 // FleetDemandReport aggregates all downstream needs across the fleet.
 type FleetDemandReport struct {
-	GeneratedAt          time.Time                    `json:"generated_at"`
-	FleetRoot            string                       `json:"fleet_root"`
-	Framework            string                       `json:"framework"`
-	TotalRepositories    int                          `json:"total_repositories"`
-	ScannedRepositories  int                          `json:"scanned_repositories"`
-	DemandFrequency      map[CapabilityKey]int        `json:"demand_frequency"`
-	CapabilityConsumers  map[CapabilityKey][]string   `json:"capability_consumers"`
-	Gaps                 []GapDetail                  `json:"gaps"`
-	Leaderboard          []RepoNeeds                  `json:"leaderboard"`
-	OverallFleetCoverage float64                      `json:"overall_fleet_coverage"`
+	GeneratedAt          time.Time                  `json:"generated_at"`
+	FleetRoot            string                     `json:"fleet_root"`
+	Framework            string                     `json:"framework"`
+	TotalRepositories    int                        `json:"total_repositories"`
+	ScannedRepositories  int                        `json:"scanned_repositories"`
+	DemandFrequency      map[CapabilityKey]int      `json:"demand_frequency"`
+	CapabilityConsumers  map[CapabilityKey][]string `json:"capability_consumers"`
+	Gaps                 []GapDetail                `json:"gaps"`
+	Leaderboard          []RepoNeeds                `json:"leaderboard"`
+	OverallFleetCoverage float64                    `json:"overall_fleet_coverage"`
 }
 
 // ReplacementAction defines an import or dependency substitution.
@@ -108,12 +108,12 @@ type ReplacementAction struct {
 
 // MigrationPlan represents the planned actions to migrate a repo to the framework.
 type MigrationPlan struct {
-	Repository     string              `json:"repository"`
-	Framework      string              `json:"framework"`
-	AddedRequires  []string            `json:"added_requires"`
-	DroppedRequires []string           `json:"dropped_requires"`
-	Replacements   []ReplacementAction `json:"replacements"`
-	GuideMarkdown  string              `json:"guide_markdown"`
+	Repository      string              `json:"repository"`
+	Framework       string              `json:"framework"`
+	AddedRequires   []string            `json:"added_requires"`
+	DroppedRequires []string            `json:"dropped_requires"`
+	Replacements    []ReplacementAction `json:"replacements"`
+	GuideMarkdown   string              `json:"guide_markdown"`
 }
 
 // MigrationResult summarizes the outcome of an applied migration.

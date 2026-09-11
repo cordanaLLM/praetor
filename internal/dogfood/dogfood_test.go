@@ -98,4 +98,3 @@ func TestDogfood_Remote_InvalidURL(t *testing.T) {
 		t.Fatal("expected error description in result")
 	}
 }
-

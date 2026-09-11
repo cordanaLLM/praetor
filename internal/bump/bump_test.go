@@ -237,4 +237,3 @@ func TestApplyUpdate_NodeFallback(t *testing.T) {
 		t.Fatalf("expected package.json to contain ^5.7.3, got: %s", string(data))
 	}
 }
-

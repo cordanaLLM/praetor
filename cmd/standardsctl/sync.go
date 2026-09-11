@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -42,10 +43,15 @@ func reconcileRuleset(bp config.BranchProtectionPolicy) error {
 	return nil
 }
 
-func reconcileRemoteForge(bp *config.BranchProtectionPolicy) {
+func reconcileRemoteForge(manifest *config.Manifest, bp *config.BranchProtectionPolicy) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
 		token = os.Getenv("GH_TOKEN")
+	}
+	if token == "" {
+		if out, err := util.RunCommand(context.Background(), ".", "gh", "auth", "token"); err == nil {
+			token = strings.TrimSpace(out)
+		}
 	}
 	if token == "" {
 		fmt.Println("  [INFO] Remote sync skipped (GITHUB_TOKEN not set; local files reconciled)")
@@ -55,6 +61,9 @@ func reconcileRemoteForge(bp *config.BranchProtectionPolicy) {
 	defer cancel()
 
 	gh := forge.NewGitHubDriver(token, "")
+	if manifest != nil && manifest.Repository.Owner != "" && manifest.Repository.Name != "" {
+		gh.SetRepository(manifest.Repository.Owner, manifest.Repository.Name)
+	}
 	fmt.Println("  [SYNC] Reconciling remote branch protection rulesets on GitHub...")
 	if err := gh.ReconcileProtection(ctx, "main", bp); err != nil {
 		fmt.Printf("  [WARN] Remote branch protection sync failed: %v\n", err)
@@ -101,7 +110,7 @@ func runSync(args []string) error {
 		return err
 	}
 
-	reconcileRemoteForge(&policy.BranchProtection)
+	reconcileRemoteForge(manifest, &policy.BranchProtection)
 
 	fmt.Println("Synchronization complete.")
 	return nil

@@ -30,14 +30,14 @@ type BuildConfig struct {
 
 // BuildResult captures the outcome of a universal build execution.
 type BuildResult struct {
-	Project     string        `json:"project"`
-	Target      string        `json:"target"`
-	Runtime     string        `json:"runtime"`
-	Artifacts   []string      `json:"artifacts"`
-	Duration    time.Duration `json:"duration"`
-	Optimized   bool          `json:"optimized"`
-	Success     bool          `json:"success"`
-	OutputLogs  string        `json:"output_logs"`
+	Project    string        `json:"project"`
+	Target     string        `json:"target"`
+	Runtime    string        `json:"runtime"`
+	Artifacts  []string      `json:"artifacts"`
+	Duration   time.Duration `json:"duration"`
+	Optimized  bool          `json:"optimized"`
+	Success    bool          `json:"success"`
+	OutputLogs string        `json:"output_logs"`
 }
 
 // LoadBuildConfig parses the .framework-build.yaml file.

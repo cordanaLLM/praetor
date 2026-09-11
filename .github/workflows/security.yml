@@ -1,1 +1,49 @@
-# security.yml configuration for cordanaLLM/praetor
+name: Security Scan
+
+on:
+  push:
+    branches:
+      - main
+      - 'lts-*'
+  pull_request:
+    branches:
+      - main
+      - 'lts-*'
+  schedule:
+    - cron: '0 4 * * *'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    name: Go Vulnerability & AST Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go Toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: true
+
+      - name: Install Toolchains
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: Run Vulnerability Scan (govulncheck)
+        run: govulncheck ./...
+
+      - name: Run AST Security Scan (gosec)
+        run: gosec -exclude=G104,G301,G302,G304,G306,G204,G703 ./...
