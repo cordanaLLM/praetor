@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+## [Unreleased] - 2026-09-11
+
+### Changed
+
+- Strengthen Lefthook configuration with stage_fixed and direct standardsctl gating
+
+
+
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 

@@ -514,7 +514,8 @@ pre-commit:
   commands:
     gofmt:
       glob: "*.go"
-      run: gofmt -l -w {staged_files} && git add {staged_files}
+      run: test -z "{staged_files}" || gofmt -w {staged_files}
+      stage_fixed: true
     govet:
       glob: "*.go"
       run: go vet ./...
@@ -528,12 +529,10 @@ pre-commit:
 pre-push:
   parallel: false
   commands:
-    test:
-      run: go test ./...
     audit:
       run: go run ./cmd/standardsctl audit
     gate:
-      run: python3 .config/agent/hooks/pre_push_gating.py
+      run: go run ./cmd/standardsctl gate run --path=.
 `
 
 const defaultBlockEvasionPY = `#!/usr/bin/env python3

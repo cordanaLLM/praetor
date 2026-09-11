@@ -5,7 +5,8 @@ pre-commit:
   commands:
     gofmt:
       glob: "*.go"
-      run: gofmt -l -w {staged_files} && git add {staged_files}
+      run: test -z "{staged_files}" || gofmt -w {staged_files}
+      stage_fixed: true
     govet:
       glob: "*.go"
       run: go vet ./...
@@ -19,9 +20,10 @@ pre-commit:
 pre-push:
   parallel: false
   commands:
-    gate:
-      run: go run ./cmd/standardsctl gate run --path=.
     audit:
       run: go run ./cmd/standardsctl audit
+    gate:
+      run: go run ./cmd/standardsctl gate run --path=.
+
 
 
