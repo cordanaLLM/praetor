@@ -16,6 +16,10 @@ BLOCKED_PATTERNS = [
     r"rm\s+(-rf?\s+)?\.git/hooks",
 ]
 
+TOPOLOGY_PATTERNS = [
+    r"(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|report|migrate|epic))\b.*(\bdev/?(\s|$)|/dev/(cordanaLLM|lusoris|vmafx|golusoris|upstream|local|stacks|worktrees|scratch)/?(\s|$))",
+]
+
 def audit_command(command_str: str) -> bool:
     for pattern in BLOCKED_PATTERNS:
         if re.search(pattern, command_str):
@@ -25,6 +29,17 @@ def audit_command(command_str: str) -> bool:
                 f"All commits, pushes, and tool invocations must pass verification gates cleanly.\n\n"
             )
             return False
+
+    for pattern in TOPOLOGY_PATTERNS:
+        if re.search(pattern, command_str, re.IGNORECASE):
+            sys.stderr.write(
+                f"\n[BLOCKED BY DEV-01] Attempted adoption/needs target on organization container or dev root!\n"
+                f"Pattern '{pattern}' targets an organization folder or dev root.\n"
+                f"Repositories must live inside organization folders as leaf git repos.\n"
+                f"Adopting an organization root folder or workstation dev root is strictly prohibited.\n\n"
+            )
+            return False
+
     return True
 
 def audit_environment() -> bool:

@@ -46,6 +46,7 @@ func printUsage() {
 	fmt.Println("  needs              Declare and report repository capabilities and demand to Golusoris")
 	fmt.Println("  issue              Reconcile cross-repo dependencies and unblock ready tasks")
 	fmt.Println("  build              Compile polyglot targets with universal builder and pre-build optimizer")
+	fmt.Println("  topology           Audit and clean workstation directory topology (DEV-01 to DEV-05)")
 	fmt.Println("  version            Print CLI version information")
 	fmt.Println("\nRun 'standardsctl <command> -h' for more information on a command.")
 }
@@ -149,6 +150,8 @@ func dispatchOperationsCommand(cmd string, args []string) error {
 		return runIssue(args)
 	case "build":
 		return runBuild(args)
+	case "topology":
+		return runTopology(args)
 	case "version":
 		fmt.Printf("standardsctl version %s\n", version)
 		return nil

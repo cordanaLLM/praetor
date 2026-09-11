@@ -246,6 +246,11 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 		t.Fatalf("paperclip disposition failed: %v", err)
 	}
 
+	// Initialize leaf git repository for adoption validation
+	gitDir := filepath.Join(tmpDir, ".git")
+	_ = os.MkdirAll(gitDir, 0755)
+	_ = os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0644)
+
 	// Adopt dry-run
 	if err := dispatchCommand("adopt", []string{"--dry-run", "--path=" + tmpDir, "--profile=framework"}); err != nil {
 		t.Fatalf("adopt dry-run failed: %v", err)
@@ -376,5 +381,25 @@ func TestDispatchCommand_DedupeSubcommands(t *testing.T) {
 	}
 	if err := dispatchCommand("dedupe", []string{"invalid"}); err == nil {
 		t.Fatal("expected error for invalid dedupe subcommand")
+	}
+}
+
+func TestDispatchCommand_TopologySubcommands(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	if err := dispatchCommand("topology", []string{}); err != nil {
+		t.Fatalf("topology with no args failed: %v", err)
+	}
+	if err := dispatchCommand("topology", []string{"-h"}); err != nil {
+		t.Fatalf("topology -h failed: %v", err)
+	}
+	if err := dispatchCommand("topology", []string{"audit", tmpDir}); err != nil {
+		t.Fatalf("topology audit on empty dir failed: %v", err)
+	}
+	if err := dispatchCommand("topology", []string{"clean", "--dry-run=true", tmpDir}); err != nil {
+		t.Fatalf("topology clean dry-run failed: %v", err)
+	}
+	if err := dispatchCommand("topology", []string{"invalid"}); err == nil {
+		t.Fatal("expected error for invalid topology subcommand")
 	}
 }

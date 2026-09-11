@@ -12,11 +12,23 @@ import (
 // Positive 3D Tests
 // =========================================================================
 
+func initTestGit(t *testing.T, dir string) {
+	t.Helper()
+	gitDir := filepath.Join(dir, ".git")
+	if err := os.MkdirAll(gitDir, 0755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0644); err != nil {
+		t.Fatalf("write HEAD: %v", err)
+	}
+}
+
 func TestAdopt_Positive_Greenfield(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 	repoPath := filepath.Join(tmpDir, "new-service")
 	_ = os.MkdirAll(repoPath, 0755)
+	initTestGit(t, repoPath)
 	_ = os.WriteFile(filepath.Join(repoPath, "go.mod"), []byte("module github.com/test/service\n"), 0644)
 
 	opts := AdoptOptions{
@@ -64,6 +76,7 @@ func TestAdopt_Positive_PartialAndDryRun(t *testing.T) {
 	tmpDir := t.TempDir()
 	repoPath := filepath.Join(tmpDir, "partial-repo")
 	_ = os.MkdirAll(repoPath, 0755)
+	initTestGit(t, repoPath)
 	_ = os.WriteFile(filepath.Join(repoPath, ".standards.yaml"), []byte("version: 1\n"), 0644)
 
 	// Dry run
@@ -104,6 +117,7 @@ func TestAdopt_Positive_BrownfieldWithDebtRatcheting(t *testing.T) {
 	tmpDir := t.TempDir()
 	repoPath := filepath.Join(tmpDir, "legacy-repo")
 	_ = os.MkdirAll(repoPath, 0755)
+	initTestGit(t, repoPath)
 
 	// Simulate legacy files with HISS violation
 	legacyCode := "package main\nfunc run() {\n\t_ = doSomething()\n}\n"
@@ -190,6 +204,7 @@ func TestAdopt_Boundary_EmptyRepoPathDefaults(t *testing.T) {
 	tmpDir := t.TempDir()
 	emptyRepo := filepath.Join(tmpDir, "empty")
 	_ = os.MkdirAll(emptyRepo, 0755)
+	initTestGit(t, emptyRepo)
 
 	opts := AdoptOptions{
 		Path:   emptyRepo,
@@ -292,6 +307,7 @@ func TestExtractRepoFromURL(t *testing.T) {
 func TestAdopt_MultiLanguageLegacyDebt(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
+	initTestGit(t, tmpDir)
 
 	// Write C file with while (1) and strcpy
 	cCode := "#include <stdio.h>\nvoid test() {\n    while (1) {}\n    strcpy(dst, src);\n}\n"
@@ -334,6 +350,7 @@ func TestAdopt_MultiLanguageLegacyDebt(t *testing.T) {
 func TestAdopt_ExistingAgentsMDMerged(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
+	initTestGit(t, tmpDir)
 
 	customInstructions := "# Custom Project Guidelines\n- Rule 1: Always check tests\n- Rule 2: Keep commits clean\n"
 	_ = os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte(customInstructions), 0644)
@@ -370,6 +387,7 @@ func TestAdopt_ExistingAgentsMDMerged(t *testing.T) {
 func TestAdopt_ExistingMakefileAppended(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
+	initTestGit(t, tmpDir)
 
 	existingMakefile := "all:\n\t@echo \"Building...\"\n"
 	_ = os.WriteFile(filepath.Join(tmpDir, "Makefile"), []byte(existingMakefile), 0644)
@@ -405,6 +423,7 @@ func TestAdopt_ExistingMakefileAppended(t *testing.T) {
 func TestAdopt_NASARule4_FunctionLengthLimit(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
+	initTestGit(t, tmpDir)
 
 	// Write C file with a function longer than 60 lines
 	var cCode strings.Builder
@@ -443,6 +462,7 @@ func TestAdopt_NASARule4_FunctionLengthLimit(t *testing.T) {
 func TestAdopt_GovernanceTextsScaffolded(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
+	initTestGit(t, tmpDir)
 
 	readmeContent := "# My Awesome Project\nSome description here.\n"
 	_ = os.WriteFile(filepath.Join(tmpDir, "README.md"), []byte(readmeContent), 0644)
@@ -501,6 +521,7 @@ func TestAdopt_GovernanceTextsScaffolded(t *testing.T) {
 func TestAdopt_AgentsMD_ForcePreservesCustomInstructions(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
+	initTestGit(t, tmpDir)
 
 	initialAgents := "<!-- markdownlint-disable -->\n# old Agent Operating Harness\n\n## Core Directives & Invariants\nold table\n\n---\n\n# Custom Repo Instructions\nDon't touch this proprietary text!\n"
 	_ = os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte(initialAgents), 0644)

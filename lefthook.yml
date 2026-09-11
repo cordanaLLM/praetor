@@ -18,6 +18,8 @@ pre-commit:
       run: go run ./cmd/standardsctl audit
     block-evasion:
       run: python3 .config/agent/hooks/block_evasion.py
+    topology-audit:
+      run: sh -c 'if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi'
 
 post-commit:
   commands:
