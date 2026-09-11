@@ -31,8 +31,8 @@ require (
 	if epic.RepoName != "github.com/test/epic-target" {
 		t.Errorf("expected repo name github.com/test/epic-target, got %s", epic.RepoName)
 	}
-	if len(epic.ChildIssues) != 4 {
-		t.Fatalf("expected 4 child tasks, got %d", len(epic.ChildIssues))
+	if len(epic.ChildIssues) != 5 {
+		t.Fatalf("expected 5 child tasks, got %d", len(epic.ChildIssues))
 	}
 
 	// Verify dependency chain
@@ -44,6 +44,9 @@ require (
 	}
 	if len(epic.ChildIssues[3].DependsOn) == 0 {
 		t.Error("expected Task 4 to depend on Task 3")
+	}
+	if len(epic.ChildIssues[4].DependsOn) == 0 {
+		t.Error("expected Task 5 to depend on Task 4")
 	}
 
 	if !strings.Contains(epic.ChecklistMarkdown, "Pre-Migration Epic") {
@@ -80,7 +83,7 @@ func TestWriteEpicMarkdown_Boundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read generated epic markdown: %v", err)
 	}
-	if !strings.Contains(string(data), "[TASK 1/4]") {
-		t.Errorf("missing [TASK 1/4] in markdown output: %s", string(data))
+	if !strings.Contains(string(data), "[TASK 1/5]") {
+		t.Errorf("missing [TASK 1/5] in markdown output: %s", string(data))
 	}
 }

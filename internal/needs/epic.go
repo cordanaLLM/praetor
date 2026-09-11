@@ -74,14 +74,14 @@ func buildEpicStructure(repoPath string, needs *RepoNeeds, plan *MigrationPlan) 
 
 func createChildTasks(repoName string, needs *RepoNeeds, plan *MigrationPlan) []forge.IssueSpec {
 	t1 := forge.IssueSpec{
-		Title:  fmt.Sprintf("[TASK 1/4] Invariant & Complexity Hygiene: %s", repoName),
+		Title:  fmt.Sprintf("[TASK 1/5] Invariant & Complexity Hygiene: %s", repoName),
 		Body:   "## Scope\n- Enforce NASA JPL Rule 4: refactor all functions to <= 60 LOC.\n- Eliminate unhandled panics, unwrap(), and raw fatal exits.\n- Add 3D unit tests (positive, negative, boundary) with race detector.",
 		State:  "open",
 		Labels: []string{"task", "hiss", "hygiene"},
 	}
 
 	t2 := forge.IssueSpec{
-		Title:     fmt.Sprintf("[TASK 2/4] Decoupling & Config Externalization: %s", repoName),
+		Title:     fmt.Sprintf("[TASK 2/5] Decoupling & Config Externalization: %s", repoName),
 		Body:      "## Scope\n- Eliminate in-cluster DNS and hardcoded localhost URLs.\n- Externalize secrets and tokens behind environment variables / HashiCorp Vault.\n- Decouple monorepo circular import dependencies.",
 		State:     "open",
 		Labels:    []string{"task", "architecture", "decoupling"},
@@ -89,7 +89,7 @@ func createChildTasks(repoName string, needs *RepoNeeds, plan *MigrationPlan) []
 	}
 
 	t3 := forge.IssueSpec{
-		Title:     fmt.Sprintf("[TASK 3/4] Framework Dependency Substitution: %s", repoName),
+		Title:     fmt.Sprintf("[TASK 3/5] Framework Dependency Substitution: %s", repoName),
 		Body:      fmt.Sprintf("## Scope\n- Swap %d external dependencies for %s builder kits.\n- Apply verified import substitutions.\n- Reconcile .needs.yaml capability declarations.", len(plan.Replacements), plan.Framework),
 		State:     "open",
 		Labels:    []string{"task", "dependencies", "migration"},
@@ -97,14 +97,22 @@ func createChildTasks(repoName string, needs *RepoNeeds, plan *MigrationPlan) []
 	}
 
 	t4 := forge.IssueSpec{
-		Title:     fmt.Sprintf("[TASK 4/4] Gated Verification & Ed25519 Receipt: %s", repoName),
+		Title:     fmt.Sprintf("[TASK 4/5] Gated Verification & Ed25519 Receipt: %s", repoName),
 		Body:      "## Scope\n- Run `standardsctl gate run --target=.` in isolated worktree.\n- Verify all 5 gates (prefetch, SCA, HISS-16, tests, receipts).\n- Sign Ed25519 Exit-0 receipt and submit fast-forward PR.",
 		State:     "open",
 		Labels:    []string{"task", "verification", "gating"},
 		DependsOn: []string{fmt.Sprintf("%s#3", repoName)},
 	}
 
-	return []forge.IssueSpec{t1, t2, t3, t4}
+	t5 := forge.IssueSpec{
+		Title:     fmt.Sprintf("[TASK 5/5] Full Praetor Activation & Governance Lockdown: %s", repoName),
+		Body:      "## Scope\n- Reconcile and lock branch protection rulesets via `standardsctl sync`.\n- Transition .standards.yaml enforcement level to `strict-zero-debt`.\n- Synthesize Paperclip agent harness (`standardsctl paperclip harness`).\n- Configure ARC/fleet runner routing policy and enroll into bot gating webhook.",
+		State:     "open",
+		Labels:    []string{"task", "activation", "governance"},
+		DependsOn: []string{fmt.Sprintf("%s#4", repoName)},
+	}
+
+	return []forge.IssueSpec{t1, t2, t3, t4, t5}
 }
 
 func renderEpicChecklistMarkdown(repoName string, needs *RepoNeeds, plan *MigrationPlan, tasks []forge.IssueSpec) string {
