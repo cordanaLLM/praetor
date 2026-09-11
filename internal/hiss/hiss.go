@@ -62,17 +62,29 @@ func Scan(ctx context.Context, repoPath string, opts ScanOptions) (*ScanReport, 
 	}
 
 	err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-		if len(rep.Violations) >= opts.Cap {
-			return filepath.SkipDir
-		}
-		rel, err := filepath.Rel(repoPath, path)
 		if err != nil {
 			return nil
 		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		rel, relErr := filepath.Rel(repoPath, path)
+		if relErr != nil {
+			return nil
+		}
+		if info.IsDir() {
+			if rel != "." && ShouldIgnoreDir(info.Name(), rel) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if len(rep.Violations) >= opts.Cap {
+			return filepath.SkipAll
+		}
 		if ShouldIgnorePath(rel) {
+			return nil
+		}
+		if info.Size() > 2*1024*1024 {
 			return nil
 		}
 
@@ -83,31 +95,56 @@ func Scan(ctx context.Context, repoPath string, opts ScanOptions) (*ScanReport, 
 	return rep, err
 }
 
+// ShouldIgnoreDir checks if a directory should be skipped completely during traversal.
+func ShouldIgnoreDir(name, rel string) bool {
+	if ShouldIgnorePath(rel + "/") {
+		return true
+	}
+	norm := strings.ToLower(name)
+	return norm == ".git" || norm == ".corpus" || norm == "vendor" ||
+		norm == "node_modules" || norm == ".venv" || norm == "build" ||
+		strings.HasPrefix(norm, "build-") || strings.HasPrefix(norm, "build_") ||
+		norm == "target" || norm == ".cache" || norm == ".idea" || norm == ".vscode" ||
+		norm == "compat" || norm == "third_party" || norm == ".claude" ||
+		norm == ".workingdir" || norm == ".workingdir2" || norm == "harvest" ||
+		norm == ".harvest" || norm == "testdata" || norm == "model" ||
+		norm == ".pytest_cache" || norm == ".mypy_cache" || norm == ".ruff_cache"
+}
+
 // ShouldIgnorePath filters out build, dependency, and tool directories.
 func ShouldIgnorePath(rel string) bool {
 	norm := filepath.ToSlash(rel)
 	prefixes := []string{
 		"vendor/", ".standards/", ".git/", "node_modules/",
-		".venv/", "build/", "core/build/", "libvmaf/build/",
+		".venv/", "build/", "build-", "build_", "core/build/", "libvmaf/build/",
 		"target/", ".cache/", ".idea/", ".vscode/",
-		"compat/", "third_party/", ".claude/", ".workingdir/",
-		"harvest/", ".harvest/",
+		"compat/", "third_party/", ".claude/", ".workingdir/", ".workingdir2/",
+		".corpus/", "harvest/", ".harvest/", "testdata/", "model/",
+		".pytest_cache/", ".mypy_cache/", ".ruff_cache/",
 	}
 	for _, p := range prefixes {
-		if strings.HasPrefix(norm, p) {
+		if strings.HasPrefix(norm, p) || strings.Contains(norm, "/"+p) {
 			return true
 		}
 	}
 	return false
 }
 
+func isScannableExt(ext string) bool {
+	return isNativeExt(ext) || ext == ".py" || ext == ".go" || ext == ".rs"
+}
+
 func dispatchFileScan(path, rel string, rep *ScanReport, opts ScanOptions) error {
+	ext := strings.ToLower(filepath.Ext(path))
+	if !isScannableExt(ext) {
+		return nil
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
 	lines := strings.Split(string(data), "\n")
-	ext := strings.ToLower(filepath.Ext(path))
 
 	switch {
 	case isNativeExt(ext):

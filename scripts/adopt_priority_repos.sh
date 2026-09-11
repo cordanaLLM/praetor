@@ -15,7 +15,9 @@ go build -o "${STANDARDSCTL}" "${PRAETOR_ROOT}/cmd/standardsctl"
 PRIORITY_REPOS=(
     "/home/kilian/dev/golusoris/golusoris"
     "/home/kilian/dev/golusoris/sveltesentio"
-    "/home/kilian/dev/vmafx"
+    "/home/kilian/dev/golusoris/goenvoy"
+    "/home/kilian/dev/vmafx/vmafx"
+    "/home/kilian/dev/lusoris/venio"
 )
 
 echo "=== Adopting and Hardening Priority Repositories ==="
@@ -39,6 +41,6 @@ for repo in "${PRIORITY_REPOS[@]}"; do
 done
 
 echo "=== Reconciling Cross-Repo Issue Dependencies ==="
-"${STANDARDSCTL}" issue reconcile --owner="golusoris" --dry-run=true || true
+"${STANDARDSCTL}" issue reconcile --owner="golusoris" --repos="golusoris/golusoris,golusoris/sveltesentio,golusoris/goenvoy" --dry-run=true || true
 
 echo "=== Priority Adoption Sweep Complete ==="
