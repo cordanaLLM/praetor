@@ -43,13 +43,13 @@ func GeneratePreMigrationEpic(ctx context.Context, repoPath, targetFramework str
 		}
 	}
 
-	return buildEpicStructure(repoNeeds, migrationPlan)
+	return buildEpicStructure(repoPath, repoNeeds, migrationPlan)
 }
 
-func buildEpicStructure(needs *RepoNeeds, plan *MigrationPlan) (*PreMigrationEpic, error) {
+func buildEpicStructure(repoPath string, needs *RepoNeeds, plan *MigrationPlan) (*PreMigrationEpic, error) {
 	repoName := needs.Repository
-	if repoName == "" {
-		repoName = "target-repo"
+	if repoName == "" || repoName == "unknown" {
+		repoName = filepath.Base(filepath.Clean(repoPath))
 	}
 
 	tasks := createChildTasks(repoName, needs, plan)

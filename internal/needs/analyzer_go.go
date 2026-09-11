@@ -37,6 +37,9 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse go.mod: %w", err)
 	}
+	if modulePath == "" || modulePath == "unknown" {
+		modulePath = filepath.Base(filepath.Clean(repoPath))
+	}
 
 	astImports, err := scanASTImports(ctx, repoPath, modulePath)
 	if err != nil {
