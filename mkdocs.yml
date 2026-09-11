@@ -1,7 +1,8 @@
 site_name: Praetor
-site_url: https://standards.cordana.ai
+site_url: https://cordanallm.github.io/praetor/
 site_description: Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine
-site_author: CordanaLLM Community
+site_author: Lusoris
+
 
 theme:
   name: material
@@ -54,11 +55,6 @@ extra:
 
 plugins:
   - search
-  - llmstxt-md:
-      enable_markdown_urls: true
-      enable_llms_txt: true
-      enable_llms_full: true
-      enable_copy_button: true
 
 markdown_extensions:
   - attr_list
@@ -74,9 +70,24 @@ nav:
   - Governance & Standards:
       - HISS-16 Formal Specification: standards/hiss-16-spec.md
       - Model Routing & Capacity Arbiter: standards/model-routing-and-fanout.md
-      - Archetype Authoring: guides/archetype-authoring.md
+  - Architecture & Design:
+      - C4 Architecture Models: architecture/c4-models.md
+      - Architectural Decisions (ADR):
+          - Decision Lattice Index: adr/README.md
+          - ADR-0001 Universal Context Transpiler: adr/0001-universal-context-transpiler.md
+          - ADR-0002 Highest-Standard-Wins Lattice: adr/0002-highest-standard-wins-lattice.md
+          - ADR-0003 Canonical Engine & Reverse-Dogfooding: adr/0003-canonical-engine-and-reverse-dogfooding-topology.md
+          - ADR-0004 Prefetch & Gating Pipeline: adr/0004-prefetch-dogfood-gating-pipeline.md
+          - ADR-0005 OCI Distroless Containers: adr/0005-cloudnative-oci-distroless-containers.md
+          - ADR-0006 Hierarchical Runner Matrix: adr/0006-hierarchical-multi-tier-runner-matrix.md
+          - ADR-0007 Universal Frameworks Hub: adr/0007-universal-frameworks-org-and-demand-deduplication.md
+  - Guides & Adoption:
       - Developer Onboarding: guides/onboarding.md
-      - Architectural Decisions (ADR): adr/README.md
+      - Contributing Guide: guides/contributing.md
+      - Archetype Authoring: guides/archetype-authoring.md
+      - Fast Adoption Engine: adoption.md
+      - Fleet Dogfooding: dogfooding.md
   - Funding & Community:
       - Sponsoring & Bounties: sponsoring.md
       - Monetization Strategy: monetization.md
+
