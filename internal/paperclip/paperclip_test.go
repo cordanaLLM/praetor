@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cordanaLLM/standards/internal/lockdown"
+	"github.com/cordanaLLM/praetor/internal/lockdown"
 )
 
 // =========================================================================
@@ -242,7 +242,18 @@ func TestLoadHarness_3D(t *testing.T) {
 		t.Fatalf("WriteHarness failed: %v", err)
 	}
 	loaded, err := LoadHarness(filepath.Join(tmpDir, ".paperclip", "harness.json"))
-	if err != nil || loaded.Platform != "cordanaLLM/praetor" {
-		t.Fatalf("LoadHarness failed or invalid platform: %v", err)
+	if err != nil || loaded.Platform != h.Platform {
+		t.Fatalf("LoadHarness failed or platform mismatch: %v (got %s, expected %s)", err, loaded.Platform, h.Platform)
+	}
+
+	// Test with explicit manifest
+	manifestDir := t.TempDir()
+	manifestContent := "repository:\n  owner: test-org\n  name: test-repo\n"
+	if err := os.WriteFile(filepath.Join(manifestDir, ".standards.yaml"), []byte(manifestContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h2, err := SynthesizeHarness(manifestDir)
+	if err != nil || h2.Platform != "test-org/test-repo" {
+		t.Fatalf("expected platform 'test-org/test-repo', got: %s (err: %v)", h2.Platform, err)
 	}
 }

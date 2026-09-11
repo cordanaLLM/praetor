@@ -272,7 +272,7 @@ func TestReceipts_Positive_CreateAndVerify(t *testing.T) {
 	}
 
 	output := []byte("All standards verification gates passed cleanly.\n")
-	receipt, err := CreateReceipt("make verify-all", 0, output, "abcdef1234567890", "cordanaLLM/standards", priv)
+	receipt, err := CreateReceipt("make verify-all", 0, output, "abcdef1234567890", "cordanaLLM/praetor", priv)
 	if err != nil {
 		t.Fatalf("failed creating receipt: %v", err)
 	}

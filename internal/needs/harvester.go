@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // HarvestRepoItem represents a single repository entry from dev-inventory.json.

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // NodeAnalyzer extracts JavaScript/TypeScript and Svelte dependencies from package.json.

@@ -1,4 +1,4 @@
--- cordanaLLM/standards Neovim LSP and Tool Configuration
+-- cordanaLLM/praetor Neovim LSP and Tool Configuration
 local lspconfig = require("lspconfig")
 local configs = require("lspconfig.configs")
 

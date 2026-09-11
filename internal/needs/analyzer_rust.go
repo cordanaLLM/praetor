@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // RustAnalyzer extracts Rust crate dependencies from Cargo.toml.

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/adopt"
-	"github.com/cordanaLLM/standards/internal/dogfood"
-	"github.com/cordanaLLM/standards/internal/harvester"
-	"github.com/cordanaLLM/standards/internal/mcp"
+	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/dogfood"
+	"github.com/cordanaLLM/praetor/internal/harvester"
+	"github.com/cordanaLLM/praetor/internal/mcp"
 )
 
 // createAdoptTool builds the standards_adopt tool for agents.

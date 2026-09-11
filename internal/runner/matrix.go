@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cordanaLLM/standards/internal/config"
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // ResolveRunner determines the appropriate runner spec for the given target OS, architecture, and GPU requirement.

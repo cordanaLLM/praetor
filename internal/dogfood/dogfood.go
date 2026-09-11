@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/adopt"
-	"github.com/cordanaLLM/standards/internal/compiler"
-	"github.com/cordanaLLM/standards/internal/harvester"
-	"github.com/cordanaLLM/standards/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/harvester"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 const (
@@ -41,15 +41,15 @@ type TargetAdoptionResult struct {
 
 // DogfoodReport summarizes the end-to-end dogfooding run.
 type DogfoodReport struct {
-	HostRepoPath        string                 `json:"host_repo_path"`
-	Timestamp           time.Time              `json:"timestamp"`
-	SelfAuditPassed     bool                   `json:"self_audit_passed"`
-	ContextSyncPassed   bool                   `json:"context_sync_passed"`
-	TargetsEvaluated    int                    `json:"targets_evaluated"`
-	TargetResults       []TargetAdoptionResult `json:"target_results"`
-	RemoteResults       []RemoteAdoptionResult `json:"remote_results,omitempty"`
-	TotalSkillsAudited  int                    `json:"total_skills_audited"`
-	OverallPassed       bool                   `json:"overall_passed"`
+	HostRepoPath       string                 `json:"host_repo_path"`
+	Timestamp          time.Time              `json:"timestamp"`
+	SelfAuditPassed    bool                   `json:"self_audit_passed"`
+	ContextSyncPassed  bool                   `json:"context_sync_passed"`
+	TargetsEvaluated   int                    `json:"targets_evaluated"`
+	TargetResults      []TargetAdoptionResult `json:"target_results"`
+	RemoteResults      []RemoteAdoptionResult `json:"remote_results,omitempty"`
+	TotalSkillsAudited int                    `json:"total_skills_audited"`
+	OverallPassed      bool                   `json:"overall_passed"`
 }
 
 func verifySelfGovernance(ctx context.Context, hostPath string) (bool, bool, error) {

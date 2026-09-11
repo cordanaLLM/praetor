@@ -16,11 +16,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/baseline"
-	"github.com/cordanaLLM/standards/internal/compiler"
-	"github.com/cordanaLLM/standards/internal/config"
-	"github.com/cordanaLLM/standards/internal/mcp"
-	"github.com/cordanaLLM/standards/internal/needs"
+	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/mcp"
+	"github.com/cordanaLLM/praetor/internal/needs"
 )
 
 const (
@@ -130,7 +130,7 @@ func (s *Server) createAuditTool() (mcp.Tool, error) {
 		agentPath := s.resolvePath(args, "agents_path", "AGENTS.md")
 
 		var report strings.Builder
-		report.WriteString("=== cordanaLLM/standards Governance Audit ===\n")
+		report.WriteString("=== cordanaLLM/praetor Governance Audit ===\n")
 
 		manifest, err := config.LoadManifest(confPath)
 		if err != nil {
@@ -157,7 +157,7 @@ func (s *Server) createAuditTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("[FAIL] Agent context targets out of sync: %v", err)), nil
 		}
 		report.WriteString("[PASS] Cross-agent context targets verified in sync.\n")
-		report.WriteString("\nAudit Summary: 100% Compliance with cordanaLLM/standards HISS-16 baseline.")
+		report.WriteString("\nAudit Summary: 100% Compliance with cordanaLLM/praetor HISS-16 baseline.")
 
 		return mcp.TextResult(report.String()), nil
 	}
@@ -188,7 +188,7 @@ func (s *Server) createPlanTool() (mcp.Tool, error) {
 		policy.ApplyOverrides(manifest.Overrides)
 
 		var b strings.Builder
-		b.WriteString("=== cordanaLLM/standards Reconcile Plan (Dry Run) ===\n")
+		b.WriteString("=== cordanaLLM/praetor Reconcile Plan (Dry Run) ===\n")
 		b.WriteString(fmt.Sprintf("Repository: %s/%s\n", manifest.Repository.Owner, manifest.Repository.Name))
 		b.WriteString(fmt.Sprintf("Profiles:   %v\nFacets:     %v\n\nTarget Invariants:\n", manifest.Profiles, manifest.Facets))
 		b.WriteString(fmt.Sprintf("  - Max Cyclomatic Complexity: <= %d\n", policy.Complexity.MaxCyclomatic))

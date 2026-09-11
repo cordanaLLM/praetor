@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/adopt"
-	"github.com/cordanaLLM/standards/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 const (

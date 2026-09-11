@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/cordanaLLM/standards/internal/baseline"
-	"github.com/cordanaLLM/standards/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 func runBaseline(args []string) error {
@@ -55,7 +55,7 @@ func runBaseline(args []string) error {
 		return nil
 	}
 
-	fmt.Printf("=== cordanaLLM/standards Technical Debt Baseline ===\n")
+	fmt.Printf("=== cordanaLLM/praetor Technical Debt Baseline ===\n")
 	fmt.Printf("File: %s | Total Infractions: %d\n", *baselinePath, b.TotalInfractions)
 	for i, inf := range b.Infractions {
 		fmt.Printf("  #%d [%s] %s:%d (%s) - %s\n", i+1, inf.RuleID, inf.FilePath, inf.LineNumber, inf.Symbol, inf.Message)

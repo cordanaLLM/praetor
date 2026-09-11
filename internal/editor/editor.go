@@ -231,13 +231,13 @@ func generateVSCodeFamily(binDir string, includeMCP, includeLSP bool, arch strin
 
 func buildVSCodeSettings(binDir string, includeMCP, includeLSP bool, arch string) string {
 	data := map[string]any{
-		"standards.lsp.enabled":        includeLSP,
-		"standards.lsp.path":           fmt.Sprintf("${workspaceFolder}/%s/standards-lsp", binDir),
-		"standards.lsp.trace.server":   "messages",
-		"standards.mcp.enabled":        includeMCP,
-		"standards.mcp.path":           fmt.Sprintf("${workspaceFolder}/%s/standards-mcp", binDir),
+		"standards.lsp.enabled":         includeLSP,
+		"standards.lsp.path":            fmt.Sprintf("${workspaceFolder}/%s/standards-lsp", binDir),
+		"standards.lsp.trace.server":    "messages",
+		"standards.mcp.enabled":         includeMCP,
+		"standards.mcp.path":            fmt.Sprintf("${workspaceFolder}/%s/standards-mcp", binDir),
 		"standards.sentinel.headroomMB": 1024,
-		"standards.modelTier":          "gemini-2.5-pro",
+		"standards.modelTier":           "gemini-2.5-pro",
 	}
 
 	if arch == "native-gpu-systems" {
@@ -419,7 +419,7 @@ func neovimLuaConfig(binDir, arch string) string {
 	if arch == "native-gpu-systems" {
 		ft = `"c", "cpp", "cuda", "go", "python"`
 	}
-	return fmt.Sprintf(`-- cordanaLLM/standards Neovim LSP and Tool Configuration
+	return fmt.Sprintf(`-- cordanaLLM/praetor Neovim LSP and Tool Configuration
 local lspconfig = require("lspconfig")
 local configs = require("lspconfig.configs")
 
@@ -885,4 +885,3 @@ func readSingleFileWithContext(ctx context.Context, path string) ([]byte, error)
 	}
 	return os.ReadFile(path)
 }
-

@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
-# GoReleaser configuration for cordanaLLM/standards
+# GoReleaser configuration for cordanaLLM/praetor
 version: 2
 
 project_name: standards

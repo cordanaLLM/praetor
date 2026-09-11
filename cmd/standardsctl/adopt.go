@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/adopt"
-	"github.com/cordanaLLM/standards/internal/harvester"
+	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/harvester"
 )
 
 func reorderAdoptArgs(args []string) []string {

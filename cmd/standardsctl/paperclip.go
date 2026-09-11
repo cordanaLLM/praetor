@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/paperclip"
+	"github.com/cordanaLLM/praetor/internal/paperclip"
 )
 
 func runPaperclip(args []string) error {

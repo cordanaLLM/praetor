@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/mcp"
+	"github.com/cordanaLLM/praetor/internal/mcp"
 )
 
 func TestServer_ToolsRegistrationAndAnnotations(t *testing.T) {
@@ -426,4 +426,3 @@ func TestServer_ToolCalls_AdoptAndDogfood(t *testing.T) {
 		t.Fatalf("standards_harvest_workstation failed: %+v", hRes)
 	}
 }
-

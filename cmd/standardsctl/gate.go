@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/gating"
 )
 
 func runGate(args []string) error {

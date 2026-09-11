@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/dogfood"
-	"github.com/cordanaLLM/standards/internal/gating"
-	"github.com/cordanaLLM/standards/internal/hiss"
-	"github.com/cordanaLLM/standards/internal/needs"
+	"github.com/cordanaLLM/praetor/internal/dogfood"
+	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/needs"
 )
 
 func runAgent(args []string) error {

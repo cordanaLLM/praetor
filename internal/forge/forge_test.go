@@ -31,7 +31,7 @@ func TestNewForge_Providers_Positive(t *testing.T) {
 func TestIssueDependencyParsing_Positive(t *testing.T) {
 	body := `
 Resolves core architecture.
-Depends-On: cordanaLLM/standards#42
+Depends-On: cordanaLLM/praetor#42
 Some other context.
 Depends-On: #15
 `
@@ -39,7 +39,7 @@ Depends-On: #15
 	if len(refs) != 2 {
 		t.Fatalf("expected 2 dependency refs, got %d", len(refs))
 	}
-	if refs[0].Owner != "cordanaLLM" || refs[0].Repo != "standards" || refs[0].Number != 42 {
+	if refs[0].Owner != "cordanaLLM" || refs[0].Repo != "praetor" || refs[0].Number != 42 {
 		t.Errorf("ref 0 mismatch: %+v", refs[0])
 	}
 	if refs[1].Number != 15 || refs[1].Owner != "" {
@@ -54,7 +54,7 @@ func TestSyncIssues_Positive(t *testing.T) {
 	issues := []IssueSpec{
 		{
 			Title: "Implement Pillar VII Multi-Forge Federation",
-			Body:  "Depends-On: cordanaLLM/standards#100",
+			Body:  "Depends-On: cordanaLLM/praetor#100",
 			State: "open",
 		},
 		{

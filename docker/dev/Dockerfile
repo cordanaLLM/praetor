@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
-# cordanaLLM/standards minimal multi-arch devcontainer base (< 250MB)
+# cordanaLLM/praetor minimal multi-arch devcontainer base (< 250MB)
 FROM golang:1.27-alpine
 
-LABEL org.opencontainers.image.title="cordanaLLM/standards dev container" \
-      org.opencontainers.image.description="Minimal multi-arch zero-CVE development container for cordanaLLM/standards" \
+LABEL org.opencontainers.image.title="cordanaLLM/praetor dev container" \
+      org.opencontainers.image.description="Minimal multi-arch zero-CVE development container for cordanaLLM/praetor" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.vendor="cordanaLLM"
 

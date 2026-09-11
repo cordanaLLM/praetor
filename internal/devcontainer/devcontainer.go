@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cordanaLLM/standards/internal/config"
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // Invariant bounds and defaults.

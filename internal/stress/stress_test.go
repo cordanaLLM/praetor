@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/astmerge"
-	"github.com/cordanaLLM/standards/internal/baseline"
-	"github.com/cordanaLLM/standards/internal/compiler"
-	"github.com/cordanaLLM/standards/internal/hiss"
-	"github.com/cordanaLLM/standards/internal/worktree"
+	"github.com/cordanaLLM/praetor/internal/astmerge"
+	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/worktree"
 )
 
 func TestProperty_TranspileIdempotency(t *testing.T) {

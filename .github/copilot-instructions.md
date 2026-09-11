@@ -1,5 +1,5 @@
 <!-- markdownlint-disable MD013 -->
-# GitHub Copilot Instructions: cordanaLLM/standards
+# GitHub Copilot Instructions: cordanaLLM/praetor
 <!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->
 
 - Ensure all Go code passes `go test -v -race ./...`.

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/cordanaLLM/standards/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/compiler"
 )
 
 func runCompileContext(args []string) error {

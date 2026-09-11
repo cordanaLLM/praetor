@@ -1,11 +1,11 @@
 ---
-title: Welcome to cordanaLLM/standards
+title: Welcome to cordanaLLM/praetor
 description: Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine
 ---
 
-# cordanaLLM/standards Documentation
+# cordanaLLM/praetor Documentation
 
-Welcome to the official documentation portal for `cordanaLLM/standards`.
+Welcome to the official documentation portal for `cordanaLLM/praetor`.
 
 ## Architecture Overview
 

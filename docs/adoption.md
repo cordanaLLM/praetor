@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: cordanaLLM/standards/.github/actions/praetor-adopt@main
+      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@main
         with:
           mode: adopt
           force: true

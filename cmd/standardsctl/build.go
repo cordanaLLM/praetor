@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/builder"
+	"github.com/cordanaLLM/praetor/internal/builder"
 )
 
 func runBuild(args []string) error {

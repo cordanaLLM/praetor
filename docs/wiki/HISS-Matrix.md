@@ -1,6 +1,6 @@
 # High-Integrity Systems Standard (HISS-16) Compliance Matrix
 
-The formal specification matrix across the 16 deterministic engineering invariants in `cordanaLLM/standards`.
+The formal specification matrix across the 16 deterministic engineering invariants in `cordanaLLM/praetor`.
 
 | Invariant | Title | Domain | Mathematical Axiom / Threshold | Enforcement Layer | Failure Action |
 | :--- | :--- | :--- | :--- | :--- | :--- |

@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cordanaLLM/standards/internal/baseline"
-	"github.com/cordanaLLM/standards/internal/compiler"
-	"github.com/cordanaLLM/standards/internal/config"
+	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -44,7 +44,7 @@ func runInit(args []string) error {
 		return err
 	}
 
-	fmt.Println("\nRepository successfully onboarded into cordanaLLM/standards!")
+	fmt.Println("\nRepository successfully onboarded into cordanaLLM/praetor!")
 	fmt.Println("Next steps: run 'standardsctl audit' and 'make verify-all'.")
 	return nil
 }

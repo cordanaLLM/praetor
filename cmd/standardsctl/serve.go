@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/container"
-	"github.com/cordanaLLM/standards/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/container"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 func runServe(args []string) error {

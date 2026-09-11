@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
 func runIssue(args []string) error {
@@ -49,10 +49,10 @@ func runIssueReconcile(ctx context.Context, args []string) error {
 	engine := forge.NewReconcileEngine(*owner)
 	sampleRepo := *owner + "/praetor"
 	engine.TrackIssue(sampleRepo, forge.IssueSpec{
-		ID:        1,
-		Title:     "Governance Baseline Foundation",
-		State:     "closed",
-		Labels:    []string{"governance", "closed"},
+		ID:     1,
+		Title:  "Governance Baseline Foundation",
+		State:  "closed",
+		Labels: []string{"governance", "closed"},
 	})
 	engine.TrackIssue(sampleRepo, forge.IssueSpec{
 		ID:        2,

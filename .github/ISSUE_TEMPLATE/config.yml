@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: "cordanaLLM Governance Discussions"
-    url: "https://github.com/cordanaLLM/standards/discussions"
+    url: "https://github.com/cordanaLLM/praetor/discussions"
     about: "Ask architectural questions, discuss invariants, or request clarifications"
   - name: "Security Vulnerability Advisory"
-    url: "https://github.com/cordanaLLM/standards/security/advisories/new"
+    url: "https://github.com/cordanaLLM/praetor/security/advisories/new"
     about: "Report sensitive security vulnerabilities or supply chain issues privately"

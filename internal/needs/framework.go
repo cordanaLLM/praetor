@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const defaultFrameworkModule = "github.com/golusoris/golusoris"

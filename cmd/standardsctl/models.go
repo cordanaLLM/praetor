@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/router"
+	"github.com/cordanaLLM/praetor/internal/router"
 )
 
 func runModels(args []string) error {
@@ -40,7 +40,7 @@ func runModels(args []string) error {
 }
 
 func handleModelsSync(ctx context.Context, configPath, endpoints string, discoverLocal bool) error {
-	fmt.Println("=== cordanaLLM/standards Live Model & Benchmark Synchronizer ===")
+	fmt.Println("=== cordanaLLM/praetor Live Model & Benchmark Synchronizer ===")
 	var localList []string
 	for _, ep := range strings.Split(endpoints, ",") {
 		if trimmed := strings.TrimSpace(ep); trimmed != "" {

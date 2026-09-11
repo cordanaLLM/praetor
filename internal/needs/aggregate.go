@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // AggregateFleet scans all repositories in fleetRoot and produces a FleetDemandReport.

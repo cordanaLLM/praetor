@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/config"
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 const (
-	defaultHTTPTimeout = 15 * time.Second
+	defaultHTTPTimeout  = 15 * time.Second
 	maxHTTPResponseBody = 1024 * 1024 // 1 MB limit
 )
 

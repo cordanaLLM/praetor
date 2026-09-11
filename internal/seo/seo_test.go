@@ -42,9 +42,9 @@ func TestSoftwareSourceCode_Positive(t *testing.T) {
 	raw := []byte(`{
 		"@context": "https://schema.org",
 		"@type": "SoftwareSourceCode",
-		"name": "cordanaLLM/standards",
+		"name": "cordanaLLM/praetor",
 		"programmingLanguage": "Go",
-		"codeRepository": "https://github.com/cordanaLLM/standards",
+		"codeRepository": "https://github.com/cordanaLLM/praetor",
 		"runtimePlatform": "Linux / POSIX",
 		"license": "https://spdx.org/licenses/Apache-2.0.html",
 		"description": "Enterprise Fleet Governance & Universal AI Agent Engineering Engine"

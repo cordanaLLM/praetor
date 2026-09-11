@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // PythonAnalyzer extracts Python dependencies from requirements.txt or pyproject.toml.

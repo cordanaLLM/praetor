@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cordanaLLM/standards/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
 // PreMigrationEpic captures the parent epic and child task issues for repo modernization.

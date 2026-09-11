@@ -9,14 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cordanaLLM/standards/internal/baseline"
-	"github.com/cordanaLLM/standards/internal/compiler"
-	"github.com/cordanaLLM/standards/internal/config"
-	"github.com/cordanaLLM/standards/internal/devcontainer"
-	"github.com/cordanaLLM/standards/internal/hiss"
-	"github.com/cordanaLLM/standards/internal/paperclip"
-	"github.com/cordanaLLM/standards/internal/runner"
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/devcontainer"
+	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/paperclip"
+	"github.com/cordanaLLM/praetor/internal/runner"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func runAudit(args []string) error {
@@ -29,10 +29,15 @@ func runAudit(args []string) error {
 		return err
 	}
 
-	fmt.Println("=== cordanaLLM/standards Governance Audit ===")
-
 	manifest, err := auditManifestAndLockfile(*manifestPath)
 	if err != nil {
+		return err
+	}
+
+	fmt.Printf("=== %s/%s Governance Audit ===\n", manifest.Repository.Owner, manifest.Repository.Name)
+
+	rootDir := filepath.Dir(*manifestPath)
+	if err := auditRepoIdentity(manifest, rootDir); err != nil {
 		return err
 	}
 
@@ -44,12 +49,11 @@ func runAudit(args []string) error {
 		return err
 	}
 
-	rootDir := filepath.Dir(*manifestPath)
 	if err := auditBranchProtectionAndSupplyChain(manifest, rootDir); err != nil {
 		return err
 	}
 
-	if err := auditPaperclipHarness(rootDir); err != nil {
+	if err := auditPaperclipHarness(manifest, rootDir); err != nil {
 		return err
 	}
 
@@ -69,7 +73,7 @@ func runAudit(args []string) error {
 		return err
 	}
 
-	fmt.Println("\nAudit Summary: 100% Compliance with cordanaLLM/standards HISS-16 baseline.")
+	fmt.Printf("\nAudit Summary: 100%% Compliance with %s/%s HISS-16 baseline.\n", manifest.Repository.Owner, manifest.Repository.Name)
 	return nil
 }
 
@@ -170,7 +174,43 @@ func auditBranchProtectionAndSupplyChain(manifest *config.Manifest, rootDir stri
 	return nil
 }
 
-func auditPaperclipHarness(rootDir string) error {
+func auditRepoIdentity(manifest *config.Manifest, rootDir string) error {
+	if manifest.Repository.Owner == "" || manifest.Repository.Name == "" {
+		return fmt.Errorf("[FAIL] Manifest repository owner and name must not be empty")
+	}
+
+	goModPath := filepath.Join(rootDir, "go.mod")
+	if util.FileExists(goModPath) {
+		data, err := os.ReadFile(goModPath)
+		if err == nil {
+			modContent := string(data)
+			if strings.Contains(modContent, "github.com/cordanaLLM/standards") {
+				return fmt.Errorf("[FAIL] go.mod contains obsolete module path 'github.com/cordanaLLM/standards'. Expected 'github.com/%s/%s'", manifest.Repository.Owner, manifest.Repository.Name)
+			}
+		}
+	}
+
+	needsPath := filepath.Join(rootDir, ".needs.yaml")
+	if util.FileExists(needsPath) {
+		data, err := os.ReadFile(needsPath)
+		if err == nil && strings.Contains(string(data), "github.com/cordanaLLM/standards") {
+			return fmt.Errorf("[FAIL] .needs.yaml contains obsolete repository reference 'github.com/cordanaLLM/standards'")
+		}
+	}
+
+	basePath := filepath.Join(rootDir, ".standards-baseline.json")
+	if util.FileExists(basePath) {
+		data, err := os.ReadFile(basePath)
+		if err == nil && manifest.Repository.Name != "standards" && strings.Contains(string(data), `"repository": "cordanaLLM/standards"`) {
+			return fmt.Errorf("[FAIL] .standards-baseline.json contains obsolete repository 'cordanaLLM/standards'")
+		}
+	}
+
+	fmt.Printf("[PASS] Repository identity verified (%s/%s, zero legacy references).\n", manifest.Repository.Owner, manifest.Repository.Name)
+	return nil
+}
+
+func auditPaperclipHarness(manifest *config.Manifest, rootDir string) error {
 	harnessPath := filepath.Join(rootDir, ".paperclip", "harness.json")
 	if !util.FileExists(harnessPath) {
 		return fmt.Errorf("[FAIL] Paperclip agent runtime harness .paperclip/harness.json is missing. Run 'standardsctl adopt' to reconcile.")
@@ -178,6 +218,10 @@ func auditPaperclipHarness(rootDir string) error {
 	h, err := paperclip.LoadHarness(harnessPath)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Paperclip harness validation failed: %w", err)
+	}
+	expectedPlatform := fmt.Sprintf("%s/%s", manifest.Repository.Owner, manifest.Repository.Name)
+	if h.Platform != expectedPlatform {
+		return fmt.Errorf("[FAIL] Paperclip harness platform mismatch: got %q, expected %q. Run 'standardsctl adopt --force' to reconcile.", h.Platform, expectedPlatform)
 	}
 	fmt.Printf("[PASS] Paperclip agent runtime harness verified (%s, %d rules).\n", h.Platform, len(h.OperatingContract))
 	return nil

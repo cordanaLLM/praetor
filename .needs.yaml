@@ -1,5 +1,5 @@
 version: 1
-repository: github.com/cordanaLLM/standards
+repository: github.com/cordanaLLM/praetor
 language: go
 go_version: "1.27"
 framework: github.com/golusoris/golusoris

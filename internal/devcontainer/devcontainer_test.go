@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/config"
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // TestSynthesize_3D verifies Synthesize against positive, negative, and boundary inputs.
@@ -18,7 +18,7 @@ func TestSynthesize_3D(t *testing.T) {
 		Version: 1,
 		Repository: config.RepositoryMetadata{
 			Owner: "cordanaLLM",
-			Name:  "standards",
+			Name:  "praetor",
 		},
 		Profiles: []string{"framework"},
 		Facets:   []string{"security:high", "api:public-contract", "docs:seo-portal", "agent:sandboxed"},
@@ -28,8 +28,8 @@ func TestSynthesize_3D(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil error on positive synthesis, got: %v", err)
 	}
-	if dc.Name != "cordanaLLM/standards" {
-		t.Fatalf("expected name cordanaLLM/standards, got: %s", dc.Name)
+	if dc.Name != "cordanaLLM/praetor" {
+		t.Fatalf("expected name cordanaLLM/praetor, got: %s", dc.Name)
 	}
 	if dc.RemoteUser != "vscode" {
 		t.Fatalf("expected remoteUser vscode, got: %s", dc.RemoteUser)

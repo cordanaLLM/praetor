@@ -5,7 +5,7 @@ description: Synchronize and reconcile local repository configurations, DevConta
 
 # Standards Synchronization & Fleet Reconciliation (`standards-sync`)
 
-Reconcile local repository configurations, DevContainers, and universal AI agent harnesses with the declared `cordanaLLM/standards` lattice.
+Reconcile local repository configurations, DevContainers, and universal AI agent harnesses with the declared `cordanaLLM/praetor` lattice.
 
 ## 5-Step Synchronization Workflow
 

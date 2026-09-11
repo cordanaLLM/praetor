@@ -7,10 +7,10 @@ export default defineConfig({
   site: 'https://standards.cordana.ai',
   integrations: [
     starlight({
-      title: 'cordanaLLM/standards Documentation',
+      title: 'cordanaLLM/praetor Documentation',
       description: 'Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine',
       social: {
-        github: 'https://github.com/cordanaLLM/standards',
+        github: 'https://github.com/cordanaLLM/praetor',
       },
       customCss: [
         './src/styles/custom.css',
@@ -41,7 +41,7 @@ export default defineConfig({
           content: JSON.stringify({
             '@context': 'https://schema.org',
             '@type': 'TechArticle',
-            'headline': 'cordanaLLM/standards Documentation & Architecture',
+            'headline': 'cordanaLLM/praetor Documentation & Architecture',
             'description': 'Universal High-Integrity Repository Governance and Autonomous Agent Harnesses.',
             'author': {
               '@type': 'Organization',
@@ -60,9 +60,9 @@ export default defineConfig({
           content: JSON.stringify({
             '@context': 'https://schema.org',
             '@type': 'SoftwareSourceCode',
-            'name': 'cordanaLLM/standards',
+            'name': 'cordanaLLM/praetor',
             'programmingLanguage': 'Go',
-            'codeRepository': 'https://github.com/cordanaLLM/standards',
+            'codeRepository': 'https://github.com/cordanaLLM/praetor',
             'runtimePlatform': 'POSIX / Linux x86_64 / arm64',
             'license': 'https://spdx.org/licenses/Apache-2.0.html'
           }),

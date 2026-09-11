@@ -1,9 +1,9 @@
-site_name: "cordanaLLM/standards"
+site_name: "cordanaLLM/praetor"
 site_url: "https://standards.cordana.ai"
 site_description: "Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine"
 site_author: "cordanaLLM"
-repo_url: "https://github.com/cordanaLLM/standards"
-repo_name: "cordanaLLM/standards"
+repo_url: "https://github.com/cordanaLLM/praetor"
+repo_name: "cordanaLLM/praetor"
 
 theme:
   name: material

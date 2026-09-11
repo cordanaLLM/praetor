@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+
+## [Unreleased] - 2026-09-11
+
+### Changed
+
+- Migrate Go module and repo identity to cordanaLLM/praetor and enforce strict identity audit
+
 ## [Unreleased] - 2026-09-11
 
 ### Changed

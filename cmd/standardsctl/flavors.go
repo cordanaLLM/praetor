@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/cordanaLLM/standards/internal/flavors"
+	"github.com/cordanaLLM/praetor/internal/flavors"
 )
 
 func fetchCurrentTags() map[string]string {
@@ -63,7 +63,7 @@ func runFlavors(args []string) error {
 
 	transitions := flavors.PlanTransitions(cfg, fetchCurrentTags(), commit, "1.0.0")
 
-	fmt.Println("=== cordanaLLM/standards Release Flavor Reconciler ===")
+	fmt.Println("=== cordanaLLM/praetor Release Flavor Reconciler ===")
 	for _, tr := range transitions {
 		fmt.Printf("  [%s] %-10s : %s -> %s\n", strings.ToUpper(tr.Action), tr.FlavorName, tr.CurrentRef, tr.TargetRef)
 	}

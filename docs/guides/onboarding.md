@@ -1,4 +1,4 @@
-# Repository Onboarding Guide: cordanaLLM/standards
+# Repository Onboarding Guide: cordanaLLM/praetor
 
 Onboard any existing or new repository into the cordanaLLM declarative governance fleet.
 

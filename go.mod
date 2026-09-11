@@ -1,4 +1,4 @@
-module github.com/cordanaLLM/standards
+module github.com/cordanaLLM/praetor
 
 go 1.27
 

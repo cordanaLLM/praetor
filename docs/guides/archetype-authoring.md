@@ -1,6 +1,6 @@
 # Archetype and Facet Authoring Guide
 
-Learn how to define new composable profiles and cross-cutting security/operational facets in `cordanaLLM/standards`.
+Learn how to define new composable profiles and cross-cutting security/operational facets in `cordanaLLM/praetor`.
 
 ```mermaid
 flowchart TD

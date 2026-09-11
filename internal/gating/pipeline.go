@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/hiss"
-	"github.com/cordanaLLM/standards/internal/lockdown"
-	"github.com/cordanaLLM/standards/internal/worktree"
+	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/lockdown"
+	"github.com/cordanaLLM/praetor/internal/worktree"
 )
 
 // GatingStatus represents the disposition of a gated check.

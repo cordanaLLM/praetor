@@ -1,12 +1,12 @@
 name: "Feature Request"
-description: "Propose a new archetype, facet, compiler target, or governance tool for cordanaLLM/standards"
+description: "Propose a new archetype, facet, compiler target, or governance tool for cordanaLLM/praetor"
 title: "[FEATURE]: "
 labels: ["enhancement", "triage"]
 body:
   - type: markdown
     attributes:
       value: |
-        Propose enhancements to `cordanaLLM/standards`. All new features must maintain strict join-semilattice properties and zero-warning hygiene.
+        Propose enhancements to `cordanaLLM/praetor`. All new features must maintain strict join-semilattice properties and zero-warning hygiene.
   - type: textarea
     id: problem
     attributes:

@@ -4,7 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
+	"gopkg.in/yaml.v3"
 )
 
 // Harness represents the Paperclip agent runtime configuration.
@@ -36,13 +41,47 @@ func SynthesizeHarness(repoPath string) (*Harness, error) {
 		"HISS-16: Canonical AGENTS.md compiled to vendor harnesses",
 	}
 
+	platform := resolvePlatform(repoPath)
+
 	return &Harness{
 		Version:           1,
-		Platform:          "cordanaLLM/praetor",
+		Platform:          platform,
 		OperatingContract: contract,
 		AGitPushFormat:    "git push origin HEAD:refs/for/main -o topic=<issue-id>",
 		Invariants:        invariants,
 	}, nil
+}
+
+func resolvePlatform(repoPath string) string {
+	manifestPath := filepath.Join(repoPath, ".standards.yaml")
+	if data, err := os.ReadFile(manifestPath); err == nil {
+		var m struct {
+			Repository struct {
+				Owner string `yaml:"owner"`
+				Name  string `yaml:"name"`
+			} `yaml:"repository"`
+		}
+		if err := yaml.Unmarshal(data, &m); err == nil {
+			if m.Repository.Owner != "" && m.Repository.Name != "" {
+				return fmt.Sprintf("%s/%s", m.Repository.Owner, m.Repository.Name)
+			}
+		}
+	}
+
+	cmd := exec.Command("git", "-C", repoPath, "config", "--get", "remote.origin.url")
+	if out, err := cmd.Output(); err == nil {
+		url := strings.TrimSpace(string(out))
+		if owner, repo := util.ExtractOwnerAndRepo(url); owner != "" && repo != "" {
+			return fmt.Sprintf("%s/%s", owner, repo)
+		}
+	}
+
+	base := filepath.Base(repoPath)
+	parent := filepath.Base(filepath.Dir(repoPath))
+	if parent != "" && parent != "." && parent != "/" && parent != "dev" {
+		return fmt.Sprintf("%s/%s", parent, base)
+	}
+	return fmt.Sprintf("cordanaLLM/%s", base)
 }
 
 // WriteHarness writes .paperclip/harness.json and .paperclip/rules.md into repoPath.

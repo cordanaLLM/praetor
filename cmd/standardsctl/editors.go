@@ -4,7 +4,7 @@ import (
 	"flag"
 	"fmt"
 
-	"github.com/cordanaLLM/standards/internal/editor"
+	"github.com/cordanaLLM/praetor/internal/editor"
 )
 
 func runEditors(args []string) error {

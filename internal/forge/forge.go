@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cordanaLLM/standards/internal/config"
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // Label represents a canonical repository label.

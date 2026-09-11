@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // NativeAnalyzer extracts C/C++ and GPU accelerator dependencies from Meson/CMake manifests.

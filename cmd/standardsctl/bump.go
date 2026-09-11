@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/bump"
+	"github.com/cordanaLLM/praetor/internal/bump"
 )
 
 func runBump(args []string) error {

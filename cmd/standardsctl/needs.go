@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/needs"
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanaLLM/praetor/internal/needs"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func runNeeds(args []string) error {

@@ -8,7 +8,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/worktree"
+	"github.com/cordanaLLM/praetor/internal/worktree"
 )
 
 func runWorktree(args []string) error {

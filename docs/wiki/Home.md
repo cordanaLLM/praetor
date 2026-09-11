@@ -1,4 +1,4 @@
-# cordanaLLM/standards Wiki Portal
+# cordanaLLM/praetor Wiki Portal
 
 Welcome to the official repository governance wiki for cordanaLLM.
 

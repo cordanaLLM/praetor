@@ -119,10 +119,29 @@ func countLines(s string) int {
 	return strings.Count(s, "\n") + 1
 }
 
+func extractRepoTitle(src string) string {
+	lines := strings.Split(src, "\n")
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if strings.HasPrefix(l, "# ") {
+			title := strings.TrimPrefix(l, "# ")
+			title = strings.TrimSuffix(title, " Agent Operating Harness")
+			title = strings.TrimSuffix(title, " Operating Harness")
+			title = strings.TrimSuffix(title, " Harness")
+			title = strings.TrimSpace(title)
+			if title != "" {
+				return title
+			}
+		}
+	}
+	return "cordanaLLM/praetor"
+}
+
 func generateClaudeMD(src string) string {
+	repoTitle := extractRepoTitle(src)
 	var b strings.Builder
 	b.WriteString("<!-- markdownlint-disable MD013 -->\n")
-	b.WriteString("# Claude Code Guidelines: cordanaLLM/standards\n")
+	b.WriteString(fmt.Sprintf("# Claude Code Guidelines: %s\n", repoTitle))
 	b.WriteString("<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n")
 	b.WriteString("## Commands\n\n")
 	b.WriteString("```bash\n")
@@ -147,13 +166,14 @@ func generateClaudeMD(src string) string {
 }
 
 func generateCursorMDC(src string) string {
+	repoTitle := extractRepoTitle(src)
 	var b strings.Builder
 	b.WriteString("---\n")
 	b.WriteString("description: HISS-16 Engineering Invariants and Verification Gates\n")
 	b.WriteString("globs: *\n")
 	b.WriteString("alwaysApply: true\n")
 	b.WriteString("---\n\n")
-	b.WriteString("# Cursor Rules: cordanaLLM/standards\n")
+	b.WriteString(fmt.Sprintf("# Cursor Rules: %s\n", repoTitle))
 	b.WriteString("<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n")
 	b.WriteString("## Mandatory Invariants\n\n")
 	b.WriteString("1. Bounded loops and explicit context timeouts on all I/O (HISS-02).\n")
@@ -167,9 +187,10 @@ func generateCursorMDC(src string) string {
 }
 
 func generateCopilotMD(src string) string {
+	repoTitle := extractRepoTitle(src)
 	var b strings.Builder
 	b.WriteString("<!-- markdownlint-disable MD013 -->\n")
-	b.WriteString("# GitHub Copilot Instructions: cordanaLLM/standards\n")
+	b.WriteString(fmt.Sprintf("# GitHub Copilot Instructions: %s\n", repoTitle))
 	b.WriteString("<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n")
 	b.WriteString("- Ensure all Go code passes `go test -v -race ./...`.\n")
 	b.WriteString("- Strictly adhere to HISS-16 invariants (McCabe <= 10, LOC <= 75, zero unwraps).\n")
@@ -179,8 +200,9 @@ func generateCopilotMD(src string) string {
 }
 
 func generateWindsurfRules(src string) string {
+	repoTitle := extractRepoTitle(src)
 	var b strings.Builder
-	b.WriteString("# Windsurf Cascade Rules: cordanaLLM/standards\n")
+	b.WriteString(fmt.Sprintf("# Windsurf Cascade Rules: %s\n", repoTitle))
 	b.WriteString("<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n")
 	b.WriteString("- Lead with direct code edits and executable commands.\n")
 	b.WriteString("- Follow HISS-16 invariants: cyclomatic complexity <= 10, function LOC <= 75.\n")
@@ -190,9 +212,10 @@ func generateWindsurfRules(src string) string {
 }
 
 func generateGeminiMD(src string) string {
+	repoTitle := extractRepoTitle(src)
 	var b strings.Builder
 	b.WriteString("<!-- markdownlint-disable MD013 -->\n")
-	b.WriteString("# Google Antigravity / Gemini Instructions: cordanaLLM/standards\n")
+	b.WriteString(fmt.Sprintf("# Google Antigravity / Gemini Instructions: %s\n", repoTitle))
 	b.WriteString("<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n")
 	b.WriteString("## Operating Directives\n\n")
 	b.WriteString("- Canonical harness is `AGENTS.md`.\n")

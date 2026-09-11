@@ -7,18 +7,18 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cordanaLLM/standards/internal/changelog"
+	"github.com/cordanaLLM/praetor/internal/changelog"
 )
 
 var semverRegex = regexp.MustCompile(`^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
 
 // ReleaseOptions configures release preparation and verification.
 type ReleaseOptions struct {
-	RepoPath    string
-	Version     string
-	Date        string
-	SkipVerify  bool
-	SkipClean   bool
+	RepoPath   string
+	Version    string
+	Date       string
+	SkipVerify bool
+	SkipClean  bool
 }
 
 // PrepareRelease validates cleanliness, executes verification gates, and renders changelog.

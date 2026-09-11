@@ -1,4 +1,4 @@
--- cordanaLLM/standards Neovim LSP and Tool Configuration
+-- cordanaLLM/praetor Neovim LSP and Tool Configuration
 -- Plug-and-play Lua integration for nvim-lspconfig and HISS governance commands.
 
 local M = {}

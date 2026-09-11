@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/supplychain"
+	"github.com/cordanaLLM/praetor/internal/supplychain"
 )
 
 func runSBOM(args []string) error {

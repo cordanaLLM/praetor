@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/config"
-	"github.com/cordanaLLM/standards/internal/forge"
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func reconcileLabels() error {
@@ -130,10 +130,10 @@ func synthesizeRuleset(targetPath string, bp config.BranchProtectionPolicy) erro
 			{
 				"type": "pull_request",
 				"parameters": map[string]any{
-					"required_approving_review_count": bp.RequiredApprovingReviewers,
-					"dismiss_stale_reviews_on_push":   bp.DismissStaleReviews,
-					"require_code_owner_review":       true,
-					"require_last_push_approval":      false,
+					"required_approving_review_count":   bp.RequiredApprovingReviewers,
+					"dismiss_stale_reviews_on_push":     bp.DismissStaleReviews,
+					"require_code_owner_review":         true,
+					"require_last_push_approval":        false,
 					"required_review_thread_resolution": true,
 				},
 			},

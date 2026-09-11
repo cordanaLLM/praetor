@@ -45,7 +45,7 @@ runs:
     - name: Build standardsctl
       shell: bash
       run: |
-        go install github.com/cordanaLLM/standards/cmd/standardsctl@latest || go build -o /tmp/standardsctl ./cmd/standardsctl
+        go install github.com/cordanaLLM/praetor/cmd/standardsctl@latest || go build -o /tmp/standardsctl ./cmd/standardsctl
 
     - name: Execute Praetor Action
       id: run-praetor

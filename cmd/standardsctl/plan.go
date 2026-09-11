@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cordanaLLM/standards/internal/config"
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func printPlanHeader(manifest *config.Manifest, policy *config.ResolvedPolicy) {
-	fmt.Println("=== cordanaLLM/standards Reconcile Plan (Dry Run) ===")
+	fmt.Println("=== cordanaLLM/praetor Reconcile Plan (Dry Run) ===")
 	fmt.Printf("Repository: %s/%s\n", manifest.Repository.Owner, manifest.Repository.Name)
 	fmt.Printf("Profiles:   %v\n", manifest.Profiles)
 	fmt.Printf("Facets:     %v\n", manifest.Facets)
@@ -88,4 +88,3 @@ func runPlan(args []string) error {
 
 	return nil
 }
-

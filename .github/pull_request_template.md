@@ -1,4 +1,4 @@
-<!-- cordanaLLM/standards Pull Request Verification Gate -->
+<!-- cordanaLLM/praetor Pull Request Verification Gate -->
 
 ## Summary of Changes
 
