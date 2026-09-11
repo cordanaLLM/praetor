@@ -13,6 +13,8 @@ import (
 	"github.com/cordanaLLM/standards/internal/config"
 	"github.com/cordanaLLM/standards/internal/devcontainer"
 	"github.com/cordanaLLM/standards/internal/hiss"
+	"github.com/cordanaLLM/standards/internal/paperclip"
+	"github.com/cordanaLLM/standards/internal/runner"
 	"github.com/cordanaLLM/standards/internal/util"
 )
 
@@ -41,7 +43,24 @@ func runAudit(args []string) error {
 		return err
 	}
 
-	if err := auditBranchProtectionAndSupplyChain(manifest, filepath.Dir(*manifestPath)); err != nil {
+	rootDir := filepath.Dir(*manifestPath)
+	if err := auditBranchProtectionAndSupplyChain(manifest, rootDir); err != nil {
+		return err
+	}
+
+	if err := auditPaperclipHarness(rootDir); err != nil {
+		return err
+	}
+
+	if err := auditRunnerMatrix(manifest, rootDir); err != nil {
+		return err
+	}
+
+	if err := auditPreMigrationTracking(rootDir); err != nil {
+		return err
+	}
+
+	if err := auditAgentDefinitions(rootDir); err != nil {
 		return err
 	}
 
@@ -143,5 +162,98 @@ func auditBranchProtectionAndSupplyChain(manifest *config.Manifest, rootDir stri
 	}
 	fmt.Println("[PASS] Repository label taxonomy .config/labels.yaml verified.")
 
+	return nil
+}
+
+func auditPaperclipHarness(rootDir string) error {
+	harnessPath := filepath.Join(rootDir, ".paperclip", "harness.json")
+	if !util.FileExists(harnessPath) {
+		return fmt.Errorf("[FAIL] Paperclip agent runtime harness .paperclip/harness.json is missing. Run 'standardsctl adopt' to reconcile.")
+	}
+	h, err := paperclip.LoadHarness(harnessPath)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Paperclip harness validation failed: %w", err)
+	}
+	fmt.Printf("[PASS] Paperclip agent runtime harness verified (%s, %d rules).\n", h.Platform, len(h.OperatingContract))
+	return nil
+}
+
+func auditRunnerMatrix(manifest *config.Manifest, rootDir string) error {
+	policy, err := config.LoadCascadingRunnerConfig(rootDir, manifest.Repository.Owner)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Cascading runner config failed: %w", err)
+	}
+
+	targets := []struct {
+		osName string
+		arch   string
+		isGPU  bool
+	}{
+		{"linux", "amd64", false},
+		{"linux", "arm64", false},
+		{"linux", "amd64", true},
+		{"darwin", "arm64", false},
+		{"darwin", "amd64", false},
+	}
+
+	for _, target := range targets {
+		spec, err := runner.ResolveRunner(policy, target.osName, target.arch, target.isGPU)
+		if err != nil {
+			return fmt.Errorf("[FAIL] Runner matrix resolution failed for %s/%s (gpu=%v): %w", target.osName, target.arch, target.isGPU, err)
+		}
+		if spec.Type == "" || len(spec.RunsOn) == 0 {
+			return fmt.Errorf("[FAIL] Empty runner spec for %s/%s", target.osName, target.arch)
+		}
+	}
+	fmt.Println("[PASS] External runner matrix & ARC platform routing policies verified.")
+	return nil
+}
+
+func auditPreMigrationTracking(rootDir string) error {
+	epicPath := filepath.Join(rootDir, "PRE_MIGRATION_EPIC.md")
+	if util.FileExists(epicPath) {
+		content, err := os.ReadFile(epicPath)
+		if err != nil {
+			return fmt.Errorf("[FAIL] Read PRE_MIGRATION_EPIC.md failed: %w", err)
+		}
+		requiredStages := []string{"[TASK 1/5]", "[TASK 2/5]", "[TASK 3/5]", "[TASK 4/5]", "[TASK 5/5]"}
+		text := string(content)
+		for _, stage := range requiredStages {
+			if !strings.Contains(text, stage) {
+				return fmt.Errorf("[FAIL] PRE_MIGRATION_EPIC.md missing required stage %s", stage)
+			}
+		}
+		fmt.Println("[PASS] Pre-migration epic (5-stage lifecycle) verified.")
+	}
+
+	needsPath := filepath.Join(rootDir, ".needs.yaml")
+	if util.FileExists(needsPath) {
+		data, err := os.ReadFile(needsPath)
+		if err != nil || len(data) == 0 {
+			return fmt.Errorf("[FAIL] .needs.yaml is missing or empty")
+		}
+		fmt.Println("[PASS] Polyglot framework demand & needs analysis (.needs.yaml) verified.")
+	}
+	return nil
+}
+
+func auditAgentDefinitions(rootDir string) error {
+	agentsDir := filepath.Join(rootDir, ".agents", "agents")
+	if util.DirExists(agentsDir) {
+		entries, err := os.ReadDir(agentsDir)
+		if err != nil {
+			return fmt.Errorf("[FAIL] Failed to inspect .agents/agents: %w", err)
+		}
+		count := 0
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+				count++
+			}
+		}
+		if count == 0 {
+			return fmt.Errorf("[FAIL] .agents/agents directory exists but contains zero agent definitions")
+		}
+		fmt.Printf("[PASS] Agent definitions verified (%d agents registered).\n", count)
+	}
 	return nil
 }

@@ -207,3 +207,42 @@ func TestReadDisposition_3D(t *testing.T) {
 		t.Fatalf("failed to read valid disposition: %v", err)
 	}
 }
+
+func TestLoadHarness_3D(t *testing.T) {
+	tmpDir := t.TempDir()
+	harnessPath := filepath.Join(tmpDir, "harness.json")
+
+	// Boundary: Non-existent file
+	if _, err := LoadHarness(filepath.Join(tmpDir, "missing.json")); err == nil {
+		t.Fatal("expected error reading non-existent file")
+	}
+
+	// Negative: Corrupt JSON
+	if err := os.WriteFile(harnessPath, []byte("{invalid"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadHarness(harnessPath); err == nil {
+		t.Fatal("expected error parsing corrupt json")
+	}
+
+	// Negative: Missing platform
+	if err := os.WriteFile(harnessPath, []byte(`{"version":1,"operating_contract":["rule1"]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadHarness(harnessPath); err == nil {
+		t.Fatal("expected error with missing platform")
+	}
+
+	// Positive: Synthesize and load
+	h, err := SynthesizeHarness(tmpDir)
+	if err != nil {
+		t.Fatalf("SynthesizeHarness failed: %v", err)
+	}
+	if err := WriteHarness(h, tmpDir); err != nil {
+		t.Fatalf("WriteHarness failed: %v", err)
+	}
+	loaded, err := LoadHarness(filepath.Join(tmpDir, ".paperclip", "harness.json"))
+	if err != nil || loaded.Platform != "cordanaLLM/praetor" {
+		t.Fatalf("LoadHarness failed or invalid platform: %v", err)
+	}
+}

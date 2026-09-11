@@ -78,3 +78,22 @@ func WriteHarness(h *Harness, repoPath string) error {
 
 	return nil
 }
+
+// LoadHarness reads and validates a Paperclip harness configuration.
+func LoadHarness(path string) (*Harness, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read harness file: %w", err)
+	}
+
+	var h Harness
+	if err := json.Unmarshal(data, &h); err != nil {
+		return nil, fmt.Errorf("parse harness json: %w", err)
+	}
+
+	if h.Platform == "" || len(h.OperatingContract) == 0 {
+		return nil, fmt.Errorf("invalid harness: missing platform or operating contract")
+	}
+
+	return &h, nil
+}
