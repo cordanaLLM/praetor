@@ -90,6 +90,10 @@ func (s *Server) registerStandardTools() error {
 		s.createAdoptTool,
 		s.createDogfoodTool,
 		s.createHarvestWorkstationTool,
+		s.createPackageDocsTool,
+		s.createVersionAuditTool,
+		s.createMemoryRecallTool,
+		s.createHindsightOptimizeTool,
 	}
 
 	limit := len(tools)

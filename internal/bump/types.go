@@ -30,6 +30,34 @@ type BumpReport struct {
 	Stables         []UpgradeCandidate `json:"stables"`
 }
 
+// ActionCandidate represents a GitHub Actions workflow action reference.
+type ActionCandidate struct {
+	WorkflowFile   string `json:"workflow_file"`
+	Action         string `json:"action"`
+	CurrentVersion string `json:"current_version"`
+	LatestVersion  string `json:"latest_version"`
+	Deprecated     bool   `json:"deprecated"`
+	Warning        string `json:"warning,omitempty"`
+}
+
+// DeprecationWarning details runtime or ecosystem deprecations.
+type DeprecationWarning struct {
+	Component string `json:"component"`
+	Kind      string `json:"kind"` // "runner-node20", "unsupported-manifest", etc.
+	Details   string `json:"details"`
+}
+
+// VersionAuditReport aggregates health and modernization status across all dependencies.
+type VersionAuditReport struct {
+	TotalScanned       int                  `json:"total_scanned"`
+	UpToDate           int                  `json:"up_to_date"`
+	PendingUpgrades    []UpgradeCandidate   `json:"pending_upgrades"`
+	Actions            []ActionCandidate    `json:"actions"`
+	Deprecations       []DeprecationWarning `json:"deprecations"`
+	ModernizationScore float64              `json:"modernization_score"`
+	Passed             bool                 `json:"passed"`
+}
+
 // ScanOptions configures dependency discovery.
 type ScanOptions struct {
 	IncludePrerelease bool

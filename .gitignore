@@ -43,5 +43,7 @@ plan_clean.md
 all_github_repos.json
 # Local working directory evidence and scratch
 .workingdir/evidence/
+.workingdir/docs/
+.workingdir/memory/
 .workingdir/*.tmp
 .workingdir/cadence.json

@@ -19,6 +19,8 @@ func printUsage() {
 	fmt.Println("  devcontainer       Synthesize or verify .devcontainer/devcontainer.json")
 	fmt.Println("  flavor             Inspect, audit, and scaffold engineering flavors (7 archetypes)")
 	fmt.Println("  flavors            Plan or sync moving version flavor tags (bleeding, latest, lts)")
+	fmt.Println("  docs               Harvest, compress, and audit package documentation sheets")
+	fmt.Println("  hindsight          Manage local zero-token memory cache and sync with Hindsight server")
 	fmt.Println("  state              Manage .workingdir/ session state, bugs ledger, and questions")
 	fmt.Println("  dedupe             Scan for AST clones, utility sprawl, and cadence enforcement")
 	fmt.Println("  models             Sync or list active model tiers and benchmark limits")
@@ -86,6 +88,10 @@ func dispatchCoreCommand(cmd string, args []string) (error, bool) {
 		return runFlavor(args), true
 	case "flavors":
 		return runFlavors(args), true
+	case "docs":
+		return runDocs(args), true
+	case "hindsight":
+		return runHindsight(args), true
 	case "state":
 		return runState(args), true
 	case "dedupe":
