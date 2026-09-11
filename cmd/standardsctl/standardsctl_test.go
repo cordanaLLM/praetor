@@ -450,3 +450,30 @@ func TestDispatchCommand_MilestoneAndProject(t *testing.T) {
 		t.Fatal("expected error for invalid project subcommand")
 	}
 }
+
+func TestDispatchCommand_CISubcommands(t *testing.T) {
+	// Boundary: empty args and help
+	if err := dispatchCommand("ci", []string{}); err != nil {
+		t.Fatalf("ci empty args failed: %v", err)
+	}
+	if err := dispatchCommand("ci", []string{"-h"}); err != nil {
+		t.Fatalf("ci -h failed: %v", err)
+	}
+
+	// Positive: filter with JSON and Env output
+	tmpDir := t.TempDir()
+	if err := dispatchCommand("ci", []string{"filter", "--dir=" + tmpDir, "--json"}); err != nil {
+		t.Fatalf("ci filter --json failed: %v", err)
+	}
+	if err := dispatchCommand("ci", []string{"filter", "--dir=" + tmpDir, "--env"}); err != nil {
+		t.Fatalf("ci filter --env failed: %v", err)
+	}
+	if err := dispatchCommand("ci", []string{"filter", "--dir=" + tmpDir, "--force"}); err != nil {
+		t.Fatalf("ci filter --force failed: %v", err)
+	}
+
+	// Negative: invalid subcommand
+	if err := dispatchCommand("ci", []string{"unknown-sub"}); err == nil {
+		t.Fatal("expected error for invalid ci subcommand")
+	}
+}

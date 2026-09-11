@@ -55,7 +55,7 @@ func printNeedsUsage() {
 	fmt.Println("  report [--path=.]                   Evaluate compatibility and replacement matrix against Golusoris")
 	fmt.Println("  aggregate [--dev-dir=...] [--output=...] Aggregate fleet-wide demand and output gap report")
 	fmt.Println("  requests [--dev-dir=...] [--output-dir=...] Synthesize and emit deduplicated Framework Demand Requests")
-	fmt.Println("  epic [--path=.] [--framework=...] [--output=...] Generate pre-migration hardening epic")
+	fmt.Println("  epic [--path=.] [--dev-dir=...] [--framework=...] [--output=...] Generate pre-migration hardening epic")
 	fmt.Println("  migrate [--path=.] [--dry-run|--apply]  Automated import and dependency rewrite to Golusoris")
 }
 
@@ -239,6 +239,7 @@ func runNeedsRequests(ctx context.Context, args []string) error {
 func runNeedsEpic(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs epic", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
+	devDir := fs.String("dev-dir", "", "Run fleet-wide epic generation across all repositories in directory")
 	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Target framework repository path")
 	output := fs.String("output", "", "Optional markdown file path to write pre-migration epic")
 	publish := fs.Bool("publish", false, "Publish pre-migration parent epic and child tasks to remote forge")
@@ -246,6 +247,10 @@ func runNeedsEpic(ctx context.Context, args []string) error {
 	endpoint := fs.String("endpoint", "", "Forge API endpoint (default: https://api.github.com)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if *devDir != "" {
+		return runFleetNeedsEpic(ctx, *devDir, *framework, *publish, *token, *endpoint)
 	}
 
 	if err := adopt.ValidateAdoptionTarget(*path); err != nil {
@@ -268,6 +273,27 @@ func runNeedsEpic(ctx context.Context, args []string) error {
 
 	if *publish {
 		return publishEpicToForge(ctx, *path, *token, *endpoint, epic)
+	}
+	return nil
+}
+
+func runFleetNeedsEpic(ctx context.Context, devDir, framework string, publish bool, token, endpoint string) error {
+	fmt.Printf("=== Rerunning Fleet Pre-Migration Epics across %s ===\n\n", devDir)
+	epics, err := needs.RegenerateFleetEpics(ctx, devDir, framework)
+	if err != nil {
+		return fmt.Errorf("fleet epic regeneration failed: %w", err)
+	}
+
+	fmt.Printf("[PASS] Generated and updated %d pre-migration epics:\n\n", len(epics))
+	for i := 0; i < len(epics); i++ {
+		ep := epics[i]
+		fmt.Printf("  [%2d/%2d] %-35s (Readiness: %5.1f%%, %d tasks)\n",
+			i+1, len(epics), ep.RepoName, ep.ReadinessScore, len(ep.ChildIssues))
+		if publish {
+			if pubErr := publishEpicToForge(ctx, ep.RepoName, token, endpoint, ep); pubErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed publishing epic for %s: %v\n", ep.RepoName, pubErr)
+			}
+		}
 	}
 	return nil
 }

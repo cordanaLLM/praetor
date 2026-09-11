@@ -37,3 +37,10 @@
 - [x] Implement comprehensive tests for new flavors in internal/flavor/flavor_test.go (completed: 2026-09-11)
 - [x] Expand remote dogfooding benchmarks in internal/dogfood/remote.go and run dogfooding simulation (completed: 2026-09-11)
 - [x] Verify full test suite with race detector and standards audit (completed: 2026-09-11)
+
+### Discharged Tasks [2026-09-11 20:35:29 UTC, commit `local`]
+- [x] Implement internal/cifilter module for diff-aware change detection and CI job filtering (completed: 2026-09-11)
+- [x] Add standardsctl ci filter CLI subcommand supporting JSON and GitHub Actions output modes (completed: 2026-09-11)
+- [x] Update .github/workflows/ci.yml and flavor CI templates with diff-aware gating (completed: 2026-09-11)
+- [x] Add batch/fleet pre-migration epic generation and rerun epics across all prepared repos (completed: 2026-09-11)
+- [x] Verify full test suite with race detector and execute standards audit (completed: 2026-09-11)
