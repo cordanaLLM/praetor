@@ -1,0 +1,10 @@
+apiVersion: v2
+name: praetor
+description: Autonomous Fleet Governance & Workstation Sentinel Engine
+type: application
+version: 1.0.0
+appVersion: 1.0.0
+icon: https://raw.githubusercontent.com/cordanaLLM/praetor/main/docs/assets/logo.png
+maintainers:
+  - name: cordanaLLM
+    url: https://github.com/cordanaLLM

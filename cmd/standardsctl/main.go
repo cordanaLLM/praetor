@@ -33,6 +33,7 @@ func printUsage() {
 	fmt.Println("  paperclip          Paperclip agent harness synthesis and Rule 0 terminal disposition")
 	fmt.Println("  changelog          Manage Keep-a-Changelog fragments and release sections")
 	fmt.Println("  release            Execute release verification gates and render changelog")
+	fmt.Println("  gate               Execute 4-stage anti-direct-merge gating pipeline")
 	fmt.Println("  needs              Declare and report repository capabilities and demand to Golusoris")
 	fmt.Println("  version            Print CLI version information")
 	fmt.Println("\nRun 'standardsctl <command> -h' for more information on a command.")
@@ -97,6 +98,8 @@ func dispatchCommand(cmd string, args []string) error {
 		return runChangelog(args)
 	case "release":
 		return runRelease(args)
+	case "gate":
+		return runGate(args)
 	case "needs":
 		return runNeeds(args)
 	case "version":

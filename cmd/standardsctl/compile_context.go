@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"path/filepath"
 
 	"github.com/cordanaLLM/standards/internal/compiler"
 )
@@ -40,6 +42,12 @@ func runCompileContext(args []string) error {
 
 	for _, f := range res.Files {
 		fmt.Printf("  [COMPILED] %-35s (%d lines, budget <= %d)\n", f.RelativePath, f.LineCount, compiler.MaxLineBudget)
+	}
+
+	agentsSrc := filepath.Join(*targetDir, ".agents", "agents")
+	agentFiles, aErr := compiler.CompileAgents(context.Background(), agentsSrc, *targetDir)
+	if aErr == nil && len(agentFiles) > 0 {
+		fmt.Printf("  [COMPILED] %d autonomous agent vendor projections.\n", len(agentFiles))
 	}
 
 	fmt.Println("Cross-agent context transpilation completed successfully.")

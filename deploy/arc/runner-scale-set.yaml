@@ -1,0 +1,53 @@
+apiVersion: actions.github.com/v1alpha1
+kind: AutoscalingRunnerSet
+metadata:
+  name: arc-runner-set-linux-amd64
+  namespace: arc-runners
+spec:
+  githubConfigUrl: "https://github.com/cordanaLLM"
+  githubConfigSecret: arc-github-token
+  minRunners: 0
+  maxRunners: 10
+  template:
+    spec:
+      containers:
+        - name: runner
+          image: ghcr.io/actions/actions-runner:latest
+          command: ["/home/runner/run.sh"]
+          resources:
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+          securityContext:
+            readOnlyRootFilesystem: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+---
+apiVersion: actions.github.com/v1alpha1
+kind: AutoscalingRunnerSet
+metadata:
+  name: arc-runner-set-gpu-xpu
+  namespace: arc-runners
+spec:
+  githubConfigUrl: "https://github.com/cordanaLLM"
+  githubConfigSecret: arc-github-token
+  minRunners: 0
+  maxRunners: 4
+  template:
+    spec:
+      containers:
+        - name: runner
+          image: ghcr.io/actions/actions-runner:latest
+          command: ["/home/runner/run.sh"]
+          resources:
+            limits:
+              cpu: "8"
+              memory: "32Gi"
+            requests:
+              cpu: "2"
+              memory: "8Gi"

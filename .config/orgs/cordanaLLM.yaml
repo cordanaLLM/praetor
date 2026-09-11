@@ -1,0 +1,3 @@
+# cordanaLLM Organization Specific Runner Policy
+runners:
+  default: "arc-runner-set-linux-amd64"
