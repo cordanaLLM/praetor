@@ -168,7 +168,10 @@ func cleanStaleWorktrees(ctx context.Context, opts Options, report *GCReport) {
 		}
 
 		if time.Since(info.ModTime()) > opts.MaxWorktreeAge {
-			size, _ := calculateDirSize(entryPath)
+			size, sizeErr := calculateDirSize(entryPath)
+			if sizeErr != nil {
+				report.Errors = append(report.Errors, fmt.Sprintf("size worktree %s: %v", entry.Name(), sizeErr))
+			}
 			if !opts.DryRun {
 				if remErr := os.RemoveAll(entryPath); remErr != nil {
 					report.Errors = append(report.Errors, fmt.Sprintf("remove worktree %s: %v", entry.Name(), remErr))
@@ -202,7 +205,10 @@ func purgeEphemeralFiles(ctx context.Context, opts Options, report *GCReport) {
 		entry := entries[i]
 		filePath := filepath.Join(opts.EphemeralDir, entry.Name())
 
-		size, _ := calculateDirSize(filePath)
+		size, sizeErr := calculateDirSize(filePath)
+		if sizeErr != nil {
+			report.Errors = append(report.Errors, fmt.Sprintf("size ephemeral %s: %v", entry.Name(), sizeErr))
+		}
 		if !opts.DryRun {
 			if remErr := os.RemoveAll(filePath); remErr != nil {
 				report.Errors = append(report.Errors, fmt.Sprintf("remove ephemeral %s: %v", entry.Name(), remErr))
@@ -262,9 +268,15 @@ func cleanTempBinaries(opts Options, report *GCReport) {
 			name := entry.Name()
 			if isTempBinary(name) {
 				p := filepath.Join(dir, name)
-				size, _ := calculateDirSize(p)
+				size, sizeErr := calculateDirSize(p)
+				if sizeErr != nil {
+					report.Errors = append(report.Errors, fmt.Sprintf("size binary %s: %v", name, sizeErr))
+				}
 				if !opts.DryRun {
-					_ = os.Remove(p)
+					if remErr := os.Remove(p); remErr != nil {
+						report.Errors = append(report.Errors, fmt.Sprintf("remove binary %s: %v", name, remErr))
+						continue
+					}
 				}
 				report.ReclaimedBytes += size
 				report.CleanedCacheArtifacts = append(report.CleanedCacheArtifacts, p)

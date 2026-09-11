@@ -126,115 +126,123 @@ func DetectFamily(modelID string) ModelFamily {
 	}
 }
 
+// queryOllamaEndpoint queries a single Ollama API endpoint for installed models.
+func queryOllamaEndpoint(ctx context.Context, client *http.Client, ep string) []ModelDescriptor {
+	req, err := http.NewRequestWithContext(ctx, "GET", ep+"/api/tags", nil)
+	if err != nil {
+		return nil
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if err != nil {
+		return nil
+	}
+
+	var payload struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil
+	}
+
+	res := make([]ModelDescriptor, 0, len(payload.Models))
+	for _, m := range payload.Models {
+		res = append(res, ModelDescriptor{
+			ID:          m.Name,
+			Family:      FamilyOpenWeights,
+			RPMLimit:    50000,
+			TPMLimit:    20000000,
+			CostPerMIn:  0.0,
+			CostPerMOut: 0.0,
+		})
+	}
+	return res
+}
+
 // DiscoverLocalModels queries local Ollama/vLLM daemon endpoints.
 func DiscoverLocalModels(ctx context.Context, endpoints []string) ([]ModelDescriptor, error) {
 	discovered := make([]ModelDescriptor, 0)
 	client := &http.Client{Timeout: 3 * time.Second}
 
 	for _, ep := range endpoints {
-		if strings.Contains(ep, "11434") { // Ollama API
-			req, err := http.NewRequestWithContext(ctx, "GET", ep+"/api/tags", nil)
-			if err != nil {
-				continue
-			}
-
-			resp, err := client.Do(req)
-			if err != nil {
-				continue
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				continue
-			}
-
-			body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-			if err != nil {
-				continue
-			}
-
-			var payload struct {
-				Models []struct {
-					Name string `json:"name"`
-				} `json:"models"`
-			}
-
-			if err := json.Unmarshal(body, &payload); err != nil {
-				continue
-			}
-
-			for _, m := range payload.Models {
-				discovered = append(discovered, ModelDescriptor{
-					ID:          m.Name,
-					Family:      FamilyOpenWeights,
-					RPMLimit:    50000,
-					TPMLimit:    20000000,
-					CostPerMIn:  0.0,
-					CostPerMOut: 0.0,
-				})
-			}
+		if strings.Contains(ep, "11434") {
+			models := queryOllamaEndpoint(ctx, client, ep)
+			discovered = append(discovered, models...)
 		}
 	}
 
 	return discovered, nil
 }
 
-// SyncCatalog reconciles and updates .config/models/routing.yaml with live model metadata.
-func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*SyncResult, error) {
-	// Baseline catalog of verified models spanning all premier frontier, workhorse, and open-weights models
-	verifiedCatalog := []struct {
-		id      string
-		elo     float64
-		rpm     int
-		tpm     int
-		costIn  float64
-		costOut float64
-	}{
-		// Nano / Micro (<= 4B)
-		{"smollm2:1.7b", 1120, 50000, 20000000, 0.0, 0.0},
-		{"qwen2.5-coder:1.5b", 1150, 50000, 20000000, 0.0, 0.0},
-		{"qwen2.5:3b", 1160, 50000, 20000000, 0.0, 0.0},
-		{"phi-3.5-mini:3.8b", 1180, 50000, 20000000, 0.0, 0.0},
-		{"llama-3.2:1b", 1100, 50000, 20000000, 0.0, 0.0},
-		{"llama-3.2:3b", 1165, 50000, 20000000, 0.0, 0.0},
-		{"gemma-2-2b", 1155, 50000, 20000000, 0.0, 0.0},
+type catalogEntry struct {
+	id      string
+	elo     float64
+	rpm     int
+	tpm     int
+	costIn  float64
+	costOut float64
+}
 
-		// Lightweight (5B - 16B: 7B, 8B, 9B, 14B)
-		{"hf.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF:Q8_0", 1240, 50000, 20000000, 0.0, 0.0},
-		{"gemma-2-9b", 1235, 5000, 2000000, 0.20, 0.20},
-		{"qwen-2.5-coder-7b-instruct", 1225, 50000, 20000000, 0.0, 0.0},
-		{"qwen-2.5-coder-14b-instruct", 1245, 50000, 20000000, 0.0, 0.0},
-		{"meta-llama/llama-3.1-8b-instruct", 1210, 5000, 5000000, 0.15, 0.15},
-		{"phi-4:14b", 1250, 50000, 20000000, 0.0, 0.0},
-		{"claude-3-5-haiku-20241022", 1230, 2000, 100000, 0.80, 4.0},
+var defaultVerifiedCatalog = []catalogEntry{
+	// Nano / Micro (<= 4B)
+	{"smollm2:1.7b", 1120, 50000, 20000000, 0.0, 0.0},
+	{"qwen2.5-coder:1.5b", 1150, 50000, 20000000, 0.0, 0.0},
+	{"qwen2.5:3b", 1160, 50000, 20000000, 0.0, 0.0},
+	{"phi-3.5-mini:3.8b", 1180, 50000, 20000000, 0.0, 0.0},
+	{"llama-3.2:1b", 1100, 50000, 20000000, 0.0, 0.0},
+	{"llama-3.2:3b", 1165, 50000, 20000000, 0.0, 0.0},
+	{"gemma-2-2b", 1155, 50000, 20000000, 0.0, 0.0},
 
-		// Mid-Weight Workhorses (20B - 35B: 20B, 22B, 27B, 30B, 32B)
-		{"hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M", 1280, 50000, 20000000, 0.0, 0.0},
-		{"qwen-2.5-coder-32b-instruct", 1260, 5000, 5000000, 0.20, 0.60},
-		{"codestral-2501", 1270, 1000, 500000, 0.30, 0.90},
-		{"gpt-oss-small", 1200, 50000, 20000000, 0.0, 0.0},
+	// Lightweight (5B - 16B: 7B, 8B, 9B, 14B)
+	{"hf.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF:Q8_0", 1240, 50000, 20000000, 0.0, 0.0},
+	{"gemma-2-9b", 1235, 5000, 2000000, 0.20, 0.20},
+	{"qwen-2.5-coder-7b-instruct", 1225, 50000, 20000000, 0.0, 0.0},
+	{"qwen-2.5-coder-14b-instruct", 1245, 50000, 20000000, 0.0, 0.0},
+	{"meta-llama/llama-3.1-8b-instruct", 1210, 5000, 5000000, 0.15, 0.15},
+	{"phi-4:14b", 1250, 50000, 20000000, 0.0, 0.0},
+	{"claude-3-5-haiku-20241022", 1230, 2000, 100000, 0.80, 4.0},
 
-		// Heavy & Frontier Reasoning (70B+ & Cloud APIs)
-		{"claude-3-7-sonnet-20250219", 1340, 1000, 80000, 3.0, 15.0},
-		{"claude-3-5-sonnet-20241022", 1315, 1000, 80000, 3.0, 15.0},
-		{"claude-3-opus-20240229", 1305, 50, 40000, 15.0, 75.0},
-		{"gemini-2.5-pro-preview-03-25", 1360, 300, 2000000, 1.25, 5.0},
-		{"gemini-2.5-flash-preview-03-25", 1320, 2000, 4000000, 0.075, 0.30},
-		{"gemini-2.0-flash", 1290, 2000, 4000000, 0.10, 0.40},
-		{"gpt-4.5-preview-2025-02-27", 1355, 200, 100000, 75.0, 150.0},
-		{"o3-mini", 1345, 500, 1000000, 1.10, 4.40},
-		{"o1", 1335, 500, 100000, 15.0, 60.0},
-		{"gpt-4o-2024-11-20", 1295, 2000, 450000, 2.50, 10.0},
-		{"grok-3", 1350, 100, 200000, 5.0, 15.0},
-		{"grok-3-mini", 1280, 500, 500000, 0.50, 2.0},
-		{"deepseek-reasoner", 1340, 5000, 5000000, 0.55, 2.19},
-		{"deepseek-chat", 1285, 10000, 10000000, 0.14, 0.28},
-		{"mistral-large-2411", 1290, 500, 250000, 2.0, 6.0},
-		{"qwen-2.5-max", 1325, 2000, 1000000, 1.60, 6.40},
-		{"meta-llama/llama-3.3-70b-instruct", 1275, 5000, 5000000, 0.35, 0.40},
-	}
+	// Mid-Weight Workhorses (20B - 35B: 20B, 22B, 27B, 30B, 32B)
+	{"hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M", 1280, 50000, 20000000, 0.0, 0.0},
+	{"qwen-2.5-coder-32b-instruct", 1260, 5000, 5000000, 0.20, 0.60},
+	{"codestral-2501", 1270, 1000, 500000, 0.30, 0.90},
+	{"gpt-oss-small", 1200, 50000, 20000000, 0.0, 0.0},
 
-	tiers := map[string]Tier{
+	// Heavy & Frontier Reasoning (70B+ & Cloud APIs)
+	{"claude-3-7-sonnet-20250219", 1340, 1000, 80000, 3.0, 15.0},
+	{"claude-3-5-sonnet-20241022", 1315, 1000, 80000, 3.0, 15.0},
+	{"claude-3-opus-20240229", 1305, 50, 40000, 15.0, 75.0},
+	{"gemini-2.5-pro-preview-03-25", 1360, 300, 2000000, 1.25, 5.0},
+	{"gemini-2.5-flash-preview-03-25", 1320, 2000, 4000000, 0.075, 0.30},
+	{"gemini-2.0-flash", 1290, 2000, 4000000, 0.10, 0.40},
+	{"gpt-4.5-preview-2025-02-27", 1355, 200, 100000, 75.0, 150.0},
+	{"o3-mini", 1345, 500, 1000000, 1.10, 4.40},
+	{"o1", 1335, 500, 100000, 15.0, 60.0},
+	{"gpt-4o-2024-11-20", 1295, 2000, 450000, 2.50, 10.0},
+	{"grok-3", 1350, 100, 200000, 5.0, 15.0},
+	{"grok-3-mini", 1280, 500, 500000, 0.50, 2.0},
+	{"deepseek-reasoner", 1340, 5000, 5000000, 0.55, 2.19},
+	{"deepseek-chat", 1285, 10000, 10000000, 0.14, 0.28},
+	{"mistral-large-2411", 1290, 500, 250000, 2.0, 6.0},
+	{"qwen-2.5-max", 1325, 2000, 1000000, 1.60, 6.40},
+	{"meta-llama/llama-3.3-70b-instruct", 1275, 5000, 5000000, 0.35, 0.40},
+}
+
+func defaultRoutingTiers() map[string]Tier {
+	return map[string]Tier{
 		"heavy-frontier": {
 			Description:  "Tier 3 Heavy & Frontier Reasoning (70B+ & Frontier APIs: Claude, Gemini, GPT, O3, R1)",
 			TargetTasks:  []string{"architecture_synthesis", "hiss_proof_verification", "ast_semantic_collision", "waiver_signoff"},
@@ -256,10 +264,44 @@ func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*Syn
 			FallbackTier: "",
 		},
 	}
+}
 
+func populateLocalModels(ctx context.Context, endpoints []string, tiers map[string]Tier, result *SyncResult) {
+	localModels, err := DiscoverLocalModels(ctx, endpoints)
+	if err != nil {
+		return
+	}
+	for _, lm := range localModels {
+		tierName := ClassifyTier(lm.ID, lm.Family, 0.0)
+		currentTier := tiers[tierName]
+		currentTier.Models = append(currentTier.Models, lm)
+		tiers[tierName] = currentTier
+
+		result.LocalModels++
+		result.TotalModels++
+		recordTierCount(result, tierName)
+	}
+}
+
+func recordTierCount(result *SyncResult, tierName string) {
+	switch tierName {
+	case "heavy-frontier":
+		result.HeavyFrontier++
+	case "midweight":
+		result.MidWeight++
+	case "lightweight":
+		result.LightWeight++
+	case "nano":
+		result.Nano++
+	}
+}
+
+// SyncCatalog reconciles and updates .config/models/routing.yaml with live model metadata.
+func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*SyncResult, error) {
+	tiers := defaultRoutingTiers()
 	result := &SyncResult{}
 
-	for _, m := range verifiedCatalog {
+	for _, m := range defaultVerifiedCatalog {
 		family := DetectFamily(m.id)
 		tierName := ClassifyTier(m.id, family, m.elo)
 
@@ -277,40 +319,11 @@ func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*Syn
 		tiers[tierName] = currentTier
 
 		result.TotalModels++
-		switch tierName {
-		case "heavy-frontier":
-			result.HeavyFrontier++
-		case "midweight":
-			result.MidWeight++
-		case "lightweight":
-			result.LightWeight++
-		case "nano":
-			result.Nano++
-		}
+		recordTierCount(result, tierName)
 	}
 
-	// Discover local models if enabled
 	if opts.DiscoverLocal && len(opts.LocalEndpoints) > 0 {
-		localModels, _ := DiscoverLocalModels(ctx, opts.LocalEndpoints)
-		for _, lm := range localModels {
-			tierName := ClassifyTier(lm.ID, lm.Family, 0.0)
-			currentTier := tiers[tierName]
-			currentTier.Models = append(currentTier.Models, lm)
-			tiers[tierName] = currentTier
-
-			result.LocalModels++
-			result.TotalModels++
-			switch tierName {
-			case "heavy-frontier":
-				result.HeavyFrontier++
-			case "midweight":
-				result.MidWeight++
-			case "lightweight":
-				result.LightWeight++
-			case "nano":
-				result.Nano++
-			}
-		}
+		populateLocalModels(ctx, opts.LocalEndpoints, tiers, result)
 	}
 
 	cfg := RoutingConfig{

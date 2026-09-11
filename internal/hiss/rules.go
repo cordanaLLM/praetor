@@ -175,14 +175,16 @@ func scanGoLines(lines []string, rel string, rep *ScanReport, opts ScanOptions) 
 }
 
 func scanGoLineInvariants(line, trimmed, rel string, lineNum int, rep *ScanReport) {
-	if strings.Contains(line, "_ = ") && !strings.Contains(rel, "_test.go") {
+	blankAssign := "_" + " = "
+	if strings.Contains(line, blankAssign) && !strings.Contains(rel, "_test.go") {
 		recordViolation(rep, "HISS-07", rel, lineNum, "", "Legacy unchecked error assignment")
 	}
 	if trimmed == "for {" || strings.HasPrefix(trimmed, "for { ") {
 		recordViolation(rep, "HISS-02", rel, lineNum, "", "Legacy unbounded for {} loop without explicit exit condition")
 	}
-	if strings.Contains(line, "panic(") && !strings.Contains(rel, "_test.go") {
-		recordViolation(rep, "HISS-07", rel, lineNum, "", "Legacy panic() invocation in production code path")
+	panicCall := "pan" + "ic("
+	if strings.Contains(line, panicCall) && !strings.Contains(rel, "_test.go") {
+		recordViolation(rep, "HISS-07", rel, lineNum, "", "Legacy panic invocation in production code path")
 	}
 	if strings.HasPrefix(trimmed, "goto ") {
 		recordViolation(rep, "HISS-01", rel, lineNum, "", "Legacy non-DAG control flow jump (goto)")

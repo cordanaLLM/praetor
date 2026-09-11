@@ -396,7 +396,7 @@ func buildAgentHarness(repoName, arch string) string {
 		testCmd = "meson test -C core/build --suite=fast"
 	}
 
-	return fmt.Sprintf(`<!-- markdownlint-disable MD013 MD025 -->
+	header := fmt.Sprintf(`<!-- markdownlint-disable MD013 MD025 -->
 # %s Agent Operating Harness
 
 Run verification before concluding any turn:
@@ -408,7 +408,28 @@ Run verification before concluding any turn:
     CHECK --> GATE{"All checks Pass?"}
     GATE -- Yes --> RECEIPT["Ed25519 Exit-0 Receipt"]
     GATE -- No --> DISTILL["SARIF Diagnostic Distillation (<= 1500 tokens)"]
-`+"```\n\n"+`## Core Directives & Invariants (Modernized NASA JPL Power-of-10)
+`+"```\n\n", repoName, verifyCmd, verifyCmd)
+
+	footer := fmt.Sprintf(`## Primary Verification Commands
+
+`+"```bash\n"+`# Fast local test suite
+%s
+
+# Recompile and verify cross-agent context outputs
+standardsctl compile-context --verify
+
+# Audit repository against declared HISS-16 standards
+standardsctl audit
+
+# Run all formatting, linting, and security gates
+%s
+`+"```\n", testCmd, verifyCmd)
+
+	return header + buildAgentHarnessDirectives() + footer
+}
+
+func buildAgentHarnessDirectives() string {
+	return `## Core Directives & Invariants (Modernized NASA JPL Power-of-10)
 
 | Invariant | Scope | NASA Rule | Enforcement Mechanism | Failure Action |
 | :--- | :--- | :--- | :--- | :--- |
@@ -443,31 +464,24 @@ Run verification before concluding any turn:
 6. **Anti-Loop Interception**:
    If the same AST diff and error category repeats $\ge 3$ times, halt execution immediately. Re-evaluate the underlying design instead of making micro-textual retries.
 
-## Primary Verification Commands
-
-`+"```bash\n"+`# Fast local test suite
-%s
-
-# Recompile and verify cross-agent context outputs
-standardsctl compile-context --verify
-
-# Audit repository against declared HISS-16 standards
-standardsctl audit
-
-# Run all formatting, linting, and security gates
-%s
-`+"```\n", repoName, verifyCmd, verifyCmd, testCmd, verifyCmd)
+`
 }
 
 func reconcileAgentHarness(repoPath, repoName, arch string, opts AdoptOptions, report *AdoptReport) error {
-	agentsPath := filepath.Join(repoPath, "AGENTS.md")
-	var agentsContent string
+	agentsContent, err := resolveAgentsContent(repoPath, repoName, arch, opts, report)
+	if err != nil {
+		return err
+	}
+	return transpileAgentTargets(repoPath, agentsContent, opts, report)
+}
 
+func resolveAgentsContent(repoPath, repoName, arch string, opts AdoptOptions, report *AdoptReport) (string, error) {
+	agentsPath := filepath.Join(repoPath, "AGENTS.md")
 	if !fileExists(agentsPath) {
-		agentsContent = buildAgentHarness(repoName, arch)
+		agentsContent := buildAgentHarness(repoName, arch)
 		if !opts.DryRun {
 			if err := os.WriteFile(agentsPath, []byte(agentsContent), 0644); err != nil {
-				return fmt.Errorf("write %s: %w", agentsPath, err)
+				return "", fmt.Errorf("write %s: %w", agentsPath, err)
 			}
 		}
 		report.CreatedFiles = append(report.CreatedFiles, "AGENTS.md")
@@ -476,59 +490,66 @@ func reconcileAgentHarness(repoPath, repoName, arch string, opts AdoptOptions, r
 			Action:  "create",
 			Details: "Synthesized canonical Praetor Agent Operating Harness and HISS-16 invariants",
 		})
-	} else {
-		existingBytes, err := os.ReadFile(agentsPath)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", agentsPath, err)
-		}
-		existing := string(existingBytes)
-		if strings.Contains(existing, "Agent Operating Harness") || strings.Contains(existing, "## Core Directives & Invariants") {
-			if opts.Force {
-				harness := strings.TrimSpace(buildAgentHarness(repoName, arch))
-				parts := strings.SplitN(existing, "\n---\n", 2)
-				if len(parts) > 1 {
-					agentsContent = harness + "\n\n---\n\n" + strings.TrimSpace(parts[1]) + "\n"
-				} else {
-					agentsContent = harness + "\n"
-				}
-				if !opts.DryRun {
-					if err := os.WriteFile(agentsPath, []byte(agentsContent), 0644); err != nil {
-						return fmt.Errorf("write %s: %w", agentsPath, err)
-					}
-				}
-				report.ReconciledFiles = append(report.ReconciledFiles, "AGENTS.md")
-				report.ActionDetails = append(report.ActionDetails, ActionDetail{
-					Path:    "AGENTS.md",
-					Action:  "reconcile",
-					Details: "Updated Praetor Agent Operating Harness while preserving repository-specific instructions",
-				})
+		return agentsContent, nil
+	}
+
+	existingBytes, err := os.ReadFile(agentsPath)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", agentsPath, err)
+	}
+	return mergeExistingAgentsContent(agentsPath, string(existingBytes), repoName, arch, opts, report)
+}
+
+func mergeExistingAgentsContent(agentsPath, existing, repoName, arch string, opts AdoptOptions, report *AdoptReport) (string, error) {
+	var agentsContent string
+	if strings.Contains(existing, "Agent Operating Harness") || strings.Contains(existing, "## Core Directives & Invariants") {
+		if opts.Force {
+			harness := strings.TrimSpace(buildAgentHarness(repoName, arch))
+			parts := strings.SplitN(existing, "\n---\n", 2)
+			if len(parts) > 1 {
+				agentsContent = harness + "\n\n---\n\n" + strings.TrimSpace(parts[1]) + "\n"
 			} else {
-				agentsContent = existing
-				report.ReconciledFiles = append(report.ReconciledFiles, "AGENTS.md")
-				report.ActionDetails = append(report.ActionDetails, ActionDetail{
-					Path:    "AGENTS.md",
-					Action:  "reconcile",
-					Details: "Existing Praetor Agent Operating Harness verified in sync",
-				})
+				agentsContent = harness + "\n"
 			}
-		} else {
-			harness := buildAgentHarness(repoName, arch)
-			agentsContent = harness + "\n---\n\n" + existing
 			if !opts.DryRun {
 				if err := os.WriteFile(agentsPath, []byte(agentsContent), 0644); err != nil {
-					return fmt.Errorf("write %s: %w", agentsPath, err)
+					return "", fmt.Errorf("write %s: %w", agentsPath, err)
 				}
 			}
 			report.ReconciledFiles = append(report.ReconciledFiles, "AGENTS.md")
 			report.ActionDetails = append(report.ActionDetails, ActionDetail{
 				Path:    "AGENTS.md",
-				Action:  "merge",
-				Details: "Merged Praetor Agent Operating Harness & HISS-16 directives above existing instructions",
+				Action:  "reconcile",
+				Details: "Updated Praetor Agent Operating Harness while preserving repository-specific instructions",
+			})
+		} else {
+			agentsContent = existing
+			report.ReconciledFiles = append(report.ReconciledFiles, "AGENTS.md")
+			report.ActionDetails = append(report.ActionDetails, ActionDetail{
+				Path:    "AGENTS.md",
+				Action:  "reconcile",
+				Details: "Existing Praetor Agent Operating Harness verified in sync",
 			})
 		}
+	} else {
+		harness := buildAgentHarness(repoName, arch)
+		agentsContent = harness + "\n---\n\n" + existing
+		if !opts.DryRun {
+			if err := os.WriteFile(agentsPath, []byte(agentsContent), 0644); err != nil {
+				return "", fmt.Errorf("write %s: %w", agentsPath, err)
+			}
+		}
+		report.ReconciledFiles = append(report.ReconciledFiles, "AGENTS.md")
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    "AGENTS.md",
+			Action:  "merge",
+			Details: "Merged Praetor Agent Operating Harness & HISS-16 directives above existing instructions",
+		})
 	}
+	return agentsContent, nil
+}
 
-	// Transpilation of vendor targets
+func transpileAgentTargets(repoPath, agentsContent string, opts AdoptOptions, report *AdoptReport) error {
 	tr := compiler.NewTranspiler()
 	res, err := tr.CompileContent(agentsContent)
 	if err != nil {
@@ -544,23 +565,21 @@ func reconcileAgentHarness(repoPath, repoName, arch string, opts AdoptOptions, r
 
 	for _, f := range res.Files {
 		fullPath := filepath.Join(repoPath, f.RelativePath)
+		action := "reconcile"
+		detail := fmt.Sprintf("Synchronized vendor context target (%d LOC)", f.LineCount)
 		if !fileExists(fullPath) {
+			action = "create"
+			detail = fmt.Sprintf("Compiled vendor context target (%d LOC)", f.LineCount)
 			report.CreatedFiles = append(report.CreatedFiles, f.RelativePath)
-			report.ActionDetails = append(report.ActionDetails, ActionDetail{
-				Path:    f.RelativePath,
-				Action:  "create",
-				Details: fmt.Sprintf("Compiled vendor context target (%d LOC)", f.LineCount),
-			})
 		} else {
 			report.ReconciledFiles = append(report.ReconciledFiles, f.RelativePath)
-			report.ActionDetails = append(report.ActionDetails, ActionDetail{
-				Path:    f.RelativePath,
-				Action:  "reconcile",
-				Details: fmt.Sprintf("Synchronized vendor context target (%d LOC)", f.LineCount),
-			})
 		}
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    f.RelativePath,
+			Action:  action,
+			Details: detail,
+		})
 	}
-
 	return nil
 }
 
@@ -578,7 +597,9 @@ func reconcileDevContainer(repoPath, repoName, arch string, facets []string, opt
 			return fmt.Errorf("marshal devcontainer: %w", err)
 		}
 		if !opts.DryRun {
-			_ = os.MkdirAll(devDir, 0755)
+			if err := os.MkdirAll(devDir, 0755); err != nil {
+				return fmt.Errorf("mkdir %s: %w", devDir, err)
+			}
 			if err := os.WriteFile(jsonPath, append(data, '\n'), 0644); err != nil {
 				return fmt.Errorf("write %s: %w", jsonPath, err)
 			}
@@ -637,11 +658,20 @@ func reconcileEditors(repoPath, arch string, opts AdoptOptions, report *AdoptRep
 }
 
 func reconcileMakefileAndGit(repoPath, arch string, opts AdoptOptions, report *AdoptReport) error {
+	if err := reconcileMakefile(repoPath, opts, report); err != nil {
+		return err
+	}
+	return reconcileGitIgnore(repoPath, opts, report)
+}
+
+func reconcileMakefile(repoPath string, opts AdoptOptions, report *AdoptReport) error {
 	makefilePath := filepath.Join(repoPath, "Makefile")
 	if !fileExists(makefilePath) {
 		content := []byte(".PHONY: all verify-all audit compile-context build test\n\nverify-all:\n\t@echo \"Running verification...\"\n\ncompile-context:\n\t@standardsctl compile-context\n\naudit:\n\t@standardsctl audit\n\ntest:\n\t@go test -v -race ./...\n\nbuild:\n\t@go build -v ./...\n")
 		if !opts.DryRun {
-			_ = os.WriteFile(makefilePath, content, 0644)
+			if err := os.WriteFile(makefilePath, content, 0644); err != nil {
+				return fmt.Errorf("write %s: %w", makefilePath, err)
+			}
 		}
 		report.CreatedFiles = append(report.CreatedFiles, "Makefile")
 		report.ActionDetails = append(report.ActionDetails, ActionDetail{
@@ -649,40 +679,50 @@ func reconcileMakefileAndGit(repoPath, arch string, opts AdoptOptions, report *A
 			Action:  "create",
 			Details: "Created default Makefile with verify-all, audit, and compile-context targets",
 		})
-	} else {
-		data, err := os.ReadFile(makefilePath)
-		if err == nil {
-			content := string(data)
-			if !strings.Contains(content, "verify-all:") {
-				appendTargets := "\n# cordanaLLM/praetor Governance Targets\n.PHONY: verify-all compile-context audit\n\nverify-all:\n\t@standardsctl audit && standardsctl compile-context --verify\n\ncompile-context:\n\t@standardsctl compile-context\n\naudit:\n\t@standardsctl audit\n"
-				if !opts.DryRun {
-					f, err := os.OpenFile(makefilePath, os.O_APPEND|os.O_WRONLY, 0644)
-					if err == nil {
-						_, _ = f.WriteString(appendTargets)
-						f.Close()
-					}
-				}
-				report.ActionDetails = append(report.ActionDetails, ActionDetail{
-					Path:    "Makefile",
-					Action:  "append",
-					Details: "Appended governance targets: verify-all, compile-context, and audit",
-				})
-			} else {
-				report.ActionDetails = append(report.ActionDetails, ActionDetail{
-					Path:    "Makefile",
-					Action:  "reconcile",
-					Details: "Existing Makefile already contains verify-all target",
-				})
-			}
-		}
-		report.ReconciledFiles = append(report.ReconciledFiles, "Makefile")
+		return nil
 	}
 
+	data, err := os.ReadFile(makefilePath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", makefilePath, err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "verify-all:") {
+		appendTargets := "\n# cordanaLLM/praetor Governance Targets\n.PHONY: verify-all compile-context audit\n\nverify-all:\n\t@standardsctl audit && standardsctl compile-context --verify\n\ncompile-context:\n\t@standardsctl compile-context\n\naudit:\n\t@standardsctl audit\n"
+		if !opts.DryRun {
+			f, err := os.OpenFile(makefilePath, os.O_APPEND|os.O_WRONLY, 0644)
+			if err != nil {
+				return fmt.Errorf("open %s: %w", makefilePath, err)
+			}
+			defer f.Close()
+			if _, err := f.WriteString(appendTargets); err != nil {
+				return fmt.Errorf("append %s: %w", makefilePath, err)
+			}
+		}
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    "Makefile",
+			Action:  "append",
+			Details: "Appended governance targets: verify-all, compile-context, and audit",
+		})
+	} else {
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    "Makefile",
+			Action:  "reconcile",
+			Details: "Existing Makefile already contains verify-all target",
+		})
+	}
+	report.ReconciledFiles = append(report.ReconciledFiles, "Makefile")
+	return nil
+}
+
+func reconcileGitIgnore(repoPath string, opts AdoptOptions, report *AdoptReport) error {
 	gitIgnorePath := filepath.Join(repoPath, ".gitignore")
 	if !fileExists(gitIgnorePath) {
 		content := []byte("bin/\n*.test\n*.out\n.DS_Store\n")
 		if !opts.DryRun {
-			_ = os.WriteFile(gitIgnorePath, content, 0644)
+			if err := os.WriteFile(gitIgnorePath, content, 0644); err != nil {
+				return fmt.Errorf("write %s: %w", gitIgnorePath, err)
+			}
 		}
 		report.CreatedFiles = append(report.CreatedFiles, ".gitignore")
 		report.ActionDetails = append(report.ActionDetails, ActionDetail{
@@ -690,19 +730,35 @@ func reconcileMakefileAndGit(repoPath, arch string, opts AdoptOptions, report *A
 			Action:  "create",
 			Details: "Created default .gitignore for build artifacts",
 		})
-	} else {
-		report.ReconciledFiles = append(report.ReconciledFiles, ".gitignore")
-		report.ActionDetails = append(report.ActionDetails, ActionDetail{
-			Path:    ".gitignore",
-			Action:  "reconcile",
-			Details: "Existing .gitignore verified present",
-		})
+		return nil
 	}
+
+	report.ReconciledFiles = append(report.ReconciledFiles, ".gitignore")
+	report.ActionDetails = append(report.ActionDetails, ActionDetail{
+		Path:    ".gitignore",
+		Action:  "reconcile",
+		Details: "Existing .gitignore verified present",
+	})
 	return nil
 }
 
 func reconcileGovernanceTexts(repoPath, repoName, arch string, opts AdoptOptions, report *AdoptReport) error {
-	// 1. CONTRIBUTING.md
+	if err := reconcileContributing(repoPath, repoName, opts, report); err != nil {
+		return err
+	}
+	if err := reconcilePullRequestTemplate(repoPath, repoName, opts, report); err != nil {
+		return err
+	}
+	if err := reconcileSecurityPolicy(repoPath, repoName, opts, report); err != nil {
+		return err
+	}
+	if err := reconcileADR(repoPath, repoName, opts, report); err != nil {
+		return err
+	}
+	return reconcileReadme(repoPath, opts, report)
+}
+
+func reconcileContributing(repoPath, repoName string, opts AdoptOptions, report *AdoptReport) error {
 	contribPath := filepath.Join(repoPath, "CONTRIBUTING.md")
 	if !fileExists(contribPath) {
 		contrib := buildContributingGuide(repoName)
@@ -717,22 +773,26 @@ func reconcileGovernanceTexts(repoPath, repoName, arch string, opts AdoptOptions
 			Action:  "create",
 			Details: "Scaffolded contributor governance guide with HISS-16 & NASA rules",
 		})
-	} else {
-		report.ReconciledFiles = append(report.ReconciledFiles, "CONTRIBUTING.md")
-		report.ActionDetails = append(report.ActionDetails, ActionDetail{
-			Path:    "CONTRIBUTING.md",
-			Action:  "reconcile",
-			Details: "Existing contributor guide verified present",
-		})
+		return nil
 	}
+	report.ReconciledFiles = append(report.ReconciledFiles, "CONTRIBUTING.md")
+	report.ActionDetails = append(report.ActionDetails, ActionDetail{
+		Path:    "CONTRIBUTING.md",
+		Action:  "reconcile",
+		Details: "Existing contributor guide verified present",
+	})
+	return nil
+}
 
-	// 2. .github/pull_request_template.md
+func reconcilePullRequestTemplate(repoPath, repoName string, opts AdoptOptions, report *AdoptReport) error {
 	prTmplPath := filepath.Join(repoPath, ".github", "pull_request_template.md")
 	prTmplUpperPath := filepath.Join(repoPath, ".github", "PULL_REQUEST_TEMPLATE.md")
 	if !fileExists(prTmplPath) && !fileExists(prTmplUpperPath) {
 		prTmpl := buildPullRequestTemplate(repoName)
 		if !opts.DryRun {
-			_ = os.MkdirAll(filepath.Dir(prTmplPath), 0755)
+			if err := os.MkdirAll(filepath.Dir(prTmplPath), 0755); err != nil {
+				return fmt.Errorf("mkdir .github: %w", err)
+			}
 			if err := os.WriteFile(prTmplPath, []byte(prTmpl), 0644); err != nil {
 				return fmt.Errorf("write %s: %w", prTmplPath, err)
 			}
@@ -743,20 +803,22 @@ func reconcileGovernanceTexts(repoPath, repoName, arch string, opts AdoptOptions
 			Action:  "create",
 			Details: "Scaffolded pull request template with HISS verification checklist",
 		})
-	} else {
-		targetName := ".github/pull_request_template.md"
-		if fileExists(prTmplUpperPath) {
-			targetName = ".github/PULL_REQUEST_TEMPLATE.md"
-		}
-		report.ReconciledFiles = append(report.ReconciledFiles, targetName)
-		report.ActionDetails = append(report.ActionDetails, ActionDetail{
-			Path:    targetName,
-			Action:  "reconcile",
-			Details: "Existing pull request template verified present",
-		})
+		return nil
 	}
+	targetName := ".github/pull_request_template.md"
+	if fileExists(prTmplUpperPath) {
+		targetName = ".github/PULL_REQUEST_TEMPLATE.md"
+	}
+	report.ReconciledFiles = append(report.ReconciledFiles, targetName)
+	report.ActionDetails = append(report.ActionDetails, ActionDetail{
+		Path:    targetName,
+		Action:  "reconcile",
+		Details: "Existing pull request template verified present",
+	})
+	return nil
+}
 
-	// 3. SECURITY.md
+func reconcileSecurityPolicy(repoPath, repoName string, opts AdoptOptions, report *AdoptReport) error {
 	secPath := filepath.Join(repoPath, "SECURITY.md")
 	if !fileExists(secPath) {
 		sec := buildSecurityPolicy(repoName)
@@ -771,24 +833,32 @@ func reconcileGovernanceTexts(repoPath, repoName, arch string, opts AdoptOptions
 			Action:  "create",
 			Details: "Scaffolded security policy and vulnerability disclosure standards",
 		})
-	} else {
-		report.ReconciledFiles = append(report.ReconciledFiles, "SECURITY.md")
-		report.ActionDetails = append(report.ActionDetails, ActionDetail{
-			Path:    "SECURITY.md",
-			Action:  "reconcile",
-			Details: "Existing security policy verified present",
-		})
+		return nil
 	}
+	report.ReconciledFiles = append(report.ReconciledFiles, "SECURITY.md")
+	report.ActionDetails = append(report.ActionDetails, ActionDetail{
+		Path:    "SECURITY.md",
+		Action:  "reconcile",
+		Details: "Existing security policy verified present",
+	})
+	return nil
+}
 
-	// 4. docs/adr/ (index and template)
+func reconcileADR(repoPath, repoName string, opts AdoptOptions, report *AdoptReport) error {
 	adrDir := filepath.Join(repoPath, "docs", "adr")
 	adrIndexPath := filepath.Join(adrDir, "README.md")
 	adrTmplPath := filepath.Join(adrDir, "0000-template.md")
 	if !fileExists(adrIndexPath) {
 		if !opts.DryRun {
-			_ = os.MkdirAll(adrDir, 0755)
-			_ = os.WriteFile(adrIndexPath, []byte(buildADRIndex(repoName)), 0644)
-			_ = os.WriteFile(adrTmplPath, []byte(buildADRTemplate(repoName)), 0644)
+			if err := os.MkdirAll(adrDir, 0755); err != nil {
+				return fmt.Errorf("mkdir %s: %w", adrDir, err)
+			}
+			if err := os.WriteFile(adrIndexPath, []byte(buildADRIndex(repoName)), 0644); err != nil {
+				return fmt.Errorf("write %s: %w", adrIndexPath, err)
+			}
+			if err := os.WriteFile(adrTmplPath, []byte(buildADRTemplate(repoName)), 0644); err != nil {
+				return fmt.Errorf("write %s: %w", adrTmplPath, err)
+			}
 		}
 		report.CreatedFiles = append(report.CreatedFiles, "docs/adr/README.md")
 		report.ActionDetails = append(report.ActionDetails, ActionDetail{
@@ -796,56 +866,61 @@ func reconcileGovernanceTexts(repoPath, repoName, arch string, opts AdoptOptions
 			Action:  "create",
 			Details: "Scaffolded Architectural Decision Records (ADR) directory and template",
 		})
-	} else {
-		report.ReconciledFiles = append(report.ReconciledFiles, "docs/adr/README.md")
-		report.ActionDetails = append(report.ActionDetails, ActionDetail{
-			Path:    "docs/adr/README.md",
-			Action:  "reconcile",
-			Details: "Architectural Decision Records directory verified present",
-		})
+		return nil
 	}
+	report.ReconciledFiles = append(report.ReconciledFiles, "docs/adr/README.md")
+	report.ActionDetails = append(report.ActionDetails, ActionDetail{
+		Path:    "docs/adr/README.md",
+		Action:  "reconcile",
+		Details: "Architectural Decision Records directory verified present",
+	})
+	return nil
+}
 
-	// 5. README.md badge and verification table
+func reconcileReadme(repoPath string, opts AdoptOptions, report *AdoptReport) error {
 	readmePath := filepath.Join(repoPath, "README.md")
-	if fileExists(readmePath) {
-		data, err := os.ReadFile(readmePath)
-		if err == nil {
-			content := string(data)
-			modified := false
-			if !strings.Contains(content, "HISS--16%20Compliant") && !strings.Contains(content, "HISS-16") {
-				badge := "[![HISS-16 Compliant](https://img.shields.io/badge/Standards-HISS--16%20Compliant-brightgreen)](AGENTS.md)\n"
-				trimmed := strings.TrimSpace(content)
-				if strings.HasPrefix(trimmed, "# ") {
-					nlIdx := strings.Index(content, "\n")
-					if nlIdx != -1 {
-						content = content[:nlIdx+1] + "\n" + badge + content[nlIdx+1:]
-					} else {
-						content = content + "\n\n" + badge
-					}
-				} else {
-					content = badge + "\n" + content
-				}
-				modified = true
+	if !fileExists(readmePath) {
+		return nil
+	}
+	data, err := os.ReadFile(readmePath)
+	if err != nil {
+		return nil
+	}
+	content := string(data)
+	modified := false
+	if !strings.Contains(content, "HISS--16%20Compliant") && !strings.Contains(content, "HISS-16") {
+		badge := "[![HISS-16 Compliant](https://img.shields.io/badge/Standards-HISS--16%20Compliant-brightgreen)](AGENTS.md)\n"
+		trimmed := strings.TrimSpace(content)
+		if strings.HasPrefix(trimmed, "# ") {
+			nlIdx := strings.Index(content, "\n")
+			if nlIdx != -1 {
+				content = content[:nlIdx+1] + "\n" + badge + content[nlIdx+1:]
+			} else {
+				content = content + "\n\n" + badge
 			}
-			if !strings.Contains(content, "Standards & Governance") && !strings.Contains(content, "make verify-all") {
-				table := "\n\n## Standards & Governance\n\nThis repository conforms to High-Integrity Systems Standards (HISS-16)\nand modernized NASA JPL Power-of-10 rules.\n\n| Gate | Command | Description |\n| :--- | :--- | :--- |\n| **Verification** | `make verify-all` | Runs full audit, test suite, and context integrity check |\n| **HISS Audit** | `standardsctl audit` | Enforces zero technical debt regression against baseline |\n| **Context Sync** | `standardsctl compile-context` | Transpiles canonical `AGENTS.md` to all AI targets |\n"
-				content = strings.TrimRight(content, "\r\n") + table
-				modified = true
-			}
-			if modified {
-				if !opts.DryRun {
-					_ = os.WriteFile(readmePath, []byte(content), 0644)
-				}
-				report.ReconciledFiles = append(report.ReconciledFiles, "README.md")
-				report.ActionDetails = append(report.ActionDetails, ActionDetail{
-					Path:    "README.md",
-					Action:  "reconcile",
-					Details: "Non-destructively injected HISS-16 compliance badge and verification gate table",
-				})
+		} else {
+			content = badge + "\n" + content
+		}
+		modified = true
+	}
+	if !strings.Contains(content, "Standards & Governance") && !strings.Contains(content, "make verify-all") {
+		table := "\n\n## Standards & Governance\n\nThis repository conforms to High-Integrity Systems Standards (HISS-16)\nand modernized NASA JPL Power-of-10 rules.\n\n| Gate | Command | Description |\n| :--- | :--- | :--- |\n| **Verification** | `make verify-all` | Runs full audit, test suite, and context integrity check |\n| **HISS Audit** | `standardsctl audit` | Enforces zero technical debt regression against baseline |\n| **Context Sync** | `standardsctl compile-context` | Transpiles canonical `AGENTS.md` to all AI targets |\n"
+		content = strings.TrimRight(content, "\r\n") + table
+		modified = true
+	}
+	if modified {
+		if !opts.DryRun {
+			if err := os.WriteFile(readmePath, []byte(content), 0644); err != nil {
+				return fmt.Errorf("write %s: %w", readmePath, err)
 			}
 		}
+		report.ReconciledFiles = append(report.ReconciledFiles, "README.md")
+		report.ActionDetails = append(report.ActionDetails, ActionDetail{
+			Path:    "README.md",
+			Action:  "reconcile",
+			Details: "Non-destructively injected HISS-16 compliance badge and verification gate table",
+		})
 	}
-
 	return nil
 }
 

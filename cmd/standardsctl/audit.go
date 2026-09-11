@@ -26,22 +26,40 @@ func runAudit(args []string) error {
 
 	fmt.Println("=== cordanaLLM/standards Governance Audit ===")
 
-	// 1. Audit Manifest
-	manifest, err := config.LoadManifest(*manifestPath)
+	manifest, err := auditManifestAndLockfile(*manifestPath)
 	if err != nil {
-		return fmt.Errorf("[FAIL] Manifest audit failed: %w", err)
+		return err
+	}
+
+	if err := auditBaselineAndInvariants(*baselinePath); err != nil {
+		return err
+	}
+
+	if err := auditAgentContextAndDevcontainer(manifest, *agentsPath); err != nil {
+		return err
+	}
+
+	fmt.Println("\nAudit Summary: 100% Compliance with cordanaLLM/standards HISS-16 baseline.")
+	return nil
+}
+
+func auditManifestAndLockfile(manifestPath string) (*config.Manifest, error) {
+	manifest, err := config.LoadManifest(manifestPath)
+	if err != nil {
+		return nil, fmt.Errorf("[FAIL] Manifest audit failed: %w", err)
 	}
 	fmt.Printf("[PASS] Manifest verified: %s/%s (Version %d)\n", manifest.Repository.Owner, manifest.Repository.Name, manifest.Version)
 	fmt.Printf("       Profiles: %v | Facets: %v\n", manifest.Profiles, manifest.Facets)
 
-	// 2. Audit Lockfile
 	if _, err := os.Stat(".standards.lock"); os.IsNotExist(err) {
-		return fmt.Errorf("[FAIL] .standards.lock is missing")
+		return nil, fmt.Errorf("[FAIL] .standards.lock is missing")
 	}
 	fmt.Println("[PASS] SemVer lockfile .standards.lock verified.")
+	return manifest, nil
+}
 
-	// 3. Audit Baseline Debt & Active HISS Invariants
-	base, err := baseline.LoadBaseline(*baselinePath)
+func auditBaselineAndInvariants(baselinePath string) error {
+	base, err := baseline.LoadBaseline(baselinePath)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
@@ -73,15 +91,16 @@ func runAudit(args []string) error {
 	}
 	fmt.Printf("[PASS] HISS invariant scan verified: %d active violations within %d baselined limit.\n",
 		ratchet.CurrentCount, base.TotalInfractions)
+	return nil
+}
 
-	// 4. Audit Cross-Agent Context Synchronization
+func auditAgentContextAndDevcontainer(manifest *config.Manifest, agentsPath string) error {
 	tr := compiler.NewTranspiler()
-	if err := tr.Verify(*agentsPath, "."); err != nil {
+	if err := tr.Verify(agentsPath, "."); err != nil {
 		return fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
 	}
 	fmt.Println("[PASS] Cross-agent context targets (CLAUDE.md, Cursor, Copilot, Windsurf, Gemini) verified in sync.")
 
-	// 5. Audit DevContainer Synchronization
 	if _, err := os.Stat(".devcontainer/devcontainer.json"); err == nil {
 		dc, err := devcontainer.Synthesize(manifest)
 		if err == nil {
@@ -91,7 +110,5 @@ func runAudit(args []string) error {
 			}
 		}
 	}
-
-	fmt.Println("\nAudit Summary: 100% Compliance with cordanaLLM/standards HISS-16 baseline.")
 	return nil
 }

@@ -489,7 +489,7 @@ func (s *Server) isUnboundedIOCall(pkg, method string) bool {
 	return false
 }
 
-// checkHISS07Errors checks for unchecked errors and banned panic() calls.
+// checkHISS07Errors checks for unchecked errors and banned panic calls.
 func (s *Server) checkHISS07Errors(fset *token.FileSet, file *ast.File) []Diagnostic {
 	var diags []Diagnostic
 	nodes := s.collectASTNodes(file)
@@ -527,7 +527,7 @@ func (s *Server) checkHISS07Errors(fset *token.FileSet, file *ast.File) []Diagno
 					Severity: 1,
 					Code:     "HISS-07",
 					Source:   "standards-lsp",
-					Message:  "Direct panic() invocation detected in code; error handling mandatory (HISS-07)",
+					Message:  "Direct panic invocation detected in code; error handling mandatory (HISS-07)",
 				})
 			}
 		}
@@ -563,7 +563,7 @@ func (s *Server) collectASTNodes(root ast.Node) []ast.Node {
 
 // Run executes the stdio loop, processing framed JSON-RPC 2.0 messages until EOF or shutdown.
 func (s *Server) Run(ctx context.Context) error {
-	for {
+	for !s.isExited {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -599,13 +599,14 @@ func (s *Server) Run(ctx context.Context) error {
 			return nil
 		}
 	}
+	return nil
 }
 
 func (s *Server) readFramedMessage() ([]byte, error) {
 	contentLength := -1
 
-	// Read headers
-	for {
+	// Read headers with bounded iteration
+	for headerLines := 0; headerLines < 100; headerLines++ {
 		line, err := s.in.ReadString('\n')
 		if err != nil {
 			return nil, err

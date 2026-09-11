@@ -42,11 +42,12 @@ func VerifyRun(ctx context.Context, repoPath string, d *Disposition) error {
 	if d.Status == StatusInReview {
 		cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "status", "--porcelain")
 		out, err := cmd.Output()
-		if err == nil {
-			uncommitted := strings.TrimSpace(string(out))
-			if uncommitted != "" {
-				return fmt.Errorf("contract violation: uncommitted changes exist in working tree; push branch before disposition")
-			}
+		if err != nil {
+			return fmt.Errorf("verify working tree git status: %w", err)
+		}
+		uncommitted := strings.TrimSpace(string(out))
+		if uncommitted != "" {
+			return fmt.Errorf("contract violation: uncommitted changes exist in working tree; push branch before disposition")
 		}
 	}
 

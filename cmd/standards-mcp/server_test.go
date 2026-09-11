@@ -197,6 +197,38 @@ func TestServer_ToolCalls_PlanAndInspect(t *testing.T) {
 	}
 }
 
+func TestServer_ToolCalls_NeedsReport(t *testing.T) {
+	srv, err := NewServer("../..", "v1.0.0")
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	ctx := context.Background()
+
+	params, err := json.Marshal(map[string]any{
+		"name": "standards_needs_report",
+		"arguments": map[string]any{
+			"path": "../..",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp := srv.HandleRequest(ctx, JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      20,
+		Method:  "tools/call",
+		Params:  params,
+	})
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("needs_report tool call failed: %+v", resp)
+	}
+	tr, ok := resp.Result.(*mcp.ToolResult)
+	if !ok || tr.IsError || !strings.Contains(tr.Content[0].Text, "Golusoris Migration Report") {
+		t.Errorf("unexpected needs_report result: %+v", resp.Result)
+	}
+}
+
 func TestServer_HTTP_Transport(t *testing.T) {
 	srv, err := NewServer("../..", "v1.0.0")
 	if err != nil {

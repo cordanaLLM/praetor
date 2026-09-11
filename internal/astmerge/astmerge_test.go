@@ -71,49 +71,15 @@ func Divide(a, b int) int {
 	}
 }
 
+func orthogonalTestSources() (string, string, string) {
+	base := "package service\n\nimport \"fmt\"\n\nfunc ProcessA() string {\n\treturn fmt.Sprintf(\"A\")\n}\n\nfunc ProcessB() string {\n\treturn fmt.Sprintf(\"B\")\n}\n"
+	ours := "package service\n\nimport (\n\t\"fmt\"\n\t\"strings\"\n)\n\nfunc ProcessA() string {\n\treturn strings.ToUpper(\"A-v2\")\n}\n\nfunc ProcessB() string {\n\treturn fmt.Sprintf(\"B\")\n}\n"
+	theirs := "package service\n\nimport (\n\t\"fmt\"\n\t\"time\"\n)\n\nfunc ProcessA() string {\n\treturn fmt.Sprintf(\"A\")\n}\n\nfunc ProcessB() string {\n\treturn time.Now().String()\n}\n"
+	return base, ours, theirs
+}
+
 func TestMerge_Positive_OrthogonalModificationsAndImports(t *testing.T) {
-	base := `package service
-
-import "fmt"
-
-func ProcessA() string {
-	return fmt.Sprintf("A")
-}
-
-func ProcessB() string {
-	return fmt.Sprintf("B")
-}
-`
-	ours := `package service
-
-import (
-	"fmt"
-	"strings"
-)
-
-func ProcessA() string {
-	return strings.ToUpper("A-v2")
-}
-
-func ProcessB() string {
-	return fmt.Sprintf("B")
-}
-`
-	theirs := `package service
-
-import (
-	"fmt"
-	"time"
-)
-
-func ProcessA() string {
-	return fmt.Sprintf("A")
-}
-
-func ProcessB() string {
-	return time.Now().String()
-}
-`
+	base, ours, theirs := orthogonalTestSources()
 
 	res, err := Merge(base, ours, theirs)
 	if err != nil {
@@ -124,18 +90,10 @@ func ProcessB() string {
 		t.Fatalf("expected clean merge, got conflicts: %+v", res.Conflicts)
 	}
 
-	// Both imports should be merged cleanly
-	if !strings.Contains(res.MergedCode, `"strings"`) {
-		t.Errorf("missing strings import in merged code")
-	}
-	if !strings.Contains(res.MergedCode, `"time"`) {
-		t.Errorf("missing time import in merged code")
-	}
-	if !strings.Contains(res.MergedCode, `"fmt"`) {
-		t.Errorf("missing fmt import in merged code")
+	if !strings.Contains(res.MergedCode, `"strings"`) || !strings.Contains(res.MergedCode, `"time"`) || !strings.Contains(res.MergedCode, `"fmt"`) {
+		t.Errorf("missing merged imports in code:\n%s", res.MergedCode)
 	}
 
-	// Both function updates should be preserved
 	if !strings.Contains(res.MergedCode, "strings.ToUpper(\"A-v2\")") {
 		t.Errorf("missing ours ProcessA update")
 	}

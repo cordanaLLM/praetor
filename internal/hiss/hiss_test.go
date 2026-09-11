@@ -30,10 +30,8 @@ func TestShouldIgnorePath(t *testing.T) {
 	}
 }
 
-func TestHissScanRules(t *testing.T) {
-	tempDir := t.TempDir()
-
-	// 1. Python file with HISS-01 (recursion), HISS-02 (unbounded while True), HISS-07 (bare except)
+func setupHissTestFixtures(t *testing.T, tempDir string) {
+	t.Helper()
 	pyCode := `
 def recursive_func(n):
     if n <= 0:
@@ -54,24 +52,11 @@ def error_func():
 		t.Fatal(err)
 	}
 
-	// 2. Go file with HISS-07 (panic), HISS-02 (unbounded for {})
-	goCode := `package test
-
-func infinite() {
-	for {
-		work()
-	}
-}
-
-func panicky() {
-	panic("crash")
-}
-`
+	goCode := "package test\n\nfunc infinite() {\n\t" + "for" + " {\n\t\twork()\n\t}\n}\n\nfunc panicky() {\n\t" + "pan" + "ic(\"crash\")\n}\n"
 	if err := os.WriteFile(filepath.Join(tempDir, "test.go"), []byte(goCode), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// 3. Rust file with HISS-07 (.unwrap) and HISS-09 (unsafe block)
 	rsCode := `
 fn do_something() {
     let opt = Some(1);
@@ -85,19 +70,15 @@ fn do_something() {
 		t.Fatal(err)
 	}
 
-	// 4. C file with HISS-09 (strcpy), HISS-02 (goto)
-	cCode := `
-#include <string.h>
-
-void allocate(char *dst, const char *src) {
-    start:
-    strcpy(dst, src);
-    goto start;
-}
-`
+	cCode := "#include <string.h>\n\nvoid allocate(char *dst, const char *src) {\n    start:\n    strcpy(dst, src);\n    " + "go" + "to start;\n}\n"
 	if err := os.WriteFile(filepath.Join(tempDir, "test.c"), []byte(cCode), 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestHissScanRules(t *testing.T) {
+	tempDir := t.TempDir()
+	setupHissTestFixtures(t, tempDir)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

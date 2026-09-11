@@ -34,6 +34,22 @@ func runInit(args []string) error {
 		}
 	}
 
+	if err := createInitialManifest(*outputPath, *profile, facetList); err != nil {
+		return err
+	}
+	if err := initBaselineAndLockfile(); err != nil {
+		return err
+	}
+	if err := initAgentContext(); err != nil {
+		return err
+	}
+
+	fmt.Println("\nRepository successfully onboarded into cordanaLLM/standards!")
+	fmt.Println("Next steps: run 'standardsctl audit' and 'make verify-all'.")
+	return nil
+}
+
+func createInitialManifest(outputPath, profile string, facets []string) error {
 	manifest := config.Manifest{
 		Version: 1,
 		Repository: config.RepositoryMetadata{
@@ -41,8 +57,8 @@ func runInit(args []string) error {
 			Name:       "new-service",
 			Visibility: "public",
 		},
-		Profiles: []string{*profile},
-		Facets:   facetList,
+		Profiles: []string{profile},
+		Facets:   facets,
 	}
 
 	data, err := yaml.Marshal(&manifest)
@@ -50,36 +66,48 @@ func runInit(args []string) error {
 		return fmt.Errorf("failed to marshal manifest: %w", err)
 	}
 
-	if err := os.WriteFile(*outputPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", *outputPath, err)
+	if err := os.WriteFile(outputPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", outputPath, err)
 	}
-	fmt.Printf("[CREATED] %s (Profile: %s, Facets: %v)\n", *outputPath, *profile, facetList)
+	fmt.Printf("[CREATED] %s (Profile: %s, Facets: %v)\n", outputPath, profile, facets)
+	return nil
+}
 
-	// Initialize baseline if missing
+func initBaselineAndLockfile() error {
 	if _, err := os.Stat(".standards-baseline.json"); os.IsNotExist(err) {
 		base := &baseline.Baseline{
 			Version:          1,
 			TotalInfractions: 0,
 			Infractions:      []baseline.Infraction{},
 		}
-		_ = baseline.SaveBaseline(".standards-baseline.json", base)
+		if err := baseline.SaveBaseline(".standards-baseline.json", base); err != nil {
+			return fmt.Errorf("failed to create baseline: %w", err)
+		}
 		fmt.Println("[CREATED] .standards-baseline.json (0 legacy infractions)")
 	}
 
-	// Initialize lockfile if missing
 	if _, err := os.Stat(".standards.lock"); os.IsNotExist(err) {
-		_ = os.WriteFile(".standards.lock", []byte("# SemVer lockfile\nversion: 1\npinned_version: \"v1.0.0\"\n"), 0644)
+		content := []byte("# SemVer lockfile\nversion: 1\npinned_version: \"v1.0.0\"\n")
+		if err := os.WriteFile(".standards.lock", content, 0644); err != nil {
+			return fmt.Errorf("failed to create lockfile: %w", err)
+		}
 		fmt.Println("[CREATED] .standards.lock")
 	}
+	return nil
+}
 
-	// Transpile agent context
-	tr := compiler.NewTranspiler()
-	if res, err := tr.Compile("AGENTS.md"); err == nil {
-		_ = tr.WriteOutputs(res, ".")
-		fmt.Println("[TRANSPILED] Cross-agent context targets initialized from AGENTS.md.")
+func initAgentContext() error {
+	if _, err := os.Stat("AGENTS.md"); os.IsNotExist(err) {
+		return nil
 	}
-
-	fmt.Println("\nRepository successfully onboarded into cordanaLLM/standards!")
-	fmt.Println("Next steps: run 'standardsctl audit' and 'make verify-all'.")
+	tr := compiler.NewTranspiler()
+	res, err := tr.Compile("AGENTS.md")
+	if err != nil {
+		return fmt.Errorf("failed to compile AGENTS.md: %w", err)
+	}
+	if err := tr.WriteOutputs(res, "."); err != nil {
+		return fmt.Errorf("failed to write agent outputs: %w", err)
+	}
+	fmt.Println("[TRANSPILED] Cross-agent context targets initialized from AGENTS.md.")
 	return nil
 }

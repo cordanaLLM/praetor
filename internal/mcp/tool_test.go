@@ -98,55 +98,41 @@ func TestBridge_Positive_SchemaTranslations(t *testing.T) {
 		t.Fatalf("tool creation failed: %v", err)
 	}
 
-	// 1. OpenAI Translation
+	verifyOpenAITranslation(t, tool)
+	verifyAnthropicTranslation(t, tool)
+	verifyGeminiTranslation(t, tool)
+}
+
+func verifyOpenAITranslation(t *testing.T, tool Tool) {
 	openAITool, err := ToOpenAITool(tool)
-	if err != nil {
-		t.Fatalf("OpenAI translation failed: %v", err)
-	}
-	if openAITool.Type != "function" || openAITool.Function.Name != "standards_audit" {
-		t.Errorf("unexpected OpenAI tool format: %+v", openAITool)
+	if err != nil || openAITool.Type != "function" || openAITool.Function.Name != "standards_audit" {
+		t.Fatalf("OpenAI translation error or unexpected format: err=%v tool=%+v", err, openAITool)
 	}
 	openAIBytes, err := json.Marshal(openAITool)
-	if err != nil {
-		t.Fatalf("failed to marshal OpenAI tool: %v", err)
+	if err != nil || !strings.Contains(string(openAIBytes), `"type":"function"`) {
+		t.Errorf("OpenAI JSON serialization invalid: %v", err)
 	}
-	openAIStr := string(openAIBytes)
-	if !strings.Contains(openAIStr, `"type":"function"`) || !strings.Contains(openAIStr, `"parameters"`) {
-		t.Errorf("OpenAI JSON does not contain expected markers: %s", openAIStr)
-	}
+}
 
-	// 2. Anthropic Translation
+func verifyAnthropicTranslation(t *testing.T, tool Tool) {
 	anthropicTool, err := ToAnthropicTool(tool)
-	if err != nil {
-		t.Fatalf("Anthropic translation failed: %v", err)
-	}
-	if anthropicTool.Name != "standards_audit" || anthropicTool.InputSchema.Type != "object" {
-		t.Errorf("unexpected Anthropic tool format: %+v", anthropicTool)
+	if err != nil || anthropicTool.Name != "standards_audit" || anthropicTool.InputSchema.Type != "object" {
+		t.Fatalf("Anthropic translation error or unexpected format: err=%v tool=%+v", err, anthropicTool)
 	}
 	anthropicBytes, err := json.Marshal(anthropicTool)
-	if err != nil {
-		t.Fatalf("failed to marshal Anthropic tool: %v", err)
+	if err != nil || !strings.Contains(string(anthropicBytes), `"input_schema"`) {
+		t.Errorf("Anthropic JSON serialization invalid: %v", err)
 	}
-	anthropicStr := string(anthropicBytes)
-	if !strings.Contains(anthropicStr, `"input_schema"`) || !strings.Contains(anthropicStr, `"name":"standards_audit"`) {
-		t.Errorf("Anthropic JSON does not contain expected markers: %s", anthropicStr)
-	}
+}
 
-	// 3. Gemini Translation
+func verifyGeminiTranslation(t *testing.T, tool Tool) {
 	geminiFunc, err := ToGeminiFunction(tool)
-	if err != nil {
-		t.Fatalf("Gemini translation failed: %v", err)
-	}
-	if geminiFunc.Name != "standards_audit" || geminiFunc.Parameters.Type != "object" {
-		t.Errorf("unexpected Gemini tool format: %+v", geminiFunc)
+	if err != nil || geminiFunc.Name != "standards_audit" || geminiFunc.Parameters.Type != "object" {
+		t.Fatalf("Gemini translation error or unexpected format: err=%v func=%+v", err, geminiFunc)
 	}
 	geminiBytes, err := json.Marshal(geminiFunc)
-	if err != nil {
-		t.Fatalf("failed to marshal Gemini function: %v", err)
-	}
-	geminiStr := string(geminiBytes)
-	if !strings.Contains(geminiStr, `"parameters"`) || !strings.Contains(geminiStr, `"name":"standards_audit"`) {
-		t.Errorf("Gemini JSON does not contain expected markers: %s", geminiStr)
+	if err != nil || !strings.Contains(string(geminiBytes), `"parameters"`) {
+		t.Errorf("Gemini JSON serialization invalid: %v", err)
 	}
 }
 

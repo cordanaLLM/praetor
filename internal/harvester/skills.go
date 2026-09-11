@@ -178,7 +178,9 @@ func PurgeBackups(ctx context.Context, geminiDir string, backups []string, dryRu
 		target := filepath.Join(geminiDir, b)
 		purged = append(purged, target)
 		if !dryRun {
-			_ = os.Remove(target)
+			if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+				return nil, fmt.Errorf("remove backup %s: %w", target, err)
+			}
 		}
 	}
 

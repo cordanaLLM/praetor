@@ -88,6 +88,10 @@ func (a *ModelCapacityArbiter) SelectModel(targetTier string) (*ModelDescriptor,
 
 // SelectOrthogonalAuditor selects an auditor model from a different family than the author model.
 func (a *ModelCapacityArbiter) SelectOrthogonalAuditor(authorFamily ModelFamily, preferredTier string) (*ModelDescriptor, error) {
+	if a.Config == nil || len(a.Config.Tiers) == 0 {
+		return nil, errors.New("routing configuration is empty or nil")
+	}
+
 	tier, exists := a.Config.Tiers[preferredTier]
 	if !exists {
 		tier = a.Config.Tiers["heavy-frontier"]

@@ -14,16 +14,7 @@ import (
 	"github.com/cordanaLLM/standards/internal/harvester"
 )
 
-func runAdopt(args []string) error {
-	fs := flag.NewFlagSet("adopt", flag.ContinueOnError)
-	profile := fs.String("profile", "", "Primary repository profile (auto-detected if empty)")
-	facets := fs.String("facets", "", "Comma-separated list of facets")
-	dryRun := fs.Bool("dry-run", false, "Simulate adoption without writing files")
-	force := fs.Bool("force", false, "Overwrite existing standards configurations")
-	recordBaseline := fs.Bool("record-baseline", true, "Record legacy debt into .standards-baseline.json")
-	allMissing := fs.Bool("all-missing", false, "Adopt all detected unmanaged repositories in ~/dev")
-	path := fs.String("path", ".", "Target repository path to adopt")
-
+func reorderAdoptArgs(args []string) []string {
 	var flagArgs []string
 	var posArgs []string
 	for i := 0; i < len(args); i++ {
@@ -42,13 +33,23 @@ func runAdopt(args []string) error {
 			posArgs = append(posArgs, args[i])
 		}
 	}
-	combined := append(flagArgs, posArgs...)
+	return append(flagArgs, posArgs...)
+}
 
-	if err := fs.Parse(combined); err != nil {
+func runAdopt(args []string) error {
+	fs := flag.NewFlagSet("adopt", flag.ContinueOnError)
+	profile := fs.String("profile", "", "Primary repository profile (auto-detected if empty)")
+	facets := fs.String("facets", "", "Comma-separated list of facets")
+	dryRun := fs.Bool("dry-run", false, "Simulate adoption without writing files")
+	force := fs.Bool("force", false, "Overwrite existing standards configurations")
+	recordBaseline := fs.Bool("record-baseline", true, "Record legacy debt into .standards-baseline.json")
+	allMissing := fs.Bool("all-missing", false, "Adopt all detected unmanaged repositories in ~/dev")
+	path := fs.String("path", ".", "Target repository path to adopt")
+
+	if err := fs.Parse(reorderAdoptArgs(args)); err != nil {
 		return err
 	}
 
-	// Positional path override if provided
 	if fs.NArg() > 0 && *path == "." {
 		*path = fs.Arg(0)
 	}
@@ -57,7 +58,6 @@ func runAdopt(args []string) error {
 	defer cancel()
 
 	homeDir, _ := os.UserHomeDir()
-
 	if *allMissing {
 		return batchAdoptMissing(ctx, filepath.Join(homeDir, "dev"), *dryRun, *force, *recordBaseline)
 	}
@@ -65,8 +65,7 @@ func runAdopt(args []string) error {
 	var facetList []string
 	if *facets != "" {
 		for _, f := range strings.Split(*facets, ",") {
-			trimmed := strings.TrimSpace(f)
-			if trimmed != "" {
+			if trimmed := strings.TrimSpace(f); trimmed != "" {
 				facetList = append(facetList, trimmed)
 			}
 		}
@@ -157,7 +156,24 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 		fmt.Println("\n--- Legacy Technical Debt: 0 infractions detected ---")
 	}
 
-	// Planned / Executed Actions
+	printAdoptedFiles(rep)
+
+	// Governance Pillars Summary
+	fmt.Println("\n--- Governance Pillars Synchronized ---")
+	fmt.Println("  ✓ Universal Harness : Canonical AGENTS.md + Mermaid Verification Flowchart")
+	fmt.Println("  ✓ AI Context Sync   : 6 targets (Claude Code, Cursor, Copilot, Windsurf, Codex, Gemini)")
+	fmt.Println("  ✓ IDE Ecosystem     : VS Code, JetBrains (CLion/GoLand/PyCharm), Neovim")
+	fmt.Println("  ✓ DevContainer      : Containerized deterministic dev environment (.devcontainer)")
+	fmt.Println("  ✓ Verification Gate : Makefile 'verify-all' standard entrypoint")
+
+	if rep.DryRun {
+		fmt.Println("\nSimulated adoption plan completed. Run without -dry-run to apply.")
+	} else {
+		fmt.Println("\nRepository successfully adopted into cordanaLLM/praetor governance!")
+	}
+}
+
+func printAdoptedFiles(rep *adopt.AdoptReport) {
 	if len(rep.CreatedFiles) > 0 {
 		fmt.Printf("\nFiles Created (%d):\n", len(rep.CreatedFiles))
 		for _, f := range rep.CreatedFiles {
@@ -180,19 +196,5 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 				fmt.Printf("  ~ [SYNC] %s\n", f)
 			}
 		}
-	}
-
-	// Governance Pillars Summary
-	fmt.Println("\n--- Governance Pillars Synchronized ---")
-	fmt.Println("  ✓ Universal Harness : Canonical AGENTS.md + Mermaid Verification Flowchart")
-	fmt.Println("  ✓ AI Context Sync   : 6 targets (Claude Code, Cursor, Copilot, Windsurf, Codex, Gemini)")
-	fmt.Println("  ✓ IDE Ecosystem     : VS Code, JetBrains (CLion/GoLand/PyCharm), Neovim")
-	fmt.Println("  ✓ DevContainer      : Containerized deterministic dev environment (.devcontainer)")
-	fmt.Println("  ✓ Verification Gate : Makefile 'verify-all' standard entrypoint")
-
-	if rep.DryRun {
-		fmt.Println("\nSimulated adoption plan completed. Run without -dry-run to apply.")
-	} else {
-		fmt.Println("\nRepository successfully adopted into cordanaLLM/praetor governance!")
 	}
 }

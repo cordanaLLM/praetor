@@ -42,6 +42,16 @@ func ProcessItem(ctx context.Context, key string) (string, error) {
 	}
 
 	suite := res.Suites[0]
+	verifySuiteDimensions(t, suite)
+
+	// Verify generated code parses as 100% valid Go
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "worker_test.go", res.GeneratedCode, parser.AllErrors); err != nil {
+		t.Fatalf("generated code failed Go parser: %v\nCode:\n%s", err, res.GeneratedCode)
+	}
+}
+
+func verifySuiteDimensions(t *testing.T, suite FuncTestSuite) {
 	if !strings.Contains(suite.PositiveTest, "TestProcessItem_Positive") {
 		t.Errorf("missing positive test function")
 	}
@@ -52,7 +62,6 @@ func ProcessItem(ctx context.Context, key string) (string, error) {
 		t.Errorf("missing boundary test function")
 	}
 
-	// Verify each dimension has >= 2 checks
 	posChecks := strings.Count(suite.PositiveTest, "t.Fatalf") + strings.Count(suite.PositiveTest, "t.Errorf")
 	negChecks := strings.Count(suite.NegativeTest, "t.Fatalf") + strings.Count(suite.NegativeTest, "t.Errorf")
 	bndChecks := strings.Count(suite.BoundaryTest, "t.Fatalf") + strings.Count(suite.BoundaryTest, "t.Errorf")
@@ -65,12 +74,6 @@ func ProcessItem(ctx context.Context, key string) (string, error) {
 	}
 	if bndChecks < 2 {
 		t.Errorf("boundary test has %d checks, expected >= 2", bndChecks)
-	}
-
-	// Verify generated code parses as 100% valid Go
-	fset := token.NewFileSet()
-	if _, err := parser.ParseFile(fset, "worker_test.go", res.GeneratedCode, parser.AllErrors); err != nil {
-		t.Fatalf("generated code failed Go parser: %v\nCode:\n%s", err, res.GeneratedCode)
 	}
 }
 

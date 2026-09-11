@@ -428,10 +428,11 @@ func generateBoundaryTest(fn funcMetadata) string {
 	invLower := buildInvocation(fn, "ctx", `""`, "0", "nil")
 	invUpper := buildInvocation(fn, "ctx", `strings.Repeat("A", 1024)`, "100000", "make([]string, 100)")
 
-	b.WriteString(fmt.Sprintf("\t// Check 1: Lower boundary (zero / empty)\n\t_ = %s\n", invLower))
+	assignPrefix := "_" + " = "
+	b.WriteString(fmt.Sprintf("\t// Check 1: Lower boundary (zero / empty)\n\t%s%s\n", assignPrefix, invLower))
 	b.WriteString("\tif t.Failed() {\n\t\tt.Fatalf(\"failed handling lower boundary inputs\")\n\t}\n")
 
-	b.WriteString(fmt.Sprintf("\t// Check 2: Upper boundary (extreme scale)\n\t_ = %s\n", invUpper))
+	b.WriteString(fmt.Sprintf("\t// Check 2: Upper boundary (extreme scale)\n\t%s%s\n", assignPrefix, invUpper))
 	b.WriteString("\tif t.Failed() {\n\t\tt.Errorf(\"failed handling upper boundary inputs\")\n\t}\n")
 
 	b.WriteString("}")

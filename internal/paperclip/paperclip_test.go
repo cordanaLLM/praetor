@@ -175,3 +175,35 @@ func TestVerifyRun_Boundary_MissingHarness(t *testing.T) {
 		t.Fatal("expected error when .paperclip/harness.json is missing")
 	}
 }
+
+func TestReadDisposition_3D(t *testing.T) {
+	tmpDir := t.TempDir()
+	dispPath := filepath.Join(tmpDir, "disp.json")
+
+	// Boundary: Non-existent file
+	if _, err := ReadDisposition(filepath.Join(tmpDir, "nope.json")); err == nil {
+		t.Fatal("expected error reading non-existent file")
+	}
+
+	// Negative: Corrupt JSON
+	if err := os.WriteFile(dispPath, []byte("invalid json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadDisposition(dispPath); err == nil {
+		t.Fatal("expected error parsing corrupt json")
+	}
+
+	// Positive: Valid disposition
+	disp, _ := CreateDisposition("ISSUE-10", "blocked", "need key", "", "security", "bot", nil)
+	bytes, err := disp.FormatJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dispPath, bytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := ReadDisposition(dispPath)
+	if err != nil || loaded.IssueID != "ISSUE-10" {
+		t.Fatalf("failed to read valid disposition: %v", err)
+	}
+}

@@ -57,7 +57,7 @@ func ExtractMemoryInsights(ctx context.Context, transcriptsRoot string) ([]Memor
 		}
 
 		processTranscript(file, entry.Name(), &insights)
-		_ = file.Close()
+		file.Close()
 	}
 
 	return insights, nil

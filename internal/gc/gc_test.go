@@ -14,11 +14,7 @@ import (
 // Positive 3D Tests
 // =========================================================================
 
-func TestCollect_Positive_PruneStaleAndEphemeral(t *testing.T) {
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-
-	// Setup directories
+func setupStaleAndEphemeralFixtures(t *testing.T, tmpDir string) (string, string) {
 	wtDir := filepath.Join(tmpDir, ".standards", "worktrees")
 	ephDir := filepath.Join(tmpDir, ".standards", "ephemeral")
 	if err := os.MkdirAll(wtDir, 0o755); err != nil {
@@ -28,7 +24,6 @@ func TestCollect_Positive_PruneStaleAndEphemeral(t *testing.T) {
 		t.Fatalf("failed to create ephemeral dir: %v", err)
 	}
 
-	// 1. Stale worktree (48 hours old)
 	staleWT := filepath.Join(wtDir, "agent-branch-old")
 	if err := os.MkdirAll(staleWT, 0o755); err != nil {
 		t.Fatalf("failed to create stale worktree: %v", err)
@@ -42,11 +37,17 @@ func TestCollect_Positive_PruneStaleAndEphemeral(t *testing.T) {
 		t.Fatalf("failed to change worktree time: %v", err)
 	}
 
-	// 2. Ephemeral diagnostic SARIF
 	sarifFile := filepath.Join(ephDir, "diagnostics.sarif")
 	if err := os.WriteFile(sarifFile, []byte(`{"version":"2.1.0","runs":[]}`), 0o644); err != nil {
 		t.Fatalf("failed to write sarif file: %v", err)
 	}
+	return staleWT, sarifFile
+}
+
+func TestCollect_Positive_PruneStaleAndEphemeral(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	staleWT, sarifFile := setupStaleAndEphemeralFixtures(t, tmpDir)
 
 	opts := Options{
 		RootDir:        tmpDir,
@@ -57,25 +58,14 @@ func TestCollect_Positive_PruneStaleAndEphemeral(t *testing.T) {
 	}
 
 	report, err := Collect(ctx, opts)
-	if err != nil {
+	if err != nil || report == nil {
 		t.Fatalf("Collect failed: %v", err)
 	}
-	if report == nil {
-		t.Fatalf("expected non-nil report")
+
+	if report.ReclaimedBytes <= 0 || len(report.PrunedWorktrees) != 1 || len(report.PurgedEphemeralFiles) != 1 {
+		t.Errorf("unexpected report results: %+v", report)
 	}
 
-	// Check assertions
-	if report.ReclaimedBytes <= 0 {
-		t.Errorf("expected ReclaimedBytes > 0, got %d", report.ReclaimedBytes)
-	}
-	if len(report.PrunedWorktrees) != 1 {
-		t.Errorf("expected 1 pruned worktree, got %d", len(report.PrunedWorktrees))
-	}
-	if len(report.PurgedEphemeralFiles) != 1 {
-		t.Errorf("expected 1 purged ephemeral file, got %d", len(report.PurgedEphemeralFiles))
-	}
-
-	// Verify real disk removal
 	if _, statErr := os.Stat(staleWT); !os.IsNotExist(statErr) {
 		t.Errorf("expected stale worktree to be removed from disk, but still exists")
 	}

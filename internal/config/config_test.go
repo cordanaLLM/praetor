@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestJoinLattice_HighestStandardWins(t *testing.T) {
+func createLatticePolicies() (*ResolvedPolicy, *ResolvedPolicy) {
 	policyA := &ResolvedPolicy{
 		Complexity: ComplexityPolicy{
 			MaxCyclomatic: 15,
@@ -48,42 +48,31 @@ func TestJoinLattice_HighestStandardWins(t *testing.T) {
 		Linters:     []string{"semgrep", "gitleaks"},
 		DevFeatures: []string{"rust", "common-utils"},
 	}
+	return policyA, policyB
+}
 
+func TestJoinLattice_HighestStandardWins(t *testing.T) {
+	policyA, policyB := createLatticePolicies()
 	joined := Join(policyA, policyB)
 
 	// Invariants: Min complexity bounds win
-	if joined.Complexity.MaxCyclomatic != 10 {
-		t.Fatalf("expected max cyclomatic 10, got %d", joined.Complexity.MaxCyclomatic)
-	}
-	if joined.Complexity.MaxFuncLOC != 75 {
-		t.Fatalf("expected max func loc 75, got %d", joined.Complexity.MaxFuncLOC)
+	if joined.Complexity.MaxCyclomatic != 10 || joined.Complexity.MaxFuncLOC != 75 {
+		t.Fatalf("unexpected complexity bounds: %+v", joined.Complexity)
 	}
 
 	// Invariants: Strictest branch protection wins
-	if !joined.BranchProtection.EnforceLinearHistory {
-		t.Fatalf("expected linear history true")
-	}
-	if !joined.BranchProtection.RequireSignedCommits {
-		t.Fatalf("expected signed commits true")
-	}
-	if joined.BranchProtection.RequiredApprovingReviewers != 2 {
-		t.Fatalf("expected 2 approving reviewers, got %d", joined.BranchProtection.RequiredApprovingReviewers)
+	if !joined.BranchProtection.EnforceLinearHistory || !joined.BranchProtection.RequireSignedCommits || joined.BranchProtection.RequiredApprovingReviewers != 2 {
+		t.Fatalf("unexpected branch protection: %+v", joined.BranchProtection)
 	}
 
 	// Invariants: Supply chain max level wins
-	if joined.SupplyChain.SLSALevel != 3 {
-		t.Fatalf("expected SLSA level 3, got %d", joined.SupplyChain.SLSALevel)
-	}
-	if !joined.SupplyChain.EnforceCosign {
-		t.Fatalf("expected Cosign true")
+	if joined.SupplyChain.SLSALevel != 3 || !joined.SupplyChain.EnforceCosign {
+		t.Fatalf("unexpected supply chain: %+v", joined.SupplyChain)
 	}
 
 	// Invariants: Linters and DevFeatures are unions
-	if len(joined.Linters) != 3 {
-		t.Fatalf("expected 3 linters, got %d", len(joined.Linters))
-	}
-	if len(joined.DevFeatures) != 3 {
-		t.Fatalf("expected 3 dev features, got %d", len(joined.DevFeatures))
+	if len(joined.Linters) != 3 || len(joined.DevFeatures) != 3 {
+		t.Fatalf("unexpected linters or features count: linters=%d features=%d", len(joined.Linters), len(joined.DevFeatures))
 	}
 }
 

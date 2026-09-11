@@ -28,7 +28,12 @@ func TestEditor_Positive_SynthesizeAllEditors(t *testing.T) {
 		fileMap[f.Path] = f.Content
 	}
 
-	// 1. VS Code / Cursor / Windsurf checks
+	verifyVSCodeAndJetBrains(t, fileMap)
+	verifyNeovimAndZed(t, fileMap)
+	verifyRemainingEditors(t, fileMap)
+}
+
+func verifyVSCodeAndJetBrains(t *testing.T, fileMap map[string]string) {
 	vscodeSettings, ok := fileMap[filepath.Join(".vscode", "settings.json")]
 	if !ok {
 		t.Errorf("missing .vscode/settings.json")
@@ -50,7 +55,6 @@ func TestEditor_Positive_SynthesizeAllEditors(t *testing.T) {
 		t.Errorf(".vscode/tasks.json is not valid JSON: %v", err)
 	}
 
-	// 2. JetBrains checks
 	ideaInspection, ok := fileMap[filepath.Join(".idea", "inspectionProfiles", "standards.xml")]
 	if !ok {
 		t.Errorf("missing .idea/inspectionProfiles/standards.xml")
@@ -58,8 +62,9 @@ func TestEditor_Positive_SynthesizeAllEditors(t *testing.T) {
 	if !strings.Contains(ideaInspection, "HISS04ComplexityLOC") {
 		t.Errorf("idea inspection profile missing HISS04ComplexityLOC")
 	}
+}
 
-	// 3. Neovim checks
+func verifyNeovimAndZed(t *testing.T, fileMap map[string]string) {
 	nvimLua, ok := fileMap[filepath.Join("lua", "standards.lua")]
 	if !ok {
 		t.Errorf("missing lua/standards.lua")
@@ -71,43 +76,33 @@ func TestEditor_Positive_SynthesizeAllEditors(t *testing.T) {
 		t.Errorf("lua/standards.lua missing user commands")
 	}
 
-	// 4. Universal EditorConfig
-	if _, ok := fileMap[".editorconfig"]; !ok {
-		t.Errorf("missing .editorconfig")
-	}
-
-	// 5. Zed checks
 	if _, ok := fileMap[filepath.Join(".zed", "settings.json")]; !ok {
 		t.Errorf("missing .zed/settings.json")
 	}
 	if _, ok := fileMap[filepath.Join(".zed", "tasks.json")]; !ok {
 		t.Errorf("missing .zed/tasks.json")
 	}
+}
 
-	// 6. Helix checks
+func verifyRemainingEditors(t *testing.T, fileMap map[string]string) {
+	if _, ok := fileMap[".editorconfig"]; !ok {
+		t.Errorf("missing .editorconfig")
+	}
 	if _, ok := fileMap[filepath.Join(".helix", "config.toml")]; !ok {
 		t.Errorf("missing .helix/config.toml")
 	}
 	if _, ok := fileMap[filepath.Join(".helix", "languages.toml")]; !ok {
 		t.Errorf("missing .helix/languages.toml")
 	}
-
-	// 7. Emacs checks
 	if _, ok := fileMap[".dir-locals.el"]; !ok {
 		t.Errorf("missing .dir-locals.el")
 	}
-
-	// 8. Fleet checks
 	if _, ok := fileMap[filepath.Join(".fleet", "settings.json")]; !ok {
 		t.Errorf("missing .fleet/settings.json")
 	}
-
-	// 9. Sublime checks
 	if _, ok := fileMap["standards.sublime-project"]; !ok {
 		t.Errorf("missing standards.sublime-project")
 	}
-
-	// 10. Visual Studio checks
 	if _, ok := fileMap[".clang-tidy"]; !ok {
 		t.Errorf("missing .clang-tidy")
 	}

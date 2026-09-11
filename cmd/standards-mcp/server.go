@@ -20,6 +20,7 @@ import (
 	"github.com/cordanaLLM/standards/internal/compiler"
 	"github.com/cordanaLLM/standards/internal/config"
 	"github.com/cordanaLLM/standards/internal/mcp"
+	"github.com/cordanaLLM/standards/internal/needs"
 )
 
 const (
@@ -85,6 +86,7 @@ func (s *Server) registerStandardTools() error {
 		s.createCompileContextTool,
 		s.createExplainRuleTool,
 		s.createInspectSymbolsTool,
+		s.createNeedsReportTool,
 	}
 
 	limit := len(tools)
@@ -318,6 +320,57 @@ func (s *Server) createInspectSymbolsTool() (mcp.Tool, error) {
 	return mcp.NewReadOnlyTool("standards_inspect_symbols", "Inspect Go AST symbols and analyze HISS-04 complexity bounds", schema, handler)
 }
 
+// createNeedsReportTool builds the read-only standards_needs_report tool.
+func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
+	schema := mcp.ToolInputSchema{
+		Type: "object",
+		Properties: map[string]mcp.PropertySchema{
+			"path": {
+				Type:        "string",
+				Description: "Path to repository to scan (default: .)",
+			},
+			"framework": {
+				Type:        "string",
+				Description: "Path to target framework repository (default: /home/kilian/dev/golusoris/golusoris)",
+			},
+		},
+	}
+
+	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
+		targetPath := s.resolvePath(args, "path", s.rootDir)
+		fwPath, _ := args["framework"].(string)
+		if fwPath == "" {
+			fwPath = "/home/kilian/dev/golusoris/golusoris"
+		}
+
+		fwIndex, err := needs.InspectFramework(ctx, fwPath)
+		if err != nil {
+			return mcp.ErrorResult(fmt.Sprintf("Failed to inspect framework: %v", err)), nil
+		}
+
+		rep, err := needs.ScanRepo(ctx, targetPath)
+		if err != nil {
+			return mcp.ErrorResult(fmt.Sprintf("Failed to scan repository: %v", err)), nil
+		}
+
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("=== Golusoris Migration Report: %s ===\n", rep.Repository))
+		b.WriteString(fmt.Sprintf("Framework: %s (%s) | Readiness Score: %.1f%%\n\n", fwIndex.Name, fwIndex.Version, rep.Readiness.Score))
+		b.WriteString("Drop-In Replacement Matrix:\n")
+		for _, dep := range rep.Dependencies {
+			if dep.Status == needs.StatusCovered || dep.Status == needs.StatusAdapterAvailable {
+				b.WriteString(fmt.Sprintf("  ✓ %-35s -> %s\n", dep.Package, dep.GolusorisReplacement))
+			} else {
+				b.WriteString(fmt.Sprintf("  ✗ %-35s -> NO DIRECT EQUIVALENT (Gap)\n", dep.Package))
+			}
+		}
+
+		return mcp.TextResult(b.String()), nil
+	}
+
+	return mcp.NewReadOnlyTool("standards_needs_report", "Evaluate repository needs and Golusoris migration compatibility", schema, handler)
+}
+
 // resolvePath helper for parameter path resolution.
 func (s *Server) resolvePath(args map[string]any, key, defaultVal string) string {
 	val, ok := args[key].(string)
@@ -420,24 +473,22 @@ func (s *Server) inspectSingleFile(fset *token.FileSet, filePath string, b *stri
 	b.WriteString("\n")
 }
 
-// lookupRuleExplanation returns authoritative HISS rule descriptions.
-func lookupRuleExplanation(ruleID string) (string, bool) {
-	rules := map[string]string{
-		"HISS-01": `Rule: HISS-01 (Control Flow - Acyclic DAG Control Flow)
+var hissRuleExplanations = map[string]string{
+	"HISS-01": `Rule: HISS-01 (Control Flow - Acyclic DAG Control Flow)
 Formal Specification: Call graphs must form a Directed Acyclic Graph: G = (V, E), ∀v ∈ V, (v, v) ∉ E*
 Direct and mutual recursion are strictly prohibited in production runtimes.
 Enforcement: AST call-graph analyzer and static linter checks.
 Failure Action: Immediate build failure.`,
-		"HISS-02": `Rule: HISS-02 (Loops & I/O - Bounded Loops & Mandatory I/O Timeouts)
+	"HISS-02": `Rule: HISS-02 (Loops & I/O - Bounded Loops & Mandatory I/O Timeouts)
 Formal Specification: Every loop construct must possess a statically verifiable scalar upper bound: iterations(L) <= N_max.
 Unbounded loops without counter termination are banned. All I/O operations must accept and enforce explicit context.Context deadlines.
 Enforcement: Semgrep rules and AST sweep.
 Failure Action: Pre-commit and CI blocker.`,
-		"HISS-03": `Rule: HISS-03 (Zero Frame Malloc)
+	"HISS-03": `Rule: HISS-03 (Zero Frame Malloc)
 Formal Specification: Hot simulation and frame loops must maintain zero dynamic heap allocations: ΔHeapAlloc_tick = 0.
 Enforcement: Heap benchmark allocations gate.
 Failure Action: CI failure.`,
-		"HISS-04": `Rule: HISS-04 (Complexity Bounds & Modular Sizing)
+	"HISS-04": `Rule: HISS-04 (Complexity Bounds & Modular Sizing)
 Formal Specification:
   - McCabe Cyclomatic Complexity <= 10
   - Cognitive Complexity <= 15
@@ -445,41 +496,43 @@ Formal Specification:
   - Executable Statements <= 50
 Enforcement: gocyclo, gocognit, AST scanners.
 Failure Action: Build sweep blocker.`,
-		"HISS-07": `Rule: HISS-07 (Checked Errors & Zero Unwrap)
+	"HISS-07": `Rule: HISS-07 (Checked Errors & Zero Unwrap)
 Formal Specification: Zero .unwrap() and .expect() in non-test code. Total ban on unchecked Go error returns. All error flows must be handled or wrapped with context.
 Enforcement: golangci-lint, clippy.
 Failure Action: Compiler / linter error.`,
-		"HISS-08": `Rule: HISS-08 (Static Determinism & Banned Functions)
+	"HISS-08": `Rule: HISS-08 (Static Determinism & Banned Functions)
 Formal Specification: Total ban on eval(), exec(), and dynamic runtime code evaluation. Ban on insecure C runtime functions (gets, strcpy, sprintf).
 Enforcement: Semgrep rules.
 Failure Action: Admission rejection.`,
-		"HISS-09": `Rule: HISS-09 (Reference Safety & Mandatory Safety Proofs)
+	"HISS-09": `Rule: HISS-09 (Reference Safety & Mandatory Safety Proofs)
 Formal Specification: Any unsafe block must be preceded by an explanatory '// SAFETY:' comment proving invariants.
 Enforcement: AST check.
 Failure Action: Immediate AST check rejection.`,
-		"HISS-10": `Rule: HISS-10 (5-Layer Zero-Warnings Cascade)
+	"HISS-10": `Rule: HISS-10 (5-Layer Zero-Warnings Cascade)
 Formal Specification: Warnings are treated as fatal errors across IDE, Pre-Commit, Pre-Push, CI, and Pre-Apply layers.
 Enforcement: Compile and linter flags (-Werror, zero-warning tolerance).
 Failure Action: Exit code 1.`,
-		"HISS-11": `Rule: HISS-11 (Hermetic Supply Chain)
+	"HISS-11": `Rule: HISS-11 (Hermetic Supply Chain)
 Formal Specification: Pinned lockfiles mandatory. Zero floating tags. SLSA Level 3 provenance attestations and Sigstore Cosign signatures.
 Enforcement: CI attestation gate.
 Failure Action: Deployment rejection.`,
-		"HISS-14": `Rule: HISS-14 (Append-Only ABI & Migration Footers)
+	"HISS-14": `Rule: HISS-14 (Append-Only ABI & Migration Footers)
 Formal Specification: Public APIs are append-only. Breaking changes require conventional commit breaking indicator (!) and mandatory Migration: footer.
 Enforcement: Git log and API diff analyzer.
 Failure Action: PR blocker.`,
-		"HISS-15": `Rule: HISS-15 (3D Test Discipline)
+	"HISS-15": `Rule: HISS-15 (3D Test Discipline)
 Formal Specification: Mandatory Positive, Negative, and Boundary tests for all public interfaces. Touched-file clean rule enforced.
 Enforcement: Coverage gates and test matrix.
 Failure Action: Merge gate rejection.`,
-		"HISS-16": `Rule: HISS-16 (Canonical AGENTS.md & Server Gates)
+	"HISS-16": `Rule: HISS-16 (Canonical AGENTS.md & Server Gates)
 Formal Specification: Single source of agent instructions (AGENTS.md). Vendor targets compiled via standardsctl compile-context. Sandboxed verification.
 Enforcement: Pre-commit blocker, server-side admission.
 Failure Action: Merge blocker.`,
-	}
+}
 
-	val, ok := rules[ruleID]
+// lookupRuleExplanation returns authoritative HISS rule descriptions.
+func lookupRuleExplanation(ruleID string) (string, bool) {
+	val, ok := hissRuleExplanations[ruleID]
 	return val, ok
 }
 
@@ -610,16 +663,13 @@ func (s *Server) RunStdio(ctx context.Context) error {
 	buf := make([]byte, 64*1024)
 	scanner.Buffer(buf, maxScannerBuffer)
 
-	for {
+	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
 
-		if !scanner.Scan() {
-			break
-		}
 		line := scanner.Bytes()
 		if len(strings.TrimSpace(string(line))) == 0 {
 			continue
@@ -660,6 +710,13 @@ func (s *Server) writeStdioResponse(resp *JSONRPCResponse) {
 	fmt.Fprintf(os.Stdout, "%s\n", string(data))
 }
 
+// writeJSON encodes an HTTP JSON payload without unchecked error suppression.
+func writeJSON(w http.ResponseWriter, payload any) {
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to encode response: %v\n", err)
+	}
+}
+
 // RunHTTP serves JSON-RPC 2.0 requests over HTTP.
 func (s *Server) RunHTTP(ctx context.Context, addr string) error {
 	mux := http.NewServeMux()
@@ -682,7 +739,7 @@ func (s *Server) RunHTTP(ctx context.Context, addr string) error {
 		var req JSONRPCRequest
 		if err := json.Unmarshal(body, &req); err != nil {
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(JSONRPCResponse{
+			writeJSON(w, JSONRPCResponse{
 				JSONRPC: "2.0",
 				Error:   &JSONRPCError{Code: -32700, Message: "Parse error"},
 			})
@@ -692,7 +749,7 @@ func (s *Server) RunHTTP(ctx context.Context, addr string) error {
 		resp := s.HandleRequest(r.Context(), req)
 		w.Header().Set("Content-Type", "application/json")
 		if resp != nil {
-			_ = json.NewEncoder(w).Encode(resp)
+			writeJSON(w, resp)
 		}
 	})
 
@@ -708,15 +765,9 @@ func (s *Server) RunHTTP(ctx context.Context, addr string) error {
 	return s.runHTTPServer(ctx, server)
 }
 
-// RunSSE serves the MCP Server-Sent Events transport.
-func (s *Server) RunSSE(ctx context.Context, addr string) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","server":"standards-mcp","version":%q}`, s.version)
-	})
-
-	mux.HandleFunc("/sse", func(w http.ResponseWriter, r *http.Request) {
+// handleSSEEndpoint handles incoming SSE connections.
+func (s *Server) handleSSEEndpoint(ctx context.Context) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
@@ -737,35 +788,47 @@ func (s *Server) RunSSE(ctx context.Context, addr string) error {
 		case <-ctx.Done():
 			return
 		}
-	})
+	}
+}
 
-	mux.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxScannerBuffer))
-		if err != nil {
-			http.Error(w, "Payload Too Large", http.StatusRequestEntityTooLarge)
-			return
-		}
+// handleSSEMessages handles POST JSON-RPC messages for SSE sessions.
+func (s *Server) handleSSEMessages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxScannerBuffer))
+	if err != nil {
+		http.Error(w, "Payload Too Large", http.StatusRequestEntityTooLarge)
+		return
+	}
 
-		var req JSONRPCRequest
-		if err := json.Unmarshal(body, &req); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(JSONRPCResponse{
-				JSONRPC: "2.0",
-				Error:   &JSONRPCError{Code: -32700, Message: "Parse error"},
-			})
-			return
-		}
-
-		resp := s.HandleRequest(r.Context(), req)
+	var req JSONRPCRequest
+	if err := json.Unmarshal(body, &req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		if resp != nil {
-			_ = json.NewEncoder(w).Encode(resp)
-		}
+		writeJSON(w, JSONRPCResponse{
+			JSONRPC: "2.0",
+			Error:   &JSONRPCError{Code: -32700, Message: "Parse error"},
+		})
+		return
+	}
+
+	resp := s.HandleRequest(r.Context(), req)
+	w.Header().Set("Content-Type", "application/json")
+	if resp != nil {
+		writeJSON(w, resp)
+	}
+}
+
+// RunSSE serves the MCP Server-Sent Events transport.
+func (s *Server) RunSSE(ctx context.Context, addr string) error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"ok","server":"standards-mcp","version":%q}`, s.version)
 	})
+	mux.HandleFunc("/sse", s.handleSSEEndpoint(ctx))
+	mux.HandleFunc("/messages", s.handleSSEMessages)
 
 	server := &http.Server{
 		Addr:              addr,

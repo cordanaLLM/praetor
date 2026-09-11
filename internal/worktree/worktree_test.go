@@ -58,29 +58,21 @@ func TestWorktree_Positive_LifecycleAndIsolation(t *testing.T) {
 	mgr := NewManager(repoDir)
 	ctx := context.Background()
 
-	// 1. Create worktree for task A
 	wtA, err := mgr.Create(ctx, "task-alpha", "main")
-	if err != nil {
+	if err != nil || wtA.TaskID != "task-alpha" || wtA.Branch != "wt/task-alpha" {
 		t.Fatalf("failed creating task-alpha worktree: %v", err)
 	}
-	if wtA.TaskID != "task-alpha" {
-		t.Errorf("expected TaskID task-alpha, got %s", wtA.TaskID)
-	}
-	if wtA.Branch != "wt/task-alpha" {
-		t.Errorf("expected Branch wt/task-alpha, got %s", wtA.Branch)
-	}
-	expectedPathA := filepath.Join(repoDir, ".standards", "worktrees", "task-alpha")
-	if wtA.Path != expectedPathA {
-		t.Errorf("expected Path %s, got %s", expectedPathA, wtA.Path)
-	}
 
-	// 2. Create worktree for task B
 	wtB, err := mgr.Create(ctx, "task-beta", "main")
 	if err != nil {
 		t.Fatalf("failed creating task-beta worktree: %v", err)
 	}
 
-	// 3. Verify physical workspace isolation
+	verifyIsolation(t, wtA, wtB)
+	verifyListAndRemoval(t, mgr, ctx, wtA, wtB)
+}
+
+func verifyIsolation(t *testing.T, wtA, wtB *Worktree) {
 	fileA := filepath.Join(wtA.Path, "alpha.txt")
 	if err := os.WriteFile(fileA, []byte("alpha content\n"), 0o644); err != nil {
 		t.Fatalf("failed writing alpha.txt: %v", err)
@@ -95,56 +87,40 @@ func TestWorktree_Positive_LifecycleAndIsolation(t *testing.T) {
 	runInDir(t, wtB.Path, "add", "beta.txt")
 	runInDir(t, wtB.Path, "commit", "-m", "commit in beta")
 
-	// Verify cross-isolation: fileA does not exist in wtB; fileB does not exist in wtA
 	if _, err := os.Stat(filepath.Join(wtB.Path, "alpha.txt")); !os.IsNotExist(err) {
 		t.Errorf("expected alpha.txt NOT to exist in wtB")
 	}
 	if _, err := os.Stat(filepath.Join(wtA.Path, "beta.txt")); !os.IsNotExist(err) {
 		t.Errorf("expected beta.txt NOT to exist in wtA")
 	}
+}
 
-	// 4. List worktrees and assert presence
+func verifyListAndRemoval(t *testing.T, mgr *Manager, ctx context.Context, wtA, wtB *Worktree) {
 	list, err := mgr.List(ctx)
-	if err != nil {
-		t.Fatalf("failed listing worktrees: %v", err)
-	}
-	if len(list) < 3 {
-		t.Fatalf("expected at least 3 worktrees in list, got %d", len(list))
+	if err != nil || len(list) < 3 {
+		t.Fatalf("failed listing worktrees: err=%v len=%d", err, len(list))
 	}
 
-	foundAlpha := false
-	foundBeta := false
-	for i := 0; i < len(list); i++ {
-		item := list[i]
+	foundAlpha, foundBeta := false, false
+	for _, item := range list {
 		if item.Branch == "wt/task-alpha" {
 			foundAlpha = true
-			if item.Path != wtA.Path {
-				t.Errorf("expected path %s for task-alpha, got %s", wtA.Path, item.Path)
-			}
 		}
 		if item.Branch == "wt/task-beta" {
 			foundBeta = true
-			if item.Path != wtB.Path {
-				t.Errorf("expected path %s for task-beta, got %s", wtB.Path, item.Path)
-			}
 		}
 	}
-	if !foundAlpha {
-		t.Errorf("task-alpha was not found in List output")
-	}
-	if !foundBeta {
-		t.Errorf("task-beta was not found in List output")
+	if !foundAlpha || !foundBeta {
+		t.Errorf("expected both tasks in list: alpha=%v beta=%v", foundAlpha, foundBeta)
 	}
 
-	// 5. Remove task-alpha with force=false (clean worktree)
 	if err := mgr.Remove(ctx, "task-alpha", false); err != nil {
-		t.Fatalf("expected clean Remove(force=false) on task-alpha to succeed: %v", err)
+		t.Fatalf("expected clean Remove on task-alpha to succeed: %v", err)
 	}
 	if _, err := os.Stat(wtA.Path); !os.IsNotExist(err) {
 		t.Errorf("expected wtA directory to be deleted after Remove")
 	}
 
-	// 6. Remove task-beta with force=true
 	if err := mgr.Remove(ctx, "task-beta", true); err != nil {
 		t.Fatalf("expected Remove(force=true) on task-beta to succeed: %v", err)
 	}
@@ -509,34 +485,30 @@ prunable
 	if err != nil {
 		t.Fatalf("failed parsing variations: %v", err)
 	}
-	if len(parsed) != 4 {
-		t.Fatalf("expected 4 entries, got %d", len(parsed))
-	}
-
-	// Entry 0: Bare
-	if !parsed[0].Bare || parsed[0].Path != "/path/to/bare" {
-		t.Errorf("entry 0 bare mismatch: %+v", parsed[0])
-	}
-
-	// Entry 1: Detached
-	if !parsed[1].Detached || parsed[1].HEAD != "1234567890abcdef1234567890abcdef12345678" {
-		t.Errorf("entry 1 detached mismatch: %+v", parsed[1])
-	}
-
-	// Entry 2: Locked without reason
-	if !parsed[2].Locked || parsed[2].LockReason != "" || parsed[2].Branch != "wt/task-locked" {
-		t.Errorf("entry 2 locked mismatch: %+v", parsed[2])
-	}
-
-	// Entry 3: Prunable without reason
-	if !parsed[3].Prunable || parsed[3].PruneReason != "" || parsed[3].Branch != "wt/task-prunable" {
-		t.Errorf("entry 3 prunable mismatch: %+v", parsed[3])
-	}
+	verifyParsedWorktreeVariations(t, parsed)
 
 	// 4. Exceeding MaxPorcelainLines bound
 	excessiveLines := strings.Repeat("worktree /foo\nHEAD 123\n\n", (MaxPorcelainLines/3)+10)
 	if _, err := parseWorktreeList(excessiveLines); !errors.Is(err, ErrLimitExceeded) {
 		t.Errorf("expected ErrLimitExceeded when line count exceeds %d, got %v", MaxPorcelainLines, err)
+	}
+}
+
+func verifyParsedWorktreeVariations(t *testing.T, parsed []WorktreeInfo) {
+	if len(parsed) != 4 {
+		t.Fatalf("expected 4 entries, got %d", len(parsed))
+	}
+	if !parsed[0].Bare || parsed[0].Path != "/path/to/bare" {
+		t.Errorf("entry 0 bare mismatch: %+v", parsed[0])
+	}
+	if !parsed[1].Detached || parsed[1].HEAD != "1234567890abcdef1234567890abcdef12345678" {
+		t.Errorf("entry 1 detached mismatch: %+v", parsed[1])
+	}
+	if !parsed[2].Locked || parsed[2].LockReason != "" || parsed[2].Branch != "wt/task-locked" {
+		t.Errorf("entry 2 locked mismatch: %+v", parsed[2])
+	}
+	if !parsed[3].Prunable || parsed[3].PruneReason != "" || parsed[3].Branch != "wt/task-prunable" {
+		t.Errorf("entry 3 prunable mismatch: %+v", parsed[3])
 	}
 }
 

@@ -79,25 +79,8 @@ func detectRepoArchetype(repoPath string) string {
 }
 
 func executeOnboarding(repoPath, repoName, arch string, facets []string) error {
-	manifestPath := filepath.Join(repoPath, ".standards.yaml")
-	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
-		manifest := config.Manifest{
-			Version: 1,
-			Repository: config.RepositoryMetadata{
-				Owner:      "cordanaLLM",
-				Name:       repoName,
-				Visibility: "public",
-			},
-			Profiles: []string{arch},
-			Facets:   facets,
-		}
-		data, err := yaml.Marshal(&manifest)
-		if err != nil {
-			return fmt.Errorf("marshal manifest: %w", err)
-		}
-		if err := os.WriteFile(manifestPath, data, 0644); err != nil {
-			return fmt.Errorf("write %s: %w", manifestPath, err)
-		}
+	if err := ensureOnboardingManifest(repoPath, repoName, arch, facets); err != nil {
+		return err
 	}
 
 	baselinePath := filepath.Join(repoPath, ".standards-baseline.json")
@@ -118,19 +101,49 @@ func executeOnboarding(repoPath, repoName, arch string, facets []string) error {
 	agentsPath := filepath.Join(repoPath, "AGENTS.md")
 	if _, err := os.Stat(agentsPath); os.IsNotExist(err) {
 		initialAgentsMD := fmt.Sprintf("# %s Agent Operating Harness\n\nRun verification before concluding any turn:\n```bash\nmake verify-all\n```\n", repoName)
-		_ = os.WriteFile(agentsPath, []byte(initialAgentsMD), 0644)
+		if err := os.WriteFile(agentsPath, []byte(initialAgentsMD), 0644); err != nil {
+			return fmt.Errorf("write AGENTS.md: %w", err)
+		}
 	}
 
 	tr := compiler.NewTranspiler()
 	if res, err := tr.Compile(agentsPath); err == nil {
-		_ = tr.WriteOutputs(res, repoPath)
+		if err := tr.WriteOutputs(res, repoPath); err != nil {
+			return fmt.Errorf("write transpiled outputs: %w", err)
+		}
 	}
 
 	opts := editor.DefaultOptions()
 	opts.WorkspaceRoot = repoPath
 	if set, err := editor.Synthesize(opts); err == nil {
-		_ = editor.Write(set, repoPath)
+		if err := editor.Write(set, repoPath); err != nil {
+			return fmt.Errorf("write editor configs: %w", err)
+		}
 	}
 
+	return nil
+}
+
+func ensureOnboardingManifest(repoPath, repoName, arch string, facets []string) error {
+	manifestPath := filepath.Join(repoPath, ".standards.yaml")
+	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
+		manifest := config.Manifest{
+			Version: 1,
+			Repository: config.RepositoryMetadata{
+				Owner:      "cordanaLLM",
+				Name:       repoName,
+				Visibility: "public",
+			},
+			Profiles: []string{arch},
+			Facets:   facets,
+		}
+		data, err := yaml.Marshal(&manifest)
+		if err != nil {
+			return fmt.Errorf("marshal manifest: %w", err)
+		}
+		if err := os.WriteFile(manifestPath, data, 0644); err != nil {
+			return fmt.Errorf("write %s: %w", manifestPath, err)
+		}
+	}
 	return nil
 }

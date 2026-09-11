@@ -99,7 +99,6 @@ func Synthesize(opts Options) (*EditorConfigSet, error) {
 		arch = "framework"
 	}
 
-	var files []GeneratedFile
 	editorMap := make(map[string]bool)
 	limit := len(editors)
 	if limit > maxLoopBound {
@@ -111,50 +110,47 @@ func Synthesize(opts Options) (*EditorConfigSet, error) {
 		editorMap[e] = true
 	}
 
-	if editorMap[EditorUniversal] {
-		files = append(files, generateUniversalEditorConfig()...)
-	}
-
-	if editorMap[EditorVSCode] || editorMap[EditorCursor] || editorMap[EditorWindsurf] {
-		files = append(files, generateVSCodeFamily(binDir, opts.IncludeMCP, opts.IncludeLSP, arch)...)
-	}
-
-	if editorMap[EditorJetBrains] {
-		files = append(files, generateJetBrains(arch)...)
-	}
-
-	if editorMap[EditorNeovim] {
-		files = append(files, generateNeovim(binDir, arch)...)
-	}
-
-	if editorMap[EditorZed] {
-		files = append(files, generateZed(arch)...)
-	}
-
-	if editorMap[EditorHelix] {
-		files = append(files, generateHelix(arch)...)
-	}
-
-	if editorMap[EditorEmacs] {
-		files = append(files, generateEmacs(arch)...)
-	}
-
-	if editorMap[EditorFleet] {
-		files = append(files, generateFleet(arch)...)
-	}
-
-	if editorMap[EditorSublime] {
-		files = append(files, generateSublime(arch)...)
-	}
-
-	if editorMap[EditorVisualStudio] {
-		files = append(files, generateVisualStudio(arch)...)
-	}
+	files := dispatchEditorFiles(editorMap, opts, binDir, arch)
 
 	return &EditorConfigSet{
 		Editors: editors,
 		Files:   files,
 	}, nil
+}
+
+func dispatchEditorFiles(editorMap map[string]bool, opts Options, binDir, arch string) []GeneratedFile {
+	var files []GeneratedFile
+	if editorMap[EditorUniversal] {
+		files = append(files, generateUniversalEditorConfig()...)
+	}
+	if editorMap[EditorVSCode] || editorMap[EditorCursor] || editorMap[EditorWindsurf] {
+		files = append(files, generateVSCodeFamily(binDir, opts.IncludeMCP, opts.IncludeLSP, arch)...)
+	}
+	if editorMap[EditorJetBrains] {
+		files = append(files, generateJetBrains(arch)...)
+	}
+	if editorMap[EditorNeovim] {
+		files = append(files, generateNeovim(binDir, arch)...)
+	}
+	if editorMap[EditorZed] {
+		files = append(files, generateZed(arch)...)
+	}
+	if editorMap[EditorHelix] {
+		files = append(files, generateHelix(arch)...)
+	}
+	if editorMap[EditorEmacs] {
+		files = append(files, generateEmacs(arch)...)
+	}
+	if editorMap[EditorFleet] {
+		files = append(files, generateFleet(arch)...)
+	}
+	if editorMap[EditorSublime] {
+		files = append(files, generateSublime(arch)...)
+	}
+	if editorMap[EditorVisualStudio] {
+		files = append(files, generateVisualStudio(arch)...)
+	}
+	return files
 }
 
 func normalizeEditors(input []string) []string {
@@ -342,10 +338,9 @@ func buildVSCodeTasks() string {
 	return string(bytes) + "\n"
 }
 
-func generateJetBrains(arch string) []GeneratedFile {
-	var extraTools string
+func jetBrainsExtraTools(arch string) string {
 	if arch == "native-gpu-systems" {
-		extraTools = `
+		return `
     <inspection_tool class="ClangTidyInspection" enabled="true" level="ERROR" enabled_by_default="true" />
     <inspection_tool class="OCUnusedGlobalDeclarationInspection" enabled="true" level="WARNING" enabled_by_default="true" />
     <inspection_tool class="OCUnusedMacroInspection" enabled="true" level="WARNING" enabled_by_default="true" />
@@ -353,12 +348,18 @@ func generateJetBrains(arch string) []GeneratedFile {
     <inspection_tool class="PyUnresolvedReferencesInspection" enabled="true" level="ERROR" enabled_by_default="true" />
     <inspection_tool class="PyPep8Inspection" enabled="true" level="WARNING" enabled_by_default="true" />
     <inspection_tool class="PyBroadExceptionInspection" enabled="true" level="ERROR" enabled_by_default="true" />`
-	} else if arch == "app-service" {
-		extraTools = `
+	}
+	if arch == "app-service" {
+		return `
     <inspection_tool class="PyUnresolvedReferencesInspection" enabled="true" level="ERROR" enabled_by_default="true" />
     <inspection_tool class="PyPep8Inspection" enabled="true" level="WARNING" enabled_by_default="true" />
     <inspection_tool class="PyBroadExceptionInspection" enabled="true" level="ERROR" enabled_by_default="true" />`
 	}
+	return ""
+}
+
+func generateJetBrains(arch string) []GeneratedFile {
+	extraTools := jetBrainsExtraTools(arch)
 	inspectionProfile := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <component name="InspectionProjectProfileManager">
   <profile version="1.0">
@@ -413,12 +414,12 @@ func generateJetBrains(arch string) []GeneratedFile {
 	}
 }
 
-func generateNeovim(binDir, arch string) []GeneratedFile {
+func neovimLuaConfig(binDir, arch string) string {
 	ft := `"go"`
 	if arch == "native-gpu-systems" {
 		ft = `"c", "cpp", "cuda", "go", "python"`
 	}
-	luaConfig := fmt.Sprintf(`-- cordanaLLM/standards Neovim LSP and Tool Configuration
+	return fmt.Sprintf(`-- cordanaLLM/standards Neovim LSP and Tool Configuration
 local lspconfig = require("lspconfig")
 local configs = require("lspconfig.configs")
 
@@ -455,9 +456,12 @@ vim.api.nvim_create_user_command("StandardsVerifyAll", function()
   vim.cmd("!make verify-all")
 end, { desc = "Run full standards verification pipeline" })
 `, binDir, ft)
+}
 
+func generateNeovim(binDir, arch string) []GeneratedFile {
+	luaConfig := neovimLuaConfig(binDir, arch)
 	nvimRootLua := `-- Load project-level standards configuration
-local status_ok, _ = pcall(require, "standards")
+local status_ok, res = pcall(require, "standards")
 if not status_ok then
   -- Fallback inline load if lua path is local
   local config_path = vim.fn.getcwd() .. "/lua/standards.lua"
@@ -531,8 +535,8 @@ indent_style = tab
 	}
 }
 
-func generateZed(arch string) []GeneratedFile {
-	settings := `{
+func zedSettings() string {
+	return `{
   "format_on_save": "on",
   "buffer_font_size": 14,
   "tab_size": 4,
@@ -564,7 +568,10 @@ func generateZed(arch string) []GeneratedFile {
   }
 }
 `
-	tasks := `[
+}
+
+func zedTasks() string {
+	return `[
   {
     "label": "Standards: Verify All",
     "command": "make",
@@ -586,15 +593,18 @@ func generateZed(arch string) []GeneratedFile {
   }
 ]
 `
+}
+
+func generateZed(arch string) []GeneratedFile {
 	return []GeneratedFile{
 		{
 			Path:    filepath.Join(".zed", "settings.json"),
-			Content: settings,
+			Content: zedSettings(),
 			Editor:  EditorZed,
 		},
 		{
 			Path:    filepath.Join(".zed", "tasks.json"),
-			Content: tasks,
+			Content: zedTasks(),
 			Editor:  EditorZed,
 		},
 	}

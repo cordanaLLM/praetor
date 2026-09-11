@@ -13,19 +13,9 @@ import (
 // Distillation 3D Tests
 // =========================================================================
 
-func TestDistill_Positive_BasicDistillation(t *testing.T) {
-	// Prepare dummy source file for context extraction
-	tmpDir := t.TempDir()
+func setupBasicDistillFixtures(t *testing.T, tmpDir string) []byte {
 	sourceFile := filepath.Join(tmpDir, "example.go")
-	fileContent := `package main
-
-func calculate(a, b int) int {
-	// Line 4
-	x := a + b
-	// Line 6
-	return x
-}
-`
+	fileContent := "package main\n\nfunc calculate(a, b int) int {\n\t// Line 4\n\tx := a + b\n\t// Line 6\n\treturn x\n}\n"
 	if err := os.WriteFile(sourceFile, []byte(fileContent), 0644); err != nil {
 		t.Fatalf("failed to write test source: %v", err)
 	}
@@ -65,6 +55,12 @@ func calculate(a, b int) int {
 	if err != nil {
 		t.Fatalf("failed to marshal test sarif: %v", err)
 	}
+	return sarifBytes
+}
+
+func TestDistill_Positive_BasicDistillation(t *testing.T) {
+	tmpDir := t.TempDir()
+	sarifBytes := setupBasicDistillFixtures(t, tmpDir)
 
 	ctx := context.Background()
 	res, err := DistillSARIF(ctx, sarifBytes, tmpDir, tmpDir)
@@ -76,23 +72,16 @@ func calculate(a, b int) int {
 		t.Errorf("expected 1 result and 1 error, got %d and %d", res.TotalResults, res.TotalErrors)
 	}
 
-	if res.LineCount > MaxDistillLines {
-		t.Errorf("distilled output exceeded line limit: %d > %d", res.LineCount, MaxDistillLines)
-	}
-
-	if res.TokenEstimate > MaxDistillTokens {
-		t.Errorf("distilled output exceeded token limit: %d > %d", res.TokenEstimate, MaxDistillTokens)
+	if res.LineCount > MaxDistillLines || res.TokenEstimate > MaxDistillTokens {
+		t.Errorf("distilled output exceeded limits: lines=%d tokens=%d", res.LineCount, res.TokenEstimate)
 	}
 
 	if _, err := os.Stat(res.FullReportPath); os.IsNotExist(err) {
 		t.Errorf("ephemeral SARIF log does not exist at %s", res.FullReportPath)
 	}
 
-	if !strings.Contains(res.Summary, "HISS-04-complexity") {
-		t.Errorf("summary missing rule ID")
-	}
-	if !strings.Contains(res.Summary, ">    5 | \tx := a + b") && !strings.Contains(res.Summary, "x := a + b") {
-		t.Errorf("summary missing source context snippet: %s", res.Summary)
+	if !strings.Contains(res.Summary, "HISS-04-complexity") || (!strings.Contains(res.Summary, ">    5 | \tx := a + b") && !strings.Contains(res.Summary, "x := a + b")) {
+		t.Errorf("summary missing expected contents: %s", res.Summary)
 	}
 }
 

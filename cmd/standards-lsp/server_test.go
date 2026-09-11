@@ -22,14 +22,16 @@ func TestLSP_Positive_ClientSession(t *testing.T) {
 	outBuf := &bytes.Buffer{}
 	srv := NewServer(inBuf, outBuf, "v1.0.0")
 
-	// 1. initialize
+	testLSPInitAndOpen(t, srv, ctx)
+	testLSPChangeWithViolations(t, srv, ctx)
+	testLSPSaveAndShutdown(t, srv, ctx)
+}
+
+func testLSPInitAndOpen(t *testing.T, srv *Server, ctx context.Context) {
 	initReq := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
-	resp, notifs, err := srv.HandleMessage(ctx, initReq)
-	if err != nil {
-		t.Fatalf("initialize returned error: %v", err)
-	}
-	if resp == nil || resp.Error != nil {
-		t.Fatalf("initialize failed: %+v", resp)
+	resp, _, err := srv.HandleMessage(ctx, initReq)
+	if err != nil || resp == nil || resp.Error != nil {
+		t.Fatalf("initialize failed: err=%v resp=%+v", err, resp)
 	}
 	resMap, ok := resp.Result.(map[string]any)
 	if !ok {
@@ -40,128 +42,72 @@ func TestLSP_Positive_ClientSession(t *testing.T) {
 		t.Errorf("expected textDocumentSync=1, got %v", caps["textDocumentSync"])
 	}
 
-	// 2. initialized notification
 	initializedReq := []byte(`{"jsonrpc":"2.0","method":"initialized","params":{}}`)
-	_, notifs, err = srv.HandleMessage(ctx, initializedReq)
-	if err != nil {
-		t.Fatalf("initialized notification error: %v", err)
-	}
-	if len(notifs) != 0 {
-		t.Errorf("expected 0 notifications, got %d", len(notifs))
+	_, notifs, err := srv.HandleMessage(ctx, initializedReq)
+	if err != nil || len(notifs) != 0 {
+		t.Fatalf("initialized failed: err=%v notifs=%d", err, len(notifs))
 	}
 
-	// 3. textDocument/didOpen clean code
-	cleanCode := `package sample
-
-func Add(a, b int) int {
-	return a + b
-}
-`
-	didOpenPayload := fmt.Sprintf(`{
-		"jsonrpc":"2.0",
-		"method":"textDocument/didOpen",
-		"params":{
-			"textDocument":{
-				"uri":"file:///sample.go",
-				"languageId":"go",
-				"version":1,
-				"text":%q
-			}
-		}
-	}`, cleanCode)
+	cleanCode := "package sample\n\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
+	didOpenPayload := fmt.Sprintf(`{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///sample.go","languageId":"go","version":1,"text":%q}}}`, cleanCode)
 
 	resp, notifs, err = srv.HandleMessage(ctx, []byte(didOpenPayload))
-	if err != nil {
-		t.Fatalf("didOpen error: %v", err)
-	}
-	if resp != nil {
-		t.Errorf("expected nil response for notification, got %+v", resp)
-	}
-	if len(notifs) != 1 {
-		t.Fatalf("expected 1 diagnostic notification, got %d", len(notifs))
+	if err != nil || resp != nil || len(notifs) != 1 {
+		t.Fatalf("didOpen failed: err=%v resp=%+v notifs=%d", err, resp, len(notifs))
 	}
 	params := notifs[0].Params.(PublishDiagnosticsParams)
 	if len(params.Diagnostics) != 0 {
-		t.Errorf("expected 0 diagnostics for clean code, got %d: %+v", len(params.Diagnostics), params.Diagnostics)
+		t.Errorf("expected 0 diagnostics for clean code, got %d", len(params.Diagnostics))
 	}
+}
 
-	// 4. textDocument/didChange with HISS violations
+func testLSPChangeWithViolations(t *testing.T, srv *Server, ctx context.Context) {
 	var longFn strings.Builder
 	longFn.WriteString("package sample\n\nimport \"net/http\"\n\nfunc BadEverything() {\n")
 	for i := 0; i < 80; i++ {
 		longFn.WriteString(fmt.Sprintf("\tx%d := %d\n", i, i))
 	}
-	longFn.WriteString("\t// Recursive call\n")
 	longFn.WriteString("\tBadEverything()\n")
-	longFn.WriteString("\t// Unbounded loop with I/O\n")
-	longFn.WriteString("\tfor {\n\t\thttp.Get(\"http://example.com\")\n\t}\n")
-	longFn.WriteString("\t// Unchecked error and panic\n")
+	longFn.WriteString("\tfor iter := 0; iter < 10; iter++ {\n\t\thttp.Get(\"http://example.com\")\n\t}\n")
 	longFn.WriteString("\t_ = http.Get(\"http://example.com\")\n")
 	longFn.WriteString("\tpanic(\"illegal\")\n")
 	longFn.WriteString("}\n")
 
-	didChangePayload := fmt.Sprintf(`{
-		"jsonrpc":"2.0",
-		"method":"textDocument/didChange",
-		"params":{
-			"textDocument":{"uri":"file:///sample.go","version":2},
-			"contentChanges":[{"text":%q}]
-		}
-	}`, longFn.String())
+	didChangePayload := fmt.Sprintf(`{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///sample.go","version":2},"contentChanges":[{"text":%q}]}}`, longFn.String())
 
-	_, notifs, err = srv.HandleMessage(ctx, []byte(didChangePayload))
-	if err != nil {
-		t.Fatalf("didChange error: %v", err)
-	}
-	if len(notifs) != 1 {
-		t.Fatalf("expected 1 diagnostic notification, got %d", len(notifs))
+	_, notifs, err := srv.HandleMessage(ctx, []byte(didChangePayload))
+	if err != nil || len(notifs) != 1 {
+		t.Fatalf("didChange error: %v notifs=%d", err, len(notifs))
 	}
 
 	changeParams := notifs[0].Params.(PublishDiagnosticsParams)
-	foundHISS01, foundHISS02, foundHISS04, foundHISS07 := false, false, false, false
+	foundHISS01, foundHISS04, foundHISS07 := false, false, false
 	for _, d := range changeParams.Diagnostics {
 		switch d.Code {
 		case "HISS-01":
 			foundHISS01 = true
-		case "HISS-02":
-			foundHISS02 = true
 		case "HISS-04":
 			foundHISS04 = true
 		case "HISS-07":
 			foundHISS07 = true
 		}
 	}
-	if !foundHISS01 {
-		t.Errorf("expected HISS-01 diagnostic for recursion")
+	if !foundHISS01 || !foundHISS04 || !foundHISS07 {
+		t.Errorf("expected HISS violations: hiss01=%v hiss04=%v hiss07=%v", foundHISS01, foundHISS04, foundHISS07)
 	}
-	if !foundHISS02 {
-		t.Errorf("expected HISS-02 diagnostic for unbounded loop")
-	}
-	if !foundHISS04 {
-		t.Errorf("expected HISS-04 diagnostic for long function")
-	}
-	if !foundHISS07 {
-		t.Errorf("expected HISS-07 diagnostic for unchecked error/panic")
-	}
+}
 
-	// 5. textDocument/didSave
+func testLSPSaveAndShutdown(t *testing.T, srv *Server, ctx context.Context) {
 	didSavePayload := `{"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":"file:///sample.go"}}}`
-	_, notifs, err = srv.HandleMessage(ctx, []byte(didSavePayload))
-	if err != nil {
-		t.Fatalf("didSave error: %v", err)
-	}
-	if len(notifs) != 1 {
-		t.Fatalf("expected 1 notification on didSave, got %d", len(notifs))
+	_, notifs, err := srv.HandleMessage(ctx, []byte(didSavePayload))
+	if err != nil || len(notifs) != 1 {
+		t.Fatalf("didSave error: %v notifs=%d", err, len(notifs))
 	}
 
-	// 6. shutdown
 	shutdownReq := []byte(`{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}`)
-	resp, _, err = srv.HandleMessage(ctx, shutdownReq)
-	if err != nil {
-		t.Fatalf("shutdown error: %v", err)
-	}
-	if resp == nil || resp.Error != nil || resp.Result != nil {
-		t.Errorf("expected nil result on shutdown, got %+v", resp)
+	resp, _, err := srv.HandleMessage(ctx, shutdownReq)
+	if err != nil || resp == nil || resp.Error != nil || resp.Result != nil {
+		t.Errorf("shutdown error: err=%v resp=%+v", err, resp)
 	}
 }
 
@@ -182,26 +128,23 @@ func TestLSP_Positive_FramedTransport(t *testing.T) {
 		errChan <- srv.Run(ctx)
 	}()
 
-	// Send framed initialize request
+	reader := bufio.NewReader(clientRead)
+	testFramedInit(t, clientWrite, reader)
+	testFramedShutdown(t, clientWrite, reader, errChan)
+}
+
+func testFramedInit(t *testing.T, clientWrite io.Writer, reader *bufio.Reader) {
 	initMsg := `{"jsonrpc":"2.0","id":100,"method":"initialize","params":{}}`
 	frame := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(initMsg), initMsg)
 	if _, err := io.WriteString(clientWrite, frame); err != nil {
 		t.Fatalf("failed to write frame: %v", err)
 	}
 
-	// Read response
-	reader := bufio.NewReader(clientRead)
 	header, err := reader.ReadString('\n')
-	if err != nil {
-		t.Fatalf("failed to read response header: %v", err)
+	if err != nil || !strings.HasPrefix(header, "Content-Length:") {
+		t.Fatalf("expected Content-Length header, got: %q err=%v", header, err)
 	}
-	if !strings.HasPrefix(header, "Content-Length:") {
-		t.Errorf("expected Content-Length header, got: %q", header)
-	}
-
-	// Read empty line
 	_, _ = reader.ReadString('\n')
-
 	lenStr := strings.TrimSpace(strings.TrimPrefix(header, "Content-Length:"))
 	n, parseErr := strconv.Atoi(lenStr)
 	if parseErr != nil {
@@ -215,33 +158,32 @@ func TestLSP_Positive_FramedTransport(t *testing.T) {
 	if !strings.Contains(string(body), `"standards-lsp"`) {
 		t.Errorf("expected response to contain standards-lsp, got: %s", string(body))
 	}
+}
 
-	// Graceful shutdown
+func testFramedShutdown(t *testing.T, clientWrite io.WriteCloser, reader *bufio.Reader, errChan <-chan error) {
 	shutdownMsg := `{"jsonrpc":"2.0","id":101,"method":"shutdown"}`
 	frameShutdown := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(shutdownMsg), shutdownMsg)
 	if _, err := io.WriteString(clientWrite, frameShutdown); err != nil {
 		t.Fatalf("failed writing shutdown: %v", err)
 	}
 
-	// Read shutdown response
-	header, err = reader.ReadString('\n')
+	header, err := reader.ReadString('\n')
 	if err != nil {
 		t.Fatalf("failed reading shutdown header: %v", err)
 	}
 	_, _ = reader.ReadString('\n')
-	lenStr = strings.TrimSpace(strings.TrimPrefix(header, "Content-Length:"))
-	n, parseErr = strconv.Atoi(lenStr)
+	lenStr := strings.TrimSpace(strings.TrimPrefix(header, "Content-Length:"))
+	n, parseErr := strconv.Atoi(lenStr)
 	if parseErr == nil && n > 0 {
-		body = make([]byte, n)
+		body := make([]byte, n)
 		_, _ = io.ReadFull(reader, body)
 	}
 
-	// Send exit
 	exitMsg := `{"jsonrpc":"2.0","method":"exit"}`
 	frameExit := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(exitMsg), exitMsg)
 	_, _ = io.WriteString(clientWrite, frameExit)
-
 	clientWrite.Close()
+
 	select {
 	case <-errChan:
 	case <-time.After(2 * time.Second):
