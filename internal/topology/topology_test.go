@@ -180,10 +180,10 @@ func TestCleanWorkstationTopology_Apply(t *testing.T) {
 		t.Errorf("child repo goenvoy was corrupted: %v", err)
 	}
 
-	// Verify symlink is intact
+	// Verify stray symlink in dev root was cleaned
 	symlinkPath := filepath.Join(devRoot, "pelorus")
-	if !isSymlink(symlinkPath) {
-		t.Errorf("symlink %s was corrupted or deleted", symlinkPath)
+	if isSymlink(symlinkPath) {
+		t.Errorf("stray symlink %s should have been removed", symlinkPath)
 	}
 }
 
@@ -245,13 +245,13 @@ func TestVerifyDeletionSafety_Protections(t *testing.T) {
 		t.Error("expected safety check to reject org container deletion")
 	}
 
-	// 3. Cannot delete symlink
+	// 3. Symlink unlinking is permitted
 	symlinkPath := filepath.Join(devRoot, "pelorus")
 	if err := os.Symlink(orgDir, symlinkPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyDeletionSafety(devRoot, symlinkPath); err == nil {
-		t.Error("expected safety check to reject symlink deletion")
+	if err := verifyDeletionSafety(devRoot, symlinkPath); err != nil {
+		t.Errorf("expected safety check to allow symlink deletion, got %v", err)
 	}
 
 	// 4. Cannot delete directory with valid git repo

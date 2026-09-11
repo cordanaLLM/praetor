@@ -150,9 +150,17 @@ func validateDevRoot(devRoot string) (string, error) {
 func processDevRootEntry(ctx context.Context, normRoot string, entry os.DirEntry, entryPath string, report *TopologyReport) {
 	lowerName := strings.ToLower(entry.Name())
 
-	// Check if entry is a symlink (DEV-02)
+	// Check if entry is a symlink (DEV-02: root compatibility symlinks are prohibited)
 	if isSymlink(entryPath) {
 		report.Symlinks = append(report.Symlinks, entry.Name())
+		report.StrayFiles = append(report.StrayFiles, StrayFile{
+			Path:           entryPath,
+			RelPath:        entry.Name(),
+			Reason:         fmt.Sprintf("deprecated root compatibility symlink %s (DEV-02)", entry.Name()),
+			IsSafeToDelete: true,
+		})
+		report.Violations = append(report.Violations,
+			fmt.Sprintf("DEV-02: root compatibility symlink %s violates canonical path invariant", entry.Name()))
 		return
 	}
 
@@ -310,8 +318,14 @@ func CleanWorkstationTopology(ctx context.Context, devRoot string, dryRun bool) 
 		}
 
 		if !dryRun {
-			if err := os.RemoveAll(stray.Path); err != nil {
-				return cleaned, fmt.Errorf("failed to remove stray entry %s: %w", stray.Path, err)
+			if isSymlink(stray.Path) {
+				if err := os.Remove(stray.Path); err != nil {
+					return cleaned, fmt.Errorf("failed to remove stray symlink %s: %w", stray.Path, err)
+				}
+			} else {
+				if err := os.RemoveAll(stray.Path); err != nil {
+					return cleaned, fmt.Errorf("failed to remove stray entry %s: %w", stray.Path, err)
+				}
 			}
 		}
 		cleaned = append(cleaned, stray.Path)
@@ -331,20 +345,15 @@ func verifyDeletionSafety(devRoot, path string) error {
 
 	// Never delete an organization container itself
 	parentDir := filepath.Dir(cleanPath)
-	if parentDir == cleanDev {
+	if parentDir == cleanDev && !isSymlink(cleanPath) {
 		baseName := strings.ToLower(filepath.Base(cleanPath))
 		if KnownOrgContainers[baseName] {
 			return fmt.Errorf("cannot delete recognized organization container: %s", cleanPath)
 		}
 	}
 
-	// Never delete a compatibility symlink
-	if isSymlink(cleanPath) {
-		return fmt.Errorf("cannot delete symlink %s (DEV-02)", cleanPath)
-	}
-
-	// Never delete a directory containing a valid leaf git repository
-	if hasValidGitRepo(cleanPath) {
+	// Never delete a directory containing a valid leaf git repository (unless it is a stray symlink)
+	if !isSymlink(cleanPath) && hasValidGitRepo(cleanPath) {
 		return fmt.Errorf("cannot delete directory with valid git repository: %s", cleanPath)
 	}
 
