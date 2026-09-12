@@ -15,6 +15,8 @@ All contributors are expected to uphold deterministic, high-integrity engineerin
 
 ## Local Development & Verification
 
+Run `make hooks` and `make hooks-check` after cloning. The [Git hooks guide](docs/guides/git-hooks.md) describes staged checks, push scope, required tools and the explicit sandbox gate. Commit with a conventional subject and `git commit -s` for DCO. Hooks preserve unstaged work; run `praetorctl state sync .` explicitly at turn end.
+
 Before submitting any Pull Request, ensure local verification passes completely:
 
 ```bash
