@@ -10,6 +10,13 @@ import (
 )
 
 func runDogfood(args []string) error {
+	if len(args) > 0 && args[0] == "suite" {
+		return runDogfoodSuite(context.Background(), args[1:])
+	}
+	return runDogfoodFlags(args)
+}
+
+func runDogfoodFlags(args []string) error {
 	fs := flag.NewFlagSet("dogfood", flag.ContinueOnError)
 	path := fs.String("path", ".", "Path to host repository")
 	targets := fs.String("targets", "", "Directory containing target repositories for adoption testing")

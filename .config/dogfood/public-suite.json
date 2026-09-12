@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "public_repositories": [
+    "https://github.com/spf13/cobra#adbc8813901bba65827259daa8e22ff94ec1f30e",
+    "https://github.com/pallets/flask#d73fa1cdcbd8b1465c151db8924ba58b1dd14e35"
+  ],
+  "transcripts": []
+}

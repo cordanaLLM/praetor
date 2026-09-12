@@ -11,3 +11,4 @@
 - [ ] Configure lusoris/praetor as synchronized operational fork with explicit repository and workstation rollout stages
 - [ ] Implement capability and evidence based per-task agent routing with cost, latency, and escalation controls
 - [ ] Optimize workstation agent and CLI context files with canonical ownership and replay verification
+- [ ] Reject malformed transcript Unicode and prevent private record types leaking through error reports

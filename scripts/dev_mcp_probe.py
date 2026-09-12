@@ -161,6 +161,53 @@ def context_checks(client, root):
             "context 64-source boundary enforced", "context 1 MiB boundary enforced"]
 
 
+def suite_checks(client, root):
+    folder = root / "suite-input"
+    folder.mkdir()
+    source = folder / "transcript_full.jsonl"
+    record = {"step_index": 1, "source": "MODEL", "type": "MESSAGE", "status": "DONE",
+              "created_at": "2026-09-12T12:00:00Z", "content": "private suite payload"}
+    original = ((json.dumps(record) + "\n") * 2).encode()
+    source.write_bytes(original)
+    config = {"version": 1, "public_repositories": [], "transcripts": [
+        {"id": "fixture", "source_path": str(source), "sha256": hashlib.sha256(original).hexdigest(),
+         "format": "antigravity-jsonl-v1"}]}
+    path = root / "suite.json"
+    path.write_text(json.dumps(config))
+    args = {"config_path": path.name, "artifact_dir": "suite-plan"}
+    planned = json.loads(tool_text(client.call("standards_dogfood_suite", args)))["report"]
+    require(planned["status"] == "planned" and not planned["verified"]
+            and "ingestion" not in planned["cases"][0], "suite plan executed or claimed verification")
+    args.update(stage="verify", artifact_dir="suite-verified")
+    report = json.loads(tool_text(client.call("standards_dogfood_suite", args)))["report"]
+    case = report["cases"][0]
+    require(report["verified"] and case["ingestion"]["stored"] == 2
+            and case["replay"]["stored"] == 0 and case["replay"]["already_present"] == 2,
+            "suite did not finish and replay its actual cache")
+    require(source.read_bytes() == original and "private suite payload" not in json.dumps(report),
+            "suite changed or disclosed original payload")
+    require(len(list((root / "suite-verified/case-01/events").glob("*.json"))) == 2,
+            "suite cache was not persisted")
+    config["transcripts"][0]["sha256"] = "0" * 64
+    path.write_text(json.dumps(config))
+    args["artifact_dir"] = "suite-failed"
+    failed = json.loads(tool_text(client.call("standards_dogfood_suite", args), error=True))["report"]
+    require(not failed["verified"] and failed["cases"][0]["status"] == "failed"
+            and (root / "suite-failed/report.json").is_file(), "suite lost failed-case evidence")
+    config["transcripts"][0]["source_path"] = str(root.parent / "outside.jsonl")
+    path.write_text(json.dumps(config))
+    args.update(stage="plan", artifact_dir="suite-outside")
+    tool_text(client.call("standards_dogfood_suite", args), error=True)
+    require(not (root / "suite-outside").exists(), "embedded path escaped suite confinement")
+    config.update(transcripts=[], public_repositories=["https://github.com/spf13/cobra#" + "a" * 40])
+    path.write_text(json.dumps(config))
+    args.update(stage="verify", artifact_dir="suite-remote")
+    tool_text(client.call("standards_dogfood_suite", args), error=True)
+    require(not (root / "suite-remote").exists(), "suite bypassed server remote opt-in")
+    return ["suite plan remains unverified", "suite complete ingestion and same-cache replay read back",
+            "suite failures retain evidence", "suite embedded paths confined", "suite remote opt-in enforced"]
+
+
 def audit_fixture(root):
     source = "id: framework\nname: Framework\n"
     digest = "sha256:" + hashlib.sha256(source.encode()).hexdigest()
@@ -218,7 +265,7 @@ def probe(binary, root, metadata):
         names = [tool["name"] for tool in tools]
         required = {"standards_inspect_symbols", "standards_compile_context",
                     "standards_memory_recall", "standards_audit", "standards_transcript_ingest",
-                    "standards_context_analyze"}
+                    "standards_context_analyze", "standards_dogfood_suite"}
         require(required <= set(names), "required tools are absent")
         inspected = tool_text(client.call("standards_inspect_symbols",
                                          {"path": "cmd/standards-mcp/main.go"}))
@@ -232,5 +279,6 @@ def probe(binary, root, metadata):
             checks += failure_checks(client, fixture)
             checks += transcript_checks(client, fixture)
             checks += claude_transcript_checks(client, fixture)
+            checks += suite_checks(client, fixture)
     return {"passed": ["source identity", "tool discovery", "checkout symbol read"] + checks,
             "tools": names, "mutations": "temporary fixtures only"}

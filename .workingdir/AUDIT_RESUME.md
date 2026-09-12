@@ -328,6 +328,41 @@ fix counts, integrated regression coverage, and independently closed findings.
 
 ### Original workflow entry points
 
+#### Configured replay suite continuation — 2026-09-12
+
+`03d4b69` integrates the Claude Code JSONL adapter: explicit format selection,
+format-bound cursors and event provenance, metadata/thinking exclusions, and
+nonblocking Unix source/cache opens. The original 1,986-record Claude session
+produces 613 observations, with 1,162 metadata and 211 thinking-only records
+explicitly skipped. Private cache readback preserves 229 tool calls, 229 results
+and eight tool references. The original source remains unchanged.
+
+The configured `dogfood suite` CLI and `standards_dogfood_suite` MCP tool consume
+strict version-1 JSON with 1–8 pinned public/transcript cases. Plan validates
+declarations only. Verify runs real public reconciliation and complete transcript
+ingestion plus same-cache replay, retaining every case and failure. Embedded
+transcript paths obey MCP confinement and public verification requires server
+remote opt-in, both checked against the consumed config snapshot. The checked-in
+`.config/dogfood/public-suite.json` holds only public inputs; private workstation
+configuration stays in the external evidence directory.
+
+Real combined MCP acceptance verifies pinned Cobra and Flask, then the original
+Claude and Antigravity inputs: 12,849 records scanned, 11,443 observations stored,
+1,406 explicit skips, and zero new records during replay. Source hashes remain
+unchanged. Independent review passes 51 CLI and 14 MCP checks, including the
+10,001-record page boundary, private modes, continued outcomes after failure,
+global case-ID uniqueness, and failed final-report persistence clearing success.
+
+The source MCP probe has 30 checks/16 tools. Full working-checkout verification
+has only the existing 76 lint/90 security findings and preserved nested-worktree
+dedupe noise. Follow-up review identified malformed JSON surrogate replacement
+and arbitrary record-type text leaking through error messages; their bounded fix
+is tracked separately before final activation. Evidence is under
+`codex-continuation/next-stage/`, including `local-suite.json`,
+`original-suite-mcp/`, `suite-review/` and `adapter-review/`. These private files
+remain outside Git. Scheduling, agent dispatch, semantic verified-fact memory
+and automatic rollout promotion remain later stages.
+
 ```bash
 S=~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit
 cat "$S/fold_summary.txt"                 # current finding counts

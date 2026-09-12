@@ -1,5 +1,8 @@
 # Public repository dogfooding
 
+For versioned input configurations and combined private transcript replay, use
+the [configured suite](guides/dogfood-suites.md).
+
 `praetorctl dogfood --public-loop` runs a bounded plan, apply, verification and
 repeat-apply loop against curated public repositories. It retains each clone,
 its upstream commit SHA, the adoption reports, and failures for reproduction.

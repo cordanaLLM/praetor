@@ -188,3 +188,9 @@
 
 ### Discharged Tasks [2026-09-12 17:16:03 UTC, commit `local`]
 - [x] Implement bounded Claude Code JSONL ingestion and replay original session (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 17:22:13 UTC, commit `local`]
+- [x] Support Claude Code JSONL ingestion with provenance and real corpus replay (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 17:22:50 UTC, commit `local`]
+- [x] Add configured repeatable dogfood suite with pinned public sources and complete private transcript replay (completed: 2026-09-12)
