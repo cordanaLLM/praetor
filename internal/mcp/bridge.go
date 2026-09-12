@@ -3,9 +3,15 @@ package mcp
 import (
 	"errors"
 	"fmt"
+
+	"github.com/cordanaLLM/praetor/internal/lockdown"
 )
 
-const maxToolsBatchLimit = 500
+const (
+	maxToolsBatchLimit = 500
+	// maxSanitizedProperties bounds the schema properties neutralized per tool (HISS-02).
+	maxSanitizedProperties = 500
+)
 
 // OpenAIFunction represents the function object inside an OpenAI tool descriptor.
 type OpenAIFunction struct {
@@ -34,15 +40,53 @@ type GeminiFunctionDeclaration struct {
 	Parameters  ToolInputSchema `json:"parameters"`
 }
 
-// prepareSchema ensures properties is non-nil for JSON schema compatibility.
+// prepareSchema ensures properties is non-nil for JSON schema compatibility and
+// neutralizes prompt-injection payloads in every free-text description it carries.
+//
+// A tool descriptor is model-facing text: a third-party MCP server can place instruction
+// overrides in a description and have them read as if they came from the operator. The
+// `agent:sandboxed` facet promises that defense, so the bridge - the single point where a
+// descriptor is translated for a model - is where it is applied.
 func prepareSchema(schema ToolInputSchema) ToolInputSchema {
 	if schema.Type == "" {
 		schema.Type = "object"
 	}
 	if schema.Properties == nil {
 		schema.Properties = make(map[string]PropertySchema)
+		return schema
 	}
+
+	sanitized := make(map[string]PropertySchema, len(schema.Properties))
+	count := 0
+	for name, prop := range schema.Properties {
+		if count >= maxSanitizedProperties {
+			break
+		}
+		count++
+		prop.Description = lockdown.SanitizePrompt(prop.Description)
+		sanitized[name] = prop
+	}
+	schema.Properties = sanitized
 	return schema
+}
+
+// HasToolInjection reports whether a tool descriptor carries a known prompt-injection
+// pattern in any of its model-facing text fields.
+func HasToolInjection(t Tool) bool {
+	if lockdown.HasInjection(t.Description) || lockdown.HasInjection(t.Name) {
+		return true
+	}
+	count := 0
+	for _, prop := range t.InputSchema.Properties {
+		if count >= maxSanitizedProperties {
+			break
+		}
+		count++
+		if lockdown.HasInjection(prop.Description) {
+			return true
+		}
+	}
+	return false
 }
 
 // ToOpenAITool converts an MCP Tool to the OpenAI Function Calling specification.
@@ -51,11 +95,12 @@ func ToOpenAITool(t Tool) (*OpenAITool, error) {
 		return nil, fmt.Errorf("cannot convert invalid tool to OpenAI format: %w", err)
 	}
 	schema := prepareSchema(t.InputSchema)
+	description := lockdown.SanitizePrompt(t.Description)
 	return &OpenAITool{
 		Type: "function",
 		Function: OpenAIFunction{
 			Name:        t.Name,
-			Description: t.Description,
+			Description: description,
 			Parameters:  schema,
 		},
 	}, nil
@@ -67,9 +112,10 @@ func ToAnthropicTool(t Tool) (*AnthropicTool, error) {
 		return nil, fmt.Errorf("cannot convert invalid tool to Anthropic format: %w", err)
 	}
 	schema := prepareSchema(t.InputSchema)
+	description := lockdown.SanitizePrompt(t.Description)
 	return &AnthropicTool{
 		Name:        t.Name,
-		Description: t.Description,
+		Description: description,
 		InputSchema: schema,
 	}, nil
 }
@@ -80,9 +126,10 @@ func ToGeminiFunction(t Tool) (*GeminiFunctionDeclaration, error) {
 		return nil, fmt.Errorf("cannot convert invalid tool to Gemini format: %w", err)
 	}
 	schema := prepareSchema(t.InputSchema)
+	description := lockdown.SanitizePrompt(t.Description)
 	return &GeminiFunctionDeclaration{
 		Name:        t.Name,
-		Description: t.Description,
+		Description: description,
 		Parameters:  schema,
 	}, nil
 }
