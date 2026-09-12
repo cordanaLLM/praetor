@@ -23,6 +23,25 @@ fixtures. A discovered tool name alone does not prove working behavior.
 
 ## Native project connections
 
+Refresh the regular commands on this workstation with `make dev-install`.
+`make build` writes only to the checkout's `bin/` directory; it does not update
+standalone executables already on `PATH`. The installer builds all three Praetor
+binaries from current source, runs the MCP behavior probe, and installs them into
+`~/.local/bin` with the three legacy aliases. `python3 scripts/dev_install.py --help`
+lists destination overrides for isolated installations.
+
+Each installation retains previous files in a private directory under
+`~/.local/state/praetor/dev-installs`, and records source and binary hashes plus the
+backup path in `~/.local/bin/.praetor-dev-install.json`. It rejects unexpected
+symlinks and special files, reads back installed hashes, and restores replaced
+files on caught installation errors. A forced process termination can interrupt a
+multi-file install; use the retained backup and `previous.json` for recovery.
+Installers serialize through `.praetor-dev-install.lock` in the destination. If a
+process was killed, check that no installer is running before removing its stale
+lock directory and rerunning the command.
+Already running CLI/MCP processes continue using their original executable until
+restarted. The development connection below still builds directly from source.
+
 The tracked configs register `praetor-dev`; they contain no machine-specific paths
 or credentials. Both run `scripts/dev_mcp.py serve`, which builds once per server
 startup. Existing native connections keep that binary after source edits. Restart
