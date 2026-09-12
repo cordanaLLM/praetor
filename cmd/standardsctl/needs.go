@@ -55,8 +55,9 @@ func printNeedsUsage() {
 	fmt.Println("  report [--path=.]                   Evaluate compatibility and replacement matrix against Golusoris")
 	fmt.Println("  aggregate [--dev-dir=...] [--output=...] Aggregate fleet-wide demand and output gap report")
 	fmt.Println("  requests [--dev-dir=...] [--output-dir=...] Synthesize and emit deduplicated Framework Demand Requests")
-	fmt.Println("  epic [--path=.] [--dev-dir=...] [--framework=...] [--output=...] Generate pre-migration hardening epic")
-	fmt.Println("       [--publish --owner=... --repo=... --yes]  Publish the epic to a forge (explicit target + confirmation)")
+	fmt.Println("  epic [--path=.] [--dev-dir=...] [--framework=...] [--output=...] [--dry-run] Generate pre-migration hardening epic")
+	fmt.Println("       [--publish --owner=... --repo=... --yes]  Publish one repository's epic to an explicit forge target")
+	fmt.Println("       Fleet mode previews writes by default; pass --dry-run=false to write the listed files")
 	fmt.Println("  migrate [--path=.] [--apply]        Automated import and dependency rewrite to Golusoris (dry run unless --apply)")
 }
 
@@ -260,7 +261,7 @@ func runNeedsRequests(ctx context.Context, args []string) error {
 	}
 
 	if *outputDir != "" {
-		if err := needs.EmitDemandRequests(requests, *outputDir); err != nil {
+		if err := needs.EmitDemandRequests(ctx, requests, *outputDir); err != nil {
 			return fmt.Errorf("failed to emit demand requests: %w", err)
 		}
 		fmt.Printf("[PASS] Emitted %d demand requests and FRAMEWORK_DEMAND.yaml to %s\n", len(requests), *outputDir)
@@ -280,6 +281,7 @@ type epicFlags struct {
 	owner     string
 	repo      string
 	assumeYes bool
+	dryRun    bool
 }
 
 func runNeedsEpic(ctx context.Context, args []string) error {
@@ -294,7 +296,8 @@ func runNeedsEpic(ctx context.Context, args []string) error {
 				"not the directory needed to resolve forge coordinates; publish one repository at a time with " +
 				"'praetorctl needs epic --path=<repo> --publish --yes'")
 		}
-		return runFleetNeedsEpic(ctx, f.devDir, f.framework)
+		opts := needs.FleetEpicOptions{FrameworkPath: f.framework, DryRun: f.dryRun}
+		return runFleetNeedsEpic(ctx, f.devDir, opts)
 	}
 	return runSingleRepoEpic(ctx, f)
 }
@@ -313,8 +316,13 @@ func parseEpicFlags(args []string) (epicFlags, error) {
 	fs.StringVar(&f.owner, "owner", "", "Forge owner to publish into (overrides the repository manifest and git remote)")
 	fs.StringVar(&f.repo, "repo", "", "Forge repository name to publish into (must be given with --owner)")
 	fs.BoolVar(&f.assumeYes, "yes", false, "Confirm creating issues in the resolved forge repository")
-	if err := fs.Parse(args); err != nil {
+	fs.BoolVar(&f.dryRun, "dry-run", true, "With --dev-dir, list the epic files without writing them")
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return epicFlags{}, err
+	}
+	if len(positional) != 0 {
+		return epicFlags{}, fmt.Errorf("needs epic accepts no positional arguments; use --path (got %q)", positional)
 	}
 	return f, nil
 }
@@ -331,7 +339,7 @@ func runSingleRepoEpic(ctx context.Context, f epicFlags) error {
 	}
 
 	if f.output != "" {
-		if wErr := needs.WriteEpicMarkdown(epic, f.output); wErr != nil {
+		if wErr := needs.WriteEpicMarkdown(ctx, epic, f.output); wErr != nil {
 			return fmt.Errorf("failed to write epic markdown: %w", wErr)
 		}
 		fmt.Printf("[PASS] Pre-migration epic written to %s\n", f.output)
@@ -345,18 +353,25 @@ func runSingleRepoEpic(ctx context.Context, f epicFlags) error {
 	return nil
 }
 
-func runFleetNeedsEpic(ctx context.Context, devDir, framework string) error {
+func runFleetNeedsEpic(ctx context.Context, devDir string, opts needs.FleetEpicOptions) error {
 	fmt.Printf("=== Rerunning Fleet Pre-Migration Epics across %s ===\n\n", devDir)
-	epics, err := needs.RegenerateFleetEpics(ctx, devDir, framework)
+	epics, err := needs.RegenerateFleetEpics(ctx, devDir, opts)
 	if err != nil {
 		return fmt.Errorf("fleet epic regeneration failed: %w", err)
 	}
 
-	fmt.Printf("[PASS] Generated and updated %d pre-migration epics:\n\n", len(epics))
+	verb := "Generated and updated"
+	if opts.DryRun {
+		verb = "Would generate"
+	}
+	fmt.Printf("[PASS] %s %d pre-migration epics:\n\n", verb, len(epics))
 	for i := 0; i < len(epics); i++ {
 		ep := epics[i]
-		fmt.Printf("  [%2d/%2d] %-35s (Readiness: %5.1f%%, %d tasks)\n",
-			i+1, len(epics), ep.RepoName, ep.ReadinessScore, len(ep.ChildIssues))
+		fmt.Printf("  [%2d/%2d] %-35s (Readiness: %5.1f%%, %d tasks) -> %s\n",
+			i+1, len(epics), ep.RepoName, ep.ReadinessScore, len(ep.ChildIssues), ep.OutputPath)
+	}
+	if opts.DryRun {
+		fmt.Println("\n[INFO] Dry-run complete. Pass --dry-run=false to write these files.")
 	}
 	return nil
 }

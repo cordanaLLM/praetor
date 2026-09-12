@@ -296,21 +296,38 @@ var CanonicalCatalog = []CatalogEntry{
 	},
 }
 
-// MatchPackage searches the catalog for the best prefix match for a given import path.
+// MatchPackage searches the catalog for the longest module-path match for a given import
+// path.
+//
+// The match is anchored on a path boundary: an entry matches the import path itself or a
+// package inside it, never a different module that merely starts with the same
+// characters. Without the boundary, "github.com/uptrace/bunrouter" would inherit the
+// "github.com/uptrace/bun" mapping and be reported as covered by an unrelated
+// replacement.
 func MatchPackage(importPath string) (CatalogEntry, bool) {
 	var bestMatch CatalogEntry
 	longestPrefix := 0
 
 	for _, entry := range CanonicalCatalog {
-		if strings.HasPrefix(importPath, entry.Package) {
-			if len(entry.Package) > longestPrefix {
-				longestPrefix = len(entry.Package)
-				bestMatch = entry
-			}
+		if !matchesModuleBoundary(importPath, entry.Package) {
+			continue
+		}
+		if len(entry.Package) > longestPrefix {
+			longestPrefix = len(entry.Package)
+			bestMatch = entry
 		}
 	}
 
 	return bestMatch, longestPrefix > 0
+}
+
+// matchesModuleBoundary reports whether importPath is modulePath itself or a package
+// nested inside it.
+func matchesModuleBoundary(importPath, modulePath string) bool {
+	if modulePath == "" {
+		return false
+	}
+	return importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/")
 }
 
 // CatalogMapping defines the framework mapping for a non-Go dependency.
