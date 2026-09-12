@@ -82,7 +82,7 @@ dedupe:
 topology-audit:
 	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
 
-verify-all: mcp-test dev-install-test mcp-probe compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: mcp-test dev-install-test dev-schedule-test mcp-probe compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
 
 hooks:
@@ -107,6 +107,10 @@ dev-install:
 
 dev-install-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_dev_install.py'
+
+.PHONY: dev-schedule-test
+dev-schedule-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_dev_schedule.py'
 
 clean:
 	rm -rf $(BIN_DIR)
