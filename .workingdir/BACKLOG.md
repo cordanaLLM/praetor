@@ -22,7 +22,15 @@
       that a crash, reboot or provider limit never loses work) become HISS-20 in `AGENTS.md`.
       Draft text: `~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit/harness-principles-draft.md`.
       The AGENTS.md rows land with the wave B agent-surface fix group; the gate needs the config workstream.
-- [ ] Deep AST Deduplication Sweeps
+- [ ] **Structural optimisation and deduplication first; fleet module library (ADR-0009, design in progress).** Per user
+      direction (2026-09-12): before new modules are added, correct the application's structure and remove the
+      duplication the audit found (four token resolvers, two GitHub clients, two HISS engines, templates duplicated as
+      string literals, 42 persona copies, four config readers, orphan packages), and extend the golusoris demand
+      mechanism (ADR-0007, `internal/needs`, `.needs.yaml`) into a module library so that shared capabilities are
+      deduplicated across all organisations and repositories by configuration, with backlogs, new features and fixes
+      flowing through the same mechanism. Absorbs "Deep AST Deduplication Sweeps". Design fan-out running; the
+      refactor itself is sequenced after the in-flight fix waves merge.
+- [ ] Deep AST Deduplication Sweeps (absorbed by the item above)
 - [ ] **Spec-driven provider integration (ADR-0008, Proposed).** Replace the hand-written forge drivers with a
       declarative provider layer: each provider is a `.config/providers/<name>.yaml` descriptor plus a compiled,
       digest-pinned operation table produced offline by `tools/specc` (a separate Go module holding the only
@@ -34,7 +42,7 @@
       native MCP consumption deferred to an optional last phase. Pins land in `.standards.lock` under
       `providers:`; docs are distilled per pinned API version. Milestone 1 (about day 15 of ~43 engineer-days):
       GitHub fully supported from its own description with fewer than 150 lines of provider-specific Go, gated by
-      a differential test against the legacy driver. Three owner decisions are filed in `QUESTIONS.md`.
+      a differential test against the legacy driver; v1 covers all three providers (decided Q-003).
       Plan: `~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit/provider-integration-plan.md`.
 - [ ] **Artifact management and dynamic session state.** Per user direction (2026-09-12): every run
       (audit, verification, fix wave, sandbox execution, gate, receipt, report) should produce first-class
