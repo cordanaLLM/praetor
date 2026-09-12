@@ -43,8 +43,12 @@ func TestRepairReportFileAndOutputBounds(t *testing.T) {
 	if err := SaveRepairPlan(context.Background(), filepath.Join(dirLink, "review"), plan); err == nil {
 		t.Fatal("symlink output ancestor accepted")
 	}
-	if _, err := LoadRepairReport(nil, target); err == nil {
-		t.Fatal("nil read context accepted")
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, invalid := range []context.Context{nil, cancelled} {
+		if _, err := LoadRepairReport(invalid, target); err == nil {
+			t.Fatal("invalid read context accepted")
+		}
 	}
 }
 

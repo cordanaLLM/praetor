@@ -197,11 +197,13 @@ func TestScheduleFailurePrefixAndFalseGreen(t *testing.T) {
 
 func TestScheduleCancelledAndNilContext(t *testing.T) {
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
-	if _, err := RunSchedule(nil, path); err == nil {
-		t.Fatal("nil context accepted")
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	for _, invalid := range []context.Context{nil, ctx} {
+		if _, err := RunSchedule(invalid, path); err == nil {
+			t.Fatal("invalid context accepted")
+		}
+	}
 	if _, err := RunSchedule(ctx, path); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel: %v", err)
 	}

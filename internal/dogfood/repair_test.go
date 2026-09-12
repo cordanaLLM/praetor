@@ -137,7 +137,10 @@ func TestRepairEvidenceBoundAndNoSourceRead(t *testing.T) {
 	}
 	before := job.ID
 	report.Cases[0].Transcript.SHA256 = strings.Repeat("c", 64)
-	after, _ := PlanRepairs(context.Background(), report, repairTestPolicy(t))
+	after, err := PlanRepairs(context.Background(), report, repairTestPolicy(t))
+	if !errors.Is(err, ErrRepairsBlocked) || after == nil {
+		t.Fatalf("changed input plan: %+v %v", after, err)
+	}
 	if after.Jobs[0].ID == before {
 		t.Fatal("changed input retained job identity")
 	}
@@ -190,14 +193,17 @@ func TestRepairPolicyAndCancellation(t *testing.T) {
 	if _, err := PlanRepairs(ctx, repairTestReport(t, 1), repairTestPolicy(t)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("lost cancellation %v", err)
 	}
-	if _, err := PlanRepairs(nil, nil, policy); err == nil {
-		t.Fatal("nil context accepted")
-	}
-	if err := ValidateRepairPolicy(nil, policy); err == nil {
-		t.Fatal("nil policy context accepted")
-	}
-	if err := SaveRepairPlan(nil, "", nil); err == nil {
-		t.Fatal("nil save accepted")
+	invalidContexts := []context.Context{nil, ctx}
+	for _, invalid := range invalidContexts {
+		if _, err := PlanRepairs(invalid, nil, policy); err == nil {
+			t.Fatal("invalid context accepted")
+		}
+		if err := ValidateRepairPolicy(invalid, policy); err == nil {
+			t.Fatal("invalid policy context accepted")
+		}
+		if err := SaveRepairPlan(invalid, "", nil); err == nil {
+			t.Fatal("invalid save context accepted")
+		}
 	}
 }
 
