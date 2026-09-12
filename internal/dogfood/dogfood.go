@@ -80,7 +80,7 @@ func verifySelfGovernance(ctx context.Context, hostPath string) (bool, bool, err
 		return synced, false, fmt.Errorf("hiss scan failed: %w", sErr)
 	}
 
-	auditPassed := scanRes.TotalInfractions == 0
+	auditPassed := scanRes.TotalInfractions == 0 && !scanRes.Truncated
 	return synced, auditPassed, nil
 }
 

@@ -587,7 +587,7 @@ func TestAdopt_MultiLanguageLegacyDebt(t *testing.T) {
 	if rep.LegacyDebtCount < 5 {
 		t.Fatalf("expected at least 5 legacy infractions across C, Python, and Rust, got: %d", rep.LegacyDebtCount)
 	}
-	for _, rule := range []string{"HISS-02", "HISS-07", "HISS-09"} {
+	for _, rule := range []string{"HISS-02", "HISS-07", "HISS-08"} {
 		if rep.DebtBreakdown[rule] == 0 {
 			t.Errorf("expected %s infractions, got none", rule)
 		}

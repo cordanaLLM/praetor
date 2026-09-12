@@ -379,6 +379,10 @@ func scanLegacyDebt(ctx context.Context, repoPath string, base *baseline.Baselin
 		return fmt.Errorf("scan legacy debt in %s: %w", repoPath, err)
 	}
 
+	if scanRep.Truncated {
+		return fmt.Errorf("scan legacy debt in %s: %w", repoPath, hiss.ErrScanTruncated)
+	}
+
 	for i := 0; i < len(scanRep.Violations) && i < maxInfractionsCap; i++ {
 		v := scanRep.Violations[i]
 		base.Infractions = append(base.Infractions, baseline.Infraction{
