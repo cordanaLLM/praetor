@@ -81,6 +81,14 @@ class RepairQueueTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "terminal"):
             repair.queue(self.config)
 
+    def test_blocked_route_is_visible_and_cannot_appear_idle(self):
+        self.report(1)
+        with patch.object(repair, "call_runner", return_value=({"status": "blocked"}, 0)):
+            result = repair.queue(self.config, True)
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["runner_exit_code"], 1)
+        self.assertEqual(result["admission_counts"]["blocked"], 1)
+
     def test_changed_policy_and_runner_rejected_before_scan(self):
         for key in ("runner_sha256", "repair_config_sha256"):
             bad = dict(self.values, **{key: "0" * 64})

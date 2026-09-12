@@ -133,12 +133,16 @@ def queue(path, execute=False):
     started = time.monotonic()
     reports = failed_reports(config["schedule_state_dir"])
     checked = 0
+    counts = {"blocked": 0, "busy": 0, "consumed": 0}
     for report in reports:
         if time.monotonic() - started > 60:
             raise RuntimeError("Repair queue inspection exceeded 60 seconds")
         status, _ = call_runner(config, "status", report, 15)
         checked += 1
         if status["status"] != "ready":
+            if status["status"] not in counts:
+                raise ValueError("Repair status returned an unknown admission state")
+            counts[status["status"]] += 1
             continue
         summary = {"status": "ready", "failed_reports": len(reports), "checked": checked,
                    "report_path": str(report), "execution_key": status.get("execution_key")}
@@ -153,7 +157,9 @@ def queue(path, execute=False):
                             ("status", "execution_key", "attempt_dir", "candidate_verified", "actual_model", "usage")})
             summary["runner_exit_code"] = code
         return summary
-    return {"status": "idle", "failed_reports": len(reports), "checked": checked,
+    result = "blocked" if counts["blocked"] else "busy" if counts["busy"] else "idle"
+    return {"status": result, "failed_reports": len(reports), "checked": checked,
+            "admission_counts": counts, "runner_exit_code": int(execute and result == "blocked"),
             "scope": "No unconsumed eligible failed case in this bounded queue"}
 
 
