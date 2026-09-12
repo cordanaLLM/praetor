@@ -10,7 +10,7 @@ Everything outside the repo is under **`~/.claude/projects/-home-kilian-dev-cord
 
 | Path (relative to that dir) | What it is |
 | :--- | :--- |
-| `report.md` | Final audit report, 18,865 lines, 9 subsystem sections + ledger + appendix |
+| `report.md` | Final audit report, 18,865 lines, 9 subsystem sections + ledger + appendix. Private page: https://claude.ai/code/artifact/4a0fbb05-4a94-45e0-ae99-3cf60dbcecc4 |
 | `report/section-*.md` | The nine per-subsystem sections |
 | `findings.json` | Kept findings (the fix input) |
 | `findings-all.json` | Every finding incl. refuted/duplicate |
