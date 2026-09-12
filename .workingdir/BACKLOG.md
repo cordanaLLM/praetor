@@ -6,6 +6,21 @@
 - [x] Initial Praetor Governance Adoption
 
 ## Future Workstreams
+
+> Ordering per user direction (2026-09-12): the layered config system comes first, because it lets praetor
+> tune its own local profile for faster dogfooding and is the enabler for the completeness gate, the sandbox
+> rule and the budget gate below.
+
+- [ ] **Change completeness gate (HISS-19) and engineering principles (HISS-20) in the ruleset.** Per user
+      direction (2026-09-12): a pull request must carry every part of the system it touches (tests, docs and
+      CLI help, config keys with schema/defaults/docs, templates and scaffolds, devcontainer/toolchain entries
+      plus `.needs.yaml` and distilled docs for new dependencies, changelog fragment, ADR for architectural
+      decisions), derived from the change set and a `completeness:` config section with `dev`/`pr` profiles,
+      enforced fail-closed by `praetorctl gate` and CI so nothing incomplete is merged again; and the basic
+      engineering principles (single source of truth, do not reinvent, deduplicate and slim, explicit over
+      implicit, fail closed, measure before claiming, small reversible steps) become HISS-20 in `AGENTS.md`.
+      Draft text: `~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit/harness-principles-draft.md`.
+      The AGENTS.md rows land with the wave B agent-surface fix group; the gate needs the config workstream.
 - [ ] Deep AST Deduplication Sweeps
 - [ ] **Budget-aware agent dispatch (limit pre-checks as a harness primitive).** Per user direction
       (2026-09-12): every multi-agent fan-out must check remaining provider budget *before* dispatch and
