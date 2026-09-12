@@ -26,4 +26,7 @@
 - [ ] Bootstrap Codex Claude Gemini AGY and independent clients from one shared tool registry with native discovery trust and tool-call evidence
 - [ ] Publish independently versioned signed model provider template and config data with upstream provenance incremental downloads and rollback
 - [ ] Resolve shared effective management policy with provenance and explicit fleet organization deployment workstation and repository layers for CLI MCP container bot plugin and private GitOps consumers
-- [ ] Migrate public dogfood original and post-adoption scans to one effective policy snapshot and preserve strict-policy ratchet evidence
+- [ ] Consolidate approved ingenium imago nucleus repository identities and preserve unpublished work before staged dogfood
+- [ ] Add Jellysin CSharp plugin and Python release helper to staged dogfood with language-correct templates and acceptance evidence
+- [ ] Build configurable research concept specification task code test interconnect with shared agent orchestration before private settings fork promotion
+- [ ] Correct needs readiness against actual selected framework coverage and reject synthetic builder dispatch success

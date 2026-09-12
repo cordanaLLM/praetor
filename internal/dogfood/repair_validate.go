@@ -6,9 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 
+	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/harvester"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
+
+var errRepairPublicRerun = errors.New("verified public report lacks current policy or baseline evidence; rerun required")
 
 func validateRepairReport(ctx context.Context, report *SuiteReport) (string, error) {
 	if err := ctx.Err(); err != nil {
@@ -172,14 +177,21 @@ func validateRepairPublic(result SuiteCase, source publicSource) error {
 	if err := validateRepairPublicIdentity(repo, source); err != nil {
 		return err
 	}
+	anchor, err := repairPublicAnchor(repo)
+	if err != nil {
+		return err
+	}
 	for i := 0; i < len(repo.Attempts) && i < MaxPublicAttempts; i++ {
-		if err := validateRepairAttempt(repo.Attempts[i], i+1); err != nil {
+		if err := validateRepairAttempt(repo.Attempts[i], i+1, anchor); err != nil {
 			return err
 		}
 	}
 	count := len(repo.Attempts)
 	if repo.Attempts[count-1].TreeDigest != repo.Attempts[count-2].TreeDigest {
 		return errors.New("public verification did not stabilize")
+	}
+	if repo.Attempts[count-1].Verification.BaselineSHA256 != repo.Attempts[count-2].Verification.BaselineSHA256 {
+		return errors.New("stable public tree has contradictory baseline digests")
 	}
 	return nil
 }
@@ -201,16 +213,142 @@ func validateRepairPublicIdentity(repo PublicRepositoryResult, source publicSour
 	return nil
 }
 
-func validateRepairAttempt(attempt PublicAttempt, number int) error {
+func repairPublicAnchor(repo PublicRepositoryResult) (publicPolicyAnchor, error) {
+	if repo.Plan == nil || repo.Plan.EffectivePolicy == nil || repo.OriginalScan == nil || repo.OriginalTreeDigest == "" {
+		return publicPolicyAnchor{}, errRepairPublicRerun
+	}
+	anchor := publicPolicyAnchor{Policy: repo.Plan.EffectivePolicy, Scan: repo.OriginalScan}
+	if err := publicAdoptionError(repo.Plan, nil); err != nil {
+		return anchor, err
+	}
+	if !repo.Plan.DryRun {
+		return anchor, errors.New("public policy plan must be a dry-run report")
+	}
+	if err := validatePublicAnchor(anchor); err != nil {
+		return anchor, err
+	}
+	if err := validateRepairPublicScan(anchor.Scan); err != nil {
+		return anchor, err
+	}
+	return anchor, validateRepairOriginalMetadata(repo)
+}
+
+func validateRepairOriginalMetadata(repo PublicRepositoryResult) error {
+	if !suiteSHA.MatchString(repo.OriginalTreeDigest) {
+		return errors.New("public original tree requires a valid SHA-256 identity")
+	}
+	if repo.Plan.LegacyDebtCount != repo.OriginalScan.TotalInfractions {
+		return errors.New("planned adoption debt count differs from the independent original scan")
+	}
+	return nil
+}
+
+func validateRepairAttempt(attempt PublicAttempt, number int, anchor publicPolicyAnchor) error {
 	if attempt.Number != number || attempt.Error != "" || !suiteSHA.MatchString(attempt.TreeDigest) {
 		return errors.New("public attempt identity mismatch")
 	}
-	return validateRepairVerification(attempt.Verification)
+	if err := validateRepairAppliedPolicy(attempt, anchor); err != nil {
+		return err
+	}
+	if err := validateRepairChangedFiles(attempt.ChangedFiles); err != nil {
+		return err
+	}
+	return validateRepairVerification(attempt.Verification, anchor, attempt.ChangedFiles)
 }
 
-func validateRepairVerification(check *PublicVerification) error {
+func validateRepairAppliedPolicy(attempt PublicAttempt, anchor publicPolicyAnchor) error {
+	if attempt.Adoption == nil || attempt.Adoption.EffectivePolicy == nil {
+		return errRepairPublicRerun
+	}
+	if err := publicAdoptionError(attempt.Adoption, nil); err != nil {
+		return err
+	}
+	if attempt.Adoption.DryRun {
+		return errors.New("public verification requires an applied adoption report")
+	}
+	if attempt.Adoption.LegacyDebtCount != anchor.Scan.TotalInfractions {
+		return errors.New("applied adoption debt count differs from the independent original scan")
+	}
+	return matchPublicPolicy(anchor.Policy, attempt.Adoption.EffectivePolicy)
+}
+
+func validateRepairVerification(check *PublicVerification, anchor publicPolicyAnchor, changed []string) error {
 	if check == nil || !check.LockVerified || !check.ContextVerified || check.Scan == nil || check.Scan.Truncated || check.Ratchet == nil || !check.Ratchet.Passed {
 		return errors.New("public verification attempt is incomplete")
+	}
+	if err := validateRepairPolicyEvidence(check, anchor); err != nil {
+		return err
+	}
+	if err := validateRepairPublicScan(check.Scan); err != nil {
+		return err
+	}
+	return validateRepairRatchet(anchor.Scan, check, changed)
+}
+
+func validateRepairPolicyEvidence(check *PublicVerification, anchor publicPolicyAnchor) error {
+	if check.PolicySHA256 == "" || check.MaxFuncLOC == 0 || check.BaselineSHA256 == "" || !check.BaselineVerified {
+		return errRepairPublicRerun
+	}
+	if check.PolicySHA256 != anchor.Policy.SHA256 || check.MaxFuncLOC != anchor.Policy.Policy.Complexity.MaxFuncLOC {
+		return errors.New("public verification policy differs from the planned policy")
+	}
+	if !suiteSHA.MatchString(check.BaselineSHA256) {
+		return errors.New("public verification requires a valid baseline SHA-256")
+	}
+	return nil
+}
+
+func validateRepairPublicScan(scan *hiss.ScanReport) error {
+	if err := validatePublicScan(scan); err != nil {
+		return err
+	}
+	counts := make(map[string]int)
+	for i := 0; i < len(scan.Violations) && i < hiss.MaxInfractionsCap; i++ {
+		entry := scan.Violations[i]
+		if entry.RuleID == "" || entry.LineNumber <= 0 || !repairPublicRelativePath(entry.FilePath) {
+			return errors.New("public scan contains an invalid violation identity")
+		}
+		counts[entry.RuleID]++
+	}
+	if len(counts) != len(scan.Breakdown) {
+		return errors.New("public scan breakdown contradicts its entries")
+	}
+	for rule, count := range counts {
+		if scan.Breakdown[rule] != count {
+			return errors.New("public scan breakdown contradicts its entries")
+		}
+	}
+	return nil
+}
+
+func validateRepairChangedFiles(changed []string) error {
+	// The union of the bounded original and final inventories can be twice as large.
+	if len(changed) > 2*maxPublicTreeEntries {
+		return errors.New("public changed-file evidence exceeds its inventory bound")
+	}
+	seen := make(map[string]bool, len(changed))
+	for i := 0; i < len(changed) && i < 2*maxPublicTreeEntries; i++ {
+		path := changed[i]
+		if !repairPublicRelativePath(path) || seen[path] {
+			return errors.New("public changed files must be unique canonical relative paths")
+		}
+		seen[path] = true
+	}
+	return nil
+}
+
+func repairPublicRelativePath(path string) bool {
+	return filepath.IsLocal(path) && path != "." && filepath.ToSlash(filepath.Clean(path)) == path
+}
+
+func validateRepairRatchet(original *hiss.ScanReport, check *PublicVerification, changed []string) error {
+	base := &baseline.Baseline{Version: 1, TotalInfractions: original.TotalInfractions, Infractions: publicInfractions(original)}
+	expected := baseline.EvaluateRatchet(base, publicInfractions(check.Scan), changed)
+	actual := check.Ratchet
+	if !expected.Passed || actual.PreviousCount != expected.PreviousCount || actual.CurrentCount != expected.CurrentCount ||
+		actual.Passed != expected.Passed || !slices.Equal(actual.NewViolations, expected.NewViolations) ||
+		!slices.Equal(actual.TouchedCleanViolations, expected.TouchedCleanViolations) {
+		return errors.New("public ratchet contradicts original scan, verified scan or changed-file evidence")
 	}
 	return nil
 }

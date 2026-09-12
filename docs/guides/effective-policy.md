@@ -1,15 +1,28 @@
 # Effective audit policy
 
-CLI `praetorctl audit` and MCP `standards_audit` resolve complexity from the same
-`internal/config` implementation. The existing HISS scanner consumes the resolved
-`max_func_loc`. Both surfaces report the same effective digest for the same input
-snapshots and show the sources that impose the limit.
+CLI `praetorctl audit`, MCP `standards_audit` and retained public adoption loops
+resolve complexity from the same `internal/config` implementation. The existing
+HISS scanner consumes the resolved `max_func_loc`. CLI/MCP audits report the same
+effective digest for the same input snapshots and show the sources that impose
+the limit. Public-loop reports retain the planned policy and each verification's
+policy digest, applied limit and baseline evidence.
 
 The first migration covers audit function length. Cyclomatic complexity, cognitive
 complexity and statement limits are resolved and retained in the typed policy;
 this change does not inject them into separate linters or the LSP. Branch and
 supply-chain checks retain their existing defaults plus repository overrides.
 Routing, budgets, credentials and deployment activation are separate consumers.
+
+Public adoption loops resolve their policy during the dry run, then independently
+scan the original source under that policy before applying changes. Applied
+policy must match the plan. Verification compares the saved baseline's entries
+with the independent original scan and evaluates current violations against that
+anchor. Unchanged legacy debt is retained; new violations and violations in
+touched files fail. Old public-loop reports produced with a fixed scanner limit
+do not establish verification under a stricter policy; rerun those cases.
+Public loops currently select repository and pinned-catalog constraints;
+external fleet/organization/deployment/workstation paths are audit arguments,
+not public-loop options.
 
 ## Sources and strictness
 

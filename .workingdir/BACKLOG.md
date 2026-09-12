@@ -224,3 +224,6 @@
 - [x] Research maintained Go packages versus custom implementations and publish a cited reuse and migration decision matrix (completed: 2026-09-12)
 - [x] Constrain whole-workspace dedupe scans so ignored Claude worktrees do not become application duplication findings (completed: 2026-09-12)
 - [x] Resolve audit policy once for CLI and MCP and materialize verified pinned catalogs during adoption (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 21:10:06 UTC, commit `local`]
+- [x] Migrate public dogfood original and post-adoption scans to one effective policy snapshot and preserve strict-policy ratchet evidence (completed: 2026-09-12)

@@ -9,7 +9,37 @@ compares maintained libraries and standard-library alternatives against these
 failures, with pinned sources and migration acceptance cases. Research is
 complete; dependency adoption remains open.
 
-## Current continuation: shared effective audit policy and offline adoption
+## Current continuation: trustworthy public dogfood evidence
+
+The public dogfood verifier now resolves policy before its original scan and
+uses that same snapshot for adoption, repeat scans and the ratchet. It rejects
+planning mutations, policy drift, missing or changed baseline entries and
+inconsistent retained repair evidence. Historical failed reports remain useful
+for triage; older verified reports without these anchors require a fresh run.
+See [dogfood suites](../docs/guides/dogfood-suites.md).
+
+Frozen source `068d48ae8f8060b090b10d5b74bc3391005bd171dcffc5f466f1537fce753ffe`
+passed `make verify-all`, including race, fresh MCP, lint, security and hooks.
+Pinned Cobra and Flask adoption/repeat runs passed; repair import reports
+`no_failures`, zero jobs. These runs verify governance adoption, not upstream
+application behavior. Private evidence: `public-policy-fix-20260912/`.
+
+The next portfolio includes `20-watts-was-enough` (approved destination
+`cordanaLLM/ingenium`), image builder `imago`, kernel builder `nucleus`, and
+Jellysin. Live inventory found unfinished builder remote migrations, not duplicate
+engines. The user wants complete research/concept/spec/task/code/test links and
+agent/tool orchestration, exercised in stages before private settings fork
+promotion. Transfers, portfolio activation and the interconnect module remain
+implementation work. Preserve unpublished and untracked work in each checkout.
+Private maps: `repo-interconnect-20260912/`.
+
+Concrete new regressions: an empty selected framework still reports 100% needs
+readiness; the image builder fabricates dispatch success without calling a
+backend; Jellysin's generated instructions prescribe Go tests for non-Go repos.
+These findings must become acceptance cases. They do not establish working
+application tests, dispatch, or automatic repair/promotion across this portfolio.
+
+## Previous checkpoint: shared effective audit policy and offline adoption
 
 Public code checkpoint `a79483c` ships the shared
 [effective policy resolver](../docs/guides/effective-policy.md), which now
@@ -35,16 +65,12 @@ public `a79483c`, with exactly four config overlays. Its full gate and hooks
 passed, and its CLI/MCP audits agree. Shipping and hosted results are retained
 under `effective-policy-20260912/REPORT.md` and `owner-sync/`.
 
-This does not activate global services: LSP, public-dogfood verification and
-other analysis paths still need migration. Only `max_func_loc` is injected;
+This does not activate global services: LSP and other analysis paths still
+need migration. Public-dogfood verification is corrected in the newer slice above. Only `max_func_loc` is injected;
 other complexity values are resolved but not yet consumed by separate linters.
 Routing, budgets, signed data updates and native client activation remain open.
-The public dogfood migration is a correctness prerequisite: its before/after
-scans currently use the fixed default and derive the ratchet from that scan,
-so stricter adopted-policy violations can be missed. Both scans need one
-effective snapshot; migrating only the after-scan would misclassify old debt.
-Public code-checkpoint hosted CI `34717743136` completed successfully. Owner
-hosted CI `34717888755` remains in progress at this update.
+The earlier fixed-limit public dogfood gap is repaired in the newer slice above.
+Public code CI `34717743136` and owner CI `34717888755` both passed.
 
 ## Shipped checkpoint: verification repair and shared client preparation
 

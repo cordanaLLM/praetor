@@ -80,17 +80,20 @@ type ActionDetail struct {
 // example hooks that were not activated because their configuration was not written
 // by praetor) that the caller should print but that do not fail the run.
 type AdoptReport struct {
-	State           RepositoryState `json:"state"`
-	Archetype       string          `json:"archetype"`
-	Facets          []string        `json:"facets"`
-	CreatedFiles    []string        `json:"created_files"`
-	ReconciledFiles []string        `json:"reconciled_files"`
-	ActionDetails   []ActionDetail  `json:"action_details,omitempty"`
-	DebtBreakdown   map[string]int  `json:"debt_breakdown,omitempty"`
-	LegacyDebtCount int             `json:"legacy_debt_count"`
-	DryRun          bool            `json:"dry_run"`
-	Errors          []string        `json:"errors,omitempty"`
-	Warnings        []string        `json:"warnings,omitempty"`
+	// EffectivePolicy is the resolved planned/applied snapshot. Its source bytes
+	// remain excluded by config's JSON contract; absence never implies defaults.
+	EffectivePolicy *config.EffectivePolicy `json:"effective_policy,omitempty"`
+	State           RepositoryState         `json:"state"`
+	Archetype       string                  `json:"archetype"`
+	Facets          []string                `json:"facets"`
+	CreatedFiles    []string                `json:"created_files"`
+	ReconciledFiles []string                `json:"reconciled_files"`
+	ActionDetails   []ActionDetail          `json:"action_details,omitempty"`
+	DebtBreakdown   map[string]int          `json:"debt_breakdown,omitempty"`
+	LegacyDebtCount int                     `json:"legacy_debt_count"`
+	DryRun          bool                    `json:"dry_run"`
+	Errors          []string                `json:"errors,omitempty"`
+	Warnings        []string                `json:"warnings,omitempty"`
 }
 
 // adoptSession carries the resolved inputs of one adoption run through the step chain.
@@ -149,6 +152,7 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	if err := executeAdoptSteps(ctx, s); err != nil {
 		return report, err
 	}
+	report.EffectivePolicy = s.policy
 	return report, nil
 }
 

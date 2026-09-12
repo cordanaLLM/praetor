@@ -3,7 +3,37 @@
 > Durable handoff for the 2026-09-11/12 multi-agent deep audit of this repository.
 > Any session can continue from this file alone. Update it whenever a wave completes.
 
-## Current continuation — verification and shared management (2026-09-12)
+## Current continuation: trustworthy public dogfood evidence
+
+The public dogfood verifier now resolves policy before its original scan and
+uses that same snapshot for adoption, repeat scans and the ratchet. It rejects
+planning mutations, policy drift, missing or changed baseline entries and
+inconsistent retained repair evidence. Historical failed reports remain useful
+for triage; older verified reports without these anchors require a fresh run.
+See [dogfood suites](../docs/guides/dogfood-suites.md).
+
+Frozen source `068d48ae8f8060b090b10d5b74bc3391005bd171dcffc5f466f1537fce753ffe`
+passed `make verify-all`, including race, fresh MCP, lint, security and hooks.
+Pinned Cobra and Flask adoption/repeat runs passed; repair import reports
+`no_failures`, zero jobs. These runs verify governance adoption, not upstream
+application behavior. Private evidence: `public-policy-fix-20260912/`.
+
+The next portfolio includes `20-watts-was-enough` (approved destination
+`cordanaLLM/ingenium`), image builder `imago`, kernel builder `nucleus`, and
+Jellysin. Live inventory found unfinished builder remote migrations, not duplicate
+engines. The user wants complete research/concept/spec/task/code/test links and
+agent/tool orchestration, exercised in stages before private settings fork
+promotion. Transfers, portfolio activation and the interconnect module remain
+implementation work. Preserve unpublished and untracked work in each checkout.
+Private maps: `repo-interconnect-20260912/`.
+
+Concrete new regressions: an empty selected framework still reports 100% needs
+readiness; the image builder fabricates dispatch success without calling a
+backend; Jellysin's generated instructions prescribe Go tests for non-Go repos.
+These findings must become acceptance cases. They do not establish working
+application tests, dispatch, or automatic repair/promotion across this portfolio.
+
+## Previous checkpoint — verification and shared management (2026-09-12)
 
 Read the current section of [GAPS_AUDIT.md](GAPS_AUDIT.md) first. Public checkpoint
 `54bae4f` repairs lint/security and error integrity, unifies snapshot writes,
@@ -45,15 +75,10 @@ passed. Owner CLI/MCP policy digests match and identify `lusoris/praetor`.
 Later public ledger-only changes do not alter this code pin. Shipping evidence:
 `effective-policy-20260912/REPORT.md` and its `owner-sync/` directory. Public
 code-checkpoint CI: https://github.com/cordanaLLM/praetor/actions/runs/34717743136.
-That hosted run completed successfully. Owner hosted run `34717888755` remains
-in progress at this ledger update; owner local full verification already passed.
+That hosted run and owner hosted run `34717888755` both completed successfully.
 
-Next concrete consumer migration: public dogfood still computes both original
-and post-adoption scans at the previous fixed limit and constructs its ratchet
-from that original scan. A stricter adopted policy can therefore be missed.
-Resolve one policy before both scans; changing only the after-scan limit would
-create false failures against the old-limit pre-scan. Track this separately from
-the completed CLI/MCP/adoption slice.
+The public dogfood consumer migration described in the new continuation section
+above supersedes the fixed-limit gap in this earlier checkpoint.
 
 ## Previous checkpoint — ledger repair and gaps audit
 

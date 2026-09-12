@@ -141,14 +141,13 @@ func executePublicRepository(ctx context.Context, opts PublicLoopOptions, source
 		return err
 	}
 	result.OriginalTreeDigest = original.digest()
-	result.OriginalScan, err = scanPublicTree(ctx, result.Checkout)
-	if err != nil {
-		return err
-	}
 	adoptOpts := adopt.AdoptOptions{Path: result.Checkout, DryRun: true, RecordBaseline: true, SkipHookActivation: true, LockSourceRoot: opts.SourceRoot}
 	result.Plan, err = adopt.Adopt(ctx, adoptOpts)
 	if err := publicAdoptionError(result.Plan, err); err != nil {
 		return fmt.Errorf("plan: %w", err)
+	}
+	if err := scanPublicOriginal(ctx, result); err != nil {
+		return err
 	}
 	if !opts.Apply {
 		result.Status = "planned"
@@ -157,12 +156,28 @@ func executePublicRepository(ctx context.Context, opts PublicLoopOptions, source
 	return reconcilePublicRepository(ctx, opts, result, original, adoptOpts)
 }
 
+func scanPublicOriginal(ctx context.Context, result *PublicRepositoryResult) error {
+	afterPlan, err := snapshotPublicTree(ctx, result.Checkout)
+	if err != nil {
+		return err
+	}
+	if afterPlan.digest() != result.OriginalTreeDigest {
+		return errors.New("adoption dry-run changed the independent original tree")
+	}
+	result.OriginalScan, err = scanPublicTree(ctx, result.Checkout, result.Plan.EffectivePolicy)
+	if err != nil {
+		return fmt.Errorf("scan original tree under planned policy: %w", err)
+	}
+	return nil
+}
+
 func reconcilePublicRepository(ctx context.Context, opts PublicLoopOptions, result *PublicRepositoryResult, original publicTree, adoptOpts adopt.AdoptOptions) error {
 	previous := ""
+	anchor := publicPolicyAnchor{Policy: result.Plan.EffectivePolicy, Scan: result.OriginalScan}
 	for i := 0; i < opts.MaxAttempts && i < MaxPublicAttempts; i++ {
 		adoptOpts.DryRun = false
 		adoptOpts.RecordBaseline = i == 0
-		attempt := applyPublicAttempt(ctx, adoptOpts, original, result.OriginalScan, i+1)
+		attempt := applyPublicAttempt(ctx, adoptOpts, original, anchor, i+1)
 		result.Attempts = append(result.Attempts, attempt)
 		if attempt.Error != "" {
 			return fmt.Errorf("attempt %d: %s", i+1, attempt.Error)

@@ -30,6 +30,21 @@ The [public loop](../dogfooding.md) retains fresh clones and checks actual lock
 digests, generated context, HISS debt and reconciliation stability. It never
 executes upstream application tests, build scripts, hooks or agent instructions.
 
+Public cases use the [resolved audit policy](effective-policy.md) for both the
+original and post-adoption scans. Each attempt must retain the planned policy
+identity, and its saved baseline must match the independently scanned original
+debt. Reports include the effective digest, function-length limit and validated
+baseline hash. A stricter profile can therefore reject a touched function below
+the previous fixed scanner limit. Re-run older public results before treating
+them as evidence for a stricter policy.
+
+Repair planning rejects old verified public reports that lack policy/baseline
+evidence, and checks retained policy digests and ratchet results for internal
+consistency. Failed historical reports remain available for triage. These
+metadata checks do not replace a fresh pinned run. Saved public baselines are
+bounded to 8 MiB; incomplete scans and malformed or inconsistent baseline entries
+cannot produce a verified result.
+
 ## Private workstation configuration
 
 Store private configuration and evidence outside the public repository. A config

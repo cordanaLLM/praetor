@@ -489,3 +489,7 @@
 ### [2026-09-12 20:44:39 UTC] Commit `a79483c` on `checkpoint/deep-audit-2026-09-12`
 - **Activity**: Public code a79483c pushed through Lefthook and hosted CI 34717743136 passed. Installed CLI/MCP/LSP hashes match source00598e704cf441c74a973a96746409a07ea1304c2a45c4f29687b92e108ff3f8; fresh CLI/MCP policy digests and stricter fleet rejection agree. Owner870ee693 pushed and active, clean, exactly four config overlays over publica794; full local gate passed, owner hosted CI in progress. Completed tasks archived. Public dogfood shared-policy scan migration now tracked; attached chat MCP still needs reload and native Codex hook trust remains untrusted.
 - **Tasks**: 21 open, 0 completed | **Open Bugs**: 713 | **Pending Questions**: 0
+
+### [2026-09-12 21:10:07 UTC] Commit `989633b` on `fix/public-policy-20260912`
+- **Activity**: Public dogfood shared-policy and baseline evidence correction passed full make verify-all on source068d48ae8f8060b090b10d5b74bc3391005bd171dcffc5f466f1537fce753ffe. Fresh pinned Cobra/Flask repeated adoption passed and repair import produced zero jobs. Captured approved ingenium migration and Jellysin portfolio plus full interconnect scope. Needs false-readiness and imago false-dispatch findings remain open; no repository transfers or portfolio activation claimed.
+- **Tasks**: 24 open, 0 completed | **Open Bugs**: 713 | **Pending Questions**: 0
