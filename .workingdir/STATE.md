@@ -497,3 +497,7 @@
 ### [2026-09-12 21:24:23 UTC] Commit `1f8fd40` on `fix/hiss-scan-coverage-20260912`
 - **Activity**: HISS coverage fix passed full make verify-all on source6605789e4f3c0048c11a5ce8a3c0b84f6d5cb07c46fb00940382f173a550e78b. Reproduced CSharp zero-without-scope and now retain bounded file/read/extension evidence in reports and CLI/MCP. Native language checks, template fixes, needs readiness and imago backend truthfulness remain separate stages. Public policy1f8fd406 pushed and installed; owner6b08213 active, exact four overlays.
 - **Tasks**: 24 open, 0 completed | **Open Bugs**: 713 | **Pending Questions**: 0
+
+### [2026-09-12 21:27:11 UTC] Commit `4168620` on `docs/portfolio-audit-20260912`
+- **Activity**: Portfolio gap audit now binds findings to current repository IDs and source pins, preserves legacy/unpublished work, records BUG-717..719, and resolves only the verified HISS coverage failure. Template/no-op gates, mapping candidates, imago dispatch, enrollment and native application stages remain explicit acceptance gaps. Full source gate at4168620 remains passed; audit-only edits add no executable change.
+- **Tasks**: 24 open, 0 completed | **Open Bugs**: 715 | **Pending Questions**: 0

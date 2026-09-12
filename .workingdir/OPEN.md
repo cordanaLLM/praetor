@@ -1,5 +1,7 @@
 # Open Items & In-Flight Blockers
 
+
+> Current portfolio gap and bugfix audit: [PORTFOLIO_AUDIT.md](PORTFOLIO_AUDIT.md).
 > Track active, immediate operational blockers and current research spikes.
 > Current evidence and repair order: [GAPS_AUDIT.md](GAPS_AUDIT.md). Audit first; ledger integrity before bulk reconciliation, then ADR-0009 unification before adapter expansion.
 > Package decisions and migration acceptance: [Go reuse research](../docs/research/go-package-reuse.md). Research complete; prototypes and adoption remain implementation work.

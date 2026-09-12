@@ -1,5 +1,7 @@
 # Capability gaps and state reconciliation — 2026-09-12
 
+
+> Current portfolio gap and bugfix audit: [PORTFOLIO_AUDIT.md](PORTFOLIO_AUDIT.md).
 This is the current continuation entry point. The owner requested this audit
 before further feature expansion. It supplements the earlier 716-finding audit;
 it is not a claim to have reverified every historical finding.

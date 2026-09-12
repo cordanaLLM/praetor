@@ -1,5 +1,7 @@
 # Deep Audit & Fix-All — Resume State
 
+
+> Current portfolio gap and bugfix audit: [PORTFOLIO_AUDIT.md](PORTFOLIO_AUDIT.md).
 > Durable handoff for the 2026-09-11/12 multi-agent deep audit of this repository.
 > Any session can continue from this file alone. Update it whenever a wave completes.
 
