@@ -306,6 +306,16 @@ the preserved nested Claude worktrees as source duplicates: 1,988 scanned files,
 remain intact; compare an isolated checkout for the ordinary CI scan scope.
 The missing-root/dangling-file false-success scanner issue remains separately open.
 
+The clean combined checkout passes the ordinary dedupe scan (215 files, 1,337
+functions); its full verification has only the same 76 lint and 90 security
+findings, none in the newly added files. Atomic coverage exposed an instrumented
+test child writing Go's missing-GOCOVERDIR warning into its asserted stderr.
+The test helper now supplies a private temporary coverage directory while keeping
+the exact byte assertions and production environment isolation unchanged. Focused
+utility race coverage passes at 87.8%; retained full coverage results live under
+`combined-local-systems-clean/` and the focused regression under
+`operational-fork/sync/coverage-fix/`.
+
 Evidence: `local-dev-install-readback.json`, `installed-cli-original-replay.json`,
 `context-global-{cli,mcp}.json`, `context-integrated-mcp-probe.json`,
 `context-optimizer/`, `task-routing/`, `router-review/`, `operational-fork/sync/`,

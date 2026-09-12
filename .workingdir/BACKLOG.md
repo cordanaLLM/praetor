@@ -182,3 +182,6 @@
 - [x] Implement bounded context-file optimization through CLI and MCP with provenance and behavior checks (completed: 2026-09-12)
 - [x] Wire declared-task and capability routing to a deterministic cost-aware CLI selector (completed: 2026-09-12)
 - [x] Prepare owner-fork updates from reviewed upstream commits while preserving configuration overlay (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 17:02:54 UTC, commit `local`]
+- [x] Fix atomic coverage subprocess warning without weakening exact-byte assertions (completed: 2026-09-12)

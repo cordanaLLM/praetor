@@ -16,7 +16,10 @@ func bytesHelper(t *testing.T, mode string) (context.Context, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := WithCommandEnvironment(context.Background(), []string{"PRAETOR_COMMAND_BYTES_TEST=" + mode})
+	// Instrumented subprocesses need a private output directory to keep stderr exact.
+	ctx, err := WithCommandEnvironment(context.Background(), []string{
+		"PRAETOR_COMMAND_BYTES_TEST=" + mode, "GOCOVERDIR=" + t.TempDir(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
