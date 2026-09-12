@@ -11,12 +11,14 @@ import (
 
 func runGC(args []string) error {
 	fs := flag.NewFlagSet("gc", flag.ContinueOnError)
-	dryRun := fs.Bool("dry-run", false, "Simulate garbage collection without deleting files")
+	// Deleting worktrees is irreversible, so the simulation is the default: the caller has
+	// to ask for the deletion explicitly with --dry-run=false.
+	dryRun := fs.Bool("dry-run", true, "Simulate garbage collection; pass --dry-run=false to delete")
 	rootDir := fs.String("path", ".", "Root repository directory")
 	worktreesDir := fs.String("worktrees-dir", "", "Custom worktrees directory to prune (e.g. ~/dev/k8s-worktrees)")
 	maxAge := fs.Duration("max-age", 24*time.Hour, "Maximum age for ephemeral worktrees")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(args, boolFlagNames(fs))); err != nil {
 		return err
 	}
 
@@ -37,12 +39,19 @@ func runGC(args []string) error {
 
 	fmt.Println("=== Workstation Garbage Collection ===")
 	if *dryRun {
-		fmt.Println("[DRY-RUN MODE: No files modified]")
+		fmt.Println("[DRY-RUN MODE: No files modified. Pass --dry-run=false to delete.]")
 	}
 	fmt.Printf("Pruned Worktrees:          %d\n", len(report.PrunedWorktrees))
 	fmt.Printf("Purged Ephemeral Files:    %d\n", len(report.PurgedEphemeralFiles))
 	fmt.Printf("Cleaned Cache Artifacts:   %d\n", len(report.CleanedCacheArtifacts))
 	fmt.Printf("Total Bytes Reclaimed:     %.2f MB\n", float64(report.ReclaimedBytes)/(1024*1024))
+
+	if len(report.SkippedWorktrees) > 0 {
+		fmt.Printf("Skipped Worktrees (%d, unsaved work or locked):\n", len(report.SkippedWorktrees))
+		for _, s := range report.SkippedWorktrees {
+			fmt.Printf("  - %s\n", s)
+		}
+	}
 
 	return nil
 }
