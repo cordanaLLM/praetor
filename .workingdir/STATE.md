@@ -520,3 +520,7 @@
 ### [2026-09-12 21:46:21 UTC] Commit `cfe9c66` on `checkpoint/deep-audit-2026-09-12`
 - **Activity**: Integrated bounded adoption command plans and configured pinned GitHub enrollment after review; root real historical Makefile replay found/fixed missing newline variant. Full make verify-all passed on source0fbe86efe555a1e3fb80d628679a195220affa962497b6af4973048ab0662fba. Actual two-pin Jellysin MCP governance replay stable with exact policy/baseline; repair import zero jobs. BUG-718/005/042 resolved only this scope. Native application execution, DevContainer bootstrap, migration candidate consistency and portfolio transfers continue separately.
 - **Tasks**: 24 open, 0 completed | **Open Bugs**: 712 | **Pending Questions**: 0
+
+### [2026-09-12 21:50:16 UTC] Commit `5d6ad1a` on `checkpoint/deep-audit-2026-09-12`
+- **Activity**: Lefthook pre-push correctly rejected a scaffold test relying on make beside git. Resolved make before isolating PATH; exact git-shim regression and full make verify-all pass. Adoption5d6ad1a installed, push retry pending. User prioritizes native harness dispatch admission, cheap eligible bounded experts, measured quotas and completion enforcement; existing isolated fixes retained.
+- **Tasks**: 25 open, 0 completed | **Open Bugs**: 712 | **Pending Questions**: 0

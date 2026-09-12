@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -149,6 +150,10 @@ func TestVerificationEmptyRecipesNeverSucceed(t *testing.T) {
 }
 
 func TestVerificationActualScaffoldBuildAndTestFailurePropagates(t *testing.T) {
+	makePath, err := exec.LookPath("make")
+	if err != nil {
+		t.Fatalf("make is required for scaffold execution: %v", err)
+	}
 	for _, failure := range []string{"none", "build", "test", "audit"} {
 		t.Run(failure, func(t *testing.T) {
 			root, plan := verificationFixture(t, map[string]string{"go.mod": "module fixture\n"})
@@ -157,7 +162,7 @@ func TestVerificationActualScaffoldBuildAndTestFailurePropagates(t *testing.T) {
 			writeStub(t, stubs, "standardsctl", "printf '%s\\n' \"$*\" >> calls\n[ \"$1\" != '"+failure+"' ]\n")
 			hermeticPath(t, stubs)
 			mustWrite(t, filepath.Join(root, "Makefile"), buildMakefile(plan))
-			_, err := util.RunCommand(context.Background(), root, "make", "--no-print-directory", "verify-all")
+			_, err := util.RunCommand(context.Background(), root, makePath, "--no-print-directory", "verify-all")
 			if (err == nil) != (failure == "none") {
 				t.Fatalf("failure %q did not propagate: %v", failure, err)
 			}
