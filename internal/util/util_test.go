@@ -418,3 +418,80 @@ func TestResolveAuthTokenContext_Boundary_CancelledContext(t *testing.T) {
 		t.Errorf("explicit token must bypass the gh lookup, got %q", got)
 	}
 }
+
+// ============================================================================
+// WriteFileNoFollow / ReadFileNoFollow (3D)
+// ============================================================================
+
+func TestWriteFileNoFollow_Positive_CreatesAndReplaces(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ledger.json")
+
+	if err := WriteFileNoFollow(path, []byte("first"), 0o644); err != nil {
+		t.Fatalf("WriteFileNoFollow failed: %v", err)
+	}
+	if err := WriteFileNoFollow(path, []byte("second"), 0o644); err != nil {
+		t.Fatalf("WriteFileNoFollow replace failed: %v", err)
+	}
+
+	data, err := ReadFileNoFollow(path)
+	if err != nil {
+		t.Fatalf("ReadFileNoFollow failed: %v", err)
+	}
+	if string(data) != "second" {
+		t.Errorf("unexpected content %q", string(data))
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Errorf("unexpected mode %v", info.Mode().Perm())
+	}
+}
+
+func TestWriteFileNoFollow_Negative_RefusesSymlinkAndBadPerm(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim.txt")
+	if err := os.WriteFile(victim, []byte("do not touch"), 0o600); err != nil {
+		t.Fatalf("write victim: %v", err)
+	}
+	link := filepath.Join(dir, "link.json")
+	if err := os.Symlink(victim, link); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+
+	err := WriteFileNoFollow(link, []byte("payload"), 0o644)
+	if !errors.Is(err, ErrSymlinkDestination) {
+		t.Fatalf("expected ErrSymlinkDestination, got %v", err)
+	}
+	data, readErr := os.ReadFile(victim)
+	if readErr != nil {
+		t.Fatalf("read victim: %v", readErr)
+	}
+	if string(data) != "do not touch" {
+		t.Errorf("the write followed the symlink: %q", string(data))
+	}
+
+	if _, err := ReadFileNoFollow(link); !errors.Is(err, ErrSymlinkDestination) {
+		t.Errorf("expected ReadFileNoFollow to refuse a symlink, got %v", err)
+	}
+	if err := WriteFileNoFollow(filepath.Join(dir, "ok.txt"), []byte("x"), 0o666); !errors.Is(err, ErrInsecurePerm) {
+		t.Errorf("expected world-writable perm to be refused, got %v", err)
+	}
+}
+
+func TestWriteFileNoFollow_Boundary_DirectoryAndMissingFile(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := WriteFileNoFollow(dir, []byte("x"), 0o644); !errors.Is(err, ErrSymlinkDestination) {
+		t.Errorf("expected a directory destination to be refused, got %v", err)
+	}
+	if _, err := ReadFileNoFollow(filepath.Join(dir, "absent.txt")); err == nil {
+		t.Errorf("expected reading an absent file to fail")
+	}
+	if err := WriteFileNoFollow(filepath.Join(dir, "fresh.txt"), nil, 0o600); err != nil {
+		t.Errorf("expected an empty write to a fresh path to succeed, got %v", err)
+	}
+}

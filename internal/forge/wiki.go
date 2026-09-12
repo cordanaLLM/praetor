@@ -4,15 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Invariant bounds adhering to HISS-02.
 const (
 	MaxWikiPagesLimit = 100
+	// wikiPageFilePerm is the mode applied to every generated wiki page.
+	wikiPageFilePerm = 0o644
+	// wikiDirPerm is the mode applied to the generated wiki output directory.
+	wikiDirPerm = 0o750
+	// wikiOwner is the organization the generated wiki portal belongs to.
+	wikiOwner = "cordanaLLM"
 )
 
 // WikiPage represents an individual wiki markdown page.
@@ -39,9 +46,9 @@ func GenerateWiki(ctx context.Context, repoRoot, outputDir string) (*WikiManifes
 		return nil, errors.New("output directory cannot be empty")
 	}
 
-	repoName := filepath.Base(repoRoot)
-	if repoName == "" || repoName == "." {
-		repoName = "standards"
+	repoName, err := resolveWikiRepoName(repoRoot)
+	if err != nil {
+		return nil, err
 	}
 
 	pages := []WikiPage{
@@ -62,8 +69,25 @@ func GenerateWiki(ctx context.Context, repoRoot, outputDir string) (*WikiManifes
 	}, nil
 }
 
+// resolveWikiRepoName derives the "<owner>/<repo>" name the wiki portal is generated for.
+//
+// The caller commonly passes ".", so the path is made absolute before its last element is
+// taken: filepath.Base(".") is "." and would otherwise select a hard-coded placeholder
+// name that is wrong for every real invocation.
+func resolveWikiRepoName(repoRoot string) (string, error) {
+	absRoot, err := filepath.Abs(strings.TrimSpace(repoRoot))
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve repository root %q: %w", repoRoot, err)
+	}
+	base := filepath.Base(filepath.Clean(absRoot))
+	if base == "." || base == ".." || base == string(filepath.Separator) || base == "" {
+		return "", fmt.Errorf("cannot derive a repository name from %q", repoRoot)
+	}
+	return wikiOwner + "/" + base, nil
+}
+
 func writeWikiPages(ctx context.Context, outputDir string, pages []WikiPage) error {
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := util.MkdirSecure(outputDir, wikiDirPerm); err != nil {
 		return fmt.Errorf("failed to create wiki output directory %s: %w", outputDir, err)
 	}
 
@@ -73,7 +97,7 @@ func writeWikiPages(ctx context.Context, outputDir string, pages []WikiPage) err
 		}
 		page := &pages[i]
 		page.Path = filepath.Join(outputDir, page.Name)
-		if err := os.WriteFile(page.Path, []byte(page.Content), 0644); err != nil {
+		if err := util.WriteFileNoFollow(page.Path, []byte(page.Content), wikiPageFilePerm); err != nil {
 			return fmt.Errorf("failed writing wiki page %s: %w", page.Name, err)
 		}
 	}
@@ -81,7 +105,7 @@ func writeWikiPages(ctx context.Context, outputDir string, pages []WikiPage) err
 }
 
 func generateHomeWiki(repoName string) WikiPage {
-	content := fmt.Sprintf(`# cordanaLLM/%s Wiki Portal
+	content := fmt.Sprintf(`# %s Wiki Portal
 
 Welcome to the official repository governance wiki for cordanaLLM.
 

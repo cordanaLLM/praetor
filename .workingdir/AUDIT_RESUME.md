@@ -123,8 +123,9 @@ receipt for the current branch or verification result.
 | G04 command parsing | `a476ef7` | Command, harvester, needs and release-track tests pass |
 | G05 capability/migration | `a9a70db` | CLI, needs and adoption tests pass |
 | G06 scanning/migration | `90f7a1a` | Needs/adoption race tests pass; integration test size regression corrected during G07a |
+| G07a forge validation | `c5ee29b` | CLI, forge, MCP, needs and affected helper race tests pass; workflow syntax checks pass |
 
-G07a integration is currently in progress. G06 preserves both G05's context,
+G07b integration is currently in progress. G06 preserves both G05's context,
 path, permission and unknown-coverage safeguards and G06's scan/migration
 corrections. The scanner reports limit breaches, migration refuses branch resets,
 and failed mutations return errors with partial results. G07a removes magic-token

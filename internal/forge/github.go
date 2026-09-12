@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -23,6 +24,9 @@ const (
 	// maxErrorBodyPreview bounds how much of a forge response body may be embedded in an
 	// error string that ends up on a terminal or inside a receipt.
 	maxErrorBodyPreview = 256
+	// maxErrorBodyBytes bounds project API error excerpts; GitHub REST previews
+	// retain their smaller, control-sanitized maxErrorBodyPreview bound.
+	maxErrorBodyBytes = util.MaxErrorBodyBytes
 	// issuesPerPage is the maximum page size the GitHub REST API accepts.
 	issuesPerPage = 100
 	// maxIssuePages bounds issue pagination (HISS-02): at most 2000 issues per listing.
@@ -197,6 +201,7 @@ func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, pay
 
 	client := g.HTTPClient
 	if client == nil {
+		// HISS-02: avoid the unbounded ambient http.DefaultClient.
 		client = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 
@@ -206,7 +211,7 @@ func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, pay
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("failed closing response body: %w", cerr)
+			err = fmt.Errorf("close response body (%s %s): %w", method, path, cerr)
 		}
 	}()
 

@@ -612,6 +612,12 @@ func TestDispatchCommand_TopologySubcommands(t *testing.T) {
 func TestDispatchCommand_MilestoneAndProject(t *testing.T) {
 	tmpDir := t.TempDir()
 
+	// Hermetic forge isolation: without this the command paths resolve a real token from
+	// the developer's environment or `gh` session and mutate a live board.
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+
 	// Milestone subcommands
 	if err := dispatchCommand("milestone", []string{}); err != nil {
 		t.Fatalf("milestone empty args failed: %v", err)
@@ -653,6 +659,84 @@ func TestDispatchCommand_MilestoneAndProject(t *testing.T) {
 	}
 	if err := dispatchCommand("project", []string{"invalid"}); err == nil {
 		t.Fatal("expected error for invalid project subcommand")
+	}
+}
+
+func TestDispatchCommand_MilestoneDirectoryFlags(t *testing.T) {
+	dir := t.TempDir()
+	if err := dispatchCommand("milestone", []string{"create", "--title=Flag fixture", "--dir=" + dir}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("milestone", []string{"status", "--dir", dir})
+	})
+	if err != nil {
+		t.Fatalf("status with directory flag: %v", err)
+	}
+	mustContain(t, out, "Total:       1", "Open:        1")
+	if err := dispatchCommand("milestone", []string{"close", "1", "--dir", dir}); err != nil {
+		t.Fatalf("close with flag after selector: %v", err)
+	}
+	out, err = captureStdout(t, func() error {
+		return dispatchCommand("milestone", []string{"status", "--dir=" + dir})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "Closed:      1")
+}
+
+func TestDispatchCommand_ProjectCachedStatusDoesNotResolveAuth(t *testing.T) {
+	dir, bin := t.TempDir(), t.TempDir()
+	t.Setenv("PATH", bin)
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("project", []string{"add", "1", "https://github.com/acme/widgets/issues/1", "--dir", dir})
+	})
+	if err != nil {
+		t.Fatalf("local project fixture: %v", err)
+	}
+	mustContain(t, out, "local cache only", "board was not updated")
+	if strings.Contains(out, "[PASS]") {
+		t.Fatalf("local cache write claimed remote success: %s", out)
+	}
+	before := readFixtureFile(t, dir, ".workingdir/project.json")
+	marker := filepath.Join(bin, "called")
+	t.Setenv("PRAETOR_TEST_GH_MARKER", marker)
+	script := "#!/bin/sh\nprintf called > \"$PRAETOR_TEST_GH_MARKER\"\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatchCommand("project", []string{"status", "--dir", dir}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("cached status resolved credentials: %v", err)
+	}
+	if after := readFixtureFile(t, dir, ".workingdir/project.json"); before != after {
+		t.Fatal("cached status rewrote the cache")
+	}
+}
+
+func TestDispatchCommand_MilestoneProjectRejectExtraArguments(t *testing.T) {
+	cases := []struct {
+		command string
+		args    []string
+	}{
+		{"milestone", []string{"close"}},
+		{"milestone", []string{"close", "1", "--unknown"}},
+		{"milestone", []string{"close", "1", "a", "b"}},
+		{"milestone", []string{"status", "a", "b"}},
+		{"milestone", []string{"status", "--unknown"}},
+		{"project", []string{"list", "extra"}},
+		{"project", []string{"status", "a", "b"}},
+		{"project", []string{"add", "1", "https://example.invalid/issues/1", "extra"}},
+	}
+	for _, tc := range cases {
+		if err := dispatchCommand(tc.command, tc.args); err == nil {
+			t.Fatalf("accepted extra or invalid args: %s %v", tc.command, tc.args)
+		}
 	}
 }
 
