@@ -206,3 +206,6 @@
 - [x] Install and verify the per-user dogfood timer with retained rollback evidence (completed: 2026-09-12)
 - [x] Implement bounded local dogfood failure triage plans using declared task routing (completed: 2026-09-12)
 - [x] Implement bounded local dogfood schedule run/status with retained evidence and retry circuit (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 18:21:51 UTC, commit `local`]
+- [x] Implement bounded repair executor with isolated source and offline verification (completed: 2026-09-12)
