@@ -12,4 +12,6 @@
 - [ ] Implement capability and evidence based per-task agent routing with cost, latency, and escalation controls
 - [ ] Optimize workstation agent and CLI context files with canonical ownership and replay verification
 - [x] Activate fresh local Praetor binaries and verify development MCP consumers (completed: 2026-09-12)
-- [ ] Implement bounded context-file optimization through CLI and MCP with provenance and behavior checks
+- [x] Implement bounded context-file optimization through CLI and MCP with provenance and behavior checks (completed: 2026-09-12)
+- [ ] Wire declared-task and capability routing to a deterministic cost-aware CLI selector
+- [ ] Prepare owner-fork updates from reviewed upstream commits while preserving configuration overlay

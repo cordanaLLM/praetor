@@ -94,6 +94,39 @@ def transcript_checks(client, root):
             "transcript cursor rejected for another cache"]
 
 
+def context_checks(client, root):
+    """Verify reduction and fail-closed bounds through the actual read-only tool."""
+    sources = ["AGENTS.md", *OUTPUTS]
+    before = {name: (root / name).read_bytes() for name in sources}
+    report = json.loads(tool_text(client.call("standards_context_analyze", {"sources": sources})))
+    require(len(report["documents"]) == 1 and report["saved_bytes"] > 0,
+            "context analyzer did not identify current compiler projections")
+    require(report["review_required"] and SENTINEL not in json.dumps(report),
+            "context analysis leaked payload or claimed automatic activation")
+    require(all((root / name).read_bytes() == data for name, data in before.items()),
+            "read-only context analysis changed sources")
+    (root / "CLAUDE.md").write_bytes(before["CLAUDE.md"] + b"\nKeep this additional rule.\n")
+    drift = json.loads(tool_text(client.call("standards_context_analyze", {"sources": sources})))
+    require(len(drift["documents"]) == 2, "context analyzer discarded changed policy")
+    for args in ({"sources": []}, {"sources": ["../AGENTS.md"]},
+                 {"sources": ["AGENTS.md"], "output_dir": "never-write"}):
+        tool_text(client.call("standards_context_analyze", args), error=True)
+    bounded = [f"context-source-{index}.md" for index in range(64)]
+    for name in bounded:
+        (root / name).write_text("private duplicate fixture\n" * 100)
+    exact = json.loads(tool_text(client.call("standards_context_analyze", {"sources": bounded})))
+    require(len(exact["sources"]) == 64 and len(exact["documents"]) == 1,
+            "exact source bound was not fully analyzed")
+    tool_text(client.call("standards_context_analyze", {"sources": bounded + ["extra.md"]}), error=True)
+    (root / bounded[0]).write_bytes(b"x" * (1 << 20))
+    tool_text(client.call("standards_context_analyze", {"sources": bounded[:1]}))
+    (root / bounded[0]).write_bytes(b"x" * ((1 << 20) + 1))
+    tool_text(client.call("standards_context_analyze", {"sources": bounded[:1]}), error=True)
+    return ["context compiler projections reduced without writes or payload disclosure",
+            "context drift retained", "context invalid and outside paths rejected",
+            "context 64-source boundary enforced", "context 1 MiB boundary enforced"]
+
+
 def audit_fixture(root):
     source = "id: framework\nname: Framework\n"
     digest = "sha256:" + hashlib.sha256(source.encode()).hexdigest()
@@ -150,7 +183,8 @@ def probe(binary, root, metadata):
         require(0 < len(tools) <= 100, "empty or oversized tool inventory")
         names = [tool["name"] for tool in tools]
         required = {"standards_inspect_symbols", "standards_compile_context",
-                    "standards_memory_recall", "standards_audit", "standards_transcript_ingest"}
+                    "standards_memory_recall", "standards_audit", "standards_transcript_ingest",
+                    "standards_context_analyze"}
         require(required <= set(names), "required tools are absent")
         inspected = tool_text(client.call("standards_inspect_symbols",
                                          {"path": "cmd/standards-mcp/main.go"}))
@@ -160,6 +194,7 @@ def probe(binary, root, metadata):
         with RPCClient(server_command(binary, fixture)) as client:
             check_identity(client, metadata)
             checks = fixture_checks(client, fixture) + audit_checks(client, fixture)
+            checks += context_checks(client, fixture)
             checks += failure_checks(client, fixture)
             checks += transcript_checks(client, fixture)
     return {"passed": ["source identity", "tool discovery", "checkout symbol read"] + checks,

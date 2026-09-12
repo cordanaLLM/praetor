@@ -151,6 +151,7 @@ func (s *Server) registerStandardTools() error {
 		s.createMemoryRecallTool,
 		s.createHindsightOptimizeTool,
 		s.createTranscriptIngestTool,
+		s.createContextAnalyzeTool,
 	}
 
 	limit := len(tools)
