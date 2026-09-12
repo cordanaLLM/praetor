@@ -4,6 +4,11 @@ This is the current continuation entry point. The owner requested this audit
 before further feature expansion. It supplements the earlier 716-finding audit;
 it is not a claim to have reverified every historical finding.
 
+The subsequent [Go package reuse research](../docs/research/go-package-reuse.md)
+compares maintained libraries and standard-library alternatives against these
+failures, with pinned sources and migration acceptance cases. Research is
+complete; dependency adoption and the repairs below remain open.
+
 Audited base: `c4c5a25beb0d3e5f071b54aff934ecc91b26b5f1`, plus the in-flight
 NotebookLM preparation and prompt-selection changes. Tested Go source SHA256:
 `8cc712d377dd5b398502efd7542c7b7c08207e1da7499d52e510ed033b457dc0`.
@@ -152,7 +157,10 @@ because the development server can build it.
 `make -k verify-all` ran in an isolated snapshot of the in-flight code and exited
 **2**. All **48 Go package race suites** passed, as did Python connector tests,
 development MCP fixtures, compiler/audit checks, hook tests and the other completed
-targets. **Lint and security failed**. Security reported 90 findings. Lint includes
+targets. **Lint and security failed**. Public checkpoint `ebd5184` also passed
+hosted race/coverage checks and then failed lint in
+[CI run 34713336249](https://github.com/cordanaLLM/praetor/actions/runs/34713336249).
+Security reported 90 findings locally. Lint includes
 six diagnostics in the new notebook/CLI code as well as existing debt; those new
 diagnostics remain open, so this checkpoint is not release-ready. Full output is
 `verify-all.log` in the evidence directory. A separately compiled VS Code check

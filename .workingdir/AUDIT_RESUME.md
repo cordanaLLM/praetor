@@ -19,6 +19,12 @@ capability descriptions below do not establish current activation. IDE MCP wirin
 Gitea/GitLab operations and hosted App/webhook runtime still have concrete gaps.
 Notebook/prompt additions are checkpoint code, not installed live features.
 
+The [Go package reuse research](../docs/research/go-package-reuse.md) is complete:
+pinned maintainer sources, measured import closures for ten candidates, a Go 1.27
+JSON strictness comparison, and scoped migration acceptance cases. No dependency
+or runtime migration was made. Repair ledger integrity first, then use the
+research to choose shared implementations and remove tested duplication.
+
 ## Where the evidence lives
 
 Everything outside the repo is under **`~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit/`**
@@ -48,7 +54,7 @@ Everything outside the repo is under **`~/.claude/projects/-home-kilian-dev-cord
 5. Fix **all** findings, not just high severity.
 6. Findings land in `.workingdir/BUGS.md`; the full report stays outside the repo.
 
-## Audit result (complete)
+## Original audit result (historical; current ledger loss is documented above)
 
 630 kept findings: **1 critical, 59 high, 270 medium, 285 low, 15 info**.
 Categories: correctness 273, tests 91, self-governance 77, security 53, dead-surface 43, drift 24, config 23, ci 17, docs 17, supply-chain 12.

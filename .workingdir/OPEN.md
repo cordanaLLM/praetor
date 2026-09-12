@@ -2,10 +2,11 @@
 
 > Track active, immediate operational blockers and current research spikes.
 > Current evidence and repair order: [GAPS_AUDIT.md](GAPS_AUDIT.md). Audit first; ledger integrity before bulk reconciliation, then ADR-0009 unification before adapter expansion.
+> Package decisions and migration acceptance: [Go reuse research](../docs/research/go-package-reuse.md). Research complete; prototypes and adoption remain implementation work.
 
 ## In-Flight Tasks
 - [x] Deep audit WF-1: read-only multi-agent audit of full codebase (Go, CI, hooks, packaging, deploy, templates, config, agent surfaces, editors, docs) (completed: 2026-09-12)
-- [x] Deep audit: record verified findings in BUGS.md + evidence report + Artifact (completed: 2026-09-12)
+- [x] Deep audit: retain original 716 findings and full evidence report; ledger loss and reconciliation tracked separately (completed: 2026-09-12)
 - [ ] Deep audit WF-2: reconcile and fix verified findings on checkpoint/deep-audit-2026-09-12 after ledger integrity and ADR-0009 unification (EUPL-1.2, praetorctl-only, pinned-key receipt, zero gosec exclusions)
 - [ ] Deep audit: verification gate, PR to cordanaLLM/praetor
 - [ ] Harvest and replay per-workstation coding CLI and agent global rules, skills, state, logs, brains, and memories with source provenance
@@ -24,4 +25,4 @@
 - [ ] Repair bug ledger parsing, persistence and read-error handling; recover four missing findings before reconciliation
 - [ ] Implement ADR-0009 shared policy and analysis boundaries before adapter and provider expansion
 - [ ] Implement staged forge bot runtime and harden adoption workflows; retain explicit unsupported provider errors
-- [ ] Research maintained Go packages versus custom implementations and publish a cited reuse and migration decision matrix
+- [x] Research maintained Go packages versus custom implementations and publish a cited reuse and migration decision matrix (completed: 2026-09-12)
