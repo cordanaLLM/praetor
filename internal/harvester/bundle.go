@@ -28,6 +28,9 @@ const (
 	MaxSkillWalkDepth = 8
 	// MaxCopyBuffer is the stream copy buffer size used for every bundled file.
 	MaxCopyBuffer = 32 * 1024
+	// MaxManifestRecords bounds the manifest record loops (HISS-02). Records accumulate
+	// across every agent root, so this bound is per bundle, not per directory.
+	MaxManifestRecords = 50000
 
 	// bundleDirPerm and bundleFilePerm keep the harvested material owner-only. The bundler
 	// copies shell history, MCP configuration and agent state, all of which routinely carry
@@ -663,7 +666,7 @@ func (c *bundleCollector) harvestVault(ctx context.Context, vaultDir string) err
 
 // writeBundleManifest totals the records and writes the owner-only manifest.
 func writeBundleManifest(report *WorkstationBundleReport) error {
-	for i := 0; i < len(report.Records) && i < MaxBundleEntries; i++ {
+	for i := 0; i < len(report.Records) && i < MaxManifestRecords; i++ {
 		report.TotalBytes += report.Records[i].SizeBytes
 		report.Categories[report.Records[i].Category]++
 	}
@@ -995,7 +998,11 @@ func IngestBundle(ctx context.Context, bundleDir, localSkillsDir string, dryRun 
 		seenPatch:    make(map[string]bool),
 	}
 
-	for i := 0; i < len(rep.Records) && i < MaxBundleEntries; i++ {
+	if len(rep.Records) > MaxManifestRecords {
+		state.reject("manifest declares %d records, only the first %d are ingested",
+			len(rep.Records), MaxManifestRecords)
+	}
+	for i := 0; i < len(rep.Records) && i < MaxManifestRecords; i++ {
 		if cErr := ctx.Err(); cErr != nil {
 			return nil, fmt.Errorf("context cancelled during ingest: %w", cErr)
 		}

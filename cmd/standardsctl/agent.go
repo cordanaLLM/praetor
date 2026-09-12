@@ -86,11 +86,16 @@ func runGatekeeperAgent(ctx context.Context) error {
 }
 
 func runDogfooderAgent(ctx context.Context) error {
-	// The zero value of ApplyAdoption keeps every adoption a simulation.
-	opts := dogfood.DogfoodOptions{HostRepoPath: "."}
+	// The zero value of ApplyAdoption keeps every adoption a simulation. VerifyOnly makes a
+	// failed host audit an error rather than a line of prose the caller can ignore.
+	opts := dogfood.DogfoodOptions{HostRepoPath: ".", VerifyOnly: true}
 	rep, err := dogfood.RunDogfood(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("dogfooder execution error: %w", err)
+	}
+	if !rep.OverallPassed {
+		return fmt.Errorf("dogfooder verification failed on %s: context sync passed=%t, self audit passed=%t",
+			rep.HostRepoPath, rep.ContextSyncPassed, rep.SelfAuditPassed)
 	}
 	fmt.Printf("[praetor-dogfooder] Adoption simulation verified on %s\n", rep.HostRepoPath)
 	return nil
