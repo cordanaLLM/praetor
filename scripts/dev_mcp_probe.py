@@ -66,6 +66,34 @@ def failure_checks(client, root):
     return ["unknown tool rejected", "corrupt cache rejected", "malformed lock rejected"]
 
 
+def transcript_checks(client, root):
+    event = {"step_index": 1, "source": "MODEL", "type": "MESSAGE", "status": "DONE",
+             "created_at": "2026-09-12T12:00:00Z", "content": "fixture observed event",
+             "thinking": "fixture excluded thinking"}
+    source = root / "transcript_full.jsonl"
+    source.write_text((json.dumps(event) + "\n") * 2)
+    args = {"source_path": source.name, "cache_dir": "events", "max_records": 1}
+    first = json.loads(tool_text(client.call("standards_transcript_ingest", args)))["report"]
+    require(first["stored"] == 1 and not first["complete"] and first["remaining"] == 1,
+            "transcript ingestion did not expose the remaining page")
+    cursor = first["next_cursor"]
+    invalid = dict(args, cursor=cursor, cache_dir="other-events")
+    tool_text(client.call("standards_transcript_ingest", invalid), error=True)
+    second = json.loads(tool_text(client.call("standards_transcript_ingest", dict(args, cursor=cursor))))["report"]
+    require(second["complete"] and second["stored"] == 1, "transcript continuation lost records")
+    replay = json.loads(tool_text(client.call("standards_transcript_ingest", args)))["report"]
+    require(replay["stored"] == 0 and replay["already_present"] == 1,
+            "transcript replay did not deduplicate")
+    records = list((root / "events").glob("*.json"))
+    require(len(records) == 2, "transcript records missing or duplicated on disk")
+    for path in records:
+        observed = json.loads(path.read_text())
+        require(observed["source_sha256"] == first["source"]["sha256"]
+                and "thinking" not in observed, "transcript provenance or payload filter failed")
+    return ["transcript pages persisted and read back", "transcript replay deduplicated",
+            "transcript cursor rejected for another cache"]
+
+
 def audit_fixture(root):
     source = "id: framework\nname: Framework\n"
     digest = "sha256:" + hashlib.sha256(source.encode()).hexdigest()
@@ -122,7 +150,7 @@ def probe(binary, root, metadata):
         require(0 < len(tools) <= 100, "empty or oversized tool inventory")
         names = [tool["name"] for tool in tools]
         required = {"standards_inspect_symbols", "standards_compile_context",
-                    "standards_memory_recall", "standards_audit"}
+                    "standards_memory_recall", "standards_audit", "standards_transcript_ingest"}
         require(required <= set(names), "required tools are absent")
         inspected = tool_text(client.call("standards_inspect_symbols",
                                          {"path": "cmd/standards-mcp/main.go"}))
@@ -133,5 +161,6 @@ def probe(binary, root, metadata):
             check_identity(client, metadata)
             checks = fixture_checks(client, fixture) + audit_checks(client, fixture)
             checks += failure_checks(client, fixture)
+            checks += transcript_checks(client, fixture)
     return {"passed": ["source identity", "tool discovery", "checkout symbol read"] + checks,
             "tools": names, "mutations": "temporary fixtures only"}

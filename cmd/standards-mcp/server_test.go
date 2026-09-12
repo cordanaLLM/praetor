@@ -229,6 +229,7 @@ func TestServer_Positive_RegistrationAndAnnotations(t *testing.T) {
 		"standards_package_docs":        ro,
 		"standards_version_audit":       {ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
 		"standards_memory_recall":       ro,
+		"standards_transcript_ingest":   {ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		"standards_hindsight_optimize":  {ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: true, OpenWorldHint: false},
 	}
 	if len(srv.tools) != len(expected) || len(srv.order) != len(expected) {
