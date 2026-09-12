@@ -5,6 +5,7 @@ package hindsight
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,12 +37,25 @@ func SaveLocalCache(repoPath string, facts []MemoryFact) error {
 
 // LoadLocalCache reads distilled memory facts from .workingdir/memory/distilled.json.
 func LoadLocalCache(repoPath string) ([]MemoryFact, error) {
-	filePath := filepath.Join(repoPath, MemoryFileRel)
-	if !util.FileExists(filePath) {
+	filePath, err := util.ConfinePath(repoPath, MemoryFileRel)
+	if err != nil {
+		return nil, fmt.Errorf("resolve local memory cache: %w", err)
+	}
+	info, err := os.Stat(filePath)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("inspect local memory cache: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("local memory cache must be a regular file: %s", filePath)
 	}
 
 	data, err := os.ReadFile(filePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed reading local memory cache: %w", err)
 	}
@@ -53,11 +67,22 @@ func LoadLocalCache(repoPath string) ([]MemoryFact, error) {
 	return facts, nil
 }
 
-// RecallLocalFacts performs instant in-memory keyword and category search over local facts.
+// RecallLocalFacts preserves the legacy best-effort query API, returning no facts
+// when the cache cannot be read. Authoritative callers must use RecallLocalFactsWithError.
 func RecallLocalFacts(repoPath, query string, category FactCategory) []MemoryFact {
-	facts, err := LoadLocalCache(repoPath)
-	if err != nil || len(facts) == 0 {
+	facts, err := RecallLocalFactsWithError(repoPath, query, category)
+	if err != nil {
 		return nil
+	}
+	return facts
+}
+
+// RecallLocalFactsWithError searches cached facts without hiding cache failures.
+// A missing cache is a legitimate empty result; corrupt or unreadable data is an error.
+func RecallLocalFactsWithError(repoPath, query string, category FactCategory) ([]MemoryFact, error) {
+	facts, err := LoadLocalCache(repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("recall local memory facts: %w", err)
 	}
 
 	lowerQuery := strings.ToLower(query)
@@ -89,7 +114,7 @@ func RecallLocalFacts(repoPath, query string, category FactCategory) []MemoryFac
 	}
 
 	if len(matches) > 10 {
-		return matches[:10]
+		return matches[:10], nil
 	}
-	return matches
+	return matches, nil
 }

@@ -108,7 +108,28 @@ jobs:
 
       - name: Run Race Detection & Unit Tests (HISS-15)
         if: steps.filter.outputs.run_tests != 'false' || github.event_name == 'push'
-        run: go test -v -race ./...
+        run: go test -v -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Enforce Statement Coverage Floor (HISS-15 coverage gate)
+        if: steps.filter.outputs.run_tests != 'false' || github.event_name == 'push'
+        env:
+          # HISS-15 is advertised as a CI coverage gate: the total statement coverage
+          # must not fall below this floor (the tree sits above it; raise it as
+          # coverage grows, never lower it).
+          COVERAGE_FLOOR: "65"
+        run: |
+          TOTAL=$(go tool cover -func=coverage.out | awk '/^total:/ { sub("%", "", $3); print $3 }')
+          if [ -z "$TOTAL" ]; then
+            echo "::error::Could not read total statement coverage from coverage.out"
+            exit 1
+          fi
+          echo "Total statement coverage: ${TOTAL}% (floor ${COVERAGE_FLOOR}%)"
+          awk -v total="$TOTAL" -v floor="$COVERAGE_FLOOR" 'BEGIN {
+            if (total + 0 < floor + 0) {
+              printf "::error::Statement coverage %.1f%% is below the HISS-15 floor of %s%%\n", total, floor
+              exit 1
+            }
+          }'
 
       - name: Run Repository Governance Audit (HISS Invariants & Rulesets)
         if: steps.filter.outputs.run_audit != 'false' || github.event_name == 'push'

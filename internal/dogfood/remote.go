@@ -2,20 +2,25 @@ package dogfood
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
 	MaxRemoteTargets     = 20
 	DefaultRemoteTimeout = 2 * time.Minute
 )
+
+// ErrInvalidRepoURL is returned when a remote repository URL is empty, would be parsed
+// as a git option, or carries shell metacharacters.
+var ErrInvalidRepoURL = errors.New("dogfood: invalid remote repository URL")
 
 // PopularBenchmarks contains curated open-source repositories representing diverse archetypes.
 var PopularBenchmarks = []string{
@@ -56,20 +61,35 @@ func calculateReadinessGrade(debtCount, hissInfractions int) string {
 	return "F"
 }
 
-// cloneEphemeralRepo clones a remote repository into a temporary directory with depth 1.
-func cloneEphemeralRepo(ctx context.Context, repoURL, targetDir string) error {
+// validateRepoURL rejects URLs that cannot safely be handed to git as a positional
+// argument: empty values, values git would parse as an option, and values carrying shell
+// metacharacters or control bytes (util.ValidateExecArg).
+func validateRepoURL(repoURL string) (string, error) {
 	trimmed := strings.TrimSpace(repoURL)
 	if trimmed == "" {
-		return fmt.Errorf("empty repository URL provided")
+		return "", fmt.Errorf("%w: empty", ErrInvalidRepoURL)
+	}
+	if err := util.ValidateExecArg(trimmed); err != nil {
+		return "", fmt.Errorf("%w: %q: %w", ErrInvalidRepoURL, trimmed, err)
+	}
+	return trimmed, nil
+}
+
+// cloneEphemeralRepo clones a remote repository into a temporary directory with depth 1.
+// The clone runs through util.RunCommand, the single audited exec entry point, under a
+// DefaultRemoteTimeout deadline (HISS-02).
+func cloneEphemeralRepo(ctx context.Context, repoURL, targetDir string) error {
+	trimmed, err := validateRepoURL(repoURL)
+	if err != nil {
+		return err
 	}
 
 	cloneCtx, cancel := context.WithTimeout(ctx, DefaultRemoteTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(cloneCtx, "git", "clone", "--depth", "1", "--single-branch", trimmed, targetDir)
-	output, err := cmd.CombinedOutput()
+	output, err := util.RunCommand(cloneCtx, "", "git", "clone", "--depth", "1", "--single-branch", "--", trimmed, targetDir)
 	if err != nil {
-		return fmt.Errorf("git clone failed (%s): %w", strings.TrimSpace(string(output)), err)
+		return fmt.Errorf("git clone failed (%s): %w", output, err)
 	}
 	return nil
 }

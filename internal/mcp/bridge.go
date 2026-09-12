@@ -7,7 +7,11 @@ import (
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 )
 
-const maxToolsBatchLimit = 500
+// MaxToolsBatchLimit is the scalar bound on a single batch conversion (HISS-02).
+const MaxToolsBatchLimit = 500
+
+// ErrBatchTooLarge is returned when a batch conversion exceeds MaxToolsBatchLimit.
+var ErrBatchTooLarge = errors.New("tool batch exceeds maximum scalar bound (500)")
 
 // OpenAIFunction represents the function object inside an OpenAI tool descriptor.
 type OpenAIFunction struct {
@@ -81,6 +85,8 @@ func HasToolInjection(t Tool) bool {
 }
 
 // ToOpenAITool converts an MCP Tool to the OpenAI Function Calling specification.
+// Validation bounds the schema before a sanitized property map is copied into the
+// result. Conversion leaves the input tool unchanged and permits spec-only tools.
 func ToOpenAITool(t Tool) (*OpenAITool, error) {
 	if err := t.Validate(); err != nil {
 		return nil, fmt.Errorf("cannot convert invalid tool to OpenAI format: %w", err)
@@ -127,8 +133,8 @@ func ToGeminiFunction(t Tool) (*GeminiFunctionDeclaration, error) {
 
 // ToOpenAITools converts a slice of MCP Tools to OpenAI format with bounded execution.
 func ToOpenAITools(tools []Tool) ([]OpenAITool, error) {
-	if len(tools) > maxToolsBatchLimit {
-		return nil, errors.New("tool batch exceeds maximum scalar bound (500)")
+	if len(tools) > MaxToolsBatchLimit {
+		return nil, ErrBatchTooLarge
 	}
 	result := make([]OpenAITool, 0, len(tools))
 	limit := len(tools)
@@ -144,8 +150,8 @@ func ToOpenAITools(tools []Tool) ([]OpenAITool, error) {
 
 // ToAnthropicTools converts a slice of MCP Tools to Anthropic format with bounded execution.
 func ToAnthropicTools(tools []Tool) ([]AnthropicTool, error) {
-	if len(tools) > maxToolsBatchLimit {
-		return nil, errors.New("tool batch exceeds maximum scalar bound (500)")
+	if len(tools) > MaxToolsBatchLimit {
+		return nil, ErrBatchTooLarge
 	}
 	result := make([]AnthropicTool, 0, len(tools))
 	limit := len(tools)
@@ -161,8 +167,8 @@ func ToAnthropicTools(tools []Tool) ([]AnthropicTool, error) {
 
 // ToGeminiFunctions converts a slice of MCP Tools to Gemini format with bounded execution.
 func ToGeminiFunctions(tools []Tool) ([]GeminiFunctionDeclaration, error) {
-	if len(tools) > maxToolsBatchLimit {
-		return nil, errors.New("tool batch exceeds maximum scalar bound (500)")
+	if len(tools) > MaxToolsBatchLimit {
+		return nil, ErrBatchTooLarge
 	}
 	result := make([]GeminiFunctionDeclaration, 0, len(tools))
 	limit := len(tools)

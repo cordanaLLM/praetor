@@ -111,7 +111,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 	rootDir := opts.rootDir
 	gates := []func() error{
 		func() error { return auditRepoIdentity(manifest, rootDir) },
-		func() error { return auditLockDigests(manifest, rootDir) },
+		func() error { return auditLockDigestsContext(ctx, manifest, rootDir) },
 		func() error { return auditBaselineAndInvariants(ctx, opts) },
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
 		func() error { return auditAgentProjections(rootDir) },
@@ -144,7 +144,6 @@ func auditManifestAndLockfile(manifestPath string) (*config.Manifest, error) {
 	if _, err := os.Stat(lockPath); err != nil {
 		return nil, fmt.Errorf("[FAIL] .standards.lock is missing or unreadable: %w", err)
 	}
-	fmt.Println("[PASS] SemVer lockfile .standards.lock verified.")
 	return manifest, nil
 }
 

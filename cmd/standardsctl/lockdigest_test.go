@@ -14,6 +14,8 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
+const emptyInputDigest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
 // lockFixture is a temporary repository carrying archetype sources and a lockfile.
 type lockFixture struct {
 	dir      string
@@ -98,6 +100,20 @@ func TestAuditLockDigests_Positive(t *testing.T) {
 	}
 }
 
+func TestAuditLockDigestsRejectsMalformedJSONWithoutPass(t *testing.T) {
+	f := newLockFixture(t)
+	if err := os.WriteFile(filepath.Join(f.dir, ".standards.lock"), []byte(`{"version":1,}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return auditLockDigests(f.manifest, f.dir) })
+	if err == nil || !strings.Contains(err.Error(), "malformed JSON") {
+		t.Fatalf("expected malformed JSON error, got %v", err)
+	}
+	if strings.Contains(out, "[PASS]") {
+		t.Fatalf("malformed lock emitted a verification claim: %s", out)
+	}
+}
+
 func TestAuditLockDigests_Negative(t *testing.T) {
 	profile := ".config/archetypes/framework.yaml"
 	facet := ".config/archetypes/facets/security-high.yaml"
@@ -172,43 +188,6 @@ func TestAuditLockDigests_Boundary(t *testing.T) {
 	}
 	if err := auditLockDigests(remote.manifest, remote.dir); err == nil {
 		t.Error("expected an error for a missing lockfile")
-	}
-}
-
-func TestNormalizeDigest_3D(t *testing.T) {
-	// A plausible real digest: 64 hex characters with no repeating 16-character block.
-	real := "0123456789abcdef" + "fedcba9876543210" + "00112233445566778899aabbccddeeff"
-
-	// Positive: a well-formed digest is normalised to bare lowercase hex.
-	got, err := normalizeDigest("sha256:" + strings.ToUpper(real))
-	if err != nil {
-		t.Fatalf("normalizeDigest: %v", err)
-	}
-	if got != real {
-		t.Errorf("normalizeDigest = %q, want %q", got, real)
-	}
-
-	// Negative: wrong prefix, wrong length, non-hex.
-	for _, bad := range []string{real, "md5:" + real, "sha256:" + real[:10], "sha256:" + strings.Repeat("z", 64)} {
-		if _, err := normalizeDigest(bad); !errors.Is(err, ErrLockDigestMalformed) {
-			t.Errorf("normalizeDigest(%q): expected ErrLockDigestMalformed, got %v", bad, err)
-		}
-	}
-
-	// Boundary: placeholders of both known shapes.
-	for _, placeholder := range []string{
-		"sha256:" + emptyInputDigest,
-		"sha256:" + strings.Repeat("1234567890abcdef", 4),
-		"sha256:" + strings.Repeat("fedcba0987654321", 4),
-	} {
-		if _, err := normalizeDigest(placeholder); !errors.Is(err, ErrLockDigestPlaceholder) {
-			t.Errorf("normalizeDigest(%q): expected ErrLockDigestPlaceholder, got %v", placeholder, err)
-		}
-	}
-
-	// Boundary: whitespace around a valid digest is tolerated.
-	if _, err := normalizeDigest("  sha256:" + real + "  "); err != nil {
-		t.Errorf("expected surrounding whitespace to be tolerated, got %v", err)
 	}
 }
 

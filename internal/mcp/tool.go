@@ -12,6 +12,11 @@ const MaxToolProperties = 500
 // ErrTooManyProperties reports a tool schema that exceeds MaxToolProperties.
 var ErrTooManyProperties = errors.New("mcp: tool schema exceeds maximum property count")
 
+// ErrNilHandler is returned by the tool constructors when no handler is supplied. A tool
+// registered without a handler would compile and list fine but panic on its first
+// tools/call, so the constructors refuse it up front.
+var ErrNilHandler = errors.New("mcp: tool handler must not be nil")
+
 // ToolAnnotations defines behavioral metadata hints for an MCP tool.
 type ToolAnnotations struct {
 	ReadOnlyHint    bool `json:"readOnlyHint"`
@@ -59,7 +64,13 @@ type Tool struct {
 	Handler     ToolHandler     `json:"-"`
 }
 
-// Validate checks that the Tool definition conforms to HISS-16 invariants.
+// Validate checks that the Tool definition conforms to HISS-16 invariants: a non-empty
+// name and a typed input schema with at most MaxToolProperties entries. A nil
+// Properties map is normalised to an empty one for JSON object serialization.
+//
+// Validate deliberately does not require a Handler: the bridge converters translate
+// spec-only tool descriptions (no executable body) into vendor formats. Executable tools
+// are built through the constructors, which do enforce a handler.
 func (t *Tool) Validate() error {
 	if t.Name == "" {
 		return errors.New("tool name cannot be empty")
@@ -76,8 +87,11 @@ func (t *Tool) Validate() error {
 	return nil
 }
 
-// NewReadOnlyTool constructs a validated read-only, idempotent MCP tool specification.
-func NewReadOnlyTool(name string, description string, schema ToolInputSchema, handler ToolHandler) (Tool, error) {
+// newTool assembles and validates an executable tool with the given annotations.
+func newTool(kind, name, description string, schema ToolInputSchema, handler ToolHandler, ann ToolAnnotations) (Tool, error) {
+	if handler == nil {
+		return Tool{}, fmt.Errorf("failed to construct %s tool %s: %w", kind, name, ErrNilHandler)
+	}
 	if schema.Properties == nil {
 		schema.Properties = make(map[string]PropertySchema)
 	}
@@ -88,44 +102,51 @@ func NewReadOnlyTool(name string, description string, schema ToolInputSchema, ha
 		Name:        name,
 		Description: description,
 		InputSchema: schema,
-		Annotations: ToolAnnotations{
-			ReadOnlyHint:    true,
-			DestructiveHint: false,
-			IdempotentHint:  true,
-			OpenWorldHint:   false,
-		},
-		Handler: handler,
+		Annotations: ann,
+		Handler:     handler,
 	}
 	if err := tool.Validate(); err != nil {
-		return Tool{}, fmt.Errorf("failed to construct read-only tool %s: %w", name, err)
+		return Tool{}, fmt.Errorf("failed to construct %s tool %s: %w", kind, name, err)
 	}
 	return tool, nil
 }
 
-// NewMutatingTool constructs an MCP tool specification that modifies state.
+// NewReadOnlyTool constructs a validated read-only, idempotent, closed-world MCP tool
+// specification. Use it only for tools that neither modify state nor reach outside the
+// server's own repository (no network, no subprocesses, no writes).
+func NewReadOnlyTool(name string, description string, schema ToolInputSchema, handler ToolHandler) (Tool, error) {
+	return newTool("read-only", name, description, schema, handler, ToolAnnotations{
+		ReadOnlyHint:    true,
+		DestructiveHint: false,
+		IdempotentHint:  true,
+		OpenWorldHint:   false,
+	})
+}
+
+// NewMutatingTool constructs an MCP tool specification that modifies state inside the
+// server's closed world. destructive must be true whenever the tool can overwrite or
+// replace existing files (for example through a force flag).
 func NewMutatingTool(name string, description string, schema ToolInputSchema, handler ToolHandler, destructive bool, idempotent bool) (Tool, error) {
-	if schema.Properties == nil {
-		schema.Properties = make(map[string]PropertySchema)
-	}
-	if schema.Type == "" {
-		schema.Type = "object"
-	}
-	tool := Tool{
-		Name:        name,
-		Description: description,
-		InputSchema: schema,
-		Annotations: ToolAnnotations{
-			ReadOnlyHint:    false,
-			DestructiveHint: destructive,
-			IdempotentHint:  idempotent,
-			OpenWorldHint:   false,
-		},
-		Handler: handler,
-	}
-	if err := tool.Validate(); err != nil {
-		return Tool{}, fmt.Errorf("failed to construct mutating tool %s: %w", name, err)
-	}
-	return tool, nil
+	return newTool("mutating", name, description, schema, handler, ToolAnnotations{
+		ReadOnlyHint:    false,
+		DestructiveHint: destructive,
+		IdempotentHint:  idempotent,
+		OpenWorldHint:   false,
+	})
+}
+
+// NewOpenWorldTool constructs an MCP tool specification whose execution leaves the
+// server's closed world: network egress, cloning remote repositories, spawning package
+// managers or scanning directories outside the repository. readOnly reports whether the
+// tool leaves the repository untouched; open-world tools are never marked destructive
+// because their side effects land outside the governed tree.
+func NewOpenWorldTool(name string, description string, schema ToolInputSchema, handler ToolHandler, readOnly bool, idempotent bool) (Tool, error) {
+	return newTool("open-world", name, description, schema, handler, ToolAnnotations{
+		ReadOnlyHint:    readOnly,
+		DestructiveHint: false,
+		IdempotentHint:  idempotent,
+		OpenWorldHint:   true,
+	})
 }
 
 // TextResult formats a successful plaintext MCP tool result.
