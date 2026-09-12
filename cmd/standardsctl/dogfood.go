@@ -10,6 +10,9 @@ import (
 )
 
 func runDogfood(args []string) error {
+	if len(args) > 0 && args[0] == "schedule" {
+		return runDogfoodSchedule(context.Background(), args[1:])
+	}
 	if len(args) > 0 && args[0] == "suite" {
 		return runDogfoodSuite(context.Background(), args[1:])
 	}
