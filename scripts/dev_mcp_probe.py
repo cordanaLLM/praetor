@@ -237,6 +237,66 @@ def schedule_checks(client, root):
     return ["schedule status stays read-only and unverified", "schedule embedded paths confined"]
 
 
+
+def repair_status_checks(client, root):
+    """Exercise actual retained failure admission without provider or state writes."""
+    routing = root / "repair-routing.yaml"
+    routing.write_text("version: 1\ntiers:\n  debug:\n    target_tasks: [ci_debugging]\n"
+                       "    models:\n      - id: cheap\n        family: openai\n"
+                       "        cost_per_m_in: 1\n        cost_per_m_out: 1\n"
+                       "governance:\n  exhaustion_threshold_percent: 80\n")
+    routing.chmod(0o600)
+    config = {"version": 1, "source_root": str(root), "source_sha": "a" * 40,
+              "state_dir": str(root / "repair-state"),
+              "allowed_files": ["internal/util/fixture.go"], "test_packages": ["./internal/util"],
+              "timeout_seconds": 30, "max_patch_bytes": 1024,
+              "repair_policy": {"routing_config": str(routing), "task": "ci_debugging",
+                                "input_tokens": 1000, "output_tokens": 500, "max_cost": 0.1},
+              "provider": {"base_url": "https://litellm.ai.cauda.dev/v1",
+                           "token_command": str(root / "nonexistent-helper"),
+                           "token_command_sha256": "b" * 64, "model": "cheap",
+                           "max_input_bytes": 65536, "max_output_tokens": 256}}
+    path = root / "repair-execution.json"
+    path.write_text(json.dumps(config))
+    path.chmod(0o600)
+    report_path = root / "suite-failed/report.json"
+    original = report_path.read_bytes()
+    args = {"config_path": path.name, "report_path": "suite-failed/report.json"}
+    report = json.loads(tool_text(client.call("standards_dogfood_repair_status", args)))
+    require(report["status"] == "ready" and not report["consumed"]
+            and not report["candidate_verified"], "repair status claimed execution or ignored failure")
+    require(not (root / "repair-state").exists() and report_path.read_bytes() == original,
+            "repair status wrote state or changed the retained report")
+    attempt = Path(report["attempt_dir"])
+    attempt.mkdir(parents=True, mode=0o700)
+    (root / "repair-state").chmod(0o700)
+    lock = root / "repair-state/execution.lock"
+    lock.write_bytes(b"")
+    lock.chmod(0o600)
+    begin = {"version": 1, "execution_key": report["execution_key"],
+             "source_sha": report["source_sha"], "config_sha256": report["config_sha256"],
+             "started_at": "2026-09-12T12:00:00Z"}
+    terminal = dict(report, status="agent_failed", consumed=True,
+                    usage={"input_tokens": 1000, "output_tokens": 100})
+    for name, value in (("started.json", begin), ("result.json", terminal)):
+        target = attempt / name
+        target.write_text(json.dumps(value))
+        target.chmod(0o600)
+    retained = (attempt / "result.json").read_bytes()
+    consumed = json.loads(tool_text(client.call("standards_dogfood_repair_status", args)))
+    require(consumed["status"] == "consumed" and consumed["consumed"]
+            and consumed["jobs"][0]["status"] == "agent_failed",
+            "repair status lost the terminal outcome or re-admitted its key")
+    require((attempt / "result.json").read_bytes() == retained,
+            "repair status rewrote terminal evidence")
+    config["provider"]["token_command"] = str(root.parent / "outside-helper")
+    path.write_text(json.dumps(config))
+    tool_text(client.call("standards_dogfood_repair_status", args), error=True)
+    tool_text(client.call("standards_dogfood_repair_status", dict(args, run=True)), error=True)
+    return ["repair status reads actual failed suite without credentials or execution",
+            "repair terminal outcome read back without repeated execution",
+            "repair status confines embedded paths and rejects dispatch arguments"]
+
 def audit_fixture(root):
     source = "id: framework\nname: Framework\n"
     digest = "sha256:" + hashlib.sha256(source.encode()).hexdigest()
@@ -294,7 +354,8 @@ def probe(binary, root, metadata):
         names = [tool["name"] for tool in tools]
         required = {"standards_inspect_symbols", "standards_compile_context",
                     "standards_memory_recall", "standards_audit", "standards_transcript_ingest",
-                    "standards_context_analyze", "standards_dogfood_suite", "standards_dogfood_schedule_status"}
+                    "standards_context_analyze", "standards_dogfood_suite", "standards_dogfood_schedule_status",
+                    "standards_dogfood_repair_status"}
         require(required <= set(names), "required tools are absent")
         inspected = tool_text(client.call("standards_inspect_symbols",
                                          {"path": "cmd/standards-mcp/main.go"}))
@@ -310,5 +371,6 @@ def probe(binary, root, metadata):
             checks += claude_transcript_checks(client, fixture)
             checks += suite_checks(client, fixture)
             checks += schedule_checks(client, fixture)
+            checks += repair_status_checks(client, fixture)
     return {"passed": ["source identity", "tool discovery", "checkout symbol read"] + checks,
             "tools": names, "mutations": "temporary fixtures only"}

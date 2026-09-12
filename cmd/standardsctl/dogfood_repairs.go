@@ -12,6 +12,13 @@ import (
 )
 
 func runDogfoodRepairs(ctx context.Context, args []string) error {
+	if len(args) > 0 && (args[0] == "run" || args[0] == "status") {
+		return runDogfoodRepairAction(ctx, args)
+	}
+	return runDogfoodRepairPlan(ctx, args)
+}
+
+func runDogfoodRepairPlan(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("dogfood repairs", flag.ContinueOnError)
 	reportPath := fs.String("report", "", "Completed suite report JSON")
 	routing := fs.String("routing-config", "", "Explicit declared routing configuration")

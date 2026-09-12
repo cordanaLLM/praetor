@@ -13,3 +13,4 @@
 - [ ] Optimize workstation agent and CLI context files with canonical ownership and replay verification
 - [ ] Execute bounded routed dogfood repairs in isolated local checkouts with real backend evidence
 - [ ] Verify and activate local scheduled repair execution with retained patches and outcomes
+- [x] Expose bounded repair execution through CLI and confined read-only MCP status (completed: 2026-09-12)

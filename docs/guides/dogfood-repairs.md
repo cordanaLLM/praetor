@@ -70,5 +70,38 @@ suite with no failed cases yields `no_failures` and an empty job list; a plan wi
 admitted jobs yields `ready_for_review`.
 
 A scheduler may call `PlanRepairs` after a failed `RunSuite` and save its returned
-plan even when the error is `ErrRepairsBlocked`. Automatic agent dispatch,
-worktree repair, behavioral retesting and promotion are later stages.
+plan even when the error is `ErrRepairsBlocked`. The explicit execution stage below consumes configured failures separately; the
+planner itself does not execute its jobs or promote changes.
+
+## Execute or inspect a configured repair
+
+Execution has separate explicit subcommands. The original flag-only command above
+continues to create a review plan.
+
+```bash
+praetorctl dogfood repairs status \
+  --config /private/repair-execution.json --report /private/suite-run/report.json
+
+praetorctl dogfood repairs run \
+  --config /private/repair-execution.json --report /private/suite-run/report.json
+```
+
+`status` inspects the supplied execution policy, retained failure evidence and
+local execution state. It does not create a workspace, invoke a credential helper,
+contact a model or write state. A `ready` status means a configured case is eligible;
+it does not mean a repair has run or passed verification.
+
+`run` delegates one bounded repair attempt to the [execution engine](dogfood-repair-execution.md). Its explicit
+configuration identifies the pinned source commit, allowed Go source files, test
+packages, routing budget, reviewed provider and private state directory. The CLI
+prints the engine's structured outcome and preserves a nonzero error exit even
+when a partial report is available. Candidate verification and any later promotion
+remain distinct outcomes; a returned model proposal alone is not a verified fix.
+
+The read-only MCP tool `standards_dogfood_repair_status` accepts exactly
+`config_path` and `report_path`. Both paths and every embedded input path are
+confined to the server root, including the configured credential-helper path.
+This tool always enforces its own root boundary, including when other server tools
+have been given `-allow-outside-root`. Set the server root to the reviewed private
+input directory when inspecting private execution state. The tool cannot enable
+execution through extra arguments.

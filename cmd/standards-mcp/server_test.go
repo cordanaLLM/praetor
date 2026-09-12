@@ -227,6 +227,7 @@ func TestServer_Positive_RegistrationAndAnnotations(t *testing.T) {
 		"standards_dogfood":                 {ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: false, OpenWorldHint: true},
 		"standards_dogfood_suite":           {ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: false, OpenWorldHint: true},
 		"standards_dogfood_schedule_status": ro,
+		"standards_dogfood_repair_status":   ro,
 		"standards_harvest_workstation":     {ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
 		"standards_package_docs":            ro,
 		"standards_version_audit":           {ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},

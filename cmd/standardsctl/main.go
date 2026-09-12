@@ -39,7 +39,7 @@ func printUsage() {
 	fmt.Println("  forge              Synchronize git provider wiki, issues, or validate PRs")
 	fmt.Println("  harvest            Audit fleet repositories, workstation worktrees, and agent skills")
 	fmt.Println("  adopt              Adopt and bootstrap any repository to 100% template compliance (alias: conform, bootstrap)")
-	fmt.Println("  dogfood            Execute self-governance verification, local adoption simulations, and public repo benchmarks")
+	fmt.Println("  dogfood            Run local dogfood suites, schedules, adoption benchmarks, and bounded repairs")
 	fmt.Println("  bump               Proactive prerelease bump train and ephemeral canary testing")
 	fmt.Println("  paperclip          Paperclip agent harness synthesis and Rule 0 terminal disposition")
 	fmt.Println("  changelog          Manage Keep-a-Changelog fragments and release sections")

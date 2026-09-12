@@ -127,3 +127,10 @@ attempt state. The configured runner binary, suite, source bundle, state, and
 repair-policy paths must all fit the server root. Status cannot run suites,
 dispatch agents, or create state. It hashes the configured CLI executable so
 MCP and CLI status agree even though they are separate processes.
+
+For configured repair execution, use the [repair guide](dogfood-repairs.md).
+`standards_dogfood_repair_status` reads a retained suite report and execution state
+through a confined private configuration. Probe it with an actual failed suite
+report, then verify that status leaves both the report and absent execution state
+unchanged. It never invokes credential helpers or providers. Only the explicit
+`praetorctl dogfood repairs run` command starts an execution attempt.

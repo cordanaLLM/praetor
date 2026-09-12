@@ -154,6 +154,7 @@ func (s *Server) registerStandardTools() error {
 		s.createContextAnalyzeTool,
 		s.createDogfoodSuiteTool,
 		s.createDogfoodScheduleStatusTool,
+		s.createDogfoodRepairStatusTool,
 	}
 
 	limit := len(tools)
