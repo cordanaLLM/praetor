@@ -53,20 +53,28 @@ func parseGoMod(goModPath string) (string, string, map[string]string, error) {
 
 	for lines := 0; lines < MaxScannedLines && scanner.Scan(); lines++ {
 		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "module ") {
-			modulePath = strings.TrimSpace(strings.TrimPrefix(line, "module"))
-		} else if strings.HasPrefix(line, "go ") {
-			goVer = strings.TrimSpace(strings.TrimPrefix(line, "go"))
-		} else if strings.HasPrefix(line, "require (") {
-			inRequireBlock = true
-		} else if inRequireBlock && line == ")" {
-			inRequireBlock = false
-		} else if inRequireBlock || strings.HasPrefix(line, "require ") {
-			parseRequireLine(line, directDeps)
-		}
+		inRequireBlock = parseGoModLine(line, inRequireBlock, &modulePath, &goVer, directDeps)
 	}
 
 	return modulePath, goVer, directDeps, scanner.Err()
+}
+
+// parseGoModLine folds one go.mod line into the accumulated module path, go version and
+// direct dependency set, returning the updated require-block state.
+func parseGoModLine(line string, inRequireBlock bool, modulePath, goVer *string, directDeps map[string]string) bool {
+	switch {
+	case strings.HasPrefix(line, "module "):
+		*modulePath = strings.TrimSpace(strings.TrimPrefix(line, "module"))
+	case strings.HasPrefix(line, "go "):
+		*goVer = strings.TrimSpace(strings.TrimPrefix(line, "go"))
+	case strings.HasPrefix(line, "require ("):
+		return true
+	case inRequireBlock && line == ")":
+		return false
+	case inRequireBlock || strings.HasPrefix(line, "require "):
+		parseRequireLine(line, directDeps)
+	}
+	return inRequireBlock
 }
 
 // parseRequireLine extracts a dependency if it is not marked as indirect.

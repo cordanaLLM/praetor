@@ -27,7 +27,7 @@ func probe(t *testing.T, hs *HealthServer, path string) (int, string) {
 
 func TestHealthServer_Positive_ProbesOverBoundListener(t *testing.T) {
 	hs := NewHealthServer("127.0.0.1:0")
-	if err := hs.Start(); err != nil {
+	if err := hs.Start(context.Background()); err != nil {
 		t.Fatalf("failed to start health server: %v", err)
 	}
 	defer func() {
@@ -91,7 +91,7 @@ func TestHealthServer_Negative_LivezBeforeStartAndAfterShutdown(t *testing.T) {
 		t.Fatalf("before Start expected 503 on /readyz, got %d", code)
 	}
 
-	if err := hs.Start(); err != nil {
+	if err := hs.Start(context.Background()); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	if code, body := probe(t, hs, "/livez"); code != http.StatusOK || body != "LIVE\n" {
@@ -127,7 +127,7 @@ func TestHealthServer_Negative_StartReportsBindFailure(t *testing.T) {
 	}()
 
 	hs := NewHealthServer(occupied.Addr().String())
-	startErr := hs.Start()
+	startErr := hs.Start(context.Background())
 	if startErr == nil {
 		if shutdownErr := hs.Shutdown(context.Background()); shutdownErr != nil {
 			t.Errorf("shutdown: %v", shutdownErr)
@@ -144,7 +144,7 @@ func TestHealthServer_Negative_StartReportsBindFailure(t *testing.T) {
 
 func TestHealthServer_Negative_DoubleStart(t *testing.T) {
 	hs := NewHealthServer("127.0.0.1:0")
-	if err := hs.Start(); err != nil {
+	if err := hs.Start(context.Background()); err != nil {
 		t.Fatalf("first start: %v", err)
 	}
 	defer func() {
@@ -153,7 +153,7 @@ func TestHealthServer_Negative_DoubleStart(t *testing.T) {
 		}
 	}()
 
-	if err := hs.Start(); !errors.Is(err, ErrAlreadyStarted) {
+	if err := hs.Start(context.Background()); !errors.Is(err, ErrAlreadyStarted) {
 		t.Fatalf("expected ErrAlreadyStarted on a second Start, got %v", err)
 	}
 }
@@ -161,10 +161,10 @@ func TestHealthServer_Negative_DoubleStart(t *testing.T) {
 func TestHealthServer_Boundary_NilReceivers(t *testing.T) {
 	var nilHs *HealthServer
 
-	if err := nilHs.Start(); !errors.Is(err, ErrServerNotInitialized) {
+	if err := nilHs.Start(context.Background()); !errors.Is(err, ErrServerNotInitialized) {
 		t.Errorf("expected ErrServerNotInitialized from a nil receiver, got %v", err)
 	}
-	if err := (&HealthServer{}).Start(); !errors.Is(err, ErrServerNotInitialized) {
+	if err := (&HealthServer{}).Start(context.Background()); !errors.Is(err, ErrServerNotInitialized) {
 		t.Errorf("expected ErrServerNotInitialized for a zero server, got %v", err)
 	}
 	if err := nilHs.Shutdown(context.Background()); err != nil {
@@ -203,7 +203,7 @@ func TestWaitForGracefulDrain_Positive_SignalDrainsServer(t *testing.T) {
 	defer signal.Stop(guard)
 
 	hs := NewHealthServer("127.0.0.1:0")
-	if err := hs.Start(); err != nil {
+	if err := hs.Start(context.Background()); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 

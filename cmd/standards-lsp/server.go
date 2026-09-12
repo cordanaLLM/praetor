@@ -658,25 +658,34 @@ func (s *Server) Run(ctx context.Context) error {
 			return fmt.Errorf("read error: %w", err)
 		}
 
-		resp, notifs, err := s.HandleMessage(ctx, payload)
-		if err != nil {
+		if err := s.handleAndRespond(ctx, payload); err != nil {
 			return err
-		}
-
-		if resp != nil {
-			if err := s.writeFramedMessage(resp); err != nil {
-				return fmt.Errorf("failed writing response: %w", err)
-			}
-		}
-
-		for _, n := range notifs {
-			if err := s.writeFramedMessage(n); err != nil {
-				return fmt.Errorf("failed writing notification: %w", err)
-			}
 		}
 
 		if s.isExited {
 			return nil
+		}
+	}
+	return nil
+}
+
+// handleAndRespond dispatches one framed message and writes its response and any
+// notifications back to the client.
+func (s *Server) handleAndRespond(ctx context.Context, payload []byte) error {
+	resp, notifs, err := s.HandleMessage(ctx, payload)
+	if err != nil {
+		return err
+	}
+
+	if resp != nil {
+		if writeErr := s.writeFramedMessage(resp); writeErr != nil {
+			return fmt.Errorf("failed writing response: %w", writeErr)
+		}
+	}
+
+	for _, n := range notifs {
+		if writeErr := s.writeFramedMessage(n); writeErr != nil {
+			return fmt.Errorf("failed writing notification: %w", writeErr)
 		}
 	}
 	return nil

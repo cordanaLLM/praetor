@@ -103,8 +103,9 @@ func (hs *HealthServer) SetReady(ready bool) {
 //
 // Binding synchronously is the point: ListenAndServe in a goroutine hides "address
 // already in use" from the caller, leaving a container that reports itself live with no
-// listener at all.
-func (hs *HealthServer) Start() error {
+// listener at all. ctx bounds the bind itself (HISS-02); it does not bound the serving
+// goroutine, which ends at Shutdown.
+func (hs *HealthServer) Start(ctx context.Context) error {
 	if hs == nil || hs.server == nil {
 		return ErrServerNotInitialized
 	}
@@ -114,7 +115,8 @@ func (hs *HealthServer) Start() error {
 		return fmt.Errorf("%w on %s", ErrAlreadyStarted, hs.listener.Addr())
 	}
 
-	listener, err := net.Listen("tcp", hs.server.Addr)
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "tcp", hs.server.Addr)
 	if err != nil {
 		return fmt.Errorf("failed to bind health probes on %s: %w", hs.server.Addr, err)
 	}

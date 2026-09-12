@@ -4,9 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/editor"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // maxReportedEditorFiles is the scalar upper bound (HISS-02) on the per-file lines the
@@ -84,19 +84,34 @@ func reportEditorFiles(set *editor.EditorConfigSet, root string) (written, prese
 	}
 	for i := 0; i < len(set.Files) && i < maxReportedEditorFiles; i++ {
 		f := set.Files[i]
-		full := filepath.Join(root, f.Path)
-		status := "SKIPPED"
-		switch onDisk, err := os.ReadFile(full); { // #nosec G304 -- path is the caller's workspace root joined with a synthesized relative config path.
-		case err == nil && string(onDisk) == f.Content:
-			status = "WRITTEN"
+		status, delta := classifyEditorFile(root, f)
+		if delta {
 			written++
-		case err == nil:
-			status = "PRESERVED"
-			preserved++
-		default:
+		} else {
 			preserved++
 		}
 		fmt.Printf("  - [%s] [%s] %s\n", status, f.Editor, f.Path)
 	}
 	return written, preserved
+}
+
+// classifyEditorFile reports whether the synthesized file is the one now on disk. The
+// candidate path is confined to the workspace root, so a synthesized path that tried to
+// escape it is reported as skipped rather than read.
+func classifyEditorFile(root string, f editor.GeneratedFile) (status string, written bool) {
+	full, err := util.ConfinePath(root, f.Path)
+	if err != nil {
+		return "SKIPPED", false
+	}
+	// #nosec G304,G703 -- full is the output of util.ConfinePath, which rejects absolute
+	// paths and anything resolving outside root; the content is only compared, never executed.
+	onDisk, err := os.ReadFile(full)
+	switch {
+	case err == nil && string(onDisk) == f.Content:
+		return "WRITTEN", true
+	case err == nil:
+		return "PRESERVED", false
+	default:
+		return "SKIPPED", false
+	}
 }

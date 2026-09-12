@@ -37,7 +37,7 @@ func runServe(args []string) error {
 	defer cancel()
 
 	hs := container.NewHealthServer(*addr)
-	if err := hs.Start(); err != nil {
+	if err := hs.Start(ctx); err != nil {
 		return fmt.Errorf("failed starting health server on %s: %w", *addr, err)
 	}
 	fmt.Printf("=== Praetor Cloud-Native Container Sentinel Running ===\n")
