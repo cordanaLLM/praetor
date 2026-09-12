@@ -14,7 +14,8 @@ import (
 func runHarvestTranscript(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("harvest transcript", flag.ContinueOnError)
 	var opts harvester.TranscriptIngestOptions
-	fs.StringVar(&opts.SourcePath, "source", "", "Explicit Antigravity JSONL source; prefers its full counterpart")
+	fs.StringVar(&opts.Format, "format", harvester.TranscriptFormatAntigravity, "Source format: antigravity-jsonl-v1 or claude-code-jsonl-v1")
+	fs.StringVar(&opts.SourcePath, "source", "", "Explicit JSONL source; Antigravity prefers its full counterpart")
 	fs.StringVar(&opts.CacheDir, "cache", "", "Explicit private local cache destination")
 	fs.StringVar(&opts.Cursor, "cursor", "", "Opaque resume cursor from the previous page")
 	fs.StringVar(&opts.ExpectedSHA256, "expected-sha256", "", "Require this exact selected-source SHA256")

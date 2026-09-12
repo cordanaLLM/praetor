@@ -18,13 +18,14 @@ import (
 )
 
 type transcriptCursor struct {
+	Format   string `json:"format,omitempty"`
 	Version  int    `json:"version"`
 	SHA256   string `json:"source_sha256"`
 	CacheKey string `json:"cache_key"`
 	NextLine int    `json:"next_line"`
 }
 
-// IngestTranscript validates a stable Antigravity source, then persists one bounded
+// IngestTranscript validates a stable explicitly selected source, then persists one bounded
 // batch of observed events in an explicit private cache. It never calls external
 // services or executes tool arguments. Existing harvest memory behavior is unchanged.
 func IngestTranscript(ctx context.Context, opts TranscriptIngestOptions) (*TranscriptIngestReport, error) {
@@ -41,7 +42,7 @@ func IngestTranscript(ctx context.Context, opts TranscriptIngestOptions) (*Trans
 	if err != nil {
 		return nil, err
 	}
-	start, err := decodeTranscriptCursor(opts.Cursor, source.SHA256, transcriptCacheKey(opts.CacheDir), len(events))
+	start, err := decodeTranscriptCursor(opts.Cursor, source.SHA256, source.Format, transcriptCacheKey(opts.CacheDir), len(events))
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +73,12 @@ func validateTranscriptOptions(ctx context.Context, opts *TranscriptIngestOption
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if opts.Format == "" {
+		opts.Format = TranscriptFormatAntigravity
+	}
+	if opts.Format != TranscriptFormatAntigravity && opts.Format != TranscriptFormatClaudeCode {
+		return fmt.Errorf("unsupported transcript format %q", opts.Format)
+	}
 	if opts.CacheDir == "" {
 		return fmt.Errorf("transcript cache directory is required")
 	}
@@ -84,7 +91,7 @@ func validateTranscriptOptions(ctx context.Context, opts *TranscriptIngestOption
 	return nil
 }
 
-func decodeTranscriptCursor(raw, sum, cacheKey string, total int) (int, error) {
+func decodeTranscriptCursor(raw, sum, format, cacheKey string, total int) (int, error) {
 	if raw == "" {
 		return 0, nil
 	}
@@ -99,14 +106,24 @@ func decodeTranscriptCursor(raw, sum, cacheKey string, total int) (int, error) {
 	if err := json.Unmarshal(data, &cursor); err != nil {
 		return 0, fmt.Errorf("invalid transcript cursor: %w", err)
 	}
+	return validateTranscriptCursor(cursor, sum, format, cacheKey, total)
+}
+
+func validateTranscriptCursor(cursor transcriptCursor, sum, format, cacheKey string, total int) (int, error) {
+	if cursor.Format == "" {
+		cursor.Format = TranscriptFormatAntigravity
+	}
+	if cursor.Format != format {
+		return 0, fmt.Errorf("transcript cursor does not match format")
+	}
 	if cursor.Version != transcriptCacheVersion || cursor.SHA256 != sum || cursor.CacheKey != cacheKey || cursor.NextLine < 1 || cursor.NextLine > total+1 {
 		return 0, fmt.Errorf("transcript cursor does not match source snapshot or range")
 	}
 	return cursor.NextLine - 1, nil
 }
 
-func encodeTranscriptCursor(sum, cacheKey string, start int) (string, error) {
-	data, err := json.Marshal(transcriptCursor{Version: transcriptCacheVersion, SHA256: sum, CacheKey: cacheKey, NextLine: start + 1})
+func encodeTranscriptCursor(sum, format, cacheKey string, start int) (string, error) {
+	data, err := json.Marshal(transcriptCursor{Format: format, Version: transcriptCacheVersion, SHA256: sum, CacheKey: cacheKey, NextLine: start + 1})
 	if err != nil {
 		return "", err
 	}
@@ -133,13 +150,13 @@ func ingestTranscriptBatch(ctx context.Context, root *os.Root, events []Transcri
 		report.NextCursor = ""
 		return nil
 	}
-	cursor, err := encodeTranscriptCursor(report.Source.SHA256, transcriptCacheKey(root.Name()), end)
+	cursor, err := encodeTranscriptCursor(report.Source.SHA256, report.Source.Format, transcriptCacheKey(root.Name()), end)
 	report.NextCursor = cursor
 	return err
 }
 
 func loadTranscriptEvents(ctx context.Context, opts TranscriptIngestOptions) (TranscriptSource, []TranscriptEvent, error) {
-	data, source, err := snapshotTranscript(ctx, opts.SourcePath)
+	data, source, err := snapshotTranscript(ctx, opts.SourcePath, opts.Format)
 	if err != nil {
 		return source, nil, err
 	}
@@ -147,17 +164,24 @@ func loadTranscriptEvents(ctx context.Context, opts TranscriptIngestOptions) (Tr
 		return source, nil, fmt.Errorf("transcript source differs from expected SHA256")
 	}
 	events, err := parseTranscript(ctx, data, source)
+	if err == nil && source.Format == TranscriptFormatClaudeCode {
+		err = claudeConversation(&source, events)
+	}
 	return source, events, err
 }
 
 func newTranscriptReport(source TranscriptSource, events []TranscriptEvent, start int, cache string) (*TranscriptIngestReport, error) {
 	report := &TranscriptIngestReport{Source: source, TotalRecords: len(events), Remaining: len(events) - start}
 	for _, event := range events {
+		report.ThinkingBlocks += event.thinkingBlocks
+		if event.metadataRecord {
+			report.MetadataRecords++
+		}
 		if len(event.TruncatedFields) > 0 {
 			report.TruncatedRecords++
 		}
 	}
-	cursor, err := encodeTranscriptCursor(source.SHA256, transcriptCacheKey(cache), start)
+	cursor, err := encodeTranscriptCursor(source.SHA256, source.Format, transcriptCacheKey(cache), start)
 	report.NextCursor = cursor
 	return report, err
 }

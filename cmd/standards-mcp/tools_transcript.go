@@ -13,7 +13,8 @@ import (
 func (s *Server) createTranscriptIngestTool() (mcp.Tool, error) {
 	schema := mcp.ToolInputSchema{Type: "object", Required: []string{"source_path", "cache_dir"},
 		Properties: map[string]mcp.PropertySchema{
-			"source_path":     {Type: "string", Description: "Explicit local Antigravity JSONL source; full counterpart preferred"},
+			"format":          {Type: "string", Description: "antigravity-jsonl-v1 (default) or claude-code-jsonl-v1"},
+			"source_path":     {Type: "string", Description: "Explicit local JSONL source; Antigravity full counterpart preferred"},
 			"cache_dir":       {Type: "string", Description: "Explicit private local destination for observed events"},
 			"cursor":          {Type: "string", Description: "Opaque resume cursor from the previous page"},
 			"expected_sha256": {Type: "string", Description: "Optional required SHA256 of the selected full source"},
@@ -53,7 +54,7 @@ func (s *Server) transcriptArguments(args map[string]any) (harvester.TranscriptI
 		value *string
 	}{
 		{"source_path", &opts.SourcePath}, {"cache_dir", &opts.CacheDir},
-		{"cursor", &opts.Cursor}, {"expected_sha256", &opts.ExpectedSHA256},
+		{"format", &opts.Format}, {"cursor", &opts.Cursor}, {"expected_sha256", &opts.ExpectedSHA256},
 	}
 	for _, field := range fields {
 		value, err := argString(args, field.key)

@@ -94,6 +94,40 @@ def transcript_checks(client, root):
             "transcript cursor rejected for another cache"]
 
 
+def claude_transcript_checks(client, root):
+    record = {"type": "assistant", "uuid": "message-id", "sessionId": "session-id",
+              "timestamp": "2026-09-12T12:00:00Z", "message": {"role": "assistant",
+              "content": [{"type": "thinking", "thinking": "EXCLUDED_CLAUDE_THINKING"},
+                          {"type": "text", "text": "CLAUDE_OBSERVED_PAYLOAD"}]}}
+    source = root / "claude-session.jsonl"
+    source.write_text(json.dumps(record) + "\n")
+    args = {"source_path": source.name, "cache_dir": "claude-events"}
+    tool_text(client.call("standards_transcript_ingest", args), error=True)
+    args["format"] = "claude-code-jsonl-v1"
+    first = json.loads(tool_text(client.call("standards_transcript_ingest", args)))["report"]
+    require(first["complete"] and first["stored"] == 1 and first["thinking_blocks"] == 1,
+            "Claude adapter did not preserve the supported message")
+    replay = json.loads(tool_text(client.call("standards_transcript_ingest", args)))["report"]
+    require(replay["stored"] == 0 and replay["already_present"] == 1,
+            "Claude replay did not deduplicate")
+    files = list((root / "claude-events").glob("*.json"))
+    require(len(files) == 1, "Claude cache record count changed")
+    data = files[0].read_text()
+    observed = json.loads(data)
+    require(observed["content"] == "CLAUDE_OBSERVED_PAYLOAD" and "EXCLUDED_CLAUDE_THINKING" not in data
+            and observed["source_format"] == args["format"] and observed["record_uuid"] == record["uuid"]
+            and observed["source_sha256"] == first["source"]["sha256"],
+            "Claude provenance or thinking exclusion failed")
+    require("CLAUDE_OBSERVED_PAYLOAD" not in json.dumps(first), "Claude report leaked payload")
+    record["message"]["content"] = [{"type": "unsupported-future-block"}]
+    source.write_text(json.dumps(record) + "\n")
+    args["cache_dir"] = "claude-invalid-events"
+    tool_text(client.call("standards_transcript_ingest", args), error=True)
+    require(not (root / args["cache_dir"]).exists(), "invalid Claude source wrote a cache")
+    return ["Claude explicit format and cache readback", "Claude replay deduplicated",
+            "Claude unsupported blocks rejected before writes"]
+
+
 def context_checks(client, root):
     """Verify reduction and fail-closed bounds through the actual read-only tool."""
     sources = ["AGENTS.md", *OUTPUTS]
@@ -197,5 +231,6 @@ def probe(binary, root, metadata):
             checks += context_checks(client, fixture)
             checks += failure_checks(client, fixture)
             checks += transcript_checks(client, fixture)
+            checks += claude_transcript_checks(client, fixture)
     return {"passed": ["source identity", "tool discovery", "checkout symbol read"] + checks,
             "tools": names, "mutations": "temporary fixtures only"}

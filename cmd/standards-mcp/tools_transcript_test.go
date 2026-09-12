@@ -70,3 +70,28 @@ func TestTranscriptMCPRejectsInvalidArgumentsAndOutsidePaths(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeTranscriptMCPExplicitFormatAndReplay(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	source := filepath.Join(root, "session.jsonl")
+	body := `{"type":"assistant","uuid":"message-id","sessionId":"session-id","timestamp":"2026-09-12T12:00:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hidden"},{"type":"text","text":"private fixture payload"}]}}` + "\n"
+	if err := os.WriteFile(source, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := map[string]any{"source_path": "session.jsonl", "cache_dir": "claude-events"}
+	for _, format := range []any{"", true, "unsupported"} {
+		args["format"] = format
+		if result := callTool(t, srv, "standards_transcript_ingest", args); !result.IsError {
+			t.Fatalf("accepted format %v", format)
+		}
+	}
+	args["format"] = harvester.TranscriptFormatClaudeCode
+	first := transcriptMCPReport(t, callTool(t, srv, "standards_transcript_ingest", args))
+	if first.Source.Format != harvester.TranscriptFormatClaudeCode || first.Stored != 1 || first.ThinkingBlocks != 1 {
+		t.Fatalf("report: %+v", first)
+	}
+	replay := transcriptMCPReport(t, callTool(t, srv, "standards_transcript_ingest", args))
+	if replay.Stored != 0 || replay.AlreadyPresent != 1 {
+		t.Fatalf("replay: %+v", replay)
+	}
+}

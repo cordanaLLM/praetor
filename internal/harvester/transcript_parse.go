@@ -59,6 +59,9 @@ func parseTranscriptEvent(raw []byte, source TranscriptSource, line int) (Transc
 	if err := rejectDuplicateTranscriptKeys(raw); err != nil {
 		return event, err
 	}
+	if source.Format == TranscriptFormatClaudeCode {
+		return parseClaudeRecord(raw, source, line)
+	}
 	if err := rejectTranscriptFieldAliases(raw); err != nil {
 		return event, err
 	}

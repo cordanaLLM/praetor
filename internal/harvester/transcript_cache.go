@@ -49,16 +49,12 @@ func matchTranscriptCache(root *os.Root, name string, expected []byte) (bool, er
 	if !before.Mode().IsRegular() || before.Mode().Perm()&0o077 != 0 || before.Size() != int64(len(expected)) {
 		return false, fmt.Errorf("existing cache record has unsafe type, mode, or conflicting size")
 	}
-	file, err := root.Open(name)
+	file, err := openStableTranscriptFile(root, name, before)
 	if err != nil {
 		return false, err
 	}
-	opened, statErr := file.Stat()
-	if statErr == nil && !os.SameFile(before, opened) {
-		statErr = fmt.Errorf("cache record changed while opening")
-	}
 	data, readErr := io.ReadAll(io.LimitReader(file, int64(len(expected))+1))
-	if err := errors.Join(statErr, readErr, file.Close()); err != nil {
+	if err := errors.Join(readErr, file.Close()); err != nil {
 		return false, err
 	}
 	if !bytes.Equal(data, expected) {
@@ -93,7 +89,7 @@ func publishTranscriptCache(root *os.Root, name string, data []byte) (stored boo
 }
 
 func hasTranscriptPayload(event TranscriptEvent) bool {
-	return event.Content != "" || len(event.ToolCalls) > 0 || event.Error != "" || event.ExitCode != nil
+	return event.Content != "" || len(event.ToolCalls) > 0 || len(event.ToolResults) > 0 || event.Error != "" || event.ExitCode != nil
 }
 
 func verifyTranscriptPrefix(ctx context.Context, root *os.Root, events []TranscriptEvent, end int) error {

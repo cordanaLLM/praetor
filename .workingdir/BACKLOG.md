@@ -185,3 +185,6 @@
 
 ### Discharged Tasks [2026-09-12 17:02:54 UTC, commit `local`]
 - [x] Fix atomic coverage subprocess warning without weakening exact-byte assertions (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 17:16:03 UTC, commit `local`]
+- [x] Implement bounded Claude Code JSONL ingestion and replay original session (completed: 2026-09-12)

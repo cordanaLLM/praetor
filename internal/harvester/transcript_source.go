@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 )
 
-func selectTranscript(path string) (string, error) {
+func selectTranscript(path, format string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("transcript source path is required")
 	}
@@ -23,6 +23,12 @@ func selectTranscript(path string) (string, error) {
 		return "", err
 	}
 	base := filepath.Base(absolute)
+	if format == TranscriptFormatClaudeCode {
+		if filepath.Ext(base) != ".jsonl" {
+			return "", fmt.Errorf("claude Code source must have a .jsonl extension")
+		}
+		return absolute, rejectBundleLinks(absolute)
+	}
 	if base != "transcript.jsonl" && base != "transcript_full.jsonl" {
 		return "", fmt.Errorf("unsupported transcript format: expected Antigravity transcript[_full].jsonl")
 	}
@@ -54,16 +60,9 @@ func openTranscript(path string) (file *os.File, info os.FileInfo, err error) {
 	if !info.Mode().IsRegular() {
 		return nil, nil, fmt.Errorf("transcript source must be a regular file")
 	}
-	file, err = root.Open(filepath.Base(path))
+	file, err = openStableTranscriptFile(root, filepath.Base(path), info)
 	if err != nil {
 		return nil, nil, err
-	}
-	opened, err := file.Stat()
-	if err == nil && !os.SameFile(info, opened) {
-		err = fmt.Errorf("transcript source changed while opening")
-	}
-	if err != nil {
-		return nil, nil, errors.Join(err, file.Close())
 	}
 	return file, info, nil
 }
@@ -80,8 +79,8 @@ func (r transcriptContextReader) Read(buffer []byte) (int, error) {
 	return r.reader.Read(buffer)
 }
 
-func snapshotTranscript(ctx context.Context, path string) (data []byte, source TranscriptSource, err error) {
-	selected, err := selectTranscript(path)
+func snapshotTranscript(ctx context.Context, path, format string) (data []byte, source TranscriptSource, err error) {
+	selected, err := selectTranscript(path, format)
 	if err != nil {
 		return nil, source, err
 	}
@@ -106,6 +105,6 @@ func snapshotTranscript(ctx context.Context, path string) (data []byte, source T
 		return nil, source, fmt.Errorf("transcript changed during snapshot or exceeded source bound")
 	}
 	sum := sha256.Sum256(data)
-	source = TranscriptSource{Path: selected, SHA256: hex.EncodeToString(sum[:]), Bytes: len(data), Format: "antigravity-jsonl-v1", Conversation: filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(selected))))}
+	source = TranscriptSource{Path: selected, SHA256: hex.EncodeToString(sum[:]), Bytes: len(data), Format: format, Conversation: filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(selected))))}
 	return data, source, nil
 }
