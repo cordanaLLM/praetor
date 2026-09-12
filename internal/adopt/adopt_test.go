@@ -1016,7 +1016,8 @@ func TestBuildLefthookYAML_FailsClosed(t *testing.T) {
 	if !ok {
 		t.Fatal("missing hiss-audit command")
 	}
-	if run, _ := audit["run"].(string); run != lefthookGovernedCommand("audit") {
+	run, isString := audit["run"].(string)
+	if !isString || run != lefthookGovernedCommand("audit") {
 		t.Fatalf("run line must survive YAML parsing verbatim, got %q", run)
 	}
 	if !strings.Contains(lefthookGovernedCommand("audit"), "exit 1; fi") {
