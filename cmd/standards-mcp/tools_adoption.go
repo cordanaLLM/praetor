@@ -28,6 +28,7 @@ type adoptArgs struct {
 	dryRun     bool
 	force      bool
 	recordBase bool
+	sourceRoot string
 }
 
 // parseAdoptArgs validates the adoption arguments; the target path is confined to the
@@ -36,6 +37,9 @@ func (s *Server) parseAdoptArgs(args map[string]any) (adoptArgs, error) {
 	var a adoptArgs
 	var err error
 	if a.path, err = s.resolvePath(args, "path", s.rootDir); err != nil {
+		return a, err
+	}
+	if a.sourceRoot, err = s.resolveOptionalPath(args, "source_root"); err != nil {
 		return a, err
 	}
 	if a.dryRun, err = argBool(args, "dry_run", false); err != nil {
@@ -67,6 +71,7 @@ func (s *Server) createAdoptTool() (mcp.Tool, error) {
 				Type:        "boolean",
 				Description: "Overwrite existing standards configurations (default: false)",
 			},
+			"source_root": {Type: "string", Description: "Optional Praetor source bundle for creating a real pinned lock; confined to the server root"},
 			"record_baseline": {
 				Type:        "boolean",
 				Description: "Record existing infractions into .standards-baseline.json (default: true)",
@@ -85,14 +90,22 @@ func (s *Server) createAdoptTool() (mcp.Tool, error) {
 
 		report, err := adopt.Adopt(adoptCtx, adopt.AdoptOptions{
 			Path:           a.path,
+			LockSourceRoot: a.sourceRoot,
 			DryRun:         a.dryRun,
 			Force:          a.force,
 			RecordBaseline: a.recordBase,
 		})
 		if err != nil {
-			return mcp.ErrorResult(fmt.Sprintf("Adoption failed: %v", err)), nil
+			details := ""
+			if report != nil {
+				details = formatAdoptMCPResult(report, a.dryRun)
+			}
+			return mcp.ErrorResult(details + fmt.Sprintf("Adoption failed: %v", err)), nil
 		}
 
+		if len(report.Errors) != 0 {
+			return mcp.ErrorResult(formatAdoptMCPResult(report, a.dryRun)), nil
+		}
 		return mcp.TextResult(formatAdoptMCPResult(report, a.dryRun)), nil
 	}
 
@@ -118,6 +131,9 @@ func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) string {
 	for _, f := range r.ReconciledFiles {
 		fmt.Fprintf(&sb, "  ~ %s\n", f)
 	}
+	for _, failure := range r.Errors {
+		fmt.Fprintf(&sb, "[ERROR] %s\n", failure)
+	}
 	for _, warning := range r.Warnings {
 		fmt.Fprintf(&sb, "[WARN] %s\n", warning)
 	}
@@ -141,6 +157,8 @@ func (s *Server) parseDogfoodOptions(args map[string]any) (dogfood.DogfoodOption
 	if opts.BenchmarkPopular && !s.opts.AllowRemoteBenchmarks {
 		return opts, ErrRemoteBenchmarksDisabled
 	}
+	opts.SkipWorkstationSkills = true
+	opts.DryRun = true
 	opts.MaxScanTargets = maxDogfoodScanTargets
 	return opts, nil
 }
@@ -158,6 +176,12 @@ func (s *Server) createDogfoodTool() (mcp.Tool, error) {
 				Type:        "string",
 				Description: "Optional local directory containing target repos to test (confined to the server root unless -allow-outside-root)",
 			},
+			"public_loop":  {Type: "boolean", Description: "Run retained public clone plan/apply/recheck loop (requires server remote opt-in)"},
+			"public_repos": {Type: "string", Description: "Comma-separated curated HTTPS URLs, optionally #<commit SHA>"},
+			"artifact_dir": {Type: "string", Description: "Required retained evidence directory for public_loop, confined to server root"},
+			"source_root":  {Type: "string", Description: "Praetor bundle with validated lock and local archetypes (default: host_path)"},
+			"max_attempts": {Type: "integer", Description: "Public loop apply/recheck bound: 2 or 3 (default: 2)"},
+			"dry_run":      {Type: "boolean", Description: "Public loop plans only by default; false applies inside fresh disposable clones"},
 			"benchmark_popular": {
 				Type:        "boolean",
 				Description: "Benchmark against curated popular public OSS repositories (clones them; requires the server flag -allow-remote-benchmarks)",
@@ -166,6 +190,16 @@ func (s *Server) createDogfoodTool() (mcp.Tool, error) {
 	}
 
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
+		public, err := argBool(args, "public_loop", false)
+		if err != nil {
+			return mcp.ErrorResult(err.Error()), nil
+		}
+		if public {
+			return s.runPublicDogfood(ctx, args), nil
+		}
+		if err := rejectPublicOnlyArgs(args); err != nil {
+			return mcp.ErrorResult(err.Error()), nil
+		}
 		opts, err := s.parseDogfoodOptions(args)
 		if err != nil {
 			return mcp.ErrorResult(err.Error()), nil
@@ -179,12 +213,15 @@ func (s *Server) createDogfoodTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("Dogfood run failed: %v", err)), nil
 		}
 
+		if !rep.OverallPassed {
+			return mcp.ErrorResult(formatDogfoodMCPResult(rep)), nil
+		}
 		return mcp.TextResult(formatDogfoodMCPResult(rep)), nil
 	}
 
-	// Dogfooding scans the workstation's agent skill roots, spawns git for clones and
-	// writes ephemeral checkouts under the temp directory: open-world, not read-only.
-	return mcp.NewOpenWorldTool("standards_dogfood", "Execute self-governance verification and adoption benchmarking", schema, handler, false, true)
+	// Dogfooding spawns Git for explicitly enabled clones and retains public-loop
+	// evidence. MCP dogfooding never audits unrelated workstation skill roots.
+	return mcp.NewOpenWorldTool("standards_dogfood", "Execute self-governance verification and retained public adoption loops", schema, handler, false, false)
 }
 
 func formatDogfoodMCPResult(rep *dogfood.DogfoodReport) string {

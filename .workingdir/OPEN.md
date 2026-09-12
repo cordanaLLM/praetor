@@ -14,3 +14,4 @@
 - [x] Development MCP: connect agents to this checkout and verify real tool behavior before implementation (completed: 2026-09-12)
 - [x] Integrate committed G09 core with G01-G08 and verify fail-closed scan consumers (completed: 2026-09-12)
 - [x] Integrate full G10 preserving G01-G08 safety and truthful harvester outcomes (completed: 2026-09-12)
+- [x] Run and close a bounded public non-owned repository dogfood loop (completed: 2026-09-12)

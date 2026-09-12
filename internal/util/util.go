@@ -193,6 +193,10 @@ func RunCommand(ctx context.Context, dir string, name string, args ...string) (s
 	// string; values originating from users or config must pass ValidateExecArg first.
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
+	if environment, ok := ctx.Value(commandEnvironmentKey{}).([]string); ok {
+		cmd.Env = make([]string, len(environment))
+		copy(cmd.Env, environment)
+	}
 	cmd.WaitDelay = CommandWaitDelay
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
@@ -278,4 +282,22 @@ func ResolveAuthTokenContext(ctx context.Context, explicitToken string) string {
 		return strings.TrimSpace(out)
 	}
 	return ""
+}
+
+// commandEnvironmentKey scopes subprocess environment to one operation tree.
+type commandEnvironmentKey struct{}
+
+// WithCommandEnvironment makes RunCommand and RunGit use exactly environment for this
+// context's child processes. It copies the input and never changes process-wide state.
+func WithCommandEnvironment(ctx context.Context, environment []string) (context.Context, error) {
+	if ctx == nil {
+		return nil, errors.New("command environment requires a context")
+	}
+	const maxEnvironmentEntries = 256
+	if len(environment) > maxEnvironmentEntries {
+		return nil, errors.New("command environment exceeds 256 entries")
+	}
+	copied := make([]string, len(environment))
+	copy(copied, environment)
+	return context.WithValue(ctx, commandEnvironmentKey{}, copied), nil
 }

@@ -92,3 +92,12 @@ and filesystem evidence. Exercise positive, negative, and boundary behavior of t
 affected tool. Report placeholder results, missing operations, and blocked
 connections explicitly; the smoke probe does not establish correctness of every
 tool. Run the relevant code tests and `make verify-all` after implementing the fix.
+
+## Retained public dogfood loops
+
+Use the [public dogfooding guide](../dogfooding.md) for the shared CLI/MCP
+plan/apply/recheck loop. Public cloning is disabled by default. Explicitly add
+`--allow-remote-benchmarks` to `serve` or `call`; a client tool argument cannot
+turn on network access. Direct calls can use `--timeout 300` for the bounded
+five-minute loop. Keep `artifact_dir` under the confined server root, such as
+`.workingdir/evidence/public-dogfood`, and retain the JSON-RPC envelope with its source identity.

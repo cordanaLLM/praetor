@@ -108,6 +108,7 @@ func runAdopt(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "Simulate adoption without writing files")
 	force := fs.Bool("force", false, "Overwrite existing standards configurations")
 	recordBaseline := fs.Bool("record-baseline", true, "Record legacy debt into .standards-baseline.json")
+	lockSource := fs.String("lock-source-root", "", "Praetor source bundle with validated pins and local archetypes for missing lockfiles")
 	allMissing := fs.Bool("all-missing", false, "Adopt all detected unmanaged repositories under --dev-dir")
 	devDir := fs.String("dev-dir", "", "Root directory scanned by --all-missing (default: $HOME/dev)")
 	path := fs.String("path", ".", "Target repository path to adopt")
@@ -128,11 +129,12 @@ func runAdopt(args []string) error {
 		if err != nil {
 			return fmt.Errorf("adopt --all-missing: %w", err)
 		}
-		return batchAdoptMissing(ctx, root, *dryRun, *force, *recordBaseline)
+		return batchAdoptMissing(ctx, root, *dryRun, *force, *recordBaseline, *lockSource)
 	}
 
 	opts := adopt.AdoptOptions{
 		Path:           *path,
+		LockSourceRoot: *lockSource,
 		Profile:        *profile,
 		Facets:         splitCommaList(*facets),
 		DryRun:         *dryRun,
@@ -153,7 +155,14 @@ func runAdopt(args []string) error {
 	return nil
 }
 
-func batchAdoptMissing(ctx context.Context, devDir string, dryRun, force, recordBaseline bool) error {
+func batchAdoptMissing(ctx context.Context, devDir string, dryRun, force, recordBaseline bool, sourceRoots ...string) error {
+	if len(sourceRoots) > 1 {
+		return fmt.Errorf("batch adoption accepts one lock source root")
+	}
+	var sourceRoot string
+	if len(sourceRoots) == 1 {
+		sourceRoot = sourceRoots[0]
+	}
 	scan, err := harvester.ScanLocalWorkstation(ctx, devDir)
 	if err != nil {
 		return fmt.Errorf("scanning workstation: %w", err)
@@ -165,6 +174,7 @@ func batchAdoptMissing(ctx context.Context, devDir string, dryRun, force, record
 		repoName := scan.MissingRulesRepos[i]
 		opts := adopt.AdoptOptions{
 			Path:           filepath.Join(devDir, repoName),
+			LockSourceRoot: sourceRoot,
 			DryRun:         dryRun,
 			Force:          force,
 			RecordBaseline: recordBaseline,

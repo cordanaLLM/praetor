@@ -347,3 +347,7 @@
 ### [2026-09-12 15:48:00 UTC] Commit `ac6e14d` on `fix/codex-g10-integration`
 - **Activity**: Automated state synchronization
 - **Tasks**: 6 open, 3 completed | **Open Bugs**: 712 | **Pending Questions**: 0
+
+### [2026-09-12 16:16:03 UTC] Commit `413c2a5` on `feat/public-dogfood-loop`
+- **Activity**: Public dogfood loop: real pinned cobra/flask CLI and MCP apply/recheck verified; retained evidence, lock source pins, context/env isolation and failure bounds tested; full race/context/audit pass, verify-all blocked by 76 existing lint findings outside changed files.
+- **Tasks**: 5 open, 7 completed | **Open Bugs**: 711 | **Pending Questions**: 0

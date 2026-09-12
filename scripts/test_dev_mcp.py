@@ -63,5 +63,22 @@ class SourceIdentityTests(unittest.TestCase):
             dev_mcp.check_identity(Client(), {"server_version": "new"})
 
 
+class PublicLoopLauncherTests(unittest.TestCase):
+    def test_remote_clones_require_explicit_launcher_opt_in(self):
+        command = dev_mcp.server_command(Path("binary"), Path("root"))
+        self.assertNotIn("--allow-remote-benchmarks", command)
+        command = dev_mcp.server_command(Path("binary"), Path("root"), True)
+        self.assertIn("--allow-remote-benchmarks", command)
+
+    def test_public_call_timeout_is_bounded(self):
+        for value in ("1", "30", "300"):
+            self.assertEqual(dev_mcp.rpc_timeout(value), int(value))
+        for value in ("0", "301"):
+            with self.assertRaises(dev_mcp.argparse.ArgumentTypeError):
+                dev_mcp.rpc_timeout(value)
+        with self.assertRaises(ValueError):
+            dev_mcp.rpc_timeout("unbounded")
+
+
 if __name__ == "__main__":
     unittest.main()
