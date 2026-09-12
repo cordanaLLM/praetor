@@ -15,6 +15,11 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// rulesetName is the single name of the declarative branch protection ruleset, shared by
+// the synthesized .github/rulesets/main.json and the remote reconciliation so that both
+// describe the same object.
+const rulesetName = "praetor-main-protection"
+
 func reconcileLabels() error {
 	if util.FileExists(".config/labels.yaml") {
 		fmt.Println("  [OK] Labels verified (.config/labels.yaml)")
@@ -43,33 +48,57 @@ func reconcileRuleset(bp config.BranchProtectionPolicy) error {
 	return nil
 }
 
-func reconcileRemoteForge(manifest *config.Manifest, bp *config.BranchProtectionPolicy) {
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
-		token = os.Getenv("GH_TOKEN")
+// resolveSyncRepository determines the repository the remote reconciliation will mutate.
+// It never guesses: without explicit coordinates the sync refuses to present the operator's
+// token to an arbitrary repository.
+func resolveSyncRepository(ctx context.Context, manifest *config.Manifest) (string, string, error) {
+	if manifest != nil && manifest.Repository.Owner != "" && manifest.Repository.Name != "" {
+		return manifest.Repository.Owner, manifest.Repository.Name, nil
 	}
-	if token == "" {
-		if out, err := util.RunCommand(context.Background(), ".", "gh", "auth", "token"); err == nil {
-			token = strings.TrimSpace(out)
+	if envRepo := os.Getenv("GITHUB_REPOSITORY"); envRepo != "" {
+		parts := strings.SplitN(envRepo, "/", 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			return parts[0], parts[1], nil
 		}
 	}
-	if token == "" {
-		fmt.Println("  [INFO] Remote sync skipped (GITHUB_TOKEN not set; local files reconciled)")
-		return
+	owner, repo, err := util.ResolveRepoIdentity(ctx, ".")
+	if err != nil {
+		return "", "", fmt.Errorf("cannot determine the repository to reconcile: set repository.owner "+
+			"and repository.name in .standards.yaml: %w", err)
 	}
+	return owner, repo, nil
+}
+
+// reconcileRemoteForge converges the remote branch protection ruleset. A configured token
+// plus an unresolved or non-converging target is a hard failure, never a warning.
+func reconcileRemoteForge(manifest *config.Manifest, bp *config.BranchProtectionPolicy) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	token := util.ResolveAuthTokenContext(ctx, "")
+	if token == "" {
+		fmt.Println("  [INFO] Remote sync skipped (GITHUB_TOKEN not set; local files reconciled)")
+		return nil
+	}
+
+	owner, repo, err := resolveSyncRepository(ctx, manifest)
+	if err != nil {
+		return fmt.Errorf("remote branch protection sync refused: %w", err)
+	}
+
 	gh := forge.NewGitHubDriver(token, "")
-	if manifest != nil && manifest.Repository.Owner != "" && manifest.Repository.Name != "" {
-		gh.SetRepository(manifest.Repository.Owner, manifest.Repository.Name)
-	}
-	fmt.Println("  [SYNC] Reconciling remote branch protection rulesets on GitHub...")
+	gh.SetRepository(owner, repo)
+	gh.RulesetName = rulesetName
+	gh.RequiredStatusChecks = forge.DefaultRequiredStatusChecks()
+	gh.StrictStatusChecks = true
+
+	fmt.Printf("  [SYNC] Reconciling remote branch protection ruleset %q on %s/%s...\n",
+		rulesetName, owner, repo)
 	if err := gh.ReconcileProtection(ctx, "main", bp); err != nil {
-		fmt.Printf("  [WARN] Remote branch protection sync failed: %v\n", err)
-	} else {
-		fmt.Println("  [OK] Remote branch protection synchronized on GitHub")
+		return fmt.Errorf("remote branch protection sync failed for %s/%s: %w", owner, repo, err)
 	}
+	fmt.Printf("  [OK] Remote branch protection synchronized on %s/%s\n", owner, repo)
+	return nil
 }
 
 func runSync(args []string) error {
@@ -110,19 +139,21 @@ func runSync(args []string) error {
 		return err
 	}
 
-	reconcileRemoteForge(manifest, &policy.BranchProtection)
+	if err := reconcileRemoteForge(manifest, &policy.BranchProtection); err != nil {
+		return err
+	}
 
 	fmt.Println("Synchronization complete.")
 	return nil
 }
 
 func synthesizeRuleset(targetPath string, bp config.BranchProtectionPolicy) error {
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+	if err := util.MkdirSecure(filepath.Dir(targetPath), 0o750); err != nil {
 		return err
 	}
 
 	ruleset := map[string]any{
-		"name":        "praetor-main-protection",
+		"name":        rulesetName,
 		"target":      "branch",
 		"enforcement": "active",
 		"conditions": map[string]any{
@@ -150,11 +181,7 @@ func synthesizeRuleset(targetPath string, bp config.BranchProtectionPolicy) erro
 				"type": "required_status_checks",
 				"parameters": map[string]any{
 					"strict_required_status_checks_policy": true,
-					"required_status_checks": []map[string]string{
-						{"context": "verify"},
-						{"context": "Standards & Invariant Verification Gate"},
-						{"context": "DCO 1.1 & REUSE Compliance Gate"},
-					},
+					"required_status_checks":               requiredStatusCheckContexts(),
 				},
 			},
 		},
@@ -164,11 +191,22 @@ func synthesizeRuleset(targetPath string, bp config.BranchProtectionPolicy) erro
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(targetPath, data, 0644)
+	return util.WriteFileSecure(targetPath, data, 0o600)
+}
+
+// requiredStatusCheckContexts renders the canonical required check contexts in the shape
+// the GitHub ruleset API expects.
+func requiredStatusCheckContexts() []map[string]string {
+	names := forge.DefaultRequiredStatusChecks()
+	contexts := make([]map[string]string, 0, len(names))
+	for i := 0; i < len(names); i++ {
+		contexts = append(contexts, map[string]string{"context": names[i]})
+	}
+	return contexts
 }
 
 func synthesizeDefaultLabels(targetPath string) error {
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+	if err := util.MkdirSecure(filepath.Dir(targetPath), 0o750); err != nil {
 		return err
 	}
 
@@ -207,5 +245,5 @@ labels:
     color: "b60205"
     description: "Breaking API change requiring mandatory Migration: footer"
 `
-	return os.WriteFile(targetPath, []byte(defaultLabels), 0644)
+	return util.WriteFileSecure(targetPath, []byte(defaultLabels), 0o600)
 }

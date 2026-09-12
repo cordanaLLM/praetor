@@ -111,6 +111,27 @@ func loadFleetIssues(ctx context.Context, token, endpoint string, repos []string
 	return nil
 }
 
+// Label names of the blocked / ready transition. The transition is additive-then-removing
+// on purpose: a PATCH carrying only these labels would replace the issue's whole label set
+// and silently destroy every other label it carries.
+const (
+	blockedLabel       = "status/blocked"
+	legacyBlockedLabel = "blocked"
+	readyLabel         = "status/ready-for-work"
+)
+
+// transitionUnblocked adds the ready label and removes the blocked labels, preserving every
+// other label on the issue.
+func transitionUnblocked(ctx context.Context, gh *forge.GitHubDriver, number int) error {
+	if err := gh.AddLabels(ctx, number, []string{readyLabel}); err != nil {
+		return err
+	}
+	if err := gh.RemoveLabel(ctx, number, blockedLabel); err != nil {
+		return err
+	}
+	return gh.RemoveLabel(ctx, number, legacyBlockedLabel)
+}
+
 func applyUnblockTransitions(ctx context.Context, token, endpoint string, unblocked []forge.UnblockAction) error {
 	for _, u := range unblocked {
 		if ctx.Err() != nil {
@@ -123,12 +144,11 @@ func applyUnblockTransitions(ctx context.Context, token, endpoint string, unbloc
 		ghDriver := forge.NewGitHubDriver(token, endpoint)
 		ghDriver.SetRepository(parts[0], parts[1])
 
-		newLabels := []string{"status/ready-for-work"}
-		if err := ghDriver.UpdateIssue(ctx, u.IssueNumber, newLabels, ""); err != nil {
+		if err := transitionUnblocked(ctx, ghDriver, u.IssueNumber); err != nil {
 			fmt.Printf("[WARN] Failed updating issue %s#%d: %v\n", u.Repo, u.IssueNumber, err)
-		} else {
-			fmt.Printf("[APPLIED] %s#%d transitioned to status/ready-for-work\n", u.Repo, u.IssueNumber)
+			continue
 		}
+		fmt.Printf("[APPLIED] %s#%d transitioned to %s\n", u.Repo, u.IssueNumber, readyLabel)
 	}
 	return nil
 }

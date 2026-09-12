@@ -1,10 +1,15 @@
 package main
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/lockdown"
 )
 
 func TestDispatchCommand_HelpAndVersion(t *testing.T) {
@@ -100,6 +105,44 @@ func TestDispatchCommand_BumpAndChangelog(t *testing.T) {
 	}
 }
 
+// prFixtureHeadSHA is the commit the fixture receipt certifies.
+const prFixtureHeadSHA = "2c4574832f8b40626598d457b509acf0056a72b7"
+
+// writeSignedPRFixture writes a manifest pinning a fresh receipt key and a PR body that
+// carries a genuine Ed25519 Exit-0 receipt for that key.
+func writeSignedPRFixture(t *testing.T, dir string) (manifestPath, prPath string) {
+	t.Helper()
+	pub, priv, err := lockdown.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed generating receipt keypair: %v", err)
+	}
+	manifestPath = filepath.Join(dir, "standards.yaml")
+	manifest := fmt.Sprintf("version: 1\nreceipt:\n  public_key: \"%s\"\n", hex.EncodeToString(pub))
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	receipt, err := lockdown.CreateReceipt("praetorctl gate run", 0, []byte("gates passed"),
+		prFixtureHeadSHA, "acme/widget", priv)
+	if err != nil {
+		t.Fatalf("failed creating receipt: %v", err)
+	}
+	receiptJSON, err := json.MarshalIndent(
+		lockdown.ReceiptFile{ExecutionReceipt: *receipt, GateOutput: "gates passed"}, "", "  ")
+	if err != nil {
+		t.Fatalf("failed encoding receipt: %v", err)
+	}
+
+	prPath = filepath.Join(dir, "compliant-pr.md")
+	prContent := "## Summary\nTest PR\n\n- [x] HISS-16 standards verified\n" +
+		"- [x] 3D tests (positive, negative, boundary) added\n\n" +
+		"```receipt\n" + string(receiptJSON) + "\n```\n"
+	if err := os.WriteFile(prPath, []byte(prContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return manifestPath, prPath
+}
+
 func TestDispatchCommand_ForgeSubcommands(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -108,14 +151,24 @@ func TestDispatchCommand_ForgeSubcommands(t *testing.T) {
 		t.Fatalf("forge with no args failed: %v", err)
 	}
 
-	// Positive: PR validation with compliant body
-	prFile := filepath.Join(tmpDir, "compliant-pr.md")
-	prContent := "## Summary\nTest PR\n\n- [x] HISS-16 standards verified\n- [x] 3D tests (positive, negative, boundary) added\n- [x] Ed25519 Exit-0 Receipt verified: `receipt:ed25519:abcdef0123456789`\n"
-	if err := os.WriteFile(prFile, []byte(prContent), 0644); err != nil {
+	// Positive: PR validation with a compliant body carrying a real signed receipt
+	manifestPath, prFile := writeSignedPRFixture(t, tmpDir)
+	if err := dispatchCommand("forge", []string{
+		"validate-pr", "--config=" + manifestPath, "--head-sha=" + prFixtureHeadSHA, prFile,
+	}); err != nil {
+		t.Fatalf("forge validate-pr failed: %v", err)
+	}
+
+	// Negative: the same checklist without a signed receipt must be rejected
+	unsignedFile := filepath.Join(tmpDir, "unsigned-pr.md")
+	unsigned := "## Summary\nTest PR\n\n- [x] HISS-16 standards verified\n" +
+		"- [x] 3D tests (positive, negative, boundary) added\n" +
+		"- [x] Ed25519 Exit-0 Receipt verified: `receipt:ed25519:abcdef0123456789`\n"
+	if err := os.WriteFile(unsignedFile, []byte(unsigned), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatchCommand("forge", []string{"validate-pr", prFile}); err != nil {
-		t.Fatalf("forge validate-pr failed: %v", err)
+	if err := dispatchCommand("forge", []string{"validate-pr", "--config=" + manifestPath, unsignedFile}); err == nil {
+		t.Fatal("expected validate-pr to reject a PR body without a signed Ed25519 receipt")
 	}
 
 	// Negative: Non-compliant PR body
@@ -123,7 +176,7 @@ func TestDispatchCommand_ForgeSubcommands(t *testing.T) {
 	if err := os.WriteFile(badPRFile, []byte("Just random text\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatchCommand("forge", []string{"validate-pr", badPRFile}); err == nil {
+	if err := dispatchCommand("forge", []string{"validate-pr", "--config=" + manifestPath, badPRFile}); err == nil {
 		t.Fatal("expected error on non-compliant PR validation")
 	}
 }

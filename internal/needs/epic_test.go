@@ -2,6 +2,9 @@ package needs
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,9 +93,29 @@ func TestWriteEpicMarkdown_Boundary(t *testing.T) {
 	}
 }
 
+// newFakeIssueForge serves the GitHub issue-creation endpoint locally so the test stays
+// hermetic and exercises the driver's real HTTP path.
+func newFakeIssueForge(t *testing.T) *forge.GitHubDriver {
+	t.Helper()
+	created := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		created++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		payload := map[string]any{"number": created, "url": "https://forge.invalid/issues", "state": "open"}
+		if err := json.NewEncoder(w).Encode(payload); err != nil {
+			t.Errorf("failed encoding fake response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	gh := forge.NewGitHubDriver("forge-token", srv.URL)
+	gh.SetRepository("test", "repo")
+	return gh
+}
+
 func TestPublishPreMigrationEpic_Positive(t *testing.T) {
 	ctx := context.Background()
-	gh := forge.NewGitHubDriver("test-token", "https://api.github.com/repos/test/repo")
+	gh := newFakeIssueForge(t)
 
 	epic := &PreMigrationEpic{
 		RepoName: "test/repo",
@@ -124,7 +147,7 @@ func TestPublishPreMigrationEpic_Negative(t *testing.T) {
 		t.Fatal("expected error for nil forge and nil epic")
 	}
 
-	gh := forge.NewGitHubDriver("test-token", "")
+	gh := newFakeIssueForge(t)
 	if _, _, err := PublishPreMigrationEpic(ctx, gh, nil); err == nil {
 		t.Fatal("expected error for nil epic")
 	}

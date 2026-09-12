@@ -8,17 +8,48 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 const (
 	defaultHTTPTimeout  = 15 * time.Second
-	maxHTTPResponseBody = 16 * 1024 * 1024 // 16 MB limit
+	maxHTTPResponseBody = 16 * 1024 * 1024 // 16 MB read bound (HISS-02)
+	// maxErrorBodyPreview bounds how much of a forge response body may be embedded in an
+	// error string that ends up on a terminal or inside a receipt.
+	maxErrorBodyPreview = 256
+	// issuesPerPage is the maximum page size the GitHub REST API accepts.
+	issuesPerPage = 100
+	// maxIssuePages bounds issue pagination (HISS-02): at most 2000 issues per listing.
+	maxIssuePages = 20
+	// maxMilestonePages bounds milestone pagination (HISS-02).
+	maxMilestonePages = 5
+	// MaxLabelsLimit bounds a single label reconciliation batch (HISS-02).
+	MaxLabelsLimit = 500
 )
+
+// ErrRepositoryUnresolved is returned when no repository coordinates are available. The
+// driver never falls back to a hard-coded repository: a mutating call against the wrong
+// repository is worse than a failed call.
+var ErrRepositoryUnresolved = errors.New(
+	"github repository is unresolved: set repository.owner and repository.name in .standards.yaml, " +
+		"call SetRepository, or export GITHUB_REPOSITORY=<owner>/<repo>")
+
+// DefaultRequiredStatusChecks returns the status check contexts a praetor-governed branch
+// must require remotely. They mirror the declarative ruleset synthesized into
+// .github/rulesets/main.json.
+func DefaultRequiredStatusChecks() []string {
+	return []string{
+		"verify",
+		"Standards & Invariant Verification Gate",
+		"DCO 1.1 & REUSE Compliance Gate",
+	}
+}
 
 // GitHubDriver implements Forge for GitHub using GitHub Apps / Personal Access Tokens.
 type GitHubDriver struct {
@@ -27,6 +58,12 @@ type GitHubDriver struct {
 	Owner      string
 	Repo       string
 	HTTPClient *http.Client
+	// RulesetName overrides the remote ruleset name. Empty means "<branch>-branch-protection".
+	RulesetName string
+	// RequiredStatusChecks are the check contexts pushed into the remote ruleset.
+	RequiredStatusChecks []string
+	// StrictStatusChecks requires branches to be up to date before merging.
+	StrictStatusChecks bool
 }
 
 // NewGitHubDriver initializes a GitHub driver.
@@ -40,6 +77,8 @@ func NewGitHubDriver(token string, endpoint string) *GitHubDriver {
 		HTTPClient: &http.Client{
 			Timeout: defaultHTTPTimeout,
 		},
+		RequiredStatusChecks: DefaultRequiredStatusChecks(),
+		StrictStatusChecks:   true,
 	}
 }
 
@@ -49,26 +88,40 @@ func (g *GitHubDriver) SetRepository(owner, repo string) {
 	g.Repo = repo
 }
 
-// repoPath constructs an API path for the targeted repository.
-func (g *GitHubDriver) repoPath(subpath string) string {
-	owner := g.Owner
-	repo := g.Repo
+// resolveRepository returns the target owner and repository, falling back to the
+// GITHUB_REPOSITORY environment variable used by GitHub Actions. It fails closed.
+func (g *GitHubDriver) resolveRepository() (string, string, error) {
+	owner, repo := g.Owner, g.Repo
 	if owner == "" || repo == "" {
 		if envRepo := os.Getenv("GITHUB_REPOSITORY"); envRepo != "" {
 			parts := strings.SplitN(envRepo, "/", 2)
-			if len(parts) == 2 {
-				owner = parts[0]
-				repo = parts[1]
+			if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+				owner, repo = parts[0], parts[1]
 			}
 		}
 	}
-	if owner == "" {
-		owner = "cordanaLLM"
+	if owner == "" || repo == "" {
+		return "", "", ErrRepositoryUnresolved
 	}
-	if repo == "" {
-		repo = "praetor"
+	return owner, repo, nil
+}
+
+// TargetRepository reports the resolved "owner/repo" coordinate the driver will mutate.
+func (g *GitHubDriver) TargetRepository() (string, error) {
+	owner, repo, err := g.resolveRepository()
+	if err != nil {
+		return "", err
 	}
-	return fmt.Sprintf("/repos/%s/%s/%s", owner, repo, strings.TrimPrefix(subpath, "/"))
+	return owner + "/" + repo, nil
+}
+
+// repoPath constructs an API path for the targeted repository.
+func (g *GitHubDriver) repoPath(subpath string) (string, error) {
+	owner, repo, err := g.resolveRepository()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("/repos/%s/%s/%s", owner, repo, strings.TrimPrefix(subpath, "/")), nil
 }
 
 func (g *GitHubDriver) Name() string {
@@ -85,13 +138,39 @@ func (g *GitHubDriver) Authenticate(ctx context.Context) error {
 	return nil
 }
 
+// bodyPreview renders a bounded, control-character-free excerpt of a response body so that
+// a hostile or misconfigured endpoint cannot flood a terminal or inject escape sequences.
+func bodyPreview(body []byte) string {
+	truncated := false
+	if len(body) > maxErrorBodyPreview {
+		body = body[:maxErrorBodyPreview]
+		truncated = true
+	}
+	var sb strings.Builder
+	for _, r := range string(body) {
+		switch {
+		case r == '\n' || r == '\t' || r == '\r':
+			sb.WriteByte(' ')
+		case unicode.IsControl(r) || r == unicode.ReplacementChar:
+			sb.WriteByte('.')
+		default:
+			sb.WriteRune(r)
+		}
+	}
+	out := strings.TrimSpace(sb.String())
+	if truncated {
+		out += "... (truncated)"
+	}
+	return out
+}
+
 // sendRequest handles authenticated HTTP communication with GitHub REST API.
-func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, payload any) ([]byte, int, error) {
+func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, payload any) (respBody []byte, statusCode int, err error) {
 	if err := g.Authenticate(ctx); err != nil {
 		return nil, 0, err
 	}
 
-	url := fmt.Sprintf("%s%s", g.Endpoint, path)
+	target := g.Endpoint + path
 	var bodyReader io.Reader
 	if payload != nil {
 		data, err := json.Marshal(payload)
@@ -101,12 +180,12 @@ func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, pay
 		bodyReader = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, target, bodyReader)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed constructing http request: %w", err)
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", g.Token))
+	req.Header.Set("Authorization", "Bearer "+g.Token)
 	req.Header.Set("User-Agent", "praetor-governance-engine")
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
@@ -116,23 +195,119 @@ func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, pay
 
 	client := g.HTTPClient
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("github api request failed (%s %s): %w", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed closing response body: %w", cerr)
+		}
+	}()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPResponseBody))
-	if err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("failed reading response body: %w", err)
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxHTTPResponseBody))
+	if readErr != nil {
+		return nil, resp.StatusCode, fmt.Errorf("failed reading response body: %w", readErr)
 	}
 
-	return body, resp.StatusCode, nil
+	return data, resp.StatusCode, nil
 }
 
+// rulesetName returns the remote ruleset name for a branch.
+func (g *GitHubDriver) rulesetName(branch string) string {
+	if g.RulesetName != "" {
+		return g.RulesetName
+	}
+	return branch + "-branch-protection"
+}
+
+// buildRulesetPayload derives the remote ruleset from the resolved policy. Every rule is
+// policy-driven: nothing is hard-coded that .standards.yaml can override.
+func (g *GitHubDriver) buildRulesetPayload(name, branch string, policy *config.BranchProtectionPolicy) map[string]any {
+	rules := []map[string]any{
+		{"type": "deletion"},
+		{"type": "non_fast_forward"},
+	}
+	if policy.EnforceLinearHistory {
+		rules = append(rules, map[string]any{"type": "required_linear_history"})
+	}
+	if policy.RequireSignedCommits {
+		rules = append(rules, map[string]any{"type": "required_signatures"})
+	}
+	rules = append(rules, map[string]any{
+		"type": "pull_request",
+		"parameters": map[string]any{
+			"required_approving_review_count": policy.RequiredApprovingReviewers,
+			"dismiss_stale_reviews_on_push":   policy.DismissStaleReviews,
+			"require_code_owner_review":       true,
+		},
+	})
+	if checks := g.statusCheckParameters(); checks != nil {
+		rules = append(rules, map[string]any{"type": "required_status_checks", "parameters": checks})
+	}
+
+	return map[string]any{
+		"name":        name,
+		"target":      "branch",
+		"enforcement": "active",
+		"conditions": map[string]any{
+			"ref_name": map[string]any{
+				"include": []string{"refs/heads/" + branch},
+				"exclude": []string{},
+			},
+		},
+		"rules": rules,
+	}
+}
+
+// statusCheckParameters renders the required_status_checks rule parameters, or nil when the
+// driver has no required contexts configured.
+func (g *GitHubDriver) statusCheckParameters() map[string]any {
+	if len(g.RequiredStatusChecks) == 0 {
+		return nil
+	}
+	contexts := make([]map[string]string, 0, len(g.RequiredStatusChecks))
+	for i := 0; i < len(g.RequiredStatusChecks); i++ {
+		contexts = append(contexts, map[string]string{"context": g.RequiredStatusChecks[i]})
+	}
+	return map[string]any{
+		"strict_required_status_checks_policy": g.StrictStatusChecks,
+		"required_status_checks":               contexts,
+	}
+}
+
+type ghRulesetRaw struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// findRulesetID returns the id of the repository ruleset named name, or 0 when absent.
+func (g *GitHubDriver) findRulesetID(ctx context.Context, listPath, name string) (int, error) {
+	body, status, err := g.sendRequest(ctx, http.MethodGet, listPath+"?per_page="+fmt.Sprint(issuesPerPage), nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed listing repository rulesets: %w", err)
+	}
+	if status != http.StatusOK {
+		return 0, fmt.Errorf("unexpected status %d listing repository rulesets: %s", status, bodyPreview(body))
+	}
+	var rulesets []ghRulesetRaw
+	if err := json.Unmarshal(body, &rulesets); err != nil {
+		return 0, fmt.Errorf("failed parsing repository rulesets (raw: %q): %w", bodyPreview(body), err)
+	}
+	for i := 0; i < len(rulesets); i++ {
+		if rulesets[i].Name == name {
+			return rulesets[i].ID, nil
+		}
+	}
+	return 0, nil
+}
+
+// ReconcileProtection converges the remote branch ruleset onto the resolved policy. It is a
+// true reconciler: an existing ruleset of the same name is updated in place, never
+// duplicated, and a non-converging remote is an error, not a warning.
 func (g *GitHubDriver) ReconcileProtection(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) error {
 	if err := g.Authenticate(ctx); err != nil {
 		return err
@@ -144,79 +319,88 @@ func (g *GitHubDriver) ReconcileProtection(ctx context.Context, branch string, p
 		return errors.New("reconcile protection: policy cannot be nil")
 	}
 
-	// In test mode or dry-run, validate parameters and conclude successfully
-	if strings.HasPrefix(g.Token, "test-") {
-		return nil
+	listPath, err := g.repoPath("rulesets")
+	if err != nil {
+		return fmt.Errorf("reconcile branch protection for %s: %w", branch, err)
+	}
+	name := g.rulesetName(branch)
+	id, err := g.findRulesetID(ctx, listPath, name)
+	if err != nil {
+		return fmt.Errorf("reconcile branch protection for %s: %w", branch, err)
 	}
 
-	// Payload for GitHub Ruleset API
-	rulesetPayload := map[string]any{
-		"name":        fmt.Sprintf("%s-branch-protection", branch),
-		"target":      "branch",
-		"enforcement": "active",
-		"conditions": map[string]any{
-			"ref_name": map[string]any{
-				"include": []string{fmt.Sprintf("refs/heads/%s", branch)},
-				"exclude": []string{},
-			},
-		},
-		"rules": []map[string]any{
-			{"type": "deletion"},
-			{"type": "non_fast_forward"},
-			{"type": "required_linear_history"},
-			{"type": "required_signatures"},
-			{
-				"type": "pull_request",
-				"parameters": map[string]any{
-					"required_approving_review_count": policy.RequiredApprovingReviewers,
-					"dismiss_stale_reviews_on_push":   policy.DismissStaleReviews,
-					"require_code_owner_review":       true,
-				},
-			},
-		},
+	method, path := http.MethodPost, listPath
+	if id > 0 {
+		method, path = http.MethodPut, fmt.Sprintf("%s/%d", listPath, id)
 	}
-
-	path := g.repoPath("rulesets")
-	_, status, err := g.sendRequest(ctx, http.MethodPost, path, rulesetPayload)
+	body, status, err := g.sendRequest(ctx, method, path, g.buildRulesetPayload(name, branch, policy))
 	if err != nil {
 		return fmt.Errorf("reconcile branch protection failed for %s: %w", branch, err)
 	}
 	if status != http.StatusOK && status != http.StatusCreated {
-		return fmt.Errorf("unexpected status %d while reconciling ruleset for %s", status, branch)
+		return fmt.Errorf("unexpected status %d while reconciling ruleset %q: %s", status, name, bodyPreview(body))
 	}
 	return nil
 }
 
+// ReconcileLabels converges the repository label taxonomy. Every non-success status is an
+// error: a label that was not written must never be reported as reconciled.
 func (g *GitHubDriver) ReconcileLabels(ctx context.Context, labels []Label) error {
 	if err := g.Authenticate(ctx); err != nil {
 		return err
 	}
+	if len(labels) > MaxLabelsLimit {
+		return fmt.Errorf("label count %d exceeds maximum allowed batch limit of %d", len(labels), MaxLabelsLimit)
+	}
 
-	for i := 0; i < len(labels); i++ {
-		l := labels[i]
-		if l.Name == "" {
-			return errors.New("reconcile labels: label name cannot be empty")
+	for i := 0; i < len(labels) && i < MaxLabelsLimit; i++ {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("context cancelled during label reconciliation at index %d: %w", i, err)
 		}
-		if strings.HasPrefix(g.Token, "test-") {
-			continue
+		if err := g.reconcileLabel(ctx, labels[i]); err != nil {
+			return err
 		}
+	}
+	return nil
+}
 
-		payload := map[string]string{
-			"name":        l.Name,
-			"color":       l.Color,
-			"description": l.Description,
-		}
-		path := g.repoPath(fmt.Sprintf("labels/%s", l.Name))
-		_, status, err := g.sendRequest(ctx, http.MethodPatch, path, payload)
-		if err != nil {
-			return fmt.Errorf("failed updating label %s: %w", l.Name, err)
-		}
-		if status == http.StatusNotFound {
-			createPath := g.repoPath("labels")
-			if _, _, err := g.sendRequest(ctx, http.MethodPost, createPath, payload); err != nil {
-				return fmt.Errorf("failed creating label %s: %w", l.Name, err)
-			}
-		}
+func (g *GitHubDriver) reconcileLabel(ctx context.Context, l Label) error {
+	if l.Name == "" {
+		return errors.New("reconcile labels: label name cannot be empty")
+	}
+	payload := map[string]string{
+		"name":        l.Name,
+		"color":       l.Color,
+		"description": l.Description,
+	}
+	path, err := g.repoPath("labels/" + url.PathEscape(l.Name))
+	if err != nil {
+		return fmt.Errorf("reconcile label %s: %w", l.Name, err)
+	}
+	body, status, err := g.sendRequest(ctx, http.MethodPatch, path, payload)
+	if err != nil {
+		return fmt.Errorf("failed updating label %s: %w", l.Name, err)
+	}
+	if status == http.StatusOK {
+		return nil
+	}
+	if status != http.StatusNotFound {
+		return fmt.Errorf("unexpected status %d updating label %s: %s", status, l.Name, bodyPreview(body))
+	}
+	return g.createLabel(ctx, l.Name, payload)
+}
+
+func (g *GitHubDriver) createLabel(ctx context.Context, name string, payload map[string]string) error {
+	createPath, err := g.repoPath("labels")
+	if err != nil {
+		return fmt.Errorf("create label %s: %w", name, err)
+	}
+	body, status, err := g.sendRequest(ctx, http.MethodPost, createPath, payload)
+	if err != nil {
+		return fmt.Errorf("failed creating label %s: %w", name, err)
+	}
+	if status != http.StatusCreated {
+		return fmt.Errorf("unexpected status %d creating label %s: %s", status, name, bodyPreview(body))
 	}
 	return nil
 }
@@ -229,14 +413,11 @@ func (g *GitHubDriver) PostStatusCheck(ctx context.Context, commitSHA string, ch
 		return errors.New("post status check: commitSHA cannot be empty")
 	}
 
-	if strings.HasPrefix(g.Token, "test-") {
-		return nil
-	}
-
 	state := "pending"
-	if check.Conclusion == "success" {
+	switch check.Conclusion {
+	case "success":
 		state = "success"
-	} else if check.Conclusion == "failure" {
+	case "failure":
 		state = "failure"
 	}
 
@@ -247,13 +428,16 @@ func (g *GitHubDriver) PostStatusCheck(ctx context.Context, commitSHA string, ch
 		"context":     check.Name,
 	}
 
-	path := g.repoPath(fmt.Sprintf("statuses/%s", commitSHA))
-	_, status, err := g.sendRequest(ctx, http.MethodPost, path, payload)
+	path, err := g.repoPath("statuses/" + url.PathEscape(commitSHA))
+	if err != nil {
+		return fmt.Errorf("post status check for %s: %w", commitSHA, err)
+	}
+	body, status, err := g.sendRequest(ctx, http.MethodPost, path, payload)
 	if err != nil {
 		return fmt.Errorf("failed posting commit status check to %s: %w", commitSHA, err)
 	}
 	if status != http.StatusCreated && status != http.StatusOK {
-		return fmt.Errorf("unexpected status %d posting commit status for %s", status, commitSHA)
+		return fmt.Errorf("unexpected status %d posting commit status for %s: %s", status, commitSHA, bodyPreview(body))
 	}
 	return nil
 }
@@ -266,34 +450,88 @@ func (g *GitHubDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*P
 		return nil, errors.New("create pull request: title, head, and base are required")
 	}
 
-	if strings.HasPrefix(g.Token, "test-") {
-		return &PRResponse{
-			Number: 1,
-			URL:    fmt.Sprintf("%s/pulls/1", g.Endpoint),
-			State:  "open",
-		}, nil
-	}
-
 	payload := map[string]string{
 		"title": req.Title,
 		"body":  req.Body,
 		"head":  req.Head,
 		"base":  req.Base,
 	}
-	path := g.repoPath("pulls")
+	path, err := g.repoPath("pulls")
+	if err != nil {
+		return nil, fmt.Errorf("create pull request: %w", err)
+	}
 	respBody, status, err := g.sendRequest(ctx, http.MethodPost, path, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed creating pull request: %w", err)
 	}
 	if status != http.StatusCreated {
-		return nil, fmt.Errorf("unexpected status %d creating pull request: %s", status, string(respBody))
+		return nil, fmt.Errorf("unexpected status %d creating pull request: %s", status, bodyPreview(respBody))
 	}
 
 	var res PRResponse
 	if err := json.Unmarshal(respBody, &res); err != nil {
-		return nil, fmt.Errorf("failed parsing pull request response: %w", err)
+		return nil, fmt.Errorf("failed parsing pull request response (raw: %q): %w", bodyPreview(respBody), err)
 	}
 	return &res, nil
+}
+
+// buildIssuePayload renders the full IssueSpec, including assignees and the milestone,
+// which is resolved from its title to the numeric id the REST API requires.
+func (g *GitHubDriver) buildIssuePayload(ctx context.Context, spec IssueSpec) (map[string]any, error) {
+	payload := map[string]any{
+		"title": spec.Title,
+		"body":  spec.Body,
+	}
+	if len(spec.Labels) > 0 {
+		payload["labels"] = spec.Labels
+	}
+	if len(spec.Assignees) > 0 {
+		payload["assignees"] = spec.Assignees
+	}
+	if spec.Milestone != "" {
+		number, err := g.resolveMilestone(ctx, spec.Milestone)
+		if err != nil {
+			return nil, err
+		}
+		payload["milestone"] = number
+	}
+	return payload, nil
+}
+
+type ghMilestoneRaw struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+}
+
+// resolveMilestone maps a milestone title to its repository-scoped number.
+func (g *GitHubDriver) resolveMilestone(ctx context.Context, title string) (int, error) {
+	base, err := g.repoPath("milestones")
+	if err != nil {
+		return 0, fmt.Errorf("resolve milestone %q: %w", title, err)
+	}
+	for page := 1; page <= maxMilestonePages; page++ {
+		path := fmt.Sprintf("%s?state=all&per_page=%d&page=%d", base, issuesPerPage, page)
+		body, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			return 0, fmt.Errorf("failed listing milestones: %w", err)
+		}
+		if status != http.StatusOK {
+			return 0, fmt.Errorf("unexpected status %d listing milestones: %s", status, bodyPreview(body))
+		}
+		var raw []ghMilestoneRaw
+		if err := json.Unmarshal(body, &raw); err != nil {
+			return 0, fmt.Errorf("failed parsing milestones (raw: %q): %w", bodyPreview(body), err)
+		}
+		for i := 0; i < len(raw); i++ {
+			if raw[i].Title == title {
+				return raw[i].Number, nil
+			}
+		}
+		if len(raw) < issuesPerPage {
+			break
+		}
+	}
+	return 0, fmt.Errorf("milestone %q does not exist in the target repository", title)
 }
 
 func (g *GitHubDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueResponse, error) {
@@ -304,36 +542,32 @@ func (g *GitHubDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueR
 		return nil, errors.New("create issue: title is required")
 	}
 
-	if strings.HasPrefix(g.Token, "test-") {
-		return &IssueResponse{
-			Number: 1,
-			URL:    fmt.Sprintf("%s/issues/1", g.Endpoint),
-			State:  "open",
-		}, nil
+	payload, err := g.buildIssuePayload(ctx, spec)
+	if err != nil {
+		return nil, err
 	}
-
-	payload := map[string]any{
-		"title":  spec.Title,
-		"body":   spec.Body,
-		"labels": spec.Labels,
+	path, err := g.repoPath("issues")
+	if err != nil {
+		return nil, fmt.Errorf("create issue: %w", err)
 	}
-	path := g.repoPath("issues")
 	respBody, status, err := g.sendRequest(ctx, http.MethodPost, path, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed creating issue: %w", err)
 	}
 	if status != http.StatusCreated {
-		return nil, fmt.Errorf("unexpected status %d creating issue: %s", status, string(respBody))
+		return nil, fmt.Errorf("unexpected status %d creating issue: %s", status, bodyPreview(respBody))
 	}
 
 	var res IssueResponse
 	if err := json.Unmarshal(respBody, &res); err != nil {
-		return nil, fmt.Errorf("failed parsing issue response: %w", err)
+		return nil, fmt.Errorf("failed parsing issue response (raw: %q): %w", bodyPreview(respBody), err)
 	}
 	return &res, nil
 }
 
-// ListIssues fetches issues from the repository.
+// ListIssues fetches every issue in the repository, following pagination up to the
+// maxIssuePages scalar bound and discarding pull requests, which the issues endpoint also
+// returns. A truncated listing would silently mark resolved prerequisites as pending.
 func (g *GitHubDriver) ListIssues(ctx context.Context, state string) ([]IssueSpec, error) {
 	if err := g.Authenticate(ctx); err != nil {
 		return nil, err
@@ -341,23 +575,31 @@ func (g *GitHubDriver) ListIssues(ctx context.Context, state string) ([]IssueSpe
 	if state == "" {
 		state = "all"
 	}
-	if strings.HasPrefix(g.Token, "test-") {
-		return []IssueSpec{
-			{ID: 1, Title: "Test Issue 1", State: "closed", Labels: []string{"governance"}},
-			{ID: 2, Title: "Test Issue 2", State: "open", Labels: []string{"architecture", "status/blocked"}, DependsOn: []string{"#1"}},
-		}, nil
-	}
-
-	path := fmt.Sprintf("%s?state=%s&per_page=100", g.repoPath("issues"), state)
-	respBody, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
+	base, err := g.repoPath("issues")
 	if err != nil {
-		return nil, fmt.Errorf("failed listing issues: %w", err)
-	}
-	if status != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status %d listing issues: %s", status, string(respBody))
+		return nil, fmt.Errorf("list issues: %w", err)
 	}
 
-	return parseGitHubIssues(respBody)
+	all := make([]IssueSpec, 0, issuesPerPage)
+	for page := 1; page <= maxIssuePages; page++ {
+		path := fmt.Sprintf("%s?state=%s&per_page=%d&page=%d", base, url.QueryEscape(state), issuesPerPage, page)
+		respBody, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed listing issues: %w", err)
+		}
+		if status != http.StatusOK {
+			return nil, fmt.Errorf("unexpected status %d listing issues: %s", status, bodyPreview(respBody))
+		}
+		specs, rawCount, err := parseGitHubIssues(respBody)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, specs...)
+		if rawCount < issuesPerPage {
+			break
+		}
+	}
+	return all, nil
 }
 
 type ghIssueRaw struct {
@@ -368,19 +610,25 @@ type ghIssueRaw struct {
 	Labels []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
+	// PullRequest is non-nil when the item is a pull request rather than an issue.
+	PullRequest *struct {
+		URL string `json:"url"`
+	} `json:"pull_request"`
 }
 
-func parseGitHubIssues(body []byte) ([]IssueSpec, error) {
+// parseGitHubIssues decodes one page of the issues endpoint. It returns the converted
+// issue specs and the number of raw items on the page (pull requests included), which the
+// caller needs to decide whether another page must be fetched.
+func parseGitHubIssues(body []byte) ([]IssueSpec, int, error) {
 	var raw []ghIssueRaw
 	if err := json.Unmarshal(body, &raw); err != nil {
-		preview := string(body)
-		if len(preview) > 100 {
-			preview = preview[:100]
-		}
-		return nil, fmt.Errorf("failed parsing issues list (len %d, raw: %q): %w", len(body), preview, err)
+		return nil, 0, fmt.Errorf("failed parsing issues list (len %d, raw: %q): %w", len(body), bodyPreview(body), err)
 	}
 	specs := make([]IssueSpec, 0, len(raw))
 	for _, r := range raw {
+		if r.PullRequest != nil {
+			continue
+		}
 		lbls := make([]string, 0, len(r.Labels))
 		for _, l := range r.Labels {
 			lbls = append(lbls, l.Name)
@@ -399,16 +647,18 @@ func parseGitHubIssues(body []byte) ([]IssueSpec, error) {
 			DependsOn: depStrs,
 		})
 	}
-	return specs, nil
+	return specs, len(raw), nil
 }
 
-// UpdateIssue modifies state or labels of an existing issue.
+// UpdateIssue modifies state and labels of an existing issue. The GitHub REST API replaces
+// the whole label set with the labels argument, so callers must pass the complete desired
+// set; use AddLabels / RemoveLabel for additive transitions that must preserve labels.
 func (g *GitHubDriver) UpdateIssue(ctx context.Context, number int, labels []string, state string) error {
 	if err := g.Authenticate(ctx); err != nil {
 		return err
 	}
-	if strings.HasPrefix(g.Token, "test-") {
-		return nil
+	if number <= 0 {
+		return fmt.Errorf("update issue: issue number must be positive, got %d", number)
 	}
 	payload := make(map[string]any)
 	if len(labels) > 0 {
@@ -417,13 +667,73 @@ func (g *GitHubDriver) UpdateIssue(ctx context.Context, number int, labels []str
 	if state != "" {
 		payload["state"] = state
 	}
-	path := fmt.Sprintf("%s/%d", g.repoPath("issues"), number)
-	_, status, err := g.sendRequest(ctx, http.MethodPatch, path, payload)
+	if len(payload) == 0 {
+		return errors.New("update issue: nothing to update (no labels and no state)")
+	}
+	base, err := g.repoPath("issues")
+	if err != nil {
+		return fmt.Errorf("update issue #%d: %w", number, err)
+	}
+	body, status, err := g.sendRequest(ctx, http.MethodPatch, fmt.Sprintf("%s/%d", base, number), payload)
 	if err != nil {
 		return fmt.Errorf("failed updating issue #%d: %w", number, err)
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("unexpected status %d updating issue #%d", status, number)
+		return fmt.Errorf("unexpected status %d updating issue #%d: %s", status, number, bodyPreview(body))
+	}
+	return nil
+}
+
+// AddLabels adds labels to an issue without touching the labels it already carries.
+func (g *GitHubDriver) AddLabels(ctx context.Context, number int, labels []string) error {
+	if err := g.Authenticate(ctx); err != nil {
+		return err
+	}
+	if number <= 0 {
+		return fmt.Errorf("add labels: issue number must be positive, got %d", number)
+	}
+	if len(labels) == 0 {
+		return errors.New("add labels: label set cannot be empty")
+	}
+	base, err := g.repoPath("issues")
+	if err != nil {
+		return fmt.Errorf("add labels to issue #%d: %w", number, err)
+	}
+	path := fmt.Sprintf("%s/%d/labels", base, number)
+	body, status, err := g.sendRequest(ctx, http.MethodPost, path, map[string]any{"labels": labels})
+	if err != nil {
+		return fmt.Errorf("failed adding labels to issue #%d: %w", number, err)
+	}
+	if status != http.StatusOK && status != http.StatusCreated {
+		return fmt.Errorf("unexpected status %d adding labels to issue #%d: %s", status, number, bodyPreview(body))
+	}
+	return nil
+}
+
+// RemoveLabel removes a single label from an issue. A label that is not present is not an
+// error: the desired end state is already reached.
+func (g *GitHubDriver) RemoveLabel(ctx context.Context, number int, label string) error {
+	if err := g.Authenticate(ctx); err != nil {
+		return err
+	}
+	if number <= 0 {
+		return fmt.Errorf("remove label: issue number must be positive, got %d", number)
+	}
+	if label == "" {
+		return errors.New("remove label: label name cannot be empty")
+	}
+	base, err := g.repoPath("issues")
+	if err != nil {
+		return fmt.Errorf("remove label from issue #%d: %w", number, err)
+	}
+	path := fmt.Sprintf("%s/%d/labels/%s", base, number, url.PathEscape(label))
+	body, status, err := g.sendRequest(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return fmt.Errorf("failed removing label %s from issue #%d: %w", label, number, err)
+	}
+	if status != http.StatusOK && status != http.StatusNoContent && status != http.StatusNotFound {
+		return fmt.Errorf("unexpected status %d removing label %s from issue #%d: %s",
+			status, label, number, bodyPreview(body))
 	}
 	return nil
 }
