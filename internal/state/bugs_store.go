@@ -128,13 +128,5 @@ func replaceBugLedger(ctx context.Context, root *os.Root, before, updated []byte
 	if err := root.Rename(bugPendingName, bugLedgerName); err != nil {
 		return err
 	}
-	return syncBugDirectory(root)
-}
-
-func syncBugDirectory(root *os.Root) error {
-	dir, err := root.Open(".")
-	if err != nil {
-		return err
-	}
-	return errors.Join(dir.Sync(), dir.Close())
+	return contextopt.SyncDirectory(ctx, root)
 }

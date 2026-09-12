@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 )
 
 const (
@@ -121,7 +121,7 @@ func projectionOwners(options Options, data [][]byte) map[int]int {
 		if options.Sources[i] != "AGENTS.md" {
 			continue
 		}
-		compiled, err := compiler.NewTranspiler().CompileContent(string(data[i]))
+		compiled, err := agentcontext.NewTranspiler().CompileContent(string(data[i]))
 		if err != nil {
 			// Over-budget or empty canonical text cannot prove a projection. Retain it.
 			continue

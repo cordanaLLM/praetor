@@ -7,12 +7,15 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -31,78 +34,75 @@ func ScanDeclaredDependencies(ctx context.Context, repoPath string, includeTrans
 	}
 
 	var allRefs []PackageRef
-
-	// 1. Scan Go modules
-	goRefs, err := scanGoDependencies(repoPath, includeTransitive)
-	if err == nil && len(goRefs) > 0 {
-		allRefs = append(allRefs, goRefs...)
+	goRefs, err := scanGoDependencies(ctx, repoPath, includeTransitive)
+	if err != nil {
+		return nil, fmt.Errorf("scan Go dependencies: %w", err)
 	}
-
-	// 2. Scan Node packages
-	nodeRefs, err := scanNodeDependencies(repoPath, includeTransitive)
-	if err == nil && len(nodeRefs) > 0 {
-		allRefs = append(allRefs, nodeRefs...)
+	allRefs = append(allRefs, goRefs...)
+	nodeRefs, err := scanNodeDependencies(ctx, repoPath, includeTransitive)
+	if err != nil {
+		return nil, fmt.Errorf("scan Node dependencies: %w", err)
 	}
-
-	// 3. Scan GitHub Actions
-	actionRefs, err := scanWorkflowActions(repoPath)
-	if err == nil && len(actionRefs) > 0 {
-		allRefs = append(allRefs, actionRefs...)
+	allRefs = append(allRefs, nodeRefs...)
+	actionRefs, err := scanWorkflowActions(ctx, repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("scan workflow actions: %w", err)
 	}
-
+	allRefs = append(allRefs, actionRefs...)
 	return deduplicatePackageRefs(allRefs), nil
 }
 
-func scanGoDependencies(repoPath string, includeTransitive bool) ([]PackageRef, error) {
-	goModPath := filepath.Join(repoPath, "go.mod")
-	if !util.FileExists(goModPath) {
+func readDocumentationFile(ctx context.Context, root, name string) ([]byte, error) {
+	path, err := util.ConfinePath(root, name)
+	if err != nil {
+		return nil, err
+	}
+	return contextopt.ReadSnapshot(ctx, path)
+}
+
+func scanGoDependencies(ctx context.Context, repoPath string, includeTransitive bool) ([]PackageRef, error) {
+	data, err := readDocumentationFile(ctx, repoPath, "go.mod")
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
-
-	file, err := os.Open(goModPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open go.mod: %w", err)
+		return nil, err
 	}
-	defer file.Close()
-
 	var refs []PackageRef
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	inRequire := false
-
-	for i := 0; i < 5000 && scanner.Scan(); i++ {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "require (") {
-			inRequire = true
+	for i := 0; i <= 5000 && scanner.Scan(); i++ {
+		if i == 5000 {
+			return nil, fmt.Errorf("go manifest exceeds 5000 lines")
+		}
+		line, required := gomanifest.RequirementLine(scanner.Text(), &inRequire)
+		if !required {
 			continue
 		}
-		if inRequire && line == ")" {
-			inRequire = false
-			continue
-		}
-
-		if inRequire || strings.HasPrefix(line, "require ") {
-			clean := strings.TrimPrefix(line, "require ")
-			matches := goRequireRegex.FindStringSubmatch(clean)
-			if len(matches) == 3 {
-				pkgName := matches[1]
-				ver := "v" + matches[2]
-				isIndirect := strings.Contains(line, "// indirect")
-				if isIndirect && !includeTransitive {
-					continue
-				}
-				refs = append(refs, PackageRef{
-					Name:       pkgName,
-					Version:    ver,
-					Kind:       KindGoModule,
-					Manifest:   "go.mod",
-					Direct:     !isIndirect,
-					Repository: "https://" + pkgName,
-				})
-			}
+		ref, ok := goPackageRef(line, includeTransitive)
+		if ok {
+			refs = append(refs, ref)
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return refs, nil
+}
 
-	return refs, scanner.Err()
+func goPackageRef(line string, includeTransitive bool) (PackageRef, bool) {
+	matches := goRequireRegex.FindStringSubmatch(line)
+	if len(matches) != 3 {
+		return PackageRef{}, false
+	}
+	indirect := strings.Contains(line, "// indirect")
+	if indirect && !includeTransitive {
+		return PackageRef{}, false
+	}
+	return PackageRef{
+		Name: matches[1], Version: "v" + matches[2], Kind: KindGoModule,
+		Manifest: "go.mod", Direct: !indirect, Repository: "https://" + matches[1],
+	}, true
 }
 
 type packageJSONDeps struct {
@@ -110,15 +110,13 @@ type packageJSONDeps struct {
 	DevDependencies map[string]string `json:"devDependencies"`
 }
 
-func scanNodeDependencies(repoPath string, includeTransitive bool) ([]PackageRef, error) {
-	pkgJSONPath := filepath.Join(repoPath, "package.json")
-	if !util.FileExists(pkgJSONPath) {
+func scanNodeDependencies(ctx context.Context, repoPath string, includeTransitive bool) ([]PackageRef, error) {
+	data, err := readDocumentationFile(ctx, repoPath, "package.json")
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
-
-	data, err := os.ReadFile(pkgJSONPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed reading package.json: %w", err)
+		return nil, fmt.Errorf("read package.json: %w", err)
 	}
 
 	var parsed packageJSONDeps
@@ -150,54 +148,56 @@ func scanNodeDependencies(repoPath string, includeTransitive bool) ([]PackageRef
 	return refs, nil
 }
 
-func scanWorkflowActions(repoPath string) ([]PackageRef, error) {
-	workflowDir := filepath.Join(repoPath, ".github", "workflows")
-	if !util.DirExists(workflowDir) {
+func scanWorkflowActions(ctx context.Context, repoPath string) ([]PackageRef, error) {
+	workflowDir, err := util.ConfinePath(repoPath, filepath.Join(".github", "workflows"))
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(workflowDir)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
-
-	var refs []PackageRef
-	entries, err := os.ReadDir(workflowDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed reading workflow dir: %w", err)
+		return nil, fmt.Errorf("read workflow directory: %w", err)
 	}
-
-	for i := 0; i < 500 && i < len(entries); i++ {
-		entry := entries[i]
-		if entry.IsDir() {
-			continue
-		}
+	if len(entries) > 500 {
+		return nil, fmt.Errorf("workflow directory exceeds 500 entries")
+	}
+	var refs []PackageRef
+	for _, entry := range entries {
 		ext := filepath.Ext(entry.Name())
-		if ext != ".yml" && ext != ".yaml" {
+		if entry.IsDir() || (ext != ".yml" && ext != ".yaml") {
 			continue
 		}
-
-		fPath := filepath.Join(workflowDir, entry.Name())
-		content, err := os.ReadFile(fPath)
+		manifest := filepath.Join(".github", "workflows", entry.Name())
+		content, err := readDocumentationFile(ctx, repoPath, manifest)
 		if err != nil {
+			return nil, fmt.Errorf("read workflow %s: %w", entry.Name(), err)
+		}
+		actions, err := workflowPackageRefs(string(content), manifest)
+		if err != nil {
+			return nil, err
+		}
+		refs = append(refs, actions...)
+	}
+	return refs, nil
+}
+
+func workflowPackageRefs(content, manifest string) ([]PackageRef, error) {
+	matches := actionRegex.FindAllStringSubmatch(content, 101)
+	if len(matches) > 100 {
+		return nil, fmt.Errorf("workflow %s exceeds 100 actions", manifest)
+	}
+	var refs []PackageRef
+	for _, match := range matches {
+		if len(match) != 3 || strings.HasPrefix(match[1], ".") {
 			continue
 		}
-
-		matches := actionRegex.FindAllStringSubmatch(string(content), 100)
-		for _, m := range matches {
-			if len(m) == 3 {
-				actionName := m[1]
-				ref := m[2]
-				if strings.HasPrefix(actionName, ".") {
-					continue
-				}
-				refs = append(refs, PackageRef{
-					Name:       actionName,
-					Version:    ref,
-					Kind:       KindGitHubAction,
-					Manifest:   filepath.Join(".github", "workflows", entry.Name()),
-					Direct:     true,
-					Repository: "https://github.com/" + actionName,
-				})
-			}
-		}
+		refs = append(refs, PackageRef{
+			Name: match[1], Version: match[2], Kind: KindGitHubAction,
+			Manifest: manifest, Direct: true, Repository: "https://github.com/" + match[1],
+		})
 	}
-
 	return refs, nil
 }
 

@@ -76,3 +76,59 @@ func TestRecallLocalFactsWithError_Boundary(t *testing.T) {
 		t.Fatalf("valid zero-match query: %v %v", matches, err)
 	}
 }
+
+func TestLocalCacheReadRejectsSymlinkAndSizeOverflow(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	dir := filepath.Join(root, MemoryDirRel)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	outsideFile := filepath.Join(outside, "facts.json")
+	if err := os.WriteFile(outsideFile, []byte("[]"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, MemoryFileRel)
+	if err := os.Symlink(outsideFile, target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadLocalCacheContext(t.Context(), root); err == nil {
+		t.Fatal("escaping cache link accepted")
+	}
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, make([]byte, (1<<20)+1), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadLocalCacheContext(t.Context(), root); err == nil {
+		t.Fatal("oversized cache accepted")
+	}
+}
+
+func TestLocalCacheWriteIsPrivateAndRejectsEscapingDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := SaveLocalCacheContext(t.Context(), root, []MemoryFact{{ID: "fact", Statement: "retained"}}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(root, MemoryFileRel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("private cache mode=%#o", info.Mode().Perm())
+	}
+	linked, outside := t.TempDir(), t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(linked, ".workingdir")); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveLocalCacheContext(t.Context(), linked, nil); err == nil {
+		t.Fatal("escaping directory accepted")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatal("memory write escaped root")
+	}
+}

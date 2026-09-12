@@ -111,33 +111,39 @@ func extractSummary(text, pkgName string) string {
 
 func extractAPISurface(text string, kind PackageKind) []string {
 	var results []string
-	if kind == KindGoModule {
-		typeMatches := typeDeclRegex.FindAllString(text, 15)
-		for _, m := range typeMatches {
-			results = append(results, strings.TrimSpace(m))
+	switch kind {
+	case KindGoModule:
+		for _, match := range typeDeclRegex.FindAllString(text, 15) {
+			results = append(results, strings.TrimSpace(match))
 		}
-		funcMatches := funcSigRegex.FindAllString(text, 20)
-		for _, m := range funcMatches {
-			results = append(results, strings.TrimSpace(m))
+		for _, match := range funcSigRegex.FindAllString(text, 20) {
+			results = append(results, strings.TrimSpace(match))
 		}
-	} else if kind == KindGitHubAction {
-		lines := strings.Split(text, "\n")
-		inInputs := false
-		for i := 0; i < 500 && i < len(lines); i++ {
-			l := lines[i]
-			if strings.TrimSpace(l) == "inputs:" {
-				inInputs = true
-				continue
-			}
-			if inInputs && strings.HasPrefix(l, "  ") && !strings.HasPrefix(l, "    ") {
-				results = append(results, strings.TrimSpace(strings.TrimSuffix(l, ":")))
-			}
-			if inInputs && (strings.TrimSpace(l) == "outputs:" || strings.TrimSpace(l) == "runs:") {
-				inInputs = false
-			}
-		}
+	case KindGitHubAction:
+		results = extractActionInputs(text)
 	}
 	return limitSlice(results, 12)
+}
+
+func extractActionInputs(text string) []string {
+	lines := strings.Split(text, "\n")
+	var results []string
+	inInputs := false
+	for i := 0; i < 500 && i < len(lines); i++ {
+		line := lines[i]
+		switch strings.TrimSpace(line) {
+		case "inputs:":
+			inInputs = true
+			continue
+		case "outputs:", "runs:":
+			inInputs = false
+			continue
+		}
+		if inInputs && strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "    ") {
+			results = append(results, strings.TrimSpace(strings.TrimSuffix(line, ":")))
+		}
+	}
+	return results
 }
 
 func extractConfigRules(text string) []string {
@@ -166,13 +172,13 @@ func extractInvariants(text string) []string {
 
 func renderDistilledMarkdown(ref PackageRef, summary string, api, config, invs []string) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# [%s@%s] (%s)\n\n", ref.Name, ref.Version, ref.Kind))
-	sb.WriteString(fmt.Sprintf("**Summary**: %s\n\n", summary))
+	fmt.Fprintf(&sb, "# [%s@%s] (%s)\n\n", ref.Name, ref.Version, ref.Kind)
+	fmt.Fprintf(&sb, "**Summary**: %s\n\n", summary)
 
 	if len(api) > 0 {
 		sb.WriteString("## Exported API & Interfaces\n")
 		for _, item := range api {
-			sb.WriteString(fmt.Sprintf("- `%s`\n", item))
+			fmt.Fprintf(&sb, "- `%s`\n", item)
 		}
 		sb.WriteString("\n")
 	}
@@ -180,7 +186,7 @@ func renderDistilledMarkdown(ref PackageRef, summary string, api, config, invs [
 	if len(config) > 0 {
 		sb.WriteString("## Configuration & Flags\n")
 		for _, item := range config {
-			sb.WriteString(fmt.Sprintf("- %s\n", item))
+			fmt.Fprintf(&sb, "- %s\n", item)
 		}
 		sb.WriteString("\n")
 	}
@@ -188,7 +194,7 @@ func renderDistilledMarkdown(ref PackageRef, summary string, api, config, invs [
 	if len(invs) > 0 {
 		sb.WriteString("## Invariants & Gotchas\n")
 		for _, item := range invs {
-			sb.WriteString(fmt.Sprintf("- %s\n", item))
+			fmt.Fprintf(&sb, "- %s\n", item)
 		}
 		sb.WriteString("\n")
 	}

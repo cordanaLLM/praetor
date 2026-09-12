@@ -136,3 +136,24 @@ func TestPlanTransitions_Boundary_NilResolverAndEmptyConfig(t *testing.T) {
 		t.Fatalf("expected no transitions for an empty config, got %d", len(got))
 	}
 }
+
+func TestLoadConfigRejectsLinkedAndOversizedSource(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.yaml")
+	if err := os.WriteFile(source, []byte("version: 1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.yaml")
+	if err := os.Symlink(source, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfigContext(t.Context(), link); err == nil {
+		t.Fatal("linked config accepted")
+	}
+	if err := os.WriteFile(source, make([]byte, (1<<20)+1), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfigContext(t.Context(), source); err == nil {
+		t.Fatal("oversized config accepted")
+	}
+}

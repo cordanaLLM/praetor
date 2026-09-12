@@ -2,11 +2,14 @@ package paperclip
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/lockdown"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // =========================================================================
@@ -119,8 +122,12 @@ func TestDisposition_Negative_MissingFields(t *testing.T) {
 	}
 
 	// Nil context in validation
-	disp, _ := CreateDisposition("ISSUE-1", "blocked", "note", "", "owner", "actor", nil)
-	if err := disp.Validate(nil); err == nil {
+	disp, err := CreateDisposition("ISSUE-1", "blocked", "note", "", "owner", "actor", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nilContext context.Context
+	if err := disp.Validate(nilContext); err == nil {
 		t.Fatal("expected error on nil context in Validate")
 	}
 }
@@ -169,8 +176,11 @@ func TestVerifyRun_Boundary_MissingHarness(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	disp, _ := CreateDisposition("ISSUE-1", "blocked", "stuck", "", "ops", "actor", nil)
-	err := VerifyRun(ctx, tmpDir, disp)
+	disp, err := CreateDisposition("ISSUE-1", "blocked", "stuck", "", "ops", "actor", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = VerifyRun(ctx, tmpDir, disp)
 	if err == nil {
 		t.Fatal("expected error when .paperclip/harness.json is missing")
 	}
@@ -194,7 +204,10 @@ func TestReadDisposition_3D(t *testing.T) {
 	}
 
 	// Positive: Valid disposition
-	disp, _ := CreateDisposition("ISSUE-10", "blocked", "need key", "", "security", "bot", nil)
+	disp, err := CreateDisposition("ISSUE-10", "blocked", "need key", "", "security", "bot", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	bytes, err := disp.FormatJSON()
 	if err != nil {
 		t.Fatal(err)
@@ -255,5 +268,47 @@ func TestLoadHarness_3D(t *testing.T) {
 	h2, err := SynthesizeHarness(context.Background(), manifestDir)
 	if err != nil || h2.Platform != "test-org/test-repo" {
 		t.Fatalf("expected platform 'test-org/test-repo', got: %s (err: %v)", h2.Platform, err)
+	}
+}
+
+func TestVerifyRunInReviewWorkingTree(t *testing.T) {
+	ctx := t.Context()
+	repo := t.TempDir()
+	disposition, err := CreateDisposition("ISSUE-1", "in_review", "review", "PR proof", "", "actor", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyRun(ctx, repo, disposition); err == nil || !strings.Contains(err.Error(), "git status") {
+		t.Fatalf("nonrepository must report git failure, got %v", err)
+	}
+	harness, err := SynthesizeHarness(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteHarness(harness, repo); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "--quiet"},
+		{"add", ".paperclip"},
+		{"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "test harness"},
+	} {
+		if out, err := util.RunGit(ctx, repo, args...); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	if err := VerifyRun(ctx, repo, disposition); err != nil {
+		t.Fatalf("clean committed worktree rejected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "unfinished.txt"), []byte("work in progress"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyRun(ctx, repo, disposition); err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Fatalf("dirty worktree must fail disposition, got %v", err)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := VerifyRun(cancelled, repo, disposition); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled verification must preserve context error, got %v", err)
 	}
 }

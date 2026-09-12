@@ -122,7 +122,7 @@ func ScanNodeDependencies(ctx context.Context, repoPath string, opts ScanOptions
 			var fbErr error
 			candidates, fbErr = scanPackageJSONStatic(repoPath, dirRel, opts)
 			if fbErr != nil {
-				continue
+				return nil, fmt.Errorf("scan Node package %s: %w", dirRel, errors.Join(err, fbErr))
 			}
 		}
 		allCandidates = append(allCandidates, candidates...)

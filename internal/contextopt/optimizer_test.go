@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 )
 
 func contextFixture(t *testing.T, files map[string][]byte) string {
@@ -110,7 +110,7 @@ func TestAnalyzeAndWritePreserveBytesAndScopes(t *testing.T) {
 
 func TestCompilerProjectionRequiresExactCurrentCanonical(t *testing.T) {
 	canonical := []byte("# Instructions\n\nPreserve all source scopes.\n")
-	compiled, err := compiler.NewTranspiler().CompileContent(string(canonical))
+	compiled, err := agentcontext.NewTranspiler().CompileContent(string(canonical))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +361,7 @@ func TestPathDepthAndCompilerBudgetFailClosed(t *testing.T) {
 	if err := validatePath(exact + "/x"); err == nil {
 		t.Fatal("depth overflow accepted")
 	}
-	canonical := strings.Repeat("policy\n", compiler.MaxLineBudget+1)
+	canonical := strings.Repeat("policy\n", agentcontext.MaxLineBudget+1)
 	root := contextFixture(t, map[string][]byte{"AGENTS.md": []byte(canonical), "CLAUDE.md": []byte("unverified projection")})
 	plan, err := Analyze(context.Background(), Options{Root: root, Sources: []string{"AGENTS.md", "CLAUDE.md"}})
 	if err != nil {

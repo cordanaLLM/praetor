@@ -3,6 +3,7 @@ package router
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -65,7 +66,12 @@ func (a *ModelCapacityArbiter) SelectModel(targetTier string) (*ModelDescriptor,
 	threshold := a.Config.Governance.ExhaustionThresholdPercent / 100.0
 	minHeadroom := 1.0 - threshold
 
-	for currentTierName != "" {
+	seen := make(map[string]bool)
+	for step := 0; currentTierName != "" && step < MaxRoutingTiers; step++ {
+		if seen[currentTierName] {
+			return nil, errors.New("model fallback tiers contain a cycle")
+		}
+		seen[currentTierName] = true
 		tier, exists := a.Config.Tiers[currentTierName]
 		if !exists {
 			return nil, fmt.Errorf("tier %s not found in configuration", currentTierName)
@@ -74,7 +80,7 @@ func (a *ModelCapacityArbiter) SelectModel(targetTier string) (*ModelDescriptor,
 		// Try models in current tier
 		for _, model := range tier.Models {
 			headroom := a.CalculateHeadroom(model)
-			if headroom >= minHeadroom {
+			if headroom > 0 && headroom >= minHeadroom {
 				return &model, nil
 			}
 		}
@@ -97,26 +103,27 @@ func (a *ModelCapacityArbiter) SelectOrthogonalAuditor(authorFamily ModelFamily,
 		tier = a.Config.Tiers["heavy-frontier"]
 	}
 
-	for _, m := range tier.Models {
-		if m.Family != authorFamily {
-			headroom := a.CalculateHeadroom(m)
-			if headroom >= 0.20 {
-				return &m, nil
-			}
+	if model := a.orthogonalCandidate(tier, authorFamily); model != nil {
+		return model, nil
+	}
+	names := make([]string, 0, len(a.Config.Tiers))
+	for name := range a.Config.Tiers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if model := a.orthogonalCandidate(a.Config.Tiers[name], authorFamily); model != nil {
+			return model, nil
 		}
 	}
-
-	// Try any other tier for an orthogonal family
-	for _, t := range a.Config.Tiers {
-		for _, m := range t.Models {
-			if m.Family != authorFamily {
-				headroom := a.CalculateHeadroom(m)
-				if headroom >= 0.20 {
-					return &m, nil
-				}
-			}
-		}
-	}
-
 	return nil, fmt.Errorf("no available orthogonal auditor found for family %s", authorFamily)
+}
+
+func (a *ModelCapacityArbiter) orthogonalCandidate(tier Tier, family ModelFamily) *ModelDescriptor {
+	for _, model := range tier.Models {
+		if model.Family != family && a.CalculateHeadroom(model) >= 0.20 {
+			return &model
+		}
+	}
+	return nil
 }

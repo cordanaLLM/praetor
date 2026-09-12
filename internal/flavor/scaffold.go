@@ -2,10 +2,13 @@ package flavor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -21,6 +24,12 @@ type ApplyReport struct {
 
 // ApplyFlavor scaffolds the missing templates and configs for a target flavor.
 func ApplyFlavor(ctx context.Context, repoPath string, targetFlavor string, force bool) (*ApplyReport, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("apply flavor requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if targetFlavor == "" || targetFlavor == "auto" {
 		targetFlavor = DetectFlavor(repoPath)
 	}
@@ -30,46 +39,63 @@ func ApplyFlavor(ctx context.Context, repoPath string, targetFlavor string, forc
 		return nil, fmt.Errorf("apply flavor: %w", err)
 	}
 
-	owner, repoName, _ := util.ResolveRepoIdentity(ctx, repoPath)
+	owner, repoName, err := util.ResolveRepoIdentity(ctx, repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve flavor repository identity: %w", err)
+	}
 	report := &ApplyReport{
 		Flavor: flv.Name(),
 	}
 
 	// 1. Initialize .workingdir/
-	if err := state.InitWorkingDir(repoPath); err != nil {
+	if err := state.InitWorkingDirContext(ctx, repoPath); err != nil {
 		report.Errors = append(report.Errors, fmt.Sprintf("workingdir init: %v", err))
+		return report, fmt.Errorf("initialize flavor working directory: %w", err)
 	} else {
 		report.WorkingDirCreated = true
 	}
 
 	// 2. Scaffold required templates
 	for _, tmpl := range flv.RequiredTemplates() {
-		applySingleTemplate(repoPath, tmpl, repoName, owner, force, report)
+		if err := ctx.Err(); err != nil {
+			return report, err
+		}
+		applySingleTemplate(ctx, repoPath, tmpl, repoName, owner, force, report)
 	}
 
 	return report, nil
 }
 
-func applySingleTemplate(repoPath string, tmpl TemplateItem, repoName, owner string, force bool, report *ApplyReport) {
+func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool, report *ApplyReport) {
+	if !filepath.IsLocal(tmpl.Path) || filepath.Clean(tmpl.Path) != tmpl.Path {
+		report.Errors = append(report.Errors, fmt.Sprintf("template path must remain within the repository: %s", tmpl.Path))
+		return
+	}
 	destPath := filepath.Join(repoPath, tmpl.Path)
-	if util.PathExists(destPath) && !force {
+	before, err := contextopt.ReadSnapshot(ctx, destPath)
+	exists := !errors.Is(err, os.ErrNotExist)
+	if err != nil && exists {
+		report.Errors = append(report.Errors, fmt.Sprintf("read %s: %v", tmpl.Path, err))
+		return
+	}
+	if exists && (!force || strings.HasPrefix(tmpl.Path, state.WorkingDirName+"/")) {
 		report.SkippedTemplates = append(report.SkippedTemplates, tmpl.Path)
 		return
 	}
 
-	content := ""
+	var content string
 	if tmpl.ContentFunc != nil {
 		content = tmpl.ContentFunc(repoName, owner)
 	} else {
 		content = defaultTemplateContent(tmpl.Path, repoName, owner)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+	if err := contextopt.EnsureDirectory(ctx, filepath.Dir(destPath), 0o755); err != nil {
 		report.Errors = append(report.Errors, fmt.Sprintf("mkdir %s: %v", tmpl.Path, err))
 		return
 	}
 
-	if err := os.WriteFile(destPath, []byte(content), 0644); err != nil {
+	if err := contextopt.ReplaceSnapshot(ctx, destPath, []byte(content), contextopt.ReplaceOptions{Expected: before, Exists: exists, Mode: 0o644}); err != nil {
 		report.Errors = append(report.Errors, fmt.Sprintf("write %s: %v", tmpl.Path, err))
 		return
 	}

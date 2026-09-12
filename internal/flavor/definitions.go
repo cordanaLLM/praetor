@@ -4,18 +4,18 @@ import (
 	"path/filepath"
 )
 
-func init() {
-	Register(&GoServiceFlavor{})
-	Register(&GoLibraryFlavor{})
-	Register(&NativeGPUSystemsFlavor{})
-	Register(&FrontendSvelteFlavor{})
-	Register(&PythonMLFlavor{})
-	Register(&InfraK8sFlavor{})
-	Register(&AgenticAutonomousFlavor{})
-	Register(&RustSystemsFlavor{})
-	Register(&TypeScriptNodeFlavor{})
-	Register(&JVMServiceFlavor{})
-	Register(&MobileFlutterFlavor{})
+func builtinFlavors() map[string]Flavor {
+	flavors := []Flavor{
+		&GoServiceFlavor{}, &GoLibraryFlavor{}, &NativeGPUSystemsFlavor{},
+		&FrontendSvelteFlavor{}, &PythonMLFlavor{}, &InfraK8sFlavor{},
+		&AgenticAutonomousFlavor{}, &RustSystemsFlavor{}, &TypeScriptNodeFlavor{},
+		&JVMServiceFlavor{}, &MobileFlutterFlavor{},
+	}
+	result := make(map[string]Flavor, len(flavors))
+	for _, flavor := range flavors {
+		result[flavor.Name()] = flavor
+	}
+	return result
 }
 
 // --- 1. Go Service Flavor ---

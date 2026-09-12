@@ -2,6 +2,7 @@ package topology
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -190,7 +191,7 @@ func TestCleanWorkstationTopology_Apply(t *testing.T) {
 func TestAuditWorkstationTopology_Negative_NonExistent(t *testing.T) {
 	ctx := context.Background()
 	_, err := AuditWorkstationTopology(ctx, "/nonexistent/path/for/test")
-	if err != ErrDevRootNotExist {
+	if !errors.Is(err, ErrDevRootNotExist) {
 		t.Errorf("expected ErrDevRootNotExist, got %v", err)
 	}
 }
@@ -202,7 +203,7 @@ func TestAuditWorkstationTopology_Negative_NotADir(t *testing.T) {
 	}
 	ctx := context.Background()
 	_, err := AuditWorkstationTopology(ctx, tmpFile)
-	if err != ErrDevRootNotDir {
+	if !errors.Is(err, ErrDevRootNotDir) {
 		t.Errorf("expected ErrDevRootNotDir, got %v", err)
 	}
 }

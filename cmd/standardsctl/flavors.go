@@ -144,7 +144,7 @@ func runFlavors(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), flavorsCommandTimeout)
 	defer cancel()
 
-	cfg, err := flavors.LoadConfig(*configPath)
+	cfg, err := flavors.LoadConfigContext(ctx, *configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load flavors config: %w", err)
 	}

@@ -2,11 +2,36 @@ package cifilter_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/cifilter"
 )
+
+func TestAnalyzeChangesRejectsMissingOrCancelledContext(t *testing.T) {
+	var absent context.Context
+	if decision, err := cifilter.AnalyzeChanges(absent, cifilter.FilterOptions{}); err == nil || decision != nil {
+		t.Fatalf("nil context must fail: %+v, %v", decision, err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := cifilter.AnalyzeChanges(ctx, cifilter.FilterOptions{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled context must fail: %v", err)
+	}
+}
+
+func TestClassifyChangesOverflowRunsHeavyGates(t *testing.T) {
+	files := make([]string, 5001)
+	for i := range files {
+		files[i] = "docs/example.md"
+	}
+	files[len(files)-1] = "late.go"
+	decision := cifilter.MakeDecision(cifilter.ClassifyChanges(files), false)
+	if !decision.RunLinters || !decision.RunTests || !decision.RunSecurity || decision.SkipHeavyGates {
+		t.Fatalf("source past inspection bound must not skip gates: %+v", decision)
+	}
+}
 
 func TestClassifyChanges_DocsOnly(t *testing.T) {
 	files := []string{

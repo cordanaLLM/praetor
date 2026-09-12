@@ -3,7 +3,33 @@
 > Durable handoff for the 2026-09-11/12 multi-agent deep audit of this repository.
 > Any session can continue from this file alone. Update it whenever a wave completes.
 
-## Current continuation — gaps audit first (2026-09-12)
+## Current continuation — verification and shared management (2026-09-12)
+
+Read the current section of [GAPS_AUDIT.md](GAPS_AUDIT.md) first. The latest
+uncommitted slice repairs lint/security and error integrity, unifies snapshot
+writes/Go requirement parsing/context rendering, and adds tested shared-registry
+client preparation/application. Integrated `make -k verify-all` passed on source
+`af5379e9306b2ea1b75868e957439a7cbc26a86e5d05ac98a1dcf9216f85169f`:
+51 Go package race suites, fresh MCP, lint/security/vulnerability scans, audits
+and hooks. Final evidence is `routing-lint-20260912/verify-all-checkpoint.log`.
+Source verification, installation and native trust remain distinct stages.
+
+The owner expanded this into configurable global management across clients,
+containers, bots, plugins and private GitOps forks. Follow the
+[client bootstrap guide](../docs/guides/client-bootstrap.md) and
+[compact management data design](../docs/research/compact-management-data.md).
+Global effective policy, signed independent data updates, lazy shared tool
+discovery and general dispatch enforcement remain open. Native Codex inspection
+confirmed the project PreToolUse hook is enabled but untrusted; no repository
+Stop gate is active. One real AGY/Gemini task ran, but its token usage included
+substantial unaccounted client context.
+
+All current changes are on `checkpoint/deep-audit-2026-09-12`, based on public
+checkpoint `ccd4786`. Preserve untracked `.standards-receipt.json`. The owner
+fork is at `1f9041f7` and must retain exactly its four reviewed config overlays
+when synchronized after the next validated public checkpoint.
+
+## Previous checkpoint — ledger repair and gaps audit
 
 **Latest checkpoint:** [ledger integrity](../docs/guides/state-ledger-integrity.md)
 is implemented and the four missing findings are recovered as BUG-713..716.
@@ -18,10 +44,9 @@ Current branch is `checkpoint/deep-audit-2026-09-12`; the audit inspected base
 `c4c5a25` plus in-flight notebook/prompt work. Full race tests pass, but lint and
 security remain failing, including new notebook lint diagnostics.
 
-The legacy ledger has 712 rows (711 open), not 716 currently verified bugs.
-Four source findings (F5, F392, F485, F634) are absent; pipe handling can silently
-drop rows and conceal P0 blockers. Fix parsing/persistence/read errors before
-recovering those records or bulk-closing old findings. Historical gate and
+Before the ledger repair, the legacy ledger had 712 rows (711 open), with four
+source findings absent. Those records and the parser/read-error defects are
+repaired as described above. Historical gate and
 capability descriptions below do not establish current activation. IDE MCP wiring,
 Gitea/GitLab operations and hosted App/webhook runtime still have concrete gaps.
 Notebook/prompt additions are checkpoint code, not installed live features.

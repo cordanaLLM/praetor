@@ -117,7 +117,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditAgentProjections(rootDir) },
 		func() error { return auditBranchProtectionAndSupplyChain(manifest, rootDir) },
 		func() error { return auditPaperclipHarness(manifest, rootDir) },
-		func() error { return auditRunnerMatrix(manifest, rootDir) },
+		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
 		func() error { return auditPreMigrationTracking(rootDir) },
 		func() error { return auditAgentDefinitions(rootDir) },
 		func() error { return auditGitHooks(ctx, rootDir) },
@@ -201,7 +201,7 @@ func describeRatchetFailure(ratchet *baseline.RatchetResult) error {
 func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
 	root := opts.rootDir
 	tr := compiler.NewTranspiler()
-	if err := tr.Verify(opts.agentsPath, root); err != nil {
+	if err := tr.VerifyContext(ctx, opts.agentsPath, root); err != nil {
 		return fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
 	}
 	fmt.Println("[PASS] Cross-agent context targets (Claude, Cursor, Copilot, Windsurf, Gemini, Codex) verified in sync.")
@@ -338,8 +338,8 @@ func auditPaperclipHarness(manifest *config.Manifest, rootDir string) error {
 	return nil
 }
 
-func auditRunnerMatrix(manifest *config.Manifest, rootDir string) error {
-	policy, err := config.LoadCascadingRunnerConfig(rootDir, manifest.Repository.Owner)
+func auditRunnerMatrix(ctx context.Context, manifest *config.Manifest, rootDir string) error {
+	policy, err := config.LoadCascadingRunnerConfigContext(ctx, rootDir, manifest.Repository.Owner)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Cascading runner config failed: %w", err)
 	}

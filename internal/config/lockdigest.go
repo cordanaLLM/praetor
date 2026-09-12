@@ -128,13 +128,9 @@ func indexArchetypes(ctx context.Context, root, dir string) (map[string]string, 
 		if entries[i].IsDir() || !strings.HasSuffix(name, ".yaml") {
 			continue
 		}
-		rel, err := filepath.Rel(root, filepath.Join(dir, name))
+		path, err := confinedArchetypePath(root, dir, name)
 		if err != nil {
 			return nil, err
-		}
-		path, err := util.ConfinePath(root, rel)
-		if err != nil {
-			return nil, fmt.Errorf("archetype escapes the repository root: %w", err)
 		}
 		id, idErr := archetypeID(ctx, path)
 		if idErr != nil {
@@ -146,6 +142,18 @@ func indexArchetypes(ctx context.Context, root, dir string) (map[string]string, 
 		index[id] = path
 	}
 	return index, nil
+}
+
+func confinedArchetypePath(root, dir, name string) (string, error) {
+	rel, err := filepath.Rel(root, filepath.Join(dir, name))
+	if err != nil {
+		return "", err
+	}
+	path, err := util.ConfinePath(root, rel)
+	if err != nil {
+		return "", fmt.Errorf("archetype escapes the repository root: %w", err)
+	}
+	return path, nil
 }
 
 // archetypeID reads the declared id of an archetype file, defaulting to its base name.

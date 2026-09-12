@@ -162,23 +162,7 @@ func inspectFunction(fn *ast.FuncDecl) funcMetadata {
 		meta.RecvType = meta.Receiver
 	}
 
-	if fn.Type.Params != nil {
-		for _, p := range fn.Type.Params.List {
-			typeStr := formatTypeExpr(p.Type)
-			if typeStr == "context.Context" {
-				meta.HasContext = true
-			} else if strings.Contains(typeStr, "string") {
-				meta.HasString = true
-			} else if strings.Contains(typeStr, "int") {
-				meta.HasInt = true
-			} else if strings.HasPrefix(typeStr, "[]") {
-				meta.HasSlice = true
-			}
-			for _, name := range p.Names {
-				meta.ParamNames = append(meta.ParamNames, name.Name)
-			}
-		}
-	}
+	inspectParameters(fn.Type.Params, &meta)
 
 	if fn.Type.Results != nil {
 		meta.HasReturn = len(fn.Type.Results.List) > 0
@@ -192,6 +176,27 @@ func inspectFunction(fn *ast.FuncDecl) funcMetadata {
 	}
 
 	return meta
+}
+
+func inspectParameters(params *ast.FieldList, meta *funcMetadata) {
+	if params == nil {
+		return
+	}
+	for _, p := range params.List {
+		typeStr := formatTypeExpr(p.Type)
+		if typeStr == "context.Context" {
+			meta.HasContext = true
+		} else if strings.Contains(typeStr, "string") {
+			meta.HasString = true
+		} else if strings.Contains(typeStr, "int") {
+			meta.HasInt = true
+		} else if strings.HasPrefix(typeStr, "[]") {
+			meta.HasSlice = true
+		}
+		for _, name := range p.Names {
+			meta.ParamNames = append(meta.ParamNames, name.Name)
+		}
+	}
 }
 
 func extractReceiverTypeName(expr ast.Expr) string {
@@ -253,17 +258,7 @@ func detectChangedFunctions(baseSrc, newSrc string) ([]string, error) {
 		return nil, fmt.Errorf("new source parse error: %w", err)
 	}
 
-	baseFuncBodies := make(map[string]string)
-	if strings.TrimSpace(baseSrc) != "" {
-		baseFile, parseErr := parser.ParseFile(fset, "base.go", baseSrc, 0)
-		if parseErr == nil {
-			for _, d := range baseFile.Decls {
-				if fn, ok := d.(*ast.FuncDecl); ok && fn.Body != nil {
-					baseFuncBodies[fn.Name.Name] = renderNode(fset, fn.Body)
-				}
-			}
-		}
-	}
+	baseFuncBodies := parseBaseFunctionBodies(fset, baseSrc)
 
 	var changed []string
 	for _, d := range newFile.Decls {
@@ -279,6 +274,22 @@ func detectChangedFunctions(baseSrc, newSrc string) ([]string, error) {
 	return changed, nil
 }
 
+func parseBaseFunctionBodies(fset *token.FileSet, baseSrc string) map[string]string {
+	baseFuncBodies := make(map[string]string)
+	if strings.TrimSpace(baseSrc) != "" {
+		baseFile, parseErr := parser.ParseFile(fset, "base.go", baseSrc, 0)
+		if parseErr == nil {
+			for _, d := range baseFile.Decls {
+				if fn, ok := d.(*ast.FuncDecl); ok && fn.Body != nil {
+					baseFuncBodies[fn.Name.Name] = renderNode(fset, fn.Body)
+				}
+			}
+		}
+	}
+
+	return baseFuncBodies
+}
+
 func renderNode(fset *token.FileSet, node ast.Node) string {
 	var buf strings.Builder
 	if err := format.Node(&buf, fset, node); err != nil {
@@ -292,7 +303,7 @@ func generateSuites(pkgName, targetPkg string, funcs []funcMetadata) (*DiffTestR
 	targetNames := make([]string, 0, len(funcs))
 
 	var codeBuilder strings.Builder
-	codeBuilder.WriteString(fmt.Sprintf("package %s\n\n", targetPkg))
+	fmt.Fprintf(&codeBuilder, "package %s\n\n", targetPkg)
 	codeBuilder.WriteString("import (\n\t\"context\"\n\t\"strings\"\n\t\"testing\"\n)\n\n")
 
 	limit := len(funcs)
@@ -341,7 +352,7 @@ func buildSuiteForFunc(fn funcMetadata) FuncTestSuite {
 
 func generatePositiveTest(fn funcMetadata) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("func Test%s_Positive(t *testing.T) {\n", fn.Name))
+	fmt.Fprintf(&b, "func Test%s_Positive(t *testing.T) {\n", fn.Name)
 
 	invocation := buildInvocation(fn, "ctx", `"test-positive"`, "42", "[]string{\"a\", \"b\"}")
 
@@ -350,29 +361,29 @@ func generatePositiveTest(fn funcMetadata) string {
 	}
 
 	if fn.Receiver != "" {
-		b.WriteString(fmt.Sprintf("\tobj := &%s{}\n", fn.Receiver))
+		fmt.Fprintf(&b, "\tobj := &%s{}\n", fn.Receiver)
 	}
 
 	if fn.HasError && fn.HasReturn {
-		b.WriteString(fmt.Sprintf("\tres, err := %s\n", invocation))
+		fmt.Fprintf(&b, "\tres, err := %s\n", invocation)
 		b.WriteString("\t// Check 1: Positive execution must return zero error\n")
 		b.WriteString("\tif err != nil {\n\t\tt.Fatalf(\"unexpected error in positive test: %v\", err)\n\t}\n")
 		b.WriteString("\t// Check 2: Returned value must be non-zero\n")
 		b.WriteString("\tif res == nil && fmt.Sprintf(\"%v\", res) == \"\" {\n\t\tt.Errorf(\"unexpected empty result on positive path\")\n\t}\n")
 	} else if fn.HasError {
-		b.WriteString(fmt.Sprintf("\terr := %s\n", invocation))
+		fmt.Fprintf(&b, "\terr := %s\n", invocation)
 		b.WriteString("\t// Check 1: Error must be nil\n")
 		b.WriteString("\tif err != nil {\n\t\tt.Fatalf(\"unexpected error in positive execution: %v\", err)\n\t}\n")
 		b.WriteString("\t// Check 2: Confirm positive pass state\n")
 		b.WriteString("\tif t.Failed() {\n\t\tt.Errorf(\"positive test failed state assertions\")\n\t}\n")
 	} else if fn.HasReturn {
-		b.WriteString(fmt.Sprintf("\tres := %s\n", invocation))
+		fmt.Fprintf(&b, "\tres := %s\n", invocation)
 		b.WriteString("\t// Check 1: Return value must be valid\n")
 		b.WriteString("\tif res == nil && fmt.Sprintf(\"%v\", res) == \"\" {\n\t\tt.Fatalf(\"unexpected nil result on positive execution\")\n\t}\n")
 		b.WriteString("\t// Check 2: Confirm positive execution passed\n")
 		b.WriteString("\tif t.Failed() {\n\t\tt.Errorf(\"positive test invariant failed\")\n\t}\n")
 	} else {
-		b.WriteString(fmt.Sprintf("\t%s\n", invocation))
+		fmt.Fprintf(&b, "\t%s\n", invocation)
 		b.WriteString("\t// Check 1: Confirm clean execution\n")
 		b.WriteString("\tif t.Failed() {\n\t\tt.Fatalf(\"positive execution failed\")\n\t}\n")
 		b.WriteString("\t// Check 2: Invariant check\n")
@@ -385,7 +396,7 @@ func generatePositiveTest(fn funcMetadata) string {
 
 func generateNegativeTest(fn funcMetadata) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("func Test%s_Negative(t *testing.T) {\n", fn.Name))
+	fmt.Fprintf(&b, "func Test%s_Negative(t *testing.T) {\n", fn.Name)
 
 	if fn.HasContext {
 		b.WriteString("\tctx, cancel := context.WithCancel(context.Background())\n")
@@ -393,19 +404,19 @@ func generateNegativeTest(fn funcMetadata) string {
 	}
 
 	if fn.Receiver != "" {
-		b.WriteString(fmt.Sprintf("\tobj := &%s{}\n", fn.Receiver))
+		fmt.Fprintf(&b, "\tobj := &%s{}\n", fn.Receiver)
 	}
 
 	invocation := buildInvocation(fn, "ctx", `""`, "-1", "nil")
 
 	if fn.HasError {
-		b.WriteString(fmt.Sprintf("\t_, err := %s\n", invocation))
+		fmt.Fprintf(&b, "\t_, err := %s\n", invocation)
 		b.WriteString("\t// Check 1: Expect error under invalid / canceled context input\n")
 		b.WriteString("\tif err == nil {\n\t\tt.Fatalf(\"expected error for negative input scenario, got nil\")\n\t}\n")
 		b.WriteString("\t// Check 2: Error must be descriptive\n")
 		b.WriteString("\tif len(err.Error()) == 0 {\n\t\tt.Errorf(\"expected non-empty error message string\")\n\t}\n")
 	} else {
-		b.WriteString(fmt.Sprintf("\tres := %s\n", invocation))
+		fmt.Fprintf(&b, "\tres := %s\n", invocation)
 		b.WriteString("\t// Check 1: Verify boundary fault tolerance\n")
 		b.WriteString("\tif t.Failed() {\n\t\tt.Fatalf(\"negative execution panicked or failed\")\n\t}\n")
 		b.WriteString("\t// Check 2: Ensure result handles negative input safely\n")
@@ -418,23 +429,23 @@ func generateNegativeTest(fn funcMetadata) string {
 
 func generateBoundaryTest(fn funcMetadata) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("func Test%s_Boundary(t *testing.T) {\n", fn.Name))
+	fmt.Fprintf(&b, "func Test%s_Boundary(t *testing.T) {\n", fn.Name)
 
 	if fn.HasContext {
 		b.WriteString("\tctx := context.Background()\n")
 	}
 	if fn.Receiver != "" {
-		b.WriteString(fmt.Sprintf("\tobj := &%s{}\n", fn.Receiver))
+		fmt.Fprintf(&b, "\tobj := &%s{}\n", fn.Receiver)
 	}
 
 	invLower := buildInvocation(fn, "ctx", `""`, "0", "nil")
 	invUpper := buildInvocation(fn, "ctx", `strings.Repeat("A", 1024)`, "100000", "make([]string, 100)")
 
 	assignPrefix := "_" + " = "
-	b.WriteString(fmt.Sprintf("\t// Check 1: Lower boundary (zero / empty)\n\t%s%s\n", assignPrefix, invLower))
+	fmt.Fprintf(&b, "\t// Check 1: Lower boundary (zero / empty)\n\t%s%s\n", assignPrefix, invLower)
 	b.WriteString("\tif t.Failed() {\n\t\tt.Fatalf(\"failed handling lower boundary inputs\")\n\t}\n")
 
-	b.WriteString(fmt.Sprintf("\t// Check 2: Upper boundary (extreme scale)\n\t%s%s\n", assignPrefix, invUpper))
+	fmt.Fprintf(&b, "\t// Check 2: Upper boundary (extreme scale)\n\t%s%s\n", assignPrefix, invUpper)
 	b.WriteString("\tif t.Failed() {\n\t\tt.Errorf(\"failed handling upper boundary inputs\")\n\t}\n")
 
 	b.WriteString("}")

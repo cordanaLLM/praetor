@@ -147,6 +147,7 @@ func runStateStatus(args []string) error {
 	fmt.Printf("=== Praetor Session State: %s ===\n", filepath.Base(snap.RepoPath))
 	fmt.Printf("  Branch:            %s\n", snap.Branch)
 	fmt.Printf("  Head SHA:          %s\n", snap.HeadSHA)
+	fmt.Printf("  Git State:         %s\n", snap.GitState)
 	fmt.Printf("  Working Tree:      %v (%d dirty)\n", snap.Clean, snap.DirtyCount)
 	fmt.Printf("  Tasks:             %d open, %d completed\n", snap.OpenTasks, snap.CompletedTasks)
 	fmt.Printf("  Open Bugs:         %d\n", snap.OpenBugs)
@@ -159,51 +160,7 @@ func runStateStatus(args []string) error {
 // it neither scaffolds .workingdir/ nor appends an entry to STATE.md, so `state status`
 // cannot mutate the ledger it reports on.
 func inspectState(ctx context.Context, dir string) (*state.StateSnapshot, error) {
-	snap := &state.StateSnapshot{RepoPath: dir, LastUpdated: time.Now().UTC()}
-	snap.Branch = gitValue(ctx, dir, "(not a git worktree)", "branch", "--show-current")
-	snap.HeadSHA = gitValue(ctx, dir, "(unknown)", "rev-parse", "--short", "HEAD")
-
-	statusOut, statusErr := util.RunGit(ctx, dir, "status", "--porcelain")
-	snap.Clean = statusErr == nil && strings.TrimSpace(statusOut) == ""
-	if statusErr == nil && !snap.Clean {
-		snap.DirtyCount = len(strings.Split(strings.TrimSpace(statusOut), "\n"))
-	}
-
-	tasks, err := state.ListTasks(dir)
-	if err != nil {
-		return nil, fmt.Errorf("list tasks: %w", err)
-	}
-	for _, t := range tasks {
-		if t.Completed {
-			snap.CompletedTasks++
-			continue
-		}
-		snap.OpenTasks++
-	}
-
-	bugs, err := state.ListBugs(dir, "open")
-	if err != nil {
-		return nil, fmt.Errorf("list bugs: %w", err)
-	}
-	snap.OpenBugs = len(bugs)
-
-	questions, err := state.ListQuestions(dir, "pending")
-	if err != nil {
-		return nil, fmt.Errorf("list questions: %w", err)
-	}
-	snap.PendingQs = len(questions)
-	return snap, nil
-}
-
-// gitValue returns the trimmed output of a read-only git query, or fallback when the
-// directory is not a git worktree. `state status` is an inspection command and must still
-// report the ledger outside a repository, so the failure is rendered, never discarded.
-func gitValue(ctx context.Context, dir, fallback string, args ...string) string {
-	out, err := util.RunGit(ctx, dir, args...)
-	if err != nil || out == "" {
-		return fallback
-	}
-	return out
+	return state.InspectState(ctx, dir)
 }
 
 func runStateAudit(args []string) error {

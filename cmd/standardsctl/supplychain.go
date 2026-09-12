@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 )
 
@@ -34,7 +36,7 @@ func runSBOM(args []string) error {
 	}
 
 	if *out != "" {
-		if err := os.WriteFile(*out, data, 0644); err != nil {
+		if err := writeCommandArtifact(ctx, *out, data, 0644); err != nil {
 			return fmt.Errorf("failed writing SBOM to %s: %w", *out, err)
 		}
 		fmt.Printf("CycloneDX 1.5 SBOM written to %s (%d components)\n", *out, len(bom.Components))
@@ -73,7 +75,7 @@ func runProvenance(args []string) error {
 	}
 
 	if *out != "" {
-		if err := os.WriteFile(*out, data, 0644); err != nil {
+		if err := writeCommandArtifact(ctx, *out, data, 0644); err != nil {
 			return fmt.Errorf("failed writing provenance to %s: %w", *out, err)
 		}
 		fmt.Printf("SLSA v1.0 Provenance written to %s\n", *out)
@@ -82,4 +84,14 @@ func runProvenance(args []string) error {
 
 	fmt.Println(string(data))
 	return nil
+}
+
+// writeCommandArtifact preserves explicit public/private output modes and rejects
+// stale observations, symlinks, and partial writes through the shared snapshot publisher.
+func writeCommandArtifact(ctx context.Context, path string, data []byte, mode os.FileMode) error {
+	before, err := contextopt.ReadSnapshot(ctx, path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return contextopt.ReplaceSnapshot(ctx, path, data, contextopt.ReplaceOptions{Expected: before, Exists: err == nil, Mode: mode})
 }

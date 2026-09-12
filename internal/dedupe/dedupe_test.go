@@ -2,6 +2,7 @@ package dedupe_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -102,13 +103,13 @@ func TestCadence_PositiveAndBoundary(t *testing.T) {
 	if err != nil {
 		t.Skip("git not available or init failed")
 	}
-	_, _ = util.RunGit(ctx, tmp, "config", "user.email", "test@cordana.ai")
-	_, _ = util.RunGit(ctx, tmp, "config", "user.name", "Praetor Test")
+	runGit(t, tmp, "config", "user.email", "test@cordana.ai")
+	runGit(t, tmp, "config", "user.name", "Praetor Test")
 
 	// Commit 1
-	_ = os.WriteFile(filepath.Join(tmp, "README.md"), []byte("# Test\n"), 0644)
-	_, _ = util.RunGit(ctx, tmp, "add", "README.md")
-	_, _ = util.RunGit(ctx, tmp, "commit", "-m", "init")
+	writeFile(t, tmp, "README.md", "# Test\n")
+	runGit(t, tmp, "add", "README.md")
+	runGit(t, tmp, "commit", "-m", "init")
 
 	// 1. Initial check: should run because never recorded
 	shouldRun, delta, err := dedupe.CheckCadence(ctx, tmp, 5)
@@ -138,10 +139,119 @@ func TestCadence_Negative_NonGitDir(t *testing.T) {
 	tmp := t.TempDir()
 	ctx := context.Background()
 	shouldRun, delta, err := dedupe.CheckCadence(ctx, tmp, 10)
-	if err != nil {
-		t.Fatalf("unexpected error for non-git dir: %v", err)
+	if err == nil {
+		t.Fatal("expected error for non-git dir")
 	}
 	if shouldRun || delta != 0 {
 		t.Fatalf("expected shouldRun=false, delta=0, got %v, %d", shouldRun, delta)
+	}
+}
+
+const duplicateBody = `package sample
+func example(value int) int {
+	value += 1
+	value *= 2
+	value -= 3
+	return value
+}
+`
+
+func writeFile(t *testing.T, dir, path, content string) {
+	t.Helper()
+	full := filepath.Join(dir, path)
+	if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	if output, err := util.RunGit(t.Context(), dir, args...); err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, output)
+	}
+}
+
+func TestScanRepoGitScope(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init")
+	writeFile(t, dir, ".gitignore", ".claude/worktrees/\nignored/\n")
+	writeFile(t, dir, "tracked.go", duplicateBody)
+	writeFile(t, dir, ".claude/worktrees/clone/a.go", duplicateBody)
+	writeFile(t, dir, "ignored/new.go", duplicateBody)
+	runGit(t, dir, "add", ".gitignore", "tracked.go")
+	report, err := dedupe.ScanRepoContext(t.Context(), dir)
+	if err != nil || !report.Passed || report.TotalFilesScanned != 1 {
+		t.Fatalf("ignored clone must not enter report: %+v, %v", report, err)
+	}
+
+	// A tracked source remains in scope even if an ignore rule later covers it.
+	runGit(t, dir, "add", "--force", "ignored/new.go")
+	writeFile(t, dir, " leading source.go", duplicateBody)
+	report, err = dedupe.ScanRepoContext(t.Context(), dir)
+	if err != nil || report.TotalFilesScanned != 3 || len(report.Duplicates) != 1 {
+		t.Fatalf("tracked ignored and nonignored untracked sources must be scanned: %+v, %v", report, err)
+	}
+	locations := report.Duplicates[0].Locations
+	if len(locations) != 3 || locations[0].Path != " leading source.go" {
+		t.Fatalf("NUL-delimited inventory must preserve whitespace paths: %+v", locations)
+	}
+}
+
+func TestScanRepoRejectsIncompleteSources(t *testing.T) {
+	for _, content := range []string{"package broken\nfunc (", "package valid\n" + string(make([]byte, (1<<20)+1))} {
+		dir := t.TempDir()
+		writeFile(t, dir, "source.go", content)
+		if report, err := dedupe.ScanRepoContext(t.Context(), dir); err == nil || report != nil {
+			t.Fatalf("incomplete source must not yield clean report: %+v, %v", report, err)
+		}
+	}
+}
+
+func TestScanRepoContextAndRootErrors(t *testing.T) {
+	dir := t.TempDir()
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := dedupe.ScanRepoContext(cancelled, dir); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation, got %v", err)
+	}
+	var absent context.Context
+	if report, err := dedupe.ScanRepoContext(absent, dir); err == nil || report != nil {
+		t.Fatalf("nil context must fail: %+v, %v", report, err)
+	}
+	if report, err := dedupe.ScanRepoContext(t.Context(), filepath.Join(dir, "missing")); err == nil || report != nil {
+		t.Fatalf("missing root must fail: %+v, %v", report, err)
+	}
+	writeFile(t, dir, ".git", "gitdir: missing-metadata\n")
+	if report, err := dedupe.ScanRepoContext(t.Context(), dir); err == nil || report != nil {
+		t.Fatalf("corrupt Git metadata must not trigger filesystem fallback: %+v, %v", report, err)
+	}
+}
+
+func TestCadenceCorruptStateFails(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init")
+	runGit(t, dir, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "fixture")
+	writeFile(t, dir, ".workingdir/cadence.json", "{")
+	if _, _, err := dedupe.CheckCadence(t.Context(), dir, 5); err == nil {
+		t.Fatal("corrupt cadence must not be treated as absent")
+	}
+}
+
+func TestCadenceRejectsLinkedStateDirectory(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	runGit(t, dir, "init")
+	runGit(t, dir, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "fixture")
+	if err := os.Symlink(outside, filepath.Join(dir, ".workingdir")); err != nil {
+		t.Fatal(err)
+	}
+	if err := dedupe.RecordCadence(t.Context(), dir, 5); err == nil {
+		t.Fatal("cadence write followed a symlink")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("cadence write modified external directory: %v, %v", entries, err)
 	}
 }

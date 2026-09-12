@@ -3,10 +3,12 @@ package supplychain
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 )
 
 // CycloneDXBOM represents a lightweight CycloneDX 1.5 Software Bill of Materials.
@@ -43,7 +45,7 @@ func GenerateCycloneDX(ctx context.Context, repoDir string) (*CycloneDXBOM, erro
 	}
 
 	goModPath := filepath.Join(repoDir, "go.mod")
-	data, err := os.ReadFile(goModPath)
+	data, err := contextopt.ReadSnapshot(ctx, goModPath)
 	if err != nil {
 		return nil, fmt.Errorf("read go.mod: %w", err)
 	}
@@ -76,16 +78,11 @@ func parseGoModComponents(content string) ([]Component, error) {
 	inRequire := false
 
 	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "require (" {
-			inRequire = true
+		requirement, required := gomanifest.RequirementLine(line, &inRequire)
+		if !required {
 			continue
 		}
-		if inRequire && trimmed == ")" {
-			inRequire = false
-			continue
-		}
-		if comp, ok := parseRequireLine(trimmed, inRequire); ok {
+		if comp, ok := parseRequireLine(requirement, true); ok {
 			components = append(components, comp)
 		}
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -66,7 +65,7 @@ func RunCanary(ctx context.Context, opts CanaryOptions) (*CanaryResult, error) {
 
 	defer func() {
 		if !opts.Retention {
-			if rmErr := wtManager.Remove(context.Background(), taskID, true); rmErr != nil {
+			if rmErr := wtManager.Remove(context.WithoutCancel(ctx), taskID, true); rmErr != nil {
 				res.ExecutionLog += fmt.Sprintf("\nwarning: failed removing worktree %s: %v", taskID, rmErr)
 			}
 		}
@@ -88,16 +87,22 @@ func executeCanaryTest(ctx context.Context, wtPath, testCmdStr, repoPath, taskID
 	}
 
 	parts := strings.Fields(testCmdStr)
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-	cmd.Dir = wtPath
-	out, err := cmd.CombinedOutput()
-	res.ExecutionLog = string(out)
+	if len(parts) == 0 {
+		res.ExecutionLog = "canary test command is empty"
+		return
+	}
+	if err := util.ValidateExecArg(parts[0]); err != nil {
+		res.ExecutionLog = fmt.Sprintf("invalid canary executable: %v", err)
+		return
+	}
+	out, err := util.RunCommand(ctx, wtPath, parts[0], parts[1:]...)
+	res.ExecutionLog = out
 
 	if err == nil {
 		res.Success = true
 		res.CanaryCertified = true
 	} else {
-		distillBreakage(ctx, repoPath, taskID, string(out), res)
+		distillBreakage(ctx, repoPath, taskID, out, res)
 	}
 }
 
@@ -115,10 +120,10 @@ func distillBreakage(ctx context.Context, repoPath, taskID, output string, res *
 
 	// Stage an adaptation patch stub in .standards/patches/
 	patchDir := filepath.Join(repoPath, ".standards", "patches")
-	if mkErr := os.MkdirAll(patchDir, 0755); mkErr == nil {
+	if mkErr := os.MkdirAll(patchDir, 0700); mkErr == nil {
 		patchFile := filepath.Join(patchDir, fmt.Sprintf("%s.patch", taskID))
 		patchContent := fmt.Sprintf("# Canary Breakage Adaptation Patch for %s\n# Target: %s\n# Output:\n%s\n", res.Candidate.Package, res.Candidate.TargetVersion, output)
-		if err := os.WriteFile(patchFile, []byte(patchContent), 0644); err == nil {
+		if err := os.WriteFile(patchFile, []byte(patchContent), 0600); err == nil {
 			res.StagedPatchPath = patchFile
 		}
 	}
@@ -138,9 +143,10 @@ func ApplyBump(ctx context.Context, repoPath string, c UpgradeCandidate, patchPa
 	}
 
 	if patchPath != "" && util.FileExists(patchPath) {
-		cmd := exec.CommandContext(ctx, "git", "apply", "--ignore-whitespace", patchPath)
-		cmd.Dir = repoPath
-		if applyErr := cmd.Run(); applyErr != nil {
+		if err := util.ValidateExecArg(patchPath); err != nil {
+			return fmt.Errorf("invalid patch path: %w", err)
+		}
+		if _, applyErr := util.RunGit(ctx, repoPath, "apply", "--ignore-whitespace", "--", patchPath); applyErr != nil {
 			return fmt.Errorf("apply patch %s: %w", patchPath, applyErr)
 		}
 	}

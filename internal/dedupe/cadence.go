@@ -3,11 +3,14 @@ package dedupe
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -29,12 +32,14 @@ func CheckCadence(ctx context.Context, repoPath string, threshold int) (shouldRu
 
 	currCount, err := getCommitCount(ctx, repoPath)
 	if err != nil {
-		// If git repo has no commits yet, don't run
-		return false, 0, nil
+		return false, 0, fmt.Errorf("read cadence commit count: %w", err)
 	}
 
-	state, err := loadCadence(repoPath)
-	if err != nil || state == nil {
+	state, err := loadCadence(ctx, repoPath)
+	if err != nil {
+		return false, 0, fmt.Errorf("read cadence state: %w", err)
+	}
+	if state == nil {
 		// Never run before, should run if there are commits
 		return currCount > 0, currCount, nil
 	}
@@ -70,7 +75,7 @@ func RecordCadence(ctx context.Context, repoPath string, threshold int) error {
 		Threshold:       threshold,
 	}
 
-	return saveCadence(repoPath, state)
+	return saveCadence(ctx, repoPath, state)
 }
 
 func getCommitCount(ctx context.Context, repoPath string) (int, error) {
@@ -81,9 +86,12 @@ func getCommitCount(ctx context.Context, repoPath string) (int, error) {
 	return strconv.Atoi(out)
 }
 
-func loadCadence(repoPath string) (*CadenceState, error) {
+func loadCadence(ctx context.Context, repoPath string) (*CadenceState, error) {
 	cadencePath := filepath.Join(repoPath, ".workingdir", CadenceFileName)
-	data, err := os.ReadFile(cadencePath)
+	data, err := contextopt.ReadSnapshot(ctx, cadencePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -94,16 +102,21 @@ func loadCadence(repoPath string) (*CadenceState, error) {
 	return &state, nil
 }
 
-func saveCadence(repoPath string, state *CadenceState) error {
+func saveCadence(ctx context.Context, repoPath string, state *CadenceState) error {
 	wDir := filepath.Join(repoPath, ".workingdir")
-	if err := os.MkdirAll(wDir, 0755); err != nil {
+	if err := contextopt.EnsureDirectory(ctx, wDir, 0o700); err != nil {
 		return err
 	}
 	cadencePath := filepath.Join(wDir, CadenceFileName)
+	before, err := contextopt.ReadSnapshot(ctx, cadencePath)
+	exists := !errors.Is(err, os.ErrNotExist)
+	if err != nil && exists {
+		return err
+	}
 
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cadencePath, data, 0644)
+	return contextopt.ReplaceSnapshot(ctx, cadencePath, data, contextopt.ReplaceOptions{Expected: before, Exists: exists, Mode: 0o600})
 }

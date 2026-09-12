@@ -136,7 +136,9 @@ func TestEditor_Positive_WriteAndVerify(t *testing.T) {
 
 	// 3. Detect tampering / out-of-sync configuration
 	tamperPath := filepath.Join(tmpDir, ".vscode", "settings.json")
-	_ = os.WriteFile(tamperPath, []byte(`{"tampered": true}`), 0644)
+	if err := os.WriteFile(tamperPath, []byte(`{"tampered": true}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := Verify(set, tmpDir); err == nil {
 		t.Errorf("expected Verify to detect modified out-of-sync configuration file")

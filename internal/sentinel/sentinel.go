@@ -2,6 +2,7 @@ package sentinel
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -199,20 +200,16 @@ func CanAllocateModel(stats *HostStats, vramRequiredGB float64) bool {
 
 	newUsed := stats.RAMTotalBytes - remFree
 	newUtil := float64(newUsed) / float64(stats.RAMTotalBytes)
-	if newUtil > RAMPressureThreshold {
-		return false
-	}
-
-	return true
+	return newUtil <= RAMPressureThreshold
 }
 
 // readHostMemory inspects /proc/meminfo or utilizes fallback logic.
-func readHostMemory() (uint64, uint64, error) {
+func readHostMemory() (total uint64, free uint64, resultErr error) {
 	f, err := os.Open(meminfoPath)
 	if err != nil {
 		return readMemoryFallback()
 	}
-	defer f.Close()
+	defer func() { resultErr = errors.Join(resultErr, f.Close()) }()
 
 	return parseMeminfo(f)
 }
@@ -233,60 +230,52 @@ func readMemoryFallback() (uint64, uint64, error) {
 // parseMeminfo parses MemTotal, MemAvailable, MemFree, Buffers, and Cached fields from meminfo.
 func parseMeminfo(r io.Reader) (uint64, uint64, error) {
 	scanner := bufio.NewScanner(r)
-	var memTotal, memFree, memAvailable, buffers, cached uint64
-	var foundTotal bool
-
+	values := make(map[string]uint64)
 	for i := 0; i < MaxScanLines && scanner.Scan(); i++ {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
-			continue
-		}
-		key := strings.TrimSuffix(parts[0], ":")
-		val, err := strconv.ParseUint(parts[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		valBytes := val * 1024
-		switch key {
-		case "MemTotal":
-			memTotal = valBytes
-			foundTotal = true
-		case "MemFree":
-			memFree = valBytes
-		case "MemAvailable":
-			memAvailable = valBytes
-		case "Buffers":
-			buffers = valBytes
-		case "Cached":
-			cached = valBytes
+		key, value, ok := memoryField(scanner.Text())
+		if ok {
+			values[key] = value
 		}
 	}
-
 	if err := scanner.Err(); err != nil {
 		return 0, 0, fmt.Errorf("scanner error in meminfo: %w", err)
 	}
-	if !foundTotal {
+	total, found := values["MemTotal"]
+	if !found {
 		return 0, 0, fmt.Errorf("meminfo missing MemTotal field")
 	}
-
-	freeBytes := memAvailable
-	if freeBytes == 0 {
-		freeBytes = memFree + buffers + cached
+	free := values["MemAvailable"]
+	if free == 0 {
+		free = values["MemFree"] + values["Buffers"] + values["Cached"]
 	}
-	return memTotal, freeBytes, nil
+	return total, free, nil
+}
+
+func memoryField(line string) (string, uint64, bool) {
+	parts := strings.Fields(line)
+	if len(parts) < 2 {
+		return "", 0, false
+	}
+	key := strings.TrimSuffix(parts[0], ":")
+	switch key {
+	case "MemTotal", "MemFree", "MemAvailable", "Buffers", "Cached":
+	default:
+		return "", 0, false
+	}
+	value, err := strconv.ParseUint(parts[1], 10, 64)
+	if err != nil || value > ^uint64(0)/1024 {
+		return "", 0, false
+	}
+	return key, value * 1024, true
 }
 
 // readHostCPULoad inspects /proc/loadavg or returns safe fallback zero metrics.
-func readHostCPULoad() (float64, float64, float64, error) {
+func readHostCPULoad() (load1 float64, load5 float64, load15 float64, resultErr error) {
 	f, err := os.Open(loadavgPath)
 	if err != nil {
 		return 0.0, 0.0, 0.0, nil
 	}
-	defer f.Close()
+	defer func() { resultErr = errors.Join(resultErr, f.Close()) }()
 
 	return parseLoadavg(f)
 }

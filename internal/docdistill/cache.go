@@ -167,7 +167,7 @@ func SyncRepositoryDocs(ctx context.Context, repoPath string, opts DistillOption
 
 		raw, harvestErr := HarvestDocumentation(ctx, ref, opts.OfflineOnly)
 		if harvestErr != nil {
-			raw = fmt.Sprintf("# %s@%s\n\nHarvesting error: %v\n", ref.Name, ref.Version, harvestErr)
+			return nil, fmt.Errorf("harvest %s@%s: %w", ref.Name, ref.Version, harvestErr)
 		}
 
 		distilled := CompressDocumentation(ref, raw, opts)

@@ -588,8 +588,8 @@ func TestDispatchCommand_DedupeSubcommands(t *testing.T) {
 	if err := dispatchCommand("dedupe", []string{"scan", tmpDir}); err != nil {
 		t.Fatalf("dedupe scan failed: %v", err)
 	}
-	if err := dispatchCommand("dedupe", []string{"cadence", "--threshold=20", tmpDir}); err != nil {
-		t.Fatalf("dedupe cadence failed: %v", err)
+	if err := dispatchCommand("dedupe", []string{"cadence", "--threshold=20", tmpDir}); err == nil {
+		t.Fatal("dedupe cadence must report that its commit count is unavailable outside Git")
 	}
 	if err := dispatchCommand("dedupe", []string{"invalid"}); err == nil {
 		t.Fatal("expected error for invalid dedupe subcommand")

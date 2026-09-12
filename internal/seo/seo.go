@@ -331,18 +331,24 @@ func processRobotsDirective(key, val string, lineNum int, current *RobotsRule, r
 			res.Sitemaps = append(res.Sitemaps, val)
 		}
 	case "crawl-delay":
-		if current != nil {
-			if delay, err := strconv.ParseFloat(val, 64); err == nil && delay >= 0 {
-				current.CrawlDelay = delay
-			} else {
-				res.Errors = append(res.Errors, fmt.Sprintf("line %d: invalid crawl-delay '%s'", lineNum, val))
-			}
-		}
+		processCrawlDelay(val, lineNum, current, res)
 	default:
 		// Unknown directive
 		res.Errors = append(res.Errors, fmt.Sprintf("line %d: unknown directive '%s'", lineNum, key))
 	}
 	return current
+}
+
+func processCrawlDelay(val string, lineNum int, current *RobotsRule, res *RobotsValidationResult) {
+	if current == nil {
+		return
+	}
+	delay, err := strconv.ParseFloat(val, 64)
+	if err != nil || !(delay >= 0) {
+		res.Errors = append(res.Errors, fmt.Sprintf("line %d: invalid crawl-delay '%s'", lineNum, val))
+		return
+	}
+	current.CrawlDelay = delay
 }
 
 func validateContext(ctx string, res *JSONLDValidationResult) {

@@ -70,7 +70,7 @@ func (s *Server) recallMemory(ctx context.Context, args map[string]any) (*mcp.To
 		return mcp.ErrorResult(fmt.Sprintf("memory recall cancelled: %v", err)), nil
 	}
 
-	facts, err := hindsight.RecallLocalFactsWithError(repoPath, query, hindsight.FactCategory(catStr))
+	facts, err := hindsight.RecallLocalFactsContext(ctx, repoPath, query, hindsight.FactCategory(catStr))
 	if err != nil {
 		return mcp.ErrorResult(fmt.Sprintf("memory recall failed: %v", err)), nil
 	}
@@ -119,7 +119,7 @@ func (s *Server) createHindsightOptimizeTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("distillation cancelled before saving: %v", err)), nil
 		}
 
-		if err := hindsight.SaveLocalCache(repoPath, report.Facts); err != nil {
+		if err := hindsight.SaveLocalCacheContext(distillCtx, repoPath, report.Facts); err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("failed saving local cache: %v", err)), nil
 		}
 

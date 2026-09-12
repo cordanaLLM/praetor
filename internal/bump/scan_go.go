@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -22,62 +23,113 @@ type goModuleJSON struct {
 	Update  *goModuleJSON `json:"Update,omitempty"`
 }
 
-// DiscoverGoModules finds all directories containing a go.mod file.
+// DiscoverGoModules finds directories containing go.mod, returning no partial result.
+// Deprecated: use DiscoverGoModulesChecked to distinguish an empty tree from a read failure.
 func DiscoverGoModules(repoPath string) []string {
-	var modules []string
-
-	// 1. Check if go.work exists
-	goWorkPath := filepath.Join(repoPath, "go.work")
-	if util.FileExists(goWorkPath) {
-		workDirs := parseGoWork(goWorkPath)
-		for _, dir := range workDirs {
-			fullDir := filepath.Join(repoPath, dir)
-			if util.FileExists(filepath.Join(fullDir, "go.mod")) {
-				modules = append(modules, dir)
-			}
-		}
-		if len(modules) > 0 {
-			return modules
-		}
-	}
-
-	// 2. Check root go.mod
-	if util.FileExists(filepath.Join(repoPath, "go.mod")) {
-		modules = append(modules, ".")
-		return modules
-	}
-
-	// 3. Walk subdirectories up to depth 3 looking for go.mod
-	if walkErr := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil || !info.IsDir() {
-			return nil
-		}
-		rel, err := filepath.Rel(repoPath, path)
-		if err != nil || rel == "." {
-			return nil
-		}
-		if strings.Count(rel, string(filepath.Separator)) > 2 {
-			return filepath.SkipDir
-		}
-		if strings.HasPrefix(rel, ".") || strings.HasPrefix(rel, "vendor") || strings.HasPrefix(rel, "node_modules") {
-			return filepath.SkipDir
-		}
-		if util.FileExists(filepath.Join(path, "go.mod")) {
-			modules = append(modules, rel)
-		}
+	modules, err := DiscoverGoModulesChecked(repoPath)
+	if err != nil {
 		return nil
-	}); walkErr != nil {
-		return modules
 	}
-
 	return modules
 }
 
-func parseGoWork(path string) []string {
-	var dirs []string
-	data, err := os.ReadFile(path)
+// DiscoverGoModulesChecked finds bounded modules and reports incomplete discovery.
+func DiscoverGoModulesChecked(repoPath string) ([]string, error) {
+	dirs, err := parseGoWork(filepath.Join(repoPath, "go.work"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	modules, err := existingGoModules(repoPath, dirs)
+	if err != nil || len(modules) > 0 {
+		return modules, err
+	}
+	rootModule, err := existingGoModules(repoPath, []string{"."})
+	if err != nil || len(rootModule) > 0 {
+		return rootModule, err
+	}
+	return walkGoModules(repoPath)
+}
+
+func existingGoModules(repoPath string, dirs []string) ([]string, error) {
+	if len(dirs) > MaxDiscoveredModules {
+		return nil, fmt.Errorf("module discovery exceeds %d directories", MaxDiscoveredModules)
+	}
+	var modules []string
+	for _, dir := range dirs {
+		path, err := util.ConfinePath(repoPath, filepath.Join(dir, "go.mod"))
+		if err != nil {
+			return nil, err
+		}
+		info, err := os.Stat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("inspect module: %w", err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("module manifest must be regular: %s", path)
+		}
+		modules = append(modules, dir)
+	}
+	return modules, nil
+}
+
+type goModuleWalker struct {
+	repoPath string
+	modules  []string
+	visited  int
+}
+
+func walkGoModules(repoPath string) ([]string, error) {
+	walker := goModuleWalker{repoPath: repoPath}
+	if err := filepath.WalkDir(repoPath, walker.visit); err != nil {
+		return nil, fmt.Errorf("discover Go modules: %w", err)
+	}
+	return walker.modules, nil
+}
+
+func (walker *goModuleWalker) visit(path string, entry os.DirEntry, walkErr error) error {
+	if walkErr != nil {
+		return walkErr
+	}
+	walker.visited++
+	if walker.visited > 100000 {
+		return fmt.Errorf("module discovery exceeds 100000 entries")
+	}
+	if !entry.IsDir() {
+		return nil
+	}
+	rel, err := filepath.Rel(walker.repoPath, path)
 	if err != nil {
-		return dirs
+		return err
+	}
+	if rel == "." {
+		return nil
+	}
+	if skipModuleDirectory(rel, entry.Name()) {
+		return filepath.SkipDir
+	}
+	found, err := existingGoModules(walker.repoPath, []string{rel})
+	if err != nil {
+		return err
+	}
+	walker.modules = append(walker.modules, found...)
+	if len(walker.modules) > MaxDiscoveredModules {
+		return fmt.Errorf("module discovery exceeds %d directories", MaxDiscoveredModules)
+	}
+	return nil
+}
+
+func skipModuleDirectory(rel, name string) bool {
+	return strings.Count(rel, string(filepath.Separator)) > 2 || strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules"
+}
+
+func parseGoWork(path string) ([]string, error) {
+	var dirs []string
+	data, err := readManifest(filepath.Dir(path), filepath.Base(path))
+	if err != nil {
+		return nil, err
 	}
 
 	inUseBlock := false
@@ -100,81 +152,91 @@ func parseGoWork(path string) []string {
 			dirs = append(dirs, filepath.Clean(clean))
 		}
 	}
-	return dirs
+	return dirs, nil
 }
 
 // ScanGoDependencies inspects Go modules in repoPath for available upgrades.
 func ScanGoDependencies(ctx context.Context, repoPath string, opts ScanOptions) ([]UpgradeCandidate, error) {
-	modules := DiscoverGoModules(repoPath)
-	if len(modules) == 0 {
-		return nil, nil
+	if ctx == nil {
+		return nil, fmt.Errorf("scan Go dependencies requires context")
 	}
-
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	modules, err := DiscoverGoModulesChecked(repoPath)
+	if err != nil {
+		return nil, err
+	}
 	var allCandidates []UpgradeCandidate
 	for _, modRel := range modules {
 		modDir := filepath.Join(repoPath, modRel)
-		candidates, err := scanGoModuleDir(ctx, modDir, modRel, opts)
-		if err != nil || len(candidates) == 0 {
-			fallback, fbErr := scanGoModFallback(modDir, modRel, opts)
-			if fbErr == nil && len(fallback) > 0 {
-				candidates = fallback
+		candidates, scanErr := scanGoModuleDir(ctx, modDir, modRel, opts)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if scanErr != nil || len(candidates) == 0 {
+			var fallbackErr error
+			candidates, fallbackErr = scanGoModFallback(modDir, modRel, opts)
+			if fallbackErr != nil {
+				return nil, fmt.Errorf("scan module %s: %w", modRel, errors.Join(scanErr, fallbackErr))
 			}
 		}
 		allCandidates = append(allCandidates, candidates...)
 	}
-
 	return allCandidates, nil
 }
 
 func scanGoModuleDir(ctx context.Context, modDir, modRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
-	cmd := exec.CommandContext(ctx, "go", "list", "-m", "-u", "-json", "all")
-	cmd.Dir = modDir
-	cmd.Env = append(os.Environ(), "GOPROXY=https://proxy.golang.org,direct")
-
-	out, err := cmd.Output()
-	if err != nil && len(out) == 0 {
-		return nil, err
+	out, err := util.RunCommandBytes(ctx, modDir, "go", 16<<20, "list", "-m", "-u", "-json", "all")
+	if err != nil {
+		return nil, fmt.Errorf("go list modules: %w", err)
 	}
+	return decodeGoModules(string(out.Stdout), modRel, opts)
+}
 
+func decodeGoModules(output, modRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
 	var candidates []UpgradeCandidate
-	decoder := json.NewDecoder(strings.NewReader(string(out)))
-
-	for i := 0; i < 10000; i++ {
+	decoder := json.NewDecoder(strings.NewReader(output))
+	for i := 0; i <= 10000; i++ {
 		var mod goModuleJSON
-		if decErr := decoder.Decode(&mod); decErr != nil {
-			break
+		err := decoder.Decode(&mod)
+		if errors.Is(err, io.EOF) {
+			return candidates, nil
 		}
-		if mod.Main {
+		if err != nil {
+			return nil, fmt.Errorf("decode Go module report: %w", err)
+		}
+		if i == 10000 {
+			return nil, fmt.Errorf("go module report exceeds 10000 records")
+		}
+		candidate, ok := goUpgradeCandidate(mod, modRel, opts)
+		if !ok {
 			continue
 		}
-
-		targetVer := mod.Version
-		if mod.Update != nil {
-			targetVer = mod.Update.Version
-		}
-
-		ch := ClassifyChannel(targetVer)
-		if !opts.IncludePrerelease && ch != ChannelStable {
-			continue
-		}
-
-		if mod.Update != nil || ch != ChannelStable {
-			candidates = append(candidates, UpgradeCandidate{
-				Package:        mod.Path,
-				CurrentVersion: mod.Version,
-				TargetVersion:  targetVer,
-				Channel:        ch,
-				ManifestType:   "go.mod",
-				ModuleDir:      modRel,
-			})
-		}
-
+		candidates = append(candidates, candidate)
 		if opts.MaxCandidates > 0 && len(candidates) >= opts.MaxCandidates {
-			break
+			return candidates, nil
 		}
 	}
+	return nil, fmt.Errorf("go module decoder exhausted bound")
+}
 
-	return candidates, nil
+func goUpgradeCandidate(mod goModuleJSON, modRel string, opts ScanOptions) (UpgradeCandidate, bool) {
+	if mod.Main {
+		return UpgradeCandidate{}, false
+	}
+	targetVer := mod.Version
+	if mod.Update != nil {
+		targetVer = mod.Update.Version
+	}
+	ch := ClassifyChannel(targetVer)
+	if (!opts.IncludePrerelease && ch != ChannelStable) || (mod.Update == nil && ch == ChannelStable) {
+		return UpgradeCandidate{}, false
+	}
+	return UpgradeCandidate{
+		Package: mod.Path, CurrentVersion: mod.Version, TargetVersion: targetVer,
+		Channel: ch, ManifestType: "go.mod", ModuleDir: modRel,
+	}, true
 }
 
 var requireRegex = regexp.MustCompile(`^\s*([a-zA-Z0-9.\-_/]+)\s+v([0-9a-zA-Z.\-_+]+)`)
@@ -245,49 +307,44 @@ func requiredVersionIn(goModPath, pkg string) (string, error) {
 }
 
 func scanGoModFallback(modDir, modRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
-	goModFile := filepath.Join(modDir, "go.mod")
-	file, err := os.Open(goModFile)
+	data, err := readManifest(modDir, "go.mod")
 	if err != nil {
 		return nil, err
 	}
-	defer closeManifest(file)
-
 	var candidates []UpgradeCandidate
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	inRequire := false
-
-	for lines := 0; lines < MaxManifestLines && scanner.Scan(); lines++ {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "require (") {
-			inRequire = true
+	for lines := 0; lines <= MaxManifestLines && scanner.Scan(); lines++ {
+		if lines == MaxManifestLines {
+			return nil, fmt.Errorf("manifest exceeds %d lines", MaxManifestLines)
+		}
+		line, isRequirement := gomanifest.RequirementLine(scanner.Text(), &inRequire)
+		if !isRequirement {
 			continue
 		}
-		if inRequire && line == ")" {
-			inRequire = false
-			continue
-		}
-
-		if inRequire || strings.HasPrefix(line, "require ") {
-			clean := strings.TrimPrefix(line, "require ")
-			matches := requireRegex.FindStringSubmatch(clean)
-			if len(matches) == 3 {
-				pkg := matches[1]
-				curVer := "v" + matches[2]
-				ch := ClassifyChannel(curVer)
-				if !opts.IncludePrerelease && ch != ChannelStable {
-					continue
-				}
-				candidates = append(candidates, UpgradeCandidate{
-					Package:        pkg,
-					CurrentVersion: curVer,
-					TargetVersion:  curVer, // Same version if offline
-					Channel:        ch,
-					ManifestType:   "go.mod",
-					ModuleDir:      modRel,
-				})
-			}
+		candidate, ok := fallbackGoCandidate(line, modRel, opts)
+		if ok {
+			candidates = append(candidates, candidate)
 		}
 	}
-
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan Go manifest: %w", err)
+	}
 	return candidates, nil
+}
+
+func fallbackGoCandidate(line, modRel string, opts ScanOptions) (UpgradeCandidate, bool) {
+	matches := requireRegex.FindStringSubmatch(line)
+	if len(matches) != 3 {
+		return UpgradeCandidate{}, false
+	}
+	version := "v" + matches[2]
+	channel := ClassifyChannel(version)
+	if !opts.IncludePrerelease && channel != ChannelStable {
+		return UpgradeCandidate{}, false
+	}
+	return UpgradeCandidate{
+		Package: matches[1], CurrentVersion: version, TargetVersion: version,
+		Channel: channel, ManifestType: "go.mod", ModuleDir: modRel,
+	}, true
 }

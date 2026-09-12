@@ -50,7 +50,7 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 	gates := []auditGate{
 		func(ctx context.Context) (string, error) { return auditLockfile(ctx, s.rootDir, manifest) },
 		func(ctx context.Context) (string, error) { return auditBaselineRatchet(ctx, s.rootDir, p.baseline) },
-		func(context.Context) (string, error) { return auditContextSync(p.agents, s.rootDir) },
+		func(ctx context.Context) (string, error) { return auditContextSync(ctx, p.agents, s.rootDir) },
 		func(context.Context) (string, error) { return auditBranchProtection(manifest, s.rootDir) },
 		func(context.Context) (string, error) { return auditLabelTaxonomy(s.rootDir) },
 		func(context.Context) (string, error) { return auditHookConfig(s.rootDir) },
@@ -131,9 +131,9 @@ func formatViolations(violations []baseline.Infraction) string {
 }
 
 // auditContextSync verifies the compiled vendor targets match the canonical AGENTS.md.
-func auditContextSync(agentsPath, root string) (string, error) {
+func auditContextSync(ctx context.Context, agentsPath, root string) (string, error) {
 	tr := compiler.NewTranspiler()
-	if err := tr.Verify(agentsPath, root); err != nil {
+	if err := tr.VerifyContext(ctx, agentsPath, root); err != nil {
 		return "", fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
 	}
 	return "[PASS] Cross-agent context targets verified in sync.", nil

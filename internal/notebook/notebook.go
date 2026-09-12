@@ -92,19 +92,8 @@ func Prepare(ctx context.Context, raw []byte) (*Prepared, error) {
 }
 
 func validateBundle(b Bundle) error {
-	if b.Format != Format || !identifier(b.NotebookID) || !label(b.Title) || !label(b.Connector) {
-		return fmt.Errorf("valid format, notebook identity, title and connector required")
-	}
-	if _, err := time.Parse(time.RFC3339, b.CapturedAt); err != nil {
-		return fmt.Errorf("captured_at: %w", err)
-	}
-	if len(b.Sources) == 0 || len(b.Sources) > MaxSources || len(b.Coverage) == 0 || len(b.Coverage) > 16 {
-		return fmt.Errorf("1..64 sources and 1..16 explicit coverage statements required")
-	}
-	for _, statement := range b.Coverage {
-		if !label(statement) {
-			return fmt.Errorf("invalid coverage statement")
-		}
+	if err := validateBundleMetadata(b); err != nil {
+		return err
 	}
 	seen := make(map[string]bool)
 	for _, s := range b.Sources {
@@ -115,6 +104,28 @@ func validateBundle(b Bundle) error {
 			return fmt.Errorf("duplicate source id %s", s.ID)
 		}
 		seen[s.ID] = true
+	}
+	return nil
+}
+
+func validateBundleMetadata(b Bundle) error {
+	if b.Format != Format || !identifier(b.NotebookID) || !label(b.Title) || !label(b.Connector) {
+		return fmt.Errorf("valid format, notebook identity, title and connector required")
+	}
+	if _, err := time.Parse(time.RFC3339, b.CapturedAt); err != nil {
+		return fmt.Errorf("captured_at: %w", err)
+	}
+	if len(b.Sources) == 0 || len(b.Sources) > MaxSources || len(b.Coverage) == 0 || len(b.Coverage) > 16 {
+		return fmt.Errorf("1..64 sources and 1..16 explicit coverage statements required")
+	}
+	return validateCoverage(b.Coverage)
+}
+
+func validateCoverage(statements []string) error {
+	for _, statement := range statements {
+		if !label(statement) {
+			return fmt.Errorf("invalid coverage statement")
+		}
 	}
 	return nil
 }
@@ -140,11 +151,15 @@ func identifier(s string) bool {
 		return false
 	}
 	for _, c := range s {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+		if !identifierRune(c) {
 			return false
 		}
 	}
 	return true
+}
+
+func identifierRune(c rune) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_'
 }
 
 func label(s string) bool { return len(s) > 0 && len(s) <= 512 && !strings.ContainsAny(s, "\x00\r\n") }

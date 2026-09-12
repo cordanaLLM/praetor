@@ -121,11 +121,9 @@ func TestHindsight_Negative(t *testing.T) {
 	}
 }
 
-// TestHindsight_Negative_ClientIsFailSafeOnTransportFailures pins the documented
-// fail-safe contract of the client: a non-2xx answer and a refused connection are
-// swallowed (nil error) so an offline workstation never blocks a distillation, while
-// the request itself is still attempted and bounded by the configured timeout.
-func TestHindsight_Negative_ClientIsFailSafeOnTransportFailures(t *testing.T) {
+// Failed online ingestion must remain visible to callers; explicit offline mode
+// is the only path that omits transmission successfully.
+func TestHindsight_Negative_ClientReportsTransportFailures(t *testing.T) {
 	var hits atomic.Int32
 	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
@@ -142,14 +140,14 @@ func TestHindsight_Negative_ClientIsFailSafeOnTransportFailures(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := client.IngestFact(ctx, "bank", MemoryFact{ID: "f500"}); err != nil {
-		t.Errorf("500 response must be fail-safe, got %v", err)
+	if err := client.IngestFact(ctx, "bank", MemoryFact{ID: "f500"}); err == nil {
+		t.Error("500 response must report failed ingestion")
 	}
 	if hits.Load() != 1 {
 		t.Errorf("server hits = %d, want 1", hits.Load())
 	}
 
-	// A closed port: the connection is refused immediately and the client stays silent.
+	// A closed port must return a bounded transport error.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -162,8 +160,8 @@ func TestHindsight_Negative_ClientIsFailSafeOnTransportFailures(t *testing.T) {
 	refused := NewClient(cfg)
 	defer refused.Close()
 	start := time.Now()
-	if err := refused.IngestFact(ctx, "bank", MemoryFact{ID: "fref"}); err != nil {
-		t.Errorf("refused connection must be fail-safe, got %v", err)
+	if err := refused.IngestFact(ctx, "bank", MemoryFact{ID: "fref"}); err == nil {
+		t.Error("refused connection must report failed ingestion")
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Errorf("refused connection took %v, the client timeout is 1s", time.Since(start))

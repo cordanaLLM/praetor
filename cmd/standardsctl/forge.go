@@ -6,10 +6,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -112,8 +112,9 @@ func runForgeValidatePR(args []string) error {
 			"[--head-sha=<sha>] <pr-body-file> (exactly one body file required)")
 	}
 
-	// #nosec G304 -- the PR body file is an operator-supplied argument read as plain text.
-	data, err := os.ReadFile(rest[0])
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	data, err := contextopt.ReadSnapshot(ctx, rest[0])
 	if err != nil {
 		return fmt.Errorf("failed to read PR body file: %w", err)
 	}

@@ -468,7 +468,7 @@ func isUserOwnedEditorFile(rel string) bool {
 
 func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 	if !s.opts.DryRun {
-		if err := state.InitWorkingDir(s.repoPath); err != nil {
+		if err := state.InitWorkingDirContext(ctx, s.repoPath); err != nil {
 			s.report.addError("workingdir init: %v", err)
 		}
 		detectedFlv := flavor.DetectFlavor(s.repoPath)

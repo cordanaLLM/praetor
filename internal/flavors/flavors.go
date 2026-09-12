@@ -1,11 +1,12 @@
 package flavors
 
 import (
+	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"gopkg.in/yaml.v3"
 )
 
@@ -71,7 +72,12 @@ func SourceRefFor(f Flavor) string {
 
 // LoadConfig reads and parses .config/flavors.yaml.
 func LoadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	return LoadConfigContext(context.Background(), path)
+}
+
+// LoadConfigContext reads bounded configuration without following symbolic links.
+func LoadConfigContext(ctx context.Context, path string) (*Config, error) {
+	data, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read flavors config at %s: %w", path, err)
 	}

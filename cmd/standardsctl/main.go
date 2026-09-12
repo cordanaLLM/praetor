@@ -19,6 +19,7 @@ func printUsage() {
 	fmt.Println("  init               Scaffold configuration, baseline, and agent context for new repo")
 	fmt.Println("  compile-context    Transpile canonical AGENTS.md to vendor-native formats (< 300 LOC)")
 	fmt.Println("  context-optimize   Analyze explicit context files and optionally write a private review pack")
+	fmt.Println("  clients            Prepare or apply client configurations from one shared tool registry")
 	fmt.Println("  notebook           Prepare source-grounded planning templates or validate generated drafts")
 	fmt.Println("  prompt-optimize    Select prompts from comparable held-out model/provider evaluations")
 	fmt.Println("  audit              Audit repository against declared HISS-16 invariants and lockfile")
@@ -106,6 +107,7 @@ func commandTable() map[string]commandFunc {
 		"worktree":         runWorktree,
 		"gc":               runGC,
 		"editors":          runEditors,
+		"clients":          runClients,
 		"forge":            runForge,
 		"harvest":          runHarvest,
 		"adopt":            runAdopt,

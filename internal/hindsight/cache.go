@@ -4,6 +4,7 @@
 package hindsight
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -21,27 +23,50 @@ const (
 
 // SaveLocalCache writes distilled memory facts to .workingdir/memory/distilled.json.
 func SaveLocalCache(repoPath string, facts []MemoryFact) error {
-	memDir := filepath.Join(repoPath, MemoryDirRel)
-	if err := os.MkdirAll(memDir, 0755); err != nil {
-		return fmt.Errorf("failed to create memory directory: %w", err)
-	}
+	return SaveLocalCacheContext(context.Background(), repoPath, facts)
+}
 
+// SaveLocalCacheContext atomically publishes bounded private facts without following links.
+func SaveLocalCacheContext(ctx context.Context, repoPath string, facts []MemoryFact) error {
 	data, err := json.MarshalIndent(facts, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal memory facts: %w", err)
+		return fmt.Errorf("marshal memory facts: %w", err)
 	}
-
-	filePath := filepath.Join(repoPath, MemoryFileRel)
-	return os.WriteFile(filePath, data, 0644)
+	if len(data) > contextopt.MaxSourceBytes {
+		return fmt.Errorf("memory cache exceeds %d bytes", contextopt.MaxSourceBytes)
+	}
+	path, err := util.ConfinePath(repoPath, MemoryFileRel)
+	if err != nil {
+		return err
+	}
+	if err := contextopt.EnsureDirectory(ctx, filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	before, err := contextopt.ReadSnapshot(ctx, path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return contextopt.ReplaceSnapshot(ctx, path, data, contextopt.ReplaceOptions{Expected: before, Exists: err == nil, Mode: 0600})
 }
 
 // LoadLocalCache reads distilled memory facts from .workingdir/memory/distilled.json.
 func LoadLocalCache(repoPath string) ([]MemoryFact, error) {
+	return LoadLocalCacheContext(context.Background(), repoPath)
+}
+
+// LoadLocalCacheContext reads a complete, bounded local fact cache under caller context.
+func LoadLocalCacheContext(ctx context.Context, repoPath string) ([]MemoryFact, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("memory cache read requires context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	filePath, err := util.ConfinePath(repoPath, MemoryFileRel)
 	if err != nil {
 		return nil, fmt.Errorf("resolve local memory cache: %w", err)
 	}
-	info, err := os.Stat(filePath)
+	info, err := os.Lstat(filePath)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -52,10 +77,7 @@ func LoadLocalCache(repoPath string) ([]MemoryFact, error) {
 		return nil, fmt.Errorf("local memory cache must be a regular file: %s", filePath)
 	}
 
-	data, err := os.ReadFile(filePath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
+	data, err := contextopt.ReadSnapshot(ctx, filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed reading local memory cache: %w", err)
 	}
@@ -80,7 +102,12 @@ func RecallLocalFacts(repoPath, query string, category FactCategory) []MemoryFac
 // RecallLocalFactsWithError searches cached facts without hiding cache failures.
 // A missing cache is a legitimate empty result; corrupt or unreadable data is an error.
 func RecallLocalFactsWithError(repoPath, query string, category FactCategory) ([]MemoryFact, error) {
-	facts, err := LoadLocalCache(repoPath)
+	return RecallLocalFactsContext(context.Background(), repoPath, query, category)
+}
+
+// RecallLocalFactsContext preserves caller cancellation and incomplete-cache failures.
+func RecallLocalFactsContext(ctx context.Context, repoPath, query string, category FactCategory) ([]MemoryFact, error) {
+	facts, err := LoadLocalCacheContext(ctx, repoPath)
 	if err != nil {
 		return nil, fmt.Errorf("recall local memory facts: %w", err)
 	}

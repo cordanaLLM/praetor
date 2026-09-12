@@ -27,7 +27,8 @@ func TestGenerateCycloneDX_Positive_And_Negative(t *testing.T) {
 	}
 
 	// Boundary: nil context
-	_, nilErr := GenerateCycloneDX(nil, repoRoot)
+	var absentContext context.Context
+	_, nilErr := GenerateCycloneDX(absentContext, repoRoot)
 	if nilErr == nil {
 		t.Error("expected error for nil context, got nil")
 	}
@@ -74,5 +75,29 @@ func TestParseGoModComponents_Boundary(t *testing.T) {
 	}
 	if len(bom.Components) != 0 {
 		t.Errorf("expected 0 components, got %d", len(bom.Components))
+	}
+}
+
+func TestSBOMRejectsLinkedOrOversizedManifest(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	source := filepath.Join(outside, "go.mod")
+	if err := os.WriteFile(source, []byte("module example.com/outside\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "go.mod")
+	if err := os.Symlink(source, target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GenerateCycloneDX(t.Context(), root); err == nil {
+		t.Fatal("linked manifest accepted")
+	}
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, make([]byte, (1<<20)+1), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GenerateCycloneDX(t.Context(), root); err == nil {
+		t.Fatal("oversized manifest accepted")
 	}
 }

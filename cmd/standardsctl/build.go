@@ -21,7 +21,7 @@ func runBuild(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	cfg, err := builder.LoadBuildConfig(*configPath)
+	cfg, err := builder.LoadBuildConfigContext(ctx, *configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load build configuration: %w", err)
 	}

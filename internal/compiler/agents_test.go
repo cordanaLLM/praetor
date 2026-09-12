@@ -50,7 +50,8 @@ func TestCompileAgents_Negative_CancelledContext(t *testing.T) {
 		t.Fatal("expected error for cancelled context, got nil")
 	}
 
-	_, nilErr := CompileAgents(nil, tmpDir, tmpDir)
+	var absentContext context.Context
+	_, nilErr := CompileAgents(absentContext, tmpDir, tmpDir)
 	if nilErr == nil {
 		t.Fatal("expected error for nil context, got nil")
 	}
@@ -71,8 +72,12 @@ func TestCompileAgents_Boundary_EmptyAndNonExistent(t *testing.T) {
 
 	// Directory with non-markdown file
 	emptyDir := filepath.Join(tmpDir, "empty")
-	_ = os.MkdirAll(emptyDir, 0755)
-	_ = os.WriteFile(filepath.Join(emptyDir, "ignore.txt"), []byte("ignore"), 0644)
+	if err := os.MkdirAll(emptyDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(emptyDir, "ignore.txt"), []byte("ignore"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	files, err = CompileAgents(ctx, emptyDir, tmpDir)
 	if err != nil {

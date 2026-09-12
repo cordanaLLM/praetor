@@ -324,7 +324,9 @@ func TestWorktree_Negative_DuplicateWorktree(t *testing.T) {
 		t.Fatalf("initial create failed: %v", err)
 	}
 	defer func() {
-		_ = mgr.Remove(ctx, "task-dup", true)
+		if err := mgr.Remove(ctx, "task-dup", true); err != nil {
+			t.Errorf("cleanup duplicate worktree: %v", err)
+		}
 	}()
 
 	// Re-creating the same task worktree must fail

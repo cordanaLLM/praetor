@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // maxScannedLines is the scalar upper bound (HISS-02) on the number of lines a single
@@ -75,19 +74,21 @@ func ListTasksContext(ctx context.Context, rootPath string) ([]TaskItem, error) 
 
 // AddTask appends a new pending task item to OPEN.md.
 func AddTask(rootPath, description string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	trimmed := strings.TrimSpace(description)
 	if trimmed == "" {
 		return fmt.Errorf("task description cannot be empty")
 	}
 
-	if err := InitWorkingDir(rootPath); err != nil {
+	if err := InitWorkingDirContext(ctx, rootPath); err != nil {
 		return err
 	}
 
 	openFile := filepath.Join(rootPath, WorkingDirName, "OPEN.md")
-	content, err := os.ReadFile(openFile)
+	content, err := contextopt.ReadSnapshot(ctx, openFile)
 	if err != nil {
-		content = []byte(defaultOpenMD())
+		return fmt.Errorf("read OPEN.md: %w", err)
 	}
 
 	newEntry := fmt.Sprintf("- [ ] %s\n", trimmed)
@@ -97,18 +98,20 @@ func AddTask(rootPath, description string) error {
 	}
 	updated += newEntry
 
-	return os.WriteFile(openFile, []byte(updated), 0644)
+	return contextopt.ReplaceSnapshot(ctx, openFile, []byte(updated), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: 0o600})
 }
 
 // CompleteTask marks a task as done in OPEN.md by 1-based index or substring match.
 func CompleteTask(rootPath, selector string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	target := strings.TrimSpace(selector)
 	if target == "" {
 		return fmt.Errorf("task selector cannot be empty")
 	}
 
 	openFile := filepath.Join(rootPath, WorkingDirName, "OPEN.md")
-	content, err := os.ReadFile(openFile)
+	content, err := contextopt.ReadSnapshot(ctx, openFile)
 	if err != nil {
 		return fmt.Errorf("read OPEN.md: %w", err)
 	}
@@ -143,48 +146,60 @@ func CompleteTask(rootPath, selector string) error {
 		return fmt.Errorf("no pending task matched selector '%s'", selector)
 	}
 
-	return os.WriteFile(openFile, []byte(strings.Join(lines, "\n")), 0644)
+	return contextopt.ReplaceSnapshot(ctx, openFile, []byte(strings.Join(lines, "\n")), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: 0o600})
 }
 
 // ArchiveCompletedTasks moves all completed tasks from OPEN.md to BACKLOG.md.
 func ArchiveCompletedTasks(rootPath, commitSHA string) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	openFile := filepath.Join(rootPath, WorkingDirName, "OPEN.md")
-	if !util.FileExists(openFile) {
+	content, err := contextopt.ReadSnapshot(ctx, openFile)
+	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
 	}
-
-	content, err := os.ReadFile(openFile)
 	if err != nil {
 		return 0, fmt.Errorf("read OPEN.md: %w", err)
 	}
 
-	lines := strings.Split(string(content), "\n")
-	var remainingLines []string
-	var completedTasks []string
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "- [x] ") || strings.HasPrefix(trimmed, "- [X] ") {
-			completedTasks = append(completedTasks, trimmed)
-		} else {
-			remainingLines = append(remainingLines, line)
-		}
-	}
+	remainingLines, completedTasks := splitCompletedTasks(string(content))
 
 	if len(completedTasks) == 0 {
 		return 0, nil
 	}
 
-	// Update OPEN.md
-	if err := os.WriteFile(openFile, []byte(strings.Join(remainingLines, "\n")), 0644); err != nil {
+	// Preserve completed records in BACKLOG.md before removing them from OPEN.md.
+	// A failed second write can leave duplicates; it must never lose the records.
+	if err := appendCompletedTasks(ctx, rootPath, commitSHA, completedTasks); err != nil {
+		return 0, err
+	}
+	if err := contextopt.ReplaceSnapshot(ctx, openFile, []byte(strings.Join(remainingLines, "\n")), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: 0o600}); err != nil {
 		return 0, fmt.Errorf("write OPEN.md: %w", err)
 	}
+	return len(completedTasks), nil
+}
 
-	// Append to BACKLOG.md
+func splitCompletedTasks(content string) (remaining, completed []string) {
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "- [x] ") || strings.HasPrefix(trimmed, "- [X] ") {
+			completed = append(completed, trimmed)
+		} else {
+			remaining = append(remaining, line)
+		}
+	}
+	return remaining, completed
+}
+
+func appendCompletedTasks(ctx context.Context, rootPath, commitSHA string, completedTasks []string) error {
 	backlogFile := filepath.Join(rootPath, WorkingDirName, "BACKLOG.md")
-	backlogContent, err := os.ReadFile(backlogFile)
-	if err != nil {
+	backlogContent, err := contextopt.ReadSnapshot(ctx, backlogFile)
+	expected := append([]byte{}, backlogContent...)
+	exists := !errors.Is(err, os.ErrNotExist)
+	if errors.Is(err, os.ErrNotExist) {
 		backlogContent = []byte(defaultBacklogMD())
+	} else if err != nil {
+		return fmt.Errorf("read BACKLOG.md: %w", err)
 	}
 
 	timeStr := time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
@@ -199,9 +214,8 @@ func ArchiveCompletedTasks(rootPath, commitSHA string) (int, error) {
 	}
 
 	updatedBacklog := string(backlogContent) + archiveHeader
-	if err := os.WriteFile(backlogFile, []byte(updatedBacklog), 0644); err != nil {
-		return 0, fmt.Errorf("write BACKLOG.md: %w", err)
+	if err := contextopt.ReplaceSnapshot(ctx, backlogFile, []byte(updatedBacklog), contextopt.ReplaceOptions{Expected: expected, Exists: exists, Mode: 0o600}); err != nil {
+		return fmt.Errorf("write BACKLOG.md: %w", err)
 	}
-
-	return len(completedTasks), nil
+	return nil
 }

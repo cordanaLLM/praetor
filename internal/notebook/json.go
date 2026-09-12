@@ -46,19 +46,9 @@ func uniqueKeys(raw []byte) error {
 			return err
 		}
 		if delim, ok := token.(json.Delim); ok {
-			if delim == '}' || delim == ']' {
-				stack = stack[:len(stack)-1]
-				continue
-			}
-			consumeValue(stack)
-			frame := jsonFrame{}
-			if delim == '{' {
-				frame.keys = make(map[string]bool)
-				frame.keyNext = true
-			}
-			stack = append(stack, frame)
-			if len(stack) > 32 {
-				return fmt.Errorf("JSON nesting exceeds 32")
+			stack, err = consumeDelimiter(stack, delim)
+			if err != nil {
+				return err
 			}
 			continue
 		}
@@ -67,6 +57,23 @@ func uniqueKeys(raw []byte) error {
 		}
 	}
 	return fmt.Errorf("JSON token bound exceeded")
+}
+
+func consumeDelimiter(stack []jsonFrame, delim json.Delim) ([]jsonFrame, error) {
+	if delim == '}' || delim == ']' {
+		return stack[:len(stack)-1], nil
+	}
+	consumeValue(stack)
+	frame := jsonFrame{}
+	if delim == '{' {
+		frame.keys = make(map[string]bool)
+		frame.keyNext = true
+	}
+	stack = append(stack, frame)
+	if len(stack) > 32 {
+		return nil, fmt.Errorf("JSON nesting exceeds 32")
+	}
+	return stack, nil
 }
 
 func consumeValue(stack []jsonFrame) {

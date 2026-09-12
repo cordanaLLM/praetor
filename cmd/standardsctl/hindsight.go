@@ -38,7 +38,7 @@ func runHindsight(args []string) error {
 	case "distill":
 		return runHindsightDistill(ctx, subArgs)
 	case "recall":
-		return runHindsightRecall(subArgs)
+		return runHindsightRecall(ctx, subArgs)
 	case "audit":
 		return runHindsightAudit(ctx, subArgs)
 	case "sync":
@@ -72,7 +72,7 @@ func runHindsightDistill(ctx context.Context, args []string) error {
 		return err
 	}
 
-	if err := hindsight.SaveLocalCache(repoPath, report.Facts); err != nil {
+	if err := hindsight.SaveLocalCacheContext(ctx, repoPath, report.Facts); err != nil {
 		return err
 	}
 
@@ -85,7 +85,7 @@ func runHindsightDistill(ctx context.Context, args []string) error {
 	return nil
 }
 
-func runHindsightRecall(args []string) error {
+func runHindsightRecall(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: standardsctl hindsight recall <query> [path]")
 	}
@@ -95,7 +95,10 @@ func runHindsightRecall(args []string) error {
 		repoPath = args[1]
 	}
 
-	matches := hindsight.RecallLocalFacts(repoPath, query, "")
+	matches, err := hindsight.RecallLocalFactsContext(ctx, repoPath, query, "")
+	if err != nil {
+		return err
+	}
 	if len(matches) == 0 {
 		fmt.Printf("No local facts match '%s'.\n", query)
 		return nil
@@ -114,7 +117,7 @@ func runHindsightAudit(ctx context.Context, args []string) error {
 		repoPath = args[0]
 	}
 
-	facts, err := hindsight.LoadLocalCache(repoPath)
+	facts, err := hindsight.LoadLocalCacheContext(ctx, repoPath)
 	if err != nil {
 		return err
 	}

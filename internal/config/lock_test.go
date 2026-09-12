@@ -87,10 +87,10 @@ func TestValidateLockfileNegativePinsAndDigests(t *testing.T) {
 		want error
 	}{
 		{"unpinned release", func(d map[string]any) { d["pinned_version"] = "latest" }, ErrLockVersionInvalid},
-		{"entry range", func(d map[string]any) { d["profiles"].([]map[string]any)[0]["version"] = "^1.0.0" }, ErrLockVersionInvalid},
+		{"entry range", func(d map[string]any) { lockTestProfile(t, d)["version"] = "^1.0.0" }, ErrLockVersionInvalid},
 		{"schema version", func(d map[string]any) { d["version"] = 2 }, ErrLockVersionInvalid},
 		{"missing entry", func(d map[string]any) { d["profiles"] = []map[string]any{} }, ErrLockEntryMissing},
-		{"placeholder", func(d map[string]any) { d["profiles"].([]map[string]any)[0]["digest"] = "sha256:" + emptyInputDigest }, ErrLockDigestPlaceholder},
+		{"placeholder", func(d map[string]any) { lockTestProfile(t, d)["digest"] = "sha256:" + emptyInputDigest }, ErrLockDigestPlaceholder},
 		{"aggregate mismatch", func(d map[string]any) { d["digest"] = lockTestDigest("wrong aggregate") }, ErrLockDigestMismatch},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -199,4 +199,13 @@ func TestNormalizeDigest_3D(t *testing.T) {
 	if _, err := normalizeDigest("  sha256:" + real + "  "); err != nil {
 		t.Errorf("expected surrounding whitespace to be tolerated, got %v", err)
 	}
+}
+
+func lockTestProfile(t *testing.T, document map[string]any) map[string]any {
+	t.Helper()
+	profiles, ok := document["profiles"].([]map[string]any)
+	if !ok || len(profiles) != 1 {
+		t.Fatal("fixture must have exactly one profile")
+	}
+	return profiles[0]
 }

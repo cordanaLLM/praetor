@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // Invariant bounds and defaults.
@@ -270,11 +271,16 @@ func WriteDevContainer(ctx context.Context, path string, dc *DevContainer) error
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := contextopt.EnsureDirectory(ctx, dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	before, err := contextopt.ReadSnapshot(ctx, path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	// The generated configuration remains publicly readable; existing stricter modes stay intact.
+	if err := contextopt.ReplaceSnapshot(ctx, path, data, contextopt.ReplaceOptions{Expected: before, Exists: err == nil, Mode: 0644}); err != nil {
 		return fmt.Errorf("failed to write devcontainer file %s: %w", path, err)
 	}
 
@@ -292,7 +298,7 @@ func LoadDevContainer(ctx context.Context, path string) (*DevContainer, error) {
 	default:
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read devcontainer file %s: %w", path, err)
 	}

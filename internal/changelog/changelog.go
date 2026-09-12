@@ -1,13 +1,14 @@
 package changelog
 
 import (
+	"context"
+	"crypto/rand"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"gopkg.in/yaml.v3"
 )
 
@@ -51,7 +52,7 @@ var sectionTitles = map[FragmentType]string{
 
 // CreateFragment writes a new YAML fragment file into changelog.d/.
 func CreateFragment(repoPath string, f Fragment) (string, error) {
-	if f.Title == "" {
+	if strings.TrimSpace(f.Title) == "" {
 		return "", fmt.Errorf("changelog: title cannot be empty")
 	}
 	f.Type = FragmentType(strings.ToLower(string(f.Type)))
@@ -60,12 +61,14 @@ func CreateFragment(repoPath string, f Fragment) (string, error) {
 	}
 
 	dir := filepath.Join(repoPath, "changelog.d")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := contextopt.EnsureDirectory(ctx, dir, 0755); err != nil {
 		return "", fmt.Errorf("create changelog.d: %w", err)
 	}
 
 	slug := slugify(f.Title)
-	filename := fmt.Sprintf("%d-%s.yaml", time.Now().UnixNano()%1000000, slug)
+	filename := fmt.Sprintf("%s-%s.yaml", rand.Text(), slug)
 	target := filepath.Join(dir, filename)
 
 	data, err := yaml.Marshal(f)
@@ -73,7 +76,7 @@ func CreateFragment(repoPath string, f Fragment) (string, error) {
 		return "", fmt.Errorf("marshal fragment: %w", err)
 	}
 
-	if err := os.WriteFile(target, data, 0644); err != nil {
+	if err := contextopt.ReplaceSnapshot(ctx, target, data, contextopt.ReplaceOptions{Mode: 0644}); err != nil {
 		return "", fmt.Errorf("write fragment: %w", err)
 	}
 	return target, nil
@@ -81,64 +84,16 @@ func CreateFragment(repoPath string, f Fragment) (string, error) {
 
 // LoadFragments reads all fragment files in changelog.d/.
 func LoadFragments(repoPath string) ([]Fragment, []string, error) {
-	dir := filepath.Join(repoPath, "changelog.d")
-	if !util.DirExists(dir) {
-		return nil, nil, nil
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, nil, fmt.Errorf("read changelog.d: %w", err)
-	}
-
-	var fragments []Fragment
-	var files []string
-
-	for _, e := range entries {
-		if e.IsDir() || (!strings.HasSuffix(e.Name(), ".yaml") && !strings.HasSuffix(e.Name(), ".yml")) {
-			continue
-		}
-		filePath := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			continue
-		}
-
-		var f Fragment
-		if err := yaml.Unmarshal(data, &f); err == nil && f.Title != "" {
-			f.Type = FragmentType(strings.ToLower(string(f.Type)))
-			fragments = append(fragments, f)
-			files = append(files, filePath)
-		}
-	}
-
-	return fragments, files, nil
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return loadFragmentsContext(ctx, repoPath)
 }
 
-// RenderRelease renders fragments into CHANGELOG.md and removes rendered fragment files.
+// RenderRelease renders a release and resumes any interrupted matching cleanup.
 func RenderRelease(repoPath, version, date string) error {
-	fragments, files, err := LoadFragments(repoPath)
-	if err != nil {
-		return err
-	}
-	if len(fragments) == 0 {
-		return nil
-	}
-
-	renderedSection := buildReleaseSection(fragments, version, date)
-	changelogPath := filepath.Join(repoPath, "CHANGELOG.md")
-
-	if err := spliceChangelog(changelogPath, renderedSection); err != nil {
-		return fmt.Errorf("splice changelog: %w", err)
-	}
-
-	// Remove rendered fragment files
-	for _, f := range files {
-		if rmErr := os.Remove(f); rmErr != nil {
-			continue
-		}
-	}
-	return nil
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return RenderReleaseContext(ctx, repoPath, version, date)
 }
 
 func buildReleaseSection(fragments []Fragment, version, date string) string {
@@ -151,14 +106,14 @@ func buildReleaseSection(fragments []Fragment, version, date string) string {
 	if date == "" {
 		date = time.Now().UTC().Format("2006-01-02")
 	}
-	sb.WriteString(fmt.Sprintf("## [%s] - %s\n\n", version, date))
+	fmt.Fprintf(&sb, "## [%s] - %s\n\n", version, date)
 
 	for _, sec := range sectionOrder {
 		items := grouped[sec]
 		if len(items) == 0 {
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("### %s\n\n", sectionTitles[sec]))
+		fmt.Fprintf(&sb, "### %s\n\n", sectionTitles[sec])
 		for _, it := range items {
 			line := fmt.Sprintf("- %s", it.Title)
 			if it.Breaking {
@@ -175,7 +130,7 @@ func buildReleaseSection(fragments []Fragment, version, date string) string {
 	return strings.TrimRight(sb.String(), "\n") + "\n\n"
 }
 
-func spliceChangelog(path, releaseSection string) error {
+func spliceChangelog(data []byte, exists bool, releaseSection string) []byte {
 	initialContent := `# Changelog
 
 All notable changes to this project will be documented in this file.
@@ -184,13 +139,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 `
-	if !util.FileExists(path) {
-		return os.WriteFile(path, []byte(initialContent+releaseSection), 0644)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
+	if !exists {
+		return []byte(initialContent + releaseSection)
 	}
 
 	content := string(data)
@@ -203,7 +153,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 			insertPos++
 		}
 		newContent := content[:insertPos] + "\n" + releaseSection + content[insertPos:]
-		return os.WriteFile(path, []byte(newContent), 0644)
+		return []byte(newContent)
 	}
 
 	// Fallback prepend after first header
@@ -217,7 +167,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 			inserted = true
 		}
 	}
-	return os.WriteFile(path, []byte(strings.Join(newLines, "\n")), 0644)
+	if !inserted {
+		return []byte(initialContent + releaseSection + content)
+	}
+	return []byte(strings.Join(newLines, "\n"))
 }
 
 func slugify(s string) string {

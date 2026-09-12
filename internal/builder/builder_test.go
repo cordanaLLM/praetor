@@ -64,7 +64,8 @@ func TestUniversalBuilder_Negative(t *testing.T) {
 	builder := NewUniversalBuilder()
 	cfg := &BuildConfig{Targets: map[string]TargetConfig{"app": {Runtime: "go"}}}
 
-	if _, err := builder.Build(nil, cfg, "app"); err == nil {
+	var absentContext context.Context
+	if _, err := builder.Build(absentContext, cfg, "app"); err == nil {
 		t.Error("expected error with nil context, got nil")
 	}
 
@@ -184,5 +185,26 @@ func TestPreBuildOptimizer_3D(t *testing.T) {
 	}
 	if err := optimizer.Optimize(&TargetConfig{}, nil); err == nil {
 		t.Error("expected error for nil plan, got nil")
+	}
+}
+
+func TestLoadBuildConfigRejectsLinkedAndOversizedSource(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.yaml")
+	if err := os.WriteFile(source, []byte("project: fixture\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.yaml")
+	if err := os.Symlink(source, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadBuildConfigContext(t.Context(), link); err == nil {
+		t.Fatal("linked config accepted")
+	}
+	if err := os.WriteFile(source, make([]byte, (1<<20)+1), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadBuildConfigContext(t.Context(), source); err == nil {
+		t.Fatal("oversized config accepted")
 	}
 }

@@ -36,23 +36,30 @@ func ValidateGeneration(ctx context.Context, bundleRaw, resultRaw []byte) (*Gene
 	if g.BundleSHA256 != Digest(bundleRaw) || len(g.Requirements) == 0 || len(g.Requirements) > 256 {
 		return nil, fmt.Errorf("generation requires matching snapshot and 1..256 requirements")
 	}
-	sources := make(map[string]Source)
-	for _, s := range b.Sources {
-		sources[s.ID] = s
-	}
-	seen := make(map[string]bool)
-	for _, r := range g.Requirements {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if err := validateRequirement(r, sources, seen); err != nil {
-			return nil, err
-		}
+	if err := validateRequirements(ctx, b.Sources, g.Requirements); err != nil {
+		return nil, err
 	}
 	if err := validateDocuments(g.Documents); err != nil {
 		return nil, err
 	}
 	return &g, nil
+}
+
+func validateRequirements(ctx context.Context, sourceList []Source, requirements []Requirement) error {
+	sources := make(map[string]Source)
+	for _, s := range sourceList {
+		sources[s.ID] = s
+	}
+	seen := make(map[string]bool)
+	for _, r := range requirements {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := validateRequirement(r, sources, seen); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateRequirement(r Requirement, sources map[string]Source, seen map[string]bool) error {

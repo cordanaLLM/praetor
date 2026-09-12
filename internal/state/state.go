@@ -3,7 +3,6 @@ package state
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,6 +19,7 @@ type StateSnapshot struct {
 	RepoPath       string    `json:"repo_path"`
 	Branch         string    `json:"branch"`
 	HeadSHA        string    `json:"head_sha"`
+	GitState       string    `json:"git_state"`
 	Clean          bool      `json:"clean"`
 	DirtyCount     int       `json:"dirty_count"`
 	OpenTasks      int       `json:"open_tasks"`
@@ -41,25 +41,8 @@ func SyncState(ctx context.Context, rootPath string, sessionSummary string) (*St
 		return nil, err
 	}
 
-	snap := &StateSnapshot{
-		RepoPath:    rootPath,
-		LastUpdated: time.Now().UTC(),
-	}
-
-	branch, _ := util.RunGit(ctx, rootPath, "branch", "--show-current")
-	snap.Branch = branch
-	head, _ := util.RunGit(ctx, rootPath, "rev-parse", "--short", "HEAD")
-	snap.HeadSHA = head
-
-	statusOut, _ := util.RunGit(ctx, rootPath, "status", "--porcelain")
-	if strings.TrimSpace(statusOut) == "" {
-		snap.Clean = true
-	} else {
-		snap.Clean = false
-		snap.DirtyCount = len(strings.Split(strings.TrimSpace(statusOut), "\n"))
-	}
-
-	if err := populateLedgerSnapshot(ctx, rootPath, snap); err != nil {
+	snap, err := InspectState(ctx, rootPath)
+	if err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -69,6 +52,56 @@ func SyncState(ctx context.Context, rootPath string, sessionSummary string) (*St
 		return snap, err
 	}
 	return snap, nil
+}
+
+// InspectState reads Git and ledger state without initialization or log writes.
+// Roots outside a worktree are explicitly marked not_repository; failures in an
+// existing worktree are errors rather than fabricated clean snapshots.
+func InspectState(ctx context.Context, rootPath string) (*StateSnapshot, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("state inspection requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	snap := &StateSnapshot{RepoPath: rootPath, LastUpdated: time.Now().UTC()}
+	if err := populateGitSnapshot(ctx, rootPath, snap); err != nil {
+		return nil, err
+	}
+	if err := populateLedgerSnapshot(ctx, rootPath, snap); err != nil {
+		return nil, err
+	}
+	return snap, nil
+}
+
+func populateGitSnapshot(ctx context.Context, rootPath string, snap *StateSnapshot) error {
+	present, err := util.GitWorktreePresent(ctx, rootPath)
+	if err != nil {
+		return fmt.Errorf("inspect state Git worktree: %w", err)
+	}
+	if !present {
+		snap.GitState = "not_repository"
+		snap.Branch, snap.HeadSHA = "(not a git worktree)", "(unavailable)"
+		return nil
+	}
+	snap.Branch, err = util.RunGit(ctx, rootPath, "branch", "--show-current")
+	if err != nil {
+		return fmt.Errorf("read state Git branch: %w", err)
+	}
+	snap.HeadSHA, err = util.RunGit(ctx, rootPath, "rev-parse", "--short", "HEAD")
+	if err != nil {
+		return fmt.Errorf("read state Git HEAD: %w", err)
+	}
+	status, err := util.RunGit(ctx, rootPath, "status", "--porcelain")
+	if err != nil {
+		return fmt.Errorf("read state Git status: %w", err)
+	}
+	snap.GitState = "available"
+	snap.Clean = status == ""
+	if !snap.Clean {
+		snap.DirtyCount = len(strings.Split(status, "\n"))
+	}
+	return nil
 }
 
 func populateLedgerSnapshot(ctx context.Context, rootPath string, snap *StateSnapshot) error {
@@ -118,7 +151,7 @@ func appendStateLog(ctx context.Context, rootPath string, snap *StateSnapshot, s
 		return fmt.Errorf("STATE.md append exceeds %d bytes", contextopt.MaxSourceBytes)
 	}
 	updated := string(content) + entry
-	return os.WriteFile(stateFile, []byte(updated), 0644)
+	return contextopt.ReplaceSnapshot(ctx, stateFile, []byte(updated), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: 0o600})
 }
 
 func defaultStateMD() string {

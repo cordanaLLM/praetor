@@ -80,21 +80,28 @@ func validateLockMetadata(lock *standardsLock, manifest *Manifest) error {
 		return fmt.Errorf("lockfile or manifest exceeds maximum of %d entries per kind", maxLockEntries)
 	}
 	for _, entries := range [][]lockEntry{lock.Profiles, lock.Facets} {
-		seen := make(map[string]struct{}, len(entries))
-		for _, entry := range entries {
-			if entry.ID == "" {
-				return errors.New("lockfile entry ID must not be empty")
-			}
-			if _, duplicate := seen[entry.ID]; duplicate {
-				return fmt.Errorf("duplicate lockfile entry %q", entry.ID)
-			}
-			seen[entry.ID] = struct{}{}
-			if !lockVersionPattern.MatchString(entry.Version) {
-				return fmt.Errorf("%w: entry %q version %q", ErrLockVersionInvalid, entry.ID, entry.Version)
-			}
-			if _, err := normalizeDigest(entry.Digest); err != nil {
-				return fmt.Errorf("entry %q: %w", entry.ID, err)
-			}
+		if err := validateLockEntryMetadata(entries); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateLockEntryMetadata(entries []lockEntry) error {
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if entry.ID == "" {
+			return errors.New("lockfile entry ID must not be empty")
+		}
+		if _, duplicate := seen[entry.ID]; duplicate {
+			return fmt.Errorf("duplicate lockfile entry %q", entry.ID)
+		}
+		seen[entry.ID] = struct{}{}
+		if !lockVersionPattern.MatchString(entry.Version) {
+			return fmt.Errorf("%w: entry %q version %q", ErrLockVersionInvalid, entry.ID, entry.Version)
+		}
+		if _, err := normalizeDigest(entry.Digest); err != nil {
+			return fmt.Errorf("entry %q: %w", entry.ID, err)
 		}
 	}
 	return nil

@@ -42,15 +42,19 @@ func notebookCommand(ctx context.Context, args []string, out io.Writer) error {
 	if args[0] == "validate" {
 		return validateNotebookCommand(ctx, raw, *resultPath, *directory, out)
 	}
-	if *resultPath != "" {
+	return prepareNotebookCommand(ctx, raw, *resultPath, *directory, out)
+}
+
+func prepareNotebookCommand(ctx context.Context, raw []byte, resultPath, directory string, out io.Writer) error {
+	if resultPath != "" {
 		return fmt.Errorf("prepare does not accept --result")
 	}
 	pack, err := notebook.Prepare(ctx, raw)
 	if err != nil {
 		return err
 	}
-	if *directory != "" {
-		if err := contextopt.WriteArtifacts(ctx, *directory, pack.Files); err != nil {
+	if directory != "" {
+		if err := contextopt.WriteArtifacts(ctx, directory, pack.Files); err != nil {
 			return err
 		}
 	}

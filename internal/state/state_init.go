@@ -19,6 +19,17 @@ func InitWorkingDir(rootPath string) error {
 	return initWorkingDir(ctx, rootPath)
 }
 
+// InitWorkingDirContext creates missing ledgers under the caller's cancellation
+// and a bounded initialization deadline.
+func InitWorkingDirContext(ctx context.Context, rootPath string) error {
+	if ctx == nil {
+		return errors.New("state initialization requires a context")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return initWorkingDir(ctx, rootPath)
+}
+
 func initWorkingDir(ctx context.Context, rootPath string) (err error) {
 	project, err := contextopt.OpenDirectory(ctx, rootPath)
 	if err != nil {

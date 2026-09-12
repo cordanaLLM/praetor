@@ -9,7 +9,51 @@ compares maintained libraries and standard-library alternatives against these
 failures, with pinned sources and migration acceptance cases. Research is
 complete; dependency adoption remains open.
 
-## Continuation: ledger repair completed
+## Current continuation: verification repair and shared client preparation
+
+The in-flight continuation fixes repository lint/security findings without new
+exclusions, propagates previously swallowed I/O/transport errors and consolidates
+bounded file writes, Go manifest parsing and agent-context rendering. Integrated
+`make -k verify-all` passed with exit 0: all 51 Go package race suites, fresh MCP
+35-check acceptance, lint, vulnerability/security scans, audits and hook tests.
+Final source SHA256 is
+`af5379e9306b2ea1b75868e957439a7cbc26a86e5d05ac98a1dcf9216f85169f`.
+The final log is `routing-lint-20260912/verify-all-checkpoint.log`. Earlier logs
+retain a transient parallel-edit build failure and the corrected complexity
+finding from the backup-directory durability fix; neither was waived.
+
+Task/question mutation and STATE/Git snapshot error handling now have focused
+regression tests. Dedupe uses Git's tracked and nonignored-untracked inventory,
+including forced tracked ignored files. Historical bug statuses have not been
+bulk-closed. Fresh package-document harvesting and MCP replay passed with actual
+cached module sources; fabricated placeholder coverage is rejected.
+
+The [client bootstrap](../docs/guides/client-bootstrap.md) now prepares eight
+client projections and can apply supported file configurations with exact
+durable backups, expected-content checks and readback. Changelog publication now
+retains a bounded recovery journal, rejects changed inputs/output and resumes
+cleanup without duplicating the release. Native trust and execution are
+separate. This session's Codex project PreToolUse hook remains enabled but
+**untrusted**, confirmed by native `hooks/list`; its Stop hook is Hindsight,
+not the requested repository verification gate. General dispatch remains
+disconnected, although one real AGY/Gemini review was executed and its findings
+were independently checked.
+
+Global management requirements span workstation/IDE clients, containers, bots,
+plugins and private GitOps forks. The [compact data research](../docs/research/compact-management-data.md)
+retains measured lossless compression and distinguishes it from prompt-token
+savings. Layered effective policy, independently signed data updates, native lazy
+tool selection and central dispatch admission are still implementation work.
+The next policy slice extends `internal/config` and migrates real consumers;
+it must preserve existing stricter scan limits rather than silently relaxing them.
+
+Current private evidence is under the continuation audit root's
+`routing-lint-20260912/`, including review reproductions, scoped race/lint/security
+logs, real AGY usage, compression round trips and native hook inspection. Local
+installation is recorded separately after the verified commit; passing source
+verification alone does not establish an installed client version.
+
+## Previous checkpoint: ledger repair completed
 
 The [ledger integrity checkpoint](../docs/guides/state-ledger-integrity.md) fixes
 loss-prone parsing, metadata persistence, ID allocation, confined initialization,
@@ -55,7 +99,7 @@ were made. A deployment absence below concerns the inspected cluster/application
 not all possible deployments. Unsupported provider methods return errors; that
 is safer than fabricated success but still not an implementation.
 
-## Current capability matrix
+## Capability matrix at the original gaps audit
 
 | Surface | Implemented and exercised | Remaining boundary |
 | --- | --- | --- |
@@ -72,7 +116,7 @@ is safer than fabricated success but still not an implementation.
 | Prompt optimization | New offline selector compares supplied metrics; race tests and package lint pass. | No automatic candidate/evaluator/provider/promotion loop. Evidence is caller-declared. Exact-case JSON ambiguity remains. |
 | Notebook preparation | New local bundle preparation, template output and structural citation checks pass synthetic tests. | Connector dependency/auth not installed or exercised; generation and semantic review remain external. New CLI features are absent from installed binaries. |
 
-Installed local binaries still identify Go source `d6a9caff625f082cbbab4b0db06542619e34a94a326695ff9842a233e7a40e57`.
+At that original audit, installed binaries identified Go source `d6a9caff625f082cbbab4b0db06542619e34a94a326695ff9842a233e7a40e57`.
 Do not describe the in-flight notebook/prompt code as locally activated merely
 because the development server can build it.
 

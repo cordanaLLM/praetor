@@ -80,7 +80,8 @@ func TestRootSnapshotRejectsInvalidTextAndNonregularFiles(t *testing.T) {
 func TestRootSnapshotRejectsNilAndCanceledContexts(t *testing.T) {
 	dir := contextFixture(t, map[string][]byte{"file": []byte("content")})
 	root := snapshotDirectory(t, dir)
-	if data, err := ReadRootSnapshot(nil, root, "file"); err == nil || data != nil {
+	var absentContext context.Context
+	if data, err := ReadRootSnapshot(absentContext, root, "file"); err == nil || data != nil {
 		t.Fatalf("nil context accepted: %v", err)
 	}
 	if data, err := ReadRootSnapshot(context.Background(), nil, "file"); err == nil || data != nil {

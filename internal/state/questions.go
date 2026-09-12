@@ -27,14 +27,17 @@ type QuestionEntry struct {
 
 // AddQuestion records a new decision requirement into .workingdir/QUESTIONS.md.
 func AddQuestion(rootPath string, q QuestionEntry) (*QuestionEntry, error) {
-	if err := InitWorkingDir(rootPath); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := InitWorkingDirContext(ctx, rootPath); err != nil {
 		return nil, err
 	}
-	existing, err := ListQuestions(rootPath, "all")
+	before, err := contextopt.ReadSnapshot(ctx, filepath.Join(rootPath, WorkingDirName, "QUESTIONS.md"))
 	if err != nil {
 		return nil, err
 	}
 
+	existing := ParseQuestionsMarkdown(string(before))
 	q.ID = fmt.Sprintf("Q-%03d", len(existing)+1)
 	if q.Status == "" {
 		q.Status = "pending"
@@ -44,7 +47,7 @@ func AddQuestion(rootPath string, q QuestionEntry) (*QuestionEntry, error) {
 	}
 
 	all := append(existing, q)
-	if err := saveQuestions(rootPath, all); err != nil {
+	if err := saveQuestions(ctx, rootPath, before, all); err != nil {
 		return nil, err
 	}
 	return &q, nil
@@ -82,10 +85,13 @@ func ListQuestionsContext(ctx context.Context, rootPath string, filterStatus str
 
 // DecideQuestion records the user's decision for a buffered question.
 func DecideQuestion(rootPath string, id string, answer string) error {
-	existing, err := ListQuestions(rootPath, "all")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	before, err := contextopt.ReadSnapshot(ctx, filepath.Join(rootPath, WorkingDirName, "QUESTIONS.md"))
 	if err != nil {
 		return err
 	}
+	existing := ParseQuestionsMarkdown(string(before))
 	found := false
 	for i := range existing {
 		if strings.EqualFold(existing[i].ID, id) {
@@ -99,13 +105,13 @@ func DecideQuestion(rootPath string, id string, answer string) error {
 	if !found {
 		return fmt.Errorf("question with ID %q not found", id)
 	}
-	return saveQuestions(rootPath, existing)
+	return saveQuestions(ctx, rootPath, before, existing)
 }
 
-func saveQuestions(rootPath string, qs []QuestionEntry) error {
+func saveQuestions(ctx context.Context, rootPath string, before []byte, qs []QuestionEntry) error {
 	qFile := filepath.Join(rootPath, WorkingDirName, "QUESTIONS.md")
 	rendered := RenderQuestionsMarkdown(qs)
-	return os.WriteFile(qFile, []byte(rendered), 0644)
+	return contextopt.ReplaceSnapshot(ctx, qFile, []byte(rendered), contextopt.ReplaceOptions{Expected: before, Exists: true, Mode: 0o600})
 }
 
 var qRowRegex = regexp.MustCompile(`^\|\s*` + "`" + `(Q-\d+)` + "`" + `\s*\|\s*([^|]+)\|\s*([^|]*)\|\s*([a-zA-Z]+)\s*\|\s*([^|]*)\|`)
@@ -146,8 +152,7 @@ func RenderQuestionsMarkdown(qs []QuestionEntry) string {
 	sb.WriteString("| :--- | :--- | :--- | :--- | :--- |\n")
 	for _, q := range qs {
 		optsStr := strings.Join(q.Options, ", ")
-		sb.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s | %s |\n",
-			q.ID, q.Question, optsStr, q.Status, q.SelectedAnswer))
+		sb.WriteString("| `" + q.ID + "` | " + q.Question + " | " + optsStr + " | " + q.Status + " | " + q.SelectedAnswer + " |\n")
 	}
 	return sb.String()
 }

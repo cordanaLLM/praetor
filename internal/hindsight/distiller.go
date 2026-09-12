@@ -42,7 +42,7 @@ func DistillWorkspace(ctx context.Context, repoPath string) (*DistillationReport
 	facts = append(facts, stateFacts...)
 
 	// 3. Deduplication & Canonical Utility Facts
-	dedupeFacts, err := distillDedupeFacts(repoPath)
+	dedupeFacts, err := distillDedupeFacts(ctx, repoPath)
 	if err == nil {
 		facts = append(facts, dedupeFacts...)
 	}
@@ -95,9 +95,9 @@ func distillStateFacts(ctx context.Context, repoPath string) ([]MemoryFact, erro
 	return facts, nil
 }
 
-func distillDedupeFacts(repoPath string) ([]MemoryFact, error) {
+func distillDedupeFacts(ctx context.Context, repoPath string) ([]MemoryFact, error) {
 	var facts []MemoryFact
-	report, err := dedupe.ScanRepo(repoPath)
+	report, err := dedupe.ScanRepoContext(ctx, repoPath)
 	if err != nil {
 		return nil, err
 	}

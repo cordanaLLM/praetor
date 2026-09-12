@@ -11,8 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"bytes"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 	"github.com/cordanaLLM/praetor/internal/needs"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -389,18 +391,23 @@ func (s *Server) createCompileContextTool() (mcp.Tool, error) {
 // compileContext verifies or (re)writes the vendor targets compiled from source.
 func (s *Server) compileContext(ctx context.Context, source, targetDir string, verifyOnly bool) *mcp.ToolResult {
 	tr := compiler.NewTranspiler()
-	res, err := tr.Compile(source)
+	source, err := s.resolveContextPath(ctx, source)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Sprintf("Context source confinement failed: %v", err))
+	}
+	res, err := tr.CompileContext(ctx, source)
 	if err != nil {
 		if verifyOnly {
 			return mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
 		}
 		return mcp.ErrorResult(fmt.Sprintf("Context compilation failed: %v", err))
 	}
-	if err := s.confineContextOutputs(res, targetDir); err != nil {
+	paths, err := s.confineContextOutputs(ctx, res, targetDir)
+	if err != nil {
 		return mcp.ErrorResult(fmt.Sprintf("Context output confinement failed: %v", err))
 	}
 	if verifyOnly {
-		if err := tr.Verify(source, targetDir); err != nil {
+		if err := verifyContextFiles(ctx, res, paths); err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
 		}
 		return mcp.TextResult("All agent context targets are 100% in sync with canonical AGENTS.md.")
@@ -409,7 +416,7 @@ func (s *Server) compileContext(ctx context.Context, source, targetDir string, v
 	if err := ctx.Err(); err != nil {
 		return mcp.ErrorResult(fmt.Sprintf("compile-context cancelled before writing: %v", err))
 	}
-	if err := tr.WriteOutputs(res, targetDir); err != nil {
+	if err := writeContextFiles(ctx, res, paths); err != nil {
 		return mcp.ErrorResult(fmt.Sprintf("Failed writing outputs: %v", err))
 	}
 
@@ -421,12 +428,59 @@ func (s *Server) compileContext(ctx context.Context, source, targetDir string, v
 	return mcp.TextResult(b.String())
 }
 
-// confineContextOutputs checks every descendant before any output is read or written.
-// A confined target directory alone does not prevent its children escaping via symlinks.
-func (s *Server) confineContextOutputs(result *compiler.CompileResult, targetDir string) error {
-	for i := 0; i < len(result.Files); i++ {
-		if _, err := s.confinePath(filepath.Join(targetDir, result.Files[i].RelativePath)); err != nil {
-			return fmt.Errorf("target %s: %w", result.Files[i].RelativePath, err)
+// confineContextOutputs resolves every permitted descendant before any writes.
+// The concrete paths are then opened without following any additional symlinks.
+func (s *Server) confineContextOutputs(ctx context.Context, result *compiler.CompileResult, targetDir string) ([]string, error) {
+	paths := make([]string, len(result.Files))
+	for i, file := range result.Files {
+		path, err := s.resolveContextPath(ctx, filepath.Join(targetDir, file.RelativePath))
+		if err != nil {
+			return nil, fmt.Errorf("target %s: %w", file.RelativePath, err)
+		}
+		paths[i] = path
+	}
+	return paths, nil
+}
+
+func (s *Server) resolveContextPath(ctx context.Context, path string) (string, error) {
+	if _, err := s.confinePath(path); err != nil {
+		return "", err
+	}
+	resolved, err := util.ResolveExistingPath(ctx, path)
+	if err != nil {
+		return "", err
+	}
+	if s.opts.AllowOutsideRoot {
+		return resolved, nil
+	}
+	root, err := util.ResolveExistingPath(ctx, s.rootDir)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("%w: resolved context path", ErrOutsideRoot)
+	}
+	return resolved, nil
+}
+
+func verifyContextFiles(ctx context.Context, result *compiler.CompileResult, paths []string) error {
+	for i, file := range result.Files {
+		actual, err := contextopt.ReadSnapshot(ctx, paths[i])
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(bytes.TrimSpace(actual), bytes.TrimSpace([]byte(file.Content))) {
+			return fmt.Errorf("target %s is out of sync", file.RelativePath)
+		}
+	}
+	return nil
+}
+
+func writeContextFiles(ctx context.Context, result *compiler.CompileResult, paths []string) error {
+	for i, file := range result.Files {
+		if err := contextopt.WriteSnapshot(ctx, paths[i], []byte(file.Content), 0o644); err != nil {
+			return err
 		}
 	}
 	return nil

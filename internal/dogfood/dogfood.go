@@ -97,7 +97,7 @@ func verifySelfGovernance(ctx context.Context, hostPath string) (governanceResul
 
 	agentsFile := filepath.Join(hostPath, "AGENTS.md")
 	tr := compiler.NewTranspiler()
-	if vErr := tr.Verify(agentsFile, hostPath); vErr != nil {
+	if vErr := tr.VerifyContext(ctx, agentsFile, hostPath); vErr != nil {
 		res.syncErr = vErr.Error()
 	} else {
 		res.synced = true

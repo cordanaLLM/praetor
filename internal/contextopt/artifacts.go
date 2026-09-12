@@ -85,12 +85,21 @@ func WriteArtifacts(ctx context.Context, directory string, files map[string][]by
 		return err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
+	if err := writeArtifactEntries(ctx, root, names, files); err != nil {
+		return err
+	}
+	return SyncDirectory(ctx, parent)
+}
+
+// writeArtifactEntries persists the pack contents before publishing its parent
+// directory entry as a durable recovery copy for a separate live replacement.
+func writeArtifactEntries(ctx context.Context, root *os.Root, names []string, files map[string][]byte) error {
 	for _, name := range names {
 		if err := writePrivate(ctx, root, name, files[name]); err != nil {
 			return err
 		}
 	}
-	return ctx.Err()
+	return SyncDirectory(ctx, root)
 }
 
 func artifactNames(files map[string][]byte) ([]string, error) {

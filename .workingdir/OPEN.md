@@ -28,4 +28,8 @@
 - [ ] Implement staged forge bot runtime and harden adoption workflows; retain explicit unsupported provider errors
 - [x] Research maintained Go packages versus custom implementations and publish a cited reuse and migration decision matrix (completed: 2026-09-12)
 - [ ] Repair question/task mutation integrity and STATE append concurrency; propagate Git failures and reconcile historical ledger statuses
-- [ ] Constrain whole-workspace dedupe scans so ignored Claude worktrees do not become application duplication findings
+- [x] Constrain whole-workspace dedupe scans so ignored Claude worktrees do not become application duplication findings (completed: 2026-09-12)
+- [ ] Fix all reported lint failures without exclusions and verify shared local agent dispatch and hook enforcement
+- [ ] Bootstrap Codex Claude Gemini AGY and independent clients from one shared tool registry with native discovery trust and tool-call evidence
+- [ ] Publish independently versioned signed model provider template and config data with upstream provenance incremental downloads and rollback
+- [ ] Resolve shared effective management policy with provenance and explicit fleet organization deployment workstation and repository layers for CLI MCP container bot plugin and private GitOps consumers

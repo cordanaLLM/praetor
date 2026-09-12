@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -39,7 +40,7 @@ func NewClient(cfg ClientConfig) *Client {
 }
 
 // IngestFact transmits an atomic fact as a Hindsight document.
-func (c *Client) IngestFact(ctx context.Context, bankID string, fact MemoryFact) error {
+func (c *Client) IngestFact(ctx context.Context, bankID string, fact MemoryFact) (resultErr error) {
 	if c.config.OfflineOnly {
 		return nil
 	}
@@ -82,10 +83,12 @@ func (c *Client) IngestFact(ctx context.Context, bankID string, fact MemoryFact)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		// Non-fatal network error in local/offline setups
-		return nil
+		return fmt.Errorf("hindsight ingest request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("hindsight ingest: HTTP status %d", resp.StatusCode)
+	}
 
 	return nil
 }

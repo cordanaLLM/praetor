@@ -55,7 +55,7 @@ func verifyPublicCheckout(ctx context.Context, dir string, before *hiss.ScanRepo
 		return result, fmt.Errorf("verify lock: %w", err)
 	}
 	result.LockVerified = true
-	if err := compiler.NewTranspiler().Verify(filepath.Join(dir, "AGENTS.md"), dir); err != nil {
+	if err := compiler.NewTranspiler().VerifyContext(ctx, filepath.Join(dir, "AGENTS.md"), dir); err != nil {
 		return result, fmt.Errorf("verify context: %w", err)
 	}
 	result.ContextVerified = true

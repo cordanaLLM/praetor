@@ -70,7 +70,8 @@ func TestCompileFrameworkAssets_Negative(t *testing.T) {
 	kit := &FrameworkKitConfig{KitName: "test"}
 	outDir := filepath.Join(tmpDir, "neg-out")
 
-	if _, err := CompileFrameworkAssets(nil, kit, outDir); err == nil {
+	var absentContext context.Context
+	if _, err := CompileFrameworkAssets(absentContext, kit, outDir); err == nil {
 		t.Error("expected error for nil context, got nil")
 	}
 

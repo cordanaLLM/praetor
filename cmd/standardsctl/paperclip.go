@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -96,7 +95,7 @@ func runPaperclipDisposition(ctx context.Context, args []string) error {
 	}
 
 	if *outputPath != "" {
-		if err := os.WriteFile(*outputPath, jsonBytes, 0644); err != nil {
+		if err := writeCommandArtifact(ctx, *outputPath, jsonBytes, 0600); err != nil {
 			return fmt.Errorf("write disposition to %s: %w", *outputPath, err)
 		}
 		fmt.Printf("[OK] Saved Paperclip Rule 0 terminal disposition to %s\n", *outputPath)
@@ -119,7 +118,7 @@ func runPaperclipVerify(ctx context.Context, args []string) error {
 		*dispPath = filepath.Join(*path, ".paperclip", "disposition.json")
 	}
 
-	disp, err := paperclip.ReadDisposition(*dispPath)
+	disp, err := paperclip.ReadDispositionContext(ctx, *dispPath)
 	if err != nil {
 		return fmt.Errorf("read disposition: %w", err)
 	}

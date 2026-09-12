@@ -31,16 +31,16 @@ func runCompileContext(args []string) error {
 
 	tr := compiler.NewTranspiler()
 	if *verify {
-		return verifyCompiledContext(tr, *source, *targetDir)
+		return verifyCompiledContext(ctx, tr, *source, *targetDir)
 	}
 	return compileContext(ctx, tr, *source, *targetDir)
 }
 
 // verifyCompiledContext checks the six transpiled vendor files and every persona
 // projection without writing anything.
-func verifyCompiledContext(tr *compiler.Transpiler, source, targetDir string) error {
+func verifyCompiledContext(ctx context.Context, tr *compiler.Transpiler, source, targetDir string) error {
 	fmt.Printf("Verifying agent context synchronization against %s...\n", source)
-	if err := tr.Verify(source, targetDir); err != nil {
+	if err := tr.VerifyContext(ctx, source, targetDir); err != nil {
 		return fmt.Errorf("context verification failed: %w", err)
 	}
 	verified, err := verifyAgentProjections(targetDir)
@@ -55,11 +55,11 @@ func verifyCompiledContext(tr *compiler.Transpiler, source, targetDir string) er
 // projection failure is an error, never a silently skipped success line.
 func compileContext(ctx context.Context, tr *compiler.Transpiler, source, targetDir string) error {
 	fmt.Printf("Compiling agent context from canonical %s...\n", source)
-	res, err := tr.Compile(source)
+	res, err := tr.CompileContext(ctx, source)
 	if err != nil {
 		return fmt.Errorf("compilation failed: %w", err)
 	}
-	if err := tr.WriteOutputs(res, targetDir); err != nil {
+	if err := tr.WriteOutputsContext(ctx, res, targetDir); err != nil {
 		return fmt.Errorf("failed to write compiled files: %w", err)
 	}
 	for _, f := range res.Files {

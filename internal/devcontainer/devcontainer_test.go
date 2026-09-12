@@ -298,3 +298,21 @@ func TestDogfoodingSynthesis(t *testing.T) {
 		t.Fatalf("verification of dogfooding .devcontainer/devcontainer.json failed: %v", err)
 	}
 }
+
+func TestWriteDevContainerRejectsLinkedParentsWithoutWriting(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "linked", "nested", "devcontainer.json")
+	if err := WriteDevContainer(t.Context(), target, &DevContainer{Name: "fixture"}); err == nil {
+		t.Fatal("linked parent accepted")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatal("write created directory through external link")
+	}
+}

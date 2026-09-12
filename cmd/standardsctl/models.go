@@ -47,7 +47,7 @@ func runModels(args []string) error {
 }
 
 func handleModelsSync(ctx context.Context, configPath, endpoints string, discoverLocal bool) error {
-	fmt.Println("=== cordanaLLM/praetor Live Model & Benchmark Synchronizer ===")
+	fmt.Println("=== Praetor legacy catalog seed and optional local inventory ===")
 	var localList []string
 	for _, ep := range strings.Split(endpoints, ",") {
 		if trimmed := strings.TrimSpace(ep); trimmed != "" {
@@ -66,7 +66,7 @@ func handleModelsSync(ctx context.Context, configPath, endpoints string, discove
 		return fmt.Errorf("model catalog sync failed: %w", err)
 	}
 
-	fmt.Printf("Catalog synchronized cleanly to %s:\n", configPath)
+	fmt.Printf("Legacy seed written to %s (prices and quotas are not refreshed upstream):\n", configPath)
 	fmt.Printf("  - Total Models:        %d\n", res.TotalModels)
 	fmt.Printf("  - Tier 3 Frontier:     %d models (Opus, Pro, O3, Grok 3, DeepSeek-R1)\n", res.HeavyFrontier)
 	fmt.Printf("  - Tier 2 Mid-Weight:   %d models (Qwen3.8-27B, Qwen3-30B, Coder-32B, Codestral)\n", res.MidWeight)

@@ -77,6 +77,15 @@ func TestSaveCachedDoc_Boundary_TraversalNameStaysInsideCache(t *testing.T) {
 
 func TestSyncRepositoryDocs_UsesSharedWriter(t *testing.T) {
 	repo := t.TempDir()
+	goPath := t.TempDir()
+	t.Setenv("GOPATH", goPath)
+	readmeDir := filepath.Join(goPath, "pkg", "mod", "github.com", "example", "dep@v1.2.3")
+	if err := os.MkdirAll(readmeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(readmeDir, "README.md"), []byte("# Dependency\nLocal documentation fixture with a real source."), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/x\n\nrequire github.com/example/dep v1.2.3\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

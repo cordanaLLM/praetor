@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"gopkg.in/yaml.v3"
 )
 
@@ -42,7 +42,12 @@ type BuildResult struct {
 
 // LoadBuildConfig parses the .framework-build.yaml file.
 func LoadBuildConfig(path string) (*BuildConfig, error) {
-	data, err := os.ReadFile(path)
+	return LoadBuildConfigContext(context.Background(), path)
+}
+
+// LoadBuildConfigContext reads a bounded regular configuration under the caller deadline.
+func LoadBuildConfigContext(ctx context.Context, path string) (*BuildConfig, error) {
+	data, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read build config %s: %w", path, err)
 	}
@@ -118,7 +123,7 @@ func resolveTargets(cfg *BuildConfig, targetName string) (map[string]TargetConfi
 }
 
 func (b *UniversalBuilder) buildSingleTarget(ctx context.Context, cfg *BuildConfig, name string, t TargetConfig) (*BuildResult, error) {
-	if err := os.MkdirAll(cfg.OutputDir, 0755); err != nil {
+	if err := contextopt.EnsureDirectory(ctx, cfg.OutputDir, 0755); err != nil {
 		return nil, err
 	}
 

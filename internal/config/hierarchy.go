@@ -1,7 +1,10 @@
 package config
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"os"
 	"path/filepath"
 
@@ -47,75 +50,52 @@ func DefaultRunnerPolicy() RunnerPolicy {
 
 // LoadCascadingRunnerConfig merges fleet, org, and repository-level runner configurations.
 func LoadCascadingRunnerConfig(rootDir, orgName string) (*RunnerPolicy, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDuration)
+	defer cancel()
+	return LoadCascadingRunnerConfigContext(ctx, rootDir, orgName)
+}
+
+func LoadCascadingRunnerConfigContext(ctx context.Context, rootDir, orgName string) (*RunnerPolicy, error) {
+	if orgName != "" && (!filepath.IsLocal(orgName) || filepath.Base(orgName) != orgName || orgName == ".") {
+		return nil, errors.New("organization must be one local path component")
+	}
 	merged := DefaultRunnerPolicy()
 
 	fleetPath := filepath.Join(rootDir, ".config", "fleet.yaml")
-	if err := mergeFleetConfig(fleetPath, &merged); err != nil {
+	if err := mergeRunnerConfig(ctx, fleetPath, &merged); err != nil {
 		return nil, fmt.Errorf("failed merging fleet config: %w", err)
 	}
 
 	if orgName != "" {
 		orgPath := filepath.Join(rootDir, ".config", "orgs", orgName+".yaml")
-		if err := mergeOrgConfig(orgPath, &merged); err != nil {
+		if err := mergeRunnerConfig(ctx, orgPath, &merged); err != nil {
 			return nil, fmt.Errorf("failed merging org config: %w", err)
 		}
 	}
 
 	repoPath := filepath.Join(rootDir, ".standards.yaml")
-	if err := mergeRepoConfig(repoPath, &merged); err != nil {
+	if err := mergeRunnerConfig(ctx, repoPath, &merged); err != nil {
 		return nil, fmt.Errorf("failed merging repo config: %w", err)
 	}
 
 	return &merged, nil
 }
 
-func mergeFleetConfig(path string, target *RunnerPolicy) error {
-	data, err := os.ReadFile(path)
+func mergeRunnerConfig(ctx context.Context, path string, target *RunnerPolicy) error {
+	data, err := contextopt.ReadSnapshot(ctx, path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
 		return err
 	}
-	var fc FleetConfig
-	if err := yaml.Unmarshal(data, &fc); err != nil {
-		return err
-	}
-	mergePolicies(target, &fc.Runners)
-	return nil
-}
-
-func mergeOrgConfig(path string, target *RunnerPolicy) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	var oc OrgConfig
-	if err := yaml.Unmarshal(data, &oc); err != nil {
-		return err
-	}
-	mergePolicies(target, &oc.Runners)
-	return nil
-}
-
-func mergeRepoConfig(path string, target *RunnerPolicy) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	var raw struct {
+	var config struct {
 		Runners RunnerPolicy `yaml:"runners"`
 	}
-	if err := yaml.Unmarshal(data, &raw); err != nil {
+	if err := yaml.Unmarshal(data, &config); err != nil {
 		return err
 	}
-	mergePolicies(target, &raw.Runners)
+	mergePolicies(target, &config.Runners)
 	return nil
 }
 
