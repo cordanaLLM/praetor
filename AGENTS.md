@@ -1,5 +1,12 @@
 # cordanaLLM/praetor Agent Operating Harness
 
+Start repository work with `python3 scripts/dev_mcp.py probe` and verify its source
+identity. Exercise MCP-facing changes through the relevant real tool, using
+temporary roots and write/readback for mutations. Discovery alone is insufficient;
+report errors, stubs, and unverified behavior explicitly, then continue code tests.
+Native servers snapshot source at startup: reconnect after edits or use fresh
+`call`/`probe`. Follow the [development MCP guide](docs/guides/development-mcp.md).
+
 Run verification before concluding any turn:
 ```bash
 make verify-all
@@ -81,4 +88,3 @@ go run ./cmd/standardsctl topology audit /home/kilian/dev
 # Run all formatting, linting, and security gates
 make verify-all
 ```
-

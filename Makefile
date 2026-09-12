@@ -82,13 +82,24 @@ dedupe:
 topology-audit:
 	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
 
-verify-all: compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: mcp-test mcp-probe compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
 
 hooks:
 	@lefthook install
 
 setup: build hooks compile-context
+
+# Development connections always compile this checkout; artifacts live in temp.
+.PHONY: mcp-dev mcp-probe mcp-test
+mcp-dev:
+	python3 scripts/dev_mcp.py serve
+
+mcp-probe:
+	python3 scripts/dev_mcp.py probe
+
+mcp-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_dev_mcp*.py'
 
 clean:
 	rm -rf $(BIN_DIR)

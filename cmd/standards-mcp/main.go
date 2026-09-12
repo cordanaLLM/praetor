@@ -10,11 +10,11 @@ import (
 	"syscall"
 )
 
-const (
-	mcpVersion = "v1.0.0"
-	// authTokenEnv names the environment variable consulted when -auth-token is empty.
-	authTokenEnv = "STANDARDS_MCP_TOKEN"
-)
+// mcpVersion is set to dev-<source SHA256> by scripts/dev_mcp.py at build time.
+var mcpVersion = "v1.0.0"
+
+// authTokenEnv names the environment variable consulted when -auth-token is empty.
+const authTokenEnv = "STANDARDS_MCP_TOKEN"
 
 func main() {
 	transport := flag.String("transport", "stdio", "Transport protocol: stdio, http, or sse")

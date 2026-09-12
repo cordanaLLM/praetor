@@ -124,14 +124,31 @@ receipt for the current branch or verification result.
 | G05 capability/migration | `a9a70db` | CLI, needs and adoption tests pass |
 | G06 scanning/migration | `90f7a1a` | Needs/adoption race tests pass; integration test size regression corrected during G07a |
 | G07a forge validation | `c5ee29b` | CLI, forge, MCP, needs and affected helper race tests pass; workflow syntax checks pass |
+| G07b project/milestone | `c9d4d28` | CLI, forge, milestone and util race tests pass; explicit store/backlog capacity failures preserve existing data |
+| G08 MCP runtime/audit | `ac6e14d` | CLI, MCP, config and affected helper race tests pass; fresh-binary wire review passes 61 checks in 11 sessions |
 
-G07b integration is currently in progress. G06 preserves both G05's context,
+G09 integration is in progress in an isolated worktree. G06 preserves both G05's context,
 path, permission and unknown-coverage safeguards and G06's scan/migration
 corrections. The scanner reports limit breaches, migration refuses branch resets,
 and failed mutations return errors with partial results. G07a removes magic-token
 network bypasses, retaining target confirmation, opt-in remote sync and pinned
 receipt tests. Oversized MCP schemas now fail rather than losing fields.
-G07b/G08/G09/G10 are still pending; merge only the committed G09 core.
+G08 also confines default and generated-output paths, reports corrupt memory
+caches, and shares actual lock pin/digest validation with the CLI. G09/G10 are
+still pending; merge only the committed G09 core.
+
+The user directed development MCP preflight before relying on advertised
+capabilities. The new launcher builds the current working tree into temporary
+storage, records source/binary hashes, and provides direct JSON-RPC calls plus
+fixture-only behavioral probes. Native Codex startup has been exercised through
+the app-server without a model request; existing IDE sessions may need reconnect.
+Canonical instruction propagation is also being fixed: the previous compiler
+ignored the AGENTS.md body and generated static policy. Reusable wire probes now
+require actual canonical body content in all six compiled outputs.
+
+`make verify-all` after the G08/development-MCP changes passes context verification,
+the full race suite and CLI audit, then stops at 111 lint findings. Later gates
+have not run in that invocation; this is not a passing Exit-0 receipt.
 
 The permission regression was also present in the shared wave-0 helper, beyond
 the rejected G09 patch. `fix/secure-write-permissions` at `c142ec4` fixes it in
