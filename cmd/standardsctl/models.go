@@ -17,12 +17,19 @@ func runModels(args []string) error {
 	configPath := fs.String("config", ".config/models/routing.yaml", "Path to model routing config")
 	discoverLocal := fs.Bool("discover-local", true, "Auto-discover local Ollama/vLLM models")
 	endpoints := fs.String("local-endpoints", "http://localhost:11434,http://localhost:8000", "Comma-separated local runtime endpoints")
+	route := addModelRouteFlags(fs)
 
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
 	action := positionalAt(positional, 0, "list")
+	if len(positional) > 1 {
+		return fmt.Errorf("models accepts one action")
+	}
+	if err := validateModelRouteFlags(fs, action); err != nil {
+		return err
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -32,8 +39,10 @@ func runModels(args []string) error {
 		return handleModelsSync(ctx, *configPath, *endpoints, *discoverLocal)
 	case "list":
 		return handleModelsList(*configPath)
+	case "route":
+		return handleModelsRoute(ctx, *configPath, route)
 	default:
-		return fmt.Errorf("unknown action: %s (supported: sync, list)", action)
+		return fmt.Errorf("unknown action: %s (supported: sync, list, route)", action)
 	}
 }
 
