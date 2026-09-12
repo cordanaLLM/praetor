@@ -27,6 +27,42 @@
       Reference implementation of items 2-3 lives in the deep-audit workflow scripts
       (`~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit/wf2-fix.mjs`: `A()` breaker,
       `subset` halves, resume-from-branch prologue).
+- [ ] **Hermetic dynamic verification as a fleet-wide, configurable harness rule.** Per user direction
+      (2026-09-12): agents must be able to spin up tiny ephemeral clones inside the repository's
+      devcontainer and test against real running code, instead of inferring behaviour by reading, for
+      every repository that adopts praetor, not just this one. Motivation: the deep audit had to stay
+      read-only because the mutating gates (`make verify-all`, `standardsctl audit/gate/state sync`,
+      lefthook) touch the tree and `$HOME`; inside a container none of that matters, and dynamic checks
+      cost far fewer tokens than reasoning. Scope:
+      1. Extend ADR-0004's ephemeral-worktree gating with a container backend: `praetorctl sandbox run
+         [--image auto] -- <cmd>` clones the current worktree (or a branch) into a throwaway directory,
+         mounts it into the repo's devcontainer image (built from `.devcontainer`/`docker/dev/Dockerfile`,
+         cached by digest), runs the command as the invoking uid with `HOME`/`GOCACHE`/`GOPATH` inside
+         the clone, and returns exit code + trimmed output; clone and container are removed afterwards.
+      2. Expose it over MCP (`standards_sandbox_run`, mutating=false from the repo's point of view) so any
+         agent, editor or workflow can request a real run; wire the paperclip harness and the fleet
+         workflow scripts to prefer it for tests, gates, fuzz batteries and reproductions.
+      3. Make it configurable in `.standards.yaml` (`verification: {sandbox: devcontainer|docker|podman|off,
+         image: <ref|auto>, mode: required|preferred, resources: {cpus, memory, timeout}}`) with a
+         praetor fleet default of `preferred`, and enforce `required` for adopted repos that declare the
+         `agent:sandboxed` facet (this repo already declares it, and it currently means nothing).
+      4. Scaffold the devcontainer during `adopt` for repos that lack one (the generator exists in
+         `internal/devcontainer`), so the rule can hold across the fleet.
+      Prerequisite: the layered config workstream below (the `verification:` block needs schema + typed access).
+- [ ] **Application config layer and explicit dependency wiring.** Per user question (2026-09-12) about
+      whether the Go application has a real config system or DI framework: it has neither. `internal/config`
+      parses only the governance manifest `.standards.yaml` (metadata, profiles, facets, three override
+      blocks) with no defaults/file/env/flag layering, no schema validation (the `# Schema:` URL is
+      unreachable), no typed subsystem sections, and the advertised `.config/archetypes/**` are never
+      loaded; complexity caps are parsed but enforced by nothing. No DI container is used. Decision
+      recorded here: do NOT adopt `go.uber.org/fx` (new dependency, reflection-based graph, at odds with
+      the single-dependency policy and HISS's explicit acyclic wiring); instead implement the
+      `config.yaml` capability the repo already declares as *required* toward golusoris (`.needs.yaml`,
+      status `gap`) - layered sources (built-in defaults -> `.config/archetypes` + facets -> `.standards.yaml`
+      -> environment -> flags), a published JSON schema that `audit` validates against, typed sections per
+      subsystem (`verification`, `providers`, `routing`, `receipts`, `budget`), and constructor injection
+      of resolved config into subsystems (kill the remaining package-level registries). Deliver in
+      `internal/config` first, upstream to golusoris when its `config.yaml` capability lands.
 
 ## Active Milestones
 
