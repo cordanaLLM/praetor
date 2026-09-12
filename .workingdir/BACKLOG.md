@@ -199,3 +199,10 @@
 
 ### Discharged Tasks [2026-09-12 17:24:40 UTC, commit `local`]
 - [x] Reject malformed transcript Unicode and prevent private record types leaking through error reports (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 17:51:40 UTC, commit `local`]
+- [x] Run bounded scheduled local dogfood verification with overlap and retry protection (completed: 2026-09-12)
+- [x] Route retained dogfood failures into bounded local triage jobs (completed: 2026-09-12)
+- [x] Install and verify the per-user dogfood timer with retained rollback evidence (completed: 2026-09-12)
+- [x] Implement bounded local dogfood failure triage plans using declared task routing (completed: 2026-09-12)
+- [x] Implement bounded local dogfood schedule run/status with retained evidence and retry circuit (completed: 2026-09-12)

@@ -364,6 +364,52 @@ Evidence is under
 remain outside Git. Scheduling, agent dispatch, semantic verified-fact memory
 and automatic rollout promotion remain later stages.
 
+#### Scheduled local suite continuation — 2026-09-12
+
+The local `praetor-dogfood-local.timer` is enabled and active. Its first automatic
+service invocation ran from 17:48:49 to 17:50:01 UTC and exited successfully:
+pinned Cobra and Flask verified, the original Claude and Antigravity transcripts
+produced 11,443 observations from 12,849 records, and replay added zero records.
+Both original hashes remain unchanged. A subsequent tick stayed in cooldown with
+one retained attempt. Private configuration is under `~/.config/praetor/`; state
+and immutable per-attempt inputs/reports are under
+`~/.local/state/praetor/dogfood-local/`. The first attempt retains about 28 MB.
+
+The timer checks two minutes after activation and fifteen minutes after a service
+finishes. The scheduler enforces daily unchanged-input runs, one-hour retries,
+three consecutive failures, 32 attempts, and a 2 GiB admission threshold. It also
+bounds filesystem entry accounting; these are finite admission limits, not disk
+quotas or an automatic cleanup policy. No retained evidence is deleted. Required
+`runner_binary` binds status to the configured CLI, and execution checks its actual
+Linux executable descriptor. MCP and CLI status fingerprints were read back equal.
+The real development MCP probe now passes 32 checks across 17 tools, including
+confined read-only `standards_dogfood_schedule_status`.
+
+Actual failed-case reports can produce local repair plans through the task router.
+An installed-CLI bad-pin fixture produced one `review_required` job for
+`ci_debugging`, then its one-failure test circuit blocked another attempt. The
+configured zero-cost `gpt-oss-small` route is a catalog estimate with unobserved
+capacity; it is not proof of a live provider or current pricing. No coding agents,
+provider requests, automatic patches, external messages or stage promotions run
+in this stage. Validate live provider inventory and capacity before enabling
+bounded agent execution. Verified-fact memory and broader workstation harvesting
+also remain open work.
+
+Full clean verification at `78585a1` passes every target except existing lint and
+security debt. Uncapped comparison against `85beb4b` proves 157 existing lint
+findings and zero added diagnostics; the previously reported 76 was capped
+display output. Security remains 90 findings. All 45 race-tested packages pass;
+atomic coverage is 80.4% at `b36b9cd`, with only test changes in the follow-up.
+Installer tests cover 16 cases. Dedupe checks 249 files/1,465 functions at 100% in
+the clean checkout. The first automatic service used `b36b9cd`; later follow-up
+changes only tests. No exit-0 receipt or fully green CI is claimed.
+
+Evidence is retained under `codex-continuation/scheduled-loop/`: `combined-clean/`,
+`acceptance/automatic-run-RESULT.json`, the failed-tick plan, installer backups,
+MCP/CLI identity readbacks and final public/private synchronization records.
+See [the user timer guide](../docs/guides/scheduled-dogfood.md) and
+[scheduler semantics](../docs/guides/dogfood-scheduling.md) for lifecycle and limits.
+
 ### Original workflow entry points
 
 ```bash
