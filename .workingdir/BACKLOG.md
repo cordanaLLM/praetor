@@ -23,6 +23,28 @@
       Draft text: `~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit/harness-principles-draft.md`.
       The AGENTS.md rows land with the wave B agent-surface fix group; the gate needs the config workstream.
 - [ ] Deep AST Deduplication Sweeps
+- [ ] **Artifact management and dynamic session state.** Per user direction (2026-09-12): every run
+      (audit, verification, fix wave, sandbox execution, gate, receipt, report) should produce first-class
+      artifacts with provenance instead of loose files, so that state and session management become fully
+      dynamic - the `.workingdir` ledgers (`STATE.md`, `OPEN.md`, `BUGS.md`, `BACKLOG.md`, `AUDIT_RESUME.md`)
+      are *rendered from* artifacts rather than hand-maintained, and any session, on any machine, resumes
+      from them. Evidence: during the deep audit the workstation rebooted and the entire scratchpad was lost;
+      the audit was rebuilt by hand from the workflow journal and agent transcripts (see the recovery script
+      in the audit directory), which is exactly the job an artifact store should do automatically. Scope:
+      1. A content-addressed artifact store per repository under a persistent location (not `/tmp`), with
+         a manifest per artifact: kind, producer (command/agent/workflow + version), inputs (digests),
+         commit, timestamp, digest, retention class, and an optional Ed25519 receipt binding.
+      2. `praetorctl artifact put|get|list|gc|export` and MCP tools (`standards_artifact_*`), plus
+         automatic capture from `audit`, `gate`, `dogfood`, `sandbox run`, and the fleet workflow scripts
+         (findings, verdicts, batches, reports, journals, receipts, sandbox logs).
+      3. Ledger rendering: `praetorctl state sync` derives `BUGS.md`/`STATE.md`/resume documents from the
+         artifact graph (findings artifacts -> bug rows; run artifacts -> state entries); hand edits become
+         unnecessary, and the current "hook stages the ledger" side effect disappears.
+      4. `praetorctl session resume`: rebuild working context (what was done, what is pending, which branch,
+         which artifacts) from the store, so a new session or machine continues without transcript archaeology.
+      5. Optional publishing targets for sharing (an Artifact page / static site export / release asset),
+         with the same provenance manifest attached.
+      Depends on the layered config workstream (store location, retention and publishing are config).
 - [ ] **Budget-aware agent dispatch (limit pre-checks as a harness primitive).** Per user direction
       (2026-09-12): every multi-agent fan-out must check remaining provider budget *before* dispatch and
       pace itself, because hitting a rolling-window limit mid-wave kills all in-flight agents and discards
