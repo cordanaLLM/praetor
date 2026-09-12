@@ -123,9 +123,10 @@ func resolveExistingAncestor(path string) (string, error) {
 	return "", fmt.Errorf("util: %q exceeds the %d level ancestor walk bound", path, maxPathAncestorWalk)
 }
 
-// WriteFileSecure creates or truncates path and writes data with an explicit file mode.
-// Unlike os.WriteFile it also applies perm to a file that already existed with looser
-// bits, and it refuses world-writable or non-permission mode bits.
+// WriteFileSecure creates or truncates path and writes data. perm is a permission
+// ceiling: existing permission bits and a restrictive creation umask are never widened.
+// Required permission tightening happens before truncation, so metadata failures leave
+// existing contents intact. World-writable and non-permission requests are refused.
 //
 // gosec: addresses G306 (WriteFile with permissions above 0600) and G302 (OpenFile with
 // permissive mode). Call sites pass an explicit perm; perm == 0 selects SecureFilePerm.
@@ -137,10 +138,8 @@ func WriteFileSecure(path string, data []byte, perm os.FileMode) (err error) {
 		return permErr
 	}
 
-	// #nosec G304 -- WriteFileSecure is the confinement primitive itself: callers pass a
-	// path already validated by ConfinePath, and perm is checked above. Flagging the
-	// helper would only push the write back to unchecked os.WriteFile call sites.
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	// #nosec G304 -- callers validate paths with ConfinePath; permissions are checked above.
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, perm)
 	if err != nil {
 		return fmt.Errorf("util: open %q for writing: %w", path, err)
 	}
@@ -150,8 +149,11 @@ func WriteFileSecure(path string, data []byte, perm os.FileMode) (err error) {
 		}
 	}()
 
-	if cerr := file.Chmod(perm); cerr != nil {
-		return fmt.Errorf("util: chmod %q to %#o: %w", path, perm, cerr)
+	if err := tightenFilePermissions(file, perm); err != nil {
+		return err
+	}
+	if err := file.Truncate(0); err != nil {
+		return fmt.Errorf("util: truncate %q: %w", path, err)
 	}
 	if _, werr := file.Write(data); werr != nil {
 		return fmt.Errorf("util: write %q: %w", path, werr)
@@ -159,9 +161,24 @@ func WriteFileSecure(path string, data []byte, perm os.FileMode) (err error) {
 	return nil
 }
 
-// MkdirSecure creates path and any missing parents with an explicit directory mode and
-// then enforces that mode on the leaf, which os.MkdirAll alone does not do because the
-// process umask masks the requested bits.
+func tightenFilePermissions(file *os.File, perm os.FileMode) error {
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("util: stat %q: %w", file.Name(), err)
+	}
+	target := info.Mode().Perm() & perm
+	if target == info.Mode().Perm() {
+		return nil
+	}
+	if err := file.Chmod(target); err != nil {
+		return fmt.Errorf("util: chmod %q to %#o: %w", file.Name(), target, err)
+	}
+	return nil
+}
+
+// MkdirSecure creates path and missing parents, respecting the process umask. perm
+// is a permission ceiling on the leaf: a pre-existing or newly created directory is
+// only tightened, never widened. Existing ancestors retain their permissions.
 //
 // gosec: addresses G301 (directory created with permissions above 0750). Call sites pass
 // an explicit perm; perm == 0 selects SecureDirPerm.
@@ -175,8 +192,15 @@ func MkdirSecure(path string, perm os.FileMode) error {
 	if err := os.MkdirAll(path, perm); err != nil {
 		return fmt.Errorf("util: create directory %q: %w", path, err)
 	}
-	if err := os.Chmod(path, perm); err != nil {
-		return fmt.Errorf("util: chmod directory %q to %#o: %w", path, perm, err)
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("util: stat directory %q: %w", path, err)
+	}
+	target := info.Mode().Perm() & perm
+	if target != info.Mode().Perm() {
+		if err := os.Chmod(path, target); err != nil {
+			return fmt.Errorf("util: chmod directory %q to %#o: %w", path, target, err)
+		}
 	}
 	return nil
 }

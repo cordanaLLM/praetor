@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -223,6 +224,69 @@ func TestMkdirSecure_3D(t *testing.T) {
 	}
 	if info, err := os.Stat(def); err != nil || info.Mode().Perm() != SecureDirPerm {
 		t.Errorf("mode = %v (%v), want %#o", info, err, SecureDirPerm)
+	}
+}
+
+func TestSecurePermissions_NeverWidenExisting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not available on Windows")
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "private.txt")
+	if err := os.WriteFile(file, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteFileSecure(file, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	assertSecureMode(t, file, 0o600)
+	if err := MkdirSecure(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	assertSecureMode(t, root, 0o700)
+	nested := filepath.Join(root, "new", "leaf")
+	if err := MkdirSecure(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	assertSecureMode(t, root, 0o700)
+}
+
+func TestSecurePermissions_IntersectRequestedBits(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not available on Windows")
+	}
+	root := t.TempDir()
+	file := filepath.Join(root, "shared.txt")
+	if err := os.WriteFile(file, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(file, 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteFileSecure(file, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	assertSecureMode(t, file, 0o640)
+	if err := os.Chmod(root, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := MkdirSecure(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	assertSecureMode(t, root, 0o750)
+}
+
+func assertSecureMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Errorf("%s mode = %#o, want %#o", filepath.Base(path), got, want)
 	}
 }
 
