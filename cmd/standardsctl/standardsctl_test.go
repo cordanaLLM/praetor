@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -161,7 +165,7 @@ func TestDispatchCommand_ContextAndDevcontainer(t *testing.T) {
 	}
 
 	// Devcontainer help
-	if err := dispatchCommand("devcontainer", []string{"-h"}); err != nil && err != flag.ErrHelp {
+	if err := dispatchCommand("devcontainer", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("devcontainer -h failed: %v", err)
 	}
 }
@@ -175,7 +179,7 @@ func TestDispatchCommand_EditorsAndFlavors(t *testing.T) {
 	}
 
 	// Flavors list and help
-	if err := dispatchCommand("flavors", []string{"-h"}); err != nil && err != flag.ErrHelp {
+	if err := dispatchCommand("flavors", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("flavors -h failed: %v", err)
 	}
 	if err := dispatchCommand("flavors", []string{"--config=../../.config/flavors.yaml", "list"}); err != nil {
@@ -191,31 +195,42 @@ func TestDispatchCommand_ModelsAndHarvest(t *testing.T) {
 		t.Fatalf("models list failed: %v", err)
 	}
 
-	// Harvest help and dry run on empty dev dir
-	if err := dispatchCommand("harvest", []string{"-h"}); err != nil && err != flag.ErrHelp {
+	// Harvest help and the argument-less fleet topology listing
+	if err := dispatchCommand("harvest", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("harvest -h failed: %v", err)
 	}
-	if err := dispatchCommand("harvest", []string{"fleet", "--dev-dir=" + tmpDir}); err != nil {
+	if err := dispatchCommand("harvest", []string{"fleet"}); err != nil {
 		t.Fatalf("harvest fleet failed: %v", err)
+	}
+
+	// Negative: `harvest fleet` implements no flags, so a trailing token must be
+	// rejected rather than silently accepted.
+	if err := dispatchCommand("harvest", []string{"fleet", "--dev-dir=" + tmpDir}); err == nil {
+		t.Fatal("expected error for unexpected harvest fleet argument")
+	}
+
+	// Negative: an unknown harvest subcommand
+	if err := dispatchCommand("harvest", []string{"not-a-subcommand"}); err == nil {
+		t.Fatal("expected error for unknown harvest subcommand")
 	}
 }
 
 func TestDispatchCommand_AdoptPlanSyncInit(t *testing.T) {
 	// Adopt help
-	if err := dispatchCommand("adopt", []string{"-h"}); err != nil && err != flag.ErrHelp {
+	if err := dispatchCommand("adopt", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("adopt -h failed: %v", err)
 	}
 
 	// Plan and Sync help
-	if err := dispatchCommand("plan", []string{"-h"}); err != nil && err != flag.ErrHelp {
+	if err := dispatchCommand("plan", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("plan -h failed: %v", err)
 	}
-	if err := dispatchCommand("sync", []string{"-h"}); err != nil && err != flag.ErrHelp {
+	if err := dispatchCommand("sync", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("sync -h failed: %v", err)
 	}
 
 	// Init help
-	if err := dispatchCommand("init", []string{"-h"}); err != nil && err != flag.ErrHelp {
+	if err := dispatchCommand("init", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("init -h failed: %v", err)
 	}
 }
@@ -224,7 +239,7 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Paperclip help
-	if err := dispatchCommand("paperclip", []string{"-h"}); err != nil && err != flag.ErrHelp {
+	if err := dispatchCommand("paperclip", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("paperclip -h failed: %v", err)
 	}
 
@@ -248,12 +263,27 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 
 	// Initialize leaf git repository for adoption validation
 	gitDir := filepath.Join(tmpDir, ".git")
-	_ = os.MkdirAll(gitDir, 0755)
-	_ = os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0644)
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatalf("failed creating .git fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+		t.Fatalf("failed writing HEAD fixture: %v", err)
+	}
 
-	// Adopt dry-run
-	if err := dispatchCommand("adopt", []string{"--dry-run", "--path=" + tmpDir, "--profile=framework"}); err != nil {
+	// Adopt dry-run, in the space-separated flag form that exercises the argument
+	// reordering (the =-form never reaches the lookahead branch).
+	if err := dispatchCommand("adopt", []string{"--dry-run", "--path", tmpDir, "--profile", "framework"}); err != nil {
 		t.Fatalf("adopt dry-run failed: %v", err)
+	}
+
+	// Boundary: the bare positional form must target the same repository.
+	if err := dispatchCommand("adopt", []string{"--dry-run", tmpDir}); err != nil {
+		t.Fatalf("adopt dry-run with a positional path failed: %v", err)
+	}
+
+	// Negative: an unknown adopt flag is rejected.
+	if err := dispatchCommand("adopt", []string{"--not-a-flag"}); err == nil {
+		t.Fatal("expected an error for an unknown adopt flag")
 	}
 }
 
@@ -298,7 +328,7 @@ targets:
 		t.Fatalf("failed to write build config: %v", err)
 	}
 
-	if err := dispatchCommand("build", []string{"-h"}); err != nil && err != flag.ErrHelp {
+	if err := dispatchCommand("build", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("build -h failed: %v", err)
 	}
 	if err := dispatchCommand("build", []string{"--config=" + buildCfgPath, "--target=cli"}); err != nil {
@@ -475,5 +505,460 @@ func TestDispatchCommand_CISubcommands(t *testing.T) {
 	// Negative: invalid subcommand
 	if err := dispatchCommand("ci", []string{"unknown-sub"}); err == nil {
 		t.Fatal("expected error for invalid ci subcommand")
+	}
+}
+
+// =========================================================================
+// Argument reordering (HISS-15: positive, negative, boundary)
+// =========================================================================
+
+func TestReorderArgs_Table(t *testing.T) {
+	fs := flag.NewFlagSet("fixture", flag.ContinueOnError)
+	fs.String("path", ".", "string flag")
+	fs.String("log", "", "string flag")
+	fs.Bool("dry-run", false, "bool flag")
+	boolFlags := boolFlagNames(fs)
+
+	if !boolFlags["dry-run"] || boolFlags["path"] {
+		t.Fatalf("boolFlagNames misclassified flags: %v", boolFlags)
+	}
+
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"equals form keeps order", []string{"--path=/x", "target"}, []string{"--path=/x", "target"}},
+		{"space form keeps flag value attached", []string{"--path", "/x", "target"}, []string{"--path", "/x", "target"}},
+		{"positional before flag is hoisted", []string{"target", "--log=msg"}, []string{"--log=msg", "target"}},
+		{"bool flag does not swallow positional", []string{"--dry-run", "target"}, []string{"--dry-run", "target"}},
+		{"bool flag before value flag", []string{"dir", "--dry-run", "--path", "/x"}, []string{"--dry-run", "--path", "/x", "dir"}},
+		{"trailing flag without value", []string{"dir", "--path"}, []string{"--path", "dir"}},
+		{"bare positional only", []string{"dir"}, []string{"dir"}},
+		{"empty input", []string{}, []string{}},
+		{"lone dash stays positional", []string{"-"}, []string{"-"}},
+		{"double dash terminates flags", []string{"--dry-run", "--", "--path", "x"}, []string{"--dry-run", "--path", "x"}},
+	}
+
+	for _, tc := range cases {
+		got := reorderArgs(tc.in, boolFlags)
+		if len(got) != len(tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+				break
+			}
+		}
+	}
+}
+
+func TestReorderArgs_ParsesFlagAfterPositional(t *testing.T) {
+	fs := flag.NewFlagSet("fixture", flag.ContinueOnError)
+	logMsg := fs.String("log", "", "log message")
+	if err := fs.Parse(reorderArgs([]string{"/tmp/x", "--log=recorded"}, boolFlagNames(fs))); err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if *logMsg != "recorded" {
+		t.Errorf("expected the flag after the positional to be parsed, got %q", *logMsg)
+	}
+	if fs.NArg() != 1 || fs.Arg(0) != "/tmp/x" {
+		t.Errorf("expected the positional to survive, got %v", fs.Args())
+	}
+}
+
+// captureStdout redirects os.Stdout while fn runs and returns everything printed.
+func captureStdout(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	orig := os.Stdout
+	r, w, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		t.Fatalf("failed creating pipe: %v", pipeErr)
+	}
+	os.Stdout = w
+	runErr := fn()
+	os.Stdout = orig
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatalf("failed closing pipe writer: %v", closeErr)
+	}
+	out, readErr := io.ReadAll(r)
+	if readErr != nil {
+		t.Fatalf("failed reading pipe: %v", readErr)
+	}
+	if closeErr := r.Close(); closeErr != nil {
+		t.Fatalf("failed closing pipe reader: %v", closeErr)
+	}
+	return string(out), runErr
+}
+
+// =========================================================================
+// state: sync logs, status is read-only, --dir is a flag everywhere
+// =========================================================================
+
+func TestDispatchCommand_StateSyncRecordsLogAfterPositional(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := dispatchCommand("state", []string{"init", tmpDir}); err != nil {
+		t.Fatalf("state init failed: %v", err)
+	}
+
+	// The documented order places the directory before the flag.
+	if err := dispatchCommand("state", []string{"sync", tmpDir, "--log=finished PR 12"}); err != nil {
+		t.Fatalf("state sync failed: %v", err)
+	}
+
+	stateMD := filepath.Join(tmpDir, ".workingdir", "STATE.md")
+	content, err := os.ReadFile(stateMD)
+	if err != nil {
+		t.Fatalf("failed reading STATE.md: %v", err)
+	}
+	if !strings.Contains(string(content), "finished PR 12") {
+		t.Errorf("expected the --log message in STATE.md, got:\n%s", content)
+	}
+}
+
+func TestDispatchCommand_StateStatusDoesNotMutateLedger(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := dispatchCommand("state", []string{"init", tmpDir}); err != nil {
+		t.Fatalf("state init failed: %v", err)
+	}
+	stateMD := filepath.Join(tmpDir, ".workingdir", "STATE.md")
+	before, err := os.ReadFile(stateMD)
+	if err != nil {
+		t.Fatalf("failed reading STATE.md: %v", err)
+	}
+
+	out, statusErr := captureStdout(t, func() error {
+		return dispatchCommand("state", []string{"status", "--dir=" + tmpDir})
+	})
+	if statusErr != nil {
+		t.Fatalf("state status failed: %v", statusErr)
+	}
+	if !strings.Contains(out, "Praetor Session State") || !strings.Contains(out, "Open Bugs") {
+		t.Errorf("unexpected state status output:\n%s", out)
+	}
+
+	after, err := os.ReadFile(stateMD)
+	if err != nil {
+		t.Fatalf("failed re-reading STATE.md: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("state status mutated STATE.md:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestDispatchCommand_StateStatusRequiresWorkingDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := dispatchCommand("state", []string{"status", tmpDir}); err == nil {
+		t.Fatal("expected state status to fail when .workingdir is absent")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, ".workingdir")); !os.IsNotExist(err) {
+		t.Errorf("state status scaffolded .workingdir instead of reporting the error")
+	}
+}
+
+func TestDispatchCommand_StateTaskLifecycle(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := dispatchCommand("state", []string{"init", "--dir=" + tmpDir}); err != nil {
+		t.Fatalf("state init failed: %v", err)
+	}
+
+	if err := dispatchCommand("state", []string{"task", "add", "wire the gate", "--dir=" + tmpDir}); err != nil {
+		t.Fatalf("state task add failed: %v", err)
+	}
+	if err := dispatchCommand("state", []string{"task", "add", "second task", tmpDir}); err != nil {
+		t.Fatalf("state task add (positional dir) failed: %v", err)
+	}
+
+	listed, err := captureStdout(t, func() error {
+		return dispatchCommand("state", []string{"task", "list", "--dir=" + tmpDir})
+	})
+	if err != nil {
+		t.Fatalf("state task list failed: %v", err)
+	}
+	if !strings.Contains(listed, "wire the gate") || !strings.Contains(listed, "second task") {
+		t.Errorf("expected both tasks in the listing, got:\n%s", listed)
+	}
+
+	// Select by text: the seeded ledger already owns index 1.
+	if err := dispatchCommand("state", []string{"task", "complete", "wire the gate", "--dir=" + tmpDir}); err != nil {
+		t.Fatalf("state task complete failed: %v", err)
+	}
+	if err := dispatchCommand("state", []string{"task", "archive", "--dir=" + tmpDir}); err != nil {
+		t.Fatalf("state task archive failed: %v", err)
+	}
+
+	backlog, err := os.ReadFile(filepath.Join(tmpDir, ".workingdir", "BACKLOG.md"))
+	if err != nil {
+		t.Fatalf("failed reading BACKLOG.md: %v", err)
+	}
+	if !strings.Contains(string(backlog), "wire the gate") {
+		t.Errorf("expected the completed task in BACKLOG.md, got:\n%s", backlog)
+	}
+
+	// Negative: task add without a description
+	if err := dispatchCommand("state", []string{"task", "add", "--dir=" + tmpDir}); err == nil {
+		t.Fatal("expected an error when the task description is missing")
+	}
+	// Negative: unknown task action
+	if err := dispatchCommand("state", []string{"task", "bogus"}); err == nil {
+		t.Fatal("expected an error for an unknown task action")
+	}
+}
+
+func TestDispatchCommand_StateDirFlagIsNotADirectoryName(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := dispatchCommand("state", []string{"init", tmpDir}); err != nil {
+		t.Fatalf("state init failed: %v", err)
+	}
+	if err := dispatchCommand("state", []string{"bug", "add", "--title=Ledger bug", "--dir=" + tmpDir}); err != nil {
+		t.Fatalf("state bug add failed: %v", err)
+	}
+
+	// The documented form places --dir after the positional arguments.
+	if err := dispatchCommand("state", []string{"bug", "resolve", "BUG-001", "fixed upstream", "--dir=" + tmpDir}); err != nil {
+		t.Fatalf("state bug resolve failed: %v", err)
+	}
+
+	bugs, err := os.ReadFile(filepath.Join(tmpDir, ".workingdir", "BUGS.md"))
+	if err != nil {
+		t.Fatalf("failed reading BUGS.md: %v", err)
+	}
+	if !strings.Contains(string(bugs), "fixed upstream") {
+		t.Errorf("expected the resolution in the target ledger, got:\n%s", bugs)
+	}
+	// The literal flag must never become a directory name in the working directory.
+	if _, statErr := os.Stat("--dir=" + tmpDir); statErr == nil {
+		t.Errorf("a stray '--dir=...' directory was created")
+	}
+
+	// Negative: resolve without a resolution argument
+	if err := dispatchCommand("state", []string{"bug", "resolve", "BUG-001"}); err == nil {
+		t.Fatal("expected an error when the resolution argument is missing")
+	}
+}
+
+// =========================================================================
+// topology: no hard-coded dev root, flags honoured after a positional
+// =========================================================================
+
+func TestDispatchCommand_TopologyAuditReportsStrayFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	stray := filepath.Join(tmpDir, "CLAUDE.md")
+	if err := os.WriteFile(stray, []byte("# stray governance file\n"), 0o600); err != nil {
+		t.Fatalf("failed writing stray file: %v", err)
+	}
+
+	if err := dispatchCommand("topology", []string{"audit", "--dev-root=" + tmpDir}); err == nil {
+		t.Fatal("expected topology audit to fail when stray governance files exist")
+	}
+
+	// R1-56: the flag must still be honoured when it follows the positional dev root.
+	if err := dispatchCommand("topology", []string{"clean", tmpDir, "--dry-run=false"}); err != nil {
+		t.Fatalf("topology clean failed: %v", err)
+	}
+	if _, statErr := os.Stat(stray); !os.IsNotExist(statErr) {
+		t.Errorf("--dry-run=false after the positional dev root was ignored; %s still exists", stray)
+	}
+
+	// Positive: a clean tree audits successfully.
+	if err := dispatchCommand("topology", []string{"audit", tmpDir}); err != nil {
+		t.Fatalf("topology audit on a clean tree failed: %v", err)
+	}
+}
+
+func TestDefaultDevRoot_NeverReturnsAForeignPath(t *testing.T) {
+	// Boundary: no home directory at all must be an error, never a hard-coded path.
+	t.Setenv("HOME", "")
+	root, err := defaultDevRoot()
+	if err == nil {
+		t.Fatalf("expected an error without a usable home directory, got %q", root)
+	}
+	if strings.Contains(err.Error(), "/home/kilian") {
+		t.Errorf("error still references a workstation-specific path: %v", err)
+	}
+
+	// Positive: an explicit value always wins over the default.
+	explicit, err := resolveDevRoot("/srv/dev", nil)
+	if err != nil || explicit != "/srv/dev" {
+		t.Errorf("expected the explicit --dev-root to win, got %q (%v)", explicit, err)
+	}
+	// Boundary: the positional argument is the second choice.
+	positional, err := resolveDevRoot("", []string{"/srv/other"})
+	if err != nil || positional != "/srv/other" {
+		t.Errorf("expected the positional dev root, got %q (%v)", positional, err)
+	}
+}
+
+// =========================================================================
+// needs: --apply semantics and publishing safety
+// =========================================================================
+
+func newGitFixtureRepo(t *testing.T) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	gitDir := filepath.Join(tmpDir, ".git")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatalf("failed creating .git fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+		t.Fatalf("failed writing HEAD fixture: %v", err)
+	}
+	return tmpDir
+}
+
+func TestDispatchCommand_NeedsMigrateApplyFlagSemantics(t *testing.T) {
+	repo := newGitFixtureRepo(t)
+
+	// Negative: --apply together with an explicit --dry-run=true is a contradiction.
+	if err := dispatchCommand("needs", []string{"migrate", "--path=" + repo, "--apply", "--dry-run=true"}); err == nil {
+		t.Fatal("expected --apply with --dry-run=true to be rejected")
+	}
+
+	// Positive: without --apply the command stays a dry run and says so.
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("needs", []string{"migrate", "--path=" + repo})
+	})
+	if err != nil {
+		t.Fatalf("needs migrate dry run failed: %v", err)
+	}
+	if !strings.Contains(out, "Dry-run complete") {
+		t.Errorf("expected a dry-run notice, got:\n%s", out)
+	}
+	if strings.Contains(out, "--dry-run=false") {
+		t.Errorf("dry-run notice still advertises the removed --dry-run=false requirement:\n%s", out)
+	}
+}
+
+func TestDispatchCommand_NeedsEpicPublishSafety(t *testing.T) {
+	repo := newGitFixtureRepo(t)
+	// Keep the token lookup hermetic: no gh CLI invocation, no network.
+	t.Setenv("GITHUB_TOKEN", "test-token-not-used")
+
+	// Negative: fleet mode cannot resolve per-repository forge coordinates.
+	err := dispatchCommand("needs", []string{"epic", "--dev-dir=" + repo, "--publish"})
+	if err == nil {
+		t.Fatal("expected fleet publishing to be refused")
+	}
+	if !strings.Contains(err.Error(), "--dev-dir") {
+		t.Errorf("expected the refusal to name --dev-dir, got: %v", err)
+	}
+
+	// Negative: single-repo publishing requires explicit confirmation.
+	err = dispatchCommand("needs", []string{"epic", "--path=" + repo, "--publish", "--owner=acme", "--repo=widget"})
+	if err == nil {
+		t.Fatal("expected publishing without --yes to be refused")
+	}
+	if !strings.Contains(err.Error(), "acme/widget") {
+		t.Errorf("expected the refusal to print the resolved target, got: %v", err)
+	}
+
+	// Negative: --owner without --repo is incomplete.
+	err = dispatchCommand("needs", []string{"epic", "--path=" + repo, "--publish", "--owner=acme", "--yes"})
+	if err == nil {
+		t.Fatal("expected --owner without --repo to be refused")
+	}
+}
+
+func TestResolveRepoCoordinates_RejectsRepositoryNames(t *testing.T) {
+	ctx := context.Background()
+
+	// Negative: a bare repository name is not a path and must not be guessed into
+	// forge coordinates.
+	if _, _, err := resolveRepoCoordinates(ctx, "vmafx"); err == nil {
+		t.Fatal("expected a bare repository name to be rejected")
+	}
+
+	// Positive: a manifest in a real directory provides the coordinates.
+	repo := t.TempDir()
+	manifest := "version: 1\nrepository:\n  owner: acme\n  name: widget\n"
+	if err := os.WriteFile(filepath.Join(repo, ".standards.yaml"), []byte(manifest), 0o600); err != nil {
+		t.Fatalf("failed writing manifest: %v", err)
+	}
+	owner, name, err := resolveRepoCoordinates(ctx, repo)
+	if err != nil {
+		t.Fatalf("resolveRepoCoordinates failed: %v", err)
+	}
+	if owner != "acme" || name != "widget" {
+		t.Errorf("expected acme/widget, got %s/%s", owner, name)
+	}
+
+	// Boundary: a directory with neither a manifest nor an origin remote nor an
+	// <owner>/<repo> shaped path resolves to nothing rather than to a guessed owner.
+	unresolvable := filepath.Join(t.TempDir(), "dev", "widget")
+	if err := os.MkdirAll(unresolvable, 0o755); err != nil {
+		t.Fatalf("failed creating fixture: %v", err)
+	}
+	if _, _, err := resolveRepoCoordinates(ctx, unresolvable); err == nil {
+		t.Error("expected an unresolvable directory to produce an error")
+	}
+}
+
+// =========================================================================
+// worktree, gc and dogfood dispatch
+// =========================================================================
+
+func TestDispatchCommand_WorktreeArgumentHandling(t *testing.T) {
+	// Negative: `list` implements no positional arguments.
+	if err := dispatchCommand("worktree", []string{"list", "bogus"}); err == nil {
+		t.Fatal("expected an error for a trailing worktree list argument")
+	}
+	// Negative: `prune` implements no positional arguments either.
+	if err := dispatchCommand("worktree", []string{"prune", "bogus", "--path=" + t.TempDir()}); err == nil {
+		t.Fatal("expected an error for a trailing worktree prune argument")
+	}
+	// Negative: create requires a task id.
+	if err := dispatchCommand("worktree", []string{"create", "--path=" + t.TempDir()}); err == nil {
+		t.Fatal("expected an error when the task id is missing")
+	}
+	// Negative: remove requires a task id.
+	if err := dispatchCommand("worktree", []string{"remove", "--force", "--path=" + t.TempDir()}); err == nil {
+		t.Fatal("expected an error when the task id is missing")
+	}
+	// Boundary: help prints usage without an error.
+	if err := dispatchCommand("worktree", []string{"-h"}); err != nil {
+		t.Fatalf("worktree -h failed: %v", err)
+	}
+}
+
+func TestDispatchCommand_GCDefaultsToDryRun(t *testing.T) {
+	tmpDir := t.TempDir()
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("gc", []string{"--path=" + tmpDir})
+	})
+	if err != nil {
+		t.Fatalf("gc failed: %v", err)
+	}
+	if !strings.Contains(out, "DRY-RUN MODE") {
+		t.Errorf("expected gc to default to a dry run, got:\n%s", out)
+	}
+
+	// Negative: an unknown flag is rejected.
+	if err := dispatchCommand("gc", []string{"--not-a-flag"}); err == nil {
+		t.Fatal("expected an error for an unknown gc flag")
+	}
+}
+
+func TestDispatchCommand_Dogfood(t *testing.T) {
+	// Boundary: help exits through flag.ErrHelp without running the suite.
+	if err := dispatchCommand("dogfood", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("dogfood -h failed: %v", err)
+	}
+	// Negative: an unknown flag is rejected before any repository is touched.
+	if err := dispatchCommand("dogfood", []string{"--not-a-flag"}); err == nil {
+		t.Fatal("expected an error for an unknown dogfood flag")
+	}
+}
+
+func TestDispatchCommand_HarvestFleetOutput(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("harvest", []string{"fleet"})
+	})
+	if err != nil {
+		t.Fatalf("harvest fleet failed: %v", err)
+	}
+	if !strings.Contains(out, "Fleet Topology") || !strings.Contains(out, "cordanaLLM") {
+		t.Errorf("unexpected harvest fleet output:\n%s", out)
 	}
 }

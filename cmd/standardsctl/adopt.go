@@ -14,26 +14,84 @@ import (
 	"github.com/cordanaLLM/praetor/internal/harvester"
 )
 
-func reorderAdoptArgs(args []string) []string {
-	var flagArgs []string
-	var posArgs []string
+// boolFlagNames returns the names of every flag in fs whose value needs no separate
+// argument. It replaces the hand-maintained literal list that reorderAdoptArgs used to
+// carry, so adding a flag to a FlagSet can no longer desynchronise the reordering below.
+func boolFlagNames(fs *flag.FlagSet) map[string]bool {
+	names := make(map[string]bool)
+	fs.VisitAll(func(f *flag.Flag) {
+		if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && bf.IsBoolFlag() {
+			names[f.Name] = true
+		}
+	})
+	return names
+}
+
+// reorderArgs moves flags ahead of positional arguments. Go's flag package stops parsing
+// at the first non-flag argument, so without this the documented form
+// `state sync <dir> --log=msg` would silently drop the flag. Everything after a bare "--"
+// terminator stays positional.
+func reorderArgs(args []string, boolFlags map[string]bool) []string {
+	flagArgs := make([]string, 0, len(args))
+	posArgs := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
-		if strings.HasPrefix(args[i], "-") {
+		arg := args[i]
+		if arg == "--" {
+			posArgs = append(posArgs, args[i+1:]...)
+			break
+		}
+		if len(arg) < 2 || !strings.HasPrefix(arg, "-") {
+			posArgs = append(posArgs, arg)
+			continue
+		}
+		flagArgs = append(flagArgs, arg)
+		if i+1 < len(args) && flagNeedsValue(arg, args[i+1], boolFlags) {
+			i++
 			flagArgs = append(flagArgs, args[i])
-			if !strings.Contains(args[i], "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				if args[i] != "-dry-run" && args[i] != "--dry-run" &&
-					args[i] != "-force" && args[i] != "--force" &&
-					args[i] != "-record-baseline" && args[i] != "--record-baseline" &&
-					args[i] != "-all-missing" && args[i] != "--all-missing" {
-					i++
-					flagArgs = append(flagArgs, args[i])
-				}
-			}
-		} else {
-			posArgs = append(posArgs, args[i])
 		}
 	}
 	return append(flagArgs, posArgs...)
+}
+
+// flagNeedsValue reports whether arg consumes next as its value: only a non-boolean flag
+// written without "=" and followed by a non-flag token does.
+func flagNeedsValue(arg, next string, boolFlags map[string]bool) bool {
+	if strings.Contains(arg, "=") || strings.HasPrefix(next, "-") {
+		return false
+	}
+	return !boolFlags[strings.TrimLeft(arg, "-")]
+}
+
+// resolveHomeSubdir returns explicit when it is set, and otherwise joins segs onto the
+// user's home directory. It never degrades to a working-directory-relative path: when the
+// home directory cannot be resolved the caller gets an error naming the flag to pass
+// instead, rather than silently retargeting the command at the current directory.
+func resolveHomeSubdir(explicit, flagName string, segs ...string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory (pass %s explicitly): %w", flagName, err)
+	}
+	if home == "" {
+		return "", fmt.Errorf("home directory is empty: pass %s explicitly", flagName)
+	}
+	return filepath.Join(append([]string{home}, segs...)...), nil
+}
+
+// splitCommaList splits a comma-separated flag value, dropping empty entries.
+func splitCommaList(value string) []string {
+	if value == "" {
+		return nil
+	}
+	items := make([]string, 0, strings.Count(value, ",")+1)
+	for _, f := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(f); trimmed != "" {
+			items = append(items, trimmed)
+		}
+	}
+	return items
 }
 
 func runAdopt(args []string) error {
@@ -43,10 +101,11 @@ func runAdopt(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "Simulate adoption without writing files")
 	force := fs.Bool("force", false, "Overwrite existing standards configurations")
 	recordBaseline := fs.Bool("record-baseline", true, "Record legacy debt into .standards-baseline.json")
-	allMissing := fs.Bool("all-missing", false, "Adopt all detected unmanaged repositories in ~/dev")
+	allMissing := fs.Bool("all-missing", false, "Adopt all detected unmanaged repositories under --dev-dir")
+	devDir := fs.String("dev-dir", "", "Root directory scanned by --all-missing (default: $HOME/dev)")
 	path := fs.String("path", ".", "Target repository path to adopt")
 
-	if err := fs.Parse(reorderAdoptArgs(args)); err != nil {
+	if err := fs.Parse(reorderArgs(args, boolFlagNames(fs))); err != nil {
 		return err
 	}
 
@@ -57,24 +116,18 @@ func runAdopt(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	homeDir, _ := os.UserHomeDir()
 	if *allMissing {
-		return batchAdoptMissing(ctx, filepath.Join(homeDir, "dev"), *dryRun, *force, *recordBaseline)
-	}
-
-	var facetList []string
-	if *facets != "" {
-		for _, f := range strings.Split(*facets, ",") {
-			if trimmed := strings.TrimSpace(f); trimmed != "" {
-				facetList = append(facetList, trimmed)
-			}
+		root, err := resolveHomeSubdir(*devDir, "--dev-dir", "dev")
+		if err != nil {
+			return fmt.Errorf("adopt --all-missing: %w", err)
 		}
+		return batchAdoptMissing(ctx, root, *dryRun, *force, *recordBaseline)
 	}
 
 	opts := adopt.AdoptOptions{
 		Path:           *path,
 		Profile:        *profile,
-		Facets:         facetList,
+		Facets:         splitCommaList(*facets),
 		DryRun:         *dryRun,
 		Force:          *force,
 		RecordBaseline: *recordBaseline,
