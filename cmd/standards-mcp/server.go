@@ -273,25 +273,66 @@ func (s *Server) createAuditTool() (mcp.Tool, error) {
 				Type:        "string",
 				Description: "Path to canonical AGENTS.md (default: AGENTS.md)",
 			},
+			"catalog_root": {
+				Type: "string", Description: "Root containing pinned .config/archetypes (default: server root)",
+			},
+			"fleet_config_path": {
+				Type: "string", Description: "Explicit fleet complexity policy file for this audit",
+			},
+			"organization_config_path": {
+				Type: "string", Description: "Explicit organization complexity policy file for this audit",
+			},
+			"deployment_config_path": {
+				Type: "string", Description: "Explicit deployment complexity policy file for this audit",
+			},
+			"workstation_config_path": {
+				Type: "string", Description: "Explicit workstation complexity policy file for this audit",
+			},
 		},
 	}
 
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
-		var p auditPaths
-		var err error
-		if p.manifest, err = s.resolvePath(args, "config_path", ".standards.yaml"); err != nil {
-			return mcp.ErrorResult(err.Error()), nil
-		}
-		if p.baseline, err = s.resolvePath(args, "baseline_path", ".standards-baseline.json"); err != nil {
-			return mcp.ErrorResult(err.Error()), nil
-		}
-		if p.agents, err = s.resolvePath(args, "agents_path", "AGENTS.md"); err != nil {
+		p, err := s.resolveAuditPaths(args)
+		if err != nil {
 			return mcp.ErrorResult(err.Error()), nil
 		}
 		return s.runAuditGates(ctx, p), nil
 	}
 
 	return mcp.NewReadOnlyTool("standards_audit", "Audit repository against declared HISS-16 standards", schema, handler)
+}
+
+// resolveAuditPaths preserves confinement for both existing and optional audit inputs.
+// An omitted external policy path contributes no layer and performs no discovery.
+func (s *Server) resolveAuditPaths(args map[string]any) (auditPaths, error) {
+	var p auditPaths
+	inputs := []struct {
+		key, fallback string
+		target        *string
+	}{
+		{"config_path", ".standards.yaml", &p.manifest},
+		{"baseline_path", ".standards-baseline.json", &p.baseline},
+		{"agents_path", "AGENTS.md", &p.agents},
+		{"catalog_root", "", &p.policy.CatalogRoot},
+		{"fleet_config_path", "", &p.policy.FleetPath},
+		{"organization_config_path", "", &p.policy.OrganizationPath},
+		{"deployment_config_path", "", &p.policy.DeploymentPath},
+		{"workstation_config_path", "", &p.policy.WorkstationPath},
+	}
+	for _, input := range inputs {
+		var path string
+		var err error
+		if input.fallback == "" {
+			path, err = s.resolveOptionalPath(args, input.key)
+		} else {
+			path, err = s.resolvePath(args, input.key, input.fallback)
+		}
+		if err != nil {
+			return p, err
+		}
+		*input.target = path
+	}
+	return p, nil
 }
 
 // createPlanTool builds the read-only standards_plan tool.

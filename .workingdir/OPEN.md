@@ -33,3 +33,4 @@
 - [ ] Bootstrap Codex Claude Gemini AGY and independent clients from one shared tool registry with native discovery trust and tool-call evidence
 - [ ] Publish independently versioned signed model provider template and config data with upstream provenance incremental downloads and rollback
 - [ ] Resolve shared effective management policy with provenance and explicit fleet organization deployment workstation and repository layers for CLI MCP container bot plugin and private GitOps consumers
+- [x] Resolve audit policy once for CLI and MCP and materialize verified pinned catalogs during adoption (completed: 2026-09-12)

@@ -182,8 +182,7 @@ func TestServer_Positive_AdoptDryRunAndApply(t *testing.T) {
 
 func TestServer_Negative_AdoptConfinement(t *testing.T) {
 	srv, _ := newFixtureServer(t)
-	other := t.TempDir()
-	initGitRepo(t, other)
+	other := newFixtureRepo(t)
 
 	blocked := callTool(t, srv, "standards_adopt", map[string]any{"path": other, "dry_run": true})
 	expectError(t, "adopt outside", blocked, "outside the server root")
@@ -200,6 +199,11 @@ func TestServer_Negative_AdoptConfinement(t *testing.T) {
 	}
 	allowed := callTool(t, open, "standards_adopt", map[string]any{"path": other, "dry_run": true})
 	expectText(t, "adopt outside allowed", allowed, "SIMULATED (DRY RUN)")
+
+	unpinned := t.TempDir()
+	initGitRepo(t, unpinned)
+	missing := callTool(t, open, "standards_adopt", map[string]any{"path": unpinned, "dry_run": true})
+	expectError(t, "default baseline requires pins", missing, "new lock pins require an explicit verified lock source root")
 }
 
 // ---- dogfood --------------------------------------------------------------------------------

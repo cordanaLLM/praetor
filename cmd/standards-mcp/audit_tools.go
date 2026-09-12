@@ -26,6 +26,7 @@ type auditPaths struct {
 	manifest string
 	baseline string
 	agents   string
+	policy   config.EffectiveOptions
 }
 
 // auditGate is one governance check: it returns its [PASS] line, or an error whose
@@ -38,18 +39,23 @@ type auditGate func(ctx context.Context) (string, error)
 // of an unconditional compliance claim.
 func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResult {
 	var report strings.Builder
-	report.WriteString("=== cordanaLLM/praetor Governance Audit ===\n")
 
-	manifest, err := config.LoadManifest(p.manifest)
+	p.policy.Root, p.policy.ManifestPath, p.policy.Audit = s.rootDir, p.manifest, true
+	effective, err := config.LoadEffectivePolicyContext(ctx, p.policy)
 	if err != nil {
-		return mcp.ErrorResult(fmt.Sprintf("[FAIL] Manifest audit failed: %v", err))
+		return mcp.ErrorResult(fmt.Sprintf("[FAIL] Effective policy audit failed: %v", err))
 	}
+	manifest := effective.Manifest
+	fmt.Fprintf(&report, "=== %s/%s Governance Audit ===\n", manifest.Repository.Owner, manifest.Repository.Name)
 	fmt.Fprintf(&report, "[PASS] Manifest verified: %s/%s (Version %d)\n",
 		manifest.Repository.Owner, manifest.Repository.Name, manifest.Version)
+	fmt.Fprintf(&report, "[PASS] %s\n", effective.Evidence())
 
 	gates := []auditGate{
 		func(ctx context.Context) (string, error) { return auditLockfile(ctx, s.rootDir, manifest) },
-		func(ctx context.Context) (string, error) { return auditBaselineRatchet(ctx, s.rootDir, p.baseline) },
+		func(ctx context.Context) (string, error) {
+			return auditBaselineRatchetWithPolicy(ctx, s.rootDir, p.baseline, effective.Policy.Complexity.MaxFuncLOC)
+		},
 		func(ctx context.Context) (string, error) { return auditContextSync(ctx, p.agents, s.rootDir) },
 		func(context.Context) (string, error) { return auditBranchProtection(manifest, s.rootDir) },
 		func(context.Context) (string, error) { return auditLabelTaxonomy(s.rootDir) },
@@ -88,12 +94,16 @@ func auditLockfile(ctx context.Context, root string, manifest *config.Manifest) 
 // auditBaselineRatchet loads the debt baseline, scans the tree for HISS violations and
 // enforces the monotonic ratchet exactly like the CLI audit does.
 func auditBaselineRatchet(ctx context.Context, root, baselinePath string) (string, error) {
+	return auditBaselineRatchetWithPolicy(ctx, root, baselinePath, config.AuditMaxFuncLOC)
+}
+
+func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath string, maxFuncLOC int) (string, error) {
 	base, err := baseline.LoadBaseline(baselinePath)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
 
-	scanRep, err := hiss.Scan(ctx, root, hiss.ScanOptions{})
+	scanRep, err := hiss.Scan(ctx, root, hiss.ScanOptions{MaxFuncLOC: maxFuncLOC})
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}

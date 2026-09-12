@@ -13,6 +13,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
@@ -43,6 +44,8 @@ type auditOptions struct {
 	agentsPath   string
 	baseRef      string
 	touched      []string
+	policy       config.EffectiveOptions
+	effective    *config.EffectivePolicy
 }
 
 func runAudit(args []string) error {
@@ -55,12 +58,15 @@ func runAudit(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), auditTimeout)
 	defer cancel()
 
-	manifest, err := auditManifestAndLockfile(opts.manifestPath)
+	effective, err := auditManifestAndLockfile(ctx, opts)
 	if err != nil {
 		return err
 	}
+	opts.effective = effective
+	manifest := effective.Manifest
 
 	fmt.Printf("=== %s/%s Governance Audit ===\n", manifest.Repository.Owner, manifest.Repository.Name)
+	fmt.Printf("[PASS] %s\n", effective.Evidence())
 
 	if err := runAuditGates(ctx, manifest, opts); err != nil {
 		return err
@@ -79,6 +85,12 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 	agentsPath := fs.String("agents", "", "Path to AGENTS.md (default: <root>/AGENTS.md)")
 	baseRef := fs.String("base", "", "Git ref the change set is compared against (e.g. origin/main); enables the touched-file clean rule over that range and the baseline growth guard")
 	touched := fs.String("touched", "", "Comma-separated files, relative to the audited root, to treat as touched instead of asking git")
+	var policy config.EffectiveOptions
+	fs.StringVar(&policy.CatalogRoot, "catalog-root", "", "Root containing pinned .config/archetypes (default: audited root)")
+	fs.StringVar(&policy.FleetPath, "fleet-config", "", "Explicit fleet complexity policy file")
+	fs.StringVar(&policy.OrganizationPath, "organization-config", "", "Explicit organization complexity policy file")
+	fs.StringVar(&policy.DeploymentPath, "deployment-config", "", "Explicit deployment complexity policy file")
+	fs.StringVar(&policy.WorkstationPath, "workstation-config", "", "Explicit workstation complexity policy file")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -88,6 +100,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 	}
 
 	rootDir := filepath.Dir(*manifestPath)
+	policy.Root, policy.ManifestPath, policy.Audit = rootDir, *manifestPath, true
 	return &auditOptions{
 		rootDir:      rootDir,
 		manifestPath: *manifestPath,
@@ -95,6 +108,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 		agentsPath:   resolveCompanion(rootDir, *agentsPath, "AGENTS.md"),
 		baseRef:      *baseRef,
 		touched:      splitCSV(*touched),
+		policy:       policy,
 	}, nil
 }
 
@@ -131,20 +145,26 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 	return nil
 }
 
-func auditManifestAndLockfile(manifestPath string) (*config.Manifest, error) {
-	manifest, err := config.LoadManifest(manifestPath)
+func auditManifestAndLockfile(ctx context.Context, opts *auditOptions) (*config.EffectivePolicy, error) {
+	manifestBytes, err := contextopt.ReadSnapshot(ctx, opts.manifestPath)
 	if err != nil {
 		return nil, fmt.Errorf("[FAIL] Manifest audit failed: %w", err)
 	}
-	fmt.Printf("[PASS] Manifest verified: %s/%s (Version %d)\n", manifest.Repository.Owner, manifest.Repository.Name, manifest.Version)
-	fmt.Printf("       Profiles: %v | Facets: %v\n", manifest.Profiles, manifest.Facets)
-
-	// Any stat failure is a failure: an unreadable lockfile must not print [PASS].
-	lockPath := filepath.Join(filepath.Dir(manifestPath), ".standards.lock")
-	if _, err := os.Stat(lockPath); err != nil {
+	lockPath := filepath.Join(opts.rootDir, ".standards.lock")
+	lockBytes, err := contextopt.ReadSnapshot(ctx, lockPath)
+	if err != nil {
 		return nil, fmt.Errorf("[FAIL] .standards.lock is missing or unreadable: %w", err)
 	}
-	return manifest, nil
+	// Resolve exactly the snapshots just read; diagnostics and scan policy cannot
+	// accidentally describe separate reads of a concurrently changed input file.
+	effective, err := config.LoadEffectivePolicyInputsContext(ctx, opts.policy, manifestBytes, lockBytes)
+	if err != nil {
+		return nil, fmt.Errorf("[FAIL] Effective policy audit failed: %w", err)
+	}
+	manifest := effective.Manifest
+	fmt.Printf("[PASS] Manifest verified: %s/%s (Version %d)\n", manifest.Repository.Owner, manifest.Repository.Name, manifest.Version)
+	fmt.Printf("       Profiles: %v | Facets: %v\n", manifest.Profiles, manifest.Facets)
+	return effective, nil
 }
 
 // auditBaselineAndInvariants scans the audited root, evaluates the HISS-13 ratchet with
@@ -156,7 +176,11 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		return fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
 
-	scanRep, err := hiss.Scan(ctx, opts.rootDir, hiss.ScanOptions{})
+	scanOpts := hiss.ScanOptions{MaxFuncLOC: config.AuditMaxFuncLOC}
+	if opts.effective != nil {
+		scanOpts.MaxFuncLOC = opts.effective.Policy.Complexity.MaxFuncLOC
+	}
+	scanRep, err := hiss.Scan(ctx, opts.rootDir, scanOpts)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}

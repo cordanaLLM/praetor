@@ -128,16 +128,17 @@ func newFixtureRepo(t *testing.T) string {
 	initGitRepo(t, root)
 
 	files := map[string]string{
-		"AGENTS.md":                  fixtureAgentsMD,
-		".standards.yaml":            "version: 1\nrepository:\n  owner: \"fixture\"\n  name: \"repo\"\nprofiles:\n  - \"framework\"\nfacets: []\n",
-		".standards.lock":            validAuditLock(t),
-		".standards-baseline.json":   `{"version":1,"generated_at":"2026-01-01T00:00:00Z","repository":"fixture/repo","commit_sha":"","total_infractions":0,"infractions":[]}` + "\n",
-		".config/labels.yaml":        "labels: []\n",
-		".github/rulesets/main.json": "{}\n",
-		"lefthook.yml":               "pre-commit:\n  commands: {}\n",
-		"go.mod":                     "module fixture\n\ngo 1.27\n",
-		"main.go":                    fixtureMainGo,
-		"complex.go":                 fixtureComplexGo,
+		"AGENTS.md":                         fixtureAgentsMD,
+		".standards.yaml":                   "version: 1\nrepository:\n  owner: \"fixture\"\n  name: \"repo\"\nprofiles:\n  - \"framework\"\nfacets: []\n",
+		".standards.lock":                   validAuditLock(t),
+		".config/archetypes/framework.yaml": auditLockSource,
+		".standards-baseline.json":          `{"version":1,"generated_at":"2026-01-01T00:00:00Z","repository":"fixture/repo","commit_sha":"","total_infractions":0,"infractions":[]}` + "\n",
+		".config/labels.yaml":               "labels: []\n",
+		".github/rulesets/main.json":        "{}\n",
+		"lefthook.yml":                      "pre-commit:\n  commands: {}\n",
+		"go.mod":                            "module fixture\n\ngo 1.27\n",
+		"main.go":                           fixtureMainGo,
+		"complex.go":                        fixtureComplexGo,
 	}
 	for rel, content := range files {
 		writeFixtureFile(t, root, rel, content)
@@ -503,13 +504,13 @@ func TestServer_Negative_PlanDriftAndAuditFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	audit = callTool(t, srv, "standards_audit", nil)
-	expectError(t, "audit lock", audit, "[FAIL] .standards.lock is missing")
+	expectError(t, "audit lock", audit, "[FAIL] Effective policy audit failed")
 	plan = callTool(t, srv, "standards_plan", nil)
 	expectText(t, "plan missing", plan, "[DRIFT] Missing baseline files: .standards.lock")
 	writeFixtureFile(t, root, ".standards.lock", validAuditLock(t))
 
 	bad := callTool(t, srv, "standards_audit", map[string]any{"config_path": "nonexistent.yaml"})
-	expectError(t, "audit manifest", bad, "[FAIL] Manifest audit failed")
+	expectError(t, "audit manifest", bad, "[FAIL] Effective policy audit failed")
 	escaped := callTool(t, srv, "standards_audit", map[string]any{"config_path": "../outside.yaml"})
 	expectError(t, "audit escape", escaped, "outside the server root")
 }
@@ -523,7 +524,7 @@ func TestServer_Boundary_AuditLockfileIsDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	audit := callTool(t, srv, "standards_audit", nil)
-	expectError(t, "audit lock dir", audit, "[FAIL] .standards.lock is a directory")
+	expectError(t, "audit lock dir", audit, "source must be regular")
 }
 
 // ---- inspect_symbols ---------------------------------------------------------------------------

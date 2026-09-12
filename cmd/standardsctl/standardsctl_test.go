@@ -370,7 +370,7 @@ func TestDispatchCommand_AdoptPlanSyncInitHelp(t *testing.T) {
 }
 
 func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := newAuditFixture(t).dir
 
 	// Paperclip help
 	if err := dispatchCommand("paperclip", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
@@ -419,6 +419,15 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 	if err := dispatchCommand("adopt", []string{"--not-a-flag"}); err == nil {
 		t.Fatal("expected an error for an unknown adopt flag")
 	}
+}
+
+func TestDispatchCommand_AdoptDryRunBaselineRequiresPins(t *testing.T) {
+	dir := t.TempDir()
+	writeFixtureFile(t, dir, ".git/HEAD", "ref: refs/heads/main\n")
+	_, err := captureStdout(t, func() error {
+		return dispatchCommand("adopt", []string{"--dry-run", "--path=" + dir, "--profile=framework"})
+	})
+	mustErrContain(t, err, "new lock pins require an explicit verified lock source root")
 }
 
 func TestDispatchCommand_IssueReconcile(t *testing.T) {

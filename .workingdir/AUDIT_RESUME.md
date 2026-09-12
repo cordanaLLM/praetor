@@ -5,29 +5,41 @@
 
 ## Current continuation — verification and shared management (2026-09-12)
 
-Read the current section of [GAPS_AUDIT.md](GAPS_AUDIT.md) first. The latest
-uncommitted slice repairs lint/security and error integrity, unifies snapshot
-writes/Go requirement parsing/context rendering, and adds tested shared-registry
-client preparation/application. Integrated `make -k verify-all` passed on source
-`af5379e9306b2ea1b75868e957439a7cbc26a86e5d05ac98a1dcf9216f85169f`:
-51 Go package race suites, fresh MCP, lint/security/vulnerability scans, audits
-and hooks. Final evidence is `routing-lint-20260912/verify-all-checkpoint.log`.
-Source verification, installation and native trust remain distinct stages.
+Read the current section of [GAPS_AUDIT.md](GAPS_AUDIT.md) first. Public checkpoint
+`54bae4f` repairs lint/security and error integrity, unifies snapshot writes,
+Go requirement parsing and context rendering, and adds shared-registry client
+preparation/application. It was pushed through normal hooks and installed with
+verified binary hashes. Public `b99e921` then repaired hosted CI's missing
+Lefthook installation using a verified pinned build toolchain. Hosted rerun is
+still queued at this writing; the fresh equivalent local gate passed.
+
+The next integrated slice adds [effective audit policy](../docs/guides/effective-policy.md)
+for CLI/MCP and offline adoption of exact pinned profiles. Final source SHA256:
+`00598e704cf441c74a973a96746409a07ea1304c2a45c4f29687b92e108ff3f8`.
+`make -k verify-all` passed on frozen source, including 51 Go package race suites,
+fresh MCP, lint/security/vulnerability scans, audits and hooks. Final evidence:
+`effective-policy-20260912/verify-all-shipping.log`. Dry-run and apply use the
+same policy for baseline counts; prospective catalog conflicts fail before
+catalog writes. Source verification, installation and native trust remain
+distinct stages.
 
 The owner expanded this into configurable global management across clients,
 containers, bots, plugins and private GitOps forks. Follow the
 [client bootstrap guide](../docs/guides/client-bootstrap.md) and
 [compact management data design](../docs/research/compact-management-data.md).
-Global effective policy, signed independent data updates, lazy shared tool
-discovery and general dispatch enforcement remain open. Native Codex inspection
+Only audit function-length enforcement consumes the new shared policy. Other
+policy consumers, signed independent data updates, lazy shared tool discovery
+and general dispatch enforcement remain open. Native Codex inspection
 confirmed the project PreToolUse hook is enabled but untrusted; no repository
 Stop gate is active. One real AGY/Gemini task ran, but its token usage included
 substantial unaccounted client context.
 
-All current changes are on `checkpoint/deep-audit-2026-09-12`, based on public
-checkpoint `ccd4786`. Preserve untracked `.standards-receipt.json`. The owner
-fork is at `1f9041f7` and must retain exactly its four reviewed config overlays
-when synchronized after the next validated public checkpoint.
+The policy slice was prepared on `feat/effective-policy-20260912` from public
+`b99e921` for integration into `checkpoint/deep-audit-2026-09-12`. Preserve the
+root checkout's untracked `.standards-receipt.json`. The owner fork was pushed
+and activated at `a709a73`, based on public `54bae4f`, with exactly four reviewed
+config overlays. Its next synchronization must include the CI fix and policy
+slice while retaining that boundary.
 
 ## Previous checkpoint — ledger repair and gaps audit
 

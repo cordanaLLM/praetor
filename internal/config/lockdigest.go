@@ -12,8 +12,6 @@ import (
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -110,40 +108,6 @@ func fileDigest(ctx context.Context, path string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// indexArchetypes maps the declared id of every archetype YAML in dir to its path.
-func indexArchetypes(ctx context.Context, root, dir string) (map[string]string, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("read archetype directory %s: %w", dir, err)
-	}
-	if len(entries) > maxLockEntries {
-		return nil, fmt.Errorf("archetype directory %s exceeds %d entries", dir, maxLockEntries)
-	}
-	index := make(map[string]string, len(entries))
-	for i := 0; i < len(entries) && i < maxLockEntries; i++ {
-		name := entries[i].Name()
-		if entries[i].IsDir() || !strings.HasSuffix(name, ".yaml") {
-			continue
-		}
-		path, err := confinedArchetypePath(root, dir, name)
-		if err != nil {
-			return nil, err
-		}
-		id, idErr := archetypeID(ctx, path)
-		if idErr != nil {
-			return nil, idErr
-		}
-		if _, duplicate := index[id]; duplicate {
-			return nil, fmt.Errorf("duplicate archetype ID %q in %s", id, dir)
-		}
-		index[id] = path
-	}
-	return index, nil
-}
-
 func confinedArchetypePath(root, dir, name string) (string, error) {
 	rel, err := filepath.Rel(root, filepath.Join(dir, name))
 	if err != nil {
@@ -156,16 +120,17 @@ func confinedArchetypePath(root, dir, name string) (string, error) {
 	return path, nil
 }
 
-// archetypeID reads the declared id of an archetype file, defaulting to its base name.
-func archetypeID(ctx context.Context, path string) (string, error) {
-	data, err := readLockSource(ctx, path)
+// parseArchetypeID uses the same bounded document parser for on-disk and planned
+// sources, defaulting a missing ID to the filename as before.
+func parseArchetypeID(ctx context.Context, path string, data []byte) (string, error) {
+	node, err := decodePolicyDocument(ctx, data)
 	if err != nil {
-		return "", fmt.Errorf("read archetype %s: %w", path, err)
+		return "", fmt.Errorf("parse archetype %s: %w", path, err)
 	}
 	var doc struct {
 		ID string `yaml:"id"`
 	}
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := node.Decode(&doc); err != nil {
 		return "", fmt.Errorf("parse archetype %s: %w", path, err)
 	}
 	if strings.TrimSpace(doc.ID) == "" {
@@ -238,14 +203,7 @@ func optionalArchetypeIndex(ctx context.Context, root, rel string) (map[string]s
 	if err != nil {
 		return nil, err
 	}
-	_, err = os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("inspect archetype directory %s: %w", path, err)
-	}
-	return indexArchetypes(ctx, root, path)
+	return indexArchetypesWithSnapshots(ctx, root, path, nil, true)
 }
 
 // readLockSource refuses nonregular inputs before opening them, bounds the read,

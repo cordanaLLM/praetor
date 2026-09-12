@@ -101,6 +101,7 @@ type adoptSession struct {
 	facets   []string
 	opts     AdoptOptions
 	report   *AdoptReport
+	policy   *config.EffectivePolicy
 }
 
 // adoptStep is one reconciliation step of the adoption chain.
@@ -251,6 +252,7 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 	steps := []adoptStep{
 		reconcileManifest,
 		reconcileLockfile,
+		reconcilePolicyCatalog,
 		reconcileBaseline,
 		reconcileAgentHarness,
 		reconcileDevContainer,
@@ -289,25 +291,15 @@ func reconcileManifest(ctx context.Context, s *adoptSession) error {
 		s.report.recordReconciled(manifestFile, "Existing standards manifest verified present")
 		return nil
 	}
-	owner := resolveOwner(ctx, s.repoPath)
-	manifest := config.Manifest{
-		Version: 1,
-		Repository: config.RepositoryMetadata{
-			Owner:      owner,
-			Name:       s.repoName,
-			Visibility: "public",
-		},
-		Profiles: []string{s.arch},
-		Facets:   s.facets,
-	}
-	data, err := yaml.Marshal(&manifest)
+	manifest := newAdoptionManifest(ctx, s)
+	data, err := yaml.Marshal(manifest)
 	if err != nil {
 		return fmt.Errorf("marshal manifest: %w", err)
 	}
 	if err := s.write(full, data, filePerm); err != nil {
 		return err
 	}
-	s.report.recordCreated(manifestFile, fmt.Sprintf("Scaffolded standards manifest (Owner: %s, Profile: %s)", owner, s.arch))
+	s.report.recordCreated(manifestFile, fmt.Sprintf("Scaffolded standards manifest (Owner: %s, Profile: %s)", manifest.Repository.Owner, s.arch))
 	return nil
 }
 
@@ -325,7 +317,7 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) error {
 
 	base := &baseline.Baseline{Version: 1, Infractions: make([]baseline.Infraction, 0)}
 	if s.opts.RecordBaseline {
-		if err := scanLegacyDebt(ctx, s.repoPath, base, s.report); err != nil {
+		if err := scanLegacyDebt(ctx, s.repoPath, base, s.report, adoptionScanLimit(s)); err != nil {
 			return err
 		}
 	}
@@ -359,12 +351,12 @@ func (s *adoptSession) verifyExistingBaseline(full string) error {
 
 // scanLegacyDebt fills base with the current HISS infractions of repoPath. The scan is
 // bounded by defaultTimeout and derived from the caller's context.
-func scanLegacyDebt(ctx context.Context, repoPath string, base *baseline.Baseline, report *AdoptReport) error {
+func scanLegacyDebt(ctx context.Context, repoPath string, base *baseline.Baseline, report *AdoptReport, maxFuncLOC int) error {
 	scanCtx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
 
 	scanRep, err := hiss.Scan(scanCtx, repoPath, hiss.ScanOptions{
-		MaxFuncLOC: defaultMaxFuncLOC,
+		MaxFuncLOC: maxFuncLOC,
 		Cap:        maxInfractionsCap,
 	})
 	if err != nil {

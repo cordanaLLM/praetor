@@ -9,9 +9,30 @@ compares maintained libraries and standard-library alternatives against these
 failures, with pinned sources and migration acceptance cases. Research is
 complete; dependency adoption remains open.
 
-## Current continuation: verification repair and shared client preparation
+## Current continuation: shared effective audit policy and offline adoption
 
-The in-flight continuation fixes repository lint/security findings without new
+The shared [effective policy resolver](../docs/guides/effective-policy.md) now
+drives CLI and MCP audit function-length enforcement. It combines verified
+profile/facet pins, explicit fleet/organization/deployment/workstation inputs,
+repository overrides and the preserved audit ceiling. Identical snapshots
+produce identical CLI/MCP provenance digests. Adoption materializes exact
+selected profiles, preflights the prospective catalog and can repeat offline.
+Both dry-run baseline estimates and actual baseline recording use this resolver.
+
+The final frozen-source `make -k verify-all` passed: 51 Go package race suites,
+35 fresh MCP checks, lint, security, vulnerabilities, audits and hooks. Source
+SHA256: `00598e704cf441c74a973a96746409a07ea1304c2a45c4f29687b92e108ff3f8`.
+Evidence: `effective-policy-20260912/verify-all-shipping.log`. Earlier failed
+fixtures and pre-fix review reproductions are retained separately.
+
+This does not activate global services: LSP, public-dogfood verification and
+other analysis paths still need migration. Only `max_func_loc` is injected;
+other complexity values are resolved but not yet consumed by separate linters.
+Routing, budgets, signed data updates and native client activation remain open.
+
+## Shipped checkpoint: verification repair and shared client preparation
+
+Public checkpoint `54bae4f` fixes repository lint/security findings without new
 exclusions, propagates previously swallowed I/O/transport errors and consolidates
 bounded file writes, Go manifest parsing and agent-context rendering. Integrated
 `make -k verify-all` passed with exit 0: all 51 Go package race suites, fresh MCP
@@ -42,16 +63,18 @@ were independently checked.
 Global management requirements span workstation/IDE clients, containers, bots,
 plugins and private GitOps forks. The [compact data research](../docs/research/compact-management-data.md)
 retains measured lossless compression and distinguishes it from prompt-token
-savings. Layered effective policy, independently signed data updates, native lazy
-tool selection and central dispatch admission are still implementation work.
-The next policy slice extends `internal/config` and migrates real consumers;
-it must preserve existing stricter scan limits rather than silently relaxing them.
+savings. The first layered policy consumers are described above; independently
+signed data updates, native lazy tool selection and central dispatch admission
+are still implementation work.
 
 Current private evidence is under the continuation audit root's
 `routing-lint-20260912/`, including review reproductions, scoped race/lint/security
 logs, real AGY usage, compression round trips and native hook inspection. Local
-installation is recorded separately after the verified commit; passing source
-verification alone does not establish an installed client version.
+installation from `54bae4f` has verified readback and a retained rollback copy.
+The owner fork is pushed at `a709a73` with exactly four config overlays. Hosted
+CI exposed a missing Lefthook installation; public `b99e921` fixes it and passes
+the equivalent local gate. Its hosted rerun remains queued at this writing.
+Passing source verification alone does not establish an installed client version.
 
 ## Previous checkpoint: ledger repair completed
 

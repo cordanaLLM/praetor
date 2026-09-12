@@ -115,10 +115,10 @@ func Join(a, b *ResolvedPolicy) *ResolvedPolicy {
 		return DefaultPolicy()
 	}
 	if a == nil {
-		return b
+		return clonePolicy(b)
 	}
 	if b == nil {
-		return a
+		return clonePolicy(a)
 	}
 
 	res := &ResolvedPolicy{}
@@ -145,6 +145,13 @@ func Join(a, b *ResolvedPolicy) *ResolvedPolicy {
 	res.DevFeatures = unionStrings(a.DevFeatures, b.DevFeatures)
 
 	return res
+}
+
+func clonePolicy(p *ResolvedPolicy) *ResolvedPolicy {
+	clone := *p
+	clone.Linters = append([]string(nil), p.Linters...)
+	clone.DevFeatures = append([]string(nil), p.DevFeatures...)
+	return &clone
 }
 
 // ApplyOverrides applies project-level overrides on top of the resolved policy,

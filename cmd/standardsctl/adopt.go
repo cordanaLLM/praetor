@@ -107,7 +107,7 @@ func runAdopt(args []string) error {
 	facets := fs.String("facets", "", "Comma-separated list of facets")
 	dryRun := fs.Bool("dry-run", false, "Simulate adoption without writing files")
 	force := fs.Bool("force", false, "Overwrite existing standards configurations")
-	recordBaseline := fs.Bool("record-baseline", true, "Record legacy debt into .standards-baseline.json")
+	recordBaseline := fs.Bool("record-baseline", true, "Record or estimate legacy debt using verified local pins and catalog, or --lock-source-root (including --dry-run)")
 	lockSource := fs.String("lock-source-root", "", "Praetor source bundle with validated pins and local archetypes for missing lockfiles")
 	allMissing := fs.Bool("all-missing", false, "Adopt all detected unmanaged repositories under --dev-dir")
 	devDir := fs.String("dev-dir", "", "Root directory scanned by --all-missing (default: $HOME/dev)")
