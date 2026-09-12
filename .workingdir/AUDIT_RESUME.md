@@ -65,6 +65,14 @@ No planted false finding was ever accepted across 58 verification batches.
 - [~] **Wave A** in two halves of 11 groups (`wf2-run.mjs` with `args.subset`); each half is followed by its own merge.
       Half 1: G01 G02 G03 G04 G05 G06 G07a G07b G08 G09 G10. Half 2: G11 G12 G13 G14 G15 G17 G18 G19 G20 G21 G22.
       First attempt (run `wf_d9746de1-7cf`) died on the previous account's spend limit with zero work done; its empty worktrees/branches were removed.
+- [ ] **SEQUENCE CHANGE (user direction 2026-09-12): deduplicate and unify BEFORE the remaining fix groups.**
+      After the half-1 merge: hold wave A half 2 (G11-G22) and the structure-sensitive non-Go groups (N04 config,
+      N05 templates, N06 agent surfaces); run the ADR-0009 structure/dedupe design (workflow `wf6-structure-dedupe.mjs`),
+      then implement the dedupe/unification refactor on the audit branch (single home for token resolution, HTTP
+      client, HISS engine, templates via go:embed, persona projection, config reader; delete orphans), then re-fold
+      `findings.json` against the new tree (many dead-surface/drift/duplicate findings become moot), then run the
+      remaining groups on what is left. Safe non-Go groups (N01 CI, N03 packaging/license, N07 editors, N08/N09 docs)
+      may run after the half-1 merge; lefthook (`fix/lefthook`) merges first of all.
 - [ ] **Wave B**: 9 non-Go groups (CI, packaging, config, templates, docs, editors, license)
 - [ ] **Wave C**: praetorctl-only rename + `compile-context` regeneration
 - [ ] **Wave D**: verification agents (gatekeeper/fuzzer/auditor/packager/dogfooder) + fix-review refuters + repair loop
