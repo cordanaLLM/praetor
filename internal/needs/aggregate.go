@@ -24,6 +24,12 @@ var ErrNoRepositoryScanned = errors.New("needs: no discovered repository could b
 // limit (HISS-02).
 const maxScanErrorsReported = 64
 
+// writef appends a formatted fragment to sb without an unchecked fmt.Fprintf error.
+func writef(sb *strings.Builder, format string, args ...any) {
+	fragment := fmt.Sprintf(format, args...)
+	sb.WriteString(fragment)
+}
+
 // AggregateFleet scans all repositories in fleetRoot and produces a FleetDemandReport.
 func AggregateFleet(ctx context.Context, fleetRoot, frameworkPath string) (*FleetDemandReport, error) {
 	return AggregateFleetWithHarvest(ctx, fleetRoot, frameworkPath, "")
@@ -56,7 +62,9 @@ func AggregateFleetWithHarvest(ctx context.Context, fleetRoot, frameworkPath, ha
 			return nil, fmt.Errorf("fleet scan aborted after %d of %d repositories: %w",
 				agg.report.ScannedRepositories, len(repoDirs), ctxErr)
 		}
-		agg.scanRepoDir(ctx, dir)
+		if err := agg.scanRepoDir(ctx, dir); err != nil {
+			return nil, err
+		}
 	}
 
 	if mErr := agg.mergeHarvest(ctx, harvestPath); mErr != nil {
@@ -98,23 +106,37 @@ func (a *fleetAggregation) result() error {
 	if a.report.TotalRepositories == 0 || a.report.ScannedRepositories > 0 {
 		return nil
 	}
-	return fmt.Errorf("%w: %d discovered, %d failed: %s", ErrNoRepositoryScanned,
-		a.report.TotalRepositories, a.report.FailedRepositories,
+	return fmt.Errorf("%w: %d discovered, %d skipped, %d failed: %s", ErrNoRepositoryScanned,
+		a.report.TotalRepositories, len(a.report.SkippedRepositories), a.report.FailedRepositories,
 		strings.Join(a.report.ScanErrors, "; "))
 }
 
 // scanRepoDir scans one repository and folds it into the report, recording the failure
-// instead of dropping it silently when the scan fails.
-func (a *fleetAggregation) scanRepoDir(ctx context.Context, dir string) {
+// instead of dropping it silently. Cancellation aborts aggregation; unsupported
+// repositories are skipped without claiming that their dependency coverage is known.
+func (a *fleetAggregation) scanRepoDir(ctx context.Context, dir string) error {
 	repoNeeds, err := ScanRepo(ctx, dir)
 	if err != nil {
+		if isContextError(err) {
+			return fmt.Errorf("fleet aggregation interrupted at %q: %w", dir, err)
+		}
+		if errors.Is(err, ErrNoAnalyzer) {
+			a.report.SkippedRepositories = append(a.report.SkippedRepositories, dir)
+			return nil
+		}
 		a.report.FailedRepositories++
 		if len(a.report.ScanErrors) < maxScanErrorsReported {
 			a.report.ScanErrors = append(a.report.ScanErrors, fmt.Sprintf("%s: %v", dir, err))
 		}
-		return
+		return nil
 	}
 	a.add(repoNeeds, false)
+	return nil
+}
+
+// isContextError identifies cancellation that must stop a fleet run.
+func isContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // add folds one repository's needs into the report and reports whether it was new.
@@ -234,6 +256,7 @@ func discoverFleetRepos(ctx context.Context, root string) ([]string, error) {
 	var repoDirs []string
 	seen := make(map[string]struct{})
 	maxDepth := 5
+	root = filepath.Clean(root)
 
 	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
@@ -246,7 +269,7 @@ func discoverFleetRepos(ctx context.Context, root string) ([]string, error) {
 		if relErr == nil && strings.Count(rel, string(os.PathSeparator)) > maxDepth {
 			return filepath.SkipDir
 		}
-		if shouldSkipDir(info, path) {
+		if shouldSkipDir(info, path, root) {
 			return filepath.SkipDir
 		}
 		if isManifestFile(info) {
@@ -265,8 +288,9 @@ func discoverFleetRepos(ctx context.Context, root string) ([]string, error) {
 	return repoDirs, nil
 }
 
+// isManifestFile excludes symlinks whose targets may be outside the fleet root.
 func isManifestFile(info os.FileInfo) bool {
-	if info.IsDir() {
+	if info == nil || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
 	name := info.Name()
@@ -372,15 +396,19 @@ func renderDemandHeader(report *FleetDemandReport) string {
 	if report.FailedRepositories > 0 {
 		failed = fmt.Sprintf("**Repositories Failed**: %d  \n", report.FailedRepositories)
 	}
+	skipped := ""
+	if len(report.SkippedRepositories) > 0 {
+		skipped = fmt.Sprintf("**Repositories Skipped (no language analyzer matched)**: %d  \n", len(report.SkippedRepositories))
+	}
 
 	return fmt.Sprintf("# Framework Demand & Capability Report\n\n"+
 		"**Target Framework**: `%s`  \n"+
 		"**Generated At**: %s  \n"+
 		"**Repositories Scanned**: %d / %d  \n"+
-		"%s"+
+		"%s%s"+
 		"**Overall Fleet Golusoris Coverage**: %s\n\n",
 		report.Framework, report.GeneratedAt.Format(time.RFC3339),
-		report.ScannedRepositories, report.TotalRepositories, failed, coverage)
+		report.ScannedRepositories, report.TotalRepositories, failed, skipped, coverage)
 }
 
 // renderDemandTopography renders the capability demand-frequency table.
@@ -412,7 +440,7 @@ func renderDemandTopography(report *FleetDemandReport) string {
 		for i, c := range consumers {
 			shortConsumers[i] = util.CleanGitURL(c)
 		}
-		fmt.Fprintf(&sb, "| `%s` | %d | %s |\n", f.key, f.count, strings.Join(shortConsumers, ", "))
+		writef(&sb, "| `%s` | %d | %s |\n", f.key, f.count, strings.Join(shortConsumers, ", "))
 	}
 	return sb.String()
 }
@@ -433,7 +461,7 @@ func renderDemandGaps(report *FleetDemandReport) string {
 	sb.WriteString("| Capability Gap | Impacted Repos | Underlying Packages |\n")
 	sb.WriteString("| :--- | :--- | :--- |\n")
 	for _, g := range report.Gaps {
-		fmt.Fprintf(&sb, "| `%s` | %d | `%s` |\n",
+		writef(&sb, "| `%s` | %d | `%s` |\n",
 			g.Capability, g.ConsumerCount, strings.Join(g.PackagesUsed, "`, `"))
 	}
 	return sb.String()
@@ -446,7 +474,7 @@ func renderDemandLeaderboard(report *FleetDemandReport) string {
 	sb.WriteString("| Rank | Repository | Readiness Score | Covered Deps | Gaps |\n")
 	sb.WriteString("| :--- | :--- | :--- | :--- | :--- |\n")
 	for i, repo := range report.Leaderboard {
-		fmt.Fprintf(&sb, "| #%d | `%s` | %.1f%% | %d | %d |\n",
+		writef(&sb, "| #%d | `%s` | %.1f%% | %d | %d |\n",
 			i+1, repo.Repository, repo.Readiness.Score, repo.Readiness.CoveredDeps, repo.Readiness.GapDeps)
 	}
 	return sb.String()

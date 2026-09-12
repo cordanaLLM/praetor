@@ -208,6 +208,12 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to apply migration: %w", err)
 	}
+	if !res.Success {
+		return fmt.Errorf("migration did not complete: %s", res.Error)
+	}
+	for _, warning := range res.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
+	}
 	fmt.Printf("\n[PASS] Migration applied on branch %s (%d files changed).\n", res.Branch, len(res.FilesChanged))
 	fmt.Printf("[PASS] Migration guide generated at %s/MIGRATION.md\n", *path)
 	return nil

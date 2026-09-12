@@ -100,17 +100,17 @@ func calculateROI(count int) string {
 
 func renderRequestMarkdown(reqID, title string, gap GapDetail, kit, roi string) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "# %s\n\n", title)
-	fmt.Fprintf(&sb, "- **Request ID**: `%s`\n", reqID)
-	fmt.Fprintf(&sb, "- **Target Builder Kit**: `%s`\n", kit)
-	fmt.Fprintf(&sb, "- **Maintenance ROI**: %s\n\n", roi)
+	writef(&sb, "# %s\n\n", title)
+	writef(&sb, "- **Request ID**: `%s`\n", reqID)
+	writef(&sb, "- **Target Builder Kit**: `%s`\n", kit)
+	writef(&sb, "- **Maintenance ROI**: %s\n\n", roi)
 	sb.WriteString("## Consuming Repositories\n\n")
 	for _, repo := range gap.Consumers {
-		fmt.Fprintf(&sb, "- `%s`\n", repo)
+		writef(&sb, "- `%s`\n", repo)
 	}
 	sb.WriteString("\n## Replaced Third-Party Packages\n\n")
 	for _, pkg := range gap.PackagesUsed {
-		fmt.Fprintf(&sb, "- `%s`\n", pkg)
+		writef(&sb, "- `%s`\n", pkg)
 	}
 	sb.WriteString("\n## Acceptance Criteria\n\n")
 	sb.WriteString("1. Zero-dependency implementation adhering to HISS-01..16 invariants.\n")

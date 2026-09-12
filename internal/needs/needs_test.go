@@ -5,10 +5,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -319,8 +321,10 @@ func TestScanRepoManifestPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rescan failed: %v", err)
 	}
-	if len(rescan.Capabilities.Required) != 2 || rescan.Capabilities.Required[0] != "db.postgres" {
-		t.Fatalf("rescan dropped the declared capabilities: %+v", rescan.Capabilities)
+	for _, declared := range repoNeeds.Capabilities.Required {
+		if !slices.Contains(rescan.Capabilities.Required, declared) {
+			t.Fatalf("rescan dropped declared capability %q: %+v", declared, rescan.Capabilities)
+		}
 	}
 	if rescan.Readiness.Score != repoNeeds.Readiness.Score {
 		t.Fatalf("expected score %f, got %f", repoNeeds.Readiness.Score, rescan.Readiness.Score)
@@ -373,13 +377,31 @@ func TestScanRepoBoundaries(t *testing.T) {
 // recordingRunner is a CommandRunner that records its invocations instead of executing
 // them, which keeps the migration tests off git, the module proxy and the network.
 type recordingRunner struct {
-	calls [][]string
-	err   error
+	calls  [][]string
+	err    error
+	failAt int
 }
 
-func (r *recordingRunner) run(_ context.Context, _ string, name string, args ...string) (string, error) {
+type migrationExitError int
+
+func (e migrationExitError) Error() string { return "simulated command failure" }
+func (e migrationExitError) ExitCode() int { return int(e) }
+
+func (r *recordingRunner) run(ctx context.Context, _ string, name string, args ...string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	r.calls = append(r.calls, append([]string{name}, args...))
-	return "", r.err
+	if r.err != nil && (r.failAt == 0 || len(r.calls) == r.failAt) {
+		return "", r.err
+	}
+	if name == "git" && len(args) >= 2 && args[0] == "rev-parse" {
+		if args[1] == "--is-inside-work-tree" {
+			return "true", nil
+		}
+		return "", migrationExitError(1)
+	}
+	return "", nil
 }
 
 func setupMigrationRepo(t *testing.T) string {
@@ -420,8 +442,8 @@ func TestPlanAndApplyMigration(t *testing.T) {
 	if !res.Success || len(res.Warnings) != 0 {
 		t.Fatalf("expected a clean migration, got success=%v warnings=%v", res.Success, res.Warnings)
 	}
-	if len(runner.calls) != 1 || runner.calls[0][0] != "git" {
-		t.Fatalf("expected exactly one git invocation, got %v", runner.calls)
+	if len(runner.calls) != 3 || strings.Join(runner.calls[2], " ") != "git switch -c "+migrationBranch {
+		t.Fatalf("expected worktree/branch checks followed by safe branch creation, got %v", runner.calls)
 	}
 	if res.Branch != migrationBranch {
 		t.Fatalf("unexpected branch: %s", res.Branch)
@@ -486,14 +508,11 @@ func TestApplyMigration_Negative(t *testing.T) {
 	}
 	failing := &recordingRunner{err: errors.New("git is unavailable")}
 	res, err := ApplyMigrationWithOptions(ctx, tmpDir, plan, MigrationOptions{Runner: failing.run})
-	if err != nil {
-		t.Fatalf("a failing runner must not fail the migration: %v", err)
+	if err == nil || res == nil || res.Success || res.Error == "" {
+		t.Fatalf("expected result plus hard failure, got result=%+v err=%v", res, err)
 	}
-	if res.Success {
-		t.Fatal("expected Success=false when a step failed")
-	}
-	if len(res.Warnings) != 2 {
-		t.Fatalf("expected the git and tidy failures to be recorded, got %v", res.Warnings)
+	if len(res.Warnings) != 1 || len(failing.calls) != 1 || len(res.FilesChanged) != 0 {
+		t.Fatalf("expected first failure retained without later mutations, got result=%+v calls=%v", res, failing.calls)
 	}
 }
 
@@ -524,8 +543,8 @@ func TestApplyMigration_Boundary(t *testing.T) {
 		},
 	}
 	res, err = ApplyMigrationWithOptions(ctx, tmpDir, escaping, MigrationOptions{Runner: runner.run})
-	if err != nil {
-		t.Fatalf("apply failed: %v", err)
+	if err == nil || res == nil || res.Success {
+		t.Fatalf("expected a hard confinement failure, got result=%+v err=%v", res, err)
 	}
 	if len(res.Warnings) == 0 {
 		t.Fatal("expected the out-of-tree rewrite to be refused")
@@ -698,8 +717,17 @@ func TestAggregateFleetReportsTotalScanFailure(t *testing.T) {
 	cancel()
 
 	agg := newFleetAggregation("/fleet", fwIndex, 2)
-	agg.scanRepoDir(cancelled, "/fleet/repo1")
-	agg.scanRepoDir(cancelled, "/fleet/repo2")
+	for i := 0; i < 2; i++ {
+		dir := t.TempDir()
+		writeFixture(t, dir, "go.mod", "module example.com/broken\ngo 1.24\n")
+		writeFixture(t, dir, ".needs.yaml", "capabilities: [unterminated")
+		if err := agg.scanRepoDir(context.Background(), dir); err != nil {
+			t.Fatalf("ordinary scan failure must be retained in the report: %v", err)
+		}
+	}
+	if err := agg.scanRepoDir(cancelled, t.TempDir()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation to stop aggregation, got %v", err)
+	}
 	compileGapsAndLeaderboard(agg.report, agg.gapPackages)
 
 	if err := agg.result(); !errors.Is(err, ErrNoRepositoryScanned) {
@@ -752,5 +780,98 @@ func TestRenderFrameworkDemandMarkdown_NilReport(t *testing.T) {
 	md := RenderFrameworkDemandMarkdown(nil)
 	if !strings.Contains(md, "No report was produced.") {
 		t.Fatalf("expected a nil report to render an explicit notice, got %q", md)
+	}
+}
+
+func initGitFixture(t *testing.T, dir string) {
+	t.Helper()
+	confDir := t.TempDir()
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(confDir, "gitconfig"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(confDir, "gitconfig-system"))
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOFLAGS", "-mod=mod")
+
+	ctx := context.Background()
+	run := func(args ...string) {
+		t.Helper()
+		out, err := util.RunCommand(ctx, dir, "git", args...)
+		if err != nil {
+			t.Fatalf("git %v failed: %v (%s)", args, err, out)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.name", "Standards Test Agent")
+	run("config", "user.email", "agent@cordana.ai")
+	run("add", "-A")
+	run("commit", "-m", "initial commit")
+}
+
+func assertMigratedGoMod(t *testing.T, goModPath string) {
+	t.Helper()
+	data, err := os.ReadFile(goModPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if strings.Contains(body, "github.com/gin-gonic/gin") {
+		t.Fatalf("expected gin require to be dropped, got:\n%s", body)
+	}
+	if !strings.Contains(body, "module example.com/migratesvc") {
+		t.Fatalf("module directive must survive the rewrite, got:\n%s", body)
+	}
+	if strings.Count(body, "github.com/golusoris/golusoris v0.8.0") != 1 {
+		t.Fatalf("expected exactly one framework require, got:\n%s", body)
+	}
+}
+
+func TestApplyMigrationNegativeNonGitTarget(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := setupMigrationRepo(t)
+
+	plan, err := PlanMigration(ctx, tmpDir, "")
+	if err != nil {
+		t.Fatalf("plan migration failed: %v", err)
+	}
+
+	res, err := ApplyMigration(ctx, tmpDir, plan)
+	if !errors.Is(err, ErrNotGitRepo) {
+		t.Fatalf("expected ErrNotGitRepo, got %v", err)
+	}
+	if res == nil || res.Success {
+		t.Fatal("expected Success=false for a failed migration")
+	}
+	if res.Error == "" {
+		t.Fatal("expected MigrationResult.Error to be populated")
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "github.com/gin-gonic/gin") {
+		t.Fatal("failed migration must not rewrite sources")
+	}
+}
+
+func TestApplyMigrationBoundaryExistingBranch(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := setupMigrationRepo(t)
+	initGitFixture(t, tmpDir)
+
+	if out, err := util.RunCommand(ctx, tmpDir, "git", "branch", "refactor/golusoris-adoption"); err != nil {
+		t.Fatalf("failed creating pre-existing branch: %v (%s)", err, out)
+	}
+
+	plan, err := PlanMigration(ctx, tmpDir, "")
+	if err != nil {
+		t.Fatalf("plan migration failed: %v", err)
+	}
+
+	res, err := ApplyMigration(ctx, tmpDir, plan)
+	if !errors.Is(err, ErrBranchExists) {
+		t.Fatalf("expected ErrBranchExists, got %v", err)
+	}
+	if res == nil || res.Success {
+		t.Fatal("expected Success=false when the adoption branch already exists")
 	}
 }

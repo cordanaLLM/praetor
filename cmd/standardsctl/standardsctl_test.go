@@ -850,6 +850,7 @@ func newGitFixtureRepo(t *testing.T) string {
 
 func TestDispatchCommand_NeedsMigrateApplyFlagSemantics(t *testing.T) {
 	repo := newGitFixtureRepo(t)
+	writeFixtureFile(t, repo, "go.mod", "module example.com/needs-fixture\n\ngo 1.24\n")
 
 	// Negative: --apply together with an explicit --dry-run=true is a contradiction.
 	if err := dispatchCommand("needs", []string{"migrate", "--path=" + repo, "--apply", "--dry-run=true"}); err == nil {
@@ -873,6 +874,7 @@ func TestDispatchCommand_NeedsMigrateApplyFlagSemantics(t *testing.T) {
 
 func TestDispatchCommand_NeedsEpicPublishSafety(t *testing.T) {
 	repo := newGitFixtureRepo(t)
+	writeFixtureFile(t, repo, "go.mod", "module example.com/needs-fixture\n\ngo 1.24\n")
 	// Keep the token lookup hermetic: no gh CLI invocation, no network.
 	t.Setenv("GITHUB_TOKEN", "test-token-not-used")
 	t.Setenv("GH_TOKEN", "")

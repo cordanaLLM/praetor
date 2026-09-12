@@ -1,22 +1,34 @@
 package needs
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// migrationBranch is the branch ApplyMigration checks out before mutating a repository.
+// migrationBranch is the branch ApplyMigration creates for the rewrite.
 const migrationBranch = "refactor/golusoris-adoption"
 
-// ErrNilMigrationPlan is returned when a migration is applied without a plan.
-var ErrNilMigrationPlan = errors.New("needs: migration plan cannot be nil")
+var (
+	// ErrNilMigrationPlan is returned when no plan was supplied.
+	ErrNilMigrationPlan = errors.New("needs: migration plan cannot be nil")
+	// ErrNotGitRepo is returned when the migration target is not a git work tree.
+	ErrNotGitRepo = errors.New("needs: migration target is not a git work tree")
+	// ErrBranchExists is returned when the adoption branch already exists. Resetting it
+	// with `git checkout -B` would orphan every commit previously made on it.
+	ErrBranchExists = errors.New("needs: adoption branch already exists")
+)
 
 // CommandRunner executes name with args inside dir and returns the trimmed combined
 // output. It is the seam ApplyMigration uses for its git and `go mod tidy` calls so that
@@ -35,10 +47,6 @@ type MigrationOptions struct {
 }
 
 // PlanMigration analyzes a repository and builds an actionable migration plan.
-//
-// frameworkPath is honoured: a checkout is resolved through its own go.mod and a
-// module-shaped value is used verbatim, so the plan names the framework the operator
-// asked for rather than a hard-coded constant, and never a local filesystem path.
 func PlanMigration(ctx context.Context, repoPath, frameworkPath string) (*MigrationPlan, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -56,13 +64,18 @@ func PlanMigration(ctx context.Context, repoPath, frameworkPath string) (*Migrat
 		AddedRequires: []string{framework},
 	}
 
+	// Only Go modules may be dropped from go.mod or rewritten in Go import blocks. A
+	// polyglot scan also yields npm/PyPI/cargo/system names such as "redis" or "click",
+	// and treating those as Go module paths deletes unrelated go.mod lines.
 	importReplacements := make(map[string]string)
 	for _, dep := range repoNeeds.Dependencies {
-		if dep.GolusorisReplacement != "" && dep.Status == StatusCovered {
-			plan.DroppedRequires = append(plan.DroppedRequires, dep.Package)
-			importReplacements[dep.Package] = dep.GolusorisReplacement
+		if dep.Status != StatusCovered || dep.GolusorisReplacement == "" || dep.Ecosystem != "go" {
+			continue
 		}
+		plan.DroppedRequires = append(plan.DroppedRequires, dep.Package)
+		importReplacements[dep.Package] = dep.GolusorisReplacement
 	}
+	sort.Strings(plan.DroppedRequires)
 
 	actions, err := findFileImportReplacements(ctx, repoPath, importReplacements)
 	if err != nil {
@@ -77,199 +90,304 @@ func PlanMigration(ctx context.Context, repoPath, frameworkPath string) (*Migrat
 // findFileImportReplacements scans source files for import lines matching replaceable packages.
 func findFileImportReplacements(ctx context.Context, rootDir string, replacements map[string]string) ([]ReplacementAction, error) {
 	var actions []ReplacementAction
+	root := filepath.Clean(rootDir)
+	keys := sortedReplacementKeys(replacements)
 
-	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, walkErr error) error {
+	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		if shouldSkipDir(info, path) {
+		if shouldSkipDir(info, path, root) {
 			return filepath.SkipDir
 		}
-		if info.IsDir() || !strings.HasSuffix(info.Name(), ".go") {
+		// Symlinked sources are skipped: filepath.Walk reports them as plain files, and
+		// rewriting through the link would mutate a file outside the migration target.
+		if info == nil || info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
+			!strings.HasSuffix(info.Name(), ".go") {
 			return nil
 		}
 
-		actions = append(actions, scanFileForReplacements(path, replacements)...)
+		actions = append(actions, scanFileForReplacements(path, replacements, keys)...)
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("walk %q for import replacements: %w", rootDir, err)
+		return nil, fmt.Errorf("failed to walk %q for import replacements: %w", root, err)
 	}
 
 	return actions, nil
 }
 
-// scanFileForReplacements inspects a single file for matching import statements.
-//
-// An unreadable source file contributes no action rather than aborting the plan, so its
-// read error is deliberately not propagated.
-func scanFileForReplacements(filePath string, replacements map[string]string) []ReplacementAction {
-	// #nosec G304 -- filePath comes from filepath.Walk over the repository being
-	// migrated; no caller-supplied string reaches this read.
-	content, err := os.ReadFile(filePath)
-	if err != nil {
+// sortedReplacementKeys orders replacement keys longest-first so that a module and one of
+// its sub-packages always resolve to the same, deterministic replacement regardless of
+// Go's randomised map iteration order.
+func sortedReplacementKeys(replacements map[string]string) []string {
+	keys := make([]string, 0, len(replacements))
+	for k := range replacements {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if len(keys[i]) != len(keys[j]) {
+			return len(keys[i]) > len(keys[j])
+		}
+		return keys[i] < keys[j]
+	})
+	return keys
+}
+
+// scanFileForReplacements inspects a single file's parsed import specs. Matching on the
+// parsed import path (rather than on any line containing the package name) keeps string
+// literals such as "redis:6379" out of the plan.
+func scanFileForReplacements(filePath string, replacements map[string]string, keys []string) []ReplacementAction {
+	// Unparseable or generated sources carry no rewritable imports.
+	node := parseImportsOnly(filePath)
+	if node == nil {
 		return nil
 	}
 
 	var actions []ReplacementAction
-	lines := strings.Split(string(content), "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		for oldPkg, newPkg := range replacements {
-			if strings.Contains(trimmed, `"`+oldPkg) {
-				actions = append(actions, ReplacementAction{
-					File:        filePath,
-					OldImport:   oldPkg,
-					NewImport:   newPkg,
-					Description: fmt.Sprintf("Replace %s with Golusoris %s", oldPkg, newPkg),
-				})
-			}
+	seen := make(map[string]struct{}, len(node.Imports))
+	for _, imp := range node.Imports {
+		rawPath, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			continue
 		}
+		if _, dup := seen[rawPath]; dup {
+			continue
+		}
+		newPath, ok := rewriteImportPath(rawPath, replacements, keys)
+		if !ok {
+			continue
+		}
+		seen[rawPath] = struct{}{}
+		actions = append(actions, ReplacementAction{
+			File:        filePath,
+			OldImport:   rawPath,
+			NewImport:   newPath,
+			Description: fmt.Sprintf("Replace %s with Golusoris %s", rawPath, newPath),
+		})
 	}
 
 	return actions
 }
 
-// ApplyMigration applies the planned migration changes to the target repository using
-// the audited command runner.
+// parseImportsOnly parses just the import block of a Go file, returning nil when the file
+// cannot be parsed.
+func parseImportsOnly(filePath string) *ast.File {
+	node, err := parser.ParseFile(token.NewFileSet(), filePath, nil, parser.ImportsOnly)
+	if err != nil {
+		return nil
+	}
+	return node
+}
+
+// rewriteImportPath maps an import path onto its Golusoris replacement, preserving the
+// sub-package suffix. keys must be ordered longest-first.
+func rewriteImportPath(importPath string, replacements map[string]string, keys []string) (string, bool) {
+	bound := len(keys)
+	for i := 0; i < bound; i++ {
+		key := keys[i]
+		if importPath != key && !strings.HasPrefix(importPath, key+"/") {
+			continue
+		}
+		rewritten := replacements[key] + strings.TrimPrefix(importPath, key)
+		if rewritten == importPath {
+			return "", false
+		}
+		return rewritten, true
+	}
+	return "", false
+}
+
+// ApplyMigration applies a migration using the audited command runner.
 func ApplyMigration(ctx context.Context, repoPath string, plan *MigrationPlan) (*MigrationResult, error) {
 	return ApplyMigrationWithOptions(ctx, repoPath, plan, MigrationOptions{})
 }
 
-// ApplyMigrationWithOptions applies the planned migration changes under caller-supplied
-// options. Every step that does not succeed is recorded in MigrationResult.Warnings
-// instead of being discarded, and Success reports whether the migration completed with
-// no warning at all.
+// ApplyMigrationWithOptions fails on any unsuccessful mutation. A partial result
+// carries its changed files, Error and Warnings alongside the returned error.
 func ApplyMigrationWithOptions(ctx context.Context, repoPath string, plan *MigrationPlan, opts MigrationOptions) (*MigrationResult, error) {
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if plan == nil {
 		return nil, ErrNilMigrationPlan
 	}
-
 	run := opts.Runner
 	if run == nil {
 		run = util.RunCommand
 	}
-
 	result := &MigrationResult{Repository: plan.Repository, Branch: migrationBranch}
-	if out, err := run(ctx, repoPath, "git", "checkout", "-B", migrationBranch); err != nil {
-		result.Warnings = append(result.Warnings,
-			fmt.Sprintf("git checkout -B %s: %v: %s", migrationBranch, err, out))
+	if err := createAdoptionBranch(ctx, repoPath, migrationBranch, run); err != nil {
+		return failedMigration(result, err)
 	}
-
-	changed := make(map[string]struct{})
-	applyPlannedReplacements(repoPath, plan, result, changed)
-	applyGoModUpdate(ctx, repoPath, plan, result, changed, run, opts.SkipTidy)
-	writeMigrationGuide(repoPath, plan, result, changed)
-
-	result.FilesChanged = sortedPaths(changed)
-	result.Success = len(result.Warnings) == 0
+	changed, err := applyPlannedRewrites(ctx, repoPath, plan, run, opts.SkipTidy)
+	result.FilesChanged = changed
+	if err != nil {
+		return failedMigration(result, err)
+	}
+	result.Success = true
 	return result, nil
 }
 
-// applyPlannedReplacements rewrites the imports named by the plan, recording every
-// rewrite that failed.
-func applyPlannedReplacements(repoPath string, plan *MigrationPlan, result *MigrationResult, changed map[string]struct{}) {
+func failedMigration(result *MigrationResult, err error) (*MigrationResult, error) {
+	result.Error = err.Error()
+	result.Warnings = append(result.Warnings, err.Error())
+	return result, err
+}
+
+// applyPlannedRewrites returns every completed file mutation, including when a
+// later step fails. Each path is confined before writing.
+func applyPlannedRewrites(ctx context.Context, repoPath string, plan *MigrationPlan, run CommandRunner, skipTidy bool) ([]string, error) {
+	changed := make(map[string]struct{})
 	for _, act := range plan.Replacements {
+		if err := ctx.Err(); err != nil {
+			return sortedFileList(changed), err
+		}
 		if err := applyFileImportReplacement(repoPath, act.File, act.OldImport, act.NewImport); err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("rewrite %s: %v", act.File, err))
-			continue
+			return sortedFileList(changed), err
 		}
 		changed[act.File] = struct{}{}
 	}
-}
-
-// applyGoModUpdate rewrites go.mod and runs `go mod tidy` when the repository has one.
-func applyGoModUpdate(ctx context.Context, repoPath string, plan *MigrationPlan, result *MigrationResult,
-	changed map[string]struct{}, run CommandRunner, skipTidy bool) {
-	goModPath := filepath.Join(repoPath, "go.mod")
-	if !util.FileExists(goModPath) {
-		return
+	if err := applyMigrationGoMod(ctx, repoPath, plan, changed, run, skipTidy); err != nil {
+		return sortedFileList(changed), err
 	}
-
-	if err := updateGoMod(goModPath, plan.AddedRequires, plan.DroppedRequires); err != nil {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("update %s: %v", goModPath, err))
-	} else {
-		changed[goModPath] = struct{}{}
+	if err := ctx.Err(); err != nil {
+		return sortedFileList(changed), err
 	}
-
-	if skipTidy {
-		return
+	guidePath, err := confineToRepo(repoPath, filepath.Join(repoPath, "MIGRATION.md"))
+	if err != nil {
+		return sortedFileList(changed), err
 	}
-	if out, err := run(ctx, repoPath, "go", "mod", "tidy"); err != nil {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("go mod tidy: %v: %s", err, out))
-	}
-}
-
-// writeMigrationGuide writes MIGRATION.md into the repository.
-func writeMigrationGuide(repoPath string, plan *MigrationPlan, result *MigrationResult, changed map[string]struct{}) {
-	guidePath := filepath.Join(repoPath, "MIGRATION.md")
-	if err := util.WriteFileSecure(guidePath, []byte(plan.GuideMarkdown), util.SecureFilePerm); err != nil {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("write %s: %v", guidePath, err))
-		return
+	if err := util.WriteFileSecure(guidePath, []byte(plan.GuideMarkdown), manifestFilePerm); err != nil {
+		return sortedFileList(changed), fmt.Errorf("write migration guide: %w", err)
 	}
 	changed[guidePath] = struct{}{}
+	return sortedFileList(changed), nil
 }
 
-// sortedPaths returns the keys of a path set in a deterministic order.
-func sortedPaths(set map[string]struct{}) []string {
-	paths := make([]string, 0, len(set))
-	for p := range set {
-		paths = append(paths, p)
+func applyMigrationGoMod(ctx context.Context, repoPath string, plan *MigrationPlan, changed map[string]struct{}, run CommandRunner, skipTidy bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	sort.Strings(paths)
-	return paths
-}
-
-// applyFileImportReplacement updates the import string inside a source file, keeping the
-// file's existing permission bits.
-func applyFileImportReplacement(repoRoot, filePath, oldImport, newImport string) error {
-	target, err := confineRepoFile(repoRoot, filePath)
+	goModPath, err := confineToRepo(repoPath, filepath.Join(repoPath, "go.mod"))
 	if err != nil {
 		return err
 	}
-
-	// #nosec G304 -- target was confined to the repository root by confineRepoFile.
-	data, err := os.ReadFile(target)
-	if err != nil {
-		return fmt.Errorf("read %q: %w", target, err)
+	if _, err := os.Stat(goModPath); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect go.mod: %w", err)
 	}
-	content := string(data)
-	replaced := strings.ReplaceAll(content, `"`+oldImport+`"`, `"`+newImport+`"`)
-	replaced = strings.ReplaceAll(replaced, `"`+oldImport+`/`, `"`+newImport+`/`)
-
-	return writePreservingMode(target, []byte(replaced))
+	if err := updateGoMod(goModPath, plan.AddedRequires, plan.DroppedRequires); err != nil {
+		return err
+	}
+	changed[goModPath] = struct{}{}
+	if skipTidy {
+		return nil
+	}
+	if out, err := run(ctx, repoPath, "go", "mod", "tidy"); err != nil {
+		return fmt.Errorf("go mod tidy: %w: %s", err, out)
+	}
+	return nil
 }
 
-// confineRepoFile guarantees that a planned mutation stays inside the repository being
-// migrated: a ReplacementAction is data, and a plan produced elsewhere must not be able
-// to rewrite a file outside the target tree.
-func confineRepoFile(repoRoot, filePath string) (string, error) {
-	rel, err := filepath.Rel(repoRoot, filePath)
-	if err != nil {
-		return "", fmt.Errorf("locate %q inside %q: %w", filePath, repoRoot, err)
+// sortedFileList flattens the changed-file set into a deterministic slice.
+func sortedFileList(files map[string]struct{}) []string {
+	out := make([]string, 0, len(files))
+	for f := range files {
+		out = append(out, f)
 	}
-	confined, err := util.ConfinePath(repoRoot, rel)
+	sort.Strings(out)
+	return out
+}
+
+// confineToRepo verifies that a planned target file really resolves inside repoPath, so
+// that a symlinked or relocated entry cannot redirect the rewrite outside the repository.
+func confineToRepo(repoPath, filePath string) (string, error) {
+	rel, err := filepath.Rel(repoPath, filePath)
 	if err != nil {
-		return "", fmt.Errorf("confine %q to %q: %w", filePath, repoRoot, err)
+		return "", fmt.Errorf("failed to relativize %q against %q: %w", filePath, repoPath, err)
+	}
+	confined, err := util.ConfinePath(repoPath, rel)
+	if err != nil {
+		return "", fmt.Errorf("migration target %q escapes %q: %w", filePath, repoPath, err)
 	}
 	return confined, nil
 }
 
-// writePreservingMode rewrites an existing file with its current permission bits, with
-// any world-write bit stripped, so a migration neither widens nor narrows the tree it
-// edits.
+// createAdoptionBranch creates the migration branch, refusing to reset an existing one.
+func createAdoptionBranch(ctx context.Context, repoPath, branchName string, run CommandRunner) error {
+	out, err := run(ctx, repoPath, "git", "rev-parse", "--is-inside-work-tree")
+	if err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrNotGitRepo, repoPath, err)
+	}
+	if strings.TrimSpace(out) != "true" {
+		return fmt.Errorf("%w: %s", ErrNotGitRepo, repoPath)
+	}
+	if _, err := run(ctx, repoPath, "git", "rev-parse", "--verify", "--quiet", "refs/heads/"+branchName); err == nil {
+		return fmt.Errorf("%w: %s", ErrBranchExists, branchName)
+	} else {
+		var exitCode interface{ ExitCode() int }
+		if !errors.As(err, &exitCode) || exitCode.ExitCode() != 1 {
+			return fmt.Errorf("inspect migration branch %q: %w", branchName, err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := run(ctx, repoPath, "git", "switch", "-c", branchName); err != nil {
+		return fmt.Errorf("create migration branch %q: %w", branchName, err)
+	}
+	return nil
+}
+
+// applyFileImportReplacement updates only parsed import literals, preserving
+// aliases, comments, unrelated string values and the file's existing permissions.
+func applyFileImportReplacement(repoRoot, filePath, oldImport, newImport string) error {
+	target, err := confineToRepo(repoRoot, filePath)
+	if err != nil {
+		return err
+	}
+	// #nosec G304 -- target was confined to repoRoot by confineToRepo.
+	data, err := os.ReadFile(target)
+	if err != nil {
+		return fmt.Errorf("read %q: %w", target, err)
+	}
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, target, data, parser.ImportsOnly)
+	if err != nil {
+		return fmt.Errorf("parse imports in %q: %w", target, err)
+	}
+	replaced := string(data)
+	for i := len(node.Imports) - 1; i >= 0; i-- {
+		imp := node.Imports[i]
+		value, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			return fmt.Errorf("decode import in %q: %w", target, err)
+		}
+		if value == oldImport {
+			start := fset.Position(imp.Path.Pos()).Offset
+			end := fset.Position(imp.Path.End()).Offset
+			replaced = replaced[:start] + strconv.Quote(newImport) + replaced[end:]
+		}
+	}
+	if replaced == string(data) {
+		return nil
+	}
+	return writePreservingMode(target, []byte(replaced))
+}
+
+// writePreservingMode retains existing permissions except for the world-write bit.
+// Missing files use the secure default, while metadata errors abort before writing.
 func writePreservingMode(path string, data []byte) error {
 	perm := util.SecureFilePerm
 	if info, err := os.Stat(path); err == nil {
-		if existing := info.Mode().Perm() &^ 0o002; existing != 0 {
-			perm = existing
-		}
+		perm = info.Mode().Perm() &^ 0o002
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect %q before writing: %w", path, err)
 	}
 	if err := util.WriteFileSecure(path, data, perm); err != nil {
 		return fmt.Errorf("write %q: %w", path, err)
@@ -277,58 +395,118 @@ func writePreservingMode(path string, data []byte) error {
 	return nil
 }
 
-// updateGoMod drops superseded packages and appends the Golusoris framework require.
+// updateGoMod drops superseded modules and appends the Golusoris framework require.
 func updateGoMod(goModPath string, added, dropped []string) error {
-	// #nosec G304 -- goModPath is the repository's own manifest, built by joining the
-	// migration target root with the constant "go.mod".
-	content, err := os.ReadFile(goModPath)
-	if err != nil {
-		return fmt.Errorf("read %q: %w", goModPath, err)
+	dropSet := make(map[string]struct{}, len(dropped))
+	for _, d := range dropped {
+		dropSet[d] = struct{}{}
 	}
 
-	var newLines []string
-	for _, line := range strings.Split(strings.TrimSuffix(string(content), "\n"), "\n") {
-		if !isDroppedRequire(line, dropped) {
-			newLines = append(newLines, line)
-		}
+	lines, present, err := readGoModLines(goModPath, dropSet)
+	if err != nil {
+		return err
 	}
 
 	for _, add := range added {
-		newLines = append(newLines, "require "+add)
+		module := strings.Fields(add)
+		if len(module) == 0 {
+			continue
+		}
+		if _, exists := present[module[0]]; exists {
+			continue
+		}
+		lines = append(lines, "require "+add)
+		present[module[0]] = struct{}{}
 	}
 
-	return writePreservingMode(goModPath, []byte(strings.Join(newLines, "\n")+"\n"))
+	body := []byte(strings.Join(lines, "\n") + "\n")
+	return writePreservingMode(goModPath, body)
 }
 
-// isDroppedRequire reports whether a go.mod line names one of the superseded packages.
-func isDroppedRequire(line string, dropped []string) bool {
-	for _, d := range dropped {
-		if strings.Contains(line, d) {
-			return true
+// readGoModLines returns the go.mod lines that survive the drop set plus the set of
+// module paths the file still requires. A read error aborts before any write: rewriting
+// go.mod from a truncated scan silently deletes the rest of the file.
+func readGoModLines(goModPath string, dropSet map[string]struct{}) (kept []string, present map[string]struct{}, err error) {
+	// #nosec G304 -- goModPath is filepath.Join(repoPath, "go.mod") for the migration
+	// target; the filename is a constant, not user input.
+	file, openErr := os.Open(goModPath)
+	if openErr != nil {
+		return nil, nil, fmt.Errorf("failed to open %q: %w", goModPath, openErr)
+	}
+	defer func() {
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed to close %q: %w", goModPath, cerr)
+		}
+	}()
+
+	present = make(map[string]struct{})
+	scanner := bufio.NewScanner(file)
+	inRequire := false
+	scanErr := scanBoundedLines(scanner, func(line string) {
+		module := requireModulePath(line, &inRequire)
+		if module != "" {
+			if _, drop := dropSet[module]; drop {
+				return
+			}
+			present[module] = struct{}{}
+		}
+		kept = append(kept, line)
+	})
+	if scanErr != nil {
+		return nil, nil, fmt.Errorf("failed to read %q: %w", goModPath, scanErr)
+	}
+	return kept, present, nil
+}
+
+// requireModulePath tracks require blocks so entries in replace/exclude blocks
+// never become drop keys. Only complete module tokens are compared.
+func requireModulePath(line string, inRequire *bool) string {
+	trimmed := strings.TrimSpace(line)
+	if idx := strings.Index(trimmed, "//"); idx >= 0 {
+		trimmed = strings.TrimSpace(trimmed[:idx])
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return ""
+	}
+	if fields[0] == ")" {
+		*inRequire = false
+		return ""
+	}
+	if fields[0] == "require" && len(fields) >= 2 {
+		if fields[1] == "(" {
+			*inRequire = true
+			return ""
+		}
+		if len(fields) >= 3 {
+			return fields[1]
 		}
 	}
-	return false
+	if *inRequire && len(fields) >= 2 {
+		return fields[0]
+	}
+	return ""
 }
 
 // generateMigrationGuide creates a concise markdown walkthrough for the developer.
 func generateMigrationGuide(plan *MigrationPlan) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "# Migration Guide: %s -> %s\n\n", plan.Repository, plan.Framework)
+	writef(&sb, "# Migration Guide: %s -> %s\n\n", plan.Repository, plan.Framework)
 	sb.WriteString("## Planned Dependency Changes\n\n")
 	sb.WriteString("**Added Requirements:**\n")
 	for _, a := range plan.AddedRequires {
-		fmt.Fprintf(&sb, "- `%s`\n", a)
+		writef(&sb, "- `%s`\n", a)
 	}
 	sb.WriteString("\n**Dropped Third-Party Packages:**\n")
 	for _, d := range plan.DroppedRequires {
-		fmt.Fprintf(&sb, "- `%s`\n", d)
+		writef(&sb, "- `%s`\n", d)
 	}
 	sb.WriteString("\n## File Import Replacements\n\n")
 	if len(plan.Replacements) == 0 {
 		sb.WriteString("No direct file import replacements identified.\n")
 	} else {
 		for _, r := range plan.Replacements {
-			fmt.Fprintf(&sb, "- `%s`: `%s` -> `%s`\n", r.File, r.OldImport, r.NewImport)
+			writef(&sb, "- `%s`: `%s` -> `%s`\n", r.File, r.OldImport, r.NewImport)
 		}
 	}
 	sb.WriteString("\n## Next Steps\n")

@@ -14,6 +14,10 @@ type LanguageAnalyzer interface {
 	Analyze(ctx context.Context, repoPath string) (*RepoNeeds, error)
 }
 
+// ErrNoAnalyzer is returned by AnalyzePolyglot when no registered analyzer recognises a
+// repository. Callers must surface it rather than substituting a default manifest.
+var ErrNoAnalyzer = errors.New("needs: no matching language analyzer found for repository")
+
 // AnalyzerRegistry maintains registered language analyzers for polyglot discovery.
 type AnalyzerRegistry struct {
 	mu        sync.RWMutex
@@ -76,7 +80,7 @@ func (r *AnalyzerRegistry) AnalyzePolyglot(ctx context.Context, repoPath string)
 	}
 	matched := r.DetectAll(repoPath)
 	if len(matched) == 0 {
-		return nil, errors.New("no matching language analyzer found for repository")
+		return nil, fmt.Errorf("%w: %s", ErrNoAnalyzer, repoPath)
 	}
 
 	primaryNeeds, err := matched[0].Analyze(ctx, repoPath)
@@ -87,7 +91,7 @@ func (r *AnalyzerRegistry) AnalyzePolyglot(ctx context.Context, repoPath string)
 	for i := 1; i < len(matched); i++ {
 		secNeeds, sErr := matched[i].Analyze(ctx, repoPath)
 		if sErr != nil {
-			continue
+			return nil, fmt.Errorf("secondary analyzer %s failed: %w", matched[i].Language(), sErr)
 		}
 		mergeRepoNeeds(primaryNeeds, secNeeds)
 	}
@@ -107,9 +111,7 @@ func mergeRepoNeeds(dst, src *RepoNeeds) {
 	for _, bk := range src.BuilderKits {
 		dst.BuilderKits = appendUniqueStr(dst.BuilderKits, bk)
 	}
-	for _, dep := range src.Dependencies {
-		dst.Dependencies = append(dst.Dependencies, dep)
-	}
+	dst.Dependencies = append(dst.Dependencies, src.Dependencies...)
 	for _, capKey := range src.Capabilities.Required {
 		dst.Capabilities.Required = appendUniqueCap(dst.Capabilities.Required, capKey)
 	}

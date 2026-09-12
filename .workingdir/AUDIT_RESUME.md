@@ -111,6 +111,35 @@ are in `audit/codex-continuation/recovery.json` and `branch-inventory.json`.
 The old untracked `.standards-receipt.json` predates this audit and is not a
 receipt for the current branch or verification result.
 
+#### Verified integration checkpoints
+
+| Checkpoint | Commit | Evidence |
+| :--- | :--- | :--- |
+| Recovery and ADR-0009 proposal | `c20d49d` | Transcript, branch inventory and preserved G09 patch |
+| Lefthook implementation | `94a6af0` | Staged-index and exact-commit snapshots, behavioral tests, installed hooks |
+| G01 adoption/config | `a4508b5` | Targeted package tests and commit hooks pass |
+| G02 audit/baseline | `20fb300` | Audit tests plus 25 hook behavioral tests pass; frozen base and touched paths supplied |
+| G03 CLI safety | `a5fe3b4` | CLI, adoption, harvester, state and needs tests pass |
+| G04 command parsing | `a476ef7` | Command, harvester, needs and release-track tests pass |
+| G05 capability/migration | `a9a70db` | CLI, needs and adoption tests pass |
+
+G06 integration is currently in progress. Preserve both G05's context, path,
+permission and unknown-coverage safeguards and G06's scan/migration corrections.
+The scanner limit must return an error rather than silently truncate input.
+G07a/G07b/G08/G09/G10 are still pending; merge only the committed G09 core.
+
+The permission regression was also present in the shared wave-0 helper, beyond
+the rejected G09 patch. `fix/secure-write-permissions` at `c142ec4` fixes it in
+isolation: requested modes act as ceilings, and metadata checks/tightening happen
+before truncation. Race tests, lint and gosec pass for the changed package;
+cross-user devcontainer fixtures fail on the original helper and pass on the fix.
+Integrate this commit after the first batch. Its full gate still reports existing
+lint failures elsewhere; no integrated full-gate pass has been established.
+
+Full logs, reproduction binaries and hashes are under `codex-continuation/`
+within the evidence root above. Keep the distinction between branch-reported
+fix counts, integrated regression coverage, and independently closed findings.
+
 ### Original workflow entry points
 
 ```bash

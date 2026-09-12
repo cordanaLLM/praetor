@@ -1,7 +1,15 @@
 package needs
 
 import (
+	"os"
 	"time"
+)
+
+const (
+	// Fleet artifacts can contain private repository and dependency inventories.
+	// New files and output directories remain accessible only to their owner.
+	manifestFilePerm os.FileMode = 0o600
+	outputDirPerm    os.FileMode = 0o700
 )
 
 // CapabilityKey represents a standardized architectural or runtime capability.
@@ -91,6 +99,8 @@ type FleetDemandReport struct {
 	Framework           string    `json:"framework"`
 	TotalRepositories   int       `json:"total_repositories"`
 	ScannedRepositories int       `json:"scanned_repositories"`
+	// SkippedRepositories contains repositories with no supported language analyzer.
+	SkippedRepositories []string `json:"skipped_repositories,omitempty"`
 	// FailedRepositories counts discovered repositories whose scan returned an error.
 	FailedRepositories int `json:"failed_repositories"`
 	// ScanErrors records those failures, bounded by maxScanErrorsReported.
@@ -123,14 +133,13 @@ type MigrationPlan struct {
 	GuideMarkdown   string              `json:"guide_markdown"`
 }
 
-// MigrationResult summarizes the outcome of an applied migration.
+// MigrationResult summarizes the outcome of an applied migration. Success is false
+// when a migration step fails; Error and Warnings retain the failure details.
 type MigrationResult struct {
 	Repository   string   `json:"repository"`
 	Branch       string   `json:"branch"`
 	FilesChanged []string `json:"files_changed"`
-	// Warnings records the non-fatal steps that did not succeed - the branch
-	// checkout, `go mod tidy`, an individual file rewrite - instead of discarding
-	// their outcome, so a caller can tell a complete migration from a partial one.
+	// Warnings preserves diagnostic details for incomplete migration steps.
 	Warnings []string `json:"warnings,omitempty"`
 	Success  bool     `json:"success"`
 	Error    string   `json:"error,omitempty"`

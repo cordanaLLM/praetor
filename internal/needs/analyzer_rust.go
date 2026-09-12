@@ -1,9 +1,8 @@
 package needs
 
 import (
-	"bufio"
 	"context"
-	"os"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -48,52 +47,142 @@ func (a *RustAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds
 		UpdatedAt:    time.Now().UTC(),
 	}
 
-	deps := parseCargoToml(filepath.Join(repoPath, "Cargo.toml"))
-	for pkg, ver := range deps {
-		demand := mapRustDependency(pkg, ver)
+	deps, err := parseCargoToml(filepath.Join(repoPath, "Cargo.toml"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse Cargo.toml in %q: %w", repoPath, err)
+	}
+	for _, pkg := range sortedKeys(deps) {
+		demand := mapRustDependency(pkg, deps[pkg])
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
 	}
 
-	loadExistingDeclarations(repoPath, repoNeeds)
+	if declErr := loadExistingDeclarations(repoPath, repoNeeds); declErr != nil {
+		return nil, fmt.Errorf("failed to load existing declarations: %w", declErr)
+	}
 	calculateReadiness(repoNeeds)
 	return repoNeeds, nil
 }
 
-func parseCargoToml(cargoPath string) map[string]string {
-	deps := make(map[string]string)
-	file, err := os.Open(cargoPath)
-	if err != nil {
-		return deps
-	}
-	defer file.Close()
+// cargoState tracks which Cargo.toml table the line scanner is inside.
+type cargoState struct {
+	inDepsTable bool   // inside a [*dependencies] table of `name = version` entries
+	subTableFor string // crate name when inside a [dependencies.<crate>] sub-table
+}
 
-	scanner := bufio.NewScanner(file)
-	inDeps := false
-	for lines := 0; lines < MaxScannedLines && scanner.Scan(); lines++ {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "[dependencies]") {
-			inDeps = true
-			continue
+// parseCargoToml collects crate dependencies from every dependency table spelling Cargo
+// accepts: [dependencies], [dev-dependencies], [build-dependencies],
+// [workspace.dependencies], [target.'cfg(...)'.dependencies] and the
+// [dependencies.<crate>] sub-table form, including inline `{ version = "1" }` tables.
+func parseCargoToml(cargoPath string) (map[string]string, error) {
+	deps := make(map[string]string)
+	st := cargoState{}
+	if err := scanManifestLines(cargoPath, func(line string) {
+		st.consume(line, deps)
+	}); err != nil {
+		return nil, err
+	}
+	return deps, nil
+}
+
+// consume classifies a single trimmed Cargo.toml line.
+func (s *cargoState) consume(line string, deps map[string]string) {
+	if strings.HasPrefix(line, "[") {
+		s.enterTable(strings.Trim(line, "[]"), deps)
+		return
+	}
+	if line == "" || strings.HasPrefix(line, "#") {
+		return
+	}
+	if s.subTableFor != "" {
+		if name, value, ok := splitTOMLAssignment(line); ok && name == "version" {
+			deps[s.subTableFor] = value
 		}
-		if inDeps && strings.HasPrefix(line, "[") {
-			inDeps = false
-			break
-		}
-		if inDeps && strings.Contains(line, "=") && !strings.HasPrefix(line, "#") {
-			parts := strings.SplitN(line, "=", 2)
-			pkg := strings.TrimSpace(parts[0])
-			ver := strings.Trim(strings.TrimSpace(parts[1]), "\", '")
-			if pkg != "" {
-				deps[pkg] = ver
-			}
+		return
+	}
+	if !s.inDepsTable {
+		return
+	}
+	if name, value, ok := splitTOMLAssignment(line); ok {
+		deps[name] = value
+	}
+}
+
+// enterTable updates the scanner state for a TOML table header.
+func (s *cargoState) enterTable(header string, deps map[string]string) {
+	s.inDepsTable = false
+	s.subTableFor = ""
+
+	segments := strings.Split(header, ".")
+	last := strings.Trim(segments[len(segments)-1], `"'`)
+	if isCargoDependencyTable(last) {
+		s.inDepsTable = true
+		return
+	}
+	if len(segments) >= 2 && isCargoDependencyTable(strings.Trim(segments[len(segments)-2], `"'`)) {
+		s.subTableFor = last
+		if _, exists := deps[last]; !exists {
+			deps[last] = ""
 		}
 	}
-	return deps
+}
+
+// isCargoDependencyTable reports whether a table name holds crate dependencies.
+func isCargoDependencyTable(name string) bool {
+	return name == "dependencies" || name == "dev-dependencies" ||
+		name == "build-dependencies"
+}
+
+// splitTOMLAssignment splits `key = value` and normalises the value: a bare string loses
+// its quotes, an inline table is reduced to its `version` field.
+func splitTOMLAssignment(line string) (string, string, bool) {
+	idx := strings.Index(line, "=")
+	if idx <= 0 {
+		return "", "", false
+	}
+	name := strings.Trim(strings.TrimSpace(line[:idx]), `"'`)
+	if name == "" {
+		return "", "", false
+	}
+	value := strings.TrimSpace(line[idx+1:])
+	if strings.HasPrefix(value, "{") {
+		return name, inlineTableVersion(value), true
+	}
+	if comment := strings.Index(value, "#"); comment >= 0 {
+		value = strings.TrimSpace(value[:comment])
+	}
+	return name, strings.Trim(value, `"',`), true
+}
+
+// inlineTableVersion extracts the `version` field of a TOML inline table, returning an
+// empty string when the table pins the dependency by path, git revision or workspace.
+func inlineTableVersion(value string) string {
+	body := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(value), "{"), "}")
+	for _, field := range strings.Split(body, ",") {
+		name, fieldValue, ok := splitTOMLScalar(field)
+		if ok && name == "version" {
+			return fieldValue
+		}
+	}
+	return ""
+}
+
+// splitTOMLScalar splits a single `key = "value"` pair without recursing into tables.
+func splitTOMLScalar(field string) (string, string, bool) {
+	idx := strings.Index(field, "=")
+	if idx <= 0 {
+		return "", "", false
+	}
+	name := strings.Trim(strings.TrimSpace(field[:idx]), `"'`)
+	value := strings.Trim(strings.TrimSpace(field[idx+1:]), `"',`)
+	if name == "" {
+		return "", "", false
+	}
+	return name, value, true
 }
 
 func mapRustDependency(pkg, ver string) DependencyDemand {
-	mapping, found := lookupRustCatalog(pkg)
+	mapping, found := lookupRustCatalog(strings.ToLower(pkg))
 	if found {
 		return DependencyDemand{
 			Package:              pkg,
