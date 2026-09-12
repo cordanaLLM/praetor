@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/harvester"
@@ -43,7 +45,7 @@ func runHarvest(args []string) error {
 }
 
 func printHarvestUsage() {
-	fmt.Println("Usage: standardsctl harvest <subcommand> [arguments]")
+	fmt.Println("Usage: praetorctl harvest <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  bundle [--name=name] [--out=dir] [--home=path] Capture workstation state bundle (memories, skills, logs, patches)")
 	fmt.Println("  ingest [--bundle=dir] [--skills-dir=path] [--dry-run] Analyze or ingest workstation bundle into local agent harness")
@@ -88,9 +90,10 @@ func runHarvestWorkstation(ctx context.Context, args []string) error {
 func runHarvestSkills(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("harvest skills", flag.ContinueOnError)
 	geminiFlag := fs.String("gemini", "", "Path to .gemini directory (default: $HOME/.gemini)")
+	repoFlag := fs.String("repo", ".", "Repository root whose .agents/skills directory is audited")
 	dedupe := fs.Bool("dedupe", false, "Remove redundant shadowed duplicate skills")
 	cleanBackups := fs.Bool("clean-backups", false, "Purge stale GEMINI.md backups")
-	dryRun := fs.Bool("dry-run", false, "Simulate changes without deleting")
+	dryRun := fs.Bool("dry-run", true, "Simulate changes without deleting")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -100,7 +103,11 @@ func runHarvestSkills(ctx context.Context, args []string) error {
 		return fmt.Errorf("harvest skills: %w", err)
 	}
 
-	rep, err := harvester.AuditSkills(ctx, geminiDir, ".agents/skills")
+	repoSkills := ""
+	if *repoFlag != "" {
+		repoSkills = filepath.Join(*repoFlag, ".agents", "skills")
+	}
+	rep, err := harvester.AuditSkills(ctx, geminiDir, repoSkills)
 	if err != nil {
 		return fmt.Errorf("failed auditing skills: %w", err)
 	}
@@ -117,6 +124,9 @@ func printSkillsAudit(rep *harvester.SkillAuditReport) {
 	fmt.Printf("Duplicate Skills (%d):\n", len(rep.Duplicates))
 	for name, paths := range rep.Duplicates {
 		fmt.Printf("  - %s (%d copies)\n", name, len(paths))
+		for _, loc := range paths {
+			fmt.Printf("      [%s] %s\n", loc.Origin, loc.Path)
+		}
 	}
 	if len(rep.StaleBackups) > 0 {
 		fmt.Printf("Stale GEMINI.md Backups (%d)\n", len(rep.StaleBackups))
@@ -128,7 +138,10 @@ func applySkillHygiene(ctx context.Context, geminiDir string, rep *harvester.Ski
 	if dedupe {
 		dRep, dErr := harvester.DeduplicateSkills(ctx, rep, dryRun)
 		if dErr != nil {
-			return fmt.Errorf("deduplicate skills: %w", dErr)
+			return fmt.Errorf("deduplicate skills after reclaiming %d directories: %w", dRep.ReclaimedEntries, dErr)
+		}
+		if len(dRep.Errors) > 0 {
+			return fmt.Errorf("deduplicate skills: %s", strings.Join(dRep.Errors, "; "))
 		}
 		fmt.Printf("\n[DEDUPE] %d shadowed skill directories processed (DryRun: %v)\n", len(dRep.PrunedSkills), dRep.DryRun)
 		for _, s := range dRep.PrunedSkills {
@@ -139,7 +152,7 @@ func applySkillHygiene(ctx context.Context, geminiDir string, rep *harvester.Ski
 	if cleanBackups && len(rep.StaleBackups) > 0 {
 		purged, pErr := harvester.PurgeBackups(ctx, geminiDir, rep.StaleBackups, dryRun)
 		if pErr != nil {
-			return fmt.Errorf("purge backups: %w", pErr)
+			return fmt.Errorf("purge backups after removing %d files: %w", len(purged), pErr)
 		}
 		fmt.Printf("\n[CLEAN] %d stale backup files processed (DryRun: %v)\n", len(purged), dryRun)
 	}
@@ -212,11 +225,13 @@ func runHarvestOnboard(ctx context.Context, args []string) error {
 		return err
 	}
 
+	var failures []error
 	fmt.Printf("=== Praetor Repository Onboarding (DryRun: %v, Repos: %d) ===\n", *dryRun, len(targets))
 	for _, target := range targets {
 		plan, err := harvester.OnboardRepository(ctx, target, *dryRun)
 		if err != nil {
 			fmt.Printf("[FAIL] %s: %v\n", target, err)
+			failures = append(failures, fmt.Errorf("onboard %s: %w", target, err))
 			continue
 		}
 		fmt.Printf("\n[TARGET] %s (Archetype: %s)\n", plan.RepoPath, plan.Archetype)
@@ -224,7 +239,7 @@ func runHarvestOnboard(ctx context.Context, args []string) error {
 			fmt.Printf("  - %s\n", action)
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 // onboardTargets resolves the repositories `harvest onboard` must act on: either the
@@ -260,6 +275,7 @@ func runHarvestBundle(ctx context.Context, args []string) error {
 	devFlag := fs.String("dev", "", "Path to local development directory (default: $HOME/dev)")
 	homeFlag := fs.String("home", "", "Workstation home directory to harvest (default: $HOME)")
 	vaultDir := fs.String("vault", "", "Optional path to workstation vault containing patches/inventory")
+	includeHistory := fs.Bool("include-shell-history", false, "Include shell history, which may contain credentials")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -279,11 +295,12 @@ func runHarvestBundle(ctx context.Context, args []string) error {
 	}
 
 	opts := harvester.BundleOptions{
-		WorkstationName: *name,
-		OutputDir:       *outDir,
-		HomeDir:         homeDir,
-		DevDir:          devDir,
-		VaultDir:        *vaultDir,
+		WorkstationName:     *name,
+		OutputDir:           *outDir,
+		HomeDir:             homeDir,
+		DevDir:              devDir,
+		VaultDir:            *vaultDir,
+		IncludeShellHistory: *includeHistory,
 	}
 
 	fmt.Printf("=== Harvesting Workstation Bundle (%s) ===\n", *name)
@@ -299,8 +316,35 @@ func runHarvestBundle(ctx context.Context, args []string) error {
 	for cat, count := range rep.Categories {
 		fmt.Printf("  - %s: %d files\n", cat, count)
 	}
+	printBundleWarnings(rep)
 	fmt.Printf("Cryptographic manifest: %s\n", rep.ManifestPath)
 	return nil
+}
+
+// printBundleWarnings names the captured categories that routinely contain credentials and
+// lists anything the bundler refused to copy.
+func printBundleWarnings(rep *harvester.WorkstationBundleReport) {
+	sensitive := make([]string, 0, len(harvester.SensitiveBundleCategories))
+	for _, cat := range harvester.SensitiveBundleCategories {
+		if rep.Categories[cat] > 0 {
+			sensitive = append(sensitive, fmt.Sprintf("%s (%d)", cat, rep.Categories[cat]))
+		}
+	}
+	if len(sensitive) > 0 {
+		fmt.Printf("[WARNING] This bundle contains credential-bearing categories: %s\n", strings.Join(sensitive, ", "))
+		fmt.Println("[WARNING] The bundle is written owner-only (0700/0600). Review it before transferring it anywhere.")
+	}
+	if len(rep.Skipped) == 0 {
+		return
+	}
+	fmt.Printf("Skipped sources (%d):\n", len(rep.Skipped))
+	for i, s := range rep.Skipped {
+		if i >= 20 {
+			fmt.Printf("  ... and %d more.\n", len(rep.Skipped)-20)
+			break
+		}
+		fmt.Printf("  - %s\n", s)
+	}
 }
 
 func runHarvestIngest(ctx context.Context, args []string) error {
@@ -335,5 +379,19 @@ func runHarvestIngest(ctx context.Context, args []string) error {
 	fmt.Printf("Overlapping Existing Skills (%d):\n", len(rep.ExistingSkills))
 	fmt.Printf("Project Memories Discovered (%d):\n", len(rep.NovelMemories))
 	fmt.Printf("Design Patches Discovered (%d):\n", len(rep.NovelPatches))
+	fmt.Printf("Manifest Integrity Verified: %v\n", rep.ValidIntegrity)
+	for i := 0; i < len(rep.Warnings) && i < harvester.MaxBundleEntries; i++ {
+		fmt.Printf("  [WARNING] %s\n", rep.Warnings[i])
+	}
+	for i, rejected := range rep.RejectedRecords {
+		if i >= 20 {
+			fmt.Printf("  ... and %d more rejected records.\n", len(rep.RejectedRecords)-20)
+			break
+		}
+		fmt.Printf("  [REJECTED] %s\n", rejected)
+	}
+	if !rep.ValidIntegrity {
+		return fmt.Errorf("bundle %s failed manifest integrity verification (%d rejected records)", *bundleDir, len(rep.RejectedRecords))
+	}
 	return nil
 }

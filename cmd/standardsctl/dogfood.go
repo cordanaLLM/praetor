@@ -42,7 +42,7 @@ func runDogfood(args []string) error {
 		TargetReposDir:   *targets,
 		RemoteRepos:      remoteURLs,
 		BenchmarkPopular: *benchmarkPopular,
-		DryRun:           *dryRun,
+		ApplyAdoption:    !*dryRun,
 		ReportPath:       *reportPath,
 		VerifyOnly:       *verifyOnly,
 		MaxScanTargets:   *maxTargets,
@@ -57,6 +57,10 @@ func runDogfood(args []string) error {
 	}
 
 	printDogfoodSummary(rep)
+	if !rep.OverallPassed {
+		return fmt.Errorf("dogfood verification failed: context sync passed=%t, self audit passed=%t, targets=%d, remotes=%d",
+			rep.ContextSyncPassed, rep.SelfAuditPassed, len(rep.TargetResults), len(rep.RemoteResults))
+	}
 	return nil
 }
 
