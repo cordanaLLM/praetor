@@ -231,3 +231,34 @@ func TestRepairStrictReportJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestRepairAcceptsOnlyCanonicalAntigravityFullCounterpart(t *testing.T) {
+	source := suiteFixture(t, suiteFixtureRecord)
+	full := source.SourcePath
+	source.SourcePath = filepath.Join(filepath.Dir(full), "transcript.jsonl")
+	if err := os.WriteFile(source.SourcePath, []byte("partial view is intentionally not selected"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report, err := RunSuite(context.Background(), suiteOptions(t, source))
+	if err != nil || report.Cases[0].Ingestion.Pages[0].Source.Path != full {
+		t.Fatalf("alias fixture: %v", err)
+	}
+	if _, err := PlanRepairs(context.Background(), report, repairTestPolicy(t)); err != nil {
+		t.Fatalf("canonical full counterpart rejected: %v", err)
+	}
+	loaded, err := LoadRepairReport(context.Background(), filepath.Join(report.Options.ArtifactDir, "report.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pass := range []*SuiteReplayPass{loaded.Cases[0].Ingestion, loaded.Cases[0].Replay} {
+		pass.Pages[0].Source.Path = "/unrelated/transcript_full.jsonl"
+	}
+	if _, err := PlanRepairs(context.Background(), loaded, repairTestPolicy(t)); err == nil {
+		t.Fatal("arbitrary source identity accepted")
+	}
+	claude := source
+	claude.Format = "claude-code-jsonl-v1"
+	if repairSourcePathMatches(claude, full) {
+		t.Fatal("Claude redirected to Antigravity counterpart")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/harvester"
 )
@@ -149,7 +150,7 @@ func validateRepairPassPage(source SuiteTranscript, pass, accumulated *SuiteRepl
 	if err := validateSuitePage(source, accumulated, page); err != nil {
 		return err
 	}
-	if page.Source.Path != source.SourcePath || page.Complete != (index == len(pass.Pages)-1) {
+	if !repairSourcePathMatches(source, page.Source.Path) || page.Complete != (index == len(pass.Pages)-1) {
 		return errors.New("transcript page identity or completion mismatch")
 	}
 	return nil
@@ -212,4 +213,16 @@ func validateRepairVerification(check *PublicVerification) error {
 		return errors.New("public verification attempt is incomplete")
 	}
 	return nil
+}
+
+// Antigravity deliberately prefers the same-directory full counterpart. This is
+// a declaration/evidence comparison only; it never probes either source path.
+func repairSourcePathMatches(source SuiteTranscript, actual string) bool {
+	if actual == source.SourcePath {
+		return true
+	}
+	if source.Format != "antigravity-jsonl-v1" || filepath.Base(source.SourcePath) != "transcript.jsonl" {
+		return false
+	}
+	return actual == filepath.Join(filepath.Dir(source.SourcePath), "transcript_full.jsonl")
 }
