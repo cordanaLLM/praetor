@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -28,38 +29,15 @@ type StateSnapshot struct {
 	LastUpdated    time.Time `json:"last_updated"`
 }
 
-// InitWorkingDir scaffolds the canonical .workingdir directory lattice if missing.
-func InitWorkingDir(rootPath string) error {
-	wDir := filepath.Join(rootPath, WorkingDirName)
-	if err := os.MkdirAll(wDir, 0755); err != nil {
-		return fmt.Errorf("failed to create %s: %w", wDir, err)
-	}
-	if err := os.MkdirAll(filepath.Join(wDir, "evidence"), 0755); err != nil {
-		return fmt.Errorf("failed to create evidence dir: %w", err)
-	}
-
-	files := map[string]string{
-		"STATE.md":     defaultStateMD(),
-		"OPEN.md":      defaultOpenMD(),
-		"BACKLOG.md":   defaultBacklogMD(),
-		"BUGS.md":      defaultBugsMD(),
-		"QUESTIONS.md": defaultQuestionsMD(),
-	}
-
-	for rel, content := range files {
-		target := filepath.Join(wDir, rel)
-		if !util.FileExists(target) {
-			if err := os.WriteFile(target, []byte(content), 0644); err != nil {
-				return fmt.Errorf("write %s: %w", rel, err)
-			}
-		}
-	}
-	return nil
-}
-
 // SyncState captures git HEAD and updates STATE.md with a session activity entry.
 func SyncState(ctx context.Context, rootPath string, sessionSummary string) (*StateSnapshot, error) {
-	if err := InitWorkingDir(rootPath); err != nil {
+	if ctx == nil {
+		return nil, fmt.Errorf("state sync requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := initWorkingDir(ctx, rootPath); err != nil {
 		return nil, err
 	}
 
@@ -81,37 +59,50 @@ func SyncState(ctx context.Context, rootPath string, sessionSummary string) (*St
 		snap.DirtyCount = len(strings.Split(strings.TrimSpace(statusOut), "\n"))
 	}
 
-	tasks, _ := ListTasks(rootPath)
-	openTasks := 0
-	doneTasks := 0
-	for _, t := range tasks {
-		if t.Completed {
-			doneTasks++
-		} else {
-			openTasks++
-		}
+	if err := populateLedgerSnapshot(ctx, rootPath, snap); err != nil {
+		return nil, err
 	}
-	snap.OpenTasks = openTasks
-	snap.CompletedTasks = doneTasks
-
-	bugs, _ := ListBugs(rootPath, "open")
-	snap.OpenBugs = len(bugs)
-
-	qs, _ := ListQuestions(rootPath, "pending")
-	snap.PendingQs = len(qs)
-
-	if err := appendStateLog(rootPath, snap, sessionSummary); err != nil {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := appendStateLog(ctx, rootPath, snap, sessionSummary); err != nil {
 		return snap, err
 	}
-
 	return snap, nil
 }
 
-func appendStateLog(rootPath string, snap *StateSnapshot, summary string) error {
-	stateFile := filepath.Join(rootPath, WorkingDirName, "STATE.md")
-	content, err := os.ReadFile(stateFile)
+func populateLedgerSnapshot(ctx context.Context, rootPath string, snap *StateSnapshot) error {
+	tasks, err := ListTasksContext(ctx, rootPath)
 	if err != nil {
-		content = []byte(defaultStateMD())
+		return fmt.Errorf("state sync list tasks: %w", err)
+	}
+	for _, t := range tasks {
+		if t.Completed {
+			snap.CompletedTasks++
+		} else {
+			snap.OpenTasks++
+		}
+	}
+
+	bugs, err := ListBugsContext(ctx, rootPath, "open")
+	if err != nil {
+		return fmt.Errorf("state sync list bugs: %w", err)
+	}
+	snap.OpenBugs = len(bugs)
+
+	qs, err := ListQuestionsContext(ctx, rootPath, "pending")
+	if err != nil {
+		return fmt.Errorf("state sync list questions: %w", err)
+	}
+	snap.PendingQs = len(qs)
+	return nil
+}
+
+func appendStateLog(ctx context.Context, rootPath string, snap *StateSnapshot, summary string) error {
+	stateFile := filepath.Join(rootPath, WorkingDirName, "STATE.md")
+	content, err := contextopt.ReadSnapshot(ctx, stateFile)
+	if err != nil {
+		return fmt.Errorf("read STATE.md before append: %w", err)
 	}
 
 	timeStr := snap.LastUpdated.Format("2006-01-02 15:04:05 UTC")
@@ -123,6 +114,9 @@ func appendStateLog(rootPath string, snap *StateSnapshot, summary string) error 
 	entry := fmt.Sprintf("\n### [%s] Commit `%s` on `%s`\n- **Activity**: %s\n- **Tasks**: %d open, %d completed | **Open Bugs**: %d | **Pending Questions**: %d\n",
 		timeStr, snap.HeadSHA, snap.Branch, logMsg, snap.OpenTasks, snap.CompletedTasks, snap.OpenBugs, snap.PendingQs)
 
+	if len(content)+len(entry) > contextopt.MaxSourceBytes {
+		return fmt.Errorf("STATE.md append exceeds %d bytes", contextopt.MaxSourceBytes)
+	}
 	updated := string(content) + entry
 	return os.WriteFile(stateFile, []byte(updated), 0644)
 }

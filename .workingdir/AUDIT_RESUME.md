@@ -5,6 +5,13 @@
 
 ## Current continuation — gaps audit first (2026-09-12)
 
+**Latest checkpoint:** [ledger integrity](../docs/guides/state-ledger-integrity.md)
+is implemented and the four missing findings are recovered as BUG-713..716.
+F392/BUG-714 and F389/BUG-190 are resolved with regression evidence. Current ledger:
+716 records, 713 open, three resolved. Shared analysis/strict decoding and staged
+dogfood replay are next; task/question persistence and STATE append still need
+their own repairs. Earlier counts below describe the pre-repair audit snapshot.
+
 Read [GAPS_AUDIT.md](GAPS_AUDIT.md) before the historical wave summaries below.
 The owner paused feature expansion for a parallel capability/state/stub audit.
 Current branch is `checkpoint/deep-audit-2026-09-12`; the audit inspected base

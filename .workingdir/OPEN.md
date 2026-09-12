@@ -3,6 +3,7 @@
 > Track active, immediate operational blockers and current research spikes.
 > Current evidence and repair order: [GAPS_AUDIT.md](GAPS_AUDIT.md). Audit first; ledger integrity before bulk reconciliation, then ADR-0009 unification before adapter expansion.
 > Package decisions and migration acceptance: [Go reuse research](../docs/research/go-package-reuse.md). Research complete; prototypes and adoption remain implementation work.
+> Ledger recovery and acceptance: [state ledger integrity](../docs/guides/state-ledger-integrity.md). The first repair is implemented; broader state reconciliation and shared services remain open.
 
 ## In-Flight Tasks
 - [x] Deep audit WF-1: read-only multi-agent audit of full codebase (Go, CI, hooks, packaging, deploy, templates, config, agent surfaces, editors, docs) (completed: 2026-09-12)
@@ -22,7 +23,9 @@
 - [ ] Repair and exercise IDE adapters through shared CLI/MCP services; then integrate notebook preparation and prompt evaluation
 - [ ] Run provider prompt candidates on held-out dogfood cases and promote only measured improvements
 - [x] Audit current gaps, stubs, disconnected adapters and inaccurate state before further feature implementation (completed: 2026-09-12)
-- [ ] Repair bug ledger parsing, persistence and read-error handling; recover four missing findings before reconciliation
+- [x] Repair bug ledger parsing, persistence and read-error handling; recover four missing findings before reconciliation (completed: 2026-09-12)
 - [ ] Implement ADR-0009 shared policy and analysis boundaries before adapter and provider expansion
 - [ ] Implement staged forge bot runtime and harden adoption workflows; retain explicit unsupported provider errors
 - [x] Research maintained Go packages versus custom implementations and publish a cited reuse and migration decision matrix (completed: 2026-09-12)
+- [ ] Repair question/task mutation integrity and STATE append concurrency; propagate Git failures and reconcile historical ledger statuses
+- [ ] Constrain whole-workspace dedupe scans so ignored Claude worktrees do not become application duplication findings

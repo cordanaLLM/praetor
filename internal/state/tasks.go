@@ -2,6 +2,8 @@ package state
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -27,12 +30,16 @@ type TaskItem struct {
 
 // ListTasks parses OPEN.md and returns all task items.
 func ListTasks(rootPath string) ([]TaskItem, error) {
+	return ListTasksContext(context.Background(), rootPath)
+}
+
+// ListTasksContext reads a bounded task snapshot under the caller's deadline.
+func ListTasksContext(ctx context.Context, rootPath string) ([]TaskItem, error) {
 	openFile := filepath.Join(rootPath, WorkingDirName, "OPEN.md")
-	if !util.FileExists(openFile) {
+	content, err := contextopt.ReadSnapshot(ctx, openFile)
+	if errors.Is(err, os.ErrNotExist) {
 		return []TaskItem{}, nil
 	}
-
-	content, err := os.ReadFile(openFile)
 	if err != nil {
 		return nil, fmt.Errorf("read OPEN.md: %w", err)
 	}

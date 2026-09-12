@@ -7,7 +7,24 @@ it is not a claim to have reverified every historical finding.
 The subsequent [Go package reuse research](../docs/research/go-package-reuse.md)
 compares maintained libraries and standard-library alternatives against these
 failures, with pinned sources and migration acceptance cases. Research is
-complete; dependency adoption and the repairs below remain open.
+complete; dependency adoption remains open.
+
+## Continuation: ledger repair completed
+
+The [ledger integrity checkpoint](../docs/guides/state-ledger-integrity.md) fixes
+loss-prone parsing, metadata persistence, ID allocation, confined initialization,
+cooperating writer serialization and read-error propagation. All four missing
+source findings are recovered as BUG-713..716; existing IDs were preserved.
+F392/BUG-714 and F389/BUG-190 are resolved against retained regression evidence.
+The ledger now has 716 records, 713 open and three resolved. The audit findings and
+counts below are the pre-repair snapshot, not the current ledger totals.
+
+All 48 package race suites and fresh MCP/CLI checks pass. Full verification still
+fails lint/security; the in-place dedupe scan additionally counts ignored Claude
+worktrees. Remaining ledger work includes question/task mutation integrity, STATE
+append concurrency, Git error handling and broader historical reconciliation.
+
+## Original audit snapshot
 
 Audited base: `c4c5a25beb0d3e5f071b54aff934ecc91b26b5f1`, plus the in-flight
 NotebookLM preparation and prompt-selection changes. Tested Go source SHA256:

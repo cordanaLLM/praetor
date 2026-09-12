@@ -461,3 +461,11 @@
 ### [2026-09-12 19:19:12 UTC] Commit `ebd5184` on `checkpoint/deep-audit-2026-09-12`
 - **Activity**: Go package reuse research completed and linked from GAPS_AUDIT: pinned primary sources, ten measured import closures, executed strict JSON comparison, ranked migration acceptance. No dependencies or runtime changed. Code checkpoint ebd5184 passed hosted race/coverage then failed lint; retained full local gate also fails security. Ledger preservation remains the first repair.
 - **Tasks**: 16 open, 5 completed | **Open Bugs**: 711 | **Pending Questions**: 0
+
+### [2026-09-12 19:27:43 UTC] Commit `1735494` on `checkpoint/deep-audit-2026-09-12`
+- **Activity**: Next-step review: confirmed ledger parser/writer data-loss and ignored audit/sync read errors remain in source. Recommended first implementation checkpoint is lossless persistence, explicit failures, stable IDs and recovery of four retained findings, then shared analysis/strict JSON and one staged dogfood replay. Latest public CI 34713858684 and fresh make verify-all both failed lint; no implementation changed.
+- **Tasks**: 16 open, 5 completed | **Open Bugs**: 711 | **Pending Questions**: 0
+
+### [2026-09-12 19:43:00 UTC] Commit `1735494` on `checkpoint/deep-audit-2026-09-12`
+- **Activity**: Ledger integrity implemented: strict lossless rows and metadata, stable IDs, pinned initialization, serialized atomic bug writes, explicit audit/sync/Hindsight read failures. Recovered F5/F392/F485/F634 as BUG-713..716; resolved only F392 and F389. 716 records, 713 open, 3 resolved. All 48 race package suites, adversarial/CLI/process checks and 728092 fuzz executions pass. Full gate remains red: 87 lint, 81 security, dedupe includes ignored worktrees. Shared analysis and remaining state mutation paths next. See state-ledger-integrity.md and retained ledger-repair-20260912 evidence.
+- **Tasks**: 17 open, 6 completed | **Open Bugs**: 713 | **Pending Questions**: 0

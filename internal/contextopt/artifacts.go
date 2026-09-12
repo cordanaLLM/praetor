@@ -4,9 +4,38 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 )
+
+// OpenDirectory pins a directory without following symlinks in any component.
+// The caller owns the returned handle and must close it after bounded operations.
+func OpenDirectory(ctx context.Context, path string) (*os.Root, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	return openDirectory(ctx, abs)
+}
+
+// ReadRootSnapshot reads a bounded regular UTF-8 file from a pinned directory.
+// A flat name is required; symlinks and changes during the read are rejected.
+func ReadRootSnapshot(ctx context.Context, root *os.Root, name string) ([]byte, error) {
+	if ctx == nil || root == nil || !filepath.IsLocal(name) || filepath.Base(name) != name || name == "." {
+		return nil, fmt.Errorf("context, directory and flat filename required")
+	}
+	if err := validatePath(name); err != nil {
+		return nil, err
+	}
+	return snapshotRoot(ctx, root, name)
+}
 
 // ReadSnapshot reads one immutable regular UTF-8 file using the same bounded,
 // symlink-resistant path traversal as context preparation.

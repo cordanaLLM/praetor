@@ -54,6 +54,8 @@ all_github_repos.json
 .workingdir/memory/
 .workingdir/*.tmp
 .workingdir/cadence.json
+# Stable advisory-lock inode; pending ledger writes remain visible for recovery.
+.workingdir/.bugs.lock
 
 # Workflow agent worktrees
 /.claude/worktrees/

@@ -140,6 +140,13 @@ func snapshot(ctx context.Context, absolute string) (data []byte, err error) {
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
 	name := filepath.Base(absolute)
+	return snapshotRoot(ctx, root, name)
+}
+
+func snapshotRoot(ctx context.Context, root *os.Root, name string) (data []byte, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	before, err := root.Lstat(name)
 	if err != nil {
 		return nil, err

@@ -1,0 +1,160 @@
+package state
+
+import (
+	"fmt"
+	"strings"
+	"unicode/utf8"
+)
+
+type bugRow struct {
+	bug        BugEntry
+	start, end int
+}
+
+type bugDocument struct {
+	text                     string
+	rows                     []bugRow
+	insert                   int
+	newline                  string
+	header, table, separator bool
+	fence                    string
+	seen                     map[string]bool
+}
+
+func parseBugDocument(text string) (*bugDocument, error) {
+	if len(text) > maxBugLedgerBytes || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
+		return nil, fmt.Errorf("bug ledger must be UTF-8 without NUL, at most %d bytes", maxBugLedgerBytes)
+	}
+	doc := &bugDocument{text: text, newline: "\n", seen: make(map[string]bool)}
+	if strings.Contains(text, "\r\n") {
+		doc.newline = "\r\n"
+	}
+	start := 0
+	for lineNo, line := range strings.SplitAfter(text, "\n") {
+		if lineNo >= maxScannedLines {
+			return nil, fmt.Errorf("bug ledger line bound exceeded")
+		}
+		body := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		if err := doc.readLine(body, start, start+len(body)); err != nil {
+			return nil, fmt.Errorf("BUGS.md line %d: %w", lineNo+1, err)
+		}
+		start += len(line)
+	}
+	if !doc.header || doc.separator {
+		return nil, fmt.Errorf("BUGS.md requires a complete six-column ledger header")
+	}
+	return doc, nil
+}
+
+func (doc *bugDocument) skipFence(line string) bool {
+	if doc.fence != "" {
+		if strings.HasPrefix(line, doc.fence) && strings.Trim(line, string(doc.fence[0])+" \t") == "" {
+			doc.fence = ""
+		}
+		return true
+	}
+	if !strings.HasPrefix(line, "```") && !strings.HasPrefix(line, "~~~") {
+		return false
+	}
+	end := 0
+	for end < len(line) && line[end] == line[0] {
+		end++
+	}
+	doc.fence = line[:end]
+	doc.table = false
+	return true
+}
+
+func (doc *bugDocument) readLine(body string, start, end int) error {
+	line := strings.TrimSpace(body)
+	if doc.skipFence(line) {
+		return nil
+	}
+	if isBugHeader(line) {
+		if doc.header {
+			return fmt.Errorf("multiple bug tables are ambiguous")
+		}
+		doc.header, doc.table, doc.separator = true, true, true
+		return nil
+	}
+	if doc.separator {
+		if !isBugSeparator(line) {
+			return fmt.Errorf("invalid bug table separator")
+		}
+		doc.separator, doc.insert = false, end
+		return nil
+	}
+	if !doc.table {
+		if claimsBugRow(line) {
+			return fmt.Errorf("bug row outside ledger table")
+		}
+		return nil
+	}
+	if !strings.HasPrefix(line, "|") {
+		if claimsBugRow(line) {
+			return fmt.Errorf("malformed bug row outside table syntax")
+		}
+		doc.table = false
+		return nil
+	}
+	return doc.addRow(body, start, end)
+}
+
+func claimsBugRow(line string) bool {
+	if !strings.Contains(line, "|") {
+		return false
+	}
+	cell, _, _ := strings.Cut(strings.TrimPrefix(line, "|"), "|")
+	return strings.HasPrefix(strings.Trim(strings.TrimSpace(cell), "`"), "BUG-")
+}
+
+func (doc *bugDocument) addRow(body string, start, end int) error {
+	bug, err := decodeBugRow(body)
+	if err != nil {
+		return err
+	}
+	if doc.seen[bug.ID] {
+		return fmt.Errorf("duplicate bug ID %s", bug.ID)
+	}
+	if len(doc.rows) >= maxBugEntries {
+		return fmt.Errorf("bug count exceeds %d", maxBugEntries)
+	}
+	doc.seen[bug.ID] = true
+	doc.rows = append(doc.rows, bugRow{bug, start, end})
+	doc.insert = end
+	return nil
+}
+
+func isBugHeader(line string) bool {
+	parts := strings.Split(line, "|")
+	if len(parts) != 8 {
+		return false
+	}
+	want := []string{"", "ID", "Title", "Severity", "Status", "Location", "Resolution", ""}
+	for i := range parts {
+		if strings.TrimSpace(parts[i]) != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func isBugSeparator(line string) bool {
+	parts := strings.Split(line, "|")
+	if len(parts) != 8 || strings.TrimSpace(parts[0])+strings.TrimSpace(parts[7]) != "" {
+		return false
+	}
+	for _, part := range parts[1:7] {
+		cell := strings.TrimSpace(part)
+		if strings.Count(cell, "-") < 3 || strings.Trim(cell, ":-") != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func (doc *bugDocument) insertRow(row string) string {
+	// Insert before the existing end-of-line; its exact bytes and all trailing
+	// prose remain untouched, including a missing final newline.
+	return doc.text[:doc.insert] + doc.newline + row + doc.text[doc.insert:]
+}

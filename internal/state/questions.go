@@ -1,6 +1,8 @@
 package state
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // QuestionEntry buffers non-blocking user decisions and questions collected during autonomous work.
@@ -50,13 +52,18 @@ func AddQuestion(rootPath string, q QuestionEntry) (*QuestionEntry, error) {
 
 // ListQuestions retrieves questions from .workingdir/QUESTIONS.md.
 func ListQuestions(rootPath string, filterStatus string) ([]QuestionEntry, error) {
+	return ListQuestionsContext(context.Background(), rootPath, filterStatus)
+}
+
+// ListQuestionsContext reads a bounded question snapshot under the caller's deadline.
+func ListQuestionsContext(ctx context.Context, rootPath string, filterStatus string) ([]QuestionEntry, error) {
 	qFile := filepath.Join(rootPath, WorkingDirName, "QUESTIONS.md")
-	if !util.FileExists(qFile) {
+	content, err := contextopt.ReadSnapshot(ctx, qFile)
+	if errors.Is(err, os.ErrNotExist) {
 		return []QuestionEntry{}, nil
 	}
-	content, err := os.ReadFile(qFile)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read QUESTIONS.md: %w", err)
 	}
 
 	all := ParseQuestionsMarkdown(string(content))
