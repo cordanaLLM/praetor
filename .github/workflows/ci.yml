@@ -57,11 +57,8 @@ jobs:
 
       - name: Install Pinned Git Hook Toolchain
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
-        env:
-          # Lefthook 1.13.6's JSON dependency predates the Go 1.27 API.
-          GOTOOLCHAIN: go1.25.5
         run: |
-          go install github.com/evilmartians/lefthook@v1.13.6
+          go install github.com/evilmartians/lefthook/v2@v2.1.12
           lefthook version
 
       - name: Verify Go Formatting (gofmt)

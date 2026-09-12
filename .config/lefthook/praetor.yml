@@ -1,4 +1,9 @@
-# Compatible with Lefthook 1.13.6. One stdin consumer per hook is intentional.
+# Compatible with Lefthook 2.1.12. One stdin consumer per hook is intentional.
+agent-pre-tool:
+  commands:
+    command-policy:
+      use_stdin: true
+      run: python3 -B .config/agent/hooks/block_evasion.py
 pre-commit:
   commands:
     staged-checks:

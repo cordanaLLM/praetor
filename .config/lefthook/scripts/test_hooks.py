@@ -111,6 +111,30 @@ class GitHooks(unittest.TestCase):
                          data=b'{"tool_input":{"command":"git status"}}', ok=False)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
 
+    def test_codex_adapter_requires_executed_lefthook_job(self):
+        adapter = self.repo / ".config/agent/hooks/codex_pre_tool.py"
+        empty_bin = self.repo / "empty-bin"
+        empty_bin.mkdir()
+        payload = b'{"tool_input":{"command":"git status"}}'
+        with mock.patch.dict(os.environ, {"PATH": str(empty_bin)}):
+            missing = command(self.repo, sys.executable, str(adapter), data=payload, ok=False)
+        self.assertEqual(missing.returncode, 2, missing.stdout + missing.stderr)
+        fake = empty_bin / "lefthook"
+        fake.write_text("#!/bin/sh\nexit 0\n")
+        fake.chmod(0o755)
+        with mock.patch.dict(os.environ, {"PATH": str(empty_bin)}):
+            skipped = command(self.repo, sys.executable, str(adapter), data=payload, ok=False)
+        self.assertEqual(skipped.returncode, 2, skipped.stdout + skipped.stderr)
+
+    def test_lefthook_agent_job_consumes_and_checks_command(self):
+        for proposed, allowed in (("git status", True), ("git commit --no-verify", False)):
+            result = self.hook("agent-pre-tool", data=json.dumps({
+                "tool_input": {"command": proposed},
+            }).encode())
+            self.assertEqual(result.returncode == 0, allowed, result.stdout + result.stderr)
+            if allowed:
+                self.assertIn(b"PRAETOR_COMMAND_POLICY_OK", result.stdout)
+
     def test_codex_hook_configuration_runs_from_nested_directory(self):
         self.write(".codex/hooks.json", (ROOT / ".codex/hooks.json").read_text())
         settings = json.loads((self.repo / ".codex/hooks.json").read_text())

@@ -524,3 +524,11 @@
 ### [2026-09-12 21:50:16 UTC] Commit `5d6ad1a` on `checkpoint/deep-audit-2026-09-12`
 - **Activity**: Lefthook pre-push correctly rejected a scaffold test relying on make beside git. Resolved make before isolating PATH; exact git-shim regression and full make verify-all pass. Adoption5d6ad1a installed, push retry pending. User prioritizes native harness dispatch admission, cheap eligible bounded experts, measured quotas and completion enforcement; existing isolated fixes retained.
 - **Tasks**: 25 open, 0 completed | **Open Bugs**: 712 | **Pending Questions**: 0
+
+### [2026-09-12 22:04:15 UTC] Commit `8ceaecb` on `checkpoint/deep-audit-2026-09-12`
+- **Activity**: Upgraded tested Lefthook to 2.1.12; native command adapter now requires real Lefthook agent job execution and normalizes rejection. Exact-hash Codex trust bootstrap verified with native readback, shared bounded MCP transport tests pass. Canonical workstation paths parameterized and regenerated. Package pipeline source audit and stage plan published; builder false success and incomplete shared policy block promotion. Native denial proof and full shipping gate pending.
+- **Tasks**: 26 open, 0 completed | **Open Bugs**: 712 | **Pending Questions**: 0
+
+### [2026-09-12 22:06:31 UTC] Commit `8ceaecb` on `checkpoint/deep-audit-2026-09-12`
+- **Activity**: Full make verify-all passed with pinned Lefthook2.1.12. Independent hook/RPC review passed. Fresh native Codex0.145.0 stderr proves PreToolUse blocked harmless forbidden-marker printf through Lefthook agent-pre-tool; current chat exec path executed it and remains unenforced. Exact-hash trust bootstrap verified through native API. Package pipeline planning completed with explicit staged blockers; runtime admission and Stop evidence remain open.
+- **Tasks**: 26 open, 0 completed | **Open Bugs**: 712 | **Pending Questions**: 0

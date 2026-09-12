@@ -92,7 +92,7 @@ go run ./cmd/standardsctl compile-context --verify
 go run ./cmd/standardsctl audit
 
 # Audit workstation directory topology compliance (DEV-01 to DEV-05)
-go run ./cmd/standardsctl topology audit /home/kilian/dev
+go run ./cmd/standardsctl topology audit "${PRAETOR_DEV_ROOT:-$HOME/dev}"
 
 # Run all formatting, linting, and security gates
 make verify-all

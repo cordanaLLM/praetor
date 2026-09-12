@@ -1,7 +1,7 @@
 # Local Git hooks
 
-Install Lefthook 1.13.6 or newer, then run `make hooks` and `make hooks-check`.
-The configuration is tested with 1.13.6. Python 3, Git and the repository Go
+Install Lefthook 2.1.12 or newer, then run `make hooks` and `make hooks-check`.
+The configuration is tested with 2.1.12. Python 3, Git and the repository Go
 version are required. Install `yamllint`, `shellcheck`, `actionlint` and `hadolint`
 when editing their file types; applicable checks fail if their tool is missing.
 Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Golangci-lint runs
@@ -134,9 +134,14 @@ selection and every configured stage. It never disables the user's hooks.
 Git hooks run when Codex invokes Git, just as they do for a human. They do not
 inspect every tool call or run verification at the end of a conversation turn.
 The repository's `.codex/hooks.json` adds a separate `PreToolUse` handler for
-Codex's `Bash` tool, including shell calls through `exec_command` and code mode.
-The handler invokes `codex_pre_tool.py`, which runs the same `block_evasion.py`
-policy used by Lefthook. Git's hook driver calls that policy's environment mode;
+Codex's native `Bash` tool. Specialized tool hosts and existing sessions require
+separate runtime verification; this file does not establish their coverage.
+The handler invokes `codex_pre_tool.py`, which executes
+`lefthook run agent-pre-tool --no-tty --no-auto-install`. That required job runs
+`block_evasion.py`. The adapter requires its success marker as well as exit zero;
+a missing binary, missing job or skipped job blocks execution. Automatic Git
+hook installation is disabled for this tool event only; install Git hooks with
+`make hooks`. Git's hook driver calls the policy's environment mode;
 Codex supplies the proposed shell command as JSON before execution.
 
 The adapter translates rejected commands, invalid input, missing guard execution
@@ -146,10 +151,11 @@ screen for known verification-evasion and topology patterns, not a complete
 shell parser or an immutable security boundary. It does not inspect file edits,
 arbitrary MCP calls, or later input sent to an already-running shell.
 
-This integration was checked against Codex CLI 0.145.0 and Lefthook 1.13.6.
-It calls the shared guard directly because Lefthook 1.13.6's validator rejects
-custom lifecycle job names. Existing Git jobs and their gates remain configured
-in the canonical Lefthook policy.
+This integration is checked against Codex CLI 0.145.0 and Lefthook 2.1.12.
+Version 2 supports custom agent lifecycle jobs; the earlier 1.13.6 validator
+rejected them. CI installs the same pinned v2 release. The adapter translates
+Lefthook's failure into Codex's blocking exit code rather than assuming their
+exit semantics match. See the [upstream agent integration](https://lefthook.dev/configuration/ai/).
 
 After opening this trusted repository in Codex, use `/hooks` to review and trust
 the repository's `PreToolUse` definition. If it is not listed in an existing
@@ -163,3 +169,24 @@ No repository `Stop` verification hook is configured. `make verify-all` remains
 an explicit required agent step, while commits and pushes have the Git gates
 listed above. See the [Codex hook lifecycle and trust documentation](https://learn.chatgpt.com/docs/hooks)
 for runtime coverage and activation semantics.
+
+
+Native bootstrap can also be inspected without a model request:
+
+```bash
+python3 -B scripts/dev_codex_hooks.py status
+python3 -B scripts/dev_codex_hooks.py trust --key '<reviewed project hook key>' --expected-hash 'sha256:<reviewed definition hash>'
+```
+
+Review the listed command and its referenced source before supplying its hash.
+The bootstrap uses Codex 0.145.0's native `hooks/list` and `config/batchWrite`
+operations, matching the native trust UI. It only updates the selected enabled
+project command hook, rejects stale hashes and discovery warnings, and verifies
+trusted status afterward. It preserves other hook and client settings. It does
+not start an agent or reload an already-running IDE session. A definition hash
+binds the command configuration, not the contents of a referenced script; source
+review and the repository gates are still required after implementation changes.
+
+The client shares MCP's bounded stdio transport, including deadlines, byte and
+request limits, and child-process cleanup. Tests cover stale/foreign/duplicate
+selection, failed discovery and readback, and real native-protocol pipe exchange.

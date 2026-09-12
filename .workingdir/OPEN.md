@@ -1,6 +1,7 @@
 # Open Items & In-Flight Blockers
 
 
+> Package pipeline plan and staged acceptance: [package development pipeline](../docs/plans/package-development-pipeline.md). Implementation begins with truthful builder and evidence states.
 > Current portfolio gap and bugfix audit: [PORTFOLIO_AUDIT.md](PORTFOLIO_AUDIT.md).
 > Track active, immediate operational blockers and current research spikes.
 > Current evidence and repair order: [GAPS_AUDIT.md](GAPS_AUDIT.md). Audit first; ledger integrity before bulk reconciliation, then ADR-0009 unification before adapter expansion.
@@ -15,7 +16,6 @@
 - [ ] Implement capability and evidence based per-task agent routing with cost, latency, and escalation controls
 - [ ] Optimize workstation agent and CLI context files with canonical ownership and replay verification
 - [ ] Promote scoped dogfood repair candidates through fresh suite replay and explicit repository stages
-- [ ] Trust and verify the repository Codex PreToolUse hook in a native session
 - [ ] Enforce verification evidence at agent Stop with bounded failure handling
 - [ ] Build NotebookLM source preparation and project plan, specification, and task templates
 - [ ] Replace model catalog name heuristics and silent discovery failures with measured capability and provenance records
@@ -33,3 +33,5 @@
 - [ ] Build configurable research concept specification task code test interconnect with shared agent orchestration before private settings fork promotion
 - [ ] Correct needs readiness against actual selected framework coverage and reject synthetic builder dispatch success
 - [ ] Enforce local agent dispatch admission with verified backend availability bounded expert tasks budgets and completion evidence
+- [ ] Implement package pipeline stage zero truthful builder optimizer issue and knowledge evidence before package promotion
+- [ ] Repair active IDE toolhost lifecycle interception; fresh native CLI blocks but current chat exec path does not

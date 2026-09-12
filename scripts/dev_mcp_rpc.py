@@ -65,13 +65,9 @@ class RPCClient:
             raise RPCError("RPCClient instances cannot be reused")
         try:
             self._start()
-            self.initialize_response = self.request("initialize", {
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {"name": "praetor-dev-mcp", "version": "1.0.0"},
-            })
+            self.initialize_response = self.request("initialize", self._initialize_params())
             self._validate_initialize()
-            self._exchange({"jsonrpc": "2.0", "method": "notifications/initialized"}, None)
+            self._exchange(self._initialized_notification(), None)
             return self
         except BaseException as error:
             self._abort(error)
@@ -79,6 +75,18 @@ class RPCClient:
     def __exit__(self, _type, _value, _traceback):
         self.close()
         return False
+
+    def _initialize_params(self):
+        return {"protocolVersion": PROTOCOL_VERSION, "capabilities": {},
+                "clientInfo": {"name": "praetor-dev-mcp", "version": "1.0.0"}}
+
+    def _initialized_notification(self):
+        return {"jsonrpc": "2.0", "method": "notifications/initialized"}
+
+    @staticmethod
+    def _validate_envelope(message):
+        if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
+            raise RPCError("server emitted an invalid JSON-RPC 2.0 envelope")
 
     def _start(self):
         self._process = subprocess.Popen(
@@ -200,8 +208,7 @@ class RPCClient:
                 message = json.loads(line.decode("utf-8"), parse_constant=_reject_constant)
             except (ValueError, RecursionError) as error:
                 raise RPCError(f"server emitted malformed JSON: {error}") from error
-            if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
-                raise RPCError("server emitted an invalid JSON-RPC 2.0 envelope")
+            self._validate_envelope(message)
             if "id" not in message and self._is_notification(message):
                 continue
             if type(message.get("id")) is not int or message["id"] != request_id:

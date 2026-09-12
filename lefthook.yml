@@ -1,5 +1,5 @@
 # The vendorable policy is shared with adopters; see .config/lefthook/README.md.
-min_version: 1.13.6
+min_version: 2.1.12
 assert_lefthook_installed: true
 extends:
   - .config/lefthook/praetor.yml

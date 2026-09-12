@@ -5,11 +5,11 @@
 paths. See [the hook guide](../../docs/guides/git-hooks.md) for behavior and tools.
 
 An adopter can vendor this directory and
-`.config/agent/hooks/block_evasion.py` from the same reviewed Praetor commit, then
+`.config/agent/hooks/` from the same reviewed Praetor commit, then
 use the following root configuration:
 
 ```yaml
-min_version: 1.13.6
+min_version: 2.1.12
 assert_lefthook_installed: true
 extends:
   - .config/lefthook/praetor.yml
@@ -29,13 +29,16 @@ Remote distribution therefore still requires vendoring the matching scripts or
 a future packaged CLI adapter. The existing Go adoption scaffolder is outside
 this change and must be updated before fleet-wide automatic rollout.
 
-Verified against the installed 1.13.6 binary (`lefthook validate`, real Git-hook
-invocations) and the upstream v1.13.6 source, commit
-`539f66c92f10e20ed369d769afee1cd6e93d5735`:
+Verified against pinned Lefthook 2.1.12 with real Git and custom agent-job
+invocations. The policy requires v2 for `agent-pre-tool`; the native Codex adapter
+normalizes failure to blocking exit code 2. Install the tested release with:
 
-- [Run arguments](https://github.com/evilmartians/lefthook/blob/v1.13.6/docs/mdbook/configuration/run.md)
-- [Single stdin consumer](https://github.com/evilmartians/lefthook/blob/v1.13.6/docs/mdbook/configuration/use_stdin.md)
-- [Extending configuration](https://github.com/evilmartians/lefthook/blob/v1.13.6/docs/mdbook/configuration/extends.md)
+```bash
+go install github.com/evilmartians/lefthook/v2@v2.1.12
+```
+
+See [upstream agent integration](https://lefthook.dev/configuration/ai/) and the
+[pinned implementation](https://github.com/evilmartians/lefthook/tree/v2.1.12).
 
 No `stage_fixed` jobs are used. Checking exported index content avoids changing
 partially staged hunks while retaining the formatting gate.

@@ -20,7 +20,7 @@ def check(payload: bytes) -> int:
     try:
         with tempfile.TemporaryFile() as output:
             result = subprocess.run(
-                [sys.executable, "-B", str(ROOT / ".config/agent/hooks/block_evasion.py")],
+                ["lefthook", "run", "agent-pre-tool", "--no-tty", "--no-auto-install"],
                 cwd=ROOT, input=payload, stdout=output, stderr=subprocess.STDOUT,
                 timeout=10, check=False,
             )

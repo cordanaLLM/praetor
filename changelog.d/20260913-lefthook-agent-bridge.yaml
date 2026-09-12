@@ -1,0 +1,3 @@
+type: changed
+title: Require Lefthook 2.1.12 for fail-closed native Codex command checks and exact-hash hook bootstrap
+breaking: true

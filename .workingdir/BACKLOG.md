@@ -237,3 +237,9 @@
 ### Discharged Tasks [2026-09-12 21:46:21 UTC, commit `local`]
 - [x] Validate optional retained scan coverage metadata and mark truncated scope partial (completed: 2026-09-12)
 - [x] Integrate metadata-derived adoption checks and replay pinned Jellysin governance with explicit enrollment (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 22:04:15 UTC, commit `local`]
+- [x] Plan configurable package organization research reuse implementation and dogfood promotion pipeline with golusoris as private binding (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 22:06:31 UTC, commit `local`]
+- [x] Trust and verify the repository Codex PreToolUse hook in a native session (completed: 2026-09-12)
