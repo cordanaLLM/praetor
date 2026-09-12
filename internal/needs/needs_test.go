@@ -747,3 +747,10 @@ func TestRepoIdentityKey(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderFrameworkDemandMarkdown_NilReport(t *testing.T) {
+	md := RenderFrameworkDemandMarkdown(nil)
+	if !strings.Contains(md, "No report was produced.") {
+		t.Fatalf("expected a nil report to render an explicit notice, got %q", md)
+	}
+}
