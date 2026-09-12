@@ -458,6 +458,19 @@ class ScopeAndGuard(unittest.TestCase):
             with self.assertRaisesRegex(HookError, "errcheck"):
                 source_checks(root, ["core/core.go"], "lint")
 
+    def test_checkpoint_test_only_packages_still_run_and_propagate_failure(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-checkpoint-test-only-") as temp:
+            root = Path(temp)
+            (root / "go.mod").write_text("module example.test/onlytests\n\ngo 1.27\n")
+            test = root / "only_test.go"
+            test.write_text('package onlytests\nimport "testing"\n'
+                            'func TestOnly(t *testing.T) {}\n')
+            checkpoint_checks(root, ["only_test.go"])
+            test.write_text('package onlytests\nimport "testing"\n'
+                            'func TestOnly(t *testing.T) { t.Fatal("test-only failure") }\n')
+            with self.assertRaisesRegex(HookError, "test-only failure"):
+                checkpoint_checks(root, ["only_test.go"])
+
     def test_checkpoint_real_build_rejects_broken_reverse_dependency(self):
         with tempfile.TemporaryDirectory(prefix="praetor-checkpoint-build-") as temp:
             root = Path(temp)

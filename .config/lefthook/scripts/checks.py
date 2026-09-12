@@ -165,7 +165,13 @@ def checkpoint_checks(directory, names):
         print("Checkpoint Go gates: no affected packages")
         return
     print("Checkpoint Go scope: " + ", ".join(packages))
-    parallel([["go", "build", *packages]], directory)
+    listed = decode_packages(run(["go", "list", "-json", *packages], cwd=directory,
+                                 env=clean_env()))
+    buildable = [pkg["ImportPath"] for pkg in listed if pkg.get("GoFiles") or pkg.get("CgoFiles")]
+    if buildable:
+        parallel([["go", "build", *buildable]], directory)
+    # go build rejects explicit test-only packages. Keep those in the race gate,
+    # which compiles and executes their tests rather than silently dropping them.
     parallel([["go", "test", "-race", "-count=1", "-timeout=5m", *packages]], directory)
 
 
