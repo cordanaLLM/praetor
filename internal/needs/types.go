@@ -44,8 +44,10 @@ type CapabilityDeclaration struct {
 	Optional []CapabilityKey `json:"optional,omitempty" yaml:"optional,omitempty"`
 }
 
-// ReadinessMetrics summarizes framework adoption feasibility.
+// ReadinessMetrics summarizes dependency mapping availability, not migration safety.
+// Basis distinguishes catalog declarations from observed source; tests are not run.
 type ReadinessMetrics struct {
+	Basis               string  `json:"basis,omitempty" yaml:"basis,omitempty"`
 	Score               float64 `json:"score" yaml:"score"` // 0.0 - 100.0%
 	TotalThirdPartyDeps int     `json:"total_third_party_deps" yaml:"total_third_party_deps"`
 	CoveredDeps         int     `json:"covered_deps" yaml:"covered_deps"`
@@ -77,6 +79,7 @@ type FrameworkPackage struct {
 
 // FrameworkIndex represents the indexed capability offerings of the framework.
 type FrameworkIndex struct {
+	Basis        string                      `json:"basis,omitempty"`
 	Name         string                      `json:"name"`
 	RootPath     string                      `json:"root_path"`
 	Version      string                      `json:"version"`
@@ -94,6 +97,7 @@ type GapDetail struct {
 
 // FleetDemandReport aggregates all downstream needs across the fleet.
 type FleetDemandReport struct {
+	CoverageBasis       string    `json:"coverage_basis,omitempty"`
 	GeneratedAt         time.Time `json:"generated_at"`
 	FleetRoot           string    `json:"fleet_root"`
 	Framework           string    `json:"framework"`

@@ -2,16 +2,18 @@ package needs
 
 import (
 	"context"
-	"fmt"
-	"os"
+	"errors"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
-	defaultFrameworkModule = "github.com/golusoris/golusoris"
+	FrameworkCatalogDeclared = "catalog-declared"
+	FrameworkSourceObserved  = "source-observed"
+	defaultFrameworkModule   = "github.com/golusoris/golusoris"
 	// defaultFrameworkVersion is the framework release generated artifacts pin.
 	defaultFrameworkVersion = "v0.8.0"
 )
@@ -78,58 +80,32 @@ func isModulePathShaped(value string) bool {
 	return ok && strings.Contains(first, ".")
 }
 
-// InspectFramework discovers exported packages and capability offerings from a local framework repo.
+// InspectFramework resolves declared catalog mappings or observes exact local
+// replacement packages. It does not run builds or establish tested correctness.
 func InspectFramework(ctx context.Context, frameworkPath string) (*FrameworkIndex, error) {
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+	if ctx == nil {
+		return nil, errors.New("framework inspection requires a context")
 	}
-
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	index := &FrameworkIndex{
-		Name:         ResolveFrameworkModule(frameworkPath),
-		RootPath:     frameworkPath,
-		Version:      defaultFrameworkVersion,
+		Name: defaultFrameworkModule, RootPath: frameworkPath,
+		Version: defaultFrameworkVersion, Basis: FrameworkCatalogDeclared,
 		Packages:     make(map[string]FrameworkPackage),
 		Capabilities: make(map[CapabilityKey][]string),
 	}
-
-	if frameworkPath == "" || !util.DirExists(frameworkPath) {
+	if frameworkPath == "" {
 		populateDefaultFrameworkIndex(index)
 		return index, nil
 	}
-
-	entries, err := os.ReadDir(frameworkPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read framework directory %s: %w", frameworkPath, err)
+	index.Basis, index.Version = FrameworkSourceObserved, "unverified"
+	if err := observeFramework(ctx, index); err != nil {
+		return nil, err
 	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		processDomainDir(entry.Name(), index)
-	}
-
 	return index, nil
-}
-
-// processDomainDir registers a domain directory into the framework index.
-func processDomainDir(domain string, index *FrameworkIndex) {
-	pkgPath := index.Name + "/" + domain
-	caps, found := KnownDomainCapabilities[domain]
-	if !found {
-		caps = []CapabilityKey{CapabilityKey(domain + ".core")}
-	}
-
-	pkg := FrameworkPackage{
-		ImportPath:   pkgPath,
-		Domain:       domain,
-		Capabilities: caps,
-	}
-	index.Packages[pkgPath] = pkg
-
-	for _, c := range caps {
-		index.Capabilities[c] = append(index.Capabilities[c], pkgPath)
-	}
 }
 
 // populateDefaultFrameworkIndex supplies static baseline index when offline.
@@ -157,38 +133,8 @@ func (idx *FrameworkIndex) IsCapabilityCovered(capKey CapabilityKey) bool {
 	return ok && len(pkgs) > 0
 }
 
-// ProvidesCapability reports whether the inspected framework can serve capKey.
-//
-// A capability counts as provided when the index lists it verbatim, or when the
-// framework exposes the domain the capability belongs to (the segment before the first
-// "."). The domain fallback exists because a checkout contributes the capabilities of
-// KnownDomainCapabilities only for the directories it actually has, and a directory
-// outside that table contributes just "<domain>.core" - yet a `mcp/` package does serve
-// "mcp.server".
-//
-// This is the production reader of FrameworkIndex.Capabilities: fleet aggregation uses
-// it to demote a catalog-covered dependency whose capability the framework the operator
-// pointed at does not in fact ship.
+// ProvidesCapability requires an exact mapping. Basis distinguishes declarations
+// from observed source availability; neither establishes tested correctness.
 func (idx *FrameworkIndex) ProvidesCapability(capKey CapabilityKey) bool {
-	if idx == nil {
-		return false
-	}
-	if idx.IsCapabilityCovered(capKey) {
-		return true
-	}
-	domain, _, ok := strings.Cut(string(capKey), ".")
-	if !ok || domain == "" {
-		return false
-	}
-	return idx.hasDomain(domain)
-}
-
-// hasDomain reports whether the index holds a package for the given framework domain.
-func (idx *FrameworkIndex) hasDomain(domain string) bool {
-	for _, pkg := range idx.Packages {
-		if pkg.Domain == domain {
-			return true
-		}
-	}
-	return false
+	return idx.IsCapabilityCovered(capKey)
 }

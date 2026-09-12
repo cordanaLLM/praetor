@@ -91,6 +91,7 @@ func newFleetAggregation(fleetRoot string, fwIndex *FrameworkIndex, discovered i
 			GeneratedAt:         time.Now().UTC(),
 			FleetRoot:           fleetRoot,
 			Framework:           fwIndex.Name,
+			CoverageBasis:       fwIndex.Basis,
 			TotalRepositories:   discovered,
 			DemandFrequency:     make(map[CapabilityKey]int),
 			CapabilityConsumers: make(map[CapabilityKey][]string),
@@ -237,18 +238,40 @@ func applyFrameworkCoverage(idx *FrameworkIndex, repoNeeds *RepoNeeds) {
 	demoted := false
 	for i := range repoNeeds.Dependencies {
 		dep := &repoNeeds.Dependencies[i]
-		if dep.Status == StatusGap || idx.ProvidesCapability(dep.Capability) {
+		if dep.Status == StatusGap {
+			continue
+		}
+		if replacement, available := frameworkReplacement(idx, *dep); available {
+			dep.GolusorisReplacement = replacement
 			continue
 		}
 		dep.Status = StatusGap
 		dep.GolusorisReplacement = ""
-		dep.Notes = fmt.Sprintf("%s does not provide capability %s", idx.Name, dep.Capability)
+		dep.Notes = fmt.Sprintf("%s has no observed catalog replacement for capability %s", idx.Name, dep.Capability)
 		demoted = true
 	}
 
 	if demoted {
 		calculateReadiness(repoNeeds)
 	}
+	repoNeeds.Framework = idx.Name
+	repoNeeds.Readiness.Basis = idx.Basis
+}
+
+func frameworkReplacement(idx *FrameworkIndex, dep DependencyDemand) (string, bool) {
+	if !idx.ProvidesCapability(dep.Capability) {
+		return "", false
+	}
+	if idx.Basis != FrameworkSourceObserved {
+		return dep.GolusorisReplacement, true
+	}
+	relative, ok := strings.CutPrefix(dep.GolusorisReplacement, defaultFrameworkModule+"/")
+	if !ok {
+		return "", false
+	}
+	replacement := idx.Name + "/" + relative
+	_, ok = idx.Packages[replacement]
+	return replacement, ok
 }
 
 // discoverFleetRepos searches up to depth 5 for repositories across all supported languages.
@@ -403,11 +426,12 @@ func renderDemandHeader(report *FleetDemandReport) string {
 
 	return fmt.Sprintf("# Framework Demand & Capability Report\n\n"+
 		"**Target Framework**: `%s`  \n"+
+		"**Coverage Basis**: %s; builds and tests not run  \n"+
 		"**Generated At**: %s  \n"+
 		"**Repositories Scanned**: %d / %d  \n"+
 		"%s%s"+
 		"**Overall Fleet Golusoris Coverage**: %s\n\n",
-		report.Framework, report.GeneratedAt.Format(time.RFC3339),
+		report.Framework, report.CoverageBasis, report.GeneratedAt.Format(time.RFC3339),
 		report.ScannedRepositories, report.TotalRepositories, failed, skipped, coverage)
 }
 

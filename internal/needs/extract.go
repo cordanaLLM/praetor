@@ -37,6 +37,20 @@ func ScanRepo(ctx context.Context, repoPath string) (*RepoNeeds, error) {
 	return repoNeeds, nil
 }
 
+// ScanRepoWithFramework reconciles catalog demands against the selected framework.
+// It reports available mappings, never runtime compatibility or passing tests.
+func ScanRepoWithFramework(ctx context.Context, repoPath string, framework *FrameworkIndex) (*RepoNeeds, error) {
+	if ctx == nil || framework == nil {
+		return nil, errors.New("context and framework index are required")
+	}
+	report, err := ScanRepo(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
+	applyFrameworkCoverage(framework, report)
+	return report, nil
+}
+
 // parseGoMod extracts the module path, go version, and direct dependencies from go.mod.
 func parseGoMod(goModPath string) (modulePath string, goVersion string, directDeps map[string]string, err error) {
 	if !util.FileExists(goModPath) {
@@ -380,6 +394,7 @@ func calculateReadiness(repoNeeds *RepoNeeds) {
 	}
 
 	repoNeeds.Readiness = ReadinessMetrics{
+		Basis:               FrameworkCatalogDeclared,
 		Score:               score,
 		TotalThirdPartyDeps: total,
 		CoveredDeps:         covered,

@@ -120,7 +120,7 @@ func TestDispatchCommand_NeedsSubcommands(t *testing.T) {
 
 	// Positive: report against a real framework checkout and against the built-in index,
 	// so both InspectFramework branches are exercised deterministically.
-	for _, fw := range []string{framework, filepath.Join(t.TempDir(), "absent")} {
+	for _, fw := range []string{framework, ""} {
 		out, err := captureStdout(t, func() error {
 			return dispatchCommand("needs", []string{"report", "--path=" + repo, "--framework=" + fw})
 		})

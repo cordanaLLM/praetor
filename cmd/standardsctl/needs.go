@@ -80,7 +80,7 @@ func runNeedsScan(ctx context.Context, args []string) error {
 
 	fmt.Printf("=== Framework Needs Scan: %s ===\n", report.Repository)
 	fmt.Printf("Go Version: %s | Target Framework: %s\n", report.GoVersion, report.Framework)
-	fmt.Printf("Readiness Score: %.1f%% (%d covered, %d gaps, %d total third-party)\n\n",
+	fmt.Printf("Mapping availability: %.1f%% (%d covered, %d gaps, %d total third-party)\n\n",
 		report.Readiness.Score, report.Readiness.CoveredDeps, report.Readiness.GapDeps, report.Readiness.TotalThirdPartyDeps)
 
 	for _, dep := range report.Dependencies {
@@ -118,13 +118,14 @@ func runNeedsReport(ctx context.Context, args []string) error {
 		return fmt.Errorf("failed to inspect framework: %w", err)
 	}
 
-	rep, err := needs.ScanRepo(ctx, *path)
+	rep, err := needs.ScanRepoWithFramework(ctx, *path, fwIndex)
 	if err != nil {
 		return fmt.Errorf("failed to scan repository: %w", err)
 	}
 
 	fmt.Printf("=== Golusoris Migration Report: %s ===\n", rep.Repository)
-	fmt.Printf("Framework: %s (%s) | Readiness Score: %.1f%%\n\n", fwIndex.Name, fwIndex.Version, rep.Readiness.Score)
+	fmt.Printf("Framework: %s (%s) | Mapping availability: %.1f%%\n\n", fwIndex.Name, fwIndex.Version, rep.Readiness.Score)
+	fmt.Printf("Coverage basis: %s; builds and tests not run\n\n", fwIndex.Basis)
 
 	fmt.Println("Drop-In Replacement Matrix:")
 	for _, dep := range rep.Dependencies {
@@ -466,7 +467,8 @@ func defaultDevDir() string {
 
 // defaultFrameworkDir is the Golusoris checkout used when --framework is not given:
 // PRAETOR_FRAMEWORK_DIR, or <dev dir>/golusoris/golusoris. When it does not exist the
-// needs engine falls back to its built-in framework index.
+// needs engine reports the missing selected path; --framework="" explicitly selects
+// the unverified built-in catalog.
 func defaultFrameworkDir() string {
 	if dir := os.Getenv("PRAETOR_FRAMEWORK_DIR"); dir != "" {
 		return dir

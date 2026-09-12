@@ -173,40 +173,29 @@ func setupFrameworkCheckout(t *testing.T, modulePath string, domains ...string) 
 	return root
 }
 
-// TestFrameworkInspectionFromCheckout drives the on-disk branch of InspectFramework,
-// which every previous test avoided by passing an empty framework path.
+// TestFrameworkInspectionFromCheckout observes only exact catalog replacement packages.
 func TestFrameworkInspectionFromCheckout(t *testing.T) {
-	ctx := context.Background()
-	root := setupFrameworkCheckout(t, "github.com/acme/forkedfw", "db", "cache", "quantum")
-
-	index, err := InspectFramework(ctx, root)
+	root := setupFrameworkCheckout(t, "github.com/acme/forkedfw", "db/pgx", "cache/redis", "quantum")
+	writeFixture(t, root, "db/pgx/doc.go", "package pgx\ntype Available struct{}\n")
+	writeFixture(t, root, "cache/redis/doc.go", "package redis\ntype Available struct{}\n")
+	writeFixture(t, root, "quantum/doc.go", "package quantum\n")
+	index, err := InspectFramework(t.Context(), root)
 	if err != nil {
-		t.Fatalf("inspect framework checkout failed: %v", err)
+		t.Fatal(err)
 	}
-	if index.Name != "github.com/acme/forkedfw" {
-		t.Fatalf("expected the checkout's own module path, got %s", index.Name)
+	if index.Name != "github.com/acme/forkedfw" || len(index.Packages) != 2 {
+		t.Fatalf("unexpected observed catalog: %+v", index)
 	}
-	if len(index.Packages) != 3 {
-		t.Fatalf("expected 3 domain packages, got %d: %v", len(index.Packages), index.Packages)
+	if _, ok := index.Packages["github.com/acme/forkedfw/db/pgx"]; !ok {
+		t.Fatal("pgx package must use the checkout module identity")
 	}
-	if _, ok := index.Packages["github.com/acme/forkedfw/db"]; !ok {
-		t.Fatalf("expected the db package to be indexed under the resolved module: %v", index.Packages)
-	}
-
-	// Positive: a known domain contributes its whole capability set.
 	if !index.IsCapabilityCovered("db.postgres") || !index.ProvidesCapability("cache.redis") {
-		t.Fatal("expected the db and cache domains to be covered")
+		t.Fatal("exact catalog packages should be available")
 	}
-	// Boundary: an unknown domain contributes "<domain>.core" and serves its domain.
-	if !index.IsCapabilityCovered("quantum.core") {
-		t.Fatal("expected quantum.core for an unknown domain directory")
-	}
-	if !index.ProvidesCapability("quantum.entanglement") {
-		t.Fatal("expected the quantum domain to serve its own capabilities")
-	}
-	// Negative: a domain the checkout does not have is not provided.
-	if index.ProvidesCapability("http.router") || index.IsCapabilityCovered("http.router") {
-		t.Fatal("expected http.router to be missing from a checkout without an http domain")
+	for _, capability := range []CapabilityKey{"quantum.core", "quantum.entanglement", "http.router", "db.orm"} {
+		if index.ProvidesCapability(capability) {
+			t.Fatalf("undeclared capability %s", capability)
+		}
 	}
 }
 
@@ -640,7 +629,8 @@ func TestAggregateFleetHonoursFrameworkCheckout(t *testing.T) {
 		t.Fatal("expected every demand to be a gap against an empty framework")
 	}
 
-	dbOnly := setupFrameworkCheckout(t, "github.com/acme/forkedfw", "db")
+	dbOnly := setupFrameworkCheckout(t, "github.com/acme/forkedfw", "db/pgx")
+	writeFixture(t, dbOnly, "db/pgx/doc.go", "package pgx\ntype Available struct{}\n")
 	partial, err := AggregateFleet(ctx, tmpRoot, dbOnly)
 	if err != nil {
 		t.Fatalf("aggregate against a partial framework failed: %v", err)

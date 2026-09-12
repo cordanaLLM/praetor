@@ -627,14 +627,15 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to inspect framework: %v", err)), nil
 		}
 
-		rep, err := needs.ScanRepo(ctx, targetPath)
+		rep, err := needs.ScanRepoWithFramework(ctx, targetPath, fwIndex)
 		if err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to scan repository: %v", err)), nil
 		}
 
 		var b strings.Builder
 		fmt.Fprintf(&b, "=== Golusoris Migration Report: %s ===\n", rep.Repository)
-		fmt.Fprintf(&b, "Framework: %s (%s) | Readiness Score: %.1f%%\n\n", fwIndex.Name, fwIndex.Version, rep.Readiness.Score)
+		fmt.Fprintf(&b, "Framework: %s (%s) | Mapping availability: %.1f%%\n\n", fwIndex.Name, fwIndex.Version, rep.Readiness.Score)
+		fmt.Fprintf(&b, "Coverage basis: %s; builds and tests not run\n\n", fwIndex.Basis)
 		b.WriteString("Drop-In Replacement Matrix:\n")
 		for _, dep := range rep.Dependencies {
 			if dep.Status == needs.StatusCovered || dep.Status == needs.StatusAdapterAvailable {

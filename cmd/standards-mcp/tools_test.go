@@ -142,7 +142,7 @@ func TestServer_Positive_NeedsReport(t *testing.T) {
 
 	res := callTool(t, srv, "standards_needs_report", nil)
 	expectText(t, "needs default", res, "Golusoris Migration Report")
-	expectText(t, "needs default", res, "Readiness Score")
+	expectText(t, "needs default", res, "Mapping availability")
 
 	// A framework checkout inside the root is inspected domain by domain.
 	if err := os.MkdirAll(filepath.Join(root, "fw", "http"), 0o750); err != nil {
