@@ -83,6 +83,10 @@
          consecutive empty results so a limit hit costs a handful of agents, not hundreds.
       4. Wire `praetorctl agent` / the paperclip harness and the fleet workflow scripts through the gate,
          and surface the decision (estimated spend, remaining budget, chosen wave size) in the run log.
+      5. Blockers-first scheduling (user direction 2026-09-12): tasks in `OPEN.md`, epics and milestones carry
+         `blocks:`/`blocked-by:` relations (the issue reconciler already parses `Depends-On:` for epics); the
+         dispatcher computes the unblocked frontier ordered by blocking degree and fans out only on it, holding
+         downstream work that a pending blocker would change - this is the primary lever for reducing token use.
       Reference implementation of items 2-3 lives in the deep-audit workflow scripts
       (`~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit/wf2-fix.mjs`: `A()` breaker,
       `subset` halves, resume-from-branch prologue).
