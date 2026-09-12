@@ -75,7 +75,7 @@ func TestDisposition_Positive_Blocked(t *testing.T) {
 
 func TestHarness_Positive_SynthesizeAndWrite(t *testing.T) {
 	tmpDir := t.TempDir()
-	h, err := SynthesizeHarness(tmpDir)
+	h, err := SynthesizeHarness(context.Background(), tmpDir)
 	if err != nil {
 		t.Fatalf("SynthesizeHarness failed: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestLoadHarness_3D(t *testing.T) {
 	}
 
 	// Positive: Synthesize and load
-	h, err := SynthesizeHarness(tmpDir)
+	h, err := SynthesizeHarness(context.Background(), tmpDir)
 	if err != nil {
 		t.Fatalf("SynthesizeHarness failed: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestLoadHarness_3D(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(manifestDir, ".standards.yaml"), []byte(manifestContent), 0644); err != nil {
 		t.Fatal(err)
 	}
-	h2, err := SynthesizeHarness(manifestDir)
+	h2, err := SynthesizeHarness(context.Background(), manifestDir)
 	if err != nil || h2.Platform != "test-org/test-repo" {
 		t.Fatalf("expected platform 'test-org/test-repo', got: %s (err: %v)", h2.Platform, err)
 	}

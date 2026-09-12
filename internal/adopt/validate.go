@@ -8,6 +8,9 @@ import (
 	"strings"
 )
 
+// maxChildEntries bounds the child-repository scan of an adoption target (HISS-02).
+const maxChildEntries = 4096
+
 var (
 	// ErrTargetNotDirectory indicates the path is not a directory.
 	ErrTargetNotDirectory = errors.New("target path must be an existing directory")
@@ -56,23 +59,34 @@ func ValidateAdoptionTarget(targetPath string) error {
 	return checkForChildRepositories(normPath)
 }
 
+// hasGitEntry reports whether dir carries a .git directory or gitlink of its own.
+func hasGitEntry(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
+}
+
+// checkWorkstationBoundaries rejects the user's home directory, the workstation dev
+// root under it, and organization container directories. A directory that merely
+// happens to be named "dev" is only rejected when it is not a repository itself, so a
+// clone named dev under any other parent remains adoptable.
 func checkWorkstationBoundaries(normPath string) error {
 	cleanPath := filepath.Clean(normPath)
 	baseName := strings.ToLower(filepath.Base(cleanPath))
 
-	// Reject dev workspace root
-	if strings.HasSuffix(cleanPath, "/dev") || baseName == "dev" {
+	if home, err := os.UserHomeDir(); err == nil {
+		home = filepath.Clean(home)
+		if cleanPath == home || cleanPath == filepath.Join(home, "dev") {
+			return ErrTargetIsWorkstationRoot
+		}
+	}
+
+	isRepo := hasGitEntry(cleanPath)
+	if baseName == "dev" && !isRepo {
 		return ErrTargetIsWorkstationRoot
 	}
 
-	// Reject user home root
-	if home, err := os.UserHomeDir(); err == nil && cleanPath == filepath.Clean(home) {
-		return ErrTargetIsWorkstationRoot
-	}
-
-	// Reject organization directory
 	parentBase := strings.ToLower(filepath.Base(filepath.Dir(cleanPath)))
-	if parentBase == "dev" && knownOrgNames[baseName] {
+	if parentBase == "dev" && knownOrgNames[baseName] && !isRepo {
 		return fmt.Errorf("%w: %s", ErrTargetIsOrgDirectory, normPath)
 	}
 
@@ -103,23 +117,28 @@ func checkGitRepositoryRoot(normPath string) error {
 	return nil
 }
 
+// checkForChildRepositories rejects a target whose immediate children are independent
+// git repositories (an organization container). A child whose .git is a regular file
+// is a gitlink (an initialized submodule or linked worktree) that belongs to the target
+// itself and does not make it a container.
 func checkForChildRepositories(normPath string) error {
 	entries, err := os.ReadDir(normPath)
 	if err != nil {
 		return fmt.Errorf("read target dir %q: %w", normPath, err)
 	}
 
-	for _, entry := range entries {
+	for i := 0; i < len(entries) && i < maxChildEntries; i++ {
+		entry := entries[i]
 		if !entry.IsDir() {
 			continue
 		}
 		childGit := filepath.Join(normPath, entry.Name(), ".git")
-		if info, err := os.Stat(childGit); err == nil {
-			if info.IsDir() || info.Mode().IsRegular() {
-				return fmt.Errorf("%w: found child repository %s inside %s",
-					ErrOrgContainerWithSubRepos, entry.Name(), normPath)
-			}
+		info, err := os.Stat(childGit)
+		if err != nil || !info.IsDir() {
+			continue
 		}
+		return fmt.Errorf("%w: found child repository %s inside %s",
+			ErrOrgContainerWithSubRepos, entry.Name(), normPath)
 	}
 
 	return nil

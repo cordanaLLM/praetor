@@ -10,11 +10,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Invariant bounds adhering to HISS-02.
 const (
 	MaxADRFilesLimit = 10000
+	// adrDirPerm is the mode of a created ADR directory.
+	adrDirPerm os.FileMode = 0o755
+	// adrFilePerm is the mode of a written ADR file.
+	adrFilePerm os.FileMode = 0o644
 )
 
 // Discussion represents an RFC or architectural proposal from a forge discussion board.
@@ -66,7 +72,7 @@ func TranscribeDiscussionToADR(ctx context.Context, disc Discussion, adrDir stri
 		return nil, errors.New("discussion decision cannot be empty")
 	}
 
-	if err := os.MkdirAll(adrDir, 0755); err != nil {
+	if err := util.MkdirSecure(adrDir, adrDirPerm); err != nil {
 		return nil, fmt.Errorf("failed to create ADR directory %s: %w", adrDir, err)
 	}
 
@@ -80,7 +86,7 @@ func TranscribeDiscussionToADR(ctx context.Context, disc Discussion, adrDir stri
 	filePath := filepath.Join(adrDir, filename)
 
 	content := renderADRContent(nextNumber, disc)
-	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+	if err := util.WriteFileSecure(filePath, []byte(content), adrFilePerm); err != nil {
 		return nil, fmt.Errorf("failed to write ADR file to %s: %w", filePath, err)
 	}
 
@@ -124,7 +130,7 @@ func slugify(text string) string {
 
 func renderADRContent(number int, disc Discussion) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# ADR-%04d: %s\n\n", number, disc.Title))
+	fmt.Fprintf(&sb, "# ADR-%04d: %s\n\n", number, disc.Title)
 	sb.WriteString("## Status\nAccepted\n\n")
 	sb.WriteString("## Context\n")
 	sb.WriteString(strings.TrimSpace(disc.ContextText) + "\n\n")
@@ -134,7 +140,7 @@ func renderADRContent(number int, disc Discussion) string {
 
 	if len(disc.PositiveConsequences) > 0 {
 		for _, pos := range disc.PositiveConsequences {
-			sb.WriteString(fmt.Sprintf("- **Positive**: %s\n", strings.TrimSpace(pos)))
+			fmt.Fprintf(&sb, "- **Positive**: %s\n", strings.TrimSpace(pos))
 		}
 	} else {
 		sb.WriteString("- **Positive**: Architectural consensus established across multi-forge federation.\n")
@@ -142,7 +148,7 @@ func renderADRContent(number int, disc Discussion) string {
 
 	if len(disc.NegativeConsequences) > 0 {
 		for _, neg := range disc.NegativeConsequences {
-			sb.WriteString(fmt.Sprintf("- **Negative**: %s\n", strings.TrimSpace(neg)))
+			fmt.Fprintf(&sb, "- **Negative**: %s\n", strings.TrimSpace(neg))
 		}
 	}
 

@@ -5,12 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Invariant limits enforcing HISS-02 (bounded execution) and HISS-04 (complexity bounds).
@@ -20,6 +21,8 @@ const (
 	MaxTaskIDLength   = 128
 	WorktreeSubdir    = ".standards/worktrees"
 	BranchPrefix      = "wt/"
+	// worktreeDirPerm is the mode of the worktree container directory.
+	worktreeDirPerm os.FileMode = 0o755
 )
 
 var (
@@ -106,7 +109,7 @@ func (m *Manager) Create(ctx context.Context, taskID, baseBranch string) (*Workt
 
 	wtPath := m.WorktreePath(taskID)
 	parentDir := filepath.Dir(wtPath)
-	if err := os.MkdirAll(parentDir, 0o755); err != nil {
+	if err := util.MkdirSecure(parentDir, worktreeDirPerm); err != nil {
 		return nil, fmt.Errorf("failed creating parent directory %s: %w", parentDir, err)
 	}
 
@@ -187,6 +190,10 @@ func (m *Manager) Prune(ctx context.Context) error {
 	return nil
 }
 
+// runGit executes git through the audited util.RunCommand entry point (HISS-02: the
+// call always carries a deadline; DefaultGitTimeout applies when the caller's context
+// has none). The arguments are fixed by this package and validated task ids or branch
+// names, never free-form user input.
 func (m *Manager) runGit(ctx context.Context, args ...string) ([]byte, error) {
 	if ctx == nil {
 		return nil, ErrNilContext
@@ -203,14 +210,11 @@ func (m *Manager) runGit(ctx context.Context, args ...string) ([]byte, error) {
 	}
 
 	gitArgs := append([]string{"-c", "core.longpaths=true"}, args...)
-	cmd := exec.CommandContext(execCtx, "git", gitArgs...)
-	cmd.Dir = m.rootDir
-
-	out, err := cmd.CombinedOutput()
+	out, err := util.RunCommand(execCtx, m.rootDir, "git", gitArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("git %s failed: %w (output: %s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("git %s failed: %w (output: %s)", strings.Join(args, " "), err, out)
 	}
-	return out, nil
+	return []byte(out), nil
 }
 
 func validateTaskID(taskID string) error {

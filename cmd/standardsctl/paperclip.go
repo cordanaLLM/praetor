@@ -52,7 +52,7 @@ func runPaperclipHarness(ctx context.Context, args []string) error {
 		return err
 	}
 
-	h, err := paperclip.SynthesizeHarness(*path)
+	h, err := paperclip.SynthesizeHarness(ctx, *path)
 	if err != nil {
 		return fmt.Errorf("synthesize harness: %w", err)
 	}

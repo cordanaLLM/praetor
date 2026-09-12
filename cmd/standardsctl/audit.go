@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -164,7 +165,7 @@ func auditBranchProtectionAndSupplyChain(manifest *config.Manifest, rootDir stri
 	rulesetPath := filepath.Join(rootDir, ".github", "rulesets", "main.json")
 	if policy.BranchProtection.EnforceLinearHistory || policy.BranchProtection.RequireSignedCommits {
 		if !util.FileExists(rulesetPath) {
-			return fmt.Errorf("[FAIL] Branch protection ruleset .github/rulesets/main.json is missing while policy requires linear history and signed commits. Run 'standardsctl sync' to reconcile.")
+			return fmt.Errorf("[FAIL] Branch protection ruleset .github/rulesets/main.json is missing while policy requires linear history and signed commits; run 'standardsctl sync' to reconcile")
 		}
 		fmt.Println("[PASS] Branch protection & merge ruleset .github/rulesets/main.json verified.")
 	}
@@ -172,41 +173,43 @@ func auditBranchProtectionAndSupplyChain(manifest *config.Manifest, rootDir stri
 	// Verify .config/labels.yaml
 	labelsPath := filepath.Join(rootDir, ".config", "labels.yaml")
 	if !util.FileExists(labelsPath) {
-		return fmt.Errorf("[FAIL] Required label taxonomy .config/labels.yaml is missing.")
+		return fmt.Errorf("[FAIL] Required label taxonomy .config/labels.yaml is missing")
 	}
 	fmt.Println("[PASS] Repository label taxonomy .config/labels.yaml verified.")
 
 	return nil
 }
 
+// legacyModulePath is the obsolete module path that must not survive a rename.
+const legacyModulePath = "github.com/cordanaLLM/standards"
+
 func auditRepoIdentity(manifest *config.Manifest, rootDir string) error {
 	if manifest.Repository.Owner == "" || manifest.Repository.Name == "" {
 		return fmt.Errorf("[FAIL] Manifest repository owner and name must not be empty")
 	}
 
-	goModPath := filepath.Join(rootDir, "go.mod")
-	if util.FileExists(goModPath) {
-		data, err := os.ReadFile(goModPath)
-		if err == nil {
-			modContent := string(data)
-			if strings.Contains(modContent, "github.com/cordanaLLM/standards") {
-				return fmt.Errorf("[FAIL] go.mod contains obsolete module path 'github.com/cordanaLLM/standards'. Expected 'github.com/%s/%s'", manifest.Repository.Owner, manifest.Repository.Name)
-			}
-		}
+	found, err := repoFileContains(rootDir, "go.mod", legacyModulePath)
+	if err != nil {
+		return err
+	}
+	if found {
+		return fmt.Errorf("[FAIL] go.mod contains obsolete module path '%s'. Expected 'github.com/%s/%s'", legacyModulePath, manifest.Repository.Owner, manifest.Repository.Name)
 	}
 
-	needsPath := filepath.Join(rootDir, ".needs.yaml")
-	if util.FileExists(needsPath) {
-		data, err := os.ReadFile(needsPath)
-		if err == nil && strings.Contains(string(data), "github.com/cordanaLLM/standards") {
-			return fmt.Errorf("[FAIL] .needs.yaml contains obsolete repository reference 'github.com/cordanaLLM/standards'")
-		}
+	found, err = repoFileContains(rootDir, ".needs.yaml", legacyModulePath)
+	if err != nil {
+		return err
+	}
+	if found {
+		return fmt.Errorf("[FAIL] .needs.yaml contains obsolete repository reference '%s'", legacyModulePath)
 	}
 
-	basePath := filepath.Join(rootDir, ".standards-baseline.json")
-	if util.FileExists(basePath) {
-		data, err := os.ReadFile(basePath)
-		if err == nil && manifest.Repository.Name != "standards" && strings.Contains(string(data), `"repository": "cordanaLLM/standards"`) {
+	if manifest.Repository.Name != "standards" {
+		found, err = repoFileContains(rootDir, ".standards-baseline.json", `"repository": "cordanaLLM/standards"`)
+		if err != nil {
+			return err
+		}
+		if found {
 			return fmt.Errorf("[FAIL] .standards-baseline.json contains obsolete repository 'cordanaLLM/standards'")
 		}
 	}
@@ -215,10 +218,28 @@ func auditRepoIdentity(manifest *config.Manifest, rootDir string) error {
 	return nil
 }
 
+// repoFileContains reports whether the file rel under rootDir contains needle. A
+// missing file is not an error; an unreadable one is.
+func repoFileContains(rootDir, rel, needle string) (bool, error) {
+	path, err := util.ConfinePath(rootDir, rel)
+	if err != nil {
+		return false, fmt.Errorf("[FAIL] Resolve %s: %w", rel, err)
+	}
+	if !util.FileExists(path) {
+		return false, nil
+	}
+	// #nosec G304 -- path is confined to the audited root by ConfinePath.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("[FAIL] Read %s: %w", rel, err)
+	}
+	return strings.Contains(string(data), needle), nil
+}
+
 func auditPaperclipHarness(manifest *config.Manifest, rootDir string) error {
 	harnessPath := filepath.Join(rootDir, ".paperclip", "harness.json")
 	if !util.FileExists(harnessPath) {
-		return fmt.Errorf("[FAIL] Paperclip agent runtime harness .paperclip/harness.json is missing. Run 'standardsctl adopt' to reconcile.")
+		return fmt.Errorf("[FAIL] Paperclip agent runtime harness .paperclip/harness.json is missing; run 'standardsctl adopt' to reconcile")
 	}
 	h, err := paperclip.LoadHarness(harnessPath)
 	if err != nil {
@@ -226,7 +247,7 @@ func auditPaperclipHarness(manifest *config.Manifest, rootDir string) error {
 	}
 	expectedPlatform := fmt.Sprintf("%s/%s", manifest.Repository.Owner, manifest.Repository.Name)
 	if h.Platform != expectedPlatform {
-		return fmt.Errorf("[FAIL] Paperclip harness platform mismatch: got %q, expected %q. Run 'standardsctl adopt --force' to reconcile.", h.Platform, expectedPlatform)
+		return fmt.Errorf("[FAIL] Paperclip harness platform mismatch: got %q, expected %q; run 'standardsctl adopt --force' to reconcile", h.Platform, expectedPlatform)
 	}
 	fmt.Printf("[PASS] Paperclip agent runtime harness verified (%s, %d rules).\n", h.Platform, len(h.OperatingContract))
 	return nil
@@ -283,8 +304,12 @@ func auditPreMigrationTracking(rootDir string) error {
 		fmt.Printf("[PASS] Pre-migration epic (5-stage lifecycle) verified: %s\n", epicPath)
 	}
 
-	needsPath := filepath.Join(rootDir, ".needs.yaml")
+	needsPath, err := util.ConfinePath(rootDir, ".needs.yaml")
+	if err != nil {
+		return fmt.Errorf("[FAIL] Resolve .needs.yaml: %w", err)
+	}
 	if util.FileExists(needsPath) {
+		// #nosec G304 -- needsPath is confined to the audited root by ConfinePath.
 		data, err := os.ReadFile(needsPath)
 		if err != nil || len(data) == 0 {
 			return fmt.Errorf("[FAIL] .needs.yaml is missing or empty")
@@ -339,7 +364,7 @@ func auditGitHooks(ctx context.Context, rootDir string) error {
 
 	lhPath := filepath.Join(rootDir, "lefthook.yml")
 	if !util.FileExists(lhPath) {
-		return fmt.Errorf("[FAIL] lefthook.yml configuration is missing from repository root.")
+		return fmt.Errorf("[FAIL] lefthook.yml configuration is missing from repository root")
 	}
 
 	if os.Getenv("CI") == "true" || os.Getenv("GITHUB_ACTIONS") == "true" {
@@ -347,24 +372,15 @@ func auditGitHooks(ctx context.Context, rootDir string) error {
 		return nil
 	}
 
-	hooksDir := resolveHooksDir(ctx, rootDir)
+	hooksDir, err := adopt.ResolveGitHooksDir(ctx, rootDir)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Resolve git hooks directory: %w", err)
+	}
 	preCommitPath := filepath.Join(hooksDir, "pre-commit")
 	if !util.FileExists(preCommitPath) {
-		return fmt.Errorf("[FAIL] Pre-commit hook %s is missing or inactive. Run 'lefthook install' or 'standardsctl adopt' to activate.", preCommitPath)
+		return fmt.Errorf("[FAIL] Pre-commit hook %s is missing or inactive; run 'lefthook install' or 'standardsctl adopt' to activate", preCommitPath)
 	}
 
-	fmt.Println("[PASS] Local Git hooks (.git/hooks/pre-commit via lefthook) verified active.")
+	fmt.Printf("[PASS] Local Git hooks (%s via lefthook) verified active.\n", preCommitPath)
 	return nil
-}
-
-func resolveHooksDir(ctx context.Context, rootDir string) string {
-	out, err := util.RunGit(ctx, rootDir, "rev-parse", "--git-path", "hooks")
-	if err == nil {
-		path := strings.TrimSpace(out)
-		if filepath.IsAbs(path) {
-			return path
-		}
-		return filepath.Join(rootDir, path)
-	}
-	return filepath.Join(rootDir, ".git", "hooks")
 }
