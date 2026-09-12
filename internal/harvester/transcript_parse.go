@@ -56,6 +56,9 @@ func parseTranscriptEvent(raw []byte, source TranscriptSource, line int) (Transc
 	if !utf8.Valid(raw) {
 		return event, fmt.Errorf("invalid UTF-8")
 	}
+	if err := rejectUnpairedTranscriptSurrogates(raw); err != nil {
+		return event, err
+	}
 	if err := rejectDuplicateTranscriptKeys(raw); err != nil {
 		return event, err
 	}

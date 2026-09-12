@@ -95,7 +95,7 @@ func acceptClaudeBlock(block claudeBlock, role string, event *TranscriptEvent, t
 	case "tool_result":
 		return acceptClaudeToolResult(block, role, event)
 	default:
-		return fmt.Errorf("unsupported Claude content block %q", block.Type)
+		return fmt.Errorf("unsupported claude content block")
 	}
 	return nil
 }
@@ -148,7 +148,7 @@ func claudeResultContent(content []byte, result *TranscriptToolResult) error {
 			}
 			result.ToolReferences = append(result.ToolReferences, block.ToolName)
 		default:
-			return fmt.Errorf("unsupported Claude tool_result content block %q", block.Type)
+			return fmt.Errorf("unsupported claude tool_result content block")
 		}
 	}
 	result.Content = strings.Join(texts, "\n")

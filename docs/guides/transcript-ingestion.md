@@ -28,9 +28,12 @@ Metadata-only records count as explicitly skipped. Internal thinking is excluded
 
 Inputs are bounded to 64 MiB, 100,000 physical records and 10,000 records per page.
 The complete source is validated before cache writes. Malformed or unsupported
-records, ambiguous duplicate JSON keys, changed sources, invalid cursors and
+records, ambiguous duplicate JSON keys, unpaired escaped UTF-16 surrogates,
+changed sources, invalid cursors and
 corrupt cache records return errors. A cursor cannot skip missing prior records
-or be reused with another cache. The source directory and its ancestors cannot
+or be reused with another cache. Valid surrogate pairs and literal escaped backslashes remain supported. Error
+reports identify unsupported source categories without echoing their values.
+The source directory and its ancestors cannot
 serve as the cache. Cache directories and records use private permissions.
 
 The development MCP exposes the same implementation as

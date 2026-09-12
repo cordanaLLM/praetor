@@ -95,3 +95,28 @@ func TestClaudeTranscriptMCPExplicitFormatAndReplay(t *testing.T) {
 		t.Fatalf("replay: %+v", replay)
 	}
 }
+
+func TestClaudeTranscriptErrorsDoNotEchoPrivateSourceCategories(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	marker := strings.Repeat("SYNTHETIC_PRIVATE_CATEGORY_", 1024)
+	messages := []string{
+		`{"type":"` + marker + `"}`,
+		`{"type":"assistant","uuid":"record","sessionId":"session","timestamp":"2026-09-12T12:00:00Z","message":{"role":"assistant","content":[{"type":"` + marker + `"}]}}`,
+		`{"type":"user","uuid":"record","sessionId":"session","timestamp":"2026-09-12T12:00:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"id","content":[{"type":"` + marker + `"}]}]}}`,
+	}
+	for _, body := range messages {
+		if err := os.WriteFile(filepath.Join(root, "private-session.jsonl"), []byte(body+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		result := callTool(t, srv, "standards_transcript_ingest", map[string]any{"format": harvester.TranscriptFormatClaudeCode, "source_path": "private-session.jsonl", "cache_dir": "untouched"})
+		if !result.IsError || len(result.Content) != 1 {
+			t.Fatalf("expected category failure: %+v", result)
+		}
+		if strings.Contains(result.Content[0].Text, "SYNTHETIC_PRIVATE_CATEGORY_") || len(result.Content[0].Text) > 256 {
+			t.Fatal("source category leaked into error response")
+		}
+		if _, err := os.Stat(filepath.Join(root, "untouched")); !os.IsNotExist(err) {
+			t.Fatal("invalid source wrote cache")
+		}
+	}
+}

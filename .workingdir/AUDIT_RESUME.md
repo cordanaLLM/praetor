@@ -326,8 +326,6 @@ Full logs, reproduction binaries and hashes are under `codex-continuation/`
 within the evidence root above. Keep the distinction between branch-reported
 fix counts, integrated regression coverage, and independently closed findings.
 
-### Original workflow entry points
-
 #### Configured replay suite continuation — 2026-09-12
 
 `03d4b69` integrates the Claude Code JSONL adapter: explicit format selection,
@@ -355,13 +353,18 @@ global case-ID uniqueness, and failed final-report persistence clearing success.
 
 The source MCP probe has 30 checks/16 tools. Full working-checkout verification
 has only the existing 76 lint/90 security findings and preserved nested-worktree
-dedupe noise. Follow-up review identified malformed JSON surrogate replacement
-and arbitrary record-type text leaking through error messages; their bounded fix
-is tracked separately before final activation. Evidence is under
+dedupe noise. Follow-up review reproduced malformed JSON surrogate replacement
+and arbitrary record-type text leaking through error messages. The integrated
+correction rejects lone escaped UTF-16 surrogates in both formats before decoding
+and uses bounded fixed-category errors. Regression cases fail before the fix and
+pass afterward; valid Unicode pairs and literal backslashes remain intact.
+Evidence is under
 `codex-continuation/next-stage/`, including `local-suite.json`,
 `original-suite-mcp/`, `suite-review/` and `adapter-review/`. These private files
 remain outside Git. Scheduling, agent dispatch, semantic verified-fact memory
 and automatic rollout promotion remain later stages.
+
+### Original workflow entry points
 
 ```bash
 S=~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit

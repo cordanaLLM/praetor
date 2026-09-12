@@ -194,3 +194,8 @@
 
 ### Discharged Tasks [2026-09-12 17:22:50 UTC, commit `local`]
 - [x] Add configured repeatable dogfood suite with pinned public sources and complete private transcript replay (completed: 2026-09-12)
+### Discharged Tasks [2026-09-12 17:23:59 UTC, commit `local`]
+- [x] Reject malformed Unicode transcript observations and keep source categories private (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 17:24:40 UTC, commit `local`]
+- [x] Reject malformed transcript Unicode and prevent private record types leaking through error reports (completed: 2026-09-12)

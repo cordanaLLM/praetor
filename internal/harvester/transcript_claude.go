@@ -62,7 +62,7 @@ func validateClaudeMetadata(kind string) error {
 	case "bridge-session", "queue-operation", "attachment", "file-history-snapshot", "atis-latch", "last-prompt", "ai-title", "file-history-delta", "system", "mode", "history-suppression", "frame-link", "artifact-comment-monitor", "artifact-autoreact-ledger", "progress", "summary":
 		return nil
 	default:
-		return fmt.Errorf("unsupported Claude record type %q", kind)
+		return fmt.Errorf("unsupported claude record type")
 	}
 }
 
