@@ -333,26 +333,25 @@ func ResolveModuleRoot(importPath string, directDeps map[string]string) string {
 	return conventionalModuleRoot(importPath)
 }
 
-// hostModuleDepth maps a hosting domain to the number of leading path segments that form
-// a module root on it. Domains not listed use two segments (host/module).
-var hostModuleDepth = map[string]int{
-	"github.com":    3,
-	"gitlab.com":    3,
-	"bitbucket.org": 3,
-	"codeberg.org":  3,
-	"gitee.com":     3,
-	"git.sr.ht":     3,
-	"golang.org":    3,
+// hostModuleDepth returns the number of leading path segments that form a module root on
+// a hosting domain. Domains that are not code-hosting forges use two segments
+// (host/module), the shape of a vanity import path.
+func hostModuleDepth(host string) int {
+	forgeHosts := map[string]struct{}{
+		"github.com": {}, "gitlab.com": {}, "bitbucket.org": {}, "codeberg.org": {},
+		"gitee.com": {}, "git.sr.ht": {}, "golang.org": {},
+	}
+	if _, ok := forgeHosts[host]; ok {
+		return 3
+	}
+	return 2
 }
 
 // conventionalModuleRoot applies the hosting-domain convention plus the /vN major-version
 // suffix rule to an import path whose module is not declared in go.mod.
 func conventionalModuleRoot(importPath string) string {
 	segments := strings.Split(importPath, "/")
-	depth, ok := hostModuleDepth[segments[0]]
-	if !ok {
-		depth = 2
-	}
+	depth := hostModuleDepth(segments[0])
 	if len(segments) <= depth {
 		return importPath
 	}

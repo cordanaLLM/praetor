@@ -143,14 +143,18 @@ func discoverFleetRepos(ctx context.Context, root string) ([]string, error) {
 	return repoDirs, nil
 }
 
+// isManifestFile reports whether info names a repository manifest. Symlinked entries are
+// excluded: their target may live outside the fleet root.
 func isManifestFile(info os.FileInfo) bool {
 	if info == nil || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
-	name := info.Name()
-	return name == "go.mod" || name == "package.json" || name == "pyproject.toml" ||
-		name == "requirements.txt" || name == "Cargo.toml" || name == "meson.build" ||
-		name == ".standards.yaml" || name == ".needs.yaml"
+	manifestNames := map[string]struct{}{
+		"go.mod": {}, "package.json": {}, "pyproject.toml": {}, "requirements.txt": {},
+		"Cargo.toml": {}, "meson.build": {}, ".standards.yaml": {}, ".needs.yaml": {},
+	}
+	_, ok := manifestNames[info.Name()]
+	return ok
 }
 
 // incorporateNeedsIntoReport folds a manifest that was not part of the discovered fleet

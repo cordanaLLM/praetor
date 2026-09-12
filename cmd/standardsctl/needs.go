@@ -310,7 +310,7 @@ func publishEpicToForge(ctx context.Context, path, token, endpoint string, epic 
 		return fmt.Errorf("epic publishing requires GITHUB_TOKEN, GH_TOKEN, or an authenticated 'gh' CLI session")
 	}
 
-	owner, repo, err := resolveRepoCoordinates(path)
+	owner, repo, err := resolveRepoCoordinates(ctx, path)
 	if err != nil {
 		return fmt.Errorf("failed resolving repository coordinates for %s: %w", path, err)
 	}
@@ -347,7 +347,7 @@ func resolveForgeAuthToken(ctx context.Context, explicitToken string) string {
 	return ""
 }
 
-func resolveRepoCoordinates(path string) (string, string, error) {
+func resolveRepoCoordinates(ctx context.Context, path string) (string, string, error) {
 	manifestPath := filepath.Join(path, ".standards.yaml")
 	if util.FileExists(manifestPath) {
 		m, err := config.LoadManifest(manifestPath)
@@ -355,5 +355,5 @@ func resolveRepoCoordinates(path string) (string, string, error) {
 			return m.Repository.Owner, m.Repository.Name, nil
 		}
 	}
-	return util.ResolveRepoIdentity(context.Background(), path)
+	return util.ResolveRepoIdentity(ctx, path)
 }

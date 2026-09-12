@@ -107,14 +107,6 @@ func codifySingleHarvestRepo(item HarvestRepoItem, patchesDir string) (RepoNeeds
 	return repoNeeds, nil
 }
 
-// arrStackNames lists the *arr media-automation projects. Matching the bare substring
-// "arr" instead classifies every repository whose name merely contains those three
-// letters (barrier, narrative-api, go-arrow) as Python.
-var arrStackNames = map[string]struct{}{
-	"sonarr": {}, "radarr": {}, "lidarr": {}, "readarr": {}, "prowlarr": {},
-	"bazarr": {}, "whisparr": {}, "tdarr": {}, "mylar": {},
-}
-
 // inferLanguageFromItem guesses a harvested repository's language. Dependencies already
 // extracted from its patch are the stronger signal and take precedence over the name.
 func inferLanguageFromItem(item HarvestRepoItem, patchDeps []string) string {
@@ -140,6 +132,13 @@ func inferLanguageFromItem(item HarvestRepoItem, patchDeps []string) string {
 // isArrStackName reports whether a repository name is one of the *arr projects, matching
 // on whole name segments rather than on the substring "arr".
 func isArrStackName(nameLower string) bool {
+	// The *arr media-automation projects. Matching the bare substring "arr" instead
+	// classifies every repository whose name merely contains those three letters
+	// (barrier, narrative-api, go-arrow) as Python.
+	arrStackNames := map[string]struct{}{
+		"sonarr": {}, "radarr": {}, "lidarr": {}, "readarr": {}, "prowlarr": {},
+		"bazarr": {}, "whisparr": {}, "tdarr": {}, "mylar": {},
+	}
 	segments := strings.FieldsFunc(nameLower, func(r rune) bool {
 		return r == '-' || r == '_' || r == '.' || r == '/'
 	})
