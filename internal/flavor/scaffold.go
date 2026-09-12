@@ -80,9 +80,15 @@ func applySingleTemplate(repoPath string, tmpl TemplateItem, repoName, owner str
 func defaultTemplateContent(path, repoName, owner string) string {
 	switch filepath.Base(path) {
 	case ".golangci.yml":
-		return "run:\n  timeout: 5m\nlinters:\n  enable:\n    - govet\n    - staticcheck\n    - errcheck\n"
+		// golangci-lint v2 schema; the enabled set mirrors praetor's own HISS-10 gate.
+		return "version: \"2\"\nrun:\n  timeout: 10m\nlinters:\n  default: none\n  enable:\n" +
+			"    - govet\n    - staticcheck\n    - errcheck\n    - errorlint\n    - nilerr\n" +
+			"    - unused\n    - ineffassign\n    - bodyclose\n    - noctx\n" +
+			"  settings:\n    errcheck:\n      check-type-assertions: true\n      check-blank: true\n"
 	case ".gosec.json":
-		return "{\n  \"global\": {\n    \"exclude\": \"G104,G301,G302,G304,G306,G204,G703\"\n  }\n}\n"
+		// Zero exclusions: every finding is fixed or carries a per-line
+		// "#nosec Gxxx -- <reason>" justification.
+		return "{\n  \"global\": {\n    \"exclude\": \"\"\n  }\n}\n"
 	case "Dockerfile":
 		return "FROM gcr.io/distroless/static:nonroot\nWORKDIR /\nCOPY " + repoName + " /\nUSER 65532:65532\nENTRYPOINT [\"/" + repoName + "\"]\n"
 	case "rustfmt.toml":

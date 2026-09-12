@@ -88,27 +88,27 @@ var (
 		{
 			Name:        "ignore_previous_instructions",
 			Regex:       regexp.MustCompile(`(?i)\bignore\s+(?:all\s+)?previous\s+instructions\b`),
-			Replacement: "[neutralized-phrase:ignore previous instructions]",
+			Replacement: "[neutralized-phrase:ignore-previous-instructions]",
 		},
 		{
 			Name:        "disregard_previous_instructions",
 			Regex:       regexp.MustCompile(`(?i)\bdisregard\s+(?:all\s+)?previous\s+instructions\b`),
-			Replacement: "[neutralized-phrase:disregard previous instructions]",
+			Replacement: "[neutralized-phrase:disregard-previous-instructions]",
 		},
 		{
 			Name:        "forget_previous_instructions",
 			Regex:       regexp.MustCompile(`(?i)\bforget\s+(?:all\s+)?previous\s+instructions\b`),
-			Replacement: "[neutralized-phrase:forget previous instructions]",
+			Replacement: "[neutralized-phrase:forget-previous-instructions]",
 		},
 		{
 			Name:        "system_prompt_override",
 			Regex:       regexp.MustCompile(`(?i)\bsystem\s+prompt\s+override\b`),
-			Replacement: "[neutralized-phrase:system prompt override]",
+			Replacement: "[neutralized-phrase:system-prompt-override]",
 		},
 		{
 			Name:        "override_system_prompt",
 			Regex:       regexp.MustCompile(`(?i)\boverride\s+(?:the\s+)?system\s+prompt\b`),
-			Replacement: "[neutralized-phrase:override system prompt]",
+			Replacement: "[neutralized-phrase:override-system-prompt]",
 		},
 	}
 )

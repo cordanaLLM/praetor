@@ -46,6 +46,7 @@ audit:
 
 lint:
 	go vet ./...
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run
 
 vuln:
 	@if command -v govulncheck >/dev/null 2>&1; then \
@@ -57,14 +58,16 @@ vuln:
 		go install golang.org/x/vuln/cmd/govulncheck@latest && "$$(go env GOPATH)/bin/govulncheck" ./...; \
 	fi
 
+# gosec runs with ZERO exclusions: .gosec.json carries an empty exclude list and every
+# finding is fixed or carries a per-line "#nosec Gxxx -- <reason>" justification.
 sec:
 	@if command -v gosec >/dev/null 2>&1; then \
-		gosec -exclude=G104,G301,G302,G304,G306,G204,G703 ./...; \
+		gosec -conf .gosec.json ./...; \
 	elif [ -x "$$(go env GOPATH)/bin/gosec" ]; then \
-		"$$(go env GOPATH)/bin/gosec" -exclude=G104,G301,G302,G304,G306,G204,G703 ./...; \
+		"$$(go env GOPATH)/bin/gosec" -conf .gosec.json ./...; \
 	else \
 		echo "gosec not found; installing..."; \
-		go install github.com/securego/gosec/v2/cmd/gosec@latest && "$$(go env GOPATH)/bin/gosec" -exclude=G104,G301,G302,G304,G306,G204,G703 ./...; \
+		go install github.com/securego/gosec/v2/cmd/gosec@latest && "$$(go env GOPATH)/bin/gosec" -conf .gosec.json ./...; \
 	fi
 
 flavor-audit:
