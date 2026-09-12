@@ -56,6 +56,9 @@ func TestScanLocalWorkstationRepositoryObservations(t *testing.T) {
 		}
 	}
 	mainObservation := byClass["main"]
+	if byClass["bare"].DirtyScope != "not-applicable" {
+		t.Fatalf("bare repository has working-tree dirty scope: %+v", byClass["bare"])
+	}
 	if mainObservation.RemoteState != "known" || len(mainObservation.RemoteURLs) != 1 || mainObservation.RemoteURLs[0] != "https://example.invalid/org/repo.git" {
 		t.Fatalf("remote was not sanitized: %+v", mainObservation)
 	}

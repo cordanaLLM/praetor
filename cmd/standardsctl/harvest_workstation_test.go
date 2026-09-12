@@ -27,6 +27,9 @@ func TestHarvestWorkstationJSONRetainsIncompleteReport(t *testing.T) {
 	if report.RepositoryInventoryComplete || len(report.RepositoryObservations) != 1 {
 		t.Fatalf("partial report was lost: %+v", report)
 	}
+	if report.RepositoryObservations[0].DirtyScope != "unknown" {
+		t.Fatalf("failed identity must retain unknown dirty scope: %+v", report.RepositoryObservations[0])
+	}
 }
 
 func TestHarvestWorkstationEmptyAndArgumentBoundary(t *testing.T) {

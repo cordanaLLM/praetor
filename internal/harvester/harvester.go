@@ -74,6 +74,7 @@ type RepositoryObservation struct {
 	RemoteState              string   `json:"remote_state"`
 	DirtyEntries             int      `json:"dirty_entries,omitempty"`
 	DirtyState               string   `json:"dirty_state"`
+	DirtyScope               string   `json:"dirty_scope"`
 	ProbeErrors              []string `json:"probe_errors,omitempty"`
 	WorkingdirPresent        bool     `json:"workingdir_present"`
 	WorkingdirProbeIgnored   *bool    `json:"workingdir_probe_ignored,omitempty"`
@@ -349,6 +350,7 @@ func inspectRepository(ctx context.Context, repoPath string) RepositoryObservati
 	observation := RepositoryObservation{Path: filepath.Clean(repoPath), Classification: "unknown", RemoteState: "unknown", DirtyState: "unknown"}
 	observation.WorkingdirPresent = util.PathExists(filepath.Join(repoPath, ".workingdir"))
 	observation.WorkingdirTrackedState = "unknown"
+	observation.DirtyScope = "unknown"
 	if err == nil {
 		observation.Path = filepath.Clean(path)
 	}
@@ -399,8 +401,10 @@ func inspectIdentity(ctx context.Context, repoPath string, observation *Reposito
 }
 
 func inspectRepositoryState(ctx context.Context, repoPath string, observation *RepositoryObservation) {
+	observation.DirtyScope = "checkout-excluding-submodules"
 	if observation.Classification == "bare" {
 		observation.DirtyState = "not-applicable"
+		observation.DirtyScope = "not-applicable"
 		return
 	}
 	filterCode, filterErr := inventoryRunGitExit(ctx, repoPath, "config", "--get-regexp", `^filter\..*\.(clean|process)$`)
@@ -408,7 +412,7 @@ func inspectRepositoryState(ctx context.Context, repoPath string, observation *R
 		observation.ProbeErrors = append(observation.ProbeErrors, "git status unavailable: configured filters or filter probe failure")
 		return
 	}
-	status, statusErr := inventoryRunGit(ctx, repoPath, "status", "--porcelain=v1", "--untracked-files=normal")
+	status, statusErr := inventoryRunGit(ctx, repoPath, "status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=all")
 	if statusErr != nil {
 		observation.ProbeErrors = append(observation.ProbeErrors, "git status probe failed")
 		return

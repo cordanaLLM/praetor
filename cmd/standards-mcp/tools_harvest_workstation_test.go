@@ -27,6 +27,9 @@ func TestHarvestWorkstationJSONPreservesRepositoryObservation(t *testing.T) {
 	if !report.RepositoryInventoryComplete || len(report.RepositoryObservations) != 1 || report.RepositoryObservations[0].GitCommonDir == "" {
 		t.Fatalf("missing complete local Git observation: %+v", report)
 	}
+	if report.RepositoryObservations[0].DirtyScope != "checkout-excluding-submodules" {
+		t.Fatalf("MCP JSON lost dirty coverage: %+v", report.RepositoryObservations[0])
+	}
 }
 
 func TestHarvestWorkstationJSONRejectsInvalidArgumentsAndUnknownGit(t *testing.T) {

@@ -27,7 +27,7 @@ The report retains existing governance counts and adds `repository_observations`
 | `path`, `git_common_dir` | Checkout location and local Git identity |
 | `classification` | Observed repository or worktree classification |
 | `remote_state`, `remote_urls` | Successfully read and sanitized remotes, or unknown state |
-| `dirty_state`, `dirty_entries` | Status availability and count; bare repositories have no working tree |
+| `dirty_state`, `dirty_scope`, `dirty_entries` | Status availability, coverage and count; bare repositories have no working tree |
 | `workingdir_tracked_state`, `workingdir_tracked_entries` | Whether the tracked-file probe succeeded and its count, without filenames |
 | `workingdir_probe_ignored` | Optional ignore result for one sentinel path; not proof that every file is private |
 | `probe_errors` | Bounded diagnostics for unavailable observations |
@@ -42,6 +42,11 @@ repository is local-only. Incomplete reports retain their observations. The CLI
 returns nonzero and MCP sets `isError`; consumers should still read the report.
 
 Git probes use an isolated environment and disable filesystem monitors and hooks.
+Dirty coverage is explicitly `checkout-excluding-submodules`: Git status cannot
+traverse submodule worktrees, whose local filters might execute commands. A known
+dirty state and complete inventory apply only to the declared scope; neither
+certifies submodule cleanliness. Inspect submodules separately as repository roots
+when their state is required. Bare repositories use `not-applicable` dirty scope.
 When repository configuration declares a clean or process filter, dirty state is
 unavailable: computing it could execute repository-supplied commands. Identity,
 remote and privacy probes still run, with incomplete coverage explicitly reported.
