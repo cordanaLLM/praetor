@@ -1,0 +1,306 @@
+package adopt
+
+import (
+	"context"
+	"fmt"
+	"strings"
+)
+
+const (
+	makefileName       = "Makefile"
+	gitIgnoreFile      = ".gitignore"
+	contributingFile   = "CONTRIBUTING.md"
+	prTemplateFile     = ".github/pull_request_template.md"
+	prTemplateUpper    = ".github/PULL_REQUEST_TEMPLATE.md"
+	securityFile       = "SECURITY.md"
+	adrIndexFile       = "docs/adr/README.md"
+	adrTemplateFile    = "docs/adr/0000-template.md"
+	readmeFile         = "README.md"
+	verifyAllTarget    = "verify-all:"
+	governanceHeading  = "Standards & Governance"
+	badgeMarker        = "HISS-16"
+	makefileAppendText = "\n# cordanaLLM/praetor Governance Targets\n.PHONY: verify-all compile-context audit\n\nverify-all:\n\t@standardsctl audit && standardsctl compile-context --verify\n\ncompile-context:\n\t@standardsctl compile-context\n\naudit:\n\t@standardsctl audit\n"
+)
+
+// buildMakefile renders the greenfield Makefile. verify-all runs the same gates the
+// AGENTS.md harness advertises; the test and build recipes follow the archetype.
+func buildMakefile(arch string) string {
+	testCmd, buildCmd := archetypeCommands(arch)
+	return ".PHONY: all verify-all compile-context compile-context-verify audit build test\n\n" +
+		"all: build\n\n" +
+		"verify-all: compile-context-verify audit test\n\n" +
+		"compile-context:\n\t@standardsctl compile-context\n\n" +
+		"compile-context-verify:\n\t@standardsctl compile-context --verify\n\n" +
+		"audit:\n\t@standardsctl audit\n\n" +
+		"test:\n\t@" + testCmd + "\n\n" +
+		"build:\n\t@" + buildCmd + "\n"
+}
+
+func reconcileMakefile(_ context.Context, s *adoptSession) error {
+	full, err := repoFile(s.repoPath, makefileName)
+	if err != nil {
+		return err
+	}
+	if !fileExists(full) {
+		if err := s.write(full, []byte(buildMakefile(s.arch)), filePerm); err != nil {
+			return err
+		}
+		s.report.recordCreated(makefileName, "Created default Makefile with verify-all, audit, and compile-context targets")
+		return nil
+	}
+	data, err := readRepoFile(full)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(string(data), verifyAllTarget) {
+		s.report.recordReconciled(makefileName, "Existing Makefile already contains verify-all target")
+		return nil
+	}
+	if err := s.write(full, append(data, []byte(makefileAppendText)...), filePerm); err != nil {
+		return err
+	}
+	s.report.recordReconciledAs(makefileName, actionAppend, "Appended governance targets: verify-all, compile-context, and audit")
+	return nil
+}
+
+func reconcileGitIgnore(_ context.Context, s *adoptSession) error {
+	_, err := s.scaffoldFile(scaffold{
+		rel:      gitIgnoreFile,
+		perm:     filePerm,
+		content:  []byte("bin/\n*.test\n*.out\n.DS_Store\n"),
+		created:  "Created default .gitignore for build artifacts",
+		verified: "Existing .gitignore verified present",
+	})
+	return err
+}
+
+func reconcileContributing(_ context.Context, s *adoptSession) error {
+	_, err := s.scaffoldFile(scaffold{
+		rel:      contributingFile,
+		perm:     filePerm,
+		content:  []byte(buildContributingGuide(s.repoName)),
+		created:  "Scaffolded contributor governance guide with HISS-16 & NASA rules",
+		verified: "Existing contributor guide verified present",
+	})
+	return err
+}
+
+func reconcilePullRequestTemplate(_ context.Context, s *adoptSession) error {
+	upper, err := repoFile(s.repoPath, prTemplateUpper)
+	if err != nil {
+		return err
+	}
+	if fileExists(upper) {
+		s.report.recordReconciled(prTemplateUpper, "Existing pull request template verified present")
+		return nil
+	}
+	_, err = s.scaffoldFile(scaffold{
+		rel:      prTemplateFile,
+		perm:     filePerm,
+		content:  []byte(buildPullRequestTemplate()),
+		created:  "Scaffolded pull request template with HISS verification checklist",
+		verified: "Existing pull request template verified present",
+	})
+	return err
+}
+
+func reconcileSecurityPolicy(_ context.Context, s *adoptSession) error {
+	_, err := s.scaffoldFile(scaffold{
+		rel:      securityFile,
+		perm:     filePerm,
+		content:  []byte(buildSecurityPolicy()),
+		created:  "Scaffolded security policy and vulnerability disclosure standards",
+		verified: "Existing security policy verified present",
+	})
+	return err
+}
+
+func reconcileADR(_ context.Context, s *adoptSession) error {
+	index, err := repoFile(s.repoPath, adrIndexFile)
+	if err != nil {
+		return err
+	}
+	if fileExists(index) {
+		s.report.recordReconciled(adrIndexFile, "Architectural Decision Records directory verified present")
+		return nil
+	}
+	tmpl, err := repoFile(s.repoPath, adrTemplateFile)
+	if err != nil {
+		return err
+	}
+	if err := s.write(index, []byte(buildADRIndex()), filePerm); err != nil {
+		return err
+	}
+	if err := s.write(tmpl, []byte(buildADRTemplate()), filePerm); err != nil {
+		return err
+	}
+	s.report.recordCreated(adrIndexFile, "Scaffolded Architectural Decision Records (ADR) directory and template")
+	return nil
+}
+
+// buildReadmeBadge renders a badge that reflects the recorded baseline instead of an
+// unconditional compliance claim.
+func buildReadmeBadge(legacyDebt int) string {
+	if legacyDebt == 0 {
+		return "[![HISS-16 Compliant](https://img.shields.io/badge/Standards-HISS--16%20Compliant-brightgreen)](AGENTS.md)\n"
+	}
+	return fmt.Sprintf("[![HISS-16 Adopted](https://img.shields.io/badge/Standards-HISS--16%%20Adopted%%20(%d%%20baselined)-yellow)](AGENTS.md)\n", legacyDebt)
+}
+
+// injectReadmeBadge places the badge under the first-level heading or at the top.
+func injectReadmeBadge(content, badge string) string {
+	if !strings.HasPrefix(strings.TrimSpace(content), "# ") {
+		return badge + "\n" + content
+	}
+	nlIdx := strings.Index(content, "\n")
+	if nlIdx == -1 {
+		return content + "\n\n" + badge
+	}
+	return content[:nlIdx+1] + "\n" + badge + content[nlIdx+1:]
+}
+
+func buildGovernanceTable() string {
+	return "\n\n## " + governanceHeading + "\n\nThis repository conforms to High-Integrity Systems Standards (HISS-16)\nand modernized NASA JPL Power-of-10 rules.\n\n| Gate | Command | Description |\n| :--- | :--- | :--- |\n| **Verification** | `make verify-all` | Runs full audit, test suite, and context integrity check |\n| **HISS Audit** | `standardsctl audit` | Enforces zero technical debt regression against baseline |\n| **Context Sync** | `standardsctl compile-context` | Transpiles canonical `AGENTS.md` to all AI targets |\n"
+}
+
+// reconcileReadme injects the compliance badge and governance table into an existing
+// README.md. A README that exists but cannot be read is an error, not a silent skip.
+func reconcileReadme(_ context.Context, s *adoptSession) error {
+	full, err := repoFile(s.repoPath, readmeFile)
+	if err != nil {
+		return err
+	}
+	if !fileExists(full) {
+		return nil
+	}
+	data, err := readRepoFile(full)
+	if err != nil {
+		return err
+	}
+	content := string(data)
+	modified := false
+	if !strings.Contains(content, badgeMarker) {
+		content = injectReadmeBadge(content, buildReadmeBadge(s.report.LegacyDebtCount))
+		modified = true
+	}
+	if !strings.Contains(content, governanceHeading) && !strings.Contains(content, verifyCommand) {
+		content = strings.TrimRight(content, "\r\n") + buildGovernanceTable()
+		modified = true
+	}
+	if !modified {
+		return nil
+	}
+	if err := s.write(full, []byte(content), filePerm); err != nil {
+		return err
+	}
+	s.report.recordReconciled(readmeFile, "Non-destructively injected HISS-16 badge and verification gate table")
+	return nil
+}
+
+func buildContributingGuide(repoName string) string {
+	return fmt.Sprintf(`<!-- markdownlint-disable MD013 -->
+# Contributing to %s
+
+Thank you for contributing! This repository adheres strictly to the **High-Integrity Systems Standards (HISS-16)** and modernized **NASA JPL Power-of-10** rules.
+
+## Core Directives & Verification
+
+All changes must pass local verification before submitting:
+
+`+"```bash\nmake verify-all\n```\n\n"+`### Modernized NASA JPL Power-of-10 Rules
+
+1. **Simple Control Flow (HISS-01)**: Recursion is strictly banned; call graph must be an acyclic DAG; zero `+"`goto`"+`.
+2. **Bounded Loops (HISS-02)**: All loops must have a statically verifiable scalar upper bound. Network and disk I/O require `+"`context.Context`"+` timeout.
+3. **Deterministic Memory (HISS-03)**: Zero dynamic heap allocations (`+"`malloc` / `free`"+`) in hot simulation or rendering loops.
+4. **Function Length Cap (HISS-04)**: No function may exceed **60 lines of code** ($\le 60$ LOC).
+5. **Assertion Density (HISS-15)**: Functions must assert preconditions, state invariants, and postconditions.
+6. **Data Scope**: Variables must be declared at the smallest possible scope.
+7. **Checked Errors (HISS-07)**: Check return values of all non-void functions; zero `+"`.unwrap()`"+` or unchecked errors.
+8. **Static Execution (HISS-08)**: Dynamic code evaluation (`+"`eval` / `exec`"+`) and banned unsafe libc calls (`+"`gets` / `strcpy` / `sprintf`"+`) are prohibited.
+9. **Pointer Safety (HISS-09)**: Pointer arithmetic must be bounded; all `+"`unsafe`"+` blocks require `+"`// SAFETY:`"+` justifications.
+10. **Zero-Warning Hygiene (HISS-10)**: Zero compiler, linter, or formatting warnings tolerated across all builds.
+
+### 3D Testing Discipline (HISS-15)
+
+Every public function requires:
+
+- **Positive tests**: Expected valid operational inputs.
+- **Negative tests**: Invalid inputs, expected error returns.
+- **Boundary tests**: Zero, one, max limits, off-by-one bounds.
+
+### Commit Messages
+
+We enforce Conventional Commits:
+
+- `+"`feat:`"+` New features
+- `+"`fix:`"+` Bug fixes
+- `+"`chore:`"+` Maintenance and governance
+- `+"`feat!:` / `fix!:`"+` Breaking API changes (must include `+"`Migration:`"+` footer)
+`, repoName)
+}
+
+func buildPullRequestTemplate() string {
+	return `<!-- markdownlint-disable MD013 -->
+## Description
+
+<!-- Provide a concise summary of the changes and the architectural rationale. -->
+
+## Pre-Merge Verification Checklist
+
+- [ ] Local verification passed: ` + "`make verify-all`" + `
+- [ ] No new HISS-16 / NASA Power-of-10 infractions (all new/modified functions $\le 60$ LOC)
+- [ ] 3D Tests included (Positive, Negative, Boundary) for public APIs
+- [ ] Agent contexts in sync: ` + "`standardsctl compile-context --verify`" + `
+- [ ] Commit messages adhere to Conventional Commits format
+`
+}
+
+func buildSecurityPolicy() string {
+	return `<!-- markdownlint-disable MD013 -->
+# Security Policy
+
+## Supported Versions
+
+Only the latest release and current default branch receive security updates.
+
+## Reporting a Vulnerability
+
+Please report security vulnerabilities privately to the maintainers rather than opening a public issue.
+Reports are investigated promptly under responsible disclosure guidelines.
+`
+}
+
+func buildADRIndex() string {
+	return `<!-- markdownlint-disable MD013 -->
+# Architectural Decision Records (ADRs)
+
+This directory documents key architectural decisions following the HISS-14 immutable numbering lattice.
+
+| Number | Date | Title | Status |
+| :--- | :--- | :--- | :--- |
+| [0000](0000-template.md) | 2026-09-11 | ADR Architecture Decision Template | Accepted |
+`
+}
+
+func buildADRTemplate() string {
+	return `<!-- markdownlint-disable MD013 -->
+# ADR-0000: Title of Decision
+
+- **Status**: Proposed | Accepted | Deprecated | Superseded
+- **Date**: YYYY-MM-DD
+- **Authors**: Team
+
+## Context
+
+Describe the context, problem statement, and forces at play.
+
+## Decision
+
+Describe the decision taken and the architectural rationale.
+
+## Consequences
+
+- **Positive**: Benefits and capabilities gained.
+- **Negative**: Trade-offs, migration burden, or constraints imposed.
+`
+}

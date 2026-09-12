@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -14,26 +15,53 @@ import (
 	"github.com/cordanaLLM/praetor/internal/harvester"
 )
 
+// adoptTimeout bounds one adoption run, including its git and scanner subprocesses.
+const adoptTimeout = 2 * time.Minute
+
+// maxAdoptArgs bounds the argument re-ordering loop (HISS-02).
+const maxAdoptArgs = 256
+
+// errAdoptIncomplete is returned when adoption ran but left the repository short of the
+// advertised state; the report printed above it lists the individual failures.
+var errAdoptIncomplete = errors.New("adoption completed with errors")
+
+// adoptBoolFlags lists the flags that never consume a following positional value.
+func adoptBoolFlags() map[string]bool {
+	return map[string]bool{
+		"dry-run": true, "force": true, "record-baseline": true, "all-missing": true,
+	}
+}
+
+// reorderAdoptArgs moves positional arguments after flags so that
+// `adopt <path> --flag` and `adopt --flag <path>` parse identically.
 func reorderAdoptArgs(args []string) []string {
+	boolFlags := adoptBoolFlags()
 	var flagArgs []string
 	var posArgs []string
-	for i := 0; i < len(args); i++ {
-		if strings.HasPrefix(args[i], "-") {
+	for i := 0; i < len(args) && i < maxAdoptArgs; i++ {
+		arg := args[i]
+		if !strings.HasPrefix(arg, "-") {
+			posArgs = append(posArgs, arg)
+			continue
+		}
+		flagArgs = append(flagArgs, arg)
+		if flagTakesNextValue(args, i, boolFlags) {
+			i++
 			flagArgs = append(flagArgs, args[i])
-			if !strings.Contains(args[i], "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				if args[i] != "-dry-run" && args[i] != "--dry-run" &&
-					args[i] != "-force" && args[i] != "--force" &&
-					args[i] != "-record-baseline" && args[i] != "--record-baseline" &&
-					args[i] != "-all-missing" && args[i] != "--all-missing" {
-					i++
-					flagArgs = append(flagArgs, args[i])
-				}
-			}
-		} else {
-			posArgs = append(posArgs, args[i])
 		}
 	}
 	return append(flagArgs, posArgs...)
+}
+
+// flagTakesNextValue reports whether args[i] is a value-taking flag whose value is the
+// next argument.
+func flagTakesNextValue(args []string, i int, boolFlags map[string]bool) bool {
+	arg := args[i]
+	if strings.Contains(arg, "=") || i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+		return false
+	}
+	name := strings.TrimLeft(arg, "-")
+	return !boolFlags[name]
 }
 
 func runAdopt(args []string) error {
@@ -54,39 +82,49 @@ func runAdopt(args []string) error {
 		*path = fs.Arg(0)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), adoptTimeout)
 	defer cancel()
 
-	homeDir, _ := os.UserHomeDir()
 	if *allMissing {
-		return batchAdoptMissing(ctx, filepath.Join(homeDir, "dev"), *dryRun, *force, *recordBaseline)
-	}
-
-	var facetList []string
-	if *facets != "" {
-		for _, f := range strings.Split(*facets, ",") {
-			if trimmed := strings.TrimSpace(f); trimmed != "" {
-				facetList = append(facetList, trimmed)
-			}
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolve home directory for --all-missing: %w", err)
 		}
+		return batchAdoptMissing(ctx, filepath.Join(homeDir, "dev"), *dryRun, *force, *recordBaseline)
 	}
 
 	opts := adopt.AdoptOptions{
 		Path:           *path,
 		Profile:        *profile,
-		Facets:         facetList,
+		Facets:         splitFacets(*facets),
 		DryRun:         *dryRun,
 		Force:          *force,
 		RecordBaseline: *recordBaseline,
 	}
 
 	report, err := adopt.Adopt(ctx, opts)
+	if report != nil {
+		printAdoptReport(report)
+	}
 	if err != nil {
 		return fmt.Errorf("adopt repository failed: %w", err)
 	}
-
-	printAdoptReport(report)
+	if len(report.Errors) > 0 {
+		return fmt.Errorf("%w: %d error(s) listed above", errAdoptIncomplete, len(report.Errors))
+	}
 	return nil
+}
+
+// splitFacets parses the comma-separated --facets value.
+func splitFacets(raw string) []string {
+	var facetList []string
+	parts := strings.Split(raw, ",")
+	for i := 0; i < len(parts) && i < maxAdoptArgs; i++ {
+		if trimmed := strings.TrimSpace(parts[i]); trimmed != "" {
+			facetList = append(facetList, trimmed)
+		}
+	}
+	return facetList
 }
 
 func batchAdoptMissing(ctx context.Context, devDir string, dryRun, force, recordBaseline bool) error {
@@ -96,28 +134,43 @@ func batchAdoptMissing(ctx context.Context, devDir string, dryRun, force, record
 	}
 
 	fmt.Printf("=== Batch Repository Adoption (%d unmanaged repos found) ===\n", len(scan.MissingRulesRepos))
-	for _, repoName := range scan.MissingRulesRepos {
-		targetPath := filepath.Join(devDir, repoName)
+	failed := 0
+	for i := 0; i < len(scan.MissingRulesRepos) && i < harvester.MaxDevScanEntries; i++ {
+		repoName := scan.MissingRulesRepos[i]
 		opts := adopt.AdoptOptions{
-			Path:           targetPath,
+			Path:           filepath.Join(devDir, repoName),
 			DryRun:         dryRun,
 			Force:          force,
 			RecordBaseline: recordBaseline,
 		}
-
 		rep, err := adopt.Adopt(ctx, opts)
-		if err != nil {
-			fmt.Printf("[FAIL] %s: %v\n", repoName, err)
-			continue
-		}
-		fmt.Printf("\n[ADOPTED] %s (State: %s, Archetype: %s, DryRun: %v)\n", repoName, rep.State, rep.Archetype, dryRun)
-		fmt.Printf("  Created:    %d files\n", len(rep.CreatedFiles))
-		fmt.Printf("  Reconciled: %d files\n", len(rep.ReconciledFiles))
-		if rep.LegacyDebtCount > 0 {
-			fmt.Printf("  Legacy Debt Baselined: %d infractions\n", rep.LegacyDebtCount)
+		if !printBatchResult(repoName, dryRun, rep, err) {
+			failed++
 		}
 	}
+	if failed > 0 {
+		return fmt.Errorf("%w: %d of %d repositories failed", errAdoptIncomplete, failed, len(scan.MissingRulesRepos))
+	}
 	return nil
+}
+
+// printBatchResult prints one batch entry and reports whether it succeeded.
+func printBatchResult(repoName string, dryRun bool, rep *adopt.AdoptReport, err error) bool {
+	if err != nil {
+		fmt.Printf("[FAIL] %s: %v\n", repoName, err)
+		if rep != nil {
+			fmt.Printf("  Written before failure: %d created, %d reconciled\n", len(rep.CreatedFiles), len(rep.ReconciledFiles))
+		}
+		return false
+	}
+	fmt.Printf("\n[ADOPTED] %s (State: %s, Archetype: %s, DryRun: %v)\n", repoName, rep.State, rep.Archetype, dryRun)
+	fmt.Printf("  Created:    %d files\n", len(rep.CreatedFiles))
+	fmt.Printf("  Reconciled: %d files\n", len(rep.ReconciledFiles))
+	if rep.LegacyDebtCount > 0 {
+		fmt.Printf("  Legacy Debt Baselined: %d infractions\n", rep.LegacyDebtCount)
+	}
+	printAdoptIssues(rep)
+	return len(rep.Errors) == 0
 }
 
 func findDetail(details []adopt.ActionDetail, path string) string {
@@ -138,27 +191,10 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 	fmt.Printf("Archetype:          %s\n", rep.Archetype)
 	fmt.Printf("Facets:             %v\n", rep.Facets)
 
-	// Debt summary
-	if rep.LegacyDebtCount > 0 {
-		fmt.Printf("\n--- Legacy Technical Debt Baselined (%d infractions) ---\n", rep.LegacyDebtCount)
-		if len(rep.DebtBreakdown) > 0 {
-			var ruleKeys []string
-			for r := range rep.DebtBreakdown {
-				ruleKeys = append(ruleKeys, r)
-			}
-			sort.Strings(ruleKeys)
-			for _, r := range ruleKeys {
-				fmt.Printf("  • %-8s: %d infractions\n", r, rep.DebtBreakdown[r])
-			}
-		}
-		fmt.Println("  (Infractions recorded into .standards-baseline.json to prevent CI breaks while ratcheting)")
-	} else {
-		fmt.Println("\n--- Legacy Technical Debt: 0 infractions detected ---")
-	}
-
+	printDebtSummary(rep)
 	printAdoptedFiles(rep)
+	printAdoptIssues(rep)
 
-	// Governance Pillars Summary
 	fmt.Println("\n--- Governance Pillars Synchronized ---")
 	fmt.Println("  ✓ Universal Harness : Canonical AGENTS.md + Mermaid Verification Flowchart")
 	fmt.Println("  ✓ AI Context Sync   : 6 targets (Claude Code, Cursor, Copilot, Windsurf, Codex, Gemini)")
@@ -166,10 +202,47 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 	fmt.Println("  ✓ DevContainer      : Containerized deterministic dev environment (.devcontainer)")
 	fmt.Println("  ✓ Verification Gate : Makefile 'verify-all' standard entrypoint")
 
-	if rep.DryRun {
+	switch {
+	case len(rep.Errors) > 0:
+		fmt.Printf("\nAdoption finished with %d error(s); the repository is not fully governed yet.\n", len(rep.Errors))
+	case rep.DryRun:
 		fmt.Println("\nSimulated adoption plan completed. Run without -dry-run to apply.")
-	} else {
+	default:
 		fmt.Println("\nRepository successfully adopted into cordanaLLM/praetor governance!")
+	}
+}
+
+// printDebtSummary prints the baselined legacy debt breakdown.
+func printDebtSummary(rep *adopt.AdoptReport) {
+	if rep.LegacyDebtCount == 0 {
+		fmt.Println("\n--- Legacy Technical Debt: 0 infractions detected ---")
+		return
+	}
+	fmt.Printf("\n--- Legacy Technical Debt Baselined (%d infractions) ---\n", rep.LegacyDebtCount)
+	var ruleKeys []string
+	for r := range rep.DebtBreakdown {
+		ruleKeys = append(ruleKeys, r)
+	}
+	sort.Strings(ruleKeys)
+	for _, r := range ruleKeys {
+		fmt.Printf("  • %-8s: %d infractions\n", r, rep.DebtBreakdown[r])
+	}
+	fmt.Println("  (Infractions recorded into .standards-baseline.json to prevent CI breaks while ratcheting)")
+}
+
+// printAdoptIssues prints the warnings and errors an adoption run recorded.
+func printAdoptIssues(rep *adopt.AdoptReport) {
+	if len(rep.Warnings) > 0 {
+		fmt.Printf("\nWarnings (%d):\n", len(rep.Warnings))
+		for _, w := range rep.Warnings {
+			fmt.Printf("  ! %s\n", w)
+		}
+	}
+	if len(rep.Errors) > 0 {
+		fmt.Printf("\nErrors (%d):\n", len(rep.Errors))
+		for _, e := range rep.Errors {
+			fmt.Printf("  x %s\n", e)
+		}
 	}
 }
 
@@ -177,24 +250,22 @@ func printAdoptedFiles(rep *adopt.AdoptReport) {
 	if len(rep.CreatedFiles) > 0 {
 		fmt.Printf("\nFiles Created (%d):\n", len(rep.CreatedFiles))
 		for _, f := range rep.CreatedFiles {
-			detail := findDetail(rep.ActionDetails, f)
-			if detail != "" {
-				fmt.Printf("  + [NEW]  %-36s : %s\n", f, detail)
-			} else {
-				fmt.Printf("  + [NEW]  %s\n", f)
-			}
+			printAdoptedFile("+ [NEW] ", f, findDetail(rep.ActionDetails, f))
 		}
 	}
 
 	if len(rep.ReconciledFiles) > 0 {
 		fmt.Printf("\nFiles Reconciled (%d):\n", len(rep.ReconciledFiles))
 		for _, f := range rep.ReconciledFiles {
-			detail := findDetail(rep.ActionDetails, f)
-			if detail != "" {
-				fmt.Printf("  ~ [SYNC] %-36s : %s\n", f, detail)
-			} else {
-				fmt.Printf("  ~ [SYNC] %s\n", f)
-			}
+			printAdoptedFile("~ [SYNC]", f, findDetail(rep.ActionDetails, f))
 		}
 	}
+}
+
+func printAdoptedFile(prefix, file, detail string) {
+	if detail != "" {
+		fmt.Printf("  %s %-36s : %s\n", prefix, file, detail)
+		return
+	}
+	fmt.Printf("  %s %s\n", prefix, file)
 }

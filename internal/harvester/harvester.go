@@ -46,34 +46,53 @@ type WorkstationReport struct {
 	DiscoveredAgentDoc []string `json:"discovered_agent_doc"`
 }
 
+// archetypeHint maps description keywords and language names to an archetype. Rules are
+// evaluated in order; the first match wins.
+type archetypeHint struct {
+	keywords  []string // matched as substrings of the lower-cased description
+	languages []string // matched exactly against the lower-cased language
+	archetype string
+}
+
+// maxArchetypeHints bounds the hint table scan (HISS-02).
+const maxArchetypeHints = 16
+
+// archetypeHints returns the detection table in priority order.
+func archetypeHints() []archetypeHint {
+	return []archetypeHint{
+		{keywords: []string{"gpu", "vulkan", "ffmpeg", "kernel", "sycl", "cuda"}, archetype: "native-gpu-systems"},
+		{keywords: []string{"kubernetes", "argocd", "terraform", "gitops", "helm"}, archetype: "gitops-infra"},
+		{keywords: []string{"framework", "composable"}, archetype: "framework"},
+		{keywords: []string{"client", "sdk", "modules"}, archetype: "library-client"},
+		{keywords: []string{"static", "pages"}, languages: []string{"astro"}, archetype: "pages-site"},
+		{languages: []string{"rust", "go", "python", "typescript", "dart", "flutter", "java", "kotlin"}, archetype: "app-service"},
+	}
+}
+
+// matches reports whether the hint applies to the lower-cased language and description.
+func (h archetypeHint) matches(lowerLang, lowerDesc string) bool {
+	for i := 0; i < len(h.keywords) && i < maxArchetypeHints; i++ {
+		if strings.Contains(lowerDesc, h.keywords[i]) {
+			return true
+		}
+	}
+	for i := 0; i < len(h.languages) && i < maxArchetypeHints; i++ {
+		if lowerLang == h.languages[i] {
+			return true
+		}
+	}
+	return false
+}
+
 // DetectArchetype recommends an archetype based on language and descriptions.
 func DetectArchetype(lang, desc string) string {
 	lowerDesc := strings.ToLower(desc)
 	lowerLang := strings.ToLower(lang)
-
-	if strings.Contains(lowerDesc, "gpu") || strings.Contains(lowerDesc, "vulkan") ||
-		strings.Contains(lowerDesc, "ffmpeg") || strings.Contains(lowerDesc, "kernel") ||
-		strings.Contains(lowerDesc, "sycl") || strings.Contains(lowerDesc, "cuda") {
-		return "native-gpu-systems"
-	}
-	if strings.Contains(lowerDesc, "kubernetes") || strings.Contains(lowerDesc, "argocd") ||
-		strings.Contains(lowerDesc, "terraform") || strings.Contains(lowerDesc, "gitops") ||
-		strings.Contains(lowerDesc, "helm") {
-		return "gitops-infra"
-	}
-	if strings.Contains(lowerDesc, "framework") || strings.Contains(lowerDesc, "composable") {
-		return "framework"
-	}
-	if strings.Contains(lowerDesc, "client") || strings.Contains(lowerDesc, "sdk") ||
-		strings.Contains(lowerDesc, "modules") {
-		return "library-client"
-	}
-	if lowerLang == "astro" || strings.Contains(lowerDesc, "static") || strings.Contains(lowerDesc, "pages") {
-		return "pages-site"
-	}
-	if lowerLang == "rust" || lowerLang == "go" || lowerLang == "python" || lowerLang == "typescript" ||
-		lowerLang == "dart" || lowerLang == "flutter" || lowerLang == "java" || lowerLang == "kotlin" {
-		return "app-service"
+	hints := archetypeHints()
+	for i := 0; i < len(hints) && i < maxArchetypeHints; i++ {
+		if hints[i].matches(lowerLang, lowerDesc) {
+			return hints[i].archetype
+		}
 	}
 	return "template-seed"
 }

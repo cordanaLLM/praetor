@@ -313,16 +313,6 @@ func MatchPackage(importPath string) (CatalogEntry, bool) {
 	return bestMatch, longestPrefix > 0
 }
 
-// MapCapabilityToReplacement returns the default replacement package for a capability.
-func MapCapabilityToReplacement(capKey CapabilityKey) string {
-	for _, entry := range CanonicalCatalog {
-		if entry.Capability == capKey && entry.Status == StatusCovered {
-			return entry.GolusorisReplacement
-		}
-	}
-	return ""
-}
-
 // CatalogMapping defines the framework mapping for a non-Go dependency.
 type CatalogMapping struct {
 	Capability  CapabilityKey

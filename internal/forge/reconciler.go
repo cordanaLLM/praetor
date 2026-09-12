@@ -67,14 +67,6 @@ func (e *ReconcileEngine) TrackIssue(repo string, issue IssueSpec) {
 	e.states[repo][issue.ID] = issue.State
 }
 
-// SetIssueState updates an issue's open/closed state.
-func (e *ReconcileEngine) SetIssueState(repo string, number int, state string) {
-	if _, ok := e.states[repo]; !ok {
-		e.states[repo] = make(map[int]string)
-	}
-	e.states[repo][number] = state
-}
-
 var checkboxRegex = regexp.MustCompile(`(?i)^\s*-\s*\[([ xX])\]\s*(.*)$`)
 
 // ParseCheckboxDependencies extracts tasklist dependencies from an issue body.
