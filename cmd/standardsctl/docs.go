@@ -8,9 +8,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/docdistill"
 )
+
+// docsCommandTimeout bounds the whole docs command (HISS-02).
+const docsCommandTimeout = 10 * time.Minute
 
 func runDocs(args []string) error {
 	if len(args) == 0 {
@@ -20,7 +24,10 @@ func runDocs(args []string) error {
 
 	sub := args[0]
 	subArgs := args[1:]
-	ctx := context.Background()
+	// HISS-02: docs sync fetches one documentation sheet per declared dependency, so the
+	// command carries an explicit deadline like its sibling commands.
+	ctx, cancel := context.WithTimeout(context.Background(), docsCommandTimeout)
+	defer cancel()
 
 	switch sub {
 	case "sync":
@@ -52,14 +59,11 @@ func runDocsSync(ctx context.Context, args []string) error {
 	offline := fs.Bool("offline", false, "Run in offline mode using local doc caches only")
 	transitive := fs.Bool("transitive", false, "Include transitive dependencies")
 
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
-
-	repoPath := "."
-	if fs.NArg() > 0 {
-		repoPath = fs.Arg(0)
-	}
+	repoPath := positionalAt(positional, 0, ".")
 
 	opts := docdistill.DefaultDistillOptions()
 	opts.ForceRefresh = *force

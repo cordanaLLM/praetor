@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"os"
+	"io/fs"
 	"strings"
 	"time"
 
@@ -17,14 +18,11 @@ func runModels(args []string) error {
 	discoverLocal := fs.Bool("discover-local", true, "Auto-discover local Ollama/vLLM models")
 	endpoints := fs.String("local-endpoints", "http://localhost:11434,http://localhost:8000", "Comma-separated local runtime endpoints")
 
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
-
-	action := "list"
-	if len(fs.Args()) > 0 {
-		action = fs.Args()[0]
-	}
+	action := positionalAt(positional, 0, "list")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -74,8 +72,8 @@ func handleModelsSync(ctx context.Context, configPath, endpoints string, discove
 func handleModelsList(configPath string) error {
 	cfg, err := router.LoadRoutingConfig(configPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("%s does not exist; run 'standardsctl models sync' first", configPath)
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%s does not exist; run 'praetorctl models sync' first: %w", configPath, err)
 		}
 		return err
 	}

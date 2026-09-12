@@ -7,8 +7,18 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/hindsight"
+)
+
+const (
+	// hindsightCommandTimeout bounds the whole hindsight command (HISS-02).
+	hindsightCommandTimeout = 15 * time.Minute
+	// maxSyncedFacts is the scalar upper bound (HISS-02) on the facts a single sync
+	// ingests. The client rate-limits to 30 requests per minute, so an unbounded fact
+	// list would otherwise pin the command for hours.
+	maxSyncedFacts = 5000
 )
 
 func runHindsight(args []string) error {
@@ -19,7 +29,10 @@ func runHindsight(args []string) error {
 
 	sub := args[0]
 	subArgs := args[1:]
-	ctx := context.Background()
+	// HISS-02: every hindsight subcommand performs filesystem or network I/O, so the
+	// whole command runs under an explicit deadline like its sibling commands.
+	ctx, cancel := context.WithTimeout(context.Background(), hindsightCommandTimeout)
+	defer cancel()
 
 	switch sub {
 	case "distill":
@@ -123,31 +136,42 @@ func runHindsightSync(ctx context.Context, args []string) error {
 	bank := fs.String("bank", "default", "Target Hindsight memory bank")
 	offline := fs.Bool("offline", false, "Run in offline mode (dry-run without HTTP)")
 
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
-
-	repoPath := "."
-	if fs.NArg() > 0 {
-		repoPath = fs.Arg(0)
-	}
+	repoPath := positionalAt(positional, 0, ".")
 
 	report, err := hindsight.DistillWorkspace(ctx, repoPath)
 	if err != nil {
 		return err
 	}
 
+	if *offline {
+		// IngestFact returns nil without issuing a request in offline mode, so reporting
+		// a successful sync here would claim a bank was populated that was never touched.
+		fmt.Printf("=== Hindsight Bank '%s' (offline dry-run) ===\n", *bank)
+		fmt.Printf("[DRY-RUN] Would ingest %d atomic facts; no request was made.\n", len(report.Facts))
+		return nil
+	}
+
 	cfg := hindsight.DefaultClientConfig()
-	cfg.OfflineOnly = *offline
 	client := hindsight.NewClient(cfg)
 	defer client.Close()
 
 	fmt.Printf("=== Syncing Facts to Hindsight Bank '%s' ===\n", *bank)
-	for _, fact := range report.Facts {
-		if err := client.IngestFact(ctx, *bank, fact); err != nil {
-			return fmt.Errorf("failed to ingest fact %s: %w", fact.ID, err)
-		}
+	if len(report.Facts) > maxSyncedFacts {
+		return fmt.Errorf("refusing to sync %d facts: the per-invocation limit is %d",
+			len(report.Facts), maxSyncedFacts)
 	}
-	fmt.Printf("Synced %d atomic facts successfully.\n", report.TotalFacts)
+	ingested := 0
+	for i := 0; i < len(report.Facts) && i < maxSyncedFacts; i++ {
+		if err := client.IngestFact(ctx, *bank, report.Facts[i]); err != nil {
+			return fmt.Errorf("ingested %d of %d facts, then failed on %s: %w",
+				ingested, len(report.Facts), report.Facts[i].ID, err)
+		}
+		ingested++
+	}
+	fmt.Printf("Synced %d of %d atomic facts successfully.\n", ingested, len(report.Facts))
 	return nil
 }

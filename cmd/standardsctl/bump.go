@@ -179,30 +179,20 @@ func runBumpCanary(ctx context.Context, args []string) error {
 	targetVer := fs.String("target", "", "Target prerelease or stable version")
 	dryRun := fs.Bool("dry-run", false, "Simulate canary test without creating worktree")
 	retention := fs.Bool("retention", false, "Retain worktree on failure for debugging")
-	var flagArgs, posArgs []string
-	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
-			flagArgs = append(flagArgs, a)
-		} else {
-			posArgs = append(posArgs, a)
-		}
-	}
-	if err := fs.Parse(append(flagArgs, posArgs...)); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
 
-	if fs.NArg() < 1 {
-		return fmt.Errorf("package name required: standardsctl bump canary <package>")
+	if len(positional) < 1 {
+		return fmt.Errorf("package name required: praetorctl bump canary <package> [--target=...]")
 	}
-	pkg := fs.Arg(0)
+	pkg := positional[0]
+	if *targetVer == "" {
+		return fmt.Errorf("--target is required: praetorctl bump canary %s --target=<version>", pkg)
+	}
 
-	cand := bump.UpgradeCandidate{
-		Package:        pkg,
-		CurrentVersion: "current",
-		TargetVersion:  *targetVer,
-		Channel:        bump.ClassifyChannel(*targetVer),
-		ManifestType:   "go.mod",
-	}
+	cand := newGoUpgradeCandidate(*path, pkg, *targetVer)
 
 	opts := bump.CanaryOptions{
 		RepoPath:  *path,
@@ -270,21 +260,20 @@ func runBumpApply(ctx context.Context, args []string) error {
 	path := fs.String("path", ".", "Target repository path")
 	version := fs.String("version", "", "Target version to apply")
 	patch := fs.String("patch", "", "Optional path to adaptation patch")
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
 
-	if fs.NArg() < 1 {
-		return fmt.Errorf("package name required: standardsctl bump apply <package>")
+	if len(positional) < 1 {
+		return fmt.Errorf("package name required: praetorctl bump apply <package> --version=<version>")
 	}
-	pkg := fs.Arg(0)
+	pkg := positional[0]
+	if *version == "" {
+		return fmt.Errorf("--version is required: praetorctl bump apply %s --version=<version>", pkg)
+	}
 
-	cand := bump.UpgradeCandidate{
-		Package:        pkg,
-		CurrentVersion: "current",
-		TargetVersion:  *version,
-		ManifestType:   "go.mod",
-	}
+	cand := newGoUpgradeCandidate(*path, pkg, *version)
 
 	if err := bump.ApplyBump(ctx, *path, cand, *patch); err != nil {
 		return fmt.Errorf("apply bump: %w", err)
@@ -295,6 +284,24 @@ func runBumpApply(ctx context.Context, args []string) error {
 		fmt.Printf("[PATCHED] Applied adaptation patch from %s\n", *patch)
 	}
 	return nil
+}
+
+// newGoUpgradeCandidate builds a go.mod upgrade candidate whose CurrentVersion is read
+// from the repository instead of being a placeholder: internal/bump's go.mod fallback
+// edit matches on "<package> <current version>", so a placeholder can never match.
+func newGoUpgradeCandidate(repoPath, pkg, targetVersion string) bump.UpgradeCandidate {
+	current, moduleDir, err := bump.CurrentGoModVersion(repoPath, pkg)
+	if err != nil {
+		fmt.Printf("[WARN] %s is not required by any go.mod under %s: %v\n", pkg, repoPath, err)
+	}
+	return bump.UpgradeCandidate{
+		Package:        pkg,
+		CurrentVersion: current,
+		TargetVersion:  targetVersion,
+		Channel:        bump.ClassifyChannel(targetVersion),
+		ManifestType:   "go.mod",
+		ModuleDir:      moduleDir,
+	}
 }
 
 func runBumpAudit(ctx context.Context, args []string) error {
