@@ -2,11 +2,14 @@ package needs
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestCatalogMatching(t *testing.T) {
@@ -176,19 +179,52 @@ func TestScanRepoBoundaries(t *testing.T) {
 	}
 }
 
-func TestPlanAndApplyMigration(t *testing.T) {
+// initGitFixture turns dir into a self-contained git repository with one commit. Global
+// and system git configuration are redirected into the test's own temp tree so the
+// fixture never reads or writes the developer's $HOME.
+func initGitFixture(t *testing.T, dir string) {
+	t.Helper()
+	confDir := t.TempDir()
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(confDir, "gitconfig"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(confDir, "gitconfig-system"))
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOFLAGS", "-mod=mod")
+
 	ctx := context.Background()
+	run := func(args ...string) {
+		t.Helper()
+		out, err := util.RunCommand(ctx, dir, "git", args...)
+		if err != nil {
+			t.Fatalf("git %v failed: %v (%s)", args, err, out)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.name", "Standards Test Agent")
+	run("config", "user.email", "agent@cordana.ai")
+	run("add", "-A")
+	run("commit", "-m", "initial commit")
+}
+
+func setupMigrationFixture(t *testing.T) string {
+	t.Helper()
 	tmpDir := t.TempDir()
 
 	goMod := "module example.com/migratesvc\n\ngo 1.24\n\nrequire github.com/gin-gonic/gin v1.10.0\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goMod), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	src := "package main\n\nimport \"github.com/gin-gonic/gin\"\n\nfunc main() {}\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(src), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return tmpDir
+}
+
+func TestPlanAndApplyMigration(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := setupMigrationFixture(t)
+	initGitFixture(t, tmpDir)
 
 	plan, err := PlanMigration(ctx, tmpDir, "")
 	if err != nil {
@@ -203,7 +239,10 @@ func TestPlanAndApplyMigration(t *testing.T) {
 		t.Fatalf("apply migration failed: %v", err)
 	}
 	if !res.Success {
-		t.Fatal("expected successful migration")
+		t.Fatalf("expected successful migration, got error %q", res.Error)
+	}
+	if res.Branch != "refactor/golusoris-adoption" {
+		t.Fatalf("unexpected branch %q", res.Branch)
 	}
 
 	content, err := os.ReadFile(filepath.Join(tmpDir, "main.go"))
@@ -212,6 +251,86 @@ func TestPlanAndApplyMigration(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "github.com/golusoris/golusoris/httpx") {
 		t.Fatal("expected import replacement in main.go")
+	}
+
+	assertMigratedGoMod(t, filepath.Join(tmpDir, "go.mod"))
+
+	guide, err := os.ReadFile(filepath.Join(tmpDir, "MIGRATION.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(guide), "Migration Guide") {
+		t.Fatalf("unexpected MIGRATION.md content: %s", guide)
+	}
+}
+
+func assertMigratedGoMod(t *testing.T, goModPath string) {
+	t.Helper()
+	data, err := os.ReadFile(goModPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if strings.Contains(body, "github.com/gin-gonic/gin") {
+		t.Fatalf("expected gin require to be dropped, got:\n%s", body)
+	}
+	if !strings.Contains(body, "module example.com/migratesvc") {
+		t.Fatalf("module directive must survive the rewrite, got:\n%s", body)
+	}
+	if strings.Count(body, "github.com/golusoris/golusoris v0.8.0") != 1 {
+		t.Fatalf("expected exactly one framework require, got:\n%s", body)
+	}
+}
+
+func TestApplyMigrationNegativeNonGitTarget(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := setupMigrationFixture(t)
+
+	plan, err := PlanMigration(ctx, tmpDir, "")
+	if err != nil {
+		t.Fatalf("plan migration failed: %v", err)
+	}
+
+	res, err := ApplyMigration(ctx, tmpDir, plan)
+	if !errors.Is(err, ErrNotGitRepo) {
+		t.Fatalf("expected ErrNotGitRepo, got %v", err)
+	}
+	if res == nil || res.Success {
+		t.Fatal("expected Success=false for a failed migration")
+	}
+	if res.Error == "" {
+		t.Fatal("expected MigrationResult.Error to be populated")
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "github.com/gin-gonic/gin") {
+		t.Fatal("failed migration must not rewrite sources")
+	}
+}
+
+func TestApplyMigrationBoundaryExistingBranch(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := setupMigrationFixture(t)
+	initGitFixture(t, tmpDir)
+
+	if out, err := util.RunCommand(ctx, tmpDir, "git", "branch", "refactor/golusoris-adoption"); err != nil {
+		t.Fatalf("failed creating pre-existing branch: %v (%s)", err, out)
+	}
+
+	plan, err := PlanMigration(ctx, tmpDir, "")
+	if err != nil {
+		t.Fatalf("plan migration failed: %v", err)
+	}
+
+	res, err := ApplyMigration(ctx, tmpDir, plan)
+	if !errors.Is(err, ErrBranchExists) {
+		t.Fatalf("expected ErrBranchExists, got %v", err)
+	}
+	if res == nil || res.Success {
+		t.Fatal("expected Success=false when the adoption branch already exists")
 	}
 }
 

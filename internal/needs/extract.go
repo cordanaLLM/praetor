@@ -3,6 +3,7 @@ package needs
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"go/parser"
 	"go/token"
@@ -15,53 +16,81 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// maxPathSegments bounds the per-path segment loop in shouldSkipDir (HISS-02).
+const maxPathSegments = 128
+
+// ErrGoModMissing is returned when a Go analysis is requested for a directory that has
+// no go.mod. Callers must not substitute a fabricated Go manifest for the missing file.
+var ErrGoModMissing = errors.New("needs: go.mod not found")
+
 // ScanRepo extracts framework capability needs and dependency mappings from a repository.
+// A repository that no registered language analyzer recognises is an error: silently
+// falling back to a Go manifest would report an unanalysed repository as fully ready.
 func ScanRepo(ctx context.Context, repoPath string) (*RepoNeeds, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 
-	needs, err := DefaultRegistry().AnalyzePolyglot(ctx, repoPath)
-	if err == nil {
-		return needs, nil
+	repoNeeds, err := DefaultRegistry().AnalyzePolyglot(ctx, repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze repository %q: %w", repoPath, err)
 	}
-
-	return NewGoAnalyzer().Analyze(ctx, repoPath)
+	return repoNeeds, nil
 }
 
 // parseGoMod extracts the module path, go version, and direct dependencies from go.mod.
-func parseGoMod(goModPath string) (string, string, map[string]string, error) {
+func parseGoMod(goModPath string) (modulePath string, goVersion string, directDeps map[string]string, err error) {
 	if !util.FileExists(goModPath) {
-		return "unknown", "1.27", make(map[string]string), nil
+		return "", "", nil, fmt.Errorf("%w: %s", ErrGoModMissing, goModPath)
 	}
 
-	file, err := os.Open(goModPath)
-	if err != nil {
-		return "", "", nil, err
+	// #nosec G304 -- goModPath is always filepath.Join(repoPath, "go.mod") for a repo the
+	// caller already selected; the filename is a constant, not user input.
+	file, openErr := os.Open(goModPath)
+	if openErr != nil {
+		return "", "", nil, fmt.Errorf("failed to open %q: %w", goModPath, openErr)
 	}
-	defer file.Close()
-
-	var modulePath, goVer string
-	directDeps := make(map[string]string)
-	scanner := bufio.NewScanner(file)
-	inRequireBlock := false
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "module ") {
-			modulePath = strings.TrimSpace(strings.TrimPrefix(line, "module"))
-		} else if strings.HasPrefix(line, "go ") {
-			goVer = strings.TrimSpace(strings.TrimPrefix(line, "go"))
-		} else if strings.HasPrefix(line, "require (") {
-			inRequireBlock = true
-		} else if inRequireBlock && line == ")" {
-			inRequireBlock = false
-		} else if inRequireBlock || strings.HasPrefix(line, "require ") {
-			parseRequireLine(line, directDeps)
+	defer func() {
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed to close %q: %w", goModPath, cerr)
 		}
+	}()
+
+	state := goModScanState{directDeps: make(map[string]string)}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		state.consume(strings.TrimSpace(scanner.Text()))
+	}
+	if scanErr := scanner.Err(); scanErr != nil {
+		return "", "", nil, fmt.Errorf("failed to read %q: %w", goModPath, scanErr)
 	}
 
-	return modulePath, goVer, directDeps, scanner.Err()
+	return state.modulePath, state.goVersion, state.directDeps, nil
+}
+
+// goModScanState accumulates the go.mod directives seen so far. Keeping the per-line
+// classification here holds parseGoMod itself under the HISS-04 complexity cap.
+type goModScanState struct {
+	modulePath     string
+	goVersion      string
+	directDeps     map[string]string
+	inRequireBlock bool
+}
+
+// consume classifies a single trimmed go.mod line.
+func (s *goModScanState) consume(line string) {
+	switch {
+	case strings.HasPrefix(line, "module "):
+		s.modulePath = strings.TrimSpace(strings.TrimPrefix(line, "module"))
+	case strings.HasPrefix(line, "go "):
+		s.goVersion = strings.TrimSpace(strings.TrimPrefix(line, "go"))
+	case strings.HasPrefix(line, "require ("):
+		s.inRequireBlock = true
+	case s.inRequireBlock && line == ")":
+		s.inRequireBlock = false
+	case s.inRequireBlock || strings.HasPrefix(line, "require "):
+		parseRequireLine(line, s.directDeps)
+	}
 }
 
 // parseRequireLine extracts a dependency if it is not marked as indirect.
@@ -82,127 +111,270 @@ func parseRequireLine(line string, directDeps map[string]string) {
 func scanASTImports(ctx context.Context, rootDir, modulePath string) (map[string]struct{}, error) {
 	thirdParty := make(map[string]struct{})
 	fset := token.NewFileSet()
+	root := filepath.Clean(rootDir)
 
-	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil || ctx.Err() != nil {
+	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
 			return walkErr
 		}
-		if shouldSkipDir(info, path) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if shouldSkipDir(info, path, root) {
 			return filepath.SkipDir
 		}
-		if info.IsDir() || !strings.HasSuffix(info.Name(), ".go") || strings.HasSuffix(info.Name(), "_test.go") {
+		if !isScannableGoFile(info) {
 			return nil
 		}
-		node, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
-		if parseErr != nil {
-			return nil // Skip unparseable generated code gracefully
-		}
-		for _, imp := range node.Imports {
-			rawPath := strings.Trim(imp.Path.Value, `"`)
-			if isThirdPartyImport(rawPath, modulePath) {
-				thirdParty[rawPath] = struct{}{}
-			}
-		}
+		collectFileImports(fset, path, modulePath, thirdParty)
 		return nil
 	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk %q for Go imports: %w", root, err)
+	}
 
-	return thirdParty, err
+	return thirdParty, nil
 }
 
-// shouldSkipDir checks whether the directory should be skipped during AST traversal.
-func shouldSkipDir(info os.FileInfo, path string) bool {
-	if !info.IsDir() {
+// isScannableGoFile reports whether info is a regular, non-test .go source file. Symlinks
+// are excluded: their target may live outside the scanned repository.
+func isScannableGoFile(info os.FileInfo) bool {
+	if info == nil || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
 	name := info.Name()
-	return name == "vendor" || name == ".git" || name == ".devcontainer" ||
-		name == "node_modules" || strings.HasPrefix(name, ".") ||
-		name == "scratch" || name == "cache" || strings.Contains(path, "/scratch") ||
-		strings.Contains(path, "/.workingdir")
+	return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
 }
 
-// isThirdPartyImport determines if an import path is external to stdlib and the current module.
+// collectFileImports parses one file and records its third-party imports. A file that
+// does not parse (generated or partially written code) contributes no imports.
+func collectFileImports(fset *token.FileSet, path, modulePath string, thirdParty map[string]struct{}) {
+	node, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+	if parseErr != nil {
+		return
+	}
+	for _, imp := range node.Imports {
+		rawPath := strings.Trim(imp.Path.Value, `"`)
+		if isThirdPartyImport(rawPath, modulePath) {
+			thirdParty[rawPath] = struct{}{}
+		}
+	}
+}
+
+// shouldSkipDir reports whether the directory at path must be excluded from a walk rooted
+// at rootDir. The walk root itself is never skipped: filepath.Walk visits it first, and
+// skipping it (which a root of "." used to trigger, because its base name starts with a
+// dot) aborts the entire traversal before a single file is seen.
+func shouldSkipDir(info os.FileInfo, path, rootDir string) bool {
+	if info == nil || !info.IsDir() {
+		return false
+	}
+	rel, err := filepath.Rel(rootDir, path)
+	if err != nil {
+		return true
+	}
+	if rel == "." || rel == "" {
+		return false
+	}
+	segments := strings.Split(filepath.ToSlash(rel), "/")
+	bound := len(segments)
+	if bound > maxPathSegments {
+		return true
+	}
+	for i := 0; i < bound; i++ {
+		if isExcludedDirSegment(segments[i]) {
+			return true
+		}
+	}
+	return false
+}
+
+// isExcludedDirSegment reports whether a single path segment names a directory that never
+// contains first-party sources.
+func isExcludedDirSegment(name string) bool {
+	switch name {
+	case "vendor", "node_modules", "scratch", "cache":
+		return true
+	}
+	return strings.HasPrefix(name, ".")
+}
+
+// isThirdPartyImport determines if an import path is external to stdlib and the current
+// module. The module comparison is boundary-aware: a sibling module that merely shares a
+// textual prefix (github.com/acme/foo-plugins vs github.com/acme/foo) is third-party.
 func isThirdPartyImport(importPath, modulePath string) bool {
-	if strings.HasPrefix(importPath, modulePath) {
+	if modulePath != "" &&
+		(importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/")) {
 		return false
 	}
 	firstSeg := strings.Split(importPath, "/")[0]
 	return strings.Contains(firstSeg, ".")
 }
 
-// loadExistingDeclarations checks for existing .needs.yaml or .standards.yaml declarations.
-func loadExistingDeclarations(repoPath string, repoNeeds *RepoNeeds) {
+// loadExistingDeclarations merges capabilities declared in an existing .needs.yaml or
+// .standards.yaml into the freshly computed set. Declared entries are additive: replacing
+// the computed set would freeze Capabilities.Required at its first written value.
+func loadExistingDeclarations(repoPath string, repoNeeds *RepoNeeds) error {
 	needsPath := filepath.Join(repoPath, ".needs.yaml")
 	if util.FileExists(needsPath) {
-		data, err := os.ReadFile(needsPath)
-		if err == nil {
-			var existing RepoNeeds
-			if yaml.Unmarshal(data, &existing) == nil {
-				repoNeeds.Capabilities = existing.Capabilities
-				return
-			}
+		var existing RepoNeeds
+		if err := readYAMLFile(needsPath, &existing); err != nil {
+			return err
 		}
+		mergeCapabilities(repoNeeds, existing.Capabilities)
+		return nil
 	}
 
 	standardsPath := filepath.Join(repoPath, ".standards.yaml")
 	if util.FileExists(standardsPath) {
-		data, err := os.ReadFile(standardsPath)
-		if err == nil {
-			var st struct {
-				Needs CapabilityDeclaration `yaml:"needs"`
-			}
-			if yaml.Unmarshal(data, &st) == nil && len(st.Needs.Required) > 0 {
-				repoNeeds.Capabilities = st.Needs
-			}
+		var st struct {
+			Needs CapabilityDeclaration `yaml:"needs"`
 		}
+		if err := readYAMLFile(standardsPath, &st); err != nil {
+			return err
+		}
+		mergeCapabilities(repoNeeds, st.Needs)
+	}
+	return nil
+}
+
+// readYAMLFile reads and unmarshals a repository-local declaration file.
+func readYAMLFile(path string, out any) error {
+	// #nosec G304 -- path is filepath.Join(repoPath, "<constant filename>") for a
+	// repository the caller already selected; no component comes from user input.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read %q: %w", path, err)
+	}
+	if err := yaml.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("failed to parse %q: %w", path, err)
+	}
+	return nil
+}
+
+// mergeCapabilities folds declared capabilities into the computed declaration.
+func mergeCapabilities(repoNeeds *RepoNeeds, declared CapabilityDeclaration) {
+	for _, capKey := range declared.Required {
+		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, capKey)
+	}
+	for _, capKey := range declared.Optional {
+		repoNeeds.Capabilities.Optional = appendUniqueCap(repoNeeds.Capabilities.Optional, capKey)
 	}
 }
 
-// buildDependencyDemands maps discovered packages to capabilities and Golusoris replacements.
+// buildDependencyDemands maps discovered packages to capabilities and Golusoris
+// replacements. AST imports are collapsed onto the module that owns them so that
+// importing several packages of one module counts as a single dependency.
 func buildDependencyDemands(directDeps map[string]string, astImports map[string]struct{}, repoNeeds *RepoNeeds) {
-	pkgSet := make(map[string]string)
+	pkgSet := make(map[string]string, len(directDeps)+len(astImports))
 	for pkg, ver := range directDeps {
 		pkgSet[pkg] = ver
 	}
 	for imp := range astImports {
-		if _, ok := pkgSet[imp]; !ok {
-			pkgSet[imp] = ""
+		root := ResolveModuleRoot(imp, directDeps)
+		if _, ok := pkgSet[root]; !ok {
+			pkgSet[root] = ""
 		}
 	}
 
 	demands := make([]DependencyDemand, 0, len(pkgSet))
 	for pkg, ver := range pkgSet {
-		entry, found := MatchPackage(pkg)
-		demand := DependencyDemand{
-			Package: pkg,
-			Version: ver,
-		}
-		if found {
-			demand.Capability = entry.Capability
-			demand.Status = entry.Status
-			demand.GolusorisReplacement = entry.GolusorisReplacement
-			demand.Notes = entry.Notes
-		} else {
-			demand.Capability = CapabilityKey("custom." + sanitizePackageName(pkg))
-			demand.Status = StatusGap
-			demand.Notes = "Third-party package without native Golusoris equivalent"
-		}
-		demands = append(demands, demand)
+		demands = append(demands, buildGoDemand(pkg, ver))
 	}
 
 	sort.Slice(demands, func(i, j int) bool {
 		return demands[i].Package < demands[j].Package
 	})
 	repoNeeds.Dependencies = demands
+	for _, d := range demands {
+		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, d.Capability)
+	}
 }
 
-// sanitizePackageName converts an import path into a safe capability identifier.
-func sanitizePackageName(pkg string) string {
-	parts := strings.Split(pkg, "/")
-	if len(parts) > 0 {
-		return parts[len(parts)-1]
+// buildGoDemand maps a single Go module path onto its catalog entry.
+func buildGoDemand(pkg, ver string) DependencyDemand {
+	demand := DependencyDemand{
+		Package:   pkg,
+		Version:   ver,
+		Language:  "go",
+		Ecosystem: "go",
 	}
-	return "lib"
+	entry, found := MatchPackage(pkg)
+	if found {
+		demand.Capability = entry.Capability
+		demand.Status = entry.Status
+		demand.GolusorisReplacement = entry.GolusorisReplacement
+		demand.Notes = entry.Notes
+		return demand
+	}
+	demand.Capability = CapabilityKey("custom." + cleanDepKey(pkg))
+	demand.Status = StatusGap
+	demand.Notes = "Third-party package without native Golusoris equivalent"
+	return demand
+}
+
+// ResolveModuleRoot reduces an import path to the module that owns it. A module listed in
+// go.mod wins (longest matching path); otherwise the conventional module root for the
+// hosting domain is used, so that github.com/foo/bar/v4/sub resolves to
+// github.com/foo/bar/v4 rather than counting as an independent dependency.
+func ResolveModuleRoot(importPath string, directDeps map[string]string) string {
+	best := ""
+	for mod := range directDeps {
+		if importPath != mod && !strings.HasPrefix(importPath, mod+"/") {
+			continue
+		}
+		if len(mod) > len(best) {
+			best = mod
+		}
+	}
+	if best != "" {
+		return best
+	}
+	return conventionalModuleRoot(importPath)
+}
+
+// hostModuleDepth maps a hosting domain to the number of leading path segments that form
+// a module root on it. Domains not listed use two segments (host/module).
+var hostModuleDepth = map[string]int{
+	"github.com":    3,
+	"gitlab.com":    3,
+	"bitbucket.org": 3,
+	"codeberg.org":  3,
+	"gitee.com":     3,
+	"git.sr.ht":     3,
+	"golang.org":    3,
+}
+
+// conventionalModuleRoot applies the hosting-domain convention plus the /vN major-version
+// suffix rule to an import path whose module is not declared in go.mod.
+func conventionalModuleRoot(importPath string) string {
+	segments := strings.Split(importPath, "/")
+	depth, ok := hostModuleDepth[segments[0]]
+	if !ok {
+		depth = 2
+	}
+	if len(segments) <= depth {
+		return importPath
+	}
+	root := strings.Join(segments[:depth], "/")
+	if isMajorVersionSegment(segments[depth]) {
+		root += "/" + segments[depth]
+	}
+	return root
+}
+
+// isMajorVersionSegment reports whether a path segment is a Go major-version suffix (v2,
+// v3, ...).
+func isMajorVersionSegment(segment string) bool {
+	if len(segment) < 2 || segment[0] != 'v' {
+		return false
+	}
+	for i := 1; i < len(segment); i++ {
+		if segment[i] < '0' || segment[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // calculateReadiness computes the framework adoption score and dependency counts.
@@ -212,9 +384,10 @@ func calculateReadiness(repoNeeds *RepoNeeds) {
 	gap := 0
 
 	for _, d := range repoNeeds.Dependencies {
-		if d.Status == StatusCovered || d.Status == StatusAdapterAvailable || d.Status == StatusNative {
+		switch d.Status {
+		case StatusCovered, StatusAdapterAvailable, StatusNative:
 			covered++
-		} else if d.Status == StatusGap {
+		case StatusGap:
 			gap++
 		}
 	}
@@ -239,5 +412,8 @@ func WriteNeedsManifest(repoPath string, repoNeeds *RepoNeeds) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal needs manifest: %w", err)
 	}
-	return os.WriteFile(targetFile, data, 0644)
+	if err := util.WriteFileSecure(targetFile, data, manifestFilePerm); err != nil {
+		return fmt.Errorf("failed to write %q: %w", targetFile, err)
+	}
+	return nil
 }

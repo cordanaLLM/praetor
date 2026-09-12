@@ -1,7 +1,18 @@
 package needs
 
 import (
+	"os"
 	"time"
+)
+
+const (
+	// manifestFilePerm is the mode applied to every manifest, report and source file the
+	// needs package writes. It is group/world readable because the artifacts are meant to
+	// be committed and read by CI, but never world-writable (gosec G306).
+	manifestFilePerm os.FileMode = 0o644
+	// outputDirPerm is the mode applied to directories the needs package creates
+	// (gosec G301).
+	outputDirPerm os.FileMode = 0o750
 )
 
 // CapabilityKey represents a standardized architectural or runtime capability.
@@ -91,6 +102,7 @@ type FleetDemandReport struct {
 	Framework            string                     `json:"framework"`
 	TotalRepositories    int                        `json:"total_repositories"`
 	ScannedRepositories  int                        `json:"scanned_repositories"`
+	SkippedRepositories  []string                   `json:"skipped_repositories,omitempty"`
 	DemandFrequency      map[CapabilityKey]int      `json:"demand_frequency"`
 	CapabilityConsumers  map[CapabilityKey][]string `json:"capability_consumers"`
 	Gaps                 []GapDetail                `json:"gaps"`
@@ -116,11 +128,14 @@ type MigrationPlan struct {
 	GuideMarkdown   string              `json:"guide_markdown"`
 }
 
-// MigrationResult summarizes the outcome of an applied migration.
+// MigrationResult summarizes the outcome of an applied migration. Success is false
+// whenever any mutating step failed; Error then carries the reason and Warnings carries
+// the non-fatal problems (for example a failing `go mod tidy`).
 type MigrationResult struct {
 	Repository   string   `json:"repository"`
 	Branch       string   `json:"branch"`
 	FilesChanged []string `json:"files_changed"`
+	Warnings     []string `json:"warnings,omitempty"`
 	Success      bool     `json:"success"`
 	Error        string   `json:"error,omitempty"`
 }

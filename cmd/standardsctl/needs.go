@@ -154,7 +154,7 @@ func runNeedsAggregate(ctx context.Context, args []string) error {
 
 	md := needs.RenderFrameworkDemandMarkdown(report)
 	if *outputFile != "" {
-		if err := os.WriteFile(*outputFile, []byte(md), 0644); err != nil {
+		if err := util.WriteFileSecure(*outputFile, []byte(md), 0o644); err != nil {
 			return fmt.Errorf("failed to write output markdown: %w", err)
 		}
 		fmt.Printf("[PASS] Framework demand report written to %s\n", *outputFile)
@@ -196,6 +196,12 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 		res, err := needs.ApplyMigration(ctx, *path, plan)
 		if err != nil {
 			return fmt.Errorf("failed to apply migration: %w", err)
+		}
+		if !res.Success {
+			return fmt.Errorf("migration did not complete: %s", res.Error)
+		}
+		for _, warning := range res.Warnings {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
 		}
 		fmt.Printf("\n[PASS] Migration applied on branch %s (%d files changed).\n", res.Branch, len(res.FilesChanged))
 		fmt.Printf("[PASS] Migration guide generated at %s/MIGRATION.md\n", *path)

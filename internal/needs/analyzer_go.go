@@ -37,8 +37,13 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse go.mod: %w", err)
 	}
-	if modulePath == "" || modulePath == "unknown" {
-		modulePath = filepath.Base(filepath.Clean(repoPath))
+
+	// The module path is only a valid import prefix when go.mod actually declares one;
+	// the directory base name is a display fallback, never an import-classification
+	// prefix (a directory called "go" would swallow every golang.org/x import).
+	repoName := modulePath
+	if repoName == "" {
+		repoName = filepath.Base(filepath.Clean(repoPath))
 	}
 
 	astImports, err := scanASTImports(ctx, repoPath, modulePath)
@@ -48,7 +53,7 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds, 
 
 	repoNeeds := &RepoNeeds{
 		Version:      1,
-		Repository:   modulePath,
+		Repository:   repoName,
 		Language:     "go",
 		Languages:    []string{"go"},
 		GoVersion:    goVer,
@@ -59,8 +64,10 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds, 
 		UpdatedAt:    time.Now().UTC(),
 	}
 
-	loadExistingDeclarations(repoPath, repoNeeds)
 	buildDependencyDemands(directDeps, astImports, repoNeeds)
+	if declErr := loadExistingDeclarations(repoPath, repoNeeds); declErr != nil {
+		return nil, fmt.Errorf("failed to load existing declarations: %w", declErr)
+	}
 	calculateReadiness(repoNeeds)
 
 	return repoNeeds, nil

@@ -2,11 +2,11 @@ package needs
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -99,17 +99,17 @@ func calculateROI(count int) string {
 
 func renderRequestMarkdown(reqID, title string, gap GapDetail, kit, roi string) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# %s\n\n", title))
-	sb.WriteString(fmt.Sprintf("- **Request ID**: `%s`\n", reqID))
-	sb.WriteString(fmt.Sprintf("- **Target Builder Kit**: `%s`\n", kit))
-	sb.WriteString(fmt.Sprintf("- **Maintenance ROI**: %s\n\n", roi))
+	writef(&sb, "# %s\n\n", title)
+	writef(&sb, "- **Request ID**: `%s`\n", reqID)
+	writef(&sb, "- **Target Builder Kit**: `%s`\n", kit)
+	writef(&sb, "- **Maintenance ROI**: %s\n\n", roi)
 	sb.WriteString("## Consuming Repositories\n\n")
 	for _, repo := range gap.Consumers {
-		sb.WriteString(fmt.Sprintf("- `%s`\n", repo))
+		writef(&sb, "- `%s`\n", repo)
 	}
 	sb.WriteString("\n## Replaced Third-Party Packages\n\n")
 	for _, pkg := range gap.PackagesUsed {
-		sb.WriteString(fmt.Sprintf("- `%s`\n", pkg))
+		writef(&sb, "- `%s`\n", pkg)
 	}
 	sb.WriteString("\n## Acceptance Criteria\n\n")
 	sb.WriteString("1. Zero-dependency implementation adhering to HISS-01..16 invariants.\n")
@@ -120,7 +120,7 @@ func renderRequestMarkdown(reqID, title string, gap GapDetail, kit, roi string) 
 
 // EmitDemandRequests writes individual RFC files and consolidated manifest to outputDir.
 func EmitDemandRequests(requests []FrameworkDemandRequest, outputDir string) error {
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := util.MkdirSecure(outputDir, outputDirPerm); err != nil {
 		return fmt.Errorf("failed to create output dir %s: %w", outputDir, err)
 	}
 
@@ -129,14 +129,14 @@ func EmitDemandRequests(requests []FrameworkDemandRequest, outputDir string) err
 	if err != nil {
 		return fmt.Errorf("failed to serialize demands manifest: %w", err)
 	}
-	if err := os.WriteFile(manifestPath, yamlData, 0644); err != nil {
+	if err := util.WriteFileSecure(manifestPath, yamlData, manifestFilePerm); err != nil {
 		return fmt.Errorf("failed to write %s: %w", manifestPath, err)
 	}
 
 	for _, req := range requests {
 		fileName := req.RequestID + ".md"
 		filePath := filepath.Join(outputDir, fileName)
-		if err := os.WriteFile(filePath, []byte(req.SpecificationMarkdown), 0644); err != nil {
+		if err := util.WriteFileSecure(filePath, []byte(req.SpecificationMarkdown), manifestFilePerm); err != nil {
 			return fmt.Errorf("failed to write request file %s: %w", filePath, err)
 		}
 	}
