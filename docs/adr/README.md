@@ -15,6 +15,7 @@ This directory documents all significant architectural and design decisions gove
 | **[ADR-0005](0005-cloudnative-oci-distroless-containers.md)** | Cloud-Native OCI Distroless Containerization | **Accepted** | 2026-09-05 |
 | **[ADR-0006](0006-hierarchical-multi-tier-runner-matrix.md)** | Hierarchical Multi-Tier Runner Matrix | **Accepted** | 2026-09-06 |
 | **[ADR-0007](0007-universal-frameworks-org-and-demand-deduplication.md)** | Universal Frameworks Hub & Demand Deduplication | **Accepted** | 2026-09-07 |
+| **[ADR-0008](0008-spec-driven-provider-integration.md)** | Spec-Driven Provider Integration | **Proposed** | 2026-09-12 |
 
 ---
 

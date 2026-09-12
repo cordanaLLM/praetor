@@ -23,6 +23,19 @@
       Draft text: `~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit/harness-principles-draft.md`.
       The AGENTS.md rows land with the wave B agent-surface fix group; the gate needs the config workstream.
 - [ ] Deep AST Deduplication Sweeps
+- [ ] **Spec-driven provider integration (ADR-0008, Proposed).** Replace the hand-written forge drivers with a
+      declarative provider layer: each provider is a `.config/providers/<name>.yaml` descriptor plus a compiled,
+      digest-pinned operation table produced offline by `tools/specc` (a separate Go module holding the only
+      OpenAPI dependency; the root `go.mod` stays at `gopkg.in/yaml.v3`). The runtime executor in
+      `internal/provider` interprets the table with no generated Go and no new dependency. Capability bindings
+      replace `internal/forge/{github,gitlab,gitea}.go`, the remote paths of `project.go` and
+      `internal/milestone/forge.go`; a `govern` funnel adds mutation allow-lists, Ed25519 receipts, budget gating
+      and injection sanitization to every call; MCP exposure is bound tools plus three meta-tools per provider,
+      native MCP consumption deferred to an optional last phase. Pins land in `.standards.lock` under
+      `providers:`; docs are distilled per pinned API version. Milestone 1 (about day 15 of ~43 engineer-days):
+      GitHub fully supported from its own description with fewer than 150 lines of provider-specific Go, gated by
+      a differential test against the legacy driver. Three owner decisions are filed in `QUESTIONS.md`.
+      Plan: `~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit/provider-integration-plan.md`.
 - [ ] **Artifact management and dynamic session state.** Per user direction (2026-09-12): every run
       (audit, verification, fix wave, sandbox execution, gate, receipt, report) should produce first-class
       artifacts with provenance instead of loose files, so that state and session management become fully
