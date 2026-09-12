@@ -12,12 +12,21 @@ import (
 )
 
 func TestApplyFlavorTransitions_Negative_RefusesUnresolvedSourceRef(t *testing.T) {
-	transitions := []flavors.TagTransition{{
-		FlavorName: "latest",
-		CurrentRef: "8feca96",
-		TargetRef:  "refs/tags/v9.9.9",
-		Action:     flavors.ActionUnresolved,
-	}}
+	transitions := []flavors.TagTransition{
+		// A resolvable transition listed first: the plan must be rejected whole, so this
+		// tag is never moved even though it precedes the unresolvable one.
+		{FlavorName: "bleeding", TargetRef: "refs/heads/main", TargetCommit: "abc", Action: flavors.ActionUpdate},
+		{
+			FlavorName: "latest",
+			CurrentRef: "8feca96",
+			TargetRef:  "refs/tags/v9.9.9",
+			Action:     flavors.ActionUnresolved,
+		},
+	}
+
+	if err := validateFlavorPlan(transitions); err == nil {
+		t.Fatal("expected plan validation to reject the unresolvable transition")
+	}
 
 	// The target directory does not matter: the refusal happens before any git call, so
 	// an unresolvable release pointer can never be force-moved onto the checkout.

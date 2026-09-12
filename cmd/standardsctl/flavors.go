@@ -74,19 +74,33 @@ func fetchCurrentTags(ctx context.Context, dir string, cfg *flavors.Config) map[
 	return currentTags
 }
 
-func applyFlavorTransitions(ctx context.Context, dir string, transitions []flavors.TagTransition) error {
-	applied := 0
+// validateFlavorPlan rejects a plan before any tag is touched, so a sync either applies
+// every transition or none: a partially applied sync would leave some release pointers
+// moved and others stale with no record of which.
+func validateFlavorPlan(transitions []flavors.TagTransition) error {
 	for i := 0; i < len(transitions) && i < flavors.MaxFlavors; i++ {
 		tr := transitions[i]
 		if tr.Action == flavors.ActionUnresolved {
 			return fmt.Errorf("flavor %q: source ref %q resolves to no commit; refusing to retarget the moving tag",
 				tr.FlavorName, tr.TargetRef)
 		}
-		if tr.Action != flavors.ActionCreate && tr.Action != flavors.ActionUpdate {
-			continue
-		}
 		if err := util.ValidateExecArg(tr.FlavorName); err != nil {
 			return fmt.Errorf("flavor %q is not a usable tag name: %w", tr.FlavorName, err)
+		}
+	}
+	return nil
+}
+
+func applyFlavorTransitions(ctx context.Context, dir string, transitions []flavors.TagTransition) error {
+	if err := validateFlavorPlan(transitions); err != nil {
+		return err
+	}
+
+	applied := 0
+	for i := 0; i < len(transitions) && i < flavors.MaxFlavors; i++ {
+		tr := transitions[i]
+		if tr.Action != flavors.ActionCreate && tr.Action != flavors.ActionUpdate {
+			continue
 		}
 		out, err := util.RunGit(ctx, dir, "tag", "-f", tr.FlavorName, tr.TargetCommit)
 		if err != nil {
