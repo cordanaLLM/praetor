@@ -5,16 +5,16 @@ import (
 	"time"
 )
 
-// ModelUsage tracks real-time usage metrics for an individual model endpoint.
+// ModelUsage holds recorded counters and cooldown data for one model endpoint.
 type ModelUsage struct {
-	CurrentRPM  int
-	CurrentTPM  int
-	TotalSpend  float64
-	Last429Time time.Time
-	ErrorCount  int
+	CurrentRPM  int       `json:"current_rpm" yaml:"current_rpm"`
+	CurrentTPM  int       `json:"current_tpm" yaml:"current_tpm"`
+	TotalSpend  float64   `json:"total_spend" yaml:"total_spend"`
+	Last429Time time.Time `json:"last_429_time" yaml:"last_429_time"`
+	ErrorCount  int       `json:"error_count" yaml:"error_count"`
 }
 
-// LimitTracker maintains thread-safe concurrency and usage counters across model endpoints.
+// LimitTracker protects recorded usage counters; it does not reserve concurrency.
 type LimitTracker struct {
 	mu    sync.RWMutex
 	usage map[string]*ModelUsage
@@ -60,14 +60,20 @@ func (lt *LimitTracker) Record429(modelID string) {
 
 // GetUsage retrieves current usage metrics for a model.
 func (lt *LimitTracker) GetUsage(modelID string) ModelUsage {
+	usage, _ := lt.ObservedUsage(modelID)
+	return usage
+}
+
+// ObservedUsage distinguishes a recorded zero from absent capacity information.
+func (lt *LimitTracker) ObservedUsage(modelID string) (ModelUsage, bool) {
 	lt.mu.RLock()
 	defer lt.mu.RUnlock()
 
 	u, ok := lt.usage[modelID]
 	if !ok {
-		return ModelUsage{}
+		return ModelUsage{}, false
 	}
-	return *u
+	return *u, true
 }
 
 // IsCoolingDown returns true if the model recently encountered a 429 within the cooldown window.
