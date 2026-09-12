@@ -19,6 +19,12 @@ F392/BUG-714 and F389/BUG-190 are resolved against retained regression evidence.
 The ledger now has 716 records, 713 open and three resolved. The audit findings and
 counts below are the pre-repair snapshot, not the current ledger totals.
 
+Local `praetorctl`, `praetor-mcp` and `praetor-lsp` were refreshed from `f92c630`,
+source SHA256 `05cf61b45d741451978084e68ca2458ccf4966b7d6ff438462be3bf96914af16`.
+All installed hashes were read back, and the CLI found on PATH preserves a pipe
+title and blocks its P0 audit. Rollback binaries are retained by dev-install.
+New invocations use this source; already-running clients may retain older code.
+
 All 48 package race suites and fresh MCP/CLI checks pass. Full verification still
 fails lint/security; the in-place dedupe scan additionally counts ignored Claude
 worktrees. Remaining ledger work includes question/task mutation integrity, STATE

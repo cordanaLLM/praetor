@@ -469,3 +469,7 @@
 ### [2026-09-12 19:43:00 UTC] Commit `1735494` on `checkpoint/deep-audit-2026-09-12`
 - **Activity**: Ledger integrity implemented: strict lossless rows and metadata, stable IDs, pinned initialization, serialized atomic bug writes, explicit audit/sync/Hindsight read failures. Recovered F5/F392/F485/F634 as BUG-713..716; resolved only F392 and F389. 716 records, 713 open, 3 resolved. All 48 race package suites, adversarial/CLI/process checks and 728092 fuzz executions pass. Full gate remains red: 87 lint, 81 security, dedupe includes ignored worktrees. Shared analysis and remaining state mutation paths next. See state-ledger-integrity.md and retained ledger-repair-20260912 evidence.
 - **Tasks**: 17 open, 6 completed | **Open Bugs**: 713 | **Pending Questions**: 0
+
+### [2026-09-12 19:44:05 UTC] Commit `f92c630` on `checkpoint/deep-audit-2026-09-12`
+- **Activity**: Ledger checkpoint f92c630 pushed through Lefthook. Local CLI/MCP/LSP refreshed with rollback backup; source 05cf61b45d741451978084e68ca2458ccf4966b7d6ff438462be3bf96914af16. Installed hashes and PATH CLI pipe/P0 acceptance verified; existing long-lived clients require restart to pick up new source. 716 records / 713 open / 3 resolved. Full lint/security and worktree-inclusive dedupe remain red.
+- **Tasks**: 17 open, 6 completed | **Open Bugs**: 713 | **Pending Questions**: 0
