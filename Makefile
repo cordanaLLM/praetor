@@ -82,7 +82,7 @@ dedupe:
 topology-audit:
 	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
 
-verify-all: compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe topology-audit
+verify-all: compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
 
 hooks:
@@ -92,3 +92,45 @@ setup: build hooks compile-context
 
 clean:
 	rm -rf $(BIN_DIR)
+
+# Hooks inspect the index or committed push refs in disposable snapshots. The full
+# verify-all target above remains the repository-wide authority.
+.PHONY: hook-cli hooks-check hooks-test check-staged changed-packages test-changed lint-changed sec-changed check-changed sandbox-verify
+HOOK_RUNNER := python3 .config/lefthook/scripts/hooks.py
+HOOK_GO_SOURCES := $(shell git ls-files '*.go')
+BASE ?= HEAD~1
+REF ?= HEAD
+
+hook-cli: $(PRAETORCTL)
+
+$(PRAETORCTL): $(HOOK_GO_SOURCES) go.mod go.sum Makefile
+	@mkdir -p $(BIN_DIR)
+	go build -o $(PRAETORCTL) ./cmd/standardsctl
+
+hooks-check:
+	lefthook validate
+	lefthook check-install
+
+hooks-test:
+	python3 -B .config/lefthook/scripts/test_hooks.py
+
+check-staged:
+	$(HOOK_RUNNER) pre-commit
+
+changed-packages:
+	$(HOOK_RUNNER) changed packages "$(BASE)"
+
+test-changed:
+	$(HOOK_RUNNER) changed test "$(BASE)"
+
+lint-changed:
+	$(HOOK_RUNNER) changed lint "$(BASE)"
+
+sec-changed:
+	$(HOOK_RUNNER) changed sec "$(BASE)"
+
+check-changed:
+	$(HOOK_RUNNER) changed all "$(BASE)"
+
+sandbox-verify:
+	python3 .config/lefthook/scripts/sandbox.py "$(REF)"

@@ -6,10 +6,11 @@ Enforces HISS-16 by intercepting attempts to bypass Git hooks, linters, or verif
 import sys
 import os
 import re
+import json
 
 BLOCKED_PATTERNS = [
     r"--no-verify\b",
-    r"-n\b(?=.*git\s+commit)",
+    r"\bgit\s+commit\b[^\n]*\s-n\b",
     r"LEFTHOOK=0\b",
     r"SKIP=.*git",
     r"core\.hooksPath\s*=\s*/dev/null",
@@ -46,19 +47,36 @@ def audit_environment() -> bool:
     if os.environ.get("LEFTHOOK") == "0":
         sys.stderr.write("[BLOCKED BY HISS-16] LEFTHOOK=0 detected in environment. Evasion prohibited.\n")
         return False
+    if os.environ.get("LEFTHOOK_EXCLUDE") or os.environ.get("LEFTHOOK_SKIP"):
+        sys.stderr.write("[BLOCKED BY HISS-16] Hook exclusions are prohibited.\n")
+        return False
     return True
 
 def main():
     if not audit_environment():
         sys.exit(1)
 
+    if sys.argv[1:] == ["--environment"]:
+        sys.exit(0)
     if len(sys.argv) > 1:
         cmd = " ".join(sys.argv[1:])
-        if not audit_command(cmd):
+    elif not sys.stdin.isatty():
+        try:
+            payload = json.load(sys.stdin)
+            tool_input = payload.get("tool_input", {})
+            cmd = tool_input.get("command", "")
+            if not isinstance(cmd, str):
+                raise ValueError("tool_input.command must be text")
+        except (ValueError, AttributeError) as error:
+            sys.stderr.write(f"[BLOCKED BY HISS-16] Invalid hook input: {error}\n")
             sys.exit(1)
+    else:
+        sys.stderr.write("Expected a command, PreToolUse JSON, or --environment.\n")
+        sys.exit(1)
+    if not audit_command(cmd):
+        sys.exit(1)
 
     sys.exit(0)
 
 if __name__ == "__main__":
     main()
-
