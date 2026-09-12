@@ -62,7 +62,9 @@ No planted false finding was ever accepted across 58 verification batches.
       `praetorctl gate keygen|verify`, lock-digest validation, v2 `.golangci.yml`, empty `.gosec.json`.
 - [x] Merged `fix/wave0` into `audit/deep-audit-2026-09-11` (`cb086c9`)
 - [x] Folded the critic findings in; fix groups regenerated; 90 new bugs registered
-- [~] **Wave A** RUNNING: 22 Go fix groups in isolated worktrees (`wf2-run.mjs`, run `wf_d9746de1-7cf`), then merge
+- [~] **Wave A** in two halves of 11 groups (`wf2-run.mjs` with `args.subset`); each half is followed by its own merge.
+      Half 1: G01 G02 G03 G04 G05 G06 G07a G07b G08 G09 G10. Half 2: G11 G12 G13 G14 G15 G17 G18 G19 G20 G21 G22.
+      First attempt (run `wf_d9746de1-7cf`) died on the previous account's spend limit with zero work done; its empty worktrees/branches were removed.
 - [ ] **Wave B**: 9 non-Go groups (CI, packaging, config, templates, docs, editors, license)
 - [ ] **Wave C**: praetorctl-only rename + `compile-context` regeneration
 - [ ] **Wave D**: verification agents (gatekeeper/fuzzer/auditor/packager/dogfooder) + fix-review refuters + repair loop
@@ -77,8 +79,25 @@ python3 "$S/fold.py"                      # regenerate findings.json + fixgroups
 sh "$S/bugs.sh"                           # register any not-yet-ledgered findings (incremental)
 ```
 
-Then launch the fix workflow with `Workflow({scriptPath: "$S/wf2-fix.mjs", args: {...wf2-args.json, only: ["A"]}})`.
-Waves are independent; `only` accepts `["0"],["A"],["B"],["C"],["D"]`.
+Then launch the fix workflow with `Workflow({scriptPath: "$S/wf2-run.mjs", args: {ts, only: ["A"], subset: [<group ids>]}})`
+(`wf2-run.mjs` has the groups embedded; regenerate it from `wf2-fix.mjs` + `wf2-args.json` after any fold).
+Waves are independent; `only` accepts `["0"],["A"],["B"],["C"],["D"]`; `subset` limits a wave to listed group ids.
+
+### Limit-safety rules (learned the hard way)
+- Fix agents commit every 3-5 findings and, on relaunch, resume from their own `fix/<group>` branch if it has commits ahead of the audit branch. A spend-limit hit therefore loses at most a few findings per in-flight agent.
+- Run waves in halves (<=11 concurrent agents) and check `/usage` between halves; a hit mid-wave kills every in-flight agent's uncommitted work and the warm context with it.
+- The Workflow worktree isolation does NOT start from the audit branch (observed: worktrees created at `36ec6c6`); every fix agent explicitly does `git checkout -B fix/<id> audit/deep-audit-2026-09-11` first.
+- The circuit breaker aborts a run after 4 consecutive empty agent results; resume with `resumeFromRunId` once the limit resets.
+
+## Hermetic sandbox (available now, prototype of `praetorctl sandbox run`)
+
+`~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit/sandbox.sh <repo-or-worktree> [<ref>] -- '<cmd>'`
+clones the checkout (uncommitted changes included when no ref is given) into a throwaway directory, runs the
+command inside the devcontainer image `praetor-dev:audit` (built from `docker/dev/Dockerfile`) as the invoking
+uid with HOME/GOCACHE/GOPATH inside the clone, and deletes everything afterwards. Verified: `go test -race ./...`
+and `standardsctl audit` run there without touching this tree. Wave D verifiers and the fix-review refuters
+use it; fix agents may use it for `make verify-all` and end-to-end reproductions. Rebuild the image with
+`docker build -f docker/dev/Dockerfile -t praetor-dev:audit .` after a reboot if `docker image inspect` fails.
 
 ## Hard-won operational notes
 
