@@ -1,6 +1,9 @@
 # Shared client configuration
 
 `praetorctl clients` projects an explicit server registry into client settings.
+
+For gateway endpoints, credential-file references, logical provider selectors and
+repository memory binding, start with [connection profiles](client-connections.md).
 The same registry can be supplied from a workstation directory, container mount,
 plugin host or private GitOps checkout. No account, endpoint, organization or home
 directory is assumed by the registry or its adapters.

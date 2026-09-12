@@ -114,8 +114,8 @@ func TestRunCanary_Positive_DryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunCanary dry-run failed: %v", err)
 	}
-	if !res.Success || !res.CanaryCertified {
-		t.Fatal("expected successful certified result in dry-run")
+	if res.Success || res.CanaryCertified || res.Status != CanaryPlanned {
+		t.Fatal("expected planned but unexecuted and uncertified dry-run")
 	}
 }
 

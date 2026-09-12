@@ -27,7 +27,7 @@ func providerFixtureConfig(t *testing.T, script string) ProviderConfig {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(data)
-	return ProviderConfig{BaseURL: "https://litellm.ai.cauda.dev/v1", TokenCommand: path,
+	return ProviderConfig{BaseURL: "https://provider.example/v1", TokenCommand: path,
 		TokenCommandSHA256: hex.EncodeToString(sum[:]), Model: "cordana/fixture", MaxInputBytes: providerPromptLimit, MaxOutputTokens: 256}
 }
 
@@ -139,9 +139,9 @@ func TestProviderValidationPrecedesHelperExecution(t *testing.T) {
 		}
 	}
 	for _, change := range []func(*ProviderConfig){
-		func(c *ProviderConfig) { c.BaseURL = "http://litellm.ai.cauda.dev/v1" },
+		func(c *ProviderConfig) { c.BaseURL = "http://provider.example/v1" },
 		func(c *ProviderConfig) { c.BaseURL += "?credential=bad" },
-		func(c *ProviderConfig) { c.BaseURL = "https://user@litellm.ai.cauda.dev/v1" },
+		func(c *ProviderConfig) { c.BaseURL = "https://user@provider.example/v1" },
 		func(c *ProviderConfig) { c.TokenCommand = "relative" },
 		func(c *ProviderConfig) { c.TokenCommandSHA256 = strings.Repeat("A", 64) },
 		func(c *ProviderConfig) { c.Model = "" },

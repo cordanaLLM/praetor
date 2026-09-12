@@ -32,6 +32,14 @@ configured provider model; there is no fallback. Configured cost is an estimate,
 not a billing reservation. Unknown measured cost remains absent. The returned
 model is server-reported identity.
 
+The endpoint is configurable: a canonical HTTPS DNS/IP URL of at most 4096 bytes,
+with an optional port 1–65535 and clean literal path. Credentials, query strings,
+fragments, escapes and trailing slashes are rejected. The transport appends
+`/responses`; redirects and environment proxies remain disabled. Selecting a URL
+does not establish ownership or authorization. Helper digest and credential
+handling checks still apply. [Connection profiles](client-connections.md) can
+generate this provider subsection alongside the shared MCP registry.
+
 Admission uses a stable key derived from the source commit, exact configuration
 and routing input hashes, and case kind, ID and input hash. Report timestamps,
 error messages and attempt paths do not create new attempts. A crash after

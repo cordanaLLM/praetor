@@ -1,9 +1,12 @@
 # Configured dogfood and transcript replay suites
 
 `praetorctl dogfood suite` runs a finite, repeatable set of pinned public adoption
-cases and explicitly selected local transcript cases. Use it to rerun the same
-inputs after a Praetor change. Every invocation requires a new evidence directory;
-earlier results and original sources remain intact.
+cases and explicitly selected local transcript cases. The checked-in public suite
+contains Cobra and Flask plus six representative public repositories covering Rust,
+JavaScript, C++, C#, Java, and shell analysis. Every public entry is pinned to a
+live immutable GitHub commit; use it to rerun the same inputs after a Praetor change.
+Every invocation requires a new evidence directory; earlier results and original
+sources remain intact.
 
 ## Public configuration
 

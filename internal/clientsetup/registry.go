@@ -1,6 +1,7 @@
 // Package clientsetup projects one explicit MCP registry into reviewed client
-// configuration candidates. It performs no filesystem writes, process execution,
-// trust changes, environment discovery, or credential handling.
+// configuration candidates and binds explicit backend connection references.
+// It performs no filesystem writes, process execution, trust changes, environment
+// discovery, or credential handling.
 package clientsetup
 
 import (

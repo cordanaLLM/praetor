@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -53,7 +54,7 @@ func printBumpUsage() {
 	fmt.Println("  unify [--apply] [--path=.]          Reconcile dependencies against fleet catalog")
 	fmt.Println("  canary <package> [--target=...]     Speculatively test bump in isolated ephemeral worktree")
 	fmt.Println("  train [--dry-run]                   Run proactive bump train across all pending upgrades")
-	fmt.Println("  apply <package> [--version=...]     Apply verified bump and adaptation patch to repository")
+	fmt.Println("  apply <package> [--version=...]     Update dependency and apply an optional supplied patch")
 }
 
 func runBumpScan(ctx context.Context, args []string) error {
@@ -202,23 +203,35 @@ func runBumpCanary(ctx context.Context, args []string) error {
 	}
 
 	res, err := bump.RunCanary(ctx, opts)
+	if res != nil {
+		printCanaryResult(res)
+	}
 	if err != nil {
 		return fmt.Errorf("canary execution failed: %w", err)
 	}
 
+	return nil
+}
+
+func printCanaryResult(res *bump.CanaryResult) {
 	fmt.Println("=== Ephemeral Worktree Canary Result ===")
 	fmt.Printf("Package:          %s\n", res.Candidate.Package)
 	fmt.Printf("Target Version:   %s (%s)\n", res.Candidate.TargetVersion, res.Candidate.Channel)
 	fmt.Printf("Canary Certified: %v\n", res.CanaryCertified)
-	if res.Success {
-		fmt.Println("Status:           [PASS] Tests and invariants passed cleanly.")
-	} else {
-		fmt.Println("Status:           [FAIL] Breakage detected in candidate version.")
+	switch res.Status {
+	case bump.CanaryPlanned:
+		fmt.Println("Status:           [PLANNED] Dependency update and tests were not executed.")
+	case bump.CanaryPassed:
+		fmt.Println("Status:           [PASS] Configured test command exited zero; no certification issued.")
+	default:
+		fmt.Println("Status:           [FAIL] Canary execution did not pass.")
 		if res.DistilledErrors != "" {
 			fmt.Printf("\n--- Distilled Breakage Diagnostics ---\n%s\n", res.DistilledErrors)
 		}
 	}
-	return nil
+	if res.DiagnosticPath != "" {
+		fmt.Printf("Diagnostics:      %s (SARIF; not an adaptation patch)\n", res.DiagnosticPath)
+	}
 }
 
 func runBumpTrain(ctx context.Context, args []string) error {
@@ -235,6 +248,7 @@ func runBumpTrain(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("=== Proactive Prerelease Bump Train (Candidates: %d, DryRun: %v) ===\n", rep.TotalCandidates, *dryRun)
+	var failures []error
 	for _, cand := range append(rep.Prereleases, rep.Stables...) {
 		opts := bump.CanaryOptions{
 			RepoPath:  *path,
@@ -244,15 +258,12 @@ func runBumpTrain(ctx context.Context, args []string) error {
 		res, err := bump.RunCanary(ctx, opts)
 		if err != nil {
 			fmt.Printf("  - [%s] %s: [ERROR] %v\n", cand.Channel, cand.Package, err)
+			failures = append(failures, fmt.Errorf("canary %s: %w", cand.Package, err))
 			continue
 		}
-		if res.CanaryCertified {
-			fmt.Printf("  - [%s] %s (%s): [CERTIFIED] Ready for instant landing\n", cand.Channel, cand.Package, cand.TargetVersion)
-		} else {
-			fmt.Printf("  - [%s] %s (%s): [BREAKAGE] Adaptation patch staged\n", cand.Channel, cand.Package, cand.TargetVersion)
-		}
+		fmt.Printf("  - [%s] %s (%s): [%s] No certification issued\n", cand.Channel, cand.Package, cand.TargetVersion, res.Status)
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 func runBumpApply(ctx context.Context, args []string) error {

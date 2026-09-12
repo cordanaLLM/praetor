@@ -2,7 +2,13 @@
   "version": 1,
   "public_repositories": [
     "https://github.com/spf13/cobra#adbc8813901bba65827259daa8e22ff94ec1f30e",
-    "https://github.com/pallets/flask#d73fa1cdcbd8b1465c151db8924ba58b1dd14e35"
+    "https://github.com/pallets/flask#d73fa1cdcbd8b1465c151db8924ba58b1dd14e35",
+    "https://github.com/dtolnay/anyhow#c63b279f3f4af2b02ca6267d9eb47d6d10497f69",
+    "https://github.com/expressjs/express#53d4a0d606c0388f764f192b306ce0e90200e7e8",
+    "https://github.com/google/googletest#8eff9e336692fc95961e096564f1044c600b881d",
+    "https://github.com/dotnet/command-line-api#1f13873cf84d5547d1b8d4f9d68dcb06b3ea0a69",
+    "https://github.com/junit-team/junit4#890f3c972647de378f25e7271d8fbbd9d3456b79",
+    "https://github.com/koalaman/shellcheck#9af7ee28ce587baadd950b85dd6826a16b9c068d"
   ],
   "transcripts": []
 }

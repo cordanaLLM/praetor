@@ -106,36 +106,57 @@ func validateIssueBatch(ctx context.Context, f Forge, issues []IssueSpec) error 
 	if len(issues) > MaxIssuesLimit {
 		return fmt.Errorf("issue count %d exceeds maximum allowed batch limit of %d", len(issues), MaxIssuesLimit)
 	}
+	seen := make(map[string]bool, len(issues))
 	for i := 0; i < len(issues) && i < MaxIssuesLimit; i++ {
-		if strings.TrimSpace(issues[i].Title) == "" {
+		title := strings.TrimSpace(issues[i].Title)
+		if title == "" {
 			return fmt.Errorf("issue at index %d has empty title", i)
 		}
+		if seen[title] {
+			return &IssueTitleConflictError{Title: title, Source: "planned"}
+		}
+		seen[title] = true
 	}
 	return f.Authenticate(ctx)
 }
 
 // existingIssuesByTitle indexes the issues already present on the forge by trimmed title,
 // which is the identity SyncIssues upserts on.
-func existingIssuesByTitle(ctx context.Context, f Forge) (map[string]IssueSpec, error) {
+func existingIssuesByTitle(ctx context.Context, f Forge, planned []IssueSpec) (map[string]IssueSpec, error) {
 	current, err := f.ListIssues(ctx, "all")
 	if err != nil {
 		return nil, fmt.Errorf("failed listing existing issues on %s: %w", f.Name(), err)
 	}
-	index := make(map[string]IssueSpec, len(current))
-	for i := 0; i < len(current) && i < MaxIssuesLimit; i++ {
-		index[strings.TrimSpace(current[i].Title)] = current[i]
+	if len(current) > MaxListedIssuesLimit {
+		return nil, &IssueListIncompleteError{Limit: MaxListedIssuesLimit}
+	}
+	wanted := make(map[string]bool, len(planned))
+	for i := 0; i < len(planned) && i < MaxIssuesLimit; i++ {
+		wanted[strings.TrimSpace(planned[i].Title)] = true
+	}
+	index := make(map[string]IssueSpec, len(planned))
+	for i := 0; i < len(current) && i < MaxListedIssuesLimit; i++ {
+		title := strings.TrimSpace(current[i].Title)
+		if !wanted[title] {
+			continue
+		}
+		if _, exists := index[title]; exists {
+			return nil, &IssueTitleConflictError{Title: title, Source: "existing"}
+		}
+		index[title] = current[i]
 	}
 	return index, nil
 }
 
 // SyncIssues converges a declarative batch of issues onto the target forge. It is an
 // upsert keyed on the issue title: re-running the same batch updates the existing issues
-// instead of creating duplicates.
+// instead of creating duplicates. Planned titles must be unique after trimming;
+// incomplete inventories or ambiguous selected titles fail before any mutation.
 func SyncIssues(ctx context.Context, f Forge, issues []IssueSpec) (*SyncReport, error) {
 	if err := validateIssueBatch(ctx, f, issues); err != nil {
 		return nil, err
 	}
-	existing, err := existingIssuesByTitle(ctx, f)
+	existing, err := existingIssuesByTitle(ctx, f, issues)
 	if err != nil {
 		return nil, err
 	}

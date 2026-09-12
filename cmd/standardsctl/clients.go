@@ -20,18 +20,25 @@ import (
 // runClients prepares exact client-specific artifacts from one shared registry.
 // Preparation is distinct from native client approval and a successful tool call.
 func runClients(args []string) error {
-	if len(args) > 0 && args[0] == "apply" {
-		return applyClientConfig(args[1:])
+	commands := map[string]func([]string) error{
+		"connect": prepareConnections, "bind-memory": bindClientMemory,
+		"apply": applyClientConfig, "prepare": prepareClientConfig,
 	}
-	if len(args) == 0 || args[0] != "prepare" {
-		return errors.New("usage: praetorctl clients prepare --registry FILE --client CLIENT --out NEW_DIRECTORY [--existing FILE]")
+	if len(args) > 0 {
+		if command, ok := commands[args[0]]; ok {
+			return command(args[1:])
+		}
 	}
+	return errors.New("usage: praetorctl clients <connect|prepare|apply|bind-memory> [options]")
+}
+
+func prepareClientConfig(args []string) error {
 	flags := flag.NewFlagSet("clients prepare", flag.ContinueOnError)
 	registryPath := flags.String("registry", "", "Canonical shared stdio server registry")
 	client := flags.String("client", "", "Client adapter identifier")
 	existing := flags.String("existing", "", "Existing client config to preserve and merge")
 	output := flags.String("out", "", "New private artifact directory; parent must exist")
-	if err := flags.Parse(args[1:]); err != nil {
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || *registryPath == "" || *client == "" || *output == "" {

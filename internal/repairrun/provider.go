@@ -5,11 +5,14 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/cordanaLLM/praetor/internal/httpendpoint"
 )
 
 const providerPromptLimit = 64 << 10
@@ -50,8 +53,11 @@ type Proposal struct {
 
 // ValidateProviderConfig checks configuration syntax without filesystem or network I/O.
 func ValidateProviderConfig(cfg ProviderConfig) error {
-	if cfg.BaseURL != "https://litellm.ai.cauda.dev/v1" && cfg.BaseURL != "https://gateway.ai.cauda.dev/v1" {
-		return errors.New("repair provider endpoint is not reviewed")
+	if err := httpendpoint.ValidateHTTPS(cfg.BaseURL); err != nil {
+		return fmt.Errorf("repair provider endpoint: %w", err)
+	}
+	if strings.HasSuffix(cfg.BaseURL, "/") {
+		return errors.New("repair provider endpoint must omit the trailing slash before /responses")
 	}
 	if !filepath.IsAbs(cfg.TokenCommand) || filepath.Clean(cfg.TokenCommand) != cfg.TokenCommand || !providerSafeText(cfg.TokenCommand, 4096) {
 		return errors.New("repair credential helper requires a clean absolute path")

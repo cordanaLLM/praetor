@@ -129,7 +129,7 @@ func TestProviderResponseSizeCredentialAndCostBoundaries(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			proposal, err := providerRequest(t.Context(), ProviderConfig{BaseURL: "https://litellm.ai.cauda.dev/v1", MaxOutputTokens: 256}, "public", providerFixtureToken, client)
+			proposal, err := providerRequest(t.Context(), ProviderConfig{BaseURL: "https://provider.example/v1", MaxOutputTokens: 256}, "public", providerFixtureToken, client)
 			if err == nil || proposal != nil || strings.Contains(err.Error(), providerFixtureToken) {
 				t.Fatalf("unsafe result: %+v %v", proposal, err)
 			}

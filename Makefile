@@ -70,7 +70,7 @@ sec:
 		go install github.com/securego/gosec/v2/cmd/gosec@latest && "$$(go env GOPATH)/bin/gosec" -conf .gosec.json ./...; \
 	fi
 
-flavor-audit:
+flavor-audit: state-init
 	go run ./cmd/standardsctl flavor audit .
 
 .PHONY: state-init

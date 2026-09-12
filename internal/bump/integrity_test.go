@@ -141,7 +141,9 @@ func TestApplyUpdateRejectsEscapingModuleAndManifestSymlink(t *testing.T) {
 
 func TestCanaryRejectsWhitespaceCommand(t *testing.T) {
 	result := &CanaryResult{}
-	executeCanaryTest(t.Context(), t.TempDir(), " \t ", t.TempDir(), "fixture", result)
+	if err := executeCanaryTest(t.Context(), t.TempDir(), " \t ", t.TempDir(), result); !errors.Is(err, ErrCanaryFailed) {
+		t.Fatalf("empty test command error lost: %v", err)
+	}
 	if result.Success || result.CanaryCertified || result.ExecutionLog == "" {
 		t.Fatalf("empty command accepted: %+v", result)
 	}

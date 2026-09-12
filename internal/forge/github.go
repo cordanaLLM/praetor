@@ -30,7 +30,7 @@ const (
 	// issuesPerPage is the maximum page size the GitHub REST API accepts.
 	issuesPerPage = 100
 	// maxIssuePages bounds issue pagination (HISS-02): at most 2000 issues per listing.
-	maxIssuePages = 20
+	maxIssuePages = MaxListedIssuesLimit / issuesPerPage
 	// maxMilestonePages bounds milestone pagination (HISS-02).
 	maxMilestonePages = 5
 	// maxRulesetsPerPage bounds a ruleset listing response.
@@ -577,7 +577,7 @@ func (g *GitHubDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueR
 
 // ListIssues fetches every issue in the repository, following pagination up to the
 // maxIssuePages scalar bound and discarding pull requests, which the issues endpoint also
-// returns. A truncated listing would silently mark resolved prerequisites as pending.
+// returns. A full final page is incomplete even if every item was a pull request.
 func (g *GitHubDriver) ListIssues(ctx context.Context, state string) ([]IssueSpec, error) {
 	if err := g.Authenticate(ctx); err != nil {
 		return nil, err
@@ -606,10 +606,10 @@ func (g *GitHubDriver) ListIssues(ctx context.Context, state string) ([]IssueSpe
 		}
 		all = append(all, specs...)
 		if rawCount < issuesPerPage {
-			break
+			return all, nil
 		}
 	}
-	return all, nil
+	return nil, &IssueListIncompleteError{Limit: MaxListedIssuesLimit}
 }
 
 type ghIssueRaw struct {
@@ -634,8 +634,17 @@ func parseGitHubIssues(body []byte) ([]IssueSpec, int, error) {
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, 0, fmt.Errorf("failed parsing issues list (len %d, raw: %q): %w", len(body), bodyPreview(body), err)
 	}
+	if raw == nil {
+		return nil, 0, errors.New("GitHub issue listing must be an array, not null")
+	}
+	if len(raw) > issuesPerPage {
+		return nil, 0, &IssueListIncompleteError{Limit: issuesPerPage}
+	}
 	specs := make([]IssueSpec, 0, len(raw))
 	for _, r := range raw {
+		if r.Number <= 0 || strings.TrimSpace(r.Title) == "" {
+			return nil, 0, errors.New("GitHub issue listing contains an invalid issue number or empty title")
+		}
 		if r.PullRequest != nil {
 			continue
 		}

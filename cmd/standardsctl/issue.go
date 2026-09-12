@@ -61,6 +61,9 @@ func runIssueReconcile(ctx context.Context, args []string) error {
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
+	if strings.Count(*reposFlag, ",") >= maxReconciledRepos {
+		return fmt.Errorf("repository selection exceeds limit of %d comma-separated entries", maxReconciledRepos)
+	}
 
 	tok := resolveForgeAuthToken(ctx, *tokenFlag)
 	if !*dryRun && tok == "" {
@@ -171,9 +174,7 @@ func loadFleetIssues(ctx context.Context, token, endpoint string, repos []string
 
 		issues, err := ghDriver.ListIssues(ctx, "all")
 		if err != nil {
-			// Non-fatal if offline or unauthenticated, proceed with best-effort
-			fmt.Printf("[WARN] Could not fetch issues for %s: %v\n", repos[i], err)
-			continue
+			return fmt.Errorf("list issues for %s: %w", repos[i], err)
 		}
 		for _, issue := range issues {
 			engine.TrackIssue(repos[i], issue)

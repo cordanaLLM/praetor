@@ -21,7 +21,7 @@ func repairExecutionCLIFixture(t *testing.T) (string, string, string) {
 	cfg := repairrun.Config{Version: 1, SourceRoot: root, SourceSHA: strings.Repeat("a", 40), StateDir: filepath.Join(root, "execution-state"),
 		AllowedFiles: []string{"internal/util/fixture.go"}, TestPackages: []string{"./internal/util"}, TimeoutSeconds: 30, MaxPatchBytes: 1024,
 		RepairPolicy: dogfood.RepairPolicy{RoutingConfig: routing, Task: "ci_debugging", InputTokens: 1000, OutputTokens: 500, MaxCost: 0.1},
-		Provider:     repairrun.ProviderConfig{BaseURL: "https://litellm.ai.cauda.dev/v1", TokenCommand: filepath.Join(root, "nonexistent-helper"), TokenCommandSHA256: strings.Repeat("b", 64), Model: "cheap", MaxInputBytes: 65536, MaxOutputTokens: 256}}
+		Provider:     repairrun.ProviderConfig{BaseURL: "https://provider.example/v1", TokenCommand: filepath.Join(root, "nonexistent-helper"), TokenCommandSHA256: strings.Repeat("b", 64), Model: "cheap", MaxInputBytes: 65536, MaxOutputTokens: 256}}
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
