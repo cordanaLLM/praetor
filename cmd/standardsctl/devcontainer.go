@@ -16,14 +16,13 @@ func runDevContainer(args []string) error {
 	outputPath := fs.String("output", ".devcontainer/devcontainer.json", "Target path for devcontainer.json")
 	verify := fs.Bool("verify", false, "Verify that target devcontainer.json matches declared standards")
 
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
-
-	subArgs := fs.Args()
-	action := "generate"
-	if len(subArgs) > 0 {
-		action = subArgs[0]
+	action := positionalAt(positional, 0, "generate")
+	if action != "generate" && action != "verify" {
+		return fmt.Errorf("unknown devcontainer action: %s (supported: generate, verify)", action)
 	}
 
 	manifest, err := config.LoadManifest(*configPath)

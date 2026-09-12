@@ -83,7 +83,7 @@ func parseMesonBuild(path string, deps map[string]string) {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
+	for lines := 0; lines < MaxScannedLines && scanner.Scan(); lines++ {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.Contains(line, "dependency(") {
 			idx := strings.Index(line, "dependency(")
@@ -103,7 +103,7 @@ func parseCMakeLists(path string, deps map[string]string) {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
+	for lines := 0; lines < MaxScannedLines && scanner.Scan(); lines++ {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.Contains(line, "find_package(") {
 			idx := strings.Index(line, "find_package(")

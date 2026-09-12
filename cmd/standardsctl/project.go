@@ -79,11 +79,11 @@ func runProjectAdd(ctx context.Context, args []string) error {
 	dir := fs.String("dir", ".", "Repository root directory")
 	token := fs.String("token", "", "GitHub access token")
 	endpoint := fs.String("endpoint", "", "GitHub GraphQL endpoint")
-	if err := fs.Parse(args); err != nil {
+	remArgs, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
 
-	remArgs := fs.Args()
 	if len(remArgs) < 2 {
 		return fmt.Errorf("usage: praetorctl project add <project-number> <item-url> [--owner=...] [--dir=.]")
 	}
@@ -106,10 +106,13 @@ func runProjectAdd(ctx context.Context, args []string) error {
 }
 
 func runProjectStatus(ctx context.Context, args []string) error {
-	dir := "."
-	if len(args) > 0 {
-		dir = args[0]
+	fs := flag.NewFlagSet("project status", flag.ContinueOnError)
+	dirFlag := fs.String("dir", ".", "Repository root directory")
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
 	}
+	dir := positionalAt(positional, 0, *dirFlag)
 
 	pm := forge.NewProjectManager("cordanaLLM", "", "")
 	projects, err := pm.ListProjects(ctx, dir)

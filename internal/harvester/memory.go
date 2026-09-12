@@ -13,6 +13,9 @@ import (
 const (
 	MaxTranscriptsScan = 50
 	MaxLinesPerLog     = 2000
+	// maxScannedLines is the scalar upper bound (HISS-02) on the lines a single
+	// transcript scan reads.
+	maxScannedLines = 200000
 )
 
 // MemoryInsight represents an extracted operational pattern or rule insight.
@@ -66,7 +69,7 @@ func ExtractMemoryInsights(ctx context.Context, transcriptsRoot string) ([]Memor
 func processTranscript(file *os.File, convoID string, insights *[]MemoryInsight) {
 	scanner := bufio.NewScanner(file)
 	lineCount := 0
-	for scanner.Scan() {
+	for lines := 0; lines < maxScannedLines && scanner.Scan(); lines++ {
 		if lineCount >= MaxLinesPerLog {
 			break
 		}

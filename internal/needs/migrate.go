@@ -165,7 +165,7 @@ func updateGoMod(goModPath string, added, dropped []string) error {
 
 	var newLines []string
 	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
+	for lines := 0; lines < MaxScannedLines && scanner.Scan(); lines++ {
 		line := scanner.Text()
 		shouldDrop := false
 		for _, d := range dropped {

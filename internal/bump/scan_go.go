@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -177,19 +179,84 @@ func scanGoModuleDir(ctx context.Context, modDir, modRel string, opts ScanOption
 
 var requireRegex = regexp.MustCompile(`^\s*([a-zA-Z0-9.\-_/]+)\s+v([0-9a-zA-Z.\-_+]+)`)
 
+// MaxManifestLines is the scalar upper bound (HISS-02) on the number of manifest lines a
+// single scan reads. No real go.mod approaches it; a pathological or hostile file cannot
+// make the scanner loop unbounded.
+const MaxManifestLines = 100000
+
+// MaxDiscoveredModules is the scalar upper bound (HISS-02) on the modules a single
+// lookup walks.
+const MaxDiscoveredModules = 1024
+
+// ErrPackageNotRequired reports that a package is not required by any go.mod in the tree.
+var ErrPackageNotRequired = errors.New("package not required by any go.mod")
+
+// CurrentGoModVersion returns the version a go.mod under repoPath currently requires for
+// pkg, together with the module directory (relative to repoPath) that requires it.
+//
+// Callers building an UpgradeCandidate must use it instead of a placeholder: the go.mod
+// fallback edit in applyGoUpdate matches on the literal "<package> <current version>", so
+// a placeholder current version can never match and the fallback always fails.
+func CurrentGoModVersion(repoPath, pkg string) (version, moduleDir string, err error) {
+	modules := DiscoverGoModules(repoPath)
+	if len(modules) == 0 {
+		modules = []string{"."}
+	}
+	for i := 0; i < len(modules) && i < MaxDiscoveredModules; i++ {
+		modDir := filepath.Join(repoPath, modules[i])
+		found, scanErr := requiredVersionIn(filepath.Join(modDir, "go.mod"), pkg)
+		if scanErr != nil {
+			continue
+		}
+		if found != "" {
+			return found, modules[i], nil
+		}
+	}
+	return "", "", fmt.Errorf("%w: %s under %s", ErrPackageNotRequired, pkg, repoPath)
+}
+
+// closeManifest closes a manifest opened for reading. A close error on a read-only file
+// carries no data loss, so it is inspected and deliberately dropped rather than assigned
+// to the blank identifier.
+func closeManifest(file *os.File) {
+	if err := file.Close(); err != nil {
+		return
+	}
+}
+
+func requiredVersionIn(goModPath, pkg string) (string, error) {
+	file, err := os.Open(goModPath) // #nosec G304 -- go.mod path assembled from a caller-supplied repo root and a discovered module dir.
+	if err != nil {
+		return "", fmt.Errorf("open %s: %w", goModPath, err)
+	}
+	defer closeManifest(file)
+
+	scanner := bufio.NewScanner(file)
+	for lines := 0; lines < MaxManifestLines && scanner.Scan(); lines++ {
+		fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(scanner.Text()), "require "))
+		if len(fields) >= 2 && fields[0] == pkg && strings.HasPrefix(fields[1], "v") {
+			return fields[1], nil
+		}
+	}
+	if scanErr := scanner.Err(); scanErr != nil {
+		return "", fmt.Errorf("scan %s: %w", goModPath, scanErr)
+	}
+	return "", nil
+}
+
 func scanGoModFallback(modDir, modRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
 	goModFile := filepath.Join(modDir, "go.mod")
 	file, err := os.Open(goModFile)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer closeManifest(file)
 
 	var candidates []UpgradeCandidate
 	scanner := bufio.NewScanner(file)
 	inRequire := false
 
-	for scanner.Scan() {
+	for lines := 0; lines < MaxManifestLines && scanner.Scan(); lines++ {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "require (") {
 			inRequire = true
