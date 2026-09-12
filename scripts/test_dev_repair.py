@@ -144,6 +144,8 @@ class RepairQueueTests(unittest.TestCase):
         service = units["praetor-dogfood-repair-test.service"].decode()
         self.assertIn("a %%$$.py", service)
         self.assertIn("MemoryMax=4G", service)
+        self.assertIn("MemorySwapMax=0", service)
+        self.assertIn("CPUQuota=200%", service)
         self.assertIn("TimeoutStartSec=12min", service)
         self.assertIn("KillMode=control-group", service)
 

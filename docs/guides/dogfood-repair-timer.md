@@ -46,13 +46,20 @@ Exceeding inventory bounds requires explicit archival or selection of a new
 queue directory; it does not silently omit older failures.
 
 The service allows 12 minutes including inspection and shutdown, with a 4 GiB
-memory limit and 128 tasks. It starts checking after two minutes and checks again
+memory limit, no swap, 128 tasks and two CPUs of aggregate quota. It starts
+checking after two minutes and checks again
 15 minutes after the previous service stops. The executor separately enforces
 request, patch, source, test, and sandbox limits. Public source snippets and
 bounded failure metadata go to the configured model; original transcript bodies
 are not opened by the repair executor. Gateway cost readback is evidence of the
 reported request cost. Declared routing rates are estimates, and gateway-side
 retry or fallback behavior is outside this client's one-attempt guarantee.
+
+This stage runs reviewed Praetor engine tests. The installed Go dependency cache
+is mounted read-only inside the sandbox and is visible to those tests. Use a
+reviewed source commit; this profile is not an arbitrary upstream application
+execution service. Only baseline test identities and allowlisted source content
+enter the provider prompt; retained transcript error excerpts remain local.
 
 `scoped_test_verified` means the configured unchanged tests failed before a
 patch and passed afterward. It is a retained candidate awaiting review and full

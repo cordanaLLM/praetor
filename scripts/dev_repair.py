@@ -178,7 +178,9 @@ KillMode=control-group
 UMask=0077
 NoNewPrivileges=true
 MemoryMax=4G
+MemorySwapMax=0
 TasksMax=128
+CPUQuota=200%
 """
     timer = schedule.MARKER + f"""[Unit]
 Description=Check for an unconsumed local dogfood repair
