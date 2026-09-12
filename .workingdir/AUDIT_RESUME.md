@@ -80,6 +80,39 @@ No planted false finding was ever accepted across 58 verification batches.
 
 ## How to resume
 
+### Codex continuation — 2026-09-12
+
+The latest Claude session is `30d48235-2c67-471a-8f6c-6d7d78ccc99b`.
+It stopped on provider usage limits at 14:29 UTC, before either first-batch merge
+attempt did any work. The latest owner direction is blockers-first dispatch:
+Lefthook first, integrate half 1, then deduplicate/unify before wave 2.
+
+- G01–G08 and G10 have ten successful workflow results, totaling 234 claimed
+  fixes. G09 has a committed HISS/LSP change (`e6e9b43`) but no successful
+  workflow result. None of these eleven branches was merged at recovery time.
+- The Lefthook workflow's "completed" notification covered research/design only:
+  its implementation and proof were null. Implementation resumes on
+  `fix/lefthook`; do not treat the old notification as shipping evidence.
+- G09's six-file uncommitted cleanup is preserved in the original worktree and
+  in `audit/codex-continuation/g09/interrupted.patch` below the evidence root.
+  An independent review found permission widening, silent truncation at the new
+  flat-directory copy cap, and cancellation falling through to hook installation.
+  Hold this patch out of integration; reassess useful pieces after G01/G10 land.
+- The copied G09 worktree passed targeted tests and the full race suite, but
+  `make verify-all` failed at lint with 140 findings. Full output is retained as
+  `audit/codex-continuation/g09/verify-all.log`. Passing tests do not refute the
+  review findings, which lack existing regression coverage.
+- [ADR-0009](../docs/adr/0009-structural-unification.md) now records the proposed
+  consolidation milestones and the previously accepted constraints. No structural
+  implementation milestone is complete yet.
+
+Recovery provenance (base heads and patch SHA-256) and a branch/file inventory
+are in `audit/codex-continuation/recovery.json` and `branch-inventory.json`.
+The old untracked `.standards-receipt.json` predates this audit and is not a
+receipt for the current branch or verification result.
+
+### Original workflow entry points
+
 ```bash
 S=~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit
 cat "$S/fold_summary.txt"                 # current finding counts
