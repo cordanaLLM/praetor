@@ -138,6 +138,37 @@ def go_packages(directory, names, reverse=False):
     return sorted(selected)
 
 
+def local_package_patterns(directory, packages):
+    """Resolve selected import paths to confined directories for filesystem-based tools."""
+    root = directory.resolve()
+    listed = decode_packages(run(["go", "list", "-json", *packages], cwd=directory,
+                                 env=clean_env()))
+    patterns = {}
+    for package in listed:
+        path = Path(package["Dir"]).resolve()
+        try:
+            relative = path.relative_to(root).as_posix()
+        except ValueError as error:
+            raise HookError(f"Go package directory is outside the checked snapshot: {path}") from error
+        if not path.is_dir():
+            raise HookError(f"Go package directory does not exist: {path}")
+        patterns[package["ImportPath"]] = "." if relative == "." else "./" + relative
+    if set(patterns) != set(packages):
+        raise HookError("Go package directory listing does not match the selected import paths")
+    return [patterns[package] for package in packages]
+
+
+def checkpoint_checks(directory, names):
+    """Build and race-test affected packages for an explicitly named WIP destination."""
+    packages = go_packages(directory, names, reverse=True)
+    if not packages:
+        print("Checkpoint Go gates: no affected packages")
+        return
+    print("Checkpoint Go scope: " + ", ".join(packages))
+    parallel([["go", "build", *packages]], directory)
+    parallel([["go", "test", "-race", "-count=1", "-timeout=5m", *packages]], directory)
+
+
 def source_checks(directory, names, gate="all", base=None):
     packages = go_packages(directory, names, reverse=True)
     governance = governance_commands(directory, names, bool(packages), base=base)
@@ -149,10 +180,11 @@ def source_checks(directory, names, gate="all", base=None):
         print("Go gates: no affected packages")
         return run_full_gate(directory) if full_gate else False
     print("Go scope: " + ", ".join(packages))
+    local = local_package_patterns(directory, packages) if gate in {"all", "lint", "sec"} else []
     commands = {"test": ["go", "test", "-race", "-count=1", "-timeout=5m", *packages],
                 "lint": ["go", "run", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest",
-                         "run", *packages],
-                "sec": ["gosec", "-conf", ".gosec.json", *packages],
+                         "run", *local],
+                "sec": ["gosec", "-conf", ".gosec.json", *local],
                 "vuln": ["govulncheck", *packages]}
     selected = list(commands.values()) if gate == "all" else [commands[gate]]
     if full_gate:

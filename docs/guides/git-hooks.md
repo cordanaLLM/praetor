@@ -4,15 +4,30 @@ Install Lefthook 1.13.6 or newer, then run `make hooks` and `make hooks-check`.
 The configuration is tested with 1.13.6. Python 3, Git and the repository Go
 version are required. Install `yamllint`, `shellcheck`, `actionlint` and `hadolint`
 when editing their file types; applicable checks fail if their tool is missing.
-Source pushes also require `gosec`, `govulncheck` and `semgrep`. Golangci-lint runs
+Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Golangci-lint runs
 from source using the existing repository `@latest` policy.
+
+For an isolated Semgrep installation, the push checks have been exercised with
+1.177.0 on Python 3.14. Install it when `semgrep` is absent from `PATH`:
+
+```bash
+PRAETOR_TOOL_DIR="$HOME/.local/share/praetor-tools/semgrep-1.177.0"
+python3 -m venv "$PRAETOR_TOOL_DIR"
+"$PRAETOR_TOOL_DIR/bin/python" -m pip install 'semgrep==1.177.0'
+mkdir -p "$HOME/.local/bin"
+ln -s "$PRAETOR_TOOL_DIR/bin/semgrep" "$HOME/.local/bin/semgrep"
+semgrep --version
+```
+
+Keep `$HOME/.local/bin` on `PATH`. The symlink command deliberately refuses to
+replace an existing executable. See the [Semgrep package installation guidance](https://pypi.org/project/semgrep/1.177.0/).
 
 | Git stage | Work performed |
 | --- | --- |
 | `pre-commit`, `pre-merge-commit` | Check the exact index for whitespace, conflict markers, Python/JSON syntax, YAML, shell, workflow and Docker lint; Go formatting and vet on changed packages; verify affected generated agent instructions. |
 | `prepare-commit-msg` | Add an instructional comment to a fresh empty message. |
 | `commit-msg` | Require a conventional commit subject and DCO sign-off; accept Git merge/revert subjects. |
-| `pre-push` | Inspect each actual pushed commit, run affected Go race tests, lint, security and vulnerability checks, plus applicable governance, flavor and ledger audits. |
+| `pre-push` | Inspect each actual pushed commit. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor, ledger and signed-receipt gates. |
 | `post-commit` | Read the dedupe cadence and print a reminder when due; never run a scan or write the ledger. |
 | `post-checkout`, `post-merge`, `post-rewrite` | Warm changed module dependencies in an isolated clone, rebuild the local CLI for source changes, verify affected agent outputs, report governance changes. File-only checkouts do nothing. |
 | `pre-rebase` | Check the hook environment before replay begins. |
@@ -22,7 +37,25 @@ files and the index remain unchanged. Formatting is a read-only gate: run `gofmt
 and stage your chosen hunks explicitly. Deleted files are included when computing
 scope and skipped by per-file linters. Paths are read with NUL delimiters and
 passed as process arguments, including filenames containing spaces or shell text.
-Missing tools and failed subprocesses stop blocking hooks.
+A missing required tool or a failed subprocess blocks the operation.
+
+## Remote checkpoints
+
+The owner approved a separate `checkpoint/*` namespace for unfinished audit work.
+Pushes to it require the same snapshot file checks plus affected Go builds and
+race tests. Full CI runs on every checkpoint push; a checkpoint is a WIP backup,
+not a passing verification receipt or permission to merge. Fixes can therefore be
+shared while the remaining repository audit findings stay visible in CI.
+
+```bash
+git switch -c checkpoint/my-task
+git push -u origin checkpoint/my-task
+```
+
+Only the actual destination under `refs/heads/checkpoint/` selects this policy.
+Other branches, tags, and PR/merge gates retain their strict checks. A push that
+contains both checkpoint and strict refs must pass both policies, even when they
+point at the same commit. No environment flag disables a gate.
 
 Pre-push consumes Git's ref protocol once and checks disposable clones of those
 commit IDs. It handles multiple refs, new branches, tag targets, deletions and

@@ -15,8 +15,9 @@ import unittest
 from unittest import mock
 
 from common import HookError, run
-from checks import go_packages, source_checks, governance_commands, context_changed, audit_scope
-from hooks import push_updates, new_branch_base, pre_push
+from checks import (go_packages, source_checks, governance_commands, context_changed,
+                    audit_scope, local_package_patterns, checkpoint_checks)
+from hooks import push_updates, new_branch_base, pre_push, push_check_mode
 import sandbox
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -197,6 +198,78 @@ class GitHooks(unittest.TestCase):
         finally:
             os.chdir(original)
 
+    def test_real_checkpoint_push_builds_and_tests_without_release_receipt(self):
+        self.write("go.mod", "module example.test/checkpoint\n\ngo 1.27\n")
+        self.write("value.go", "package checkpoint\n\nfunc Value() int { return 1 }\n")
+        self.write("value_test.go", 'package checkpoint\n\nimport "testing"\n\n'
+                   'func TestValue(t *testing.T) {\n\tif Value() != 1 {\n\t\tt.Fatal("wrong value")\n\t}\n}\n')
+        # Valid syntax, but no signing authority or release gate implementation.
+        self.write(".standards.yaml", 'receipt:\n  public_key: ""\n')
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "feat: add checkpoint fixture")
+        remote = Path(self.temp.name) / "remote.git"
+        command(self.repo, "git", "init", "--bare", "-q", str(remote))
+        command(self.repo, "git", "remote", "add", "origin", str(remote))
+        result = command(self.repo, "git", "push", "origin", "HEAD:refs/heads/checkpoint/wip")
+        output = result.stdout + result.stderr
+        self.assertIn(b"Checkpoint Go scope: example.test/checkpoint", output)
+        self.assertIn(b"ok  \texample.test/checkpoint", output)
+        self.assertIn(b"WIP checkpoint:", output)
+        self.assertIn(b"no release receipt issued", output)
+        self.assertEqual(command(remote, "git", "rev-parse", "refs/heads/checkpoint/wip").stdout,
+                         command(self.repo, "git", "rev-parse", "HEAD").stdout)
+        self.assertFalse((self.repo / ".git/praetor-receipts").exists())
+        self.assertFalse((self.repo / ".standards-receipt.json").exists())
+        # Existing remote checkpoints cannot become trusted strict baselines.
+        # Promotion of this same commit must still reach and fail release checks.
+        for destination in ("refs/heads/review/wip", "refs/tags/checkpoint/wip"):
+            rejected = command(self.repo, "git", "push", "origin", "HEAD:" + destination, ok=False)
+            self.assertNotEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
+            self.assertIn(b"cmd/standardsctl", rejected.stdout + rejected.stderr)
+            self.assertNotIn(b"WIP checkpoint:", rejected.stdout + rejected.stderr)
+            self.assertEqual(command(self.repo, "git", "ls-remote", "origin", destination).stdout, b"")
+        mixed_refs = ("refs/heads/checkpoint/mixed", "refs/heads/review/mixed")
+        rejected = command(self.repo, "git", "push", "origin",
+                           *("HEAD:" + ref for ref in mixed_refs), ok=False)
+        self.assertNotEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
+        self.assertIn(b"cmd/standardsctl", rejected.stdout + rejected.stderr)
+        self.assertEqual(command(self.repo, "git", "ls-remote", "origin", *mixed_refs).stdout, b"")
+
+    def test_push_destination_controls_mode_and_mixed_refs_still_run_strict_checks(self):
+        base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        self.write("README.md", "# Checkpoint routing\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: test destination policy")
+        head = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        checkpoint = f"refs/heads/main {head} refs/heads/checkpoint/wip {base}\n"
+        strict = f"refs/heads/checkpoint/local {head} refs/heads/main {base}\n"
+        original = Path.cwd()
+        try:
+            os.chdir(self.repo)
+            # Only the destination determines policy; the local branch is irrelevant.
+            with mock.patch("hooks.sys.stdin", io.StringIO(strict)), \
+                    mock.patch("hooks.checkpoint_checks") as wip, \
+                    mock.patch("hooks.source_checks", return_value=False) as full:
+                pre_push("origin")
+                full.assert_called_once()
+                wip.assert_not_called()
+            # An already-checked WIP commit cannot suppress the strict check for
+            # that same commit/base, including after a duplicate checkpoint ref.
+            for protocol in (checkpoint + strict, checkpoint + checkpoint + strict, strict + checkpoint):
+                with self.subTest(protocol=protocol), \
+                        mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
+                        mock.patch("hooks.source_checks", side_effect=HookError("strict release rejected")) as full:
+                    with self.assertRaisesRegex(HookError, "strict release rejected"):
+                        pre_push("origin")
+                    full.assert_called_once()
+            # File checks are mandatory before either mode's source checks.
+            with mock.patch("hooks.sys.stdin", io.StringIO(checkpoint)), \
+                    mock.patch("hooks.file_checks", side_effect=HookError("invalid snapshot syntax")), \
+                    mock.patch("hooks.checkpoint_checks") as wip:
+                with self.assertRaisesRegex(HookError, "invalid snapshot syntax"):
+                    pre_push("origin")
+                wip.assert_not_called()
+        finally:
+            os.chdir(original)
+
     def test_real_merge_and_rewrite_stages(self):
         base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
         command(self.repo, "git", "checkout", "-q", "-b", "topic")
@@ -220,10 +293,23 @@ class ScopeAndGuard(unittest.TestCase):
         command(root, "git", "commit", "-q", "-m", "chore: initialize audit fixture")
 
     def test_new_branch_ignores_unrelated_tracking_ref(self):
-        with mock.patch("hooks.git", return_value=b"unrelated\nrelated\n"), \
+        with mock.patch("hooks.git", return_value=b"refs/remotes/origin/a unrelated\nrefs/remotes/origin/b related\n"), \
                 mock.patch("hooks.run", side_effect=[b"", b"ancestor\n"]) as process:
             self.assertEqual(new_branch_base("head", "origin"), "ancestor")
             self.assertEqual(process.call_count, 2)
+
+    def test_new_strict_branch_ignores_checkpoint_and_symbolic_head_baselines(self):
+        refs = (b"refs/remotes/origin/HEAD checkpoint\n"
+                b"refs/remotes/origin/checkpoint/wip checkpoint\n"
+                b"refs/remotes/origin/main strict\n")
+        with mock.patch("hooks.git", return_value=refs), \
+                mock.patch("hooks.run", return_value=b"base\n") as process:
+            self.assertEqual(new_branch_base("head", "origin"), "base")
+            self.assertEqual(process.call_args.args[0][-1], "strict")
+        with mock.patch("hooks.git", return_value=refs), \
+                mock.patch("hooks.run", return_value=b"base\n") as process:
+            self.assertEqual(new_branch_base("head", "origin", include_checkpoints=True), "base")
+            self.assertEqual(process.call_args.args[0][-1], "checkpoint")
 
     def test_push_protocol_boundaries(self):
         self.assertEqual(push_updates(""), [])
@@ -232,6 +318,15 @@ class ScopeAndGuard(unittest.TestCase):
         self.assertEqual(len(push_updates(f"refs/heads/a {'b' * 40} refs/heads/a {zero}")), 1)
         with self.assertRaises(HookError):
             push_updates("bad")
+
+    def test_checkpoint_destination_boundaries(self):
+        for destination in ("refs/heads/checkpoint/wip", "refs/heads/checkpoint/a/b"):
+            self.assertEqual(push_check_mode(destination), "checkpoint")
+        for destination in ("refs/heads/main", "refs/heads/lts/1", "refs/heads/audit/wip",
+                            "refs/tags/checkpoint/wip", "refs/checkpoint/wip", "checkpoint/wip",
+                            "refs/heads/checkpoint", "refs/heads/checkpoint/", ""):
+            with self.subTest(destination=destination):
+                self.assertEqual(push_check_mode(destination), "strict")
 
     def test_guard_command_and_json_without_changing_live_environment(self):
         for cmd in ("git status", "git commit -s -m 'fix: valid'"):
@@ -343,6 +438,90 @@ class ScopeAndGuard(unittest.TestCase):
             test.write_text('package a\nimport "testing"\nfunc TestA(t *testing.T) { t.Fatal("negative control") }\n')
             with self.assertRaisesRegex(HookError, "negative control"):
                 source_checks(root, ["a_test.go"], "test")
+
+    def test_real_scoped_lint_scans_reverse_dependencies(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-lint-scope-") as temp:
+            root = Path(temp)
+            (root / "go.mod").write_text("module example.test/scopes\n\ngo 1.27\n")
+            (root / ".golangci.yml").write_text(
+                'version: "2"\nlinters:\n  default: none\n  enable: [errcheck]\n')
+            (root / "core").mkdir()
+            (root / "core/core.go").write_text("package core\nfunc Value() int { return 1 }\n")
+            consumer = root / "consumer.go"
+            consumer.write_text('package consumer\nimport "example.test/scopes/core"\n'
+                                'func Value() int { return core.Value() }\n')
+            # Use the actual from-source invocation: an installed binary may have been
+            # built with an older Go version than the checked module requires.
+            source_checks(root, ["core/core.go"], "lint")
+            consumer.write_text('package consumer\nimport ("example.test/scopes/core"; "os")\n'
+                                'func Value() int { os.Chdir("."); return core.Value() }\n')
+            with self.assertRaisesRegex(HookError, "errcheck"):
+                source_checks(root, ["core/core.go"], "lint")
+
+    def test_checkpoint_real_build_rejects_broken_reverse_dependency(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-checkpoint-build-") as temp:
+            root = Path(temp)
+            (root / "go.mod").write_text("module example.test/checkpoint\n\ngo 1.27\n")
+            (root / "core").mkdir()
+            (root / "core/core.go").write_text("package core\nfunc Value() int { return 1 }\n")
+            consumer = root / "consumer.go"
+            consumer.write_text('package consumer\nimport "example.test/checkpoint/core"\n'
+                                'func Value() int { return core.Value() }\n')
+            checkpoint_checks(root, ["core/core.go"])
+            consumer.write_text('package consumer\nimport "example.test/checkpoint/core"\n'
+                                'func Value() int { return core.Missing() }\n')
+            with self.assertRaisesRegex(HookError, "go build.*|undefined: core.Missing") as failure:
+                checkpoint_checks(root, ["core/core.go"])
+            self.assertIn("undefined: core.Missing", str(failure.exception))
+
+    def test_checkpoint_real_race_detector_rejects_consumer_test_race(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-checkpoint-race-") as temp:
+            root = Path(temp)
+            (root / "go.mod").write_text("module example.test/checkpoint\n\ngo 1.27\n")
+            (root / "core").mkdir()
+            (root / "core/core.go").write_text("package core\nfunc Value() int { return 1 }\n")
+            (root / "consumer.go").write_text("package consumer\n")
+            test = root / "consumer_test.go"
+            test.write_text('package consumer\nimport ("testing"; "example.test/checkpoint/core")\n'
+                            'func TestConsumer(t *testing.T) { if core.Value() != 1 { t.Fatal("value") } }\n')
+            checkpoint_checks(root, ["core/core.go"])
+            test.write_text('package consumer\nimport ("testing"; "example.test/checkpoint/core")\n'
+                            'func TestConsumer(t *testing.T) {\n'
+                            'var value int; done := make(chan bool)\n'
+                            'go func() { value = core.Value(); done <- true }()\n'
+                            'value = 2; <-done; _ = value\n}\n')
+            with self.assertRaisesRegex(HookError, "DATA RACE"):
+                checkpoint_checks(root, ["core/core.go"])
+
+    def test_real_scoped_gosec_cannot_succeed_without_scanning(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-gosec-scope-") as temp:
+            root = Path(temp)
+            (root / "go.mod").write_text("module example.test/scopes\n\ngo 1.27\n")
+            (root / ".gosec.json").write_text("{}\n")
+            (root / "core").mkdir()
+            (root / "core/core.go").write_text("package core\nfunc Value() int { return 1 }\n")
+            consumer = root / "consumer.go"
+            consumer.write_text('package consumer\nimport "example.test/scopes/core"\n'
+                                'func Value() int { return core.Value() }\n')
+            source_checks(root, ["core/core.go"], "sec")
+            consumer.write_text('package consumer\nimport ("example.test/scopes/core"; "crypto/md5")\n'
+                                'func Sum() [md5.Size]byte { return md5.Sum([]byte{byte(core.Value())}) }\n')
+            with self.assertRaisesRegex(HookError, "G401|G501"):
+                source_checks(root, ["core/core.go"], "sec")
+
+    def test_local_package_patterns_confine_actual_go_metadata(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-package-dirs-") as temp:
+            root = Path(temp)
+            (root / "go.mod").write_text("module example.test/scopes\n\ngo 1.27\n")
+            (root / "a.go").write_text("package scopes\n")
+            (root / "nested").mkdir()
+            (root / "nested/a.go").write_text("package nested\n")
+            selected = ["example.test/scopes", "example.test/scopes/nested"]
+            self.assertEqual(local_package_patterns(root, selected), [".", "./nested"])
+            with self.assertRaisesRegex(HookError, "outside the checked snapshot"):
+                local_package_patterns(root, ["fmt"])
+            with self.assertRaises(HookError):
+                local_package_patterns(root, ["example.test/scopes/missing"])
 
     def test_process_failure_and_timeout_are_not_swallowed(self):
         with self.assertRaises(HookError):

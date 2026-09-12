@@ -10,7 +10,7 @@ import sys
 
 sys.dont_write_bytecode = True
 from common import HookError, changed, clean_env, git, paths, run, snapshot
-from checks import context_changed, file_checks, go_packages, source_checks
+from checks import checkpoint_checks, context_changed, file_checks, go_packages, source_checks
 
 SUBJECT = re.compile(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)"
                      r"(\([^()\n]+\))?!?: \S.*$")
@@ -68,15 +68,27 @@ def push_updates(text):
     return updates
 
 
-def new_branch_base(head, remote):
+def new_branch_base(head, remote, include_checkpoints=False):
     """Use a known remote ancestor; without one, conservatively check the full tree."""
-    candidates = git("for-each-ref", "--format=%(objectname)", f"refs/remotes/{remote}/").decode().splitlines()
-    for oid in candidates:
+    prefix = f"refs/remotes/{remote}/"
+    candidates = git("for-each-ref", "--format=%(refname) %(objectname)", prefix).decode().splitlines()
+    for candidate in candidates:
+        ref, oid = candidate.split()
+        # A WIP checkpoint has never satisfied the strict gates. It cannot be a
+        # trusted baseline for publishing a new strict branch or tag. Ignore the
+        # symbolic remote HEAD too; its target may be a checkpoint branch.
+        if ref == prefix + "HEAD" or (not include_checkpoints and ref.startswith(prefix + "checkpoint/")):
+            continue
         result = run(["git", "merge-base", "--all", head, oid], allowed=(0, 1))
         bases = result.decode().splitlines()
         if bases:
             return bases[0]
     return None
+
+
+def push_check_mode(destination):
+    prefix = "refs/heads/checkpoint/"
+    return "checkpoint" if destination.startswith(prefix) and len(destination) > len(prefix) else "strict"
 
 
 def pre_push(remote):
@@ -85,15 +97,16 @@ def pre_push(remote):
     if not updates:
         print("Push: no new commits (empty input or ref deletion)")
     checked = set()
-    for _, local, _, old in updates:
+    for _, local, destination, old in updates:
+        mode = push_check_mode(destination)
         head = git("rev-parse", "--verify", local + "^{commit}").decode().strip()
-        base = old if set(old) != {"0"} else new_branch_base(head, remote)
+        base = old if set(old) != {"0"} else new_branch_base(head, remote, mode == "checkpoint")
         if base:
             kind = run(["git", "cat-file", "--batch-check=%(objecttype)"], data=(base + "\n").encode())
             if kind.strip().endswith(b" missing"):
                 print(f"Push baseline {base[:12]} unavailable locally; checking the full tree")
                 base = None
-        key = (head, base)
+        key = (head, base, mode)
         if key in checked:
             continue
         checked.add(key)
@@ -102,12 +115,18 @@ def pre_push(remote):
             continue
         with snapshot(head) as directory:
             file_checks(directory, names)
-            gated = source_checks(directory, names, base=base)
-            if gated:
-                preserve_receipt(directory, head)
-            if os.environ.get("PRAETOR_HOOK_SANDBOX") == "1":
-                run(["python3", ".config/lefthook/scripts/sandbox.py", head], timeout=2400,
-                    capture=False)
+            if mode == "checkpoint":
+                checkpoint_checks(directory, names)
+            else:
+                gated = source_checks(directory, names, base=base)
+                if gated:
+                    preserve_receipt(directory, head)
+                if os.environ.get("PRAETOR_HOOK_SANDBOX") == "1":
+                    run(["python3", ".config/lefthook/scripts/sandbox.py", head], timeout=2400,
+                        capture=False)
+        if mode == "checkpoint":
+            print(f"WIP checkpoint: {destination}; local file/build/race checks passed. "
+                  "Full CI diagnostics remain required; no release receipt issued.")
         print(f"Push: {head[:12]} checked ({len(names)} changed paths)")
 
 

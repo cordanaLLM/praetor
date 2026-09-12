@@ -129,8 +129,9 @@ receipt for the current branch or verification result.
 | Development MCP and canonical context | `2fee173` | Native Codex calls, fresh-build wire probes and 14 client/provenance tests pass; all six outputs preserve AGENTS body |
 | Secure-write permissions | `0a26497` | Integrated util, adoption, milestone, harvester, gating and CLI race tests pass |
 | G09 scanner/LSP | `fac9d09` | Preserved earlier fixes; scanner bounds fail explicitly, including a 1,100-if AST-depth fixture; combined MCP audit wire probes pass |
+| G10 harvesting/dogfood | `413c2a5` | Full prepared-branch races pass; combined CLI/MCP/dogfood/harvester/util/adopt races and development MCP preflight pass |
 
-G10 integration is in progress in an isolated worktree. G06 preserves both G05's context,
+Wave A half 1 is integrated. G06 preserves both G05's context,
 path, permission and unknown-coverage safeguards and G06's scan/migration
 corrections. The scanner reports limit breaches, migration refuses branch resets,
 and failed mutations return errors with partial results. G07a removes magic-token
@@ -164,6 +165,30 @@ cross-user devcontainer fixtures fail on the original helper and pass on the fix
 It is integrated as `0a26497`. The G09 integration's full gate passes context, all
 43 race-tested packages and audit, then stops at 93 lint findings outside its
 changed files. No integrated full-gate pass has been established.
+
+#### Current owner priorities
+
+- Publish WIP regularly. The owner explicitly approved `checkpoint/*` destinations
+  with snapshot file checks, affected builds and race tests; full CI must run on
+  these pushes. Other refs and PR/merge/receipt gates remain strict.
+- The first normal push attempts found manifest formatting, a missing local
+  Semgrep executable, and incorrect linter package scopes. Formatting is fixed;
+  Semgrep 1.177.0 is installed in an isolated environment. Real-tool regressions
+  cover the scope fix, including gosec's previous zero-file false success.
+- BUG-001/F212 is independently verified fixed and closed. Fifteen fresh-CLI
+  fixture commands preserved historical and newly archived task headings; the
+  real state audit now passes with 711 remaining open findings.
+- Prioritize the automatic loop against public non-owned repositories, plus
+  harvesting/memory ingestion and replay of retained `lusoris/praetor` data.
+  Preserve original inputs and source revisions; run only in disposable clones,
+  retain failure evidence, and expose incomplete/skipped outcomes. No upstream
+  repository writes or messages are authorized by this testing work.
+- Include each workstation's coding CLI and agent global state, rules, skills,
+  session logs, brains, memories and related data. Inventory available sources
+  and formats with provenance, preserve originals, and replay sanitized fixtures;
+  report unavailable workstations and unsupported formats explicitly.
+- Keep the structural proposal and held fix groups pending while these explicitly
+  requested publication and replay prerequisites are completed.
 
 Full logs, reproduction binaries and hashes are under `codex-continuation/`
 within the evidence root above. Keep the distinction between branch-reported
