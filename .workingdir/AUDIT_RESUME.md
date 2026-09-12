@@ -251,10 +251,66 @@ Full logs and replay counterexamples are in `combined-verification-f59190cc/`.
 Workstation inventory covers local Claude, Codex, Gemini, OpenCode, Copilot, Pi,
 shared skills and editor stores. Only Antigravity JSONL has the new ingestion
 adapter. Other formats, consistent SQLite snapshots, further workstations,
-verified-fact extraction/recall and local-file optimization remain explicit work.
-Raw observations are never silently treated as verified facts. Owner-fork bot
-rollout, cost/capability routing and context optimization remain in `OPEN.md`;
-11 completed prerequisite tasks were archived through the state CLI.
+and verified-fact extraction/recall remain explicit work. Raw observations are
+never silently treated as verified facts. Owner-fork bot rollout, measured
+routing/dispatch and content-aware context optimization remain in `OPEN.md`.
+
+#### Local activation and new consumers — 2026-09-12
+
+`19b4744` adds `make dev-install`: build all three executables from current source,
+run the real MCP probe, preserve previous binaries in a private backup and read
+back installed hashes. Existing PATH executables were stale standalone copies
+from `43c180e`; `make build` alone had not refreshed them. The installed MCP passed
+the real probe, and the PATH CLI replayed the original 10,863-record corpus with
+10,830 already-present events, 33 metadata skips, zero new events and an unchanged
+source hash. Installation metadata lives at `~/.local/bin/.praetor-dev-install.json`.
+Nine installer regressions cover backup, rollback, permissions, links and locking.
+
+Codex recognizes the project `praetor-dev` connection. `claude mcp get praetor-dev`
+still reports native project approval pending; fresh direct wire calls work.
+Existing native server processes retain their startup binary until reconnected.
+
+`b1e2981` integrates `context-optimize` and the read-only MCP
+`standards_context_analyze`. Both use explicit bounded inputs and return matching
+hashes, aliases and byte counts. Candidates preserve retained document bytes and
+are written only to a new private directory; they require review before use.
+The selected repository canonical/vendor bundle measures 37,195 input bytes and
+5,260 packed bytes. The real four-file global rule/skill set has no duplicates:
+30,655 input/payload bytes, 30,963 packed bytes. Neither result establishes live
+per-turn token or latency savings. The expanded wire probe has 22 checks/15 tools.
+
+`147903d` integrates offline `models route`: declared task/capability eligibility,
+configured token-cost ordering and explicit observation status. Supplied capacity
+snapshots reject missing/ambiguous counters; absent observations are never filled
+with invented zeroes. The stricter shared config loader requires explicit finite
+nonnegative prices, including explicit zero. Existing catalog data is unchanged.
+Provider dispatch, telemetry, measured quality/latency, quota reservation and
+automatic escalation remain future work. See the routing guide's migration notes.
+
+`50d81bb` supplies `operational sync plan|prepare`, verified against the real owner
+checkout and reviewed upstream commits. Preparation creates a separate clone,
+preserves ordinary merge ancestry and limits differences to the four existing
+owner configuration paths and their declared fields. Unknown upstream manifest
+fields survive. Effective Git filters, submodules, replacement/graft ancestry,
+configuration drift, and incomplete or dirty candidates fail explicitly. The
+prepared clone starts with inert hooks; activate reviewed hooks and run checks
+before normal checkpoint publication. Broad repository/workstation overlays,
+scheduled synchronization and bot promotion remain later stages.
+
+Combined verification after integration passes all 45 Go packages with races,
+22 MCP wire checks, 16 MCP client tests, nine installer tests and the 35 hook tests.
+The working-checkout full harness reports 76 existing lint findings and 90 gosec
+findings (one fewer after the routing loader change). Its dedupe scan also counts
+the preserved nested Claude worktrees as source duplicates: 1,988 scanned files,
+10,827 functions, and 1,423 duplicate groups. Those worktrees are evidence and
+remain intact; compare an isolated checkout for the ordinary CI scan scope.
+The missing-root/dangling-file false-success scanner issue remains separately open.
+
+Evidence: `local-dev-install-readback.json`, `installed-cli-original-replay.json`,
+`context-global-{cli,mcp}.json`, `context-integrated-mcp-probe.json`,
+`context-optimizer/`, `task-routing/`, `router-review/`, `operational-fork/sync/`,
+`operational-sync-review/`, and `combined-local-systems-verify.log` under the external
+`codex-continuation/` evidence root. Private candidate contents remain outside Git.
 
 Full logs, reproduction binaries and hashes are under `codex-continuation/`
 within the evidence root above. Keep the distinction between branch-reported

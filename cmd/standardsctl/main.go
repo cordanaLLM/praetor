@@ -31,6 +31,7 @@ func printUsage() {
 	fmt.Println("  models             Sync or list active model tiers and benchmark limits")
 	fmt.Println("  plan               Dry-run comparison of repository settings against policy")
 	fmt.Println("  sync               Reconcile repository settings, labels, and branch rulesets")
+	fmt.Println("  operational        Plan or prepare an operational fork from reviewed local commits")
 	fmt.Println("  sentinel           Inspect workstation RAM/disk health and model headroom")
 	fmt.Println("  worktree           Manage isolated ephemeral git worktrees")
 	fmt.Println("  gc                 Garbage collect stale worktrees, caches, and logs")
@@ -94,6 +95,7 @@ func commandTable() map[string]commandFunc {
 		"state":            runState,
 		"dedupe":           runDedupe,
 		"models":           runModels,
+		"operational":      runOperational,
 		"plan":             runPlan,
 		"sync":             runSync,
 		"sentinel":         runSentinel,

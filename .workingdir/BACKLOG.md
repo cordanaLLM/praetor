@@ -176,3 +176,9 @@
 - [x] Run automatic dogfooding against public non-owned repositories with replayable evidence (completed: 2026-09-12)
 - [x] Discover and replay retained lusoris/praetor harvesting and memory ingestion data (completed: 2026-09-12)
 - [x] Run and close a bounded public non-owned repository dogfood loop (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 16:55:49 UTC, commit `local`]
+- [x] Activate fresh local Praetor binaries and verify development MCP consumers (completed: 2026-09-12)
+- [x] Implement bounded context-file optimization through CLI and MCP with provenance and behavior checks (completed: 2026-09-12)
+- [x] Wire declared-task and capability routing to a deterministic cost-aware CLI selector (completed: 2026-09-12)
+- [x] Prepare owner-fork updates from reviewed upstream commits while preserving configuration overlay (completed: 2026-09-12)

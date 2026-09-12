@@ -11,7 +11,3 @@
 - [ ] Configure lusoris/praetor as synchronized operational fork with explicit repository and workstation rollout stages
 - [ ] Implement capability and evidence based per-task agent routing with cost, latency, and escalation controls
 - [ ] Optimize workstation agent and CLI context files with canonical ownership and replay verification
-- [x] Activate fresh local Praetor binaries and verify development MCP consumers (completed: 2026-09-12)
-- [x] Implement bounded context-file optimization through CLI and MCP with provenance and behavior checks (completed: 2026-09-12)
-- [x] Wire declared-task and capability routing to a deterministic cost-aware CLI selector (completed: 2026-09-12)
-- [ ] Prepare owner-fork updates from reviewed upstream commits while preserving configuration overlay
