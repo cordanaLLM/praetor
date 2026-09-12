@@ -36,7 +36,8 @@ Everything outside the repo is under **`~/.claude/projects/-home-kilian-dev-cord
 
 630 kept findings: **1 critical, 59 high, 270 medium, 285 low, 15 info**.
 Categories: correctness 273, tests 91, self-governance 77, security 53, dead-surface 43, drift 24, config 23, ci 17, docs 17, supply-chain 12.
-Plus **86 more** from two completeness-critic rounds, to be folded in (total ≈ 716).
+Plus 90 from two completeness-critic rounds, now folded in: **716 kept findings total**
+(1 critical, 62 high, 299 medium, 336 low, 18 info), all registered as `BUG-001`..`BUG-720`.
 
 Method: 37 units x 2-3 lenses (~70 finders) -> dedupe -> canaried 2-lens verification -> adversary pass -> 2 critic rounds.
 No planted false finding was ever accepted across 58 verification batches.
@@ -59,9 +60,9 @@ No planted false finding was ever accepted across 58 verification batches.
       `internal/lockdown`, `internal/gating` have **0** gosec issues with exclusions removed.
       Adds `util.ConfinePath/WriteFileSecure/MkdirSecure/ValidateExecArg`, `lockdown.LoadSigningKey/PinnedPublicKey`,
       `praetorctl gate keygen|verify`, lock-digest validation, v2 `.golangci.yml`, empty `.gosec.json`.
-- [ ] Merge `fix/wave0` into `audit/deep-audit-2026-09-11`
-- [ ] Fold the 86 critic findings in; regenerate fix groups; register the new bugs
-- [ ] **Wave A**: 22 Go fix groups in isolated worktrees, then merge
+- [x] Merged `fix/wave0` into `audit/deep-audit-2026-09-11` (`cb086c9`)
+- [x] Folded the critic findings in; fix groups regenerated; 90 new bugs registered
+- [~] **Wave A** RUNNING: 22 Go fix groups in isolated worktrees (`wf2-run.mjs`, run `wf_d9746de1-7cf`), then merge
 - [ ] **Wave B**: 9 non-Go groups (CI, packaging, config, templates, docs, editors, license)
 - [ ] **Wave C**: praetorctl-only rename + `compile-context` regeneration
 - [ ] **Wave D**: verification agents (gatekeeper/fuzzer/auditor/packager/dogfooder) + fix-review refuters + repair loop

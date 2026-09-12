@@ -54,3 +54,6 @@ all_github_repos.json
 .workingdir/memory/
 .workingdir/*.tmp
 .workingdir/cadence.json
+
+# Workflow agent worktrees
+/.claude/worktrees/

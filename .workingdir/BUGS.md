@@ -630,3 +630,89 @@
 | `BUG-624` | [F673] Five .config subdirectories are empty with no producer or consumer, and scripts/adopt_priority_repos.sh has no invoker | p3 | open | .config/waivers |  |
 | `BUG-625` | [F683] Neovim and JetBrains standards-integration files exist as two independently-maintained copies per editor, with real content differences | p3 | open | editors/neovim/lua/standards.lua:1 |  |
 | `BUG-626` | [F685] Root mkdocs.yml and the distributed docs/presets/mkdocs/mkdocs.yml template have diverged in branding and theme content | p3 | open | mkdocs.yml:1 |  |
+| `BUG-627` | [R1-25] Starlight preset cannot build: hero image src/assets/houston.webp does not exist | p1 | open | docs/presets/starlight/src/content/docs/index.mdx:8 |  |
+| `BUG-628` | [R2-11] ADR-0002's "Highest Standard Wins" lattice join has zero production callers; facets are printed, never resolved | p1 | open | docs/adr/0002-highest-standard-wins-lattice.md:12 |  |
+| `BUG-629` | [R2-12] ADR-0007's "universal builder compiles polyglot targets" — internal/builder never invokes a compiler and fabricates artifact paths | p1 | open | docs/adr/0007-universal-frameworks-org-and-demand-deduplication.md:20 |  |
+| `BUG-630` | [R1-1] VS Code extension entrypoint ./dist/extension.js can never be produced: no tsconfig.json, no bundler, no build in Makefile or CI | p2 | open | editors/vscode/package.json:16 |  |
+| `BUG-631` | [R1-19] hiss-audit's verification ladder orders scanners that do not exist and mislabels the one banned-call rule that does (HISS-08 vs implemented | p2 | open | .agents/skills/hiss-audit/SKILL.md:16 |  |
+| `BUG-632` | [R1-2] extension.ts imports vscode-languageclient at runtime but package.json lists it only in devDependencies, so a packaged .vsix cannot activate | p2 | open | editors/vscode/package.json:93 |  |
+| `BUG-633` | [R1-22] `project add <num> <url> --owner=...` and `hindsight sync <path> --bank=...` drop their flags — items land on the default org's board and fa | p2 | open | cmd/standardsctl/project.go:82 |  |
+| `BUG-634` | [R1-26] mkdocs preset pins a PyPI package that does not exist (mkdocs-sitemap-plugin): install fails and the name is squattable | p2 | open | docs/presets/mkdocs/requirements.txt:3 |  |
+| `BUG-635` | [R1-27] mkdocs preset's own `mkdocs build --strict` fails: nav lists three pages the preset does not ship | p2 | open | docs/presets/mkdocs/mkdocs.yml:63 |  |
+| `BUG-636` | [R1-28] SEOHead.astro is never rendered: no component override, no import -- the preset's advertised SEO component is dead code | p2 | open | docs/presets/starlight/src/components/SEOHead.astro:1 |  |
+| `BUG-637` | [R1-30] Starlight preset's Core Web Vitals stylesheet is inert: invalid property, selectors that match no Starlight markup, unused @font-face, dead | p2 | open | docs/presets/starlight/src/styles/custom.css:9 |  |
+| `BUG-638` | [R1-41] C4 shows .standards.yaml driving the gating engine; the pipeline hardcodes its limits and never loads the manifest | p2 | open | docs/architecture/c4-models.md:62 |  |
+| `BUG-639` | [R1-44] Published invariant tables are two invariants stale and their own index page misdescribes them | p2 | open | docs/wiki/HISS-Matrix.md:3 |  |
+| `BUG-640` | [R1-46] "SLSA Level 3" is advertised in three places but no provenance is ever generated and no signature is ever verified | p2 | open | .github/workflows/sbom.yml:16 |  |
+| `BUG-641` | [R1-47] sbom.yml uploads to a GitHub release that its own workflow never creates, racing a concurrent workflow | p2 | open | .github/workflows/sbom.yml:60 |  |
+| `BUG-642` | [R1-48] wiki-sync bootstrap branch leaves cwd in /tmp/wiki, so the relative cp after the if/else cannot resolve and the step dies under set -e | p2 | open | .github/workflows/wiki-sync.yml:47 |  |
+| `BUG-643` | [R1-49] wiki-sync mirror is additive only: pages deleted from docs/wiki are never removed from the wiki | p2 | open | .github/workflows/wiki-sync.yml:47 |  |
+| `BUG-644` | [R1-5] Helm chart's container image is published by no workflow: every install ends in ImagePullBackOff | p2 | open | deploy/helm/praetor/values.yaml:4 |  |
+| `BUG-645` | [R1-52] DCO 1.1 gate is skipped entirely on push, so direct commits to main and lts-* bypass it | p2 | open | .github/workflows/compliance.yml:41 |  |
+| `BUG-646` | [R1-6] ServiceAccount name is a fixed literal, so a second release collides and create=false dangles | p2 | open | deploy/helm/praetor/templates/serviceaccount.yaml:5 |  |
+| `BUG-647` | [R2-1] Optimizer output is written into a value copy and is never consumed by anything | p2 | open | internal/builder/builder.go:127 |  |
+| `BUG-648` | [R2-13] docs/wiki "Multi-Forge Federation": GitLab and Gitea drivers are no-op stubs that return fabricated success | p2 | open | docs/wiki/API-Reference.md:21 |  |
+| `BUG-649` | [R2-17] Wiki and C4 docs advertise AST / gocyclo / gitleaks / semgrep enforcement for HISS rules implemented as substring greps or not at all | p2 | open | docs/architecture/c4-models.md:82 |  |
+| `BUG-650` | [R2-2] NativeGPUConfig / GenerateMesonArgs / GenerateCMakeArgs have no non-test caller; the native-gpu target ignores them entirely | p2 | open | internal/builder/native.go:34 |  |
+| `BUG-651` | [R2-22] Every archetype's devcontainer_features list is contradicted by internal/devcontainer, which hardcodes the Go feature for all repos | p2 | open | internal/devcontainer/devcontainer.go:110 |  |
+| `BUG-652` | [R2-23] HISS-18's manifest switch `overrides.ci` has no struct field and internal/cifilter never loads the manifest | p2 | open | .standards.yaml:45 |  |
+| `BUG-653` | [R2-31] Prompt-injection neutralizer is 100% dead code while five untrusted-text paths feed agent context verbatim | p2 | open | internal/lockdown/sanitize.go:119 |  |
+| `BUG-654` | [R2-32] docdistill actively promotes attacker-chosen imperative lines into the agent-served "Invariants & Gotchas" section | p2 | open | internal/docdistill/compressor.go:160 |  |
+| `BUG-655` | [R2-4] Config writes follow symlinks (no O_NOFOLLOW / lstat), so a repo-controlled symlink redirects the write outside the tree | p2 | open | internal/editor/editor.go:844 |  |
+| `BUG-656` | [R2-6] JetBrains inspection profile enables 9 inspection classes that no plugin in this repo implements | p2 | open | editors/jetbrains/inspectionProfiles/standards.xml:6 |  |
+| `BUG-657` | [R2-8] AGENTS.md:29 advertises HISS-15 enforcement as a "CI coverage gate"; no coverage instrumentation exists in any workflow, Makefile target, or | p2 | open | AGENTS.md:29 |  |
+| `BUG-658` | [R2-9] The entire fuzz battery is unreachable from any gate, has no persisted seed corpus, and every one of its 8 bodies asserts only "did not pani | p2 | open | Makefile:28 |  |
+| `BUG-659` | [R1-10] No .dockerignore: the "hermetic builder" COPYs .git, .workingdir and agent configs into the build stage | p3 | open | build/package/Dockerfile:19 |  |
+| `BUG-660` | [R1-11] deploy/k8s/kustomization.yaml is orphaned, and its commonLabels would mutate the immutable Deployment selector | p3 | open | deploy/k8s/kustomization.yaml:6 |  |
+| `BUG-661` | [R1-12] Pod gets a ServiceAccount token it cannot use: the binary has zero Kubernetes dependencies | p3 | open | deploy/helm/praetor/templates/deployment.yaml:25 |  |
+| `BUG-662` | [R1-13] standards-sync step 4 invokes `baseline --verify`, a flag the baseline FlagSet rejects; no ratchet check exists at all | p3 | open | .agents/skills/standards-sync/SKILL.md:43 |  |
+| `BUG-663` | [R1-14] All 11 .agents/skills/**/SKILL.md are orphaned: no loader, no CLI, no audit gate, no plugin manifest entry | p3 | open | .agents/skills/adhd-format/SKILL.md:1 |  |
+| `BUG-664` | [R1-15] infocard-generate makes every generated infocard assert four enforcement tools that do not exist in the repo | p3 | open | .agents/skills/infocard-generate/SKILL.md:32 |  |
+| `BUG-665` | [R1-16] infocard-generate's mandated template is a broken nested fence: the closing ``` at :51 ends the template early and :60 opens an unterminated | p3 | open | .agents/skills/infocard-generate/SKILL.md:51 |  |
+| `BUG-666` | [R1-17] seo-audit's step 1 cannot pass for this repo: the JSON-LD overrides live in docs/presets and mkdocs.yml never sets theme.custom_dir | p3 | open | .agents/skills/seo-audit/SKILL.md:13 |  |
+| `BUG-667` | [R1-18] seo-audit declares dateModified a required TechArticle field, but ValidateTechArticle accepts it empty and both shipped presets omit it | p3 | open | .agents/skills/seo-audit/SKILL.md:15 |  |
+| `BUG-668` | [R1-20] adr-scaffold's template and checklist diverge from docs/adr/README.md's own lifecycle, receipt rule and index/nav registration | p3 | open | .agents/skills/adr-scaffold/SKILL.md:24 |  |
+| `BUG-669` | [R1-21] adr-scaffold prompts authors for "HISS-01 through HISS-16" although HISS-17 and HISS-18 are now declared invariants | p3 | open | .agents/skills/adr-scaffold/SKILL.md:27 |  |
+| `BUG-670` | [R1-23] praetor-adopt composite action: `dry-run: false` (its own default) still produces a dry-run dogfood, because standardsctl's dogfood --dry-ru | p3 | open | .github/actions/praetor-adopt/action.yml:60 |  |
+| `BUG-671` | [R1-24] praetor-adopt composite action: `record-baseline: false` is inert — adopt's --record-baseline defaults to true, so the opt-out never reaches | p3 | open | .github/actions/praetor-adopt/action.yml:73 |  |
+| `BUG-672` | [R1-29] Both presets emit canonical URLs and sitemaps for standards.cordana.ai, a domain that does not resolve | p3 | open | docs/presets/starlight/astro.config.mjs:7 |  |
+| `BUG-673` | [R1-3] Contributed standards.mcp.* settings are never read by the extension, and standards.lsp.trace.server is written under a key the language cli | p3 | open | editors/vscode/package.json:65 |  |
+| `BUG-674` | [R1-31] Preset dependencies are unpinned with no lockfile and no CI build, in two ecosystems the repo's pinning policy does not cover | p3 | open | docs/presets/starlight/package.json:13 |  |
+| `BUG-675` | [R1-32] Starlight content config uses the pre-0.32 collection shape: no loader: docsLoader() | p3 | open | docs/presets/starlight/src/content/config.ts:5 |  |
+| `BUG-676` | [R1-33] Starlight sidebar autogenerates from directories that do not exist and the hero CTA links to a 404 | p3 | open | docs/presets/starlight/astro.config.mjs:78 |  |
+| `BUG-677` | [R1-38] C4 container diagram claims the HISS scanner emits SARIF; it emits no SARIF at all | p3 | open | docs/architecture/c4-models.md:69 |  |
+| `BUG-678` | [R1-39] C4 lists a distroless OCI image as a generated projection, but no workflow builds or publishes any image | p3 | open | docs/architecture/c4-models.md:59 |  |
+| `BUG-679` | [R1-4] Unused `path` import in extension.ts breaks the zero-warnings invariant and fails tsc under noUnusedLocals | p3 | open | editors/vscode/src/extension.ts:1 |  |
+| `BUG-680` | [R1-42] Wiki front page inverts the compile-context data flow (.standards.yaml -> compile-context -> AGENTS.md) | p3 | open | docs/wiki/Home.md:9 |  |
+| `BUG-681` | [R1-43] Verification ladder's fifth layer (cordana-standards[bot] admission gate) does not exist | p3 | open | docs/wiki/HISS-Matrix.md:36 |  |
+| `BUG-682` | [R1-45] HISS-Matrix.md is hand-written into a generator-owned directory and is unlinked from the generated index | p3 | open | docs/wiki/HISS-Matrix.md:1 |  |
+| `BUG-683` | [R1-50] SBOMs attached to the release describe the source tree, not the released binaries | p3 | open | .github/workflows/sbom.yml:39 |  |
+| `BUG-684` | [R1-51] supply_chain policy keys (slsa_level, enforce_cosign, require_sbom) are parsed, merged and printed but never enforced by any code path | p3 | open | .standards.yaml:42 |  |
+| `BUG-685` | [R1-53] The "Licensing Verification Gate" cannot detect the Apache/EUPL license contradiction it is named for | p3 | open | .github/workflows/compliance.yml:57 |  |
+| `BUG-686` | [R1-54] goreleaser uses archives.format / format_overrides.format, deprecated since goreleaser v2.6, against a floating '~> v2' pin | p3 | open | .goreleaser.yaml:59 |  |
+| `BUG-687` | [R1-55] The release archives the whole pipeline exists to produce have no documented consumer | p3 | open | .goreleaser.yaml:63 |  |
+| `BUG-688` | [R1-56] topology clean accepts a positional dev-root, after which flag.Parse stops and --dry-run=false is silently ignored | p3 | open | cmd/standardsctl/topology.go:108 |  |
+| `BUG-689` | [R1-7] ArgoCD Application auto-syncs an unpinned git HEAD with prune and selfHeal | p3 | open | deploy/k8s/application.yaml:12 |  |
+| `BUG-690` | [R1-8] Three values.yaml keys are read by no template (imagePullSecrets, nameOverride, fullnameOverride) | p3 | open | deploy/helm/praetor/values.yaml:8 |  |
+| `BUG-691` | [R2-10] The seo-audit skill's only "run the validator" instruction is `go test ./internal/seo/...`, which re-validates hardcoded fixtures and never | p3 | open | .agents/skills/seo-audit/SKILL.md:19 |  |
+| `BUG-692` | [R2-14] ADR-0003's "100% test coverage" on the canonical engine is false (measured 57.1% in internal/config) | p3 | open | docs/adr/0003-canonical-engine-and-reverse-dogfooding-topology.md:18 |  |
+| `BUG-693` | [R2-15] ADR-0006's 4-tier runner matrix routes no CI job: Tier 3 key absent, every workflow hardcodes ubuntu-latest | p3 | open | docs/adr/0006-hierarchical-multi-tier-runner-matrix.md:14 |  |
+| `BUG-694` | [R2-16] ADR-0007 clause 5: the framework asset compiler has no CLI entry point | p3 | open | docs/adr/0007-universal-frameworks-org-and-demand-deduplication.md:22 |  |
+| `BUG-695` | [R2-18] ADR-0001 claims a single canonical source for all agent instructions, but names a vendor with no compiler target and coexists with hand-main | p3 | open | docs/adr/0001-universal-context-transpiler.md:7 |  |
+| `BUG-696` | [R2-19] Four archetypes declare complexity/supply-chain thresholds WEAKER than the fleet-wide HISS-04/HISS-11 invariants, and the lattice has no flo | p3 | open | .config/archetypes/app-service.yaml:7 |  |
+| `BUG-697` | [R2-20] ADR-0002 lattice dimensions `memory` and `error unwraps` have no field in ResolvedPolicy and no rule in Join(), so two archetype files decla | p3 | open | internal/config/config.go:60 |  |
+| `BUG-698` | [R2-21] Facet id -> filename mapping is undefined: three different transformations across five facets, none matching the documented `{facet-id}.yaml | p3 | open | docs/guides/archetype-authoring.md:49 |  |
+| `BUG-699` | [R2-24] routing.yaml mislabels two local open-weights models as anthropic/openai, defeating the orthogonal-auditor independence rule | p3 | open | .config/models/routing.yaml:122 |  |
+| `BUG-700` | [R2-25] Two lattice entries are orphans: closed-private.yaml and facets/perf-hotpath.yaml ids appear nowhere else in the repository | p3 | open | .config/archetypes/closed-private.yaml:1 |  |
+| `BUG-701` | [R2-26] Eleven linters declared by archetypes exist nowhere else in the repo; for container-image and gitops-infra the entire declared linter set is | p3 | open | .config/archetypes/gitops-infra.yaml:23 |  |
+| `BUG-702` | [R2-28] routing.yaml target_tasks (16 entries) and two of three governance keys are parsed and regenerated but never read by any selection logic | p3 | open | .config/models/routing.yaml:5 |  |
+| `BUG-703` | [R2-29] template-seed archetype is byte-for-byte config.DefaultPolicy(): under the min/max lattice it can only ever contribute one extra linter | p3 | open | .config/archetypes/template-seed.yaml:6 |  |
+| `BUG-704` | [R2-3] cfg.OutputDir from the YAML manifest is passed to MkdirAll unvalidated | p3 | open | internal/builder/builder.go:121 |  |
+| `BUG-705` | [R2-30] Facet descriptions cite HISS-03 and HISS-14, which are absent from the canonical AGENTS.md invariant table and from .standards.yaml | p3 | open | .config/archetypes/facets/perf-hotpath.yaml:3 |  |
+| `BUG-706` | [R2-33] Untrusted clone URL is passed positionally to git with no `--` separator (option and ext:: transport injection) | p3 | open | internal/dogfood/remote.go:69 |  |
+| `BUG-707` | [R2-34] sanitize.go's pattern set is exact-ASCII and phrase-literal: trivially evaded if it were ever wired | p3 | open | internal/lockdown/sanitize.go:17 |  |
+| `BUG-708` | [R2-5] `editors generate` reports files it deliberately skipped as successfully generated | p3 | open | cmd/standardsctl/editors.go:37 |  |
+| `BUG-709` | [R2-7] Three VS Code configuration keys are declared and written into .vscode/settings.json but read by nothing | p3 | open | editors/vscode/package.json:65 |  |
+| `BUG-710` | [R1-34] Both presets ship machine-readable Apache-2.0 license assertions that downstream copies inherit | p3 | open | docs/presets/starlight/astro.config.mjs:66 |  |
+| `BUG-711` | [R1-9] docker/dev/Dockerfile's "< 250MB" header claim is false by a wide margin | p3 | open | docker/dev/Dockerfile:2 |  |
+| `BUG-712` | [R2-27] Archetype top-level keys id/name/description/runtime match no Go struct, and ResolvedPolicy's untagged fields would not accept branch_protec | p3 | open | internal/config/config.go:59 |  |
