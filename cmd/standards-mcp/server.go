@@ -134,7 +134,7 @@ func NewServerWithOptions(opts ServerOptions) (*Server, error) {
 	return s, nil
 }
 
-// registerStandardTools registers the 13 standards MCP tools.
+// registerStandardTools registers the standards MCP tools.
 func (s *Server) registerStandardTools() error {
 	tools := []func() (mcp.Tool, error){
 		s.createAuditTool,
@@ -150,6 +150,7 @@ func (s *Server) registerStandardTools() error {
 		s.createVersionAuditTool,
 		s.createMemoryRecallTool,
 		s.createHindsightOptimizeTool,
+		s.createTranscriptIngestTool,
 	}
 
 	limit := len(tools)

@@ -37,6 +37,8 @@ func runHarvest(args []string) error {
 		return runHarvestFleet(args[1:])
 	case "memory":
 		return runHarvestMemory(ctx, args[1:])
+	case "transcript":
+		return runHarvestTranscript(ctx, args[1:])
 	case "onboard":
 		return runHarvestOnboard(ctx, args[1:])
 	default:
@@ -53,6 +55,7 @@ func printHarvestUsage() {
 	fmt.Println("  skills [--gemini=path] [--dedupe] [--dry-run] Audit and deduplicate agent skills")
 	fmt.Println("  fleet                                       Display multi-org remote fleet topology")
 	fmt.Println("  memory [--brain=path]                       Extract agent memory insights from transcripts")
+	fmt.Println("  transcript --source=path --cache=dir       Ingest a bounded page of observed transcript events; emit JSON metadata and resume cursor")
 	fmt.Println("  onboard [--repo=path] [--dry-run]           Scaffold governance and harnesses into repos")
 }
 
