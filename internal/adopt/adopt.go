@@ -60,6 +60,10 @@ type AdoptOptions struct {
 	Force             bool     `json:"force"`
 	RecordBaseline    bool     `json:"record_baseline"`
 	SkipGitValidation bool     `json:"skip_git_validation"`
+	// SkipHookActivation leaves generated hooks inactive in disposable analysis clones.
+	SkipHookActivation bool `json:"skip_hook_activation,omitempty"`
+	// LockSourceRoot selects the verified Praetor bundle used for new lock pins.
+	LockSourceRoot string `json:"lock_source_root,omitempty"`
 }
 
 // ActionDetail describes a specific planned or executed action on a target file.
@@ -305,18 +309,6 @@ func reconcileManifest(ctx context.Context, s *adoptSession) error {
 	}
 	s.report.recordCreated(manifestFile, fmt.Sprintf("Scaffolded standards manifest (Owner: %s, Profile: %s)", owner, s.arch))
 	return nil
-}
-
-func reconcileLockfile(_ context.Context, s *adoptSession) error {
-	_, err := s.scaffoldFile(scaffold{
-		rel:      lockFile,
-		perm:     filePerm,
-		content:  []byte("# SemVer lockfile\nversion: 1\npinned_version: \"v1.0.0\"\n"),
-		force:    true,
-		created:  "Pinned SemVer lockfile to v1.0.0",
-		verified: "SemVer lockfile verified present",
-	})
-	return err
 }
 
 // reconcileBaseline records the legacy-debt baseline. A scan that does not complete is

@@ -212,7 +212,7 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	}); err != nil {
 		return err
 	}
-	if s.opts.DryRun {
+	if s.opts.DryRun || s.opts.SkipHookActivation {
 		return nil
 	}
 	return s.activateGitHooks(ctx, lefthookWritten)

@@ -194,7 +194,7 @@ func auditWorkstationSkills(ctx context.Context, homeDir string, report *Dogfood
 
 // resolveAuditHome returns the home directory whose skills should be audited.
 func resolveAuditHome(opts DogfoodOptions) (string, error) {
-	if opts.SkipWorkstationAudit || opts.SkipWorkstationSkills {
+	if opts.SkipWorkstationAudit || opts.SkipWorkstationSkills || opts.BenchmarkPopular || len(opts.RemoteRepos) > 0 {
 		return "", nil
 	}
 	if opts.HomeDir != "" {

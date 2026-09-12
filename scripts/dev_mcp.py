@@ -73,8 +73,11 @@ def build(directory):
     return binary, metadata
 
 
-def server_command(binary, root):
-    return [str(binary), "--transport", "stdio", "--root", str(root)]
+def server_command(binary, root, allow_remote=False):
+    command = [str(binary), "--transport", "stdio", "--root", str(root)]
+    if allow_remote:
+        command.append("--allow-remote-benchmarks")
+    return command
 
 
 def check_identity(client, metadata):
@@ -87,14 +90,21 @@ def failed(response):
     return "error" in response or response.get("result", {}).get("isError", False)
 
 
-def direct_call(binary, root, metadata, name, arguments):
-    with RPCClient(server_command(binary, root)) as client:
+def direct_call(binary, root, metadata, name, arguments, allow_remote=False, timeout=30):
+    with RPCClient(server_command(binary, root, allow_remote), timeout=timeout) as client:
         check_identity(client, metadata)
         response = client.call(name, arguments)
     if source_hash() != metadata["source_sha256"]:
         raise RuntimeError("Go sources changed during the call; rerun against the new build")
     print(json.dumps({"provenance": metadata, "response": response}, indent=2))
     return 1 if failed(response) else 0
+
+
+def rpc_timeout(value):
+    seconds = int(value)
+    if not 1 <= seconds <= 300:
+        raise argparse.ArgumentTypeError("RPC timeout must be 1..300 seconds")
+    return seconds
 
 
 def parse_args():
@@ -104,10 +114,16 @@ def parse_args():
         child = actions.add_parser(action)
         child.add_argument("--root", type=Path, default=ROOT,
                            help="Confined server root (default: this checkout)")
+        child.add_argument("--allow-remote-benchmarks", action="store_true",
+                           help="Explicitly enable curated public repository clones")
         if action == "call":
+            child.add_argument("--timeout", type=rpc_timeout, default=30,
+                               metavar="SECONDS", help="RPC deadline, 1..300 seconds (default: 30)")
             child.add_argument("tool", help="Name from the MCP tools/list response")
             child.add_argument("arguments", help="Tool arguments as a JSON object")
     args = parser.parse_args()
+    if args.action == "probe" and args.allow_remote_benchmarks:
+        parser.error("--allow-remote-benchmarks applies to serve/call only")
     args.root = args.root.resolve(strict=True)
     if not args.root.is_dir():
         parser.error("--root must name a directory")
@@ -126,10 +142,11 @@ def main():
         binary, metadata = build(Path(directory))
         if args.action == "serve":
             print(json.dumps({"dev_mcp": metadata}), file=sys.stderr, flush=True)
-            return subprocess.run(server_command(binary, args.root),
+            return subprocess.run(server_command(binary, args.root, args.allow_remote_benchmarks),
                                   timeout=SESSION_TIMEOUT, check=False).returncode
         if args.action == "call":
-            return direct_call(binary, args.root, metadata, args.tool, args.arguments)
+            return direct_call(binary, args.root, metadata, args.tool, args.arguments,
+                               args.allow_remote_benchmarks, args.timeout)
         from dev_mcp_probe import probe
         report = probe(binary, args.root, metadata)
         if source_hash() != metadata["source_sha256"]:
