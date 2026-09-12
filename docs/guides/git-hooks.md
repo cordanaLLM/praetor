@@ -39,6 +39,20 @@ scope and skipped by per-file linters. Paths are read with NUL delimiters and
 passed as process arguments, including filenames containing spaces or shell text.
 A missing required tool or a failed subprocess blocks the operation.
 
+The entire `/.workingdir/` directory is private, Git-ignored workstation state.
+Git metadata checks reject staged additions and changes beneath it, including
+forced staging and submodule entries, before exporting the index. Push checks
+inspect every outgoing commit, so adding a private file and removing it in a later
+commit still blocks publication. The history scan is bounded to 1,000 commits;
+an unknown baseline selects the full reachable history, and exhaustion fails.
+Removing previously tracked entries is allowed and preserves local
+files when done with `git rm --cached`. Previously published content remains in Git
+history. Put cluster connection guides and backend notes in this ignored directory;
+publish only reviewed, sanitized documentation under `docs/`.
+The root `.dockerignore` also excludes this directory and Git history from local
+container builds; Docker applies its [build-context ignore rules](https://docs.docker.com/build/concepts/context/#dockerignore-files)
+separately from Git.
+
 ## Remote checkpoints
 
 The owner approved a separate `checkpoint/*` namespace for unfinished audit work.
@@ -80,8 +94,10 @@ enforced. The full gate and CI remain the final integration checks.
 
 Use `git commit -s -m 'fix(scope): describe the change'` after reviewing your work.
 The hook does not create a DCO attestation on your behalf. Run the required
-`praetorctl state sync .` explicitly at turn end and stage intended ledger changes
-as a separate action. Post hooks cannot undo an operation that already succeeded;
+`praetorctl state sync .` explicitly at turn end; keep the ledger local and untracked.
+`make state-audit` initializes a missing ledger in a fresh checkout, then audits it;
+existing incomplete, malformed, or P0-blocked state still fails. Post hooks cannot
+undo an operation that already succeeded;
 resolve any reported refresh failure before continuing.
 
 Useful local commands:

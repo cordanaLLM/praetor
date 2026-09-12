@@ -67,17 +67,6 @@ func reconcileMakefile(ctx context.Context, s *adoptSession) error {
 	return nil
 }
 
-func reconcileGitIgnore(_ context.Context, s *adoptSession) error {
-	_, err := s.scaffoldFile(scaffold{
-		rel:      gitIgnoreFile,
-		perm:     filePerm,
-		content:  []byte("bin/\n*.test\n*.out\n.DS_Store\n"),
-		created:  "Created default .gitignore for build artifacts",
-		verified: "Existing .gitignore verified present",
-	})
-	return err
-}
-
 func reconcileContributing(_ context.Context, s *adoptSession) error {
 	_, err := s.scaffoldFile(scaffold{
 		rel:      contributingFile,

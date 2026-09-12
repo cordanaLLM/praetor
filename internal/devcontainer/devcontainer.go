@@ -40,11 +40,13 @@ type VSCodeCustomization struct {
 
 // Customizations encapsulates vendor/IDE specific configurations.
 type Customizations struct {
-	VSCode *VSCodeCustomization `json:"vscode,omitempty"`
+	Praetor *PraetorCustomization `json:"praetor,omitempty"`
+	VSCode  *VSCodeCustomization  `json:"vscode,omitempty"`
 }
 
 // DevContainer represents the standardized .devcontainer/devcontainer.json schema.
 type DevContainer struct {
+	Image             string                 `json:"image,omitempty"`
 	Name              string                 `json:"name"`
 	Build             *BuildConfig           `json:"build,omitempty"`
 	Features          map[string]interface{} `json:"features,omitempty"`
@@ -54,7 +56,8 @@ type DevContainer struct {
 	ForwardPorts      []int                  `json:"forwardPorts,omitempty"`
 }
 
-// Synthesize produces a DevContainer configuration from a Manifest.
+// Synthesize produces the legacy profile baseline for checking existing configs.
+// New portable generation uses PrepareBundle with explicit bootstrap inputs.
 func Synthesize(m *config.Manifest) (*DevContainer, error) {
 	if m == nil {
 		return nil, errors.New("manifest cannot be nil")
@@ -71,7 +74,8 @@ func Synthesize(m *config.Manifest) (*DevContainer, error) {
 	return SynthesizeFromProfiles(repoName, m.Profiles, m.Facets)
 }
 
-// SynthesizeFromProfiles generates a DevContainer using declared profiles and facets.
+// SynthesizeFromProfiles returns the legacy profile baseline. New writers must
+// use PrepareBundle so adopted repositories receive complete bootstrap artifacts.
 func SynthesizeFromProfiles(name string, profiles []string, facets []string) (*DevContainer, error) {
 	containerName := strings.TrimSpace(name)
 	if containerName == "" {
@@ -265,6 +269,10 @@ func WriteDevContainer(ctx context.Context, path string, dc *DevContainer) error
 	default:
 	}
 
+	if (&Bundle{Config: dc}).Spec() != nil {
+		return errors.New("recorded bootstrap configs require WriteBundle and exact companions")
+	}
+
 	data, err := Render(dc)
 	if err != nil {
 		return err
@@ -313,9 +321,12 @@ func LoadDevContainer(ctx context.Context, path string) (*DevContainer, error) {
 
 // Verify validates that the devcontainer file at path matches expected configuration.
 func Verify(ctx context.Context, path string, expected *DevContainer) error {
-	actual, err := LoadDevContainer(ctx, path)
+	raw, actual, err := readBootstrapConfig(ctx, path)
 	if err != nil {
 		return err
+	}
+	if (&Bundle{Config: actual}).Spec() != nil {
+		return verifyRecordedBootstrap(ctx, path, raw, actual, expected)
 	}
 
 	actualBytes, err := Render(actual)
@@ -332,5 +343,5 @@ func Verify(ctx context.Context, path string, expected *DevContainer) error {
 		return fmt.Errorf("devcontainer at %s does not match expected configuration", path)
 	}
 
-	return nil
+	return verifyLegacyBootstrapInputs(ctx, path, actual)
 }

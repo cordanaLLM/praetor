@@ -56,7 +56,7 @@ func printUsage() {
 	fmt.Println("  issue              Reconcile cross-repo dependencies and unblock ready tasks")
 	fmt.Println("  milestone          Manage local and remote GitHub milestones and progress")
 	fmt.Println("  project            Manage GitHub Projects v2 boards and track epic issues")
-	fmt.Println("  build              Compile polyglot targets with universal builder and pre-build optimizer")
+	fmt.Println("  build              Request a polyglot build (execution backends currently unavailable)")
 	fmt.Println("  ci                 Analyze git diff and filter CI verification gates")
 	fmt.Println("  topology           Audit and clean workstation directory topology (DEV-01 to DEV-05)")
 	fmt.Println("  version            Print CLI version information")

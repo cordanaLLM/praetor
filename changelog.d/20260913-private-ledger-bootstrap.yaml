@@ -1,0 +1,3 @@
+type: changed
+title: Bootstrap absent private ledgers for verification and exclude adoption state from Git
+breaking: true

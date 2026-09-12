@@ -47,7 +47,7 @@ func runState(args []string) error {
 func printStateUsage() {
 	fmt.Println("Usage: praetorctl state <subcommand> [args]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  init [dir|--dir=.]             Initialize .workingdir/ session state structure")
+	fmt.Println("  init [dir|--dir=.] [--if-absent] Initialize private state; --if-absent preserves all existing ledgers")
 	fmt.Println("  sync [dir|--dir=.] [--log=\"message\"] Synchronize git & working state into STATE.md")
 	fmt.Println("  status [dir|--dir=.]           Inspect active session state (read-only; never writes)")
 	fmt.Println("  audit [dir|--dir=.]            Audit .workingdir/ for required files and P0 blockers")
@@ -85,15 +85,34 @@ func stateDir(dirFlag string, rest []string, index int) string {
 }
 
 func runStateInit(args []string) error {
-	dirFlag, rest, err := stateArgs("state init", args, nil)
+	var ifAbsent *bool
+	dirFlag, rest, err := stateArgs("state init", args, func(fs *flag.FlagSet) {
+		ifAbsent = fs.Bool("if-absent", false, "Initialize only when .workingdir is entirely absent; never repair existing ledgers")
+	})
 	if err != nil {
 		return err
 	}
 	dir := stateDir(dirFlag, rest, 0)
+	if *ifAbsent {
+		return bootstrapState(dir)
+	}
 	if err := state.InitWorkingDir(dir); err != nil {
 		return fmt.Errorf("state init failed: %w", err)
 	}
 	fmt.Printf("Initialized %s/ in %s\n", state.WorkingDirName, dir)
+	return nil
+}
+
+func bootstrapState(dir string) error {
+	created, err := state.InitWorkingDirIfAbsentContext(context.Background(), dir)
+	if err != nil {
+		return fmt.Errorf("state bootstrap failed: %w", err)
+	}
+	if created {
+		fmt.Printf("Initialized private %s/ in %s; audit still required\n", state.WorkingDirName, dir)
+	} else {
+		fmt.Printf("Existing %s/ left unchanged in %s; audit still required\n", state.WorkingDirName, dir)
+	}
 	return nil
 }
 

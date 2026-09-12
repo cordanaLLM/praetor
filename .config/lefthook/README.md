@@ -42,3 +42,9 @@ See [upstream agent integration](https://lefthook.dev/configuration/ai/) and the
 
 No `stage_fixed` jobs are used. Checking exported index content avoids changing
 partially staged hunks while retaining the formatting gate.
+
+The Git metadata gate rejects additions and changes under private `/.workingdir/`,
+including forced staging, submodule entries and private content added then removed
+within outgoing history. Removing legacy tracked entries is allowed. Adopters
+must keep this whole directory ignored and publish reviewed documentation under
+`docs/` instead.

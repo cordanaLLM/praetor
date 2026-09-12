@@ -151,9 +151,8 @@ without triggering unnecessary heavy source checks (HISS-18).
 
 ## References
 
-- [Resume state](../../.workingdir/AUDIT_RESUME.md)
-- [Accepted owner decisions](../../.workingdir/QUESTIONS.md)
-- [Config and structural workstreams](../../.workingdir/BACKLOG.md)
+- Resume state, accepted owner decisions and workstream tracking are retained in
+  the private, Git-ignored `.workingdir/` ledger.
 - [ADR-0002: Strictness lattice](0002-highest-standard-wins-lattice.md)
 - [ADR-0007: Demand deduplication](0007-universal-frameworks-org-and-demand-deduplication.md)
 - [ADR-0008: Provider integration](0008-spec-driven-provider-integration.md)

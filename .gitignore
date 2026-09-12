@@ -48,14 +48,9 @@ coverage.html
 extracted_plan.txt
 plan_clean.md
 all_github_repos.json
-# Local working directory evidence and scratch
-.workingdir/evidence/
-.workingdir/docs/
-.workingdir/memory/
-.workingdir/*.tmp
-.workingdir/cadence.json
-# Stable advisory-lock inode; pending ledger writes remain visible for recovery.
-.workingdir/.bugs.lock
+# Private workstation state, cluster connection guides, memory and scratch.
+# Publish explicitly reviewed, sanitized documentation under docs/ instead.
+/.workingdir/
 
 # Workflow agent worktrees
 /.claude/worktrees/

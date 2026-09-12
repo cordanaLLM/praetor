@@ -13,7 +13,7 @@ func runBuild(args []string) error {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	configPath := fs.String("config", ".framework-build.yaml", "Path to .framework-build.yaml manifest")
 	target := fs.String("target", "all", "Specific target to build (or 'all')")
-	optimize := fs.Bool("optimize", true, "Enable pre-build capability pruning and symbol stripping")
+	optimize := fs.Bool("optimize", true, "Request optimization; execution backends are currently unavailable")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

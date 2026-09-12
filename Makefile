@@ -73,7 +73,11 @@ sec:
 flavor-audit:
 	go run ./cmd/standardsctl flavor audit .
 
-state-audit:
+.PHONY: state-init
+state-init:
+	go run ./cmd/standardsctl state init --if-absent .
+
+state-audit: state-init
 	go run ./cmd/standardsctl state audit .
 
 dedupe:
@@ -92,7 +96,7 @@ notebook-test:
 hooks:
 	@lefthook install
 
-setup: build hooks compile-context
+setup: build hooks compile-context state-audit
 
 # Development connections always compile this checkout; artifacts live in temp.
 .PHONY: mcp-dev mcp-probe mcp-test

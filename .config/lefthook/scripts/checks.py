@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from common import HookError, clean_env, paths, present_files, run
+from privacy import PRIVATE_STATE_ERROR
 
 GO_CONFIG = {"go.mod", "go.sum", "go.work", "go.work.sum", "Makefile",
              ".golangci.yml", ".gosec.json"}
@@ -59,6 +60,8 @@ def text_checks(directory, names):
 
 def file_checks(directory, names):
     files = present_files(directory, names)
+    if any(name == ".workingdir" or name.startswith(".workingdir/") for name in files):
+        raise HookError(PRIVATE_STATE_ERROR)
     text_checks(directory, files)
     gofiles = [name for name in files if name.endswith(".go")]
     if gofiles:

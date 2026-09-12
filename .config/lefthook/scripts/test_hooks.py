@@ -19,6 +19,7 @@ from common import HookError, run
 from checks import (go_packages, source_checks, governance_commands, context_changed,
                     audit_scope, local_package_patterns, checkpoint_checks)
 from hooks import push_updates, new_branch_base, pre_push, push_check_mode
+from privacy import check_private_history, check_private_index
 import sandbox
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -42,6 +43,9 @@ class GitHooks(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="praetor-hook-test-")
         self.addCleanup(self.temp.cleanup)
         self.repo = Path(self.temp.name) / "repo"
+        self.initialize_repo()
+
+    def initialize_repo(self, initial_files=()):
         self.repo.mkdir()
         command(self.repo, "git", "init", "-q", "-b", "main")
         command(self.repo, "git", "config", "user.name", "Hook Test")
@@ -53,6 +57,8 @@ class GitHooks(unittest.TestCase):
         (self.repo / ".config/lefthook/scripts/test_hooks.py").write_text(
             'print("fixture hook self-tests passed")\n')
         (self.repo / "README.md").write_text("# Fixture\n")
+        for name, content in initial_files:
+            self.write(name, content, stage=False)
         command(self.repo, "git", "add", ".")
         command(self.repo, "git", "commit", "-q", "-s", "-m", "chore: initialize fixture")
         command(self.repo, "lefthook", "install")
@@ -89,6 +95,195 @@ class GitHooks(unittest.TestCase):
         result = self.hook()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(b"invalid syntax", result.stdout + result.stderr)
+
+    def test_forced_private_state_staging_blocks_commit_without_reading_content(self):
+        self.write(".gitignore", "/.workingdir/\n")
+        self.write(".workingdir/docs/cluster.json", "not JSON: PRIVATE_FIXTURE\n", stage=False)
+        command(self.repo, "git", "add", "-f", "--", ".workingdir/docs/cluster.json")
+        before = command(self.repo, "git", "rev-parse", "HEAD").stdout
+        result = command(self.repo, "git", "commit", "-s", "-m", "docs: accidental private guide", ok=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"Private .workingdir content must stay untracked", result.stdout + result.stderr)
+        self.assertNotIn(b"PRIVATE_FIXTURE", result.stdout + result.stderr)
+        self.assertEqual(before, command(self.repo, "git", "rev-parse", "HEAD").stdout)
+        self.assertEqual((self.repo / ".workingdir/docs/cluster.json").read_text(),
+                         "not JSON: PRIVATE_FIXTURE\n")
+
+    def test_untracking_legacy_private_state_keeps_local_file_and_allows_commit(self):
+        self.repo = Path(self.temp.name) / "legacy"
+        self.initialize_repo(((".workingdir/docs/cluster.md", "private fixture\n"),))
+        self.write(".gitignore", "/.workingdir/\n")
+        command(self.repo, "git", "rm", "--cached", "--", ".workingdir/docs/cluster.md")
+        result = command(self.repo, "git", "commit", "-s", "-m", "chore: keep state private")
+        self.assertIn(b"staged-checks", result.stdout + result.stderr)
+        self.assertEqual(command(self.repo, "git", "ls-files", ".workingdir").stdout, b"")
+        self.assertEqual((self.repo / ".workingdir/docs/cluster.md").read_text(), "private fixture\n")
+
+    def test_private_gitlinks_block_commit_before_snapshot_export(self):
+        for index, name in enumerate((".workingdir", ".workingdir/submodule")):
+            with self.subTest(name=name):
+                self.repo = Path(self.temp.name) / f"gitlink-{index}"
+                self.initialize_repo()
+                head = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+                command(self.repo, "git", "clone", "-q", str(self.repo), str(self.repo / name))
+                command(self.repo, "git", "update-index", "--add", "--cacheinfo", f"160000,{head},{name}")
+                result = command(self.repo, "git", "commit", "-s", "-m", "chore: private gitlink", ok=False)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(b"Private .workingdir content must stay untracked", result.stdout + result.stderr)
+                self.assertEqual(command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip(), head)
+
+    def incoming_private_history(self, legacy=False, gitlink=False):
+        # Simulate commits received from a plain repository that never installed
+        # Praetor hooks. The receiving fixture keeps all real hooks enabled.
+        external = Path(self.temp.name) / "external"
+        remote = Path(self.temp.name) / "remote.git"
+        external.mkdir()
+        command(external, "git", "init", "-q", "-b", "main")
+        command(external, "git", "config", "user.name", "External Fixture")
+        command(external, "git", "config", "user.email", "external@example.test")
+        (external / "README.md").write_text("# External fixture\n")
+        if legacy:
+            (external / ".workingdir").mkdir()
+            (external / ".workingdir/private.txt").write_text("PRIVATE_HISTORY_SENTINEL\n")
+        command(external, "git", "add", ".")
+        command(external, "git", "commit", "-q", "-s", "-m", "chore: published baseline")
+        base = command(external, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        command(external, "git", "init", "--bare", "-q", str(remote))
+        command(external, "git", "remote", "add", "origin", str(remote))
+        command(external, "git", "push", "-q", "origin", "main")
+        if not legacy:
+            if gitlink:
+                command(external, "git", "update-index", "--add", "--cacheinfo", f"160000,{base},.workingdir")
+            else:
+                (external / ".workingdir").mkdir()
+                (external / ".workingdir/private.txt").write_text("PRIVATE_HISTORY_SENTINEL\n")
+                command(external, "git", "add", ".workingdir")
+            command(external, "git", "commit", "-q", "-s", "-m", "docs: incoming private content")
+        command(external, "git", "rm", "-r", "--cached", "--", ".workingdir")
+        command(external, "git", "commit", "-q", "-s", "-m", "chore: remove private tracking")
+        head = command(external, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        command(self.repo, "git", "remote", "add", "origin", str(remote))
+        command(self.repo, "git", "fetch", "-q", "origin")
+        command(self.repo, "git", "fetch", "-q", str(external), "main")
+        return remote, base, head
+
+    def test_real_push_rejects_private_add_then_delete_in_requested_history(self):
+        remote, base, head = self.incoming_private_history()
+        self.write("README.md", "# Unstaged unrelated content\n", stage=False)
+        for destination in ("refs/heads/main", "refs/heads/checkpoint/private"):
+            result = command(self.repo, "git", "push", "origin", f"{head}:{destination}", ok=False)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn(b"Private .workingdir content must stay untracked", result.stdout + result.stderr)
+            self.assertNotIn(b"PRIVATE_HISTORY_SENTINEL", result.stdout + result.stderr)
+        self.assertEqual(command(remote, "git", "rev-parse", "refs/heads/main").stdout.decode().strip(), base)
+        self.assertEqual(command(remote, "git", "for-each-ref", "refs/heads/checkpoint/private").stdout, b"")
+        self.assertEqual((self.repo / "README.md").read_text(), "# Unstaged unrelated content\n")
+
+    def test_real_push_rejects_deleted_private_gitlink_history(self):
+        remote, base, head = self.incoming_private_history(gitlink=True)
+        result = command(self.repo, "git", "push", "origin", f"{head}:refs/heads/main", ok=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(b"Private .workingdir content must stay untracked", result.stdout + result.stderr)
+        self.assertEqual(command(remote, "git", "rev-parse", "refs/heads/main").stdout.decode().strip(), base)
+
+    def test_real_push_allows_removal_of_already_remote_private_state(self):
+        remote, _, head = self.incoming_private_history(legacy=True)
+        result = command(self.repo, "git", "push", "origin", f"{head}:refs/heads/main")
+        self.assertIn(b"pushed-checks", result.stdout + result.stderr)
+        self.assertEqual(command(remote, "git", "rev-parse", "refs/heads/main").stdout.decode().strip(), head)
+        self.assertEqual(command(remote, "git", "ls-tree", "-r", "--name-only", head, "--", ".workingdir").stdout, b"")
+        self.assertEqual((Path(self.temp.name) / "external/.workingdir/private.txt").read_text(),
+                         "PRIVATE_HISTORY_SENTINEL\n")
+
+    def test_merge_retaining_remote_private_baseline_is_not_new_private_content(self):
+        external = Path(self.temp.name) / "merge-source"
+        external.mkdir()
+        command(external, "git", "init", "-q", "-b", "main")
+        command(external, "git", "config", "user.name", "External Fixture")
+        command(external, "git", "config", "user.email", "external@example.test")
+        (external / "README.md").write_text("# Fixture\n")
+        command(external, "git", "add", ".")
+        command(external, "git", "commit", "-q", "-s", "-m", "chore: initial source")
+        command(external, "git", "branch", "side")
+        (external / ".workingdir").mkdir()
+        (external / ".workingdir/private.txt").write_text("old published fixture\n")
+        command(external, "git", "add", ".workingdir")
+        command(external, "git", "commit", "-q", "-s", "-m", "docs: old remote state")
+        base = command(external, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        command(external, "git", "checkout", "-q", "side")
+        (external / "other.md").write_text("public change\n")
+        command(external, "git", "add", "other.md")
+        command(external, "git", "commit", "-q", "-s", "-m", "docs: side change")
+        command(external, "git", "checkout", "-q", "main")
+        command(external, "git", "merge", "-q", "--no-ff", "-m", "Merge side fixture", "side")
+        original = Path.cwd()
+        try:
+            os.chdir(external)
+            check_private_history("HEAD", base)
+        finally:
+            os.chdir(original)
+
+    def test_unknown_push_baseline_still_checks_private_history(self):
+        _, _, head = self.incoming_private_history()
+        protocol = f"refs/heads/incoming {head} refs/heads/main {'f' * 40}\n".encode()
+        result = self.hook("pre-push", "origin", data=protocol)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(b"checking the full tree", result.stdout + result.stderr)
+        self.assertIn(b"Private .workingdir content must stay untracked", result.stdout + result.stderr)
+
+    def test_private_symlink_and_ancestor_rejected_without_reading_target(self):
+        target = Path(self.temp.name) / "outside-private"
+        target.write_text("PRIVATE_SYMLINK_SENTINEL\n")
+        for index, name in enumerate((".workingdir", ".workingdir/docs/link")):
+            with self.subTest(name=name):
+                self.repo = Path(self.temp.name) / f"symlink-{index}"
+                self.initialize_repo()
+                link = self.repo / name
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(target)
+                command(self.repo, "git", "add", "--", name)
+                result = command(self.repo, "git", "commit", "-s", "-m", "docs: private symlink", ok=False)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(b"Private .workingdir content must stay untracked", result.stdout + result.stderr)
+                self.assertNotIn(b"PRIVATE_SYMLINK_SENTINEL", result.stdout + result.stderr)
+                self.assertTrue(link.is_symlink())
+                self.assertEqual(target.read_text(), "PRIVATE_SYMLINK_SENTINEL\n")
+
+    def test_private_history_commit_bound_and_missing_objects_fail_closed(self):
+        base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        heads = []
+        for number in range(3):
+            self.write("README.md", f"# Revision {number}\n")
+            command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: bounded history")
+            heads.append(command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip())
+        original = Path.cwd()
+        try:
+            os.chdir(self.repo)
+            with mock.patch("privacy.MAX_PRIVATE_COMMITS", 2):
+                check_private_history(heads[1], base)
+                with self.assertRaisesRegex(HookError, "exceeds 2 commits"):
+                    check_private_history(heads[2], base)
+            with self.assertRaises(HookError):
+                check_private_history("f" * 40, base)
+            with mock.patch("privacy.subprocess.run", return_value=subprocess.CompletedProcess([], 2)):
+                with self.assertRaisesRegex(HookError, "inspection failed"):
+                    check_private_index()
+            with mock.patch("privacy.subprocess.run", side_effect=subprocess.TimeoutExpired("git", 60)):
+                with self.assertRaisesRegex(HookError, "inspection failed"):
+                    check_private_index()
+        finally:
+            os.chdir(original)
+
+    def test_private_history_rejects_incomplete_shallow_ancestry(self):
+        shallow = Path(self.temp.name) / "shallow"
+        command(self.repo, "git", "clone", "-q", "--depth=1", self.repo.as_uri(), str(shallow))
+        original = Path.cwd()
+        try:
+            os.chdir(shallow)
+            with self.assertRaisesRegex(HookError, "shallow repository"):
+                check_private_history("HEAD", None)
+        finally:
+            os.chdir(original)
 
     def test_codex_adapter_routes_guard_and_normalizes_failures(self):
         adapter = self.repo / ".config/agent/hooks/codex_pre_tool.py"

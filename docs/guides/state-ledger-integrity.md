@@ -1,5 +1,12 @@
 # Bug ledger integrity
 
+The entire `.workingdir/` directory is private, Git-ignored workstation state.
+Keep cluster connection guides, backend notes and raw evidence there; publish
+only reviewed, sanitized documents under `docs/`. Run `make state-audit` in a fresh
+checkout to initialize an absent ledger and audit it. Existing incomplete or
+invalid ledgers still fail and require explicit repair; initialization never
+imports another workstation's private state.
+
 Bug mutations validate the entire `.workingdir/BUGS.md` before changing it. A
 malformed row, duplicate or noncanonical ID, invalid severity/status, unreadable
 file, symlink, or exceeded size limit returns an error. Audit, state sync and

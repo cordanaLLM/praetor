@@ -60,6 +60,6 @@ pieces of evidence. Repository enrollment and external application execution are
 not activated by this plan.
 
 This correction does not repair language-specific devcontainer or editor setup:
-[BUG-651 and BUG-438 remain tracked](../../.workingdir/BUGS.md). Archetype catalogs
+BUG-651 and BUG-438 remain open in the private local ledger. Archetype catalogs
 and these downstream consumers still require separate reconciliation; a C# command
 plan does not imply a configured .NET development container or complete C# scanning.

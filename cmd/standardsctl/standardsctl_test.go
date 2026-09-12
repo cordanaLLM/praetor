@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/builder"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
@@ -518,8 +519,8 @@ targets:
 	if err := dispatchCommand("build", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("build -h failed: %v", err)
 	}
-	if err := dispatchCommand("build", []string{"--config=" + buildCfgPath, "--target=cli"}); err != nil {
-		t.Fatalf("build failed: %v", err)
+	if err := dispatchCommand("build", []string{"--config=" + buildCfgPath, "--target=cli"}); !errors.Is(err, builder.ErrBackendUnavailable) {
+		t.Fatalf("unimplemented backend must reject even an existing entrypoint: %v", err)
 	}
 }
 

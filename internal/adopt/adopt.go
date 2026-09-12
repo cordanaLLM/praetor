@@ -2,7 +2,6 @@ package adopt
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -407,27 +406,32 @@ func scanLegacyDebt(ctx context.Context, repoPath string, base *baseline.Baselin
 	return nil
 }
 
-func reconcileDevContainer(_ context.Context, s *adoptSession) error {
+func reconcileDevContainer(ctx context.Context, s *adoptSession) error {
 	full, err := repoFile(s.repoPath, devcontainerFile)
 	if err != nil {
 		return err
 	}
 	if fileExists(full) && !s.opts.Force {
-		s.report.recordReconciled(devcontainerFile, "DevContainer configuration verified present")
+		s.report.recordReconciled(devcontainerFile, "Existing DevContainer preserved; container startup has not been verified by adoption")
+		s.report.addWarning("Existing DevContainer preserved; bootstrap readiness requires separate verification.")
 		return nil
 	}
-	dc, err := devcontainer.SynthesizeFromProfiles(s.repoName, []string{s.arch}, s.facets)
+	bundle, err := prepareAdoptDevContainer(ctx, s)
 	if err != nil {
-		return fmt.Errorf("synthesize devcontainer: %w", err)
+		return fmt.Errorf("prepare devcontainer bootstrap: %w", err)
 	}
-	data, err := json.MarshalIndent(dc, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal devcontainer: %w", err)
+	if bundle.Spec().State == devcontainer.BootstrapUnavailable {
+		s.report.addWarning("DevContainer bootstrap unavailable: %s", bundle.Spec().Reason)
 	}
-	if err := s.write(full, append(data, '\n'), filePerm); err != nil {
-		return err
+	if !s.opts.DryRun {
+		if err := devcontainer.WriteBundle(ctx, full, bundle, s.opts.Force); err != nil {
+			return err
+		}
 	}
-	s.report.recordCreated(devcontainerFile, fmt.Sprintf("Synthesized DevContainer for archetype '%s'", s.arch))
+	s.report.recordCreated(devcontainerFile, fmt.Sprintf("Prepared DevContainer for archetype '%s'; bootstrap %s, execution unverified", s.arch, bundle.Spec().State))
+	for _, artifact := range bundle.Artifacts {
+		s.report.recordCreated(filepath.ToSlash(filepath.Join(".devcontainer", artifact.Name)), "Prepared exact DevContainer bootstrap companion")
+	}
 	return nil
 }
 

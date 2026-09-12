@@ -25,8 +25,8 @@ standardsctl compile-context
 # 3. Snapshot legacy technical debt infractions to prevent CI failure
 standardsctl baseline --record
 
-# 4. Generate hermetic devcontainer
-standardsctl devcontainer generate
+# 4. Prepare a portable devcontainer from reviewed Praetor sources
+standardsctl devcontainer generate --source-root /path/to/reviewed/praetor
 
 # 5. Verify 100% compliance
 standardsctl audit
@@ -41,7 +41,7 @@ standardsctl audit
 | **1. Scaffolding** | Create declarative `.standards.yaml` | `standardsctl init` | `.standards.yaml` created with selected profiles. |
 | **2. Context Transpilation** | Generate vendor agent files | `standardsctl compile-context` | `CLAUDE.md`, `.cursor/rules/*.mdc`, etc. created ($< 300$ LOC). |
 | **3. Brownfield Baselining** | Snapshot legacy debt | `standardsctl baseline --record` | `.standards-baseline.json` populated with existing debt. |
-| **4. Devcontainer Setup** | Build isolated container | `standardsctl devcontainer generate`| `.devcontainer/devcontainer.json` synthesized. |
+| **4. Devcontainer Setup** | Prepare a portable bootstrap | `standardsctl devcontainer generate --source-root /path/to/reviewed/praetor` | JSON and exact source companions prepared; build and startup remain separate checks. |
 | **5. Audit Verification** | Final compliance sweep | `standardsctl audit` | Score: 100% Compliance. |
 
 ---
@@ -51,4 +51,3 @@ Legacy infractions recorded in `.standards-baseline.json` will not fail CI statu
 - **Monotonic Ratchet**: Technical debt must decrease over time ($V_{\text{total}}(t_1) \le V_{\text{total}}(t_0)$).
 - **Touched-File Clean Rule**: Any legacy file modified during a pull request revokes previous exemptions and must be refactored clean.
 - **Waivers**: For unavoidable architectural exceptions, mint an Ed25519-signed waiver in `.standards-waivers.yaml`.
-

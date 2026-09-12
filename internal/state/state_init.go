@@ -41,6 +41,10 @@ func initWorkingDir(ctx context.Context, rootPath string) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, working.Close()) }()
+	return initializeWorkingFiles(ctx, working)
+}
+
+func initializeWorkingFiles(ctx context.Context, working *os.Root) error {
 	if err := working.Mkdir("evidence", 0700); err != nil && !errors.Is(err, os.ErrExist) {
 		return fmt.Errorf("create evidence directory: %w", err)
 	}

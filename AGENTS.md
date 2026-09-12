@@ -62,7 +62,8 @@ flowchart LR
    If the same AST diff and error category repeats $\ge 3$ times, halt execution immediately. Re-evaluate the underlying design instead of making micro-textual retries.
 
 7. **State Ledger Discipline (HISS-17)**:
-   Agents MUST maintain the local `.workingdir` session state ledger on every turn:
+   Agents MUST maintain the local `.workingdir` session state ledger on every turn. The entire directory is private and Git-ignored, including cluster connection guides, backend settings, memory, and scratch files. Never stage its contents, including with force. Publish explicitly reviewed, sanitized documentation under `docs/` instead.
+   - **Fresh Checkout**: Run `make state-audit` to initialize a missing local ledger and audit it. Existing incomplete or invalid ledgers must be repaired explicitly.
    - **Turn Start**: Inspect `.workingdir/STATE.md` and `.workingdir/OPEN.md` (or run `praetorctl state status`).
    - **During Work**: Register discrete tasks via `praetorctl state task add "<desc>"`, mark progress with `praetorctl state task complete "<selector>"`, and archive finished items with `praetorctl state task archive`.
    - **Turn End**: Execute `praetorctl state sync .` to record working tree status, dirty count, open tasks, and cryptographic state hash into `STATE.md`.

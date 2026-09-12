@@ -11,6 +11,7 @@ import sys
 sys.dont_write_bytecode = True
 from common import HookError, changed, clean_env, git, paths, run, snapshot
 from checks import checkpoint_checks, context_changed, file_checks, go_packages, source_checks
+from privacy import check_private_history, check_private_index
 
 SUBJECT = re.compile(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)"
                      r"(\([^()\n]+\))?!?: \S.*$")
@@ -25,6 +26,7 @@ def guard():
 def pre_commit():
     guard()
     names = paths(git("diff", "--cached", "--name-only", "-z", "--no-renames", "--"))
+    check_private_index()
     git("diff", "--cached", "--check")
     if not names:
         print("Index: no changed files")
@@ -110,6 +112,7 @@ def pre_push(remote):
         if key in checked:
             continue
         checked.add(key)
+        check_private_history(head, base)
         names = changed(base, head) if base else paths(git("ls-tree", "-r", "--name-only", "-z", head))
         if not names:
             continue

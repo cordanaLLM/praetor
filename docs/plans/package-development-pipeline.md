@@ -7,6 +7,13 @@ bounded reproductions below ran in private temporary fixtures; their logs and
 source bindings are retained outside the public repository. Pipeline completion
 and fleet promotion are not established by this audit.
 
+Implementation update: BUG-720 readiness and fail-closed builder dispatch are now
+integrated. The builder reports unavailable runtimes without fabricating output;
+real backend execution, issue-action evidence and knowledge-page status remain
+open. The inventory below records the original audit baseline. The related
+[upstream contribution plan](upstream-contribution-workflow.md) extends the same
+evidence and policy services.
+
 ## Intended behavior
 
 Build the reusable orchestration inside Praetor. Treat organization, forge, module namespace, catalogs, package destination, release channels, workstation roots and policy bindings as explicit deployment inputs. `golusoris` is the owner-selected deployment example; the public app must work identically with synthetic `example` identities. Default to read-only inventory and candidate plans until a stage is admitted. No blocking user question is needed to begin the stages below.
