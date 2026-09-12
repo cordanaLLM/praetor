@@ -170,7 +170,7 @@ func extractPatchDependencies(repoName, patchesDir string) []string {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
+	for lines := 0; lines < MaxScannedLines && scanner.Scan(); lines++ {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
 			dep := parsePatchDependencyLine(strings.TrimPrefix(line, "+"))

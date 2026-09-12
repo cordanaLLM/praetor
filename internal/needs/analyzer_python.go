@@ -84,7 +84,7 @@ func parseRequirementsFile(path string, deps map[string]string) {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
+	for lines := 0; lines < MaxScannedLines && scanner.Scan(); lines++ {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "-") {
 			continue
@@ -118,7 +118,7 @@ func parsePyprojectFile(path string, deps map[string]string) {
 
 	scanner := bufio.NewScanner(file)
 	inDeps := false
-	for scanner.Scan() {
+	for lines := 0; lines < MaxScannedLines && scanner.Scan(); lines++ {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "dependencies = [") {
 			inDeps = true

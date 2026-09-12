@@ -18,6 +18,11 @@ import (
 const (
 	maxLSPMessageSize = 4 * 1024 * 1024 // 4 MB
 	maxASTLoopDepth   = 5000
+	// maxLSPHeaderLines and maxLSPHeaderLineBytes bound the framing header of a single
+	// message; maxLSPMessagesPerSession bounds the stdio loop itself (HISS-02).
+	maxLSPHeaderLines        = 100
+	maxLSPHeaderLineBytes    = 8192
+	maxLSPMessagesPerSession = 1 << 24
 )
 
 // Position in a text document (0-indexed).
@@ -408,41 +413,66 @@ func (s *Server) isCallToFunction(fun ast.Expr, targetName string) bool {
 }
 
 // checkHISS02BoundedLoops verifies loops have bounds and timeout context on I/O.
+//
+// Three loop shapes carry no statically verifiable scalar bound and are reported:
+// `for {}`, a condition-only loop such as `for scanner.Scan()` or `for !done`, and a
+// range with neither key nor value such as `for range ticker.C`. A three-clause `for` and
+// a range that binds an index or element are bounded by construction and are not flagged.
 func (s *Server) checkHISS02BoundedLoops(fset *token.FileSet, file *ast.File) []Diagnostic {
 	var diags []Diagnostic
 	nodes := s.collectASTNodes(file)
 	limit := len(nodes)
 
 	for i := 0; i < limit; i++ {
-		loop, ok := nodes[i].(*ast.ForStmt)
-		if !ok {
-			continue
+		switch loop := nodes[i].(type) {
+		case *ast.ForStmt:
+			if msg := unboundedForMessage(loop); msg != "" {
+				diags = append(diags, s.loopDiagnostic(fset, loop, msg))
+			}
+			diags = append(diags, s.checkLoopIOCalls(fset, loop.Body)...)
+		case *ast.RangeStmt:
+			if loop.Key == nil && loop.Value == nil {
+				diags = append(diags, s.loopDiagnostic(fset, loop,
+					"Range loop without key or value (for example over a channel or ticker) carries no statically verifiable scalar bound (HISS-02)"))
+			}
+			diags = append(diags, s.checkLoopIOCalls(fset, loop.Body)...)
 		}
-
-		loopPos := fset.Position(loop.Pos())
-		loopEnd := fset.Position(loop.End())
-
-		if loop.Cond == nil && loop.Init == nil && loop.Post == nil {
-			diags = append(diags, Diagnostic{
-				Range: Range{
-					Start: Position{Line: loopPos.Line - 1, Character: loopPos.Column - 1},
-					End:   Position{Line: loopEnd.Line - 1, Character: loopEnd.Column - 1},
-				},
-				Severity: 1,
-				Code:     "HISS-02",
-				Source:   "standards-lsp",
-				Message:  "Unbounded loop construct 'for {}' detected without statically verifiable scalar bound (HISS-02)",
-			})
-		}
-
-		diags = append(diags, s.checkLoopIOCalls(fset, loop)...)
 	}
 	return diags
 }
 
-func (s *Server) checkLoopIOCalls(fset *token.FileSet, loop *ast.ForStmt) []Diagnostic {
+func unboundedForMessage(loop *ast.ForStmt) string {
+	switch {
+	case loop.Cond == nil && loop.Init == nil && loop.Post == nil:
+		return "Unbounded loop construct 'for {}' detected without statically verifiable scalar bound (HISS-02)"
+	case loop.Init == nil && loop.Post == nil:
+		return "Condition-only loop carries no statically verifiable scalar bound; add an explicit counter (HISS-02)"
+	default:
+		return ""
+	}
+}
+
+func (s *Server) loopDiagnostic(fset *token.FileSet, loop ast.Node, message string) Diagnostic {
+	pos := fset.Position(loop.Pos())
+	end := fset.Position(loop.End())
+	return Diagnostic{
+		Range: Range{
+			Start: Position{Line: pos.Line - 1, Character: pos.Column - 1},
+			End:   Position{Line: end.Line - 1, Character: end.Column - 1},
+		},
+		Severity: 1,
+		Code:     "HISS-02",
+		Source:   "standards-lsp",
+		Message:  message,
+	}
+}
+
+func (s *Server) checkLoopIOCalls(fset *token.FileSet, body *ast.BlockStmt) []Diagnostic {
+	if body == nil {
+		return nil
+	}
 	var diags []Diagnostic
-	bNodes := s.collectASTNodes(loop.Body)
+	bNodes := s.collectASTNodes(body)
 	limit := len(bNodes)
 
 	for i := 0; i < limit; i++ {
@@ -461,32 +491,82 @@ func (s *Server) checkLoopIOCalls(fset *token.FileSet, loop *ast.ForStmt) []Diag
 			continue
 		}
 
-		if s.isUnboundedIOCall(pkgIdent.Name, sel.Sel.Name) {
-			pos := fset.Position(call.Pos())
-			end := fset.Position(call.End())
-			diags = append(diags, Diagnostic{
-				Range: Range{
-					Start: Position{Line: pos.Line - 1, Character: pos.Column - 1},
-					End:   Position{Line: end.Line - 1, Character: end.Column - 1},
-				},
-				Severity: 1,
-				Code:     "HISS-02",
-				Source:   "standards-lsp",
-				Message:  fmt.Sprintf("I/O call %s.%s inside loop lacks mandatory context deadline (HISS-02)", pkgIdent.Name, sel.Sel.Name),
-			})
+		alternative, unbounded := contextFreeIOCall(pkgIdent.Name, sel.Sel.Name)
+		// Before reporting a missing deadline, the call is actually inspected for a
+		// context: a ...Context variant or a context argument satisfies HISS-02.
+		if !unbounded || callCarriesContext(call) {
+			continue
 		}
+		pos := fset.Position(call.Pos())
+		end := fset.Position(call.End())
+		diags = append(diags, Diagnostic{
+			Range: Range{
+				Start: Position{Line: pos.Line - 1, Character: pos.Column - 1},
+				End:   Position{Line: end.Line - 1, Character: end.Column - 1},
+			},
+			Severity: 1,
+			Code:     "HISS-02",
+			Source:   "standards-lsp",
+			Message: fmt.Sprintf("I/O call %s.%s inside loop carries no context deadline; use %s (HISS-02)",
+				pkgIdent.Name, sel.Sel.Name, alternative),
+		})
 	}
 	return diags
 }
 
-func (s *Server) isUnboundedIOCall(pkg, method string) bool {
-	if pkg == "http" && (method == "Get" || method == "Post" || method == "Head") {
+// contextFreeIOCall reports package-level I/O entry points that have no context and do
+// have a context-carrying alternative, together with that alternative. Calls without any
+// context-aware form (os.ReadFile, for instance) are deliberately absent: reporting them
+// would be noise, because there is nothing the author could write instead.
+func contextFreeIOCall(pkg, method string) (alternative string, unbounded bool) {
+	switch pkg {
+	case "http":
+		if method == "Get" || method == "Post" || method == "Head" || method == "PostForm" {
+			return "http.NewRequestWithContext with an explicit client timeout", true
+		}
+	case "net":
+		if strings.HasPrefix(method, "Dial") && !strings.HasSuffix(method, "Context") {
+			return "net.Dialer.DialContext", true
+		}
+	case "exec":
+		if method == "Command" {
+			return "exec.CommandContext", true
+		}
+	}
+	return "", false
+}
+
+// callCarriesContext reports whether a call is context-aware: either it is a ...Context
+// variant, or one of its arguments is a context value.
+func callCarriesContext(call *ast.CallExpr) bool {
+	if sel, ok := call.Fun.(*ast.SelectorExpr); ok && strings.HasSuffix(sel.Sel.Name, "Context") {
 		return true
 	}
-	if pkg == "net" && (method == "Dial" || method == "DialTCP") {
-		return true
+	for _, arg := range call.Args {
+		if exprIsContext(arg) {
+			return true
+		}
 	}
 	return false
+}
+
+func exprIsContext(expr ast.Expr) bool {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return e.Name == "ctx" || e.Name == "context"
+	case *ast.SelectorExpr:
+		inner, ok := e.X.(*ast.Ident)
+		return ok && inner.Name == "context"
+	case *ast.CallExpr:
+		sel, ok := e.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return false
+		}
+		inner, isIdent := sel.X.(*ast.Ident)
+		return isIdent && inner.Name == "context"
+	default:
+		return false
+	}
 }
 
 // checkHISS07Errors checks for unchecked errors and banned panic calls.
@@ -563,7 +643,7 @@ func (s *Server) collectASTNodes(root ast.Node) []ast.Node {
 
 // Run executes the stdio loop, processing framed JSON-RPC 2.0 messages until EOF or shutdown.
 func (s *Server) Run(ctx context.Context) error {
-	for !s.isExited {
+	for handled := 0; handled < maxLSPMessagesPerSession && !s.isExited; handled++ {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -602,12 +682,34 @@ func (s *Server) Run(ctx context.Context) error {
 	return nil
 }
 
+// readHeaderLine reads one header line, bounded to maxLSPHeaderLineBytes.
+//
+// bufio.Reader.ReadString('\n') accumulates the whole stream in memory when the peer
+// never sends a newline, so the surrounding header-line cap never engages. Reading byte
+// by byte under a scalar cap makes the bound real (HISS-02).
+func (s *Server) readHeaderLine() (string, error) {
+	var line strings.Builder
+	for read := 0; read < maxLSPHeaderLineBytes; read++ {
+		b, err := s.in.ReadByte()
+		if err != nil {
+			return "", err
+		}
+		if b == '\n' {
+			return line.String(), nil
+		}
+		if err := line.WriteByte(b); err != nil {
+			return "", fmt.Errorf("failed buffering header line: %w", err)
+		}
+	}
+	return "", fmt.Errorf("header line exceeds the %d byte limit", maxLSPHeaderLineBytes)
+}
+
 func (s *Server) readFramedMessage() ([]byte, error) {
 	contentLength := -1
 
 	// Read headers with bounded iteration
-	for headerLines := 0; headerLines < 100; headerLines++ {
-		line, err := s.in.ReadString('\n')
+	for headerLines := 0; headerLines < maxLSPHeaderLines; headerLines++ {
+		line, err := s.readHeaderLine()
 		if err != nil {
 			return nil, err
 		}

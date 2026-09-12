@@ -15,6 +15,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// MaxScannedLines is the scalar upper bound (HISS-02) on the number of lines a single
+// file scan reads. No source or manifest file in a governed repository approaches it;
+// the constant exists so every scanner loop has a statically verifiable bound.
+const MaxScannedLines = 200000
+
 // ScanRepo extracts framework capability needs and dependency mappings from a repository.
 func ScanRepo(ctx context.Context, repoPath string) (*RepoNeeds, error) {
 	if ctx.Err() != nil {
@@ -46,7 +51,7 @@ func parseGoMod(goModPath string) (string, string, map[string]string, error) {
 	scanner := bufio.NewScanner(file)
 	inRequireBlock := false
 
-	for scanner.Scan() {
+	for lines := 0; lines < MaxScannedLines && scanner.Scan(); lines++ {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "module ") {
 			modulePath = strings.TrimSpace(strings.TrimPrefix(line, "module"))

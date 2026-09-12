@@ -12,6 +12,11 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// maxScannedLines is the scalar upper bound (HISS-02) on the number of lines a single
+// file scan reads. No source or manifest file in a governed repository approaches it;
+// the constant exists so every scanner loop has a statically verifiable bound.
+const maxScannedLines = 200000
+
 // TaskItem represents an actionable task in OPEN.md or BACKLOG.md.
 type TaskItem struct {
 	Index         int    `json:"index"`
@@ -36,7 +41,7 @@ func ListTasks(rootPath string) ([]TaskItem, error) {
 	scanner := bufio.NewScanner(strings.NewReader(string(content)))
 	idx := 1
 
-	for scanner.Scan() {
+	for lines := 0; lines < maxScannedLines && scanner.Scan(); lines++ {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "- [ ] ") {
 			desc := strings.TrimPrefix(line, "- [ ] ")

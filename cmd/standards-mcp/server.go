@@ -26,6 +26,9 @@ import (
 const (
 	maxScannerBuffer = 1024 * 1024 // 1MB
 	maxFilesToScan   = 500
+	// maxScannedLines is the scalar upper bound (HISS-02) on the lines a single
+	// file scan reads.
+	maxScannedLines = 200000
 )
 
 // JSONRPCRequest represents a JSON-RPC 2.0 request payload.
@@ -670,7 +673,7 @@ func (s *Server) RunStdio(ctx context.Context) error {
 	buf := make([]byte, 64*1024)
 	scanner.Buffer(buf, maxScannerBuffer)
 
-	for scanner.Scan() {
+	for lines := 0; lines < maxScannedLines && scanner.Scan(); lines++ {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

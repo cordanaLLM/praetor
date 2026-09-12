@@ -70,7 +70,7 @@ func parseCargoToml(cargoPath string) map[string]string {
 
 	scanner := bufio.NewScanner(file)
 	inDeps := false
-	for scanner.Scan() {
+	for lines := 0; lines < MaxScannedLines && scanner.Scan(); lines++ {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "[dependencies]") {
 			inDeps = true
