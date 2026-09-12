@@ -64,6 +64,9 @@ this scope; application verification still requires the native test tools.
 
 ## Private workstation configuration
 
+Use [workstation inventory](workstation-inventory.md) to precheck local repositories,
+worktrees and local-only identities through the CLI or MCP before selecting cases.
+
 Store private configuration and evidence outside the public repository. A config
 must contain exactly `version`, `public_repositories` and `transcripts`. All case
 fields below are required; replace the example path and SHA with a reviewed source:

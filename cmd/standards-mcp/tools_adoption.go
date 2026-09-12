@@ -10,7 +10,6 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
-	"github.com/cordanaLLM/praetor/internal/harvester"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 )
 
@@ -268,6 +267,7 @@ func (s *Server) createHarvestWorkstationTool() (mcp.Tool, error) {
 	schema := mcp.ToolInputSchema{
 		Type: "object",
 		Properties: map[string]mcp.PropertySchema{
+			"json": {Type: "boolean", Description: "Return private workstation repository observations as JSON (default false)"},
 			"dev_dir": {
 				Type:        "string",
 				Description: "Path to developer repositories root directory (default: ~/dev; requires -allow-outside-root unless under the server root)",
@@ -275,31 +275,7 @@ func (s *Server) createHarvestWorkstationTool() (mcp.Tool, error) {
 		},
 	}
 
-	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
-		devDir, err := s.resolveDevDir(args)
-		if err != nil {
-			return mcp.ErrorResult(err.Error()), nil
-		}
-
-		scanCtx, cancel := context.WithTimeout(ctx, harvestBudget)
-		defer cancel()
-
-		scan, err := harvester.ScanLocalWorkstation(scanCtx, devDir)
-		if err != nil {
-			return mcp.ErrorResult(fmt.Sprintf("Workstation harvest scan failed: %v", err)), nil
-		}
-
-		var sb strings.Builder
-		sb.WriteString("=== Workstation Governance & Fleet Audit ===\n")
-		fmt.Fprintf(&sb, "Dev Root: %s\n", devDir)
-		fmt.Fprintf(&sb, "Dev Repos Total: %d\n", scan.DevReposCount)
-		fmt.Fprintf(&sb, "Unmanaged (Missing Rules) Repos: %d\n", len(scan.MissingRulesRepos))
-		fmt.Fprintf(&sb, "Dirty Git Repos: %d\n", len(scan.DirtyRepos))
-		fmt.Fprintf(&sb, "Stale Git Worktrees: %d\n", len(scan.StaleWorktrees))
-		return mcp.TextResult(sb.String()), nil
-	}
-
 	// The harvest walks repositories outside the governed tree and runs git in each:
 	// open-world, but it never writes.
-	return mcp.NewOpenWorldTool("standards_harvest_workstation", "Audit workstation repositories and fleet adoption state", schema, handler, true, true)
+	return mcp.NewOpenWorldTool("standards_harvest_workstation", "Audit workstation repositories and fleet adoption state", schema, s.runHarvestWorkstation, true, true)
 }

@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -51,7 +53,7 @@ func printHarvestUsage() {
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  bundle [--name=name] [--out=dir] [--home=path] Capture workstation state bundle (memories, skills, logs, patches)")
 	fmt.Println("  ingest [--bundle=dir] [--skills-dir=path] [--dry-run] Analyze or ingest workstation bundle into local agent harness")
-	fmt.Println("  workstation [--dir=path]                    Audit local dev directory and worktree sprawl")
+	fmt.Println("  workstation [--dir=path] [--json]            Audit local dev directory and emit repository observations")
 	fmt.Println("  skills [--gemini=path] [--dedupe] [--dry-run] Audit and deduplicate agent skills")
 	fmt.Println("  fleet                                       Display multi-org remote fleet topology")
 	fmt.Println("  memory [--brain=path]                       Extract agent memory insights from transcripts")
@@ -62,8 +64,12 @@ func printHarvestUsage() {
 func runHarvestWorkstation(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("harvest workstation", flag.ContinueOnError)
 	dirFlag := fs.String("dir", "", "Path to development directory (default: $HOME/dev)")
+	jsonOutput := fs.Bool("json", false, "Emit the complete read-only workstation report as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("harvest workstation accepts no positional arguments")
 	}
 
 	devDir, err := resolveHomeSubdir(*dirFlag, "--dir", "dev")
@@ -72,8 +78,14 @@ func runHarvestWorkstation(ctx context.Context, args []string) error {
 	}
 
 	rep, err := harvester.ScanLocalWorkstation(ctx, devDir)
-	if err != nil {
+	if rep == nil {
 		return fmt.Errorf("failed scanning workstation: %w", err)
+	}
+	if *jsonOutput {
+		if err := json.NewEncoder(os.Stdout).Encode(rep); err != nil {
+			return fmt.Errorf("encode workstation report: %w", err)
+		}
+		return errors.Join(err, workstationInventoryError(rep))
 	}
 
 	fmt.Println("=== Workstation Governance & Worktree Audit ===")
@@ -86,6 +98,14 @@ func runHarvestWorkstation(ctx context.Context, args []string) error {
 	fmt.Printf("Stale Ephemeral Worktrees (%d):\n", len(rep.StaleWorktrees))
 	for _, wt := range rep.StaleWorktrees {
 		fmt.Printf("  - %s\n", wt)
+	}
+	fmt.Printf("Repository inventory complete: %t (truncated: %t)\n", rep.RepositoryInventoryComplete, rep.RepositoryInventoryTruncated)
+	return errors.Join(err, workstationInventoryError(rep))
+}
+
+func workstationInventoryError(report *harvester.WorkstationReport) error {
+	if !report.RepositoryInventoryComplete {
+		return errors.New("workstation inventory is incomplete; inspect report errors and scope")
 	}
 	return nil
 }
@@ -172,9 +192,9 @@ func runHarvestFleet(args []string) error {
 }
 
 func printHarvestFleet() error {
-	fmt.Println("=== cordanaLLM Multi-Org Fleet Topology ===")
+	fmt.Println("=== cordanaLLM Multi-Org Fleet Topology (static reference; no live inventory probe) ===")
 	orgs := []string{"cordanaLLM", "golusoris", "VMAFx", "jellysin", "goph-arr", "lusoris"}
-	fmt.Printf("Governance Orgs Monitored: %v\n", orgs)
+	fmt.Printf("Governance Orgs Monitored (static reference only): %v\n", orgs)
 	fmt.Println("Archetype Match Distribution:")
 	fmt.Println("  - native-gpu-systems: vmafx, pelorus, template-native-gpu, model_server")
 	fmt.Println("  - gitops-infra:       k8s, home-zeus, helm-charts, dockge-stacks")
