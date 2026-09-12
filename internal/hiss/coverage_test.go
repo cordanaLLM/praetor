@@ -94,6 +94,9 @@ func TestScanCoverageSkipsAndTruncation(t *testing.T) {
 	if !r.Truncated || r.Coverage.FilesRead != 1 || r.Coverage.UnscannedFiles != 0 {
 		t.Fatalf("partial scan must retain traversal limits: %+v", r)
 	}
+	if evidence := r.CoverageEvidence(); !strings.Contains(evidence, "partial") || !strings.Contains(evidence, "truncated") {
+		t.Fatalf("truncated file scope must be explicit in text: %s", evidence)
+	}
 }
 
 func TestHistoricalScanCoverageIsUnknown(t *testing.T) {

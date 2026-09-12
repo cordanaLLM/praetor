@@ -302,6 +302,9 @@ func validateRepairPublicScan(scan *hiss.ScanReport) error {
 	if err := validatePublicScan(scan); err != nil {
 		return err
 	}
+	if err := scan.Coverage.Validate(); err != nil {
+		return fmt.Errorf("public scan coverage: %w", err)
+	}
 	counts := make(map[string]int)
 	for i := 0; i < len(scan.Violations) && i < hiss.MaxInfractionsCap; i++ {
 		entry := scan.Violations[i]

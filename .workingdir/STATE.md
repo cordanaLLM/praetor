@@ -512,3 +512,7 @@
 ### [2026-09-12 21:32:57 UTC] Commit `5fc1c21` on `checkpoint/deep-audit-2026-09-12`
 - **Activity**: Integrated needs reports/fleet mapping correction5fc1c21 after preserving parallel session histories. Full integrated make verify-all passed. Header-only stubs remain unavailable and actual declarations are only source-observed candidates; BUG-717 resolved. Follow-up BUG-720 records migration/epic bypass of selected source index/version evidence; projections now disclose declared basis. Template and imago repairs continue in isolated worktrees.
 - **Tasks**: 24 open, 0 completed | **Open Bugs**: 715 | **Pending Questions**: 0
+
+### [2026-09-12 21:36:57 UTC] Commit `2099f6d` on `fix/coverage-integrity-20260912`
+- **Activity**: Coverage consistency correction verified on source 0bb51eb68e8cf45d46e64b1935b93874ddc80e679bc057563d83d9ea29899dd7: scoped hiss/dogfood race, lint and security passed; fresh 35-check MCP probe passed. Real retained public suite accepts omitted historical coverage and coherent counters, rejects negative original and contradictory verification coverage without writes. Truncated text now states partial scope. Root integration and combined full verify-all remain pending.
+- **Tasks**: 24 open, 1 completed | **Open Bugs**: 715 | **Pending Questions**: 0
