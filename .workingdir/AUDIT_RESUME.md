@@ -89,6 +89,16 @@ Waves are independent; `only` accepts `["0"],["A"],["B"],["C"],["D"]`; `subset` 
 - The Workflow worktree isolation does NOT start from the audit branch (observed: worktrees created at `36ec6c6`); every fix agent explicitly does `git checkout -B fix/<id> audit/deep-audit-2026-09-11` first.
 - The circuit breaker aborts a run after 4 consecutive empty agent results; resume with `resumeFromRunId` once the limit resets.
 
+## Hermetic sandbox (available now, prototype of `praetorctl sandbox run`)
+
+`~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit/sandbox.sh <repo-or-worktree> [<ref>] -- '<cmd>'`
+clones the checkout (uncommitted changes included when no ref is given) into a throwaway directory, runs the
+command inside the devcontainer image `praetor-dev:audit` (built from `docker/dev/Dockerfile`) as the invoking
+uid with HOME/GOCACHE/GOPATH inside the clone, and deletes everything afterwards. Verified: `go test -race ./...`
+and `standardsctl audit` run there without touching this tree. Wave D verifiers and the fix-review refuters
+use it; fix agents may use it for `make verify-all` and end-to-end reproductions. Rebuild the image with
+`docker build -f docker/dev/Dockerfile -t praetor-dev:audit .` after a reboot if `docker image inspect` fails.
+
 ## Hard-won operational notes
 
 - Agents inherit this repo's `CLAUDE.md`, which tells them to run `make verify-all`, `go test ./...` and
