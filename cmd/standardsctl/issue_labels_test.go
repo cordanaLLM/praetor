@@ -4,7 +4,12 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
@@ -29,6 +34,104 @@ func TestIssueLabelIndex_Positive_MergePreservesOtherLabels(t *testing.T) {
 	}
 	if strings.Contains(joined, "status/blocked") {
 		t.Errorf("status/blocked must be removed, got %v", merged)
+	}
+}
+
+func TestApplyUnblockTransitions_Positive_PreservesConcurrentLabels(t *testing.T) {
+	var mu sync.Mutex
+	labels := map[string]bool{"status/blocked": true, "blocked": true, "type/bug": true}
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, r.Method)
+		if r.Method == http.MethodPost {
+			var payload struct {
+				Labels []string `json:"labels"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			labels["area/new-since-scan"] = true
+			for _, label := range payload.Labels {
+				labels[label] = true
+			}
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		if r.Method == http.MethodDelete {
+			delete(labels, strings.TrimPrefix(r.URL.Path, "/repos/acme/widgets/issues/42/labels/"))
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, "unexpected replacing update", http.StatusMethodNotAllowed)
+	}))
+	t.Cleanup(srv.Close)
+	idx := newIssueLabelIndex()
+	idx.record("acme/widgets", forge.IssueSpec{ID: 42, Labels: []string{"status/blocked", "type/bug"}})
+	actions := []forge.UnblockAction{{Repo: "acme/widgets", IssueNumber: 42}}
+	applied, failed := applyUnblockTransitions(context.Background(), "test-fixture", srv.URL, actions, idx)
+	if applied != 1 || failed != 0 {
+		t.Fatalf("transition result: applied=%d failed=%d", applied, failed)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(calls, ",") != "POST,DELETE,DELETE" {
+		t.Fatalf("unexpected methods: %v", calls)
+	}
+	for _, label := range []string{"type/bug", "area/new-since-scan", readyLabel} {
+		if !labels[label] {
+			t.Errorf("label %q was lost: %v", label, labels)
+		}
+	}
+	if labels["blocked"] || labels["status/blocked"] {
+		t.Fatalf("blocked labels remain: %v", labels)
+	}
+}
+
+func TestApplyUnblockTransitions_Negative_PropagatesUpdateFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "rejected", http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	idx := newIssueLabelIndex()
+	idx.record("acme/widgets", forge.IssueSpec{ID: 42})
+	applied, failed := applyUnblockTransitions(context.Background(), "fixture-token", srv.URL,
+		[]forge.UnblockAction{{Repo: "acme/widgets", IssueNumber: 42}}, idx)
+	if applied != 0 || failed != 1 {
+		t.Fatalf("API rejection reported as applied: %d/%d", applied, failed)
+	}
+}
+
+func TestApplyUnblockTransitions_Boundary_RefusesUnobservedOrOversizedBatch(t *testing.T) {
+	var mu sync.Mutex
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		requests++
+		mu.Unlock()
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	idx := newIssueLabelIndex()
+	unknown := []forge.UnblockAction{{Repo: "acme/widgets", IssueNumber: 42}}
+	if applied, failed := applyUnblockTransitions(context.Background(), "fixture-token", srv.URL, unknown, idx); applied != 0 || failed != 1 {
+		t.Fatalf("unobserved issue accepted: %d/%d", applied, failed)
+	}
+	over := make([]forge.UnblockAction, maxUnblockTransitions+1)
+	if applied, failed := applyUnblockTransitions(context.Background(), "fixture-token", srv.URL, over, idx); applied != 0 || failed != len(over) {
+		t.Fatalf("oversized batch accepted: %d/%d", applied, failed)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if applied, failed := applyUnblockTransitions(ctx, "fixture-token", srv.URL, unknown, idx); applied != 0 || failed != 1 {
+		t.Fatalf("cancellation ignored: %d/%d", applied, failed)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if requests != 0 {
+		t.Fatalf("refused transitions made %d requests", requests)
 	}
 }
 

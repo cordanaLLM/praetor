@@ -6,6 +6,12 @@ import (
 	"fmt"
 )
 
+// MaxToolProperties bounds the number of schema properties a tool may declare.
+const MaxToolProperties = 500
+
+// ErrTooManyProperties reports a tool schema that exceeds MaxToolProperties.
+var ErrTooManyProperties = errors.New("mcp: tool schema exceeds maximum property count")
+
 // ToolAnnotations defines behavioral metadata hints for an MCP tool.
 type ToolAnnotations struct {
 	ReadOnlyHint    bool `json:"readOnlyHint"`
@@ -60,6 +66,9 @@ func (t *Tool) Validate() error {
 	}
 	if t.InputSchema.Type == "" {
 		return fmt.Errorf("tool %q input schema type cannot be empty", t.Name)
+	}
+	if len(t.InputSchema.Properties) > MaxToolProperties {
+		return fmt.Errorf("tool %q: %w: got %d, maximum %d", t.Name, ErrTooManyProperties, len(t.InputSchema.Properties), MaxToolProperties)
 	}
 	if t.InputSchema.Properties == nil {
 		t.InputSchema.Properties = make(map[string]PropertySchema)

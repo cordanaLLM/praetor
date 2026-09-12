@@ -2,8 +2,11 @@ package needs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,9 +17,8 @@ import (
 )
 
 // fakeForge is a Forge stub that hands out increasing issue numbers, so a test can
-// observe the dependency chain PublishPreMigrationEpic builds. The real GitHub driver
-// short-circuits every "test-" token to the same canned issue number 1, which makes the
-// chaining logic unobservable.
+// observe the dependency chain PublishPreMigrationEpic builds and inject failures.
+// The separate HTTP test below exercises the real GitHub driver.
 type fakeForge struct {
 	created []forge.IssueSpec
 	next    int
@@ -390,5 +392,53 @@ func TestRegenerateFleetEpics_Boundary(t *testing.T) {
 	cancel()
 	if _, err := RegenerateFleetEpics(cancelled, setupFleetEpicRoot(t), FleetEpicOptions{}); err == nil {
 		t.Fatal("expected error for cancelled context")
+	}
+}
+
+// newFakeIssueForge serves the GitHub issue-creation endpoint locally so the test stays
+// hermetic and exercises the driver's real HTTP path.
+func newFakeIssueForge(t *testing.T) *forge.GitHubDriver {
+	t.Helper()
+	created := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		created++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		payload := map[string]any{"number": created, "url": "https://forge.invalid/issues", "state": "open"}
+		if err := json.NewEncoder(w).Encode(payload); err != nil {
+			t.Errorf("failed encoding fake response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	gh := forge.NewGitHubDriver("forge-token", srv.URL)
+	gh.SetRepository("test", "repo")
+	return gh
+}
+
+func TestPublishPreMigrationEpic_HTTP(t *testing.T) {
+	ctx := context.Background()
+	gh := newFakeIssueForge(t)
+
+	epic := &PreMigrationEpic{
+		RepoName: "test/repo",
+		ParentEpic: forge.IssueSpec{
+			Title: "[EPIC] Pre-Migration",
+			Body:  "Checklist",
+		},
+		ChildIssues: []forge.IssueSpec{
+			{Title: "[TASK 1/5] Invariants", Body: "Task body"},
+			{Title: "[TASK 2/5] Decoupling", Body: "Task body"},
+		},
+	}
+
+	parentRes, childResults, err := PublishPreMigrationEpic(ctx, gh, epic)
+	if err != nil {
+		t.Fatalf("failed to publish epic: %v", err)
+	}
+	if parentRes.Number != 1 {
+		t.Errorf("expected parent issue number 1, got %d", parentRes.Number)
+	}
+	if len(childResults) != 2 {
+		t.Fatalf("expected 2 child results, got %d", len(childResults))
 	}
 }

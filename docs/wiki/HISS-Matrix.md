@@ -13,13 +13,28 @@ The formal specification matrix across the 16 deterministic engineering invarian
 | **HISS-07** | Checked Errors | Error Handling | Zero `.unwrap()`, zero unchecked `_ = err` | Static Analyzer | Pre-commit blocker |
 | **HISS-08** | Static Determinism | Safety | Ban `eval()`, dynamic code loading, unsafe C | Semgrep | Admission blocker |
 | **HISS-09** | Reference Safety | Memory | Mandatory `// SAFETY:` proofs for `unsafe` | AST Scanner | Review blocker |
-| **HISS-10** | Zero-Warning Cascade | Hygiene | Zero compiler / linter warning tolerance | 5-Layer Cascade | Exit code 1 |
+| **HISS-10** | Zero-Warning Cascade | Hygiene | Zero compiler / linter warning tolerance | `go vet` + `golangci-lint run` (CI) | Exit code 1 |
 | **HISS-11** | Hermetic Supply Chain | Security | Cryptographic pinning, SLSA Level 3, Cosign | Attestation Verifier | Deployment rejection |
 | **HISS-12** | Secret Leak Prevention | Security | Zero credentials in Git history | `gitleaks` | Push hook failure |
 | **HISS-13** | Monotonic Debt Ratchet | Governance | $V_{\text{total}}(t_1) \le V_{\text{total}}(t_0)$ | `standardsctl baseline` | PR status gate |
-| **HISS-14** | Append-Only ABI | Architecture | Append-only public contracts; `Migration:` footer | AST Diff / Commit lint | PR merge blocker |
+| **HISS-14** | Append-Only ABI | Architecture | Append-only public contracts; `Migration:` footer | `standardsctl forge check-commits` (CI) | PR merge blocker |
 | **HISS-15** | 3D Test Discipline | Quality | Positive + Negative + Boundary tests required | `go test -race` | Coverage gate |
 | **HISS-16** | Context Integrity | Agentic Fleet | Single `AGENTS.md` source; compiled $< 300$ LOC | `compile-context --verify` | Pre-commit blocker |
+
+---
+
+## Pull Request Admission
+
+Every pull request is admitted by `standardsctl forge validate-pr`, which requires all three
+of the following in the PR description:
+
+1. A checked HISS-16 context-integrity box.
+2. A checked HISS-15 3D-testing box.
+3. A fenced ` ```receipt ` block carrying the `.standards-receipt.json` envelope produced by
+   `praetorctl gate run`. The block is parsed as JSON, its Ed25519 signature is verified
+   against `receipt.public_key` pinned in `.standards.yaml`, its recorded output hash is
+   checked against the gate output it carries, and its `commit_sha` must equal the pull
+   request head. Prose, a bare code block, or the words "Exit-0 Receipt" satisfy nothing.
 
 ---
 

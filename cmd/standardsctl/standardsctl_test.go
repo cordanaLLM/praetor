@@ -2,12 +2,21 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/lockdown"
 )
 
 func TestDispatchCommand_HelpAndVersion(t *testing.T) {
@@ -174,6 +183,44 @@ func TestDispatchCommand_BumpAndChangelog(t *testing.T) {
 	}
 }
 
+// prFixtureHeadSHA is the commit the fixture receipt certifies.
+const prFixtureHeadSHA = "2c4574832f8b40626598d457b509acf0056a72b7"
+
+// writeSignedPRFixture writes a manifest pinning a fresh receipt key and a PR body that
+// carries a genuine Ed25519 Exit-0 receipt for that key.
+func writeSignedPRFixture(t *testing.T, dir string) (manifestPath, prPath string) {
+	t.Helper()
+	pub, priv, err := lockdown.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed generating receipt keypair: %v", err)
+	}
+	manifestPath = filepath.Join(dir, "standards.yaml")
+	manifest := fmt.Sprintf("version: 1\nreceipt:\n  public_key: \"%s\"\n", hex.EncodeToString(pub))
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	receipt, err := lockdown.CreateReceipt(gating.ReceiptCommand, 0, []byte("gates passed"),
+		prFixtureHeadSHA, "acme/widget", priv)
+	if err != nil {
+		t.Fatalf("failed creating receipt: %v", err)
+	}
+	receiptJSON, err := json.MarshalIndent(
+		lockdown.ReceiptFile{ExecutionReceipt: *receipt, GateOutput: "gates passed"}, "", "  ")
+	if err != nil {
+		t.Fatalf("failed encoding receipt: %v", err)
+	}
+
+	prPath = filepath.Join(dir, "compliant-pr.md")
+	prContent := "## Summary\nTest PR\n\n- [x] HISS-16 standards verified\n" +
+		"- [x] 3D tests (positive, negative, boundary) added\n\n" +
+		"```receipt\n" + string(receiptJSON) + "\n```\n"
+	if err := os.WriteFile(prPath, []byte(prContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return manifestPath, prPath
+}
+
 func TestDispatchCommand_ForgeSubcommands(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -182,14 +229,24 @@ func TestDispatchCommand_ForgeSubcommands(t *testing.T) {
 		t.Fatalf("forge with no args failed: %v", err)
 	}
 
-	// Positive: PR validation with compliant body
-	prFile := filepath.Join(tmpDir, "compliant-pr.md")
-	prContent := "## Summary\nTest PR\n\n- [x] HISS-16 standards verified\n- [x] 3D tests (positive, negative, boundary) added\n- [x] Ed25519 Exit-0 Receipt verified: `receipt:ed25519:abcdef0123456789`\n"
-	if err := os.WriteFile(prFile, []byte(prContent), 0o600); err != nil {
+	// Positive: PR validation with a compliant body carrying a real signed receipt
+	manifestPath, prFile := writeSignedPRFixture(t, tmpDir)
+	if err := dispatchCommand("forge", []string{
+		"validate-pr", "--config=" + manifestPath, "--head-sha=" + prFixtureHeadSHA, prFile,
+	}); err != nil {
+		t.Fatalf("forge validate-pr failed: %v", err)
+	}
+
+	// Negative: the same checklist without a signed receipt must be rejected
+	unsignedFile := filepath.Join(tmpDir, "unsigned-pr.md")
+	unsigned := "## Summary\nTest PR\n\n- [x] HISS-16 standards verified\n" +
+		"- [x] 3D tests (positive, negative, boundary) added\n" +
+		"- [x] Ed25519 Exit-0 Receipt verified: `receipt:ed25519:abcdef0123456789`\n"
+	if err := os.WriteFile(unsignedFile, []byte(unsigned), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatchCommand("forge", []string{"validate-pr", prFile}); err != nil {
-		t.Fatalf("forge validate-pr failed: %v", err)
+	if err := dispatchCommand("forge", []string{"validate-pr", "--config=" + manifestPath, unsignedFile}); err == nil {
+		t.Fatal("expected validate-pr to reject a PR body without a signed Ed25519 receipt")
 	}
 
 	// Negative: Non-compliant PR body
@@ -197,8 +254,28 @@ func TestDispatchCommand_ForgeSubcommands(t *testing.T) {
 	if err := os.WriteFile(badPRFile, []byte("Just random text\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatchCommand("forge", []string{"validate-pr", badPRFile}); err == nil {
+	if err := dispatchCommand("forge", []string{"validate-pr", "--config=" + manifestPath, badPRFile}); err == nil {
 		t.Fatal("expected error on non-compliant PR validation")
+	}
+}
+
+func TestDispatchCommand_ForgePinnedReceiptArguments(t *testing.T) {
+	manifest, body := writeSignedPRFixture(t, t.TempDir())
+	// Flags after the positional body must still enforce the requested trust policy.
+	if err := dispatchCommand("forge", []string{"validate-pr", body, "--config", manifest, "--head-sha", prFixtureHeadSHA}); err != nil {
+		t.Fatalf("interspersed receipt arguments: %v", err)
+	}
+	foreignManifest, _ := writeSignedPRFixture(t, t.TempDir())
+	cases := [][]string{
+		{"validate-pr", body, "--config", manifest, "--head-sha", strings.Repeat("a", 40)},
+		{"validate-pr", body, "--config", foreignManifest, "--head-sha", prFixtureHeadSHA},
+		{"validate-pr", body, "--config", filepath.Join(t.TempDir(), "missing.yaml")},
+		{"validate-pr", body, "--config", manifest, "extra"},
+	}
+	for _, args := range cases {
+		if err := dispatchCommand("forge", args); err == nil {
+			t.Fatalf("invalid receipt policy or arguments accepted: %v", args)
+		}
 	}
 }
 
@@ -338,10 +415,23 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 }
 
 func TestDispatchCommand_IssueReconcile(t *testing.T) {
-	// The fixture token selects the forge dry-run driver; no credential is harvested and
-	// no request leaves the process.
+	// A local server exercises real forge reads; dry-run must perform no writes.
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GH_TOKEN", "")
+	var reads, writes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writes.Add(1)
+			http.Error(w, "dry-run write forbidden", http.StatusMethodNotAllowed)
+			return
+		}
+		reads.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte("[]")); err != nil {
+			t.Errorf("write fixture response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
 
 	if err := dispatchCommand("issue", []string{}); err != nil {
 		t.Fatalf("issue with no args failed: %v", err)
@@ -350,13 +440,16 @@ func TestDispatchCommand_IssueReconcile(t *testing.T) {
 		t.Fatalf("issue -h failed: %v", err)
 	}
 	out, err := captureStdout(t, func() error {
-		return dispatchCommand("issue", []string{"reconcile", "--owner=cordanaLLM", "--dry-run", "--token=test-fixture", "--endpoint=http://127.0.0.1:0"})
+		return dispatchCommand("issue", []string{"reconcile", "--owner=cordanaLLM", "--repos=praetor", "--dry-run", "--token=test-fixture", "--endpoint=" + srv.URL})
 	})
 	if err != nil {
 		t.Fatalf("issue reconcile failed: %v", err)
 	}
 	if strings.Contains(out, "[WARN]") {
 		t.Fatalf("fixture-backed reconcile must not warn about remote failures:\n%s", out)
+	}
+	if reads.Load() != 1 || writes.Load() != 0 {
+		t.Fatalf("dry-run performed %d reads and %d writes", reads.Load(), writes.Load())
 	}
 	if err := dispatchCommand("issue", []string{"invalid"}); err == nil {
 		t.Fatal("expected error for invalid issue subcommand")

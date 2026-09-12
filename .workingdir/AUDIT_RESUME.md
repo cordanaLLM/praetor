@@ -122,11 +122,15 @@ receipt for the current branch or verification result.
 | G03 CLI safety | `a5fe3b4` | CLI, adoption, harvester, state and needs tests pass |
 | G04 command parsing | `a476ef7` | Command, harvester, needs and release-track tests pass |
 | G05 capability/migration | `a9a70db` | CLI, needs and adoption tests pass |
+| G06 scanning/migration | `90f7a1a` | Needs/adoption race tests pass; integration test size regression corrected during G07a |
 
-G06 integration is currently in progress. Preserve both G05's context, path,
-permission and unknown-coverage safeguards and G06's scan/migration corrections.
-The scanner limit must return an error rather than silently truncate input.
-G07a/G07b/G08/G09/G10 are still pending; merge only the committed G09 core.
+G07a integration is currently in progress. G06 preserves both G05's context,
+path, permission and unknown-coverage safeguards and G06's scan/migration
+corrections. The scanner reports limit breaches, migration refuses branch resets,
+and failed mutations return errors with partial results. G07a removes magic-token
+network bypasses, retaining target confirmation, opt-in remote sync and pinned
+receipt tests. Oversized MCP schemas now fail rather than losing fields.
+G07b/G08/G09/G10 are still pending; merge only the committed G09 core.
 
 The permission regression was also present in the shared wave-0 helper, beyond
 the rejected G09 patch. `fix/secure-write-permissions` at `c142ec4` fixes it in

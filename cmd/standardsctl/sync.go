@@ -20,9 +20,12 @@ const (
 	// syncTimeout bounds the whole reconciliation, including the forge round trips.
 	syncTimeout = 2 * time.Minute
 	// syncDirPerm and syncFilePerm are the modes of the synthesized, tracked files.
-	syncDirPerm  os.FileMode = 0o755
-	syncFilePerm os.FileMode = 0o644
+	syncDirPerm  os.FileMode = 0o750
+	syncFilePerm os.FileMode = 0o600
 )
+
+// rulesetName is shared by the local declaration and remote reconciliation.
+const rulesetName = "praetor-main-protection"
 
 // ErrRemoteTokenMissing reports a --remote sync without any usable credential.
 var ErrRemoteTokenMissing = errors.New("--remote requires --token, GITHUB_TOKEN or GH_TOKEN")
@@ -99,8 +102,7 @@ func verifyOriginIdentity(ctx context.Context, rootDir, owner, name string) erro
 }
 
 // reconcileRemoteForge pushes the branch protection ruleset and returns every failure:
-// a missing credential, an unset or foreign repository identity, a fixture token that
-// would perform no request, or a rejected API call.
+// a missing credential, an unset or foreign repository identity, or a rejected API call.
 func reconcileRemoteForge(ctx context.Context, rootDir string, manifest *config.Manifest, bp *config.BranchProtectionPolicy, remote remoteSyncOptions) error {
 	token := resolveSyncToken(remote.token)
 	if token == "" {
@@ -115,10 +117,10 @@ func reconcileRemoteForge(ctx context.Context, rootDir string, manifest *config.
 	}
 
 	gh := forge.NewGitHubDriver(token, remote.endpoint)
-	if gh.DryRun {
-		return fmt.Errorf("token selects the forge fixture mode (prefix %q); no remote request was made", forge.FixtureTokenPrefix)
-	}
 	gh.SetRepository(owner, name)
+	gh.RulesetName = rulesetName
+	gh.RequiredStatusChecks = forge.DefaultRequiredStatusChecks()
+	gh.StrictStatusChecks = true
 	fmt.Printf("  [SYNC] Reconciling branch protection ruleset on GitHub for %s/%s...\n", owner, name)
 	if err := gh.ReconcileProtection(ctx, "main", bp); err != nil {
 		return err
@@ -207,11 +209,7 @@ func rulesetRules(bp config.BranchProtectionPolicy) []map[string]any {
 			"type": "required_status_checks",
 			"parameters": map[string]any{
 				"strict_required_status_checks_policy": true,
-				"required_status_checks": []map[string]string{
-					{"context": "verify"},
-					{"context": "Standards & Invariant Verification Gate"},
-					{"context": "DCO 1.1 & REUSE Compliance Gate"},
-				},
+				"required_status_checks":               requiredStatusCheckContexts(),
 			},
 		},
 	)
@@ -223,7 +221,7 @@ func synthesizeRuleset(targetPath string, bp config.BranchProtectionPolicy) erro
 	}
 
 	ruleset := map[string]any{
-		"name":        "praetor-main-protection",
+		"name":        rulesetName,
 		"target":      "branch",
 		"enforcement": "active",
 		"conditions": map[string]any{
@@ -240,6 +238,16 @@ func synthesizeRuleset(targetPath string, bp config.BranchProtectionPolicy) erro
 		return err
 	}
 	return util.WriteFileSecure(targetPath, data, syncFilePerm)
+}
+
+// requiredStatusCheckContexts renders the shared forge status check policy.
+func requiredStatusCheckContexts() []map[string]string {
+	names := forge.DefaultRequiredStatusChecks()
+	contexts := make([]map[string]string, 0, len(names))
+	for _, name := range names {
+		contexts = append(contexts, map[string]string{"context": name})
+	}
+	return contexts
 }
 
 func synthesizeDefaultLabels(targetPath string) error {

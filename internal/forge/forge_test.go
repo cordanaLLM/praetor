@@ -2,11 +2,17 @@ package forge
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/lockdown"
 )
 
 // ============================================================================
@@ -15,16 +21,90 @@ import (
 
 func TestNewForge_Providers_Positive(t *testing.T) {
 	ctx := context.Background()
-	providers := []string{"github", "gitlab", "gitea", "forgejo"}
+	cases := []struct {
+		provider string
+		wantName string
+	}{
+		{"github", "github"},
+		{"gitlab", "gitlab"},
+		{"gitea", "gitea"},
+		{"forgejo", "gitea"},
+	}
 
-	for _, p := range providers {
-		f, err := NewForge(p, "test-token", "")
+	for _, tc := range cases {
+		f, err := NewForge(tc.provider, "forge-token", "")
 		if err != nil {
-			t.Fatalf("failed to create forge driver for %s: %v", p, err)
+			t.Fatalf("failed to create forge driver for %s: %v", tc.provider, err)
+		}
+		if f.Name() != tc.wantName {
+			t.Fatalf("provider %s produced driver %q, want %q", tc.provider, f.Name(), tc.wantName)
 		}
 		if err := f.Authenticate(ctx); err != nil {
-			t.Fatalf("expected authentication to pass for %s: %v", p, err)
+			t.Fatalf("expected authentication to pass for %s: %v", tc.provider, err)
 		}
+	}
+
+	if _, ok := mustForge(t, "github").(*GitHubDriver); !ok {
+		t.Fatal("provider github must produce a *GitHubDriver")
+	}
+	if _, ok := mustForge(t, "gitlab").(*GitLabDriver); !ok {
+		t.Fatal("provider gitlab must produce a *GitLabDriver")
+	}
+	if _, ok := mustForge(t, "gitea").(*GiteaDriver); !ok {
+		t.Fatal("provider gitea must produce a *GiteaDriver")
+	}
+}
+
+func mustForge(t *testing.T, provider string) Forge {
+	t.Helper()
+	f, err := NewForge(provider, "forge-token", "")
+	if err != nil {
+		t.Fatalf("failed to create forge driver for %s: %v", provider, err)
+	}
+	return f
+}
+
+// The GitLab and Gitea drivers have no client: every enforcement method must fail loudly
+// instead of reporting governance that was never applied.
+func TestStubDrivers_Negative_EveryEnforcementMethodIsUnsupported(t *testing.T) {
+	ctx := context.Background()
+	policy := &config.BranchProtectionPolicy{}
+
+	for _, provider := range []string{"gitlab", "gitea", "forgejo"} {
+		f := mustForge(t, provider)
+		checks := map[string]error{
+			"ReconcileProtection": f.ReconcileProtection(ctx, "main", policy),
+			"ReconcileLabels":     f.ReconcileLabels(ctx, []Label{{Name: "governance"}}),
+			"PostStatusCheck":     f.PostStatusCheck(ctx, "abc", CheckRun{Name: "verify"}),
+			"UpdateIssue":         f.UpdateIssue(ctx, 1, []string{"x"}, "open"),
+		}
+		if _, err := f.CreatePullRequest(ctx, PRRequest{Title: "t", Head: "h", Base: "b"}); true {
+			checks["CreatePullRequest"] = err
+		}
+		if _, err := f.CreateIssue(ctx, IssueSpec{Title: "t"}); true {
+			checks["CreateIssue"] = err
+		}
+		if _, err := f.ListIssues(ctx, "all"); true {
+			checks["ListIssues"] = err
+		}
+		for method, err := range checks {
+			if !errors.Is(err, ErrNotImplemented) || !errors.Is(err, errors.ErrUnsupported) {
+				t.Fatalf("%s.%s returned %v, want ErrNotImplemented", provider, method, err)
+			}
+		}
+	}
+}
+
+func TestStubDrivers_Negative_EmptyToken(t *testing.T) {
+	ctx := context.Background()
+	if err := NewGitLabDriver("", "").Authenticate(ctx); err == nil {
+		t.Fatal("expected an authentication error for an empty GitLab token")
+	}
+	if err := NewGiteaDriver("", "").Authenticate(ctx); err == nil {
+		t.Fatal("expected an authentication error for an empty Gitea token")
+	}
+	if err := NewGiteaDriver("t", "").Authenticate(nil); err == nil { //nolint:staticcheck // nil context is the boundary under test
+		t.Fatal("expected an error for a nil context")
 	}
 }
 
@@ -51,41 +131,176 @@ Depends-On: #15
 	}
 }
 
-func TestSyncIssues_Positive(t *testing.T) {
+// recordingForge is a hermetic Forge that records exactly what SyncIssues asked it to do.
+type recordingForge struct {
+	existing  []IssueSpec
+	created   []IssueSpec
+	updated   []updateCall
+	listErr   error
+	createErr error
+	updateErr error
+}
+
+type updateCall struct {
+	Number int
+	Labels []string
+	State  string
+}
+
+func (r *recordingForge) Name() string                           { return "recording" }
+func (r *recordingForge) Authenticate(ctx context.Context) error { return ctx.Err() }
+func (r *recordingForge) ReconcileProtection(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) error {
+	return nil
+}
+func (r *recordingForge) ReconcileLabels(ctx context.Context, labels []Label) error { return nil }
+func (r *recordingForge) PostStatusCheck(ctx context.Context, commitSHA string, check CheckRun) error {
+	return nil
+}
+func (r *recordingForge) CreatePullRequest(ctx context.Context, req PRRequest) (*PRResponse, error) {
+	return &PRResponse{Number: 1}, nil
+}
+
+func (r *recordingForge) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueResponse, error) {
+	if r.createErr != nil {
+		return nil, r.createErr
+	}
+	r.created = append(r.created, spec)
+	return &IssueResponse{Number: len(r.created), State: "open"}, nil
+}
+
+func (r *recordingForge) ListIssues(ctx context.Context, state string) ([]IssueSpec, error) {
+	if r.listErr != nil {
+		return nil, r.listErr
+	}
+	return r.existing, nil
+}
+
+func (r *recordingForge) UpdateIssue(ctx context.Context, number int, labels []string, state string) error {
+	if r.updateErr != nil {
+		return r.updateErr
+	}
+	r.updated = append(r.updated, updateCall{Number: number, Labels: labels, State: state})
+	return nil
+}
+
+func TestSyncIssues_Positive_CreatesAndUpserts(t *testing.T) {
 	ctx := context.Background()
-	gh := NewGitHubDriver("test-token", "")
+	fake := &recordingForge{
+		existing: []IssueSpec{{ID: 7, Title: "Refactor ADR Pipeline", State: "open"}},
+	}
 
 	issues := []IssueSpec{
 		{
-			Title: "Implement Pillar VII Multi-Forge Federation",
-			Body:  "Depends-On: cordanaLLM/praetor#100",
-			State: "open",
+			Title:     "Implement Pillar VII Multi-Forge Federation",
+			Body:      "Depends-On: cordanaLLM/praetor#100",
+			State:     "open",
+			Assignees: []string{"alice"},
 		},
 		{
-			Title: "Refactor ADR Pipeline",
-			State: "open",
+			Title:  "Refactor ADR Pipeline",
+			State:  "closed",
+			Labels: []string{"governance"},
 		},
 	}
 
-	err := SyncIssues(ctx, gh, issues)
+	rep, err := SyncIssues(ctx, fake, issues)
 	if err != nil {
 		t.Fatalf("unexpected error syncing issues: %v", err)
 	}
+	if rep.Created != 1 || rep.Updated != 1 {
+		t.Fatalf("unexpected report %+v", rep)
+	}
+	if len(fake.created) != 1 || fake.created[0].Title != issues[0].Title {
+		t.Fatalf("unexpected created specs: %+v", fake.created)
+	}
+	if len(fake.created[0].Assignees) != 1 || fake.created[0].Assignees[0] != "alice" {
+		t.Fatalf("assignees were lost on the way to the driver: %+v", fake.created[0])
+	}
+	if len(fake.updated) != 1 || fake.updated[0].Number != 7 || fake.updated[0].State != "closed" {
+		t.Fatalf("unexpected update calls: %+v", fake.updated)
+	}
+
+	// Re-running the same batch must not duplicate anything.
+	fake2 := &recordingForge{existing: issues}
+	rep2, err := SyncIssues(ctx, fake2, issues)
+	if err != nil {
+		t.Fatalf("unexpected error on the second sync: %v", err)
+	}
+	if rep2.Created != 0 || len(fake2.created) != 0 {
+		t.Fatalf("a repeated sync created duplicates: %+v", rep2)
+	}
 }
 
-func TestValidatePRChecklist_Positive(t *testing.T) {
-	prBody := `
+func TestSyncIssues_Negative_PropagatesDriverFailures(t *testing.T) {
+	ctx := context.Background()
+	sentinel := errors.New("forge exploded")
+
+	if _, err := SyncIssues(ctx, &recordingForge{listErr: sentinel}, []IssueSpec{{Title: "a"}}); !errors.Is(err, sentinel) {
+		t.Fatalf("expected the listing error to propagate, got %v", err)
+	}
+	if _, err := SyncIssues(ctx, &recordingForge{createErr: sentinel}, []IssueSpec{{Title: "a"}}); !errors.Is(err, sentinel) {
+		t.Fatalf("expected the create error to propagate, got %v", err)
+	}
+	fake := &recordingForge{existing: []IssueSpec{{ID: 3, Title: "a"}}, updateErr: sentinel}
+	if _, err := SyncIssues(ctx, fake, []IssueSpec{{Title: "a", State: "closed"}}); !errors.Is(err, sentinel) {
+		t.Fatalf("expected the update error to propagate, got %v", err)
+	}
+}
+
+func TestSyncIssues_Boundary_BatchLimitAndValidationBeforeWrites(t *testing.T) {
+	ctx := context.Background()
+
+	over := make([]IssueSpec, MaxIssuesLimit+1)
+	for i := range over {
+		over[i] = IssueSpec{Title: "t"}
+	}
+	if _, err := SyncIssues(ctx, &recordingForge{}, over); err == nil {
+		t.Fatalf("expected an error above the %d issue batch limit", MaxIssuesLimit)
+	}
+
+	// A malformed spec late in the batch must abort before anything is written.
+	fake := &recordingForge{}
+	if _, err := SyncIssues(ctx, fake, []IssueSpec{{Title: "ok"}, {Title: "  "}}); err == nil {
+		t.Fatal("expected an error for a blank title")
+	}
+	if len(fake.created) != 0 {
+		t.Fatalf("the batch was partially written before validation: %+v", fake.created)
+	}
+}
+
+const prChecklistBoxes = `
 ## Summary
 Implemented Phase 3 Pillar VII.
 
 ## Checklist
 - [x] **HISS-16 (Context Integrity)**: Checked and verified via compile-context.
 - [X] **3D Test Discipline (HISS-15)**: Positive, Negative, and Boundary tests pass.
+`
 
-## Ed25519 Exit-0 Verification Receipt
-` + "```text\n" + `All standards verification gates passed cleanly. Receipt: e25519_abcdef123456\n` + "```\n"
+// signedReceiptBlock renders a genuine Ed25519 Exit-0 receipt as the fenced block a PR body
+// is expected to carry.
+func signedReceiptBlock(t *testing.T, priv ed25519.PrivateKey, commitSHA, output string) string {
+	t.Helper()
+	receipt, err := lockdown.CreateReceipt("praetorctl gate run", 0, []byte(output), commitSHA, "acme/widgets", priv)
+	if err != nil {
+		t.Fatalf("failed creating receipt: %v", err)
+	}
+	data, err := json.MarshalIndent(lockdown.ReceiptFile{ExecutionReceipt: *receipt, GateOutput: output}, "", "  ")
+	if err != nil {
+		t.Fatalf("failed encoding receipt: %v", err)
+	}
+	return "\n```receipt\n" + string(data) + "\n```\n"
+}
 
-	res, err := ValidatePRChecklist(prBody)
+func TestValidatePRChecklist_Positive(t *testing.T) {
+	pub, priv, err := lockdown.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed generating keypair: %v", err)
+	}
+	head := "0f1e2d3c4b5a69788796a5b4c3d2e1f009182736"
+	prBody := prChecklistBoxes + signedReceiptBlock(t, priv, head, "all gates passed")
+
+	res, err := ValidatePRChecklistWithPolicy(prBody, ReceiptPolicy{PinnedKey: pub, HeadSHA: head})
 	if err != nil {
 		t.Fatalf("unexpected error validating checklist: %v", err)
 	}
@@ -95,6 +310,105 @@ Implemented Phase 3 Pillar VII.
 	if !res.HasHISS16Check || !res.Has3DTestsCheck || !res.HasReceipt {
 		t.Fatalf("expected all checks true, got: %+v", res)
 	}
+	if !strings.Contains(res.ReceiptProof, head) {
+		t.Fatalf("receipt proof does not name the certified commit: %q", res.ReceiptProof)
+	}
+}
+
+// A fenced code block or the literal words "Exit-0 Receipt" must never satisfy a gate that
+// claims to verify an Ed25519 signature.
+func TestValidatePRChecklist_Negative_UnsignedReceiptSubstitutes(t *testing.T) {
+	cases := map[string]string{
+		"plain fenced block": prChecklistBoxes + "\n```text\nAll gates passed. Exit-0 Receipt\n```\n",
+		"literal phrase":     prChecklistBoxes + "\nEd25519 Exit-0 Receipt: Receipt Signature present.\n",
+		"malformed json":     prChecklistBoxes + "\n```receipt\n{not json\n```\n",
+		"empty receipt":      prChecklistBoxes + "\n```receipt\n{}\n```\n",
+	}
+	for name, body := range cases {
+		res, err := ValidatePRChecklist(body)
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", name, err)
+		}
+		if res.Valid || res.HasReceipt {
+			t.Fatalf("%s: an unsigned receipt was accepted: %+v", name, res)
+		}
+	}
+}
+
+func TestValidatePRChecklist_Negative_WrongKeyCommitOrPayload(t *testing.T) {
+	_, priv, err := lockdown.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed generating keypair: %v", err)
+	}
+	otherPub, _, err := lockdown.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed generating keypair: %v", err)
+	}
+	head := "0f1e2d3c4b5a69788796a5b4c3d2e1f009182736"
+	body := prChecklistBoxes + signedReceiptBlock(t, priv, head, "all gates passed")
+
+	res, err := ValidatePRChecklistWithPolicy(body, ReceiptPolicy{PinnedKey: otherPub})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.HasReceipt {
+		t.Fatal("a receipt signed by an unpinned key was accepted")
+	}
+
+	res, err = ValidatePRChecklistWithPolicy(body, ReceiptPolicy{HeadSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.HasReceipt {
+		t.Fatal("a receipt certifying a different commit was accepted")
+	}
+
+	tampered := strings.Replace(body, "all gates passed", "all gates failed", 1)
+	res, err = ValidatePRChecklist(tampered)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.HasReceipt {
+		t.Fatal("a receipt whose certified output was altered was accepted")
+	}
+}
+
+func TestValidatePRChecklist_Boundary_FenceLabelAndLineLimit(t *testing.T) {
+	_, priv, err := lockdown.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed generating keypair: %v", err)
+	}
+	block := signedReceiptBlock(t, priv, "abc", "out")
+
+	// The same receipt in an unlabelled fence is not a receipt.
+	unlabelled := prChecklistBoxes + strings.Replace(block, "```receipt", "```", 1)
+	res, err := ValidatePRChecklist(unlabelled)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.HasReceipt {
+		t.Fatal("an unlabelled fenced block was accepted as a receipt")
+	}
+
+	// A json-labelled receipt fence is accepted.
+	labelled := prChecklistBoxes + strings.Replace(block, "```receipt", "```json receipt", 1)
+	res, err = ValidatePRChecklist(labelled)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.HasReceipt || !res.Valid {
+		t.Fatalf("expected the labelled receipt to be accepted: %+v", res)
+	}
+
+	// Beyond MaxPRLinesLimit the body is truncated, so the receipt is out of scope.
+	padded := prChecklistBoxes + strings.Repeat("filler\n", MaxPRLinesLimit+10) + block
+	res, err = ValidatePRChecklist(padded)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.HasReceipt {
+		t.Fatal("content beyond the scalar line bound must not be scanned")
+	}
 }
 
 func TestAssignReviewers_Positive(t *testing.T) {
@@ -102,7 +416,7 @@ func TestAssignReviewers_Positive(t *testing.T) {
 # CODEOWNERS
 *                   @cordanaLLM/core-leads
 internal/forge/*    @cordanaLLM/multi-forge-team
-docs/*              @cordanaLLM/docs-team
+docs/                @cordanaLLM/docs-team
 `
 	touched := []string{"internal/forge/issues.go", "docs/wiki/Home.md"}
 	assignment, err := AssignReviewers(touched, codeowners)
@@ -124,9 +438,63 @@ docs/*              @cordanaLLM/docs-team
 	if !foundForge || !foundDocs {
 		t.Errorf("expected multi-forge and docs teams assigned, got: %v", assignment.HumanReviewers)
 	}
+	// Last match wins, exactly as on GitHub: the catch-all rule must not survive.
+	for _, h := range assignment.HumanReviewers {
+		if h == "@cordanaLLM/core-leads" {
+			t.Errorf("the catch-all rule must be overridden by the later matching rule: %v", assignment.HumanReviewers)
+		}
+	}
 
 	if len(assignment.BotReviewers) == 0 || assignment.BotReviewers[0] != StandardReviewBot {
 		t.Errorf("expected bot reviewer %s, got: %v", StandardReviewBot, assignment.BotReviewers)
+	}
+}
+
+// CODEOWNERS patterns follow gitignore semantics; a prefix test without a separator
+// boundary hands ownership of unrelated directories to the wrong team.
+func TestMatchPattern_3D(t *testing.T) {
+	cases := []struct {
+		pattern string
+		path    string
+		want    bool
+	}{
+		// Positive
+		{"*", "any/where.go", true},
+		{"*.go", "internal/forge/pr.go", true},
+		{"docs/", "docs/wiki/Home.md", true},
+		{"docs/*", "docs/index.md", true},
+		{"internal/**", "internal/forge/deep/x.go", true},
+		{"/cmd/standardsctl/main.go", "cmd/standardsctl/main.go", true},
+		{"internal/forge/*", "internal/forge/pr.go", true},
+		// Negative: the separator boundary must hold
+		{"docs/*", "docs-old/README.md", false},
+		{"internal/forge/*", "internal/forgery/x.go", false},
+		{"docs/", "docs-old/README.md", false},
+		{"docs/*", "docs/wiki/Home.md", false},
+		{"*.go", "internal/forge/pr.md", false},
+		// Boundary
+		{"", "a.go", false},
+		{"*.go", "", false},
+		{"**", "a/b/c.go", true},
+	}
+	for _, tc := range cases {
+		if got := matchPattern(tc.pattern, tc.path); got != tc.want {
+			t.Errorf("matchPattern(%q, %q) = %v, want %v", tc.pattern, tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestAssignReviewers_Boundary_PathLimit(t *testing.T) {
+	paths := make([]string, MaxPathsLimit+10)
+	for i := range paths {
+		paths[i] = "internal/forge/pr.go"
+	}
+	assignment, err := AssignReviewers(paths, "internal/forge/* @team\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(assignment.HumanReviewers) != 1 || assignment.HumanReviewers[0] != "@team" {
+		t.Fatalf("unexpected reviewers: %v", assignment.HumanReviewers)
 	}
 }
 
@@ -230,13 +598,13 @@ func TestNewForge_Negative_InvalidProvider(t *testing.T) {
 
 func TestSyncIssues_Negative_NilForgeAndUnauthenticated(t *testing.T) {
 	ctx := context.Background()
-	err := SyncIssues(ctx, nil, []IssueSpec{{Title: "Test"}})
+	_, err := SyncIssues(ctx, nil, []IssueSpec{{Title: "Test"}})
 	if err == nil {
 		t.Fatalf("expected error for nil forge, got nil")
 	}
 
 	unauth := NewGitHubDriver("", "")
-	errUnauth := SyncIssues(ctx, unauth, []IssueSpec{{Title: "Test"}})
+	_, errUnauth := SyncIssues(ctx, unauth, []IssueSpec{{Title: "Test"}})
 	if errUnauth == nil {
 		t.Fatalf("expected error for unauthenticated forge, got nil")
 	}
@@ -246,14 +614,14 @@ func TestSyncIssues_Negative_EmptyTitleAndCancelledContext(t *testing.T) {
 	ctx := context.Background()
 	gh := NewGitHubDriver("token", "")
 
-	err := SyncIssues(ctx, gh, []IssueSpec{{Title: ""}})
+	_, err := SyncIssues(ctx, gh, []IssueSpec{{Title: ""}})
 	if err == nil {
 		t.Fatalf("expected error for issue with empty title")
 	}
 
 	cancCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	errCanc := SyncIssues(cancCtx, gh, []IssueSpec{{Title: "Valid"}})
+	_, errCanc := SyncIssues(cancCtx, gh, []IssueSpec{{Title: "Valid"}})
 	if errCanc == nil {
 		t.Fatalf("expected error for cancelled context")
 	}
@@ -359,6 +727,32 @@ func TestValidatePRChecklist_Boundary_EmptyBody(t *testing.T) {
 	_, err := ValidatePRChecklist("")
 	if err == nil {
 		t.Fatalf("expected error for empty PR body")
+	}
+}
+
+// Conventional Commits 1.0.0 declares BREAKING-CHANGE synonymous with BREAKING CHANGE.
+func TestAnalyzeCommit_Negative_BothBreakingFooterSpellings(t *testing.T) {
+	for _, token := range []string{"BREAKING CHANGE:", "BREAKING-CHANGE:"} {
+		msg := "feat(api): drop v1 endpoint\n\n" + token + " v1 removed"
+		res, err := AnalyzeCommit(msg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.IsBreaking {
+			t.Fatalf("footer %q was not recognised as breaking", token)
+		}
+		if res.Valid {
+			t.Fatalf("footer %q without a Migration: footer must be invalid", token)
+		}
+	}
+
+	withMigration := "feat(api): drop v1 endpoint\n\nBREAKING-CHANGE: v1 removed\nMigration: call /v2/issues instead"
+	res, err := AnalyzeCommit(withMigration)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.IsBreaking || !res.HasMigrationFooter || !res.Valid {
+		t.Fatalf("expected a valid breaking commit, got %+v", res)
 	}
 }
 

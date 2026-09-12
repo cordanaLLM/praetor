@@ -255,7 +255,7 @@ func TestSync_Remote_Negative(t *testing.T) {
 	_, err = runSyncCmd(t, "--config="+unset, "--remote", "--token=ghp_x")
 	mustErrContain(t, err, "must be set")
 
-	// No origin remote, then a foreign origin, then a fixture token: all refuse.
+	// No origin remote, then a foreign origin: both refuse before any HTTP request.
 	_, err = runSyncCmd(t, "--config="+manifest, "--remote", "--token=ghp_x")
 	mustErrContain(t, err, "no origin remote")
 	env := initGitFixture(t, dir)
@@ -267,15 +267,16 @@ func TestSync_Remote_Negative(t *testing.T) {
 	if out, gerr := runFixtureGit(t, dir, env, "remote", "set-url", "origin", "git@github.com:acme/widgets.git"); gerr != nil {
 		t.Fatalf("remote set-url: %v (%s)", gerr, out)
 	}
-	_, err = runSyncCmd(t, "--config="+manifest, "--remote", "--token=test-fixture")
-	mustErrContain(t, err, "fixture mode")
 
 	// An API rejection fails the command instead of printing a warning.
 	stub := &forgeStub{writeStatus: http.StatusForbidden}
 	srv := httptest.NewServer(stub.handler())
 	t.Cleanup(srv.Close)
-	out, err := runSyncCmd(t, "--config="+manifest, "--remote", "--token=ghp_x", "--endpoint="+srv.URL)
+	out, err := runSyncCmd(t, "--config="+manifest, "--remote", "--token=test-fixture", "--endpoint="+srv.URL)
 	mustErrContain(t, err, "403")
+	if writes := stub.recorded(); len(writes) != 1 {
+		t.Fatalf("a test-prefixed token must make a real request to the stub, got %v", writes)
+	}
 	if strings.Contains(out, "Synchronization complete.") {
 		t.Fatalf("a failed remote sync must not report completion:\n%s", out)
 	}

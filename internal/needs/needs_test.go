@@ -283,7 +283,25 @@ func TestScanRepoManifestPersistence(t *testing.T) {
 		t.Fatalf("failed to write manifest: %v", err)
 	}
 
-	manifestPath := filepath.Join(tmpDir, ".needs.yaml")
+	assertPersistedNeedsManifest(t, filepath.Join(tmpDir, ".needs.yaml"), repoNeeds)
+
+	// The declared capabilities are the part of the manifest a rescan reads back.
+	rescan, err := ScanRepo(ctx, tmpDir)
+	if err != nil {
+		t.Fatalf("rescan failed: %v", err)
+	}
+	for _, declared := range repoNeeds.Capabilities.Required {
+		if !slices.Contains(rescan.Capabilities.Required, declared) {
+			t.Fatalf("rescan dropped declared capability %q: %+v", declared, rescan.Capabilities)
+		}
+	}
+	if rescan.Readiness.Score != repoNeeds.Readiness.Score {
+		t.Fatalf("expected score %f, got %f", repoNeeds.Readiness.Score, rescan.Readiness.Score)
+	}
+}
+
+func assertPersistedNeedsManifest(t *testing.T, manifestPath string, repoNeeds *RepoNeeds) {
+	t.Helper()
 	data, err := os.ReadFile(manifestPath) // #nosec G304 -- test-local path from t.TempDir
 	if err != nil {
 		t.Fatalf("failed to read back the manifest: %v", err)
@@ -314,20 +332,6 @@ func TestScanRepoManifestPersistence(t *testing.T) {
 	}
 	if perm := info.Mode().Perm(); perm != 0o600 {
 		t.Errorf("expected the manifest to be owner-only, got %#o", perm)
-	}
-
-	// The declared capabilities are the part of the manifest a rescan reads back.
-	rescan, err := ScanRepo(ctx, tmpDir)
-	if err != nil {
-		t.Fatalf("rescan failed: %v", err)
-	}
-	for _, declared := range repoNeeds.Capabilities.Required {
-		if !slices.Contains(rescan.Capabilities.Required, declared) {
-			t.Fatalf("rescan dropped declared capability %q: %+v", declared, rescan.Capabilities)
-		}
-	}
-	if rescan.Readiness.Score != repoNeeds.Readiness.Score {
-		t.Fatalf("expected score %f, got %f", repoNeeds.Readiness.Score, rescan.Readiness.Score)
 	}
 }
 

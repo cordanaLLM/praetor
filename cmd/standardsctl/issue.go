@@ -187,6 +187,10 @@ func loadFleetIssues(ctx context.Context, token, endpoint string, repos []string
 // and how many failed, so the caller can report the real outcome and exit non-zero.
 func applyUnblockTransitions(ctx context.Context, token, endpoint string,
 	unblocked []forge.UnblockAction, labels issueLabelIndex) (applied, failed int) {
+	if len(unblocked) > maxUnblockTransitions {
+		fmt.Printf("[WARN] Refusing %d transitions: maximum is %d\n", len(unblocked), maxUnblockTransitions)
+		return 0, len(unblocked)
+	}
 	for i := 0; i < len(unblocked) && i < maxUnblockTransitions; i++ {
 		u := unblocked[i]
 		if ctx.Err() != nil {
@@ -194,29 +198,42 @@ func applyUnblockTransitions(ctx context.Context, token, endpoint string,
 			return applied, failed + (len(unblocked) - i)
 		}
 		owner, name, ok := strings.Cut(u.Repo, "/")
-		if !ok {
+		if !ok || owner == "" || name == "" {
+			failed++
 			continue
 		}
 		ghDriver := forge.NewGitHubDriver(token, endpoint)
 		ghDriver.SetRepository(owner, name)
 
-		newLabels, known := labels.mergedReadyLabels(u.Repo, u.IssueNumber)
+		_, known := labels.mergedReadyLabels(u.Repo, u.IssueNumber)
 		if !known {
-			fmt.Printf("[WARN] Skipping %s#%d: its current labels are unknown, and a label update replaces the whole set\n",
+			fmt.Printf("[WARN] Skipping %s#%d: the issue was not observed in this reconciliation\n",
 				u.Repo, u.IssueNumber)
 			failed++
 			continue
 		}
-		if err := ghDriver.UpdateIssue(ctx, u.IssueNumber, newLabels, ""); err != nil {
+		if err := transitionUnblocked(ctx, ghDriver, u.IssueNumber); err != nil {
 			fmt.Printf("[WARN] Failed updating issue %s#%d: %v\n", u.Repo, u.IssueNumber, err)
 			failed++
 			continue
 		}
-		fmt.Printf("[APPLIED] %s#%d transitioned to %s (labels: %s)\n",
-			u.Repo, u.IssueNumber, readyLabel, strings.Join(newLabels, ", "))
+		fmt.Printf("[APPLIED] %s#%d transitioned to %s\n", u.Repo, u.IssueNumber, readyLabel)
 		applied++
 	}
 	return applied, failed
+}
+
+// transitionUnblocked uses additive APIs to preserve labels added since the scan.
+func transitionUnblocked(ctx context.Context, gh *forge.GitHubDriver, number int) error {
+	if err := gh.AddLabels(ctx, number, []string{readyLabel}); err != nil {
+		return err
+	}
+	for _, label := range blockedLabels {
+		if err := gh.RemoveLabel(ctx, number, label); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func printReconciliationSummary(owner string, rep *forge.ReconciliationReport, dryRun bool, applied, failed int) {
