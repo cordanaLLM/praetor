@@ -201,7 +201,7 @@ func (pm *ProjectManager) addItemRemote(ctx context.Context, rootPath string, pr
 	out, err := util.RunCommand(ctx, "", "gh", cmdArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("gh project item-add %d --url %s: %w (output: %s)",
-			projectNum, itemURL, err, truncateExcerpt(out, maxErrorBodyBytes))
+			projectNum, itemURL, err, util.TruncateExcerpt(out, maxErrorBodyBytes))
 	}
 
 	var res struct {
@@ -244,7 +244,7 @@ func (pm *ProjectManager) fetchRemoteProjects(ctx context.Context) (projects []P
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub GraphQL returned HTTP %d: %s",
-			resp.StatusCode, readErrorBody(resp.Body))
+			resp.StatusCode, util.ReadErrorBody(resp.Body))
 	}
 
 	var res struct {
@@ -264,7 +264,7 @@ func (pm *ProjectManager) fetchRemoteProjects(ctx context.Context) (projects []P
 	}
 	if len(res.Errors) > 0 {
 		return nil, fmt.Errorf("GitHub GraphQL reported %d error(s), first: %s",
-			len(res.Errors), truncateExcerpt(res.Errors[0].Message, maxErrorBodyBytes))
+			len(res.Errors), util.TruncateExcerpt(res.Errors[0].Message, maxErrorBodyBytes))
 	}
 	return res.Data.Organization.ProjectsV2.Nodes, nil
 }

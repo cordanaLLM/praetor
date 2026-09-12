@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -20,29 +21,8 @@ const (
 	maxHTTPResponseBody = 16 * 1024 * 1024 // 16 MB limit
 	// maxErrorBodyBytes bounds how much of a response body may be read into, and
 	// embedded in, an error that the CLI prints verbatim.
-	maxErrorBodyBytes = 64 * 1024
+	maxErrorBodyBytes = util.MaxErrorBodyBytes
 )
-
-// readErrorBody reads the excerpt of an error response that may be embedded in an error
-// message. The read is bounded by maxErrorBodyBytes so a hostile or misconfigured
-// endpoint cannot stream an unbounded body into memory, and a read failure is reported
-// instead of silently yielding a truncated body (HISS-07).
-func readErrorBody(r io.Reader) string {
-	data, err := io.ReadAll(io.LimitReader(r, maxErrorBodyBytes))
-	excerpt := strings.TrimSpace(string(data))
-	if err != nil {
-		return fmt.Sprintf("%s [reading the response body failed: %v]", excerpt, err)
-	}
-	return excerpt
-}
-
-// truncateExcerpt shortens s to at most limit bytes, marking that it was cut.
-func truncateExcerpt(s string, limit int) string {
-	if limit <= 0 || len(s) <= limit {
-		return s
-	}
-	return s[:limit] + "... [truncated]"
-}
 
 // GitHubDriver implements Forge for GitHub using GitHub Apps / Personal Access Tokens.
 type GitHubDriver struct {
@@ -316,7 +296,7 @@ func (g *GitHubDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*P
 		return nil, fmt.Errorf("failed creating pull request: %w", err)
 	}
 	if status != http.StatusCreated {
-		return nil, fmt.Errorf("unexpected status %d creating pull request: %s", status, truncateExcerpt(string(respBody), maxErrorBodyBytes))
+		return nil, fmt.Errorf("unexpected status %d creating pull request: %s", status, util.TruncateExcerpt(string(respBody), maxErrorBodyBytes))
 	}
 
 	var res PRResponse
@@ -353,7 +333,7 @@ func (g *GitHubDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueR
 		return nil, fmt.Errorf("failed creating issue: %w", err)
 	}
 	if status != http.StatusCreated {
-		return nil, fmt.Errorf("unexpected status %d creating issue: %s", status, truncateExcerpt(string(respBody), maxErrorBodyBytes))
+		return nil, fmt.Errorf("unexpected status %d creating issue: %s", status, util.TruncateExcerpt(string(respBody), maxErrorBodyBytes))
 	}
 
 	var res IssueResponse
@@ -384,7 +364,7 @@ func (g *GitHubDriver) ListIssues(ctx context.Context, state string) ([]IssueSpe
 		return nil, fmt.Errorf("failed listing issues: %w", err)
 	}
 	if status != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status %d listing issues: %s", status, truncateExcerpt(string(respBody), maxErrorBodyBytes))
+		return nil, fmt.Errorf("unexpected status %d listing issues: %s", status, util.TruncateExcerpt(string(respBody), maxErrorBodyBytes))
 	}
 
 	return parseGitHubIssues(respBody)

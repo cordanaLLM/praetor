@@ -25,7 +25,7 @@ const (
 	maxAPIResponseBytes = 8 << 20
 	// maxErrorBodyBytes bounds how much of an error response is embedded in an error
 	// message that the CLI prints verbatim.
-	maxErrorBodyBytes = 64 * 1024
+	maxErrorBodyBytes = util.MaxErrorBodyBytes
 	// defaultAPIBase is the forge API used when no endpoint is configured.
 	defaultAPIBase = "https://api.github.com"
 )
@@ -142,7 +142,7 @@ func fetchMilestonePage(ctx context.Context, client *http.Client, url, tok strin
 	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("GitHub API returned HTTP %d: %s", resp.StatusCode, readErrorBody(resp.Body))
+		return nil, fmt.Errorf("GitHub API returned HTTP %d: %s", resp.StatusCode, util.ReadErrorBody(resp.Body))
 	}
 
 	var remotes []RemoteMilestone
@@ -150,18 +150,6 @@ func fetchMilestonePage(ctx context.Context, client *http.Client, url, tok strin
 		return nil, fmt.Errorf("decode remote milestones: %w", err)
 	}
 	return remotes, nil
-}
-
-// readErrorBody reads a bounded excerpt of an error response body. The read is limited to
-// maxErrorBodyBytes so that an unbounded body cannot be buffered into an error string,
-// and a read failure is reported rather than silently swallowed (HISS-07).
-func readErrorBody(r io.Reader) string {
-	data, err := io.ReadAll(io.LimitReader(r, maxErrorBodyBytes))
-	excerpt := strings.TrimSpace(string(data))
-	if err != nil {
-		return fmt.Sprintf("%s [reading the response body failed: %v]", excerpt, err)
-	}
-	return excerpt
 }
 
 // remoteProgress computes the completion ratio reported by the forge.
@@ -279,7 +267,7 @@ func postMilestone(ctx context.Context, url, tok string, m *Milestone) (created 
 	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("GitHub API returned HTTP %d: %s", resp.StatusCode, readErrorBody(resp.Body))
+		return nil, fmt.Errorf("GitHub API returned HTTP %d: %s", resp.StatusCode, util.ReadErrorBody(resp.Body))
 	}
 
 	var decoded RemoteMilestone

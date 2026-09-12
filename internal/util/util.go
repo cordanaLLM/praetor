@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +31,31 @@ var ErrRepoIdentityUnresolved = errors.New("util: unable to resolve repository o
 // ErrSymlinkDestination is returned by WriteFileNoFollow when the destination exists and
 // is a symbolic link, or exists and is not a regular file.
 var ErrSymlinkDestination = errors.New("util: refusing to write through a non-regular destination")
+
+// MaxErrorBodyBytes bounds how much of an HTTP error response body may be read into, and
+// embedded in, an error message that a command prints verbatim.
+const MaxErrorBodyBytes = 64 * 1024
+
+// ReadErrorBody reads the excerpt of an HTTP error response that may be embedded in an
+// error message. The read is bounded by MaxErrorBodyBytes, so neither a hostile nor a
+// misconfigured endpoint can stream an unbounded body into memory, and a read failure is
+// reported rather than silently yielding a truncated body (HISS-07).
+func ReadErrorBody(r io.Reader) string {
+	data, err := io.ReadAll(io.LimitReader(r, MaxErrorBodyBytes))
+	excerpt := strings.TrimSpace(string(data))
+	if err != nil {
+		return fmt.Sprintf("%s [reading the response body failed: %v]", excerpt, err)
+	}
+	return excerpt
+}
+
+// TruncateExcerpt shortens s to at most limit bytes, marking that it was cut.
+func TruncateExcerpt(s string, limit int) string {
+	if limit <= 0 || len(s) <= limit {
+		return s
+	}
+	return s[:limit] + "... [truncated]"
+}
 
 // WriteFileNoFollow writes data to path, refusing to write through a symbolic link.
 //
