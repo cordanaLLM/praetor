@@ -7,6 +7,26 @@
 
 ## Future Workstreams
 - [ ] Deep AST Deduplication Sweeps
+- [ ] **Budget-aware agent dispatch (limit pre-checks as a harness primitive).** Per user direction
+      (2026-09-12): every multi-agent fan-out must check remaining provider budget *before* dispatch and
+      pace itself, because hitting a rolling-window limit mid-wave kills all in-flight agents and discards
+      their warm context. Today `internal/router` models only per-model RPM/TPM headroom (arbiter,
+      `LimitTracker`, 429 cooldown, `docs/standards/model-routing-and-fanout.md`) and no dispatcher calls
+      it (`.config/agent/hooks/pre_agent_dispatch.py` is unreferenced). Scope:
+      1. Model account-window budgets (rolling 5 h / weekly / monthly, per provider and per model tier)
+         next to the RPM/TPM limits in `.config/models/routing.yaml`; track spend per window in
+         `LimitTracker`; expose `RemainingWindowBudget(tier)`.
+      2. A pre-dispatch gate: estimate a wave's spend from agent count x effort tier x observed
+         tokens-per-agent, refuse or shrink the wave when it would breach 80 % of the remaining window,
+         and prefer the cheaper tier for grunt work (the "route grunt off the scarce provider" rule).
+      3. Checkpoint/resume semantics for agent work units: commit every N findings on a per-unit branch,
+         resume from that branch on relaunch, and a circuit breaker that stops launching after K
+         consecutive empty results so a limit hit costs a handful of agents, not hundreds.
+      4. Wire `praetorctl agent` / the paperclip harness and the fleet workflow scripts through the gate,
+         and surface the decision (estimated spend, remaining budget, chosen wave size) in the run log.
+      Reference implementation of items 2-3 lives in the deep-audit workflow scripts
+      (`~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit/wf2-fix.mjs`: `A()` breaker,
+      `subset` halves, resume-from-branch prologue).
 
 ## Active Milestones
 
