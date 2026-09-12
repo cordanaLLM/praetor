@@ -11,6 +11,4 @@
 - [ ] Configure lusoris/praetor as synchronized operational fork with explicit repository and workstation rollout stages
 - [ ] Implement capability and evidence based per-task agent routing with cost, latency, and escalation controls
 - [ ] Optimize workstation agent and CLI context files with canonical ownership and replay verification
-- [ ] Execute bounded routed dogfood repairs in isolated local checkouts with real backend evidence
-- [ ] Verify and activate local scheduled repair execution with retained patches and outcomes
-- [x] Expose bounded repair execution through CLI and confined read-only MCP status (completed: 2026-09-12)
+- [ ] Promote scoped dogfood repair candidates through fresh suite replay and explicit repository stages

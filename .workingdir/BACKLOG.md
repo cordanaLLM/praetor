@@ -209,3 +209,8 @@
 
 ### Discharged Tasks [2026-09-12 18:21:51 UTC, commit `local`]
 - [x] Implement bounded repair executor with isolated source and offline verification (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 18:29:35 UTC, commit `local`]
+- [x] Execute bounded routed dogfood repairs in isolated local checkouts with real backend evidence (completed: 2026-09-12)
+- [x] Verify and activate local scheduled repair execution with retained patches and outcomes (completed: 2026-09-12)
+- [x] Expose bounded repair execution through CLI and confined read-only MCP status (completed: 2026-09-12)

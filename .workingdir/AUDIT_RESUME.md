@@ -450,3 +450,53 @@ use it; fix agents may use it for `make verify-all` and end-to-end reproductions
 - 56 findings (see `citation_mismatches.txt`) cite a wrong or non-existent line. The claim is usually
   still real; re-locate by the snippet, not the line number.
 - Only the Fable model tier is capped on this account; Opus and Sonnet are not.
+
+## 2026-09-12: real bounded repair execution activated
+
+Code checkpoint `2313b90` adds `dogfood repairs run|status`, the confined read-only
+`standards_dogfood_repair_status` MCP tool, and a separate repair queue timer.
+Fresh MCP verification passes 35 checks across 18 tools. All three development
+binaries were rebuilt and installed with source and executable hash readback.
+
+The actual `cordana/gemini-flash-lite` Responses route was verified through the
+existing pinned credential helper. A deliberately injected Claude-envelope bug
+at local-only fixture commit `4b0e5b9` produced a real failed suite report and five
+failing tests. One model request restored the exact pre-injection source; all
+134 unchanged harvester tests passed, and the original synthetic suite then
+verified ingestion plus replay with zero new replay records. Reported usage was
+1,793 input and 1,432 output tokens, costing $0.0041179. Repeating queue execution
+found the consumed key and made no further provider attempt. This was an
+explicit acceptance fault, not a discovered production defect.
+
+The live `praetor-dogfood-repair-local.timer` is enabled and active alongside the
+suite timer. A manual start of its backing service succeeded and reported an
+idle queue with no current failed reports. Private settings are
+`~/.config/praetor/{repair-local,repair-queue}.json` and `repair-routing.yaml`;
+the suite planner now uses the same live model binding. The repair profile pins
+the reviewed public code commit, five harvester/public-adoption Go files, and
+the harvester/dogfood test packages. Its green-baseline negative control ran
+201 tests and consumed the synthetic case as `not_reproduced` without provider
+usage. Recheck these live files and user units before relying on this history.
+
+Every verification uses offline bubblewrap plus a systemd user scope enforcing
+4 GiB memory, zero swap, 128 tasks and two CPUs of aggregate quota. Source files
+come from exact Git blobs, ignoring mutable Git attributes. The first stage
+preserves imports, top-level declarations, signatures and call expressions;
+only local expression/control-flow edits are admitted. Go test identities and
+the AST contract reject skipped-test and test-output-framing shortcuts. Raw
+retained error excerpts and transcript bodies are not sent to the provider.
+The reviewed engine tests can read the mounted Go dependency cache; this is
+not an arbitrary upstream application execution profile.
+
+Full `make -k verify-all` ran in a detached worktree. All gates passed except
+the existing lint/security debt: 157 uncapped lint findings (identical
+diagnostic multiset, zero additions) and 90 security findings. No Exit-0 receipt
+was claimed or overwritten. The public checkpoint remains the review channel.
+
+Evidence is retained under the existing private audit root at
+`codex-continuation/repair-execution/`, including `README.json`, provider canary,
+fault acceptance, isolated full gates, install manifests and live unit status.
+See [repair execution](../docs/guides/dogfood-repair-execution.md) and
+[repair timer](../docs/guides/dogfood-repair-timer.md). Candidate promotion,
+broader workstation harvesting, semantic verified-fact memory, measured
+multi-backend routing and context optimization remain staged work in `OPEN.md`.
