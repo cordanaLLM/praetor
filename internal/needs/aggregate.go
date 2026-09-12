@@ -205,10 +205,10 @@ func RenderFrameworkDemandMarkdown(report *FleetDemandReport) string {
 	var sb strings.Builder
 
 	sb.WriteString("# Framework Demand & Capability Report\n\n")
-	sb.WriteString(fmt.Sprintf("**Target Framework**: `%s`  \n", report.Framework))
-	sb.WriteString(fmt.Sprintf("**Generated At**: %s  \n", report.GeneratedAt.Format(time.RFC3339)))
-	sb.WriteString(fmt.Sprintf("**Repositories Scanned**: %d / %d  \n", report.ScannedRepositories, report.TotalRepositories))
-	sb.WriteString(fmt.Sprintf("**Overall Fleet Golusoris Coverage**: %.1f%%\n\n", report.OverallFleetCoverage))
+	fmt.Fprintf(&sb, "**Target Framework**: `%s`  \n", report.Framework)
+	fmt.Fprintf(&sb, "**Generated At**: %s  \n", report.GeneratedAt.Format(time.RFC3339))
+	fmt.Fprintf(&sb, "**Repositories Scanned**: %d / %d  \n", report.ScannedRepositories, report.TotalRepositories)
+	fmt.Fprintf(&sb, "**Overall Fleet Golusoris Coverage**: %.1f%%\n\n", report.OverallFleetCoverage)
 
 	sb.WriteString("## Fleet Demand Topography\n\n")
 	sb.WriteString("| Capability | Demand Frequency | Consumer Repositories |\n")
@@ -232,7 +232,7 @@ func RenderFrameworkDemandMarkdown(report *FleetDemandReport) string {
 		for i, c := range consumers {
 			shortConsumers[i] = util.CleanGitURL(c)
 		}
-		sb.WriteString(fmt.Sprintf("| `%s` | %d | %s |\n", f.key, f.count, strings.Join(shortConsumers, ", ")))
+		fmt.Fprintf(&sb, "| `%s` | %d | %s |\n", f.key, f.count, strings.Join(shortConsumers, ", "))
 	}
 
 	sb.WriteString("\n## High-Priority Framework Gaps\n\n")
@@ -242,7 +242,7 @@ func RenderFrameworkDemandMarkdown(report *FleetDemandReport) string {
 		sb.WriteString("| Capability Gap | Impacted Repos | Underlying Packages |\n")
 		sb.WriteString("| :--- | :--- | :--- |\n")
 		for _, g := range report.Gaps {
-			sb.WriteString(fmt.Sprintf("| `%s` | %d | `%s` |\n", g.Capability, g.ConsumerCount, strings.Join(g.PackagesUsed, "`, `")))
+			fmt.Fprintf(&sb, "| `%s` | %d | `%s` |\n", g.Capability, g.ConsumerCount, strings.Join(g.PackagesUsed, "`, `"))
 		}
 	}
 
@@ -250,8 +250,8 @@ func RenderFrameworkDemandMarkdown(report *FleetDemandReport) string {
 	sb.WriteString("| Rank | Repository | Readiness Score | Covered Deps | Gaps |\n")
 	sb.WriteString("| :--- | :--- | :--- | :--- | :--- |\n")
 	for i, repo := range report.Leaderboard {
-		sb.WriteString(fmt.Sprintf("| #%d | `%s` | %.1f%% | %d | %d |\n",
-			i+1, repo.Repository, repo.Readiness.Score, repo.Readiness.CoveredDeps, repo.Readiness.GapDeps))
+		fmt.Fprintf(&sb, "| #%d | `%s` | %.1f%% | %d | %d |\n",
+			i+1, repo.Repository, repo.Readiness.Score, repo.Readiness.CoveredDeps, repo.Readiness.GapDeps)
 	}
 
 	return sb.String()

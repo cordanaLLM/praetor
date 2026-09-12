@@ -12,6 +12,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/harvester"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -69,7 +70,8 @@ func verifySelfGovernance(ctx context.Context, hostPath string) (bool, bool, err
 		return synced, false, fmt.Errorf("hiss scan failed: %w", sErr)
 	}
 
-	auditPassed := scanRes.TotalInfractions == 0
+	// A capped scan is a lower bound and can never certify a clean tree.
+	auditPassed := scanRes.TotalInfractions == 0 && !scanRes.Truncated
 	return synced, auditPassed, nil
 }
 
@@ -80,7 +82,7 @@ func testTargetAdoptions(ctx context.Context, targetsDir string, maxTargets int,
 
 	entries, err := os.ReadDir(targetsDir)
 	if err != nil {
-		return nil
+		return fmt.Errorf("list dogfood targets in %q: %w", targetsDir, err)
 	}
 
 	limit := maxTargets
@@ -88,45 +90,44 @@ func testTargetAdoptions(ctx context.Context, targetsDir string, maxTargets int,
 		limit = MaxDogfoodTargets
 	}
 
-	count := 0
-	for _, entry := range entries {
+	for i := 0; i < len(entries) && i < limit; i++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("context cancelled during target testing: %w", err)
 		}
-		if count >= limit {
-			break
+		if res, ok := evaluateTargetAdoption(ctx, targetsDir, entries[i]); ok {
+			report.TargetResults = append(report.TargetResults, res)
 		}
-		count++
-
-		if !entry.IsDir() {
-			continue
-		}
-
-		targetPath := filepath.Join(targetsDir, entry.Name())
-		gitDir := filepath.Join(targetPath, ".git")
-		if _, statErr := os.Stat(gitDir); statErr != nil {
-			continue
-		}
-
-		plan, aErr := adopt.Adopt(ctx, adopt.AdoptOptions{
-			Path:   targetPath,
-			DryRun: true,
-		})
-
-		res := TargetAdoptionResult{
-			RepoName: entry.Name(),
-			Passed:   aErr == nil,
-		}
-		if aErr == nil && plan != nil {
-			res.Archetype = plan.Archetype
-			res.DebtCount = plan.LegacyDebtCount
-			res.Actions = len(plan.CreatedFiles) + len(plan.ReconciledFiles)
-		}
-		report.TargetResults = append(report.TargetResults, res)
 	}
 
 	report.TargetsEvaluated = len(report.TargetResults)
 	return nil
+}
+
+// evaluateTargetAdoption dry-runs an adoption of one target directory. Entries that
+// are not git repositories are not targets and yield ok == false.
+func evaluateTargetAdoption(ctx context.Context, targetsDir string, entry os.DirEntry) (TargetAdoptionResult, bool) {
+	if !entry.IsDir() {
+		return TargetAdoptionResult{}, false
+	}
+	targetPath := filepath.Join(targetsDir, entry.Name())
+	if _, statErr := os.Stat(filepath.Join(targetPath, ".git")); statErr != nil {
+		return TargetAdoptionResult{}, false
+	}
+
+	plan, aErr := adopt.Adopt(ctx, adopt.AdoptOptions{
+		Path:   targetPath,
+		DryRun: true,
+	})
+	res := TargetAdoptionResult{
+		RepoName: entry.Name(),
+		Passed:   aErr == nil,
+	}
+	if aErr == nil && plan != nil {
+		res.Archetype = plan.Archetype
+		res.DebtCount = plan.LegacyDebtCount
+		res.Actions = len(plan.CreatedFiles) + len(plan.ReconciledFiles)
+	}
+	return res, true
 }
 
 func auditWorkstationSkills(ctx context.Context, homeDir string, report *DogfoodReport) error {
@@ -136,7 +137,7 @@ func auditWorkstationSkills(ctx context.Context, homeDir string, report *Dogfood
 
 	skillRep, err := harvester.AuditSkills(ctx, homeDir, "")
 	if err != nil {
-		return nil
+		return fmt.Errorf("audit workstation skills under %q: %w", homeDir, err)
 	}
 
 	report.TotalSkillsAudited = skillRep.TotalSkills
@@ -169,28 +170,8 @@ func RunDogfood(ctx context.Context, opts DogfoodOptions) (*DogfoodReport, error
 		return report, fmt.Errorf("self governance audit failed: %w", err)
 	}
 
-	// 2. Multi-Target Adoption Simulation
-	if err := testTargetAdoptions(ctx, opts.TargetReposDir, opts.MaxScanTargets, report); err != nil {
-		return report, fmt.Errorf("testing target adoptions: %w", err)
-	}
-
-	// 3. Workstation Skills Audit
-	homeDir, hErr := os.UserHomeDir()
-	if hErr == nil {
-		if err := auditWorkstationSkills(ctx, homeDir, report); err != nil {
-			return report, fmt.Errorf("audit workstation skills: %w", err)
-		}
-	}
-
-	// 4. Remote Non-Owned Public Repo Dogfooding
-	remoteURLs := opts.RemoteRepos
-	if opts.BenchmarkPopular {
-		remoteURLs = append(remoteURLs, PopularBenchmarks...)
-	}
-	if len(remoteURLs) > 0 {
-		if err := testRemoteAdoptions(ctx, remoteURLs, report); err != nil {
-			return report, fmt.Errorf("testing remote adoptions: %w", err)
-		}
+	if err := runDogfoodStages(ctx, opts, report); err != nil {
+		return report, err
 	}
 
 	report.OverallPassed = report.ContextSyncPassed && report.SelfAuditPassed
@@ -202,6 +183,34 @@ func RunDogfood(ctx context.Context, opts DogfoodOptions) (*DogfoodReport, error
 	return report, nil
 }
 
+// runDogfoodStages executes the target, workstation and remote stages after the
+// self-governance check.
+func runDogfoodStages(ctx context.Context, opts DogfoodOptions, report *DogfoodReport) error {
+	// 2. Multi-Target Adoption Simulation
+	if err := testTargetAdoptions(ctx, opts.TargetReposDir, opts.MaxScanTargets, report); err != nil {
+		return fmt.Errorf("testing target adoptions: %w", err)
+	}
+
+	// 3. Workstation Skills Audit: without a home directory there is nothing to scan.
+	if homeDir, hErr := os.UserHomeDir(); hErr == nil {
+		if err := auditWorkstationSkills(ctx, homeDir, report); err != nil {
+			return fmt.Errorf("audit workstation skills: %w", err)
+		}
+	}
+
+	// 4. Remote Non-Owned Public Repo Dogfooding
+	remoteURLs := opts.RemoteRepos
+	if opts.BenchmarkPopular {
+		remoteURLs = append(remoteURLs, PopularBenchmarks...)
+	}
+	if len(remoteURLs) > 0 {
+		if err := testRemoteAdoptions(ctx, remoteURLs, report); err != nil {
+			return fmt.Errorf("testing remote adoptions: %w", err)
+		}
+	}
+	return nil
+}
+
 func writeDogfoodReport(path string, report *DogfoodReport) error {
 	if path == "" {
 		return nil
@@ -210,7 +219,7 @@ func writeDogfoodReport(path string, report *DogfoodReport) error {
 	if mErr != nil {
 		return fmt.Errorf("marshal dogfood report: %w", mErr)
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := util.WriteFileSecure(path, data, 0o644); err != nil {
 		return fmt.Errorf("write dogfood report: %w", err)
 	}
 	return nil

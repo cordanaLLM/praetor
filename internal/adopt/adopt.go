@@ -675,7 +675,9 @@ func reconcileBaseline(repoPath string, opts AdoptOptions, report *AdoptReport) 
 			Infractions:      make([]baseline.Infraction, 0),
 		}
 		if opts.RecordBaseline {
-			scanLegacyDebt(repoPath, base, report)
+			if err := scanLegacyDebt(repoPath, base, report); err != nil {
+				return err
+			}
 		}
 		report.LegacyDebtCount = base.TotalInfractions
 		if !opts.DryRun {
@@ -709,7 +711,10 @@ func reconcileBaseline(repoPath string, opts AdoptOptions, report *AdoptReport) 
 	return nil
 }
 
-func scanLegacyDebt(repoPath string, base *baseline.Baseline, report *AdoptReport) {
+// scanLegacyDebt records the repository's current infractions into base. A failed or
+// capped scan is an error: a baseline recorded from a partial scan would silently
+// exempt every unscanned violation from the debt ratchet (HISS-07, HISS-13).
+func scanLegacyDebt(repoPath string, base *baseline.Baseline, report *AdoptReport) error {
 	if report.DebtBreakdown == nil {
 		report.DebtBreakdown = make(map[string]int)
 	}
@@ -722,7 +727,10 @@ func scanLegacyDebt(repoPath string, base *baseline.Baseline, report *AdoptRepor
 		Cap:        maxInfractionsCap,
 	})
 	if err != nil {
-		return
+		return fmt.Errorf("scan legacy debt: %w", err)
+	}
+	if scanRep.Truncated {
+		return fmt.Errorf("scan legacy debt: %w", hiss.ErrScanTruncated)
 	}
 
 	for _, v := range scanRep.Violations {
@@ -739,6 +747,7 @@ func scanLegacyDebt(repoPath string, base *baseline.Baseline, report *AdoptRepor
 	for k, count := range scanRep.Breakdown {
 		report.DebtBreakdown[k] = count
 	}
+	return nil
 }
 
 const agentHarnessTemplate = `<!-- markdownlint-disable MD013 MD025 -->

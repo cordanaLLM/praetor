@@ -199,6 +199,11 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 		}
 		fmt.Printf("\n[PASS] Migration applied on branch %s (%d files changed).\n", res.Branch, len(res.FilesChanged))
 		fmt.Printf("[PASS] Migration guide generated at %s/MIGRATION.md\n", *path)
+		// go mod tidy is a best-effort convenience after the deterministic rewrite; its
+		// failure is reported, never swallowed (HISS-07), and leaves the migration applied.
+		if out, tidyErr := util.RunCommand(ctx, *path, "go", "mod", "tidy"); tidyErr != nil {
+			fmt.Printf("[WARN] go mod tidy failed after migration (%v); run it manually: %s\n", tidyErr, out)
+		}
 	} else {
 		fmt.Println("\n[INFO] Dry-run complete. Pass --apply --dry-run=false to execute migration.")
 	}

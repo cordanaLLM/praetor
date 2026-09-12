@@ -364,8 +364,9 @@ func TestAdopt_MultiLanguageLegacyDebt(t *testing.T) {
 	if rep.DebtBreakdown["HISS-07"] == 0 {
 		t.Errorf("expected HISS-07 infractions, got none")
 	}
-	if rep.DebtBreakdown["HISS-09"] == 0 {
-		t.Errorf("expected HISS-09 infractions, got none")
+	// strcpy is a banned C runtime function: HISS-08 per docs/standards/hiss-16-spec.md.
+	if rep.DebtBreakdown["HISS-08"] == 0 {
+		t.Errorf("expected HISS-08 infractions, got none")
 	}
 }
 

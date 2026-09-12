@@ -108,6 +108,9 @@ func auditBaselineAndInvariants(ctx context.Context, baselinePath string) error 
 	if err != nil {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}
+	if scanRep.Truncated {
+		return fmt.Errorf("[FAIL] Invariant audit failed: %w (%d infractions recorded before the cap)", hiss.ErrScanTruncated, scanRep.TotalInfractions)
+	}
 
 	currentViolations := hiss.ConvertToBaseline(scanRep.Violations)
 	for i := range currentViolations {
@@ -128,8 +131,9 @@ func auditBaselineAndInvariants(ctx context.Context, baselinePath string) error 
 		return fmt.Errorf("[FAIL] HISS invariant violations introduced (%d total infractions, %d new unbaselined violations):\n%s",
 			ratchet.CurrentCount, len(ratchet.NewViolations), strings.Join(msgs, "\n"))
 	}
-	fmt.Printf("[PASS] HISS invariant scan verified: %d active violations within %d baselined limit.\n",
-		ratchet.CurrentCount, base.TotalInfractions)
+	fmt.Printf("[PASS] HISS invariant scan verified: %d active violations within %d baselined limit "+
+		"(skipped: %d ignored directories, %d symlinks, %d oversize files).\n",
+		ratchet.CurrentCount, base.TotalInfractions, scanRep.Skips.DirCount, scanRep.Skips.Symlinks, scanRep.Skips.Oversize)
 	return nil
 }
 
