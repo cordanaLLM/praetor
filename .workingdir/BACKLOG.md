@@ -214,3 +214,13 @@
 - [x] Execute bounded routed dogfood repairs in isolated local checkouts with real backend evidence (completed: 2026-09-12)
 - [x] Verify and activate local scheduled repair execution with retained patches and outcomes (completed: 2026-09-12)
 - [x] Expose bounded repair execution through CLI and confined read-only MCP status (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 20:42:52 UTC, commit `local`]
+- [x] Deep audit WF-1: read-only multi-agent audit of full codebase (Go, CI, hooks, packaging, deploy, templates, config, agent surfaces, editors, docs) (completed: 2026-09-12)
+- [x] Deep audit: retain original 716 findings and full evidence report; ledger loss and reconciliation tracked separately (completed: 2026-09-12)
+- [x] Wire Codex PreToolUse through Lefthook and verify activation boundary (completed: 2026-09-12)
+- [x] Audit current gaps, stubs, disconnected adapters and inaccurate state before further feature implementation (completed: 2026-09-12)
+- [x] Repair bug ledger parsing, persistence and read-error handling; recover four missing findings before reconciliation (completed: 2026-09-12)
+- [x] Research maintained Go packages versus custom implementations and publish a cited reuse and migration decision matrix (completed: 2026-09-12)
+- [x] Constrain whole-workspace dedupe scans so ignored Claude worktrees do not become application duplication findings (completed: 2026-09-12)
+- [x] Resolve audit policy once for CLI and MCP and materialize verified pinned catalogs during adoption (completed: 2026-09-12)

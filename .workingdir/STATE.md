@@ -485,3 +485,7 @@
 ### [2026-09-12 20:38:30 UTC] Commit `b99e921` on `feat/effective-policy-20260912`
 - **Activity**: Shared audit policy and offline adoption verified on source 00598e704cf441c74a973a96746409a07ea1304c2a45c4f29687b92e108ff3f8. Fresh full make -k verify-all passes: race, MCP, lint, security, audits and hooks. Exact pinned profiles copied with conflict and prospective catalog checks; dry-run and actual baseline use the same limit. Global dispatch, other policy consumers, independent data updates and native hook trust remain open.
 - **Tasks**: 20 open, 8 completed | **Open Bugs**: 713 | **Pending Questions**: 0
+
+### [2026-09-12 20:44:39 UTC] Commit `a79483c` on `checkpoint/deep-audit-2026-09-12`
+- **Activity**: Public code a79483c pushed through Lefthook and hosted CI 34717743136 passed. Installed CLI/MCP/LSP hashes match source00598e704cf441c74a973a96746409a07ea1304c2a45c4f29687b92e108ff3f8; fresh CLI/MCP policy digests and stricter fleet rejection agree. Owner870ee693 pushed and active, clean, exactly four config overlays over publica794; full local gate passed, owner hosted CI in progress. Completed tasks archived. Public dogfood shared-policy scan migration now tracked; attached chat MCP still needs reload and native Codex hook trust remains untrusted.
+- **Tasks**: 21 open, 0 completed | **Open Bugs**: 713 | **Pending Questions**: 0

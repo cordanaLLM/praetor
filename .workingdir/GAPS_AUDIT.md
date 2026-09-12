@@ -11,7 +11,8 @@ complete; dependency adoption remains open.
 
 ## Current continuation: shared effective audit policy and offline adoption
 
-The shared [effective policy resolver](../docs/guides/effective-policy.md) now
+Public code checkpoint `a79483c` ships the shared
+[effective policy resolver](../docs/guides/effective-policy.md), which now
 drives CLI and MCP audit function-length enforcement. It combines verified
 profile/facet pins, explicit fleet/organization/deployment/workstation inputs,
 repository overrides and the preserved audit ceiling. Identical snapshots
@@ -25,10 +26,25 @@ SHA256: `00598e704cf441c74a973a96746409a07ea1304c2a45c4f29687b92e108ff3f8`.
 Evidence: `effective-policy-20260912/verify-all-shipping.log`. Earlier failed
 fixtures and pre-fix review reproductions are retained separately.
 
+Installed CLI/MCP/LSP binary hashes match this source. Fresh installed CLI/MCP
+audits agree on the effective digest; explicit stricter fleet input is enforced
+and missing selected files fail. The existing attached chat MCP connection
+still reports the previous audit implementation and requires a client reload.
+The private owner checkout is clean, pushed and active at `870ee693`, pinned to
+public `a79483c`, with exactly four config overlays. Its full gate and hooks
+passed, and its CLI/MCP audits agree. Shipping and hosted results are retained
+under `effective-policy-20260912/REPORT.md` and `owner-sync/`.
+
 This does not activate global services: LSP, public-dogfood verification and
 other analysis paths still need migration. Only `max_func_loc` is injected;
 other complexity values are resolved but not yet consumed by separate linters.
 Routing, budgets, signed data updates and native client activation remain open.
+The public dogfood migration is a correctness prerequisite: its before/after
+scans currently use the fixed default and derive the ratchet from that scan,
+so stricter adopted-policy violations can be missed. Both scans need one
+effective snapshot; migrating only the after-scan would misclassify old debt.
+Public code-checkpoint hosted CI `34717743136` completed successfully. Owner
+hosted CI `34717888755` remains in progress at this update.
 
 ## Shipped checkpoint: verification repair and shared client preparation
 
@@ -73,7 +89,7 @@ logs, real AGY usage, compression round trips and native hook inspection. Local
 installation from `54bae4f` has verified readback and a retained rollback copy.
 The owner fork is pushed at `a709a73` with exactly four config overlays. Hosted
 CI exposed a missing Lefthook installation; public `b99e921` fixes it and passes
-the equivalent local gate. Its hosted rerun remains queued at this writing.
+the equivalent local gate. Its hosted rerun was superseded by the `a79483c` run.
 Passing source verification alone does not establish an installed client version.
 
 ## Previous checkpoint: ledger repair completed

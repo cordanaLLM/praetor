@@ -10,10 +10,10 @@ Read the current section of [GAPS_AUDIT.md](GAPS_AUDIT.md) first. Public checkpo
 Go requirement parsing and context rendering, and adds shared-registry client
 preparation/application. It was pushed through normal hooks and installed with
 verified binary hashes. Public `b99e921` then repaired hosted CI's missing
-Lefthook installation using a verified pinned build toolchain. Hosted rerun is
-still queued at this writing; the fresh equivalent local gate passed.
+Lefthook installation using a verified pinned build toolchain. Its standalone
+run was superseded by the full code-checkpoint CI run linked below.
 
-The next integrated slice adds [effective audit policy](../docs/guides/effective-policy.md)
+Public checkpoint `a79483c` adds [effective audit policy](../docs/guides/effective-policy.md)
 for CLI/MCP and offline adoption of exact pinned profiles. Final source SHA256:
 `00598e704cf441c74a973a96746409a07ea1304c2a45c4f29687b92e108ff3f8`.
 `make -k verify-all` passed on frozen source, including 51 Go package race suites,
@@ -21,7 +21,10 @@ fresh MCP, lint/security/vulnerability scans, audits and hooks. Final evidence:
 `effective-policy-20260912/verify-all-shipping.log`. Dry-run and apply use the
 same policy for baseline counts; prospective catalog conflicts fail before
 catalog writes. Source verification, installation and native trust remain
-distinct stages.
+distinct stages. All three installed binary hashes were read back. Fresh
+installed CLI/MCP audit digests match, including an explicit stricter fleet
+input and missing-file rejection. This chat's existing MCP connection still
+returned the previous audit response and needs a client-side reload.
 
 The owner expanded this into configurable global management across clients,
 containers, bots, plugins and private GitOps forks. Follow the
@@ -34,12 +37,23 @@ confirmed the project PreToolUse hook is enabled but untrusted; no repository
 Stop gate is active. One real AGY/Gemini task ran, but its token usage included
 substantial unaccounted client context.
 
-The policy slice was prepared on `feat/effective-policy-20260912` from public
-`b99e921` for integration into `checkpoint/deep-audit-2026-09-12`. Preserve the
-root checkout's untracked `.standards-receipt.json`. The owner fork was pushed
-and activated at `a709a73`, based on public `54bae4f`, with exactly four reviewed
-config overlays. Its next synchronization must include the CI fix and policy
-slice while retaining that boundary.
+The policy slice is pushed on `checkpoint/deep-audit-2026-09-12`. Preserve the
+root checkout's untracked `.standards-receipt.json`. The owner fork is pushed
+and activated at `870ee693`, explicitly pinned to public code `a79483c`, with
+exactly four reviewed config overlays. Its full gate and normal Git hooks
+passed. Owner CLI/MCP policy digests match and identify `lusoris/praetor`.
+Later public ledger-only changes do not alter this code pin. Shipping evidence:
+`effective-policy-20260912/REPORT.md` and its `owner-sync/` directory. Public
+code-checkpoint CI: https://github.com/cordanaLLM/praetor/actions/runs/34717743136.
+That hosted run completed successfully. Owner hosted run `34717888755` remains
+in progress at this ledger update; owner local full verification already passed.
+
+Next concrete consumer migration: public dogfood still computes both original
+and post-adoption scans at the previous fixed limit and constructs its ratchet
+from that original scan. A stricter adopted policy can therefore be missed.
+Resolve one policy before both scans; changing only the after-scan limit would
+create false failures against the old-limit pre-scan. Track this separately from
+the completed CLI/MCP/adoption slice.
 
 ## Previous checkpoint — ledger repair and gaps audit
 
