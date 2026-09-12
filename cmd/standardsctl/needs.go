@@ -55,7 +55,7 @@ func printNeedsUsage() {
 	fmt.Println("  report [--path=.]                   Evaluate compatibility and replacement matrix against Golusoris")
 	fmt.Println("  aggregate [--dev-dir=...] [--output=...] Aggregate fleet-wide demand and output gap report")
 	fmt.Println("  requests [--dev-dir=...] [--output-dir=...] Synthesize and emit deduplicated Framework Demand Requests")
-	fmt.Println("  epic [--path=.] [--dev-dir=...] [--framework=...] [--output=...] Generate pre-migration hardening epic")
+	fmt.Println("  epic [--path=.] [--dev-dir=...] [--framework=...] [--output=...] [--dry-run] Generate pre-migration hardening epic")
 	fmt.Println("  migrate [--path=.] [--dry-run|--apply]  Automated import and dependency rewrite to Golusoris")
 }
 
@@ -228,7 +228,7 @@ func runNeedsRequests(ctx context.Context, args []string) error {
 	}
 
 	if *outputDir != "" {
-		if err := needs.EmitDemandRequests(requests, *outputDir); err != nil {
+		if err := needs.EmitDemandRequests(ctx, requests, *outputDir); err != nil {
 			return fmt.Errorf("failed to emit demand requests: %w", err)
 		}
 		fmt.Printf("[PASS] Emitted %d demand requests and FRAMEWORK_DEMAND.yaml to %s\n", len(requests), *outputDir)
@@ -245,12 +245,14 @@ func runNeedsEpic(ctx context.Context, args []string) error {
 	publish := fs.Bool("publish", false, "Publish pre-migration parent epic and child tasks to remote forge")
 	token := fs.String("token", "", "Forge API token (default: GITHUB_TOKEN or gh auth token)")
 	endpoint := fs.String("endpoint", "", "Forge API endpoint (default: https://api.github.com)")
+	dryRun := fs.Bool("dry-run", true, "With --dev-dir, list the epic files that would be written without writing them")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	if *devDir != "" {
-		return runFleetNeedsEpic(ctx, *devDir, *framework, *publish, *token, *endpoint)
+		opts := needs.FleetEpicOptions{FrameworkPath: *framework, DryRun: *dryRun}
+		return runFleetNeedsEpic(ctx, *devDir, opts, *publish, *token, *endpoint)
 	}
 
 	if err := adopt.ValidateAdoptionTarget(*path); err != nil {
@@ -263,7 +265,7 @@ func runNeedsEpic(ctx context.Context, args []string) error {
 	}
 
 	if *output != "" {
-		if err := needs.WriteEpicMarkdown(epic, *output); err != nil {
+		if err := needs.WriteEpicMarkdown(ctx, epic, *output); err != nil {
 			return fmt.Errorf("failed to write epic markdown: %w", err)
 		}
 		fmt.Printf("[PASS] Pre-migration epic written to %s\n", *output)
@@ -277,23 +279,31 @@ func runNeedsEpic(ctx context.Context, args []string) error {
 	return nil
 }
 
-func runFleetNeedsEpic(ctx context.Context, devDir, framework string, publish bool, token, endpoint string) error {
+func runFleetNeedsEpic(ctx context.Context, devDir string, opts needs.FleetEpicOptions,
+	publish bool, token, endpoint string) error {
 	fmt.Printf("=== Rerunning Fleet Pre-Migration Epics across %s ===\n\n", devDir)
-	epics, err := needs.RegenerateFleetEpics(ctx, devDir, framework)
+	epics, err := needs.RegenerateFleetEpics(ctx, devDir, opts)
 	if err != nil {
 		return fmt.Errorf("fleet epic regeneration failed: %w", err)
 	}
 
-	fmt.Printf("[PASS] Generated and updated %d pre-migration epics:\n\n", len(epics))
+	verb := "Generated and updated"
+	if opts.DryRun {
+		verb = "Would generate"
+	}
+	fmt.Printf("[PASS] %s %d pre-migration epics:\n\n", verb, len(epics))
 	for i := 0; i < len(epics); i++ {
 		ep := epics[i]
-		fmt.Printf("  [%2d/%2d] %-35s (Readiness: %5.1f%%, %d tasks)\n",
-			i+1, len(epics), ep.RepoName, ep.ReadinessScore, len(ep.ChildIssues))
-		if publish {
+		fmt.Printf("  [%2d/%2d] %-35s (Readiness: %5.1f%%, %d tasks) -> %s\n",
+			i+1, len(epics), ep.RepoName, ep.ReadinessScore, len(ep.ChildIssues), ep.OutputPath)
+		if publish && !opts.DryRun {
 			if pubErr := publishEpicToForge(ctx, ep.RepoName, token, endpoint, ep); pubErr != nil {
 				fmt.Fprintf(os.Stderr, "warning: failed publishing epic for %s: %v\n", ep.RepoName, pubErr)
 			}
 		}
+	}
+	if opts.DryRun {
+		fmt.Println("\n[INFO] Dry-run complete. Pass --dry-run=false to write these files.")
 	}
 	return nil
 }

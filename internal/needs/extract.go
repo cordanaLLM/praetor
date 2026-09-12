@@ -1,7 +1,6 @@
 package needs
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"go/parser"
@@ -35,19 +34,19 @@ func parseGoMod(goModPath string) (string, string, map[string]string, error) {
 		return "unknown", "1.27", make(map[string]string), nil
 	}
 
-	file, err := os.Open(goModPath)
+	// #nosec G304 -- goModPath is the scanned repository's own manifest, built by
+	// joining the repository root with the constant "go.mod".
+	content, err := os.ReadFile(goModPath)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", nil, fmt.Errorf("read %q: %w", goModPath, err)
 	}
-	defer file.Close()
 
 	var modulePath, goVer string
 	directDeps := make(map[string]string)
-	scanner := bufio.NewScanner(file)
 	inRequireBlock := false
 
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	for _, raw := range strings.Split(string(content), "\n") {
+		line := strings.TrimSpace(raw)
 		if strings.HasPrefix(line, "module ") {
 			modulePath = strings.TrimSpace(strings.TrimPrefix(line, "module"))
 		} else if strings.HasPrefix(line, "go ") {
@@ -61,7 +60,7 @@ func parseGoMod(goModPath string) (string, string, map[string]string, error) {
 		}
 	}
 
-	return modulePath, goVer, directDeps, scanner.Err()
+	return modulePath, goVer, directDeps, nil
 }
 
 // parseRequireLine extracts a dependency if it is not marked as indirect.
@@ -84,8 +83,11 @@ func scanASTImports(ctx context.Context, rootDir, modulePath string) (map[string
 	fset := token.NewFileSet()
 
 	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil || ctx.Err() != nil {
+		if walkErr != nil {
 			return walkErr
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
 		}
 		if shouldSkipDir(info, path) {
 			return filepath.SkipDir
@@ -93,20 +95,31 @@ func scanASTImports(ctx context.Context, rootDir, modulePath string) (map[string
 		if info.IsDir() || !strings.HasSuffix(info.Name(), ".go") || strings.HasSuffix(info.Name(), "_test.go") {
 			return nil
 		}
-		node, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
-		if parseErr != nil {
-			return nil // Skip unparseable generated code gracefully
-		}
-		for _, imp := range node.Imports {
-			rawPath := strings.Trim(imp.Path.Value, `"`)
-			if isThirdPartyImport(rawPath, modulePath) {
-				thirdParty[rawPath] = struct{}{}
-			}
-		}
+		collectFileImports(fset, path, modulePath, thirdParty)
 		return nil
 	})
+	if err != nil {
+		return nil, fmt.Errorf("walk %q for imports: %w", rootDir, err)
+	}
 
-	return thirdParty, err
+	return thirdParty, nil
+}
+
+// collectFileImports adds the third-party imports of one Go file to out.
+//
+// An unparseable file - generated or partially written code - contributes nothing rather
+// than failing the whole scan, so its parse error is deliberately not propagated.
+func collectFileImports(fset *token.FileSet, path, modulePath string, out map[string]struct{}) {
+	node, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+	if parseErr != nil {
+		return
+	}
+	for _, imp := range node.Imports {
+		rawPath := strings.Trim(imp.Path.Value, `"`)
+		if isThirdPartyImport(rawPath, modulePath) {
+			out[rawPath] = struct{}{}
+		}
+	}
 }
 
 // shouldSkipDir checks whether the directory should be skipped during AST traversal.
@@ -134,6 +147,8 @@ func isThirdPartyImport(importPath, modulePath string) bool {
 func loadExistingDeclarations(repoPath string, repoNeeds *RepoNeeds) {
 	needsPath := filepath.Join(repoPath, ".needs.yaml")
 	if util.FileExists(needsPath) {
+		// #nosec G304 -- needsPath is the scanned repository's own .needs.yaml, a
+		// constant filename under the caller-supplied repository root.
 		data, err := os.ReadFile(needsPath)
 		if err == nil {
 			var existing RepoNeeds
@@ -146,6 +161,8 @@ func loadExistingDeclarations(repoPath string, repoNeeds *RepoNeeds) {
 
 	standardsPath := filepath.Join(repoPath, ".standards.yaml")
 	if util.FileExists(standardsPath) {
+		// #nosec G304 -- standardsPath is the scanned repository's own
+		// .standards.yaml, a constant filename under the repository root.
 		data, err := os.ReadFile(standardsPath)
 		if err == nil {
 			var st struct {
@@ -212,9 +229,10 @@ func calculateReadiness(repoNeeds *RepoNeeds) {
 	gap := 0
 
 	for _, d := range repoNeeds.Dependencies {
-		if d.Status == StatusCovered || d.Status == StatusAdapterAvailable || d.Status == StatusNative {
+		switch d.Status {
+		case StatusCovered, StatusAdapterAvailable, StatusNative:
 			covered++
-		} else if d.Status == StatusGap {
+		case StatusGap:
 			gap++
 		}
 	}
@@ -233,11 +251,20 @@ func calculateReadiness(repoNeeds *RepoNeeds) {
 }
 
 // WriteNeedsManifest serializes the RepoNeeds to .needs.yaml.
+//
+// The manifest enumerates a repository's full third-party dependency inventory, so it is
+// written owner-only rather than world-readable.
 func WriteNeedsManifest(repoPath string, repoNeeds *RepoNeeds) error {
+	if repoNeeds == nil {
+		return fmt.Errorf("needs: cannot write a nil manifest for %q", repoPath)
+	}
 	targetFile := filepath.Join(repoPath, ".needs.yaml")
 	data, err := yaml.Marshal(repoNeeds)
 	if err != nil {
 		return fmt.Errorf("failed to marshal needs manifest: %w", err)
 	}
-	return os.WriteFile(targetFile, data, 0644)
+	if err := util.WriteFileSecure(targetFile, data, util.SecureFilePerm); err != nil {
+		return fmt.Errorf("failed to write %s: %w", targetFile, err)
+	}
+	return nil
 }

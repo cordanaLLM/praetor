@@ -86,16 +86,23 @@ type GapDetail struct {
 
 // FleetDemandReport aggregates all downstream needs across the fleet.
 type FleetDemandReport struct {
-	GeneratedAt          time.Time                  `json:"generated_at"`
-	FleetRoot            string                     `json:"fleet_root"`
-	Framework            string                     `json:"framework"`
-	TotalRepositories    int                        `json:"total_repositories"`
-	ScannedRepositories  int                        `json:"scanned_repositories"`
-	DemandFrequency      map[CapabilityKey]int      `json:"demand_frequency"`
-	CapabilityConsumers  map[CapabilityKey][]string `json:"capability_consumers"`
-	Gaps                 []GapDetail                `json:"gaps"`
-	Leaderboard          []RepoNeeds                `json:"leaderboard"`
-	OverallFleetCoverage float64                    `json:"overall_fleet_coverage"`
+	GeneratedAt         time.Time `json:"generated_at"`
+	FleetRoot           string    `json:"fleet_root"`
+	Framework           string    `json:"framework"`
+	TotalRepositories   int       `json:"total_repositories"`
+	ScannedRepositories int       `json:"scanned_repositories"`
+	// FailedRepositories counts discovered repositories whose scan returned an error.
+	FailedRepositories int `json:"failed_repositories"`
+	// ScanErrors records those failures, bounded by maxScanErrorsReported.
+	ScanErrors          []string                   `json:"scan_errors,omitempty"`
+	DemandFrequency     map[CapabilityKey]int      `json:"demand_frequency"`
+	CapabilityConsumers map[CapabilityKey][]string `json:"capability_consumers"`
+	Gaps                []GapDetail                `json:"gaps"`
+	Leaderboard         []RepoNeeds                `json:"leaderboard"`
+	// CoverageKnown is false when no repository could be scanned, in which case
+	// OverallFleetCoverage carries no meaning and must not be rendered as a result.
+	CoverageKnown        bool    `json:"coverage_known"`
+	OverallFleetCoverage float64 `json:"overall_fleet_coverage"`
 }
 
 // ReplacementAction defines an import or dependency substitution.
@@ -121,6 +128,10 @@ type MigrationResult struct {
 	Repository   string   `json:"repository"`
 	Branch       string   `json:"branch"`
 	FilesChanged []string `json:"files_changed"`
-	Success      bool     `json:"success"`
-	Error        string   `json:"error,omitempty"`
+	// Warnings records the non-fatal steps that did not succeed - the branch
+	// checkout, `go mod tidy`, an individual file rewrite - instead of discarding
+	// their outcome, so a caller can tell a complete migration from a partial one.
+	Warnings []string `json:"warnings,omitempty"`
+	Success  bool     `json:"success"`
+	Error    string   `json:"error,omitempty"`
 }
