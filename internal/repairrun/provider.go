@@ -36,7 +36,7 @@ type Edit struct {
 type Usage struct {
 	InputTokens  int64    `json:"input_tokens"`
 	OutputTokens int64    `json:"output_tokens"`
-	CostUSD      *float64 `json:"cost_usd"`
+	CostUSD      *float64 `json:"cost_usd,omitempty"`
 }
 
 // Proposal is generated evidence, not an applied or verified repair.

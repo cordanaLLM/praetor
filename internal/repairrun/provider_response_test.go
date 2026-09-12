@@ -146,3 +146,15 @@ func TestProviderResponseSizeCredentialAndCostBoundaries(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderUsagePreservesUnknownAndExplicitZeroCost(t *testing.T) {
+	unknown := providerEncoded(t, Usage{InputTokens: 1, OutputTokens: 2})
+	if strings.Contains(string(unknown), "cost_usd") {
+		t.Fatal("unobserved cost must be omitted for strict retained-report readback")
+	}
+	zero := 0.0
+	observed := providerEncoded(t, Usage{InputTokens: 1, OutputTokens: 2, CostUSD: &zero})
+	if !strings.Contains(string(observed), `"cost_usd":0`) {
+		t.Fatal("observed zero cost must remain explicit")
+	}
+}
