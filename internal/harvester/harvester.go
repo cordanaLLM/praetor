@@ -12,8 +12,13 @@ import (
 )
 
 const (
+	// MaxDevScanEntries bounds the dev directory iteration (HISS-02).
 	MaxDevScanEntries = 500
-	MaxWorktreeScan   = 200
+	// MaxWorktreeScan bounds the per-container worktree iteration (HISS-02).
+	MaxWorktreeScan = 200
+	// DefaultStaleWorktreeAge is the idle time after which an ephemeral worktree counts as
+	// stale. It matches gc.DefaultMaxWorktreeAge, which is what actually prunes them.
+	DefaultStaleWorktreeAge = 24 * time.Hour
 )
 
 // RepoMetadata captures governance and technical discovery attributes for a repository.
@@ -39,7 +44,8 @@ type FleetReport struct {
 
 // WorkstationReport captures local machine dev directory and worktree states.
 type WorkstationReport struct {
-	DevReposCount      int      `json:"dev_repos_count"`
+	DevReposCount int `json:"dev_repos_count"`
+	// StaleWorktrees lists worktrees idle for longer than DefaultStaleWorktreeAge.
 	StaleWorktrees     []string `json:"stale_worktrees"`
 	MissingRulesRepos  []string `json:"missing_rules_repos"`
 	DirtyRepos         []string `json:"dirty_repos"`
@@ -187,20 +193,28 @@ func scanSubDir(parentPath, parentName string, report *WorkstationReport) {
 	}
 }
 
+// scanWorktreeDir records the worktrees under a *-worktrees container that have not been
+// touched for DefaultStaleWorktreeAge. A worktree that is still being worked in is not
+// stale: reporting every worktree as stale invites an operator or agent to delete live
+// work, and contradicts the age criterion internal/gc uses when it actually prunes them.
 func scanWorktreeDir(path string, report *WorkstationReport) {
 	subEntries, err := os.ReadDir(path)
 	if err != nil {
 		return
 	}
-	subCount := 0
-	for _, sub := range subEntries {
-		if subCount >= MaxWorktreeScan {
-			break
+	for i := 0; i < len(subEntries) && i < MaxWorktreeScan; i++ {
+		sub := subEntries[i]
+		if !sub.IsDir() {
+			continue
 		}
-		subCount++
-		if sub.IsDir() {
-			report.StaleWorktrees = append(report.StaleWorktrees, filepath.Join(filepath.Base(path), sub.Name()))
+		info, infoErr := sub.Info()
+		if infoErr != nil {
+			continue
 		}
+		if time.Since(info.ModTime()) <= DefaultStaleWorktreeAge {
+			continue
+		}
+		report.StaleWorktrees = append(report.StaleWorktrees, filepath.Join(filepath.Base(path), sub.Name()))
 	}
 }
 
