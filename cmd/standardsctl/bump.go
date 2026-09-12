@@ -324,35 +324,53 @@ func runBumpAudit(ctx context.Context, args []string) error {
 	fmt.Printf("  Pending Upgrades:    %d\n", len(report.PendingUpgrades))
 	fmt.Printf("  Deprecations:        %d\n\n", len(report.Deprecations))
 
-	if len(report.Actions) > 0 {
-		fmt.Println("GitHub Actions Inventory:")
-		for _, a := range report.Actions {
-			status := "[UP-TO-DATE]"
-			if a.Deprecated {
-				status = "[DEPRECATED]"
-			} else if a.CurrentVersion != a.LatestVersion {
-				status = "[DRIFT]"
-			}
-			fmt.Printf("  %-12s %-32s %s -> %s (%s)\n", status, a.Action, a.CurrentVersion, a.LatestVersion, a.WorkflowFile)
-		}
-		fmt.Println()
-	}
-
-	if len(report.PendingUpgrades) > 0 {
-		fmt.Println("Pending Dependency Upgrades:")
-		for _, u := range report.PendingUpgrades {
-			fmt.Printf("  - [%s] %-32s %s -> %s (%s)\n", u.Channel, u.Package, u.CurrentVersion, u.TargetVersion, u.ManifestType)
-		}
-		fmt.Println()
-	}
-
-	if len(report.Deprecations) > 0 {
-		fmt.Println("Deprecation Warnings & Breaking Advisories:")
-		for _, d := range report.Deprecations {
-			fmt.Printf("  ! [%s] %s: %s\n", d.Kind, d.Component, d.Details)
-		}
-		fmt.Println()
-	}
-
+	printActionsInventory(report.Actions)
+	printPendingUpgrades(report.PendingUpgrades)
+	printDeprecations(report.Deprecations)
 	return nil
+}
+
+func printActionsInventory(actions []bump.ActionCandidate) {
+	if len(actions) == 0 {
+		return
+	}
+	fmt.Println("GitHub Actions Inventory:")
+	for _, a := range actions {
+		fmt.Printf("  %-12s %-32s %s -> %s (%s)\n",
+			actionDriftStatus(a), a.Action, a.CurrentVersion, a.LatestVersion, a.WorkflowFile)
+	}
+	fmt.Println()
+}
+
+func actionDriftStatus(a bump.ActionCandidate) string {
+	switch {
+	case a.Deprecated:
+		return "[DEPRECATED]"
+	case a.CurrentVersion != a.LatestVersion:
+		return "[DRIFT]"
+	default:
+		return "[UP-TO-DATE]"
+	}
+}
+
+func printPendingUpgrades(upgrades []bump.UpgradeCandidate) {
+	if len(upgrades) == 0 {
+		return
+	}
+	fmt.Println("Pending Dependency Upgrades:")
+	for _, u := range upgrades {
+		fmt.Printf("  - [%s] %-32s %s -> %s (%s)\n", u.Channel, u.Package, u.CurrentVersion, u.TargetVersion, u.ManifestType)
+	}
+	fmt.Println()
+}
+
+func printDeprecations(deprecations []bump.DeprecationWarning) {
+	if len(deprecations) == 0 {
+		return
+	}
+	fmt.Println("Deprecation Warnings & Breaking Advisories:")
+	for _, d := range deprecations {
+		fmt.Printf("  ! [%s] %s: %s\n", d.Kind, d.Component, d.Details)
+	}
+	fmt.Println()
 }
