@@ -14,3 +14,4 @@
 - [ ] Run bounded scheduled local dogfood verification with overlap and retry protection
 - [ ] Route retained dogfood failures into bounded local triage jobs
 - [ ] Install and verify the per-user dogfood timer with retained rollback evidence
+- [x] Implement bounded local dogfood failure triage plans using declared task routing (completed: 2026-09-12)
