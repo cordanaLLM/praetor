@@ -12,3 +12,6 @@
 - [ ] Implement capability and evidence based per-task agent routing with cost, latency, and escalation controls
 - [ ] Optimize workstation agent and CLI context files with canonical ownership and replay verification
 - [ ] Promote scoped dogfood repair candidates through fresh suite replay and explicit repository stages
+- [x] Wire Codex PreToolUse through Lefthook and verify activation boundary (completed: 2026-09-12)
+- [ ] Trust and verify the repository Codex PreToolUse hook in a native session
+- [ ] Enforce verification evidence at agent Stop with bounded failure handling

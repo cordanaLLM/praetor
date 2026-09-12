@@ -445,3 +445,11 @@
 ### [2026-09-12 18:29:58 UTC] Commit `2313b90` on `checkpoint/deep-audit-2026-09-12`
 - **Activity**: Activated bounded repair timer; real model corrected injected harvester fault, 134 unchanged tests and synthetic suite replay passed; existing lint/security debt unchanged
 - **Tasks**: 9 open, 0 completed | **Open Bugs**: 711 | **Pending Questions**: 0
+
+### [2026-09-12 18:40:17 UTC] Commit `e95a206` on `checkpoint/deep-audit-2026-09-12`
+- **Activity**: Verified Git hook rejection controls; added Codex bridge to shared Lefthook guard with blocking semantics. Codex 0.145.0 hooks/list discovers it enabled but untrusted; native enforcement awaits user hook review. No Stop verification hook is configured.
+- **Tasks**: 10 open, 1 completed | **Open Bugs**: 711 | **Pending Questions**: 0
+
+### [2026-09-12 18:40:44 UTC] Commit `e95a206` on `checkpoint/deep-audit-2026-09-12`
+- **Activity**: Codex hook bridge tested; native hooks/list confirms enabled but untrusted. Git negative commits blocked successfully; lifecycle activation and Stop evidence enforcement remain explicit open tasks.
+- **Tasks**: 11 open, 1 completed | **Open Bugs**: 711 | **Pending Questions**: 0

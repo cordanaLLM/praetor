@@ -8,6 +8,8 @@ import os
 import re
 import json
 
+MAX_INPUT_BYTES = 1 << 20
+
 BLOCKED_PATTERNS = [
     r"--no-verify\b",
     r"\bgit\s+commit\b[^\n]*\s-n\b",
@@ -52,22 +54,37 @@ def audit_environment() -> bool:
         return False
     return True
 
+
+def read_json_command(stream) -> str:
+    raw = stream.read(MAX_INPUT_BYTES + 1)
+    if len(raw) > MAX_INPUT_BYTES:
+        raise ValueError("hook input exceeds 1 MiB")
+    payload = json.loads(raw.decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("hook input must be an object")
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        raise ValueError("tool_input must be an object")
+    command = tool_input.get("command")
+    if not isinstance(command, str) or not command.strip():
+        raise ValueError("tool_input.command must be nonempty text")
+    return command
+
+
 def main():
     if not audit_environment():
         sys.exit(1)
 
     if sys.argv[1:] == ["--environment"]:
         sys.exit(0)
+    json_input = False
     if len(sys.argv) > 1:
         cmd = " ".join(sys.argv[1:])
     elif not sys.stdin.isatty():
         try:
-            payload = json.load(sys.stdin)
-            tool_input = payload.get("tool_input", {})
-            cmd = tool_input.get("command", "")
-            if not isinstance(cmd, str):
-                raise ValueError("tool_input.command must be text")
-        except (ValueError, AttributeError) as error:
+            cmd = read_json_command(sys.stdin.buffer)
+            json_input = True
+        except (ValueError, OSError, RecursionError) as error:
             sys.stderr.write(f"[BLOCKED BY HISS-16] Invalid hook input: {error}\n")
             sys.exit(1)
     else:
@@ -75,6 +92,8 @@ def main():
         sys.exit(1)
     if not audit_command(cmd):
         sys.exit(1)
+    if json_input:
+        print("PRAETOR_COMMAND_POLICY_OK")
 
     sys.exit(0)
 

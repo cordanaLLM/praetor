@@ -128,3 +128,38 @@ real commits/pushes. It includes staged/unstaged isolation, arbitrary filenames,
 empty and deletion-only changes, malformed syntax/messages/protocols, negative
 vet/race controls, embedded-input and reverse-dependency scope, governance gate
 selection and every configured stage. It never disables the user's hooks.
+
+## Codex command guard
+
+Git hooks run when Codex invokes Git, just as they do for a human. They do not
+inspect every tool call or run verification at the end of a conversation turn.
+The repository's `.codex/hooks.json` adds a separate `PreToolUse` handler for
+Codex's `Bash` tool, including shell calls through `exec_command` and code mode.
+The handler invokes `codex_pre_tool.py`, which runs the same `block_evasion.py`
+policy used by Lefthook. Git's hook driver calls that policy's environment mode;
+Codex supplies the proposed shell command as JSON before execution.
+
+The adapter translates rejected commands, invalid input, missing guard execution
+and subprocess failures into Codex's blocking exit code 2. Input is capped at
+1 MiB, guard execution at ten seconds, and diagnostics at 4 KiB. This is a
+screen for known verification-evasion and topology patterns, not a complete
+shell parser or an immutable security boundary. It does not inspect file edits,
+arbitrary MCP calls, or later input sent to an already-running shell.
+
+This integration was checked against Codex CLI 0.145.0 and Lefthook 1.13.6.
+It calls the shared guard directly because Lefthook 1.13.6's validator rejects
+custom lifecycle job names. Existing Git jobs and their gates remain configured
+in the canonical Lefthook policy.
+
+After opening this trusted repository in Codex, use `/hooks` to review and trust
+the repository's `PreToolUse` definition. If it is not listed in an existing
+session, start a new session from the repository. New or changed definitions are
+skipped until trusted. User-level Hindsight hooks load alongside this handler.
+The adapter's subprocess tests establish its behavior; activation additionally
+requires a native Codex hook event after trust. A checked-in hook file alone is
+not evidence that the current session is enforcing it.
+
+No repository `Stop` verification hook is configured. `make verify-all` remains
+an explicit required agent step, while commits and pushes have the Git gates
+listed above. See the [Codex hook lifecycle and trust documentation](https://learn.chatgpt.com/docs/hooks)
+for runtime coverage and activation semantics.

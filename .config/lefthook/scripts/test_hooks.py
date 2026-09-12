@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -88,6 +89,44 @@ class GitHooks(unittest.TestCase):
         result = self.hook()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(b"invalid syntax", result.stdout + result.stderr)
+
+    def test_codex_adapter_routes_guard_and_normalizes_failures(self):
+        adapter = self.repo / ".config/agent/hooks/codex_pre_tool.py"
+        allowed = {"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                   "tool_input": {"command": "printf 'policy-test'"}}
+        denied = {"tool_input": {"command": "git commit --no-verify"}}
+        cases = [(json.dumps(allowed).encode(), 0), (json.dumps(denied).encode(), 2),
+                 (b"", 2), (b"not JSON", 2), (b"{}", 2),
+                 (b'{"tool_input":{"command":null}}', 2), (b" " * ((1 << 20) + 1), 2)]
+        for payload, expected in cases:
+            with self.subTest(size=len(payload), prefix=payload[:48]):
+                result = command(self.repo, "python3", str(adapter), data=payload, ok=False)
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                self.assertNotIn(b"policy-test\n", result.stdout)
+
+    def test_codex_adapter_missing_guard_blocks(self):
+        adapter = self.repo / ".config/agent/hooks/codex_pre_tool.py"
+        (self.repo / ".config/agent/hooks/block_evasion.py").unlink()
+        result = command(self.repo, "python3", str(adapter),
+                         data=b'{"tool_input":{"command":"git status"}}', ok=False)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+
+    def test_codex_hook_configuration_runs_from_nested_directory(self):
+        self.write(".codex/hooks.json", (ROOT / ".codex/hooks.json").read_text())
+        settings = json.loads((self.repo / ".codex/hooks.json").read_text())
+        registration = settings["hooks"]["PreToolUse"][0]
+        self.assertRegex("Bash", registration["matcher"])
+        self.assertNotRegex("Write", registration["matcher"])
+        action = registration["hooks"][0]
+        self.assertEqual(action["type"], "command")
+        nested = self.repo / "nested directory"
+        nested.mkdir()
+        for command_text, expected in (("git status", 0), ("git commit --no-verify", 2)):
+            payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                  "tool_input": {"command": command_text}}).encode()
+            result = command(nested, "/bin/sh", "-c", action["command"],
+                             data=payload, ok=False)
+            self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
 
     def test_good_index_ignores_unstaged_python_syntax_error(self):
         self.write("strange ; $ name.py", "value = 1\n")
@@ -330,13 +369,81 @@ class ScopeAndGuard(unittest.TestCase):
 
     def test_guard_command_and_json_without_changing_live_environment(self):
         for cmd in ("git status", "git commit -s -m 'fix: valid'"):
-            result = subprocess.run(["python3", str(GUARD)], input=json.dumps({"tool_input": {"command": cmd}}).encode(), capture_output=True, timeout=10)
+            payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                       "tool_input": {"command": cmd, "workdir": str(ROOT)}}
+            result = self.guard_input(json.dumps(payload).encode())
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, b"PRAETOR_COMMAND_POLICY_OK\n")
+        # Denied commands are JSON data for the guard; they are never executed.
         for cmd in ("git commit --no-verify", "git commit -n", "LEFTHOOK=0 git commit"):
-            result = subprocess.run(["python3", str(GUARD)], input=json.dumps({"tool_input": {"command": cmd}}).encode(), capture_output=True, timeout=10)
-            self.assertNotEqual(result.returncode, 0)
-        malformed = subprocess.run(["python3", str(GUARD)], input=b"not json", capture_output=True, timeout=10)
-        self.assertNotEqual(malformed.returncode, 0)
+            result = self.guard_input(json.dumps({"tool_input": {"command": cmd}}).encode())
+            self.assertEqual(result.returncode, 1)
+            self.assertNotIn(b"PRAETOR_COMMAND_POLICY_OK", result.stdout)
+
+    def guard_input(self, data):
+        return subprocess.run(["python3", str(GUARD)], input=data, capture_output=True,
+                              timeout=10, check=False)
+
+    def test_guard_rejects_missing_or_wrong_json_command(self):
+        payloads = [None, [], "git status", {}, {"tool_input": None},
+                    {"tool_input": []}, {"tool_input": "git status"}, {"tool_input": {}}]
+        payloads.extend({"tool_input": {"command": value}}
+                        for value in (None, False, 1, [], {}, "", " \t\r\n"))
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                result = self.guard_input(json.dumps(payload).encode())
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(b"Invalid hook input", result.stderr)
+
+    def test_guard_rejects_malformed_and_oversized_json(self):
+        maximum = 1 << 20
+        valid = json.dumps({"tool_input": {"command": "git status"}}).encode()
+        boundary = valid + b" " * (maximum - len(valid))
+        result = self.guard_input(boundary)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for data in (b"", b"not json", b'{"tool_input":', b"\xff",
+                     b"[" * 2000 + b"]" * 2000, boundary + b" "):
+            with self.subTest(size=len(data), prefix=data[:20]):
+                result = self.guard_input(data)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(b"Invalid hook input", result.stderr)
+                self.assertNotIn(b"Traceback", result.stderr)
+
+    def test_guard_preserves_argv_and_environment_entry_points(self):
+        for args in (("git", "status"), ("--environment",)):
+            result = subprocess.run(["python3", str(GUARD), *args], input=b"",
+                                    capture_output=True, timeout=10, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, b"")
+
+    def load_codex_adapter(self):
+        path = GUARD.with_name("codex_pre_tool.py")
+        spec = importlib.util.spec_from_file_location("tested_codex_pre_tool", path)
+        module = importlib.util.module_from_spec(spec)
+        with mock.patch.object(sys, "path", [str(GUARD.parent), *sys.path]):
+            spec.loader.exec_module(module)
+        return module
+
+    def test_codex_adapter_fails_closed_when_guard_is_unavailable(self):
+        adapter = self.load_codex_adapter()
+        payload = b'{"tool_input":{"command":"git status"}}'
+        for failure in (FileNotFoundError("missing fixture executable"),
+                        subprocess.TimeoutExpired(["python3", "block_evasion.py"], 10)):
+            with self.subTest(failure=type(failure).__name__), \
+                    mock.patch.object(adapter.subprocess, "run", side_effect=failure), \
+                    contextlib.redirect_stderr(io.StringIO()) as diagnostic:
+                self.assertEqual(adapter.check(payload), 2)
+                self.assertIn("unavailable", diagnostic.getvalue())
+
+    def test_codex_adapter_rejects_success_without_guard_marker(self):
+        adapter = self.load_codex_adapter()
+        payload = b'{"tool_input":{"command":"git status"}}'
+        def skipped_guard(*_args, **kwargs):
+            kwargs["stdout"].write(b"guard process completed without checking policy\n")
+            return subprocess.CompletedProcess(["python3", "block_evasion.py"], 0)
+        with mock.patch.object(adapter.subprocess, "run", side_effect=skipped_guard), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(adapter.check(payload), 2)
 
     def test_reverse_dependencies_embed_testdata_module_and_docs_scope(self):
         with tempfile.TemporaryDirectory(prefix="praetor-scope-") as temp:

@@ -77,7 +77,8 @@ def file_checks(directory, names):
     yaml = [name for name in files if name.endswith((".yml", ".yaml"))]
     if yaml:
         commands.append(["yamllint", "--strict", "-d", "{extends: relaxed, rules: {line-length: disable}}", *yaml])
-    if any(name == "lefthook.yml" or name.startswith(".config/lefthook/") for name in files):
+    if any(name in {"lefthook.yml", ".codex/hooks.json"}
+           or name.startswith((".config/lefthook/", ".config/agent/hooks/")) for name in files):
         commands.append(["lefthook", "validate"])
         commands.append(["python3", "-B", ".config/lefthook/scripts/test_hooks.py"])
     if context_changed(names):
