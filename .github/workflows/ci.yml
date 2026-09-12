@@ -96,7 +96,29 @@ jobs:
 
       - name: Run Race Detection & Unit Tests (HISS-15)
         if: steps.filter.outputs.run_tests != 'false' || github.event_name == 'push'
-        run: go test -v -race ./...
+        run: go test -v -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      # HISS-15 names a "CI coverage gate" as its enforcement mechanism. This is that gate:
+      # without it, `go test` measures nothing and a package whose tests were deleted still
+      # passes. MIN_COVERAGE is a floor, not a target; raise it as coverage improves.
+      - name: Enforce Statement Coverage Threshold (HISS-15)
+        if: steps.filter.outputs.run_tests != 'false' || github.event_name == 'push'
+        env:
+          MIN_COVERAGE: '65.0'
+        run: |
+          if [ ! -f coverage.out ]; then
+            echo "::error::coverage.out was not produced by the test step."
+            exit 1
+          fi
+          TOTAL=$(go tool cover -func=coverage.out | awk '/^total:/ {print $NF}' | tr -d '%')
+          echo "Total statement coverage: ${TOTAL}% (minimum ${MIN_COVERAGE}%)"
+          awk -v total="$TOTAL" -v min="$MIN_COVERAGE" 'BEGIN {
+            if (total + 0 < min + 0) {
+              printf "::error::Statement coverage %.1f%% is below the required %.1f%% (HISS-15).\n", total, min
+              exit 1
+            }
+            printf "Coverage gate passed: %.1f%% >= %.1f%%.\n", total, min
+          }'
 
       - name: Run Repository Governance Audit (HISS Invariants & Rulesets)
         if: steps.filter.outputs.run_audit != 'false' || github.event_name == 'push'

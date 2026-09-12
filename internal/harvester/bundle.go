@@ -40,6 +40,9 @@ const (
 	// skillRecordSegments is the minimum number of path segments in a skill record:
 	// agent-skills/<origin>/<name>/<file>.
 	skillRecordSegments = 4
+	// maxSkillRecordSegments bounds the segment validation loop (HISS-02) and with it the
+	// depth a manifest record may reach inside a skill directory.
+	maxSkillRecordSegments = skillRecordSegments + MaxSkillWalkDepth
 )
 
 var (
@@ -728,28 +731,49 @@ type skillRecordTarget struct {
 // input: without this the ingest would happily write outside the local skills directory.
 func validateSkillRecordPath(relPath string) ([]string, error) {
 	slashed := filepath.ToSlash(relPath)
-	if slashed == "" || filepath.IsAbs(relPath) || strings.HasPrefix(slashed, "/") {
-		return nil, fmt.Errorf("%w: %q is not a relative path", ErrBundleRecordPath, relPath)
+	if err := checkSkillRecordShape(relPath, slashed); err != nil {
+		return nil, err
 	}
-	if path.Clean(slashed) != slashed {
-		return nil, fmt.Errorf("%w: %q is not normalised", ErrBundleRecordPath, relPath)
-	}
-	if !strings.HasPrefix(slashed, skillRecordPrefix) {
-		return nil, fmt.Errorf("%w: %q is not under %s", ErrBundleRecordPath, relPath, skillRecordPrefix)
-	}
+
 	parts := strings.Split(slashed, "/")
 	if len(parts) < skillRecordSegments {
 		return nil, fmt.Errorf("%w: %q has too few segments", ErrBundleRecordPath, relPath)
 	}
-	for _, p := range parts {
-		if p == "" || p == "." || p == ".." {
-			return nil, fmt.Errorf("%w: %q contains an empty or traversing segment", ErrBundleRecordPath, relPath)
+	if len(parts) > maxSkillRecordSegments {
+		return nil, fmt.Errorf("%w: %q has more than %d segments", ErrBundleRecordPath, relPath, maxSkillRecordSegments)
+	}
+	if err := checkSkillRecordSegments(relPath, parts); err != nil {
+		return nil, err
+	}
+	return parts, nil
+}
+
+// checkSkillRecordShape rejects a record path that is absolute, unnormalised, or outside
+// the agent-skills/ prefix.
+func checkSkillRecordShape(relPath, slashed string) error {
+	if slashed == "" || filepath.IsAbs(relPath) || strings.HasPrefix(slashed, "/") {
+		return fmt.Errorf("%w: %q is not a relative path", ErrBundleRecordPath, relPath)
+	}
+	if path.Clean(slashed) != slashed {
+		return fmt.Errorf("%w: %q is not normalised", ErrBundleRecordPath, relPath)
+	}
+	if !strings.HasPrefix(slashed, skillRecordPrefix) {
+		return fmt.Errorf("%w: %q is not under %s", ErrBundleRecordPath, relPath, skillRecordPrefix)
+	}
+	return nil
+}
+
+// checkSkillRecordSegments rejects empty, traversing or hidden path segments.
+func checkSkillRecordSegments(relPath string, parts []string) error {
+	for i := 0; i < len(parts) && i < maxSkillRecordSegments; i++ {
+		if parts[i] == "" || parts[i] == "." || parts[i] == ".." {
+			return fmt.Errorf("%w: %q contains an empty or traversing segment", ErrBundleRecordPath, relPath)
 		}
 	}
 	if strings.HasPrefix(parts[2], ".") {
-		return nil, fmt.Errorf("%w: %q names a hidden skill", ErrBundleRecordPath, relPath)
+		return fmt.Errorf("%w: %q names a hidden skill", ErrBundleRecordPath, relPath)
 	}
-	return parts, nil
+	return nil
 }
 
 // resolveSkillRecord confines the record's source inside the bundle and its destination

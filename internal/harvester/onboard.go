@@ -111,6 +111,18 @@ func executeOnboarding(ctx context.Context, repoPath, repoName, arch string, fac
 		return err
 	}
 
+	// compiler.WriteOutputs and editor.Write each open their own bounded I/O context, so
+	// HISS-02 holds; their signatures take no caller context and belong to packages this
+	// unit does not own.
+	//nolint:contextcheck // callee owns its bounded context; see comment above
+	return writeAgentHarness(repoPath)
+}
+
+// writeAgentHarness compiles AGENTS.md into the per-agent context targets and synthesises
+// the editor configuration. It deliberately takes no context: compiler.WriteOutputs and
+// editor.Write each open their own bounded I/O context (HISS-02), and the onboarding
+// deadline is already enforced before this step begins.
+func writeAgentHarness(repoPath string) error {
 	agentsPath := filepath.Join(repoPath, "AGENTS.md")
 	tr := compiler.NewTranspiler()
 	res, cErr := tr.Compile(agentsPath)

@@ -110,6 +110,27 @@ func runHarvestSkills(ctx context.Context, homeDir string, args []string) error 
 		return fmt.Errorf("failed auditing skills: %w", err)
 	}
 
+	printSkillAudit(rep)
+
+	if *dedupe {
+		if err := runSkillDedupe(ctx, rep, *dryRun); err != nil {
+			return err
+		}
+	}
+
+	if *cleanBackups && len(rep.StaleBackups) > 0 {
+		purged, pErr := harvester.PurgeBackups(ctx, *geminiDir, rep.StaleBackups, *dryRun)
+		if pErr != nil {
+			return fmt.Errorf("purge backups: %w", pErr)
+		}
+		fmt.Printf("\n[CLEAN] %d stale backup files processed (DryRun: %v)\n", len(purged), *dryRun)
+	}
+
+	return nil
+}
+
+// printSkillAudit renders the discovered skills and their duplicate locations.
+func printSkillAudit(rep *harvester.SkillAuditReport) {
 	fmt.Println("=== Agent Skills & Hygiene Audit ===")
 	fmt.Printf("Total Skill Manifests: %d\n", rep.TotalSkills)
 	fmt.Printf("Unique Skills:         %d\n", rep.UniqueSkills)
@@ -123,26 +144,21 @@ func runHarvestSkills(ctx context.Context, homeDir string, args []string) error 
 	if len(rep.StaleBackups) > 0 {
 		fmt.Printf("Stale GEMINI.md Backups (%d)\n", len(rep.StaleBackups))
 	}
+}
 
-	if *dedupe {
-		dRep, dErr := harvester.DeduplicateSkills(ctx, rep, *dryRun)
-		if dErr != nil {
-			return fmt.Errorf("deduplicate skills: %w", dErr)
-		}
-		fmt.Printf("\n[DEDUPE] %d shadowed skill directories processed (DryRun: %v)\n", len(dRep.PrunedSkills), dRep.DryRun)
-		for _, s := range dRep.PrunedSkills {
-			fmt.Printf("  - %s\n", s)
-		}
+// runSkillDedupe prunes the Gemini root copies shadowed by the Gemini config directory.
+func runSkillDedupe(ctx context.Context, rep *harvester.SkillAuditReport, dryRun bool) error {
+	dRep, dErr := harvester.DeduplicateSkills(ctx, rep, dryRun)
+	if dErr != nil {
+		return fmt.Errorf("deduplicate skills: %w", dErr)
 	}
-
-	if *cleanBackups && len(rep.StaleBackups) > 0 {
-		purged, pErr := harvester.PurgeBackups(ctx, *geminiDir, rep.StaleBackups, *dryRun)
-		if pErr != nil {
-			return fmt.Errorf("purge backups: %w", pErr)
-		}
-		fmt.Printf("\n[CLEAN] %d stale backup files processed (DryRun: %v)\n", len(purged), *dryRun)
+	fmt.Printf("\n[DEDUPE] %d shadowed skill directories processed (DryRun: %v)\n", len(dRep.PrunedSkills), dRep.DryRun)
+	for _, s := range dRep.PrunedSkills {
+		fmt.Printf("  - %s\n", s)
 	}
-
+	for _, e := range dRep.Errors {
+		fmt.Printf("  [ERROR] %s\n", e)
+	}
 	return nil
 }
 
