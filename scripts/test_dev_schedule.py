@@ -22,6 +22,8 @@ class ScheduleTests(unittest.TestCase):
         self.enabled, self.active, self.busy = False, False, False
         self.failure = None
         self.foreign = False
+        self.runner = "/usr/bin/true"
+        self.runner_hash = schedule.runner_digest(Path(self.runner))
         self.mock = patch.object(schedule, "command", side_effect=self.command)
         self.mock.start()
         self.addCleanup(self.mock.stop)
@@ -33,7 +35,10 @@ class ScheduleTests(unittest.TestCase):
             self.failure = None
             raise RuntimeError("fixture command failure")
         output = ""
-        if verb == "is-enabled":
+        if args[0] == "/usr/bin/true":
+            import json
+            output = json.dumps({"config": {"runner_binary": self.runner}, "runner_sha256": self.runner_hash})
+        elif verb == "is-enabled":
             output = "enabled" if self.enabled else "disabled"
         elif verb == "is-active":
             busy = self.active if args[3].endswith(".timer") else self.busy
@@ -70,6 +75,18 @@ class ScheduleTests(unittest.TestCase):
 
     def test_install_without_activation_keeps_disabled(self):
         self.assertEqual(self.install(False)["timer"], {"active": False, "enabled": False})
+
+    def test_mismatched_config_runner_fails_before_creating_units(self):
+        self.runner = "/different/runner"
+        with self.assertRaisesRegex(ValueError, "runner_binary must match"):
+            self.install()
+        self.assertFalse(self.directory.exists())
+
+    def test_changed_runner_fails_before_creating_units(self):
+        self.runner_hash = "0" * 64
+        with self.assertRaisesRegex(ValueError, "runner digest changed"):
+            self.install()
+        self.assertFalse(self.directory.exists())
 
     def test_disable_retains_running_service_units_and_evidence(self):
         self.install()
@@ -194,6 +211,11 @@ class ScheduleTests(unittest.TestCase):
                 schedule.quote_argument(bad)
         self.assertEqual(schedule.quote_argument('/tmp/a $USER %h "q" \\b'),
                          '"/tmp/a $$USER %%h \\"q\\" \\\\b"')
+        self.assertEqual(schedule.quote_argument('/tmp/a $USER %h/runner', executable=True),
+                         '"/tmp/a $USER %%h/runner"')
+        for bad in ('/tmp/a"b/runner', '/tmp/a\\b/runner'):
+            with self.assertRaisesRegex(ValueError, "systemd executable paths"):
+                schedule.quote_argument(bad, executable=True)
 
     def test_special_file_and_oversized_config_rejected(self):
         import os

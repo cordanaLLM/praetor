@@ -208,6 +208,35 @@ def suite_checks(client, root):
             "suite failures retain evidence", "suite embedded paths confined", "suite remote opt-in enforced"]
 
 
+def schedule_checks(client, root):
+    bundle = root / "schedule-bundle"
+    audit_fixture(bundle)
+    source = root / "suite-input/transcript_full.jsonl"
+    suite = {"version": 1, "public_repositories": [], "transcripts": [
+        {"id": "schedule-fixture", "source_path": str(source),
+         "sha256": hashlib.sha256(source.read_bytes()).hexdigest(), "format": "antigravity-jsonl-v1"}]}
+    suite_path = root / "schedule-suite.json"
+    suite_path.write_text(json.dumps(suite))
+    suite_path.chmod(0o600)
+    runner = root / "schedule-runner"
+    runner.write_bytes(b"status-only runner identity fixture")
+    runner.chmod(0o700)
+    config = {"version": 1, "suite_config": str(suite_path), "source_root": str(bundle),
+              "state_dir": str(root / "schedule-state"), "allow_remote": False, "runner_binary": str(runner)}
+    path = root / "schedule.json"
+    path.write_text(json.dumps(config))
+    path.chmod(0o600)
+    args = {"config_path": path.name}
+    report = json.loads(tool_text(client.call("standards_dogfood_schedule_status", args)))
+    require(report["status"] == "due" and not report["verified"] and report["attempts"] == 0,
+            "schedule status claimed verification")
+    require(not (root / "schedule-state").exists(), "schedule status created state")
+    config["state_dir"] = str(root.parent / "outside-state")
+    path.write_text(json.dumps(config))
+    tool_text(client.call("standards_dogfood_schedule_status", args), error=True)
+    return ["schedule status stays read-only and unverified", "schedule embedded paths confined"]
+
+
 def audit_fixture(root):
     source = "id: framework\nname: Framework\n"
     digest = "sha256:" + hashlib.sha256(source.encode()).hexdigest()
@@ -265,7 +294,7 @@ def probe(binary, root, metadata):
         names = [tool["name"] for tool in tools]
         required = {"standards_inspect_symbols", "standards_compile_context",
                     "standards_memory_recall", "standards_audit", "standards_transcript_ingest",
-                    "standards_context_analyze", "standards_dogfood_suite"}
+                    "standards_context_analyze", "standards_dogfood_suite", "standards_dogfood_schedule_status"}
         require(required <= set(names), "required tools are absent")
         inspected = tool_text(client.call("standards_inspect_symbols",
                                          {"path": "cmd/standards-mcp/main.go"}))
@@ -280,5 +309,6 @@ def probe(binary, root, metadata):
             checks += transcript_checks(client, fixture)
             checks += claude_transcript_checks(client, fixture)
             checks += suite_checks(client, fixture)
+            checks += schedule_checks(client, fixture)
     return {"passed": ["source identity", "tool discovery", "checkout symbol read"] + checks,
             "tools": names, "mutations": "temporary fixtures only"}

@@ -16,6 +16,7 @@ import tempfile
 
 MARKER = "# Managed by praetor scripts/dev_schedule.py v1\n"
 MAX_FILE = 65536
+sys.dont_write_bytecode = True
 
 
 def command(args, check=True):
@@ -58,6 +59,26 @@ def read_file(path, missing=False):
         return data
 
 
+def runner_digest(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode) or not before.st_mode & 0o111 or before.st_size > 256 << 20:
+            raise ValueError("Schedule runner must be a regular executable of at most 256 MiB")
+        digest = hashlib.sha256()
+        for index in range(257):
+            chunk = stream.read(1 << 20)
+            if not chunk:
+                break
+            if index == 256:
+                raise ValueError("Schedule runner exceeds 256 MiB")
+            digest.update(chunk)
+        after = os.fstat(stream.fileno())
+        if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            raise ValueError("Schedule runner changed during readback")
+        return digest.hexdigest()
+
+
 def atomic_write(path, data, mode=0o600):
     descriptor, temporary = tempfile.mkstemp(prefix=".praetor-unit-", dir=path.parent)
     try:
@@ -93,14 +114,20 @@ def unit_name(name):
     return name
 
 
-def quote_argument(value):
+def quote_argument(value, executable=False):
     checked_path(value)
-    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%").replace("$", "$$") + '"'
+    if executable and any(char in str(value) for char in ('"', "\\")):
+        raise ValueError("systemd executable paths cannot contain quotes or backslashes")
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    # systemd expands variables in arguments, never in the executable token.
+    if not executable:
+        escaped = escaped.replace("$", "$$")
+    return '"' + escaped + '"'
 
 
 def render_units(name, binary, config):
     unit_name(name)
-    invocation = f"{quote_argument(binary)} dogfood schedule run --config {quote_argument(config)}"
+    invocation = f"{quote_argument(binary, executable=True)} dogfood schedule run --config {quote_argument(config)}"
     service = MARKER + f"""[Unit]
 Description=Praetor local dogfood verification and repair triage
 
@@ -194,7 +221,12 @@ def install(name, binary, config, directory, backups, activate):
     units = render_units(name, binary, config)
     directory, backups = checked_path(directory), checked_path(backups)
     config_data = read_file(checked_path(config))
-    command([str(binary), "dogfood", "schedule", "status", "--config", str(config)])
+    status = command([str(binary), "dogfood", "schedule", "status", "--config", str(config)])
+    report = json.loads(status.stdout)
+    if not isinstance(report, dict) or not isinstance(report.get("config"), dict) or report["config"].get("runner_binary") != str(binary):
+        raise ValueError("Schedule runner_binary must match the installed service executable")
+    if report.get("runner_sha256") != runner_digest(binary):
+        raise ValueError("Schedule runner digest changed since status verification")
     with installation_lock(backups):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         return install_locked(name, config, config_data, directory, backups, units, activate)

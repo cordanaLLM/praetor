@@ -120,3 +120,10 @@ plan/apply/recheck loop. Public cloning is disabled by default. Explicitly add
 turn on network access. Direct calls can use `--timeout 300` for the bounded
 five-minute loop. Keep `artifact_dir` under the confined server root, such as
 `.workingdir/evidence/public-dogfood`, and retain the JSON-RPC envelope with its source identity.
+
+For recurring suites, use the [user timer guide](scheduled-dogfood.md).
+`standards_dogfood_schedule_status` reads a configured schedule and retained
+attempt state. The configured runner binary, suite, source bundle, state, and
+repair-policy paths must all fit the server root. Status cannot run suites,
+dispatch agents, or create state. It hashes the configured CLI executable so
+MCP and CLI status agree even though they are separate processes.
