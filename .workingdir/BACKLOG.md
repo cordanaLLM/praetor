@@ -18,7 +18,8 @@
       decisions), derived from the change set and a `completeness:` config section with `dev`/`pr` profiles,
       enforced fail-closed by `praetorctl gate` and CI so nothing incomplete is merged again; and the basic
       engineering principles (single source of truth, do not reinvent, deduplicate and slim, explicit over
-      implicit, fail closed, measure before claiming, small reversible steps) become HISS-20 in `AGENTS.md`.
+      implicit, fail closed, measure before claiming, small reversible steps with round-based checkpoint commits so
+      that a crash, reboot or provider limit never loses work) become HISS-20 in `AGENTS.md`.
       Draft text: `~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit/harness-principles-draft.md`.
       The AGENTS.md rows land with the wave B agent-surface fix group; the gate needs the config workstream.
 - [ ] Deep AST Deduplication Sweeps
