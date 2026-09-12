@@ -14,7 +14,10 @@
 - [x] Development MCP: connect agents to this checkout and verify real tool behavior before implementation (completed: 2026-09-12)
 - [x] Integrate committed G09 core with G01-G08 and verify fail-closed scan consumers (completed: 2026-09-12)
 - [x] Integrate full G10 preserving G01-G08 safety and truthful harvester outcomes (completed: 2026-09-12)
-- [ ] Publish verified WIP checkpoints through the approved checkpoint branch policy
+- [x] Publish verified WIP checkpoints through the approved checkpoint branch policy (completed: 2026-09-12)
 - [ ] Run automatic dogfooding against public non-owned repositories with replayable evidence
 - [ ] Discover and replay retained lusoris/praetor harvesting and memory ingestion data
 - [ ] Harvest and replay per-workstation coding CLI and agent global rules, skills, state, logs, brains, and memories with source provenance
+- [ ] Configure lusoris/praetor as synchronized operational fork with explicit repository and workstation rollout stages
+- [ ] Implement capability and evidence based per-task agent routing with cost, latency, and escalation controls
+- [ ] Optimize workstation agent and CLI context files with canonical ownership and replay verification

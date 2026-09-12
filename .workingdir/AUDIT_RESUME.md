@@ -187,8 +187,42 @@ changed files. No integrated full-gate pass has been established.
   session logs, brains, memories and related data. Inventory available sources
   and formats with provenance, preserve originals, and replay sanitized fixtures;
   report unavailable workstations and unsupported formats explicitly.
+- Keep `cordanaLLM/praetor` as the public application. The owner wants
+  `lusoris/praetor` to be its synchronized operational fork, with maintained
+  differences limited to owner repository/workstation configuration. The fork
+  conversion and synchronization policy are not implemented yet.
+- Configure explicit rollout stages before bot activation: inventory, dry-run,
+  proposed fixes, then verified automation. Advancement must use actual evidence;
+  a simulated scan, checkpoint push or empty report is not a passing stage.
+- Next systems requested: per-task agent selection using capability and measured
+  success/cost/latency with escalation, then optimization of local agent/CLI
+  rules, skills and context using canonical ownership and replay verification.
+  Implement real consumers with each setting; do not add inert configuration.
 - Keep the structural proposal and held fix groups pending while these explicitly
   requested publication and replay prerequisites are completed.
+
+#### Remote checkpoint and verification evidence
+
+`checkpoint/deep-audit-2026-09-12` was successfully pushed to origin at `0a96f26`,
+and remote SHA readback matched. The actual pre-push checked 264 changed paths,
+all affected builds and race tests. The 35-test hook suite includes real remote
+pushes, mixed-ref and strict-promotion rejection, compiler/race failures, and
+test-only packages that still compile and execute in the race gate.
+
+Hosted CI run `34703959347` ran and failed in `TestBundlePreservesUmask`: its child
+left umask 0777 active at coverage shutdown. The fix is integrated as `62edf3e`;
+isolated full race/atomic coverage passes at 79.6% (CI floor 65%). An exact clean
+checkout full `make -k verify-all` before that test-only fix passed all gates
+except 76 lint and 91 gosec findings. Dedupe passed on 175 files/1,181 functions;
+the earlier duplicate count included preserved nested worktrees. No complete
+Exit-0 gate or signed receipt has been established.
+
+Original corpus and workstation metadata are preserved outside Git under
+`codex-continuation/corpus-discovery/DISCOVERY.md`. Gemini's full Praetor transcript
+contains 10,863 records; the old 2,000-line extractor stopped before its first
+`lusoris/praetor` checkout reference. Raw private payloads remain outside tracked
+files. Public-loop and transcript-ingestion fixes are in separate worktrees;
+integration and fresh MCP validation remain required.
 
 Full logs, reproduction binaries and hashes are under `codex-continuation/`
 within the evidence root above. Keep the distinction between branch-reported
