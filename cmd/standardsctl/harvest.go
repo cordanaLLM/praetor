@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/harvester"
@@ -20,7 +21,10 @@ func runHarvest(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	homeDir, _ := os.UserHomeDir()
+	homeDir, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		return fmt.Errorf("resolve user home directory: %w", homeErr)
+	}
 
 	switch args[0] {
 	case "help", "-h", "--help":
@@ -48,10 +52,12 @@ func runHarvest(args []string) error {
 func printHarvestUsage() {
 	fmt.Println("Usage: standardsctl harvest <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  bundle [--name=name] [--out=dir]            Capture workstation state bundle (memories, skills, logs, patches)")
+	fmt.Println("  bundle [--name=name] [--out=dir] [--include-shell-history]")
+	fmt.Println("                                              Capture workstation state bundle (memories, skills, logs, patches)")
 	fmt.Println("  ingest [--bundle=dir] [--dry-run]           Analyze or ingest workstation bundle into local agent harness")
 	fmt.Println("  workstation [--dir=path]                    Audit local dev directory and worktree sprawl")
-	fmt.Println("  skills [--gemini=path] [--dedupe] [--dry-run] Audit and deduplicate agent skills")
+	fmt.Println("  skills [--gemini=path] [--repo=path] [--dedupe] [--dry-run]")
+	fmt.Println("                                              Audit and deduplicate agent skills")
 	fmt.Println("  fleet                                       Display multi-org remote fleet topology")
 	fmt.Println("  memory [--brain=path]                       Extract agent memory insights from transcripts")
 	fmt.Println("  onboard [--repo=path] [--dry-run]           Scaffold governance and harnesses into repos")
@@ -86,14 +92,20 @@ func runHarvestWorkstation(ctx context.Context, homeDir string, args []string) e
 func runHarvestSkills(ctx context.Context, homeDir string, args []string) error {
 	fs := flag.NewFlagSet("harvest skills", flag.ContinueOnError)
 	geminiDir := fs.String("gemini", filepath.Join(homeDir, ".gemini"), "Path to .gemini directory")
-	dedupe := fs.Bool("dedupe", false, "Remove redundant shadowed duplicate skills")
+	repoDir := fs.String("repo", ".", "Repository root whose .agents/skills directory is included in the audit")
+	dedupe := fs.Bool("dedupe", false, "Remove ~/.gemini/skills entries shadowed by ~/.gemini/config/skills")
 	cleanBackups := fs.Bool("clean-backups", false, "Purge stale GEMINI.md backups")
-	dryRun := fs.Bool("dry-run", false, "Simulate changes without deleting")
+	dryRun := fs.Bool("dry-run", true, "Simulate changes without deleting")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	rep, err := harvester.AuditSkills(ctx, *geminiDir, ".agents/skills")
+	repoSkills := ""
+	if *repoDir != "" {
+		repoSkills = filepath.Join(*repoDir, ".agents", "skills")
+	}
+
+	rep, err := harvester.AuditSkills(ctx, *geminiDir, repoSkills)
 	if err != nil {
 		return fmt.Errorf("failed auditing skills: %w", err)
 	}
@@ -102,8 +114,11 @@ func runHarvestSkills(ctx context.Context, homeDir string, args []string) error 
 	fmt.Printf("Total Skill Manifests: %d\n", rep.TotalSkills)
 	fmt.Printf("Unique Skills:         %d\n", rep.UniqueSkills)
 	fmt.Printf("Duplicate Skills (%d):\n", len(rep.Duplicates))
-	for name, paths := range rep.Duplicates {
-		fmt.Printf("  - %s (%d copies)\n", name, len(paths))
+	for name, locations := range rep.Duplicates {
+		fmt.Printf("  - %s (%d copies)\n", name, len(locations))
+		for _, loc := range locations {
+			fmt.Printf("      [%s] %s\n", loc.Origin, loc.Path)
+		}
 	}
 	if len(rep.StaleBackups) > 0 {
 		fmt.Printf("Stale GEMINI.md Backups (%d)\n", len(rep.StaleBackups))
@@ -212,8 +227,9 @@ func runHarvestBundle(ctx context.Context, homeDir string, args []string) error 
 	fs := flag.NewFlagSet("harvest bundle", flag.ContinueOnError)
 	name := fs.String("name", "", "Workstation name identifier (e.g. --name=office-1)")
 	outDir := fs.String("out", "", "Output destination directory for bundle (required)")
-	devDir := fs.String("dev", filepath.Join(homeDir, "dev"), "Path to local development directory")
 	vaultDir := fs.String("vault", "", "Optional path to workstation vault containing patches/inventory")
+	includeHistory := fs.Bool("include-shell-history", false,
+		"Also bundle ~/.bash_history, ~/.zsh_history and the PowerShell console history (they commonly contain exported credentials)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -224,11 +240,11 @@ func runHarvestBundle(ctx context.Context, homeDir string, args []string) error 
 	}
 
 	opts := harvester.BundleOptions{
-		WorkstationName: *name,
-		OutputDir:       *outDir,
-		HomeDir:         homeDir,
-		DevDir:          *devDir,
-		VaultDir:        *vaultDir,
+		WorkstationName:     *name,
+		OutputDir:           *outDir,
+		HomeDir:             homeDir,
+		VaultDir:            *vaultDir,
+		IncludeShellHistory: *includeHistory,
 	}
 
 	fmt.Printf("=== Harvesting Workstation Bundle (%s) ===\n", *name)
@@ -244,8 +260,35 @@ func runHarvestBundle(ctx context.Context, homeDir string, args []string) error 
 	for cat, count := range rep.Categories {
 		fmt.Printf("  - %s: %d files\n", cat, count)
 	}
+	printBundleWarnings(rep)
 	fmt.Printf("Cryptographic manifest: %s\n", rep.ManifestPath)
 	return nil
+}
+
+// printBundleWarnings names the captured categories that routinely contain credentials and
+// lists anything the bundler refused to copy.
+func printBundleWarnings(rep *harvester.WorkstationBundleReport) {
+	sensitive := make([]string, 0, len(harvester.SensitiveBundleCategories))
+	for _, cat := range harvester.SensitiveBundleCategories {
+		if rep.Categories[cat] > 0 {
+			sensitive = append(sensitive, fmt.Sprintf("%s (%d)", cat, rep.Categories[cat]))
+		}
+	}
+	if len(sensitive) > 0 {
+		fmt.Printf("[WARNING] This bundle contains credential-bearing categories: %s\n", strings.Join(sensitive, ", "))
+		fmt.Println("[WARNING] The bundle is written owner-only (0700/0600). Review it before transferring it anywhere.")
+	}
+	if len(rep.Skipped) == 0 {
+		return
+	}
+	fmt.Printf("Skipped sources (%d):\n", len(rep.Skipped))
+	for i, s := range rep.Skipped {
+		if i >= 20 {
+			fmt.Printf("  ... and %d more.\n", len(rep.Skipped)-20)
+			break
+		}
+		fmt.Printf("  - %s\n", s)
+	}
 }
 
 func runHarvestIngest(ctx context.Context, homeDir string, args []string) error {
@@ -275,5 +318,16 @@ func runHarvestIngest(ctx context.Context, homeDir string, args []string) error 
 	fmt.Printf("Overlapping Existing Skills (%d):\n", len(rep.ExistingSkills))
 	fmt.Printf("Project Memories Discovered (%d):\n", len(rep.NovelMemories))
 	fmt.Printf("Design Patches Discovered (%d):\n", len(rep.NovelPatches))
+	fmt.Printf("Manifest Integrity Verified: %v\n", rep.ValidIntegrity)
+	for i, rejected := range rep.RejectedRecords {
+		if i >= 20 {
+			fmt.Printf("  ... and %d more rejected records.\n", len(rep.RejectedRecords)-20)
+			break
+		}
+		fmt.Printf("  [REJECTED] %s\n", rejected)
+	}
+	if !rep.ValidIntegrity {
+		return fmt.Errorf("bundle %s failed manifest integrity verification (%d rejected records)", *bundleDir, len(rep.RejectedRecords))
+	}
 	return nil
 }

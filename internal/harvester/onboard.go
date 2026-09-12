@@ -2,6 +2,7 @@ package harvester
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,8 +11,15 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/editor"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
+
+// ErrNotADirectory is returned when an onboarding target exists but is not a directory.
+var ErrNotADirectory = errors.New("harvester: onboarding target is not a directory")
+
+// onboardFilePerm is the mode of every file onboarding scaffolds into a repository.
+const onboardFilePerm os.FileMode = 0o600
 
 // OnboardPlan captures planned or applied onboarding actions for a repository.
 type OnboardPlan struct {
@@ -29,8 +37,11 @@ func OnboardRepository(ctx context.Context, repoPath string, dryRun bool) (*Onbo
 	}
 
 	info, err := os.Stat(repoPath)
-	if err != nil || !info.IsDir() {
+	if err != nil {
 		return nil, fmt.Errorf("invalid repository path %q: %w", repoPath, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%w: %q", ErrNotADirectory, repoPath)
 	}
 
 	repoName := filepath.Base(repoPath)
@@ -55,104 +66,152 @@ func OnboardRepository(ctx context.Context, repoPath string, dryRun bool) (*Onbo
 		return plan, nil
 	}
 
-	if err := executeOnboarding(repoPath, repoName, arch, facets); err != nil {
+	if err := executeOnboarding(ctx, repoPath, repoName, arch, facets); err != nil {
 		return nil, err
 	}
 
 	return plan, nil
 }
 
+// archetypeMarkers maps a repository marker file to the archetype it implies.
+var archetypeMarkers = []struct {
+	file      string
+	archetype string
+}{
+	{"go.mod", "framework"},
+	{"Cargo.toml", "native-gpu-systems"},
+	{"pubspec.yaml", "app-service"},
+	{"pom.xml", "app-service"},
+	{"build.gradle", "app-service"},
+	{"package.json", "app-service"},
+	{"pyproject.toml", "app-service"},
+}
+
+// detectRepoArchetype infers the archetype from the build manifests present in the repo.
 func detectRepoArchetype(repoPath string) string {
-	if _, err := os.Stat(filepath.Join(repoPath, "go.mod")); err == nil {
-		return "framework"
-	}
-	if _, err := os.Stat(filepath.Join(repoPath, "Cargo.toml")); err == nil {
-		return "native-gpu-systems"
-	}
-	if _, err := os.Stat(filepath.Join(repoPath, "pubspec.yaml")); err == nil {
-		return "app-service"
-	}
-	if _, err := os.Stat(filepath.Join(repoPath, "pom.xml")); err == nil {
-		return "app-service"
-	}
-	if _, err := os.Stat(filepath.Join(repoPath, "build.gradle")); err == nil {
-		return "app-service"
-	}
-	if _, err := os.Stat(filepath.Join(repoPath, "package.json")); err == nil {
-		return "app-service"
-	}
-	if _, err := os.Stat(filepath.Join(repoPath, "pyproject.toml")); err == nil {
-		return "app-service"
+	for _, marker := range archetypeMarkers {
+		if util.FileExists(filepath.Join(repoPath, marker.file)) {
+			return marker.archetype
+		}
 	}
 	return "template-seed"
 }
 
-func executeOnboarding(repoPath, repoName, arch string, facets []string) error {
-	if err := ensureOnboardingManifest(repoPath, repoName, arch, facets); err != nil {
+// executeOnboarding writes the governance scaffold and the compiled agent harnesses. Every
+// step propagates its failure: the returned plan claims these actions were performed, so a
+// swallowed transpile or editor error would make the plan a lie.
+func executeOnboarding(ctx context.Context, repoPath, repoName, arch string, facets []string) error {
+	if err := ensureOnboardingManifest(ctx, repoPath, repoName, arch, facets); err != nil {
+		return err
+	}
+	if err := ensureOnboardingBaseline(repoPath); err != nil {
+		return err
+	}
+	if err := ensureOnboardingHarness(repoPath, repoName); err != nil {
 		return err
 	}
 
-	baselinePath := filepath.Join(repoPath, ".standards-baseline.json")
-	if _, err := os.Stat(baselinePath); os.IsNotExist(err) {
-		base := &baseline.Baseline{Version: 1, TotalInfractions: 0, Infractions: []baseline.Infraction{}}
-		if err := baseline.SaveBaseline(baselinePath, base); err != nil {
-			return fmt.Errorf("save baseline: %w", err)
-		}
+	agentsPath := filepath.Join(repoPath, "AGENTS.md")
+	tr := compiler.NewTranspiler()
+	res, cErr := tr.Compile(agentsPath)
+	if cErr != nil {
+		return fmt.Errorf("compile %s: %w", agentsPath, cErr)
+	}
+	if err := tr.WriteOutputs(res, repoPath); err != nil {
+		return fmt.Errorf("write transpiled outputs: %w", err)
 	}
 
+	opts := editor.DefaultOptions()
+	opts.WorkspaceRoot = repoPath
+	set, sErr := editor.Synthesize(opts)
+	if sErr != nil {
+		return fmt.Errorf("synthesize editor configs: %w", sErr)
+	}
+	if err := editor.Write(set, repoPath); err != nil {
+		return fmt.Errorf("write editor configs: %w", err)
+	}
+	return nil
+}
+
+// ensureOnboardingBaseline writes an empty baseline when the repository has none.
+func ensureOnboardingBaseline(repoPath string) error {
+	baselinePath := filepath.Join(repoPath, ".standards-baseline.json")
+	if util.PathExists(baselinePath) {
+		return nil
+	}
+	base := &baseline.Baseline{Version: 1, TotalInfractions: 0, Infractions: []baseline.Infraction{}}
+	if err := baseline.SaveBaseline(baselinePath, base); err != nil {
+		return fmt.Errorf("save baseline: %w", err)
+	}
+	return nil
+}
+
+// ensureOnboardingHarness writes the lockfile and the initial AGENTS.md. The scaffolded
+// AGENTS.md names the commands praetorctl actually provides; onboarding writes no Makefile,
+// so it must not instruct agents to run a make target that does not exist.
+func ensureOnboardingHarness(repoPath, repoName string) error {
 	lockPath := filepath.Join(repoPath, ".standards.lock")
-	if _, err := os.Stat(lockPath); os.IsNotExist(err) {
-		if err := os.WriteFile(lockPath, []byte("# SemVer lockfile\nversion: 1\npinned_version: \"v1.0.0\"\n"), 0644); err != nil {
+	if !util.PathExists(lockPath) {
+		lockBody := []byte("# SemVer lockfile\nversion: 1\npinned_version: \"v1.0.0\"\n")
+		if err := util.WriteFileSecure(lockPath, lockBody, onboardFilePerm); err != nil {
 			return fmt.Errorf("write lockfile: %w", err)
 		}
 	}
 
 	agentsPath := filepath.Join(repoPath, "AGENTS.md")
-	if _, err := os.Stat(agentsPath); os.IsNotExist(err) {
-		initialAgentsMD := fmt.Sprintf("# %s Agent Operating Harness\n\nRun verification before concluding any turn:\n```bash\nmake verify-all\n```\n", repoName)
-		if err := os.WriteFile(agentsPath, []byte(initialAgentsMD), 0644); err != nil {
-			return fmt.Errorf("write AGENTS.md: %w", err)
-		}
+	if util.PathExists(agentsPath) {
+		return nil
 	}
-
-	tr := compiler.NewTranspiler()
-	if res, err := tr.Compile(agentsPath); err == nil {
-		if err := tr.WriteOutputs(res, repoPath); err != nil {
-			return fmt.Errorf("write transpiled outputs: %w", err)
-		}
+	initialAgentsMD := fmt.Sprintf(
+		"# %s Agent Operating Harness\n\nRun verification before concluding any turn:\n"+
+			"```bash\npraetorctl audit\npraetorctl compile-context --verify\n```\n",
+		repoName)
+	if err := util.WriteFileSecure(agentsPath, []byte(initialAgentsMD), onboardFilePerm); err != nil {
+		return fmt.Errorf("write AGENTS.md: %w", err)
 	}
-
-	opts := editor.DefaultOptions()
-	opts.WorkspaceRoot = repoPath
-	if set, err := editor.Synthesize(opts); err == nil {
-		if err := editor.Write(set, repoPath); err != nil {
-			return fmt.Errorf("write editor configs: %w", err)
-		}
-	}
-
 	return nil
 }
 
-func ensureOnboardingManifest(repoPath, repoName, arch string, facets []string) error {
+// resolveGitIdentity reads the owner and repository name from the target's own origin
+// remote. It deliberately does not fall back to the directory layout: an onboarding
+// manifest must never claim an owner the repository did not itself declare.
+func resolveGitIdentity(ctx context.Context, repoPath string) (owner, name string) {
+	remote, err := util.RunGit(ctx, repoPath, "config", "--get", "remote.origin.url")
+	if err != nil || remote == "" {
+		return "", ""
+	}
+	return util.ExtractOwnerAndRepo(remote)
+}
+
+// ensureOnboardingManifest writes .standards.yaml when the repository has none. The owner
+// is resolved from the repository's own git identity; it is never invented, and the
+// visibility is left blank for the operator to declare rather than defaulted to "public".
+func ensureOnboardingManifest(ctx context.Context, repoPath, repoName, arch string, facets []string) error {
 	manifestPath := filepath.Join(repoPath, ".standards.yaml")
-	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
-		manifest := config.Manifest{
-			Version: 1,
-			Repository: config.RepositoryMetadata{
-				Owner:      "cordanaLLM",
-				Name:       repoName,
-				Visibility: "public",
-			},
-			Profiles: []string{arch},
-			Facets:   facets,
-		}
-		data, err := yaml.Marshal(&manifest)
-		if err != nil {
-			return fmt.Errorf("marshal manifest: %w", err)
-		}
-		if err := os.WriteFile(manifestPath, data, 0644); err != nil {
-			return fmt.Errorf("write %s: %w", manifestPath, err)
-		}
+	if util.PathExists(manifestPath) {
+		return nil
+	}
+
+	owner, resolvedName := resolveGitIdentity(ctx, repoPath)
+	if resolvedName == "" {
+		resolvedName = repoName
+	}
+
+	manifest := config.Manifest{
+		Version: 1,
+		Repository: config.RepositoryMetadata{
+			Owner: owner,
+			Name:  resolvedName,
+		},
+		Profiles: []string{arch},
+		Facets:   facets,
+	}
+	data, err := yaml.Marshal(&manifest)
+	if err != nil {
+		return fmt.Errorf("marshal manifest: %w", err)
+	}
+	if err := util.WriteFileSecure(manifestPath, data, onboardFilePerm); err != nil {
+		return fmt.Errorf("write %s: %w", manifestPath, err)
 	}
 	return nil
 }

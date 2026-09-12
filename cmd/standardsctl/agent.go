@@ -86,7 +86,8 @@ func runGatekeeperAgent(ctx context.Context) error {
 }
 
 func runDogfooderAgent(ctx context.Context) error {
-	opts := dogfood.DogfoodOptions{HostRepoPath: ".", DryRun: true}
+	// The zero value of ApplyAdoption keeps every adoption a simulation.
+	opts := dogfood.DogfoodOptions{HostRepoPath: "."}
 	rep, err := dogfood.RunDogfood(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("dogfooder execution error: %w", err)

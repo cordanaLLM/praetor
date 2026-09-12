@@ -3,6 +3,7 @@ package harvester
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,8 +12,16 @@ import (
 )
 
 const (
+	// MaxTranscriptsScan bounds how many conversation directories are inspected.
 	MaxTranscriptsScan = 50
-	MaxLinesPerLog     = 2000
+	// MaxLinesPerLog bounds how many lines of a single transcript are read.
+	MaxLinesPerLog = 2000
+	// transcriptScanBuffer is the initial bufio.Scanner buffer for a transcript line.
+	transcriptScanBuffer = 64 * 1024
+	// MaxTranscriptLineBytes is the largest single JSONL line accepted. Agent transcripts
+	// routinely embed tool output well past bufio's 64 KiB default, and silently stopping
+	// at the first oversized line would under-report every insight behind it.
+	MaxTranscriptLineBytes = 8 * 1024 * 1024
 )
 
 // MemoryInsight represents an extracted operational pattern or rule insight.
@@ -24,6 +33,8 @@ type MemoryInsight struct {
 }
 
 // ExtractMemoryInsights scans conversation transcripts for recurring patterns and rules.
+// An absent transcripts root yields no insights; any other directory failure is reported so
+// that a mistyped path can never be mistaken for an empty brain directory.
 func ExtractMemoryInsights(ctx context.Context, transcriptsRoot string) ([]MemoryInsight, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context cancelled before memory extraction: %w", err)
@@ -36,39 +47,61 @@ func ExtractMemoryInsights(ctx context.Context, transcriptsRoot string) ([]Memor
 
 	entries, err := os.ReadDir(transcriptsRoot)
 	if err != nil {
-		return insights, nil
+		if errors.Is(err, os.ErrNotExist) {
+			return insights, nil
+		}
+		return nil, fmt.Errorf("read transcripts root %s: %w", transcriptsRoot, err)
 	}
 
-	scanCount := 0
-	for _, entry := range entries {
-		if scanCount >= MaxTranscriptsScan {
-			break
+	for i := 0; i < len(entries) && i < MaxTranscriptsScan; i++ {
+		if cErr := ctx.Err(); cErr != nil {
+			return nil, fmt.Errorf("context cancelled during memory extraction: %w", cErr)
 		}
-		scanCount++
-
-		if !entry.IsDir() {
+		if !entries[i].IsDir() {
 			continue
 		}
-
-		transcriptPath := filepath.Join(transcriptsRoot, entry.Name(), ".system_generated", "logs", "transcript.jsonl")
-		file, err := os.Open(transcriptPath)
-		if err != nil {
-			continue
+		transcriptPath := filepath.Join(transcriptsRoot, entries[i].Name(), ".system_generated", "logs", "transcript.jsonl")
+		if scanErr := scanTranscript(transcriptPath, entries[i].Name(), &insights); scanErr != nil {
+			return nil, scanErr
 		}
-
-		processTranscript(file, entry.Name(), &insights)
-		file.Close()
 	}
 
 	return insights, nil
 }
 
-func processTranscript(file *os.File, convoID string, insights *[]MemoryInsight) {
+// scanTranscript opens one transcript and appends the insights it yields. A missing
+// transcript is normal; a read failure is propagated.
+func scanTranscript(transcriptPath, convoID string, insights *[]MemoryInsight) (err error) {
+	file, openErr := openRegularSource(transcriptPath)
+	if openErr != nil {
+		if errors.Is(openErr, os.ErrNotExist) || errors.Is(openErr, ErrNotRegularFile) {
+			return nil
+		}
+		return fmt.Errorf("open transcript %s: %w", transcriptPath, openErr)
+	}
+	defer func() {
+		if cErr := file.Close(); cErr != nil && err == nil {
+			err = fmt.Errorf("close transcript %s: %w", transcriptPath, cErr)
+		}
+	}()
+
+	if scanErr := processTranscript(file, convoID, insights); scanErr != nil {
+		return fmt.Errorf("scan transcript %s: %w", transcriptPath, scanErr)
+	}
+	return nil
+}
+
+// processTranscript appends one governance insight when the transcript mentions a HISS
+// invariant. A scanner failure (including a line above MaxTranscriptLineBytes) is returned
+// rather than silently truncating the scan.
+func processTranscript(file *os.File, convoID string, insights *[]MemoryInsight) error {
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, transcriptScanBuffer), MaxTranscriptLineBytes)
+
 	lineCount := 0
 	for scanner.Scan() {
 		if lineCount >= MaxLinesPerLog {
-			break
+			return nil
 		}
 		lineCount++
 
@@ -80,7 +113,11 @@ func processTranscript(file *os.File, convoID string, insights *[]MemoryInsight)
 				Summary:   "Detected explicit HISS invariant mention in transcript trajectory",
 				Timestamp: time.Now(),
 			})
-			break
+			return nil
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read transcript lines: %w", err)
+	}
+	return nil
 }
