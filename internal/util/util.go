@@ -27,6 +27,57 @@ const (
 // origin remote nor the directory layout identifies an owner and repository.
 var ErrRepoIdentityUnresolved = errors.New("util: unable to resolve repository owner and name")
 
+// ErrSymlinkDestination is returned by WriteFileNoFollow when the destination exists and
+// is a symbolic link, or exists and is not a regular file.
+var ErrSymlinkDestination = errors.New("util: refusing to write through a non-regular destination")
+
+// WriteFileNoFollow writes data to path, refusing to write through a symbolic link.
+//
+// os.WriteFile follows symlinks and truncates their target, so a repository that ships a
+// tracked ledger path (.workingdir/BACKLOG.md, .workingdir/milestones.json, docs/wiki/*)
+// as a link to a file outside the repository can redirect praetor's own writes onto that
+// file. The destination is inspected with os.Lstat, which does not follow the final path
+// component, and anything that exists but is not a regular file is rejected before the
+// write. The write itself goes through WriteFileSecure so the permission bits are
+// validated and enforced.
+func WriteFileNoFollow(path string, data []byte, perm os.FileMode) error {
+	info, err := os.Lstat(path)
+	switch {
+	case err == nil && info.Mode()&os.ModeSymlink != 0:
+		return fmt.Errorf("%w: %q is a symbolic link", ErrSymlinkDestination, path)
+	case err == nil && !info.Mode().IsRegular():
+		return fmt.Errorf("%w: %q is not a regular file", ErrSymlinkDestination, path)
+	case err != nil && !errors.Is(err, os.ErrNotExist):
+		return fmt.Errorf("util: inspect write destination %q: %w", path, err)
+	}
+	return WriteFileSecure(path, data, perm)
+}
+
+// ReadFileNoFollow reads path, refusing to read through a symbolic link.
+//
+// It is the read-side counterpart of WriteFileNoFollow: a ledger or cache file that a
+// hostile repository ships as a link to a file outside the tree must not be parsed as
+// praetor's own state.
+func ReadFileNoFollow(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("util: inspect %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%w: %q is a symbolic link", ErrSymlinkDestination, path)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %q is not a regular file", ErrSymlinkDestination, path)
+	}
+	// #nosec G304 -- the destination has just been checked with os.Lstat to be a regular
+	// file that is not a symbolic link; callers pass repository-local ledger paths.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("util: read %q: %w", path, err)
+	}
+	return data, nil
+}
+
 // PathExists returns true if path exists on the filesystem.
 func PathExists(path string) bool {
 	_, err := os.Stat(path)

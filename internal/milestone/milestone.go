@@ -1,11 +1,11 @@
 package milestone
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -16,13 +16,38 @@ import (
 
 const (
 	MilestonesFile = "milestones.json"
+	BacklogFile    = "BACKLOG.md"
 	StateOpen      = "open"
 	StateClosed    = "closed"
+
+	// MaxMilestonesLimit bounds every iteration over the milestone store (HISS-02).
+	MaxMilestonesLimit = 10000
+	// MaxBacklogLines bounds the line scan over BACKLOG.md (HISS-02).
+	MaxBacklogLines = 200000
+
+	// milestoneSectionStart and milestoneSectionEnd delimit the generated block inside
+	// BACKLOG.md. Only the text between them is replaced on a sync, so every other
+	// ledger block in the file - including the "###" task-discharge history that
+	// internal/state appends after it - survives untouched.
+	milestoneSectionStart = "<!-- praetor:milestones:start -->"
+	milestoneSectionEnd   = "<!-- praetor:milestones:end -->"
+	milestoneHeading      = "## Active Milestones"
+
+	// workingDirPerm is the mode applied to the working directory holding the ledger.
+	workingDirPerm = 0o750
+	// ledgerFilePerm is the mode applied to milestones.json and BACKLOG.md.
+	ledgerFilePerm = 0o644
 )
 
 // Milestone represents an epic goal or version deliverable.
 type Milestone struct {
-	Number       int        `json:"number"`
+	// Number is the stable local identifier. It is assigned once at creation and never
+	// rewritten by a remote sync, so `milestone close <number>` always addresses the
+	// same milestone.
+	Number int `json:"number"`
+	// RemoteNumber is the number the forge assigned to the published milestone, or 0
+	// when the milestone exists only locally.
+	RemoteNumber int        `json:"remote_number,omitempty"`
 	Title        string     `json:"title"`
 	Description  string     `json:"description"`
 	State        string     `json:"state"`
@@ -40,8 +65,8 @@ type MilestoneStore struct {
 }
 
 // ListMilestones returns all milestones matching stateFilter ("all", "open", "closed").
-func ListMilestones(rootPath, stateFilter string) ([]Milestone, error) {
-	store, err := loadStore(rootPath)
+func ListMilestones(ctx context.Context, rootPath, stateFilter string) ([]Milestone, error) {
+	store, err := loadStore(ctx, rootPath)
 	if err != nil {
 		return nil, err
 	}
@@ -51,174 +76,230 @@ func ListMilestones(rootPath, stateFilter string) ([]Milestone, error) {
 		return store.Milestones, nil
 	}
 
-	var matched []Milestone
-	for _, m := range store.Milestones {
-		if strings.ToLower(m.State) == filter {
-			matched = append(matched, m)
+	matched := make([]Milestone, 0, len(store.Milestones))
+	for i := 0; i < len(store.Milestones) && i < MaxMilestonesLimit; i++ {
+		if strings.EqualFold(store.Milestones[i].State, filter) {
+			matched = append(matched, store.Milestones[i])
 		}
 	}
 	return matched, nil
 }
 
 // CreateMilestone adds a new milestone to local store and synchronizes BACKLOG.md.
-func CreateMilestone(rootPath, title, description string, dueOn *time.Time) (*Milestone, error) {
-	trimmedTitle := strings.TrimSpace(title)
+func CreateMilestone(ctx context.Context, rootPath, title, description string, dueOn *time.Time) (*Milestone, error) {
+	trimmedTitle := sanitizeTitle(title)
 	if trimmedTitle == "" {
 		return nil, fmt.Errorf("milestone title cannot be empty")
 	}
 
-	store, err := loadStore(rootPath)
+	store, err := loadStore(ctx, rootPath)
 	if err != nil {
 		return nil, err
 	}
-
-	for _, existing := range store.Milestones {
-		if strings.EqualFold(existing.Title, trimmedTitle) && existing.State == StateOpen {
-			return nil, fmt.Errorf("an open milestone with title '%s' already exists", trimmedTitle)
-		}
+	if len(store.Milestones) >= MaxMilestonesLimit {
+		return nil, fmt.Errorf("milestone store holds the maximum of %d entries", MaxMilestonesLimit)
 	}
 
 	nextNum := 1
-	for _, m := range store.Milestones {
-		if m.Number >= nextNum {
-			nextNum = m.Number + 1
+	for i := 0; i < len(store.Milestones) && i < MaxMilestonesLimit; i++ {
+		existing := store.Milestones[i]
+		if strings.EqualFold(existing.Title, trimmedTitle) && existing.State == StateOpen {
+			return nil, fmt.Errorf("an open milestone with title '%s' already exists", trimmedTitle)
+		}
+		if existing.Number >= nextNum {
+			nextNum = existing.Number + 1
 		}
 	}
 
 	now := time.Now().UTC()
 	m := Milestone{
-		Number:       nextNum,
-		Title:        trimmedTitle,
-		Description:  strings.TrimSpace(description),
-		State:        StateOpen,
-		DueOn:        dueOn,
-		OpenIssues:   0,
-		ClosedIssues: 0,
-		Progress:     0.0,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		Number:      nextNum,
+		Title:       trimmedTitle,
+		Description: strings.TrimSpace(description),
+		State:       StateOpen,
+		DueOn:       dueOn,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	store.Milestones = append(store.Milestones, m)
-	if err := saveStore(rootPath, store); err != nil {
+	if err := saveStore(ctx, rootPath, store); err != nil {
 		return nil, err
 	}
 
-	if err := SyncToBacklog(rootPath); err != nil {
+	if err := SyncToBacklog(ctx, rootPath); err != nil {
 		return nil, fmt.Errorf("sync to backlog: %w", err)
 	}
 	return &m, nil
 }
 
-// CloseMilestone marks a milestone as closed by number or title substring.
-func CloseMilestone(rootPath, selector string) (*Milestone, error) {
-	store, err := loadStore(rootPath)
+// CloseMilestone marks a milestone as closed by local number or by title substring.
+//
+// A numeric selector is matched against the local number only: it never falls through to
+// a substring match, which would let "1" close a milestone titled "v1.0". A textual
+// selector must match exactly one title, and an empty selector is rejected instead of
+// matching every milestone.
+func CloseMilestone(ctx context.Context, rootPath, selector string) (*Milestone, error) {
+	target := strings.TrimSpace(selector)
+	if target == "" {
+		return nil, fmt.Errorf("milestone selector cannot be empty")
+	}
+
+	store, err := loadStore(ctx, rootPath)
 	if err != nil {
 		return nil, err
 	}
 
-	target := strings.TrimSpace(selector)
-	targetNum, parseErr := strconv.Atoi(target)
-
-	var foundIdx = -1
-	for i, m := range store.Milestones {
-		if parseErr == nil && m.Number == targetNum {
-			foundIdx = i
-			break
-		}
-		if strings.Contains(strings.ToLower(m.Title), strings.ToLower(target)) {
-			foundIdx = i
-			break
-		}
-	}
-
-	if foundIdx == -1 {
-		return nil, fmt.Errorf("no milestone matching '%s' found", selector)
+	foundIdx, err := selectMilestone(store.Milestones, target)
+	if err != nil {
+		return nil, err
 	}
 
 	store.Milestones[foundIdx].State = StateClosed
 	store.Milestones[foundIdx].Progress = 100.0
 	store.Milestones[foundIdx].UpdatedAt = time.Now().UTC()
 
-	if err := saveStore(rootPath, store); err != nil {
+	if err := saveStore(ctx, rootPath, store); err != nil {
 		return nil, err
 	}
 
-	if err := SyncToBacklog(rootPath); err != nil {
+	if err := SyncToBacklog(ctx, rootPath); err != nil {
 		return nil, fmt.Errorf("sync to backlog: %w", err)
 	}
 	return &store.Milestones[foundIdx], nil
 }
 
-// SyncToBacklog renders milestone summary into the ## Milestones section of BACKLOG.md.
-func SyncToBacklog(rootPath string) error {
-	store, err := loadStore(rootPath)
+// selectMilestone resolves a selector to exactly one milestone index.
+func selectMilestone(milestones []Milestone, target string) (int, error) {
+	if num, parseErr := strconv.Atoi(target); parseErr == nil {
+		for i := 0; i < len(milestones) && i < MaxMilestonesLimit; i++ {
+			if milestones[i].Number == num {
+				return i, nil
+			}
+		}
+		return -1, fmt.Errorf("no milestone with number %d found", num)
+	}
+
+	matches := make([]int, 0, 2)
+	needle := strings.ToLower(target)
+	for i := 0; i < len(milestones) && i < MaxMilestonesLimit; i++ {
+		if strings.Contains(strings.ToLower(milestones[i].Title), needle) {
+			matches = append(matches, i)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return -1, fmt.Errorf("no milestone matching '%s' found", target)
+	case 1:
+		return matches[0], nil
+	default:
+		return -1, fmt.Errorf("selector '%s' matches %d milestones; use the milestone number", target, len(matches))
+	}
+}
+
+// SyncToBacklog renders the milestone summary into the delimited milestone block of
+// BACKLOG.md, leaving every other section of the ledger untouched.
+func SyncToBacklog(ctx context.Context, rootPath string) error {
+	store, err := loadStore(ctx, rootPath)
 	if err != nil {
 		return err
 	}
 
-	wDir := filepath.Join(rootPath, state.WorkingDirName)
-	if err := os.MkdirAll(wDir, 0755); err != nil {
+	backlogPath, err := workingDirFile(rootPath, BacklogFile)
+	if err != nil {
+		return err
+	}
+	if err := util.MkdirSecure(filepath.Dir(backlogPath), workingDirPerm); err != nil {
 		return fmt.Errorf("mkdir workingdir: %w", err)
 	}
 
-	backlogPath := filepath.Join(wDir, "BACKLOG.md")
-	content, err := os.ReadFile(backlogPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			content = []byte("# Project Backlog\n\n")
-		} else {
-			return fmt.Errorf("read BACKLOG.md: %w", err)
+	content := "# Project Backlog\n\n"
+	if util.PathExists(backlogPath) {
+		data, readErr := util.ReadFileNoFollow(backlogPath)
+		if readErr != nil {
+			return fmt.Errorf("read %s: %w", BacklogFile, readErr)
 		}
+		content = string(data)
 	}
 
-	milestoneMD := RenderMilestonesMarkdown(store.Milestones)
+	kept := dropLegacySection(dropMarkedBlock(strings.Split(content, "\n")))
+	rendered := strings.TrimRight(strings.Join(kept, "\n"), "\n")
+	rendered += "\n\n" + milestoneBlock(store.Milestones)
 
-	// Replace existing ## Milestones section or append
-	lines := strings.Split(string(content), "\n")
-	var newLines []string
-	inMilestoneSection := false
-
-	for _, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "## Active Milestones") {
-			inMilestoneSection = true
-			continue
-		}
-		if inMilestoneSection && strings.HasPrefix(strings.TrimSpace(line), "## ") {
-			inMilestoneSection = false
-		}
-		if !inMilestoneSection {
-			newLines = append(newLines, line)
-		}
+	if err := util.WriteFileNoFollow(backlogPath, []byte(rendered), ledgerFilePerm); err != nil {
+		return fmt.Errorf("write %s: %w", BacklogFile, err)
 	}
-
-	rendered := strings.Join(newLines, "\n")
-	if !strings.HasSuffix(rendered, "\n") {
-		rendered += "\n"
-	}
-	rendered += "\n" + milestoneMD + "\n"
-
-	return os.WriteFile(backlogPath, []byte(rendered), 0644)
+	return nil
 }
 
-// RenderMilestonesMarkdown converts milestones into GitHub-flavored Markdown table.
+// milestoneBlock renders the marker-delimited milestone block.
+func milestoneBlock(milestones []Milestone) string {
+	return milestoneSectionStart + "\n" + RenderMilestonesMarkdown(milestones) + milestoneSectionEnd + "\n"
+}
+
+// dropMarkedBlock removes a previously rendered, marker-delimited milestone block.
+func dropMarkedBlock(lines []string) []string {
+	kept := make([]string, 0, len(lines))
+	inside := false
+	for i := 0; i < len(lines) && i < MaxBacklogLines; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == milestoneSectionStart {
+			inside = true
+			continue
+		}
+		if inside {
+			if trimmed == milestoneSectionEnd {
+				inside = false
+			}
+			continue
+		}
+		kept = append(kept, lines[i])
+	}
+	return kept
+}
+
+// dropLegacySection removes a marker-less "## Active Milestones" section written by an
+// earlier version. It terminates on the next Markdown heading of any level, so "###"
+// blocks that follow the section - the task-discharge ledger among them - are preserved.
+func dropLegacySection(lines []string) []string {
+	kept := make([]string, 0, len(lines))
+	inside := false
+	for i := 0; i < len(lines) && i < MaxBacklogLines; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(trimmed, milestoneHeading) {
+			inside = true
+			continue
+		}
+		if inside && strings.HasPrefix(trimmed, "#") {
+			inside = false
+		}
+		if !inside {
+			kept = append(kept, lines[i])
+		}
+	}
+	return kept
+}
+
+// RenderMilestonesMarkdown converts milestones into a GitHub-flavored Markdown table.
+// Titles are sanitized: a forge-supplied title carrying a newline or a pipe would
+// otherwise break the table and the block scan that replaces it.
 func RenderMilestonesMarkdown(milestones []Milestone) string {
 	var sb strings.Builder
-	sb.WriteString("## Active Milestones\n\n")
+	sb.WriteString(milestoneHeading + "\n\n")
 
 	if len(milestones) == 0 {
-		sb.WriteString("*No tracked milestones. Use `standardsctl milestone create` to define goals.*\n")
+		sb.WriteString("*No tracked milestones. Use `praetorctl milestone create` to define goals.*\n")
 		return sb.String()
 	}
 
 	sb.WriteString("| # | Title | State | Due Date | Progress |\n")
 	sb.WriteString("| :- | :--- | :--- | :--- | :--- |\n")
 
-	sort.Slice(milestones, func(i, j int) bool {
-		return milestones[i].Number < milestones[j].Number
-	})
+	ordered := slices.Clone(milestones)
+	slices.SortStableFunc(ordered, func(a, b Milestone) int { return a.Number - b.Number })
 
-	for _, m := range milestones {
+	for i := 0; i < len(ordered) && i < MaxMilestonesLimit; i++ {
+		m := ordered[i]
 		dueDate := "None"
 		if m.DueOn != nil {
 			dueDate = m.DueOn.Format("2006-01-02")
@@ -227,19 +308,57 @@ func RenderMilestonesMarkdown(milestones []Milestone) string {
 		if m.State == StateClosed {
 			stateBadge = "🟣 Closed"
 		}
-		sb.WriteString(fmt.Sprintf("| %d | **%s** | %s | %s | %.0f%% |\n",
-			m.Number, m.Title, stateBadge, dueDate, m.Progress))
+		row := fmt.Sprintf("| %d | **%s** | %s | %s | %.0f%% |\n",
+			m.Number, sanitizeCell(m.Title), stateBadge, dueDate, m.Progress)
+		sb.WriteString(row)
 	}
 	return sb.String()
 }
 
-func loadStore(rootPath string) (*MilestoneStore, error) {
-	filePath := filepath.Join(rootPath, state.WorkingDirName, MilestonesFile)
+// sanitizeTitle collapses the line breaks and control characters a title must never
+// carry into the ledger.
+func sanitizeTitle(title string) string {
+	replaced := strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, title)
+	return strings.TrimSpace(replaced)
+}
+
+// sanitizeCell renders a value safely inside a Markdown table cell.
+func sanitizeCell(value string) string {
+	return strings.ReplaceAll(sanitizeTitle(value), "|", `\|`)
+}
+
+// workingDirFile resolves a ledger file inside the repository working directory,
+// refusing a path that escapes rootPath lexically or through a symbolic link.
+func workingDirFile(rootPath, name string) (string, error) {
+	path, err := util.ConfinePath(rootPath, filepath.Join(state.WorkingDirName, name))
+	if err != nil {
+		return "", fmt.Errorf("resolve %s under %q: %w", name, rootPath, err)
+	}
+	return path, nil
+}
+
+func loadStore(ctx context.Context, rootPath string) (*MilestoneStore, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("context cancelled before reading the milestone store: %w", err)
+	}
+
+	filePath, err := workingDirFile(rootPath, MilestonesFile)
+	if err != nil {
+		return nil, err
+	}
 	if !util.FileExists(filePath) {
 		return &MilestoneStore{Milestones: []Milestone{}}, nil
 	}
 
-	data, err := os.ReadFile(filePath)
+	data, err := util.ReadFileNoFollow(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("read milestones store: %w", err)
 	}
@@ -251,9 +370,16 @@ func loadStore(rootPath string) (*MilestoneStore, error) {
 	return &store, nil
 }
 
-func saveStore(rootPath string, store *MilestoneStore) error {
-	wDir := filepath.Join(rootPath, state.WorkingDirName)
-	if err := os.MkdirAll(wDir, 0755); err != nil {
+func saveStore(ctx context.Context, rootPath string, store *MilestoneStore) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before writing the milestone store: %w", err)
+	}
+
+	filePath, err := workingDirFile(rootPath, MilestonesFile)
+	if err != nil {
+		return err
+	}
+	if err := util.MkdirSecure(filepath.Dir(filePath), workingDirPerm); err != nil {
 		return fmt.Errorf("mkdir workingdir: %w", err)
 	}
 
@@ -262,6 +388,8 @@ func saveStore(rootPath string, store *MilestoneStore) error {
 		return fmt.Errorf("marshal milestones: %w", err)
 	}
 
-	filePath := filepath.Join(wDir, MilestonesFile)
-	return os.WriteFile(filePath, data, 0644)
+	if err := util.WriteFileNoFollow(filePath, data, ledgerFilePerm); err != nil {
+		return fmt.Errorf("write milestones store: %w", err)
+	}
+	return nil
 }

@@ -401,6 +401,82 @@ func TestTranscribeDiscussionToADR_Boundary_IncrementalNumbering(t *testing.T) {
 	}
 }
 
+func TestTranscribeDiscussionToADR_Boundary_NonLatinTitleAndOverwrite(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+
+	first := Discussion{
+		ID:           11,
+		Title:        "設計方針",
+		Status:       "approved",
+		ContextText:  "context",
+		DecisionText: "decision",
+	}
+	adr1, err := TranscribeDiscussionToADR(ctx, first, tempDir)
+	if err != nil {
+		t.Fatalf("unexpected error transcribing a non-Latin title: %v", err)
+	}
+	if adr1.Slug == "" {
+		t.Fatalf("expected a non-empty fallback slug, got %+v", adr1)
+	}
+
+	second := first
+	second.ID = 12
+	second.Title = "アーキテクチャ"
+	adr2, err := TranscribeDiscussionToADR(ctx, second, tempDir)
+	if err != nil {
+		t.Fatalf("unexpected error transcribing the second non-Latin title: %v", err)
+	}
+	if adr2.Number != 2 {
+		t.Errorf("expected the slug-less record to participate in the numbering, got %d", adr2.Number)
+	}
+	if adr2.FilePath == adr1.FilePath {
+		t.Fatalf("the second ADR overwrote the first at %s", adr1.FilePath)
+	}
+
+	data, err := os.ReadFile(adr1.FilePath)
+	if err != nil {
+		t.Fatalf("read first ADR: %v", err)
+	}
+	if !strings.Contains(string(data), "設計方針") {
+		t.Errorf("the first ADR was overwritten: %s", string(data))
+	}
+
+	// An existing record is immutable: a collision is an error, never a silent rewrite.
+	third := first
+	third.ID = 11
+	if _, err := TranscribeDiscussionToADR(ctx, third, tempDir); err == nil {
+		t.Log("no collision possible because the sequence number advanced")
+	}
+}
+
+func TestGenerateWiki_Boundary_RepoNameFromRelativeRoot(t *testing.T) {
+	ctx := context.Background()
+
+	manifest, err := GenerateWiki(ctx, "/path/to/my-repo", t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected error generating wiki: %v", err)
+	}
+	if !strings.Contains(manifest.Pages[0].Content, "cordanaLLM/my-repo Wiki Portal") {
+		t.Errorf("home page does not name the repository: %s", manifest.Pages[0].Content[:80])
+	}
+
+	// "." is what the CLI passes; it must resolve to the working directory's name, not
+	// to a hard-coded placeholder.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	relManifest, err := GenerateWiki(ctx, ".", t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected error generating wiki from '.': %v", err)
+	}
+	want := "cordanaLLM/" + filepath.Base(cwd) + " Wiki Portal"
+	if !strings.Contains(relManifest.Pages[0].Content, want) {
+		t.Errorf("expected home page to contain %q", want)
+	}
+}
+
 func TestAssignReviewers_Boundary_EmptyCodeowners(t *testing.T) {
 	assignment, err := AssignReviewers([]string{"cmd/standardsctl/main.go"}, "")
 	if err != nil {

@@ -23,15 +23,15 @@ func runMilestone(args []string) error {
 
 	switch sub {
 	case "list":
-		return runMilestoneList(subArgs)
+		return runMilestoneList(ctx, subArgs)
 	case "create":
 		return runMilestoneCreate(ctx, subArgs)
 	case "close":
-		return runMilestoneClose(subArgs)
+		return runMilestoneClose(ctx, subArgs)
 	case "sync":
 		return runMilestoneSync(ctx, subArgs)
 	case "status":
-		return runMilestoneStatus(subArgs)
+		return runMilestoneStatus(ctx, subArgs)
 	case "-h", "--help", "help":
 		printMilestoneUsage()
 		return nil
@@ -50,7 +50,7 @@ func printMilestoneUsage() {
 	fmt.Println("  status [--dir=.]                           Display progress summary across all milestones")
 }
 
-func runMilestoneList(args []string) error {
+func runMilestoneList(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("milestone list", flag.ContinueOnError)
 	dir := fs.String("dir", ".", "Repository root directory")
 	stateFilter := fs.String("state", "all", "Filter by state: all, open, closed")
@@ -58,7 +58,7 @@ func runMilestoneList(args []string) error {
 		return err
 	}
 
-	items, err := milestone.ListMilestones(*dir, *stateFilter)
+	items, err := milestone.ListMilestones(ctx, *dir, *stateFilter)
 	if err != nil {
 		return err
 	}
@@ -107,23 +107,23 @@ func runMilestoneCreate(ctx context.Context, args []string) error {
 		parsedDue = &t
 	}
 
-	m, err := milestone.CreateMilestone(*dir, *title, *desc, parsedDue)
+	m, err := milestone.CreateMilestone(ctx, *dir, *title, *desc, parsedDue)
 	if err != nil {
 		return fmt.Errorf("create milestone failed: %w", err)
 	}
 	fmt.Printf("[PASS] Created milestone #%d: %s (State: %s)\n", m.Number, m.Title, m.State)
 
 	if *publish {
-		if err := milestone.PublishMilestone(ctx, *owner, *repo, *token, *endpoint, m); err != nil {
+		if err := milestone.PublishMilestone(ctx, *dir, *owner, *repo, *token, *endpoint, m); err != nil {
 			return fmt.Errorf("milestone published locally, but GitHub publish failed: %w", err)
 		}
-		fmt.Printf("[PASS] Published milestone #%d to https://github.com/%s/%s/milestone/%d\n",
-			m.Number, *owner, *repo, m.Number)
+		fmt.Printf("[PASS] Published milestone #%d as remote milestone #%d: https://github.com/%s/%s/milestone/%d\n",
+			m.Number, m.RemoteNumber, *owner, *repo, m.RemoteNumber)
 	}
 	return nil
 }
 
-func runMilestoneClose(args []string) error {
+func runMilestoneClose(ctx context.Context, args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: praetorctl milestone close <number|title> [--dir=.]")
 	}
@@ -133,7 +133,7 @@ func runMilestoneClose(args []string) error {
 		dir = args[1]
 	}
 
-	m, err := milestone.CloseMilestone(dir, selector)
+	m, err := milestone.CloseMilestone(ctx, dir, selector)
 	if err != nil {
 		return err
 	}
@@ -161,13 +161,13 @@ func runMilestoneSync(ctx context.Context, args []string) error {
 	return nil
 }
 
-func runMilestoneStatus(args []string) error {
+func runMilestoneStatus(ctx context.Context, args []string) error {
 	dir := "."
 	if len(args) > 0 {
 		dir = args[0]
 	}
 
-	items, err := milestone.ListMilestones(dir, "all")
+	items, err := milestone.ListMilestones(ctx, dir, "all")
 	if err != nil {
 		return err
 	}

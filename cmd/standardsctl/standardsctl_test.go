@@ -407,6 +407,12 @@ func TestDispatchCommand_TopologySubcommands(t *testing.T) {
 func TestDispatchCommand_MilestoneAndProject(t *testing.T) {
 	tmpDir := t.TempDir()
 
+	// Hermetic forge isolation: without this the command paths resolve a real token from
+	// the developer's environment or `gh` session and mutate a live board.
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+
 	// Milestone subcommands
 	if err := dispatchCommand("milestone", []string{}); err != nil {
 		t.Fatalf("milestone empty args failed: %v", err)
