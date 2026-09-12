@@ -19,6 +19,8 @@ func printUsage() {
 	fmt.Println("  init               Scaffold configuration, baseline, and agent context for new repo")
 	fmt.Println("  compile-context    Transpile canonical AGENTS.md to vendor-native formats (< 300 LOC)")
 	fmt.Println("  context-optimize   Analyze explicit context files and optionally write a private review pack")
+	fmt.Println("  notebook           Prepare source-grounded planning templates or validate generated drafts")
+	fmt.Println("  prompt-optimize    Select prompts from comparable held-out model/provider evaluations")
 	fmt.Println("  audit              Audit repository against declared HISS-16 invariants and lockfile")
 	fmt.Println("  baseline           Inspect or record technical debt infractions")
 	fmt.Println("  devcontainer       Synthesize or verify .devcontainer/devcontainer.json")
@@ -85,6 +87,8 @@ func commandTable() map[string]commandFunc {
 		"init":             runInit,
 		"compile-context":  runCompileContext,
 		"context-optimize": runContextOptimize,
+		"notebook":         runNotebook,
+		"prompt-optimize":  runPromptOptimize,
 		"audit":            runAudit,
 		"baseline":         runBaseline,
 		"devcontainer":     runDevContainer,

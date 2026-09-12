@@ -3,6 +3,22 @@
 > Durable handoff for the 2026-09-11/12 multi-agent deep audit of this repository.
 > Any session can continue from this file alone. Update it whenever a wave completes.
 
+## Current continuation — gaps audit first (2026-09-12)
+
+Read [GAPS_AUDIT.md](GAPS_AUDIT.md) before the historical wave summaries below.
+The owner paused feature expansion for a parallel capability/state/stub audit.
+Current branch is `checkpoint/deep-audit-2026-09-12`; the audit inspected base
+`c4c5a25` plus in-flight notebook/prompt work. Full race tests pass, but lint and
+security remain failing, including new notebook lint diagnostics.
+
+The legacy ledger has 712 rows (711 open), not 716 currently verified bugs.
+Four source findings (F5, F392, F485, F634) are absent; pipe handling can silently
+drop rows and conceal P0 blockers. Fix parsing/persistence/read errors before
+recovering those records or bulk-closing old findings. Historical gate and
+capability descriptions below do not establish current activation. IDE MCP wiring,
+Gitea/GitLab operations and hosted App/webhook runtime still have concrete gaps.
+Notebook/prompt additions are checkpoint code, not installed live features.
+
 ## Where the evidence lives
 
 Everything outside the repo is under **`~/.claude/projects/-home-kilian-dev-cordanaLLM-praetor/audit/`**
