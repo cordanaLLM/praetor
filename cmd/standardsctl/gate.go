@@ -56,6 +56,11 @@ func runGateRun(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// Flag parsing stops at the first positional argument; refusing leftovers keeps a
+	// misplaced --path or --dry-run from being silently ignored.
+	if fs.NArg() > 0 {
+		return fmt.Errorf("gate run accepts no positional arguments, got %q (flags must precede them)", fs.Args())
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), gateRunTimeout)
 	defer cancel()
@@ -98,6 +103,9 @@ func runGateVerify(args []string) error {
 
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("gate verify accepts no positional arguments, got %q", fs.Args())
 	}
 
 	resolvedReceipt := *receiptPath
@@ -156,6 +164,9 @@ func runGateKeygen(args []string) error {
 
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("gate keygen accepts no positional arguments, got %q", fs.Args())
 	}
 
 	resolved := *keyPath

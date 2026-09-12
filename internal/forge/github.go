@@ -18,7 +18,17 @@ import (
 const (
 	defaultHTTPTimeout  = 15 * time.Second
 	maxHTTPResponseBody = 16 * 1024 * 1024 // 16 MB limit
+	// FixtureTokenPrefix marks a token that constructs a dry-run driver: every write is
+	// validated and answered with canned data, and no request leaves the process. It is
+	// the single place this convention lives; callers must consult DryRun, never the
+	// token text.
+	FixtureTokenPrefix = "test-"
+	// maxRulesetsPerPage bounds the ruleset listing loop (HISS-02).
+	maxRulesetsPerPage = 100
 )
+
+// ErrRepositoryUnset reports a repository-scoped request without a target repository.
+var ErrRepositoryUnset = errors.New("github: target repository is not set; call SetRepository or export GITHUB_REPOSITORY")
 
 // GitHubDriver implements Forge for GitHub using GitHub Apps / Personal Access Tokens.
 type GitHubDriver struct {
@@ -27,6 +37,10 @@ type GitHubDriver struct {
 	Owner      string
 	Repo       string
 	HTTPClient *http.Client
+	// DryRun makes every mutating call validate its input and return canned data
+	// without touching the network. NewGitHubDriver sets it for FixtureTokenPrefix
+	// tokens; callers may set it explicitly.
+	DryRun bool
 }
 
 // NewGitHubDriver initializes a GitHub driver.
@@ -37,6 +51,7 @@ func NewGitHubDriver(token string, endpoint string) *GitHubDriver {
 	return &GitHubDriver{
 		Token:    token,
 		Endpoint: strings.TrimRight(endpoint, "/"),
+		DryRun:   strings.HasPrefix(token, FixtureTokenPrefix),
 		HTTPClient: &http.Client{
 			Timeout: defaultHTTPTimeout,
 		},
@@ -49,26 +64,29 @@ func (g *GitHubDriver) SetRepository(owner, repo string) {
 	g.Repo = repo
 }
 
-// repoPath constructs an API path for the targeted repository.
-func (g *GitHubDriver) repoPath(subpath string) string {
-	owner := g.Owner
-	repo := g.Repo
-	if owner == "" || repo == "" {
-		if envRepo := os.Getenv("GITHUB_REPOSITORY"); envRepo != "" {
-			parts := strings.SplitN(envRepo, "/", 2)
-			if len(parts) == 2 {
-				owner = parts[0]
-				repo = parts[1]
-			}
+// resolveRepository returns the configured owner and repository, falling back to the
+// GITHUB_REPOSITORY variable the Actions runner sets. It never invents a repository.
+func (g *GitHubDriver) resolveRepository() (owner, repo string, err error) {
+	owner, repo = g.Owner, g.Repo
+	if owner != "" && repo != "" {
+		return owner, repo, nil
+	}
+	if envRepo := os.Getenv("GITHUB_REPOSITORY"); envRepo != "" {
+		parts := strings.SplitN(envRepo, "/", 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			return parts[0], parts[1], nil
 		}
 	}
-	if owner == "" {
-		owner = "cordanaLLM"
+	return "", "", ErrRepositoryUnset
+}
+
+// repoPath constructs an API path for the targeted repository.
+func (g *GitHubDriver) repoPath(subpath string) (string, error) {
+	owner, repo, err := g.resolveRepository()
+	if err != nil {
+		return "", err
 	}
-	if repo == "" {
-		repo = "praetor"
-	}
-	return fmt.Sprintf("/repos/%s/%s/%s", owner, repo, strings.TrimPrefix(subpath, "/"))
+	return fmt.Sprintf("/repos/%s/%s/%s", owner, repo, strings.TrimPrefix(subpath, "/")), nil
 }
 
 func (g *GitHubDriver) Name() string {
@@ -86,7 +104,7 @@ func (g *GitHubDriver) Authenticate(ctx context.Context) error {
 }
 
 // sendRequest handles authenticated HTTP communication with GitHub REST API.
-func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, payload any) ([]byte, int, error) {
+func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, payload any) (body []byte, status int, err error) {
 	if err := g.Authenticate(ctx); err != nil {
 		return nil, 0, err
 	}
@@ -116,16 +134,21 @@ func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, pay
 
 	client := g.HTTPClient
 	if client == nil {
-		client = http.DefaultClient
+		// HISS-02: never fall back to the timeout-less http.DefaultClient.
+		client = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("github api request failed (%s %s): %w", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed closing response body: %w", cerr)
+		}
+	}()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPResponseBody))
+	body, err = io.ReadAll(io.LimitReader(resp.Body, maxHTTPResponseBody))
 	if err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("failed reading response body: %w", err)
 	}
@@ -133,6 +156,77 @@ func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, pay
 	return body, resp.StatusCode, nil
 }
 
+// rulesetName is the name of the ruleset praetor owns for a branch.
+func rulesetName(branch string) string {
+	return fmt.Sprintf("%s-branch-protection", branch)
+}
+
+// rulesetPayload renders the GitHub ruleset for the resolved policy. Linear history and
+// signed commits are emitted only when the policy requires them, so the forge never
+// enforces stricter rules than the manifest declares.
+func rulesetPayload(branch string, policy *config.BranchProtectionPolicy) map[string]any {
+	rules := []map[string]any{
+		{"type": "deletion"},
+		{"type": "non_fast_forward"},
+	}
+	if policy.EnforceLinearHistory {
+		rules = append(rules, map[string]any{"type": "required_linear_history"})
+	}
+	if policy.RequireSignedCommits {
+		rules = append(rules, map[string]any{"type": "required_signatures"})
+	}
+	rules = append(rules, map[string]any{
+		"type": "pull_request",
+		"parameters": map[string]any{
+			"required_approving_review_count": policy.RequiredApprovingReviewers,
+			"dismiss_stale_reviews_on_push":   policy.DismissStaleReviews,
+			"require_code_owner_review":       true,
+		},
+	})
+	return map[string]any{
+		"name":        rulesetName(branch),
+		"target":      "branch",
+		"enforcement": "active",
+		"conditions": map[string]any{
+			"ref_name": map[string]any{
+				"include": []string{fmt.Sprintf("refs/heads/%s", branch)},
+				"exclude": []string{},
+			},
+		},
+		"rules": rules,
+	}
+}
+
+// findRulesetID looks up the id of an existing ruleset with the given name.
+func (g *GitHubDriver) findRulesetID(ctx context.Context, name string) (id int64, found bool, err error) {
+	path, err := g.repoPath(fmt.Sprintf("rulesets?per_page=%d", maxRulesetsPerPage))
+	if err != nil {
+		return 0, false, err
+	}
+	body, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return 0, false, err
+	}
+	if status != http.StatusOK {
+		return 0, false, fmt.Errorf("unexpected status %d listing rulesets: %s", status, string(body))
+	}
+	var rulesets []struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &rulesets); err != nil {
+		return 0, false, fmt.Errorf("failed parsing rulesets list: %w", err)
+	}
+	for i := 0; i < len(rulesets) && i < maxRulesetsPerPage; i++ {
+		if rulesets[i].Name == name {
+			return rulesets[i].ID, true, nil
+		}
+	}
+	return 0, false, nil
+}
+
+// ReconcileProtection creates the branch protection ruleset for branch, or updates the
+// existing one of the same name so repeated runs stay idempotent.
 func (g *GitHubDriver) ReconcileProtection(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) error {
 	if err := g.Authenticate(ctx); err != nil {
 		return err
@@ -143,46 +237,30 @@ func (g *GitHubDriver) ReconcileProtection(ctx context.Context, branch string, p
 	if policy == nil {
 		return errors.New("reconcile protection: policy cannot be nil")
 	}
-
-	// In test mode or dry-run, validate parameters and conclude successfully
-	if strings.HasPrefix(g.Token, "test-") {
+	if g.DryRun {
 		return nil
 	}
 
-	// Payload for GitHub Ruleset API
-	rulesetPayload := map[string]any{
-		"name":        fmt.Sprintf("%s-branch-protection", branch),
-		"target":      "branch",
-		"enforcement": "active",
-		"conditions": map[string]any{
-			"ref_name": map[string]any{
-				"include": []string{fmt.Sprintf("refs/heads/%s", branch)},
-				"exclude": []string{},
-			},
-		},
-		"rules": []map[string]any{
-			{"type": "deletion"},
-			{"type": "non_fast_forward"},
-			{"type": "required_linear_history"},
-			{"type": "required_signatures"},
-			{
-				"type": "pull_request",
-				"parameters": map[string]any{
-					"required_approving_review_count": policy.RequiredApprovingReviewers,
-					"dismiss_stale_reviews_on_push":   policy.DismissStaleReviews,
-					"require_code_owner_review":       true,
-				},
-			},
-		},
+	name := rulesetName(branch)
+	id, found, err := g.findRulesetID(ctx, name)
+	if err != nil {
+		return fmt.Errorf("reconcile branch protection failed for %s: %w", branch, err)
+	}
+	method, subpath := http.MethodPost, "rulesets"
+	if found {
+		method, subpath = http.MethodPut, fmt.Sprintf("rulesets/%d", id)
+	}
+	path, err := g.repoPath(subpath)
+	if err != nil {
+		return fmt.Errorf("reconcile branch protection failed for %s: %w", branch, err)
 	}
 
-	path := g.repoPath("rulesets")
-	_, status, err := g.sendRequest(ctx, http.MethodPost, path, rulesetPayload)
+	body, status, err := g.sendRequest(ctx, method, path, rulesetPayload(branch, policy))
 	if err != nil {
 		return fmt.Errorf("reconcile branch protection failed for %s: %w", branch, err)
 	}
 	if status != http.StatusOK && status != http.StatusCreated {
-		return fmt.Errorf("unexpected status %d while reconciling ruleset for %s", status, branch)
+		return fmt.Errorf("unexpected status %d while reconciling ruleset %s for %s: %s", status, name, branch, string(body))
 	}
 	return nil
 }
@@ -197,25 +275,38 @@ func (g *GitHubDriver) ReconcileLabels(ctx context.Context, labels []Label) erro
 		if l.Name == "" {
 			return errors.New("reconcile labels: label name cannot be empty")
 		}
-		if strings.HasPrefix(g.Token, "test-") {
+		if g.DryRun {
 			continue
 		}
+		if err := g.upsertLabel(ctx, l); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-		payload := map[string]string{
-			"name":        l.Name,
-			"color":       l.Color,
-			"description": l.Description,
-		}
-		path := g.repoPath(fmt.Sprintf("labels/%s", l.Name))
-		_, status, err := g.sendRequest(ctx, http.MethodPatch, path, payload)
+// upsertLabel updates a label and creates it when it does not exist yet.
+func (g *GitHubDriver) upsertLabel(ctx context.Context, l Label) error {
+	payload := map[string]string{
+		"name":        l.Name,
+		"color":       l.Color,
+		"description": l.Description,
+	}
+	path, err := g.repoPath(fmt.Sprintf("labels/%s", l.Name))
+	if err != nil {
+		return err
+	}
+	_, status, err := g.sendRequest(ctx, http.MethodPatch, path, payload)
+	if err != nil {
+		return fmt.Errorf("failed updating label %s: %w", l.Name, err)
+	}
+	if status == http.StatusNotFound {
+		createPath, err := g.repoPath("labels")
 		if err != nil {
-			return fmt.Errorf("failed updating label %s: %w", l.Name, err)
+			return err
 		}
-		if status == http.StatusNotFound {
-			createPath := g.repoPath("labels")
-			if _, _, err := g.sendRequest(ctx, http.MethodPost, createPath, payload); err != nil {
-				return fmt.Errorf("failed creating label %s: %w", l.Name, err)
-			}
+		if _, _, err := g.sendRequest(ctx, http.MethodPost, createPath, payload); err != nil {
+			return fmt.Errorf("failed creating label %s: %w", l.Name, err)
 		}
 	}
 	return nil
@@ -228,15 +319,15 @@ func (g *GitHubDriver) PostStatusCheck(ctx context.Context, commitSHA string, ch
 	if commitSHA == "" {
 		return errors.New("post status check: commitSHA cannot be empty")
 	}
-
-	if strings.HasPrefix(g.Token, "test-") {
+	if g.DryRun {
 		return nil
 	}
 
 	state := "pending"
-	if check.Conclusion == "success" {
+	switch check.Conclusion {
+	case "success":
 		state = "success"
-	} else if check.Conclusion == "failure" {
+	case "failure":
 		state = "failure"
 	}
 
@@ -247,7 +338,10 @@ func (g *GitHubDriver) PostStatusCheck(ctx context.Context, commitSHA string, ch
 		"context":     check.Name,
 	}
 
-	path := g.repoPath(fmt.Sprintf("statuses/%s", commitSHA))
+	path, err := g.repoPath(fmt.Sprintf("statuses/%s", commitSHA))
+	if err != nil {
+		return err
+	}
 	_, status, err := g.sendRequest(ctx, http.MethodPost, path, payload)
 	if err != nil {
 		return fmt.Errorf("failed posting commit status check to %s: %w", commitSHA, err)
@@ -266,7 +360,7 @@ func (g *GitHubDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*P
 		return nil, errors.New("create pull request: title, head, and base are required")
 	}
 
-	if strings.HasPrefix(g.Token, "test-") {
+	if g.DryRun {
 		return &PRResponse{
 			Number: 1,
 			URL:    fmt.Sprintf("%s/pulls/1", g.Endpoint),
@@ -280,7 +374,10 @@ func (g *GitHubDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*P
 		"head":  req.Head,
 		"base":  req.Base,
 	}
-	path := g.repoPath("pulls")
+	path, err := g.repoPath("pulls")
+	if err != nil {
+		return nil, err
+	}
 	respBody, status, err := g.sendRequest(ctx, http.MethodPost, path, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed creating pull request: %w", err)
@@ -304,7 +401,7 @@ func (g *GitHubDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueR
 		return nil, errors.New("create issue: title is required")
 	}
 
-	if strings.HasPrefix(g.Token, "test-") {
+	if g.DryRun {
 		return &IssueResponse{
 			Number: 1,
 			URL:    fmt.Sprintf("%s/issues/1", g.Endpoint),
@@ -317,7 +414,10 @@ func (g *GitHubDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueR
 		"body":   spec.Body,
 		"labels": spec.Labels,
 	}
-	path := g.repoPath("issues")
+	path, err := g.repoPath("issues")
+	if err != nil {
+		return nil, err
+	}
 	respBody, status, err := g.sendRequest(ctx, http.MethodPost, path, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed creating issue: %w", err)
@@ -341,14 +441,17 @@ func (g *GitHubDriver) ListIssues(ctx context.Context, state string) ([]IssueSpe
 	if state == "" {
 		state = "all"
 	}
-	if strings.HasPrefix(g.Token, "test-") {
+	if g.DryRun {
 		return []IssueSpec{
 			{ID: 1, Title: "Test Issue 1", State: "closed", Labels: []string{"governance"}},
 			{ID: 2, Title: "Test Issue 2", State: "open", Labels: []string{"architecture", "status/blocked"}, DependsOn: []string{"#1"}},
 		}, nil
 	}
 
-	path := fmt.Sprintf("%s?state=%s&per_page=100", g.repoPath("issues"), state)
+	path, err := g.repoPath(fmt.Sprintf("issues?state=%s&per_page=100", state))
+	if err != nil {
+		return nil, err
+	}
 	respBody, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed listing issues: %w", err)
@@ -407,7 +510,7 @@ func (g *GitHubDriver) UpdateIssue(ctx context.Context, number int, labels []str
 	if err := g.Authenticate(ctx); err != nil {
 		return err
 	}
-	if strings.HasPrefix(g.Token, "test-") {
+	if g.DryRun {
 		return nil
 	}
 	payload := make(map[string]any)
@@ -417,7 +520,10 @@ func (g *GitHubDriver) UpdateIssue(ctx context.Context, number int, labels []str
 	if state != "" {
 		payload["state"] = state
 	}
-	path := fmt.Sprintf("%s/%d", g.repoPath("issues"), number)
+	path, err := g.repoPath(fmt.Sprintf("issues/%d", number))
+	if err != nil {
+		return err
+	}
 	_, status, err := g.sendRequest(ctx, http.MethodPatch, path, payload)
 	if err != nil {
 		return fmt.Errorf("failed updating issue #%d: %w", number, err)

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import re
 
-from common import HookError, clean_env, present_files, run
+from common import HookError, clean_env, paths, present_files, run
 
 GO_CONFIG = {"go.mod", "go.sum", "go.work", "go.work.sum", "Makefile",
              ".golangci.yml", ".gosec.json"}
@@ -138,10 +138,10 @@ def go_packages(directory, names, reverse=False):
     return sorted(selected)
 
 
-def source_checks(directory, names, gate="all"):
+def source_checks(directory, names, gate="all", base=None):
     packages = go_packages(directory, names, reverse=True)
-    governance = governance_commands(directory, names, bool(packages))
-    full_gate = gate == "all" and any(cmd[-1] == "audit" for cmd in governance)
+    governance = governance_commands(directory, names, bool(packages), base=base)
+    full_gate = gate == "all" and any(cmd[3:4] == ["audit"] for cmd in governance)
     if gate == "all":
         parallel(governance, directory)
         parallel(semgrep_commands(directory, names), directory)
@@ -181,7 +181,7 @@ def semgrep_commands(directory, names):
     return []
 
 
-def governance_commands(directory, names, source):
+def governance_commands(directory, names, source, base=None):
     """Retain governance, flavor and ledger controls where changes affect them."""
     commands = []
     cli = ["go", "run", "./cmd/standardsctl"]
@@ -190,7 +190,33 @@ def governance_commands(directory, names, source):
                          ".gemini/", ".cursor/", ".devcontainer/", ".github/", "templates/"))
         or name == "lefthook.yml" for name in names)
     if (directory / ".standards.yaml").exists() and (source or config):
-        commands.extend([[*cli, "audit"], [*cli, "flavor", "audit", "."]])
+        scope = audit_scope(directory, names, base)
+        commands.extend([[*cli, "audit", *scope], [*cli, "flavor", "audit", "."]])
     if (directory / ".workingdir").exists() and any(name.startswith(".workingdir/") for name in names):
         commands.append([*cli, "state", "audit", "."])
     return commands
+
+
+def audit_scope(directory, names, base):
+    """Bind G02's debt ratchet and touched-file guard to the actual snapshot diff."""
+    args = []
+    touched = names
+    if base is not None:
+        # A caller-supplied missing/invalid ref is a failure, never permission to
+        # turn off the historical baseline comparison. Freeze valid refs to OIDs.
+        oid = run(["git", "rev-parse", "--verify", "--end-of-options", base + "^{commit}"],
+                  cwd=directory, env=clean_env()).decode().strip()
+        args.append("--base=" + oid)
+    else:
+        touched = paths(run(["git", "ls-tree", "-r", "--name-only", "-z", "HEAD"],
+                            cwd=directory, env=clean_env()))
+        print("Audit: no trusted prior commit; every tracked path is touched. "
+              "Historical baseline growth cannot be compared.")
+    # The current G02 CLI accepts CSV and at most 10,000 trimmed entries. Refuse
+    # inputs it cannot represent instead of silently auditing a smaller set.
+    if len(touched) > 10000 or any(not name or name != name.strip() or
+                                  any(char in name for char in ",\r\n") for name in touched):
+        raise HookError("Audit touched paths exceed the CLI's lossless CSV/10,000-path contract")
+    if touched:
+        args.append("--touched=" + ",".join(touched))
+    return args

@@ -15,8 +15,8 @@ import unittest
 from unittest import mock
 
 from common import HookError, run
-from checks import go_packages, source_checks, governance_commands, context_changed
-from hooks import push_updates, new_branch_base
+from checks import go_packages, source_checks, governance_commands, context_changed, audit_scope
+from hooks import push_updates, new_branch_base, pre_push
 import sandbox
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -175,6 +175,28 @@ class GitHooks(unittest.TestCase):
         self.assertIn(b"checking the full tree", result.stdout + result.stderr)
         self.assertNotEqual(self.hook("pre-push", "origin", data=b"broken\n").returncode, 0)
 
+    def test_push_passes_actual_base_to_snapshot_audit(self):
+        base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        self.write("README.md", "# Range audit\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: test pushed range")
+        head = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        protocol = f"refs/heads/main {head} refs/heads/main {base}\n"
+        original = Path.cwd()
+        try:
+            os.chdir(self.repo)
+            with mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
+                    mock.patch("hooks.source_checks", return_value=False) as check:
+                pre_push("origin")
+                self.assertEqual(check.call_args.kwargs, {"base": base})
+                self.assertEqual(check.call_args.args[1], ["README.md"])
+            with mock.patch("hooks.sys.stdin", io.StringIO(protocol.replace(base, "f" * 40))), \
+                    mock.patch("hooks.source_checks", return_value=False) as check:
+                pre_push("origin")
+                self.assertIsNone(check.call_args.kwargs["base"])
+                self.assertIn("lefthook.yml", check.call_args.args[1])
+        finally:
+            os.chdir(original)
+
     def test_real_merge_and_rewrite_stages(self):
         base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
         command(self.repo, "git", "checkout", "-q", "-b", "topic")
@@ -190,6 +212,13 @@ class GitHooks(unittest.TestCase):
 
 
 class ScopeAndGuard(unittest.TestCase):
+    def init_governance_repo(self, root):
+        command(root, "git", "init", "-q")
+        command(root, "git", "config", "user.name", "Hook Test")
+        command(root, "git", "config", "user.email", "hook@example.test")
+        command(root, "git", "add", ".")
+        command(root, "git", "commit", "-q", "-m", "chore: initialize audit fixture")
+
     def test_new_branch_ignores_unrelated_tracking_ref(self):
         with mock.patch("hooks.git", return_value=b"unrelated\nrelated\n"), \
                 mock.patch("hooks.run", side_effect=[b"", b"ancestor\n"]) as process:
@@ -243,9 +272,11 @@ class ScopeAndGuard(unittest.TestCase):
             root = Path(temp)
             (root / ".standards.yaml").write_text("repository: {}\n")
             (root / ".workingdir").mkdir()
+            self.init_governance_repo(root)
             for name in (".standards.yaml", ".standards.lock", ".standards-baseline.json", ".agents/persona.md"):
                 commands = governance_commands(root, [name], False)
-                self.assertEqual([cmd[3:] for cmd in commands], [["audit"], ["flavor", "audit", "."]])
+                self.assertEqual(commands[0][3:], ["audit", "--touched=.standards.yaml"])
+                self.assertEqual(commands[1][3:], ["flavor", "audit", "."])
             self.assertEqual(governance_commands(root, ["README.md"], False), [])
             self.assertEqual(len(governance_commands(root, ["a.go"], True)), 2)
             self.assertEqual(governance_commands(root, [".workingdir/OPEN.md"], False)[0][3:], ["state", "audit", "."])
@@ -260,12 +291,46 @@ class ScopeAndGuard(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="praetor-receipt-") as temp:
             root = Path(temp)
             (root / ".standards.yaml").write_text("repository: {}\n")
-            with mock.patch("checks.parallel"), mock.patch("checks.run", return_value=b"") as process:
-                self.assertTrue(source_checks(root, [".standards.yaml"]))
-                self.assertEqual([call.args[0][4] for call in process.call_args_list], ["run", "verify"])
-            with mock.patch("checks.parallel"), mock.patch("checks.run", side_effect=[b"", HookError("pin mismatch")]):
+            self.init_governance_repo(root)
+            base = command(root, "git", "rev-parse", "HEAD").stdout.decode().strip()
+            calls = []
+            def process(argv, **kwargs):
+                if argv[0] == "git":
+                    return run(argv, **kwargs)
+                calls.append(argv)
+                return b""
+            with mock.patch("checks.parallel"), mock.patch("checks.run", side_effect=process):
+                self.assertTrue(source_checks(root, [".standards.yaml"], base=base))
+                self.assertEqual([cmd[4] for cmd in calls], ["run", "verify"])
+            def reject_pin(argv, **kwargs):
+                if argv[:5] == ["go", "run", "./cmd/standardsctl", "gate", "verify"]:
+                    raise HookError("pin mismatch")
+                return process(argv, **kwargs)
+            with mock.patch("checks.parallel"), mock.patch("checks.run", side_effect=reject_pin):
                 with self.assertRaisesRegex(HookError, "pin mismatch"):
-                    source_checks(root, [".standards.yaml"])
+                    source_checks(root, [".standards.yaml"], base=base)
+
+    def test_audit_range_uses_exact_oid_and_touched_paths(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-audit-range-") as temp:
+            root = Path(temp)
+            (root / "legacy.go").write_text("package legacy\n")
+            (root / ".standards-baseline.json").write_text('{"total_infractions": 0}\n')
+            self.init_governance_repo(root)
+            base = command(root, "git", "rev-parse", "HEAD").stdout.decode().strip()
+            supplied = ["legacy.go", ".standards-baseline.json"]
+            self.assertEqual(audit_scope(root, supplied, base),
+                             ["--base=" + base, "--touched=" + ",".join(supplied)])
+            # Missing explicit refs cannot silently drop historical comparison.
+            for invalid in ("f" * 40, "--help", "missing-branch"):
+                with self.assertRaises(HookError):
+                    audit_scope(root, supplied, invalid)
+            # Absent remote history makes every tracked file touched, even when
+            # callers request a narrower path list.
+            self.assertEqual(audit_scope(root, ["README.md"], None),
+                             ["--touched=.standards-baseline.json,legacy.go"])
+            for unrepresentable in (["comma,name.go"], ["line\nname.go"], [" leading.go"], ["a.go"] * 10001):
+                with self.assertRaisesRegex(HookError, "lossless CSV"):
+                    audit_scope(root, unrepresentable, base)
 
     def test_real_scoped_race_test_propagates_failure(self):
         with tempfile.TemporaryDirectory(prefix="praetor-race-") as temp:

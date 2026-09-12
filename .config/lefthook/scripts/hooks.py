@@ -102,7 +102,7 @@ def pre_push(remote):
             continue
         with snapshot(head) as directory:
             file_checks(directory, names)
-            gated = source_checks(directory, names)
+            gated = source_checks(directory, names, base=base)
             if gated:
                 preserve_receipt(directory, head)
             if os.environ.get("PRAETOR_HOOK_SANDBOX") == "1":
@@ -186,12 +186,14 @@ def main(argv):
         pre_push(args[0] if args else "origin")
     elif stage == "changed":
         gate, base = args
-        names = changed(base)
-        with snapshot("HEAD") as directory:
+        base = git("rev-parse", "--verify", "--end-of-options", base + "^{commit}").decode().strip()
+        head = git("rev-parse", "--verify", "HEAD^{commit}").decode().strip()
+        names = changed(base, head)
+        with snapshot(head) as directory:
             if gate == "packages":
                 print("\n".join(go_packages(directory, names, reverse=True)))
             else:
-                source_checks(directory, names, gate)
+                source_checks(directory, names, gate, base=base)
     elif stage in {"post-commit", "post-checkout", "post-merge", "post-rewrite"}:
         post_stage(stage, args)
     else:

@@ -27,15 +27,27 @@ const (
 	preMigrationEpicFile = "PRE_MIGRATION_EPIC.md"
 	// maxAuditGates bounds the governance gate loop (HISS-02).
 	maxAuditGates = 32
+	// maxLegacyChecks bounds the legacy-reference loop in auditRepoIdentity (HISS-02).
+	maxLegacyChecks = 8
+	// legacyModulePath is the pre-rename module path no repository may reference.
+	legacyModulePath = "github.com/cordanaLLM/standards"
 )
 
-func runAudit(args []string) error {
-	fs := flag.NewFlagSet("audit", flag.ContinueOnError)
-	manifestPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml")
-	baselinePath := fs.String("baseline", ".standards-baseline.json", "Path to .standards-baseline.json")
-	agentsPath := fs.String("agents", "AGENTS.md", "Path to AGENTS.md")
+// auditOptions carries the resolved audit inputs. Every companion file defaults to the
+// directory of the manifest, so `audit --config=/repo/.standards.yaml` audits /repo and
+// never the process working directory.
+type auditOptions struct {
+	rootDir      string
+	manifestPath string
+	baselinePath string
+	agentsPath   string
+	baseRef      string
+	touched      []string
+}
 
-	if err := fs.Parse(args); err != nil {
+func runAudit(args []string) error {
+	opts, err := parseAuditOptions(args)
+	if err != nil {
 		return err
 	}
 
@@ -43,15 +55,14 @@ func runAudit(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), auditTimeout)
 	defer cancel()
 
-	manifest, err := auditManifestAndLockfile(*manifestPath)
+	manifest, err := auditManifestAndLockfile(opts.manifestPath)
 	if err != nil {
 		return err
 	}
 
 	fmt.Printf("=== %s/%s Governance Audit ===\n", manifest.Repository.Owner, manifest.Repository.Name)
 
-	rootDir := filepath.Dir(*manifestPath)
-	if err := runAuditGates(ctx, manifest, rootDir, *baselinePath, *agentsPath); err != nil {
+	if err := runAuditGates(ctx, manifest, opts); err != nil {
 		return err
 	}
 
@@ -59,13 +70,51 @@ func runAudit(args []string) error {
 	return nil
 }
 
+// parseAuditOptions parses the audit flags and anchors every companion path on the
+// manifest directory unless it was set explicitly.
+func parseAuditOptions(args []string) (*auditOptions, error) {
+	fs := flag.NewFlagSet("audit", flag.ContinueOnError)
+	manifestPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml; its directory is the audited root")
+	baselinePath := fs.String("baseline", "", "Path to .standards-baseline.json (default: <root>/.standards-baseline.json)")
+	agentsPath := fs.String("agents", "", "Path to AGENTS.md (default: <root>/AGENTS.md)")
+	baseRef := fs.String("base", "", "Git ref the change set is compared against (e.g. origin/main); enables the touched-file clean rule over that range and the baseline growth guard")
+	touched := fs.String("touched", "", "Comma-separated files, relative to the audited root, to treat as touched instead of asking git")
+
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if fs.NArg() > 0 {
+		return nil, fmt.Errorf("audit accepts no positional arguments, got %q", fs.Args())
+	}
+
+	rootDir := filepath.Dir(*manifestPath)
+	return &auditOptions{
+		rootDir:      rootDir,
+		manifestPath: *manifestPath,
+		baselinePath: resolveCompanion(rootDir, *baselinePath, ".standards-baseline.json"),
+		agentsPath:   resolveCompanion(rootDir, *agentsPath, "AGENTS.md"),
+		baseRef:      *baseRef,
+		touched:      splitCSV(*touched),
+	}, nil
+}
+
+// resolveCompanion returns explicit when set, otherwise name joined onto rootDir.
+func resolveCompanion(rootDir, explicit, name string) string {
+	if explicit != "" {
+		return explicit
+	}
+	return filepath.Join(rootDir, name)
+}
+
 // runAuditGates executes every governance gate in order, stopping at the first failure.
-func runAuditGates(ctx context.Context, manifest *config.Manifest, rootDir, baselinePath, agentsPath string) error {
+func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
+	rootDir := opts.rootDir
 	gates := []func() error{
 		func() error { return auditRepoIdentity(manifest, rootDir) },
 		func() error { return auditLockDigests(manifest, rootDir) },
-		func() error { return auditBaselineAndInvariants(ctx, baselinePath) },
-		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, agentsPath) },
+		func() error { return auditBaselineAndInvariants(ctx, opts) },
+		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
+		func() error { return auditAgentProjections(rootDir) },
 		func() error { return auditBranchProtectionAndSupplyChain(manifest, rootDir) },
 		func() error { return auditPaperclipHarness(manifest, rootDir) },
 		func() error { return auditRunnerMatrix(manifest, rootDir) },
@@ -90,54 +139,67 @@ func auditManifestAndLockfile(manifestPath string) (*config.Manifest, error) {
 	fmt.Printf("[PASS] Manifest verified: %s/%s (Version %d)\n", manifest.Repository.Owner, manifest.Repository.Name, manifest.Version)
 	fmt.Printf("       Profiles: %v | Facets: %v\n", manifest.Profiles, manifest.Facets)
 
+	// Any stat failure is a failure: an unreadable lockfile must not print [PASS].
 	lockPath := filepath.Join(filepath.Dir(manifestPath), ".standards.lock")
-	if _, err := os.Stat(lockPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("[FAIL] .standards.lock is missing")
+	if _, err := os.Stat(lockPath); err != nil {
+		return nil, fmt.Errorf("[FAIL] .standards.lock is missing or unreadable: %w", err)
 	}
 	fmt.Println("[PASS] SemVer lockfile .standards.lock verified.")
 	return manifest, nil
 }
 
-func auditBaselineAndInvariants(ctx context.Context, baselinePath string) error {
-	base, err := baseline.LoadBaseline(baselinePath)
+// auditBaselineAndInvariants scans the audited root, evaluates the HISS-13 ratchet with
+// the real change set (touched-file clean rule) and, when a base ref is given, refuses a
+// baseline that grew versus the one committed on that ref.
+func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
+	base, err := baseline.LoadBaseline(opts.baselinePath)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
 
-	root := filepath.Dir(baselinePath)
-	scanRep, err := hiss.Scan(ctx, root, hiss.ScanOptions{})
+	scanRep, err := hiss.Scan(ctx, opts.rootDir, hiss.ScanOptions{})
 	if err != nil {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}
+	current := fingerprintViolations(scanRep.Violations)
 
-	currentViolations := hiss.ConvertToBaseline(scanRep.Violations)
-	for i := range currentViolations {
-		currentViolations[i].Fingerprint = fmt.Sprintf("%s:%d:%s", currentViolations[i].FilePath, currentViolations[i].LineNumber, currentViolations[i].RuleID)
+	touched, err := resolveTouchedFiles(ctx, opts)
+	if err != nil {
+		return err
 	}
 
-	ratchet := baseline.EvaluateRatchet(base, currentViolations, nil)
+	ratchet := baseline.EvaluateRatchet(base, current, touched)
 	if !ratchet.Passed {
-		limit := 3
-		if len(ratchet.NewViolations) < limit {
-			limit = len(ratchet.NewViolations)
-		}
-		var msgs []string
-		for i := 0; i < limit; i++ {
-			v := ratchet.NewViolations[i]
-			msgs = append(msgs, fmt.Sprintf("  [%s] %s:%d - %s", v.RuleID, v.FilePath, v.LineNumber, v.Message))
-		}
-		return fmt.Errorf("[FAIL] HISS invariant violations introduced (%d total infractions, %d new unbaselined violations):\n%s",
-			ratchet.CurrentCount, len(ratchet.NewViolations), strings.Join(msgs, "\n"))
+		return describeRatchetFailure(ratchet)
 	}
-	fmt.Printf("[PASS] HISS invariant scan verified: %d active violations within %d baselined limit.\n",
-		ratchet.CurrentCount, base.TotalInfractions)
-	return nil
+	fmt.Printf("[PASS] HISS invariant scan verified: %d active violations within %d baselined limit (%d touched files clean).\n",
+		ratchet.CurrentCount, base.TotalInfractions, len(touched))
+
+	return auditBaselineGrowth(ctx, opts, base)
 }
 
-func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Manifest, agentsPath string) error {
-	root := filepath.Dir(agentsPath)
+// describeRatchetFailure renders the first few new and touched-file violations.
+func describeRatchetFailure(ratchet *baseline.RatchetResult) error {
+	var msgs []string
+	for i := 0; i < len(ratchet.NewViolations) && i < maxRatchetExamples; i++ {
+		v := ratchet.NewViolations[i]
+		msgs = append(msgs, fmt.Sprintf("  [%s] %s:%d - %s (new)", v.RuleID, v.FilePath, v.LineNumber, v.Message))
+	}
+	for i := 0; i < len(ratchet.TouchedCleanViolations) && i < maxRatchetExamples; i++ {
+		v := ratchet.TouchedCleanViolations[i]
+		msgs = append(msgs, fmt.Sprintf("  [%s] %s:%d - %s (touched file must be clean)", v.RuleID, v.FilePath, v.LineNumber, v.Message))
+	}
+	if ratchet.CurrentCount > ratchet.PreviousCount {
+		msgs = append(msgs, fmt.Sprintf("  total infractions rose from %d to %d", ratchet.PreviousCount, ratchet.CurrentCount))
+	}
+	return fmt.Errorf("[FAIL] HISS invariant violations introduced (%d total infractions, %d new unbaselined, %d in touched files):\n%s",
+		ratchet.CurrentCount, len(ratchet.NewViolations), len(ratchet.TouchedCleanViolations), strings.Join(msgs, "\n"))
+}
+
+func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
+	root := opts.rootDir
 	tr := compiler.NewTranspiler()
-	if err := tr.Verify(agentsPath, root); err != nil {
+	if err := tr.Verify(opts.agentsPath, root); err != nil {
 		return fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
 	}
 	fmt.Println("[PASS] Cross-agent context targets (Claude, Cursor, Copilot, Windsurf, Gemini, Codex) verified in sync.")
@@ -157,6 +219,20 @@ func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Mani
 	return nil
 }
 
+// auditAgentProjections fails when any vendor or plugin copy of a persona under
+// .agents/agents differs from its canonical source, so a loosened persona copy can no
+// longer pass the audit unnoticed.
+func auditAgentProjections(rootDir string) error {
+	verified, err := verifyAgentProjections(rootDir)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Agent persona projections out of sync: %w", err)
+	}
+	if verified > 0 {
+		fmt.Printf("[PASS] Agent persona projections verified (%d copies identical to .agents/agents).\n", verified)
+	}
+	return nil
+}
+
 func auditBranchProtectionAndSupplyChain(manifest *config.Manifest, rootDir string) error {
 	policy := config.DefaultPolicy()
 	policy.ApplyOverrides(manifest.Overrides)
@@ -165,7 +241,7 @@ func auditBranchProtectionAndSupplyChain(manifest *config.Manifest, rootDir stri
 	rulesetPath := filepath.Join(rootDir, ".github", "rulesets", "main.json")
 	if policy.BranchProtection.EnforceLinearHistory || policy.BranchProtection.RequireSignedCommits {
 		if !util.FileExists(rulesetPath) {
-			return fmt.Errorf("[FAIL] Branch protection ruleset .github/rulesets/main.json is missing while policy requires linear history and signed commits; run 'standardsctl sync' to reconcile")
+			return fmt.Errorf("[FAIL] Branch protection ruleset .github/rulesets/main.json is missing while policy requires linear history or signed commits; run 'praetorctl sync' to reconcile")
 		}
 		fmt.Println("[PASS] Branch protection & merge ruleset .github/rulesets/main.json verified.")
 	}
@@ -180,41 +256,48 @@ func auditBranchProtectionAndSupplyChain(manifest *config.Manifest, rootDir stri
 	return nil
 }
 
-// legacyModulePath is the obsolete module path that must not survive a rename.
-const legacyModulePath = "github.com/cordanaLLM/standards"
+// legacyRefCheck describes one file that must not mention a legacy identity.
+type legacyRefCheck struct {
+	rel     string
+	needle  string
+	message string
+}
+
+// run reads the file when present and fails on a legacy reference or on any read error.
+func (c legacyRefCheck) run(rootDir string) error {
+	found, err := repoFileContains(rootDir, c.rel, c.needle)
+	if err != nil {
+		return err
+	}
+	if found {
+		return fmt.Errorf("[FAIL] %s", c.message)
+	}
+	return nil
+}
 
 func auditRepoIdentity(manifest *config.Manifest, rootDir string) error {
-	if manifest.Repository.Owner == "" || manifest.Repository.Name == "" {
+	owner, name := manifest.Repository.Owner, manifest.Repository.Name
+	if owner == "" || name == "" {
 		return fmt.Errorf("[FAIL] Manifest repository owner and name must not be empty")
 	}
 
-	found, err := repoFileContains(rootDir, "go.mod", legacyModulePath)
-	if err != nil {
-		return err
+	checks := []legacyRefCheck{
+		{rel: "go.mod", needle: legacyModulePath,
+			message: fmt.Sprintf("go.mod contains obsolete module path '%s'. Expected 'github.com/%s/%s'", legacyModulePath, owner, name)},
+		{rel: ".needs.yaml", needle: legacyModulePath,
+			message: fmt.Sprintf(".needs.yaml contains obsolete repository reference '%s'", legacyModulePath)},
 	}
-	if found {
-		return fmt.Errorf("[FAIL] go.mod contains obsolete module path '%s'. Expected 'github.com/%s/%s'", legacyModulePath, manifest.Repository.Owner, manifest.Repository.Name)
+	if name != "standards" {
+		checks = append(checks, legacyRefCheck{rel: ".standards-baseline.json", needle: `"repository": "cordanaLLM/standards"`,
+			message: ".standards-baseline.json contains obsolete repository 'cordanaLLM/standards'"})
 	}
-
-	found, err = repoFileContains(rootDir, ".needs.yaml", legacyModulePath)
-	if err != nil {
-		return err
-	}
-	if found {
-		return fmt.Errorf("[FAIL] .needs.yaml contains obsolete repository reference '%s'", legacyModulePath)
-	}
-
-	if manifest.Repository.Name != "standards" {
-		found, err = repoFileContains(rootDir, ".standards-baseline.json", `"repository": "cordanaLLM/standards"`)
-		if err != nil {
+	for i := 0; i < len(checks) && i < maxLegacyChecks; i++ {
+		if err := checks[i].run(rootDir); err != nil {
 			return err
 		}
-		if found {
-			return fmt.Errorf("[FAIL] .standards-baseline.json contains obsolete repository 'cordanaLLM/standards'")
-		}
 	}
 
-	fmt.Printf("[PASS] Repository identity verified (%s/%s, zero legacy references).\n", manifest.Repository.Owner, manifest.Repository.Name)
+	fmt.Printf("[PASS] Repository identity verified (%s/%s, zero legacy references).\n", owner, name)
 	return nil
 }
 
@@ -231,7 +314,7 @@ func repoFileContains(rootDir, rel, needle string) (bool, error) {
 	// #nosec G304 -- path is confined to the audited root by ConfinePath.
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false, fmt.Errorf("[FAIL] Read %s: %w", rel, err)
+		return false, fmt.Errorf("[FAIL] Repository identity audit cannot read %s: %w", rel, err)
 	}
 	return strings.Contains(string(data), needle), nil
 }
@@ -239,7 +322,7 @@ func repoFileContains(rootDir, rel, needle string) (bool, error) {
 func auditPaperclipHarness(manifest *config.Manifest, rootDir string) error {
 	harnessPath := filepath.Join(rootDir, ".paperclip", "harness.json")
 	if !util.FileExists(harnessPath) {
-		return fmt.Errorf("[FAIL] Paperclip agent runtime harness .paperclip/harness.json is missing; run 'standardsctl adopt' to reconcile")
+		return fmt.Errorf("[FAIL] Paperclip agent runtime harness .paperclip/harness.json is missing; run 'praetorctl adopt' to reconcile")
 	}
 	h, err := paperclip.LoadHarness(harnessPath)
 	if err != nil {
@@ -247,7 +330,7 @@ func auditPaperclipHarness(manifest *config.Manifest, rootDir string) error {
 	}
 	expectedPlatform := fmt.Sprintf("%s/%s", manifest.Repository.Owner, manifest.Repository.Name)
 	if h.Platform != expectedPlatform {
-		return fmt.Errorf("[FAIL] Paperclip harness platform mismatch: got %q, expected %q; run 'standardsctl adopt --force' to reconcile", h.Platform, expectedPlatform)
+		return fmt.Errorf("[FAIL] Paperclip harness platform mismatch: got %q, expected %q; run 'praetorctl adopt --force' to reconcile", h.Platform, expectedPlatform)
 	}
 	fmt.Printf("[PASS] Paperclip agent runtime harness verified (%s, %d rules).\n", h.Platform, len(h.OperatingContract))
 	return nil
@@ -378,7 +461,7 @@ func auditGitHooks(ctx context.Context, rootDir string) error {
 	}
 	preCommitPath := filepath.Join(hooksDir, "pre-commit")
 	if !util.FileExists(preCommitPath) {
-		return fmt.Errorf("[FAIL] Pre-commit hook %s is missing or inactive; run 'lefthook install' or 'standardsctl adopt' to activate", preCommitPath)
+		return fmt.Errorf("[FAIL] Pre-commit hook %s is missing or inactive; run 'lefthook install' or 'praetorctl adopt' to activate", preCommitPath)
 	}
 
 	fmt.Printf("[PASS] Local Git hooks (%s via lefthook) verified active.\n", preCommitPath)

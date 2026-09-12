@@ -102,7 +102,7 @@ func runNeedsScan(ctx context.Context, args []string) error {
 func runNeedsReport(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs report", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
-	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Target framework repository path")
+	framework := fs.String("framework", defaultFrameworkDir(), "Target framework repository path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -140,8 +140,8 @@ func runNeedsReport(ctx context.Context, args []string) error {
 
 func runNeedsAggregate(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs aggregate", flag.ContinueOnError)
-	devDir := fs.String("dev-dir", "/home/kilian/dev", "Fleet dev root directory")
-	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Framework repository path")
+	devDir := fs.String("dev-dir", defaultDevDir(), "Fleet dev root directory")
+	framework := fs.String("framework", defaultFrameworkDir(), "Framework repository path")
 	outputFile := fs.String("output", "", "Optional file path to write markdown report")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -154,7 +154,7 @@ func runNeedsAggregate(ctx context.Context, args []string) error {
 
 	md := needs.RenderFrameworkDemandMarkdown(report)
 	if *outputFile != "" {
-		if err := os.WriteFile(*outputFile, []byte(md), 0644); err != nil {
+		if err := util.WriteFileSecure(*outputFile, []byte(md), 0o644); err != nil {
 			return fmt.Errorf("failed to write output markdown: %w", err)
 		}
 		fmt.Printf("[PASS] Framework demand report written to %s\n", *outputFile)
@@ -167,7 +167,7 @@ func runNeedsAggregate(ctx context.Context, args []string) error {
 func runNeedsMigrate(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs migrate", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
-	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Framework repository path")
+	framework := fs.String("framework", defaultFrameworkDir(), "Framework repository path")
 	dryRun := fs.Bool("dry-run", true, "Preview migration without mutating files")
 	apply := fs.Bool("apply", false, "Apply migration changes and create branch")
 	if err := fs.Parse(args); err != nil {
@@ -207,8 +207,8 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 
 func runNeedsRequests(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs requests", flag.ContinueOnError)
-	devDir := fs.String("dev-dir", "/home/kilian/dev", "Fleet dev root directory")
-	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Framework repository path")
+	devDir := fs.String("dev-dir", defaultDevDir(), "Fleet dev root directory")
+	framework := fs.String("framework", defaultFrameworkDir(), "Framework repository path")
 	outputDir := fs.String("output-dir", "", "Optional output directory to write demand requests")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -240,7 +240,7 @@ func runNeedsEpic(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs epic", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
 	devDir := fs.String("dev-dir", "", "Run fleet-wide epic generation across all repositories in directory")
-	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Target framework repository path")
+	framework := fs.String("framework", defaultFrameworkDir(), "Target framework repository path")
 	output := fs.String("output", "", "Optional markdown file path to write pre-migration epic")
 	publish := fs.Bool("publish", false, "Publish pre-migration parent epic and child tasks to remote forge")
 	token := fs.String("token", "", "Forge API token (default: GITHUB_TOKEN or gh auth token)")
@@ -304,7 +304,7 @@ func publishEpicToForge(ctx context.Context, path, token, endpoint string, epic 
 		return fmt.Errorf("epic publishing requires GITHUB_TOKEN, GH_TOKEN, or an authenticated 'gh' CLI session")
 	}
 
-	owner, repo, err := resolveRepoCoordinates(path)
+	owner, repo, err := resolveRepoCoordinates(ctx, path)
 	if err != nil {
 		return fmt.Errorf("failed resolving repository coordinates for %s: %w", path, err)
 	}
@@ -325,23 +325,14 @@ func publishEpicToForge(ctx context.Context, path, token, endpoint string, epic 
 	return nil
 }
 
+// resolveForgeAuthToken resolves the forge credential for the issue and epic commands:
+// the explicit flag, the CI environment, then the gh CLI session under the caller's
+// deadline. These commands document the gh fallback in their flag help.
 func resolveForgeAuthToken(ctx context.Context, explicitToken string) string {
-	if explicitToken != "" {
-		return explicitToken
-	}
-	if tok := os.Getenv("GITHUB_TOKEN"); tok != "" {
-		return tok
-	}
-	if tok := os.Getenv("GH_TOKEN"); tok != "" {
-		return tok
-	}
-	if out, err := util.RunCommand(ctx, "", "gh", "auth", "token"); err == nil {
-		return strings.TrimSpace(out)
-	}
-	return ""
+	return util.ResolveAuthTokenContext(ctx, explicitToken)
 }
 
-func resolveRepoCoordinates(path string) (string, string, error) {
+func resolveRepoCoordinates(ctx context.Context, path string) (string, string, error) {
 	manifestPath := filepath.Join(path, ".standards.yaml")
 	if util.FileExists(manifestPath) {
 		m, err := config.LoadManifest(manifestPath)
@@ -349,5 +340,28 @@ func resolveRepoCoordinates(path string) (string, string, error) {
 			return m.Repository.Owner, m.Repository.Name, nil
 		}
 	}
-	return util.ResolveRepoIdentity(context.Background(), path)
+	return util.ResolveRepoIdentity(ctx, path)
+}
+
+// defaultDevDir is the fleet root used when --dev-dir is not given: PRAETOR_DEV_DIR, or
+// <home>/dev. No workstation path is baked into the binary.
+func defaultDevDir() string {
+	if dir := os.Getenv("PRAETOR_DEV_DIR"); dir != "" {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "dev"
+	}
+	return filepath.Join(home, "dev")
+}
+
+// defaultFrameworkDir is the Golusoris checkout used when --framework is not given:
+// PRAETOR_FRAMEWORK_DIR, or <dev dir>/golusoris/golusoris. When it does not exist the
+// needs engine falls back to its built-in framework index.
+func defaultFrameworkDir() string {
+	if dir := os.Getenv("PRAETOR_FRAMEWORK_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join(defaultDevDir(), "golusoris", "golusoris")
 }
