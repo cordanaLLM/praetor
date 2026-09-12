@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -26,26 +27,23 @@ func printPlanHeader(manifest *config.Manifest, policy *config.ResolvedPolicy) {
 	fmt.Printf("  - SBOM Generation Required:  %t\n", policy.SupplyChain.RequireSBOM)
 }
 
-func checkPlanDrift(policy *config.ResolvedPolicy) ([]string, []string) {
+// checkPlanDrift inspects the companion files next to the manifest, never the cwd.
+func checkPlanDrift(policy *config.ResolvedPolicy, rootDir string) ([]string, []string) {
 	var missing []string
 	var drift []string
 
-	if !util.FileExists(".standards.lock") {
-		missing = append(missing, ".standards.lock")
-	}
-	if !util.FileExists("AGENTS.md") {
-		missing = append(missing, "AGENTS.md")
-	}
-	if !util.FileExists(".config/labels.yaml") {
-		missing = append(missing, ".config/labels.yaml")
+	for _, rel := range []string{".standards.lock", "AGENTS.md", ".config/labels.yaml"} {
+		if !util.FileExists(filepath.Join(rootDir, filepath.FromSlash(rel))) {
+			missing = append(missing, rel)
+		}
 	}
 
 	if policy.BranchProtection.EnforceLinearHistory || policy.BranchProtection.RequireSignedCommits {
-		if !util.FileExists(".github/rulesets/main.json") {
+		if !util.FileExists(filepath.Join(rootDir, ".github", "rulesets", "main.json")) {
 			drift = append(drift, ".github/rulesets/main.json (Branch protection ruleset missing)")
 		}
 	}
-	if policy.SupplyChain.RequireSBOM && !util.FileExists(".github/workflows/sbom.yml") {
+	if policy.SupplyChain.RequireSBOM && !util.FileExists(filepath.Join(rootDir, ".github", "workflows", "sbom.yml")) {
 		drift = append(drift, ".github/workflows/sbom.yml (SBOM & SLSA Level 3 workflow missing)")
 	}
 
@@ -54,10 +52,13 @@ func checkPlanDrift(policy *config.ResolvedPolicy) ([]string, []string) {
 
 func runPlan(args []string) error {
 	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
-	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml")
+	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml; its directory is the planned root")
 
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("plan accepts no positional arguments, got %q", fs.Args())
 	}
 
 	manifest, err := config.LoadManifest(*configPath)
@@ -69,7 +70,7 @@ func runPlan(args []string) error {
 	policy.ApplyOverrides(manifest.Overrides)
 
 	printPlanHeader(manifest, policy)
-	missing, drift := checkPlanDrift(policy)
+	missing, drift := checkPlanDrift(policy, filepath.Dir(*configPath))
 
 	if len(missing) > 0 || len(drift) > 0 {
 		if len(missing) > 0 {
@@ -81,7 +82,7 @@ func runPlan(args []string) error {
 				fmt.Printf("  - %s\n", d)
 			}
 		}
-		fmt.Println("\nAction: Run 'standardsctl sync' to reconcile repository configuration.")
+		fmt.Println("\nAction: Run 'praetorctl sync' to reconcile repository configuration.")
 	} else {
 		fmt.Println("\nStatus: Local state matches declared policy. No changes required.")
 	}

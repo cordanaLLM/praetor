@@ -56,6 +56,16 @@ jobs:
           standardsctl adopt --path=. --force --record-baseline
           standardsctl compile-context --verify
 
+      # HISS-13: a re-recorded baseline must not grow versus the default branch. The audit
+      # fails before anything is committed when --record-baseline absorbed new debt without
+      # a recorded rationale.
+      - name: Enforce Monotonic Debt Ratchet
+        if: "!contains(github.event.comment.body, '/dogfood')"
+        env:
+          CI: "true"
+        run: |
+          standardsctl audit --base=origin/${{ github.event.repository.default_branch }}
+
       - name: Commit & Push Adoption Changes
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run != true
         run: |

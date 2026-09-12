@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -15,22 +16,39 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-func reconcileLabels() error {
-	if util.FileExists(".config/labels.yaml") {
+const (
+	// syncTimeout bounds the whole reconciliation, including the forge round trips.
+	syncTimeout = 2 * time.Minute
+	// syncDirPerm and syncFilePerm are the modes of the synthesized, tracked files.
+	syncDirPerm  os.FileMode = 0o755
+	syncFilePerm os.FileMode = 0o644
+)
+
+// ErrRemoteTokenMissing reports a --remote sync without any usable credential.
+var ErrRemoteTokenMissing = errors.New("--remote requires --token, GITHUB_TOKEN or GH_TOKEN")
+
+// remoteSyncOptions carries the explicit inputs of a --remote reconciliation.
+type remoteSyncOptions struct {
+	token    string
+	endpoint string
+}
+
+func reconcileLabels(rootDir string) error {
+	labelsPath := filepath.Join(rootDir, ".config", "labels.yaml")
+	if util.FileExists(labelsPath) {
 		fmt.Println("  [OK] Labels verified (.config/labels.yaml)")
 		return nil
 	}
 	fmt.Println("  [FIX] Synthesizing missing .config/labels.yaml...")
-	if err := synthesizeDefaultLabels(".config/labels.yaml"); err != nil {
+	if err := synthesizeDefaultLabels(labelsPath); err != nil {
 		return fmt.Errorf("failed creating labels manifest: %w", err)
 	}
 	fmt.Println("  [OK] Labels synthesized (.config/labels.yaml)")
 	return nil
 }
 
-func reconcileRuleset(bp config.BranchProtectionPolicy) error {
-	rulesetDir := filepath.Join(".github", "rulesets")
-	rulesetPath := filepath.Join(rulesetDir, "main.json")
+func reconcileRuleset(rootDir string, bp config.BranchProtectionPolicy) error {
+	rulesetPath := filepath.Join(rootDir, ".github", "rulesets", "main.json")
 	if !util.FileExists(rulesetPath) {
 		fmt.Println("  [FIX] Synthesizing declarative branch protection ruleset (.github/rulesets/main.json)...")
 		if err := synthesizeRuleset(rulesetPath, bp); err != nil {
@@ -43,42 +61,90 @@ func reconcileRuleset(bp config.BranchProtectionPolicy) error {
 	return nil
 }
 
-func reconcileRemoteForge(manifest *config.Manifest, bp *config.BranchProtectionPolicy) {
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
-		token = os.Getenv("GH_TOKEN")
-	}
-	if token == "" {
-		if out, err := util.RunCommand(context.Background(), ".", "gh", "auth", "token"); err == nil {
-			token = strings.TrimSpace(out)
-		}
-	}
-	if token == "" {
-		fmt.Println("  [INFO] Remote sync skipped (GITHUB_TOKEN not set; local files reconciled)")
+// reportCompanion prints whether a companion file exists next to the manifest.
+func reportCompanion(rootDir, name, label string) {
+	if util.FileExists(filepath.Join(rootDir, name)) {
+		fmt.Printf("  [OK] %s %s verified\n", label, name)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	fmt.Printf("  [WARN] %s %s missing. Run 'praetorctl init' to create.\n", label, name)
+}
 
-	gh := forge.NewGitHubDriver(token, "")
-	if manifest != nil && manifest.Repository.Owner != "" && manifest.Repository.Name != "" {
-		gh.SetRepository(manifest.Repository.Owner, manifest.Repository.Name)
+// resolveSyncToken returns the explicit token or the CI environment token. The gh CLI
+// session is deliberately never consulted: a forge write must use a credential the
+// operator handed over on purpose.
+func resolveSyncToken(explicit string) string {
+	if explicit != "" {
+		return explicit
 	}
-	fmt.Println("  [SYNC] Reconciling remote branch protection rulesets on GitHub...")
+	if tok := os.Getenv("GITHUB_TOKEN"); tok != "" {
+		return tok
+	}
+	return os.Getenv("GH_TOKEN")
+}
+
+// verifyOriginIdentity refuses to write to any forge repository other than the one the
+// checkout's origin remote points at, so a foreign manifest cannot redirect the ruleset.
+func verifyOriginIdentity(ctx context.Context, rootDir, owner, name string) error {
+	out, err := util.RunGit(ctx, rootDir, "config", "--get", "remote.origin.url")
+	if err != nil || strings.TrimSpace(out) == "" {
+		return fmt.Errorf("cannot verify manifest repository %s/%s: no origin remote in %s", owner, name, rootDir)
+	}
+	remoteOwner, remoteRepo := util.ExtractOwnerAndRepo(out)
+	if !strings.EqualFold(remoteOwner, owner) || !strings.EqualFold(remoteRepo, name) {
+		return fmt.Errorf("manifest declares %s/%s but origin points at %s/%s; refusing to modify a foreign repository",
+			owner, name, remoteOwner, remoteRepo)
+	}
+	return nil
+}
+
+// reconcileRemoteForge pushes the branch protection ruleset and returns every failure:
+// a missing credential, an unset or foreign repository identity, a fixture token that
+// would perform no request, or a rejected API call.
+func reconcileRemoteForge(ctx context.Context, rootDir string, manifest *config.Manifest, bp *config.BranchProtectionPolicy, remote remoteSyncOptions) error {
+	token := resolveSyncToken(remote.token)
+	if token == "" {
+		return ErrRemoteTokenMissing
+	}
+	owner, name := manifest.Repository.Owner, manifest.Repository.Name
+	if owner == "" || name == "" {
+		return errors.New("manifest repository.owner and repository.name must be set before writing to the forge")
+	}
+	if err := verifyOriginIdentity(ctx, rootDir, owner, name); err != nil {
+		return err
+	}
+
+	gh := forge.NewGitHubDriver(token, remote.endpoint)
+	if gh.DryRun {
+		return fmt.Errorf("token selects the forge fixture mode (prefix %q); no remote request was made", forge.FixtureTokenPrefix)
+	}
+	gh.SetRepository(owner, name)
+	fmt.Printf("  [SYNC] Reconciling branch protection ruleset on GitHub for %s/%s...\n", owner, name)
 	if err := gh.ReconcileProtection(ctx, "main", bp); err != nil {
-		fmt.Printf("  [WARN] Remote branch protection sync failed: %v\n", err)
-	} else {
-		fmt.Println("  [OK] Remote branch protection synchronized on GitHub")
+		return err
 	}
+	fmt.Println("  [OK] Remote branch protection synchronized on GitHub")
+	return nil
 }
 
 func runSync(args []string) error {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
-	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml")
+	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml; its directory is the reconciled root")
+	remote := fs.Bool("remote", false, "Also reconcile branch protection on GitHub (an explicit opt-in; nothing is pushed without it)")
+	token := fs.String("token", "", "Forge API token for --remote (default: GITHUB_TOKEN, then GH_TOKEN; the gh CLI is never consulted)")
+	endpoint := fs.String("endpoint", "", "Forge API endpoint for --remote (default: https://api.github.com)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("sync accepts no positional arguments, got %q", fs.Args())
+	}
+	remoteOpts := remoteSyncOptions{token: *token, endpoint: *endpoint}
+
+	// HISS-02: local reconciliation and the forge round trips share one deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)
+	defer cancel()
 
 	manifest, err := config.LoadManifest(*configPath)
 	if err != nil {
@@ -87,37 +153,72 @@ func runSync(args []string) error {
 
 	policy := config.DefaultPolicy()
 	policy.ApplyOverrides(manifest.Overrides)
+	rootDir := filepath.Dir(*configPath)
 
 	fmt.Printf("Reconciling configuration for %s/%s...\n", manifest.Repository.Owner, manifest.Repository.Name)
 
-	if err := reconcileLabels(); err != nil {
+	if err := reconcileLabels(rootDir); err != nil {
+		return err
+	}
+	reportCompanion(rootDir, ".standards.lock", "Lockfile")
+	reportCompanion(rootDir, "AGENTS.md", "Context harness")
+	if err := reconcileRuleset(rootDir, policy.BranchProtection); err != nil {
 		return err
 	}
 
-	if util.FileExists(".standards.lock") {
-		fmt.Println("  [OK] Lockfile .standards.lock verified")
+	if *remote {
+		if err := reconcileRemoteForge(ctx, rootDir, manifest, &policy.BranchProtection, remoteOpts); err != nil {
+			return fmt.Errorf("remote branch protection sync failed: %w", err)
+		}
 	} else {
-		fmt.Println("  [WARN] Lockfile .standards.lock missing. Run 'standardsctl init' to create.")
+		fmt.Println("  [INFO] Remote forge untouched (pass --remote to reconcile branch protection on GitHub)")
 	}
-
-	if util.FileExists("AGENTS.md") {
-		fmt.Println("  [OK] Context harness AGENTS.md verified")
-	} else {
-		fmt.Println("  [WARN] Context harness AGENTS.md missing. Run 'standardsctl init' to create.")
-	}
-
-	if err := reconcileRuleset(policy.BranchProtection); err != nil {
-		return err
-	}
-
-	reconcileRemoteForge(manifest, &policy.BranchProtection)
 
 	fmt.Println("Synchronization complete.")
 	return nil
 }
 
+// rulesetRules renders the ruleset rules for the resolved policy: linear history and
+// signed commits are emitted only when the policy actually requires them, so the local
+// ruleset never contradicts the branch protection reconciled on the forge.
+func rulesetRules(bp config.BranchProtectionPolicy) []map[string]any {
+	rules := []map[string]any{
+		{"type": "deletion"},
+		{"type": "non_fast_forward"},
+	}
+	if bp.EnforceLinearHistory {
+		rules = append(rules, map[string]any{"type": "required_linear_history"})
+	}
+	if bp.RequireSignedCommits {
+		rules = append(rules, map[string]any{"type": "required_signatures"})
+	}
+	return append(rules,
+		map[string]any{
+			"type": "pull_request",
+			"parameters": map[string]any{
+				"required_approving_review_count":   bp.RequiredApprovingReviewers,
+				"dismiss_stale_reviews_on_push":     bp.DismissStaleReviews,
+				"require_code_owner_review":         true,
+				"require_last_push_approval":        false,
+				"required_review_thread_resolution": true,
+			},
+		},
+		map[string]any{
+			"type": "required_status_checks",
+			"parameters": map[string]any{
+				"strict_required_status_checks_policy": true,
+				"required_status_checks": []map[string]string{
+					{"context": "verify"},
+					{"context": "Standards & Invariant Verification Gate"},
+					{"context": "DCO 1.1 & REUSE Compliance Gate"},
+				},
+			},
+		},
+	)
+}
+
 func synthesizeRuleset(targetPath string, bp config.BranchProtectionPolicy) error {
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+	if err := util.MkdirSecure(filepath.Dir(targetPath), syncDirPerm); err != nil {
 		return err
 	}
 
@@ -131,44 +232,18 @@ func synthesizeRuleset(targetPath string, bp config.BranchProtectionPolicy) erro
 				"exclude": []string{},
 			},
 		},
-		"rules": []map[string]any{
-			{"type": "deletion"},
-			{"type": "non_fast_forward"},
-			{"type": "required_linear_history"},
-			{"type": "required_signatures"},
-			{
-				"type": "pull_request",
-				"parameters": map[string]any{
-					"required_approving_review_count":   bp.RequiredApprovingReviewers,
-					"dismiss_stale_reviews_on_push":     bp.DismissStaleReviews,
-					"require_code_owner_review":         true,
-					"require_last_push_approval":        false,
-					"required_review_thread_resolution": true,
-				},
-			},
-			{
-				"type": "required_status_checks",
-				"parameters": map[string]any{
-					"strict_required_status_checks_policy": true,
-					"required_status_checks": []map[string]string{
-						{"context": "verify"},
-						{"context": "Standards & Invariant Verification Gate"},
-						{"context": "DCO 1.1 & REUSE Compliance Gate"},
-					},
-				},
-			},
-		},
+		"rules": rulesetRules(bp),
 	}
 
 	data, err := json.MarshalIndent(ruleset, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(targetPath, data, 0644)
+	return util.WriteFileSecure(targetPath, data, syncFilePerm)
 }
 
 func synthesizeDefaultLabels(targetPath string) error {
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+	if err := util.MkdirSecure(filepath.Dir(targetPath), syncDirPerm); err != nil {
 		return err
 	}
 
@@ -207,5 +282,5 @@ labels:
     color: "b60205"
     description: "Breaking API change requiring mandatory Migration: footer"
 `
-	return os.WriteFile(targetPath, []byte(defaultLabels), 0644)
+	return util.WriteFileSecure(targetPath, []byte(defaultLabels), syncFilePerm)
 }

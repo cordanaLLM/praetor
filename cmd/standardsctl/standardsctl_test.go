@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -20,14 +22,70 @@ func TestDispatchCommand_HelpAndVersion(t *testing.T) {
 	}
 
 	// Positive: Version
-	if err := dispatchCommand("version", []string{}); err != nil {
+	out, err := captureStdout(t, func() error { return dispatchCommand("version", []string{}) })
+	if err != nil {
 		t.Fatalf("version failed: %v", err)
 	}
+	mustContain(t, out, version)
 
 	// Negative: Unknown command
 	if err := dispatchCommand("unknown-cmd", []string{}); err == nil {
 		t.Fatal("expected error for unknown command")
 	}
+}
+
+// TestCommandTable_CoversUsage keeps the dispatch table and the usage text in step: every
+// command listed by printUsage must dispatch, and every alias must resolve.
+func TestCommandTable_CoversUsage(t *testing.T) {
+	usage, err := captureStdout(t, func() error { printUsage(); return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := commandTable()
+	listed := 0
+	for _, line := range strings.Split(usage, "\n") {
+		if !strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "  praetorctl") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		listed++
+		if _, ok := table[fields[0]]; !ok {
+			t.Errorf("usage lists %q but the command table does not dispatch it", fields[0])
+		}
+	}
+	if listed < 30 {
+		t.Fatalf("expected the usage text to list the commands, parsed only %d", listed)
+	}
+	for _, alias := range []string{"conform", "bootstrap", "help", "-h", "--help"} {
+		if _, ok := table[alias]; !ok {
+			t.Errorf("alias %q missing from the command table", alias)
+		}
+	}
+}
+
+// newNeedsRepo builds a leaf git repository with a go.mod so the needs commands accept it.
+func newNeedsRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeFixtureFile(t, dir, ".git/HEAD", "ref: refs/heads/main\n")
+	writeFixtureFile(t, dir, "go.mod", "module example.com/fixture\n\ngo 1.27\n\nrequire github.com/spf13/cobra v1.8.0\n")
+	writeFixtureFile(t, dir, "main.go", "package main\n\nimport \"github.com/spf13/cobra\"\n\nfunc main() { _ = cobra.Command{} }\n")
+	return dir
+}
+
+// newFrameworkFixture builds a framework checkout with two domain directories.
+func newFrameworkFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, domain := range []string{"config", "clikit"} {
+		if err := os.MkdirAll(filepath.Join(dir, domain), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }
 
 func TestDispatchCommand_NeedsSubcommands(t *testing.T) {
@@ -39,17 +97,32 @@ func TestDispatchCommand_NeedsSubcommands(t *testing.T) {
 		t.Fatalf("needs -h failed: %v", err)
 	}
 
-	// Positive: Scan current repo
-	if err := dispatchCommand("needs", []string{"scan", "--path=../.."}); err != nil {
+	repo := newNeedsRepo(t)
+	framework := newFrameworkFixture(t)
+
+	// Positive: scan a fixture repository
+	out, err := captureStdout(t, func() error { return dispatchCommand("needs", []string{"scan", "--path=" + repo}) })
+	if err != nil {
 		t.Fatalf("needs scan failed: %v", err)
 	}
+	mustContain(t, out, "=== Framework Needs Scan:", "github.com/spf13/cobra")
 
-	// Positive: Report against current repo
-	if err := dispatchCommand("needs", []string{"report", "--path=../.."}); err != nil {
-		t.Fatalf("needs report failed: %v", err)
+	// Positive: report against a real framework checkout and against the built-in index,
+	// so both InspectFramework branches are exercised deterministically.
+	for _, fw := range []string{framework, filepath.Join(t.TempDir(), "absent")} {
+		out, err := captureStdout(t, func() error {
+			return dispatchCommand("needs", []string{"report", "--path=" + repo, "--framework=" + fw})
+		})
+		if err != nil {
+			t.Fatalf("needs report (framework=%s) failed: %v", fw, err)
+		}
+		mustContain(t, out, "=== Golusoris Migration Report:", "Framework: github.com/golusoris/golusoris", "Drop-In Replacement Matrix:", "github.com/spf13/cobra")
 	}
 
-	// Negative: Unknown subcommand
+	// Negative: a directory that is not a repository, and an unknown subcommand
+	if err := dispatchCommand("needs", []string{"report", "--path=" + t.TempDir(), "--framework=" + framework}); err == nil {
+		t.Fatal("expected error for a non-repository target")
+	}
 	if err := dispatchCommand("needs", []string{"invalid-sub"}); err == nil {
 		t.Fatal("expected error for unknown needs subcommand")
 	}
@@ -111,7 +184,7 @@ func TestDispatchCommand_ForgeSubcommands(t *testing.T) {
 	// Positive: PR validation with compliant body
 	prFile := filepath.Join(tmpDir, "compliant-pr.md")
 	prContent := "## Summary\nTest PR\n\n- [x] HISS-16 standards verified\n- [x] 3D tests (positive, negative, boundary) added\n- [x] Ed25519 Exit-0 Receipt verified: `receipt:ed25519:abcdef0123456789`\n"
-	if err := os.WriteFile(prFile, []byte(prContent), 0644); err != nil {
+	if err := os.WriteFile(prFile, []byte(prContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := dispatchCommand("forge", []string{"validate-pr", prFile}); err != nil {
@@ -120,7 +193,7 @@ func TestDispatchCommand_ForgeSubcommands(t *testing.T) {
 
 	// Negative: Non-compliant PR body
 	badPRFile := filepath.Join(tmpDir, "bad-pr.md")
-	if err := os.WriteFile(badPRFile, []byte("Just random text\n"), 0644); err != nil {
+	if err := os.WriteFile(badPRFile, []byte("Just random text\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := dispatchCommand("forge", []string{"validate-pr", badPRFile}); err == nil {
@@ -128,40 +201,31 @@ func TestDispatchCommand_ForgeSubcommands(t *testing.T) {
 	}
 }
 
-func TestDispatchCommand_AuditAndBaseline(t *testing.T) {
-	// Audit pass with real files
-	if err := dispatchCommand("audit", []string{
-		"--config=../../.standards.yaml",
-		"--baseline=../../.standards-baseline.json",
-		"--agents=../../AGENTS.md",
-	}); err != nil {
-		t.Fatalf("audit failed: %v", err)
+// TestDispatchCommand_RepositoryDogfood audits this repository's own committed state. It
+// is read-only; the hermetic audit behaviour is covered by audit_cmd_test.go.
+func TestDispatchCommand_RepositoryDogfood(t *testing.T) {
+	t.Setenv("CI", "true")
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("audit", []string{"--config=../../.standards.yaml"})
+	})
+	if err != nil {
+		t.Fatalf("repository audit failed: %v\n%s", err, out)
 	}
+	mustContain(t, out, "=== cordanaLLM/praetor Governance Audit ===", "Audit Summary: 100% Compliance")
 
-	// Audit fail with nonexistent manifest
-	if err := dispatchCommand("audit", []string{"--config=nonexistent.yaml"}); err == nil {
-		t.Fatal("expected audit to fail with nonexistent config")
-	}
-
-	// Baseline inspect
-	if err := dispatchCommand("baseline", []string{"--file=../../.standards-baseline.json"}); err != nil {
-		t.Fatalf("baseline inspect failed: %v", err)
+	if err := dispatchCommand("compile-context", []string{"--verify", "--source=../../AGENTS.md", "--target-dir=../.."}); err != nil {
+		t.Fatalf("compile-context verify failed: %v", err)
 	}
 }
 
 func TestDispatchCommand_ContextAndDevcontainer(t *testing.T) {
-	// Compile-context verify
-	if err := dispatchCommand("compile-context", []string{"--verify", "--source=../../AGENTS.md", "--target-dir=../.."}); err != nil {
-		t.Fatalf("compile-context verify failed: %v", err)
-	}
-
 	// Devcontainer verify
 	if err := dispatchCommand("devcontainer", []string{"--verify", "--config=../../.standards.yaml", "--output=../../.devcontainer/devcontainer.json"}); err != nil {
 		t.Fatalf("devcontainer verify failed: %v", err)
 	}
 
 	// Devcontainer help
-	if err := dispatchCommand("devcontainer", []string{"-h"}); err != nil && err != flag.ErrHelp {
+	if err := dispatchCommand("devcontainer", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("devcontainer -h failed: %v", err)
 	}
 }
@@ -174,49 +238,41 @@ func TestDispatchCommand_EditorsAndFlavors(t *testing.T) {
 		t.Fatalf("editors failed: %v", err)
 	}
 
-	// Flavors list and help
-	if err := dispatchCommand("flavors", []string{"-h"}); err != nil && err != flag.ErrHelp {
+	// Flavors help and the real "plan" action (the reconciler knows plan and sync only).
+	if err := dispatchCommand("flavors", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("flavors -h failed: %v", err)
 	}
-	if err := dispatchCommand("flavors", []string{"--config=../../.config/flavors.yaml", "list"}); err != nil {
-		t.Fatalf("flavors list failed: %v", err)
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("flavors", []string{"--config=../../.config/flavors.yaml", "plan"})
+	})
+	if err != nil {
+		t.Fatalf("flavors plan failed: %v", err)
 	}
+	mustContain(t, out, "Release Flavor Reconciler", "flavors sync")
 }
 
 func TestDispatchCommand_ModelsAndHarvest(t *testing.T) {
-	tmpDir := t.TempDir()
-
 	// Models list with existing routing config
 	if err := dispatchCommand("models", []string{"--config=../../.config/models/routing.yaml", "list"}); err != nil {
 		t.Fatalf("models list failed: %v", err)
 	}
 
-	// Harvest help and dry run on empty dev dir
-	if err := dispatchCommand("harvest", []string{"-h"}); err != nil && err != flag.ErrHelp {
+	// Harvest help and the static fleet topology (fleet takes no flags).
+	if err := dispatchCommand("harvest", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("harvest -h failed: %v", err)
 	}
-	if err := dispatchCommand("harvest", []string{"fleet", "--dev-dir=" + tmpDir}); err != nil {
+	out, err := captureStdout(t, func() error { return dispatchCommand("harvest", []string{"fleet"}) })
+	if err != nil {
 		t.Fatalf("harvest fleet failed: %v", err)
 	}
+	mustContain(t, out, "Fleet Topology")
 }
 
-func TestDispatchCommand_AdoptPlanSyncInit(t *testing.T) {
-	// Adopt help
-	if err := dispatchCommand("adopt", []string{"-h"}); err != nil && err != flag.ErrHelp {
-		t.Fatalf("adopt -h failed: %v", err)
-	}
-
-	// Plan and Sync help
-	if err := dispatchCommand("plan", []string{"-h"}); err != nil && err != flag.ErrHelp {
-		t.Fatalf("plan -h failed: %v", err)
-	}
-	if err := dispatchCommand("sync", []string{"-h"}); err != nil && err != flag.ErrHelp {
-		t.Fatalf("sync -h failed: %v", err)
-	}
-
-	// Init help
-	if err := dispatchCommand("init", []string{"-h"}); err != nil && err != flag.ErrHelp {
-		t.Fatalf("init -h failed: %v", err)
+func TestDispatchCommand_AdoptPlanSyncInitHelp(t *testing.T) {
+	for _, cmd := range []string{"adopt", "plan", "sync", "init"} {
+		if err := dispatchCommand(cmd, []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
+			t.Fatalf("%s -h failed: %v", cmd, err)
+		}
 	}
 }
 
@@ -224,7 +280,7 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Paperclip help
-	if err := dispatchCommand("paperclip", []string{"-h"}); err != nil && err != flag.ErrHelp {
+	if err := dispatchCommand("paperclip", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("paperclip -h failed: %v", err)
 	}
 
@@ -246,10 +302,9 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 		t.Fatalf("paperclip disposition failed: %v", err)
 	}
 
-	// Initialize leaf git repository for adoption validation
-	gitDir := filepath.Join(tmpDir, ".git")
-	_ = os.MkdirAll(gitDir, 0755)
-	_ = os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0644)
+	// Initialize leaf git repository for adoption validation; a fixture failure must be
+	// reported as such, never as an adoption failure.
+	writeFixtureFile(t, tmpDir, ".git/HEAD", "ref: refs/heads/main\n")
 
 	// Adopt dry-run
 	if err := dispatchCommand("adopt", []string{"--dry-run", "--path=" + tmpDir, "--profile=framework"}); err != nil {
@@ -257,33 +312,61 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 	}
 }
 
-func TestDispatchCommand_IssueAndBuild(t *testing.T) {
-	tmpDir := t.TempDir()
+func TestDispatchCommand_IssueReconcile(t *testing.T) {
+	// The fixture token selects the forge dry-run driver; no credential is harvested and
+	// no request leaves the process.
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
 
-	// Issue help and reconcile
 	if err := dispatchCommand("issue", []string{}); err != nil {
 		t.Fatalf("issue with no args failed: %v", err)
 	}
 	if err := dispatchCommand("issue", []string{"-h"}); err != nil {
 		t.Fatalf("issue -h failed: %v", err)
 	}
-	if err := dispatchCommand("issue", []string{"reconcile", "--owner=cordanaLLM", "--dry-run"}); err != nil {
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("issue", []string{"reconcile", "--owner=cordanaLLM", "--dry-run", "--token=test-fixture", "--endpoint=http://127.0.0.1:0"})
+	})
+	if err != nil {
 		t.Fatalf("issue reconcile failed: %v", err)
+	}
+	if strings.Contains(out, "[WARN]") {
+		t.Fatalf("fixture-backed reconcile must not warn about remote failures:\n%s", out)
 	}
 	if err := dispatchCommand("issue", []string{"invalid"}); err == nil {
 		t.Fatal("expected error for invalid issue subcommand")
 	}
+}
 
-	// Needs requests and epic
-	if err := dispatchCommand("needs", []string{"requests", "--dev-dir=../.."}); err != nil {
+func TestDispatchCommand_NeedsFleet(t *testing.T) {
+	// Needs requests and epic against fixture repositories and an explicit framework.
+	fleet := t.TempDir()
+	repo := filepath.Join(fleet, "acme", "widgets")
+	if err := os.MkdirAll(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, repo, ".git/HEAD", "ref: refs/heads/main\n")
+	writeFixtureFile(t, repo, "go.mod", "module example.com/widgets\n\ngo 1.27\n\nrequire github.com/spf13/cobra v1.8.0\n")
+	framework := newFrameworkFixture(t)
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("needs", []string{"requests", "--dev-dir=" + fleet, "--framework=" + framework})
+	})
+	if err != nil {
 		t.Fatalf("needs requests failed: %v", err)
 	}
-	epicOut := filepath.Join(tmpDir, "EPIC.md")
-	if err := dispatchCommand("needs", []string{"epic", "--path=../..", "--output=" + epicOut}); err != nil {
+	mustContain(t, out, "Framework Demand Requests")
+	epicOut := filepath.Join(t.TempDir(), "EPIC.md")
+	if err := dispatchCommand("needs", []string{"epic", "--path=" + repo, "--framework=" + framework, "--output=" + epicOut}); err != nil {
 		t.Fatalf("needs epic failed: %v", err)
 	}
+	if _, err := os.Stat(epicOut); err != nil {
+		t.Fatalf("expected the epic to be written: %v", err)
+	}
+}
 
-	// Build with temporary config
+func TestDispatchCommand_Build(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeFixtureFile(t, tmpDir, "cmd/app/main.go", "package main\n\nfunc main() {}\n")
 	buildCfgPath := filepath.Join(tmpDir, ".framework-build.yaml")
 	cfgContent := `
 version: 1
@@ -292,13 +375,13 @@ output_dir: ` + filepath.Join(tmpDir, "dist") + `
 targets:
   cli:
     runtime: go
-    entrypoint: ./cmd/standardsctl
+    entrypoint: ` + filepath.Join(tmpDir, "cmd", "app") + `
 `
-	if err := os.WriteFile(buildCfgPath, []byte(cfgContent), 0644); err != nil {
+	if err := os.WriteFile(buildCfgPath, []byte(cfgContent), 0o600); err != nil {
 		t.Fatalf("failed to write build config: %v", err)
 	}
 
-	if err := dispatchCommand("build", []string{"-h"}); err != nil && err != flag.ErrHelp {
+	if err := dispatchCommand("build", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("build -h failed: %v", err)
 	}
 	if err := dispatchCommand("build", []string{"--config=" + buildCfgPath, "--target=cli"}); err != nil {
@@ -336,8 +419,12 @@ func TestDispatchCommand_StateSubcommands(t *testing.T) {
 	if err := dispatchCommand("state", []string{"question", "decide", "Q-001", "A", tmpDir}); err != nil {
 		t.Fatalf("state question decide failed: %v", err)
 	}
-	if err := dispatchCommand("state", []string{"sync", tmpDir, "--log=test execution"}); err != nil {
+	// Flags precede the positional directory; the log line must land in STATE.md.
+	if err := dispatchCommand("state", []string{"sync", "--log=test execution", tmpDir}); err != nil {
 		t.Fatalf("state sync failed: %v", err)
+	}
+	if got := readFixtureFile(t, tmpDir, ".workingdir/STATE.md"); !strings.Contains(got, "test execution") {
+		t.Fatalf("expected the --log message in STATE.md, got:\n%s", got)
 	}
 	if err := dispatchCommand("state", []string{"audit", tmpDir}); err != nil {
 		t.Fatalf("state audit failed: %v", err)
@@ -460,19 +547,7 @@ func TestDispatchCommand_CISubcommands(t *testing.T) {
 		t.Fatalf("ci -h failed: %v", err)
 	}
 
-	// Positive: filter with JSON and Env output
-	tmpDir := t.TempDir()
-	if err := dispatchCommand("ci", []string{"filter", "--dir=" + tmpDir, "--json"}); err != nil {
-		t.Fatalf("ci filter --json failed: %v", err)
-	}
-	if err := dispatchCommand("ci", []string{"filter", "--dir=" + tmpDir, "--env"}); err != nil {
-		t.Fatalf("ci filter --env failed: %v", err)
-	}
-	if err := dispatchCommand("ci", []string{"filter", "--dir=" + tmpDir, "--force"}); err != nil {
-		t.Fatalf("ci filter --force failed: %v", err)
-	}
-
-	// Negative: invalid subcommand
+	// Negative: invalid subcommand (the filter itself is covered by ci_cmd_test.go)
 	if err := dispatchCommand("ci", []string{"unknown-sub"}); err == nil {
 		t.Fatal("expected error for invalid ci subcommand")
 	}

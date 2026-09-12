@@ -41,6 +41,10 @@ pre-push:
     state-audit:
       run: go run ./cmd/standardsctl state audit .
     audit:
-      run: go run ./cmd/standardsctl audit
+      # --base enables the HISS-13 touched-file clean rule over the pushed range and
+      # refuses a .standards-baseline.json that grew versus the one on origin/main.
+      run: go run ./cmd/standardsctl audit --base=origin/main
     gate:
+      # "run" is the gate subcommand; every flag must follow it, positional leftovers
+      # are rejected by the CLI.
       run: go run ./cmd/standardsctl gate run --path=.
