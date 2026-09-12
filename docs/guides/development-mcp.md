@@ -16,7 +16,9 @@ the run; retry against the completed edit.
 
 The probe checks checkout symbol inspection, canonical context compilation with
 all six outputs read back, verification drift, invalid arguments, path escape,
-unknown tools, corrupt memory, and malformed locks. All mutations use disposable
+unknown tools, corrupt memory, and malformed locks. It also audits a valid fixture
+before checking changed pinned content, invariant violations, and incomplete scans
+that must fail without changing the baseline. All mutations use disposable
 fixtures. A discovered tool name alone does not prove working behavior.
 
 ## Native project connections

@@ -126,25 +126,31 @@ receipt for the current branch or verification result.
 | G07a forge validation | `c5ee29b` | CLI, forge, MCP, needs and affected helper race tests pass; workflow syntax checks pass |
 | G07b project/milestone | `c9d4d28` | CLI, forge, milestone and util race tests pass; explicit store/backlog capacity failures preserve existing data |
 | G08 MCP runtime/audit | `ac6e14d` | CLI, MCP, config and affected helper race tests pass; fresh-binary wire review passes 61 checks in 11 sessions |
+| Development MCP and canonical context | `2fee173` | Native Codex calls, fresh-build wire probes and 14 client/provenance tests pass; all six outputs preserve AGENTS body |
+| Secure-write permissions | `0a26497` | Integrated util, adoption, milestone, harvester, gating and CLI race tests pass |
+| G09 scanner/LSP | `fac9d09` | Preserved earlier fixes; scanner bounds fail explicitly, including a 1,100-if AST-depth fixture; combined MCP audit wire probes pass |
 
-G09 integration is in progress in an isolated worktree. G06 preserves both G05's context,
+G10 integration is in progress in an isolated worktree. G06 preserves both G05's context,
 path, permission and unknown-coverage safeguards and G06's scan/migration
 corrections. The scanner reports limit breaches, migration refuses branch resets,
 and failed mutations return errors with partial results. G07a removes magic-token
 network bypasses, retaining target confirmation, opt-in remote sync and pinned
 receipt tests. Oversized MCP schemas now fail rather than losing fields.
 G08 also confines default and generated-output paths, reports corrupt memory
-caches, and shares actual lock pin/digest validation with the CLI. G09/G10 are
-still pending; merge only the committed G09 core.
+caches, and shares actual lock pin/digest validation with the CLI. Only the
+committed G09 core was integrated; its rejected interrupted WIP remains preserved.
+G09 also disables unused parser object resolution and marks AST depth overflow
+incomplete, so the scanner cannot certify a truncated analysis as clean.
 
 The user directed development MCP preflight before relying on advertised
 capabilities. The new launcher builds the current working tree into temporary
 storage, records source/binary hashes, and provides direct JSON-RPC calls plus
 fixture-only behavioral probes. Native Codex startup has been exercised through
 the app-server without a model request; existing IDE sessions may need reconnect.
-Canonical instruction propagation is also being fixed: the previous compiler
-ignored the AGENTS.md body and generated static policy. Reusable wire probes now
-require actual canonical body content in all six compiled outputs.
+Canonical instruction propagation is fixed: the previous compiler ignored the
+AGENTS.md body and generated static policy. Reusable wire probes now require actual
+canonical body content in all six compiled outputs, valid and invalid audits, and
+failure on truncated analysis without baseline writes.
 
 `make verify-all` after the G08/development-MCP changes passes context verification,
 the full race suite and CLI audit, then stops at 111 lint findings. Later gates
@@ -155,8 +161,9 @@ the rejected G09 patch. `fix/secure-write-permissions` at `c142ec4` fixes it in
 isolation: requested modes act as ceilings, and metadata checks/tightening happen
 before truncation. Race tests, lint and gosec pass for the changed package;
 cross-user devcontainer fixtures fail on the original helper and pass on the fix.
-Integrate this commit after the first batch. Its full gate still reports existing
-lint failures elsewhere; no integrated full-gate pass has been established.
+It is integrated as `0a26497`. The G09 integration's full gate passes context, all
+43 race-tested packages and audit, then stops at 93 lint findings outside its
+changed files. No integrated full-gate pass has been established.
 
 Full logs, reproduction binaries and hashes are under `codex-continuation/`
 within the evidence root above. Keep the distinction between branch-reported
