@@ -1052,7 +1052,7 @@ func TestDispatchCommand_NeedsMigrateApplyFlagSemantics(t *testing.T) {
 
 	// Positive: without --apply the command stays a dry run and says so.
 	out, err := captureStdout(t, func() error {
-		return dispatchCommand("needs", []string{"migrate", "--path=" + repo})
+		return dispatchCommand("needs", []string{"migrate", "--path=" + repo, "--framework="})
 	})
 	if err != nil {
 		t.Fatalf("needs migrate dry run failed: %v", err)
@@ -1082,7 +1082,7 @@ func TestDispatchCommand_NeedsEpicPublishSafety(t *testing.T) {
 	}
 
 	// Negative: single-repo publishing requires explicit confirmation.
-	err = dispatchCommand("needs", []string{"epic", "--path=" + repo, "--publish", "--owner=acme", "--repo=widget"})
+	err = dispatchCommand("needs", []string{"epic", "--path=" + repo, "--framework=", "--publish", "--owner=acme", "--repo=widget"})
 	if err == nil {
 		t.Fatal("expected publishing without --yes to be refused")
 	}
@@ -1091,7 +1091,7 @@ func TestDispatchCommand_NeedsEpicPublishSafety(t *testing.T) {
 	}
 
 	// Negative: --owner without --repo is incomplete.
-	err = dispatchCommand("needs", []string{"epic", "--path=" + repo, "--publish", "--owner=acme", "--yes"})
+	err = dispatchCommand("needs", []string{"epic", "--path=" + repo, "--framework=", "--publish", "--owner=acme", "--yes"})
 	if err == nil {
 		t.Fatal("expected --owner without --repo to be refused")
 	}

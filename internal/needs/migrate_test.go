@@ -81,7 +81,7 @@ func TestApplyFileImportReplacementLeavesStringLiteralsAlone(t *testing.T) {
 	}
 }
 
-func TestApplyMigrationWithRealGit(t *testing.T) {
+func TestMigrationRewritePrimitivesWithRealGit(t *testing.T) {
 	ctx := context.Background()
 	dir := setupMigrationRepo(t)
 	initGitFixture(t, dir)
@@ -89,7 +89,9 @@ func TestApplyMigrationWithRealGit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := ApplyMigrationWithOptions(ctx, dir, plan, MigrationOptions{SkipTidy: true})
+	// Synthetic requirement exercises the writer; it is not verified release evidence.
+	plan.AddedRequires = []string{defaultFrameworkModule + " v0.8.0"}
+	result, err := rewriteMigrationFixture(ctx, dir, plan, MigrationOptions{SkipTidy: true})
 	if err != nil || result == nil || !result.Success {
 		t.Fatalf("expected a successful migration: result=%+v err=%v", result, err)
 	}
@@ -110,16 +112,18 @@ func TestApplyMigrationWithRealGit(t *testing.T) {
 	}
 }
 
-func TestApplyMigrationTidyFailureRetainsPartialResult(t *testing.T) {
+func TestMigrationRewriteTidyFailureRetainsPartialResult(t *testing.T) {
 	ctx := context.Background()
 	dir := setupMigrationRepo(t)
 	plan, err := PlanMigration(ctx, dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Synthetic requirement exercises the writer; it is not verified release evidence.
+	plan.AddedRequires = []string{defaultFrameworkModule + " v0.8.0"}
 	tidyErr := errors.New("tidy failed")
 	runner := &recordingRunner{err: tidyErr, failAt: 4}
-	result, err := ApplyMigrationWithOptions(ctx, dir, plan, MigrationOptions{Runner: runner.run})
+	result, err := rewriteMigrationFixture(ctx, dir, plan, MigrationOptions{Runner: runner.run})
 	if !errors.Is(err, tidyErr) || result == nil || result.Success || result.Error == "" || len(result.Warnings) != 1 {
 		t.Fatalf("expected a hard failure with diagnostics: result=%+v err=%v", result, err)
 	}
@@ -279,4 +283,24 @@ func TestConfineToRepoNegativeEscapingTarget(t *testing.T) {
 	if _, err := confineToRepo(repo, inside); err != nil {
 		t.Fatalf("expected an in-repository file to be accepted, got %v", err)
 	}
+}
+
+// rewriteMigrationFixture exercises existing file/branch primitives directly.
+// It intentionally is test-only: candidate plans are not admitted by public apply.
+func rewriteMigrationFixture(ctx context.Context, repoPath string, plan *MigrationPlan, opts MigrationOptions) (*MigrationResult, error) {
+	run := opts.Runner
+	if run == nil {
+		run = util.RunCommand
+	}
+	result := &MigrationResult{Repository: plan.Repository, Branch: migrationBranch}
+	if err := createAdoptionBranch(ctx, repoPath, migrationBranch, run); err != nil {
+		return failedMigration(result, err)
+	}
+	changed, err := applyPlannedRewrites(ctx, repoPath, plan, run, opts.SkipTidy)
+	result.FilesChanged = changed
+	if err != nil {
+		return failedMigration(result, err)
+	}
+	result.Success = true
+	return result, nil
 }

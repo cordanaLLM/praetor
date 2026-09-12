@@ -411,7 +411,7 @@ func setupMigrationRepo(t *testing.T) string {
 	return tmpDir
 }
 
-func TestPlanAndApplyMigration(t *testing.T) {
+func TestPlanAndMigrationRewritePrimitives(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	tmpDir := setupMigrationRepo(t)
@@ -423,12 +423,14 @@ func TestPlanAndApplyMigration(t *testing.T) {
 	if len(plan.DroppedRequires) == 0 {
 		t.Fatal("expected dropped requires")
 	}
-	if plan.Framework != defaultFrameworkModule+" "+defaultFrameworkVersion {
+	if plan.Framework != defaultFrameworkModule {
 		t.Fatalf("unexpected plan framework: %s", plan.Framework)
 	}
 
+	// Synthetic requirement exercises the writer; it is not verified release evidence.
+	plan.AddedRequires = []string{defaultFrameworkModule + " v0.8.0"}
 	runner := &recordingRunner{}
-	res, err := ApplyMigrationWithOptions(ctx, tmpDir, plan, MigrationOptions{Runner: runner.run, SkipTidy: true})
+	res, err := rewriteMigrationFixture(ctx, tmpDir, plan, MigrationOptions{Runner: runner.run, SkipTidy: true})
 	if err != nil {
 		t.Fatalf("apply migration failed: %v", err)
 	}
@@ -472,12 +474,12 @@ func TestPlanMigrationHonoursFramework(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan migration failed: %v", err)
 	}
-	want := "github.com/acme/otherkit " + defaultFrameworkVersion
+	want := "github.com/acme/otherkit"
 	if plan.Framework != want {
 		t.Fatalf("plan framework = %q, want %q", plan.Framework, want)
 	}
-	if len(plan.AddedRequires) != 1 || plan.AddedRequires[0] != want {
-		t.Fatalf("plan added requires = %v, want [%q]", plan.AddedRequires, want)
+	if len(plan.AddedRequires) != 0 || len(plan.Replacements) != 0 || plan.CoverageBasis != FrameworkIdentityDeclared {
+		t.Fatalf("identity-only selection must remain unresolved: %+v", plan)
 	}
 }
 
@@ -500,7 +502,7 @@ func TestApplyMigration_Negative(t *testing.T) {
 		t.Fatal(err)
 	}
 	failing := &recordingRunner{err: errors.New("git is unavailable")}
-	res, err := ApplyMigrationWithOptions(ctx, tmpDir, plan, MigrationOptions{Runner: failing.run})
+	res, err := rewriteMigrationFixture(ctx, tmpDir, plan, MigrationOptions{Runner: failing.run})
 	if err == nil || res == nil || res.Success || res.Error == "" {
 		t.Fatalf("expected result plus hard failure, got result=%+v err=%v", res, err)
 	}
@@ -509,14 +511,14 @@ func TestApplyMigration_Negative(t *testing.T) {
 	}
 }
 
-func TestApplyMigration_Boundary(t *testing.T) {
+func TestMigrationRewrite_Boundary(t *testing.T) {
 	ctx := context.Background()
 	// Boundary: a repository with no go.mod and a plan with no replacements.
 	tmpDir := t.TempDir()
 	runner := &recordingRunner{}
 	plan := &MigrationPlan{Repository: "example.com/bare", GuideMarkdown: "# guide\n"}
 
-	res, err := ApplyMigrationWithOptions(ctx, tmpDir, plan, MigrationOptions{Runner: runner.run})
+	res, err := rewriteMigrationFixture(ctx, tmpDir, plan, MigrationOptions{Runner: runner.run})
 	if err != nil {
 		t.Fatalf("apply on a bare repository failed: %v", err)
 	}
@@ -535,7 +537,7 @@ func TestApplyMigration_Boundary(t *testing.T) {
 			{File: outside, OldImport: "package", NewImport: "hacked"},
 		},
 	}
-	res, err = ApplyMigrationWithOptions(ctx, tmpDir, escaping, MigrationOptions{Runner: runner.run})
+	res, err = rewriteMigrationFixture(ctx, tmpDir, escaping, MigrationOptions{Runner: runner.run})
 	if err == nil || res == nil || res.Success {
 		t.Fatalf("expected a hard confinement failure, got result=%+v err=%v", res, err)
 	}
@@ -818,7 +820,7 @@ func assertMigratedGoMod(t *testing.T, goModPath string) {
 	}
 }
 
-func TestApplyMigrationNegativeNonGitTarget(t *testing.T) {
+func TestMigrationRewriteNegativeNonGitTarget(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := setupMigrationRepo(t)
 
@@ -827,7 +829,7 @@ func TestApplyMigrationNegativeNonGitTarget(t *testing.T) {
 		t.Fatalf("plan migration failed: %v", err)
 	}
 
-	res, err := ApplyMigration(ctx, tmpDir, plan)
+	res, err := rewriteMigrationFixture(ctx, tmpDir, plan, MigrationOptions{})
 	if !errors.Is(err, ErrNotGitRepo) {
 		t.Fatalf("expected ErrNotGitRepo, got %v", err)
 	}
@@ -847,7 +849,7 @@ func TestApplyMigrationNegativeNonGitTarget(t *testing.T) {
 	}
 }
 
-func TestApplyMigrationBoundaryExistingBranch(t *testing.T) {
+func TestMigrationRewriteBoundaryExistingBranch(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := setupMigrationRepo(t)
 	initGitFixture(t, tmpDir)
@@ -861,7 +863,7 @@ func TestApplyMigrationBoundaryExistingBranch(t *testing.T) {
 		t.Fatalf("plan migration failed: %v", err)
 	}
 
-	res, err := ApplyMigration(ctx, tmpDir, plan)
+	res, err := rewriteMigrationFixture(ctx, tmpDir, plan, MigrationOptions{})
 	if !errors.Is(err, ErrBranchExists) {
 		t.Fatalf("expected ErrBranchExists, got %v", err)
 	}

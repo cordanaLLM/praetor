@@ -67,7 +67,7 @@ func TestGeneratePreMigrationEpic_Positive(t *testing.T) {
 	ctx := context.Background()
 	tempDir := writeEpicFixtureRepo(t)
 
-	epic, err := GeneratePreMigrationEpic(ctx, tempDir, "github.com/golusoris/golusoris")
+	epic, err := GeneratePreMigrationEpic(ctx, tempDir, "")
 	if err != nil {
 		t.Fatalf("epic generation failed: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestGeneratePreMigrationEpic_FrameworkIsHonoured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("epic generation failed: %v", err)
 	}
-	want := "github.com/acme/otherkit " + defaultFrameworkVersion
+	want := "github.com/acme/otherkit"
 	if epic.TargetFramework != want {
 		t.Errorf("expected target framework %q, got %q", want, epic.TargetFramework)
 	}
@@ -112,15 +112,8 @@ func TestGeneratePreMigrationEpic_FrameworkIsHonoured(t *testing.T) {
 	}
 
 	localPath := filepath.Join(t.TempDir(), "not-a-checkout")
-	epic, err = GeneratePreMigrationEpic(ctx, tempDir, localPath)
-	if err != nil {
-		t.Fatalf("epic generation failed: %v", err)
-	}
-	if strings.Contains(epic.ChecklistMarkdown, localPath) {
-		t.Errorf("a local filesystem path leaked into a publishable epic body: %s", epic.ChecklistMarkdown)
-	}
-	if epic.TargetFramework != defaultFrameworkModule+" "+defaultFrameworkVersion {
-		t.Errorf("expected the default framework, got %q", epic.TargetFramework)
+	if _, err = GeneratePreMigrationEpic(ctx, tempDir, localPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing selected source must fail without public fallback: %v", err)
 	}
 }
 

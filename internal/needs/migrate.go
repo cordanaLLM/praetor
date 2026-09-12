@@ -30,38 +30,37 @@ var (
 	ErrBranchExists = errors.New("needs: adoption branch already exists")
 )
 
-// CommandRunner executes name with args inside dir and returns the trimmed combined
-// output. It is the seam ApplyMigration uses for its git and `go mod tidy` calls so that
-// a caller - a hermetic test in particular - can apply a migration without invoking git,
-// the module proxy or the network.
+// CommandRunner executes name with args inside dir and returns combined output.
+// It supports isolated testing of rewrite primitives; it cannot admit a candidate.
 type CommandRunner func(ctx context.Context, dir, name string, args ...string) (string, error)
 
 // MigrationOptions configures ApplyMigrationWithOptions.
 type MigrationOptions struct {
-	// Runner executes the external commands; nil selects util.RunCommand, which
-	// enforces a context deadline on every subprocess (HISS-02).
+	// Runner is retained for source compatibility; admission happens before commands.
 	Runner CommandRunner
-	// SkipTidy suppresses the `go mod tidy` invocation, which would otherwise reach
-	// the module proxy.
+	// SkipTidy is retained for source compatibility and cannot bypass admission.
 	SkipTidy bool
 }
 
-// PlanMigration analyzes a repository and builds an actionable migration plan.
+// PlanMigration analyzes selected framework evidence and builds a blocked candidate.
 func PlanMigration(ctx context.Context, repoPath, frameworkPath string) (*MigrationPlan, error) {
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-
-	repoNeeds, err := ScanRepo(ctx, repoPath)
+	analysis, err := analyzeMigration(ctx, repoPath, frameworkPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan repo for migration: %w", err)
+		return nil, err
 	}
+	return planMigrationFromAnalysis(ctx, repoPath, analysis)
+}
 
-	framework := ResolveFrameworkModule(frameworkPath) + " " + defaultFrameworkVersion
+func planMigrationFromAnalysis(ctx context.Context, repoPath string, analysis *migrationAnalysis) (*MigrationPlan, error) {
+	repoNeeds := analysis.report
 	plan := &MigrationPlan{
-		Repository:    repoNeeds.Repository,
-		Framework:     framework,
-		AddedRequires: []string{framework},
+		Repository:          repoNeeds.Repository,
+		Framework:           analysis.framework.Name,
+		FrameworkVersion:    "unverified",
+		Status:              "candidate",
+		CoverageBasis:       repoNeeds.Readiness.Basis,
+		MappingAvailability: repoNeeds.Readiness.Score,
+		Blockers:            migrationBlockers(analysis),
 	}
 
 	// Only Go modules may be dropped from go.mod or rewritten in Go import blocks. A
@@ -201,35 +200,25 @@ func rewriteImportPath(importPath string, replacements map[string]string, keys [
 	return "", false
 }
 
-// ApplyMigration applies a migration using the audited command runner.
+// ApplyMigration rejects migration without verified version/API evidence.
 func ApplyMigration(ctx context.Context, repoPath string, plan *MigrationPlan) (*MigrationResult, error) {
 	return ApplyMigrationWithOptions(ctx, repoPath, plan, MigrationOptions{})
 }
 
-// ApplyMigrationWithOptions fails on any unsuccessful mutation. A partial result
-// carries its changed files, Error and Warnings alongside the returned error.
+// ApplyMigrationWithOptions rejects candidates before commands or mutations.
+// No module-version/API compatibility evidence validator is available yet. Options
+// remain source-compatible but cannot bypass admission, including SkipTidy/Runner.
 func ApplyMigrationWithOptions(ctx context.Context, repoPath string, plan *MigrationPlan, opts MigrationOptions) (*MigrationResult, error) {
+	if ctx == nil {
+		return nil, errors.New("needs: migration requires a context")
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if plan == nil {
 		return nil, ErrNilMigrationPlan
 	}
-	run := opts.Runner
-	if run == nil {
-		run = util.RunCommand
-	}
-	result := &MigrationResult{Repository: plan.Repository, Branch: migrationBranch}
-	if err := createAdoptionBranch(ctx, repoPath, migrationBranch, run); err != nil {
-		return failedMigration(result, err)
-	}
-	changed, err := applyPlannedRewrites(ctx, repoPath, plan, run, opts.SkipTidy)
-	result.FilesChanged = changed
-	if err != nil {
-		return failedMigration(result, err)
-	}
-	result.Success = true
-	return result, nil
+	return failedMigration(&MigrationResult{Repository: plan.Repository}, &UnverifiedMigrationError{})
 }
 
 func failedMigration(result *MigrationResult, err error) (*MigrationResult, error) {
@@ -492,12 +481,13 @@ func requireModulePath(line string, inRequire *bool) string {
 func generateMigrationGuide(plan *MigrationPlan) string {
 	var sb strings.Builder
 	writef(&sb, "# Migration Guide: %s -> %s\n\n", plan.Repository, plan.Framework)
-	sb.WriteString("## Planned Dependency Changes\n\n")
+	writeMigrationEvidence(&sb, plan)
+	sb.WriteString("## Candidate Dependency Changes\n\n")
 	sb.WriteString("**Added Requirements:**\n")
 	for _, a := range plan.AddedRequires {
 		writef(&sb, "- `%s`\n", a)
 	}
-	sb.WriteString("\n**Dropped Third-Party Packages:**\n")
+	sb.WriteString("\n**Proposed Third-Party Removals:**\n")
 	for _, d := range plan.DroppedRequires {
 		writef(&sb, "- `%s`\n", d)
 	}
@@ -510,8 +500,8 @@ func generateMigrationGuide(plan *MigrationPlan) string {
 		}
 	}
 	sb.WriteString("\n## Next Steps\n")
-	sb.WriteString("1. Run `go mod tidy` to clean up indirect dependencies.\n")
-	sb.WriteString("2. Verify compilation with `go build ./...`.\n")
-	sb.WriteString("3. Run tests with `go test -v ./...`.\n")
+	sb.WriteString("1. Resolve an immutable module version matching the inspected framework.\n")
+	sb.WriteString("2. Validate replacement APIs and consumer compilation/tests in isolation.\n")
+	sb.WriteString("3. Executable migration admission remains unavailable pending a real evidence validator.\n")
 	return sb.String()
 }

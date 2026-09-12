@@ -34,6 +34,9 @@ type PreMigrationEpic struct {
 	TargetFramework   string            `json:"target_framework"`
 	ReadinessScore    float64           `json:"readiness_score"`
 	CoverageBasis     string            `json:"coverage_basis,omitempty"`
+	FrameworkVersion  string            `json:"framework_version"`
+	Status            string            `json:"status"`
+	Blockers          []string          `json:"blockers"`
 	ParentEpic        forge.IssueSpec   `json:"parent_epic"`
 	ChildIssues       []forge.IssueSpec `json:"child_issues"`
 	ChecklistMarkdown string            `json:"checklist_markdown"`
@@ -44,31 +47,19 @@ type PreMigrationEpic struct {
 
 // GeneratePreMigrationEpic analyzes a repository and synthesizes a pre-migration epic.
 //
-// targetFramework is honoured on both paths: it is resolved to a module path (a checkout
-// through its own go.mod, a module-shaped value verbatim) and that module is what the
-// epic advertises. A local filesystem path never reaches the epic body, which may be
-// published as a public issue.
+// A selected checkout supplies the same evidence as a needs report. Module-only
+// selections remain unresolved identity declarations; invalid selected paths fail.
+// Local filesystem paths never reach public epic fields.
 func GeneratePreMigrationEpic(ctx context.Context, repoPath, targetFramework string) (*PreMigrationEpic, error) {
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-
-	repoNeeds, err := ScanRepo(ctx, repoPath)
+	analysis, err := analyzeMigration(ctx, repoPath, targetFramework)
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan repo for epic: %w", err)
+		return nil, fmt.Errorf("analyze pre-migration epic: %w", err)
 	}
-
-	if targetFramework == "" {
-		targetFramework = repoNeeds.Framework
+	migrationPlan, err := planMigrationFromAnalysis(ctx, repoPath, analysis)
+	if err != nil {
+		return nil, fmt.Errorf("plan pre-migration epic: %w", err)
 	}
-
-	migrationPlan, mErr := PlanMigration(ctx, repoPath, targetFramework)
-	if mErr != nil {
-		migrationPlan = &MigrationPlan{
-			Repository: repoNeeds.Repository,
-			Framework:  ResolveFrameworkModule(targetFramework) + " " + defaultFrameworkVersion,
-		}
-	}
+	repoNeeds := analysis.report
 
 	return buildEpicStructure(repoPath, repoNeeds, migrationPlan)
 }
@@ -95,6 +86,9 @@ func buildEpicStructure(repoPath string, repoNeeds *RepoNeeds, plan *MigrationPl
 		TargetFramework:   plan.Framework,
 		ReadinessScore:    repoNeeds.Readiness.Score,
 		CoverageBasis:     repoNeeds.Readiness.Basis,
+		FrameworkVersion:  plan.FrameworkVersion,
+		Status:            plan.Status,
+		Blockers:          append([]string(nil), plan.Blockers...),
 		ParentEpic:        parentEpic,
 		ChildIssues:       tasks,
 		ChecklistMarkdown: checklistMD,
@@ -130,7 +124,7 @@ func createChildTasks(repoName string, plan *MigrationPlan) []forge.IssueSpec {
 
 	t3 := forge.IssueSpec{
 		Title:     fmt.Sprintf("[TASK 3/5] Framework Dependency Substitution: %s", repoName),
-		Body:      fmt.Sprintf("## Scope\n- Swap %d external dependencies for %s builder kits.\n- Apply verified import substitutions.\n- Reconcile .needs.yaml capability declarations.", len(plan.Replacements), plan.Framework),
+		Body:      fmt.Sprintf("## Scope\n- Review %d proposed import substitutions targeting %s.\n- Resolve a verified module version and validate API compatibility before application.\n- Executable migration admission remains unavailable.\n- Reconcile .needs.yaml capability declarations.", len(plan.Replacements), plan.Framework),
 		State:     "open",
 		Labels:    []string{"task", "dependencies", "migration"},
 		DependsOn: []string{taskAnchor(2)},
@@ -159,8 +153,8 @@ func renderEpicChecklistMarkdown(repoName string, repoNeeds *RepoNeeds, plan *Mi
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "# Pre-Migration Epic: %s\n\n", repoName)
 	fmt.Fprintf(&sb, "- **Target Framework**: `%s`\n", plan.Framework)
-	fmt.Fprintf(&sb, "- **Declared Mapping Availability**: `%.1f%%`\n", repoNeeds.Readiness.Score)
-	fmt.Fprintf(&sb, "- **Coverage Basis**: %s; builds and tests not run\n", repoNeeds.Readiness.Basis)
+	fmt.Fprintf(&sb, "- **Mapping Availability**: `%.1f%%`\n", repoNeeds.Readiness.Score)
+	writeMigrationEvidence(&sb, plan)
 	fmt.Fprintf(&sb, "- **Third-Party Dependencies**: `%d` total (%d covered, %d gaps)\n\n",
 		repoNeeds.Readiness.TotalThirdPartyDeps, repoNeeds.Readiness.CoveredDeps, repoNeeds.Readiness.GapDeps)
 

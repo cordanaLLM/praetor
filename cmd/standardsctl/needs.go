@@ -173,7 +173,7 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 	path := fs.String("path", ".", "Target repository path")
 	framework := fs.String("framework", defaultFrameworkDir(), "Framework repository path")
 	dryRun := fs.Bool("dry-run", true, "Preview migration without mutating files")
-	apply := fs.Bool("apply", false, "Apply migration changes and create branch (implies --dry-run=false)")
+	apply := fs.Bool("apply", false, "Request application (blocked until module-version/API evidence is validated)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -192,17 +192,10 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 		return fmt.Errorf("failed to plan migration: %w", err)
 	}
 
-	fmt.Printf("=== Migration Plan: %s -> %s ===\n", plan.Repository, plan.Framework)
-	fmt.Printf("Added:   %s\n", strings.Join(plan.AddedRequires, ", "))
-	fmt.Printf("Dropped: %s\n", strings.Join(plan.DroppedRequires, ", "))
-	fmt.Printf("File import replacements: %d\n", len(plan.Replacements))
-
-	for _, r := range plan.Replacements {
-		fmt.Printf("  - %s: %s -> %s\n", util.CleanGitURL(r.File), r.OldImport, r.NewImport)
-	}
+	printMigrationCandidate(plan)
 
 	if !applyNow {
-		fmt.Println("\n[INFO] Dry-run complete. Pass --apply to execute the migration.")
+		fmt.Println("\n[INFO] Dry-run complete. Application is blocked pending verified module version and API compatibility evidence.")
 		return nil
 	}
 
@@ -219,6 +212,21 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 	fmt.Printf("\n[PASS] Migration applied on branch %s (%d files changed).\n", res.Branch, len(res.FilesChanged))
 	fmt.Printf("[PASS] Migration guide generated at %s/MIGRATION.md\n", *path)
 	return nil
+}
+
+func printMigrationCandidate(plan *needs.MigrationPlan) {
+	fmt.Printf("=== Migration Candidate: %s -> %s ===\n", plan.Repository, plan.Framework)
+	fmt.Printf("Status: %s | Framework version: %s\n", plan.Status, plan.FrameworkVersion)
+	fmt.Printf("Mapping availability: %.1f%% | Coverage basis: %s; builds and tests not run\n", plan.MappingAvailability, plan.CoverageBasis)
+	for _, blocker := range plan.Blockers {
+		fmt.Printf("Blocker: %s\n", blocker)
+	}
+	fmt.Printf("Added:   %s\n", strings.Join(plan.AddedRequires, ", "))
+	fmt.Printf("Proposed removals: %s\n", strings.Join(plan.DroppedRequires, ", "))
+	fmt.Printf("Proposed file import replacements: %d\n", len(plan.Replacements))
+	for _, r := range plan.Replacements {
+		fmt.Printf("  - %s: %s -> %s\n", util.CleanGitURL(r.File), r.OldImport, r.NewImport)
+	}
 }
 
 // resolveMigrationMode decides whether the migration is executed. --apply implies

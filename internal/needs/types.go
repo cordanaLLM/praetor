@@ -135,6 +135,12 @@ type MigrationPlan struct {
 	DroppedRequires []string            `json:"dropped_requires"`
 	Replacements    []ReplacementAction `json:"replacements"`
 	GuideMarkdown   string              `json:"guide_markdown"`
+	// Candidate evidence is descriptive; it cannot authorize mutation.
+	FrameworkVersion    string   `json:"framework_version"`
+	CoverageBasis       string   `json:"coverage_basis"`
+	MappingAvailability float64  `json:"mapping_availability"`
+	Status              string   `json:"status"`
+	Blockers            []string `json:"blockers"`
 }
 
 // MigrationResult summarizes the outcome of an applied migration. Success is false

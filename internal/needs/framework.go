@@ -14,7 +14,7 @@ const (
 	FrameworkCatalogDeclared = "catalog-declared"
 	FrameworkSourceObserved  = "source-observed"
 	defaultFrameworkModule   = "github.com/golusoris/golusoris"
-	// defaultFrameworkVersion is the framework release generated artifacts pin.
+	// defaultFrameworkVersion is a legacy catalog label, not a verified release pin.
 	defaultFrameworkVersion = "v0.8.0"
 )
 

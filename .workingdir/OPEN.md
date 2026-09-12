@@ -35,3 +35,4 @@
 - [ ] Enforce local agent dispatch admission with verified backend availability bounded expert tasks budgets and completion evidence
 - [ ] Implement package pipeline stage zero truthful builder optimizer issue and knowledge evidence before package promotion
 - [ ] Repair active IDE toolhost lifecycle interception; fresh native CLI blocks but current chat exec path does not
+- [ ] Implement executable migration admission using verified module-version and API compatibility evidence bound to exact consumer and framework sources

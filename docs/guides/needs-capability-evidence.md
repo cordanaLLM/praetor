@@ -70,9 +70,60 @@ All existing exported signatures remain; callers can use the additive
 reports use “Mapping availability” instead of “Readiness Score”. Parse structured
 fields and inspect the evidence basis rather than matching the old label.
 
-`needs scan` and generated pre-migration epics also expose their declared-catalog
-basis. Epic and import-migration generation still use catalog declarations;
-they do not yet consume the selected source index or validate replacement API
-compatibility. Their proposed imports and version must be independently checked
-before application. A source-observed report does not certify an older migration
-plan produced through those separate paths.
+## Migration candidates and epics
+
+`needs migrate` and `needs epic` now share one selected framework analysis with
+`ScanRepoWithFramework`. Their availability, basis, gaps and proposed import paths
+come from the same reconciled inputs. An observed fork uses its root module name;
+a header-only replacement package produces no replacement candidate. Epic
+creation propagates inspection/planning errors instead of generating a fallback.
+
+The exported function signatures and existing JSON fields remain. Migration plans
+add `coverage_basis`, `mapping_availability`, `framework_version`, `status`, and
+`blockers`; epics add version, status and blockers alongside their existing basis.
+Current results are `status: "candidate"`, `framework_version: "unverified"`.
+`Framework`/`target_framework` identify the module without a fabricated release
+suffix. `AddedRequires` stays empty because no verified module version is known.
+`Replacements` and `DroppedRequires` describe proposals only, not approved edits.
+
+An empty selection explicitly requests the declared catalog. A module-shaped
+selection such as `example.org/fork` preserves its identity but uses
+`identity-declared` basis with no claimed source mappings. To select a relative
+checkout unambiguously, prefix its path with `./`. Missing local selections,
+invalid source, and inspection failures are errors, matching source reports.
+Module names and catalog metadata do not establish a published release.
+
+```bash
+# Preview using actual selected source; performs no migration writes.
+praetorctl needs migrate --path /path/to/consumer --framework /path/to/framework
+
+# Generate an advisory epic from that same source selection.
+praetorctl needs epic --path /path/to/consumer --framework /path/to/framework
+
+# Explicitly request an offline catalog estimate.
+praetorctl needs migrate --path /path/to/consumer --framework=""
+```
+
+### Breaking migration: application requires evidence
+
+`ApplyMigration`, `ApplyMigrationWithOptions`, and `needs migrate --apply` now
+return `*needs.UnverifiedMigrationError` (matching `needs.ErrUnverifiedMigration`
+through `errors.Is`) before invoking Git, modifying files, or running module
+commands. `Runner`, `SkipTidy`, and caller-supplied plan status/version fields do
+not bypass admission. Nil plans and canceled contexts retain explicit errors.
+
+Previously these paths could rewrite imports and claim success from catalog
+mappings and an invented `v0.8.0`; `go mod tidy` alone did not prove that the
+consumer compiled. Use candidate generation to review the actual proposed
+changes. Stop automation that treats a dry-run proposal or successful source
+inspection as permission to apply it. Handle the typed admission error, and
+retain the original dependency until a reviewed replacement has real evidence.
+
+**Remaining work:** executable migration admission requires an immutable module
+version bound to the selected source, replacement API compatibility, and isolated
+consumer build/test results with an evidence validator that rejects stale or
+forged inputs. That system is not implemented by candidate generation. Source
+observation can include wrong APIs, absent imported subpackages, or TODO/panic
+implementations and cannot supply that evidence. Existing rewrite primitives
+retain their direct tests for path confinement, branch safety, dependency edits
+and partial failures; these tests do not admit a generated plan for execution.
