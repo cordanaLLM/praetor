@@ -9,7 +9,8 @@ import (
 
 const CooldownDuration = 30 * time.Second
 
-// ModelCapacityArbiter arbitrates model selection using real-time quota telemetry and fallback cascades.
+// ModelCapacityArbiter uses operator configuration and process-local counters.
+// Keep Config immutable while the arbiter is shared between concurrent callers.
 type ModelCapacityArbiter struct {
 	Config  *RoutingConfig
 	Tracker *LimitTracker
@@ -28,32 +29,13 @@ func NewModelCapacityArbiter(cfg *RoutingConfig, tracker *LimitTracker) *ModelCa
 
 // CalculateHeadroom evaluates available capacity headroom C_avail(M) in [0.0, 1.0].
 func (a *ModelCapacityArbiter) CalculateHeadroom(m ModelDescriptor) float64 {
-	if a.Tracker.IsCoolingDown(m.ID, CooldownDuration) {
-		return 0.0
+	a.Tracker.mu.RLock()
+	defer a.Tracker.mu.RUnlock()
+	usage, _ := a.Tracker.observedUsageLocked(m.ID)
+	if a.Tracker.overflowed[m.ID] || validateRecordedUsage(usage) != nil || !quotaEligible(usage, m, 100, time.Now()) {
+		return 0
 	}
-
-	usage := a.Tracker.GetUsage(m.ID)
-
-	rpmRatio := 0.0
-	if m.RPMLimit > 0 {
-		rpmRatio = float64(usage.CurrentRPM) / float64(m.RPMLimit)
-	}
-
-	tpmRatio := 0.0
-	if m.TPMLimit > 0 {
-		tpmRatio = float64(usage.CurrentTPM) / float64(m.TPMLimit)
-	}
-
-	maxRatio := rpmRatio
-	if tpmRatio > maxRatio {
-		maxRatio = tpmRatio
-	}
-
-	headroom := 1.0 - maxRatio
-	if headroom < 0.0 {
-		return 0.0
-	}
-	return headroom
+	return usageHeadroom(usage, m)
 }
 
 // SelectModel finds the best available model for a task, cascading to secondary tiers if primary is throttled.
@@ -120,8 +102,10 @@ func (a *ModelCapacityArbiter) SelectOrthogonalAuditor(authorFamily ModelFamily,
 }
 
 func (a *ModelCapacityArbiter) orthogonalCandidate(tier Tier, family ModelFamily) *ModelDescriptor {
+	minimum := 1 - a.Config.Governance.ExhaustionThresholdPercent/100
 	for _, model := range tier.Models {
-		if model.Family != family && a.CalculateHeadroom(model) >= 0.20 {
+		headroom := a.CalculateHeadroom(model)
+		if model.Family != family && headroom > 0 && headroom >= minimum {
 			return &model
 		}
 	}

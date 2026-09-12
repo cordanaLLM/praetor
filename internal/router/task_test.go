@@ -19,6 +19,12 @@ func taskConfig(models ...ModelDescriptor) *RoutingConfig {
 		Governance: GovernancePolicy{ExhaustionThresholdPercent: 80}}
 }
 
+func costTaskModel(id string, input, output float64, capabilities ...string) ModelDescriptor {
+	model := taskModel(id, input, output, capabilities...)
+	model.TPMLimit = 2_000_000_000
+	return model
+}
+
 func routeTask(t *testing.T, arbiter *ModelCapacityArbiter, request TaskRequest) *TaskRoute {
 	t.Helper()
 	route, err := arbiter.SelectForTask(context.Background(), request)
@@ -29,7 +35,7 @@ func routeTask(t *testing.T, arbiter *ModelCapacityArbiter, request TaskRequest)
 }
 
 func TestTaskRoutingEligibilityAndCost(t *testing.T) {
-	cfg := taskConfig(taskModel("expensive", 10, 10, "tools", "json"), taskModel("cheap-incapable", 0, 0, "tools"), taskModel("eligible", 1, 2, "tools", "json"))
+	cfg := taskConfig(costTaskModel("expensive", 10, 10, "tools", "json"), costTaskModel("cheap-incapable", 0, 0, "tools"), costTaskModel("eligible", 1, 2, "tools", "json"))
 	cfg.Tiers["wrong-task"] = Tier{TargetTasks: []string{"docstrings"}, Models: []ModelDescriptor{taskModel("free-unqualified", 0, 0, "tools", "json")}}
 	request := TaskRequest{Task: "implement", Capabilities: []string{"tools", "json"}, InputTokens: 1000, OutputTokens: 500}
 	route := routeTask(t, NewModelCapacityArbiter(cfg, nil), request)
@@ -47,7 +53,7 @@ func TestTaskRoutingEligibilityAndCost(t *testing.T) {
 }
 
 func TestTaskRoutingWeightedCostAndDeterministicTies(t *testing.T) {
-	cfg := taskConfig(taskModel("input-cheap", 1, 10), taskModel("output-cheap", 2, 1))
+	cfg := taskConfig(costTaskModel("input-cheap", 1, 10), costTaskModel("output-cheap", 2, 1))
 	arbiter := NewModelCapacityArbiter(cfg, nil)
 	if got := routeTask(t, arbiter, TaskRequest{Task: "implement", InputTokens: 1_000_000}); got.Model.ID != "input-cheap" {
 		t.Fatal("input estimate ignored")
@@ -67,7 +73,7 @@ func TestTaskRoutingWeightedCostAndDeterministicTies(t *testing.T) {
 func TestTaskRoutingCapacityThresholdAndCooldown(t *testing.T) {
 	cfg := taskConfig(taskModel("cheap", 1, 1), taskModel("reserve", 2, 2))
 	tracker := NewLimitTracker()
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 7; i++ {
 		tracker.RecordUsage("cheap", 0, 0)
 	}
 	arbiter := NewModelCapacityArbiter(cfg, tracker)
@@ -129,7 +135,7 @@ func TestTaskRoutingRequiresObservedCapacityWhenRequested(t *testing.T) {
 }
 
 func TestTaskRoutingInputBounds(t *testing.T) {
-	arbiter := NewModelCapacityArbiter(taskConfig(taskModel("one", 1, 1)), nil)
+	arbiter := NewModelCapacityArbiter(taskConfig(costTaskModel("one", 1, 1)), nil)
 	if got := routeTask(t, arbiter, TaskRequest{Task: "implement", InputTokens: MaxTaskTokens}); got.EstimatedCost != 1000 {
 		t.Fatal("exact token bound rejected")
 	}
@@ -154,7 +160,7 @@ func TestTaskRoutingInputBounds(t *testing.T) {
 }
 
 func TestTaskRoutingConfigAndCostBounds(t *testing.T) {
-	cfg := &RoutingConfig{Version: 1, Tiers: make(map[string]Tier)}
+	cfg := &RoutingConfig{Version: 1, Tiers: make(map[string]Tier), Governance: GovernancePolicy{ExhaustionThresholdPercent: 80}}
 	for i := 0; i < MaxRoutingTiers; i++ {
 		tier := Tier{TargetTasks: []string{"implement"}}
 		for j := 0; j < MaxModelsPerTier; j++ {

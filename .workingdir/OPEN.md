@@ -36,3 +36,4 @@
 - [ ] Implement package pipeline stage zero truthful builder optimizer issue and knowledge evidence before package promotion
 - [ ] Repair active IDE toolhost lifecycle interception; fresh native CLI blocks but current chat exec path does not
 - [ ] Implement executable migration admission using verified module-version and API compatibility evidence bound to exact consumer and framework sources
+- [x] Make router admission account for projected requests and atomically reserve per-model concurrency with bounded completion accounting (completed: 2026-09-12)

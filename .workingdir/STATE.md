@@ -540,3 +540,15 @@
 ### [2026-09-12 21:53:20 UTC] Commit `cfe9c66` on `fix/needs-migration-evidence-20260912`
 - **Activity**: Automated state synchronization
 - **Tasks**: 25 open, 1 completed | **Open Bugs**: 715 | **Pending Questions**: 0
+
+### [2026-09-12 22:04:32 UTC] Commit `8ceaecb` on `fix/router-atomic-admission-20260912`
+- **Activity**: Router admission correction: projected quota and atomic reservation regressions pass; scoped race, lint and security green; full verification and fresh CLI/MCP evidence running.
+- **Tasks**: 26 open, 0 completed | **Open Bugs**: 712 | **Pending Questions**: 0
+
+### [2026-09-12 22:07:01 UTC] Commit `8ceaecb` on `fix/router-atomic-admission-20260912`
+- **Activity**: Router admission complete: projected RPM/TPM checks, atomic shared-tracker reservations, conservative completion, cooldown provenance, CLI/MCP threshold parity and initial full verify-all pass. Final full gate rerun after cooldown regression is in progress; private evidence router-admission-20260912.
+- **Tasks**: 25 open, 1 completed | **Open Bugs**: 712 | **Pending Questions**: 0
+
+### [2026-09-12 22:08:32 UTC] Commit `8ceaecb` on `fix/router-atomic-admission-20260912`
+- **Activity**: Router admission frozen for review: final make verify-all passed under Lefthook 2.1.12; source d9b00835c48c6830982a482782c323ab0926a1edbddd839b936b327c6aa981b5. Fresh CLI/MCP 60+40 threshold accepted and 60+41 blocked with unchanged inputs and no dispatch. Atomic reservation lifecycle/race regressions pass. Evidence router-admission-20260912/FROZEN.md.
+- **Tasks**: 25 open, 1 completed | **Open Bugs**: 712 | **Pending Questions**: 0

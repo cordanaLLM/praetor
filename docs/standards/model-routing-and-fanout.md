@@ -2,7 +2,8 @@
 
 `praetorctl models route` makes an offline selection from
 `.config/models/routing.yaml`. It filters by declared task and model capabilities,
-checks recorded capacity where supplied, and minimizes configured token cost.
+checks projected request capacity against supplied counters and declared limits,
+and minimizes configured token cost.
 It does not dispatch an agent or call a provider. Prices, capabilities and task
 assignments are operator declarations, not measured quality or current availability.
 
@@ -13,7 +14,7 @@ flowchart LR
     CLI["models route"] --> CONFIG["Bounded, validated routing.yaml"]
     CONFIG --> TASK["Exact target_tasks eligibility"]
     TASK --> CAPS["All requested capabilities declared"]
-    CAPS --> USAGE["Recorded RPM/TPM and cooldown checks"]
+    CAPS --> USAGE["Projected +1 RPM, input+output TPM and cooldown checks"]
     USAGE --> COST["Configured token cost, deterministic tie break"]
     COST --> RESULT["JSON selection and observation status"]
 ```
@@ -21,7 +22,9 @@ flowchart LR
 The CLI calls `LoadRoutingConfigContext`, optionally `LoadUsageSnapshot` and
 `TrackerFromSnapshot`, then `ModelCapacityArbiter.SelectForTask`. This is a real
 consumer of the Go router. There is no MCP route tool or scheduler dispatch
-connection in this slice. The older `SelectModel` tier-cascade and
+connection in this slice. The MCP `standards_dogfood_repair_status` tool consumes
+the same advisory selection through repair planning, so oversized requests block
+repair admission there too. The older `SelectModel` tier-cascade and
 `SelectOrthogonalAuditor` helpers still exist, but have no production consumer.
 They do not establish that a running agent harness enforces their policies.
 
@@ -69,7 +72,10 @@ or that running it has no resource cost.
 
 Without `--usage`, the CLI uses an empty in-process tracker and reports
 `capacity_source: "unobserved"`, `capacity_observed: false`, with no recorded
-headroom value. This is a provisional selection; no live quota was observed.
+headroom value. `quota_limits_known` says whether both configured quota dimensions
+are positive. When both are known, `projected_headroom` describes utilization after
+the request, using zero as a provisional starting counter when observations are
+absent. These fields do not turn an unobserved selection into a live quota claim.
 
 To use actual observations collected separately:
 
@@ -93,22 +99,70 @@ A model observation may also include nonnegative `total_spend`, nonnegative inte
 `error_count`, and RFC3339 `last_429_time`. Those fields must use their exact names.
 Duplicate keys, field-name aliases, unknown fields/models, null observations and
 missing counters fail. Do not fill absent observations with invented zeroes.
-When `--usage` is supplied, unobserved models cannot be selected. Programmatic
-callers obtain the same behavior with `TaskRequest.RequireObservedCapacity`.
+When `--usage` is supplied, unobserved models and models lacking a positive RPM or
+TPM limit cannot be selected. Programmatic callers obtain the same behavior with
+`TaskRequest.RequireObservedCapacity`.
 
-The existing capacity calculation uses the larger recorded RPM/TPM utilization
-ratio, subtracts it from one, and clamps exhausted capacity to zero. A configured
-zero RPM or TPM limit disables that dimension; it does not prove an unlimited
-provider quota. A candidate needs positive headroom at least
-`1 - exhaustion_threshold_percent/100`. A recorded 429 triggers the existing
-30-second cooldown. Fully exhausted or cooling models remain ineligible even at
-an exhaustion threshold of 100 percent.
+Admission adds one request and the sum of both token estimates before checking
+each known limit against `exhaustion_threshold_percent`. At 80 percent, 7 recorded
+requests against a 10 RPM limit admits one more; 8 does not. Similarly, 700 recorded
+tokens against a 1,000 TPM limit admits 60 input plus 40 output tokens, but rejects
+60 plus 41. Integer additions are checked before mutation, and threshold comparisons
+use the exact configured numeric value without rounding large counters through
+floating point. Headroom floats are diagnostics only.
+
+A configured zero RPM or TPM limit disables that dimension in provisional
+selection; it does not prove an unlimited provider quota. A recorded 429 triggers
+the existing 30-second cooldown. Fully exhausted or cooling models remain
+ineligible even at an exhaustion threshold of 100 percent. Orthogonal selection
+uses the configured threshold and requires positive headroom.
 
 These are historical counter checks. Snapshot timestamps are exposed, but neither
-freshness nor rolling-window expiry is inferred. The requested token estimate is
-used for cost; it is not projected into capacity or reserved. `total_spend` and
-`error_count` do not produce a latency, success-rate or error-rate score. Tracker
-updates are thread-safe; selection is not an atomic quota reservation.
+freshness nor rolling-window expiry is inferred. `total_spend` and `error_count`
+do not produce a latency, success-rate or error-rate score. Advisory selection uses
+one coherent tracker snapshot and does not reserve anything.
+
+## Atomic reservations within a process
+
+The Go API adds `arbiter.ReserveForTask(ctx, request) (*TaskReservation, error)` and
+`tracker.FinishReservation(reservation, actual) error`. A successful reservation
+selects and charges +1 RPM, estimated input+output TPM, and configured cost under
+one tracker lock. It enforces a positive `max_concurrent_same_model`; zero means
+reservation concurrency has not been configured and fails. Active reservations
+also affect advisory selection and headroom reads. Share the same `LimitTracker`
+between dispatchers and keep their routing configuration immutable while in use.
+
+The opaque handle's `Route()` returns a detached description. Every successful
+reservation must be finished, including failed or cancelled dispatches; defer the
+cleanup in the owning runner and finish only after execution has actually stopped.
+Admission cancellation and declined requests write no counters or handles.
+Finishing does not require a context, so a cancelled request can still release its
+slot. No background task, provider request or expiry timer is started by this API.
+
+Pass `&router.ReservationUsage{Tokens: actualTokens, Cost: actualCost}` when actual
+usage is known, including an explicit zero. Completion replaces the estimated
+tokens and cost, keeps the one RPM charge, and releases the active slot exactly
+once. Pass `nil` when actual usage is unknown: the charge stays conservative and
+the slot is released. Do not also call `RecordUsage` for that request; that older
+API is for independent consumption. Invalid actual usage leaves the handle active
+for correction or a final `nil` completion. Duplicate, copied and foreign handles
+are rejected without changing accounting.
+
+Counters created only by estimated charges do not become observations, including
+after `nil` completion. `ObservedUsage` returns charged counters plus a boolean
+indicating whether supplied or actual usage exists; that boolean does not certify
+every charge as measured. A lone 429 event records cooldown, not measured quota
+counters. Accounting overflow saturates the affected counter,
+blocks subsequent admission for that model, releases the finishing slot and returns
+an explicit error. Later completions cannot reclaim saturated accounting. Legacy
+`RecordUsage` cannot wrap counters or reopen a blocked model.
+
+One tracker admits at most 1,024 active handles and cannot add new reservation model
+identities beyond 1,024 tracked models. Counters are cumulative until a caller
+deliberately builds a new tracker from independent observations. No automatic
+reset is safe while reservations remain active. Separate processes, trackers or
+CLI invocations do not share this state: this is not fleet persistence, provider
+availability checking, or scheduler integration. `models route` remains advisory.
 
 ## Bounds and configuration migration
 
@@ -128,13 +182,24 @@ shared validation prevents listing one ambiguous file as free while routing trea
 it differently. Programmatically constructed task-routing descriptors must set
 `CostRatesDeclared` when both configured rates are intentional.
 
+Migration: requests that cross a configured RPM/TPM threshold now fail before
+selection, including oversized requests against an empty tracker. Supply realistic
+token estimates and explicit applicable limits. `--usage` and
+`RequireObservedCapacity` additionally require positive limits for both dimensions.
+Consumers may read the additive `quota_limits_known` and `projected_headroom`
+fields; existing `recorded_headroom` remains the pre-request counter diagnostic.
+Dispatch consumers must opt into the reservation API, configure positive concurrency,
+and finish every successful handle; calling advisory selection alone does not
+enforce concurrency.
+
 ## Remaining dispatch and feedback work
 
-Automatic agent dispatch, concurrency reservations, projected quotas, observed
-latency/success feedback, quality calibration, retry/escalation policy and
+Automatic agent dispatch, shared fleet reservations, observed latency/success
+feedback, quality calibration, retry/escalation policy and
 cross-model review orchestration remain unimplemented integrations. The declared
-`max_concurrent_same_model` and `orthogonal_audit_required` settings do not establish
-scheduler enforcement. The standalone `.config/agent/hooks/pre_agent_dispatch.py`
+`orthogonal_audit_required` setting does not establish scheduler enforcement.
+The concurrency setting is enforced only by callers using the shared tracker
+reservation API. The standalone `.config/agent/hooks/pre_agent_dispatch.py`
 script has no verified hook registration here; this command does not invoke it.
 
 `models list` displays routing configuration. The separate `models sync` path

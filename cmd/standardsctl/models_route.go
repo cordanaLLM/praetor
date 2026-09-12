@@ -29,9 +29,9 @@ func addModelRouteFlags(fs *flag.FlagSet) modelRouteFlags {
 	return modelRouteFlags{
 		task:         fs.String("task", "", "Declared target_tasks label for models route"),
 		capabilities: fs.String("capabilities", "", "Comma-separated required declared model capabilities for route"),
-		input:        fs.Int64("input-tokens", 0, "Estimated input tokens for configured route cost"),
-		output:       fs.Int64("output-tokens", 0, "Estimated output tokens for configured route cost"),
-		usage:        fs.String("usage", "", "Optional bounded JSON capacity snapshot; requires an observation for the selected model"),
+		input:        fs.Int64("input-tokens", 0, "Estimated input tokens for cost and projected quota checks"),
+		output:       fs.Int64("output-tokens", 0, "Estimated output tokens for cost and projected quota checks"),
+		usage:        fs.String("usage", "", "Optional bounded JSON capacity snapshot; requires an observation and positive RPM/TPM limits for the selected model"),
 	}
 }
 
