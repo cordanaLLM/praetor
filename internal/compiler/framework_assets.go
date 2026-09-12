@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // FrameworkKitConfig defines metadata and assets to compile for a language builder kit.
@@ -49,7 +50,7 @@ func CompileFrameworkAssets(ctx context.Context, kit *FrameworkKitConfig, output
 		Templates: make(map[string]string),
 	}
 
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := util.MkdirSecure(outputDir, 0o750); err != nil {
 		return nil, fmt.Errorf("failed to create output dir: %w", err)
 	}
 
@@ -76,7 +77,7 @@ func generateDocsSurfaces(kit *FrameworkKitConfig, outputDir string, res *Compil
 	}
 
 	llmsPath := filepath.Join(outputDir, "llms.txt")
-	if err := os.WriteFile(llmsPath, []byte(llmsTxt), 0644); err != nil {
+	if err := util.WriteFileSecure(llmsPath, []byte(llmsTxt), 0o600); err != nil {
 		return fmt.Errorf("write llms.txt: %w", err)
 	}
 	res.LLMsTxtPath = llmsPath
@@ -86,7 +87,7 @@ func generateDocsSurfaces(kit *FrameworkKitConfig, outputDir string, res *Compil
 	for _, r := range kit.Rules {
 		fullContent += fmt.Sprintf("- %s\n", r)
 	}
-	if err := os.WriteFile(fullPath, []byte(fullContent), 0644); err != nil {
+	if err := util.WriteFileSecure(fullPath, []byte(fullContent), 0o600); err != nil {
 		return fmt.Errorf("write llms-full.txt: %w", err)
 	}
 	res.LLMsFullTxtPath = fullPath
@@ -95,7 +96,7 @@ func generateDocsSurfaces(kit *FrameworkKitConfig, outputDir string, res *Compil
 
 func generateAgentRules(kit *FrameworkKitConfig, outputDir string, res *CompiledFrameworkAssets) error {
 	rulesDir := filepath.Join(outputDir, ".agents", "rules")
-	if err := os.MkdirAll(rulesDir, 0755); err != nil {
+	if err := util.MkdirSecure(rulesDir, 0o750); err != nil {
 		return fmt.Errorf("mkdir agent rules: %w", err)
 	}
 
@@ -114,7 +115,7 @@ func generateAgentRules(kit *FrameworkKitConfig, outputDir string, res *Compiled
 	}
 
 	rulePath := filepath.Join(rulesDir, fmt.Sprintf("%s.md", kit.KitName))
-	if err := os.WriteFile(rulePath, []byte(sb.String()), 0644); err != nil {
+	if err := util.WriteFileSecure(rulePath, []byte(sb.String()), 0o600); err != nil {
 		return fmt.Errorf("write agent rule: %w", err)
 	}
 	res.AgentRulePath = rulePath
@@ -123,20 +124,20 @@ func generateAgentRules(kit *FrameworkKitConfig, outputDir string, res *Compiled
 
 func generateStarterTemplates(kit *FrameworkKitConfig, outputDir string, res *CompiledFrameworkAssets) error {
 	tmplDir := filepath.Join(outputDir, "templates")
-	if err := os.MkdirAll(tmplDir, 0755); err != nil {
+	if err := util.MkdirSecure(tmplDir, 0o750); err != nil {
 		return fmt.Errorf("mkdir templates: %w", err)
 	}
 
 	buildYaml := fmt.Sprintf("version: 1\nproject: %s\noutput_dir: dist\noptimize: true\ntargets:\n  main:\n    runtime: %s\n    entrypoint: ./src\n", kit.KitName, kit.Language)
 	buildPath := filepath.Join(tmplDir, ".framework-build.yaml")
-	if err := os.WriteFile(buildPath, []byte(buildYaml), 0644); err != nil {
+	if err := util.WriteFileSecure(buildPath, []byte(buildYaml), 0o600); err != nil {
 		return fmt.Errorf("write build template: %w", err)
 	}
 	res.Templates[".framework-build.yaml"] = buildPath
 
 	readmeContent := fmt.Sprintf("# %s Starter Kit\n\n%s\n\nLanguage: %s\n", kit.KitName, kit.Description, kit.Language)
 	readmePath := filepath.Join(tmplDir, "README.md")
-	if err := os.WriteFile(readmePath, []byte(readmeContent), 0644); err != nil {
+	if err := util.WriteFileSecure(readmePath, []byte(readmeContent), 0o600); err != nil {
 		return fmt.Errorf("write readme template: %w", err)
 	}
 	res.Templates["README.md"] = readmePath

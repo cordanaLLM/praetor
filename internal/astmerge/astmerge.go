@@ -118,6 +118,8 @@ func readFileWithContext(ctx context.Context, path string) ([]byte, error) {
 		return nil, ctx.Err()
 	default:
 	}
+	// #nosec G304 -- path is a caller-supplied source file to analyze; the content is only
+	// parsed as Go source, never executed, and the read is gated on the caller's context.
 	return os.ReadFile(path)
 }
 
