@@ -441,3 +441,35 @@ func TestScheduleCompletedFailureRetainsPlanAfterCancellation(t *testing.T) {
 		t.Fatal("cancellation discarded failure triage:", err)
 	}
 }
+
+func TestScheduleInterruptedClockRollbackKeepsValidState(t *testing.T) {
+	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
+	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
+		t.Fatal(err)
+	}
+	root, err := openScheduleState(context.Background(), cfg.StateDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := readScheduleState(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.LastAttempt.Status = "running"
+	state.LastAttempt.FinishedAt = time.Time{}
+	state.ConsecutiveFailures = 1
+	if err := saveScheduleJSON(root, "state.json", state); err != nil {
+		t.Fatal(err)
+	}
+	clock := func() time.Time { return fixedScheduleTime().Add(-time.Hour) }
+	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner)
+	if err != nil || report.Status != "cooldown" || report.LastAttempt.FinishedAt.Before(report.LastAttempt.StartedAt) {
+		t.Fatalf("clock rollback %+v %v", report, err)
+	}
+	if _, err := readScheduleState(context.Background(), root); err != nil {
+		t.Fatal("rollback corrupted state:", err)
+	}
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

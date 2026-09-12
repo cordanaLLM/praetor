@@ -112,6 +112,9 @@ func (s *scheduleSession) inspect(ctx context.Context, execute bool) error {
 	if s.state.LastAttempt != nil && s.state.LastAttempt.Status == "running" {
 		s.state.LastAttempt.Status = "interrupted"
 		s.state.LastAttempt.FinishedAt = s.now().UTC()
+		if s.state.LastAttempt.FinishedAt.Before(s.state.LastAttempt.StartedAt) {
+			s.state.LastAttempt.FinishedAt = s.state.LastAttempt.StartedAt
+		}
 		s.state.LastAttempt.Error = "Previous process exited before recording a result; retained evidence is incomplete"
 		if execute {
 			if err := saveScheduleJSON(s.root, "state.json", s.state); err != nil {
