@@ -77,6 +77,7 @@ runnable container: select a complete reviewed source checkout to activate the
 bootstrap. API callers should use `PrepareBundle` and `WriteBundle`; the legacy
 JSON writer cannot publish a recorded specification without its companions.
 
-Runtime/profile selection remains a separate open limitation: the existing
-feature generator still inserts Go (BUG-651). This correction does not implement
-C# tooling, a language-aware feature resolver, or IDE feature-installation proof.
+Runtime/profile selection is sourced from the selected pinned catalog entries.
+Only the selected profile and facets contribute DevContainer features; duplicate
+references must agree on options. This does not establish IDE feature-installation
+or application-tool execution proof.

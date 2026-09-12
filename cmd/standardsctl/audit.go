@@ -235,7 +235,11 @@ func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Mani
 	if !util.FileExists(dcPath) {
 		return nil
 	}
-	dc, err := devcontainer.Synthesize(manifest)
+	features, err := config.ResolveDevContainerFeatures(ctx, opts.effective)
+	if err != nil {
+		return fmt.Errorf("[FAIL] DevContainer catalog resolution failed: %w", err)
+	}
+	dc, err := devcontainer.SynthesizeWithFeatures(manifest, features)
 	if err != nil {
 		return fmt.Errorf("[FAIL] DevContainer synthesis failed: %w", err)
 	}

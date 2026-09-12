@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
@@ -23,5 +24,12 @@ func prepareAdoptDevContainer(ctx context.Context, s *adoptSession) (*devcontain
 	if err != nil {
 		return nil, err
 	}
-	return devcontainer.PrepareBundle(ctx, baseline.Name, manifest.Profiles, manifest.Facets, devcontainer.BootstrapOptions{SourceRoot: s.opts.LockSourceRoot})
+	var features []config.DevContainerFeature
+	if s.policy != nil {
+		features, err = config.ResolveDevContainerFeatures(ctx, s.policy)
+		if err != nil {
+			return nil, fmt.Errorf("resolve selected DevContainer features: %w", err)
+		}
+	}
+	return devcontainer.PrepareBundle(ctx, baseline.Name, manifest.Profiles, manifest.Facets, devcontainer.BootstrapOptions{SourceRoot: s.opts.LockSourceRoot, Features: features})
 }

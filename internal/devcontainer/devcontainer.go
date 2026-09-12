@@ -74,17 +74,45 @@ func Synthesize(m *config.Manifest) (*DevContainer, error) {
 	return SynthesizeFromProfiles(repoName, m.Profiles, m.Facets)
 }
 
+// SynthesizeWithFeatures applies the selected catalog feature set to a manifest.
+func SynthesizeWithFeatures(m *config.Manifest, selected []config.DevContainerFeature) (*DevContainer, error) {
+	if m == nil {
+		return nil, errors.New("manifest cannot be nil")
+	}
+	repoName := m.Repository.Name
+	if repoName == "" {
+		repoName = "workspace"
+	}
+	if m.Repository.Owner != "" {
+		repoName = m.Repository.Owner + "/" + repoName
+	}
+	return SynthesizeFromProfilesWithFeatures(repoName, m.Profiles, m.Facets, selected)
+}
+
 // SynthesizeFromProfiles returns the legacy profile baseline. New writers must
 // use PrepareBundle so adopted repositories receive complete bootstrap artifacts.
 func SynthesizeFromProfiles(name string, profiles []string, facets []string) (*DevContainer, error) {
+	return synthesize(name, profiles, facets, nil)
+}
+
+// SynthesizeFromProfilesWithFeatures synthesizes using only features resolved
+// from the selected, pinned catalog entries.
+func SynthesizeFromProfilesWithFeatures(name string, profiles, facets []string, selected []config.DevContainerFeature) (*DevContainer, error) {
+	return synthesize(name, profiles, facets, selected)
+}
+
+func synthesize(name string, profiles []string, facets []string, selected []config.DevContainerFeature) (*DevContainer, error) {
+	if len(selected) > MaxLoopLimit {
+		return nil, errors.New("selected DevContainer features exceed bounds")
+	}
 	containerName := strings.TrimSpace(name)
 	if containerName == "" {
 		containerName = "workspace"
 	}
 
-	features := synthesizeFeatures(profiles, facets)
-	extensions := synthesizeExtensions(profiles, facets)
-	settings := synthesizeSettings(profiles, facets)
+	features := synthesizeFeatures(selected, profiles, facets)
+	extensions := synthesizeExtensions(profiles, facets, selected)
+	settings := synthesizeSettings(profiles, facets, selected)
 	postCmd := synthesizePostCreateCommand(profiles)
 
 	dc := &DevContainer{
@@ -108,8 +136,14 @@ func SynthesizeFromProfiles(name string, profiles []string, facets []string) (*D
 }
 
 // synthesizeFeatures resolves devcontainer features for profiles and facets.
-func synthesizeFeatures(profiles []string, facets []string) map[string]interface{} {
+func synthesizeFeatures(selected []config.DevContainerFeature, profiles []string, facets []string) map[string]interface{} {
 	features := make(map[string]interface{})
+	if selected != nil {
+		for i := 0; i < len(selected) && i < MaxLoopLimit; i++ {
+			features[selected[i].Ref] = selected[i].Options
+		}
+		return features
+	}
 
 	// Always wire Go feature for Go-based repositories
 	features[GoFeatureRef] = map[string]interface{}{
@@ -130,7 +164,7 @@ func synthesizeFeatures(profiles []string, facets []string) map[string]interface
 }
 
 // synthesizeExtensions constructs deduplicated IDE extensions based on profiles and facets.
-func synthesizeExtensions(profiles []string, facets []string) []string {
+func synthesizeExtensions(profiles []string, facets []string, selected []config.DevContainerFeature) []string {
 	extList := []string{
 		"GitHub.vscode-pull-request-github",
 		"eamodio.gitlens",
@@ -151,7 +185,7 @@ func synthesizeExtensions(profiles []string, facets []string) []string {
 			"ms-vscode.cmake-tools",
 			"ms-python.python",
 		)
-	} else {
+	} else if shouldAddGoTooling(selected) {
 		extList = append(extList, "golang.go")
 	}
 
@@ -173,7 +207,7 @@ func synthesizeExtensions(profiles []string, facets []string) []string {
 }
 
 // synthesizeSettings builds standard and facet-driven editor settings.
-func synthesizeSettings(profiles []string, facets []string) map[string]interface{} {
+func synthesizeSettings(profiles []string, facets []string, selected []config.DevContainerFeature) map[string]interface{} {
 	settings := map[string]interface{}{
 		"editor.formatOnSave": true,
 	}
@@ -192,7 +226,7 @@ func synthesizeSettings(profiles []string, facets []string) map[string]interface
 			"--compile-commands-dir=core/build",
 			"--header-insertion=never",
 		}
-	} else {
+	} else if shouldAddGoTooling(selected) {
 		settings["go.toolsManagement.autoUpdate"] = true
 		settings["go.useLanguageServer"] = true
 		settings["go.lintTool"] = "golangci-lint"
@@ -207,6 +241,19 @@ func synthesizeSettings(profiles []string, facets []string) map[string]interface
 	}
 
 	return settings
+}
+
+func hasGoFeature(selected []config.DevContainerFeature) bool {
+	for _, feature := range selected {
+		if strings.HasSuffix(feature.Identity(), "/go") {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldAddGoTooling(selected []config.DevContainerFeature) bool {
+	return selected == nil || hasGoFeature(selected)
 }
 
 // synthesizePostCreateCommand determines appropriate startup command.

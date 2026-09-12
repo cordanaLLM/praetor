@@ -17,7 +17,9 @@ const (
 	maxVerificationInputs     = 128
 	maxVerificationInputBytes = 64 * 1024
 	maxVerificationTotalBytes = 2 * 1024 * 1024
-	maxVerificationDepth      = 6
+	// Public repositories commonly nest project metadata under src/test trees;
+	// retain a scalar traversal bound while allowing those supported layouts.
+	maxVerificationDepth = 32
 )
 
 type verificationInputs struct {

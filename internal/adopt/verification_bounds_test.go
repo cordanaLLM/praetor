@@ -55,10 +55,20 @@ func TestVerificationDirectoryBounds(t *testing.T) {
 			mustWrite(t, filepath.Join(root, strings.Repeat("d/", depth), "Test.csproj"), "<Project/>")
 			_, err := loadVerificationInputs(t.Context(), root)
 			if (err != nil) != (depth > maxVerificationDepth) {
-				t.Fatalf("depth bound: %v", err)
+				t.Fatalf("meaningful marker depth bound: %v", err)
 			}
 		})
 	}
+	t.Run("deep-recognized-manifest-captured", func(t *testing.T) {
+		root := t.TempDir()
+		path := filepath.Join(root, strings.Repeat("d/", maxVerificationDepth), "Test.csproj")
+		mustWrite(t, path, "<Project/>")
+		rel := filepath.ToSlash(strings.TrimPrefix(path, root+string(filepath.Separator)))
+		inputs, err := loadVerificationInputs(t.Context(), root)
+		if err != nil || !inputs.has(rel) {
+			t.Fatalf("deep manifest was not captured: %v", err)
+		}
+	})
 }
 
 func TestVerificationInputsRejectLinksNewlinesAndCancellation(t *testing.T) {
@@ -116,6 +126,9 @@ func TestVerificationDotnetMetadataTestIdentity(t *testing.T) {
 			t.Fatalf("%s valid marker rejected: %v", name, err)
 		}
 	}
+	if test, err := dotnetTestProject([]byte("\xef\xbb\xbf<Project><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup></Project>")); err != nil || !test {
+		t.Fatalf("UTF-8 BOM should be accepted: test=%v err=%v", test, err)
+	}
 	for name, data := range map[string]string{
 		"production":           `<Project/>`,
 		"explicit-false":       `<Project><PropertyGroup><IsTestProject>false</IsTestProject></PropertyGroup><ItemGroup><PackageReference Include="Microsoft.NET.Test.Sdk"/></ItemGroup></Project>`,
@@ -129,7 +142,7 @@ func TestVerificationDotnetMetadataTestIdentity(t *testing.T) {
 			t.Fatalf("%s ambiguous/disabled project claimed test: %v", name, err)
 		}
 	}
-	for _, data := range []string{"", "<wrong/>", "<Project/><Project/>", "<Project>", "text<Project/>", "<Project>" + strings.Repeat("<X/>", 8192) + "</Project>"} {
+	for _, data := range []string{"", "<wrong/>", "<Project/><Project/>", "<Project>", "text<Project/>", "\xef\xbb\xbf\xef\xbb\xbf<Project/>", "<Project>" + strings.Repeat("<X/>", 8192) + "</Project>"} {
 		if _, err := dotnetTestProject([]byte(data)); err == nil {
 			t.Fatalf("invalid/beyond-bound XML accepted: %.50s", data)
 		}

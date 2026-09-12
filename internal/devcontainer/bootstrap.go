@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
@@ -27,6 +28,7 @@ type BootstrapOptions struct {
 	SourceRoot   string
 	BuilderImage string
 	BaseImage    string
+	Features     []config.DevContainerFeature
 }
 
 // BootstrapSpec records generation inputs, not a claim of build or execution.
@@ -83,7 +85,7 @@ func PrepareBundle(ctx context.Context, name string, profiles, facets []string, 
 	if err := validateBootstrapImages(options.BuilderImage, options.BaseImage); err != nil {
 		return nil, err
 	}
-	dc, err := SynthesizeFromProfiles(name, profiles, facets)
+	dc, err := SynthesizeFromProfilesWithFeatures(name, profiles, facets, options.Features)
 	if err != nil {
 		return nil, err
 	}

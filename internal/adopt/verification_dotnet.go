@@ -101,6 +101,7 @@ type dotnetProjectMetadata struct {
 }
 
 func dotnetTestProject(data []byte) (bool, error) {
+	data = bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
 	decoder := xml.NewDecoder(bytes.NewReader(data))
 	metadata := &dotnetProjectMetadata{}
 	for i := 0; i < 8192; i++ {

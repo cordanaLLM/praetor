@@ -61,6 +61,13 @@ type PolicyArtifact struct {
 	Content      []byte
 }
 
+// DevContainerFeature is a selected catalog feature and its JSON-compatible options.
+// It is decoded only from CatalogArtifacts retained by the effective-policy loader.
+type DevContainerFeature struct {
+	Ref     string
+	Options map[string]interface{}
+}
+
 // Evidence is the compact shared CLI/MCP audit description. Full source hashes
 // and paths remain available on Sources for callers retaining structured evidence.
 func (p *EffectivePolicy) Evidence() string {

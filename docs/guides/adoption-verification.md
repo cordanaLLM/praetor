@@ -29,8 +29,9 @@ renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
 Mixed projects retain all detected gates; npm build precedes .NET builds for
 frontend resources. A solution marker without projects, or Meson/CMake markers
 without a selected configured build directory, remains unavailable. Discovery is
-bounded to 4,096 entries, six directory levels, 128 metadata files, 64 KiB per
-metadata file and 2 MiB in aggregate. Generated dependency/build trees are omitted.
+bounded to 4,096 entries, 32 directory levels (to cover nested public `src`/test
+project layouts), 128 metadata files, 64 KiB per metadata file and 2 MiB in
+aggregate. Generated dependency/build trees are omitted.
 Exceeding a bound is an error, never a truncated successful plan. Selected metadata
 uses bounded reads that refuse symlinks. Command paths with line breaks are
 rejected; shell arguments are quoted and Make dollar signs escaped.

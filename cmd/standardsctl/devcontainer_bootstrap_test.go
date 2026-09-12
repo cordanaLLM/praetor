@@ -29,7 +29,8 @@ func cliBootstrapSource(t *testing.T) string {
 func cliBootstrapPaths(t *testing.T) (string, string) {
 	t.Helper()
 	root := t.TempDir()
-	manifest := writeFixtureFile(t, root, ".standards.yaml", "repository:\n  owner: adopted\n  name: app\nprofiles: [framework]\n")
+	manifest := writeFixtureFile(t, root, ".standards.yaml", "version: 1\nrepository:\n  owner: adopted\n  name: app\nprofiles: []\nfacets: []\n")
+	writeFixtureFile(t, root, ".standards.lock", "version: 1\npinned_version: v1.0.0\ndigest: sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b\nprofiles: []\nfacets: []\n")
 	return manifest, filepath.Join(root, ".devcontainer", "devcontainer.json")
 }
 
@@ -71,6 +72,49 @@ func TestDevContainerCLIMissingSourceIsVisibleFailure(t *testing.T) {
 	}
 	if err := runDevContainer([]string{"verify", "--config", manifest, "--output", output}); !errors.Is(err, devcontainer.ErrBootstrapUnavailable) {
 		t.Fatalf("unavailable verification succeeded: %v", err)
+	}
+}
+
+func TestDevContainerCLIRejectsInvalidManifestBeforeWriting(t *testing.T) {
+	for _, version := range []string{"0", "2"} {
+		t.Run(version, func(t *testing.T) {
+			root := t.TempDir()
+			manifest := writeFixtureFile(t, root, ".standards.yaml", "version: "+version+"\nprofiles: []\nfacets: []\n")
+			output := filepath.Join(root, ".devcontainer", "devcontainer.json")
+			if err := runDevContainer([]string{"generate", "--config", manifest, "--output", output}); err == nil {
+				t.Fatal("invalid manifest version accepted")
+			}
+			if _, err := os.Stat(output); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("invalid manifest wrote output: %v", err)
+			}
+		})
+	}
+}
+
+func TestDevContainerCLIUsesPinnedCatalogFeatures(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureFile(t, root, ".standards.yaml", "version: 1\nrepository:\n  owner: cordanaLLM\n  name: praetor\nprofiles: [framework]\nfacets: [security:high]\n")
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+	for _, rel := range []string{".standards.lock", ".config/archetypes/framework.yaml", ".config/archetypes/facets/security-high.yaml", ".config/archetypes/facets/api-public.yaml", ".config/archetypes/facets/docs-seoportal.yaml", ".config/archetypes/facets/agent-sandboxed.yaml"} {
+		data, err := os.ReadFile(filepath.Join(repoRoot, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFixtureFile(t, root, rel, string(data))
+	}
+	output := filepath.Join(root, ".devcontainer", "devcontainer.json")
+	if err := runDevContainer([]string{"generate", "--config", filepath.Join(root, ".standards.yaml"), "--output", output, "--source-root", cliBootstrapSource(t)}); err != nil {
+		t.Fatal(err)
+	}
+	dc, err := devcontainer.LoadDevContainer(t.Context(), output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := dc.Features[devcontainer.GoFeatureRef]; !ok {
+		t.Fatal("pinned framework feature was not selected")
+	}
+	if _, ok := dc.Features[devcontainer.CommonUtilsFeature]; !ok {
+		t.Fatal("pinned security facet feature was not selected")
 	}
 }
 

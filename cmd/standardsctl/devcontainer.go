@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -45,16 +46,21 @@ func runDevContainer(args []string) error {
 	if err != nil {
 		return err
 	}
-	manifest, err := config.LoadManifest(opts.configPath)
-	if err != nil {
-		return fmt.Errorf("failed to load manifest: %w", err)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	policy, policyErr := config.LoadEffectivePolicyContext(ctx, config.EffectiveOptions{Root: filepath.Dir(opts.configPath), ManifestPath: opts.configPath})
+	if policyErr != nil {
+		return fmt.Errorf("failed to resolve pinned catalog: %w", policyErr)
 	}
-	dc, err := devcontainer.Synthesize(manifest)
+	manifest := policy.Manifest
+	features, err := config.ResolveDevContainerFeatures(ctx, policy)
+	if err != nil {
+		return fmt.Errorf("failed to resolve selected DevContainer features: %w", err)
+	}
+	dc, err := devcontainer.SynthesizeWithFeatures(manifest, features)
 	if err != nil {
 		return fmt.Errorf("failed to synthesize devcontainer: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	if opts.verify {
 		fmt.Printf("Verifying %s against %s...\n", opts.outputPath, opts.configPath)
 		if err := devcontainer.Verify(ctx, opts.outputPath, dc); err != nil {
@@ -63,11 +69,11 @@ func runDevContainer(args []string) error {
 		fmt.Println("[PASS] DevContainer configuration and recorded bootstrap inputs match; runtime execution remains a separate check.")
 		return nil
 	}
-	return generateDevContainerBundle(ctx, manifest, dc, opts)
+	return generateDevContainerBundle(ctx, manifest, dc, features, opts)
 }
 
-func generateDevContainerBundle(ctx context.Context, manifest *config.Manifest, dc *devcontainer.DevContainer, opts devContainerOptions) error {
-	bundle, err := devcontainer.PrepareBundle(ctx, dc.Name, manifest.Profiles, manifest.Facets, devcontainer.BootstrapOptions{SourceRoot: opts.sourceRoot, BuilderImage: opts.builderImage, BaseImage: opts.baseImage})
+func generateDevContainerBundle(ctx context.Context, manifest *config.Manifest, dc *devcontainer.DevContainer, features []config.DevContainerFeature, opts devContainerOptions) error {
+	bundle, err := devcontainer.PrepareBundle(ctx, dc.Name, manifest.Profiles, manifest.Facets, devcontainer.BootstrapOptions{SourceRoot: opts.sourceRoot, BuilderImage: opts.builderImage, BaseImage: opts.baseImage, Features: features})
 	if err != nil {
 		return fmt.Errorf("prepare devcontainer bootstrap: %w", err)
 	}

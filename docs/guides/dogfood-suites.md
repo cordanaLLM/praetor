@@ -3,15 +3,15 @@
 `praetorctl dogfood suite` runs a finite, repeatable set of pinned public adoption
 cases and explicitly selected local transcript cases. The checked-in public suite
 contains Cobra and Flask plus six representative public repositories covering Rust,
-JavaScript, C++, C#, Java, and shell analysis. Every public entry is pinned to a
+JavaScript, C++, C#, Java, and Haskell (ShellCheck). Every public entry is pinned to a
 live immutable GitHub commit; use it to rerun the same inputs after a Praetor change.
 Every invocation requires a new evidence directory; earlier results and original
 sources remain intact.
 
 ## Public configuration
 
-The checked-in `.config/dogfood/public-suite.json` selects the previously tested
-Cobra and Flask commits. Preview it without network or transcript access:
+The checked-in `.config/dogfood/public-suite.json` selects eight pinned public
+repositories. Preview it without network or transcript access:
 
 ```bash
 praetorctl dogfood suite --config .config/dogfood/public-suite.json \
