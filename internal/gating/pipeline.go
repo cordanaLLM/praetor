@@ -239,6 +239,9 @@ func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("hiss scan error: %w", err)
 	}
+	if scanRep.Truncated {
+		return "", fmt.Errorf("hiss scan error: %w", hiss.ErrScanTruncated)
+	}
 
 	base, err := baseline.LoadBaseline(filepath.Join(cfg.repoDir, ".standards-baseline.json"))
 	if err != nil {

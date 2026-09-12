@@ -11,3 +11,4 @@
 - [ ] Continue Claude: recover G09 work and integrate wave A half 1 while preserving all fixes
 - [x] Continue Claude: synthesize ADR-0009 and preserve accepted config-first consolidation decisions (completed: 2026-09-12)
 - [ ] Continue Claude: integrate verified secure-write permission and pre-truncation failure fix
+- [x] Integrate committed G09 core with G01-G08 and verify fail-closed scan consumers (completed: 2026-09-12)

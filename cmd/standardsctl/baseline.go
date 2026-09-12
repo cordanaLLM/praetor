@@ -53,6 +53,10 @@ func recordBaseline(path string, previous *baseline.Baseline, opts baseline.Reco
 		return fmt.Errorf("failed to scan for baseline infractions: %w", err)
 	}
 
+	if scanRep.Truncated {
+		return fmt.Errorf("refusing to record an incomplete baseline: %w", hiss.ErrScanTruncated)
+	}
+
 	next, err := baseline.Record(previous, fingerprintViolations(scanRep.Violations), opts)
 	if err != nil {
 		return fmt.Errorf("refusing to record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase)", path, err)

@@ -98,6 +98,10 @@ func auditBaselineRatchet(ctx context.Context, root, baselinePath string) (strin
 		return "", fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}
 
+	if scanRep.Truncated {
+		return "", fmt.Errorf("[FAIL] Invariant audit failed: %w", hiss.ErrScanTruncated)
+	}
+
 	current := hiss.ConvertToBaseline(scanRep.Violations)
 	for i := range current {
 		current[i].Fingerprint = fmt.Sprintf("%s:%d:%s", current[i].FilePath, current[i].LineNumber, current[i].RuleID)

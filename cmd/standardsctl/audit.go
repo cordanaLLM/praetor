@@ -160,6 +160,9 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 	if err != nil {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}
+	if scanRep.Truncated {
+		return fmt.Errorf("[FAIL] Invariant audit failed: %w (%d infractions recorded before truncation)", hiss.ErrScanTruncated, scanRep.TotalInfractions)
+	}
 	current := fingerprintViolations(scanRep.Violations)
 
 	touched, err := resolveTouchedFiles(ctx, opts)
@@ -171,8 +174,8 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 	if !ratchet.Passed {
 		return describeRatchetFailure(ratchet)
 	}
-	fmt.Printf("[PASS] HISS invariant scan verified: %d active violations within %d baselined limit (%d touched files clean).\n",
-		ratchet.CurrentCount, base.TotalInfractions, len(touched))
+	fmt.Printf("[PASS] HISS invariant scan verified: %d active violations within %d baselined limit (%d touched files clean) (skipped: %d ignored directories, %d symlinks, %d oversize files).\n",
+		ratchet.CurrentCount, base.TotalInfractions, len(touched), scanRep.Skips.DirCount, scanRep.Skips.Symlinks, scanRep.Skips.Oversize)
 
 	return auditBaselineGrowth(ctx, opts, base)
 }
