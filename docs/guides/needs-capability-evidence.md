@@ -69,3 +69,10 @@ All existing exported signatures remain; callers can use the additive
 `ScanRepoWithFramework` function when selecting a framework. Human-readable
 reports use “Mapping availability” instead of “Readiness Score”. Parse structured
 fields and inspect the evidence basis rather than matching the old label.
+
+`needs scan` and generated pre-migration epics also expose their declared-catalog
+basis. Epic and import-migration generation still use catalog declarations;
+they do not yet consume the selected source index or validate replacement API
+compatibility. Their proposed imports and version must be independently checked
+before application. A source-observed report does not certify an older migration
+plan produced through those separate paths.

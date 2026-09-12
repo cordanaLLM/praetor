@@ -230,3 +230,6 @@
 
 ### Discharged Tasks [2026-09-12 21:24:23 UTC, commit `local`]
 - [x] Expose actual HISS file coverage so unsupported CSharp sources cannot be mistaken for measured zero debt (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 21:32:39 UTC, commit `local`]
+- [x] Fix needs framework coverage using exact observed catalog packages and shared CLI MCP reports (completed: 2026-09-12)

@@ -33,6 +33,7 @@ type PreMigrationEpic struct {
 	RepoName          string            `json:"repo_name"`
 	TargetFramework   string            `json:"target_framework"`
 	ReadinessScore    float64           `json:"readiness_score"`
+	CoverageBasis     string            `json:"coverage_basis,omitempty"`
 	ParentEpic        forge.IssueSpec   `json:"parent_epic"`
 	ChildIssues       []forge.IssueSpec `json:"child_issues"`
 	ChecklistMarkdown string            `json:"checklist_markdown"`
@@ -93,6 +94,7 @@ func buildEpicStructure(repoPath string, repoNeeds *RepoNeeds, plan *MigrationPl
 		RepoName:          repoName,
 		TargetFramework:   plan.Framework,
 		ReadinessScore:    repoNeeds.Readiness.Score,
+		CoverageBasis:     repoNeeds.Readiness.Basis,
 		ParentEpic:        parentEpic,
 		ChildIssues:       tasks,
 		ChecklistMarkdown: checklistMD,
@@ -157,7 +159,8 @@ func renderEpicChecklistMarkdown(repoName string, repoNeeds *RepoNeeds, plan *Mi
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "# Pre-Migration Epic: %s\n\n", repoName)
 	fmt.Fprintf(&sb, "- **Target Framework**: `%s`\n", plan.Framework)
-	fmt.Fprintf(&sb, "- **Current Readiness Score**: `%.1f%%`\n", repoNeeds.Readiness.Score)
+	fmt.Fprintf(&sb, "- **Declared Mapping Availability**: `%.1f%%`\n", repoNeeds.Readiness.Score)
+	fmt.Fprintf(&sb, "- **Coverage Basis**: %s; builds and tests not run\n", repoNeeds.Readiness.Basis)
 	fmt.Fprintf(&sb, "- **Third-Party Dependencies**: `%d` total (%d covered, %d gaps)\n\n",
 		repoNeeds.Readiness.TotalThirdPartyDeps, repoNeeds.Readiness.CoveredDeps, repoNeeds.Readiness.GapDeps)
 

@@ -75,6 +75,9 @@ func TestGeneratePreMigrationEpic_Positive(t *testing.T) {
 	if epic.RepoName != "test/epic-target" {
 		t.Errorf("expected repo name test/epic-target, got %s", epic.RepoName)
 	}
+	if epic.CoverageBasis != FrameworkCatalogDeclared || !strings.Contains(epic.ChecklistMarkdown, "builds and tests not run") {
+		t.Fatalf("epic must retain unverified catalog basis: %+v", epic)
+	}
 	if len(epic.ChildIssues) != totalEpicTasks {
 		t.Fatalf("expected %d child tasks, got %d", totalEpicTasks, len(epic.ChildIssues))
 	}

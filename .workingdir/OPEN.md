@@ -32,4 +32,3 @@
 - [ ] Add Jellysin CSharp plugin and Python release helper to staged dogfood with language-correct templates and acceptance evidence
 - [ ] Build configurable research concept specification task code test interconnect with shared agent orchestration before private settings fork promotion
 - [ ] Correct needs readiness against actual selected framework coverage and reject synthetic builder dispatch success
-- [x] Fix needs framework coverage using exact observed catalog packages and shared CLI MCP reports (completed: 2026-09-12)

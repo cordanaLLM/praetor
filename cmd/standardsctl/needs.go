@@ -82,6 +82,7 @@ func runNeedsScan(ctx context.Context, args []string) error {
 	fmt.Printf("Go Version: %s | Target Framework: %s\n", report.GoVersion, report.Framework)
 	fmt.Printf("Mapping availability: %.1f%% (%d covered, %d gaps, %d total third-party)\n\n",
 		report.Readiness.Score, report.Readiness.CoveredDeps, report.Readiness.GapDeps, report.Readiness.TotalThirdPartyDeps)
+	fmt.Printf("Coverage basis: %s; builds and tests not run\n\n", report.Readiness.Basis)
 
 	for _, dep := range report.Dependencies {
 		statusIndicator := "[COVERED]"

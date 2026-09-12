@@ -508,3 +508,7 @@
 ### [2026-09-12 21:29:26 UTC] Commit `989633b` on `fix/needs-capability-evidence-20260912`
 - **Activity**: Final needs review correction rejects package-header and import-only stubs; function/type/var/const declarations count only as source-observed candidates, not working APIs. Final source c788372b4c05e76f69a951ac87c3f2992cbb943f018c4809c0ef18f15df7d703 passed three-package race, lint, security and fresh CLI/MCP parity plus 35-check probe. Frozen for root review; no commit.
 - **Tasks**: 21 open, 1 completed | **Open Bugs**: 713 | **Pending Questions**: 0
+
+### [2026-09-12 21:32:57 UTC] Commit `5fc1c21` on `checkpoint/deep-audit-2026-09-12`
+- **Activity**: Integrated needs reports/fleet mapping correction5fc1c21 after preserving parallel session histories. Full integrated make verify-all passed. Header-only stubs remain unavailable and actual declarations are only source-observed candidates; BUG-717 resolved. Follow-up BUG-720 records migration/epic bypass of selected source index/version evidence; projections now disclose declared basis. Template and imago repairs continue in isolated worktrees.
+- **Tasks**: 24 open, 0 completed | **Open Bugs**: 715 | **Pending Questions**: 0
