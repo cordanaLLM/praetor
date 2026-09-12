@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 )
@@ -283,13 +284,19 @@ func TestDispatchCommand_ForgePinnedReceiptArguments(t *testing.T) {
 // is read-only; the hermetic audit behaviour is covered by audit_cmd_test.go.
 func TestDispatchCommand_RepositoryDogfood(t *testing.T) {
 	t.Setenv("CI", "true")
+	const manifestPath = "../../.standards.yaml"
+	manifest, err := config.LoadManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("load repository identity: %v", err)
+	}
 	out, err := captureStdout(t, func() error {
-		return dispatchCommand("audit", []string{"--config=../../.standards.yaml"})
+		return dispatchCommand("audit", []string{"--config=" + manifestPath})
 	})
 	if err != nil {
 		t.Fatalf("repository audit failed: %v\n%s", err, out)
 	}
-	mustContain(t, out, "=== cordanaLLM/praetor Governance Audit ===", "Audit Summary: 100% Compliance")
+	expectedHeader := fmt.Sprintf("=== %s/%s Governance Audit ===", manifest.Repository.Owner, manifest.Repository.Name)
+	mustContain(t, out, expectedHeader, "Audit Summary: 100% Compliance")
 
 	if err := dispatchCommand("compile-context", []string{"--verify", "--source=../../AGENTS.md", "--target-dir=../.."}); err != nil {
 		t.Fatalf("compile-context verify failed: %v", err)
