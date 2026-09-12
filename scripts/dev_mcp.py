@@ -115,7 +115,7 @@ def parse_args():
         child.add_argument("--root", type=Path, default=ROOT,
                            help="Confined server root (default: this checkout)")
         child.add_argument("--allow-remote-benchmarks", action="store_true",
-                           help="Explicitly enable curated public repository clones")
+                           help="Explicitly enable configured public repository clones")
         if action == "call":
             child.add_argument("--timeout", type=rpc_timeout, default=30,
                                metavar="SECONDS", help="RPC deadline, 1..300 seconds (default: 30)")

@@ -30,6 +30,8 @@ The [public loop](../dogfooding.md) retains fresh clones and checks actual lock
 digests, generated context, HISS debt and reconciliation stability. It never
 executes upstream application tests, build scripts, hooks or agent instructions.
 
+The [adoption command plan](adoption-verification.md) reports declared native commands and missing gates separately. A governance result of `verified` does not mean those commands ran; an unavailable native build contract remains unavailable and does not create a governance repair job.
+
 Public cases use the [resolved audit policy](effective-policy.md) for both the
 original and post-adoption scans. Each attempt must retain the planned policy
 identity, and its saved baseline must match the independently scanned original
@@ -94,8 +96,25 @@ or working semantic memory recall.
 
 ## Evidence, bounds and failure behavior
 
-The config is bounded to 64 KiB and 1–8 total cases. Public URLs must belong to
-the existing curated list and include immutable commit pins. Duplicate IDs,
+The config is bounded to 64 KiB and 1–8 total cases. Each explicit
+`public_repositories` entry enrolls a public GitHub repository at an immutable
+commit; no separate repository allowlist or personal fork configuration is needed.
+Use `https://github.com/owner/repo#<commit>` with a lowercase 40- or 64-hex commit
+pin. The admitted spelling uses an ASCII alphanumeric/hyphen owner of 1–39 bytes
+with alphanumeric endpoints, and an ASCII alphanumeric/dot/underscore/hyphen
+repository name of 1–100 bytes. Credentials, alternate hosts, ports, queries,
+percent escapes, whitespace, extra path segments, trailing slashes, `.`/`..`
+repository names and `.git` suffix aliases are rejected. Repository identities
+are compared without case, so spelling or pin changes cannot enroll duplicates.
+
+The eight popular benchmark defaults remain available. Exploratory public-loop
+runs may omit pins only for those defaults; suites always require pins. Enrollment
+permits disposable clone and Praetor adoption checks only. It does not authorize
+upstream hooks, build scripts or application tests, and MCP public verification
+still requires the server's existing remote opt-in. Plan records declarations
+without cloning and remains unverified.
+
+Duplicate IDs,
 duplicate transcript paths, unknown or duplicate JSON fields, invalid formats,
 null lists, and unpinned public URLs fail before evidence creation or execution.
 Config and evidence paths reject symlink ancestors; Unix config/source reads use

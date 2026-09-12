@@ -23,7 +23,7 @@ func runDogfoodSuite(ctx context.Context, args []string) error {
 	if fs.NArg() != 0 || opts.ConfigPath == "" || opts.ArtifactDir == "" {
 		return errors.New("dogfood suite requires --config and --artifacts and no positional arguments")
 	}
-	opts.AllowRemote = true // Explicit CLI verify stage authorizes its declared curated sources.
+	opts.AllowRemote = true // Explicit CLI verify stage authorizes its declared pinned GitHub sources.
 	report, runErr := dogfood.RunSuite(ctx, opts)
 	if report != nil {
 		return errors.Join(runErr, json.NewEncoder(os.Stdout).Encode(report))

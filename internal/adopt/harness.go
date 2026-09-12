@@ -51,23 +51,14 @@ standardsctl audit
 {{ .VerifyCmd }}
 ` + "```\n"
 
-// archetypeCommands returns the test and build commands advertised for an archetype.
-// The harness and the scaffolded Makefile both derive from it so they never disagree.
-func archetypeCommands(arch string) (testCmd, buildCmd string) {
-	if arch == "native-gpu-systems" {
-		return "meson test -C core/build --suite=fast", "meson compile -C core/build"
-	}
-	return "go test -v -race ./...", "go build -v ./..."
-}
-
 // buildAgentHarness renders the canonical harness, terminated by harnessEndMarker.
-func buildAgentHarness(repoName, arch string) (string, error) {
-	testCmd, _ := archetypeCommands(arch)
+func buildAgentHarness(repoName, arch string, plan *VerificationPlan) (string, error) {
 	tCtx := TemplateContext{
 		RepoName:  repoName,
 		Archetype: arch,
 		VerifyCmd: verifyCommand,
-		TestCmd:   testCmd,
+		TestCmd:   verificationTestText(plan),
+		Runtime:   strings.Join(plan.Runtimes, ", "),
 	}
 	header, err := RenderTemplate("harness_header", agentHarnessTemplate, tCtx)
 	if err != nil {
@@ -174,7 +165,7 @@ func resolveAgentsContent(s *adoptSession) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	harness, err := buildAgentHarness(s.repoName, s.arch)
+	harness, err := buildAgentHarness(s.repoName, s.arch, s.verification)
 	if err != nil {
 		return "", err
 	}
@@ -207,7 +198,10 @@ func mergeExistingAgentsContent(s *adoptSession, full, existing, harness string)
 		return merged, nil
 	}
 	if !s.opts.Force {
-		s.report.recordReconciled(agentsFile, "Existing Praetor Agent Operating Harness verified in sync")
+		s.report.recordReconciled(agentsFile, "Existing Praetor Agent Operating Harness preserved; command synchronization not verified")
+		if existing != harness {
+			s.report.addWarning("Existing AGENTS.md was preserved; review its commands against the verification plan or use --force to refresh a recognized harness boundary.")
+		}
 		return existing, nil
 	}
 	tail, ok := splitHarnessTail(existing)

@@ -21,7 +21,7 @@ func newAdoptLockSource(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	manifest := &config.Manifest{Version: 1,
-		Profiles: []string{"framework", "template-seed", "native-gpu-systems"},
+		Profiles: []string{"framework", "template-seed", "native-gpu-systems", "app-service"},
 		Facets:   []string{"security:high", "api:public-contract", "docs:seo-portal", "agent:sandboxed", "custom:facet"}}
 	profiles, profileLines := writeAdoptSourceEntries(t, root, "profile", manifest.Profiles)
 	facets, facetLines := writeAdoptSourceEntries(t, root, "facet", manifest.Facets)

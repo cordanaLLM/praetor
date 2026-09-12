@@ -416,18 +416,18 @@ func TestAdopt_Negative_DanglingSymlinkIsNotCreatedThrough(t *testing.T) {
 
 func TestAdopt_Negative_PartialReportOnFailure(t *testing.T) {
 	repoPath := newTestRepo(t, "partial-failure")
-	mustWrite(t, filepath.Join(repoPath, "Makefile"), "all:\n")
+	mustWrite(t, filepath.Join(repoPath, "README.md"), "all:\n")
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores file modes")
 	}
-	if err := os.Chmod(filepath.Join(repoPath, "Makefile"), 0o000); err != nil {
+	if err := os.Chmod(filepath.Join(repoPath, "README.md"), 0o000); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { restoreMode(t, filepath.Join(repoPath, "Makefile")) })
+	t.Cleanup(func() { restoreMode(t, filepath.Join(repoPath, "README.md")) })
 
 	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
 	if err == nil {
-		t.Fatal("expected an error for an unreadable Makefile")
+		t.Fatal("expected an error for an unreadable README")
 	}
 	if rep == nil || !contains(rep.CreatedFiles, ".standards.yaml") {
 		t.Fatalf("partial report must list the files written before the failure, got %+v", rep)
@@ -793,19 +793,29 @@ func TestAdopt_ExistingMakefileAppended(t *testing.T) {
 	}
 }
 
-func TestBuildMakefile_ArchetypeCommands(t *testing.T) {
-	if mk := buildMakefile("native-gpu-systems"); !strings.Contains(mk, "meson test -C core/build --suite=fast") {
-		t.Errorf("native archetype must use meson, got:\n%s", mk)
-	}
-	if mk := buildMakefile("framework"); !strings.Contains(mk, "go test -v -race ./...") {
-		t.Errorf("framework archetype must use go test, got:\n%s", mk)
-	}
-	harness, err := buildAgentHarness("r", "native-gpu-systems")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(harness, "meson test -C core/build --suite=fast") {
-		t.Error("harness and Makefile must advertise the same test command")
+func TestBuildMakefile_DetectedCommands(t *testing.T) {
+	for _, tc := range []struct{ marker, command string }{
+		{"go.mod", "'go' 'test' '-v' '-race' './...'"},
+		{"Cargo.toml", "'cargo' 'test' '--locked'"},
+	} {
+		t.Run(tc.marker, func(t *testing.T) {
+			root := t.TempDir()
+			mustWrite(t, filepath.Join(root, tc.marker), "")
+			plan, err := resolveVerificationPlan(context.Background(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mk := buildMakefile(plan); !strings.Contains(mk, tc.command) {
+				t.Errorf("detected toolchain command absent: %s", mk)
+			}
+			harness, err := buildAgentHarness("r", "unrelated-governance-profile", plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(harness, tc.command) {
+				t.Error("harness and Makefile must advertise the same detected command")
+			}
+		})
 	}
 }
 

@@ -233,3 +233,7 @@
 
 ### Discharged Tasks [2026-09-12 21:32:39 UTC, commit `local`]
 - [x] Fix needs framework coverage using exact observed catalog packages and shared CLI MCP reports (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 21:46:21 UTC, commit `local`]
+- [x] Validate optional retained scan coverage metadata and mark truncated scope partial (completed: 2026-09-12)
+- [x] Integrate metadata-derived adoption checks and replay pinned Jellysin governance with explicit enrollment (completed: 2026-09-12)

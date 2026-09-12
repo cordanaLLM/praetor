@@ -80,6 +80,7 @@ type ActionDetail struct {
 // example hooks that were not activated because their configuration was not written
 // by praetor) that the caller should print but that do not fail the run.
 type AdoptReport struct {
+	Verification *VerificationPlan `json:"verification,omitempty"`
 	// EffectivePolicy is the resolved planned/applied snapshot. Its source bytes
 	// remain excluded by config's JSON contract; absence never implies defaults.
 	EffectivePolicy *config.EffectivePolicy `json:"effective_policy,omitempty"`
@@ -98,13 +99,14 @@ type AdoptReport struct {
 
 // adoptSession carries the resolved inputs of one adoption run through the step chain.
 type adoptSession struct {
-	repoPath string
-	repoName string
-	arch     string
-	facets   []string
-	opts     AdoptOptions
-	report   *AdoptReport
-	policy   *config.EffectivePolicy
+	repoPath     string
+	repoName     string
+	arch         string
+	facets       []string
+	opts         AdoptOptions
+	report       *AdoptReport
+	policy       *config.EffectivePolicy
+	verification *VerificationPlan
 }
 
 // adoptStep is one reconciliation step of the adoption chain.
@@ -126,11 +128,41 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	if err != nil {
 		return nil, err
 	}
+	report := newAdoptionReport(normPath, opts)
+	verification, err := resolveVerificationPlan(ctx, normPath)
+	if err != nil {
+		report.Errors = append(report.Errors, err.Error())
+		return report, fmt.Errorf("resolve project verification: %w", err)
+	}
 
 	arch := resolveArchetype(normPath, opts.Profile)
-	report := &AdoptReport{
-		State:           DetectState(normPath),
-		Archetype:       arch,
+	if opts.Profile == "" && containsRuntime(verification, "dotnet") {
+		arch = "app-service"
+	}
+	report.Archetype = arch
+	report.Verification = verification
+	s := &adoptSession{
+		repoPath:     normPath,
+		repoName:     resolveRepoName(ctx, normPath),
+		arch:         arch,
+		facets:       report.Facets,
+		opts:         opts,
+		report:       report,
+		verification: verification,
+	}
+	report.addWarning("%s", verification.notice())
+
+	if err := executeAdoptSteps(ctx, s); err != nil {
+		return report, err
+	}
+	report.EffectivePolicy = s.policy
+	return report, nil
+}
+
+func newAdoptionReport(path string, opts AdoptOptions) *AdoptReport {
+	return &AdoptReport{
+		State:           DetectState(path),
+		Archetype:       resolveArchetype(path, opts.Profile),
 		Facets:          resolveFacets(opts.Facets),
 		CreatedFiles:    make([]string, 0),
 		ReconciledFiles: make([]string, 0),
@@ -140,20 +172,6 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 		Errors:          make([]string, 0),
 		Warnings:        make([]string, 0),
 	}
-	s := &adoptSession{
-		repoPath: normPath,
-		repoName: resolveRepoName(ctx, normPath),
-		arch:     arch,
-		facets:   report.Facets,
-		opts:     opts,
-		report:   report,
-	}
-
-	if err := executeAdoptSteps(ctx, s); err != nil {
-		return report, err
-	}
-	report.EffectivePolicy = s.policy
-	return report, nil
 }
 
 // resolveTargetPath normalises opts.Path and validates that it is an adoptable target.

@@ -16,6 +16,7 @@ import (
 type publicSource struct{ url, sha string }
 
 var publicSHA = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+var publicGitHubRepository = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}$`)
 
 func validatePublicOptions(ctx context.Context, opts *PublicLoopOptions) ([]publicSource, error) {
 	if err := ctx.Err(); err != nil {
@@ -62,35 +63,57 @@ func normalizePublicBounds(opts *PublicLoopOptions) error {
 }
 
 func parsePublicSources(inputs []string) ([]publicSource, error) {
+	if len(inputs) > MaxPublicRepositories {
+		return nil, fmt.Errorf("public sources exceed %d repositories", MaxPublicRepositories)
+	}
 	sources := make([]publicSource, 0, len(inputs))
 	seen := make(map[string]bool, len(inputs))
 	for i := 0; i < len(inputs) && i < MaxPublicRepositories; i++ {
-		if len(inputs[i]) > 4096 {
-			return nil, ErrInvalidRepoURL
+		source, err := parsePublicSource(inputs[i])
+		if err != nil {
+			return nil, err
 		}
-		url, sha, pinned := strings.Cut(strings.TrimSpace(inputs[i]), "#")
-		if !curatedPublicURL(url) || (pinned && !publicSHA.MatchString(sha)) {
-			return nil, fmt.Errorf("%w: expected curated HTTPS URL optionally followed by #<commit SHA>", ErrInvalidRepoURL)
+		identity := strings.ToLower(source.url)
+		if seen[identity] {
+			return nil, fmt.Errorf("duplicate public repository %s", source.url)
 		}
-		if seen[url] {
-			return nil, fmt.Errorf("duplicate public repository %s", url)
-		}
-		seen[url] = true
-		sources = append(sources, publicSource{url: url, sha: sha})
+		seen[identity] = true
+		sources = append(sources, source)
 	}
 	return sources, nil
 }
 
-func curatedPublicURL(url string) bool {
-	switch url {
-	case "https://github.com/gin-gonic/gin", "https://github.com/spf13/cobra",
-		"https://github.com/pallets/flask", "https://github.com/sveltejs/template",
-		"https://github.com/google/googletest", "https://github.com/BurntSushi/ripgrep",
-		"https://github.com/fastify/fastify", "https://github.com/spring-projects/spring-petclinic":
-		return true
-	default:
+func parsePublicSource(input string) (publicSource, error) {
+	if len(input) > 4096 {
+		return publicSource{}, ErrInvalidRepoURL
+	}
+	url, sha, pinned := strings.Cut(input, "#")
+	if !canonicalPublicURL(url) || (pinned && !publicSHA.MatchString(sha)) {
+		return publicSource{}, fmt.Errorf("%w: expected canonical https://github.com/owner/repo with a lowercase 40- or 64-hex commit pin", ErrInvalidRepoURL)
+	}
+	if !pinned && !popularPublicURL(url) {
+		return publicSource{}, fmt.Errorf("%w: additional public repositories require an explicit immutable commit pin", ErrInvalidRepoURL)
+	}
+	return publicSource{url: url, sha: sha}, nil
+}
+
+// The literal grammar excludes credentials, ports, escapes, query parameters,
+// alternate hosts and path aliases before Git sees the input.
+func canonicalPublicURL(url string) bool {
+	if !publicGitHubRepository.MatchString(url) {
 		return false
 	}
+	repo := url[strings.LastIndexByte(url, '/')+1:]
+	return repo != "." && repo != ".." && !strings.HasSuffix(strings.ToLower(repo), ".git")
+}
+
+func popularPublicURL(url string) bool {
+	for i := 0; i < len(PopularBenchmarks) && i < MaxPublicRepositories; i++ {
+		if strings.EqualFold(PopularBenchmarks[i], url) {
+			return true
+		}
+	}
+	return false
 }
 
 // publicCommandContext supplies only explicit non-secret process settings. Git

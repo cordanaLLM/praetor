@@ -26,7 +26,9 @@ const (
 var ErrPublicLoopFailed = errors.New("public dogfood loop did not verify every repository")
 
 // PublicLoopOptions selects explicit public sources and a retained evidence directory.
-// Repository URLs must be curated HTTPS URLs, optionally suffixed #<commit SHA>.
+// Repository URLs must be canonical GitHub HTTPS URLs with #<commit SHA> pins.
+// Only PopularBenchmarks retain optional pins for exploratory public-loop runs;
+// suite configurations require immutable pins for every public repository.
 // Apply authorizes Praetor scaffolding only inside newly created disposable clones;
 // upstream code, hooks, build scripts and tests are never executed.
 type PublicLoopOptions struct {
