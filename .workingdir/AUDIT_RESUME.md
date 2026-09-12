@@ -130,6 +130,10 @@ receipt for the current branch or verification result.
 | Secure-write permissions | `0a26497` | Integrated util, adoption, milestone, harvester, gating and CLI race tests pass |
 | G09 scanner/LSP | `fac9d09` | Preserved earlier fixes; scanner bounds fail explicitly, including a 1,100-if AST-depth fixture; combined MCP audit wire probes pass |
 | G10 harvesting/dogfood | `413c2a5` | Full prepared-branch races pass; combined CLI/MCP/dogfood/harvester/util/adopt races and development MCP preflight pass |
+| Checkpoint publication | `0a96f26` | Real origin push passed file/build/race gates; 35 hook regressions preserve strict promotion checks |
+| Transcript replay and MCP ingestion | `ba75796` | Full original source replay and duplicate-free retry; CLI/MCP pagination/readback and independent cursor/parser review pass |
+| Public repository loop and real lock generation | `f59190c` | Fresh merged-source MCP verifies pinned Cobra/Flask through two stable applications; full atomic race coverage 79.8% |
+| Configurable owner regression | `5b21260` | Audit heading test derives owner/name from manifest; public and private owner cases pass |
 
 Wave A half 1 is integrated. G06 preserves both G05's context,
 path, permission and unknown-coverage safeguards and G06's scan/migration
@@ -189,8 +193,10 @@ changed files. No integrated full-gate pass has been established.
   report unavailable workstations and unsupported formats explicitly.
 - Keep `cordanaLLM/praetor` as the public application. The owner wants
   `lusoris/praetor` to be its synchronized operational fork, with maintained
-  differences limited to owner repository/workstation configuration. The fork
-  conversion and synchronization policy are not implemented yet.
+  differences limited to owner repository/workstation configuration. The current
+  private repository is a downstream copy (`fork=false`), not a GitHub-linked
+  fork. Four owner-derived configuration changes are prepared against the public
+  checkpoint; automatic upstream synchronization and rollout stages remain open.
 - Configure explicit rollout stages before bot activation: inventory, dry-run,
   proposed fixes, then verified automation. Advancement must use actual evidence;
   a simulated scan, checkpoint push or empty report is not a passing stage.
@@ -221,8 +227,34 @@ Original corpus and workstation metadata are preserved outside Git under
 `codex-continuation/corpus-discovery/DISCOVERY.md`. Gemini's full Praetor transcript
 contains 10,863 records; the old 2,000-line extractor stopped before its first
 `lusoris/praetor` checkout reference. Raw private payloads remain outside tracked
-files. Public-loop and transcript-ingestion fixes are in separate worktrees;
-integration and fresh MCP validation remain required.
+files. Both implementations are integrated and pushed on the checkpoint branch.
+The merged CLI replayed the original source in two pages: 10,830 already-present
+events, 33 metadata-only skips, zero new records, and explicit completion. The
+initial library replay stored the 10,830 events. Source SHA256 remained
+`ccc79794d9e92ca8998291082e9176344ceec3b330797df7be39bf2af33eeae4`.
+
+Fresh merged-source MCP public-loop acceptance on `f59190c` verified pinned
+Cobra `adbc8813901bba65827259daa8e22ff94ec1f30e` and Flask
+`d73fa1cdcbd8b1465c151db8924ba58b1dd14e35`. Each clone was configured twice with
+stable file/directory digests, valid real-content lock pins, synchronized agent
+context and no HISS debt growth. This scope does not execute upstream application
+tests or builds. Failed pins retain failed checkouts and return a tool error.
+
+Final clean-checkout `make -k verify-all` at `f59190c` has only 76 lint and 91 gosec
+failures, unchanged signatures outside the new files. All 43 packages pass race
+tests with atomic coverage 79.8%; 16 MCP client tests, 17 wire checks/14 tools,
+context, audit, vulnerabilities, flavor, state, topology and 35 hook tests pass.
+Dedupe scans 191 files/1,244 functions, but its separate missing-root/dangling-file
+false-success regression remains open as BUG-252/F525 (bounds/context: BUG-522).
+Full logs and replay counterexamples are in `combined-verification-f59190cc/`.
+
+Workstation inventory covers local Claude, Codex, Gemini, OpenCode, Copilot, Pi,
+shared skills and editor stores. Only Antigravity JSONL has the new ingestion
+adapter. Other formats, consistent SQLite snapshots, further workstations,
+verified-fact extraction/recall and local-file optimization remain explicit work.
+Raw observations are never silently treated as verified facts. Owner-fork bot
+rollout, cost/capability routing and context optimization remain in `OPEN.md`;
+11 completed prerequisite tasks were archived through the state CLI.
 
 Full logs, reproduction binaries and hashes are under `codex-continuation/`
 within the evidence root above. Keep the distinction between branch-reported

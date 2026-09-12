@@ -163,3 +163,16 @@
 - [x] Update .github/workflows/ci.yml and flavor CI templates with diff-aware gating (completed: 2026-09-11)
 - [x] Add batch/fleet pre-migration epic generation and rerun epics across all prepared repos (completed: 2026-09-11)
 - [x] Verify full test suite with race detector and execute standards audit (completed: 2026-09-11)
+
+### Discharged Tasks [2026-09-12 16:19:17 UTC, commit `local`]
+- [x] Continue Claude: implement and verify the staged lefthook gates before fix-wave integration (completed: 2026-09-12)
+- [x] Continue Claude: recover G09 work and integrate wave A half 1 while preserving all fixes (completed: 2026-09-12)
+- [x] Continue Claude: synthesize ADR-0009 and preserve accepted config-first consolidation decisions (completed: 2026-09-12)
+- [x] Continue Claude: integrate verified secure-write permission and pre-truncation failure fix (completed: 2026-09-12)
+- [x] Development MCP: connect agents to this checkout and verify real tool behavior before implementation (completed: 2026-09-12)
+- [x] Integrate committed G09 core with G01-G08 and verify fail-closed scan consumers (completed: 2026-09-12)
+- [x] Integrate full G10 preserving G01-G08 safety and truthful harvester outcomes (completed: 2026-09-12)
+- [x] Publish verified WIP checkpoints through the approved checkpoint branch policy (completed: 2026-09-12)
+- [x] Run automatic dogfooding against public non-owned repositories with replayable evidence (completed: 2026-09-12)
+- [x] Discover and replay retained lusoris/praetor harvesting and memory ingestion data (completed: 2026-09-12)
+- [x] Run and close a bounded public non-owned repository dogfood loop (completed: 2026-09-12)
