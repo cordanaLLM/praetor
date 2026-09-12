@@ -4,7 +4,7 @@
 
 | ID | Title | Severity | Status | Location | Resolution |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `BUG-001` | [F212] SyncToBacklog deletes every '###' ledger block following the Active Milestones section (live data loss in .workingdir/BACKLOG.md) | p0 | open | internal/milestone/milestone.go:182 |  |
+| `BUG-001` | [F212] SyncToBacklog deletes every '###' ledger block following the Active Milestones section (live data loss in .workingdir/BACKLOG.md) | p0 | resolved | internal/milestone/milestone.go:182 | Verified F212 fixed by c9d4d28; TestMilestone_Boundary_SyncPreservesTrailingLedgerBlocks passes with race, plus 15 fresh-CLI fixture commands preserving historical and newly archived headings (closure-F212 evidence). |
 | `BUG-002` | [F10] adopt --force silently discards every AGENTS.md without a '\n---\n' separator (including praetor's own) | p1 | open | internal/adopt/adopt.go:877 |  |
 | `BUG-003` | [F100] issue reconcile --dry-run=false strips every label from each unblocked issue | p1 | open | cmd/standardsctl/issue.go:126 |  |
 | `BUG-004` | [F12] reconcileEditors overwrites user IDE configs on every live adopt run, ignoring Force | p1 | open | internal/adopt/adopt.go:1002 |  |
