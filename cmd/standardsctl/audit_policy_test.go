@@ -31,8 +31,11 @@ func TestAudit_EffectivePolicyEnforcesExplicitDeployment(t *testing.T) {
 	mustErrContain(t, err, "limit of 8 LOC")
 	mustContain(t, out, "max_func_loc=8", "contributors=deployment")
 	// Merely placing policy files in the repository cannot activate private layers.
+	// Their additional files do change observed scan coverage, so compare the
+	// manifest/policy/lock evidence preceding that separate diagnostic.
 	after, err := f.audit(t)
-	if err != nil || after != before {
+	mustContain(t, after, "[INFO] HISS file scope:")
+	if err != nil || strings.SplitN(after, "[INFO] HISS file scope:", 2)[0] != strings.SplitN(before, "[INFO] HISS file scope:", 2)[0] {
 		t.Fatalf("unselected policy affected audit: %v\nbefore:\n%s\nafter:\n%s", err, before, after)
 	}
 }
@@ -104,7 +107,7 @@ func TestAudit_EffectivePolicyRequiresExplicitSourcesAndSupportsCatalog(t *testi
 	if err != nil {
 		t.Fatalf("selected catalog failed: %v\n%s", err, out)
 	}
-	mustContain(t, out, "max_func_loc=60", "100% Compliance")
+	mustContain(t, out, "max_func_loc=60", "configured governance gates passed")
 }
 
 func TestAudit_EffectivePolicyCannotLoosenCompatibilityCeiling(t *testing.T) {

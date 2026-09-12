@@ -122,8 +122,8 @@ func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath stri
 		return "", fmt.Errorf("[FAIL] HISS invariant violations introduced (%d total infractions, %d new unbaselined violations):\n%s",
 			ratchet.CurrentCount, len(ratchet.NewViolations), formatViolations(ratchet.NewViolations))
 	}
-	return fmt.Sprintf("[PASS] Technical debt baseline verified: %d recorded legacy infractions; HISS scan found %d active violations within the baselined limit.",
-		base.TotalInfractions, ratchet.CurrentCount), nil
+	return fmt.Sprintf("[PASS] Technical debt baseline verified: %d recorded legacy infractions; HISS scan found %d active violations within the baselined limit. %s",
+		base.TotalInfractions, ratchet.CurrentCount, scanRep.CoverageEvidence()), nil
 }
 
 // formatViolations renders up to maxReportedViolations infractions for a failure line.

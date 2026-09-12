@@ -31,7 +31,7 @@ func TestServerAuditEffectiveDeploymentPolicy(t *testing.T) {
 	// Policy files remain inactive unless selected by this request.
 	after := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "default remains", after, "max_func_loc=60")
-	if after.Content[0].Text != before.Content[0].Text {
+	if policyEvidenceLine(t, after.Content[0].Text) != policyEvidenceLine(t, before.Content[0].Text) {
 		t.Fatal("unselected policy files changed the default policy identity")
 	}
 }
@@ -120,4 +120,15 @@ func TestServerAuditUsesSelectedCatalog(t *testing.T) {
 	if beforeLine != afterLine {
 		t.Fatalf("moving catalog changed policy identity: %s != %s", beforeLine, afterLine)
 	}
+}
+
+func policyEvidenceLine(t *testing.T, text string) string {
+	t.Helper()
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "Effective complexity policy sha256:") {
+			return line
+		}
+	}
+	t.Fatal("audit omitted effective policy evidence")
+	return ""
 }

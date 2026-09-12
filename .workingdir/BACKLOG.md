@@ -227,3 +227,6 @@
 
 ### Discharged Tasks [2026-09-12 21:10:06 UTC, commit `local`]
 - [x] Migrate public dogfood original and post-adoption scans to one effective policy snapshot and preserve strict-policy ratchet evidence (completed: 2026-09-12)
+
+### Discharged Tasks [2026-09-12 21:24:23 UTC, commit `local`]
+- [x] Expose actual HISS file coverage so unsupported CSharp sources cannot be mistaken for measured zero debt (completed: 2026-09-12)

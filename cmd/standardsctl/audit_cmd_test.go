@@ -27,7 +27,7 @@ func TestAudit_Positive_RootsFollowManifest(t *testing.T) {
 		"[PASS] Cross-agent context targets",
 		"[PASS] Repository label taxonomy",
 		"[PASS] Paperclip agent runtime harness verified (acme/widgets",
-		"Audit Summary: 100% Compliance",
+		"Audit Summary: configured governance gates passed",
 	)
 }
 

@@ -76,6 +76,9 @@ type ScanReport struct {
 	Truncated bool `json:"truncated,omitempty"`
 	// Skips accounts for directories and files excluded from the scan.
 	Skips ScanSkips `json:"skips"`
+	// Coverage is present on newly executed scans. A missing value in a retained
+	// report means coverage was not recorded, not that every source was analyzed.
+	Coverage *ScanCoverage `json:"coverage,omitempty"`
 
 	capLimit int
 }
@@ -133,6 +136,7 @@ func newScanReport(capLimit int) *ScanReport {
 	return &ScanReport{
 		Breakdown:  make(map[string]int),
 		Violations: make([]InvariantViolation, 0),
+		Coverage:   &ScanCoverage{UnscannedByExtension: make(map[string]int)},
 		capLimit:   capLimit,
 	}
 }
@@ -181,7 +185,11 @@ func (w *scanWalker) visitFile(path, rel string, info os.FileInfo) error {
 	if w.rep.Truncated {
 		return filepath.SkipAll
 	}
-	if !isScannableExt(strings.ToLower(filepath.Ext(rel))) || ShouldIgnorePath(rel) {
+	if ShouldIgnorePath(rel) {
+		return nil
+	}
+	if !isScannableExt(strings.ToLower(filepath.Ext(rel))) {
+		w.rep.Coverage.recordUnscanned(rel)
 		return nil
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
@@ -292,6 +300,7 @@ func scanFile(root, rel string, rep *ScanReport, opts ScanOptions) error {
 		}
 		return err
 	}
+	rep.Coverage.FilesRead++
 	ext := strings.ToLower(filepath.Ext(rel))
 	if ext == ".go" {
 		scanGoSource(data, rel, rep, opts)

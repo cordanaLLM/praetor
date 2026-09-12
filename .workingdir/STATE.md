@@ -493,3 +493,7 @@
 ### [2026-09-12 21:10:07 UTC] Commit `989633b` on `fix/public-policy-20260912`
 - **Activity**: Public dogfood shared-policy and baseline evidence correction passed full make verify-all on source068d48ae8f8060b090b10d5b74bc3391005bd171dcffc5f466f1537fce753ffe. Fresh pinned Cobra/Flask repeated adoption passed and repair import produced zero jobs. Captured approved ingenium migration and Jellysin portfolio plus full interconnect scope. Needs false-readiness and imago false-dispatch findings remain open; no repository transfers or portfolio activation claimed.
 - **Tasks**: 24 open, 0 completed | **Open Bugs**: 713 | **Pending Questions**: 0
+
+### [2026-09-12 21:24:23 UTC] Commit `1f8fd40` on `fix/hiss-scan-coverage-20260912`
+- **Activity**: HISS coverage fix passed full make verify-all on source6605789e4f3c0048c11a5ce8a3c0b84f6d5cb07c46fb00940382f173a550e78b. Reproduced CSharp zero-without-scope and now retain bounded file/read/extension evidence in reports and CLI/MCP. Native language checks, template fixes, needs readiness and imago backend truthfulness remain separate stages. Public policy1f8fd406 pushed and installed; owner6b08213 active, exact four overlays.
+- **Tasks**: 24 open, 0 completed | **Open Bugs**: 713 | **Pending Questions**: 0

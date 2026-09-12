@@ -72,7 +72,7 @@ func runAudit(args []string) error {
 		return err
 	}
 
-	fmt.Printf("\nAudit Summary: 100%% Compliance with %s/%s HISS-16 baseline.\n", manifest.Repository.Owner, manifest.Repository.Name)
+	fmt.Printf("\nAudit Summary: configured governance gates passed for %s/%s; source analysis is limited to the reported HISS file scope.\n", manifest.Repository.Owner, manifest.Repository.Name)
 	return nil
 }
 
@@ -184,6 +184,7 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 	if err != nil {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}
+	fmt.Printf("[INFO] %s\n", scanRep.CoverageEvidence())
 	if scanRep.Truncated {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w (%d infractions recorded before truncation)", hiss.ErrScanTruncated, scanRep.TotalInfractions)
 	}

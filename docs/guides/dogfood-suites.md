@@ -45,6 +45,18 @@ metadata checks do not replace a fresh pinned run. Saved public baselines are
 bounded to 8 MiB; incomplete scans and malformed or inconsistent baseline entries
 cannot produce a verified result.
 
+New HISS scan reports retain `coverage`: files actually read by supported
+scanners, files outside those extensions, and a bounded extension/count map.
+The latter includes documentation/configuration files and unsupported languages
+such as C# and TypeScript. It is not a list of violations. The map retains at
+most 32 extensions of at most 32 bytes; excess files remain counted separately.
+An empty extension key denotes an extensionless file. Ignored directories,
+symlinks and oversized supported inputs remain in `skips`; `truncated` limits
+the whole report, including observed coverage. A historical report without
+`coverage` has unknown coverage. Zero infractions does not establish that a
+repository's application language was analyzed. CLI/MCP audit summaries expose
+this scope; application verification still requires the native test tools.
+
 ## Private workstation configuration
 
 Store private configuration and evidence outside the public repository. A config

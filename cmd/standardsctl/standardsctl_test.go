@@ -296,7 +296,7 @@ func TestDispatchCommand_RepositoryDogfood(t *testing.T) {
 		t.Fatalf("repository audit failed: %v\n%s", err, out)
 	}
 	expectedHeader := fmt.Sprintf("=== %s/%s Governance Audit ===", manifest.Repository.Owner, manifest.Repository.Name)
-	mustContain(t, out, expectedHeader, "Audit Summary: 100% Compliance")
+	mustContain(t, out, expectedHeader, "Audit Summary: configured governance gates passed")
 
 	if err := dispatchCommand("compile-context", []string{"--verify", "--source=../../AGENTS.md", "--target-dir=../.."}); err != nil {
 		t.Fatalf("compile-context verify failed: %v", err)

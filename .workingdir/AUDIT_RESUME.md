@@ -5,6 +5,16 @@
 
 ## Current continuation: trustworthy public dogfood evidence
 
+The subsequent scanner-coverage correction passed the full gate on source
+`6605789e4f3c0048c11a5ce8a3c0b84f6d5cb07c46fb00940382f173a550e78b`.
+Fresh reports now retain files actually read and bounded unscanned-extension
+counts. CLI/MCP expose the scope, and the CLI no longer calls configured gate
+success 100% compliance. C# remains unsupported by HISS; native tests are a
+separate required stage. Historical reports without coverage remain unknown.
+Evidence: `repo-interconnect-20260912/hiss-coverage-*.log` and live MCP JSON.
+Needs mapping availability, language-specific templates and Imago dispatch are
+being repaired in isolated worktrees and are not yet included in this checkpoint.
+
 The public dogfood verifier now resolves policy before its original scan and
 uses that same snapshot for adoption, repeat scans and the ratchet. It rejects
 planning mutations, policy drift, missing or changed baseline entries and
