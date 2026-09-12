@@ -101,16 +101,16 @@ func generateAgentRules(kit *FrameworkKitConfig, outputDir string, res *Compiled
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# %s Autonomous Agent Operating Rules\n\n", kit.KitName))
-	sb.WriteString(fmt.Sprintf("Language Target: %s\n\n", kit.Language))
+	fmt.Fprintf(&sb, "# %s Autonomous Agent Operating Rules\n\n", kit.KitName)
+	fmt.Fprintf(&sb, "Language Target: %s\n\n", kit.Language)
 	sb.WriteString("## Directives\n")
 	for i, r := range kit.Rules {
-		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, r))
+		fmt.Fprintf(&sb, "%d. %s\n", i+1, r)
 	}
 	if len(kit.Skills) > 0 {
 		sb.WriteString("\n## Recommended Skills\n")
 		for _, s := range kit.Skills {
-			sb.WriteString(fmt.Sprintf("- `%s`\n", s))
+			fmt.Fprintf(&sb, "- `%s`\n", s)
 		}
 	}
 
