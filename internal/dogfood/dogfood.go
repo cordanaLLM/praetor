@@ -12,10 +12,14 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/harvester"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
 	MaxDogfoodTargets = 50
+	// reportFilePerm is the mode of the JSON report: readable by the workstation user
+	// and group, never world-writable.
+	reportFilePerm os.FileMode = 0o644
 )
 
 // DogfoodOptions configures the dogfooding verification engine.
@@ -28,6 +32,13 @@ type DogfoodOptions struct {
 	ReportPath       string   `json:"report_path"`
 	VerifyOnly       bool     `json:"verify_only"`
 	MaxScanTargets   int      `json:"max_scan_targets"`
+	// HomeDir is the workstation home whose agent skill roots are audited. When empty
+	// the process owner's home directory is used; tests pass a temporary directory so
+	// the run never touches the real $HOME.
+	HomeDir string `json:"home_dir,omitempty"`
+	// SkipWorkstationSkills disables the workstation skill audit entirely, keeping the
+	// run confined to the host repository and the explicitly named targets.
+	SkipWorkstationSkills bool `json:"skip_workstation_skills,omitempty"`
 }
 
 // TargetAdoptionResult records simulation results for a specific repository.
@@ -73,6 +84,35 @@ func verifySelfGovernance(ctx context.Context, hostPath string) (bool, bool, err
 	return synced, auditPassed, nil
 }
 
+// evaluateTargetEntry dry-run adopts one git repository directory under targetsDir and
+// appends its result to the report. Non-directories and directories without .git are
+// skipped silently; they are not adoption targets.
+func evaluateTargetEntry(ctx context.Context, targetsDir string, entry os.DirEntry, report *DogfoodReport) {
+	if !entry.IsDir() {
+		return
+	}
+	targetPath := filepath.Join(targetsDir, entry.Name())
+	if _, statErr := os.Stat(filepath.Join(targetPath, ".git")); statErr != nil {
+		return
+	}
+
+	plan, aErr := adopt.Adopt(ctx, adopt.AdoptOptions{
+		Path:   targetPath,
+		DryRun: true,
+	})
+
+	res := TargetAdoptionResult{
+		RepoName: entry.Name(),
+		Passed:   aErr == nil,
+	}
+	if aErr == nil && plan != nil {
+		res.Archetype = plan.Archetype
+		res.DebtCount = plan.LegacyDebtCount
+		res.Actions = len(plan.CreatedFiles) + len(plan.ReconciledFiles)
+	}
+	report.TargetResults = append(report.TargetResults, res)
+}
+
 func testTargetAdoptions(ctx context.Context, targetsDir string, maxTargets int, report *DogfoodReport) error {
 	if targetsDir == "" {
 		return nil
@@ -80,7 +120,7 @@ func testTargetAdoptions(ctx context.Context, targetsDir string, maxTargets int,
 
 	entries, err := os.ReadDir(targetsDir)
 	if err != nil {
-		return nil
+		return fmt.Errorf("read targets directory %s: %w", targetsDir, err)
 	}
 
 	limit := maxTargets
@@ -88,41 +128,11 @@ func testTargetAdoptions(ctx context.Context, targetsDir string, maxTargets int,
 		limit = MaxDogfoodTargets
 	}
 
-	count := 0
-	for _, entry := range entries {
+	for i := 0; i < len(entries) && i < limit; i++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("context cancelled during target testing: %w", err)
 		}
-		if count >= limit {
-			break
-		}
-		count++
-
-		if !entry.IsDir() {
-			continue
-		}
-
-		targetPath := filepath.Join(targetsDir, entry.Name())
-		gitDir := filepath.Join(targetPath, ".git")
-		if _, statErr := os.Stat(gitDir); statErr != nil {
-			continue
-		}
-
-		plan, aErr := adopt.Adopt(ctx, adopt.AdoptOptions{
-			Path:   targetPath,
-			DryRun: true,
-		})
-
-		res := TargetAdoptionResult{
-			RepoName: entry.Name(),
-			Passed:   aErr == nil,
-		}
-		if aErr == nil && plan != nil {
-			res.Archetype = plan.Archetype
-			res.DebtCount = plan.LegacyDebtCount
-			res.Actions = len(plan.CreatedFiles) + len(plan.ReconciledFiles)
-		}
-		report.TargetResults = append(report.TargetResults, res)
+		evaluateTargetEntry(ctx, targetsDir, entries[i], report)
 	}
 
 	report.TargetsEvaluated = len(report.TargetResults)
@@ -136,10 +146,43 @@ func auditWorkstationSkills(ctx context.Context, homeDir string, report *Dogfood
 
 	skillRep, err := harvester.AuditSkills(ctx, homeDir, "")
 	if err != nil {
-		return nil
+		return fmt.Errorf("audit agent skills under %s: %w", homeDir, err)
 	}
 
 	report.TotalSkillsAudited = skillRep.TotalSkills
+	return nil
+}
+
+// resolveHomeDir returns the directory whose agent skill roots are audited, or "" when
+// the audit is disabled or no home directory can be determined.
+func resolveHomeDir(opts DogfoodOptions) string {
+	if opts.SkipWorkstationSkills {
+		return ""
+	}
+	if opts.HomeDir != "" {
+		return opts.HomeDir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
+}
+
+// runRemoteBenchmarks dry-run adopts the explicitly listed remote repositories plus,
+// when requested, the curated popular benchmark set.
+func runRemoteBenchmarks(ctx context.Context, opts DogfoodOptions, report *DogfoodReport) error {
+	remoteURLs := make([]string, 0, len(opts.RemoteRepos)+len(PopularBenchmarks))
+	remoteURLs = append(remoteURLs, opts.RemoteRepos...)
+	if opts.BenchmarkPopular {
+		remoteURLs = append(remoteURLs, PopularBenchmarks...)
+	}
+	if len(remoteURLs) == 0 {
+		return nil
+	}
+	if err := testRemoteAdoptions(ctx, remoteURLs, report); err != nil {
+		return fmt.Errorf("testing remote adoptions: %w", err)
+	}
 	return nil
 }
 
@@ -175,22 +218,13 @@ func RunDogfood(ctx context.Context, opts DogfoodOptions) (*DogfoodReport, error
 	}
 
 	// 3. Workstation Skills Audit
-	homeDir, hErr := os.UserHomeDir()
-	if hErr == nil {
-		if err := auditWorkstationSkills(ctx, homeDir, report); err != nil {
-			return report, fmt.Errorf("audit workstation skills: %w", err)
-		}
+	if err := auditWorkstationSkills(ctx, resolveHomeDir(opts), report); err != nil {
+		return report, fmt.Errorf("audit workstation skills: %w", err)
 	}
 
 	// 4. Remote Non-Owned Public Repo Dogfooding
-	remoteURLs := opts.RemoteRepos
-	if opts.BenchmarkPopular {
-		remoteURLs = append(remoteURLs, PopularBenchmarks...)
-	}
-	if len(remoteURLs) > 0 {
-		if err := testRemoteAdoptions(ctx, remoteURLs, report); err != nil {
-			return report, fmt.Errorf("testing remote adoptions: %w", err)
-		}
+	if err := runRemoteBenchmarks(ctx, opts, report); err != nil {
+		return report, err
 	}
 
 	report.OverallPassed = report.ContextSyncPassed && report.SelfAuditPassed
@@ -210,7 +244,7 @@ func writeDogfoodReport(path string, report *DogfoodReport) error {
 	if mErr != nil {
 		return fmt.Errorf("marshal dogfood report: %w", mErr)
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := util.WriteFileSecure(path, data, reportFilePerm); err != nil {
 		return fmt.Errorf("write dogfood report: %w", err)
 	}
 	return nil
