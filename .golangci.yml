@@ -1,7 +1,88 @@
+# golangci-lint v2 configuration for cordanaLLM/praetor.
+#
+# HISS-10 ("zero warnings") is only real if the linters that produce the warnings
+# actually run. This configuration is executed by `make lint`, the CI lint step and the
+# lefthook pre-push hook, always through
+#   go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run
+# because a binary installed with an older Go toolchain refuses this Go 1.27 tree.
+version: "2"
+
 run:
-  timeout: 5m
+  timeout: 10m
+  tests: true
+
 linters:
+  default: none
   enable:
+    # Correctness
     - govet
     - staticcheck
-    - errcheck
+    - errcheck # HISS-07: every error is handled
+    - errorlint # HISS-07: %w wrapping and errors.Is/As
+    - nilerr # HISS-07: never return nil after a non-nil error
+    - unused
+    - ineffassign
+    - wastedassign
+    - copyloopvar
+    - bodyclose # leaked response bodies
+    - noctx # HISS-02: no request without a context
+    - contextcheck # HISS-02: no context.Background() inside a context-carrying call tree
+    # Complexity: the HISS-04 caps
+    - gocyclo
+    - gocognit
+    - funlen
+    # Structure
+    - gochecknoinits # no hidden init() side effects
+    - forbidigo # unaudited exec / http entry points
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    gocyclo:
+      min-complexity: 11 # HISS-04: McCabe cyclomatic <= 10
+    gocognit:
+      min-complexity: 16 # HISS-04: cognitive <= 15
+    funlen:
+      lines: 75 # HISS-04: function LOC <= 75
+      statements: 50 # HISS-04: statements <= 50
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+    forbidigo:
+      analyze-types: true
+      forbid:
+        # `pkg` is matched against the import path and only honoured with analyze-types,
+        # so these rules fire on the real os/exec and net/http symbols, not on any
+        # local identifier that happens to be spelled the same way.
+        - pattern: ^exec\.Command(Context)?$
+          pkg: ^os/exec$
+          msg: use internal/util.RunCommand or RunGit; they enforce a context deadline (HISS-02) and are the single audited exec entry point
+        - pattern: ^http\.DefaultClient$
+          pkg: ^net/http$
+          msg: http.DefaultClient has no timeout; build an http.Client with an explicit timeout (HISS-02)
+        - pattern: ^http\.(Get|Post|Head|PostForm)$
+          pkg: ^net/http$
+          msg: these helpers use http.DefaultClient and carry no context or timeout; use http.NewRequestWithContext with an explicit client (HISS-02)
+
+  exclusions:
+    generated: lax
+    rules:
+      # internal/util owns the audited exec wrapper that everything else must use.
+      - path: internal/util/
+        linters:
+          - forbidigo
+      # Tests build sandboxed git and PATH fixtures, and table-driven 3D tests are long
+      # by construction; the complexity caps target production control flow.
+      - path: _test\.go
+        linters:
+          - funlen
+          - gocognit
+          - gocyclo
+          - forbidigo
+          - noctx
+
+formatters:
+  enable:
+    - gofmt

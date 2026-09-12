@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
@@ -16,6 +17,15 @@ import (
 	"github.com/cordanaLLM/praetor/internal/paperclip"
 	"github.com/cordanaLLM/praetor/internal/runner"
 	"github.com/cordanaLLM/praetor/internal/util"
+)
+
+const (
+	// auditTimeout bounds the whole governance audit, including its git and scan I/O.
+	auditTimeout = 5 * time.Minute
+	// preMigrationEpicFile is the pre-migration epic tracked under .workingdir/.
+	preMigrationEpicFile = "PRE_MIGRATION_EPIC.md"
+	// maxAuditGates bounds the governance gate loop (HISS-02).
+	maxAuditGates = 32
 )
 
 func runAudit(args []string) error {
@@ -28,6 +38,10 @@ func runAudit(args []string) error {
 		return err
 	}
 
+	// HISS-02: every filesystem, git and scanner call below runs under this deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), auditTimeout)
+	defer cancel()
+
 	manifest, err := auditManifestAndLockfile(*manifestPath)
 	if err != nil {
 		return err
@@ -36,43 +50,34 @@ func runAudit(args []string) error {
 	fmt.Printf("=== %s/%s Governance Audit ===\n", manifest.Repository.Owner, manifest.Repository.Name)
 
 	rootDir := filepath.Dir(*manifestPath)
-	if err := auditRepoIdentity(manifest, rootDir); err != nil {
-		return err
-	}
-
-	if err := auditBaselineAndInvariants(*baselinePath); err != nil {
-		return err
-	}
-
-	if err := auditAgentContextAndDevcontainer(manifest, *agentsPath); err != nil {
-		return err
-	}
-
-	if err := auditBranchProtectionAndSupplyChain(manifest, rootDir); err != nil {
-		return err
-	}
-
-	if err := auditPaperclipHarness(manifest, rootDir); err != nil {
-		return err
-	}
-
-	if err := auditRunnerMatrix(manifest, rootDir); err != nil {
-		return err
-	}
-
-	if err := auditPreMigrationTracking(rootDir); err != nil {
-		return err
-	}
-
-	if err := auditAgentDefinitions(rootDir); err != nil {
-		return err
-	}
-
-	if err := auditGitHooks(rootDir); err != nil {
+	if err := runAuditGates(ctx, manifest, rootDir, *baselinePath, *agentsPath); err != nil {
 		return err
 	}
 
 	fmt.Printf("\nAudit Summary: 100%% Compliance with %s/%s HISS-16 baseline.\n", manifest.Repository.Owner, manifest.Repository.Name)
+	return nil
+}
+
+// runAuditGates executes every governance gate in order, stopping at the first failure.
+func runAuditGates(ctx context.Context, manifest *config.Manifest, rootDir, baselinePath, agentsPath string) error {
+	gates := []func() error{
+		func() error { return auditRepoIdentity(manifest, rootDir) },
+		func() error { return auditLockDigests(manifest, rootDir) },
+		func() error { return auditBaselineAndInvariants(ctx, baselinePath) },
+		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, agentsPath) },
+		func() error { return auditBranchProtectionAndSupplyChain(manifest, rootDir) },
+		func() error { return auditPaperclipHarness(manifest, rootDir) },
+		func() error { return auditRunnerMatrix(manifest, rootDir) },
+		func() error { return auditPreMigrationTracking(rootDir) },
+		func() error { return auditAgentDefinitions(rootDir) },
+		func() error { return auditGitHooks(ctx, rootDir) },
+	}
+
+	for i := 0; i < len(gates) && i < maxAuditGates; i++ {
+		if err := gates[i](); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -92,13 +97,12 @@ func auditManifestAndLockfile(manifestPath string) (*config.Manifest, error) {
 	return manifest, nil
 }
 
-func auditBaselineAndInvariants(baselinePath string) error {
+func auditBaselineAndInvariants(ctx context.Context, baselinePath string) error {
 	base, err := baseline.LoadBaseline(baselinePath)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
 
-	ctx := context.Background()
 	root := filepath.Dir(baselinePath)
 	scanRep, err := hiss.Scan(ctx, root, hiss.ScanOptions{})
 	if err != nil {
@@ -129,7 +133,7 @@ func auditBaselineAndInvariants(baselinePath string) error {
 	return nil
 }
 
-func auditAgentContextAndDevcontainer(manifest *config.Manifest, agentsPath string) error {
+func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Manifest, agentsPath string) error {
 	root := filepath.Dir(agentsPath)
 	tr := compiler.NewTranspiler()
 	if err := tr.Verify(agentsPath, root); err != nil {
@@ -138,15 +142,17 @@ func auditAgentContextAndDevcontainer(manifest *config.Manifest, agentsPath stri
 	fmt.Println("[PASS] Cross-agent context targets (Claude, Cursor, Copilot, Windsurf, Gemini, Codex) verified in sync.")
 
 	dcPath := filepath.Join(root, ".devcontainer", "devcontainer.json")
-	if _, err := os.Stat(dcPath); err == nil {
-		dc, err := devcontainer.Synthesize(manifest)
-		if err == nil {
-			ctx := context.Background()
-			if err := devcontainer.Verify(ctx, dcPath, dc); err == nil {
-				fmt.Println("[PASS] DevContainer configuration verified in sync with declared standards.")
-			}
-		}
+	if !util.FileExists(dcPath) {
+		return nil
 	}
+	dc, err := devcontainer.Synthesize(manifest)
+	if err != nil {
+		return fmt.Errorf("[FAIL] DevContainer synthesis failed: %w", err)
+	}
+	if err := devcontainer.Verify(ctx, dcPath, dc); err != nil {
+		return fmt.Errorf("[FAIL] DevContainer out of sync with declared standards: %w", err)
+	}
+	fmt.Println("[PASS] DevContainer configuration verified in sync with declared standards.")
 	return nil
 }
 
@@ -258,20 +264,23 @@ func auditRunnerMatrix(manifest *config.Manifest, rootDir string) error {
 }
 
 func auditPreMigrationTracking(rootDir string) error {
-	epicPath := filepath.Join(rootDir, "PRE_MIGRATION_EPIC.md")
-	if util.FileExists(epicPath) {
+	// The epic lives in the local working directory; the repository root is only the
+	// legacy location. Checking just the root silently skipped the whole gate.
+	epicPath := resolvePreMigrationEpic(rootDir)
+	if epicPath != "" {
+		// #nosec G304 -- epicPath is one of two fixed locations under the audited root.
 		content, err := os.ReadFile(epicPath)
 		if err != nil {
-			return fmt.Errorf("[FAIL] Read PRE_MIGRATION_EPIC.md failed: %w", err)
+			return fmt.Errorf("[FAIL] Read %s failed: %w", epicPath, err)
 		}
 		requiredStages := []string{"[TASK 1/5]", "[TASK 2/5]", "[TASK 3/5]", "[TASK 4/5]", "[TASK 5/5]"}
 		text := string(content)
 		for _, stage := range requiredStages {
 			if !strings.Contains(text, stage) {
-				return fmt.Errorf("[FAIL] PRE_MIGRATION_EPIC.md missing required stage %s", stage)
+				return fmt.Errorf("[FAIL] %s missing required stage %s", epicPath, stage)
 			}
 		}
-		fmt.Println("[PASS] Pre-migration epic (5-stage lifecycle) verified.")
+		fmt.Printf("[PASS] Pre-migration epic (5-stage lifecycle) verified: %s\n", epicPath)
 	}
 
 	needsPath := filepath.Join(rootDir, ".needs.yaml")
@@ -283,6 +292,22 @@ func auditPreMigrationTracking(rootDir string) error {
 		fmt.Println("[PASS] Polyglot framework demand & needs analysis (.needs.yaml) verified.")
 	}
 	return nil
+}
+
+// resolvePreMigrationEpic returns the pre-migration epic path, preferring the working
+// directory location over the legacy repository-root one. It returns "" when neither
+// exists.
+func resolvePreMigrationEpic(rootDir string) string {
+	candidates := []string{
+		filepath.Join(rootDir, ".workingdir", preMigrationEpicFile),
+		filepath.Join(rootDir, preMigrationEpicFile),
+	}
+	for _, candidate := range candidates {
+		if util.FileExists(candidate) {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func auditAgentDefinitions(rootDir string) error {
@@ -306,7 +331,7 @@ func auditAgentDefinitions(rootDir string) error {
 	return nil
 }
 
-func auditGitHooks(rootDir string) error {
+func auditGitHooks(ctx context.Context, rootDir string) error {
 	gitDir := filepath.Join(rootDir, ".git")
 	if !util.DirExists(gitDir) && !util.FileExists(gitDir) {
 		return nil
@@ -322,7 +347,7 @@ func auditGitHooks(rootDir string) error {
 		return nil
 	}
 
-	hooksDir := resolveHooksDir(rootDir)
+	hooksDir := resolveHooksDir(ctx, rootDir)
 	preCommitPath := filepath.Join(hooksDir, "pre-commit")
 	if !util.FileExists(preCommitPath) {
 		return fmt.Errorf("[FAIL] Pre-commit hook %s is missing or inactive. Run 'lefthook install' or 'standardsctl adopt' to activate.", preCommitPath)
@@ -332,8 +357,8 @@ func auditGitHooks(rootDir string) error {
 	return nil
 }
 
-func resolveHooksDir(rootDir string) string {
-	out, err := util.RunGit(context.Background(), rootDir, "rev-parse", "--git-path", "hooks")
+func resolveHooksDir(ctx context.Context, rootDir string) string {
+	out, err := util.RunGit(ctx, rootDir, "rev-parse", "--git-path", "hooks")
 	if err == nil {
 		path := strings.TrimSpace(out)
 		if filepath.IsAbs(path) {
