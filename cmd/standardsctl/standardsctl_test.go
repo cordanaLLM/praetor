@@ -951,6 +951,101 @@ func TestDispatchCommand_Dogfood(t *testing.T) {
 	}
 }
 
+// =========================================================================
+// Home-directory resolution: explicit flags, hard errors, never the cwd
+// =========================================================================
+
+func TestResolveHomeSubdir_3D(t *testing.T) {
+	// Positive: an explicit value is returned untouched.
+	explicit, err := resolveHomeSubdir("/srv/skills", "--skills-dir", ".gemini")
+	if err != nil || explicit != "/srv/skills" {
+		t.Errorf("expected the explicit value, got %q (%v)", explicit, err)
+	}
+
+	// Positive: the default is anchored at the home directory.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	got, err := resolveHomeSubdir("", "--dir", "dev")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != filepath.Join(home, "dev") {
+		t.Errorf("expected %s, got %s", filepath.Join(home, "dev"), got)
+	}
+
+	// Negative/boundary: without a home directory the caller gets an error naming the
+	// flag, never a working-directory-relative path such as "dev".
+	t.Setenv("HOME", "")
+	missing, err := resolveHomeSubdir("", "--dir", "dev")
+	if err == nil {
+		t.Fatalf("expected an error without a home directory, got %q", missing)
+	}
+	if !strings.Contains(err.Error(), "--dir") {
+		t.Errorf("expected the error to name the flag, got: %v", err)
+	}
+}
+
+func TestDispatchCommand_AdoptAllMissingNeverFallsBackToCwd(t *testing.T) {
+	// Negative: an unset HOME must fail loudly instead of scanning ./dev.
+	t.Setenv("HOME", "")
+	if err := dispatchCommand("adopt", []string{"--all-missing", "--dry-run"}); err == nil {
+		t.Fatal("expected adopt --all-missing to fail without a home directory")
+	}
+
+	// Positive: --dev-dir makes the scan root injectable, so nothing escapes the sandbox.
+	devDir := t.TempDir()
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("adopt", []string{"--all-missing", "--dry-run", "--dev-dir=" + devDir})
+	})
+	if err != nil {
+		t.Fatalf("adopt --all-missing failed: %v", err)
+	}
+	if !strings.Contains(out, "Batch Repository Adoption") {
+		t.Errorf("unexpected batch adoption output:\n%s", out)
+	}
+	entries, readErr := os.ReadDir(devDir)
+	if readErr != nil {
+		t.Fatalf("failed reading the scan root: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected an empty scan root to stay empty, found %d entries", len(entries))
+	}
+}
+
+func TestDispatchCommand_HarvestSubcommandsAreInjectable(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Positive: every home-anchored path has an explicit override flag.
+	if err := dispatchCommand("harvest", []string{"workstation", "--dir=" + tmpDir}); err != nil {
+		t.Fatalf("harvest workstation failed: %v", err)
+	}
+	if err := dispatchCommand("harvest", []string{"skills", "--gemini=" + tmpDir}); err != nil {
+		t.Fatalf("harvest skills failed: %v", err)
+	}
+	if err := dispatchCommand("harvest", []string{"memory", "--brain=" + tmpDir}); err != nil {
+		t.Fatalf("harvest memory failed: %v", err)
+	}
+	if err := dispatchCommand("harvest", []string{"ingest", "--bundle=" + tmpDir, "--skills-dir=" + tmpDir}); err == nil {
+		t.Fatal("expected ingest of a directory without a manifest to fail")
+	}
+
+	// Negative: required flags are still required.
+	if err := dispatchCommand("harvest", []string{"ingest"}); err == nil {
+		t.Fatal("expected harvest ingest to require --bundle")
+	}
+	if err := dispatchCommand("harvest", []string{"bundle", "--name=ws"}); err == nil {
+		t.Fatal("expected harvest bundle to require --out")
+	}
+	if err := dispatchCommand("harvest", []string{"onboard"}); err == nil {
+		t.Fatal("expected harvest onboard to require --repo or --all-missing")
+	}
+
+	// Boundary: onboarding a single empty repository stays in dry-run mode.
+	if err := dispatchCommand("harvest", []string{"onboard", "--repo=" + tmpDir}); err != nil {
+		t.Fatalf("harvest onboard failed: %v", err)
+	}
+}
+
 func TestDispatchCommand_HarvestFleetOutput(t *testing.T) {
 	out, err := captureStdout(t, func() error {
 		return dispatchCommand("harvest", []string{"fleet"})
