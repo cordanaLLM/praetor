@@ -4,6 +4,14 @@ agent-pre-tool:
     command-policy:
       use_stdin: true
       run: python3 -B .config/agent/hooks/block_evasion.py
+agent-checkpoint-tool:
+  commands:
+    checkpoint:
+      run: python3 -B .config/lefthook/scripts/checkpoint.py --event tool --json --marker
+agent-checkpoint-stop:
+  commands:
+    checkpoint:
+      run: python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json --marker
 pre-commit:
   commands:
     staged-checks:

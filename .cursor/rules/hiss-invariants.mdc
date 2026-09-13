@@ -77,6 +77,14 @@ flowchart LR
    - **During Work**: Register discrete tasks via `praetorctl state task add "<desc>"`, mark progress with `praetorctl state task complete "<selector>"`, and archive finished items with `praetorctl state task archive`.
    - **Turn End**: Execute `praetorctl state sync .` to record working tree status, dirty count, open tasks, and cryptographic state hash into `STATE.md`.
 
+   **Checkpoint cadence**: Run `lefthook run agent-checkpoint-tool` between work
+   chunks and `lefthook run agent-checkpoint-stop` before finishing. Act on due
+   results: review owned public changes, verify, commit with sign-off, push through
+   normal hooks, and create or reuse a draft PR for the pushed branch. Follow
+   [checkpoint workflow](docs/guides/checkpoint-cadence.md) for policy, blockers,
+   local-only repositories and client activation. Publication needs session or
+   configured authorization; this repository's checkpoint workflow is authorized.
+
 8. **Diff-Aware CI Efficiency (HISS-18)**:
    CI pipelines MUST evaluate git diffs via `standardsctl ci filter` and execute targeted validation gates. Pure documentation or session-state changes MUST skip heavy race detectors and security suites while maintaining invariant integrity.
 

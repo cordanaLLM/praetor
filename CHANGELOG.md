@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- Configurable agent checkpoint cadence for reviewed commits, gated pushes and
+  draft PR visibility, with a shared Lefthook check and native lifecycle adapter.
+- Draft creation support in the existing GitHub forge request contract.
+
 ### Fixed
 
 - Repair HISS Semgrep HTTP, Python eval and Rust test-boundary matching; add pinned

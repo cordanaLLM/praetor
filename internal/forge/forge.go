@@ -36,6 +36,7 @@ type PRRequest struct {
 	Body  string `json:"body"`
 	Head  string `json:"head"`
 	Base  string `json:"base"`
+	Draft bool   `json:"draft"`
 }
 
 // PRResponse represents the result of creating a pull request.

@@ -43,6 +43,13 @@ See [upstream agent integration](https://lefthook.dev/configuration/ai/) and the
 No `stage_fixed` jobs are used. Checking exported index content avoids changing
 partially staged hunks while retaining the formatting gate.
 
+`agent-checkpoint-tool` and `agent-checkpoint-stop` share the bounded checkpoint
+evaluator. Add a reviewed `.config/agent/checkpoint.json` for the adopting repo
+to enable it; missing policy is explicitly disabled. Configure publication only
+for the authorized remote/repository. The native adapter translates due results
+into lifecycle feedback; agents then execute reviewed commits and draft PRs
+through the normal gates. See the [checkpoint guide](../../docs/guides/checkpoint-cadence.md).
+
 The Git metadata gate rejects additions and changes under private `/.workingdir/`,
 including forced staging, submodule entries and private content added then removed
 within outgoing history. Removing legacy tracked entries is allowed. Adopters

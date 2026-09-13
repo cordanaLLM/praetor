@@ -51,7 +51,7 @@ YAML aliases are rejected.
 
 Supported adapter identifiers are `codex`, `claude`, `gemini`, `agy`,
 `opencode-v1`, `continue`, `cline` and `kilo`. Exact schemas and source versions
-are in the [adapter reference](../../internal/clientsetup/README.md).
+are in the [adapter reference](https://github.com/CordanaLLM/praetor/blob/main/internal/clientsetup/README.md).
 
 ## Apply to an explicit destination
 

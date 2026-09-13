@@ -460,11 +460,12 @@ func (g *GitHubDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*P
 		return nil, errors.New("create pull request: title, head, and base are required")
 	}
 
-	payload := map[string]string{
+	payload := map[string]any{
 		"title": req.Title,
 		"body":  req.Body,
 		"head":  req.Head,
 		"base":  req.Base,
+		"draft": req.Draft,
 	}
 	path, err := g.repoPath("pulls")
 	if err != nil {

@@ -71,6 +71,7 @@ nav:
       - HISS-16 Formal Specification: standards/hiss-16-spec.md
       - HISS Refinement Audit: research/hiss-rule-refinement.md
       - Model Routing & Capacity Arbiter: standards/model-routing-and-fanout.md
+      - Context Optimizer: context-optimizer.md
   - Architecture & Design:
       - C4 Architecture Models: architecture/c4-models.md
       - Shared Lifecycle Management: plans/lifecycle-management.md
@@ -84,13 +85,56 @@ nav:
           - ADR-0005 OCI Distroless Containers: adr/0005-cloudnative-oci-distroless-containers.md
           - ADR-0006 Hierarchical Runner Matrix: adr/0006-hierarchical-multi-tier-runner-matrix.md
           - ADR-0007 Universal Frameworks Hub: adr/0007-universal-frameworks-org-and-demand-deduplication.md
+          - ADR-0008 Spec-Driven Provider Integration: adr/0008-spec-driven-provider-integration.md
+          - ADR-0009 Structural Unification: adr/0009-structural-unification.md
   - Guides & Adoption:
       - Developer Onboarding: guides/onboarding.md
+      - Checkpoint Cadence: guides/checkpoint-cadence.md
       - Garbage Collection: guides/garbage-collection.md
       - Contributing Guide: guides/contributing.md
       - Archetype Authoring: guides/archetype-authoring.md
+      - Adoption Verification: guides/adoption-verification.md
+      - Canary Evidence: guides/canary-evidence.md
+      - Client Bootstrap: guides/client-bootstrap.md
+      - Client Connections: guides/client-connections.md
+      - DevContainer Bootstrap: guides/devcontainer-bootstrap.md
+      - Development MCP: guides/development-mcp.md
+      - Dogfood Repair Execution: guides/dogfood-repair-execution.md
+      - Dogfood Repair Timer: guides/dogfood-repair-timer.md
+      - Dogfood Repairs: guides/dogfood-repairs.md
+      - Dogfood Scheduling: guides/dogfood-scheduling.md
+      - Dogfood Suites: guides/dogfood-suites.md
+      - Effective Policy: guides/effective-policy.md
+      - Git Hooks: guides/git-hooks.md
+      - Issue Sync Integrity: guides/issue-sync-integrity.md
+      - Needs Capability Evidence: guides/needs-capability-evidence.md
+      - Operational Sync: guides/operational-sync.md
+      - Scheduled Dogfood: guides/scheduled-dogfood.md
+      - State Ledger Integrity: guides/state-ledger-integrity.md
+      - Transcript Ingestion: guides/transcript-ingestion.md
+      - Universal Builder: guides/universal-builder.md
+      - Workstation Inventory: guides/workstation-inventory.md
       - Fast Adoption Engine: adoption.md
       - Fleet Dogfooding: dogfooding.md
+  - Plans:
+      - Bidirectional Module Contracts: plans/bidirectional-contracts.md
+      - Lifecycle Management: plans/lifecycle-management.md
+      - Package Development Pipeline: plans/package-development-pipeline.md
+      - Upstream Contribution Workflow: plans/upstream-contribution-workflow.md
+  - Research:
+      - Compact Management Data: research/compact-management-data.md
+      - Go Package Reuse: research/go-package-reuse.md
+      - HISS Rule Refinement: research/hiss-rule-refinement.md
+  - Wiki:
+      - Home: wiki/Home.md
+      - API Reference: wiki/API-Reference.md
+      - Architecture Lattice: wiki/Architecture-Lattice.md
+      - HISS-16 Invariants: wiki/HISS-16-Invariants.md
+      - HISS Matrix: wiki/HISS-Matrix.md
+  - Presets:
+      - MkDocs Preset README: presets/mkdocs/README.md
+      - MkDocs Preset Example: presets/mkdocs/docs/index.md
+      - Starlight Preset README: presets/starlight/README.md
   - Funding & Community:
       - Sponsoring & Bounties: sponsoring.md
       - Monetization Strategy: monetization.md

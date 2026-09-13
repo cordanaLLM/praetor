@@ -184,10 +184,13 @@ The adapter's subprocess tests establish its behavior; activation additionally
 requires a native Codex hook event after trust. A checked-in hook file alone is
 not evidence that the current session is enforcing it.
 
-No repository `Stop` verification hook is configured. `make verify-all` remains
-an explicit required agent step, while commits and pushes have the Git gates
-listed above. See the [Codex hook lifecycle and trust documentation](https://learn.chatgpt.com/docs/hooks)
-for runtime coverage and activation semantics.
+The repository now configures PostToolUse and Stop checkpoint hooks. They share
+Lefthook's checkpoint evaluator and require reviewed public changes to reach a
+commit, gated push and draft PR according to the configured policy. They do not
+replace `make verify-all` or certify the code themselves. See the
+[checkpoint guide](checkpoint-cadence.md) for due results, local-only settings,
+bounded continuation and activation evidence. Current-session interception still
+requires a real native hook event; configuration alone does not establish it.
 
 
 Native bootstrap can also be inspected without a model request:

@@ -5,11 +5,72 @@ import os
 from pathlib import Path
 import subprocess
 import signal
+import selectors
 import tempfile
+import time
 
 
 class HookError(Exception):
     """An actionable local gate failure."""
+
+
+def _stop_bounded(process):
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass  # The group already exited.
+    process.wait(timeout=5)
+
+
+def _bounded_output(process, timeout, maximum):
+    deadline = time.monotonic() + timeout
+    output = {"stdout": bytearray(), "stderr": bytearray()}
+    total = 0
+    with selectors.DefaultSelector() as selector:
+        selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+        selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+        # Every iteration either consumes a byte, observes EOF, or waits to deadline.
+        for _ in range(maximum + 3):
+            if not selector.get_map():
+                process.wait(timeout=max(0.001, deadline - time.monotonic()))
+                return bytes(output["stdout"])
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise HookError("checkpoint command timed out")
+            events = selector.select(remaining)
+            if not events:
+                raise HookError("checkpoint command timed out")
+            for key, _mask in events:
+                chunk = os.read(key.fileobj.fileno(), min(65536, maximum - total + 1))
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                total += len(chunk)
+                if total > maximum:
+                    raise HookError("checkpoint command output exceeded its byte limit")
+                output[key.data].extend(chunk)
+    raise HookError("checkpoint command exceeded its read bound")
+
+
+def run_bounded(args, cwd=None, *, timeout=10, max_output=1024 * 1024,
+                env=None, allowed=(0,)):
+    """Bound both streams during capture; never copy credential-bearing diagnostics."""
+    if not 0 < timeout <= 60 or not 0 < max_output <= 1024 * 1024:
+        raise HookError("invalid checkpoint process bounds")
+    try:
+        with subprocess.Popen(args, cwd=cwd, env=env, start_new_session=True,
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE) as process:
+            try:
+                stdout = _bounded_output(process, timeout, max_output)
+            except BaseException:
+                _stop_bounded(process)
+                raise
+            if process.returncode not in allowed:
+                raise HookError(f"{args[0]} exited {process.returncode}; checkpoint unverified")
+            return stdout
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise HookError(f"{args[0]} checkpoint process failed ({type(error).__name__})") from error
 
 
 def run(args, cwd=None, *, data=None, timeout=180, capture=True, env=None, allowed=(0,)):

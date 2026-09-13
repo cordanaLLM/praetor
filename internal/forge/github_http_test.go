@@ -628,6 +628,15 @@ func TestGitHubDriver_CreatePullRequestAndStatusCheck_3D(t *testing.T) {
 	if err != nil || pr.Number != 4 {
 		t.Fatalf("unexpected pull request result %+v (err %v)", pr, err)
 	}
+	if draft, ok := fake.requests[0].Body["draft"].(bool); !ok || draft {
+		t.Fatalf("default pull request draft flag = %v (present=%v), want false", draft, ok)
+	}
+	if _, err := gh.CreatePullRequest(ctx, PRRequest{Title: "draft", Head: "h", Base: "main", Draft: true}); err != nil {
+		t.Fatalf("unexpected draft pull request error: %v", err)
+	}
+	if draft, ok := fake.requests[1].Body["draft"].(bool); !ok || !draft {
+		t.Fatalf("draft pull request draft flag = %v (present=%v), want true", draft, ok)
+	}
 	if _, err := gh.CreatePullRequest(ctx, PRRequest{Title: "t"}); err == nil {
 		t.Fatal("expected an error for a missing head and base")
 	}

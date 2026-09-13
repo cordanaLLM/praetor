@@ -81,9 +81,12 @@ def file_checks(directory, names):
     if yaml:
         commands.append(["yamllint", "--strict", "-d", "{extends: relaxed, rules: {line-length: disable}}", *yaml])
     if any(name in {"lefthook.yml", ".codex/hooks.json"}
-           or name.startswith((".config/lefthook/", ".config/agent/hooks/")) for name in files):
+           or name.startswith((".config/lefthook/", ".config/agent/")) for name in files):
         commands.append(["lefthook", "validate"])
         commands.append(["python3", "-B", ".config/lefthook/scripts/test_hooks.py"])
+        commands.append(["python3", "-B", ".config/lefthook/scripts/test_checkpoint.py"])
+        if (directory / "scripts/test_checkpoint_hooks.py").exists():
+            commands.append(["python3", "-B", "scripts/test_checkpoint_hooks.py"])
     if context_changed(names):
         commands.append(["go", "run", "./cmd/standardsctl", "compile-context", "--verify"])
     parallel(commands, directory)
