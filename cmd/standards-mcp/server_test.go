@@ -1,67 +1,279 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
+	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/mcp"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-func TestServer_ToolsRegistrationAndAnnotations(t *testing.T) {
-	srv, err := NewServer("../..", "v1.0.0")
+// ---- fixture ---------------------------------------------------------------------------
+
+const fixtureAgentsMD = `# Fixture Repository
+
+## Core Directives & Invariants
+
+| Invariant | Scope | Enforcement Mechanism | Failure Action |
+| :--- | :--- | :--- | :--- |
+| **HISS-01** | Control Flow | Recursion strictly prohibited. | Build failure |
+| **HISS-15** | 3D Testing | Positive, negative, and boundary tests mandatory. | CI coverage gate |
+
+## Operational Rules
+
+1. Act on verified state.
+`
+
+const fixtureMainGo = `package main
+
+import "fmt"
+
+// Greet returns a greeting for name.
+func Greet(name string) string {
+	if name == "" {
+		return "hello"
+	}
+	return fmt.Sprintf("hello %s", name)
+}
+
+func main() {
+	fmt.Println(Greet("praetor"))
+}
+`
+
+// fixtureComplexGo has cyclomatic complexity 13 (> 10) and cognitive complexity 12.
+const fixtureComplexGo = `package main
+
+// Classify is a deliberately branchy fixture for the HISS-04 inspector.
+func Classify(a, b, c, d int) string {
+	if a > 0 && b > 0 && c > 0 {
+		return "all"
+	}
+	if a > 0 || b > 0 {
+		if c > 0 {
+			return "ac"
+		}
+		if d > 0 {
+			return "ad"
+		}
+	}
+	switch {
+	case a == 1:
+		return "one"
+	case a == 2:
+		return "two"
+	case a == 3:
+		return "three"
+	}
+	for i := 0; i < d; i++ {
+		if i%2 == 0 {
+			continue
+		}
+	}
+	return "none"
+}
+`
+
+const fixturePickGo = `package main
+
+// Pick exercises the else-if chain accounting.
+func Pick(x int) int {
+	if x < 0 {
+		return -1
+	} else if x == 0 {
+		return 0
+	} else {
+		return 1
+	}
+}
+`
+
+func writeFixtureFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	full := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+		t.Fatalf("mkdir %s: %v", full, err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", full, err)
+	}
+}
+
+// initGitRepo turns dir into a git repository or skips the test when git is unavailable.
+func initGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := util.RunGit(ctx, dir, "init", "-q"); err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+}
+
+// newFixtureRepo builds a governed repository in a temporary directory: manifest,
+// lockfile, baseline, labels, ruleset, hook config, a clean Go module and AGENTS.md
+// with its compiled vendor targets in sync.
+func newFixtureRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	initGitRepo(t, root)
+
+	files := map[string]string{
+		"AGENTS.md":                         fixtureAgentsMD,
+		".standards.yaml":                   "version: 1\nrepository:\n  owner: \"fixture\"\n  name: \"repo\"\nprofiles:\n  - \"framework\"\nfacets: []\n",
+		".standards.lock":                   validAuditLock(t),
+		".config/archetypes/framework.yaml": auditLockSource,
+		".standards-baseline.json":          `{"version":1,"generated_at":"2026-01-01T00:00:00Z","repository":"fixture/repo","commit_sha":"","total_infractions":0,"infractions":[]}` + "\n",
+		".config/labels.yaml":               "labels: []\n",
+		".github/rulesets/main.json":        "{}\n",
+		"lefthook.yml":                      "pre-commit:\n  commands: {}\n",
+		"go.mod":                            "module fixture\n\ngo 1.27\n",
+		"main.go":                           fixtureMainGo,
+		"complex.go":                        fixtureComplexGo,
+	}
+	for rel, content := range files {
+		writeFixtureFile(t, root, rel, content)
+	}
+
+	tr := compiler.NewTranspiler()
+	res, err := tr.Compile(filepath.Join(root, "AGENTS.md"))
 	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
+		t.Fatalf("compile fixture AGENTS.md: %v", err)
 	}
-
-	expectedTools := []string{
-		"standards_audit",
-		"standards_plan",
-		"standards_compile_context",
-		"standards_explain_rule",
-		"standards_inspect_symbols",
+	if err := tr.WriteOutputs(res, root); err != nil {
+		t.Fatalf("write fixture vendor targets: %v", err)
 	}
+	return root
+}
 
-	for _, name := range expectedTools {
+// newFixtureServer returns a server confined to a fresh fixture repository.
+func newFixtureServer(t *testing.T) (*Server, string) {
+	t.Helper()
+	root := newFixtureRepo(t)
+	srv, err := NewServer(root, "v1.0.0-test")
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	return srv, root
+}
+
+// callTool invokes a registered tool through the JSON-RPC layer and returns its result.
+func callTool(t *testing.T, srv *Server, name string, args map[string]any) *mcp.ToolResult {
+	t.Helper()
+	params, err := json.Marshal(map[string]any{"name": name, "arguments": args})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	resp := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: "tools/call", Params: params})
+	if resp == nil {
+		t.Fatalf("%s: nil response", name)
+	}
+	if resp.Error != nil {
+		t.Fatalf("%s: JSON-RPC error %+v", name, resp.Error)
+	}
+	res, ok := resp.Result.(*mcp.ToolResult)
+	if !ok || res == nil || len(res.Content) == 0 {
+		t.Fatalf("%s: unexpected result %+v", name, resp.Result)
+	}
+	return res
+}
+
+// expectText asserts a successful tool result containing want.
+func expectText(t *testing.T, name string, res *mcp.ToolResult, want string) {
+	t.Helper()
+	if res.IsError {
+		t.Fatalf("%s: unexpected error result: %s", name, res.Content[0].Text)
+	}
+	if !strings.Contains(res.Content[0].Text, want) {
+		t.Errorf("%s: output lacks %q:\n%s", name, want, res.Content[0].Text)
+	}
+}
+
+// expectError asserts an error tool result containing want.
+func expectError(t *testing.T, name string, res *mcp.ToolResult, want string) {
+	t.Helper()
+	if !res.IsError {
+		t.Fatalf("%s: expected error result, got success:\n%s", name, res.Content[0].Text)
+	}
+	if !strings.Contains(res.Content[0].Text, want) {
+		t.Errorf("%s: error lacks %q: %s", name, want, res.Content[0].Text)
+	}
+}
+
+// ---- registration and protocol -------------------------------------------------------------
+
+func TestServer_Positive_RegistrationAndAnnotations(t *testing.T) {
+	srv, _ := newFixtureServer(t)
+
+	ro := mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false}
+	expected := map[string]mcp.ToolAnnotations{
+		"standards_audit":                   ro,
+		"standards_plan":                    ro,
+		"standards_compile_context":         {ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: true, OpenWorldHint: false},
+		"standards_explain_rule":            ro,
+		"standards_inspect_symbols":         ro,
+		"standards_needs_report":            ro,
+		"standards_adopt":                   {ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: true, OpenWorldHint: false},
+		"standards_dogfood":                 {ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: false, OpenWorldHint: true},
+		"standards_dogfood_suite":           {ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: false, OpenWorldHint: true},
+		"standards_dogfood_discover":        {ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: false, OpenWorldHint: true},
+		"standards_dogfood_schedule_status": ro,
+		"standards_dogfood_repair_status":   ro,
+		"standards_harvest_workstation":     {ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
+		"standards_package_docs":            ro,
+		"standards_version_audit":           {ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
+		"standards_memory_recall":           ro,
+		"standards_context_analyze":         ro,
+		"standards_wishes_status":           ro,
+		"standards_client_capabilities":     ro,
+		"standards_wishes_update":           {ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: false},
+		"standards_transcript_ingest":       {ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
+		"standards_notebook_prepare":        {ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
+		"standards_hindsight_optimize":      {ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: true, OpenWorldHint: false},
+	}
+	if len(srv.tools) != len(expected) || len(srv.order) != len(expected) {
+		t.Fatalf("registered %d tools (order %d), want %d", len(srv.tools), len(srv.order), len(expected))
+	}
+	for name, want := range expected {
 		tool, exists := srv.tools[name]
 		if !exists {
 			t.Errorf("tool %q not registered", name)
 			continue
 		}
+		if tool.Annotations != want {
+			t.Errorf("tool %q annotations = %+v, want %+v", name, tool.Annotations, want)
+		}
+		if tool.Handler == nil {
+			t.Errorf("tool %q registered without handler", name)
+		}
+	}
 
-		if name == "standards_audit" || name == "standards_plan" || name == "standards_explain_rule" || name == "standards_inspect_symbols" {
-			if !tool.Annotations.ReadOnlyHint {
-				t.Errorf("tool %q expected readOnlyHint=true", name)
-			}
-		}
-		if name == "standards_compile_context" {
-			if tool.Annotations.ReadOnlyHint {
-				t.Errorf("standards_compile_context expected readOnlyHint=false")
-			}
-		}
+	listResp := srv.HandleRequest(context.Background(), JSONRPCRequest{JSONRPC: "2.0", ID: 3, Method: "tools/list"})
+	if listResp == nil || listResp.Error != nil {
+		t.Fatalf("tools/list failed: %+v", listResp)
+	}
+	listed, ok := listResp.Result.(map[string]any)["tools"].([]map[string]any)
+	if !ok || len(listed) != len(expected) {
+		t.Fatalf("tools/list returned %d tools, want %d", len(listed), len(expected))
 	}
 }
 
-func TestServer_JSONRPC_ProtocolMethods(t *testing.T) {
-	srv, err := NewServer("../..", "v1.0.0")
-	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
-	}
+func TestServer_Positive_ProtocolMethods(t *testing.T) {
+	srv, _ := newFixtureServer(t)
 	ctx := context.Background()
 
-	// 1. initialize
-	initReq := JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "initialize",
-	}
-	resp := srv.HandleRequest(ctx, initReq)
+	resp := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: "initialize"})
 	if resp == nil || resp.Error != nil {
 		t.Fatalf("initialize failed: %+v", resp)
 	}
@@ -70,359 +282,338 @@ func TestServer_JSONRPC_ProtocolMethods(t *testing.T) {
 		t.Errorf("unexpected initialize result: %+v", resp.Result)
 	}
 
-	// 2. notifications/initialized
-	notifReq := JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "notifications/initialized",
-	}
-	notifResp := srv.HandleRequest(ctx, notifReq)
-	if notifResp != nil {
-		t.Errorf("notification should not produce response, got: %+v", notifResp)
+	if notif := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", Method: "notifications/initialized"}); notif != nil {
+		t.Errorf("notification should not produce response, got: %+v", notif)
 	}
 
-	// 3. ping
-	pingReq := JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      2,
-		Method:  "ping",
-	}
-	pingResp := srv.HandleRequest(ctx, pingReq)
-	if pingResp == nil || pingResp.Error != nil {
-		t.Errorf("ping failed: %+v", pingResp)
-	}
-
-	// 4. tools/list
-	listReq := JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      3,
-		Method:  "tools/list",
-	}
-	listResp := srv.HandleRequest(ctx, listReq)
-	if listResp == nil || listResp.Error != nil {
-		t.Fatalf("tools/list failed: %+v", listResp)
+	ping := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 2, Method: "ping"})
+	if ping == nil || ping.Error != nil || ping.ID != 2 {
+		t.Errorf("ping failed: %+v", ping)
 	}
 }
 
-func TestServer_ToolCalls_ExplainRule(t *testing.T) {
-	srv, err := NewServer("../..", "v1.0.0")
-	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
-	}
+func TestServer_Negative_JSONRPC(t *testing.T) {
+	srv, _ := newFixtureServer(t)
 	ctx := context.Background()
 
-	// Positive explain rule
-	explainParams, _ := json.Marshal(map[string]any{
-		"name": "standards_explain_rule",
-		"arguments": map[string]any{
-			"rule_id": "HISS-01",
-		},
-	})
-	explainResp := srv.HandleRequest(ctx, JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      10,
-		Method:  "tools/call",
-		Params:  explainParams,
-	})
-	if explainResp == nil || explainResp.Error != nil {
-		t.Fatalf("explain_rule failed: %+v", explainResp)
-	}
-	tr, ok := explainResp.Result.(*mcp.ToolResult)
-	if !ok || tr.IsError || !strings.Contains(tr.Content[0].Text, "HISS-01") {
-		t.Errorf("unexpected explain_rule result: %+v", explainResp.Result)
+	unk := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 40, Method: "unknown_method"})
+	if unk == nil || unk.Error == nil || unk.Error.Code != -32601 {
+		t.Fatalf("expected method not found error, got: %+v", unk)
 	}
 
-	// Negative explain rule: unknown rule
-	unknownParams, _ := json.Marshal(map[string]any{
-		"name": "standards_explain_rule",
-		"arguments": map[string]any{
-			"rule_id": "UNKNOWN-99",
-		},
-	})
-	unknownResp := srv.HandleRequest(ctx, JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      11,
-		Method:  "tools/call",
-		Params:  unknownParams,
-	})
-	if unknownResp == nil {
-		t.Fatalf("expected response for unknown rule")
-	}
-	trUnknown := unknownResp.Result.(*mcp.ToolResult)
-	if !trUnknown.IsError || !strings.Contains(trUnknown.Content[0].Text, "Unknown rule") {
-		t.Errorf("expected error result for unknown rule, got: %+v", trUnknown)
-	}
-}
-
-func TestServer_ToolCalls_PlanAndInspect(t *testing.T) {
-	srv, err := NewServer("../..", "v1.0.0")
-	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
-	}
-	ctx := context.Background()
-
-	// standards_plan
-	planParams, _ := json.Marshal(map[string]any{
-		"name":      "standards_plan",
-		"arguments": map[string]any{},
-	})
-	planResp := srv.HandleRequest(ctx, JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      12,
-		Method:  "tools/call",
-		Params:  planParams,
-	})
-	if planResp == nil || planResp.Error != nil {
-		t.Fatalf("plan failed: %+v", planResp)
+	mal := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 41, Method: "tools/call", Params: []byte(`not-json`)})
+	if mal == nil || mal.Error == nil || mal.Error.Code != -32602 {
+		t.Fatalf("expected invalid params error, got: %+v", mal)
 	}
 
-	// standards_inspect_symbols
-	inspectParams, _ := json.Marshal(map[string]any{
-		"name": "standards_inspect_symbols",
-		"arguments": map[string]any{
-			"path": "internal/mcp",
-		},
-	})
-	inspectResp := srv.HandleRequest(ctx, JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      13,
-		Method:  "tools/call",
-		Params:  inspectParams,
-	})
-	if inspectResp == nil || inspectResp.Error != nil {
-		t.Fatalf("inspect_symbols failed: %+v", inspectResp)
-	}
-	trInspect := inspectResp.Result.(*mcp.ToolResult)
-	if trInspect.IsError || !strings.Contains(trInspect.Content[0].Text, "Go AST Symbol") {
-		t.Errorf("unexpected inspect_symbols output: %+v", trInspect)
-	}
-}
-
-func TestServer_ToolCalls_NeedsReport(t *testing.T) {
-	srv, err := NewServer("../..", "v1.0.0")
-	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
-	}
-	ctx := context.Background()
-
-	params, err := json.Marshal(map[string]any{
-		"name": "standards_needs_report",
-		"arguments": map[string]any{
-			"path": "../..",
-		},
-	})
+	badToolP, err := json.Marshal(map[string]any{"name": "nonexistent_tool"})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	resp := srv.HandleRequest(ctx, JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      20,
-		Method:  "tools/call",
-		Params:  params,
-	})
-	if resp == nil || resp.Error != nil {
-		t.Fatalf("needs_report tool call failed: %+v", resp)
+	bad := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 42, Method: "tools/call", Params: badToolP})
+	if bad == nil || bad.Error == nil || bad.Error.Code != -32601 {
+		t.Fatalf("expected tool not found error (-32601), got: %+v", bad)
 	}
-	tr, ok := resp.Result.(*mcp.ToolResult)
-	if !ok || tr.IsError || !strings.Contains(tr.Content[0].Text, "Golusoris Migration Report") {
-		t.Errorf("unexpected needs_report result: %+v", resp.Result)
-	}
-}
 
-func TestServer_HTTP_Transport(t *testing.T) {
-	srv, err := NewServer("../..", "v1.0.0")
+	// A tool registered without a handler must fail with -32603, not panic.
+	srv.tools["broken_tool"] = mcp.Tool{Name: "broken_tool", InputSchema: mcp.ToolInputSchema{Type: "object"}}
+	brokenP, err := json.Marshal(map[string]any{"name": "broken_tool"})
 	if err != nil {
-		t.Fatalf("server setup error: %v", err)
+		t.Fatal(err)
+	}
+	broken := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 43, Method: "tools/call", Params: brokenP})
+	if broken == nil || broken.Error == nil || broken.Error.Code != -32603 {
+		t.Fatalf("expected -32603 for nil handler, got: %+v", broken)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	// Absent arguments reach the handler as an empty map.
+	res := callTool(t, srv, "standards_explain_rule", nil)
+	expectError(t, "explain_rule without args", res, "Unknown rule")
+}
+
+func TestServer_Boundary_ToolTimeoutAndArgTypes(t *testing.T) {
+	root := newFixtureRepo(t)
+	srv, err := NewServerWithOptions(ServerOptions{RootDir: root, Version: "v", ToolTimeout: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("NewServerWithOptions: %v", err)
+	}
+	slow, err := mcp.NewReadOnlyTool("slow_tool", "waits for its deadline", mcp.ToolInputSchema{}, func(ctx context.Context, _ map[string]any) (*mcp.ToolResult, error) {
+		<-ctx.Done()
+		return mcp.ErrorResult(ctx.Err().Error()), nil
 	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var req JSONRPCRequest
-		_ = json.Unmarshal(body, &req)
-		resp := srv.HandleRequest(r.Context(), req)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	})
-
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	// Health check
-	hRes, err := http.Get(ts.URL + "/health")
-	if err != nil || hRes.StatusCode != 200 {
-		t.Errorf("health check failed: %v", err)
+	if err != nil {
+		t.Fatalf("slow tool: %v", err)
 	}
+	srv.tools[slow.Name] = slow
 
-	// JSON-RPC POST
-	reqBody := `{"jsonrpc":"2.0","id":100,"method":"ping"}`
-	pRes, err := http.Post(ts.URL+"/", "application/json", bytes.NewBufferString(reqBody))
-	if err != nil || pRes.StatusCode != 200 {
-		t.Fatalf("POST request failed: %v", err)
+	start := time.Now()
+	res := callTool(t, srv, "slow_tool", nil)
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("tool call was not bounded by the tool timeout")
 	}
-	defer pRes.Body.Close()
+	expectError(t, "slow_tool", res, context.DeadlineExceeded.Error())
 
-	var rpcResp JSONRPCResponse
-	if err := json.NewDecoder(pRes.Body).Decode(&rpcResp); err != nil {
-		t.Fatalf("decode failed: %v", err)
+	// Boundary: booleans given as strings are rejected instead of being coerced to false.
+	res = callTool(t, srv, "standards_compile_context", map[string]any{"verify_only": "true"})
+	expectError(t, "compile_context verify_only string", res, "verify_only must be a boolean")
+	if _, err := argBool(map[string]any{"x": nil}, "x", true); err != nil {
+		t.Errorf("nil argument should fall back to the default: %v", err)
 	}
-	if rpcResp.ID == nil || rpcResp.Error != nil {
-		t.Errorf("unexpected JSON-RPC response: %+v", rpcResp)
+	if _, err := argString(map[string]any{"p": 42}, "p"); !errors.Is(err, ErrArgType) {
+		t.Errorf("argString on int: got %v, want ErrArgType", err)
 	}
 }
 
-func TestServer_SSE_Transport(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/sse", func(w http.ResponseWriter, r *http.Request) {
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "no flush", http.StatusInternalServerError)
-			return
+// ---- path confinement -------------------------------------------------------------------------
+
+func TestServer_Boundary_ResolvePathConfinement(t *testing.T) {
+	root := newFixtureRepo(t)
+	parent := filepath.Dir(root)
+	t.Chdir(parent)
+
+	// A relative -root is resolved once; defaults are never joined onto it twice.
+	srv, err := NewServer(filepath.Base(root), "v")
+	if err != nil {
+		t.Fatalf("NewServer relative root: %v", err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("eval root: %v", err)
+	}
+	got, err := srv.resolvePath(map[string]any{}, "path", srv.rootDir)
+	if err != nil {
+		t.Fatalf("default path: %v", err)
+	}
+	if gotResolved, evalErr := filepath.EvalSymlinks(got); evalErr != nil || gotResolved != resolvedRoot {
+		t.Errorf("default path = %q (resolved %q), want root %q", got, gotResolved, resolvedRoot)
+	}
+	if got, err := srv.resolvePath(map[string]any{}, "config_path", ".standards.yaml"); err != nil || got != filepath.Join(srv.rootDir, ".standards.yaml") {
+		t.Errorf("relative default = %q, %v", got, err)
+	}
+
+	// Inside the root: relative, absolute and interior "..".
+	for _, in := range []string{"main.go", filepath.Join(root, "main.go"), filepath.Join("sub", "..", "main.go")} {
+		if _, err := srv.resolvePath(map[string]any{"path": in}, "path", srv.rootDir); err != nil {
+			t.Errorf("inside path %q rejected: %v", in, err)
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("event: endpoint\ndata: /messages?sessionId=test-123\n\n"))
-		flusher.Flush()
-	})
+	}
 
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
+	// Outside the root: lexical escape, absolute foreign path, symlink escape.
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	for _, in := range []string{"..", filepath.Join("..", "x"), outside, filepath.Join("escape", "f")} {
+		if _, err := srv.resolvePath(map[string]any{"path": in}, "path", srv.rootDir); !errors.Is(err, ErrOutsideRoot) {
+			t.Errorf("outside path %q: got %v, want ErrOutsideRoot", in, err)
+		}
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", ts.URL+"/sse", nil)
+	// The opt-in flag lifts the confinement.
+	open, err := NewServerWithOptions(ServerOptions{RootDir: root, Version: "v", AllowOutsideRoot: true})
 	if err != nil {
-		t.Fatalf("failed to create SSE request: %v", err)
+		t.Fatalf("open server: %v", err)
 	}
-
-	client := &http.Client{}
-	res, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("SSE GET failed: %v", err)
+	if got, err := open.resolvePath(map[string]any{"path": outside}, "path", open.rootDir); err != nil || got != filepath.Clean(outside) {
+		t.Errorf("allow-outside-root absolute = %q, %v", got, err)
 	}
-	defer res.Body.Close()
-
-	buf := make([]byte, 128)
-	n, err := res.Body.Read(buf)
-	if err != nil && err != io.EOF {
-		t.Fatalf("failed to read SSE body: %v", err)
-	}
-	msg := string(buf[:n])
-	if !strings.Contains(msg, "event: endpoint") || !strings.Contains(msg, "test-123") {
-		t.Errorf("unexpected SSE initial payload: %s", msg)
+	if got, err := open.resolvePath(map[string]any{"path": filepath.Join("escape", "f")}, "path", open.rootDir); err != nil || got == "" {
+		t.Errorf("allow-outside-root symlink = %q, %v", got, err)
 	}
 }
 
-func TestServer_ToolCalls_AuditAndCompileContext(t *testing.T) {
-	srv, err := NewServer("../..", "v1.0.0")
-	if err != nil {
-		t.Fatalf("server setup error: %v", err)
+func TestServer_Negative_NewServerRoot(t *testing.T) {
+	if _, err := NewServer(filepath.Join(t.TempDir(), "missing"), "v"); err == nil {
+		t.Error("expected error for a non-existent root")
 	}
-	ctx := context.Background()
-
-	// Positive audit
-	auditP, _ := json.Marshal(map[string]any{
-		"name":      "standards_audit",
-		"arguments": map[string]any{},
-	})
-	res := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 30, Method: "tools/call", Params: auditP})
-	if res == nil || res.Error != nil {
-		t.Fatalf("standards_audit failed: %+v", res)
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-
-	// Negative audit: invalid manifest path
-	badAuditP, _ := json.Marshal(map[string]any{
-		"name":      "standards_audit",
-		"arguments": map[string]any{"config_path": "nonexistent.yaml"},
-	})
-	resBad := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 31, Method: "tools/call", Params: badAuditP})
-	if resBad == nil || !resBad.Result.(*mcp.ToolResult).IsError {
-		t.Fatalf("expected error result for nonexistent manifest")
-	}
-
-	// Positive compile-context with verify_only
-	compileP, _ := json.Marshal(map[string]any{
-		"name":      "standards_compile_context",
-		"arguments": map[string]any{"verify_only": true},
-	})
-	resComp := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 32, Method: "tools/call", Params: compileP})
-	if resComp == nil || resComp.Error != nil {
-		t.Fatalf("standards_compile_context failed: %+v", resComp)
+	if _, err := NewServer(file, "v"); err == nil {
+		t.Error("expected error for a file root")
 	}
 }
 
-func TestServer_JSONRPC_NegativeCases(t *testing.T) {
-	srv, err := NewServer("../..", "v1.0.0")
-	if err != nil {
-		t.Fatalf("server setup error: %v", err)
-	}
-	ctx := context.Background()
+// ---- explain_rule ------------------------------------------------------------------------------
 
-	// Unknown method
-	unkRes := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 40, Method: "unknown_method"})
-	if unkRes == nil || unkRes.Error == nil || unkRes.Error.Code != -32601 {
-		t.Fatalf("expected method not found error, got: %+v", unkRes)
-	}
+func TestServer_Positive_ExplainRuleCoversDocumentedInvariants(t *testing.T) {
+	srv, _ := newFixtureServer(t)
 
-	// tools/call with malformed params JSON
-	malRes := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 41, Method: "tools/call", Params: []byte(`not-json`)})
-	if malRes == nil || malRes.Error == nil || malRes.Error.Code != -32602 {
-		t.Fatalf("expected invalid params error, got: %+v", malRes)
+	// Every invariant documented in AGENTS.md must resolve, including HISS-17/18.
+	for _, id := range []string{"HISS-01", "HISS-02", "HISS-04", "HISS-07", "HISS-10", "HISS-15", "HISS-16", "HISS-17", "HISS-18"} {
+		res := callTool(t, srv, "standards_explain_rule", map[string]any{"rule_id": id})
+		expectText(t, id, res, "Rule: "+id)
+	}
+	for _, id := range knownRuleIDs() {
+		res := callTool(t, srv, "standards_explain_rule", map[string]any{"rule_id": " " + strings.ToLower(id) + "\n"})
+		expectText(t, "normalised "+id, res, "Rule: "+id)
 	}
 
-	// tools/call with unregistered tool name
-	badToolP, _ := json.Marshal(map[string]any{"name": "nonexistent_tool"})
-	badRes := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 42, Method: "tools/call", Params: badToolP})
-	if badRes == nil || badRes.Error == nil || badRes.Error.Code != -32601 {
-		t.Fatalf("expected tool not found error (-32601), got: %+v", badRes)
+	schema := srv.tools["standards_explain_rule"].InputSchema.Properties["rule_id"]
+	if len(schema.Enum) != len(hissRuleExplanations) {
+		t.Errorf("schema enum lists %d rules, map has %d", len(schema.Enum), len(hissRuleExplanations))
+	}
+
+	res := callTool(t, srv, "standards_explain_rule", map[string]any{"rule_id": "UNKNOWN-99"})
+	expectError(t, "unknown rule", res, "Unknown rule")
+	for _, id := range knownRuleIDs() {
+		if !strings.Contains(res.Content[0].Text, id) {
+			t.Errorf("error message does not list %s", id)
+		}
+	}
+	res = callTool(t, srv, "standards_explain_rule", map[string]any{"rule_id": 7})
+	expectError(t, "typed rule id", res, "must be a string")
+}
+
+// ---- plan and audit ------------------------------------------------------------------------------
+
+func TestServer_Positive_PlanAndAuditOnSyncedRepo(t *testing.T) {
+	srv, _ := newFixtureServer(t)
+
+	plan := callTool(t, srv, "standards_plan", nil)
+	expectText(t, "plan", plan, "No changes required")
+
+	audit := callTool(t, srv, "standards_audit", nil)
+	expectText(t, "audit", audit, "[PASS] Technical debt baseline verified")
+	expectText(t, "audit", audit, "[PASS] Cross-agent context targets verified in sync")
+	expectText(t, "audit", audit, "7/7 MCP audit gates passed")
+}
+
+func TestServer_Negative_PlanDriftAndAuditFailures(t *testing.T) {
+	srv, root := newFixtureServer(t)
+
+	if err := os.Remove(filepath.Join(root, ".github", "rulesets", "main.json")); err != nil {
+		t.Fatal(err)
+	}
+	plan := callTool(t, srv, "standards_plan", nil)
+	expectText(t, "plan drift", plan, "[DRIFT] Policy drift detected")
+	if strings.Contains(plan.Content[0].Text, "No changes required") {
+		t.Error("drifted plan still claims no changes required")
+	}
+	audit := callTool(t, srv, "standards_audit", nil)
+	expectError(t, "audit ruleset", audit, "[FAIL] Branch protection ruleset")
+	writeFixtureFile(t, root, ".github/rulesets/main.json", "{}\n")
+
+	// A new HISS-02 violation must trip the ratchet even though the baseline is empty.
+	writeFixtureFile(t, root, "bad.go", "package main\n\nfunc spin() {\n\tfor {\n\t}\n}\n")
+	audit = callTool(t, srv, "standards_audit", nil)
+	expectError(t, "audit ratchet", audit, "[FAIL] HISS invariant violations introduced")
+	expectError(t, "audit ratchet", audit, "bad.go")
+	if err := os.Remove(filepath.Join(root, "bad.go")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(filepath.Join(root, ".standards.lock")); err != nil {
+		t.Fatal(err)
+	}
+	audit = callTool(t, srv, "standards_audit", nil)
+	expectError(t, "audit lock", audit, "[FAIL] Effective policy audit failed")
+	plan = callTool(t, srv, "standards_plan", nil)
+	expectText(t, "plan missing", plan, "[DRIFT] Missing baseline files: .standards.lock")
+	writeFixtureFile(t, root, ".standards.lock", validAuditLock(t))
+
+	bad := callTool(t, srv, "standards_audit", map[string]any{"config_path": "nonexistent.yaml"})
+	expectError(t, "audit manifest", bad, "[FAIL] Effective policy audit failed")
+	escaped := callTool(t, srv, "standards_audit", map[string]any{"config_path": "../outside.yaml"})
+	expectError(t, "audit escape", escaped, "outside the server root")
+}
+
+func TestServer_Boundary_AuditLockfileIsDirectory(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	if err := os.Remove(filepath.Join(root, ".standards.lock")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, ".standards.lock"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	audit := callTool(t, srv, "standards_audit", nil)
+	expectError(t, "audit lock dir", audit, "source must be regular")
+}
+
+// ---- inspect_symbols ---------------------------------------------------------------------------
+
+func TestServer_Positive_InspectSymbolsMeasuresComplexity(t *testing.T) {
+	srv, _ := newFixtureServer(t)
+
+	res := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "."})
+	expectText(t, "inspect dir", res, "Func: Greet")
+	expectText(t, "inspect dir", res, "Func: Classify")
+	expectText(t, "inspect dir", res, "Cyclo: 13 (<=10)")
+	expectText(t, "inspect dir", res, "HISS-04 WARN: Cyclo")
+
+	single := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "main.go"})
+	expectText(t, "inspect file", single, "Func: Greet | LOC: 6 (<=75) | Stmts: 3 (<=50) | Cyclo: 2 (<=10) | Cognitive: 1 (<=15) [PASS]")
+	if strings.Contains(single.Content[0].Text, "WARN") {
+		t.Errorf("clean file reported a warning:\n%s", single.Content[0].Text)
 	}
 }
 
-func TestServer_ToolCalls_AdoptAndDogfood(t *testing.T) {
-	srv, err := NewServer("../..", "v1.0.0")
-	if err != nil {
-		t.Fatalf("server setup error: %v", err)
-	}
-	ctx := context.Background()
+func TestServer_Negative_InspectSymbols(t *testing.T) {
+	srv, root := newFixtureServer(t)
 
-	// 1. standards_adopt (dry-run)
-	adoptP, _ := json.Marshal(map[string]any{
-		"name": "standards_adopt",
-		"arguments": map[string]any{
-			"path":    "../..",
-			"dry_run": true,
-		},
-	})
-	adoptRes := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 50, Method: "tools/call", Params: adoptP})
-	if adoptRes == nil || adoptRes.Error != nil {
-		t.Fatalf("standards_adopt failed: %+v", adoptRes)
+	res := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "does-not-exist.go"})
+	expectError(t, "missing path", res, "Inspection failed")
+	res = callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": ""})
+	expectError(t, "empty path", res, "path parameter is required")
+	res = callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "../"})
+	expectError(t, "escaping path", res, "outside the server root")
+
+	writeFixtureFile(t, root, "broken/broken.go", "package main\n\nfunc (")
+	res = callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "broken"})
+	expectText(t, "parse error", res, "Parse error")
+
+	if err := os.Mkdir(filepath.Join(root, "empty"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	res = callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "empty"})
+	expectText(t, "no go files", res, "No Go source files")
+}
+
+func TestServer_Boundary_MeasureFuncMetrics(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		fn   string
+		want funcMetrics
+	}{
+		{"simple", fixtureMainGo, "Greet", funcMetrics{LOC: 6, Statements: 3, Cyclomatic: 2, Cognitive: 1}},
+		{"branchy", fixtureComplexGo, "Classify", funcMetrics{LOC: 27, Statements: 20, Cyclomatic: 13, Cognitive: 12}},
+		{"else-if chain", fixturePickGo, "Pick", funcMetrics{LOC: 9, Statements: 5, Cyclomatic: 3, Cognitive: 3}},
+		{"empty body", "package p\n\nfunc Nop() {}\n", "Nop", funcMetrics{LOC: 1, Statements: 0, Cyclomatic: 1, Cognitive: 0}},
+	}
+	for _, tc := range cases {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, tc.name+".go", tc.src, 0)
+		if err != nil {
+			t.Fatalf("%s: parse: %v", tc.name, err)
+		}
+		fn := findFunc(file, tc.fn)
+		if fn == nil {
+			t.Fatalf("%s: function %s not found", tc.name, tc.fn)
+		}
+		if got := measureFunc(fset, fn); got != tc.want {
+			t.Errorf("%s: metrics = %+v, want %+v", tc.name, got, tc.want)
+		}
 	}
 
-	// 2. standards_dogfood
-	dfP, _ := json.Marshal(map[string]any{
-		"name": "standards_dogfood",
-		"arguments": map[string]any{
-			"host_path": "../..",
-		},
-	})
-	dfRes := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 51, Method: "tools/call", Params: dfP})
-	if dfRes == nil || dfRes.Error != nil {
-		t.Fatalf("standards_dogfood failed: %+v", dfRes)
+	// Boundary: exactly at the caps is a pass; one over each cap names the bound.
+	at := funcMetrics{LOC: maxFuncLOC, Statements: maxStatements, Cyclomatic: maxCyclomatic, Cognitive: maxCognitive}
+	if v := at.violations(); len(v) != 0 {
+		t.Errorf("metrics at the caps reported %v", v)
 	}
+	over := funcMetrics{LOC: maxFuncLOC + 1, Statements: maxStatements + 1, Cyclomatic: maxCyclomatic + 1, Cognitive: maxCognitive + 1}
+	if v := strings.Join(over.violations(), ","); v != "LOC,Stmts,Cyclo,Cognitive" {
+		t.Errorf("violations over every cap = %q", v)
+	}
+}
 
-	// 3. standards_harvest_workstation
-	hP, _ := json.Marshal(map[string]any{
-		"name": "standards_harvest_workstation",
-		"arguments": map[string]any{
-			"dev_dir": t.TempDir(),
-		},
-	})
-	hRes := srv.HandleRequest(ctx, JSONRPCRequest{JSONRPC: "2.0", ID: 52, Method: "tools/call", Params: hP})
-	if hRes == nil || hRes.Error != nil {
-		t.Fatalf("standards_harvest_workstation failed: %+v", hRes)
+// findFunc returns the named top-level function declaration of a parsed file.
+func findFunc(file *ast.File, name string) *ast.FuncDecl {
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == name {
+			return fn
+		}
 	}
+	return nil
 }

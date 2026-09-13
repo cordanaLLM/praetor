@@ -1,0 +1,3 @@
+type: fixed
+title: Enforce fresh private state and exact remote check acceptance, and validate synchronized governance artifacts
+breaking: false

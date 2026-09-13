@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -67,7 +68,9 @@ type ResolvedPolicy struct {
 
 // LoadManifest reads and parses a .standards.yaml file.
 func LoadManifest(path string) (*Manifest, error) {
-	data, err := os.ReadFile(path)
+	// #nosec G304 -- path is the manifest location chosen by the invoking user (a CLI
+	// flag defaulting to the repository root); there is no confinement root to enforce.
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read manifest at %s: %w", path, err)
 	}
@@ -112,10 +115,10 @@ func Join(a, b *ResolvedPolicy) *ResolvedPolicy {
 		return DefaultPolicy()
 	}
 	if a == nil {
-		return b
+		return clonePolicy(b)
 	}
 	if b == nil {
-		return a
+		return clonePolicy(a)
 	}
 
 	res := &ResolvedPolicy{}
@@ -144,40 +147,55 @@ func Join(a, b *ResolvedPolicy) *ResolvedPolicy {
 	return res
 }
 
+func clonePolicy(p *ResolvedPolicy) *ResolvedPolicy {
+	clone := *p
+	clone.Linters = append([]string(nil), p.Linters...)
+	clone.DevFeatures = append([]string(nil), p.DevFeatures...)
+	return &clone
+}
+
 // ApplyOverrides applies project-level overrides on top of the resolved policy,
 // enforcing that overrides can only increase strictness.
 func (p *ResolvedPolicy) ApplyOverrides(o Overrides) {
 	if o.Complexity != nil {
-		if o.Complexity.MaxCyclomatic > 0 {
-			p.Complexity.MaxCyclomatic = minPositive(p.Complexity.MaxCyclomatic, o.Complexity.MaxCyclomatic)
-		}
-		if o.Complexity.MaxCognitive > 0 {
-			p.Complexity.MaxCognitive = minPositive(p.Complexity.MaxCognitive, o.Complexity.MaxCognitive)
-		}
-		if o.Complexity.MaxFuncLOC > 0 {
-			p.Complexity.MaxFuncLOC = minPositive(p.Complexity.MaxFuncLOC, o.Complexity.MaxFuncLOC)
-		}
-		if o.Complexity.MaxStatements > 0 {
-			p.Complexity.MaxStatements = minPositive(p.Complexity.MaxStatements, o.Complexity.MaxStatements)
-		}
+		p.Complexity.applyOverride(o.Complexity)
 	}
-
 	if o.BranchProtection != nil {
-		p.BranchProtection.EnforceLinearHistory = p.BranchProtection.EnforceLinearHistory || o.BranchProtection.EnforceLinearHistory
-		p.BranchProtection.RequireSignedCommits = p.BranchProtection.RequireSignedCommits || o.BranchProtection.RequireSignedCommits
-		p.BranchProtection.DismissStaleReviews = p.BranchProtection.DismissStaleReviews || o.BranchProtection.DismissStaleReviews
-		if o.BranchProtection.RequiredApprovingReviewers > p.BranchProtection.RequiredApprovingReviewers {
-			p.BranchProtection.RequiredApprovingReviewers = o.BranchProtection.RequiredApprovingReviewers
-		}
+		p.BranchProtection.applyOverride(o.BranchProtection)
 	}
-
 	if o.SupplyChain != nil {
-		if o.SupplyChain.SLSALevel > p.SupplyChain.SLSALevel {
-			p.SupplyChain.SLSALevel = o.SupplyChain.SLSALevel
-		}
-		p.SupplyChain.EnforceCosign = p.SupplyChain.EnforceCosign || o.SupplyChain.EnforceCosign
-		p.SupplyChain.RequireSBOM = p.SupplyChain.RequireSBOM || o.SupplyChain.RequireSBOM
+		p.SupplyChain.applyOverride(o.SupplyChain)
 	}
+}
+
+// tightenPositive lowers *current to override when override is a stricter positive cap.
+func tightenPositive(current *int, override int) {
+	if override > 0 {
+		*current = minPositive(*current, override)
+	}
+}
+
+// applyOverride keeps the stricter (lower, positive) complexity caps.
+func (c *ComplexityPolicy) applyOverride(o *ComplexityPolicy) {
+	tightenPositive(&c.MaxCyclomatic, o.MaxCyclomatic)
+	tightenPositive(&c.MaxCognitive, o.MaxCognitive)
+	tightenPositive(&c.MaxFuncLOC, o.MaxFuncLOC)
+	tightenPositive(&c.MaxStatements, o.MaxStatements)
+}
+
+// applyOverride keeps the stricter branch protection settings.
+func (b *BranchProtectionPolicy) applyOverride(o *BranchProtectionPolicy) {
+	b.EnforceLinearHistory = b.EnforceLinearHistory || o.EnforceLinearHistory
+	b.RequireSignedCommits = b.RequireSignedCommits || o.RequireSignedCommits
+	b.DismissStaleReviews = b.DismissStaleReviews || o.DismissStaleReviews
+	b.RequiredApprovingReviewers = max(b.RequiredApprovingReviewers, o.RequiredApprovingReviewers)
+}
+
+// applyOverride keeps the stricter supply-chain settings.
+func (s *SupplyChainPolicy) applyOverride(o *SupplyChainPolicy) {
+	s.SLSALevel = max(s.SLSALevel, o.SLSALevel)
+	s.EnforceCosign = s.EnforceCosign || o.EnforceCosign
+	s.RequireSBOM = s.RequireSBOM || o.RequireSBOM
 }
 
 func minPositive(a, b int) int {

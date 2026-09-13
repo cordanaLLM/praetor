@@ -45,6 +45,11 @@ func verifyVSCodeAndJetBrains(t *testing.T, fileMap map[string]string) {
 	if !strings.Contains(vscodeSettings, "standards-lsp") {
 		t.Errorf(".vscode/settings.json missing standards-lsp reference")
 	}
+	for _, forbidden := range []string{"standards.mcp.", "standards.modelTier", "gemini-2.5-pro"} {
+		if strings.Contains(vscodeSettings, forbidden) {
+			t.Errorf("workspace settings must not assert %s: %s", forbidden, vscodeSettings)
+		}
+	}
 
 	vscodeTasks, ok := fileMap[filepath.Join(".vscode", "tasks.json")]
 	if !ok {
@@ -136,7 +141,9 @@ func TestEditor_Positive_WriteAndVerify(t *testing.T) {
 
 	// 3. Detect tampering / out-of-sync configuration
 	tamperPath := filepath.Join(tmpDir, ".vscode", "settings.json")
-	_ = os.WriteFile(tamperPath, []byte(`{"tampered": true}`), 0644)
+	if err := os.WriteFile(tamperPath, []byte(`{"tampered": true}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := Verify(set, tmpDir); err == nil {
 		t.Errorf("expected Verify to detect modified out-of-sync configuration file")
@@ -243,8 +250,10 @@ func TestEditor_Boundary_CustomBinaryDirAndFlags(t *testing.T) {
 	if !strings.Contains(settingsContent, customBin+"/standards-lsp") {
 		t.Errorf("settings missing custom binary path: %s", settingsContent)
 	}
-	if !strings.Contains(settingsContent, `"standards.mcp.enabled": false`) {
-		t.Errorf("expected standards.mcp.enabled to be false: %s", settingsContent)
+	for _, forbidden := range []string{"standards.mcp.", "standards.modelTier", "gemini-2.5-pro"} {
+		if strings.Contains(settingsContent, forbidden) {
+			t.Errorf("workspace settings must not assert %s: %s", forbidden, settingsContent)
+		}
 	}
 }
 

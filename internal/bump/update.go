@@ -3,9 +3,8 @@ package bump
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -18,9 +17,21 @@ func ApplyUpdate(ctx context.Context, repoPath string, cand UpgradeCandidate) er
 }
 
 func applyUpdateInternal(ctx context.Context, repoPath string, cand UpgradeCandidate, tidy bool) error {
-	targetDir := repoPath
-	if cand.ModuleDir != "" && cand.ModuleDir != "." {
-		targetDir = filepath.Join(repoPath, cand.ModuleDir)
+	if ctx == nil {
+		return fmt.Errorf("update requires context")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := util.ValidateExecArg(cand.Package); err != nil {
+		return fmt.Errorf("invalid package: %w", err)
+	}
+	if err := util.ValidateExecArg(cand.TargetVersion); err != nil {
+		return fmt.Errorf("invalid target version: %w", err)
+	}
+	targetDir, err := util.ConfinePath(repoPath, cand.ModuleDir)
+	if err != nil {
+		return fmt.Errorf("invalid module directory: %w", err)
 	}
 
 	switch cand.ManifestType {
@@ -35,28 +46,27 @@ func applyUpdateInternal(ctx context.Context, repoPath string, cand UpgradeCandi
 
 func applyGoUpdate(ctx context.Context, targetDir string, cand UpgradeCandidate, tidy bool) error {
 	targetSpec := fmt.Sprintf("%s@%s", cand.Package, cand.TargetVersion)
-	cmd := exec.CommandContext(ctx, "go", "get", targetSpec)
-	cmd.Dir = targetDir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := util.RunCommand(ctx, targetDir, "go", "get", targetSpec); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		// If go get fails, try direct fallback to go.mod edit + go mod tidy
-		if fbErr := fallbackGoModEdit(targetDir, cand); fbErr != nil {
-			return fmt.Errorf("go get %s failed: %w (%s)", targetSpec, err, strings.TrimSpace(string(out)))
+		if fbErr := fallbackGoModEdit(ctx, targetDir, cand); fbErr != nil {
+			return fmt.Errorf("go get %s failed: %w (%s)", targetSpec, err, strings.TrimSpace(out))
 		}
 	}
 
 	if tidy {
-		tidyCmd := exec.CommandContext(ctx, "go", "mod", "tidy")
-		tidyCmd.Dir = targetDir
-		if tidyErr := tidyCmd.Run(); tidyErr != nil {
+		if _, tidyErr := util.RunCommand(ctx, targetDir, "go", "mod", "tidy"); tidyErr != nil {
 			return fmt.Errorf("go mod tidy in %s: %w", targetDir, tidyErr)
 		}
 	}
 	return nil
 }
 
-func fallbackGoModEdit(targetDir string, cand UpgradeCandidate) error {
+func fallbackGoModEdit(ctx context.Context, targetDir string, cand UpgradeCandidate) error {
 	goModPath := filepath.Join(targetDir, "go.mod")
-	data, err := os.ReadFile(goModPath)
+	data, err := readManifest(targetDir, "go.mod")
 	if err != nil {
 		return err
 	}
@@ -65,7 +75,7 @@ func fallbackGoModEdit(targetDir string, cand UpgradeCandidate) error {
 	newPat := fmt.Sprintf("%s %s", cand.Package, cand.TargetVersion)
 	if strings.Contains(content, oldPat) {
 		content = strings.Replace(content, oldPat, newPat, 1)
-		return os.WriteFile(goModPath, []byte(content), 0644)
+		return writeManifest(ctx, targetDir, "go.mod", data, []byte(content))
 	}
 	return fmt.Errorf("pattern %s not found in %s", oldPat, goModPath)
 }
@@ -75,20 +85,21 @@ func applyNodeUpdate(ctx context.Context, targetDir string, cand UpgradeCandidat
 	pnpmLock := filepath.Join(targetDir, "pnpm-lock.yaml")
 	if util.FileExists(pnpmLock) || util.FileExists(filepath.Join(targetDir, "..", "pnpm-lock.yaml")) {
 		spec := fmt.Sprintf("%s@%s", cand.Package, cand.TargetVersion)
-		cmd := exec.CommandContext(ctx, "pnpm", "update", spec)
-		cmd.Dir = targetDir
-		cmdOut, err := cmd.CombinedOutput()
+		cmdOut, err := util.RunCommand(ctx, targetDir, "pnpm", "update", spec)
 		if err == nil {
 			return nil
 		}
-		if len(cmdOut) == 0 {
+		if len(cmdOut) == 0 || ctx.Err() != nil {
 			return err
 		}
 	}
 
-	// Fallback to direct package.json update
+	return updatePackageManifest(ctx, targetDir, cand)
+}
+
+func updatePackageManifest(ctx context.Context, targetDir string, cand UpgradeCandidate) error {
 	pkgFile := filepath.Join(targetDir, "package.json")
-	data, err := os.ReadFile(pkgFile)
+	data, err := readManifest(targetDir, "package.json")
 	if err != nil {
 		return err
 	}
@@ -116,16 +127,18 @@ func applyNodeUpdate(ctx context.Context, targetDir string, cand UpgradeCandidat
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(pkgFile, append(outData, '\n'), 0644)
+	return writeManifest(ctx, targetDir, "package.json", data, append(outData, '\n'))
 }
 
 // UpdateAll batches updates for all given candidates across repoPath.
 func UpdateAll(ctx context.Context, repoPath string, candidates []UpgradeCandidate) (int, error) {
 	applied := 0
+	var failures []error
 	modulesToTidy := make(map[string]bool)
 
 	for _, c := range candidates {
 		if err := applyUpdateInternal(ctx, repoPath, c, false); err != nil {
+			failures = append(failures, fmt.Errorf("update %s: %w", c.Package, err))
 			continue
 		}
 		applied++
@@ -140,12 +153,11 @@ func UpdateAll(ctx context.Context, repoPath string, candidates []UpgradeCandida
 
 	// Final tidy pass for Go modules
 	for dir := range modulesToTidy {
-		cmd := exec.CommandContext(ctx, "go", "mod", "tidy")
-		cmd.Dir = dir
-		if tidyErr := cmd.Run(); tidyErr != nil {
+		if _, tidyErr := util.RunCommand(ctx, dir, "go", "mod", "tidy"); tidyErr != nil {
+			failures = append(failures, fmt.Errorf("tidy %s: %w", dir, tidyErr))
 			continue
 		}
 	}
 
-	return applied, nil
+	return applied, errors.Join(failures...)
 }

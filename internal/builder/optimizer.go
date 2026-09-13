@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-// OptimizationPlan details compiler flags, pruned capabilities, and stripping directives.
+// OptimizationPlan declares suggested compiler flags and pruning directives.
+// These options are not evidence of execution, compatibility, or measured improvement.
 type OptimizationPlan struct {
 	Runtime       string   `json:"runtime" yaml:"runtime"`
 	Flags         []string `json:"flags" yaml:"flags"`
@@ -15,7 +16,7 @@ type OptimizationPlan struct {
 	BytecodeClean bool     `json:"bytecode_clean" yaml:"bytecode_clean"`
 }
 
-// PreBuildOptimizer prunes unnecessary framework dependencies and configures build flags.
+// PreBuildOptimizer prepares option declarations; it does not execute optimization.
 type PreBuildOptimizer struct{}
 
 // NewPreBuildOptimizer creates a ready-to-use pre-build optimizer.
@@ -104,7 +105,8 @@ func (p *PreBuildOptimizer) planNative(plan *OptimizationPlan, capMap map[string
 	}
 }
 
-// Optimize applies the generated optimization plan into target build options.
+// Optimize copies a plan into in-memory target options. No dependencies or artifacts
+// are changed, and no compiler or optimization tool is executed.
 func (p *PreBuildOptimizer) Optimize(target *TargetConfig, plan *OptimizationPlan) error {
 	if target == nil {
 		return errors.New("target configuration cannot be nil")

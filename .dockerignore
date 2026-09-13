@@ -1,0 +1,5 @@
+# Private local state must never enter container build contexts or cache layers.
+/.workingdir/
+/.git/
+/.claude/worktrees/
+/.standards-receipt.json

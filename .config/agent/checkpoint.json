@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "enabled": true,
+  "commit_after_minutes": 30,
+  "commit_after_files": 20,
+  "on_stop": true,
+  "publish": true,
+  "remote": "origin",
+  "base": "main",
+  "repository": "cordanaLLM/praetor",
+  "branch_prefixes": ["checkpoint/", "audit/", "fix/", "feat/", "chore/", "docs/", "refactor/", "test/", "ci/"],
+  "require_pr": true,
+  "require_checks": true,
+  "required_checks": [
+    "Standards & Invariant Verification Gate",
+    "DCO 1.1 & REUSE Compliance Gate",
+    "Go Vulnerability & AST Security Scan"
+  ],
+  "enforce_batch_scope": true
+}

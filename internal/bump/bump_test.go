@@ -114,8 +114,8 @@ func TestRunCanary_Positive_DryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunCanary dry-run failed: %v", err)
 	}
-	if !res.Success || !res.CanaryCertified {
-		t.Fatal("expected successful certified result in dry-run")
+	if res.Success || res.CanaryCertified || res.Status != CanaryPlanned {
+		t.Fatal("expected planned but unexecuted and uncertified dry-run")
 	}
 }
 
@@ -124,7 +124,7 @@ func TestRunCanary_Positive_DryRun(t *testing.T) {
 // =========================================================================
 
 func TestScanDependencies_Negative_NilContext(t *testing.T) {
-	_, err := ScanDependencies(nil, "/tmp", true)
+	_, err := ScanDependencies(nilTestContext(), "/tmp", true)
 	if err == nil {
 		t.Fatal("expected error with nil context")
 	}
@@ -132,7 +132,7 @@ func TestScanDependencies_Negative_NilContext(t *testing.T) {
 
 func TestRunCanary_Negative_NilContext(t *testing.T) {
 	opts := CanaryOptions{RepoPath: "/tmp"}
-	_, err := RunCanary(nil, opts)
+	_, err := RunCanary(nilTestContext(), opts)
 	if err == nil {
 		t.Fatal("expected error with nil context")
 	}
@@ -140,7 +140,7 @@ func TestRunCanary_Negative_NilContext(t *testing.T) {
 
 func TestApplyBump_Negative_NilContext(t *testing.T) {
 	cand := UpgradeCandidate{Package: "foo"}
-	err := ApplyBump(nil, "/tmp", cand, "")
+	err := ApplyBump(nilTestContext(), "/tmp", cand, "")
 	if err == nil {
 		t.Fatal("expected error with nil context")
 	}
@@ -154,8 +154,12 @@ func TestScanDependencies_Boundary_EmptyManifests(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	_ = os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module empty\n"), 0644)
-	_ = os.WriteFile(filepath.Join(tmpDir, "package.json"), []byte("{}\n"), 0644)
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module empty\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "package.json"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	rep, err := ScanDependencies(ctx, tmpDir, true)
 	if err != nil {
@@ -237,3 +241,6 @@ func TestApplyUpdate_NodeFallback(t *testing.T) {
 		t.Fatalf("expected package.json to contain ^5.7.3, got: %s", string(data))
 	}
 }
+
+// nilTestContext supplies the deliberately invalid argument for guard tests.
+func nilTestContext() context.Context { return nil }

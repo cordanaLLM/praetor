@@ -1,27 +1,27 @@
 # syntax=docker/dockerfile:1
-# cordanaLLM/praetor minimal multi-arch devcontainer base (< 250MB)
-FROM golang:1.27-alpine
+# cordanaLLM/praetor Go development container base
+FROM golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125
 
 LABEL org.opencontainers.image.title="cordanaLLM/praetor dev container" \
-      org.opencontainers.image.description="Minimal multi-arch zero-CVE development container for cordanaLLM/praetor" \
-      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.description="Go development environment for cordanaLLM/praetor" \
+      org.opencontainers.image.licenses="EUPL-1.2" \
       org.opencontainers.image.vendor="cordanaLLM"
 
 # Install git, make, bash, curl, sudo, shadow, base dev tools and certificates
 RUN apk update && \
     apk add --no-cache \
-      git \
-      make \
-      bash \
-      curl \
-      sudo \
-      shadow \
-      ca-certificates \
-      tzdata \
-      openssh-client \
-      tar \
-      gcc \
-      musl-dev \
+      git=2.54.0-r0 \
+      make=4.4.1-r4 \
+      bash=5.3.9-r1 \
+      curl=8.22.0-r0 \
+      sudo=1.9.17_p2-r1 \
+      shadow=4.18.0-r1 \
+      ca-certificates=20260611-r0 \
+      tzdata=2026c-r0 \
+      openssh-client-default=10.3_p1-r1 \
+      tar=1.35-r5 \
+      gcc=15.2.0-r5 \
+      musl-dev=1.2.6-r2 \
     && rm -rf /var/cache/apk/*
 
 # Configure non-root user vscode (1000:1000) with passwordless sudo

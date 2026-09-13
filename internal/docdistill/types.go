@@ -75,4 +75,7 @@ type DocAuditResult struct {
 	Stale         []PackageRef `json:"stale"`
 	CoverageScore float64      `json:"coverage_score"`
 	Passed        bool         `json:"passed"`
+	// Status distinguishes a valid repository with no declared dependencies from
+	// a successful coverage audit. It is not applicable when TotalDeclared is zero.
+	Status string `json:"status,omitempty"`
 }

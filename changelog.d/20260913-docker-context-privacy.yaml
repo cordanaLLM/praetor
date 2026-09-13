@@ -1,0 +1,3 @@
+type: fixed
+title: Exclude parked agent worktrees and local receipt artifacts from Docker build contexts
+breaking: false

@@ -8,63 +8,12 @@ import (
 	"testing"
 )
 
-func TestUniversalBuilder_Positive(t *testing.T) {
-	tmpDir := t.TempDir()
-	builder := NewUniversalBuilder()
-
-	cfg := &BuildConfig{
-		Version:   1,
-		Project:   "test-go",
-		OutputDir: filepath.Join(tmpDir, "dist-go"),
-		Optimize:  true,
-		Targets: map[string]TargetConfig{
-			"cli": {
-				Runtime:      "go",
-				Entrypoint:   "cmd/main.go",
-				Capabilities: []string{"logging", "metrics"},
-			},
-		},
-	}
-
-	results, err := builder.Build(context.Background(), cfg, "cli")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(results) != 1 || !results[0].Success || !results[0].Optimized {
-		t.Errorf("expected 1 successful optimized result, got %+v", results)
-	}
-}
-
-func TestUniversalBuilder_Polyglot(t *testing.T) {
-	tmpDir := t.TempDir()
-	builder := NewUniversalBuilder()
-
-	cfg := &BuildConfig{
-		Version:   1,
-		Project:   "test-polyglot",
-		OutputDir: filepath.Join(tmpDir, "dist-poly"),
-		Targets: map[string]TargetConfig{
-			"frontend": {Runtime: "svelte", Entrypoint: "src/App.svelte"},
-			"backend":  {Runtime: "python", Entrypoint: "main.py"},
-			"engine":   {Runtime: "rust", Entrypoint: "src/lib.rs"},
-			"native":   {Runtime: "native-gpu", Entrypoint: "src/kernel.c"},
-		},
-	}
-
-	results, err := builder.Build(context.Background(), cfg, "all")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(results) != 4 {
-		t.Fatalf("expected 4 results, got %d", len(results))
-	}
-}
-
 func TestUniversalBuilder_Negative(t *testing.T) {
 	builder := NewUniversalBuilder()
 	cfg := &BuildConfig{Targets: map[string]TargetConfig{"app": {Runtime: "go"}}}
 
-	if _, err := builder.Build(nil, cfg, "app"); err == nil {
+	var absentContext context.Context
+	if _, err := builder.Build(absentContext, cfg, "app"); err == nil {
 		t.Error("expected error with nil context, got nil")
 	}
 
@@ -184,5 +133,26 @@ func TestPreBuildOptimizer_3D(t *testing.T) {
 	}
 	if err := optimizer.Optimize(&TargetConfig{}, nil); err == nil {
 		t.Error("expected error for nil plan, got nil")
+	}
+}
+
+func TestLoadBuildConfigRejectsLinkedAndOversizedSource(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.yaml")
+	if err := os.WriteFile(source, []byte("project: fixture\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.yaml")
+	if err := os.Symlink(source, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadBuildConfigContext(t.Context(), link); err == nil {
+		t.Fatal("linked config accepted")
+	}
+	if err := os.WriteFile(source, make([]byte, (1<<20)+1), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadBuildConfigContext(t.Context(), source); err == nil {
+		t.Fatal("oversized config accepted")
 	}
 }

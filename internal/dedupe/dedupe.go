@@ -1,15 +1,20 @@
 package dedupe
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/printer"
 	"go/token"
-	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
+
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // FileLocation points to a file and line number.
@@ -46,6 +51,18 @@ type DedupeReport struct {
 
 // ScanRepo scans a repository for function-level clones and utility sprawl.
 func ScanRepo(repoPath string) (*DedupeReport, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return ScanRepoContext(ctx, repoPath)
+}
+
+// ScanRepoContext scans tracked and nonignored working tree Go sources. Non-Git
+// directories retain a filesystem scan. Incomplete scans return an error.
+func ScanRepoContext(ctx context.Context, repoPath string) (*DedupeReport, error) {
+	files, err := sourceFiles(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
 	report := &DedupeReport{
 		Duplicates:  make([]DuplicateGroup, 0),
 		SprawlItems: make([]SprawlItem, 0),
@@ -55,24 +72,14 @@ func ScanRepo(repoPath string) (*DedupeReport, error) {
 	funcHashMap := make(map[string][]FileLocation)
 	funcLocMap := make(map[string]int)
 
-	err := filepath.Walk(repoPath, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil || info.IsDir() {
-			if info != nil && info.IsDir() && shouldSkipDir(info.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
+	for _, relPath := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-
-		relPath, _ := filepath.Rel(repoPath, path)
 		report.TotalFilesScanned++
-		scanGoFile(fset, path, relPath, funcHashMap, funcLocMap, report)
-		return nil
-	})
-	if err != nil {
-		return nil, err
+		if err := scanGoFile(ctx, fset, filepath.Join(repoPath, relPath), relPath, funcHashMap, funcLocMap, report); err != nil {
+			return nil, err
+		}
 	}
 
 	collectDuplicates(funcHashMap, funcLocMap, report)
@@ -84,10 +91,14 @@ func shouldSkipDir(name string) bool {
 	return name == ".git" || name == "vendor" || name == "node_modules" || name == ".workingdir"
 }
 
-func scanGoFile(fset *token.FileSet, path, relPath string, hashMap map[string][]FileLocation, locMap map[string]int, report *DedupeReport) {
-	node, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, hashMap map[string][]FileLocation, locMap map[string]int, report *DedupeReport) error {
+	content, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
-		return
+		return fmt.Errorf("read dedupe source %s: %w", relPath, err)
+	}
+	node, err := parser.ParseFile(fset, path, content, parser.ParseComments)
+	if err != nil {
+		return fmt.Errorf("parse dedupe source %s: %w", relPath, err)
 	}
 
 	checkUtilitySprawl(fset, node, relPath, report)
@@ -101,7 +112,7 @@ func scanGoFile(fset *token.FileSet, path, relPath string, hashMap map[string][]
 
 		var buf strings.Builder
 		if err := printer.Fprint(&buf, fset, fn.Body); err != nil {
-			continue
+			return fmt.Errorf("print dedupe source %s: %w", relPath, err)
 		}
 		bodyStr := strings.TrimSpace(buf.String())
 		lines := strings.Count(bodyStr, "\n") + 1
@@ -120,6 +131,7 @@ func scanGoFile(fset *token.FileSet, path, relPath string, hashMap map[string][]
 		})
 		locMap[hashKey] = lines
 	}
+	return nil
 }
 
 func checkUtilitySprawl(fset *token.FileSet, node *ast.File, relPath string, report *DedupeReport) {
@@ -173,6 +185,9 @@ func collectDuplicates(hashMap map[string][]FileLocation, locMap map[string]int,
 			})
 		}
 	}
+	sort.Slice(report.Duplicates, func(i, j int) bool {
+		return report.Duplicates[i].Hash < report.Duplicates[j].Hash
+	})
 }
 
 func calculateScore(report *DedupeReport) {

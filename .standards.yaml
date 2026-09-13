@@ -17,6 +17,16 @@ repository:
     - "slsa-level-3"
     - "renovate-presets"
 
+# Ed25519 Exit-0 receipt trust anchor.
+#
+# `praetorctl gate run` signs .standards-receipt.json with the private key resolved from
+# PRAETOR_RECEIPT_KEY or ~/.config/praetor/receipt.key, and `praetorctl gate verify`
+# accepts a receipt only when it was signed by the key pinned here. Generate the pair with
+# `praetorctl gate keygen` and paste the printed public key below; until it is pinned,
+# `gate verify` fails closed with "no pinned receipt public key".
+receipt:
+  public_key: "213f9534a662075308e2087694985eff7590386760a19609b08437412b46e9d8"
+
 profiles:
   - "framework"
 
@@ -25,6 +35,7 @@ facets:
   - "api:public-contract"
   - "docs:seo-portal"
   - "agent:sandboxed"
+  - "tooling:vscode-extension"
 
 # Overrides (strictness can only be increased, never reduced)
 overrides:
@@ -57,5 +68,3 @@ needs:
     - "git.worktree"
     - "ast.analyzer"
     - "telemetry.logging"
-
-

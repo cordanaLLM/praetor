@@ -1,0 +1,3 @@
+type: fixed
+title: Enforce configured checkpoint batch scope before Claude and Gemini native file edits through shared Lefthook
+breaking: false

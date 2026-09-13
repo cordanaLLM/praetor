@@ -4,13 +4,28 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 )
 
 func runDogfood(args []string) error {
+	if len(args) > 0 && args[0] == "discover" {
+		return runDogfoodDiscovery(context.Background(), args[1:])
+	}
+	if len(args) > 0 && args[0] == "repairs" {
+		return runDogfoodRepairs(context.Background(), args[1:])
+	}
+	if len(args) > 0 && args[0] == "schedule" {
+		return runDogfoodSchedule(context.Background(), args[1:])
+	}
+	if len(args) > 0 && args[0] == "suite" {
+		return runDogfoodSuite(context.Background(), args[1:])
+	}
+	return runDogfoodFlags(args)
+}
+
+func runDogfoodFlags(args []string) error {
 	fs := flag.NewFlagSet("dogfood", flag.ContinueOnError)
 	path := fs.String("path", ".", "Path to host repository")
 	targets := fs.String("targets", "", "Directory containing target repositories for adoption testing")
@@ -20,6 +35,7 @@ func runDogfood(args []string) error {
 	reportPath := fs.String("report", "", "Path to write dogfood JSON report")
 	verifyOnly := fs.Bool("verify-only", false, "Strict verify mode: exit with error if host fails audit")
 	maxTargets := fs.Int("max-targets", 20, "Maximum target repositories to simulate")
+	public := addPublicDogfoodFlags(fs)
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -28,13 +44,18 @@ func runDogfood(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	var remoteURLs []string
-	if *remote != "" {
-		for _, u := range strings.Split(*remote, ",") {
-			if trimmed := strings.TrimSpace(u); trimmed != "" {
-				remoteURLs = append(remoteURLs, trimmed)
-			}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("dogfood accepts flags only")
+	}
+	remoteURLs := splitCommaList(*remote)
+	if *public.enabled {
+		if incompatiblePublicFlags(*targets, *benchmarkPopular, *verifyOnly, *reportPath) {
+			return fmt.Errorf("public-loop uses --remote and --artifacts; targets, benchmark-popular, verify-only and report are incompatible")
 		}
+		return runPublicDogfood(ctx, public, *path, remoteURLs, !*dryRun)
+	}
+	if *public.source != "" || *public.artifacts != "" || *public.attempts != 2 {
+		return fmt.Errorf("source-root, artifacts and attempts require --public-loop")
 	}
 
 	opts := dogfood.DogfoodOptions{
@@ -42,7 +63,7 @@ func runDogfood(args []string) error {
 		TargetReposDir:   *targets,
 		RemoteRepos:      remoteURLs,
 		BenchmarkPopular: *benchmarkPopular,
-		DryRun:           *dryRun,
+		ApplyAdoption:    !*dryRun,
 		ReportPath:       *reportPath,
 		VerifyOnly:       *verifyOnly,
 		MaxScanTargets:   *maxTargets,
@@ -57,6 +78,10 @@ func runDogfood(args []string) error {
 	}
 
 	printDogfoodSummary(rep)
+	if !rep.OverallPassed {
+		return fmt.Errorf("dogfood verification failed: context sync passed=%t, self audit passed=%t, targets=%d, remotes=%d",
+			rep.ContextSyncPassed, rep.SelfAuditPassed, len(rep.TargetResults), len(rep.RemoteResults))
+	}
 	return nil
 }
 

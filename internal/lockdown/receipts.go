@@ -5,9 +5,13 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const ReceiptVersion = "v1"
@@ -15,6 +19,7 @@ const ReceiptVersion = "v1"
 var (
 	ErrNonZeroExit     = errors.New("cannot generate Exit-0 receipt: execution exit code is non-zero")
 	ErrNilReceipt      = errors.New("execution receipt cannot be nil")
+	ErrInvalidPrivKey  = errors.New("invalid Ed25519 private key size")
 	ErrInvalidPubKey   = errors.New("invalid Ed25519 public key in receipt")
 	ErrInvalidSig      = errors.New("invalid Ed25519 signature in receipt")
 	ErrSigVerification = errors.New("receipt Ed25519 signature verification failed")
@@ -62,7 +67,7 @@ func CreateReceipt(command string, exitCode int, output []byte, commitSHA, repos
 		return nil, fmt.Errorf("%w: exit code is %d", ErrNonZeroExit, exitCode)
 	}
 	if len(privKey) != ed25519.PrivateKeySize {
-		return nil, errors.New("invalid Ed25519 private key size")
+		return nil, fmt.Errorf("%w: got %d bytes, want %d", ErrInvalidPrivKey, len(privKey), ed25519.PrivateKeySize)
 	}
 
 	hash := sha256.Sum256(output)
@@ -72,7 +77,10 @@ func CreateReceipt(command string, exitCode int, output []byte, commitSHA, repos
 	payload := BuildCanonicalPayload(ReceiptVersion, command, exitCode, now, commitSHA, repository, outputHash)
 	sig := ed25519.Sign(privKey, []byte(payload))
 
-	pubKey := privKey.Public().(ed25519.PublicKey)
+	pubKey, ok := privKey.Public().(ed25519.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("%w: derived public key is not Ed25519", ErrInvalidPrivKey)
+	}
 
 	return &ExecutionReceipt{
 		Version:    ReceiptVersion,
@@ -93,7 +101,7 @@ func VerifyReceipt(receipt *ExecutionReceipt) error {
 		return ErrNilReceipt
 	}
 	if receipt.ExitCode != 0 {
-		return fmt.Errorf("invalid Exit-0 receipt: recorded exit code is %d", receipt.ExitCode)
+		return fmt.Errorf("%w: recorded exit code is %d", ErrNonZeroExit, receipt.ExitCode)
 	}
 
 	pubKeyBytes, err := hex.DecodeString(receipt.PublicKey)
@@ -120,6 +128,44 @@ func VerifyReceipt(receipt *ExecutionReceipt) error {
 		return ErrSigVerification
 	}
 
+	return nil
+}
+
+// ReceiptFile is the on-disk .standards-receipt.json envelope: the signed receipt plus
+// the verbatim gate output whose SHA-256 the receipt certifies. Embedding inlines the
+// receipt fields, so the file stays readable as a plain ExecutionReceipt.
+type ReceiptFile struct {
+	ExecutionReceipt
+	GateOutput string `json:"gate_output"`
+}
+
+// LoadReceiptFile reads and parses an on-disk receipt envelope.
+func LoadReceiptFile(path string) (*ReceiptFile, error) {
+	// #nosec G304 -- path is the repository's own receipt location or an operator-supplied
+	// --receipt argument; the file is only parsed as JSON, never executed.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read receipt %s: %w", path, err)
+	}
+	var rf ReceiptFile
+	if err := json.Unmarshal(data, &rf); err != nil {
+		return nil, fmt.Errorf("parse receipt %s: %w", path, err)
+	}
+	return &rf, nil
+}
+
+// SaveReceiptFile writes a receipt envelope with an explicit file mode.
+func SaveReceiptFile(path string, rf *ReceiptFile, perm os.FileMode) error {
+	if rf == nil {
+		return ErrNilReceipt
+	}
+	data, err := json.MarshalIndent(rf, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal receipt: %w", err)
+	}
+	if err := util.WriteFileSecure(path, append(data, '\n'), perm); err != nil {
+		return fmt.Errorf("write receipt %s: %w", path, err)
+	}
 	return nil
 }
 

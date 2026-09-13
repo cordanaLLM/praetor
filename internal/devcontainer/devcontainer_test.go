@@ -117,6 +117,87 @@ func TestSynthesizeFromProfiles_3D(t *testing.T) {
 	}
 }
 
+func TestSynthesizeWithFeaturesUsesOnlySelectedCatalogFeatures(t *testing.T) {
+	selected := []config.DevContainerFeature{{Ref: "ghcr.io/devcontainers/features/node:1", Options: map[string]interface{}{"version": 20}}}
+	dc, err := SynthesizeWithFeatures(&config.Manifest{Repository: config.RepositoryMetadata{Name: "site"}, Profiles: []string{"pages-site"}}, selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := dc.Features[GoFeatureRef]; exists {
+		t.Fatal("selected catalog features must not receive unconditional Go")
+	}
+	options, ok := dc.Features[selected[0].Ref].(map[string]interface{})
+	if !ok || options["version"] != 20 {
+		t.Fatalf("selected feature options lost: %#v", dc.Features)
+	}
+
+	dc, err = SynthesizeWithFeatures(&config.Manifest{Repository: config.RepositoryMetadata{Name: "empty"}}, []config.DevContainerFeature{})
+	if err != nil || len(dc.Features) != 0 {
+		t.Fatalf("empty selected feature set must remain empty: %+v (%v)", dc.Features, err)
+	}
+}
+
+func TestSynthesizeWithFeaturesProfileMatrix(t *testing.T) {
+	cases := []struct {
+		name, profile, feature string
+	}{
+		{"empty", "", ""},
+		{"pages", "pages-site", "ghcr.io/devcontainers/features/node:1"},
+		{"node", "app-service", "ghcr.io/devcontainers/features/docker-in-docker:2"},
+		{"go", "framework", "ghcr.io/devcontainers/features/go:1"},
+		{"native", "native-gpu-systems", "ghcr.io/devcontainers/features/rust:1"},
+		{"iac", "gitops-infra", "ghcr.io/devcontainers/features/terraform:1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			selected := []config.DevContainerFeature{}
+			if tc.feature != "" {
+				selected = append(selected, config.DevContainerFeature{Ref: tc.feature, Options: map[string]interface{}{}})
+			}
+			dc, err := SynthesizeWithFeatures(&config.Manifest{Profiles: []string{tc.profile}}, selected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(dc.Features) != len(selected) {
+				t.Fatalf("profile %q synthesized unselected features: %#v", tc.profile, dc.Features)
+			}
+		})
+	}
+}
+
+func TestSelectedGoToolingFollowsFeatureIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		ref       string
+		goTooling bool
+	}{
+		{"ghcr.io/devcontainers/features/go:1", true},
+		{"ghcr.io/devcontainers/features/go@sha256:" + strings.Repeat("a", 64), true},
+		{"registry.test:5000/features/go:1@sha256:" + strings.Repeat("b", 64), true},
+		{"ghcr.io/devcontainers/features/node:1", false},
+		{"registry.test/go:5000/features/node:1", false},
+		{"", false},
+	} {
+		t.Run(tc.ref, func(t *testing.T) {
+			features := []config.DevContainerFeature{}
+			if tc.ref != "" {
+				features = append(features, config.DevContainerFeature{Ref: tc.ref})
+			}
+			dc, err := SynthesizeWithFeatures(&config.Manifest{}, features)
+			if err != nil {
+				t.Fatal(err)
+			}
+			extension := false
+			for _, name := range dc.Customizations.VSCode.Extensions {
+				extension = extension || name == "golang.go"
+			}
+			_, settings := dc.Customizations.VSCode.Settings["go.useLanguageServer"]
+			if extension != tc.goTooling || settings != tc.goTooling {
+				t.Fatalf("Go tooling extension=%v settings=%v; want %v", extension, settings, tc.goTooling)
+			}
+		})
+	}
+}
+
 // TestRender_3D verifies Render against positive, negative, and boundary inputs.
 func TestRender_3D(t *testing.T) {
 	// 1. Positive Test
@@ -276,12 +357,16 @@ func TestVerify_3D(t *testing.T) {
 
 // TestDogfoodingSynthesis validates synthesis against canonical repository manifest.
 func TestDogfoodingSynthesis(t *testing.T) {
-	manifest, err := config.LoadManifest("../../.standards.yaml")
+	policy, err := config.LoadEffectivePolicyContext(t.Context(), config.EffectiveOptions{Root: "../.."})
 	if err != nil {
-		t.Fatalf("failed to load root manifest: %v", err)
+		t.Fatalf("failed to resolve root catalog: %v", err)
 	}
-
-	dc, err := Synthesize(manifest)
+	features, err := config.ResolveDevContainerFeatures(t.Context(), policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := policy.Manifest
+	dc, err := SynthesizeWithFeatures(manifest, features)
 	if err != nil {
 		t.Fatalf("failed to synthesize devcontainer from root manifest: %v", err)
 	}
@@ -296,5 +381,23 @@ func TestDogfoodingSynthesis(t *testing.T) {
 
 	if err := Verify(ctx, "../../.devcontainer/devcontainer.json", dc); err != nil {
 		t.Fatalf("verification of dogfooding .devcontainer/devcontainer.json failed: %v", err)
+	}
+}
+
+func TestWriteDevContainerRejectsLinkedParentsWithoutWriting(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "linked", "nested", "devcontainer.json")
+	if err := WriteDevContainer(t.Context(), target, &DevContainer{Name: "fixture"}); err == nil {
+		t.Fatal("linked parent accepted")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatal("write created directory through external link")
 	}
 }

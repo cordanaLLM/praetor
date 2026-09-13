@@ -2,9 +2,13 @@ package compiler
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -31,9 +35,9 @@ func CompileAgents(ctx context.Context, agentsSrcDir, targetDir string) ([]Agent
 		return nil, fmt.Errorf("compile-agents cancelled: %w", err)
 	}
 
-	entries, err := os.ReadDir(agentsSrcDir)
+	entries, err := readAgentDirectory(ctx, agentsSrcDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read agents dir %s: %w", agentsSrcDir, err)
@@ -52,7 +56,7 @@ func CompileAgents(ctx context.Context, agentsSrcDir, targetDir string) ([]Agent
 		}
 
 		srcPath := filepath.Join(agentsSrcDir, entry.Name())
-		agentFiles, pErr := projectAgentToVendors(srcPath, entry.Name(), targetDir)
+		agentFiles, pErr := projectAgentToVendors(ctx, srcPath, entry.Name(), targetDir)
 		if pErr != nil {
 			return nil, pErr
 		}
@@ -62,8 +66,8 @@ func CompileAgents(ctx context.Context, agentsSrcDir, targetDir string) ([]Agent
 	return results, nil
 }
 
-func projectAgentToVendors(srcPath, filename, targetDir string) ([]AgentFile, error) {
-	data, err := os.ReadFile(srcPath)
+func projectAgentToVendors(ctx context.Context, srcPath, filename, targetDir string) ([]AgentFile, error) {
+	data, err := contextopt.ReadSnapshot(ctx, srcPath)
 	if err != nil {
 		return nil, fmt.Errorf("read agent file %s: %w", srcPath, err)
 	}
@@ -83,7 +87,7 @@ func projectAgentToVendors(srcPath, filename, targetDir string) ([]AgentFile, er
 	files := make([]AgentFile, 0, len(targets))
 	for _, t := range targets {
 		dstPath := filepath.Join(targetDir, t.vendorRel)
-		if err := writeVendorAgent(dstPath, content); err != nil {
+		if err := writeVendorAgent(ctx, dstPath, content); err != nil {
 			return nil, err
 		}
 		files = append(files, AgentFile{
@@ -96,12 +100,35 @@ func projectAgentToVendors(srcPath, filename, targetDir string) ([]AgentFile, er
 	return files, nil
 }
 
-func writeVendorAgent(dstPath, content string) error {
-	if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
-		return fmt.Errorf("mkdir vendor agent dir: %w", err)
+func writeVendorAgent(ctx context.Context, path, content string) error {
+	return contextopt.WriteSnapshot(ctx, path, []byte(content), 0o644)
+}
+
+func projectionPath(root, relative string) (string, error) {
+	if !filepath.IsLocal(relative) || filepath.Clean(relative) != relative || relative == "." {
+		return "", errors.New("compiled output requires a clean relative file path")
 	}
-	if err := os.WriteFile(dstPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("write vendor agent %s: %w", dstPath, err)
+	return filepath.Join(root, relative), nil
+}
+
+func readAgentDirectory(ctx context.Context, path string) (entries []os.DirEntry, err error) {
+	root, err := contextopt.OpenDirectory(ctx, path)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	defer func() { err = errors.Join(err, root.Close()) }()
+	directory, err := root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, directory.Close()) }()
+	entries, err = directory.ReadDir(MaxAgentFiles + 1)
+	if errors.Is(err, io.EOF) {
+		err = nil
+	}
+	if len(entries) > MaxAgentFiles {
+		return nil, errors.New("agent directory exceeds 50 entries")
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return entries, err
 }

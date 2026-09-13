@@ -6,18 +6,45 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
 	MaxDistillLines  = 58
 	MaxDistillTokens = 1500
 	MaxLoopLimit     = 1000
+	// ContextRadius is the number of source lines shown above and below a diagnostic.
+	ContextRadius = 2
+	// MaxSourceScanLines bounds the line scan of a source file (HISS-02). It is a sanity
+	// cap on pathological input, not a limit on which diagnostics can be rendered.
+	MaxSourceScanLines = 1 << 20
+	// MaxSourceLineBytes bounds the length of a single scanned source line.
+	MaxSourceLineBytes = 1 << 20
+	// MaxContextLineChars caps how much of one source line is copied into the summary.
+	MaxContextLineChars = 200
+	// LevelError, LevelWarning and LevelNote are the SARIF result levels praetor ranks.
+	LevelError   = "error"
+	LevelWarning = "warning"
+	LevelNote    = "note"
+)
+
+var (
+	// ErrEmptyArtifactURI is returned for a SARIF location without a usable URI.
+	ErrEmptyArtifactURI = errors.New("sarif artifactLocation.uri is empty")
+	// ErrUnconfinedSourceRoot is returned when source context is requested without a root
+	// to confine the artifact URI to.
+	ErrUnconfinedSourceRoot = errors.New("sarif source root is required to resolve artifact URIs")
+	// ErrAbsoluteArtifactURI is returned for an absolute SARIF artifact URI, which could
+	// otherwise pull arbitrary file content into the distilled summary.
+	ErrAbsoluteArtifactURI = errors.New("sarif artifactLocation.uri must be relative to the source root")
 )
 
 // SarifLog represents the top-level SARIF 2.1.0 log structure.
@@ -38,10 +65,22 @@ type SarifTool struct {
 	Driver SarifDriver `json:"driver"`
 }
 
-// SarifDriver describes the tool driver name and version.
+// SarifDriver describes the tool driver name, version and rule descriptors.
 type SarifDriver struct {
-	Name    string `json:"name"`
-	Version string `json:"version,omitempty"`
+	Name    string                     `json:"name"`
+	Version string                     `json:"version,omitempty"`
+	Rules   []SarifReportingDescriptor `json:"rules,omitempty"`
+}
+
+// SarifReportingDescriptor is a rule descriptor (SARIF 2.1.0 3.49).
+type SarifReportingDescriptor struct {
+	ID                   string                      `json:"id"`
+	DefaultConfiguration SarifReportingConfiguration `json:"defaultConfiguration,omitempty"`
+}
+
+// SarifReportingConfiguration carries a rule's default severity (SARIF 2.1.0 3.50).
+type SarifReportingConfiguration struct {
+	Level string `json:"level,omitempty"`
 }
 
 // SarifResult represents an individual diagnostic emitted by an analyzer.
@@ -104,44 +143,99 @@ type DistillResult struct {
 	TokenEstimate  int                 `json:"token_estimate"`
 }
 
-// readContextLines reads +/-2 lines of context around targetLine from filePath.
+// readContextLines renders +/-ContextRadius lines of context around targetLine. Unlike a
+// whole-file buffer it streams straight to the window, so a diagnostic at any line number
+// is rendered, not just the first MaxLoopLimit lines of the file.
 func readContextLines(filePath string, targetLine int) ([]string, int) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return []string{"[source context unavailable]"}, targetLine
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	lines := make([]string, 0, 100)
-	lineIdx := 1
-	for scanner.Scan() && lineIdx <= targetLine+2 && len(lines) < MaxLoopLimit {
-		lines = append(lines, scanner.Text())
-		lineIdx++
-	}
-
-	start := targetLine - 2
-	if start < 1 {
-		start = 1
-	}
-	end := targetLine + 2
-	if end > len(lines) {
-		end = len(lines)
-	}
-
-	if start > len(lines) || start > end {
+	if targetLine < 1 || targetLine > MaxSourceScanLines {
 		return []string{"[source line out of range]"}, targetLine
 	}
 
-	snippet := make([]string, 0, end-start+1)
-	for i := start; i <= end; i++ {
+	window, start, err := readLineWindow(filePath, targetLine)
+	if err != nil {
+		return []string{"[source context unavailable]"}, targetLine
+	}
+	if len(window) == 0 || start+len(window)-1 < targetLine {
+		return []string{"[source line out of range]"}, targetLine
+	}
+
+	snippet := make([]string, 0, len(window))
+	for i := 0; i < len(window); i++ {
+		lineNum := start + i
 		prefix := "  "
-		if i == targetLine {
+		if lineNum == targetLine {
 			prefix = "> "
 		}
-		snippet = append(snippet, fmt.Sprintf("%s%4d | %s", prefix, i, lines[i-1]))
+		snippet = append(snippet, fmt.Sprintf("%s%4d | %s", prefix, lineNum, clampLine(window[i])))
 	}
 	return snippet, start
+}
+
+// readLineWindow streams filePath and returns the lines in
+// [targetLine-ContextRadius, targetLine+ContextRadius] plus the first line number kept.
+func readLineWindow(filePath string, targetLine int) (window []string, start int, err error) {
+	// #nosec G304 -- callers resolve filePath through resolveDiagnosticPath, which
+	// confines every SARIF artifact URI under the source root via util.ConfinePath.
+	file, openErr := os.Open(filePath)
+	if openErr != nil {
+		return nil, 0, fmt.Errorf("open source %s: %w", filePath, openErr)
+	}
+	defer func() {
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close source %s: %w", filePath, cerr)
+		}
+	}()
+
+	first := targetLine - ContextRadius
+	if first < 1 {
+		first = 1
+	}
+	last := targetLine + ContextRadius
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), MaxSourceLineBytes)
+	window = make([]string, 0, 2*ContextRadius+1)
+	for lineNum := 1; lineNum <= last && lineNum <= MaxSourceScanLines && scanner.Scan(); lineNum++ {
+		if lineNum >= first {
+			window = append(window, scanner.Text())
+		}
+	}
+	if scanErr := scanner.Err(); scanErr != nil {
+		return nil, 0, fmt.Errorf("scan source %s: %w", filePath, scanErr)
+	}
+	return window, first, nil
+}
+
+// clampLine caps a single source line copied into the distilled summary.
+func clampLine(line string) string {
+	runes := []rune(line)
+	if len(runes) <= MaxContextLineChars {
+		return line
+	}
+	return string(runes[:MaxContextLineChars]) + "..."
+}
+
+// resolveDiagnosticPath maps a SARIF artifactLocation URI onto a filesystem path that
+// provably stays inside sourceRoot. Absolute URIs and paths escaping the root are
+// rejected so a hostile or misconfigured SARIF log cannot pull unrelated file content
+// (for example a private key) into the distilled summary.
+func resolveDiagnosticPath(sourceRoot, uri string) (string, error) {
+	raw := strings.TrimSpace(uri)
+	raw = strings.TrimPrefix(raw, "file://")
+	if raw == "" {
+		return "", ErrEmptyArtifactURI
+	}
+	if sourceRoot == "" {
+		return "", ErrUnconfinedSourceRoot
+	}
+	if filepath.IsAbs(raw) {
+		return "", fmt.Errorf("%w: %q", ErrAbsoluteArtifactURI, uri)
+	}
+	confined, err := util.ConfinePath(sourceRoot, raw)
+	if err != nil {
+		return "", fmt.Errorf("sarif artifact %q: %w", uri, err)
+	}
+	return confined, nil
 }
 
 // writeEphemeralSARIF writes full raw SARIF JSON to an ephemeral storage file.
@@ -149,7 +243,7 @@ func writeEphemeralSARIF(dir string, data []byte) (string, error) {
 	if dir == "" {
 		dir = os.TempDir()
 	}
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := util.MkdirSecure(dir, 0o700); err != nil {
 		return "", fmt.Errorf("failed to create ephemeral dir: %w", err)
 	}
 
@@ -157,7 +251,7 @@ func writeEphemeralSARIF(dir string, data []byte) (string, error) {
 	fileName := fmt.Sprintf("sarif-%d-%s.sarif", time.Now().UnixNano(), hex.EncodeToString(hash[:6]))
 	fullPath := filepath.Join(dir, fileName)
 
-	if err := os.WriteFile(fullPath, data, 0600); err != nil {
+	if err := util.WriteFileSecure(fullPath, data, 0o600); err != nil {
 		return "", fmt.Errorf("failed writing ephemeral SARIF to %s: %w", fullPath, err)
 	}
 	return fullPath, nil
@@ -170,34 +264,68 @@ func estimateTokens(s string) int {
 	return int(float64(len(words)) * 1.3)
 }
 
-// extractTopFailures extracts up to maxCount root-cause failure pointers with context.
-func extractTopFailures(results []SarifResult, sourceRoot string, maxCount int) []DiagnosticPointer {
-	failures := make([]DiagnosticPointer, 0, maxCount)
-	count := 0
-	for i := 0; i < len(results) && count < maxCount && i < MaxLoopLimit; i++ {
-		res := results[i]
-		dp := DiagnosticPointer{
-			RuleID:  res.RuleID,
-			Level:   res.Level,
-			Message: res.Message.Text,
-		}
-		if len(res.Locations) > 0 {
-			loc := res.Locations[0].PhysicalLocation
-			dp.URI = loc.ArtifactLocation.URI
-			dp.StartLine = loc.Region.StartLine
-			dp.StartColumn = loc.Region.StartColumn
+// levelRank orders SARIF levels by severity: error first, then warning, note and any
+// other level. Results carry a resolved level by the time they reach this function.
+func levelRank(level string) int {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case LevelError:
+		return 0
+	case LevelWarning:
+		return 1
+	case LevelNote:
+		return 2
+	default:
+		return 3
+	}
+}
 
-			targetFile := dp.URI
-			if !filepath.IsAbs(targetFile) && sourceRoot != "" {
-				targetFile = filepath.Join(sourceRoot, targetFile)
-			}
-			snippet, _ := readContextLines(targetFile, dp.StartLine)
-			dp.ContextLines = snippet
-		}
-		failures = append(failures, dp)
-		count++
+// rankResults returns results ordered by descending severity, preserving the original
+// order within a severity so the selection is deterministic.
+func rankResults(results []SarifResult) []SarifResult {
+	ranked := make([]SarifResult, len(results))
+	copy(ranked, results)
+	sort.SliceStable(ranked, func(i, j int) bool {
+		return levelRank(ranked[i].Level) < levelRank(ranked[j].Level)
+	})
+	return ranked
+}
+
+// extractTopFailures extracts up to maxCount root-cause failure pointers with context,
+// selecting the most severe diagnostics rather than the first ones in file order.
+func extractTopFailures(results []SarifResult, sourceRoot string, maxCount int) []DiagnosticPointer {
+	ranked := rankResults(results)
+	failures := make([]DiagnosticPointer, 0, maxCount)
+	for i := 0; i < len(ranked) && len(failures) < maxCount && i < MaxLoopLimit; i++ {
+		failures = append(failures, buildPointer(ranked[i], sourceRoot))
 	}
 	return failures
+}
+
+// buildPointer converts a single SARIF result into a diagnostic pointer, attaching
+// confined source context when the result carries a location.
+func buildPointer(res SarifResult, sourceRoot string) DiagnosticPointer {
+	dp := DiagnosticPointer{
+		RuleID:  res.RuleID,
+		Level:   res.Level,
+		Message: res.Message.Text,
+	}
+	if len(res.Locations) == 0 {
+		return dp
+	}
+
+	loc := res.Locations[0].PhysicalLocation
+	dp.URI = loc.ArtifactLocation.URI
+	dp.StartLine = loc.Region.StartLine
+	dp.StartColumn = loc.Region.StartColumn
+
+	targetFile, err := resolveDiagnosticPath(sourceRoot, dp.URI)
+	if err != nil {
+		dp.ContextLines = []string{"[source context unavailable]"}
+		return dp
+	}
+	snippet, _ := readContextLines(targetFile, dp.StartLine)
+	dp.ContextLines = snippet
+	return dp
 }
 
 // capSummary enforces strictly <= maxLines and <= maxTokens constraints.
@@ -227,7 +355,27 @@ func capSummary(rawLines []string, ephemeralPath string) (string, int, int) {
 	return res, len(finalLines), estimateTokens(res)
 }
 
-// aggregateDiagnostics collects results, category tallies, and error counts.
+// resolveLevel implements SARIF 2.1.0 3.27.10: an absent result.level defaults to the
+// rule descriptor's defaultConfiguration.level and, failing that, to "warning".
+func resolveLevel(run SarifRun, res SarifResult) string {
+	if lvl := strings.TrimSpace(res.Level); lvl != "" {
+		return lvl
+	}
+	rules := run.Tool.Driver.Rules
+	for i := 0; i < len(rules) && i < MaxLoopLimit; i++ {
+		if rules[i].ID != res.RuleID {
+			continue
+		}
+		if lvl := strings.TrimSpace(rules[i].DefaultConfiguration.Level); lvl != "" {
+			return lvl
+		}
+		break
+	}
+	return LevelWarning
+}
+
+// aggregateDiagnostics collects results with resolved levels, category tallies, and the
+// count of genuine errors.
 func aggregateDiagnostics(log SarifLog) ([]SarifResult, map[string]int, int) {
 	categories := make(map[string]int)
 	allResults := make([]SarifResult, 0)
@@ -235,13 +383,14 @@ func aggregateDiagnostics(log SarifLog) ([]SarifResult, map[string]int, int) {
 
 	for _, run := range log.Runs {
 		for _, res := range run.Results {
+			res.Level = resolveLevel(run, res)
 			allResults = append(allResults, res)
 			cat := res.RuleID
 			if cat == "" {
 				cat = "unknown"
 			}
 			categories[cat]++
-			if res.Level == "error" || res.Level == "" {
+			if res.Level == LevelError {
 				totalErrors++
 			}
 		}

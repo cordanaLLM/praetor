@@ -64,7 +64,7 @@ export default defineConfig({
             'programmingLanguage': 'Go',
             'codeRepository': 'https://github.com/cordanaLLM/praetor',
             'runtimePlatform': 'POSIX / Linux x86_64 / arm64',
-            'license': 'https://spdx.org/licenses/Apache-2.0.html'
+            'license': 'https://spdx.org/licenses/EUPL-1.2.html'
           }),
         },
       ],

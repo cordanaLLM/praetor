@@ -108,12 +108,13 @@ Note: Caller must close decoder after use.
 	// 2. Negative Tests
 	// ==========================================
 	t.Run("Negative: Nil Context", func(t *testing.T) {
-		_, err := ScanDeclaredDependencies(nil, "/tmp", false)
+		var absentContext context.Context
+		_, err := ScanDeclaredDependencies(absentContext, "/tmp", false)
 		if err == nil {
 			t.Errorf("expected error with nil context")
 		}
 
-		_, err = HarvestDocumentation(nil, PackageRef{}, false)
+		_, err = HarvestDocumentation(absentContext, PackageRef{}, false)
 		if err == nil {
 			t.Errorf("expected error harvesting with nil context")
 		}
@@ -132,8 +133,12 @@ Note: Caller must close decoder after use.
 	t.Run("Negative: Corrupted Catalog File", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		docsDir := filepath.Join(tmpDir, DocsDirRel)
-		_ = os.MkdirAll(docsDir, 0755)
-		_ = os.WriteFile(filepath.Join(tmpDir, CatalogFileRel), []byte("{corrupt-json"), 0644)
+		if err := os.MkdirAll(docsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, CatalogFileRel), []byte("{corrupt-json"), 0644); err != nil {
+			t.Fatal(err)
+		}
 
 		_, err := LoadCatalog(tmpDir)
 		if err == nil {
@@ -158,8 +163,8 @@ Note: Caller must close decoder after use.
 		if err != nil {
 			t.Fatalf("unexpected error auditing empty repo: %v", err)
 		}
-		if audit.CoverageScore != 100.0 || !audit.Passed {
-			t.Errorf("expected 100%% pass on empty repo, got score: %f", audit.CoverageScore)
+		if audit.CoverageScore != 0 || audit.Passed || audit.Status != "not_applicable" {
+			t.Errorf("expected not-applicable empty repo, got: %+v", audit)
 		}
 	})
 

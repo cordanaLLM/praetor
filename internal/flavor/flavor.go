@@ -42,7 +42,7 @@ type Flavor interface {
 
 var (
 	registryMu sync.RWMutex
-	registry   = make(map[string]Flavor)
+	registry   = builtinFlavors()
 )
 
 // Register registers a flavor archetype into the global registry.

@@ -3,8 +3,10 @@ package cifilter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -54,10 +56,13 @@ type FilterDecision struct {
 // AnalyzeChanges inspects git diff and computes the optimal CI execution decision.
 func AnalyzeChanges(ctx context.Context, opts FilterOptions) (*FilterDecision, error) {
 	if ctx == nil {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(context.Background(), defaultGitTimeout)
-		defer cancel()
+		return nil, errors.New("analyze changes requires a context")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, defaultGitTimeout)
+	defer cancel()
 
 	repoDir := opts.RepoDir
 	if repoDir == "" {
@@ -113,7 +118,7 @@ func GetChangedFiles(ctx context.Context, dir, baseRef, headRef string) ([]strin
 	rawLines := strings.Split(out, "\n")
 	limit := len(rawLines)
 	if limit > maxFilesToInspect {
-		limit = maxFilesToInspect
+		return nil, fmt.Errorf("git diff exceeds %d file entries", maxFilesToInspect)
 	}
 
 	for i := 0; i < limit; i++ {
@@ -133,6 +138,10 @@ func ClassifyChanges(files []string) *ChangeSet {
 	}
 
 	if len(files) == 0 {
+		return cs
+	}
+	if len(files) > maxFilesToInspect {
+		cs.CodeChanged, cs.ConfigChanged = true, true
 		return cs
 	}
 
@@ -156,23 +165,19 @@ func ClassifyChanges(files []string) *ChangeSet {
 		}
 		nonDocsCount++
 
-		if isTest(p) {
-			cs.TestsChanged = true
-		}
-		if isCode(p) {
-			cs.CodeChanged = true
-		}
-		if isConfig(p) {
-			cs.ConfigChanged = true
-		}
-		if isAgent(p) {
-			cs.AgentChanged = true
-		}
+		cs.classifySource(p)
 	}
 
 	cs.StateOnly = nonStateCount == 0 && len(files) > 0
 	cs.DocsOnly = nonDocsCount == 0 && cs.DocsChanged
 	return cs
+}
+
+func (cs *ChangeSet) classifySource(path string) {
+	cs.TestsChanged = cs.TestsChanged || isTest(path)
+	cs.CodeChanged = cs.CodeChanged || isCode(path)
+	cs.ConfigChanged = cs.ConfigChanged || isConfig(path)
+	cs.AgentChanged = cs.AgentChanged || isAgent(path)
 }
 
 // MakeDecision maps categorized changes to CI execution decisions.
@@ -251,7 +256,7 @@ func (d *FilterDecision) ToEnvMap() map[string]string {
 func (d *FilterDecision) FormatGitHubOutput() string {
 	var sb strings.Builder
 	for k, v := range d.ToEnvMap() {
-		sb.WriteString(fmt.Sprintf("%s=%s\n", strings.ToLower(k), v))
+		sb.WriteString(strings.ToLower(k) + "=" + v + "\n")
 	}
 	return sb.String()
 }
@@ -274,18 +279,9 @@ func isDocumentation(p string) bool {
 }
 
 func isCode(p string) bool {
-	return strings.HasSuffix(p, ".go") ||
-		strings.HasSuffix(p, ".c") ||
-		strings.HasSuffix(p, ".cpp") ||
-		strings.HasSuffix(p, ".h") ||
-		strings.HasSuffix(p, ".cu") ||
-		strings.HasSuffix(p, ".rs") ||
-		strings.HasSuffix(p, ".ts") ||
-		strings.HasSuffix(p, ".js") ||
-		strings.HasSuffix(p, ".py") ||
-		strings.HasSuffix(p, ".java") ||
-		strings.HasSuffix(p, ".dart") ||
-		strings.HasSuffix(p, ".proto")
+	return slices.Contains([]string{
+		".go", ".c", ".cpp", ".h", ".cu", ".rs", ".ts", ".js", ".py", ".java", ".dart", ".proto",
+	}, filepath.Ext(p))
 }
 
 func isTest(p string) bool {
@@ -299,18 +295,15 @@ func isTest(p string) bool {
 
 func isConfig(p string) bool {
 	base := filepath.Base(p)
-	return strings.HasPrefix(p, ".github/") ||
-		strings.EqualFold(base, "Makefile") ||
-		strings.EqualFold(base, "lefthook.yml") ||
+	if strings.HasPrefix(p, ".github/") ||
 		strings.HasSuffix(p, ".yaml") ||
 		strings.HasSuffix(p, ".yml") ||
-		strings.EqualFold(base, "go.mod") ||
-		strings.EqualFold(base, "go.sum") ||
-		strings.EqualFold(base, "Cargo.toml") ||
-		strings.EqualFold(base, "Cargo.lock") ||
-		strings.EqualFold(base, "package.json") ||
-		strings.EqualFold(base, "pnpm-lock.yaml") ||
-		strings.EqualFold(base, "pom.xml")
+		slices.Contains([]string{
+			"makefile", "lefthook.yml", "go.mod", "go.sum", "cargo.toml", "cargo.lock", "package.json", "package-lock.json", "pnpm-lock.yaml", "pom.xml",
+		}, strings.ToLower(base)) {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(base), "tsconfig") && strings.HasSuffix(strings.ToLower(base), ".json")
 }
 
 func isAgent(p string) bool {

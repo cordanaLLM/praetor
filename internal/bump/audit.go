@@ -6,7 +6,10 @@ package bump
 import (
 	"context"
 	"fmt"
-	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // AuditCodebaseVersions performs a comprehensive audit across all dependencies, actions, and tools.
@@ -23,8 +26,14 @@ func AuditCodebaseVersions(ctx context.Context, repoPath string, includePrerelea
 		MaxCandidates:     1000,
 	}
 
-	pending, langScanned := scanLangDeps(ctx, repoPath, opts)
-	actions, actionDeps, _ := ScanWorkflowActions(repoPath)
+	pending, langScanned, err := scanLangDeps(ctx, repoPath, opts)
+	if err != nil {
+		return nil, err
+	}
+	actions, actionDeps, err := ScanWorkflowActions(repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("audit workflow actions: %w", err)
+	}
 	toolDeps := auditToolchains(ctx)
 
 	deprecations := append(actionDeps, toolDeps...)
@@ -42,27 +51,22 @@ func AuditCodebaseVersions(ctx context.Context, repoPath string, includePrerelea
 	}, nil
 }
 
-func scanLangDeps(ctx context.Context, repoPath string, opts ScanOptions) ([]UpgradeCandidate, int) {
+func scanLangDeps(ctx context.Context, repoPath string, opts ScanOptions) ([]UpgradeCandidate, int, error) {
 	var pending []UpgradeCandidate
 	total := 0
-
-	if goC, err := ScanGoDependencies(ctx, repoPath, opts); err == nil {
-		total += len(goC)
-		for _, c := range goC {
+	for _, scan := range []func(context.Context, string, ScanOptions) ([]UpgradeCandidate, error){ScanGoDependencies, ScanNodeDependencies} {
+		candidates, err := scan(ctx, repoPath, opts)
+		if err != nil {
+			return nil, 0, fmt.Errorf("audit language dependencies: %w", err)
+		}
+		total += len(candidates)
+		for _, c := range candidates {
 			if c.CurrentVersion != c.TargetVersion {
 				pending = append(pending, c)
 			}
 		}
 	}
-	if nodeC, err := ScanNodeDependencies(ctx, repoPath, opts); err == nil {
-		total += len(nodeC)
-		for _, c := range nodeC {
-			if c.CurrentVersion != c.TargetVersion {
-				pending = append(pending, c)
-			}
-		}
-	}
-	return pending, total
+	return pending, total, nil
 }
 
 func calculateAuditScore(total, pending, deps int) (int, float64) {
@@ -70,7 +74,7 @@ func calculateAuditScore(total, pending, deps int) (int, float64) {
 	if upToDate < 0 {
 		upToDate = 0
 	}
-	var score float64 = 100.0
+	score := 100.0
 	if total > 0 {
 		score = (float64(upToDate) / float64(total)) * 100.0
 		if score < 0 {
@@ -82,22 +86,29 @@ func calculateAuditScore(total, pending, deps int) (int, float64) {
 
 func auditToolchains(ctx context.Context) []DeprecationWarning {
 	var warnings []DeprecationWarning
-	tools := []string{"govulncheck", "gosec", "reuse", "lefthook"}
-
-	for _, tool := range tools {
-		cmd := exec.CommandContext(ctx, tool, "--version")
-		if err := cmd.Run(); err != nil {
-			// Check if binary is in go/bin
-			goCmd := exec.CommandContext(ctx, "go", "env", "GOPATH")
-			if _, goErr := goCmd.Output(); goErr != nil {
-				warnings = append(warnings, DeprecationWarning{
-					Component: tool,
-					Kind:      "toolchain-missing",
-					Details:   fmt.Sprintf("Tool %s is not available on PATH", tool),
-				})
-			}
+	for _, tool := range []string{"govulncheck", "gosec", "reuse", "lefthook"} {
+		if err := probeToolchain(ctx, tool); err != nil {
+			warnings = append(warnings, DeprecationWarning{
+				Component: tool, Kind: "toolchain-missing",
+				Details: fmt.Sprintf("Tool %s could not run: %v", tool, err),
+			})
 		}
 	}
-
 	return warnings
+}
+
+func probeToolchain(ctx context.Context, tool string) error {
+	if _, err := util.RunCommand(ctx, "", tool, "--version"); err == nil {
+		return nil
+	}
+	goPath, err := util.RunCommand(ctx, "", "go", "env", "GOPATH")
+	if err != nil {
+		return fmt.Errorf("resolve Go tool directory: %w", err)
+	}
+	for _, root := range filepath.SplitList(strings.TrimSpace(goPath)) {
+		if _, err := util.RunCommand(ctx, "", filepath.Join(root, "bin", tool), "--version"); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("not runnable on PATH or under GOPATH/bin")
 }

@@ -1,41 +1,5 @@
-# Lefthook Configuration for cordanaLLM/praetor (Go 1.27+ & HISS-16 Governance)
-# Fast, parallel local Git hook runner
-pre-commit:
-  parallel: false
-  commands:
-    gofmt:
-      glob: "*.go"
-      run: gofmt -w {staged_files}
-      stage_fixed: true
-    state-sync:
-      run: go run ./cmd/standardsctl state sync . && git add .workingdir/
-    govet:
-      glob: "*.go"
-      run: go vet ./...
-    context-check:
-      run: go run ./cmd/standardsctl compile-context --verify
-    hiss-audit:
-      run: go run ./cmd/standardsctl audit
-    block-evasion:
-      run: python3 .config/agent/hooks/block_evasion.py
-    topology-audit:
-      run: sh -c 'if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi'
-
-post-commit:
-  commands:
-    dedupe-cadence:
-      run: go run ./cmd/standardsctl dedupe cadence --threshold=20 --record .
-
-pre-push:
-  parallel: false
-  commands:
-    security:
-      run: govulncheck ./... && gosec -exclude=G104,G301,G302,G304,G306,G204,G703 ./...
-    flavor-audit:
-      run: go run ./cmd/standardsctl flavor audit .
-    state-audit:
-      run: go run ./cmd/standardsctl state audit .
-    audit:
-      run: go run ./cmd/standardsctl audit
-    gate:
-      run: go run ./cmd/standardsctl gate run --path=.
+# The vendorable policy is shared with adopters; see .config/lefthook/README.md.
+min_version: 2.1.12
+assert_lefthook_installed: true
+extends:
+  - .config/lefthook/praetor.yml

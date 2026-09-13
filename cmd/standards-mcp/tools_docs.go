@@ -7,11 +7,16 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/bump"
 	"github.com/cordanaLLM/praetor/internal/docdistill"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 )
+
+// versionAuditBudget bounds the upstream registry lookups of standards_version_audit
+// (HISS-02); it must stay below the server's tool timeout.
+const versionAuditBudget = 3 * time.Minute
 
 // createPackageDocsTool builds the standards_package_docs tool for fast local doc lookups.
 func (s *Server) createPackageDocsTool() (mcp.Tool, error) {
@@ -24,18 +29,27 @@ func (s *Server) createPackageDocsTool() (mcp.Tool, error) {
 			},
 			"path": {
 				Type:        "string",
-				Description: "Repository root path (default: workspace root)",
+				Description: "Repository root path (default: server root)",
 			},
 		},
 		Required: []string{"package"},
 	}
 
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
-		pkgName, _ := args["package"].(string)
+		pkgName, err := argString(args, "package")
+		if err != nil {
+			return mcp.ErrorResult(err.Error()), nil
+		}
 		if pkgName == "" {
 			return mcp.ErrorResult("package argument is required"), nil
 		}
-		repoPath := s.resolvePath(args, "path", s.rootDir)
+		repoPath, err := s.resolvePath(args, "path", s.rootDir)
+		if err != nil {
+			return mcp.ErrorResult(err.Error()), nil
+		}
+		if err := ctx.Err(); err != nil {
+			return mcp.ErrorResult(fmt.Sprintf("package docs lookup cancelled: %v", err)), nil
+		}
 
 		cat, err := docdistill.LoadCatalog(repoPath)
 		if err != nil {
@@ -48,7 +62,7 @@ func (s *Server) createPackageDocsTool() (mcp.Tool, error) {
 			}
 		}
 
-		return mcp.ErrorResult(fmt.Sprintf("package '%s' not found in local catalog; run 'standardsctl docs sync' to harvest", pkgName)), nil
+		return mcp.ErrorResult(fmt.Sprintf("package '%s' not found in local catalog; run 'praetorctl docs sync' to harvest", pkgName)), nil
 	}
 
 	return mcp.NewReadOnlyTool(
@@ -66,7 +80,7 @@ func (s *Server) createVersionAuditTool() (mcp.Tool, error) {
 		Properties: map[string]mcp.PropertySchema{
 			"path": {
 				Type:        "string",
-				Description: "Repository root path (default: workspace root)",
+				Description: "Repository root path (default: server root)",
 			},
 			"prerelease": {
 				Type:        "boolean",
@@ -76,41 +90,59 @@ func (s *Server) createVersionAuditTool() (mcp.Tool, error) {
 	}
 
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
-		repoPath := s.resolvePath(args, "path", s.rootDir)
-		prerelease, _ := args["prerelease"].(bool)
+		repoPath, err := s.resolvePath(args, "path", s.rootDir)
+		if err != nil {
+			return mcp.ErrorResult(err.Error()), nil
+		}
+		prerelease, err := argBool(args, "prerelease", false)
+		if err != nil {
+			return mcp.ErrorResult(err.Error()), nil
+		}
 
-		report, err := bump.AuditCodebaseVersions(ctx, repoPath, prerelease)
+		auditCtx, cancel := context.WithTimeout(ctx, versionAuditBudget)
+		defer cancel()
+
+		report, err := bump.AuditCodebaseVersions(auditCtx, repoPath, prerelease)
 		if err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("version audit failed: %v", err)), nil
 		}
 
-		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("=== Codebase Version Audit: %s ===\n", repoPath))
-		sb.WriteString(fmt.Sprintf("Score: %.1f%% | Scanned: %d | Up to Date: %d | Deprecations: %d\n\n",
-			report.ModernizationScore, report.TotalScanned, report.UpToDate, len(report.Deprecations)))
-
-		if len(report.Deprecations) > 0 {
-			sb.WriteString("Deprecation Advisories:\n")
-			for _, d := range report.Deprecations {
-				sb.WriteString(fmt.Sprintf("! [%s] %s: %s\n", d.Kind, d.Component, d.Details))
-			}
-			sb.WriteString("\n")
-		}
-
-		if len(report.PendingUpgrades) > 0 {
-			sb.WriteString("Pending Upgrades:\n")
-			for _, u := range report.PendingUpgrades {
-				sb.WriteString(fmt.Sprintf("- %s: %s -> %s (%s)\n", u.Package, u.CurrentVersion, u.TargetVersion, u.ManifestType))
-			}
-		}
-
-		return mcp.TextResult(sb.String()), nil
+		return mcp.TextResult(formatVersionAudit(repoPath, report)), nil
 	}
 
-	return mcp.NewReadOnlyTool(
+	// The audit queries module proxies and package registries and spawns the local
+	// toolchain: open-world, read-only with respect to the repository.
+	return mcp.NewOpenWorldTool(
 		"standards_version_audit",
 		"Audit all declared dependencies and workflow actions against upstream releases and runner deprecations",
 		schema,
 		handler,
+		true,
+		true,
 	)
+}
+
+// formatVersionAudit renders the version audit report.
+func formatVersionAudit(repoPath string, report *bump.VersionAuditReport) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "=== Codebase Version Audit: %s ===\n", repoPath)
+	fmt.Fprintf(&sb, "Score: %.1f%% | Scanned: %d | Up to Date: %d | Deprecations: %d\n\n",
+		report.ModernizationScore, report.TotalScanned, report.UpToDate, len(report.Deprecations))
+
+	if len(report.Deprecations) > 0 {
+		sb.WriteString("Deprecation Advisories:\n")
+		for _, d := range report.Deprecations {
+			fmt.Fprintf(&sb, "! [%s] %s: %s\n", d.Kind, d.Component, d.Details)
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(report.PendingUpgrades) > 0 {
+		sb.WriteString("Pending Upgrades:\n")
+		for _, u := range report.PendingUpgrades {
+			fmt.Fprintf(&sb, "- %s: %s -> %s (%s)\n", u.Package, u.CurrentVersion, u.TargetVersion, u.ManifestType)
+		}
+	}
+
+	return sb.String()
 }

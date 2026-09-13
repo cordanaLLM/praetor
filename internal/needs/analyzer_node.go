@@ -64,25 +64,29 @@ func (a *NodeAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds
 	}
 
 	allDeps := mergeDependencies(pkgData.Dependencies, pkgData.DevDependencies)
-	for pkg, ver := range allDeps {
-		demand := mapNodeDependency(pkg, ver)
+	for _, pkg := range sortedKeys(allDeps) {
+		demand := mapNodeDependency(pkg, allDeps[pkg])
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
 	}
 
-	loadExistingDeclarations(repoPath, repoNeeds)
+	if declErr := loadExistingDeclarations(repoPath, repoNeeds); declErr != nil {
+		return nil, fmt.Errorf("failed to load existing declarations: %w", declErr)
+	}
 	calculateReadiness(repoNeeds)
 	return repoNeeds, nil
 }
 
 func readPackageJSON(pkgPath string) (*packageJSON, error) {
+	// #nosec G304 -- pkgPath is filepath.Join(repoPath, "package.json") for a repository
+	// the caller already selected; the filename is a constant, not user input.
 	data, err := os.ReadFile(pkgPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read %q: %w", pkgPath, err)
 	}
 	var pkg packageJSON
 	if err := json.Unmarshal(data, &pkg); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse %q: %w", pkgPath, err)
 	}
 	return &pkg, nil
 }

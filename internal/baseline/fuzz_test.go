@@ -16,7 +16,10 @@ func FuzzBaselineRatchet(f *testing.F) {
 			{RuleID: "HISS-02", FilePath: "b.go", Fingerprint: "fp2"},
 		},
 	}
-	validBytes, _ := json.Marshal(validBase)
+	validBytes, err := json.Marshal(validBase)
+	if err != nil {
+		f.Fatalf("marshal seed baseline: %v", err)
+	}
 	f.Add(validBytes, "a.go,c.go")
 
 	f.Fuzz(func(t *testing.T, data []byte, touchedStr string) {

@@ -1,52 +1,80 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"strings"
+	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
+
+// initFilePerm is the mode of the scaffolded, tracked configuration files.
+const initFilePerm os.FileMode = 0o644
 
 func runInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	profile := fs.String("profile", "framework", "Primary repository profile")
 	facets := fs.String("facets", "security:high,api:public-contract,docs:seo-portal", "Comma-separated list of facets")
-	outputPath := fs.String("output", ".standards.yaml", "Path to write .standards.yaml")
+	outputPath := fs.String("output", ".standards.yaml", "Path to write .standards.yaml; its directory receives the companion files")
 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-
-	if _, err := os.Stat(*outputPath); err == nil {
-		return fmt.Errorf("%s already exists; use 'standardsctl plan' or 'standardsctl sync' instead", *outputPath)
+	if fs.NArg() > 0 {
+		return fmt.Errorf("init accepts no positional arguments, got %q", fs.Args())
 	}
 
-	var facetList []string
-	for _, f := range strings.Split(*facets, ",") {
-		trimmed := strings.TrimSpace(f)
-		if trimmed != "" {
-			facetList = append(facetList, trimmed)
-		}
-	}
-
-	if err := createInitialManifest(*outputPath, *profile, facetList); err != nil {
+	if err := ensureManifestAbsent(*outputPath); err != nil {
 		return err
 	}
-	if err := initBaselineAndLockfile(); err != nil {
+
+	// Every companion file lives next to the manifest, never in the process cwd.
+	rootDir := filepath.Dir(*outputPath)
+	if err := createInitialManifest(*outputPath, *profile, splitCSV(*facets)); err != nil {
 		return err
 	}
-	if err := initAgentContext(); err != nil {
+	if err := initBaselineAndLockfile(rootDir); err != nil {
+		return err
+	}
+	if err := initAgentContext(rootDir); err != nil {
 		return err
 	}
 
 	fmt.Println("\nRepository successfully onboarded into cordanaLLM/praetor!")
-	fmt.Println("Next steps: run 'standardsctl audit' and 'make verify-all'.")
+	fmt.Println("Next steps: run 'praetorctl audit' and 'make verify-all'.")
 	return nil
+}
+
+// ensureManifestAbsent refuses to overwrite an existing manifest and surfaces any stat
+// error other than "not found" instead of proceeding blindly.
+func ensureManifestAbsent(path string) error {
+	missing, err := fileMissing(path)
+	if err != nil {
+		return err
+	}
+	if !missing {
+		return fmt.Errorf("%s already exists; use 'praetorctl plan' or 'praetorctl sync' instead", path)
+	}
+	return nil
+}
+
+// fileMissing reports whether path does not exist; any other stat error is returned so
+// that an unreadable file is never mistaken for an absent one.
+func fileMissing(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return false, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	return false, fmt.Errorf("cannot inspect %s: %w", path, err)
 }
 
 func createInitialManifest(outputPath, profile string, facets []string) error {
@@ -66,46 +94,61 @@ func createInitialManifest(outputPath, profile string, facets []string) error {
 		return fmt.Errorf("failed to marshal manifest: %w", err)
 	}
 
-	if err := os.WriteFile(outputPath, data, 0644); err != nil {
+	if err := util.WriteFileSecure(outputPath, data, initFilePerm); err != nil {
 		return fmt.Errorf("failed to write %s: %w", outputPath, err)
 	}
 	fmt.Printf("[CREATED] %s (Profile: %s, Facets: %v)\n", outputPath, profile, facets)
 	return nil
 }
 
-func initBaselineAndLockfile() error {
-	if _, err := os.Stat(".standards-baseline.json"); os.IsNotExist(err) {
+func initBaselineAndLockfile(rootDir string) error {
+	baselinePath := filepath.Join(rootDir, ".standards-baseline.json")
+	missing, err := fileMissing(baselinePath)
+	if err != nil {
+		return err
+	}
+	if missing {
 		base := &baseline.Baseline{
 			Version:          1,
 			TotalInfractions: 0,
 			Infractions:      []baseline.Infraction{},
 		}
-		if err := baseline.SaveBaseline(".standards-baseline.json", base); err != nil {
+		if err := baseline.SaveBaseline(baselinePath, base); err != nil {
 			return fmt.Errorf("failed to create baseline: %w", err)
 		}
-		fmt.Println("[CREATED] .standards-baseline.json (0 legacy infractions)")
+		fmt.Printf("[CREATED] %s (0 legacy infractions)\n", baselinePath)
 	}
 
-	if _, err := os.Stat(".standards.lock"); os.IsNotExist(err) {
+	lockPath := filepath.Join(rootDir, ".standards.lock")
+	missing, err = fileMissing(lockPath)
+	if err != nil {
+		return err
+	}
+	if missing {
 		content := []byte("# SemVer lockfile\nversion: 1\npinned_version: \"v1.0.0\"\n")
-		if err := os.WriteFile(".standards.lock", content, 0644); err != nil {
+		if err := util.WriteFileSecure(lockPath, content, initFilePerm); err != nil {
 			return fmt.Errorf("failed to create lockfile: %w", err)
 		}
-		fmt.Println("[CREATED] .standards.lock")
+		fmt.Printf("[CREATED] %s\n", lockPath)
 	}
 	return nil
 }
 
-func initAgentContext() error {
-	if _, err := os.Stat("AGENTS.md"); os.IsNotExist(err) {
+func initAgentContext(rootDir string) error {
+	agentsPath := filepath.Join(rootDir, "AGENTS.md")
+	missing, err := fileMissing(agentsPath)
+	if err != nil {
+		return err
+	}
+	if missing {
 		return nil
 	}
 	tr := compiler.NewTranspiler()
-	res, err := tr.Compile("AGENTS.md")
+	res, err := tr.Compile(agentsPath)
 	if err != nil {
 		return fmt.Errorf("failed to compile AGENTS.md: %w", err)
 	}
-	if err := tr.WriteOutputs(res, "."); err != nil {
+	if err := tr.WriteOutputs(res, rootDir); err != nil {
 		return fmt.Errorf("failed to write agent outputs: %w", err)
 	}
 	fmt.Println("[TRANSPILED] Cross-agent context targets initialized from AGENTS.md.")

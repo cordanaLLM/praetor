@@ -25,14 +25,35 @@ standardsctl compile-context
 # 3. Snapshot legacy technical debt infractions to prevent CI failure
 standardsctl baseline --record
 
-# 4. Generate hermetic devcontainer
-standardsctl devcontainer generate
+# 4. Prepare a portable devcontainer from reviewed Praetor sources
+standardsctl devcontainer generate --source-root /path/to/reviewed/praetor
 
 # 5. Verify 100% compliance
 standardsctl audit
 ```
 
 ---
+
+## Planning-only adoption through MCP
+
+`standards_adopt` accepts `profile` and comma-separated `facets`, matching the
+CLI's `--profile` and `--facets` selection. For example:
+
+```json
+{"path":"/workspace/project","source_root":"/workspace/praetor","profile":"planning-artifacts","facets":"agent:sandboxed","record_baseline":false,"dry_run":true}
+```
+
+Both paths must be allowed by the server's existing root policy. Inspect the
+preview, then use the same selection with `dry_run: false` for an authorized
+application. Omitted or empty selection retains the shared adoption defaults;
+an empty facet string does not clear them. The adapter accepts at most 64
+comma-separated entries and 8192 facet bytes, with a 128-byte profile bound.
+The shared pinned catalog validates selected identities. Existing repository
+configuration retains its normal preservation/force semantics.
+
+The planning profile prepares governance without inventing Go or Rust manifests.
+It does not qualify a native build, boot, release, running DevContainer or agent
+activation. Those stages need their own selected checks and execution evidence.
 
 ## 2. Onboarding Workflow Stages
 
@@ -41,7 +62,7 @@ standardsctl audit
 | **1. Scaffolding** | Create declarative `.standards.yaml` | `standardsctl init` | `.standards.yaml` created with selected profiles. |
 | **2. Context Transpilation** | Generate vendor agent files | `standardsctl compile-context` | `CLAUDE.md`, `.cursor/rules/*.mdc`, etc. created ($< 300$ LOC). |
 | **3. Brownfield Baselining** | Snapshot legacy debt | `standardsctl baseline --record` | `.standards-baseline.json` populated with existing debt. |
-| **4. Devcontainer Setup** | Build isolated container | `standardsctl devcontainer generate`| `.devcontainer/devcontainer.json` synthesized. |
+| **4. Devcontainer Setup** | Prepare a portable bootstrap | `standardsctl devcontainer generate --source-root /path/to/reviewed/praetor` | JSON and exact source companions prepared; build and startup remain separate checks. |
 | **5. Audit Verification** | Final compliance sweep | `standardsctl audit` | Score: 100% Compliance. |
 
 ---
@@ -51,4 +72,3 @@ Legacy infractions recorded in `.standards-baseline.json` will not fail CI statu
 - **Monotonic Ratchet**: Technical debt must decrease over time ($V_{\text{total}}(t_1) \le V_{\text{total}}(t_0)$).
 - **Touched-File Clean Rule**: Any legacy file modified during a pull request revokes previous exemptions and must be refactored clean.
 - **Waivers**: For unavoidable architectural exceptions, mint an Ed25519-signed waiver in `.standards-waivers.yaml`.
-

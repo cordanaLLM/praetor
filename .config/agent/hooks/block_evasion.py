@@ -6,10 +6,13 @@ Enforces HISS-16 by intercepting attempts to bypass Git hooks, linters, or verif
 import sys
 import os
 import re
+import json
+
+MAX_INPUT_BYTES = 1 << 20
 
 BLOCKED_PATTERNS = [
     r"--no-verify\b",
-    r"-n\b(?=.*git\s+commit)",
+    r"\bgit\s+commit\b[^\n]*\s-n\b",
     r"LEFTHOOK=0\b",
     r"SKIP=.*git",
     r"core\.hooksPath\s*=\s*/dev/null",
@@ -46,19 +49,53 @@ def audit_environment() -> bool:
     if os.environ.get("LEFTHOOK") == "0":
         sys.stderr.write("[BLOCKED BY HISS-16] LEFTHOOK=0 detected in environment. Evasion prohibited.\n")
         return False
+    if os.environ.get("LEFTHOOK_EXCLUDE") or os.environ.get("LEFTHOOK_SKIP"):
+        sys.stderr.write("[BLOCKED BY HISS-16] Hook exclusions are prohibited.\n")
+        return False
     return True
+
+
+def read_json_command(stream) -> str:
+    raw = stream.read(MAX_INPUT_BYTES + 1)
+    if len(raw) > MAX_INPUT_BYTES:
+        raise ValueError("hook input exceeds 1 MiB")
+    payload = json.loads(raw.decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("hook input must be an object")
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        raise ValueError("tool_input must be an object")
+    command = tool_input.get("command")
+    if not isinstance(command, str) or not command.strip():
+        raise ValueError("tool_input.command must be nonempty text")
+    return command
+
 
 def main():
     if not audit_environment():
         sys.exit(1)
 
+    if sys.argv[1:] == ["--environment"]:
+        sys.exit(0)
+    json_input = False
     if len(sys.argv) > 1:
         cmd = " ".join(sys.argv[1:])
-        if not audit_command(cmd):
+    elif not sys.stdin.isatty():
+        try:
+            cmd = read_json_command(sys.stdin.buffer)
+            json_input = True
+        except (ValueError, OSError, RecursionError) as error:
+            sys.stderr.write(f"[BLOCKED BY HISS-16] Invalid hook input: {error}\n")
             sys.exit(1)
+    else:
+        sys.stderr.write("Expected a command, PreToolUse JSON, or --environment.\n")
+        sys.exit(1)
+    if not audit_command(cmd):
+        sys.exit(1)
+    if json_input:
+        print("PRAETOR_COMMAND_POLICY_OK")
 
     sys.exit(0)
 
 if __name__ == "__main__":
     main()
-

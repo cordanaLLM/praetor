@@ -4,11 +4,30 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"sort"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"gopkg.in/yaml.v3"
+)
+
+const maxBuildTargets = 128
+
+// BuildStatus describes whether a selected target has an executable backend.
+type BuildStatus string
+
+const (
+	// BuildUnavailable identifies a known runtime whose backend is not implemented.
+	BuildUnavailable BuildStatus = "unavailable"
+	// BuildUnsupported identifies a runtime not recognized by the builder.
+	BuildUnsupported BuildStatus = "unsupported"
+)
+
+var (
+	// ErrBackendUnavailable means no compilation or optimization was executed.
+	ErrBackendUnavailable = errors.New("build backend is not implemented; no compilation or optimization was executed")
+	// ErrUnsupportedRuntime means the requested runtime is not recognized.
+	ErrUnsupportedRuntime = errors.New("unsupported target runtime; no compilation or optimization was executed")
 )
 
 // TargetConfig defines build directives for an individual language or framework target.
@@ -38,11 +57,18 @@ type BuildResult struct {
 	Optimized  bool          `json:"optimized"`
 	Success    bool          `json:"success"`
 	OutputLogs string        `json:"output_logs"`
+	Status     BuildStatus   `json:"status"`
+	Reason     string        `json:"reason"`
 }
 
 // LoadBuildConfig parses the .framework-build.yaml file.
 func LoadBuildConfig(path string) (*BuildConfig, error) {
-	data, err := os.ReadFile(path)
+	return LoadBuildConfigContext(context.Background(), path)
+}
+
+// LoadBuildConfigContext reads a bounded regular configuration under the caller deadline.
+func LoadBuildConfigContext(ctx context.Context, path string) (*BuildConfig, error) {
+	data, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read build config %s: %w", path, err)
 	}
@@ -59,19 +85,18 @@ func LoadBuildConfig(path string) (*BuildConfig, error) {
 	return &cfg, nil
 }
 
-// UniversalBuilder orchestrates polyglot builds across Go, Svelte, Python, Rust, and Native GPU.
-type UniversalBuilder struct {
-	optimizer *PreBuildOptimizer
-}
+// UniversalBuilder checks polyglot build requests. Execution backends are unavailable.
+type UniversalBuilder struct{}
 
-// NewUniversalBuilder initializes a universal builder with attached optimizer.
+// NewUniversalBuilder initializes a builder without filesystem or process effects.
 func NewUniversalBuilder() *UniversalBuilder {
-	return &UniversalBuilder{
-		optimizer: NewPreBuildOptimizer(),
-	}
+	return &UniversalBuilder{}
 }
 
-// Build executes compilation for the specified target runtime or all targets.
+// Build rejects unimplemented or unsupported backends without modifying inputs or
+// the filesystem. Results describe rejected targets, never planned artifacts.
+// At most 128 selected targets are inspected in lexical order; callers must check
+// the returned error even when results are present. Duration measures inspection.
 func (b *UniversalBuilder) Build(ctx context.Context, cfg *BuildConfig, targetName string) ([]BuildResult, error) {
 	if ctx == nil {
 		return nil, errors.New("context cannot be nil")
@@ -87,19 +112,29 @@ func (b *UniversalBuilder) Build(ctx context.Context, cfg *BuildConfig, targetNa
 	if err != nil {
 		return nil, err
 	}
+	if len(targetsToBuild) > maxBuildTargets {
+		return nil, fmt.Errorf("build selection exceeds %d targets", maxBuildTargets)
+	}
+	names := make([]string, 0, len(targetsToBuild))
+	for name := range targetsToBuild {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 
 	results := make([]BuildResult, 0, len(targetsToBuild))
-	for name, targetCfg := range targetsToBuild {
-		start := time.Now()
-		res, bErr := b.buildSingleTarget(ctx, cfg, name, targetCfg)
-		if bErr != nil {
-			return nil, fmt.Errorf("build target %s failed: %w", name, bErr)
+	var failures []error
+	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return results, err
 		}
+		start := time.Now()
+		res, bErr := unavailableTarget(cfg.Project, name, targetsToBuild[name].Runtime)
+		failures = append(failures, fmt.Errorf("build target %s failed: %w", name, bErr))
 		res.Duration = time.Since(start)
-		results = append(results, *res)
+		results = append(results, res)
 	}
 
-	return results, nil
+	return results, errors.Join(failures...)
 }
 
 func resolveTargets(cfg *BuildConfig, targetName string) (map[string]TargetConfig, error) {
@@ -117,46 +152,13 @@ func resolveTargets(cfg *BuildConfig, targetName string) (map[string]TargetConfi
 	return map[string]TargetConfig{targetName: t}, nil
 }
 
-func (b *UniversalBuilder) buildSingleTarget(ctx context.Context, cfg *BuildConfig, name string, t TargetConfig) (*BuildResult, error) {
-	if err := os.MkdirAll(cfg.OutputDir, 0755); err != nil {
-		return nil, err
+func unavailableTarget(project, name, runtime string) (BuildResult, error) {
+	status, err := BuildUnsupported, ErrUnsupportedRuntime
+	switch runtime {
+	case "go", "svelte", "typescript", "python", "rust", "native-gpu", "native", "c", "cpp":
+		status, err = BuildUnavailable, ErrBackendUnavailable
 	}
-
-	if cfg.Optimize && b.optimizer != nil {
-		plan := b.optimizer.Plan(t.Runtime, t.Capabilities)
-		if err := b.optimizer.Optimize(&t, plan); err != nil {
-			return nil, fmt.Errorf("optimization failed: %w", err)
-		}
-	}
-
-	outArtifact := filepath.Join(cfg.OutputDir, name)
-	res := &BuildResult{
-		Project:   cfg.Project,
-		Target:    name,
-		Runtime:   t.Runtime,
-		Optimized: cfg.Optimize,
-		Success:   true,
-	}
-
-	switch t.Runtime {
-	case "go":
-		res.Artifacts = []string{outArtifact}
-		res.OutputLogs = fmt.Sprintf("Built static hermetic Go binary with -s -w symbols at %s", outArtifact)
-	case "svelte", "typescript":
-		res.Artifacts = []string{filepath.Join(cfg.OutputDir, name, "index.js")}
-		res.OutputLogs = "Compiled Svelte 5 frontend with Tailwind purged and asset bundle generated."
-	case "python":
-		res.Artifacts = []string{filepath.Join(cfg.OutputDir, name+".whl")}
-		res.OutputLogs = "Packaged optimized Python wheel with bytecode compiled."
-	case "rust":
-		res.Artifacts = []string{outArtifact}
-		res.OutputLogs = "Compiled Rust crate with release LTO and stripped symbols."
-	case "native-gpu", "native", "c", "cpp":
-		res.Artifacts = []string{outArtifact + ".so"}
-		res.OutputLogs = "Configured Meson/Ninja for Native GPU acceleration with sanitizers enabled."
-	default:
-		return nil, fmt.Errorf("unsupported target runtime: %s", t.Runtime)
-	}
-
-	return res, nil
+	return BuildResult{
+		Project: project, Target: name, Runtime: runtime, Status: status, Reason: err.Error(),
+	}, fmt.Errorf("runtime %q: %w", runtime, err)
 }

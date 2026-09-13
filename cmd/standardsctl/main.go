@@ -3,9 +3,13 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 const version = "v1.0.0"
+
+// maxCSVFields bounds the comma-separated list parser (HISS-02).
+const maxCSVFields = 1024
 
 func printUsage() {
 	fmt.Println("praetorctl (formerly standardsctl) - Autonomous Fleet Governance & Workstation Sentinel (" + version + ")")
@@ -14,6 +18,10 @@ func printUsage() {
 	fmt.Println("\nAvailable Commands:")
 	fmt.Println("  init               Scaffold configuration, baseline, and agent context for new repo")
 	fmt.Println("  compile-context    Transpile canonical AGENTS.md to vendor-native formats (< 300 LOC)")
+	fmt.Println("  context-optimize   Analyze explicit context files and optionally write a private review pack")
+	fmt.Println("  clients            Prepare or apply client configurations from one shared tool registry")
+	fmt.Println("  notebook           Prepare source-grounded planning templates or validate generated drafts")
+	fmt.Println("  prompt-optimize    Select prompts from comparable held-out model/provider evaluations")
 	fmt.Println("  audit              Audit repository against declared HISS-16 invariants and lockfile")
 	fmt.Println("  baseline           Inspect or record technical debt infractions")
 	fmt.Println("  devcontainer       Synthesize or verify .devcontainer/devcontainer.json")
@@ -26,6 +34,7 @@ func printUsage() {
 	fmt.Println("  models             Sync or list active model tiers and benchmark limits")
 	fmt.Println("  plan               Dry-run comparison of repository settings against policy")
 	fmt.Println("  sync               Reconcile repository settings, labels, and branch rulesets")
+	fmt.Println("  operational        Plan or prepare an operational fork from reviewed local commits")
 	fmt.Println("  sentinel           Inspect workstation RAM/disk health and model headroom")
 	fmt.Println("  worktree           Manage isolated ephemeral git worktrees")
 	fmt.Println("  gc                 Garbage collect stale worktrees, caches, and logs")
@@ -33,7 +42,7 @@ func printUsage() {
 	fmt.Println("  forge              Synchronize git provider wiki, issues, or validate PRs")
 	fmt.Println("  harvest            Audit fleet repositories, workstation worktrees, and agent skills")
 	fmt.Println("  adopt              Adopt and bootstrap any repository to 100% template compliance (alias: conform, bootstrap)")
-	fmt.Println("  dogfood            Execute self-governance verification, local adoption simulations, and public repo benchmarks")
+	fmt.Println("  dogfood            Run local dogfood suites, schedules, adoption benchmarks, and bounded repairs")
 	fmt.Println("  bump               Proactive prerelease bump train and ephemeral canary testing")
 	fmt.Println("  paperclip          Paperclip agent harness synthesis and Rule 0 terminal disposition")
 	fmt.Println("  changelog          Manage Keep-a-Changelog fragments and release sections")
@@ -45,9 +54,10 @@ func printUsage() {
 	fmt.Println("  provenance         Generate SLSA v1.0 provenance attestation statement")
 	fmt.Println("  needs              Declare and report repository capabilities and demand to Golusoris")
 	fmt.Println("  issue              Reconcile cross-repo dependencies and unblock ready tasks")
+	fmt.Println("  wishes             Read and apply private repository wishes and polls")
 	fmt.Println("  milestone          Manage local and remote GitHub milestones and progress")
 	fmt.Println("  project            Manage GitHub Projects v2 boards and track epic issues")
-	fmt.Println("  build              Compile polyglot targets with universal builder and pre-build optimizer")
+	fmt.Println("  build              Request a polyglot build (execution backends currently unavailable)")
 	fmt.Println("  ci                 Analyze git diff and filter CI verification gates")
 	fmt.Println("  topology           Audit and clean workstation directory topology (DEV-01 to DEV-05)")
 	fmt.Println("  version            Print CLI version information")
@@ -69,106 +79,95 @@ func main() {
 	}
 }
 
+// commandFunc is the signature every top-level command implements.
+type commandFunc func(args []string) error
+
+// commandTable maps every command name (and alias) to its handler. A table keeps
+// dispatch at constant complexity regardless of how many commands exist (HISS-04).
+func commandTable() map[string]commandFunc {
+	return map[string]commandFunc{
+		"init":             runInit,
+		"compile-context":  runCompileContext,
+		"context-optimize": runContextOptimize,
+		"notebook":         runNotebook,
+		"prompt-optimize":  runPromptOptimize,
+		"audit":            runAudit,
+		"baseline":         runBaseline,
+		"devcontainer":     runDevContainer,
+		"flavor":           runFlavor,
+		"flavors":          runFlavors,
+		"docs":             runDocs,
+		"hindsight":        runHindsight,
+		"state":            runState,
+		"dedupe":           runDedupe,
+		"models":           runModels,
+		"operational":      runOperational,
+		"plan":             runPlan,
+		"sync":             runSync,
+		"sentinel":         runSentinel,
+		"worktree":         runWorktree,
+		"gc":               runGC,
+		"editors":          runEditors,
+		"clients":          runClients,
+		"forge":            runForge,
+		"harvest":          runHarvest,
+		"adopt":            runAdopt,
+		"conform":          runAdopt,
+		"bootstrap":        runAdopt,
+		"dogfood":          runDogfood,
+		"bump":             runBump,
+		"paperclip":        runPaperclip,
+		"changelog":        runChangelog,
+		"release":          runRelease,
+		"gate":             runGate,
+		"agent":            runAgent,
+		"serve":            runServe,
+		"sbom":             runSBOM,
+		"provenance":       runProvenance,
+		"needs":            runNeeds,
+		"issue":            runIssue,
+		"wishes":           runWishes,
+		"milestone":        runMilestone,
+		"project":          runProject,
+		"build":            runBuild,
+		"ci":               runCI,
+		"topology":         runTopology,
+		"version":          runVersion,
+		"help":             runHelp,
+		"-h":               runHelp,
+		"--help":           runHelp,
+	}
+}
+
 func dispatchCommand(cmd string, args []string) error {
-	if err, ok := dispatchCoreCommand(cmd, args); ok {
-		return err
+	if handler, ok := commandTable()[cmd]; ok {
+		return handler(args)
 	}
-	return dispatchOperationsCommand(cmd, args)
+	printUsage()
+	return fmt.Errorf("unknown command: %s", cmd)
 }
 
-func dispatchCoreCommand(cmd string, args []string) (error, bool) {
-	switch cmd {
-	case "init":
-		return runInit(args), true
-	case "compile-context":
-		return runCompileContext(args), true
-	case "audit":
-		return runAudit(args), true
-	case "baseline":
-		return runBaseline(args), true
-	case "devcontainer":
-		return runDevContainer(args), true
-	case "flavor":
-		return runFlavor(args), true
-	case "flavors":
-		return runFlavors(args), true
-	case "docs":
-		return runDocs(args), true
-	case "hindsight":
-		return runHindsight(args), true
-	case "state":
-		return runState(args), true
-	case "dedupe":
-		return runDedupe(args), true
-	case "models":
-		return runModels(args), true
-	case "plan":
-		return runPlan(args), true
-	case "sync":
-		return runSync(args), true
-	case "sentinel":
-		return runSentinel(args), true
-	case "worktree":
-		return runWorktree(args), true
-	case "gc":
-		return runGC(args), true
-	case "editors":
-		return runEditors(args), true
-	default:
-		return nil, false
-	}
+func runVersion(_ []string) error {
+	fmt.Printf("standardsctl version %s\n", version)
+	return nil
 }
 
-func dispatchOperationsCommand(cmd string, args []string) error {
-	switch cmd {
-	case "forge":
-		return runForge(args)
-	case "harvest":
-		return runHarvest(args)
-	case "adopt", "conform", "bootstrap":
-		return runAdopt(args)
-	case "dogfood":
-		return runDogfood(args)
-	case "bump":
-		return runBump(args)
-	case "paperclip":
-		return runPaperclip(args)
-	case "changelog":
-		return runChangelog(args)
-	case "release":
-		return runRelease(args)
-	case "gate":
-		return runGate(args)
-	case "agent":
-		return runAgent(args)
-	case "serve":
-		return runServe(args)
-	case "sbom":
-		return runSBOM(args)
-	case "provenance":
-		return runProvenance(args)
-	case "needs":
-		return runNeeds(args)
-	case "issue":
-		return runIssue(args)
-	case "milestone":
-		return runMilestone(args)
-	case "project":
-		return runProject(args)
-	case "build":
-		return runBuild(args)
-	case "ci":
-		return runCI(args)
-	case "topology":
-		return runTopology(args)
-	case "version":
-		fmt.Printf("standardsctl version %s\n", version)
+func runHelp(_ []string) error {
+	printUsage()
+	return nil
+}
+
+// splitCSV splits a comma-separated flag value into trimmed, non-empty fields.
+func splitCSV(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
 		return nil
-	case "-h", "--help", "help":
-		printUsage()
-		return nil
-	default:
-		printUsage()
-		return fmt.Errorf("unknown command: %s", cmd)
 	}
+	parts := strings.Split(raw, ",")
+	fields := make([]string, 0, len(parts))
+	for i := 0; i < len(parts) && i < maxCSVFields; i++ {
+		if trimmed := strings.TrimSpace(parts[i]); trimmed != "" {
+			fields = append(fields, trimmed)
+		}
+	}
+	return fields
 }

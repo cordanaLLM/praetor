@@ -84,6 +84,20 @@ func (d *Disposition) Validate(ctx context.Context) error {
 		return fmt.Errorf("validation cancelled: %w", err)
 	}
 
+	if err := d.validateFields(); err != nil {
+		return err
+	}
+
+	if d.Receipt != nil {
+		if err := lockdown.VerifyReceipt(d.Receipt); err != nil {
+			return fmt.Errorf("invalid exit-0 receipt attached to disposition: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (d *Disposition) validateFields() error {
 	if d.Status != StatusInReview && d.Status != StatusBlocked {
 		return fmt.Errorf("invalid status %q", d.Status)
 	}
@@ -98,12 +112,6 @@ func (d *Disposition) Validate(ctx context.Context) error {
 	}
 	if d.Status == StatusBlocked && d.RecoveryOwner == "" {
 		return fmt.Errorf("missing recovery_owner for blocked")
-	}
-
-	if d.Receipt != nil {
-		if err := lockdown.VerifyReceipt(d.Receipt); err != nil {
-			return fmt.Errorf("invalid exit-0 receipt attached to disposition: %w", err)
-		}
 	}
 
 	return nil

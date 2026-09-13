@@ -1,6 +1,6 @@
 ---
 name: prerelease-bump
-description: Execute proactive prerelease bump trains, speculative ephemeral worktree tests, and adaptation patch synthesis to prevent upgrade fire-drills on stable release day.
+description: Plan or execute dependency canaries in ephemeral worktrees, inspect failures, and apply reviewed dependency updates and supplied patches.
 ---
 
 # Proactive Prerelease Bump Train (`prerelease-bump`)
@@ -10,7 +10,7 @@ Speculatively test dependency upgrades against upstream `alpha`, `beta`, `rc`, a
 ## 4-Step Bump Train Workflow
 
 1. **Scan Upstream Dependency Candidates**:
-   - Inspect manifests (`go.mod`, `package.json`, `Cargo.toml`) for available stable and prerelease updates:
+   - Inspect supported manifests (`go.mod`, `package.json`) for candidate stable and prerelease versions:
      ```bash
      praetorctl bump scan --prerelease
      ```
@@ -20,8 +20,8 @@ Speculatively test dependency upgrades against upstream `alpha`, `beta`, `rc`, a
      ```bash
      praetorctl bump canary <package-name> --target=<prerelease-version>
      ```
-   - If tests pass cleanly, the candidate is **Canary Certified**.
-   - If tests fail, SARIF distillation pinpoints the exact breaking symbol change and stages an adaptation patch in `.standards/patches/`.
+   - A passing result means the configured command exited zero; no certification is issued. The CLI currently uses `go test -v ./...`.
+   - On failure, inspect private SARIF diagnostics under `.workingdir/evidence/canary/`. These contain command output and are not adaptation patches.
 
 3. **Execute Automated Bump Train**:
    - Run speculative testing across all eligible dependencies:
@@ -29,11 +29,14 @@ Speculatively test dependency upgrades against upstream `alpha`, `beta`, `rc`, a
      praetorctl bump train --dry-run
      praetorctl bump train
      ```
+   - A dry run only plans work. Execution failures produce a nonzero result.
 
-4. **Instant Landing on Stable Release**:
-   - When upstream releases GA/stable, apply the pre-tested bump and adaptation patch in minutes:
+4. **Apply and Verify a Reviewed Update**:
+   - Verify the intended stable version and any supplied patch, then apply and run the repository gates:
      ```bash
-     praetorctl bump apply <package-name> --version=<stable-version> --patch=.standards/patches/<patch-file>
+     praetorctl bump apply <package-name> --version=<stable-version> --patch=<reviewed-patch-file>
      make verify-all
      ```
+   - The patch is optional. Its syntax is checked before updating; applicability is checked afterward. A failed application may leave the dependency updated and does not roll back.
 
+For status fields, diagnostic privacy, patch bounds, and migration from older false certification flags, read [the canary evidence guide](../../../docs/guides/canary-evidence.md).

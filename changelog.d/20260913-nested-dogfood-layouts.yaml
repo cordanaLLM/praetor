@@ -1,0 +1,3 @@
+type: fixed
+title: Support bounded nested verification layouts and UTF-8 BOM in .NET XML project metadata
+breaking: false

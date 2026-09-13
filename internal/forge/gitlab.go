@@ -2,12 +2,16 @@ package forge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
-// GitLabDriver implements Forge for GitLab using Project Access Tokens.
+// GitLabDriver implements the credential handling for GitLab Project Access Tokens. The
+// enforcement methods are deliberately unimplemented: returning success without performing
+// the operation would report governance that does not exist, so every one of them fails
+// with ErrNotImplemented until a real GitLab client exists.
 type GitLabDriver struct {
 	Token     string
 	Endpoint  string
@@ -30,77 +34,69 @@ func (gl *GitLabDriver) SetProject(projectID string) {
 	gl.ProjectID = projectID
 }
 
-func (gl *GitLabDriver) targetProject() string {
-	if gl.ProjectID != "" {
-		return gl.ProjectID
-	}
-	return "default-project"
-}
-
 func (gl *GitLabDriver) Name() string {
 	return "gitlab"
 }
 
 func (gl *GitLabDriver) Authenticate(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("gitlab authentication: context cannot be nil")
+	}
 	if gl.Token == "" {
-		return fmt.Errorf("gitlab authentication failed: token is empty")
+		return errors.New("gitlab authentication failed: token is empty")
 	}
 	return nil
+}
+
+func (gl *GitLabDriver) unsupported(method string) error {
+	return fmt.Errorf("gitlab driver: %s: %w", method, ErrNotImplemented)
 }
 
 func (gl *GitLabDriver) ReconcileProtection(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) error {
 	if err := gl.Authenticate(ctx); err != nil {
 		return err
 	}
-	return nil
+	return gl.unsupported("ReconcileProtection")
 }
 
 func (gl *GitLabDriver) ReconcileLabels(ctx context.Context, labels []Label) error {
 	if err := gl.Authenticate(ctx); err != nil {
 		return err
 	}
-	return nil
+	return gl.unsupported("ReconcileLabels")
 }
 
 func (gl *GitLabDriver) PostStatusCheck(ctx context.Context, commitSHA string, check CheckRun) error {
 	if err := gl.Authenticate(ctx); err != nil {
 		return err
 	}
-	return nil
+	return gl.unsupported("PostStatusCheck")
 }
 
 func (gl *GitLabDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*PRResponse, error) {
 	if err := gl.Authenticate(ctx); err != nil {
 		return nil, err
 	}
-	return &PRResponse{
-		Number: 1,
-		URL:    fmt.Sprintf("%s/projects/%s/merge_requests/1", gl.Endpoint, gl.targetProject()),
-		State:  "opened",
-	}, nil
+	return nil, gl.unsupported("CreatePullRequest")
 }
 
 func (gl *GitLabDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueResponse, error) {
 	if err := gl.Authenticate(ctx); err != nil {
 		return nil, err
 	}
-	return &IssueResponse{
-		Number: 1,
-		URL:    fmt.Sprintf("%s/projects/%s/issues/1", gl.Endpoint, gl.targetProject()),
-		State:  "opened",
-	}, nil
+	return nil, gl.unsupported("CreateIssue")
 }
 
 func (gl *GitLabDriver) ListIssues(ctx context.Context, state string) ([]IssueSpec, error) {
 	if err := gl.Authenticate(ctx); err != nil {
 		return nil, err
 	}
-	return []IssueSpec{}, nil
+	return nil, gl.unsupported("ListIssues")
 }
 
 func (gl *GitLabDriver) UpdateIssue(ctx context.Context, number int, labels []string, state string) error {
 	if err := gl.Authenticate(ctx); err != nil {
 		return err
 	}
-	return nil
+	return gl.unsupported("UpdateIssue")
 }

@@ -8,9 +8,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/docdistill"
 )
+
+// docsCommandTimeout bounds the whole docs command (HISS-02).
+const docsCommandTimeout = 10 * time.Minute
 
 func runDocs(args []string) error {
 	if len(args) == 0 {
@@ -20,7 +24,10 @@ func runDocs(args []string) error {
 
 	sub := args[0]
 	subArgs := args[1:]
-	ctx := context.Background()
+	// HISS-02: docs sync fetches one documentation sheet per declared dependency, so the
+	// command carries an explicit deadline like its sibling commands.
+	ctx, cancel := context.WithTimeout(context.Background(), docsCommandTimeout)
+	defer cancel()
 
 	switch sub {
 	case "sync":
@@ -52,14 +59,11 @@ func runDocsSync(ctx context.Context, args []string) error {
 	offline := fs.Bool("offline", false, "Run in offline mode using local doc caches only")
 	transitive := fs.Bool("transitive", false, "Include transitive dependencies")
 
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
-
-	repoPath := "."
-	if fs.NArg() > 0 {
-		repoPath = fs.Arg(0)
-	}
+	repoPath := positionalAt(positional, 0, ".")
 
 	opts := docdistill.DefaultDistillOptions()
 	opts.ForceRefresh = *force
@@ -80,10 +84,15 @@ func runDocsSync(ctx context.Context, args []string) error {
 }
 
 func runDocsAudit(ctx context.Context, args []string) error {
-	repoPath := "."
-	if len(args) > 0 {
-		repoPath = args[0]
+	fs := flag.NewFlagSet("docs audit", flag.ContinueOnError)
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
 	}
+	if len(positional) > 1 {
+		return fmt.Errorf("docs audit accepts at most one repository path, got %d", len(positional))
+	}
+	repoPath := positionalAt(positional, 0, ".")
 
 	result, err := docdistill.AuditDocumentationCoverage(ctx, repoPath)
 	if err != nil {
@@ -91,9 +100,14 @@ func runDocsAudit(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("=== Documentation Coverage Audit: %s ===\n", repoPath)
-	fmt.Printf("  Coverage:   %.1f%%\n", result.CoverageScore)
+	if result.Status == "not_applicable" {
+		fmt.Println("  Coverage:   not applicable (no declared dependencies)")
+	} else {
+		fmt.Printf("  Coverage:   %.1f%%\n", result.CoverageScore)
+	}
 	fmt.Printf("  Documented: %d / %d declared packages\n", result.Documented, result.TotalDeclared)
 	fmt.Printf("  Passed:     %t\n", result.Passed)
+	fmt.Printf("  Status:     %s\n", result.Status)
 
 	if len(result.Missing) > 0 {
 		fmt.Println("\nMissing Distilled Documentation:")
@@ -104,6 +118,9 @@ func runDocsAudit(ctx context.Context, args []string) error {
 		return fmt.Errorf("documentation audit failed: %d missing packages", len(result.Missing))
 	}
 
+	if !result.Passed {
+		return fmt.Errorf("documentation audit did not pass (status: %s)", result.Status)
+	}
 	return nil
 }
 

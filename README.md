@@ -174,6 +174,8 @@ go run ./cmd/standardsctl baseline
 
 ## 📜 License & Compliance
 
-Distributed under the **Apache License 2.0**. See [`LICENSE`](LICENSE) for details.
+Distributed under the **European Union Public Licence 1.2 (EUPL-1.2)**. See
+[`LICENSE`](LICENSE) for the full text and [`REUSE.toml`](REUSE.toml) for SPDX
+licensing metadata.
 
 Part of the **[CordanaLLM](https://github.com/CordanaLLM)** project.

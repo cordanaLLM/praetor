@@ -1,0 +1,3 @@
+type: fixed
+title: Pin the repository receipt signer so strict pushes and pull requests can verify exact-commit gate evidence
+breaking: false

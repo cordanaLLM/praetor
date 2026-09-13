@@ -2,6 +2,10 @@
 
 The definitive formal specification for deterministic software engineering and autonomous agent governance across the cordanaLLM fleet.
 
+The invariants below are policy requirements. Their implemented coverage and
+remaining proof gaps are recorded in the [HISS refinement audit](../research/hiss-rule-refinement.md);
+a passing scanner does not establish every invariant for every language.
+
 ```mermaid
 flowchart TD
     subgraph ExecutionInvariants["Static & Runtime Determinism"]
@@ -111,4 +115,3 @@ All public methods require three-dimensional test coverage:
 Agent instructions originate from a single canonical source (`AGENTS.md`):
 - All vendor harnesses (`CLAUDE.md`, Cursor rules, Copilot) are compiled via `standardsctl compile-context`.
 - Authoritative verification executes inside non-root ephemeral sandboxes with cgroup limits and default-deny egress.
-

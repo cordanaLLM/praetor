@@ -13,7 +13,7 @@ func runBuild(args []string) error {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	configPath := fs.String("config", ".framework-build.yaml", "Path to .framework-build.yaml manifest")
 	target := fs.String("target", "all", "Specific target to build (or 'all')")
-	optimize := fs.Bool("optimize", true, "Enable pre-build capability pruning and symbol stripping")
+	optimize := fs.Bool("optimize", true, "Request optimization; execution backends are currently unavailable")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -21,12 +21,21 @@ func runBuild(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	cfg, err := builder.LoadBuildConfig(*configPath)
+	cfg, err := builder.LoadBuildConfigContext(ctx, *configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load build configuration: %w", err)
 	}
 
-	if fs.Lookup("optimize") != nil {
+	// fs.Lookup always finds a registered flag, so it cannot tell "the operator passed
+	// --optimize" from "the flag has its default". fs.Visit only reports flags that were
+	// actually set, so `optimize: false` in the manifest survives an unflagged run.
+	optimizeSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "optimize" {
+			optimizeSet = true
+		}
+	})
+	if optimizeSet {
 		cfg.Optimize = *optimize
 	}
 

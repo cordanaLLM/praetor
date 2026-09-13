@@ -92,7 +92,10 @@ func TestRenderRelease_Positive(t *testing.T) {
 	}
 
 	// changelog.d should now have 0 fragments
-	remaining, _, _ := LoadFragments(tmpDir)
+	remaining, _, err := LoadFragments(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(remaining) != 0 {
 		t.Errorf("expected 0 remaining fragments after render, got %d", len(remaining))
 	}

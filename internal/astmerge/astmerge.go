@@ -118,6 +118,8 @@ func readFileWithContext(ctx context.Context, path string) ([]byte, error) {
 		return nil, ctx.Err()
 	default:
 	}
+	// #nosec G304 -- path is a caller-supplied source file to analyze; the content is only
+	// parsed as Go source, never executed, and the read is gated on the caller's context.
 	return os.ReadFile(path)
 }
 
@@ -168,17 +170,7 @@ func extractASTElements(fset *token.FileSet, file *ast.File, src string) (*Parse
 
 func processGenDecl(fset *token.FileSet, d *ast.GenDecl, src string, p *ParsedAST, order int) {
 	if d.Tok == token.IMPORT {
-		specsLimit := len(d.Specs)
-		for j := 0; j < specsLimit && j < maxImportCount; j++ {
-			if imp, ok := d.Specs[j].(*ast.ImportSpec); ok {
-				path := imp.Path.Value
-				alias := ""
-				if imp.Name != nil {
-					alias = imp.Name.Name
-				}
-				p.Imports[path] = ImportItem{Path: path, Alias: alias}
-			}
-		}
+		processImportSpecs(d.Specs, p)
 		return
 	}
 
@@ -199,6 +191,20 @@ func processGenDecl(fset *token.FileSet, d *ast.GenDecl, src string, p *ParsedAS
 				p.Decls[key] = DeclItem{Key: key, Kind: kind, Name: name.Name, Body: body, Order: order}
 				p.DeclOrder = append(p.DeclOrder, key)
 			}
+		}
+	}
+}
+
+func processImportSpecs(specs []ast.Spec, p *ParsedAST) {
+	specsLimit := len(specs)
+	for j := 0; j < specsLimit && j < maxImportCount; j++ {
+		if imp, ok := specs[j].(*ast.ImportSpec); ok {
+			path := imp.Path.Value
+			alias := ""
+			if imp.Name != nil {
+				alias = imp.Name.Name
+			}
+			p.Imports[path] = ImportItem{Path: path, Alias: alias}
 		}
 	}
 }
@@ -241,13 +247,8 @@ func extractNodeSource(fset *token.FileSet, node ast.Node, src string) string {
 	start := fset.Position(node.Pos()).Offset
 	end := fset.Position(node.End()).Offset
 
-	if gd, ok := node.(*ast.GenDecl); ok && gd.Doc != nil {
-		docStart := fset.Position(gd.Doc.Pos()).Offset
-		if docStart < start && docStart >= 0 {
-			start = docStart
-		}
-	} else if fd, ok := node.(*ast.FuncDecl); ok && fd.Doc != nil {
-		docStart := fset.Position(fd.Doc.Pos()).Offset
+	if doc := declarationDoc(node); doc != nil {
+		docStart := fset.Position(doc.Pos()).Offset
 		if docStart < start && docStart >= 0 {
 			start = docStart
 		}
@@ -264,6 +265,17 @@ func extractNodeSource(fset *token.FileSet, node ast.Node, src string) string {
 	}
 
 	return strings.TrimSpace(src[start:end])
+}
+
+func declarationDoc(node ast.Node) *ast.CommentGroup {
+	switch d := node.(type) {
+	case *ast.GenDecl:
+		return d.Doc
+	case *ast.FuncDecl:
+		return d.Doc
+	default:
+		return nil
+	}
 }
 
 func resolve3Way(base, ours, theirs *ParsedAST) (*MergeResult, error) {
@@ -354,38 +366,43 @@ func mergeImports3Way(base, ours, theirs map[string]ImportItem) ([]ImportItem, [
 
 	limit := len(paths)
 	for i := 0; i < limit && i < maxImportCount; i++ {
-		p := paths[i]
-		_, inBase := base[p]
-		o, inOurs := ours[p]
-		t, inTheirs := theirs[p]
-
-		switch {
-		case inOurs && inTheirs:
-			if o.Alias != t.Alias {
-				conflicts = append(conflicts, Conflict{
-					Symbol: "import:" + p,
-					Kind:   "import",
-					Reason: fmt.Sprintf("Conflicting import aliases for %s: %q vs %q", p, o.Alias, t.Alias),
-					Ours:   o.Alias,
-					Theirs: t.Alias,
-				})
-			} else {
-				merged = append(merged, o)
-			}
-		case inOurs && !inTheirs:
-			if !inBase {
-				merged = append(merged, o) // Added by ours
-			}
-			// If inBase and not inTheirs, deleted by theirs -> omitted
-		case !inOurs && inTheirs:
-			if !inBase {
-				merged = append(merged, t) // Added by theirs
-			}
-			// If inBase and not inOurs, deleted by ours -> omitted
+		item, conflict := resolveImport(paths[i], base, ours, theirs)
+		if conflict != nil {
+			conflicts = append(conflicts, *conflict)
+		} else if item != nil {
+			merged = append(merged, *item)
 		}
 	}
 
 	return merged, conflicts
+}
+
+func resolveImport(path string, base, ours, theirs map[string]ImportItem) (*ImportItem, *Conflict) {
+	_, inBase := base[path]
+	o, inOurs := ours[path]
+	t, inTheirs := theirs[path]
+	if inOurs && inTheirs {
+		if o.Alias == t.Alias {
+			return &o, nil
+		}
+		return nil, &Conflict{
+			Symbol: "import:" + path,
+			Kind:   "import",
+			Reason: fmt.Sprintf("Conflicting import aliases for %s: %q vs %q", path, o.Alias, t.Alias),
+			Ours:   o.Alias,
+			Theirs: t.Alias,
+		}
+	}
+	if inBase {
+		return nil, nil // Omitted when deleted by either side.
+	}
+	if inOurs {
+		return &o, nil
+	}
+	if inTheirs {
+		return &t, nil
+	}
+	return nil, nil
 }
 
 func mergeDecls3Way(base, ours, theirs *ParsedAST) ([]string, int, []Conflict) {
@@ -416,23 +433,7 @@ func mergeDecls3Way(base, ours, theirs *ParsedAST) ([]string, int, []Conflict) {
 func resolveSingleSymbol(key string, b DeclItem, inB bool, o DeclItem, inO bool, t DeclItem, inT bool) (string, int, *Conflict) {
 	switch {
 	case inO && inT:
-		if o.Body == t.Body {
-			return o.Body, 1, nil
-		}
-		if inB && o.Body == b.Body {
-			return t.Body, 1, nil // Changed only in theirs
-		}
-		if inB && t.Body == b.Body {
-			return o.Body, 1, nil // Changed only in ours
-		}
-		return "", 0, &Conflict{
-			Symbol: key,
-			Kind:   o.Kind,
-			Reason: fmt.Sprintf("Conflicting modifications to declaration %s", key),
-			Ours:   o.Body,
-			Theirs: t.Body,
-			Base:   b.Body,
-		}
+		return resolveModifiedSymbol(key, b, inB, o, t)
 	case inO && !inT:
 		if !inB {
 			return o.Body, 1, nil // Disjoint addition in ours
@@ -466,6 +467,26 @@ func resolveSingleSymbol(key string, b DeclItem, inB bool, o DeclItem, inO bool,
 	}
 }
 
+func resolveModifiedSymbol(key string, b DeclItem, inB bool, o, t DeclItem) (string, int, *Conflict) {
+	if o.Body == t.Body {
+		return o.Body, 1, nil
+	}
+	if inB && o.Body == b.Body {
+		return t.Body, 1, nil // Changed only in theirs
+	}
+	if inB && t.Body == b.Body {
+		return o.Body, 1, nil // Changed only in ours
+	}
+	return "", 0, &Conflict{
+		Symbol: key,
+		Kind:   o.Kind,
+		Reason: fmt.Sprintf("Conflicting modifications to declaration %s", key),
+		Ours:   o.Body,
+		Theirs: t.Body,
+		Base:   b.Body,
+	}
+}
+
 func collectOrderedKeys(base, ours, theirs *ParsedAST) []string {
 	seen := make(map[string]bool)
 	var order []string
@@ -494,7 +515,7 @@ func renderGoCode(pkgName string, imports []ImportItem, decls []string) (string,
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("package %s\n\n", pkgName))
+	fmt.Fprintf(&b, "package %s\n\n", pkgName)
 
 	if len(imports) > 0 {
 		b.WriteString("import (\n")
@@ -502,9 +523,9 @@ func renderGoCode(pkgName string, imports []ImportItem, decls []string) (string,
 		for i := 0; i < limit; i++ {
 			imp := imports[i]
 			if imp.Alias != "" {
-				b.WriteString(fmt.Sprintf("\t%s %s\n", imp.Alias, imp.Path))
+				fmt.Fprintf(&b, "\t%s %s\n", imp.Alias, imp.Path)
 			} else {
-				b.WriteString(fmt.Sprintf("\t%s\n", imp.Path))
+				fmt.Fprintf(&b, "\t%s\n", imp.Path)
 			}
 		}
 		b.WriteString(")\n\n")

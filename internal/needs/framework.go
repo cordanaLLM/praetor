@@ -2,14 +2,21 @@ package needs
 
 import (
 	"context"
-	"fmt"
-	"os"
+	"errors"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-const defaultFrameworkModule = "github.com/golusoris/golusoris"
+const (
+	FrameworkCatalogDeclared = "catalog-declared"
+	FrameworkSourceObserved  = "source-observed"
+	defaultFrameworkModule   = "github.com/golusoris/golusoris"
+	// defaultFrameworkVersion is a legacy catalog label, not a verified release pin.
+	defaultFrameworkVersion = "v0.8.0"
+)
 
 // KnownDomainCapabilities maps Golusoris root directories to standard capabilities.
 var KnownDomainCapabilities = map[string][]CapabilityKey{
@@ -36,64 +43,75 @@ var KnownDomainCapabilities = map[string][]CapabilityKey{
 	"secrets":       {"security.secrets"},
 }
 
-// InspectFramework discovers exported packages and capability offerings from a local framework repo.
-func InspectFramework(ctx context.Context, frameworkPath string) (*FrameworkIndex, error) {
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+// ResolveFrameworkModule maps the operator-supplied framework location onto the module
+// path that identifies the framework in generated artifacts.
+//
+// A directory is resolved through its own go.mod, so a checkout of a fork reports the
+// fork's module path; a value already shaped like a module path is taken as-is; anything
+// else - in particular a filesystem path that does not exist - falls back to the default
+// module, because a local filesystem path must never be published as the target
+// framework of an issue body or a migration plan.
+func ResolveFrameworkModule(frameworkPath string) string {
+	value := strings.TrimSpace(frameworkPath)
+	if value == "" {
+		return defaultFrameworkModule
 	}
+	if util.DirExists(value) {
+		modulePath, _, _, err := parseGoMod(filepath.Join(value, "go.mod"))
+		if err != nil || modulePath == "" || modulePath == "unknown" {
+			return defaultFrameworkModule
+		}
+		return modulePath
+	}
+	if isModulePathShaped(value) {
+		return value
+	}
+	return defaultFrameworkModule
+}
 
+// isModulePathShaped reports whether value looks like a Go module path rather than a
+// filesystem location: it must not be absolute or relative-prefixed, and its first
+// segment must be a host, i.e. contain a dot.
+func isModulePathShaped(value string) bool {
+	if filepath.IsAbs(value) || strings.HasPrefix(value, ".") || strings.HasPrefix(value, "~") {
+		return false
+	}
+	first, _, ok := strings.Cut(value, "/")
+	return ok && strings.Contains(first, ".")
+}
+
+// InspectFramework resolves declared catalog mappings or observes exact local
+// replacement packages. It does not run builds or establish tested correctness.
+func InspectFramework(ctx context.Context, frameworkPath string) (*FrameworkIndex, error) {
+	if ctx == nil {
+		return nil, errors.New("framework inspection requires a context")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	index := &FrameworkIndex{
-		Name:         defaultFrameworkModule,
-		RootPath:     frameworkPath,
-		Version:      "v0.8.0",
+		Name: defaultFrameworkModule, RootPath: frameworkPath,
+		Version: defaultFrameworkVersion, Basis: FrameworkCatalogDeclared,
 		Packages:     make(map[string]FrameworkPackage),
 		Capabilities: make(map[CapabilityKey][]string),
 	}
-
-	if frameworkPath == "" || !util.DirExists(frameworkPath) {
+	if frameworkPath == "" {
 		populateDefaultFrameworkIndex(index)
 		return index, nil
 	}
-
-	entries, err := os.ReadDir(frameworkPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read framework directory %s: %w", frameworkPath, err)
+	index.Basis, index.Version = FrameworkSourceObserved, "unverified"
+	if err := observeFramework(ctx, index); err != nil {
+		return nil, err
 	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		processDomainDir(frameworkPath, entry.Name(), index)
-	}
-
 	return index, nil
-}
-
-// processDomainDir registers a domain directory into the framework index.
-func processDomainDir(root, domain string, index *FrameworkIndex) {
-	pkgPath := defaultFrameworkModule + "/" + domain
-	caps, found := KnownDomainCapabilities[domain]
-	if !found {
-		caps = []CapabilityKey{CapabilityKey(domain + ".core")}
-	}
-
-	pkg := FrameworkPackage{
-		ImportPath:   pkgPath,
-		Domain:       domain,
-		Capabilities: caps,
-	}
-	index.Packages[pkgPath] = pkg
-
-	for _, c := range caps {
-		index.Capabilities[c] = append(index.Capabilities[c], pkgPath)
-	}
 }
 
 // populateDefaultFrameworkIndex supplies static baseline index when offline.
 func populateDefaultFrameworkIndex(index *FrameworkIndex) {
 	for domain, caps := range KnownDomainCapabilities {
-		pkgPath := defaultFrameworkModule + "/" + domain
+		pkgPath := index.Name + "/" + domain
 		index.Packages[pkgPath] = FrameworkPackage{
 			ImportPath:   pkgPath,
 			Domain:       domain,
@@ -103,10 +121,30 @@ func populateDefaultFrameworkIndex(index *FrameworkIndex) {
 			index.Capabilities[c] = append(index.Capabilities[c], pkgPath)
 		}
 	}
+	// Related adapters come from the same catalog as dependency relationships.
+	for _, entry := range CanonicalCatalog {
+		if entry.Relationship == nil || entry.Relationship.FrameworkPackage == "" {
+			continue
+		}
+		relative, ok := strings.CutPrefix(entry.Relationship.FrameworkPackage, defaultFrameworkModule+"/")
+		if ok {
+			addObservedPackage(index, relative, []CapabilityKey{entry.Capability})
+		}
+	}
 }
 
-// IsCapabilityCovered checks if the framework provides an implementation for capKey.
+// IsCapabilityCovered reports whether the index lists at least one framework package
+// for capKey verbatim.
 func (idx *FrameworkIndex) IsCapabilityCovered(capKey CapabilityKey) bool {
+	if idx == nil {
+		return false
+	}
 	pkgs, ok := idx.Capabilities[capKey]
 	return ok && len(pkgs) > 0
+}
+
+// ProvidesCapability requires an exact mapping. Basis distinguishes declarations
+// from observed source availability; neither establishes tested correctness.
+func (idx *FrameworkIndex) ProvidesCapability(capKey CapabilityKey) bool {
+	return idx.IsCapabilityCovered(capKey)
 }

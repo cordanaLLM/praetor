@@ -10,11 +10,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Invariant bounds adhering to HISS-02.
 const (
 	MaxADRFilesLimit = 10000
+	// adrFilePerm is the mode applied to a transcribed ADR file.
+	adrFilePerm = 0o644
+	// adrDirPerm is the mode applied to the ADR directory.
+	adrDirPerm = 0o750
 )
 
 // Discussion represents an RFC or architectural proposal from a forge discussion board.
@@ -42,7 +48,10 @@ type ADR struct {
 }
 
 var (
-	adrFileRegex  = regexp.MustCompile(`^(\d{4})-([a-z0-9\-]+)\.md$`)
+	// adrFileRegex matches an ADR filename. The slug is optional so that a record whose
+	// title carries no [a-z0-9] character still participates in the numbering sequence
+	// and cannot be silently overwritten by the next such record.
+	adrFileRegex  = regexp.MustCompile(`^(\d{4})(?:-([a-z0-9\-]*))?\.md$`)
 	nonAlphaRegex = regexp.MustCompile(`[^a-z0-9]+`)
 )
 
@@ -52,21 +61,11 @@ func TranscribeDiscussionToADR(ctx context.Context, disc Discussion, adrDir stri
 		return nil, fmt.Errorf("context cancelled before discussion transcription: %w", err)
 	}
 
-	status := strings.ToLower(strings.TrimSpace(disc.Status))
-	if status != "approved" && status != "accepted" {
-		return nil, fmt.Errorf("cannot transcribe discussion #%d: status '%s' is not approved", disc.ID, disc.Status)
-	}
-	if strings.TrimSpace(disc.Title) == "" {
-		return nil, errors.New("discussion title cannot be empty")
-	}
-	if strings.TrimSpace(disc.ContextText) == "" {
-		return nil, errors.New("discussion context cannot be empty")
-	}
-	if strings.TrimSpace(disc.DecisionText) == "" {
-		return nil, errors.New("discussion decision cannot be empty")
+	if err := validateDiscussion(disc); err != nil {
+		return nil, err
 	}
 
-	if err := os.MkdirAll(adrDir, 0755); err != nil {
+	if err := util.MkdirSecure(adrDir, adrDirPerm); err != nil {
 		return nil, fmt.Errorf("failed to create ADR directory %s: %w", adrDir, err)
 	}
 
@@ -76,11 +75,19 @@ func TranscribeDiscussionToADR(ctx context.Context, disc Discussion, adrDir stri
 	}
 
 	slug := slugify(disc.Title)
+	if slug == "" {
+		// A title written entirely outside [a-z0-9] (for example a CJK title) would
+		// otherwise produce the same slug-less filename for every such discussion.
+		slug = fmt.Sprintf("discussion-%d", disc.ID)
+	}
 	filename := fmt.Sprintf("%04d-%s.md", nextNumber, slug)
 	filePath := filepath.Join(adrDir, filename)
+	if util.PathExists(filePath) {
+		return nil, fmt.Errorf("ADR %s already exists: an accepted record is immutable", filePath)
+	}
 
 	content := renderADRContent(nextNumber, disc)
-	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+	if err := util.WriteFileNoFollow(filePath, []byte(content), adrFilePerm); err != nil {
 		return nil, fmt.Errorf("failed to write ADR file to %s: %w", filePath, err)
 	}
 
@@ -94,10 +101,28 @@ func TranscribeDiscussionToADR(ctx context.Context, disc Discussion, adrDir stri
 	}, nil
 }
 
+// validateDiscussion rejects a discussion that must not become an ADR.
+func validateDiscussion(disc Discussion) error {
+	status := strings.ToLower(strings.TrimSpace(disc.Status))
+	if status != "approved" && status != "accepted" {
+		return fmt.Errorf("cannot transcribe discussion #%d: status '%s' is not approved", disc.ID, disc.Status)
+	}
+	if strings.TrimSpace(disc.Title) == "" {
+		return errors.New("discussion title cannot be empty")
+	}
+	if strings.TrimSpace(disc.ContextText) == "" {
+		return errors.New("discussion context cannot be empty")
+	}
+	if strings.TrimSpace(disc.DecisionText) == "" {
+		return errors.New("discussion decision cannot be empty")
+	}
+	return nil
+}
+
 func resolveNextADRNumber(adrDir string) (int, error) {
 	entries, err := os.ReadDir(adrDir)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("read ADR directory %q: %w", adrDir, err)
 	}
 
 	maxNumber := 0
@@ -124,7 +149,8 @@ func slugify(text string) string {
 
 func renderADRContent(number int, disc Discussion) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# ADR-%04d: %s\n\n", number, disc.Title))
+	header := fmt.Sprintf("# ADR-%04d: %s\n\n", number, disc.Title)
+	sb.WriteString(header)
 	sb.WriteString("## Status\nAccepted\n\n")
 	sb.WriteString("## Context\n")
 	sb.WriteString(strings.TrimSpace(disc.ContextText) + "\n\n")
@@ -133,17 +159,15 @@ func renderADRContent(number int, disc Discussion) string {
 	sb.WriteString("## Consequences\n")
 
 	if len(disc.PositiveConsequences) > 0 {
-		for _, pos := range disc.PositiveConsequences {
-			sb.WriteString(fmt.Sprintf("- **Positive**: %s\n", strings.TrimSpace(pos)))
+		for i := 0; i < len(disc.PositiveConsequences) && i < MaxADRFilesLimit; i++ {
+			sb.WriteString("- **Positive**: " + strings.TrimSpace(disc.PositiveConsequences[i]) + "\n")
 		}
 	} else {
 		sb.WriteString("- **Positive**: Architectural consensus established across multi-forge federation.\n")
 	}
 
-	if len(disc.NegativeConsequences) > 0 {
-		for _, neg := range disc.NegativeConsequences {
-			sb.WriteString(fmt.Sprintf("- **Negative**: %s\n", strings.TrimSpace(neg)))
-		}
+	for i := 0; i < len(disc.NegativeConsequences) && i < MaxADRFilesLimit; i++ {
+		sb.WriteString("- **Negative**: " + strings.TrimSpace(disc.NegativeConsequences[i]) + "\n")
 	}
 
 	return sb.String()

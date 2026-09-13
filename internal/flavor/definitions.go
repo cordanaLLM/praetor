@@ -4,18 +4,18 @@ import (
 	"path/filepath"
 )
 
-func init() {
-	Register(&GoServiceFlavor{})
-	Register(&GoLibraryFlavor{})
-	Register(&NativeGPUSystemsFlavor{})
-	Register(&FrontendSvelteFlavor{})
-	Register(&PythonMLFlavor{})
-	Register(&InfraK8sFlavor{})
-	Register(&AgenticAutonomousFlavor{})
-	Register(&RustSystemsFlavor{})
-	Register(&TypeScriptNodeFlavor{})
-	Register(&JVMServiceFlavor{})
-	Register(&MobileFlutterFlavor{})
+func builtinFlavors() map[string]Flavor {
+	flavors := []Flavor{
+		&GoServiceFlavor{}, &GoLibraryFlavor{}, &NativeGPUSystemsFlavor{},
+		&FrontendSvelteFlavor{}, &PythonMLFlavor{}, &InfraK8sFlavor{},
+		&AgenticAutonomousFlavor{}, &RustSystemsFlavor{}, &TypeScriptNodeFlavor{},
+		&JVMServiceFlavor{}, &MobileFlutterFlavor{},
+	}
+	result := make(map[string]Flavor, len(flavors))
+	for _, flavor := range flavors {
+		result[flavor.Name()] = flavor
+	}
+	return result
 }
 
 // --- 1. Go Service Flavor ---
@@ -59,7 +59,7 @@ func (f *GoServiceFlavor) RequiredToolchains() []ToolchainItem {
 		{Binary: "go", Purpose: "Go Compiler & Toolchain", InstallGuide: "https://golang.org/dl/"},
 		{Binary: "govulncheck", Purpose: "Go vulnerability detection", InstallGuide: "go install golang.org/x/vuln/cmd/govulncheck@latest"},
 		{Binary: "gosec", Purpose: "Go AST security scanner", InstallGuide: "go install github.com/securego/gosec/v2/cmd/gosec@latest"},
-		{Binary: "golangci-lint", Purpose: "Go unified linter", InstallGuide: "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"},
+		{Binary: "golangci-lint", Purpose: "Go unified linter", InstallGuide: "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run"},
 	}
 }
 

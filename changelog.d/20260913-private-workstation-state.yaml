@@ -1,0 +1,3 @@
+type: changed
+title: Keep workstation ledgers and cluster guides private in Git and container builds
+breaking: true

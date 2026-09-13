@@ -3,16 +3,23 @@ package paperclip
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 )
 
 // ReadDisposition loads and parses a disposition JSON file.
 func ReadDisposition(path string) (*Disposition, error) {
-	data, err := os.ReadFile(path)
+	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDuration)
+	defer cancel()
+	return ReadDispositionContext(ctx, path)
+}
+
+func ReadDispositionContext(ctx context.Context, path string) (*Disposition, error) {
+	data, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("read disposition file: %w", err)
 	}
@@ -40,21 +47,22 @@ func VerifyRun(ctx context.Context, repoPath string, d *Disposition) error {
 	// Invariant: Pushing is NOT shipping.
 	// If in_review, working directory in repoPath must have committed changes.
 	if d.Status == StatusInReview {
-		cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "status", "--porcelain")
-		out, err := cmd.Output()
+		uncommitted, err := util.RunGit(ctx, repoPath, "status", "--porcelain")
 		if err != nil {
 			return fmt.Errorf("verify working tree git status: %w", err)
 		}
-		uncommitted := strings.TrimSpace(string(out))
 		if uncommitted != "" {
 			return fmt.Errorf("contract violation: uncommitted changes exist in working tree; push branch before disposition")
 		}
 	}
 
-	// Verify harness exists in repoPath
+	// A file's presence cannot establish a valid configured harness.
 	harnessPath := filepath.Join(repoPath, ".paperclip", "harness.json")
-	if _, err := os.Stat(harnessPath); os.IsNotExist(err) {
-		return fmt.Errorf("missing .paperclip/harness.json in %s; run 'praetorctl paperclip harness'", repoPath)
+	if _, err := LoadHarnessContext(ctx, harnessPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("missing .paperclip/harness.json in %s; run 'praetorctl paperclip harness'", repoPath)
+		}
+		return fmt.Errorf("verify harness configuration: %w", err)
 	}
 
 	return nil
