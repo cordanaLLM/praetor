@@ -36,8 +36,40 @@
         ".c",
         ".cc",
         ".cpp",
+        ".cxx",
+        ".cu",
         ".h",
+        ".hip",
         ".hpp"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:cuda-headers",
+      "title": "CUDA header HISS dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".cuh"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:apple-native",
+      "title": "Apple native HISS dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".metal",
+        ".mm"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:shaders",
+      "title": "Shader HISS dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".comp",
+        ".glsl"
       ],
       "analyzer": "hiss"
     },
@@ -205,6 +237,16 @@
       "kind": "verification_marker",
       "matches": [
         "Makefile"
+      ],
+      "analyzer": "adopt"
+    },
+    {
+      "key": "verification:native",
+      "title": "Declared native verification plan",
+      "kind": "verification_marker",
+      "matches": [
+        "CMakeLists.txt",
+        "meson.build"
       ],
       "analyzer": "adopt"
     },
@@ -450,7 +492,8 @@
       "title": "Native needs analyzer",
       "kind": "needs_marker",
       "matches": [
-        "CMakeLists.txt"
+        "CMakeLists.txt",
+        "meson.build"
       ],
       "analyzer": "native"
     },

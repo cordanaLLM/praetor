@@ -7,6 +7,9 @@
 - Configurable local and pinned-public dogfood capability discovery through shared
   CLI and MCP adapters, bounded evidence, deduplicated review candidates, and a
   100-repository cohort. Incomplete observations stay outside candidate ranking.
+- Native discovery now covers Meson markers and HISS-dispatched CXX, CUDA, and
+  HIP sources, while recording observed CUDA-header, Metal, Objective-C++, and shader
+  extensions as unsupported adapter candidates.
 
 - Configurable agent checkpoint cadence for reviewed commits, gated pushes and
   draft PR visibility, with a shared Lefthook check and native lifecycle adapter.

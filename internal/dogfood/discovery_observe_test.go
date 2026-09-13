@@ -40,6 +40,54 @@ func TestObserveCapabilitiesScannerAndNestedEvidence(t *testing.T) {
 	}
 }
 
+func TestObserveCapabilitiesNativeMesonAndGPUExtensions(t *testing.T) {
+	root := t.TempDir()
+	writeDiscoveryFile(t, root, "meson.build", "project('fixture')\n")
+	writeDiscoveryFile(t, root, "src/kernel.cu", "__global__ void kernel() {}\n")
+	writeDiscoveryFile(t, root, "src/kernel.hip", "__global__ void kernel() {}\n")
+	writeDiscoveryFile(t, root, "src/host.cxx", "int main() { return 0; }\n")
+	writeDiscoveryFile(t, root, "src/native.mm", "int main() { return 0; }\n")
+	writeDiscoveryFile(t, root, "src/native.cuh", "__global__ void kernel() {}\n")
+	writeDiscoveryFile(t, root, "src/native.metal", "kernel void kernel() {}\n")
+	writeDiscoveryFile(t, root, "src/native.comp", "#version 450\n")
+	writeDiscoveryFile(t, root, "src/native.glsl", "void main() {}\n")
+	policyPath := filepath.Join("..", "..", ".config", "dogfood", "discovery-policy.json")
+	policy, _, err := loadDiscoveryPolicy(context.Background(), policyPath)
+	if err != nil {
+		t.Fatalf("load default policy: %v", err)
+	}
+	report, err := ObserveCapabilities(context.Background(), root, policy)
+	if err != nil {
+		t.Fatalf("observe: %v", err)
+	}
+	if report.Status != "observed" || report.FilesObserved != 9 || report.FilesMatched != 9 {
+		t.Fatalf("scope: %+v", report)
+	}
+	observations := make(map[string]CapabilityObservation, len(report.Observations))
+	for _, observation := range report.Observations {
+		observations[observation.Key] = observation
+	}
+	for key, want := range map[string]struct {
+		status string
+		count  int
+	}{
+		"hiss:native":       {"available", 3},
+		"hiss:cuda-headers": {"unsupported", 1},
+		"hiss:apple-native": {"unsupported", 2},
+		"hiss:shaders":      {"unsupported", 2},
+		"needs:native":      {"available", 1},
+	} {
+		observation, ok := observations[key]
+		if !ok || observation.Status != want.status || observation.EvidenceCount != want.count {
+			t.Errorf("%s: got=%+v present=%v", key, observation, ok)
+		}
+	}
+	verification := observations["verification:native"]
+	if verification.Status != "unknown" || verification.Basis != "verification-plan-declared-unavailable" {
+		t.Fatalf("native verification: %+v", verification)
+	}
+}
+
 func TestObserveCapabilitiesNoMatchAndInvalidPolicy(t *testing.T) {
 	root := t.TempDir()
 	writeDiscoveryFile(t, root, "README.md", "hello\n")

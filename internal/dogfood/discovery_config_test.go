@@ -79,6 +79,40 @@ func TestLoadDiscoveryPolicyStrictSchema(t *testing.T) {
 	}
 }
 
+func TestDefaultDiscoveryPolicyNativeCoverage(t *testing.T) {
+	policyPath := filepath.Join("..", "..", ".config", "dogfood", "discovery-policy.json")
+	policy, _, err := loadDiscoveryPolicy(context.Background(), policyPath)
+	if err != nil {
+		t.Fatalf("load default policy: %v", err)
+	}
+	rules := make(map[string]DiscoveryRule, len(policy.Rules))
+	for _, rule := range policy.Rules {
+		rules[rule.Key] = rule
+	}
+	for key, want := range map[string][]string{
+		"hiss:native":         {".cxx", ".cu", ".hip"},
+		"hiss:cuda-headers":   {".cuh"},
+		"hiss:apple-native":   {".metal", ".mm"},
+		"hiss:shaders":        {".comp", ".glsl"},
+		"needs:native":        {"CMakeLists.txt", "meson.build"},
+		"verification:native": {"CMakeLists.txt", "meson.build"},
+	} {
+		rule, ok := rules[key]
+		if !ok {
+			t.Fatalf("default policy missing %q", key)
+		}
+		got := make(map[string]bool, len(rule.Matches))
+		for _, match := range rule.Matches {
+			got[match] = true
+		}
+		for _, match := range want {
+			if !got[match] {
+				t.Errorf("default policy %q missing %q: %v", key, match, rule.Matches)
+			}
+		}
+	}
+}
+
 func TestRunDiscoveryLocalPlanIsOfflineAndContextBound(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "fixture.go"), []byte("package fixture\n"), 0o600); err != nil {
