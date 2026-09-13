@@ -7,13 +7,16 @@ when editing their file types; applicable checks fail if their tool is missing.
 Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Golangci-lint runs
 from source using the existing repository `@latest` policy.
 
-For an isolated Semgrep installation, the push checks have been exercised with
-1.177.0 on Python 3.14. Install it when `semgrep` is absent from `PATH`:
+`make verify-all` also runs `make semgrep-test`, which checks the real matcher on
+temporary positive, negative and boundary fixtures. The engine version comes from
+`.config/semgrep/requirements.txt`; missing or mismatched engines fail the check.
+This is rule regression coverage, not a replacement for repository source scans.
+For an isolated installation, use the tested 1.177.0 release (Python 3.14 locally):
 
 ```bash
 PRAETOR_TOOL_DIR="$HOME/.local/share/praetor-tools/semgrep-1.177.0"
 python3 -m venv "$PRAETOR_TOOL_DIR"
-"$PRAETOR_TOOL_DIR/bin/python" -m pip install 'semgrep==1.177.0'
+"$PRAETOR_TOOL_DIR/bin/python" -m pip install -r .config/semgrep/requirements.txt
 mkdir -p "$HOME/.local/bin"
 ln -s "$PRAETOR_TOOL_DIR/bin/semgrep" "$HOME/.local/bin/semgrep"
 semgrep --version

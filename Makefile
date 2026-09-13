@@ -86,8 +86,12 @@ dedupe:
 topology-audit:
 	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
 
-verify-all: notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test mcp-probe compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: semgrep-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test mcp-probe compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
+
+.PHONY: semgrep-test
+semgrep-test:
+	python3 -B scripts/test_hiss_semgrep.py
 
 .PHONY: notebook-test
 notebook-test:

@@ -69,10 +69,12 @@ nav:
   - Home: index.md
   - Governance & Standards:
       - HISS-16 Formal Specification: standards/hiss-16-spec.md
+      - HISS Refinement Audit: research/hiss-rule-refinement.md
       - Model Routing & Capacity Arbiter: standards/model-routing-and-fanout.md
   - Architecture & Design:
       - C4 Architecture Models: architecture/c4-models.md
       - Shared Lifecycle Management: plans/lifecycle-management.md
+      - Bidirectional Module Contracts: plans/bidirectional-contracts.md
       - Architectural Decisions (ADR):
           - Decision Lattice Index: adr/README.md
           - ADR-0001 Universal Context Transpiler: adr/0001-universal-context-transpiler.md

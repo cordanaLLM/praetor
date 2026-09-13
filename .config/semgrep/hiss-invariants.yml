@@ -1,12 +1,17 @@
+# Rust module names use $_ deliberately: named captures fail the pinned engine's
+# module match. Real-engine fixtures cover test bodies and adjacent production.
 rules:
   - id: hiss-07-banned-unwrap
     patterns:
       - pattern: $X.unwrap()
       - pattern-not-inside: |
-          #[cfg(test)]
-          ...
-      - pattern-not-inside: |
           mod tests { ... }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          fn $F(...) { ... }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $_ { ... }
     message: "[HISS-07] Direct .unwrap() is strictly banned in production code. Use pattern matching or ? propagation."
     languages: [rust]
     severity: ERROR
@@ -15,10 +20,13 @@ rules:
     patterns:
       - pattern: $X.expect(...)
       - pattern-not-inside: |
-          #[cfg(test)]
-          ...
-      - pattern-not-inside: |
           mod tests { ... }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          fn $F(...) { ... }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $_ { ... }
     message: "[HISS-07] Direct .expect() is strictly banned in production code. Use pattern matching or ? propagation."
     languages: [rust]
     severity: ERROR
@@ -27,7 +35,13 @@ rules:
     patterns:
       - pattern: eval(...)
     message: "[HISS-08] Dynamic runtime eval() is strictly prohibited."
-    languages: [javascript, typescript, python]
+    languages: [javascript, typescript]
+    severity: ERROR
+
+  - id: hiss-08-banned-eval-python
+    pattern: eval(...)
+    message: "[HISS-08] Dynamic runtime eval() is strictly prohibited."
+    languages: [python]
     severity: ERROR
 
   - id: hiss-08-banned-c-memory
@@ -41,10 +55,9 @@ rules:
     severity: ERROR
 
   - id: hiss-02-go-http-without-context
-    patterns:
+    pattern-either:
       - pattern: http.Get(...)
       - pattern: http.Post(...)
     message: "[HISS-02] Direct http.Get/Post without context timeout violates bounded I/O invariant. Use http.NewRequestWithContext."
     languages: [go]
     severity: ERROR
-

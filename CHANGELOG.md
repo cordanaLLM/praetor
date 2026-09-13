@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Repair HISS Semgrep HTTP, Python eval and Rust test-boundary matching; add pinned
+  real-engine regression checks. Document remaining enforcement gaps and staged
+  bidirectional module contracts without replacing the HISS policy.
+
 ### Changed
 
 - Garbage collection requires explicit release and retention checks, confines

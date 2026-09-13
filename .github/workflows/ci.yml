@@ -61,6 +61,13 @@ jobs:
           go install github.com/evilmartians/lefthook/v2@v2.1.12
           lefthook version
 
+      - name: Install Pinned HISS Rule Test Engine
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/praetor-semgrep"
+          "$RUNNER_TEMP/praetor-semgrep/bin/python" -m pip install -r .config/semgrep/requirements.txt
+          echo "$RUNNER_TEMP/praetor-semgrep/bin" >> "$GITHUB_PATH"
+
       - name: Verify Go Formatting (gofmt)
         if: steps.filter.outputs.run_linters != 'false' || github.event_name == 'push'
         run: |
