@@ -54,6 +54,7 @@ func printUsage() {
 	fmt.Println("  provenance         Generate SLSA v1.0 provenance attestation statement")
 	fmt.Println("  needs              Declare and report repository capabilities and demand to Golusoris")
 	fmt.Println("  issue              Reconcile cross-repo dependencies and unblock ready tasks")
+	fmt.Println("  wishes             Read and apply private repository wishes and polls")
 	fmt.Println("  milestone          Manage local and remote GitHub milestones and progress")
 	fmt.Println("  project            Manage GitHub Projects v2 boards and track epic issues")
 	fmt.Println("  build              Request a polyglot build (execution backends currently unavailable)")
@@ -125,6 +126,7 @@ func commandTable() map[string]commandFunc {
 		"provenance":       runProvenance,
 		"needs":            runNeeds,
 		"issue":            runIssue,
+		"wishes":           runWishes,
 		"milestone":        runMilestone,
 		"project":          runProject,
 		"build":            runBuild,

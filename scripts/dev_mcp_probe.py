@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 
 from dev_mcp_rpc import RPCClient
+from dev_mcp_wishes import wish_checks
 
 OUTPUTS = ("CLAUDE.md", ".cursor/rules/hiss-invariants.mdc",
            ".github/copilot-instructions.md", ".windsurfrules",
@@ -386,7 +387,8 @@ def probe(binary, root, metadata):
         required = {"standards_inspect_symbols", "standards_compile_context",
                     "standards_memory_recall", "standards_audit", "standards_transcript_ingest",
                     "standards_context_analyze", "standards_dogfood_suite", "standards_dogfood_schedule_status",
-                    "standards_dogfood_repair_status"}
+                    "standards_dogfood_repair_status", "standards_wishes_status",
+                    "standards_wishes_update"}
         require(required <= set(names), "required tools are absent")
         inspected = tool_text(client.call("standards_inspect_symbols",
                                          {"path": "cmd/standards-mcp/main.go"}))
@@ -404,5 +406,6 @@ def probe(binary, root, metadata):
             checks += discovery_checks(client, fixture)
             checks += schedule_checks(client, fixture)
             checks += repair_status_checks(client, fixture)
+            checks += wish_checks(client, fixture, tool_text, require)
     return {"passed": ["source identity", "tool discovery", "checkout symbol read"] + checks,
             "tools": names, "mutations": "temporary fixtures only"}

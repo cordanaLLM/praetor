@@ -106,6 +106,7 @@ nav:
       - Dogfood Scheduling: guides/dogfood-scheduling.md
       - Dogfood Suites: guides/dogfood-suites.md
       - Capability Discovery: guides/capability-discovery.md
+      - Wishes and Polls: guides/wishes-and-polls.md
       - Effective Policy: guides/effective-policy.md
       - Git Hooks: guides/git-hooks.md
       - Issue Sync Integrity: guides/issue-sync-integrity.md
@@ -123,8 +124,10 @@ nav:
       - Bidirectional Module Contracts: plans/bidirectional-contracts.md
       - Lifecycle Management: plans/lifecycle-management.md
       - Package Development Pipeline: plans/package-development-pipeline.md
+      - Wish Platform Integration: plans/wish-platform-integration.md
       - Upstream Contribution Workflow: plans/upstream-contribution-workflow.md
   - Research:
+      - Wish Voting Platforms: research/wish-voting-platforms.md
       - Infrastructure Sandboxes: research/infrastructure-sandboxes.md
       - Public Capability Discovery: research/dogfood-capability-discovery.md
       - Compact Management Data: research/compact-management-data.md
