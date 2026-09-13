@@ -23,6 +23,13 @@ fixtures. A discovered tool name alone does not prove working behavior.
 
 ## Native project connections
 
+The MCP server is client-neutral at the wire boundary. Client configuration and
+lifecycle behavior are separate acceptance surfaces. The supported projections
+are Codex, Claude, Gemini, OpenCode v1, Continue, Cline, Kilo, and AGY; see
+[agent lifecycle coverage](agent-lifecycle.md) for their current qualification
+states. A projection test or checked-in client file does not prove that an
+installed client loaded, trusted, reconnected, or used the server.
+
 Refresh the regular commands on this workstation with `make dev-install`.
 `make build` writes only to the checkout's `bin/` directory; it does not update
 standalone executables already on `PATH`. The installer builds all three Praetor
@@ -72,6 +79,21 @@ launcher completed a handshake and symbol read from an unrelated directory with
 the documented child environment. Its native connection remains subject to
 Claude's project approval. If a client cannot load the project connection, record
 that limitation and use the direct wire client.
+
+**Other supported clients:** use `praetorctl clients prepare` or the documented
+native plan for Gemini, OpenCode v1, Continue, Cline, Kilo, or AGY. Inspect the
+exact destination or argv, complete that client's approval/reload flow, and
+perform the initialization, discovery, and harmless readback checks. Existing
+projection tests establish serialization and conflict handling; they are not
+live session evidence.
+
+Gemini's checked-in `.gemini/settings.json` also contains the native
+`BeforeTool`/`AfterTool`/`AfterAgent` lifecycle hooks. Claude's
+`.claude/settings.json` contains the corresponding `PreToolUse`/`PostToolUse`/
+`Stop` hooks. OpenCode v1, Continue, Cline, Kilo, and AGY have no checked-in
+Praetor lifecycle adapter; their MCP projection does not imply lifecycle
+enforcement. Cursor, Windsurf, and Copilot have compiled context support only.
+See [agent lifecycle coverage](agent-lifecycle.md) for the complete matrix.
 
 ## Reproduce through a real tool
 

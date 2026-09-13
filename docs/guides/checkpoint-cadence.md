@@ -5,6 +5,10 @@ canonical policy is `.config/agent/checkpoint.json`; the shared evaluator lives
 with the vendorable Lefthook scripts. It is separate from `cadence.json`, which
 records dedupe audits.
 
+The evaluator and Lefthook jobs are shared across coding agents. Native event
+adapters are client-specific; see [agent lifecycle coverage](agent-lifecycle.md)
+for the tested and untested boundaries.
+
 Run `lefthook run agent-checkpoint-tool` between work chunks and
 `lefthook run agent-checkpoint-stop` before ending a turn. Inspect the returned
 `due` and `actions` fields: a successful observation can report work still due.
@@ -45,24 +49,29 @@ publication policy. Go forge PR requests now separately support the draft flag.
 
 ## Agent activation and failure handling
 
-The repository's Codex PostToolUse and Stop definitions invoke
-`.config/agent/hooks/checkpoint.py`, which requires the actual Lefthook job's
-structured result. PostToolUse adds guidance without replacing the completed
-tool's output. Stop requests one continuation for due or unverifiable work. If
+Codex and Claude use PostToolUse and Stop; Gemini uses AfterTool and AfterAgent.
+All three invoke `.config/agent/hooks/checkpoint.py`, which requires the actual
+Lefthook job's structured result. PostToolUse/AfterTool adds guidance without
+replacing the completed tool's output. Stop/AfterAgent requests one continuation
+for due or unverifiable work. If
 the continued turn still cannot qualify, it ends with an explicit blocked reason
 instead of looping or claiming completion. Repair the reported cause and resume.
 Repeated periodic reminders can occur until the checkpoint is reconciled.
 
-Review and trust the exact project definitions using native hook discovery or
-`scripts/dev_codex_hooks.py`. Updated definitions need renewed trust. Configuration
+Review the exact project definitions through the client's native hook discovery
+and trust flow. For Codex, `scripts/dev_codex_hooks.py` also supports inspection
+and reviewed activation; it does not configure other clients. Configuration
 and adapter tests establish available behavior; a live hook event establishes
-activation for a specific client/session. Other agents can call the shared
-Lefthook jobs explicitly while their native adapters are being integrated.
+activation for a specific client/session. Clients without native lifecycle
+adapters can call the shared Lefthook jobs explicitly.
 The fallback instruction is compiled from AGENTS.md into vendor context.
 The bounded process and file handling currently targets POSIX workstations;
 the native lifecycle integration is exercised on Linux.
 
-These event and continuation semantics were checked against
-[official Codex hook documentation](https://learn.chatgpt.com/docs/hooks).
+Contracts are documented by
+[Codex](https://learn.chatgpt.com/docs/hooks),
+[Claude Code](https://code.claude.com/docs/en/hooks), and
+[Gemini CLI](https://geminicli.com/docs/hooks/reference/).
+Gemini's adapter also follows the installed CLI 0.50.0 hook runner and schema.
 The adapter does not configure an autonomous timer, publish from a Git post-hook,
 or bypass verification when the network or signing setup is unavailable.

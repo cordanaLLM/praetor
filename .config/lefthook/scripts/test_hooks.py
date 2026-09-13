@@ -374,6 +374,15 @@ class GitHooks(unittest.TestCase):
         self.write("lefthook.yml", "pre-commit: [malformed\n")
         self.assertNotEqual(self.hook().returncode, 0)
 
+    def test_client_settings_alone_run_hook_behavioral_gate(self):
+        for name in (".claude/settings.json", ".gemini/settings.json"):
+            with self.subTest(client=name):
+                self.write(name, (ROOT / name).read_text())
+                result = self.hook()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(b"fixture hook self-tests passed", result.stdout + result.stderr)
+                command(self.repo, "git", "reset", "-q", "HEAD", "--", name)
+
     def test_gofmt_failure_does_not_modify_or_stage_file(self):
         self.write("go.mod", "module example.test/hooks\n\ngo 1.27\n")
         self.write("main.go", "package main\nfunc main(){println(1)}\n")

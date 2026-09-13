@@ -50,6 +50,12 @@ for the authorized remote/repository. The native adapter translates due results
 into lifecycle feedback; agents then execute reviewed commits and draft PRs
 through the normal gates. See the [checkpoint guide](../../docs/guides/checkpoint-cadence.md).
 
+The evaluator and Git jobs are shared across coding agents. Native lifecycle
+events remain client-specific and require client approval, reload, and a live
+event readback. A vendored policy, compiled agent context, or MCP projection is
+not evidence that every client session is enforcing the lifecycle. See the
+[coverage guide](../../docs/guides/agent-lifecycle.md) for the current boundary.
+
 The Git metadata gate rejects additions and changes under private `/.workingdir/`,
 including forced staging, submodule entries and private content added then removed
 within outgoing history. Removing legacy tracked entries is allowed. Adopters

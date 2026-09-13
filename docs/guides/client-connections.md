@@ -41,7 +41,9 @@ praetorctl clients apply --registry /private/generated/registry.json \
   --client gemini --target /private/gemini/settings.json --out /private/gemini-backup
 ```
 
-Use [client bootstrap](client-bootstrap.md) for every adapter's native workflow.
+Use [client bootstrap](client-bootstrap.md) for each adapter's configuration and
+native workflow. The workflow differs by client: some merge a reviewed file,
+some export a profile for the caller, and Codex/AGY expose native commands.
 Select the exact client profile destination; preparation does not infer global
 versus repository scope. Existing unrelated settings and access rules are retained.
 Conflicting server definitions fail before publication. The gateway exposes its

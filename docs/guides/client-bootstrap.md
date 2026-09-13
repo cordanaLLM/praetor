@@ -75,6 +75,7 @@ apply`. Their prepared plans contain argument arrays for inspection and native
 configuration. Cline and Kilo require an explicitly selected profile destination;
 the command does not guess a client profile path.
 
+These are adapter-specific workflows, not a universal lifecycle integration.
 Configuration is only the first acceptance stage. Verify native discovery,
 connection, user trust and a named tool call in each client. A configured server
 does not establish that every tool is authorized, that all schemas are loaded

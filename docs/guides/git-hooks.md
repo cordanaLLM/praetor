@@ -148,7 +148,12 @@ empty and deletion-only changes, malformed syntax/messages/protocols, negative
 vet/race controls, embedded-input and reverse-dependency scope, governance gate
 selection and every configured stage. It never disables the user's hooks.
 
-## Codex command guard
+## Native Codex command guard
+
+The Git hook policy above is shared by humans and coding agents. This section
+describes the separate native Codex adapter; it is not coverage for every tool
+host or client. Other agents can invoke the shared Lefthook policy explicitly
+and need a client-specific native adapter before claiming lifecycle coverage.
 
 Git hooks run when Codex invokes Git, just as they do for a human. They do not
 inspect every tool call or run verification at the end of a conversation turn.

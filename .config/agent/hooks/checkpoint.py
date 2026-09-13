@@ -50,13 +50,14 @@ def respond(payload):
     if not isinstance(payload, dict):
         raise ValueError("hook input must be an object")
     name = payload.get("hook_event_name")
-    if name not in {"Stop", "PostToolUse"}:
-        raise ValueError("expected Stop or PostToolUse event")
+    if not isinstance(name, str) or name not in {"Stop", "PostToolUse", "AfterAgent", "AfterTool"}:
+        raise ValueError("expected Stop, PostToolUse, AfterAgent or AfterTool event")
     if type(payload.get("stop_hook_active", False)) is not bool:
         raise ValueError("stop_hook_active must be a boolean")
     active = payload.get("stop_hook_active", False)
+    stopping = name in {"Stop", "AfterAgent"}
     try:
-        report = checkpoint("stop" if name == "Stop" else "tool")
+        report = checkpoint("stop" if stopping else "tool")
         if not report["enabled"] or not report["due"]:
             return {}
         reason = ("Praetor checkpoint due: " + "; ".join(report["actions"])
@@ -66,9 +67,9 @@ def respond(payload):
                   "and private files. Report a concrete blocker if this cannot complete.")
     except (HookError, OSError, ValueError, subprocess.TimeoutExpired) as error:
         reason = "Praetor checkpoint could not be verified: " + str(error)[:1000]
-    if name == "Stop":
+    if stopping:
         return blocked(reason, active)
-    return {"hookSpecificOutput": {"hookEventName": "PostToolUse",
+    return {"hookSpecificOutput": {"hookEventName": name,
                                    "additionalContext": reason}}
 
 

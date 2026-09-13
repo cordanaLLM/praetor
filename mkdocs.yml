@@ -90,6 +90,7 @@ nav:
   - Guides & Adoption:
       - Developer Onboarding: guides/onboarding.md
       - Checkpoint Cadence: guides/checkpoint-cadence.md
+      - Agent Lifecycle Coverage: guides/agent-lifecycle.md
       - Garbage Collection: guides/garbage-collection.md
       - Contributing Guide: guides/contributing.md
       - Archetype Authoring: guides/archetype-authoring.md
