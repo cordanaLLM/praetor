@@ -44,7 +44,7 @@ func printWorktreeUsage() {
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  create <task-id> [base-branch] [--path=.] Create isolated ephemeral git worktree")
 	fmt.Println("  list [--path=.]                 List all active git worktrees")
-	fmt.Println("  remove <task-id> [--force] [--path=.] Remove worktree and ephemeral branch")
+	fmt.Println("  remove <task-id> [--force] [--path=.] Remove worktree (ordinary removal preserves branch; --force deletes it)")
 	fmt.Println("  prune [--path=.]                Prune orphaned worktree references")
 }
 
@@ -121,7 +121,7 @@ func worktreeStatus(wt worktree.WorktreeInfo) string {
 	if wt.Prunable {
 		return "prunable"
 	}
-	return "clean"
+	return "registered"
 }
 
 // worktreeBranch renders the branch column, marking detached heads.
@@ -155,7 +155,11 @@ func handleWorktreeRemove(ctx context.Context, subArgs []string) error {
 	if err := mgr.Remove(ctx, taskID, *force); err != nil {
 		return fmt.Errorf("failed removing worktree: %w", err)
 	}
-	fmt.Printf("[OK] Worktree and branch for task %s removed.\n", taskID)
+	if *force {
+		fmt.Printf("[OK] Worktree and branch for task %s removed.\n", taskID)
+	} else {
+		fmt.Printf("[OK] Worktree for task %s removed; branch preserved.\n", taskID)
+	}
 	return nil
 }
 

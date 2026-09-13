@@ -19,7 +19,7 @@ const (
 	// MaxWorktreeScan bounds the per-container worktree iteration (HISS-02).
 	MaxWorktreeScan = 200
 	// DefaultStaleWorktreeAge is the idle time after which an ephemeral worktree counts as
-	// stale. It matches gc.DefaultMaxWorktreeAge, which is what actually prunes them.
+	// stale. This observation does not establish owner release or GC eligibility.
 	DefaultStaleWorktreeAge = 24 * time.Hour
 	inventoryGitOutputLimit = 64 * 1024
 	// MaxRepositoryObservations bounds the complete report across the whole scan.

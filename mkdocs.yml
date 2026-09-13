@@ -72,6 +72,7 @@ nav:
       - Model Routing & Capacity Arbiter: standards/model-routing-and-fanout.md
   - Architecture & Design:
       - C4 Architecture Models: architecture/c4-models.md
+      - Shared Lifecycle Management: plans/lifecycle-management.md
       - Architectural Decisions (ADR):
           - Decision Lattice Index: adr/README.md
           - ADR-0001 Universal Context Transpiler: adr/0001-universal-context-transpiler.md
@@ -83,6 +84,7 @@ nav:
           - ADR-0007 Universal Frameworks Hub: adr/0007-universal-frameworks-org-and-demand-deduplication.md
   - Guides & Adoption:
       - Developer Onboarding: guides/onboarding.md
+      - Garbage Collection: guides/garbage-collection.md
       - Contributing Guide: guides/contributing.md
       - Archetype Authoring: guides/archetype-authoring.md
       - Fast Adoption Engine: adoption.md
@@ -90,4 +92,3 @@ nav:
   - Funding & Community:
       - Sponsoring & Bounties: sponsoring.md
       - Monetization Strategy: monetization.md
-

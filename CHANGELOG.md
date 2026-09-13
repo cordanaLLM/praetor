@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Garbage collection requires explicit release and retention checks, confines
+  complete scans, preserves unpublished worktree branches, and reports partial
+  failures. Shared Go test cache clearing is now opt-in.
+- **Breaking:** GC dry-runs populate planned fields instead of completed deletion
+  fields; ordinary worktree removal preserves branches. GC no longer prunes Git
+  administration or sweeps repository-root and `bin/` files automatically.
+  Migration: supply each quiescent resource with `--released-path`, consume
+  `planned_*` report fields for previews, and handle nonzero partial-result exits.
+  See [garbage collection](docs/guides/garbage-collection.md).
+
 
 ## [Unreleased] - 2026-09-11
 
