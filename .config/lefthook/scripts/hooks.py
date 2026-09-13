@@ -27,6 +27,7 @@ def pre_commit():
     guard()
     names = paths(git("diff", "--cached", "--name-only", "-z", "--no-renames", "--"))
     check_private_index()
+    audit_live_state()
     git("diff", "--cached", "--check")
     if not names:
         print("Index: no changed files")
@@ -42,6 +43,10 @@ def pre_commit():
 
 
 def check_message(filename):
+    # Lefthook restores partially staged worktree bytes before commit-msg.
+    # Checking freshness here preserves partial commits without certifying the
+    # temporary staged-only tree that Lefthook exposes during pre-commit.
+    verify_live_state()
     message = Path(filename).read_text()
     lines = [line for line in message.splitlines() if not line.startswith("#")]
     subject = next((line for line in lines if line.strip()), "")
@@ -96,6 +101,8 @@ def push_check_mode(destination):
 def pre_push(remote):
     guard()
     updates = push_updates(sys.stdin.read())
+    if updates:
+        verify_live_state()
     if not updates:
         print("Push: no new commits (empty input or ref deletion)")
     checked = set()
@@ -116,21 +123,25 @@ def pre_push(remote):
         names = changed(base, head) if base else paths(git("ls-tree", "-r", "--name-only", "-z", head))
         if not names:
             continue
-        with snapshot(head) as directory:
-            file_checks(directory, names)
-            if mode == "checkpoint":
-                checkpoint_checks(directory, names)
-            else:
-                gated = source_checks(directory, names, base=base)
-                if gated:
-                    preserve_receipt(directory, head)
-                if os.environ.get("PRAETOR_HOOK_SANDBOX") == "1":
-                    run(["python3", ".config/lefthook/scripts/sandbox.py", head], timeout=2400,
-                        capture=False)
+        check_pushed_snapshot(head, base, mode, names)
         if mode == "checkpoint":
             print(f"WIP checkpoint: {destination}; local file/build/race checks passed. "
                   "Full CI diagnostics remain required; no release receipt issued.")
         print(f"Push: {head[:12]} checked ({len(names)} changed paths)")
+
+
+def check_pushed_snapshot(head, base, mode, names):
+    with snapshot(head) as directory:
+        file_checks(directory, names)
+        if mode == "checkpoint":
+            checkpoint_checks(directory, names)
+        else:
+            gated = source_checks(directory, names, base=base)
+            if gated:
+                preserve_receipt(directory, head)
+            if os.environ.get("PRAETOR_HOOK_SANDBOX") == "1":
+                run(["python3", ".config/lefthook/scripts/sandbox.py", head], timeout=2400,
+                    capture=False)
 
 
 def preserve_receipt(directory, head):
@@ -142,8 +153,19 @@ def preserve_receipt(directory, head):
 
 
 def cli(args):
-    run(["make", "--no-print-directory", "-s", "hook-cli"], capture=False, timeout=180)
+    run(["make", "--always-make", "--no-print-directory", "-s", "hook-cli"], capture=False, timeout=180)
     run(["bin/praetorctl", *args], capture=False, timeout=180)
+
+
+def verify_live_state():
+    """Check private workstation state outside the exported Git snapshot."""
+    audit_live_state()
+    run(["bin/praetorctl", "state", "sync", "--verify", "."], capture=False, timeout=30)
+    print('PRAETOR_STATE_RESULT={"schema_version":1,"verified":true}', flush=True)
+
+
+def audit_live_state():
+    cli(["state", "audit", "."])
 
 
 def refresh(names):
@@ -161,6 +183,7 @@ def refresh(names):
 
 def post_stage(stage, args):
     if stage == "post-commit":
+        cli(["state", "sync", ".", "--log=Git post-commit synchronization"])
         cadence_status()
     elif stage == "post-checkout":
         if len(args) == 3 and args[2] == "1" and set(args[0]) != {"0"}:
@@ -206,6 +229,8 @@ def main(argv):
         prepare_message(*args)
     elif stage == "pre-push":
         pre_push(args[0] if args else "origin")
+    elif stage == "state-verify":
+        verify_live_state()
     elif stage == "changed":
         gate, base = args
         base = git("rev-parse", "--verify", "--end-of-options", base + "^{commit}").decode().strip()

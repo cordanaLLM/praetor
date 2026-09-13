@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // maxSnapshotEntries bounds the tree walk of snapshotTree (HISS-02).
@@ -1096,18 +1098,18 @@ func TestBlockEvasion_PreToolUseContract(t *testing.T) {
 }
 
 func TestBuildRulesetJSON_Boundary(t *testing.T) {
-	empty, err := buildRulesetJSON(nil)
+	empty, err := buildRulesetJSON(config.DefaultPolicy().BranchProtection, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(empty, "required_status_checks") || strings.Contains(empty, "required_signatures") {
 		t.Fatalf("no contexts means no status-check rule and never forced signatures:\n%s", empty)
 	}
-	one, err := buildRulesetJSON([]string{"verify"})
+	one, err := buildRulesetJSON(config.DefaultPolicy().BranchProtection, []string{"verify"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(one, `"context": "verify"`) || !strings.Contains(one, `"required_approving_review_count": 0`) {
+	if !strings.Contains(one, `"context": "verify"`) || !strings.Contains(one, `"required_approving_review_count": 1`) {
 		t.Fatalf("unexpected ruleset:\n%s", one)
 	}
 }
@@ -1156,7 +1158,13 @@ func TestRulesetMatchesCheckedInFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	generated, err := buildRulesetJSON(contexts)
+	manifest, err := config.LoadManifest(filepath.Join(repoRoot, ".standards.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := config.DefaultPolicy()
+	policy.ApplyOverrides(manifest.Overrides)
+	generated, err := buildRulesetJSON(policy.BranchProtection, contexts)
 	if err != nil {
 		t.Fatal(err)
 	}

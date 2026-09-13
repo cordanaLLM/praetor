@@ -27,11 +27,11 @@ replace an existing executable. See the [Semgrep package installation guidance](
 
 | Git stage | Work performed |
 | --- | --- |
-| `pre-commit`, `pre-merge-commit` | Check the exact index for whitespace, conflict markers, Python/JSON syntax, YAML, shell, workflow and Docker lint; Go formatting and vet on changed packages; verify affected generated agent instructions. |
+| `pre-commit`, `pre-merge-commit` | Audit the live private ledger, then check the exact index for whitespace, conflict markers, Python/JSON syntax, YAML, shell, workflow and Docker lint; Go formatting and vet on changed packages; verify affected generated agent instructions. |
 | `prepare-commit-msg` | Add an instructional comment to a fresh empty message. |
-| `commit-msg` | Require a conventional commit subject and DCO sign-off; accept Git merge/revert subjects. |
-| `pre-push` | Inspect each actual pushed commit. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor, ledger and signed-receipt gates. |
-| `post-commit` | Read the dedupe cadence and print a reminder when due; never run a scan or write the ledger. |
+| `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then require a conventional subject and DCO sign-off; accept Git merge/revert subjects. |
+| `pre-push` | Audit and verify live state before inspecting each actual pushed commit. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. |
+| `post-commit` | Synchronize and read back the private state for the new commit, then print the dedupe cadence reminder when due. Sync failures are reported. |
 | `post-checkout`, `post-merge`, `post-rewrite` | Warm changed module dependencies in an isolated clone, rebuild the local CLI for source changes, verify affected agent outputs, report governance changes. File-only checkouts do nothing. |
 | `pre-rebase` | Check the hook environment before replay begins. |
 
@@ -87,7 +87,8 @@ packages. Deleted files beneath a package with embed patterns conservatively
 select that package and its dependents. Go's package metadata is inspected before
 skipping documentation, so embedded Markdown is still tested. Ordinary docs and
 state edits skip Go race/security gates. Governance and flavor audits run for
-source and policy/configuration edits; ledger edits run `state audit`. Source and
+source and policy/configuration edits. The live private ledger is checked outside
+the exported snapshot; it never becomes published snapshot content. Source and
 governance pushes also retain the full `gate run` pipeline and pinned-key
 `gate verify`. Its full race/security stages replace duplicate scoped runs;
 golangci-lint still uses affected packages. Verified receipts are retained under
@@ -95,13 +96,41 @@ Git metadata at `praetor-receipts/<commit>.json`, without staging an artifact. E
 P0 blockers, audit failures, zero-warning lint failures and all gosec rules remain
 enforced. The full gate and CI remain the final integration checks.
 
-Use `git commit -s -m 'fix(scope): describe the change'` after reviewing your work.
-The hook does not create a DCO attestation on your behalf. Run the required
-`praetorctl state sync .` explicitly at turn end; keep the ledger local and untracked.
+After reviewing and staging your work, run `praetorctl state sync .`, then
+`git commit -s -m 'fix(scope): describe the change'`. Task, bug, question, staged,
+unstaged or untracked input changes require another sync. The hook does not create
+a DCO attestation or task narrative on your behalf. For a merge that changes the
+index, use `git merge --no-commit`, inspect the result, sync, then commit. Run the
+required `praetorctl state sync .` at turn end; keep the ledger local and untracked.
 `make state-audit` initializes a missing ledger in a fresh checkout, then audits it;
 existing incomplete, malformed, or P0-blocked state still fails. Post hooks cannot
 undo an operation that already succeeded;
 resolve any reported refresh failure before continuing.
+
+`praetorctl state sync --verify .` is read-only. It requires a versioned SHA-256
+binding in the final STATE entry covering its complete preceding history, the
+absolute worktree root, branch and full HEAD (or explicitly verified unborn
+branch), index entries, staged and unstaged binary Git diffs, visible Git status,
+untracked file bytes, and OPEN, BACKLOG, BUGS and QUESTIONS bytes. STATE records
+the observed Git state, clean flag and dirty count. `state status` reports an
+inspection time, never a fabricated last-sync timestamp.
+
+Only these canonical ledgers are read inside `.workingdir`; evidence, memories
+and caches are excluded. Git-ignored public paths are also outside the binding.
+Limits are 1 MiB per canonical ledger or untracked file, 8 MiB total untracked
+bytes, 10,000 index entries/untracked paths and 8 MiB per Git output stream.
+Git probes have five-second deadlines. Missing or oversized inputs, unsupported
+submodules, assume-unchanged/skip-worktree entries, and configured Git clean or
+process filters fail explicitly. Symlinked untracked files are rejected. These
+checks establish synchronized bytes; they cannot establish that an agent recorded
+every relevant task or explanation.
+
+This repository's native Stop/AfterAgent bridge calls the shared `agent-state-stop`
+job and requires its unique success marker. Missing, stale or invalid state blocks
+completion. The Git hooks rebuild the checkout CLI before ledger checks to avoid
+accepting an older installed binary. Generated adoption bundles require their own
+compatible CLI and hook integration; this repository's activation is not evidence
+that every adopted client enforces state freshness.
 
 Useful local commands:
 

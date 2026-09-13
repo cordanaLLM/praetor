@@ -13,6 +13,10 @@ agent-checkpoint-pre-edit:
     checkpoint-scope:
       use_stdin: true
       run: python3 -B .config/lefthook/scripts/checkpoint_scope.py
+agent-state-stop:
+  commands:
+    state-verify:
+      run: python3 -B .config/lefthook/scripts/hooks.py state-verify
 agent-checkpoint-stop:
   commands:
     checkpoint:

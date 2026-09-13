@@ -27,7 +27,12 @@ RUNNER = Path(".config/lefthook/scripts/hooks.py")
 GUARD = ROOT / ".config/agent/hooks/block_evasion.py"
 
 
-def command(repo, *args, data=None, ok=True):
+def command(repo, *args, data=None, ok=True, maintain_state=True):
+    # Most fixtures model an agent obeying the sync obligation. Negative state
+    # tests opt out and execute the same real hooks against stale/missing state.
+    if (maintain_state and args[:2] in (("git", "commit"), ("git", "push"))
+            and (repo / "bin/praetorctl").is_file()):
+        command(repo, "bin/praetorctl", "state", "sync", ".", ok=ok)
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     for key in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
         env.pop(key, None)
@@ -39,6 +44,13 @@ def command(repo, *args, data=None, ok=True):
 
 
 class GitHooks(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.cli_temp = tempfile.TemporaryDirectory(prefix="praetor-hook-cli-")
+        cls.addClassCleanup(cls.cli_temp.cleanup)
+        cls.binary = Path(cls.cli_temp.name) / "praetorctl"
+        command(ROOT, "go", "build", "-o", str(cls.binary), "./cmd/standardsctl")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="praetor-hook-test-")
         self.addCleanup(self.temp.cleanup)
@@ -61,7 +73,16 @@ class GitHooks(unittest.TestCase):
             self.write(name, content, stage=False)
         command(self.repo, "git", "add", ".")
         command(self.repo, "git", "commit", "-q", "-s", "-m", "chore: initialize fixture")
+        self.initialize_state()
         command(self.repo, "lefthook", "install")
+
+    def initialize_state(self):
+        (self.repo / "bin").mkdir()
+        os.link(self.binary, self.repo / "bin/praetorctl")
+        (self.repo / ".git/info/exclude").write_text("/bin/\n/.workingdir/\n/Makefile\n")
+        (self.repo / "Makefile").write_text("hook-cli:\n\t@test -x bin/praetorctl\n")
+        command(self.repo, "bin/praetorctl", "state", "init", ".")
+        command(self.repo, "bin/praetorctl", "state", "sync", ".")
 
     def write(self, name, data, stage=True):
         path = self.repo / name
@@ -70,7 +91,9 @@ class GitHooks(unittest.TestCase):
         if stage:
             command(self.repo, "git", "add", "--", name)
 
-    def hook(self, name="pre-commit", *args, data=None):
+    def hook(self, name="pre-commit", *args, data=None, maintain_state=True):
+        if maintain_state and name in {"pre-commit", "pre-push", "commit-msg"}:
+            command(self.repo, "bin/praetorctl", "state", "sync", ".")
         return command(self.repo, "lefthook", "run", name, *args, data=data, ok=False)
 
     def test_docs_commit_preserves_unstaged_and_untracked_files(self):
@@ -87,7 +110,8 @@ class GitHooks(unittest.TestCase):
         self.assertEqual(command(self.repo, "git", "show", "HEAD:README.md").stdout, b"# Intended\n")
         self.assertEqual((self.repo / "README.md").read_text(), "# Unstaged\n")
         self.assertTrue((self.repo / "private scratch.txt").exists())
-        self.assertFalse((self.repo / ".workingdir").exists())
+        self.assertTrue((self.repo / ".workingdir/STATE.md").is_file())
+        command(self.repo, "bin/praetorctl", "state", "sync", "--verify", ".")
 
     def test_staged_python_failure_cannot_be_hidden_by_worktree_fix(self):
         self.write("bad name 'quoted'.py", "def invalid(:\n")
@@ -124,6 +148,8 @@ class GitHooks(unittest.TestCase):
             with self.subTest(name=name):
                 self.repo = Path(self.temp.name) / f"gitlink-{index}"
                 self.initialize_repo()
+                if name == ".workingdir":
+                    shutil.rmtree(self.repo / ".workingdir")
                 head = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
                 command(self.repo, "git", "clone", "-q", str(self.repo), str(self.repo / name))
                 command(self.repo, "git", "update-index", "--add", "--cacheinfo", f"160000,{head},{name}")
@@ -238,10 +264,12 @@ class GitHooks(unittest.TestCase):
             with self.subTest(name=name):
                 self.repo = Path(self.temp.name) / f"symlink-{index}"
                 self.initialize_repo()
+                if name == ".workingdir":
+                    shutil.rmtree(self.repo / ".workingdir")
                 link = self.repo / name
                 link.parent.mkdir(parents=True, exist_ok=True)
                 link.symlink_to(target)
-                command(self.repo, "git", "add", "--", name)
+                command(self.repo, "git", "add", "-f", "--", name)
                 result = command(self.repo, "git", "commit", "-s", "-m", "docs: private symlink", ok=False)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn(b"Private .workingdir content must stay untracked", result.stdout + result.stderr)
@@ -408,6 +436,46 @@ class GitHooks(unittest.TestCase):
         message.write_text("bad subject\n\nSigned-off-by: Hook Test <hook@example.test>\n")
         self.assertNotEqual(self.hook("commit-msg", str(message)).returncode, 0)
 
+    def test_commit_requires_explicit_state_sync_after_staging(self):
+        self.write("README.md", "# Staged after sync\n")
+        before = command(self.repo, "git", "rev-parse", "HEAD").stdout
+        rejected = command(self.repo, "git", "commit", "-s", "-m", "docs: stale state",
+                           ok=False, maintain_state=False)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn(b"state synchronization stale", rejected.stdout + rejected.stderr)
+        self.assertEqual(command(self.repo, "git", "rev-parse", "HEAD").stdout, before)
+        command(self.repo, "bin/praetorctl", "state", "sync", ".")
+        command(self.repo, "git", "commit", "-s", "-m", "docs: maintained state", maintain_state=False)
+        command(self.repo, "bin/praetorctl", "state", "sync", "--verify", ".")
+
+    def test_precommit_missing_and_incomplete_ledger_are_not_repaired(self):
+        self.write("README.md", "# Need live ledger\n")
+        for name in ("BACKLOG.md", "STATE.md"):
+            with self.subTest(name=name):
+                path = self.repo / ".workingdir" / name
+                before = path.read_bytes()
+                path.unlink()
+                rejected = self.hook(maintain_state=False)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertFalse(path.exists())
+                path.write_bytes(before)
+        shutil.rmtree(self.repo / ".workingdir")
+        self.assertNotEqual(self.hook(maintain_state=False).returncode, 0)
+        self.assertFalse((self.repo / ".workingdir").exists())
+
+    def test_postcommit_sync_failure_is_reported(self):
+        (self.repo / ".workingdir/BACKLOG.md").unlink()
+        rejected = self.hook("post-commit", maintain_state=False)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn(b"state sync failed", rejected.stdout + rejected.stderr)
+
+    def test_initial_commit_has_valid_unborn_state(self):
+        command(self.repo, "git", "checkout", "--orphan", "new-history")
+        command(self.repo, "git", "rm", "-r", "--cached", ".config", "lefthook.yml")
+        command(self.repo, "bin/praetorctl", "state", "sync", ".")
+        command(self.repo, "git", "commit", "-s", "-m", "chore: initial history", maintain_state=False)
+        command(self.repo, "bin/praetorctl", "state", "sync", "--verify", ".")
+
     def test_prepare_does_not_invent_attestation(self):
         message = self.repo / "message.txt"
         message.write_text("")
@@ -544,8 +612,10 @@ class GitHooks(unittest.TestCase):
         command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: add topic")
         tip = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
         command(self.repo, "git", "checkout", "-q", "main")
-        result = command(self.repo, "git", "merge", "--no-ff", "--signoff", "topic", "-m", "chore: merge topic")
-        self.assertIn(b"post-merge", result.stdout + result.stderr)
+        command(self.repo, "git", "merge", "--no-ff", "--no-commit", "topic")
+        command(self.repo, "git", "commit", "-s", "-m", "chore: merge topic")
+        merged = self.hook("post-merge")
+        self.assertEqual(merged.returncode, 0, merged.stdout + merged.stderr)
         rewritten = self.hook("post-rewrite", data=f"{base} {tip}\n".encode())
         self.assertEqual(rewritten.returncode, 0, rewritten.stdout + rewritten.stderr)
         self.assertNotEqual(self.hook("post-rewrite", data=b"bad\n").returncode, 0)

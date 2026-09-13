@@ -6,7 +6,7 @@ Keep those layers separate when installing or reviewing an integration.
 ## Shared contracts
 
 Git invokes the installed Lefthook jobs for every coding agent and for human
-contributors. `agent-pre-tool`, `agent-checkpoint-tool`, and
+contributors. `agent-pre-tool`, `agent-state-stop`, `agent-checkpoint-tool`, and
 `agent-checkpoint-stop` are explicit, bounded jobs. Any client can invoke these
 jobs through its command tool while a native lifecycle adapter is unavailable.
 The jobs do not stage, commit, push, publish, grant trust, or prove that an
@@ -15,6 +15,16 @@ agent used an MCP tool.
 The repository's `AGENTS.md` and compiled vendor context provide the same
 fallback instructions to supported agent environments. Context projection is
 configuration delivery; it is not lifecycle enforcement.
+
+Native Stop/AfterAgent first requires `agent-state-stop` to verify that the
+existing private ledger has a fresh state snapshot. This calls the shared CLI
+through the Git-hook entry point and requires its structured success marker.
+Missing, malformed, stale, or unverifiable state requests continuation even when
+checkpoint publication policy is disabled. Repair the ledger and run
+`praetorctl state sync .` before retrying. Stop does not silently synchronize it.
+The state probe has a 20-second budget and the subsequent checkpoint observation
+has 30 seconds, within the native adapter's 60-second timeout. A slow or missing
+CLI is an explicit verification failure.
 
 ## Native adapter coverage
 

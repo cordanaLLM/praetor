@@ -358,6 +358,123 @@ class CheckpointTests(unittest.TestCase):
         self.assertIsNotNone(checkpoint.OID.fullmatch("a" * 64))
         self.assertIsNone(checkpoint.OID.fullmatch("a" * 41))
 
+    def review_fixture(self):
+        head, base = self.publication_fixture()
+        self.write_config({**CONFIG, "publish": True, "require_checks": True,
+                           "required_checks": ["gate"]})
+        git(self.root, "add", ".")
+        git(self.root, "commit", "-q", "-m", "require hosted checks")
+        head = git(self.root, "rev-parse", "HEAD").stdout.decode().strip()
+        return head, base
+
+    def observe_review(self, head, base, checks, **overrides):
+        original = checkpoint._run
+        pr = {"number": 7, "url": "https://github.com/acme/demo/pull/7", "isDraft": True,
+              "headRefOid": head, "headRefName": "checkpoint/test", "baseRefName": "main",
+              "statusCheckRollup": checks, **overrides}
+
+        def fake(argv, root, **kwargs):
+            if argv[:2] == ["git", "ls-remote"]:
+                return f"{head}\trefs/heads/checkpoint/test\n{base}\trefs/heads/main\n".encode()
+            if argv[:3] == ["gh", "pr", "list"]:
+                self.assertIn("statusCheckRollup", argv[-1])
+                return json.dumps([pr]).encode()
+            return original(argv, root, **kwargs)
+
+        with mock.patch.object(checkpoint, "_run", side_effect=fake):
+            return checkpoint.inspect_checkpoint(self.root, "stop")
+
+    def test_present_pr_requires_exact_head_checks_when_configured(self):
+        head, base = self.review_fixture()
+        check = {"__typename": "CheckRun", "name": "gate", "status": "COMPLETED"}
+        cases = (("SUCCESS", "passed"), ("FAILURE", "failed"), ("CANCELLED", "failed"),
+                 ("SKIPPED", "missing"), ("NEUTRAL", "missing"))
+        for conclusion, status in cases:
+            with self.subTest(conclusion=conclusion):
+                result = self.observe_review(head, base, [{**check, "conclusion": conclusion}])
+                self.assertEqual(result["publication_status"], "present", result)
+                self.assertEqual(result["review_status"], status)
+                self.assertEqual(result["review_head"], head)
+                self.assertEqual(result["due"], status != "passed")
+                self.assertFalse(result["commit_due"])
+                self.assertNotIn(checkpoint.PUSH_ACTION, result["actions"])
+        result = self.observe_review(head, base, [{**check, "conclusion": "SUCCESS"}], headRefOid=base)
+        self.assertEqual(result["publication_status"], "error")
+        self.assertNotEqual(result["review_status"], "passed")
+
+    def test_review_empty_pending_and_missing_required_are_not_complete(self):
+        head, base = self.review_fixture()
+        pending = {"__typename": "CheckRun", "name": "gate", "status": "QUEUED", "conclusion": ""}
+        success = {"__typename": "StatusContext", "context": "unrelated", "state": "SUCCESS"}
+        for checks, status in (([], "missing"), ([pending], "pending"), ([success], "missing")):
+            with self.subTest(status=status):
+                result = self.observe_review(head, base, checks)
+                self.assertEqual(result["review_status"], status, result)
+                self.assertTrue(result["due"])
+                self.assertEqual(result["required_checks_unpassed"], ["gate"])
+
+    def test_review_mixed_duplicate_names_do_not_hide_failure(self):
+        head, base = self.review_fixture()
+        passed = {"__typename": "StatusContext", "context": "gate", "state": "SUCCESS"}
+        failed = {**passed, "state": "ERROR"}
+        result = self.observe_review(head, base, [passed, failed])
+        self.assertEqual(result["review_status"], "failed", result)
+        self.assertTrue(result["due"])
+        self.assertEqual(result["check_counts"]["failed"], 1)
+
+    def test_review_bounds_and_malformed_responses_fail_closed(self):
+        head, base = self.review_fixture()
+        passed = {"__typename": "StatusContext", "context": "gate", "state": "SUCCESS"}
+        valid = self.observe_review(head, base, [passed] * (checkpoint.MAX_CHECKS - 1))
+        self.assertEqual(valid["review_status"], "passed", valid)
+        invalid = (None, {}, [passed] * checkpoint.MAX_CHECKS, [None],
+                   [{**passed, "state": []}], [{**passed, "state": "NEW_UNKNOWN"}],
+                   [{"__typename": "CheckRun", "name": "gate", "status": []}],
+                   [{"__typename": "CheckRun", "name": "gate", "status": "IN_PROGRESS",
+                     "conclusion": "SUCCESS"}])
+        for checks in invalid:
+            with self.subTest(checks=checks):
+                result = self.observe_review(head, base, checks)
+                self.assertEqual(result["publication_status"], "error", result)
+                self.assertIn("error", result)
+
+    def test_review_policy_is_strict_and_optional(self):
+        invalid = ({"require_checks": "true"}, {"require_checks": True},
+                   {"publish": True, "require_checks": True, "required_checks": []},
+                   {"required_checks": ["gate"]}, {"required_checks": None},
+                   {"publish": True, "require_checks": True, "required_checks": ["gate", "gate"]},
+                   {"publish": True, "require_checks": True, "required_checks": ["gate\n"]},
+                   {"publish": True, "require_checks": True, "required_checks": [str(i) for i in range(65)]})
+        for extra in invalid:
+            with self.subTest(extra=extra):
+                self.write_config({**CONFIG, **extra})
+                self.assertIn("error", checkpoint.inspect_checkpoint(self.root, "stop"))
+        self.write_config(CONFIG)
+        result = checkpoint.inspect_checkpoint(self.root, "stop")
+        self.assertEqual(result["review_status"], "not_requested")
+
+    def test_clean_protected_base_observes_live_remote_without_push_advice(self):
+        head, base = self.publication_fixture()
+        future = self.remote_commit("remote-future", head)
+        fork = self.remote_commit("remote-fork", base)
+        git(self.root, "switch", "-q", "main")
+        git(self.root, "merge", "--ff-only", "checkpoint/test")
+        original = checkpoint._run
+        cases = ((head, "base_current"), (base, "base_local_ahead"),
+                 (future, "base_remote_ahead"), (fork, "base_diverged"))
+        for remote, status in cases:
+            def fake(argv, root, **kwargs):
+                if argv[:2] == ["git", "ls-remote"]:
+                    return f"{remote}\trefs/heads/main\n".encode()
+                if argv[:2] == ["gh", "pr"]:
+                    self.fail("base reconciliation must not query or create a PR")
+                return original(argv, root, **kwargs)
+            with self.subTest(status=status), mock.patch.object(checkpoint, "_run", side_effect=fake):
+                result = checkpoint.inspect_checkpoint(self.root, "stop")
+                self.assertEqual(result["publication_status"], status, result)
+                self.assertEqual(result["due"], status != "base_current")
+                self.assertNotIn(checkpoint.PUSH_ACTION, result["actions"])
+
 
 if __name__ == "__main__":
     unittest.main()

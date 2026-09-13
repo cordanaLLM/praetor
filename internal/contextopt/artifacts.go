@@ -52,6 +52,29 @@ func ReadSnapshot(ctx context.Context, path string) ([]byte, error) {
 	return snapshot(ctx, abs)
 }
 
+// ReadBinarySnapshot reads bounded stable bytes through confined directories.
+// Unlike ReadSnapshot it accepts binary content; the same 1 MiB bound applies.
+func ReadBinarySnapshot(ctx context.Context, path string) (data []byte, err error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("context is required")
+	}
+	ctx, cancel := context.WithTimeout(ctx, MaxDuration)
+	defer cancel()
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePath(abs); err != nil {
+		return nil, err
+	}
+	root, err := openDirectory(ctx, filepath.Dir(abs))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	return snapshotRootBytes(ctx, root, filepath.Base(abs))
+}
+
 // WriteArtifacts writes a bounded flat pack to a NEW private directory. On
 // failure any partial output is retained for inspection; no existing file is changed.
 func WriteArtifacts(ctx context.Context, directory string, files map[string][]byte) (err error) {

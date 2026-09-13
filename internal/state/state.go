@@ -27,6 +27,7 @@ type StateSnapshot struct {
 	OpenBugs       int       `json:"open_bugs"`
 	PendingQs      int       `json:"pending_questions"`
 	LastUpdated    time.Time `json:"last_updated"`
+	StateHash      string    `json:"state_hash,omitempty"`
 }
 
 // SyncState captures git HEAD and updates STATE.md with a session activity entry.
@@ -37,7 +38,7 @@ func SyncState(ctx context.Context, rootPath string, sessionSummary string) (*St
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := initWorkingDir(ctx, rootPath); err != nil {
+	if _, err := InitWorkingDirIfAbsentContext(ctx, rootPath); err != nil {
 		return nil, err
 	}
 
@@ -48,10 +49,14 @@ func SyncState(ctx context.Context, rootPath string, sessionSummary string) (*St
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	snap.StateHash, err = stateBinding(ctx, rootPath, snap)
+	if err != nil {
+		return nil, err
+	}
 	if err := appendStateLog(ctx, rootPath, snap, sessionSummary); err != nil {
 		return snap, err
 	}
-	return snap, nil
+	return snap, VerifyStateSync(ctx, rootPath)
 }
 
 // InspectState reads Git and ledger state without initialization or log writes.
@@ -84,19 +89,25 @@ func populateGitSnapshot(ctx context.Context, rootPath string, snap *StateSnapsh
 		snap.Branch, snap.HeadSHA = "(not a git worktree)", "(unavailable)"
 		return nil
 	}
-	snap.Branch, err = util.RunGit(ctx, rootPath, "branch", "--show-current")
+	if err := rejectStateGitFilters(ctx, rootPath); err != nil {
+		return err
+	}
+	snap.Branch, err = stateGitString(ctx, rootPath, "branch", "--show-current")
 	if err != nil {
 		return fmt.Errorf("read state Git branch: %w", err)
 	}
-	snap.HeadSHA, err = util.RunGit(ctx, rootPath, "rev-parse", "--short", "HEAD")
+	snap.HeadSHA, err = stateGitHead(ctx, rootPath)
 	if err != nil {
 		return fmt.Errorf("read state Git HEAD: %w", err)
 	}
-	status, err := util.RunGit(ctx, rootPath, "status", "--porcelain")
+	status, err := stateGitString(ctx, rootPath, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=all", "--", ".", ":(top,exclude).workingdir")
 	if err != nil {
 		return fmt.Errorf("read state Git status: %w", err)
 	}
 	snap.GitState = "available"
+	if snap.HeadSHA == "(unborn)" {
+		snap.GitState = "unborn"
+	}
 	snap.Clean = status == ""
 	if !snap.Clean {
 		snap.DirtyCount = len(strings.Split(status, "\n"))
@@ -146,11 +157,14 @@ func appendStateLog(ctx context.Context, rootPath string, snap *StateSnapshot, s
 
 	entry := fmt.Sprintf("\n### [%s] Commit `%s` on `%s`\n- **Activity**: %s\n- **Tasks**: %d open, %d completed | **Open Bugs**: %d | **Pending Questions**: %d\n",
 		timeStr, snap.HeadSHA, snap.Branch, logMsg, snap.OpenTasks, snap.CompletedTasks, snap.OpenBugs, snap.PendingQs)
+	entry += fmt.Sprintf("- **Git State**: %s | **Clean**: %t | **Dirty Paths**: %d\n", snap.GitState, snap.Clean, snap.DirtyCount)
+	updated := string(content) + entry
+	snap.StateHash = stateLogHash(snap.StateHash, []byte(updated))
+	updated += "\n<!-- praetor-state:v1 sha256:" + snap.StateHash + " -->\n"
 
-	if len(content)+len(entry) > contextopt.MaxSourceBytes {
+	if len(updated) > contextopt.MaxSourceBytes {
 		return fmt.Errorf("STATE.md append exceeds %d bytes", contextopt.MaxSourceBytes)
 	}
-	updated := string(content) + entry
 	return contextopt.ReplaceSnapshot(ctx, stateFile, []byte(updated), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: 0o600})
 }
 

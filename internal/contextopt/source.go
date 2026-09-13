@@ -144,6 +144,17 @@ func snapshot(ctx context.Context, absolute string) (data []byte, err error) {
 }
 
 func snapshotRoot(ctx context.Context, root *os.Root, name string) (data []byte, err error) {
+	data, err = snapshotRootBytes(ctx, root, name)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateText(data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func snapshotRootBytes(ctx context.Context, root *os.Root, name string) (data []byte, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -166,9 +177,6 @@ func snapshotRoot(ctx context.Context, root *os.Root, name string) (data []byte,
 	linked, err := root.Lstat(name)
 	if err != nil || !os.SameFile(before, linked) {
 		return nil, errors.Join(fmt.Errorf("source replaced during snapshot"), err)
-	}
-	if err := validateText(data); err != nil {
-		return nil, err
 	}
 	return data, nil
 }

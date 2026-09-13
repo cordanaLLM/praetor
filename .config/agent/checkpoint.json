@@ -10,5 +10,11 @@
   "repository": "cordanaLLM/praetor",
   "branch_prefixes": ["checkpoint/", "audit/", "fix/", "feat/", "chore/", "docs/", "refactor/", "test/", "ci/"],
   "require_pr": true,
+  "require_checks": true,
+  "required_checks": [
+    "Standards & Invariant Verification Gate",
+    "DCO 1.1 & REUSE Compliance Gate",
+    "Go Vulnerability & AST Security Scan"
+  ],
   "enforce_batch_scope": true
 }

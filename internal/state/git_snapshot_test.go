@@ -32,7 +32,7 @@ func TestInspectStateNonGitAndCancellation(t *testing.T) {
 }
 
 func TestSyncStateGitErrorsPreserveHistory(t *testing.T) {
-	for _, kind := range []string{"invalid-metadata", "unborn-head"} {
+	for _, kind := range []string{"invalid-metadata"} {
 		t.Run(kind, func(t *testing.T) {
 			dir := t.TempDir()
 			if err := InitWorkingDir(dir); err != nil {

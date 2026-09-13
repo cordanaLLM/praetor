@@ -12,13 +12,30 @@ from common import HookError, run_bounded
 
 LIMIT = 1024 * 1024
 MARKER = "PRAETOR_CHECKPOINT_RESULT="
+STATE_MARKER = "PRAETOR_STATE_RESULT="
+
+
+def verify_state():
+    """Require a fresh existing ledger; Stop must not silently perform its upkeep."""
+    raw = run_bounded(
+        ["lefthook", "run", "agent-state-stop", "--no-tty", "--no-auto-install"],
+        cwd=ROOT, timeout=20, max_output=LIMIT,
+    )
+    rows = [line[len(STATE_MARKER):] for line in raw.decode().splitlines()
+            if line.startswith(STATE_MARKER)]
+    if len(rows) != 1:
+        raise ValueError("shared state job returned no unique execution result")
+    report = json.loads(rows[0])
+    if (not isinstance(report, dict) or type(report.get("schema_version")) is not int
+            or report["schema_version"] != 1 or report.get("verified") is not True):
+        raise ValueError("shared state job did not verify ledger freshness")
 
 
 def checkpoint(event):
     """Require execution of the configured shared job, not just exit zero."""
     raw = run_bounded(
         ["lefthook", "run", "agent-checkpoint-" + event,
-         "--no-tty", "--no-auto-install"], cwd=ROOT, timeout=50, max_output=LIMIT,
+         "--no-tty", "--no-auto-install"], cwd=ROOT, timeout=30, max_output=LIMIT,
     )
     rows = [line[len(MARKER):] for line in raw.decode().splitlines()
             if line.startswith(MARKER)]
@@ -56,6 +73,14 @@ def respond(payload):
         raise ValueError("stop_hook_active must be a boolean")
     active = payload.get("stop_hook_active", False)
     stopping = name in {"Stop", "AfterAgent"}
+    if stopping:
+        try:
+            verify_state()
+        except (HookError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+            reason = ("Praetor state could not be verified: " + str(error)[:1000]
+                      + ". Inspect and repair the existing ledger, run praetorctl state "
+                      "sync ., then retry; do not report completion while state is unverified.")
+            return blocked(reason, active)
     try:
         report = checkpoint("stop" if stopping else "tool")
         if not report["enabled"] or not report["due"]:

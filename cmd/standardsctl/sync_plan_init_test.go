@@ -166,8 +166,13 @@ func hasType(types []string, want string) bool {
 }
 
 func TestSync_Positive_LocalReconciliation(t *testing.T) {
-	dir := t.TempDir()
-	manifest := writeFixtureFile(t, dir, ".standards.yaml", fixtureManifest("acme", "widgets", false))
+	f := newSyncValidationFixture(t)
+	dir, manifest := f.dir, f.manifestPath
+	for _, path := range []string{".config/labels.yaml", ".github/rulesets/main.json"} {
+		if err := os.Remove(filepath.Join(dir, path)); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	out, err := runSyncCmd(t, "--config="+manifest)
 	if err != nil {
@@ -176,9 +181,9 @@ func TestSync_Positive_LocalReconciliation(t *testing.T) {
 	mustContain(t, out,
 		"[FIX] Synthesizing missing .config/labels.yaml",
 		"[FIX] Synthesizing declarative branch protection ruleset",
-		"[WARN] Lockfile .standards.lock missing",
+		"[OK] Lockfile .standards.lock verified",
 		"[INFO] Remote forge untouched",
-		"Synchronization complete.")
+		"Local sync checks finished: labels and ruleset verified; 0 companion checks missing.")
 	if !util.FileExists(filepath.Join(dir, ".config", "labels.yaml")) || util.FileExists(filepath.Join(".config", "labels.yaml")) {
 		t.Fatal("labels must be synthesized next to the manifest, not in the cwd")
 	}
@@ -195,8 +200,12 @@ func TestSync_Positive_LocalReconciliation(t *testing.T) {
 	mustContain(t, out, "[OK] Labels verified", "[OK] Branch protection ruleset verified")
 
 	// A signed-commit override emits the signature rule.
-	dir2 := t.TempDir()
+	f2 := newSyncValidationFixture(t)
+	dir2 := f2.dir
 	manifest2 := writeFixtureFile(t, dir2, ".standards.yaml", fixtureManifest("acme", "widgets", true))
+	if err := os.Remove(filepath.Join(dir2, ".github/rulesets/main.json")); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := runSyncCmd(t, "--config="+manifest2); err != nil {
 		t.Fatalf("signed sync: %v", err)
 	}
@@ -240,8 +249,8 @@ func (s *forgeStub) recorded() []string {
 func TestSync_Remote_Negative(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GH_TOKEN", "")
-	dir := t.TempDir()
-	manifest := writeFixtureFile(t, dir, ".standards.yaml", fixtureManifest("acme", "widgets", false))
+	f := newSyncValidationFixture(t)
+	dir, manifest := f.dir, f.manifestPath
 
 	// No credential: nothing is harvested from the gh CLI.
 	_, err := runSyncCmd(t, "--config="+manifest, "--remote")
@@ -250,8 +259,8 @@ func TestSync_Remote_Negative(t *testing.T) {
 	}
 
 	// An unset identity is never defaulted.
-	dir2 := t.TempDir()
-	unset := writeFixtureFile(t, dir2, ".standards.yaml", "version: 1\nrepository:\n  owner: \"\"\n  name: \"\"\n")
+	f2 := newSyncValidationFixture(t)
+	unset := writeFixtureFile(t, f2.dir, ".standards.yaml", fixtureManifest("", "", false))
 	_, err = runSyncCmd(t, "--config="+unset, "--remote", "--token=ghp_x")
 	mustErrContain(t, err, "must be set")
 
@@ -283,8 +292,8 @@ func TestSync_Remote_Negative(t *testing.T) {
 }
 
 func TestSync_Remote_Positive(t *testing.T) {
-	dir := t.TempDir()
-	manifest := writeFixtureFile(t, dir, ".standards.yaml", fixtureManifest("acme", "widgets", false))
+	f := newSyncValidationFixture(t)
+	dir, manifest := f.dir, f.manifestPath
 	env := initGitFixture(t, dir)
 	if out, gerr := runFixtureGit(t, dir, env, "remote", "add", "origin", "https://github.com/acme/widgets"); gerr != nil {
 		t.Fatalf("remote add: %v (%s)", gerr, out)
@@ -300,7 +309,7 @@ func TestSync_Remote_Positive(t *testing.T) {
 	mustContain(t, out,
 		"[SYNC] Reconciling branch protection ruleset on GitHub for acme/widgets",
 		"[OK] Remote branch protection synchronized on GitHub",
-		"Synchronization complete.")
+		"Local sync checks finished: labels and ruleset verified; 0 companion checks missing.")
 	if writes := stub.recorded(); len(writes) != 1 || writes[0] != "POST /repos/acme/widgets/rulesets" {
 		t.Fatalf("expected one ruleset create, got %v", writes)
 	}

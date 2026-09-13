@@ -15,6 +15,8 @@ from common import HookError, run_bounded
 
 MAX_OUTPUT = 1024 * 1024
 MAX_PATHS = 10000
+# gh 2.100.0 requests the first 100 contexts for pr list; equality is incomplete.
+MAX_CHECKS = 100
 TIMEOUT = 5
 PUBLIC_ACTIONS = [
     "Review the owned public paths and run the required verification gates.",
@@ -91,12 +93,12 @@ def _validate_config(value, pairs):
         raise CheckpointError("checkpoint configuration requires version 1")
     expected = {"version", "enabled", "commit_after_minutes", "commit_after_files", "on_stop",
                 "publish", "remote", "base", "repository", "branch_prefixes", "require_pr"}
-    if not expected.issubset(value) or not set(value).issubset(expected | {"enforce_batch_scope"}):
+    optional = {"enforce_batch_scope", "require_checks", "required_checks"}
+    if not expected.issubset(value) or not set(value).issubset(expected | optional):
         raise CheckpointError("checkpoint configuration has unknown or missing fields")
     if any(type(value[name]) is not bool for name in ("enabled", "on_stop", "publish", "require_pr")):
         raise CheckpointError("checkpoint boolean fields must be booleans")
-    if "enforce_batch_scope" in value and type(value["enforce_batch_scope"]) is not bool:
-        raise CheckpointError("checkpoint boolean fields must be booleans")
+    _validate_review_policy(value)
     if (type(value["commit_after_minutes"]) is not int or not 1 <= value["commit_after_minutes"] <= 1440 or
             type(value["commit_after_files"]) is not int or not 1 <= value["commit_after_files"] <= 1000):
         raise CheckpointError("checkpoint thresholds are outside their bounds")
@@ -112,6 +114,25 @@ def _validate_config(value, pairs):
                 or not item.endswith("/") or ".." in item or "//" in item for item in prefixes)):
         raise CheckpointError("checkpoint repository or branch_prefixes is malformed")
     return value
+
+
+def _validate_review_policy(value):
+    for key in ("enforce_batch_scope", "require_checks"):
+        if key in value and type(value[key]) is not bool:
+            raise CheckpointError("checkpoint boolean fields must be booleans")
+    names = value.get("required_checks", [])
+    if (not isinstance(names, list) or len(names) > 64 or
+            any(not isinstance(name, str) or not 1 <= len(name) <= 200 or
+                name.strip() != name or any(ord(char) < 32 for char in name) for name in names)):
+        raise CheckpointError("required_checks must contain at most 64 bounded check names")
+    if len(set(names)) != len(names):
+        raise CheckpointError("required_checks contains duplicate names")
+    if names and not value.get("require_checks", False):
+        raise CheckpointError("required_checks requires require_checks")
+    if value.get("require_checks", False) and not (value["publish"] and value["require_pr"]):
+        raise CheckpointError("require_checks requires publication and PR observation")
+    if value.get("require_checks", False) and not names:
+        raise CheckpointError("require_checks requires a nonempty required_checks selection")
 
 
 def _paths(raw):
@@ -205,12 +226,14 @@ def _branch_publication(root, head, remote_oid):
     return "diverged", ["Review and reconcile divergent local and live remote commits before publication."]
 
 
-def _publication(root, cfg, branch, head):
+def _publication(root, cfg, branch, head, observation=None):
     _validate_remote(_remote_url(root, cfg["remote"]), cfg["repository"])
     refs, branch_ref, base_ref = _remote_refs(root, cfg, branch)
     base_oid = refs.get(base_ref)
     if not base_oid:
         raise CheckpointError("configured remote base branch is missing")
+    if observation is not None:
+        observation.update(remote_head=refs.get(branch_ref, ""), base_head=base_oid)
     try:
         _git(root, "cat-file", "-e", f"{base_oid}^{{commit}}")
     except CheckpointError as error:
@@ -225,14 +248,16 @@ def _publication(root, cfg, branch, head):
         return status, actions
     if not cfg["require_pr"]:
         return "pushed", []
-    return _pull_request(root, cfg, branch, head)
+    return _pull_request(root, cfg, branch, head, observation)
 
 
-def _pull_request(root, cfg, branch, head):
+def _pull_request(root, cfg, branch, head, observation=None):
     repo = cfg["repository"]
+    fields = "number,url,isDraft,headRefOid,headRefName,baseRefName"
+    if cfg.get("require_checks", False):
+        fields += ",statusCheckRollup"
     raw = _run(["gh", "pr", "list", "--repo", repo, "--base", cfg["base"], "--head", branch,
-                "--state", "open", "--limit", "2", "--json",
-                "number,url,isDraft,headRefOid,headRefName,baseRefName"], root, network=True)
+                "--state", "open", "--limit", "2", "--json", fields], root, network=True)
     try:
         prs = json.loads(raw)
     except json.JSONDecodeError as error:
@@ -247,13 +272,84 @@ def _pull_request(root, cfg, branch, head):
             pr.get("headRefName") != branch or pr.get("baseRefName") != cfg["base"] or
             pr.get("url") != f"https://github.com/{repo}/pull/{pr['number']}"):
         raise CheckpointError("pull request does not match the exact branch head/base")
-    return "present", []
+    actions = _review_checks(pr, cfg, observation if observation is not None else {})
+    return "present", actions
+
+
+def _check_run_state(check):
+    status, conclusion = check.get("status"), check.get("conclusion")
+    if not isinstance(status, str) or (conclusion is not None and not isinstance(conclusion, str)):
+        raise CheckpointError("hosted check status and conclusion must be strings")
+    if status in {"QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED"}:
+        if conclusion not in {None, ""}:
+            raise CheckpointError("unfinished hosted check has a terminal conclusion")
+        return "pending"
+    states = {"SUCCESS": "passed", "FAILURE": "failed", "CANCELLED": "failed",
+              "TIMED_OUT": "failed", "ACTION_REQUIRED": "failed", "STARTUP_FAILURE": "failed",
+              "STALE": "failed", "SKIPPED": "skipped", "NEUTRAL": "skipped"}
+    if status != "COMPLETED" or conclusion not in states:
+        raise CheckpointError("hosted check has an unknown status or conclusion")
+    return states[conclusion]
+
+
+def _check_observation(check):
+    if not isinstance(check, dict):
+        raise CheckpointError("hosted check must be an object")
+    if check.get("__typename") == "CheckRun":
+        name, state = check.get("name"), _check_run_state(check)
+    elif check.get("__typename") == "StatusContext":
+        name = check.get("context")
+        if not isinstance(check.get("state"), str):
+            raise CheckpointError("hosted status context state must be a string")
+        state = {"SUCCESS": "passed", "FAILURE": "failed", "ERROR": "failed",
+                 "PENDING": "pending", "EXPECTED": "pending"}.get(check.get("state"))
+    else:
+        raise CheckpointError("hosted check has an unknown type")
+    if (not isinstance(name, str) or not 1 <= len(name) <= 200 or
+            any(ord(char) < 32 for char in name) or state is None):
+        raise CheckpointError("hosted check has an invalid name or state")
+    return name, state
+
+
+def _review_state(checks, required):
+    if not isinstance(checks, list) or len(checks) >= MAX_CHECKS:
+        raise CheckpointError("hosted check coverage is invalid or reaches its observation bound")
+    counts = {name: 0 for name in ("passed", "failed", "pending", "skipped")}
+    passed = set()
+    for check in checks[:MAX_CHECKS]:
+        name, state = _check_observation(check)
+        counts[state] += 1
+        if state == "passed":
+            passed.add(name)
+    missing = sorted(set(required) - passed)
+    if counts["failed"]:
+        return "failed", counts, missing
+    if counts["pending"]:
+        return "pending", counts, missing
+    if missing or not counts["passed"]:
+        return "missing", counts, missing
+    return "passed", counts, missing
+
+
+def _review_checks(pr, cfg, result):
+    if not cfg.get("require_checks", False):
+        return []
+    status, counts, missing = _review_state(pr.get("statusCheckRollup"), cfg.get("required_checks", []))
+    result.update(review_status=status, check_counts=counts, required_checks_unpassed=missing,
+                  review_url=pr["url"], review_head=pr["headRefOid"])
+    actions = {
+        "failed": "Inspect and repair failed hosted checks; record blockers before claiming completion.",
+        "pending": "Recheck pending hosted checks for this exact head before claiming completion.",
+        "missing": "Verify missing required hosted checks; absent or skipped checks do not prove acceptance.",
+    }
+    return [actions[status]] if status in actions else []
 
 
 def _empty_result(include_paths):
     result = {"schema_version": 1, "enabled": False, "due": False, "actions": [], "branch": "",
               "head": "", "changed_count": 0, "commit_due": False,
-              "enforce_batch_scope": False, "publication_status": "disabled"}
+              "enforce_batch_scope": False, "publication_status": "disabled",
+              "review_status": "not_requested"}
     if include_paths:
         result["public_paths"] = []
     return result
@@ -261,6 +357,7 @@ def _empty_result(include_paths):
 
 def _observe_worktree(root, cfg, event, include_paths, result):
     result["enabled"] = True
+    result["review_status"] = "not_observed" if cfg.get("require_checks", False) else "not_requested"
     result["enforce_batch_scope"] = cfg.get("enforce_batch_scope", False)
     result["branch"] = _branch(root)
     head = _git(root, "rev-parse", "--verify", "--quiet", "HEAD", allowed=(0, 1)).decode().strip()
@@ -298,10 +395,26 @@ def _observe_publication(root, cfg, event, result):
     if branch in {"main", "master", cfg["base"]} or not allowed:
         if result["due"]:
             raise CheckpointError("checkpoint due on protected or nonallowed branch")
+        if branch == cfg["base"]:
+            _observe_base(root, cfg, result)
         return
-    status, actions = _publication(root, cfg, branch, result["head"])
+    status, actions = _publication(root, cfg, branch, result["head"], result)
     result["publication_status"] = status
     result["actions"].extend(actions)
+
+
+def _observe_base(root, cfg, result):
+    _validate_remote(_remote_url(root, cfg["remote"]), cfg["repository"])
+    refs, _, base_ref = _remote_refs(root, cfg, cfg["base"])
+    if base_ref not in refs:
+        raise CheckpointError("configured remote base branch is missing")
+    status, _ = _branch_publication(root, result["head"], refs[base_ref])
+    states = {"pushed": "base_current", "due_push": "base_local_ahead",
+              "remote_ahead": "base_remote_ahead", "diverged": "base_diverged"}
+    result.update(publication_status=states[status], review_status="not_applicable",
+                  remote_head=refs[base_ref], base_head=refs[base_ref])
+    if status != "pushed":
+        result["actions"].append("Review and reconcile the protected base with its live remote; use a review branch for local work.")
 
 
 def _validate_stability(root, head, public, result):

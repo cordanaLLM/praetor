@@ -51,9 +51,9 @@ var ErrRepositoryUnresolved = errors.New(
 // .github/rulesets/main.json.
 func DefaultRequiredStatusChecks() []string {
 	return []string{
-		"verify",
 		"Standards & Invariant Verification Gate",
 		"DCO 1.1 & REUSE Compliance Gate",
+		"Go Vulnerability & AST Security Scan",
 	}
 }
 
@@ -231,61 +231,6 @@ func (g *GitHubDriver) rulesetName(branch string) string {
 	return branch + "-branch-protection"
 }
 
-// buildRulesetPayload derives the remote ruleset from the resolved policy. Every rule is
-// policy-driven: nothing is hard-coded that .standards.yaml can override.
-func (g *GitHubDriver) buildRulesetPayload(name, branch string, policy *config.BranchProtectionPolicy) map[string]any {
-	rules := []map[string]any{
-		{"type": "deletion"},
-		{"type": "non_fast_forward"},
-	}
-	if policy.EnforceLinearHistory {
-		rules = append(rules, map[string]any{"type": "required_linear_history"})
-	}
-	if policy.RequireSignedCommits {
-		rules = append(rules, map[string]any{"type": "required_signatures"})
-	}
-	rules = append(rules, map[string]any{
-		"type": "pull_request",
-		"parameters": map[string]any{
-			"required_approving_review_count": policy.RequiredApprovingReviewers,
-			"dismiss_stale_reviews_on_push":   policy.DismissStaleReviews,
-			"require_code_owner_review":       true,
-		},
-	})
-	if checks := g.statusCheckParameters(); checks != nil {
-		rules = append(rules, map[string]any{"type": "required_status_checks", "parameters": checks})
-	}
-
-	return map[string]any{
-		"name":        name,
-		"target":      "branch",
-		"enforcement": "active",
-		"conditions": map[string]any{
-			"ref_name": map[string]any{
-				"include": []string{"refs/heads/" + branch},
-				"exclude": []string{},
-			},
-		},
-		"rules": rules,
-	}
-}
-
-// statusCheckParameters renders the required_status_checks rule parameters, or nil when the
-// driver has no required contexts configured.
-func (g *GitHubDriver) statusCheckParameters() map[string]any {
-	if len(g.RequiredStatusChecks) == 0 {
-		return nil
-	}
-	contexts := make([]map[string]string, 0, len(g.RequiredStatusChecks))
-	for i := 0; i < len(g.RequiredStatusChecks); i++ {
-		contexts = append(contexts, map[string]string{"context": g.RequiredStatusChecks[i]})
-	}
-	return map[string]any{
-		"strict_required_status_checks_policy": g.StrictStatusChecks,
-		"required_status_checks":               contexts,
-	}
-}
-
 type ghRulesetRaw struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
@@ -334,6 +279,10 @@ func (g *GitHubDriver) ReconcileProtection(ctx context.Context, branch string, p
 		return fmt.Errorf("reconcile branch protection for %s: %w", branch, err)
 	}
 	name := g.rulesetName(branch)
+	payload, err := protectionRuleset(name, []string{"refs/heads/" + branch}, *policy, g.RequiredStatusChecks, g.StrictStatusChecks)
+	if err != nil {
+		return err
+	}
 	id, err := g.findRulesetID(ctx, listPath, name)
 	if err != nil {
 		return fmt.Errorf("reconcile branch protection for %s: %w", branch, err)
@@ -343,7 +292,7 @@ func (g *GitHubDriver) ReconcileProtection(ctx context.Context, branch string, p
 	if id > 0 {
 		method, path = http.MethodPut, fmt.Sprintf("%s/%d", listPath, id)
 	}
-	body, status, err := g.sendRequest(ctx, method, path, g.buildRulesetPayload(name, branch, policy))
+	body, status, err := g.sendRequest(ctx, method, path, payload)
 	if err != nil {
 		return fmt.Errorf("reconcile branch protection failed for %s: %w", branch, err)
 	}

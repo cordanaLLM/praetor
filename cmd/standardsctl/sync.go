@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -36,41 +36,51 @@ type remoteSyncOptions struct {
 	endpoint string
 }
 
-func reconcileLabels(rootDir string) error {
+func reconcileLabels(ctx context.Context, rootDir string) error {
 	labelsPath := filepath.Join(rootDir, ".config", "labels.yaml")
-	if util.FileExists(labelsPath) {
-		fmt.Println("  [OK] Labels verified (.config/labels.yaml)")
-		return nil
+	data, exists, err := contextopt.ObserveSnapshot(ctx, labelsPath)
+	if err != nil {
+		return fmt.Errorf("labels observation failed: %w", err)
 	}
-	fmt.Println("  [FIX] Synthesizing missing .config/labels.yaml...")
-	if err := synthesizeDefaultLabels(labelsPath); err != nil {
-		return fmt.Errorf("failed creating labels manifest: %w", err)
+	if !exists {
+		fmt.Println("  [FIX] Synthesizing missing .config/labels.yaml...")
+		if err := synthesizeDefaultLabels(labelsPath); err != nil {
+			return fmt.Errorf("failed creating labels manifest: %w", err)
+		}
+		data, err = contextopt.ReadSnapshot(ctx, labelsPath)
+		if err != nil {
+			return fmt.Errorf("labels readback failed: %w", err)
+		}
 	}
-	fmt.Println("  [OK] Labels synthesized (.config/labels.yaml)")
+	count, err := validateSyncLabels(data)
+	if err != nil {
+		return fmt.Errorf(".config/labels.yaml validation failed: %w", err)
+	}
+	fmt.Printf("  [OK] Labels verified (.config/labels.yaml: schema and %d unique labels; remote labels not checked)\n", count)
 	return nil
 }
 
-func reconcileRuleset(rootDir string, bp config.BranchProtectionPolicy) error {
+func reconcileRuleset(ctx context.Context, rootDir string, bp config.BranchProtectionPolicy, contexts []string) error {
 	rulesetPath := filepath.Join(rootDir, ".github", "rulesets", "main.json")
-	if !util.FileExists(rulesetPath) {
+	data, exists, err := contextopt.ObserveSnapshot(ctx, rulesetPath)
+	if err != nil {
+		return fmt.Errorf("ruleset observation failed: %w", err)
+	}
+	if !exists {
 		fmt.Println("  [FIX] Synthesizing declarative branch protection ruleset (.github/rulesets/main.json)...")
-		if err := synthesizeRuleset(rulesetPath, bp); err != nil {
+		if err := synthesizeRuleset(rulesetPath, bp, contexts); err != nil {
 			return fmt.Errorf("failed synthesizing ruleset: %w", err)
 		}
-		fmt.Println("  [OK] Branch protection ruleset synthesized (.github/rulesets/main.json)")
-	} else {
-		fmt.Println("  [OK] Branch protection ruleset verified (.github/rulesets/main.json)")
+		data, err = contextopt.ReadSnapshot(ctx, rulesetPath)
+		if err != nil {
+			return fmt.Errorf("ruleset readback failed: %w", err)
+		}
 	}
+	if err := validateSyncRuleset(data, bp, contexts); err != nil {
+		return fmt.Errorf(".github/rulesets/main.json validation failed: %w", err)
+	}
+	fmt.Println("  [OK] Branch protection ruleset verified (.github/rulesets/main.json: matches declared policy)")
 	return nil
-}
-
-// reportCompanion prints whether a companion file exists next to the manifest.
-func reportCompanion(rootDir, name, label string) {
-	if util.FileExists(filepath.Join(rootDir, name)) {
-		fmt.Printf("  [OK] %s %s verified\n", label, name)
-		return
-	}
-	fmt.Printf("  [WARN] %s %s missing. Run 'praetorctl init' to create.\n", label, name)
 }
 
 // resolveSyncToken returns the explicit token or the CI environment token. The gh CLI
@@ -103,7 +113,7 @@ func verifyOriginIdentity(ctx context.Context, rootDir, owner, name string) erro
 
 // reconcileRemoteForge pushes the branch protection ruleset and returns every failure:
 // a missing credential, an unset or foreign repository identity, or a rejected API call.
-func reconcileRemoteForge(ctx context.Context, rootDir string, manifest *config.Manifest, bp *config.BranchProtectionPolicy, remote remoteSyncOptions) error {
+func reconcileRemoteForge(ctx context.Context, rootDir string, manifest *config.Manifest, bp *config.BranchProtectionPolicy, remote remoteSyncOptions, contexts []string) error {
 	token := resolveSyncToken(remote.token)
 	if token == "" {
 		return ErrRemoteTokenMissing
@@ -119,7 +129,7 @@ func reconcileRemoteForge(ctx context.Context, rootDir string, manifest *config.
 	gh := forge.NewGitHubDriver(token, remote.endpoint)
 	gh.SetRepository(owner, name)
 	gh.RulesetName = rulesetName
-	gh.RequiredStatusChecks = forge.DefaultRequiredStatusChecks()
+	gh.RequiredStatusChecks = append([]string(nil), contexts...)
 	gh.StrictStatusChecks = true
 	fmt.Printf("  [SYNC] Reconciling branch protection ruleset on GitHub for %s/%s...\n", owner, name)
 	if err := gh.ReconcileProtection(ctx, "main", bp); err != nil {
@@ -156,98 +166,49 @@ func runSync(args []string) error {
 	policy := config.DefaultPolicy()
 	policy.ApplyOverrides(manifest.Overrides)
 	rootDir := filepath.Dir(*configPath)
+	contexts, err := forge.RequiredStatusContexts(ctx, rootDir)
+	if err != nil {
+		return fmt.Errorf("discover repository workflow checks: %w", err)
+	}
 
 	fmt.Printf("Reconciling configuration for %s/%s...\n", manifest.Repository.Owner, manifest.Repository.Name)
 
-	if err := reconcileLabels(rootDir); err != nil {
+	if err := reconcileLabels(ctx, rootDir); err != nil {
 		return err
 	}
-	reportCompanion(rootDir, ".standards.lock", "Lockfile")
-	reportCompanion(rootDir, "AGENTS.md", "Context harness")
-	if err := reconcileRuleset(rootDir, policy.BranchProtection); err != nil {
+	missing, err := verifySyncCompanions(ctx, rootDir, manifest)
+	if err != nil {
 		return err
+	}
+	if err := reconcileRuleset(ctx, rootDir, policy.BranchProtection, contexts); err != nil {
+		return err
+	}
+	if missing > 0 {
+		return fmt.Errorf("local sync verification incomplete: %d companion checks missing; generated labels and ruleset retained", missing)
 	}
 
 	if *remote {
-		if err := reconcileRemoteForge(ctx, rootDir, manifest, &policy.BranchProtection, remoteOpts); err != nil {
+		if err := reconcileRemoteForge(ctx, rootDir, manifest, &policy.BranchProtection, remoteOpts, contexts); err != nil {
 			return fmt.Errorf("remote branch protection sync failed: %w", err)
 		}
 	} else {
 		fmt.Println("  [INFO] Remote forge untouched (pass --remote to reconcile branch protection on GitHub)")
 	}
 
-	fmt.Println("Synchronization complete.")
+	fmt.Printf("Local sync checks finished: labels and ruleset verified; %d companion checks missing.\n", missing)
 	return nil
 }
 
-// rulesetRules renders the ruleset rules for the resolved policy: linear history and
-// signed commits are emitted only when the policy actually requires them, so the local
-// ruleset never contradicts the branch protection reconciled on the forge.
-func rulesetRules(bp config.BranchProtectionPolicy) []map[string]any {
-	rules := []map[string]any{
-		{"type": "deletion"},
-		{"type": "non_fast_forward"},
-	}
-	if bp.EnforceLinearHistory {
-		rules = append(rules, map[string]any{"type": "required_linear_history"})
-	}
-	if bp.RequireSignedCommits {
-		rules = append(rules, map[string]any{"type": "required_signatures"})
-	}
-	return append(rules,
-		map[string]any{
-			"type": "pull_request",
-			"parameters": map[string]any{
-				"required_approving_review_count":   bp.RequiredApprovingReviewers,
-				"dismiss_stale_reviews_on_push":     bp.DismissStaleReviews,
-				"require_code_owner_review":         true,
-				"require_last_push_approval":        false,
-				"required_review_thread_resolution": true,
-			},
-		},
-		map[string]any{
-			"type": "required_status_checks",
-			"parameters": map[string]any{
-				"strict_required_status_checks_policy": true,
-				"required_status_checks":               requiredStatusCheckContexts(),
-			},
-		},
-	)
-}
-
-func synthesizeRuleset(targetPath string, bp config.BranchProtectionPolicy) error {
+func synthesizeRuleset(targetPath string, bp config.BranchProtectionPolicy, contexts []string) error {
 	if err := util.MkdirSecure(filepath.Dir(targetPath), syncDirPerm); err != nil {
 		return err
 	}
 
-	ruleset := map[string]any{
-		"name":        rulesetName,
-		"target":      "branch",
-		"enforcement": "active",
-		"conditions": map[string]any{
-			"ref_name": map[string]any{
-				"include": []string{"refs/heads/main", "refs/heads/lts-*"},
-				"exclude": []string{},
-			},
-		},
-		"rules": rulesetRules(bp),
-	}
-
-	data, err := json.MarshalIndent(ruleset, "", "  ")
+	data, err := forge.RenderRepositoryRuleset(bp, contexts)
 	if err != nil {
 		return err
 	}
 	return util.WriteFileSecure(targetPath, data, syncFilePerm)
-}
-
-// requiredStatusCheckContexts renders the shared forge status check policy.
-func requiredStatusCheckContexts() []map[string]string {
-	names := forge.DefaultRequiredStatusChecks()
-	contexts := make([]map[string]string, 0, len(names))
-	for _, name := range names {
-		contexts = append(contexts, map[string]string{"context": name})
-	}
-	return contexts
 }
 
 func synthesizeDefaultLabels(targetPath string) error {

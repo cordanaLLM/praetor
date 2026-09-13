@@ -48,7 +48,7 @@ func printStateUsage() {
 	fmt.Println("Usage: praetorctl state <subcommand> [args]")
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  init [dir|--dir=.] [--if-absent] Initialize private state; --if-absent preserves all existing ledgers")
-	fmt.Println("  sync [dir|--dir=.] [--log=\"message\"] Synchronize git & working state into STATE.md")
+	fmt.Println("  sync [dir|--dir=.] [--log=\"message\"] [--verify] Synchronize state, or verify its freshness without writes")
 	fmt.Println("  status [dir|--dir=.]           Inspect active session state (read-only; never writes)")
 	fmt.Println("  audit [dir|--dir=.]            Audit .workingdir/ for required files and P0 blockers")
 	fmt.Println("  task [add|complete|list|archive] Manage active tasks in OPEN.md & BACKLOG.md")
@@ -118,8 +118,10 @@ func bootstrapState(dir string) error {
 
 func runStateSync(args []string) error {
 	var logMsg *string
+	var verify *bool
 	dirFlag, rest, err := stateArgs("state sync", args, func(fs *flag.FlagSet) {
 		logMsg = fs.String("log", "", "Optional log message to append to STATE.md")
+		verify = fs.Bool("verify", false, "Verify current state synchronization without writes")
 	})
 	if err != nil {
 		return err
@@ -128,6 +130,12 @@ func runStateSync(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if *verify {
+		if *logMsg != "" {
+			return fmt.Errorf("state sync --verify does not accept --log")
+		}
+		return state.VerifyStateSync(ctx, dir)
+	}
 
 	snap, err := state.SyncState(ctx, dir, *logMsg)
 	if err != nil {
@@ -171,7 +179,7 @@ func runStateStatus(args []string) error {
 	fmt.Printf("  Tasks:             %d open, %d completed\n", snap.OpenTasks, snap.CompletedTasks)
 	fmt.Printf("  Open Bugs:         %d\n", snap.OpenBugs)
 	fmt.Printf("  Pending Questions: %d\n", snap.PendingQs)
-	fmt.Printf("  Last Synced:       %s\n", snap.LastUpdated.Format(time.RFC3339))
+	fmt.Printf("  Inspected At:      %s\n", snap.LastUpdated.Format(time.RFC3339))
 	return nil
 }
 

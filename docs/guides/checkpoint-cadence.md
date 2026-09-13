@@ -30,11 +30,33 @@ description. This avoids assigning unrelated edits to the current task. Private
 staged private data remains an error. Existing Git privacy and verification
 gates continue to apply independently.
 
+Publication and hosted acceptance are separate observations. When the optional
+`require_checks` policy is true, an exact-head PR can be `publication_status:
+present` while `review_status` is `failed`, `pending`, or `missing` and work
+remains `due`. The agent must resolve the failures or retain an explicit blocker;
+the existence of a draft cannot close that work. `passed` requires at least one
+successful check, no failed or pending checks, and success for every configured
+`required_checks` name. Optional skipped/neutral jobs are reported separately;
+they cannot satisfy a required name. Duplicate names never hide a failure.
+
+The check observer uses `gh pr list --json statusCheckRollup`, verified against
+GitHub CLI 2.100.0. It rejects 100 or more contexts as incomplete because that
+[CLI query requests the first 100 contexts](https://github.com/cli/cli/blob/v2.100.0/api/query_builder.go#L222).
+Unknown states and malformed output also fail closed. This establishes a bounded
+check observation, not merge approval, review approval, fork synchronization, or
+downstream deployment. Those require their own evidence and authorization.
+
 ## Policy and local-only work
 
 The version-1 JSON policy is strict. Its `enabled`, `commit_after_minutes`,
 `commit_after_files`, `on_stop`, `publish`, `remote`, `base`, `repository`,
 `branch_prefixes` and `require_pr` fields control this repository's behavior.
+`require_checks` defaults to false for existing policies and requires both
+`publish` and `require_pr`. `required_checks` accepts 1 to 64 distinct names
+when enabled; an empty selection cannot identify absent required workflows.
+When provided, `require_checks` must be true. Praetor enables it and names its
+standards, compliance and security gates. Local-only repositories perform no
+remote check requests.
 The optional backward-compatible `enforce_batch_scope` field enables native
 file-tool admission once due: Claude `Edit`/`Write` and Gemini `replace`/
 `write_file` must name one target path, which is allowed only when it is already
@@ -55,6 +77,10 @@ when local HEAD has no commits beyond the base. Missing branch objects and
 shallow ancestry remain explicit verification errors. The observer uses live
 remote tips and available commit history; cached tracking labels alone do not
 establish whether publication is due.
+On the configured protected base, a clean worktree also checks live ancestry:
+`base_current`, `base_local_ahead`, `base_remote_ahead`, and `base_diverged`
+distinguish its states. Differences request review, never a protected-branch
+push. Base equality does not establish hosted release acceptance or fork rollout.
 Forge failures, ambiguous PRs and stale PR heads cannot certify review visibility.
 Other forge providers need a verified observation adapter before enabling this
 publication policy. Go forge PR requests now separately support the draft flag.
@@ -69,6 +95,14 @@ for due or unverifiable work. If
 the continued turn still cannot qualify, it ends with an explicit blocked reason
 instead of looping or claiming completion. Repair the reported cause and resume.
 Repeated periodic reminders can occur until the checkpoint is reconciled.
+
+Stop/AfterAgent first runs the separate `agent-state-stop` Lefthook job, even
+when cadence is disabled. Its unique execution marker must confirm a valid,
+fresh existing ledger through `state sync --verify`; the bridge does not silently
+write a replacement snapshot. After changing the ledger or staging public work,
+run `praetorctl state sync .` explicitly. Generated adoptee bundles still need
+their own compatible CLI/state-job bootstrap; this repository's wiring does not
+prove native activation or freshness enforcement for every adopter.
 
 Review the exact project definitions through the client's native hook discovery
 and trust flow. For Codex, `scripts/dev_codex_hooks.py` also supports inspection

@@ -22,6 +22,30 @@ SCOPE_SPEC.loader.exec_module(SCOPE)
 
 
 class LifecycleOutput(unittest.TestCase):
+    def setUp(self):
+        self.state = mock.patch.object(ADAPTER, "verify_state")
+        self.state_probe = self.state.start()
+        self.addCleanup(self.state.stop)
+
+    def test_stop_requires_state_verification_before_checkpoint_observation(self):
+        for event in ("Stop", "AfterAgent"):
+            with mock.patch.object(ADAPTER, "checkpoint", return_value={
+                    "enabled": False, "due": False, "actions": []}) as observe:
+                self.state_probe.side_effect = ValueError("state snapshot is stale")
+                result = ADAPTER.respond({"hook_event_name": event})
+                self.assertEqual(result["decision"], "block")
+                self.assertIn("state snapshot is stale", result["reason"])
+                self.assertIn("state sync", result["reason"])
+                observe.assert_not_called()
+        self.state_probe.assert_called()
+
+    def test_tool_feedback_does_not_claim_state_verification(self):
+        with mock.patch.object(ADAPTER, "checkpoint", return_value={
+                "enabled": True, "due": False, "actions": []}):
+            for event in ("PostToolUse", "AfterTool"):
+                self.assertEqual(ADAPTER.respond({"hook_event_name": event}), {})
+        self.state_probe.assert_not_called()
+
     def test_stop_requires_checkpoint_and_repeat_reports_blocked(self):
         report = {"enabled": True, "due": True, "actions": ["commit"]}
         with mock.patch.object(ADAPTER, "checkpoint", return_value=report):
@@ -77,7 +101,32 @@ class LifecycleOutput(unittest.TestCase):
         self.assertEqual(output, b"pass")
 
 
+class StateResult(unittest.TestCase):
+    def test_state_requires_one_positive_execution_result(self):
+        marker = ADAPTER.STATE_MARKER
+        valid = marker + '{"schema_version":1,"verified":true}\n'
+        with mock.patch.object(ADAPTER, "run_bounded", return_value=valid.encode()) as run:
+            self.assertIsNone(ADAPTER.verify_state())
+        self.assertEqual(run.call_args.kwargs["timeout"], 20)
+        for raw in (b"skipped job exited zero\n", (valid * 2).encode(),
+                    (marker + "null\n").encode(), (marker + "{\n").encode(),
+                    (marker + '{"schema_version":true,"verified":true}').encode(),
+                    (marker + '{"schema_version":1,"verified":false}').encode(),
+                    (marker + '{"schema_version":1,"verified":1}').encode()):
+            with mock.patch.object(ADAPTER, "run_bounded", return_value=raw):
+                with self.assertRaises(ValueError):
+                    ADAPTER.verify_state()
+
+
 class NativeLefthook(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.build = tempfile.TemporaryDirectory(prefix="praetor-state-hook-cli-")
+        cls.addClassCleanup(cls.build.cleanup)
+        cls.binary = Path(cls.build.name) / "praetorctl"
+        subprocess.run(["go", "build", "-o", str(cls.binary), "./cmd/standardsctl"],
+                       cwd=ROOT, capture_output=True, timeout=180, check=True)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="praetor-checkpoint-hooks-")
         self.addCleanup(self.temp.cleanup)
@@ -91,13 +140,25 @@ class NativeLefthook(unittest.TestCase):
         shutil.copy(ROOT / "lefthook.yml", self.root / "lefthook.yml")
         policy = json.loads((ROOT / ".config/agent/checkpoint.json").read_text())
         policy["publish"] = False
+        policy["require_checks"] = False
+        policy["required_checks"] = []
         policy["commit_after_files"] = 1
         policy["enforce_batch_scope"] = True
         (self.root / ".config/agent/checkpoint.json").write_text(json.dumps(policy))
-        (self.root / ".gitignore").write_text("/.workingdir/\n")
+        (self.root / ".gitignore").write_text("/.workingdir/\n/bin/\n")
+        (self.root / "Makefile").write_text(".PHONY: hook-cli\nhook-cli:\n\ttest -x bin/praetorctl\n")
+        (self.root / "bin").mkdir()
+        os.link(self.binary, self.root / "bin/praetorctl")
         (self.root / "README.md").write_text("fixture\n")
         self.git("add", ".")
         self.git("commit", "-q", "-s", "-m", "chore: initialize fixture")
+        self.state("init")
+        self.state("sync")
+
+    def state(self, action):
+        result = subprocess.run([str(self.root / "bin/praetorctl"), "state", action, "."],
+                                cwd=self.root, text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def git(self, *args):
         env = dict(os.environ)
@@ -152,21 +213,26 @@ class NativeLefthook(unittest.TestCase):
             self.assertEqual(self.run_registered(settings, key, denied).returncode, 2)
 
         (self.root / "README.md").write_text("dirty\n")
+        self.state("sync")
         for settings, key, event in ((".claude/settings.json", "PostToolUse", "PostToolUse"),
-                                     (".gemini/settings.json", "AfterTool", "AfterTool")):
+                                     (".gemini/settings.json", "AfterTool", "AfterTool"),
+                                     (".codex/hooks.json", "PostToolUse", "PostToolUse")):
             result = self.run_registered(settings, key, {"hook_event_name": event})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("additionalContext", json.loads(result.stdout)["hookSpecificOutput"])
         for settings, key in ((".claude/settings.json", "Stop"),
-                              (".gemini/settings.json", "AfterAgent")):
+                              (".gemini/settings.json", "AfterAgent"),
+                              (".codex/hooks.json", "Stop")):
             stop = self.run_registered(settings, key, {"hook_event_name": key})
             self.assertEqual(stop.returncode, 0, stop.stderr)
             self.assertEqual(json.loads(stop.stdout)["decision"], "block")
         (self.root / "README.md").write_text("fixture\n")
         (self.root / ".workingdir").mkdir(exist_ok=True)
         (self.root / ".workingdir/private.txt").write_text("private\n")
+        self.state("sync")
         for settings, key, event in ((".claude/settings.json", "Stop", "Stop"),
-                                     (".gemini/settings.json", "AfterAgent", "AfterAgent")):
+                                     (".gemini/settings.json", "AfterAgent", "AfterAgent"),
+                                     (".codex/hooks.json", "Stop", "Stop")):
             result = self.run_registered(settings, key, {"hook_event_name": event})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout), {})
@@ -181,8 +247,9 @@ class NativeLefthook(unittest.TestCase):
 
     def test_actual_job_and_adapter_observe_dirty_work_without_staging(self):
         (self.root / "README.md").write_text("changed\n")
-        (self.root / ".workingdir").mkdir()
+        (self.root / ".workingdir").mkdir(exist_ok=True)
         (self.root / ".workingdir/secret.txt").write_text("PRIVATE_SENTINEL\n")
+        self.state("sync")
         head = self.git("rev-parse", "HEAD")
         index = self.git("ls-files", "--stage")
         result = self.invoke({"hook_event_name": "Stop"})
@@ -195,10 +262,31 @@ class NativeLefthook(unittest.TestCase):
         self.assertEqual((self.root / "README.md").read_text(), "changed\n")
 
     def test_private_only_and_unrelated_receipt_do_not_require_commit(self):
-        (self.root / ".workingdir").mkdir()
+        (self.root / ".workingdir").mkdir(exist_ok=True)
         (self.root / ".workingdir/state.txt").write_text("local\n")
         (self.root / ".standards-receipt.json").write_text("unrelated\n")
+        self.state("sync")
         self.assertEqual(self.invoke({"hook_event_name": "Stop"}), {})
+
+    def test_stop_rejects_stale_missing_and_malformed_state_before_cadence(self):
+        state_path = self.root / ".workingdir/STATE.md"
+        before = state_path.read_bytes()
+        (self.root / "README.md").write_text("unrecorded change\n")
+        result = self.invoke({"hook_event_name": "Stop"})
+        self.assertEqual(result["decision"], "block")
+        self.assertIn("Praetor state could not be verified", result["reason"])
+        self.assertEqual(state_path.read_bytes(), before)
+        self.state("sync")
+        self.assertIn("Praetor checkpoint due", self.invoke({"hook_event_name": "Stop"})["reason"])
+        (self.root / ".workingdir/OPEN.md").unlink()
+        missing = self.invoke({"hook_event_name": "AfterAgent"})
+        self.assertIn("Praetor state could not be verified", missing["reason"])
+        self.assertFalse((self.root / ".workingdir/OPEN.md").exists())
+        self.state("init")
+        (self.root / ".workingdir/BUGS.md").write_text("malformed ledger\n")
+        malformed = self.invoke({"hook_event_name": "AfterAgent", "stop_hook_active": True})
+        self.assertIs(malformed["continue"], False)
+        self.assertIn("Praetor state could not be verified", malformed["stopReason"])
 
     def test_native_batch_scope_allows_existing_and_private_but_blocks_new(self):
         (self.root / "README.md").write_text("dirty\n")
