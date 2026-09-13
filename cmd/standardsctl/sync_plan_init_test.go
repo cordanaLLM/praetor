@@ -113,11 +113,13 @@ func TestInit_Boundary(t *testing.T) {
 func TestPlan_3D(t *testing.T) {
 	// Positive: a complete fixture matches policy.
 	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+"overrides:\n  branch_protection:\n    review_mode: single_maintainer\n")
 	out, err := runPlanCmd(t, "--config="+f.manifestPath)
 	if err != nil {
 		t.Fatalf("plan: %v\n%s", err, out)
 	}
-	mustContain(t, out, "Repository: acme/widgets", "Local state matches declared policy")
+	mustContain(t, out, "Repository: acme/widgets", "Local state matches declared policy",
+		"Approving Reviewers:       0", "Configured Reviewer Minimum: 1", "Review Mode:               single_maintainer")
 
 	// Negative: companions resolve against the manifest directory, not the cwd.
 	if err := os.Remove(filepath.Join(f.dir, ".standards.lock")); err != nil {
@@ -136,6 +138,13 @@ func TestPlan_3D(t *testing.T) {
 	mustErrContain(t, err, "failed to load manifest")
 	_, err = runPlanCmd(t, "--config="+f.manifestPath, "extra")
 	mustErrContain(t, err, "no positional arguments")
+}
+
+func TestPrintPlanHeaderRejectsInvalidReviewMode(t *testing.T) {
+	policy := config.DefaultPolicy()
+	policy.BranchProtection.ReviewMode = "unreviewed"
+	_, err := captureStdout(t, func() error { return printPlanHeader(&config.Manifest{}, policy) })
+	mustErrContain(t, err, "unsupported branch protection review mode")
 }
 
 // rulesetTypes reads the synthesized ruleset under dir and returns its rule types.

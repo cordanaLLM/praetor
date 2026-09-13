@@ -10,7 +10,11 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-func printPlanHeader(manifest *config.Manifest, policy *config.ResolvedPolicy) {
+func printPlanHeader(manifest *config.Manifest, policy *config.ResolvedPolicy) error {
+	reviewCount, _, err := policy.BranchProtection.EffectiveReviewRequirements()
+	if err != nil {
+		return fmt.Errorf("resolve branch protection reviews: %w", err)
+	}
 	fmt.Println("=== cordanaLLM/praetor Reconcile Plan (Dry Run) ===")
 	fmt.Printf("Repository: %s/%s\n", manifest.Repository.Owner, manifest.Repository.Name)
 	fmt.Printf("Profiles:   %v\n", manifest.Profiles)
@@ -20,11 +24,14 @@ func printPlanHeader(manifest *config.Manifest, policy *config.ResolvedPolicy) {
 	fmt.Printf("  - Max Function LOC:          <= %d\n", policy.Complexity.MaxFuncLOC)
 	fmt.Printf("  - Linear History Required:    %t\n", policy.BranchProtection.EnforceLinearHistory)
 	fmt.Printf("  - Signed Commits Required:   %t\n", policy.BranchProtection.RequireSignedCommits)
-	fmt.Printf("  - Approving Reviewers:       %d\n", policy.BranchProtection.RequiredApprovingReviewers)
+	fmt.Printf("  - Approving Reviewers:       %d\n", reviewCount)
+	fmt.Printf("  - Configured Reviewer Minimum: %d\n", policy.BranchProtection.RequiredApprovingReviewers)
+	fmt.Printf("  - Review Mode:               %s\n", policy.BranchProtection.ReviewMode)
 	fmt.Printf("  - Dismiss Stale Reviews:     %t\n", policy.BranchProtection.DismissStaleReviews)
 	fmt.Printf("  - SLSA Provenance Level:     %d\n", policy.SupplyChain.SLSALevel)
 	fmt.Printf("  - Cosign Attestation:        %t\n", policy.SupplyChain.EnforceCosign)
 	fmt.Printf("  - SBOM Generation Required:  %t\n", policy.SupplyChain.RequireSBOM)
+	return nil
 }
 
 // checkPlanDrift inspects the companion files next to the manifest, never the cwd.
@@ -69,7 +76,9 @@ func runPlan(args []string) error {
 	policy := config.DefaultPolicy()
 	policy.ApplyOverrides(manifest.Overrides)
 
-	printPlanHeader(manifest, policy)
+	if err := printPlanHeader(manifest, policy); err != nil {
+		return err
+	}
 	missing, drift := checkPlanDrift(policy, filepath.Dir(*configPath))
 
 	if len(missing) > 0 || len(drift) > 0 {

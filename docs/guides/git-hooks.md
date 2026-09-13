@@ -74,6 +74,10 @@ Other branches, tags, and PR/merge gates retain their strict checks. A push that
 contains both checkpoint and strict refs must pass both policies, even when they
 point at the same commit. No environment flag disables a gate.
 
+The separately configured [review policy](review-policy.md) supports explicit
+single-maintainer operation while another reviewer is unavailable. This changes
+the hosted approval requirement; the Git hook and verification gates still run.
+
 Pre-push consumes Git's ref protocol once and checks disposable clones of those
 commit IDs. It handles multiple refs, new branches, tag targets, deletions and
 pushes that do not use the current checkout. An existing branch uses the remote

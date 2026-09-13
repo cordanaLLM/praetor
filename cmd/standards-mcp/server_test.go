@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -469,15 +470,33 @@ func TestServer_Positive_ExplainRuleCoversDocumentedInvariants(t *testing.T) {
 // ---- plan and audit ------------------------------------------------------------------------------
 
 func TestServer_Positive_PlanAndAuditOnSyncedRepo(t *testing.T) {
-	srv, _ := newFixtureServer(t)
+	srv, root := newFixtureServer(t)
 
 	plan := callTool(t, srv, "standards_plan", nil)
 	expectText(t, "plan", plan, "No changes required")
+	expectText(t, "plan default effective reviews", plan, "Approving Reviewers:       1")
+	expectText(t, "plan default configured reviews", plan, "Configured Reviewer Minimum: 1")
+	expectText(t, "plan default review mode", plan, "Review Mode:               independent")
+
+	writeFixtureFile(t, root, ".standards.yaml", "version: 1\nrepository:\n  owner: fixture\n  name: repo\nprofiles: [framework]\nfacets: []\noverrides:\n  branch_protection:\n    review_mode: single_maintainer\n")
+	plan = callTool(t, srv, "standards_plan", nil)
+	expectText(t, "plan single-maintainer effective reviews", plan, "Approving Reviewers:       0")
+	expectText(t, "plan single-maintainer configured reviews", plan, "Configured Reviewer Minimum: 1")
+	expectText(t, "plan single-maintainer review mode", plan, "Review Mode:               single_maintainer")
 
 	audit := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "audit", audit, "[PASS] Technical debt baseline verified")
 	expectText(t, "audit", audit, "[PASS] Cross-agent context targets verified in sync")
 	expectText(t, "audit", audit, "7/7 MCP audit gates passed")
+}
+
+func TestWritePlanHeaderRejectsInvalidReviewMode(t *testing.T) {
+	policy := config.DefaultPolicy()
+	policy.BranchProtection.ReviewMode = "unreviewed"
+	var b strings.Builder
+	if err := writePlanHeader(&b, &config.Manifest{}, policy); err == nil || !strings.Contains(err.Error(), "unsupported branch protection review mode") {
+		t.Fatalf("invalid review mode was not propagated: %v", err)
+	}
 }
 
 func TestServer_Negative_PlanDriftAndAuditFailures(t *testing.T) {

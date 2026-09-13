@@ -15,13 +15,43 @@ func TestRenderRepositoryRulesetPolicyAndEmptyChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, required := range []string{"required_signatures", `"required_approving_review_count": 3`, `"dismiss_stale_reviews_on_push": false`} {
+	for _, required := range []string{"required_signatures", `"required_approving_review_count": 3`, `"require_code_owner_review": true`, `"dismiss_stale_reviews_on_push": false`} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("selected policy missing %s: %s", required, text)
 		}
 	}
 	if strings.Contains(text, "required_linear_history") || strings.Contains(text, "required_status_checks") {
 		t.Fatal("unselected protections or phantom contexts were rendered")
+	}
+}
+
+func TestRenderRepositoryRulesetSingleMaintainerReviewMode(t *testing.T) {
+	policy := config.DefaultPolicy().BranchProtection
+	policy.RequireSignedCommits = true
+	policy.ReviewMode = config.BranchReviewModeSingleMaintainer
+	data, err := RenderRepositoryRuleset(policy, []string{"Required Checks Aggregator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"required_linear_history", "required_signatures", "required_status_checks",
+		`"required_approving_review_count": 0`, `"require_code_owner_review": false`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("single-maintainer ruleset missing %s: %s", required, text)
+		}
+	}
+	if policy.RequiredApprovingReviewers != 1 {
+		t.Fatalf("rendering mutated the configured reviewer minimum: %+v", policy)
+	}
+}
+
+func TestRenderRepositoryRulesetRejectsUnknownReviewMode(t *testing.T) {
+	policy := config.DefaultPolicy().BranchProtection
+	policy.ReviewMode = "unreviewed"
+	if _, err := RenderRepositoryRuleset(policy, nil); err == nil || !strings.Contains(err.Error(), "unsupported branch protection review mode") {
+		t.Fatalf("unknown review mode was not rejected: %v", err)
 	}
 }
 

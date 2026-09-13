@@ -37,7 +37,8 @@ facets:
   - "agent:sandboxed"
   - "tooling:vscode-extension"
 
-# Overrides (strictness can only be increased, never reduced)
+# Standard overrides only increase strictness. The explicit review mode below
+# temporarily permits single-maintainer operation; all other gates stay enforced.
 overrides:
   complexity:
     max_cyclomatic: 10
@@ -48,6 +49,9 @@ overrides:
     enforce_linear_history: true
     require_signed_commits: true
     required_approving_reviewers: 1
+    # Owner-approved 2026-09-13: restore independent when a maintainer or review
+    # bot can approve. Keep the required count so restoration retains the minimum.
+    review_mode: single_maintainer
     dismiss_stale_reviews: true
   supply_chain:
     slsa_level: 3

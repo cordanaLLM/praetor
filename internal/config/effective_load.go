@@ -170,6 +170,9 @@ func (l *effectiveLoader) manifest(path string) (*Manifest, PolicyLayer, error) 
 	if manifest.Version != 1 {
 		return nil, layer, errors.New("effective policy manifest requires version 1")
 	}
+	if err := validateManifestReviewPolicy(&manifest); err != nil {
+		return nil, layer, fmt.Errorf("effective policy manifest: %w", err)
+	}
 	overrides := policyMember(node, "overrides")
 	if overrides != nil && overrides.Kind != yaml.MappingNode {
 		return nil, layer, errors.New("manifest overrides must be a mapping")

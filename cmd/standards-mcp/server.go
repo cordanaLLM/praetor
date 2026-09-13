@@ -368,7 +368,9 @@ func (s *Server) createPlanTool() (mcp.Tool, error) {
 		policy.ApplyOverrides(manifest.Overrides)
 
 		var b strings.Builder
-		writePlanHeader(&b, manifest, policy)
+		if err := writePlanHeader(&b, manifest, policy); err != nil {
+			return mcp.ErrorResult(fmt.Sprintf("Failed to resolve plan policy: %v", err)), nil
+		}
 		missing, drift := planDrift(s.rootDir, policy)
 		writePlanStatus(&b, missing, drift)
 
@@ -379,7 +381,11 @@ func (s *Server) createPlanTool() (mcp.Tool, error) {
 }
 
 // writePlanHeader prints the resolved policy values of a reconcile plan.
-func writePlanHeader(b *strings.Builder, manifest *config.Manifest, policy *config.ResolvedPolicy) {
+func writePlanHeader(b *strings.Builder, manifest *config.Manifest, policy *config.ResolvedPolicy) error {
+	reviewCount, _, err := policy.BranchProtection.EffectiveReviewRequirements()
+	if err != nil {
+		return fmt.Errorf("resolve branch protection reviews: %w", err)
+	}
 	b.WriteString("=== cordanaLLM/praetor Reconcile Plan (Dry Run) ===\n")
 	fmt.Fprintf(b, "Repository: %s/%s\n", manifest.Repository.Owner, manifest.Repository.Name)
 	fmt.Fprintf(b, "Profiles:   %v\nFacets:     %v\n\nTarget Invariants:\n", manifest.Profiles, manifest.Facets)
@@ -387,10 +393,13 @@ func writePlanHeader(b *strings.Builder, manifest *config.Manifest, policy *conf
 	fmt.Fprintf(b, "  - Max Function LOC:          <= %d\n", policy.Complexity.MaxFuncLOC)
 	fmt.Fprintf(b, "  - Linear History Required:    %t\n", policy.BranchProtection.EnforceLinearHistory)
 	fmt.Fprintf(b, "  - Signed Commits Required:   %t\n", policy.BranchProtection.RequireSignedCommits)
-	fmt.Fprintf(b, "  - Approving Reviewers:       %d\n", policy.BranchProtection.RequiredApprovingReviewers)
+	fmt.Fprintf(b, "  - Approving Reviewers:       %d\n", reviewCount)
+	fmt.Fprintf(b, "  - Configured Reviewer Minimum: %d\n", policy.BranchProtection.RequiredApprovingReviewers)
+	fmt.Fprintf(b, "  - Review Mode:               %s\n", policy.BranchProtection.ReviewMode)
 	fmt.Fprintf(b, "  - SLSA Provenance Level:     %d\n", policy.SupplyChain.SLSALevel)
 	fmt.Fprintf(b, "  - Cosign Attestation:        %t\n", policy.SupplyChain.EnforceCosign)
 	fmt.Fprintf(b, "  - SBOM Generation Required:  %t\n", policy.SupplyChain.RequireSBOM)
+	return nil
 }
 
 // createCompileContextTool builds the standards_compile_context tool.

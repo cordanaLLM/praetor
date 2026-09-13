@@ -22,10 +22,14 @@ func RenderRepositoryRuleset(policy config.BranchProtectionPolicy, contexts []st
 }
 
 func protectionRuleset(name string, refs []string, policy config.BranchProtectionPolicy, contexts []string, strict bool) (map[string]any, error) {
-	if err := validateRulesetInputs(policy, contexts); err != nil {
+	reviewCount, requireCodeOwner, err := policy.EffectiveReviewRequirements()
+	if err != nil {
 		return nil, err
 	}
-	rules := protectionRules(policy)
+	if err := validateRulesetInputs(contexts); err != nil {
+		return nil, err
+	}
+	rules := protectionRules(policy, reviewCount, requireCodeOwner)
 	if len(contexts) > 0 {
 		checks := make([]map[string]string, 0, len(contexts))
 		for i := 0; i < len(contexts) && i < maxRulesetContexts; i++ {
@@ -43,10 +47,7 @@ func protectionRuleset(name string, refs []string, policy config.BranchProtectio
 	}, nil
 }
 
-func validateRulesetInputs(policy config.BranchProtectionPolicy, contexts []string) error {
-	if policy.RequiredApprovingReviewers < 0 {
-		return errors.New("required approving review count cannot be negative")
-	}
+func validateRulesetInputs(contexts []string) error {
 	if len(contexts) > maxRulesetContexts {
 		return fmt.Errorf("required status checks exceed %d contexts", maxRulesetContexts)
 	}
@@ -61,7 +62,7 @@ func validateRulesetInputs(policy config.BranchProtectionPolicy, contexts []stri
 	return nil
 }
 
-func protectionRules(policy config.BranchProtectionPolicy) []map[string]any {
+func protectionRules(policy config.BranchProtectionPolicy, reviewCount int, requireCodeOwner bool) []map[string]any {
 	rules := []map[string]any{{"type": "deletion"}, {"type": "non_fast_forward"}}
 	if policy.EnforceLinearHistory {
 		rules = append(rules, map[string]any{"type": "required_linear_history"})
@@ -70,9 +71,9 @@ func protectionRules(policy config.BranchProtectionPolicy) []map[string]any {
 		rules = append(rules, map[string]any{"type": "required_signatures"})
 	}
 	return append(rules, map[string]any{"type": "pull_request", "parameters": map[string]any{
-		"required_approving_review_count":   policy.RequiredApprovingReviewers,
+		"required_approving_review_count":   reviewCount,
 		"dismiss_stale_reviews_on_push":     policy.DismissStaleReviews,
-		"require_code_owner_review":         true,
+		"require_code_owner_review":         requireCodeOwner,
 		"require_last_push_approval":        false,
 		"required_review_thread_resolution": true,
 	}})
