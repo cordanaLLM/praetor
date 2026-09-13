@@ -83,10 +83,18 @@ func optionalToolCommand(tool, args string) string {
 
 // buildLefthookYAML renders the scaffolded lefthook configuration.
 func buildLefthookYAML() string {
+	return buildLefthookYAMLFor(false)
+}
+
+func buildLefthookYAMLFor(checkpoint bool) string {
 	governed := lefthookGovernedCommand
+	checkpointJobs := ""
+	if checkpoint {
+		checkpointJobs = "agent-checkpoint-tool:\n  commands:\n    checkpoint:\n      run: python3 -B .config/lefthook/scripts/checkpoint.py --event tool --json --marker\nagent-checkpoint-stop:\n  commands:\n    checkpoint:\n      run: python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json --marker\n"
+	}
 	return "# Lefthook Configuration (Go 1.27+ & HISS-16 Governance)\n" +
 		"# Governance commands fail closed: a failing or missing praetorctl blocks the commit or push.\n" +
-		"pre-commit:\n" +
+		checkpointJobs + "pre-commit:\n" +
 		"  parallel: true\n" +
 		"  commands:\n" +
 		"    gofmt:\n      glob: \"*.go\"\n      run: gofmt -w {staged_files}\n      stage_fixed: true\n" +
@@ -191,10 +199,14 @@ func buildFallbackPreCommitScript() string {
 // reconcileGitHooks scaffolds lefthook.yml and the agent evasion interceptor, then
 // activates local git hooks for configurations praetor itself wrote.
 func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
+	checkpointReady, err := reconcileCheckpointLifecycle(ctx, s)
+	if err != nil {
+		return err
+	}
 	lefthookWritten, err := s.scaffoldFile(scaffold{
 		rel:      lefthookFile,
 		perm:     filePerm,
-		content:  []byte(buildLefthookYAML()),
+		content:  []byte(buildLefthookYAMLFor(checkpointReady)),
 		force:    true,
 		created:  "Scaffolded Lefthook configuration for local pre-commit and pre-push enforcement",
 		verified: "Existing Lefthook configuration verified present",
@@ -202,20 +214,52 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.scaffoldFile(scaffold{
-		rel:      evasionHookFile,
-		perm:     execPerm,
-		content:  []byte(blockEvasionPY),
-		force:    true,
-		created:  "Scaffolded agent PreToolUse anti-evasion interceptor (wire it into the agent harness hooks)",
-		verified: "Existing agent anti-evasion interceptor verified present",
-	}); err != nil {
+	warnPreservedCheckpoint(s, checkpointReady, lefthookWritten)
+	if err := reconcileEvasionHook(s); err != nil {
 		return err
 	}
 	if s.opts.DryRun || s.opts.SkipHookActivation {
 		return nil
 	}
 	return s.activateGitHooks(ctx, lefthookWritten)
+}
+
+func reconcileCheckpointLifecycle(ctx context.Context, s *adoptSession) (bool, error) {
+	ready, err := reconcileCheckpointBundle(ctx, s)
+	if err == nil {
+		return ready, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return false, ctxErr
+	}
+	s.report.addWarning("checkpoint lifecycle unavailable: %v", err)
+	return false, nil
+}
+
+func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
+	if !ready || written {
+		return
+	}
+	full, err := repoFile(s.repoPath, lefthookFile)
+	if err != nil {
+		return
+	}
+	data, err := readRepoFile(full)
+	if err == nil && !bytes.Contains(data, []byte("agent-checkpoint-tool:")) {
+		s.report.addWarning("existing lefthook.yml was preserved without checkpoint lifecycle jobs")
+	}
+}
+
+func reconcileEvasionHook(s *adoptSession) error {
+	_, err := s.scaffoldFile(scaffold{
+		rel:      evasionHookFile,
+		perm:     execPerm,
+		content:  []byte(blockEvasionPY),
+		force:    true,
+		created:  "Scaffolded agent PreToolUse anti-evasion interceptor (wire it into the agent harness hooks)",
+		verified: "Existing agent anti-evasion interceptor verified present",
+	})
+	return err
 }
 
 // activateGitHooks installs hooks through lefthook, or the fallback hook when lefthook
@@ -254,7 +298,10 @@ func (s *adoptSession) lefthookConfigIsPraetor() bool {
 	if err != nil {
 		return false
 	}
-	return bytes.Equal(data, []byte(buildLefthookYAML()))
+	if bytes.Equal(data, []byte(buildLefthookYAML())) {
+		return true
+	}
+	return bytes.Equal(data, []byte(buildLefthookYAMLFor(true))) && checkpointFilesPresent(s.repoPath)
 }
 
 // resolveHooksDirForInstall asks git for the hooks directory. Without git on PATH it

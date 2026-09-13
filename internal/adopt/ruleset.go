@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
 	"gopkg.in/yaml.v3"
 )
@@ -278,7 +279,7 @@ func reconcilePaperclip(ctx context.Context, s *adoptSession) error {
 	return nil
 }
 
-func reconcileAgentDefinitions(_ context.Context, s *adoptSession) error {
+func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 	if _, err := s.scaffoldFile(scaffold{
 		rel:      auditorAgentFile,
 		perm:     filePerm,
@@ -289,15 +290,27 @@ func reconcileAgentDefinitions(_ context.Context, s *adoptSession) error {
 	}); err != nil {
 		return err
 	}
-	_, err := s.scaffoldFile(scaffold{
+	if _, err := s.scaffoldFile(scaffold{
 		rel:      gatekeeperFile,
 		perm:     filePerm,
 		content:  []byte(defaultGatekeeperAgentMD),
 		force:    true,
 		created:  "Scaffolded repository gatekeeper agent definition",
 		verified: "Existing repository gatekeeper agent definition verified present",
-	})
-	return err
+	}); err != nil {
+		return err
+	}
+	if s.opts.DryRun {
+		return nil
+	}
+	projected, err := compiler.CompileAgents(ctx, filepath.Join(s.repoPath, ".agents", "agents"), s.repoPath)
+	if err != nil {
+		return fmt.Errorf("compile agent definitions: %w", err)
+	}
+	for i := 0; i < len(projected) && i < maxTranspileTargets; i++ {
+		s.report.recordCreated(projected[i].VendorTarget, "Projected canonical agent definition to vendor target")
+	}
+	return nil
 }
 
 const defaultAuditorAgentMD = `---

@@ -81,6 +81,10 @@ def _config(root):
         value = json.loads(raw, object_pairs_hook=lambda items: (pairs.append(items), dict(items))[1])
     except (OSError, ValueError, RecursionError) as error:
         raise CheckpointError("invalid or inaccessible checkpoint configuration") from error
+    return _validate_config(value, pairs)
+
+
+def _validate_config(value, pairs):
     if any(len(dict(items)) != len(items) for items in pairs):
         raise CheckpointError("checkpoint configuration contains duplicate keys")
     if not isinstance(value, dict) or type(value.get("version")) is not int or value.get("version") != 1:
@@ -221,6 +225,10 @@ def _publication(root, cfg, branch, head):
         return status, actions
     if not cfg["require_pr"]:
         return "pushed", []
+    return _pull_request(root, cfg, branch, head)
+
+
+def _pull_request(root, cfg, branch, head):
     repo = cfg["repository"]
     raw = _run(["gh", "pr", "list", "--repo", repo, "--base", cfg["base"], "--head", branch,
                 "--state", "open", "--limit", "2", "--json",
@@ -242,12 +250,70 @@ def _publication(root, cfg, branch, head):
     return "present", []
 
 
-def inspect_checkpoint(root: Path, event: str, include_paths: bool = False) -> dict:
+def _empty_result(include_paths):
     result = {"schema_version": 1, "enabled": False, "due": False, "actions": [], "branch": "",
               "head": "", "changed_count": 0, "commit_due": False,
               "enforce_batch_scope": False, "publication_status": "disabled"}
     if include_paths:
         result["public_paths"] = []
+    return result
+
+
+def _observe_worktree(root, cfg, event, include_paths, result):
+    result["enabled"] = True
+    result["enforce_batch_scope"] = cfg.get("enforce_batch_scope", False)
+    result["branch"] = _branch(root)
+    head = _git(root, "rev-parse", "--verify", "--quiet", "HEAD", allowed=(0, 1)).decode().strip()
+    if head and not OID.fullmatch(head):
+        raise CheckpointError("HEAD is not a valid Git object ID")
+    result["head"] = head
+    public = _worktree(root)
+    result["changed_count"] = len(public)
+    if include_paths:
+        result["public_paths"] = sorted(public)
+    age = (time.time() - int(_git(root, "show", "-s", "--format=%ct", "HEAD").decode().strip())
+           if head else cfg["commit_after_minutes"] * 60)
+    result["commit_due"] = bool(public) and (age >= cfg["commit_after_minutes"] * 60 or
+                                              len(public) >= cfg["commit_after_files"])
+    result["commit_due"] = result["commit_due"] or (event == "stop" and cfg["on_stop"] and bool(public))
+    result["due"] = result["commit_due"]
+    result["publication_status"] = "not_due"
+    if result["due"]:
+        if not result["branch"]:
+            raise CheckpointError("checkpoint due on detached HEAD")
+        allowed = any(result["branch"].startswith(prefix) for prefix in cfg["branch_prefixes"])
+        if result["branch"] in {"main", "master", cfg["base"]} or not allowed:
+            raise CheckpointError("checkpoint due on protected or nonallowed branch")
+        result["actions"] = list(PUBLIC_ACTIONS)
+    return head, public
+
+
+def _observe_publication(root, cfg, event, result):
+    if event != "stop" or not cfg["publish"] or not result["head"]:
+        return
+    branch = result["branch"]
+    allowed = any(branch.startswith(prefix) for prefix in cfg["branch_prefixes"])
+    if not branch:
+        raise CheckpointError("publication cannot be verified on detached HEAD")
+    if branch in {"main", "master", cfg["base"]} or not allowed:
+        if result["due"]:
+            raise CheckpointError("checkpoint due on protected or nonallowed branch")
+        return
+    status, actions = _publication(root, cfg, branch, result["head"])
+    result["publication_status"] = status
+    result["actions"].extend(actions)
+
+
+def _validate_stability(root, head, public, result):
+    if (_branch(root) != result["branch"] or
+            _git(root, "rev-parse", "--verify", "--quiet", "HEAD", allowed=(0, 1)).decode().strip() != head):
+        raise CheckpointError("branch or HEAD changed during checkpoint observation; retry")
+    if not result["due"] and _worktree(root) != public:
+        raise CheckpointError("working tree changed during checkpoint observation; retry")
+
+
+def inspect_checkpoint(root: Path, event: str, include_paths: bool = False) -> dict:
+    result = _empty_result(include_paths)
     if event not in {"tool", "stop"}:
         result.update(error="event must be tool or stop", publication_status="error")
         return result
@@ -255,47 +321,10 @@ def inspect_checkpoint(root: Path, event: str, include_paths: bool = False) -> d
         cfg = _config(root)
         if not cfg.get("enabled", False):
             return result
-        result["enabled"] = True
-        result["enforce_batch_scope"] = cfg.get("enforce_batch_scope", False)
-        result["branch"] = _branch(root)
-        head = _git(root, "rev-parse", "--verify", "--quiet", "HEAD", allowed=(0, 1)).decode().strip()
-        if head and not OID.fullmatch(head):
-            raise CheckpointError("HEAD is not a valid Git object ID")
-        result["head"] = head
-        public = _worktree(root)
-        result["changed_count"] = len(public)
-        if include_paths:
-            result["public_paths"] = sorted(public)
-        age = (time.time() - int(_git(root, "show", "-s", "--format=%ct", "HEAD").decode().strip())
-               if head else cfg["commit_after_minutes"] * 60)
-        threshold_due = bool(public) and (age >= cfg["commit_after_minutes"] * 60 or
-                                          len(public) >= cfg["commit_after_files"])
-        result["commit_due"] = threshold_due or (event == "stop" and cfg["on_stop"] and bool(public))
-        result["due"] = result["commit_due"]
-        result["publication_status"] = "not_due"
-        if result["due"]:
-            if not result["branch"]:
-                raise CheckpointError("checkpoint due on detached HEAD")
-            if (result["branch"] in {"main", "master", cfg["base"]} or
-                    not any(result["branch"].startswith(prefix) for prefix in cfg["branch_prefixes"])):
-                raise CheckpointError("checkpoint due on protected or nonallowed branch")
-            result["actions"] = list(PUBLIC_ACTIONS)
-        if event == "stop" and cfg["publish"] and head:
-            if not result["branch"]:
-                raise CheckpointError("publication cannot be verified on detached HEAD")
-            if result["branch"] in {"main", "master", cfg["base"]} or not any(
-                    result["branch"].startswith(prefix) for prefix in cfg["branch_prefixes"]):
-                if result["due"]:
-                    raise CheckpointError("checkpoint due on protected or nonallowed branch")
-            else:
-                result["publication_status"], actions = _publication(root, cfg, result["branch"], result["head"])
-                result["actions"].extend(actions)
+        head, public = _observe_worktree(root, cfg, event, include_paths, result)
+        _observe_publication(root, cfg, event, result)
         result["due"] = bool(result["actions"])
-        if (_branch(root) != result["branch"] or
-                _git(root, "rev-parse", "--verify", "--quiet", "HEAD", allowed=(0, 1)).decode().strip() != head):
-            raise CheckpointError("branch or HEAD changed during checkpoint observation; retry")
-        if not result["due"] and _worktree(root) != public:
-            raise CheckpointError("working tree changed during checkpoint observation; retry")
+        _validate_stability(root, head, public, result)
         return result
     except (CheckpointError, ValueError, OSError) as error:
         result["publication_status"] = "error"

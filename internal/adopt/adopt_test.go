@@ -227,6 +227,12 @@ func TestAdopt_Positive_Greenfield(t *testing.T) {
 	if !strings.Contains(hook, fallbackPreCommitMarker) || strings.Contains(hook, "./bin/") {
 		t.Errorf("fallback hook must be praetor-managed and never execute a repository-relative binary:\n%s", hook)
 	}
+	for _, vendor := range []string{".claude", ".codex", ".github", ".gemini"} {
+		path := filepath.Join(repoPath, vendor, "agents", "repo-auditor.md")
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("agent definition projection missing at %s: %v", path, err)
+		}
+	}
 }
 
 func TestAdopt_Positive_PartialAndDryRun(t *testing.T) {

@@ -101,6 +101,7 @@ semgrep-test:
 .PHONY: notebook-test
 notebook-test:
 	python3 -B scripts/test_notebooklm_export.py
+	python3 -B scripts/test_planning_import.py
 
 hooks:
 	@lefthook install
