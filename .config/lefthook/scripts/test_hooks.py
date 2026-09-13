@@ -15,7 +15,7 @@ import time
 import unittest
 from unittest import mock
 
-from common import HookError, run
+from common import HookError, run, snapshot
 from checks import (go_packages, source_checks, governance_commands, context_changed,
                     audit_scope, local_package_patterns, checkpoint_checks)
 from hooks import push_updates, new_branch_base, pre_push, push_check_mode
@@ -201,6 +201,54 @@ class GitHooks(unittest.TestCase):
             command(self.repo, "git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
         command(self.repo, "git", "fetch", "-q", str(external), "main")
         return remote, base, head
+
+    def test_public_snapshot_initializes_private_state_before_flavor_and_gate(self):
+        public = Path(self.temp.name) / "snapshot-source"
+        public.mkdir()
+        command(public, "git", "init", "-q", "-b", "main")
+        command(public, "git", "config", "user.name", "Snapshot Fixture")
+        command(public, "git", "config", "user.email", "snapshot@example.test")
+        files = {".standards.yaml": "repository: {}\n", ".standards.lock": "{}\n",
+                 ".golangci.yml": "version: '2'\n", ".github/workflows/ci.yml": "name: fixture\n",
+                 "lefthook.yml": "{}\n", ".github/rulesets/main.json": "{}\n",
+                 ".gitignore": "/.workingdir/\n",
+                 "Makefile": 'state-audit: state-init\n\t"' + str(self.binary) + '" state audit .\n'
+                             'state-init:\n\t"' + str(self.binary) + '" state init --if-absent .\n'}
+        for name, value in files.items():
+            path = public / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(value)
+        command(public, "git", "add", ".")
+        command(public, "git", "commit", "-q", "-s", "-m", "chore: public snapshot fixture")
+        private = public / ".workingdir/STATE.md"
+        private.parent.mkdir()
+        private.write_text("PRIVATE_SNAPSHOT_SENTINEL\n")
+        with contextlib.chdir(public), snapshot("HEAD") as directory:
+            self.assertFalse((directory / ".workingdir").exists())
+            def check_flavor(commands, root):
+                for argv in commands:
+                    if argv[3:5] == ["flavor", "audit"]:
+                        run([str(self.binary), *argv[3:]], cwd=root)
+            def check_gate(root):
+                run([str(self.binary), "state", "audit", "."], cwd=root)
+                return True
+            with mock.patch("checks.parallel", side_effect=check_flavor), \
+                    mock.patch("checks.run_full_gate", side_effect=check_gate) as gated:
+                self.assertTrue(source_checks(directory, [".standards.yaml"], base="HEAD"))
+                gated.assert_called_once_with(directory)
+            self.assertTrue((directory / ".workingdir/OPEN.md").is_file())
+            self.assertNotIn("PRIVATE_SNAPSHOT_SENTINEL", (directory / ".workingdir/STATE.md").read_text())
+            self.assertEqual(command(directory, "git", "status", "--porcelain").stdout, b"")
+            # Existing partial state must not be repaired or permitted into later gates.
+            (directory / ".workingdir/OPEN.md").unlink()
+            before = {p.name: p.read_bytes() for p in (directory / ".workingdir").iterdir() if p.is_file()}
+            with mock.patch("checks.parallel") as scans, mock.patch("checks.run_full_gate") as gated:
+                with self.assertRaisesRegex(HookError, "state audit failed"):
+                    source_checks(directory, [".standards.yaml"], base="HEAD")
+                scans.assert_not_called()
+                gated.assert_not_called()
+            self.assertEqual(before, {p.name: p.read_bytes() for p in (directory / ".workingdir").iterdir() if p.is_file()})
+        self.assertEqual(private.read_text(), "PRIVATE_SNAPSHOT_SENTINEL\n")
 
     def test_new_branch_push_prefers_remote_default_over_older_topic_for_private_removal(self):
         remote, base, head = self.incoming_private_history(legacy=True, old_topic=True)
@@ -589,19 +637,22 @@ class GitHooks(unittest.TestCase):
         self.assertFalse((self.repo / ".git/praetor-receipts").exists())
         self.assertFalse((self.repo / ".standards-receipt.json").exists())
         # Existing remote checkpoints cannot become trusted strict baselines.
-        # Promotion of this same commit must still reach and fail release checks.
+        # Promotion must reach strict checks and reject the absent state-audit
+        # bootstrap target before attempting the remaining release pipeline.
         for destination in ("refs/heads/review/wip", "refs/tags/checkpoint/wip"):
             rejected = command(self.repo, "git", "push", "origin", "HEAD:" + destination, ok=False)
             self.assertNotEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
-            self.assertIn(b"cmd/standardsctl", rejected.stdout + rejected.stderr)
+            self.assertIn(b"No rule to make target 'state-audit'", rejected.stdout + rejected.stderr)
             self.assertNotIn(b"WIP checkpoint:", rejected.stdout + rejected.stderr)
             self.assertEqual(command(self.repo, "git", "ls-remote", "origin", destination).stdout, b"")
         mixed_refs = ("refs/heads/checkpoint/mixed", "refs/heads/review/mixed")
         rejected = command(self.repo, "git", "push", "origin",
                            *("HEAD:" + ref for ref in mixed_refs), ok=False)
         self.assertNotEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
-        self.assertIn(b"cmd/standardsctl", rejected.stdout + rejected.stderr)
+        self.assertIn(b"No rule to make target 'state-audit'", rejected.stdout + rejected.stderr)
         self.assertEqual(command(self.repo, "git", "ls-remote", "origin", *mixed_refs).stdout, b"")
+        self.assertFalse((self.repo / ".git/praetor-receipts").exists())
+        self.assertFalse((self.repo / ".standards-receipt.json").exists())
 
     def test_push_destination_controls_mode_and_mixed_refs_still_run_strict_checks(self):
         base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
@@ -830,7 +881,8 @@ class ScopeAndGuard(unittest.TestCase):
             self.assertEqual(governance_commands(root, [".workingdir/OPEN.md"], False)[0][3:], ["state", "audit", "."])
             for name in (".gemini/GEMINI.md", ".codex/rules.md", ".cursor/rules/hiss-invariants.mdc"):
                 self.assertTrue(context_changed([name]))
-            with mock.patch("checks.parallel", side_effect=HookError("governance rejected")) as gate:
+            with mock.patch("checks.run", return_value=b""), \
+                    mock.patch("checks.parallel", side_effect=HookError("governance rejected")) as gate:
                 with self.assertRaisesRegex(HookError, "governance rejected"):
                     source_checks(root, [".standards.yaml"])
                 self.assertEqual(len(gate.call_args.args[0]), 2)
@@ -849,7 +901,9 @@ class ScopeAndGuard(unittest.TestCase):
                 return b""
             with mock.patch("checks.parallel"), mock.patch("checks.run", side_effect=process):
                 self.assertTrue(source_checks(root, [".standards.yaml"], base=base))
-                self.assertEqual([cmd[4] for cmd in calls], ["run", "verify"])
+                self.assertEqual(calls, [["make", "--no-print-directory", "state-audit"],
+                                        ["go", "run", "./cmd/standardsctl", "gate", "run", "--path=."],
+                                        ["go", "run", "./cmd/standardsctl", "gate", "verify", "--path=."]])
             def reject_pin(argv, **kwargs):
                 if argv[:5] == ["go", "run", "./cmd/standardsctl", "gate", "verify"]:
                     raise HookError("pin mismatch")

@@ -102,6 +102,10 @@ Git metadata at `praetor-receipts/<commit>.json`, without staging an artifact. E
 P0 blockers, audit failures, zero-warning lint failures and all gosec rules remain
 enforced. The full gate and CI remain the final integration checks.
 
+Before snapshot governance checks, the disposable clone initializes its own
+missing private ledger and audits it. Incomplete or invalid existing state still
+fails. The live ledger is never copied into the clone.
+
 After reviewing and staging your work, run `praetorctl state sync .`, then
 `git commit -s -m 'fix(scope): describe the change'`. Task, bug, question, staged,
 unstaged or untracked input changes require another sync. The hook does not create
@@ -156,6 +160,10 @@ The `*-changed` targets compare committed `HEAD` against `BASE` and use exactly
 the same scope and process runner as pre-push. `make verify-all` retains the full
 repository checks. Independent checks run with at most three workers; command
 failures are collected and propagated.
+
+CI sets `TEST_COVERPROFILE` to an explicit temporary file and obtains coverage
+from the race run inside `make verify-all`. The same run must meet the 65%
+statement-coverage floor; CI does not execute a second full race suite.
 
 The sandbox runner requires Docker and the explicitly selected local
 `praetor-dev:audit` image. Override its name with `PRAETOR_SANDBOX_IMAGE`. It clones

@@ -7,6 +7,8 @@ PRAETOR_MCP := $(BIN_DIR)/praetor-mcp
 STANDARDS_MCP := $(BIN_DIR)/standards-mcp
 PRAETOR_LSP := $(BIN_DIR)/praetor-lsp
 STANDARDS_LSP := $(BIN_DIR)/standards-lsp
+# CI obtains coverage from the same race run used by verify-all.
+TEST_COVERPROFILE ?=
 
 all: build
 
@@ -20,7 +22,7 @@ build:
 	@ln -sf praetor-lsp $(STANDARDS_LSP)
 
 test:
-	go test -v -race ./...
+	go test -v -race $(if $(TEST_COVERPROFILE),-covermode=atomic -coverprofile="$(TEST_COVERPROFILE)") ./...
 
 stress:
 	go test -v -race ./internal/stress/...

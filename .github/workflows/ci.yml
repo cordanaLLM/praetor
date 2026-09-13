@@ -119,7 +119,7 @@ jobs:
         run: go run ./cmd/standardsctl forge check-commits --base="origin/${{ github.base_ref }}" --head=HEAD
 
       - name: Verify Cross-Agent Context Synchronization (HISS-16)
-        if: steps.filter.outputs.run_context_sync != 'false' || github.event_name == 'push'
+        if: steps.filter.outputs.skip_heavy_gates == 'true' && steps.filter.outputs.run_context_sync != 'false' && github.event_name != 'push'
         run: go run ./cmd/standardsctl compile-context --verify
 
       - name: Documentation Integrity Audit
@@ -129,21 +129,27 @@ jobs:
           python3 -m pip install -r docs/presets/mkdocs/requirements.txt
           mkdocs build --strict
 
-      - name: Run Race Detection & Unit Tests (HISS-15)
-        if: steps.filter.outputs.run_tests != 'false' || github.event_name == 'push'
-        run: go test -v -race -covermode=atomic -coverprofile=coverage.out ./...
+      # Heavy changes use the complete local authority once, including race tests,
+      # context, audit, all configured linters, vulnerability and AST security scans.
+      # Lightweight changes retain their selective governance checks below.
+      - name: Full Verification Harness Gate
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        env:
+          TEST_COVERPROFILE: ${{ runner.temp }}/praetor-coverage.out
+        run: make verify-all
 
       - name: Enforce Statement Coverage Floor (HISS-15 coverage gate)
-        if: steps.filter.outputs.run_tests != 'false' || github.event_name == 'push'
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
         env:
+          TEST_COVERPROFILE: ${{ runner.temp }}/praetor-coverage.out
           # HISS-15 is advertised as a CI coverage gate: the total statement coverage
           # must not fall below this floor (the tree sits above it; raise it as
           # coverage grows, never lower it).
           COVERAGE_FLOOR: "65"
         run: |
-          TOTAL=$(go tool cover -func=coverage.out | awk '/^total:/ { sub("%", "", $3); print $3 }')
+          TOTAL=$(go tool cover -func="$TEST_COVERPROFILE" | awk '/^total:/ { sub("%", "", $3); print $3 }')
           if [ -z "$TOTAL" ]; then
-            echo "::error::Could not read total statement coverage from coverage.out"
+            echo "::error::Could not read total statement coverage from $TEST_COVERPROFILE"
             exit 1
           fi
           echo "Total statement coverage: ${TOTAL}% (floor ${COVERAGE_FLOOR}%)"
@@ -155,24 +161,8 @@ jobs:
           }'
 
       - name: Run Repository Governance Audit (HISS Invariants & Rulesets)
-        if: steps.filter.outputs.run_audit != 'false' || github.event_name == 'push'
+        if: steps.filter.outputs.skip_heavy_gates == 'true' && steps.filter.outputs.run_audit != 'false' && github.event_name != 'push'
         run: go run ./cmd/standardsctl audit
-
-      # HISS-10 is only real if every configured linter runs: go vet alone never executes
-      # the staticcheck / errcheck / complexity linters declared in .golangci.yml.
-      - name: Run Linter & Static Analysis (HISS-10)
-        if: steps.filter.outputs.run_linters != 'false' || github.event_name == 'push'
-        run: |
-          go vet ./...
-          go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run --config .golangci.yml ./...
-
-      - name: Run AST Security Scan (gosec, zero exclusions)
-        if: steps.filter.outputs.run_security != 'false' || github.event_name == 'push'
-        run: python3 -B .config/lefthook/scripts/security_scope.py -- gosec -conf .gosec.json
-
-      - name: Full Verification Harness Gate
-        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
-        run: make verify-all
 
       - name: Verify Binary Compilation
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'

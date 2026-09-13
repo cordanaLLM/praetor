@@ -242,3 +242,24 @@ func TestDocsOnlyStillSkipsHeavyGates(t *testing.T) {
 		t.Fatalf("documentation change changed policy: %+v", decision)
 	}
 }
+
+// CI runs race, lint and security checks through make verify-all only when heavy
+// gates are selected. Any new selective decision must preserve this contract.
+func TestLightweightDecisionsNeverRequireHeavyChecks(t *testing.T) {
+	for flags := range 128 {
+		changes := &cifilter.ChangeSet{
+			TotalFiles:    1,
+			CodeChanged:   flags&1 != 0,
+			TestsChanged:  flags&2 != 0,
+			DocsChanged:   flags&4 != 0,
+			ConfigChanged: flags&8 != 0,
+			AgentChanged:  flags&16 != 0,
+			StateOnly:     flags&32 != 0,
+			DocsOnly:      flags&64 != 0,
+		}
+		decision := cifilter.MakeDecision(changes, false)
+		if decision.SkipHeavyGates && (decision.RunTests || decision.RunLinters || decision.RunSecurity) {
+			t.Fatalf("CI would omit requested checks for flags %d: %+v", flags, decision)
+		}
+	}
+}

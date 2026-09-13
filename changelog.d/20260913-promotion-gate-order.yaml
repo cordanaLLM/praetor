@@ -1,0 +1,3 @@
+type: fixed
+title: Initialize and audit private state in public verification snapshots and collect CI coverage without repeating the full race suite
+breaking: false

@@ -185,9 +185,14 @@ def checkpoint_checks(directory, names):
 
 
 def source_checks(directory, names, gate="all", base=None):
+    """Verify an exported snapshot; governance bootstraps only its absent private ledger."""
     packages = go_packages(directory, names, reverse=True)
     governance = governance_commands(directory, names, bool(packages), base=base)
     full_gate = gate == "all" and any(cmd[3:4] == ["audit"] for cmd in governance)
+    if full_gate:
+        # The Make target initializes only absent state, then audits it strictly.
+        # Finish before parallel flavor checks and the later receipt pipeline.
+        run(["make", "--no-print-directory", "state-audit"], cwd=directory, env=clean_env())
     if gate == "all":
         parallel(governance, directory)
         parallel(semgrep_commands(directory, names), directory)
