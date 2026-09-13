@@ -24,6 +24,9 @@ func TestScanLocalWorkstationRepositoryObservations(t *testing.T) {
 	if out, err := runTestGit(root, "init", "--bare", bare); err != nil {
 		t.Fatalf("init bare: %v (%s)", err, out)
 	}
+	if err := os.Mkdir(filepath.Join(bare, ".workingdir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(linkedRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +61,10 @@ func TestScanLocalWorkstationRepositoryObservations(t *testing.T) {
 	mainObservation := byClass["main"]
 	if byClass["bare"].DirtyScope != "not-applicable" {
 		t.Fatalf("bare repository has working-tree dirty scope: %+v", byClass["bare"])
+	}
+	bareObservation := byClass["bare"]
+	if !bareObservation.WorkingdirPresent || bareObservation.WorkingdirProbeIgnored != nil || bareObservation.WorkingdirTrackedState != "not-applicable" || len(bareObservation.ProbeErrors) != 0 {
+		t.Fatalf("bare privacy probe was not not-applicable: %+v", bareObservation)
 	}
 	if mainObservation.RemoteState != "known" || len(mainObservation.RemoteURLs) != 1 || mainObservation.RemoteURLs[0] != "https://example.invalid/org/repo.git" {
 		t.Fatalf("remote was not sanitized: %+v", mainObservation)

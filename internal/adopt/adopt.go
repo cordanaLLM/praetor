@@ -91,9 +91,11 @@ type AdoptReport struct {
 	ActionDetails   []ActionDetail          `json:"action_details,omitempty"`
 	DebtBreakdown   map[string]int          `json:"debt_breakdown,omitempty"`
 	LegacyDebtCount int                     `json:"legacy_debt_count"`
-	DryRun          bool                    `json:"dry_run"`
-	Errors          []string                `json:"errors,omitempty"`
-	Warnings        []string                `json:"warnings,omitempty"`
+	// BaselineStatus distinguishes an observed zero from a skipped or unevaluated scan.
+	BaselineStatus string   `json:"baseline_status"`
+	DryRun         bool     `json:"dry_run"`
+	Errors         []string `json:"errors,omitempty"`
+	Warnings       []string `json:"warnings,omitempty"`
 }
 
 // adoptSession carries the resolved inputs of one adoption run through the step chain.
@@ -168,6 +170,7 @@ func newAdoptionReport(path string, opts AdoptOptions) *AdoptReport {
 		ActionDetails:   make([]ActionDetail, 0),
 		DebtBreakdown:   make(map[string]int),
 		DryRun:          opts.DryRun,
+		BaselineStatus:  "not_run",
 		Errors:          make([]string, 0),
 		Warnings:        make([]string, 0),
 	}
@@ -333,18 +336,24 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) error {
 	}
 	existed := fileExists(full)
 	if existed && !s.opts.RecordBaseline {
+		s.report.BaselineStatus = "existing"
 		return s.verifyExistingBaseline(full)
 	}
 
 	base := &baseline.Baseline{Version: 1, Infractions: make([]baseline.Infraction, 0)}
 	if s.opts.RecordBaseline {
 		if err := scanLegacyDebt(ctx, s.repoPath, base, s.report, adoptionScanLimit(s)); err != nil {
+			s.report.BaselineStatus = "failed"
 			return err
 		}
+		s.report.BaselineStatus = "scanned"
+	} else {
+		s.report.BaselineStatus = "skipped"
 	}
 	s.report.LegacyDebtCount = base.TotalInfractions
 	if !s.opts.DryRun {
 		if err := baseline.SaveBaseline(full, base); err != nil {
+			s.report.BaselineStatus = "failed"
 			return fmt.Errorf("save baseline: %w", err)
 		}
 	}
@@ -363,6 +372,8 @@ func (s *adoptSession) verifyExistingBaseline(full string) error {
 	base, err := baseline.LoadBaseline(full)
 	if err != nil {
 		s.report.addError("baseline: existing %s is unreadable: %v", baselineFile, err)
+		s.report.BaselineStatus = "failed"
+		return fmt.Errorf("load existing baseline: %w", err)
 	} else {
 		s.report.LegacyDebtCount = base.TotalInfractions
 	}

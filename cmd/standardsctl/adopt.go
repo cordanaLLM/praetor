@@ -231,12 +231,20 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 	printAdoptedFiles(rep)
 	printAdoptIssues(rep)
 
-	fmt.Println("\n--- Governance Pillars Synchronized ---")
-	fmt.Println("  ✓ Universal Harness : Canonical AGENTS.md + Mermaid Verification Flowchart")
-	fmt.Println("  ✓ AI Context Sync   : 6 targets (Claude Code, Cursor, Copilot, Windsurf, Codex, Gemini)")
-	fmt.Println("  ✓ IDE Ecosystem     : VS Code, JetBrains (CLion/GoLand/PyCharm), Neovim")
-	fmt.Println("  ✓ DevContainer      : Containerized deterministic dev environment (.devcontainer)")
-	fmt.Println("  ✓ Verification Gate : Makefile 'verify-all' standard entrypoint")
+	if len(rep.Errors) > 0 {
+		fmt.Println("\n--- Governance Pillars Not Synchronized (incomplete adoption) ---")
+	} else if rep.DryRun {
+		fmt.Println("\n--- Governance Pillars Planned (dry-run; not written) ---")
+	} else {
+		fmt.Println("\n--- Governance Pillars Synchronized ---")
+	}
+	if len(rep.Errors) == 0 {
+		fmt.Println("  ✓ Universal Harness : Canonical AGENTS.md + Mermaid Verification Flowchart")
+		fmt.Println("  ✓ AI Context Sync   : 6 targets (Claude Code, Cursor, Copilot, Windsurf, Codex, Gemini)")
+		fmt.Println("  ✓ IDE Ecosystem     : VS Code, JetBrains (CLion/GoLand/PyCharm), Neovim")
+		fmt.Println("  ✓ DevContainer      : Containerized deterministic dev environment (.devcontainer)")
+		fmt.Println("  ✓ Verification Gate : Makefile 'verify-all' standard entrypoint")
+	}
 
 	switch {
 	case len(rep.Errors) > 0:
@@ -250,11 +258,40 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 
 // printDebtSummary prints the baselined legacy debt breakdown.
 func printDebtSummary(rep *adopt.AdoptReport) {
+	switch rep.BaselineStatus {
+	case "scanned":
+		printScannedDebt(rep)
+	case "existing":
+		printExistingDebt(rep)
+	case "skipped":
+		fmt.Println("\n--- Legacy Technical Debt: scan skipped (baseline recording disabled) ---")
+	default:
+		status := rep.BaselineStatus
+		if status == "" {
+			status = "not_run"
+		}
+		fmt.Printf("\n--- Legacy Technical Debt: baseline %s; no usable baseline result ---\n", status)
+	}
+}
+
+func printScannedDebt(rep *adopt.AdoptReport) {
+	label := "Baselined"
+	if rep.DryRun {
+		label = "Scanned (dry-run; not written)"
+	}
 	if rep.LegacyDebtCount == 0 {
-		fmt.Println("\n--- Legacy Technical Debt: 0 infractions detected ---")
+		fmt.Printf("\n--- Legacy Technical Debt: 0 infractions (%s) ---\n", label)
 		return
 	}
-	fmt.Printf("\n--- Legacy Technical Debt Baselined (%d infractions) ---\n", rep.LegacyDebtCount)
+	fmt.Printf("\n--- Legacy Technical Debt %s (%d infractions) ---\n", label, rep.LegacyDebtCount)
+	printDebtBreakdown(rep, !rep.DryRun)
+}
+
+func printExistingDebt(rep *adopt.AdoptReport) {
+	fmt.Printf("\n--- Existing Legacy Technical Debt Baseline: %d infractions ---\n", rep.LegacyDebtCount)
+}
+
+func printDebtBreakdown(rep *adopt.AdoptReport, explain bool) {
 	var ruleKeys []string
 	for r := range rep.DebtBreakdown {
 		ruleKeys = append(ruleKeys, r)
@@ -263,7 +300,9 @@ func printDebtSummary(rep *adopt.AdoptReport) {
 	for _, r := range ruleKeys {
 		fmt.Printf("  • %-8s: %d infractions\n", r, rep.DebtBreakdown[r])
 	}
-	fmt.Println("  (Infractions recorded into .standards-baseline.json to prevent CI breaks while ratcheting)")
+	if explain {
+		fmt.Println("  (Infractions recorded into .standards-baseline.json to prevent CI breaks while ratcheting)")
+	}
 }
 
 // printAdoptIssues prints the warnings and errors an adoption run recorded.
@@ -283,6 +322,10 @@ func printAdoptIssues(rep *adopt.AdoptReport) {
 }
 
 func printAdoptedFiles(rep *adopt.AdoptReport) {
+	if rep.DryRun {
+		printPlannedFiles(rep)
+		return
+	}
 	if len(rep.CreatedFiles) > 0 {
 		fmt.Printf("\nFiles Created (%d):\n", len(rep.CreatedFiles))
 		for _, f := range rep.CreatedFiles {
@@ -294,6 +337,21 @@ func printAdoptedFiles(rep *adopt.AdoptReport) {
 		fmt.Printf("\nFiles Reconciled (%d):\n", len(rep.ReconciledFiles))
 		for _, f := range rep.ReconciledFiles {
 			printAdoptedFile("~ [SYNC]", f, findDetail(rep.ActionDetails, f))
+		}
+	}
+}
+
+func printPlannedFiles(rep *adopt.AdoptReport) {
+	if len(rep.CreatedFiles) > 0 {
+		fmt.Printf("\nFiles Planned for Creation (%d):\n", len(rep.CreatedFiles))
+		for _, f := range rep.CreatedFiles {
+			printAdoptedFile("+ [PLAN] ", f, findDetail(rep.ActionDetails, f))
+		}
+	}
+	if len(rep.ReconciledFiles) > 0 {
+		fmt.Printf("\nFiles Planned for Reconciliation (%d):\n", len(rep.ReconciledFiles))
+		for _, f := range rep.ReconciledFiles {
+			printAdoptedFile("~ [PLAN] ", f, findDetail(rep.ActionDetails, f))
 		}
 	}
 }

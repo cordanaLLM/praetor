@@ -279,6 +279,9 @@ func TestAdopt_Positive_BrownfieldWithDebtRatcheting(t *testing.T) {
 	if rep.LegacyDebtCount != 1 {
 		t.Fatalf("expected 1 legacy infraction recorded, got: %d", rep.LegacyDebtCount)
 	}
+	if rep.BaselineStatus != "scanned" {
+		t.Fatalf("expected completed baseline scan, got %q", rep.BaselineStatus)
+	}
 	if len(mustRead(t, filepath.Join(repoPath, ".standards-baseline.json"))) == 0 {
 		t.Fatal("baseline file should not be empty")
 	}
@@ -294,6 +297,9 @@ func TestAdopt_Positive_BrownfieldWithDebtRatcheting(t *testing.T) {
 	}
 	if rep2.LegacyDebtCount != 1 {
 		t.Fatalf("existing baseline debt must be reported, got %d", rep2.LegacyDebtCount)
+	}
+	if rep2.BaselineStatus != "existing" {
+		t.Fatalf("expected existing baseline status, got %q", rep2.BaselineStatus)
 	}
 }
 
@@ -468,6 +474,9 @@ func TestAdopt_Negative_ScanTimeoutFailsInsteadOfEmptyBaseline(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatal("an interrupted scan must fail the baseline step")
+	}
+	if s.report.BaselineStatus != "failed" {
+		t.Fatalf("interrupted scan status: %q", s.report.BaselineStatus)
 	}
 	if _, statErr := os.Stat(filepath.Join(repoPath, ".standards-baseline.json")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatal("no baseline may be written when the scan did not complete")

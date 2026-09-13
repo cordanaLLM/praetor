@@ -441,6 +441,10 @@ func inspectRepositoryRemotes(ctx context.Context, repoPath string, observation 
 }
 
 func inspectRepositoryPrivacy(ctx context.Context, repoPath string, observation *RepositoryObservation) {
+	if observation.Classification == "bare" {
+		observation.WorkingdirTrackedState = "not-applicable"
+		return
+	}
 	tracked, trackedErr := inventoryRunGit(ctx, repoPath, "ls-files", "-z", "--", ".workingdir")
 	if trackedErr == nil {
 		observation.WorkingdirTrackedState = "known"

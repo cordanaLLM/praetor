@@ -65,6 +65,39 @@ func TestPrintBatchResult_ReportsErrorsAsFailure(t *testing.T) {
 	}
 }
 
+func TestPrintAdoptReportDoesNotClaimUnobservedBaselineOrPillars(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		printAdoptReport(&adopt.AdoptReport{State: adopt.StatePartial, BaselineStatus: "not_run", Errors: []string{"pre-baseline failure"}})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "baseline not_run; no usable baseline result") || strings.Contains(out, "Pillars Synchronized") {
+		t.Fatalf("false-success diagnostics: %s", out)
+	}
+	out, err = captureStdout(t, func() error {
+		printAdoptReport(&adopt.AdoptReport{DryRun: true, BaselineStatus: "scanned"})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "0 infractions (Scanned (dry-run; not written))") || !strings.Contains(out, "Pillars Planned") {
+		t.Fatalf("dry-run diagnostics: %s", out)
+	}
+	out, err = captureStdout(t, func() error {
+		printAdoptReport(&adopt.AdoptReport{DryRun: true, BaselineStatus: "scanned", LegacyDebtCount: 2, DebtBreakdown: map[string]int{"HISS-01": 2}, CreatedFiles: []string{"new.md"}})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "Baselined") || strings.Contains(out, "recorded into") || strings.Contains(out, "Files Created") {
+		t.Fatalf("dry-run claimed writes: %s", out)
+	}
+}
+
 // reorderTestAdoptArgs supplies the adoption flag fixtures to the shared parser.
 func reorderTestAdoptArgs(args []string) []string {
 	return reorderArgs(args, map[string]bool{
