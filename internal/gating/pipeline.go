@@ -283,8 +283,16 @@ func runSecurityStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if !util.FileExists(confPath) {
 		return "", fmt.Errorf("%s is missing: the security gate refuses to run gosec without its pinned configuration", GosecConfigFile)
 	}
-	if out, err := cfg.run(ctx, cfg.repoDir, "gosec", "-conf", GosecConfigFile, "./..."); err != nil {
-		return "", fmt.Errorf("gosec found security infractions: %s", out)
+	listing, err := cfg.run(ctx, cfg.repoDir, "go", "list", "-f", "{{.Dir}}", "./...")
+	if err != nil {
+		return "", fmt.Errorf("list Go packages for gosec: %w: %s", err, listing)
+	}
+	packages, err := resolveSecurityPackages(cfg.repoDir, listing)
+	if err != nil {
+		return "", err
+	}
+	if out, err := cfg.run(ctx, cfg.repoDir, "gosec", append([]string{"-conf", GosecConfigFile}, packages...)...); err != nil {
+		return "", fmt.Errorf("gosec found security infractions: %w: %s", err, out)
 	}
 	return "", nil
 }

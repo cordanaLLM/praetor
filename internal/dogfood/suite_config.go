@@ -129,7 +129,7 @@ func decodeSuiteField(decoder *json.Decoder, fields map[string]json.RawMessage, 
 }
 
 func suiteHasKey(names []string, key string) bool {
-	for i := 0; i < len(names) && i < 4; i++ {
+	for i := 0; i < len(names) && i < 8; i++ {
 		if names[i] == key {
 			return true
 		}

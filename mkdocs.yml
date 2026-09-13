@@ -104,6 +104,7 @@ nav:
       - Dogfood Repairs: guides/dogfood-repairs.md
       - Dogfood Scheduling: guides/dogfood-scheduling.md
       - Dogfood Suites: guides/dogfood-suites.md
+      - Capability Discovery: guides/capability-discovery.md
       - Effective Policy: guides/effective-policy.md
       - Git Hooks: guides/git-hooks.md
       - Issue Sync Integrity: guides/issue-sync-integrity.md
@@ -122,6 +123,7 @@ nav:
       - Package Development Pipeline: plans/package-development-pipeline.md
       - Upstream Contribution Workflow: plans/upstream-contribution-workflow.md
   - Research:
+      - Public Capability Discovery: research/dogfood-capability-discovery.md
       - Compact Management Data: research/compact-management-data.md
       - Go Package Reuse: research/go-package-reuse.md
       - HISS Rule Refinement: research/hiss-rule-refinement.md

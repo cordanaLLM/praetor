@@ -289,6 +289,12 @@ func isScannableExt(ext string) bool {
 	return isNativeExt(ext) || ext == ".py" || ext == ".go" || ext == ".rs"
 }
 
+// SupportsExtension reports whether the HISS scanner has a language dispatch for ext.
+// The answer is based on the same dispatch table used by Scan.
+func SupportsExtension(ext string) bool {
+	return isScannableExt(strings.ToLower(ext))
+}
+
 // scanFile reads one source file under a byte bound and dispatches it to the language
 // scanner. The path is re-confined to the root before it is opened.
 func scanFile(root, rel string, rep *ScanReport, opts ScanOptions) error {

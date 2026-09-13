@@ -1,0 +1,485 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "key": "hiss:go",
+      "title": "Go HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".go"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:rust",
+      "title": "Rust HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".rs"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:python",
+      "title": "Python HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".py"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:native",
+      "title": "Native HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".c",
+        ".cc",
+        ".cpp",
+        ".h",
+        ".hpp"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:typescript",
+      "title": "TypeScript HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".ts",
+        ".tsx",
+        ".mts"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "needs:javascript",
+      "title": "JavaScript needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "package.json"
+      ],
+      "analyzer": "typescript"
+    },
+    {
+      "key": "needs:java",
+      "title": "Java needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts"
+      ],
+      "analyzer": "java"
+    },
+    {
+      "key": "needs:dotnet",
+      "title": ".NET needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "*.csproj",
+        "*.sln"
+      ],
+      "analyzer": "dotnet"
+    },
+    {
+      "key": "needs:php",
+      "title": "PHP needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "composer.json"
+      ],
+      "analyzer": "php"
+    },
+    {
+      "key": "needs:ruby",
+      "title": "Ruby needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "Gemfile"
+      ],
+      "analyzer": "ruby"
+    },
+    {
+      "key": "needs:scala",
+      "title": "Scala needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "build.sbt"
+      ],
+      "analyzer": "scala"
+    },
+    {
+      "key": "needs:kotlin",
+      "title": "Kotlin needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "build.gradle.kts"
+      ],
+      "analyzer": "kotlin"
+    },
+    {
+      "key": "needs:swift",
+      "title": "Swift needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "Package.swift"
+      ],
+      "analyzer": "swift"
+    },
+    {
+      "key": "needs:dart",
+      "title": "Dart needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "pubspec.yaml"
+      ],
+      "analyzer": "dart"
+    },
+    {
+      "key": "needs:lua",
+      "title": "Lua needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "*.rockspec"
+      ],
+      "analyzer": "lua"
+    },
+    {
+      "key": "needs:haskell",
+      "title": "Haskell needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "*.cabal"
+      ],
+      "analyzer": "haskell"
+    },
+    {
+      "key": "needs:clojure",
+      "title": "Clojure needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "deps.edn"
+      ],
+      "analyzer": "clojure"
+    },
+    {
+      "key": "needs:elixir",
+      "title": "Elixir needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "mix.exs"
+      ],
+      "analyzer": "elixir"
+    },
+    {
+      "key": "needs:erlang",
+      "title": "Erlang needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "rebar.config"
+      ],
+      "analyzer": "erlang"
+    },
+    {
+      "key": "needs:ocaml",
+      "title": "OCaml needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "dune-project"
+      ],
+      "analyzer": "ocaml"
+    },
+    {
+      "key": "needs:zig",
+      "title": "Zig needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "build.zig"
+      ],
+      "analyzer": "zig"
+    },
+    {
+      "key": "verification:project",
+      "title": "Declared project verification plan",
+      "kind": "verification_marker",
+      "matches": [
+        "Makefile"
+      ],
+      "analyzer": "adopt"
+    },
+    {
+      "key": "verification:dotnet",
+      "title": "Declared .NET verification plan",
+      "kind": "verification_marker",
+      "matches": [
+        "*.csproj"
+      ],
+      "analyzer": "adopt"
+    },
+    {
+      "key": "hiss:javascript",
+      "title": "Javascript HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".cjs"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:java",
+      "title": "Java HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".java"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:dotnet",
+      "title": "Dotnet HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".cs",
+        ".fs"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:ruby",
+      "title": "Ruby HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".rb"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:php",
+      "title": "Php HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".php"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:scala",
+      "title": "Scala HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".scala"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:kotlin",
+      "title": "Kotlin HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".kt",
+        ".kts"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:swift",
+      "title": "Swift HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".swift"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:dart",
+      "title": "Dart HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".dart"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:lua",
+      "title": "Lua HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".lua"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:haskell",
+      "title": "Haskell HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".hs"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:clojure",
+      "title": "Clojure HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".clj",
+        ".cljs",
+        ".cljc"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:elixir",
+      "title": "Elixir HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".ex",
+        ".exs"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:erlang",
+      "title": "Erlang HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".erl"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:ocaml",
+      "title": "Ocaml HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".ml",
+        ".mli"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:zig",
+      "title": "Zig HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".zig"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:nim",
+      "title": "Nim HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".nim"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:perl",
+      "title": "Perl HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".pl",
+        ".pm"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:r",
+      "title": "R HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".r"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:vimscript",
+      "title": "Vimscript HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".vim"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "hiss:groovy",
+      "title": "Groovy HISS scanner dispatch",
+      "kind": "scanner_extension",
+      "matches": [
+        ".groovy"
+      ],
+      "analyzer": "hiss"
+    },
+    {
+      "key": "needs:go",
+      "title": "Go needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "go.mod"
+      ],
+      "analyzer": "go"
+    },
+    {
+      "key": "needs:rust",
+      "title": "Rust needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "Cargo.toml"
+      ],
+      "analyzer": "rust"
+    },
+    {
+      "key": "needs:python",
+      "title": "Python needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "pyproject.toml",
+        "requirements.txt",
+        "setup.py"
+      ],
+      "analyzer": "python"
+    },
+    {
+      "key": "needs:native",
+      "title": "Native needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "CMakeLists.txt"
+      ],
+      "analyzer": "native"
+    },
+    {
+      "key": "needs:nim",
+      "title": "Nim needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "*.nimble"
+      ],
+      "analyzer": "nim"
+    },
+    {
+      "key": "needs:perl",
+      "title": "Perl needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "cpanfile"
+      ],
+      "analyzer": "perl"
+    },
+    {
+      "key": "needs:r",
+      "title": "R needs analyzer",
+      "kind": "needs_marker",
+      "matches": [
+        "DESCRIPTION"
+      ],
+      "analyzer": "r"
+    }
+  ]
+}

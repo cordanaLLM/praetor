@@ -234,15 +234,22 @@ func TestRunSecurityStage_3D(t *testing.T) {
 	goDir := newGoModuleDir(t)
 	writeFile(t, filepath.Join(goDir, GosecConfigFile), "{\"global\":{}}\n")
 	cfg, recorded := newTestConfig(t, goDir, false)
+	cfg.run = func(ctx context.Context, dir, name string, args ...string) (string, error) {
+		*recorded = append(*recorded, recordedCommand{dir: dir, name: name, args: args})
+		if name == "go" {
+			return goDir + "\n", nil
+		}
+		return "", nil
+	}
 	if _, err := runSecurityStage(ctx, cfg); err != nil {
 		t.Fatalf("security stage failed: %v", err)
 	}
-	if len(*recorded) != 2 {
-		t.Fatalf("expected govulncheck and gosec to run, recorded %+v", *recorded)
+	if len(*recorded) != 3 {
+		t.Fatalf("expected package listing, govulncheck and gosec to run, recorded %+v", *recorded)
 	}
-	gosecArgs := strings.Join((*recorded)[1].args, " ")
-	if (*recorded)[1].name != "gosec" || gosecArgs != "-conf "+GosecConfigFile+" ./..." {
-		t.Errorf("unexpected gosec invocation: %s %s", (*recorded)[1].name, gosecArgs)
+	gosecArgs := strings.Join((*recorded)[2].args, " ")
+	if (*recorded)[2].name != "gosec" || gosecArgs != "-conf "+GosecConfigFile+" ." {
+		t.Errorf("unexpected gosec invocation: %s %s", (*recorded)[2].name, gosecArgs)
 	}
 	if strings.Contains(gosecArgs, "-exclude") {
 		t.Errorf("gosec must run with zero exclusions, got: %s", gosecArgs)

@@ -56,6 +56,12 @@ func resolveVerificationPlan(ctx context.Context, root string) (*VerificationPla
 	return plan, nil
 }
 
+// ObserveVerificationPlan exposes the bounded declarative planner to read-only
+// observers. It does not adopt files or execute project commands.
+func ObserveVerificationPlan(ctx context.Context, root string) (*VerificationPlan, error) {
+	return resolveVerificationPlan(ctx, root)
+}
+
 func (p *VerificationPlan) unavailable(reason string) {
 	p.Reasons = append(p.Reasons, reason)
 }

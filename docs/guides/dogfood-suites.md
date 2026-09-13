@@ -1,5 +1,10 @@
 # Configured dogfood and transcript replay suites
 
+Capability availability discovery has a separate bounded workflow; see the
+[capability discovery guide](capability-discovery.md). Its candidates are review
+inputs and do not change the suite’s governance or application-verification
+meaning.
+
 `praetorctl dogfood suite` runs a finite, repeatable set of pinned public adoption
 cases and explicitly selected local transcript cases. The checked-in public suite
 contains Cobra and Flask plus six representative public repositories covering Rust,

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 const (
@@ -22,19 +24,30 @@ const (
 type publicTree map[string]string
 
 type publicSnapshot struct {
-	tree    publicTree
-	dirs    []string
-	total   int64
-	entries int
+	tree     publicTree
+	dirs     []string
+	total    int64
+	entries  int
+	filtered bool
 }
 
 func snapshotPublicTree(ctx context.Context, dir string) (tree publicTree, err error) {
+	return snapshotTree(ctx, dir, false)
+}
+
+// snapshotDiscoveryTree reuses the bounded snapshot reader while excluding
+// generated/dependency/private state according to the existing scanner policy.
+func snapshotDiscoveryTree(ctx context.Context, dir string) (publicTree, error) {
+	return snapshotTree(ctx, dir, true)
+}
+
+func snapshotTree(ctx context.Context, dir string, filtered bool) (tree publicTree, err error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	snapshot := publicSnapshot{tree: make(publicTree), dirs: []string{"."}, entries: 1}
+	snapshot := publicSnapshot{tree: make(publicTree), dirs: []string{"."}, entries: 1, filtered: filtered}
 	for i := 0; i < len(snapshot.dirs) && i < maxPublicTreeEntries; i++ {
 		if err := snapshot.addDirectory(ctx, root, snapshot.dirs[i]); err != nil {
 			return nil, err
@@ -61,22 +74,39 @@ func (snapshot *publicSnapshot) addDirectory(ctx context.Context, root *os.Root,
 	snapshot.tree[filepath.ToSlash(dir)] = fmt.Sprintf("directory:%04o", info.Mode().Perm())
 	for i := 0; i < len(entries) && i < maxPublicTreeEntries; i++ {
 		rel := filepath.Join(dir, entries[i].Name())
-		if rel == ".git" {
-			continue
-		}
-		snapshot.entries++
-		if snapshot.entries > maxPublicTreeEntries {
-			return errors.New("public checkout exceeds 20000 entries")
-		}
-		if entries[i].IsDir() {
-			snapshot.dirs = append(snapshot.dirs, rel)
-			continue
-		}
-		if err := snapshot.addFile(ctx, root, rel); err != nil {
+		if err := snapshot.addEntry(ctx, root, rel, entries[i]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (snapshot *publicSnapshot) addEntry(ctx context.Context, root *os.Root, rel string, entry os.DirEntry) error {
+	if rel == ".git" {
+		return nil
+	}
+	snapshot.entries++
+	if snapshot.entries > maxPublicTreeEntries {
+		return errors.New("public checkout exceeds 20000 entries")
+	}
+	if snapshot.filtered && discoveryIgnored(rel, entry) {
+		return nil
+	}
+	if entry.IsDir() {
+		snapshot.dirs = append(snapshot.dirs, rel)
+		return nil
+	}
+	if err := snapshot.addFile(ctx, root, rel); err != nil {
+		return err
+	}
+	return nil
+}
+
+func discoveryIgnored(rel string, entry os.DirEntry) bool {
+	if entry.IsDir() {
+		return hiss.ShouldIgnoreDir(entry.Name(), rel)
+	}
+	return rel == ".standards-receipt.json" || hiss.ShouldIgnorePath(rel)
 }
 
 func (snapshot *publicSnapshot) addFile(ctx context.Context, root *os.Root, rel string) error {

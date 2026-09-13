@@ -159,7 +159,7 @@ jobs:
 
       - name: Run AST Security Scan (gosec, zero exclusions)
         if: steps.filter.outputs.run_security != 'false' || github.event_name == 'push'
-        run: gosec -conf .gosec.json ./...
+        run: python3 -B .config/lefthook/scripts/security_scope.py -- gosec -conf .gosec.json
 
       - name: Full Verification Harness Gate
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'

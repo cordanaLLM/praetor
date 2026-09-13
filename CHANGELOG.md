@@ -4,11 +4,18 @@
 
 ### Added
 
+- Configurable local and pinned-public dogfood capability discovery through shared
+  CLI and MCP adapters, bounded evidence, deduplicated review candidates, and a
+  100-repository cohort. Incomplete observations stay outside candidate ranking.
+
 - Configurable agent checkpoint cadence for reviewed commits, gated pushes and
   draft PR visibility, with a shared Lefthook check and native lifecycle adapter.
 - Draft creation support in the existing GitHub forge request contract.
 
 ### Fixed
+
+- Resolve security scan scope from actual Go packages so private dogfood corpora
+  stay outside project gates; first-party findings still fail with zero exclusions.
 
 - Repair HISS Semgrep HTTP, Python eval and Rust test-boundary matching; add pinned
   real-engine regression checks. Document remaining enforcement gaps and staged

@@ -84,6 +84,7 @@ def file_checks(directory, names):
            or name.startswith((".config/lefthook/", ".config/agent/")) for name in files):
         commands.append(["lefthook", "validate"])
         commands.append(["python3", "-B", ".config/lefthook/scripts/test_hooks.py"])
+        commands.append(["python3", "-B", ".config/lefthook/scripts/test_security_scope.py"])
         commands.append(["python3", "-B", ".config/lefthook/scripts/test_checkpoint.py"])
         if (directory / "scripts/test_checkpoint_hooks.py").exists():
             commands.append(["python3", "-B", "scripts/test_checkpoint_hooks.py"])

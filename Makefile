@@ -62,12 +62,12 @@ vuln:
 # finding is fixed or carries a per-line "#nosec Gxxx -- <reason>" justification.
 sec:
 	@if command -v gosec >/dev/null 2>&1; then \
-		gosec -conf .gosec.json ./...; \
+		python3 -B .config/lefthook/scripts/security_scope.py -- gosec -conf .gosec.json; \
 	elif [ -x "$$(go env GOPATH)/bin/gosec" ]; then \
-		"$$(go env GOPATH)/bin/gosec" -conf .gosec.json ./...; \
+		python3 -B .config/lefthook/scripts/security_scope.py -- "$$(go env GOPATH)/bin/gosec" -conf .gosec.json; \
 	else \
 		echo "gosec not found; installing..."; \
-		go install github.com/securego/gosec/v2/cmd/gosec@latest && "$$(go env GOPATH)/bin/gosec" -conf .gosec.json ./...; \
+		go install github.com/securego/gosec/v2/cmd/gosec@latest && python3 -B .config/lefthook/scripts/security_scope.py -- "$$(go env GOPATH)/bin/gosec" -conf .gosec.json; \
 	fi
 
 flavor-audit: state-init
@@ -154,6 +154,7 @@ hooks-check:
 	lefthook check-install
 
 hooks-test:
+	python3 -B .config/lefthook/scripts/test_security_scope.py
 	python3 -B .config/lefthook/scripts/test_hooks.py
 	python3 -B .config/lefthook/scripts/test_checkpoint.py
 	python3 -B scripts/test_checkpoint_hooks.py

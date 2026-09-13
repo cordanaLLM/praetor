@@ -297,6 +297,37 @@ def repair_status_checks(client, root):
             "repair terminal outcome read back without repeated execution",
             "repair status confines embedded paths and rejects dispatch arguments"]
 
+
+def discovery_checks(client, root):
+    """Exercise local capability discovery plan, observation, readback and replay."""
+    policy = {"version": 1, "rules": [{
+        "key": "hiss:typescript", "title": "TypeScript scanner",
+        "kind": "scanner_extension", "matches": [".ts"], "analyzer": "hiss"}]}
+    (root / "discovery-policy.json").write_text(json.dumps(policy))
+    (root / "app.ts").write_text("export const fixture = 1;\n")
+    args = {"path": ".", "policy_path": "discovery-policy.json", "artifact_dir": "discovery-plan"}
+    planned = json.loads(tool_text(client.call("standards_dogfood_discover", args)))
+    require(planned["status"] == "planned" and not planned["complete"] and not planned["verified"],
+            "discovery plan executed or claimed verification")
+    plan_file = root / "discovery-plan/report.json"
+    require(plan_file.is_file(), "discovery plan report was not written")
+    args.update(stage="observe", artifact_dir="discovery-observed")
+    observed = json.loads(tool_text(client.call("standards_dogfood_discover", args)))
+    require(observed["status"] == "observed" and observed["complete"] and not observed["verified"],
+            "discovery observation did not complete as unverified")
+    report = json.loads((root / "discovery-observed/report.json").read_text())
+    require(report["cases"][0]["status"] == "observed" and report["candidates"],
+            "unsupported TypeScript observation did not produce a review candidate")
+    (root / "app.ts").unlink()
+    (root / "app.go").write_text("package fixture\n")
+    args["artifact_dir"] = "discovery-replay"
+    replay = json.loads(tool_text(client.call("standards_dogfood_discover", args)))
+    replay_report = json.loads((root / "discovery-replay/report.json").read_text())
+    require(replay["status"] == "observed" and not replay_report["candidates"],
+            "changed extension replay retained a stale candidate")
+    return ["discovery plan stayed unverified and read back", "local observation retained candidate evidence",
+            "changed extension replay removed the candidate"]
+
 def audit_fixture(root):
     source = "id: framework\nname: Framework\n"
     digest = "sha256:" + hashlib.sha256(source.encode()).hexdigest()
@@ -370,6 +401,7 @@ def probe(binary, root, metadata):
             checks += transcript_checks(client, fixture)
             checks += claude_transcript_checks(client, fixture)
             checks += suite_checks(client, fixture)
+            checks += discovery_checks(client, fixture)
             checks += schedule_checks(client, fixture)
             checks += repair_status_checks(client, fixture)
     return {"passed": ["source identity", "tool discovery", "checkout symbol read"] + checks,
