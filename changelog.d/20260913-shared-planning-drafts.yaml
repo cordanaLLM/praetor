@@ -1,0 +1,4 @@
+type: added
+title: Compile bounded typed planning drafts into linked private task roadmap and milestone proposals through shared CLI and MCP services
+breaking: false
+package: planning

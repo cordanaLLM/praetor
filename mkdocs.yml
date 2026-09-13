@@ -76,6 +76,7 @@ nav:
       - C4 Architecture Models: architecture/c4-models.md
       - Shared Lifecycle Management: plans/lifecycle-management.md
       - Bidirectional Module Contracts: plans/bidirectional-contracts.md
+      - Shared Planning and Reconciliation: plans/shared-planning-and-reconciliation.md
       - Architectural Decisions (ADR):
           - Decision Lattice Index: adr/README.md
           - ADR-0001 Universal Context Transpiler: adr/0001-universal-context-transpiler.md
@@ -88,6 +89,7 @@ nav:
           - ADR-0008 Spec-Driven Provider Integration: adr/0008-spec-driven-provider-integration.md
           - ADR-0009 Structural Unification: adr/0009-structural-unification.md
   - Guides & Adoption:
+      - Detailed Planning Drafts: guides/planning-drafts.md
       - Developer Onboarding: guides/onboarding.md
       - Checkpoint Cadence: guides/checkpoint-cadence.md
       - Agent Lifecycle Coverage: guides/agent-lifecycle.md

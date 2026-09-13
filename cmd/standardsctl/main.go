@@ -20,7 +20,8 @@ func printUsage() {
 	fmt.Println("  compile-context    Transpile canonical AGENTS.md to vendor-native formats (< 300 LOC)")
 	fmt.Println("  context-optimize   Analyze explicit context files and optionally write a private review pack")
 	fmt.Println("  clients            Prepare or apply client configurations from one shared tool registry")
-	fmt.Println("  notebook           Prepare source-grounded planning templates or validate generated drafts")
+	fmt.Print("  notebook           Prepare source-grounded planning templates or validate generated drafts\n" +
+		"  planning           Compile a structural planning draft and optionally write private artifacts\n")
 	fmt.Println("  prompt-optimize    Select prompts from comparable held-out model/provider evaluations")
 	fmt.Println("  audit              Audit repository against declared HISS-16 invariants and lockfile")
 	fmt.Println("  baseline           Inspect or record technical debt infractions")
@@ -90,6 +91,7 @@ func commandTable() map[string]commandFunc {
 		"compile-context":  runCompileContext,
 		"context-optimize": runContextOptimize,
 		"notebook":         runNotebook,
+		"planning":         runPlanning,
 		"prompt-optimize":  runPromptOptimize,
 		"audit":            runAudit,
 		"baseline":         runBaseline,

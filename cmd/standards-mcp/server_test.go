@@ -241,6 +241,8 @@ func TestServer_Positive_RegistrationAndAnnotations(t *testing.T) {
 		"standards_wishes_update":           {ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: false},
 		"standards_transcript_ingest":       {ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		"standards_notebook_prepare":        {ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
+		"standards_planning_validate":       ro,
+		"standards_planning_prepare":        {ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: false, OpenWorldHint: false},
 		"standards_hindsight_optimize":      {ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: true, OpenWorldHint: false},
 	}
 	if len(srv.tools) != len(expected) || len(srv.order) != len(expected) {

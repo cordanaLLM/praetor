@@ -154,6 +154,8 @@ func (s *Server) registerStandardTools() error {
 		s.createHindsightOptimizeTool,
 		s.createTranscriptIngestTool,
 		s.createNotebookPrepareTool,
+		s.createPlanningValidateTool,
+		s.createPlanningPrepareTool,
 		s.createContextAnalyzeTool,
 		s.createDogfoodSuiteTool,
 		s.createDogfoodDiscoveryTool,

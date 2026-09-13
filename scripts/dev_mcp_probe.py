@@ -176,6 +176,75 @@ def context_checks(client, root):
             "context 64-source boundary enforced", "context 1 MiB boundary enforced"]
 
 
+def planning_probe_draft():
+    """Return one generic caller-asserted structural planning fixture."""
+    source_hash = "a" * 64
+    acceptance = {"positive": ["Valid input compiles."],
+                  "negative": ["Invalid input fails."],
+                  "boundary": ["The input byte limit is enforced."]}
+    return {"schema_version": 1, "id": "probe-draft",
+            "project": {"id": "probe-project", "title": "Probe",
+                        "repository": "cordana/probe", "revision": "fixture"},
+            "sources": [{"id": "source-1", "kind": "research",
+                         "locator": "private://probe", "revision": "v1",
+                         "sha256": source_hash, "provenance": "caller_asserted",
+                         "verified": False}],
+            "requirements": [{"id": "requirement-1", "detail": "Retain the requirement.",
+                              "disposition": "proposed", "source_refs": [{
+                                  "source_id": "source-1", "source_sha256": source_hash,
+                                  "quote": "Probe requirement."}]}],
+            "milestones": [{"id": "milestone-1", "title": "Planning probe",
+                            "outcome": "A reviewable private draft exists.",
+                            "depends_on": [], "acceptance": acceptance}],
+            "steps": [{"id": "step-1", "title": "Compile probe",
+                       "detail": "Compile and review the structural proposal.",
+                       "kind": "implementation", "status": "proposed",
+                       "requirement_ids": ["requirement-1"],
+                       "milestone_id": "milestone-1", "depends_on": [],
+                       "actions": ["Compile the draft.", "Review the outputs."],
+                       "expected_outputs": [{"id": "output-1",
+                                             "description": "Private planning pack."}],
+                       "acceptance": acceptance,
+                       "link": {"todo_id": "todo-1", "roadmap_id": "roadmap-1",
+                                "milestone_id": "milestone-1"}}]}
+
+
+def planning_checks(client, root):
+    """Compile one structural draft through both real tools and read artifacts back."""
+    draft = planning_probe_draft()
+    path = root / "planning-draft.json"
+    path.write_text(json.dumps(draft))
+    validated = json.loads(tool_text(client.call(
+        "standards_planning_validate", {"input_path": path.name})))
+    require(validated["status"] == "structurally_valid"
+            and validated["review_required"] and not validated["artifacts_written"],
+            "planning validation claimed more than structural metadata")
+    require("private://probe" not in json.dumps(validated),
+            "planning validation leaked the caller draft")
+    (root / ".workingdir").mkdir(exist_ok=True)
+    args = {"input_path": path.name, "output_dir": ".workingdir/probe-plan"}
+    prepared = json.loads(tool_text(client.call("standards_planning_prepare", args)))
+    require(prepared["digest"] == validated["digest"] and prepared["artifacts_written"],
+            "planning validate and prepare results diverged")
+    artifact_dir = root / args["output_dir"]
+    expected = {"plan.json", "TODO.md", "ROADMAP.md", "MILESTONES.md"}
+    require(set(prepared["artifacts"]) == expected
+            and all((artifact_dir / name).is_file() for name in expected),
+            "planning artifacts were not persisted")
+    require(json.loads((artifact_dir / "plan.json").read_text())["id"] == draft["id"],
+            "canonical planning JSON did not read back")
+    tool_text(client.call("standards_planning_prepare", args), error=True)
+    tool_text(client.call("standards_planning_validate",
+                          {"input_path": path.name, "mode": "apply"}), error=True)
+    tool_text(client.call("standards_planning_prepare",
+                          {"input_path": path.name, "output_dir": "public-plan"}), error=True)
+    tool_text(client.call("standards_planning_validate",
+                          {"input_path": "../outside-planning.json"}), error=True)
+    return ["planning validation stayed metadata-only and unverified",
+            "planning prepare artifacts persisted and read back",
+            "planning unsafe arguments paths and collisions rejected"]
+
+
 def suite_checks(client, root):
     folder = root / "suite-input"
     folder.mkdir()
@@ -403,6 +472,7 @@ def probe(binary, root, metadata):
                     "standards_context_analyze", "standards_dogfood_suite", "standards_dogfood_schedule_status",
                     "standards_dogfood_repair_status", "standards_wishes_status",
                     "standards_wishes_update", "standards_client_capabilities"}
+        required.update({"standards_planning_validate", "standards_planning_prepare"})
         require(required <= set(names), "required tools are absent")
         inspected = tool_text(client.call("standards_inspect_symbols",
                                          {"path": "cmd/standards-mcp/main.go"}))
@@ -413,6 +483,7 @@ def probe(binary, root, metadata):
             check_identity(client, metadata)
             checks = fixture_checks(client, fixture) + audit_checks(client, fixture)
             checks += context_checks(client, fixture)
+            checks += planning_checks(client, fixture)
             checks += failure_checks(client, fixture)
             checks += transcript_checks(client, fixture)
             checks += claude_transcript_checks(client, fixture)
