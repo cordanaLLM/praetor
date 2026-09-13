@@ -119,11 +119,13 @@ nav:
       - Fast Adoption Engine: adoption.md
       - Fleet Dogfooding: dogfooding.md
   - Plans:
+      - Infrastructure Development Environments: plans/infrastructure-development-environments.md
       - Bidirectional Module Contracts: plans/bidirectional-contracts.md
       - Lifecycle Management: plans/lifecycle-management.md
       - Package Development Pipeline: plans/package-development-pipeline.md
       - Upstream Contribution Workflow: plans/upstream-contribution-workflow.md
   - Research:
+      - Infrastructure Sandboxes: research/infrastructure-sandboxes.md
       - Public Capability Discovery: research/dogfood-capability-discovery.md
       - Compact Management Data: research/compact-management-data.md
       - Go Package Reuse: research/go-package-reuse.md

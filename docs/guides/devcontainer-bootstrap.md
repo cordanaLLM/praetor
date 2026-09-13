@@ -81,3 +81,13 @@ Runtime/profile selection is sourced from the selected pinned catalog entries.
 Only the selected profile and facets contribute DevContainer features; duplicate
 references must agree on options. This does not establish IDE feature-installation
 or application-tool execution proof.
+
+## Infrastructure test environments
+
+The current GitOps profile selects tool features; it does not provision a
+Kubernetes cluster, Ansible target, or VM. Keep editor tooling and task execution
+requirements distinct. The [infrastructure environment plan](../plans/infrastructure-development-environments.md)
+extends the matrix with configurable container, cluster and guest requirements,
+backend admission and cleanup evidence. The [sandbox comparison](../research/infrastructure-sandboxes.md)
+explains where Firecracker and other VM backends fit. These runtime adapters are
+planned, and are not enabled by generating a DevContainer.
