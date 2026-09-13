@@ -1,4 +1,5 @@
 # Compatible with Lefthook 2.1.12. One stdin consumer per hook is intentional.
+source_dir: .config/lefthook
 agent-pre-tool:
   commands:
     command-policy:
@@ -34,10 +35,12 @@ commit-msg:
     message-policy:
       run: python3 .config/lefthook/scripts/hooks.py commit-msg "{1}"
 pre-push:
-  commands:
-    pushed-checks:
+  # Script jobs consume the actual ref protocol even when Lefthook's HEAD-based
+  # push-file estimate is empty (for example, add-then-delete history).
+  scripts:
+    pushed-checks.sh:
       use_stdin: true
-      run: python3 .config/lefthook/scripts/hooks.py pre-push "{1}"
+      runner: sh
 post-commit:
   commands:
     cadence:

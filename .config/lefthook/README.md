@@ -1,8 +1,10 @@
 # Canonical hook policy
 
 `praetor.yml` is consumed through `extends` by Praetor itself. Keep the policy and
-`scripts/` together: the YAML entry points intentionally use stable repository
-paths. See [the hook guide](../../docs/guides/git-hooks.md) for behavior and tools.
+`scripts/` and `pre-push/` together: the YAML entry points intentionally use stable
+repository paths. The pre-push script job preserves checks when Lefthook's final
+file diff is empty. See [the hook guide](../../docs/guides/git-hooks.md) for behavior
+and tools.
 
 An adopter can vendor this directory and
 `.config/agent/hooks/` from the same reviewed Praetor commit, then

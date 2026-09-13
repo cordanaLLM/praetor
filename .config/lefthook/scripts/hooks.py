@@ -76,15 +76,17 @@ def push_updates(text):
 
 
 def new_branch_base(head, remote, include_checkpoints=False):
-    """Use a known remote ancestor; without one, conservatively check the full tree."""
+    """Prefer the known remote default ancestor; otherwise check known refs or all history."""
     prefix = f"refs/remotes/{remote}/"
-    candidates = git("for-each-ref", "--format=%(refname) %(objectname)", prefix).decode().splitlines()
-    for candidate in candidates:
-        ref, oid = candidate.split()
+    records = git("for-each-ref", "--format=%(refname) %(objectname) %(symref)", prefix).decode().splitlines()
+    candidates = [record.split() for record in records]
+    default = next((row[2] for row in candidates if len(row) == 3 and row[0] == prefix + "HEAD"), None)
+    candidates.sort(key=lambda row: row[0] != default)
+    for ref, oid, *symbolic in candidates:
         # A WIP checkpoint has never satisfied the strict gates. It cannot be a
-        # trusted baseline for publishing a new strict branch or tag. Ignore the
-        # symbolic remote HEAD too; its target may be a checkpoint branch.
-        if ref == prefix + "HEAD" or (not include_checkpoints and ref.startswith(prefix + "checkpoint/")):
+        # trusted baseline for publishing a new strict branch or tag. Resolve
+        # HEAD to its actual candidate; symbolic aliases cannot hide checkpoints.
+        if symbolic or ref == prefix + "HEAD" or (not include_checkpoints and ref.startswith(prefix + "checkpoint/")):
             continue
         result = run(["git", "merge-base", "--all", head, oid], allowed=(0, 1))
         bases = result.decode().splitlines()

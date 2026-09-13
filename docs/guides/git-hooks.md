@@ -77,9 +77,15 @@ point at the same commit. No environment flag disables a gate.
 Pre-push consumes Git's ref protocol once and checks disposable clones of those
 commit IDs. It handles multiple refs, new branches, tag targets, deletions and
 pushes that do not use the current checkout. An existing branch uses the remote
-OID supplied by Git; a new branch uses a known remote ancestor, falling back to a
-full-tree check when none is available. An unavailable remote object selects a conservative full-tree check. Empty input and ref deletions
-have no new content to validate.
+OID supplied by Git; a new branch first uses the known remote default branch's
+ancestor, then other eligible remote ancestors. Strict pushes exclude checkpoint
+baselines. Missing ancestry or an unavailable remote object selects a
+conservative full-tree check. Empty input and ref deletions have no new content
+to validate.
+
+The stdin-consuming pre-push entry is a Lefthook script job. It runs even when
+Lefthook estimates an empty final file diff, so intermediate commits that add
+and then remove private content still reach the history check.
 
 Go scope includes changed packages, test-only reverse dependencies, testdata and
 embedded inputs of any extension. Module/build/security configuration selects all

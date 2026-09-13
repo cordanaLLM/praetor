@@ -158,7 +158,7 @@ class GitHooks(unittest.TestCase):
                 self.assertIn(b"Private .workingdir content must stay untracked", result.stdout + result.stderr)
                 self.assertEqual(command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip(), head)
 
-    def incoming_private_history(self, legacy=False, gitlink=False):
+    def incoming_private_history(self, legacy=False, gitlink=False, old_topic=False):
         # Simulate commits received from a plain repository that never installed
         # Praetor hooks. The receiving fixture keeps all real hooks enabled.
         external = Path(self.temp.name) / "external"
@@ -167,6 +167,11 @@ class GitHooks(unittest.TestCase):
         command(external, "git", "init", "-q", "-b", "main")
         command(external, "git", "config", "user.name", "External Fixture")
         command(external, "git", "config", "user.email", "external@example.test")
+        if old_topic:
+            (external / "README.md").write_text("# Earlier public baseline\n")
+            command(external, "git", "add", ".")
+            command(external, "git", "commit", "-q", "-s", "-m", "docs: earlier baseline")
+            command(external, "git", "branch", "feat/old-topic")
         (external / "README.md").write_text("# External fixture\n")
         if legacy:
             (external / ".workingdir").mkdir()
@@ -177,6 +182,8 @@ class GitHooks(unittest.TestCase):
         command(external, "git", "init", "--bare", "-q", str(remote))
         command(external, "git", "remote", "add", "origin", str(remote))
         command(external, "git", "push", "-q", "origin", "main")
+        if old_topic:
+            command(external, "git", "push", "-q", "origin", "feat/old-topic")
         if not legacy:
             if gitlink:
                 command(external, "git", "update-index", "--add", "--cacheinfo", f"160000,{base},.workingdir")
@@ -190,8 +197,35 @@ class GitHooks(unittest.TestCase):
         head = command(external, "git", "rev-parse", "HEAD").stdout.decode().strip()
         command(self.repo, "git", "remote", "add", "origin", str(remote))
         command(self.repo, "git", "fetch", "-q", "origin")
+        if old_topic:
+            command(self.repo, "git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
         command(self.repo, "git", "fetch", "-q", str(external), "main")
         return remote, base, head
+
+    def test_new_branch_push_prefers_remote_default_over_older_topic_for_private_removal(self):
+        remote, base, head = self.incoming_private_history(legacy=True, old_topic=True)
+        result = command(self.repo, "git", "push", "origin", f"{head}:refs/heads/review/removal")
+        self.assertIn(b"pushed-checks", result.stdout + result.stderr)
+        self.assertEqual(command(remote, "git", "rev-parse", "refs/heads/review/removal").stdout.decode().strip(), head)
+        self.assertEqual(command(remote, "git", "rev-parse", "refs/heads/main").stdout.decode().strip(), base)
+        self.assertEqual(command(remote, "git", "ls-tree", "-r", "--name-only", head, "--", ".workingdir").stdout, b"")
+
+    def test_new_branch_default_baseline_rejects_new_private_add_then_delete(self):
+        remote, base, head = self.incoming_private_history(old_topic=True)
+        result = command(self.repo, "git", "push", "origin", f"{head}:refs/heads/review/private", ok=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(b"Private .workingdir content must stay untracked", result.stdout + result.stderr)
+        self.assertNotIn(b"PRIVATE_HISTORY_SENTINEL", result.stdout + result.stderr)
+        self.assertEqual(command(remote, "git", "for-each-ref", "refs/heads/review/private").stdout, b"")
+        self.assertEqual(command(remote, "git", "rev-parse", "refs/heads/main").stdout.decode().strip(), base)
+
+    def test_missing_vendored_push_script_rejects_actual_push(self):
+        remote, _, head = self.incoming_private_history(legacy=True, old_topic=True)
+        (self.repo / ".config/lefthook/pre-push/pushed-checks.sh").unlink()
+        result = command(self.repo, "git", "push", "origin", f"{head}:refs/heads/review/removal", ok=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(b"script does not exist", result.stdout + result.stderr)
+        self.assertEqual(command(remote, "git", "for-each-ref", "refs/heads/review/removal").stdout, b"")
 
     def test_real_push_rejects_private_add_then_delete_in_requested_history(self):
         remote, base, head = self.incoming_private_history()
@@ -636,7 +670,8 @@ class ScopeAndGuard(unittest.TestCase):
             self.assertEqual(process.call_count, 2)
 
     def test_new_strict_branch_ignores_checkpoint_and_symbolic_head_baselines(self):
-        refs = (b"refs/remotes/origin/HEAD checkpoint\n"
+        refs = (b"refs/remotes/origin/HEAD checkpoint refs/remotes/origin/checkpoint/wip\n"
+                b"refs/remotes/origin/alias checkpoint refs/remotes/origin/checkpoint/wip\n"
                 b"refs/remotes/origin/checkpoint/wip checkpoint\n"
                 b"refs/remotes/origin/main strict\n")
         with mock.patch("hooks.git", return_value=refs), \
@@ -647,6 +682,19 @@ class ScopeAndGuard(unittest.TestCase):
                 mock.patch("hooks.run", return_value=b"base\n") as process:
             self.assertEqual(new_branch_base("head", "origin", include_checkpoints=True), "base")
             self.assertEqual(process.call_args.args[0][-1], "checkpoint")
+
+    def test_new_branch_prefers_named_default_and_preserves_ancestry_failures(self):
+        refs = (b"refs/remotes/origin/HEAD current refs/remotes/origin/trunk\n"
+                b"refs/remotes/origin/main old\nrefs/remotes/origin/trunk current\n")
+        with mock.patch("hooks.git", return_value=refs), \
+                mock.patch("hooks.run", return_value=b"base\n") as process:
+            self.assertEqual(new_branch_base("head", "origin"), "base")
+            self.assertEqual(process.call_args.args[0][-1], "current")
+        with mock.patch("hooks.git", return_value=refs), \
+                mock.patch("hooks.run", side_effect=HookError("missing ancestry")) as process:
+            with self.assertRaisesRegex(HookError, "missing ancestry"):
+                new_branch_base("head", "origin")
+            self.assertEqual(process.call_count, 1)
 
     def test_push_protocol_boundaries(self):
         self.assertEqual(push_updates(""), [])

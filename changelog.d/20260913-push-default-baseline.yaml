@@ -1,0 +1,3 @@
+type: fixed
+title: Prefer the remote default branch for new push baselines and inspect private history even when the final diff is empty
+breaking: false
