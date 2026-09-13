@@ -2,6 +2,17 @@
 
 `praetorctl clients` projects an explicit server registry into client settings.
 
+The [IDE-driven agent setup goal](../plans/ide-agent-setup.md) extends this shared
+service to complete wrapper installation, native activation and ongoing
+enforcement checks for every selected coding agent. The current setup entry
+point covers MCP configuration; those later stages remain explicit work.
+
+Use `praetorctl clients capabilities` or the read-only MCP tool
+`standards_client_capabilities` for the current versioned adapter inventory.
+It reports projection mode, documented destination and lifecycle definition
+coverage. `runtime_verified: false` and `activation: unverified` mean that the
+inventory has not inspected or activated any native client session.
+
 For gateway endpoints, credential-file references, logical provider selectors and
 repository memory binding, start with [connection profiles](client-connections.md).
 The same registry can be supplied from a workstation directory, container mount,

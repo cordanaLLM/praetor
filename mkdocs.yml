@@ -125,8 +125,10 @@ nav:
       - Lifecycle Management: plans/lifecycle-management.md
       - Package Development Pipeline: plans/package-development-pipeline.md
       - Wish Platform Integration: plans/wish-platform-integration.md
+      - IDE Agent Setup: plans/ide-agent-setup.md
       - Upstream Contribution Workflow: plans/upstream-contribution-workflow.md
   - Research:
+      - IDE Agent Bootstrap: research/ide-agent-bootstrap.md
       - Wish Voting Platforms: research/wish-voting-platforms.md
       - Infrastructure Sandboxes: research/infrastructure-sandboxes.md
       - Public Capability Discovery: research/dogfood-capability-discovery.md

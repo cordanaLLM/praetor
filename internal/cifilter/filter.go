@@ -295,12 +295,15 @@ func isTest(p string) bool {
 
 func isConfig(p string) bool {
 	base := filepath.Base(p)
-	return strings.HasPrefix(p, ".github/") ||
+	if strings.HasPrefix(p, ".github/") ||
 		strings.HasSuffix(p, ".yaml") ||
 		strings.HasSuffix(p, ".yml") ||
 		slices.Contains([]string{
-			"makefile", "lefthook.yml", "go.mod", "go.sum", "cargo.toml", "cargo.lock", "package.json", "pnpm-lock.yaml", "pom.xml",
-		}, strings.ToLower(base))
+			"makefile", "lefthook.yml", "go.mod", "go.sum", "cargo.toml", "cargo.lock", "package.json", "package-lock.json", "pnpm-lock.yaml", "pom.xml",
+		}, strings.ToLower(base)) {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(base), "tsconfig") && strings.HasSuffix(strings.ToLower(base), ".json")
 }
 
 func isAgent(p string) bool {

@@ -42,8 +42,10 @@ type Options struct {
 	BinaryDir     string   `json:"binary_dir"`
 	Archetype     string   `json:"archetype"`
 	Editors       []string `json:"editors"`
-	IncludeMCP    bool     `json:"include_mcp"`
-	IncludeLSP    bool     `json:"include_lsp"`
+	// IncludeMCP is retained for input compatibility; MCP setup belongs to the
+	// client setup pipeline and is never asserted by workspace settings.
+	IncludeMCP bool `json:"include_mcp"`
+	IncludeLSP bool `json:"include_lsp"`
 }
 
 // GeneratedFile holds relative path and payload of a synthesized configuration file.
@@ -126,7 +128,7 @@ func dispatchEditorFiles(editorMap map[string]bool, opts Options, binDir, arch s
 		files = append(files, generateUniversalEditorConfig()...)
 	}
 	if editorMap[EditorVSCode] || editorMap[EditorCursor] || editorMap[EditorWindsurf] {
-		files = append(files, generateVSCodeFamily(binDir, opts.IncludeMCP, opts.IncludeLSP, arch)...)
+		files = append(files, generateVSCodeFamily(binDir, opts.IncludeLSP, arch)...)
 	}
 	for _, generator := range []struct {
 		editor   string
@@ -187,8 +189,8 @@ func normalizeEditors(input []string) []string {
 	return normalized
 }
 
-func generateVSCodeFamily(binDir string, includeMCP, includeLSP bool, arch string) []GeneratedFile {
-	settings := buildVSCodeSettings(binDir, includeMCP, includeLSP, arch)
+func generateVSCodeFamily(binDir string, includeLSP bool, arch string) []GeneratedFile {
+	settings := buildVSCodeSettings(binDir, includeLSP, arch)
 	extensions := buildVSCodeExtensions(arch)
 	tasks := buildVSCodeTasks()
 
@@ -211,15 +213,12 @@ func generateVSCodeFamily(binDir string, includeMCP, includeLSP bool, arch strin
 	}
 }
 
-func buildVSCodeSettings(binDir string, includeMCP, includeLSP bool, arch string) string {
+func buildVSCodeSettings(binDir string, includeLSP bool, arch string) string {
 	data := map[string]any{
 		"standards.lsp.enabled":         includeLSP,
 		"standards.lsp.path":            fmt.Sprintf("${workspaceFolder}/%s/standards-lsp", binDir),
 		"standards.lsp.trace.server":    "messages",
-		"standards.mcp.enabled":         includeMCP,
-		"standards.mcp.path":            fmt.Sprintf("${workspaceFolder}/%s/standards-mcp", binDir),
 		"standards.sentinel.headroomMB": 1024,
-		"standards.modelTier":           "gemini-2.5-pro",
 	}
 
 	if arch == "native-gpu-systems" {

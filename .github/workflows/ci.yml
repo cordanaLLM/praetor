@@ -49,6 +49,14 @@ jobs:
           fi
           go run ./cmd/standardsctl ci filter --base="$BASE_REF" --head=HEAD --env
 
+      - name: Setup Node Toolchain
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
       - name: Install Security Toolchains (govulncheck & gosec)
         if: steps.filter.outputs.run_security != 'false' || github.event_name == 'push'
         run: |

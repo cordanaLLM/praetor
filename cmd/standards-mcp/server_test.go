@@ -236,6 +236,7 @@ func TestServer_Positive_RegistrationAndAnnotations(t *testing.T) {
 		"standards_memory_recall":           ro,
 		"standards_context_analyze":         ro,
 		"standards_wishes_status":           ro,
+		"standards_client_capabilities":     ro,
 		"standards_wishes_update":           {ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: false},
 		"standards_transcript_ingest":       {ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		"standards_notebook_prepare":        {ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},

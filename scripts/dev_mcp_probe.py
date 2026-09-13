@@ -67,6 +67,20 @@ def failure_checks(client, root):
     return ["unknown tool rejected", "corrupt cache rejected", "malformed lock rejected"]
 
 
+def client_capability_checks(client):
+    report = json.loads(tool_text(client.call("standards_client_capabilities", {})))
+    require(report["schema_version"] == 1 and report["runtime_verified"] is False,
+            "client inventory claimed runtime activation")
+    clients = report["clients"]
+    names = [entry["client"] for entry in clients]
+    require(names == sorted(set(names)) and 0 < len(names) <= 64,
+            "client inventory is empty, duplicated, unsorted or unbounded")
+    require(all(entry["lifecycle"]["activation"] == "unverified" for entry in clients),
+            "client definitions claimed native lifecycle activation")
+    tool_text(client.call("standards_client_capabilities", {"install": True}), error=True)
+    return ["shared client capabilities distinguish definitions from activation"]
+
+
 def transcript_checks(client, root):
     event = {"step_index": 1, "source": "MODEL", "type": "MESSAGE", "status": "DONE",
              "created_at": "2026-09-12T12:00:00Z", "content": "fixture observed event",
@@ -388,7 +402,7 @@ def probe(binary, root, metadata):
                     "standards_memory_recall", "standards_audit", "standards_transcript_ingest",
                     "standards_context_analyze", "standards_dogfood_suite", "standards_dogfood_schedule_status",
                     "standards_dogfood_repair_status", "standards_wishes_status",
-                    "standards_wishes_update"}
+                    "standards_wishes_update", "standards_client_capabilities"}
         require(required <= set(names), "required tools are absent")
         inspected = tool_text(client.call("standards_inspect_symbols",
                                          {"path": "cmd/standards-mcp/main.go"}))
@@ -407,5 +421,6 @@ def probe(binary, root, metadata):
             checks += schedule_checks(client, fixture)
             checks += repair_status_checks(client, fixture)
             checks += wish_checks(client, fixture, tool_text, require)
+            checks += client_capability_checks(client)
     return {"passed": ["source identity", "tool discovery", "checkout symbol read"] + checks,
             "tools": names, "mutations": "temporary fixtures only"}

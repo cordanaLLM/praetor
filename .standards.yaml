@@ -35,6 +35,7 @@ facets:
   - "api:public-contract"
   - "docs:seo-portal"
   - "agent:sandboxed"
+  - "tooling:vscode-extension"
 
 # Overrides (strictness can only be increased, never reduced)
 overrides:

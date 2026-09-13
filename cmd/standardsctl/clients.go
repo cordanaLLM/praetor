@@ -23,13 +23,14 @@ func runClients(args []string) error {
 	commands := map[string]func([]string) error{
 		"connect": prepareConnections, "bind-memory": bindClientMemory,
 		"apply": applyClientConfig, "prepare": prepareClientConfig,
+		"capabilities": reportClientCapabilities,
 	}
 	if len(args) > 0 {
 		if command, ok := commands[args[0]]; ok {
 			return command(args[1:])
 		}
 	}
-	return errors.New("usage: praetorctl clients <connect|prepare|apply|bind-memory> [options]")
+	return errors.New("usage: praetorctl clients <connect|prepare|apply|bind-memory|capabilities> [options]")
 }
 
 func prepareClientConfig(args []string) error {

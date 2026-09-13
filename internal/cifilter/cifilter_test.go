@@ -226,3 +226,19 @@ func TestAnalyzeChanges_FallbackOnInvalidDir(t *testing.T) {
 		t.Errorf("expected fail-safe execution (all true) on git diff error")
 	}
 }
+
+func TestConfigClassificationCoversEditorLockAndTypeScriptConfigs(t *testing.T) {
+	for _, path := range []string{"package-lock.json", "tsconfig.json", "tsconfig.editor.json", "TSConfig.custom.JSON"} {
+		decision := cifilter.MakeDecision(cifilter.ClassifyChanges([]string{path}), false)
+		if !decision.RunTests || !decision.RunLinters || !decision.RunSecurity {
+			t.Fatalf("%s did not select editor/config validation: %+v", path, decision)
+		}
+	}
+}
+
+func TestDocsOnlyStillSkipsHeavyGates(t *testing.T) {
+	decision := cifilter.MakeDecision(cifilter.ClassifyChanges([]string{"docs/editor.md"}), false)
+	if decision.RunTests || !decision.RunAudit || !decision.SkipHeavyGates || !decision.RunDocsOnly {
+		t.Fatalf("documentation change changed policy: %+v", decision)
+	}
+}

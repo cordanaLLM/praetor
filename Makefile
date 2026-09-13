@@ -1,4 +1,4 @@
-.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec flavor-audit state-audit dedupe topology-audit verify-all clean hooks setup
+.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec flavor-audit state-audit dedupe topology-audit vscode-test verify-all clean hooks setup
 
 BIN_DIR := bin
 PRAETORCTL := $(BIN_DIR)/praetorctl
@@ -86,8 +86,13 @@ dedupe:
 topology-audit:
 	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
 
-verify-all: semgrep-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test mcp-probe compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: semgrep-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
+
+.PHONY: vscode-test
+vscode-test:
+	npm ci --prefix editors/vscode --ignore-scripts
+	npm test --prefix editors/vscode
 
 .PHONY: semgrep-test
 semgrep-test:
