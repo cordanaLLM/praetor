@@ -55,8 +55,10 @@ func printNeedsUsage() {
 	fmt.Println("  report [--path=.]                   Evaluate compatibility and replacement matrix against Golusoris")
 	fmt.Println("  aggregate [--dev-dir=...] [--output=...] Aggregate fleet-wide demand and output gap report")
 	fmt.Println("  requests [--dev-dir=...] [--output-dir=...] Synthesize and emit deduplicated Framework Demand Requests")
-	fmt.Println("  epic [--path=.] [--dev-dir=...] [--framework=...] [--output=...] Generate pre-migration hardening epic")
-	fmt.Println("  migrate [--path=.] [--dry-run|--apply]  Automated import and dependency rewrite to Golusoris")
+	fmt.Println("  epic [--path=.] [--dev-dir=...] [--framework=...] [--output=...] [--dry-run] Generate pre-migration hardening epic")
+	fmt.Println("       [--publish --owner=... --repo=... --yes]  Publish one repository's epic to an explicit forge target")
+	fmt.Println("       Fleet mode previews writes by default; pass --dry-run=false to write the listed files")
+	fmt.Println("  migrate [--path=.] [--apply]        Automated import and dependency rewrite to Golusoris (dry run unless --apply)")
 }
 
 func runNeedsScan(ctx context.Context, args []string) error {
@@ -78,17 +80,11 @@ func runNeedsScan(ctx context.Context, args []string) error {
 
 	fmt.Printf("=== Framework Needs Scan: %s ===\n", report.Repository)
 	fmt.Printf("Go Version: %s | Target Framework: %s\n", report.GoVersion, report.Framework)
-	fmt.Printf("Readiness Score: %.1f%% (%d covered, %d gaps, %d total third-party)\n\n",
+	fmt.Printf("Mapping availability: %.1f%% (%d covered, %d gaps, %d total third-party)\n\n",
 		report.Readiness.Score, report.Readiness.CoveredDeps, report.Readiness.GapDeps, report.Readiness.TotalThirdPartyDeps)
+	fmt.Printf("Coverage basis: %s; builds and tests not run\n\n", report.Readiness.Basis)
 
-	for _, dep := range report.Dependencies {
-		statusIndicator := "[COVERED]"
-		if dep.Status == needs.StatusGap {
-			statusIndicator = "[GAP]    "
-		}
-		fmt.Printf("  %s %-36s -> %-18s (replacement: %s)\n",
-			statusIndicator, dep.Package, dep.Capability, dep.GolusorisReplacement)
-	}
+	fmt.Print(needs.FormatLibraryRelationships(report))
 
 	if *writeManifest {
 		if err := needs.WriteNeedsManifest(*path, report); err != nil {
@@ -102,7 +98,7 @@ func runNeedsScan(ctx context.Context, args []string) error {
 func runNeedsReport(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs report", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
-	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Target framework repository path")
+	framework := fs.String("framework", defaultFrameworkDir(), "Target framework repository path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -116,32 +112,23 @@ func runNeedsReport(ctx context.Context, args []string) error {
 		return fmt.Errorf("failed to inspect framework: %w", err)
 	}
 
-	rep, err := needs.ScanRepo(ctx, *path)
+	rep, err := needs.ScanRepoWithFramework(ctx, *path, fwIndex)
 	if err != nil {
 		return fmt.Errorf("failed to scan repository: %w", err)
 	}
 
 	fmt.Printf("=== Golusoris Migration Report: %s ===\n", rep.Repository)
-	fmt.Printf("Framework: %s (%s) | Readiness Score: %.1f%%\n\n", fwIndex.Name, fwIndex.Version, rep.Readiness.Score)
+	fmt.Printf("Framework: %s (%s) | Mapping availability: %.1f%%\n\n", fwIndex.Name, fwIndex.Version, rep.Readiness.Score)
+	fmt.Printf("Coverage basis: %s; builds and tests not run\n\n", fwIndex.Basis)
 
-	fmt.Println("Drop-In Replacement Matrix:")
-	for _, dep := range rep.Dependencies {
-		if dep.Status == needs.StatusCovered || dep.Status == needs.StatusAdapterAvailable {
-			fmt.Printf("  ✓ %-35s -> %s\n", dep.Package, dep.GolusorisReplacement)
-			if dep.Notes != "" {
-				fmt.Printf("    Note: %s\n", dep.Notes)
-			}
-		} else {
-			fmt.Printf("  ✗ %-35s -> NO DIRECT EQUIVALENT (Gap)\n", dep.Package)
-		}
-	}
+	fmt.Print(needs.FormatLibraryRelationships(rep))
 	return nil
 }
 
 func runNeedsAggregate(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs aggregate", flag.ContinueOnError)
-	devDir := fs.String("dev-dir", "/home/kilian/dev", "Fleet dev root directory")
-	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Framework repository path")
+	devDir := fs.String("dev-dir", defaultDevDir(), "Fleet dev root directory")
+	framework := fs.String("framework", defaultFrameworkDir(), "Framework repository path")
 	outputFile := fs.String("output", "", "Optional file path to write markdown report")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -154,7 +141,7 @@ func runNeedsAggregate(ctx context.Context, args []string) error {
 
 	md := needs.RenderFrameworkDemandMarkdown(report)
 	if *outputFile != "" {
-		if err := os.WriteFile(*outputFile, []byte(md), 0644); err != nil {
+		if err := util.WriteFileSecure(*outputFile, []byte(md), 0o644); err != nil {
 			return fmt.Errorf("failed to write output markdown: %w", err)
 		}
 		fmt.Printf("[PASS] Framework demand report written to %s\n", *outputFile)
@@ -167,10 +154,15 @@ func runNeedsAggregate(ctx context.Context, args []string) error {
 func runNeedsMigrate(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs migrate", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
-	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Framework repository path")
+	framework := fs.String("framework", defaultFrameworkDir(), "Framework repository path")
 	dryRun := fs.Bool("dry-run", true, "Preview migration without mutating files")
-	apply := fs.Bool("apply", false, "Apply migration changes and create branch")
+	apply := fs.Bool("apply", false, "Request application (blocked until module-version/API evidence is validated)")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	applyNow, err := resolveMigrationMode(fs, *apply, *dryRun)
+	if err != nil {
 		return err
 	}
 
@@ -183,32 +175,72 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 		return fmt.Errorf("failed to plan migration: %w", err)
 	}
 
-	fmt.Printf("=== Migration Plan: %s -> %s ===\n", plan.Repository, plan.Framework)
-	fmt.Printf("Added:   %s\n", strings.Join(plan.AddedRequires, ", "))
-	fmt.Printf("Dropped: %s\n", strings.Join(plan.DroppedRequires, ", "))
-	fmt.Printf("File import replacements: %d\n", len(plan.Replacements))
+	printMigrationCandidate(plan)
 
+	if !applyNow {
+		fmt.Println("\n[INFO] Dry-run complete. Application is blocked pending verified module version and API compatibility evidence.")
+		return nil
+	}
+
+	res, err := needs.ApplyMigration(ctx, *path, plan)
+	if err != nil {
+		return fmt.Errorf("failed to apply migration: %w", err)
+	}
+	if !res.Success {
+		return fmt.Errorf("migration did not complete: %s", res.Error)
+	}
+	for _, warning := range res.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
+	}
+	fmt.Printf("\n[PASS] Migration applied on branch %s (%d files changed).\n", res.Branch, len(res.FilesChanged))
+	fmt.Printf("[PASS] Migration guide generated at %s/MIGRATION.md\n", *path)
+	return nil
+}
+
+func printMigrationCandidate(plan *needs.MigrationPlan) {
+	fmt.Printf("=== Migration Candidate: %s -> %s ===\n", plan.Repository, plan.Framework)
+	fmt.Printf("Status: %s | Framework version: %s\n", plan.Status, plan.FrameworkVersion)
+	fmt.Printf("Mapping availability: %.1f%% | Coverage basis: %s; builds and tests not run\n", plan.MappingAvailability, plan.CoverageBasis)
+	for _, blocker := range plan.Blockers {
+		fmt.Printf("Blocker: %s\n", blocker)
+	}
+	fmt.Printf("Added:   %s\n", strings.Join(plan.AddedRequires, ", "))
+	fmt.Printf("Proposed removals: %s\n", strings.Join(plan.DroppedRequires, ", "))
+	fmt.Printf("Proposed file import replacements: %d\n", len(plan.Replacements))
 	for _, r := range plan.Replacements {
 		fmt.Printf("  - %s: %s -> %s\n", util.CleanGitURL(r.File), r.OldImport, r.NewImport)
 	}
+}
 
-	if *apply && !*dryRun {
-		res, err := needs.ApplyMigration(ctx, *path, plan)
-		if err != nil {
-			return fmt.Errorf("failed to apply migration: %w", err)
-		}
-		fmt.Printf("\n[PASS] Migration applied on branch %s (%d files changed).\n", res.Branch, len(res.FilesChanged))
-		fmt.Printf("[PASS] Migration guide generated at %s/MIGRATION.md\n", *path)
-	} else {
-		fmt.Println("\n[INFO] Dry-run complete. Pass --apply --dry-run=false to execute migration.")
+// resolveMigrationMode decides whether the migration is executed. --apply implies
+// --dry-run=false, so `needs migrate --apply` does what its usage line advertises;
+// combining --apply with an explicit --dry-run=true is a contradiction and is rejected
+// rather than silently resolved into a no-op.
+func resolveMigrationMode(fs *flag.FlagSet, apply, dryRun bool) (bool, error) {
+	if !apply {
+		return false, nil
 	}
-	return nil
+	if dryRun && flagWasSet(fs, "dry-run") {
+		return false, fmt.Errorf("--apply conflicts with --dry-run=true: pass --apply alone to execute the migration")
+	}
+	return true, nil
+}
+
+// flagWasSet reports whether name was given on the command line rather than defaulted.
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	return set
 }
 
 func runNeedsRequests(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs requests", flag.ContinueOnError)
-	devDir := fs.String("dev-dir", "/home/kilian/dev", "Fleet dev root directory")
-	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Framework repository path")
+	devDir := fs.String("dev-dir", defaultDevDir(), "Fleet dev root directory")
+	framework := fs.String("framework", defaultFrameworkDir(), "Framework repository path")
 	outputDir := fs.String("output-dir", "", "Optional output directory to write demand requests")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -228,7 +260,7 @@ func runNeedsRequests(ctx context.Context, args []string) error {
 	}
 
 	if *outputDir != "" {
-		if err := needs.EmitDemandRequests(requests, *outputDir); err != nil {
+		if err := needs.EmitDemandRequests(ctx, requests, *outputDir); err != nil {
 			return fmt.Errorf("failed to emit demand requests: %w", err)
 		}
 		fmt.Printf("[PASS] Emitted %d demand requests and FRAMEWORK_DEMAND.yaml to %s\n", len(requests), *outputDir)
@@ -236,80 +268,129 @@ func runNeedsRequests(ctx context.Context, args []string) error {
 	return nil
 }
 
+// epicFlags carries the parsed `needs epic` command line.
+type epicFlags struct {
+	path      string
+	devDir    string
+	framework string
+	output    string
+	publish   bool
+	token     string
+	endpoint  string
+	owner     string
+	repo      string
+	assumeYes bool
+	dryRun    bool
+}
+
 func runNeedsEpic(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("needs epic", flag.ContinueOnError)
-	path := fs.String("path", ".", "Target repository path")
-	devDir := fs.String("dev-dir", "", "Run fleet-wide epic generation across all repositories in directory")
-	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Target framework repository path")
-	output := fs.String("output", "", "Optional markdown file path to write pre-migration epic")
-	publish := fs.Bool("publish", false, "Publish pre-migration parent epic and child tasks to remote forge")
-	token := fs.String("token", "", "Forge API token (default: GITHUB_TOKEN or gh auth token)")
-	endpoint := fs.String("endpoint", "", "Forge API endpoint (default: https://api.github.com)")
-	if err := fs.Parse(args); err != nil {
+	f, err := parseEpicFlags(args)
+	if err != nil {
 		return err
 	}
 
-	if *devDir != "" {
-		return runFleetNeedsEpic(ctx, *devDir, *framework, *publish, *token, *endpoint)
+	if f.devDir != "" {
+		if f.publish {
+			return fmt.Errorf("--publish is not supported together with --dev-dir: a fleet epic carries only the repository name, " +
+				"not the directory needed to resolve forge coordinates; publish one repository at a time with " +
+				"'praetorctl needs epic --path=<repo> --publish --yes'")
+		}
+		opts := needs.FleetEpicOptions{FrameworkPath: f.framework, DryRun: f.dryRun}
+		return runFleetNeedsEpic(ctx, f.devDir, opts)
 	}
+	return runSingleRepoEpic(ctx, f)
+}
 
-	if err := adopt.ValidateAdoptionTarget(*path); err != nil {
+// parseEpicFlags parses the `needs epic` flag set.
+func parseEpicFlags(args []string) (epicFlags, error) {
+	fs := flag.NewFlagSet("needs epic", flag.ContinueOnError)
+	f := epicFlags{}
+	fs.StringVar(&f.path, "path", ".", "Target repository path")
+	fs.StringVar(&f.devDir, "dev-dir", "", "Run fleet-wide epic generation across all repositories in directory")
+	fs.StringVar(&f.framework, "framework", defaultFrameworkDir(), "Target framework repository path")
+	fs.StringVar(&f.output, "output", "", "Optional markdown file path to write pre-migration epic")
+	fs.BoolVar(&f.publish, "publish", false, "Publish pre-migration parent epic and child tasks to remote forge")
+	fs.StringVar(&f.token, "token", "", "Forge API token (default: GITHUB_TOKEN or gh auth token)")
+	fs.StringVar(&f.endpoint, "endpoint", "", "Forge API endpoint (default: https://api.github.com)")
+	fs.StringVar(&f.owner, "owner", "", "Forge owner to publish into (overrides the repository manifest and git remote)")
+	fs.StringVar(&f.repo, "repo", "", "Forge repository name to publish into (must be given with --owner)")
+	fs.BoolVar(&f.assumeYes, "yes", false, "Confirm creating issues in the resolved forge repository")
+	fs.BoolVar(&f.dryRun, "dry-run", true, "With --dev-dir, list the epic files without writing them")
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return epicFlags{}, err
+	}
+	if len(positional) != 0 {
+		return epicFlags{}, fmt.Errorf("needs epic accepts no positional arguments; use --path (got %q)", positional)
+	}
+	return f, nil
+}
+
+// runSingleRepoEpic generates, writes and optionally publishes the epic of one repository.
+func runSingleRepoEpic(ctx context.Context, f epicFlags) error {
+	if err := adopt.ValidateAdoptionTarget(f.path); err != nil {
 		return fmt.Errorf("invalid repository target: %w", err)
 	}
 
-	epic, err := needs.GeneratePreMigrationEpic(ctx, *path, *framework)
+	epic, err := needs.GeneratePreMigrationEpic(ctx, f.path, f.framework)
 	if err != nil {
 		return fmt.Errorf("failed to generate pre-migration epic: %w", err)
 	}
 
-	if *output != "" {
-		if err := needs.WriteEpicMarkdown(epic, *output); err != nil {
-			return fmt.Errorf("failed to write epic markdown: %w", err)
+	if f.output != "" {
+		if wErr := needs.WriteEpicMarkdown(ctx, epic, f.output); wErr != nil {
+			return fmt.Errorf("failed to write epic markdown: %w", wErr)
 		}
-		fmt.Printf("[PASS] Pre-migration epic written to %s\n", *output)
-	} else if !*publish {
+		fmt.Printf("[PASS] Pre-migration epic written to %s\n", f.output)
+	} else if !f.publish {
 		fmt.Println(epic.ChecklistMarkdown)
 	}
 
-	if *publish {
-		return publishEpicToForge(ctx, *path, *token, *endpoint, epic)
+	if f.publish {
+		return publishEpicToForge(ctx, f, epic)
 	}
 	return nil
 }
 
-func runFleetNeedsEpic(ctx context.Context, devDir, framework string, publish bool, token, endpoint string) error {
+func runFleetNeedsEpic(ctx context.Context, devDir string, opts needs.FleetEpicOptions) error {
 	fmt.Printf("=== Rerunning Fleet Pre-Migration Epics across %s ===\n\n", devDir)
-	epics, err := needs.RegenerateFleetEpics(ctx, devDir, framework)
+	epics, err := needs.RegenerateFleetEpics(ctx, devDir, opts)
 	if err != nil {
 		return fmt.Errorf("fleet epic regeneration failed: %w", err)
 	}
 
-	fmt.Printf("[PASS] Generated and updated %d pre-migration epics:\n\n", len(epics))
+	verb := "Generated and updated"
+	if opts.DryRun {
+		verb = "Would generate"
+	}
+	fmt.Printf("[PASS] %s %d pre-migration epics:\n\n", verb, len(epics))
 	for i := 0; i < len(epics); i++ {
 		ep := epics[i]
-		fmt.Printf("  [%2d/%2d] %-35s (Readiness: %5.1f%%, %d tasks)\n",
-			i+1, len(epics), ep.RepoName, ep.ReadinessScore, len(ep.ChildIssues))
-		if publish {
-			if pubErr := publishEpicToForge(ctx, ep.RepoName, token, endpoint, ep); pubErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: failed publishing epic for %s: %v\n", ep.RepoName, pubErr)
-			}
-		}
+		fmt.Printf("  [%2d/%2d] %-35s (Readiness: %5.1f%%, %d tasks) -> %s\n",
+			i+1, len(epics), ep.RepoName, ep.ReadinessScore, len(ep.ChildIssues), ep.OutputPath)
+	}
+	if opts.DryRun {
+		fmt.Println("\n[INFO] Dry-run complete. Pass --dry-run=false to write these files.")
 	}
 	return nil
 }
 
-func publishEpicToForge(ctx context.Context, path, token, endpoint string, epic *needs.PreMigrationEpic) error {
-	tok := resolveForgeAuthToken(ctx, token)
+func publishEpicToForge(ctx context.Context, f epicFlags, epic *needs.PreMigrationEpic) error {
+	tok := resolveForgeAuthToken(ctx, f.token)
 	if tok == "" {
 		return fmt.Errorf("epic publishing requires GITHUB_TOKEN, GH_TOKEN, or an authenticated 'gh' CLI session")
 	}
 
-	owner, repo, err := resolveRepoCoordinates(path)
+	owner, repo, err := resolveEpicTarget(ctx, f)
 	if err != nil {
-		return fmt.Errorf("failed resolving repository coordinates for %s: %w", path, err)
+		return fmt.Errorf("failed resolving repository coordinates for %s: %w", f.path, err)
+	}
+	if !f.assumeYes {
+		return fmt.Errorf("refusing to create issues in %s/%s without confirmation: the target is derived from repository content "+
+			"(.standards.yaml or the git origin remote); re-run with --yes, or pass --owner/--repo explicitly", owner, repo)
 	}
 
-	ghDriver := forge.NewGitHubDriver(tok, endpoint)
+	ghDriver := forge.NewGitHubDriver(tok, f.endpoint)
 	ghDriver.SetRepository(owner, repo)
 
 	fmt.Printf("[INFO] Publishing Pre-Migration Epic to %s/%s...\n", owner, repo)
@@ -325,23 +406,34 @@ func publishEpicToForge(ctx context.Context, path, token, endpoint string, epic 
 	return nil
 }
 
+// resolveForgeAuthToken resolves the forge token from the flag, the environment, or the
+// gh CLI session, all bounded by the caller's context (HISS-02).
 func resolveForgeAuthToken(ctx context.Context, explicitToken string) string {
-	if explicitToken != "" {
-		return explicitToken
-	}
-	if tok := os.Getenv("GITHUB_TOKEN"); tok != "" {
-		return tok
-	}
-	if tok := os.Getenv("GH_TOKEN"); tok != "" {
-		return tok
-	}
-	if out, err := util.RunCommand(ctx, "", "gh", "auth", "token"); err == nil {
-		return strings.TrimSpace(out)
-	}
-	return ""
+	return util.ResolveAuthTokenContext(ctx, explicitToken)
 }
 
-func resolveRepoCoordinates(path string) (string, string, error) {
+// resolveEpicTarget returns the forge coordinates the epic is published to. Explicit
+// --owner/--repo win; otherwise the coordinates are read from the repository directory.
+func resolveEpicTarget(ctx context.Context, f epicFlags) (string, string, error) {
+	if f.owner != "" && f.repo != "" {
+		return f.owner, f.repo, nil
+	}
+	if f.owner != "" || f.repo != "" {
+		return "", "", fmt.Errorf("--owner and --repo must be given together")
+	}
+	return resolveRepoCoordinates(ctx, f.path)
+}
+
+// resolveRepoCoordinates reads the forge owner and repository name of the repository
+// checked out at path. path must be a real directory: a bare repository *name* cannot
+// identify a forge repository, and resolving one relative to the working directory used to
+// publish issues into a guessed organization.
+//
+// HISS-02: the git lookup inherits the caller's deadline instead of context.Background().
+func resolveRepoCoordinates(ctx context.Context, path string) (string, string, error) {
+	if !util.DirExists(path) {
+		return "", "", fmt.Errorf("%q is not a repository directory: forge coordinates must be resolved from a checkout, not from a repository name", path)
+	}
 	manifestPath := filepath.Join(path, ".standards.yaml")
 	if util.FileExists(manifestPath) {
 		m, err := config.LoadManifest(manifestPath)
@@ -349,5 +441,29 @@ func resolveRepoCoordinates(path string) (string, string, error) {
 			return m.Repository.Owner, m.Repository.Name, nil
 		}
 	}
-	return util.ResolveRepoIdentity(context.Background(), path)
+	return util.ResolveRepoIdentity(ctx, path)
+}
+
+// defaultDevDir is the fleet root used when --dev-dir is not given: PRAETOR_DEV_DIR, or
+// <home>/dev. No workstation path is baked into the binary.
+func defaultDevDir() string {
+	if dir := os.Getenv("PRAETOR_DEV_DIR"); dir != "" {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "dev"
+	}
+	return filepath.Join(home, "dev")
+}
+
+// defaultFrameworkDir is the Golusoris checkout used when --framework is not given:
+// PRAETOR_FRAMEWORK_DIR, or <dev dir>/golusoris/golusoris. When it does not exist the
+// needs engine reports the missing selected path; --framework="" explicitly selects
+// the unverified built-in catalog.
+func defaultFrameworkDir() string {
+	if dir := os.Getenv("PRAETOR_FRAMEWORK_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join(defaultDevDir(), "golusoris", "golusoris")
 }

@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -42,8 +42,10 @@ type Options struct {
 	BinaryDir     string   `json:"binary_dir"`
 	Archetype     string   `json:"archetype"`
 	Editors       []string `json:"editors"`
-	IncludeMCP    bool     `json:"include_mcp"`
-	IncludeLSP    bool     `json:"include_lsp"`
+	// IncludeMCP is retained for input compatibility; MCP setup belongs to the
+	// client setup pipeline and is never asserted by workspace settings.
+	IncludeMCP bool `json:"include_mcp"`
+	IncludeLSP bool `json:"include_lsp"`
 }
 
 // GeneratedFile holds relative path and payload of a synthesized configuration file.
@@ -126,33 +128,38 @@ func dispatchEditorFiles(editorMap map[string]bool, opts Options, binDir, arch s
 		files = append(files, generateUniversalEditorConfig()...)
 	}
 	if editorMap[EditorVSCode] || editorMap[EditorCursor] || editorMap[EditorWindsurf] {
-		files = append(files, generateVSCodeFamily(binDir, opts.IncludeMCP, opts.IncludeLSP, arch)...)
+		files = append(files, generateVSCodeFamily(binDir, opts.IncludeLSP, arch)...)
 	}
-	if editorMap[EditorJetBrains] {
-		files = append(files, generateJetBrains(arch)...)
-	}
-	if editorMap[EditorNeovim] {
-		files = append(files, generateNeovim(binDir, arch)...)
-	}
-	if editorMap[EditorZed] {
-		files = append(files, generateZed(arch)...)
-	}
-	if editorMap[EditorHelix] {
-		files = append(files, generateHelix(arch)...)
-	}
-	if editorMap[EditorEmacs] {
-		files = append(files, generateEmacs(arch)...)
-	}
-	if editorMap[EditorFleet] {
-		files = append(files, generateFleet(arch)...)
-	}
-	if editorMap[EditorSublime] {
-		files = append(files, generateSublime(arch)...)
-	}
-	if editorMap[EditorVisualStudio] {
-		files = append(files, generateVisualStudio(arch)...)
+	for _, generator := range []struct {
+		editor   string
+		generate func(string) []GeneratedFile
+	}{
+		{EditorJetBrains, generateJetBrains},
+		{EditorNeovim, func(arch string) []GeneratedFile { return generateNeovim(binDir, arch) }},
+		{EditorZed, generateZed},
+		{EditorHelix, generateHelix},
+		{EditorEmacs, generateEmacs},
+		{EditorFleet, generateFleet},
+		{EditorSublime, generateSublime},
+		{EditorVisualStudio, generateVisualStudio},
+	} {
+		if editorMap[generator.editor] {
+			files = append(files, generator.generate(arch)...)
+		}
 	}
 	return files
+}
+
+var editorAliases = map[string]string{
+	"universal": EditorUniversal, "editorconfig": EditorUniversal,
+	"vscode": EditorVSCode, "code": EditorVSCode,
+	"cursor": EditorCursor, "windsurf": EditorWindsurf,
+	"jetbrains": EditorJetBrains, "goland": EditorJetBrains, "idea": EditorJetBrains, "intellij": EditorJetBrains,
+	"neovim": EditorNeovim, "nvim": EditorNeovim,
+	"zed": EditorZed, "helix": EditorHelix, "hx": EditorHelix,
+	"emacs": EditorEmacs, "fleet": EditorFleet,
+	"sublime": EditorSublime, "sublimetext": EditorSublime,
+	"visualstudio": EditorVisualStudio, "vs": EditorVisualStudio,
 }
 
 func normalizeEditors(input []string) []string {
@@ -168,33 +175,8 @@ func normalizeEditors(input []string) []string {
 	}
 
 	for i := 0; i < limit; i++ {
-		e := strings.ToLower(strings.TrimSpace(input[i]))
-		switch e {
-		case "universal", "editorconfig":
-			e = EditorUniversal
-		case "vscode", "code":
-			e = EditorVSCode
-		case "cursor":
-			e = EditorCursor
-		case "windsurf":
-			e = EditorWindsurf
-		case "jetbrains", "goland", "idea", "intellij":
-			e = EditorJetBrains
-		case "neovim", "nvim":
-			e = EditorNeovim
-		case "zed":
-			e = EditorZed
-		case "helix", "hx":
-			e = EditorHelix
-		case "emacs":
-			e = EditorEmacs
-		case "fleet":
-			e = EditorFleet
-		case "sublime", "sublimetext":
-			e = EditorSublime
-		case "visualstudio", "vs":
-			e = EditorVisualStudio
-		default:
+		e, supported := editorAliases[strings.ToLower(strings.TrimSpace(input[i]))]
+		if !supported {
 			continue
 		}
 
@@ -207,8 +189,8 @@ func normalizeEditors(input []string) []string {
 	return normalized
 }
 
-func generateVSCodeFamily(binDir string, includeMCP, includeLSP bool, arch string) []GeneratedFile {
-	settings := buildVSCodeSettings(binDir, includeMCP, includeLSP, arch)
+func generateVSCodeFamily(binDir string, includeLSP bool, arch string) []GeneratedFile {
+	settings := buildVSCodeSettings(binDir, includeLSP, arch)
 	extensions := buildVSCodeExtensions(arch)
 	tasks := buildVSCodeTasks()
 
@@ -231,15 +213,12 @@ func generateVSCodeFamily(binDir string, includeMCP, includeLSP bool, arch strin
 	}
 }
 
-func buildVSCodeSettings(binDir string, includeMCP, includeLSP bool, arch string) string {
+func buildVSCodeSettings(binDir string, includeLSP bool, arch string) string {
 	data := map[string]any{
 		"standards.lsp.enabled":         includeLSP,
 		"standards.lsp.path":            fmt.Sprintf("${workspaceFolder}/%s/standards-lsp", binDir),
 		"standards.lsp.trace.server":    "messages",
-		"standards.mcp.enabled":         includeMCP,
-		"standards.mcp.path":            fmt.Sprintf("${workspaceFolder}/%s/standards-mcp", binDir),
 		"standards.sentinel.headroomMB": 1024,
-		"standards.modelTier":           "gemini-2.5-pro",
 	}
 
 	if arch == "native-gpu-systems" {
@@ -797,8 +776,8 @@ func fileExists(path string) bool {
 
 // Write writes all generated files to the target workspace root directory.
 func Write(set *EditorConfigSet, rootDir string) error {
-	if set == nil {
-		return errors.New("cannot write nil config set")
+	if err := validateEditorFiles(set); err != nil {
+		return err
 	}
 	if rootDir == "" {
 		rootDir = "."
@@ -808,9 +787,6 @@ func Write(set *EditorConfigSet, rootDir string) error {
 	defer cancel()
 
 	limit := len(set.Files)
-	if limit > maxFilesToGenerate {
-		limit = maxFilesToGenerate
-	}
 
 	for i := 0; i < limit; i++ {
 		f := set.Files[i]
@@ -829,25 +805,29 @@ func Write(set *EditorConfigSet, rootDir string) error {
 	return nil
 }
 
+func validateEditorFiles(set *EditorConfigSet) error {
+	if set == nil {
+		return errors.New("cannot write nil config set")
+	}
+	if len(set.Files) > maxFilesToGenerate {
+		return errors.New("editor output exceeds file bound")
+	}
+	for _, file := range set.Files {
+		if !filepath.IsLocal(file.Path) || filepath.Clean(file.Path) != file.Path || file.Path == "." {
+			return errors.New("editor output requires a clean relative file path")
+		}
+	}
+	return nil
+}
+
 func writeSingleFileWithContext(ctx context.Context, path, content string) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-	}
-
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed creating directory %s: %w", dir, err)
-	}
-
-	return os.WriteFile(path, []byte(content), 0644)
+	return contextopt.WriteSnapshot(ctx, path, []byte(content), 0o644)
 }
 
 // Verify checks that all files in set exist and match content in rootDir.
 func Verify(set *EditorConfigSet, rootDir string) error {
-	if set == nil {
-		return errors.New("cannot verify nil config set")
+	if err := validateEditorFiles(set); err != nil {
+		return err
 	}
 	if rootDir == "" {
 		rootDir = "."
@@ -879,10 +859,5 @@ func Verify(set *EditorConfigSet, rootDir string) error {
 }
 
 func readSingleFileWithContext(ctx context.Context, path string) ([]byte, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-	}
-	return os.ReadFile(path)
+	return contextopt.ReadSnapshot(ctx, path)
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -53,7 +54,7 @@ func printBumpUsage() {
 	fmt.Println("  unify [--apply] [--path=.]          Reconcile dependencies against fleet catalog")
 	fmt.Println("  canary <package> [--target=...]     Speculatively test bump in isolated ephemeral worktree")
 	fmt.Println("  train [--dry-run]                   Run proactive bump train across all pending upgrades")
-	fmt.Println("  apply <package> [--version=...]     Apply verified bump and adaptation patch to repository")
+	fmt.Println("  apply <package> [--version=...]     Update dependency and apply an optional supplied patch")
 }
 
 func runBumpScan(ctx context.Context, args []string) error {
@@ -179,30 +180,20 @@ func runBumpCanary(ctx context.Context, args []string) error {
 	targetVer := fs.String("target", "", "Target prerelease or stable version")
 	dryRun := fs.Bool("dry-run", false, "Simulate canary test without creating worktree")
 	retention := fs.Bool("retention", false, "Retain worktree on failure for debugging")
-	var flagArgs, posArgs []string
-	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
-			flagArgs = append(flagArgs, a)
-		} else {
-			posArgs = append(posArgs, a)
-		}
-	}
-	if err := fs.Parse(append(flagArgs, posArgs...)); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
 
-	if fs.NArg() < 1 {
-		return fmt.Errorf("package name required: standardsctl bump canary <package>")
+	if len(positional) < 1 {
+		return fmt.Errorf("package name required: praetorctl bump canary <package> [--target=...]")
 	}
-	pkg := fs.Arg(0)
+	pkg := positional[0]
+	if *targetVer == "" {
+		return fmt.Errorf("--target is required: praetorctl bump canary %s --target=<version>", pkg)
+	}
 
-	cand := bump.UpgradeCandidate{
-		Package:        pkg,
-		CurrentVersion: "current",
-		TargetVersion:  *targetVer,
-		Channel:        bump.ClassifyChannel(*targetVer),
-		ManifestType:   "go.mod",
-	}
+	cand := newGoUpgradeCandidate(*path, pkg, *targetVer)
 
 	opts := bump.CanaryOptions{
 		RepoPath:  *path,
@@ -212,23 +203,35 @@ func runBumpCanary(ctx context.Context, args []string) error {
 	}
 
 	res, err := bump.RunCanary(ctx, opts)
+	if res != nil {
+		printCanaryResult(res)
+	}
 	if err != nil {
 		return fmt.Errorf("canary execution failed: %w", err)
 	}
 
+	return nil
+}
+
+func printCanaryResult(res *bump.CanaryResult) {
 	fmt.Println("=== Ephemeral Worktree Canary Result ===")
 	fmt.Printf("Package:          %s\n", res.Candidate.Package)
 	fmt.Printf("Target Version:   %s (%s)\n", res.Candidate.TargetVersion, res.Candidate.Channel)
 	fmt.Printf("Canary Certified: %v\n", res.CanaryCertified)
-	if res.Success {
-		fmt.Println("Status:           [PASS] Tests and invariants passed cleanly.")
-	} else {
-		fmt.Println("Status:           [FAIL] Breakage detected in candidate version.")
+	switch res.Status {
+	case bump.CanaryPlanned:
+		fmt.Println("Status:           [PLANNED] Dependency update and tests were not executed.")
+	case bump.CanaryPassed:
+		fmt.Println("Status:           [PASS] Configured test command exited zero; no certification issued.")
+	default:
+		fmt.Println("Status:           [FAIL] Canary execution did not pass.")
 		if res.DistilledErrors != "" {
 			fmt.Printf("\n--- Distilled Breakage Diagnostics ---\n%s\n", res.DistilledErrors)
 		}
 	}
-	return nil
+	if res.DiagnosticPath != "" {
+		fmt.Printf("Diagnostics:      %s (SARIF; not an adaptation patch)\n", res.DiagnosticPath)
+	}
 }
 
 func runBumpTrain(ctx context.Context, args []string) error {
@@ -245,6 +248,7 @@ func runBumpTrain(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("=== Proactive Prerelease Bump Train (Candidates: %d, DryRun: %v) ===\n", rep.TotalCandidates, *dryRun)
+	var failures []error
 	for _, cand := range append(rep.Prereleases, rep.Stables...) {
 		opts := bump.CanaryOptions{
 			RepoPath:  *path,
@@ -254,15 +258,12 @@ func runBumpTrain(ctx context.Context, args []string) error {
 		res, err := bump.RunCanary(ctx, opts)
 		if err != nil {
 			fmt.Printf("  - [%s] %s: [ERROR] %v\n", cand.Channel, cand.Package, err)
+			failures = append(failures, fmt.Errorf("canary %s: %w", cand.Package, err))
 			continue
 		}
-		if res.CanaryCertified {
-			fmt.Printf("  - [%s] %s (%s): [CERTIFIED] Ready for instant landing\n", cand.Channel, cand.Package, cand.TargetVersion)
-		} else {
-			fmt.Printf("  - [%s] %s (%s): [BREAKAGE] Adaptation patch staged\n", cand.Channel, cand.Package, cand.TargetVersion)
-		}
+		fmt.Printf("  - [%s] %s (%s): [%s] No certification issued\n", cand.Channel, cand.Package, cand.TargetVersion, res.Status)
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 func runBumpApply(ctx context.Context, args []string) error {
@@ -270,21 +271,20 @@ func runBumpApply(ctx context.Context, args []string) error {
 	path := fs.String("path", ".", "Target repository path")
 	version := fs.String("version", "", "Target version to apply")
 	patch := fs.String("patch", "", "Optional path to adaptation patch")
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
 
-	if fs.NArg() < 1 {
-		return fmt.Errorf("package name required: standardsctl bump apply <package>")
+	if len(positional) < 1 {
+		return fmt.Errorf("package name required: praetorctl bump apply <package> --version=<version>")
 	}
-	pkg := fs.Arg(0)
+	pkg := positional[0]
+	if *version == "" {
+		return fmt.Errorf("--version is required: praetorctl bump apply %s --version=<version>", pkg)
+	}
 
-	cand := bump.UpgradeCandidate{
-		Package:        pkg,
-		CurrentVersion: "current",
-		TargetVersion:  *version,
-		ManifestType:   "go.mod",
-	}
+	cand := newGoUpgradeCandidate(*path, pkg, *version)
 
 	if err := bump.ApplyBump(ctx, *path, cand, *patch); err != nil {
 		return fmt.Errorf("apply bump: %w", err)
@@ -295,6 +295,24 @@ func runBumpApply(ctx context.Context, args []string) error {
 		fmt.Printf("[PATCHED] Applied adaptation patch from %s\n", *patch)
 	}
 	return nil
+}
+
+// newGoUpgradeCandidate builds a go.mod upgrade candidate whose CurrentVersion is read
+// from the repository instead of being a placeholder: internal/bump's go.mod fallback
+// edit matches on "<package> <current version>", so a placeholder can never match.
+func newGoUpgradeCandidate(repoPath, pkg, targetVersion string) bump.UpgradeCandidate {
+	current, moduleDir, err := bump.CurrentGoModVersion(repoPath, pkg)
+	if err != nil {
+		fmt.Printf("[WARN] %s is not required by any go.mod under %s: %v\n", pkg, repoPath, err)
+	}
+	return bump.UpgradeCandidate{
+		Package:        pkg,
+		CurrentVersion: current,
+		TargetVersion:  targetVersion,
+		Channel:        bump.ClassifyChannel(targetVersion),
+		ManifestType:   "go.mod",
+		ModuleDir:      moduleDir,
+	}
 }
 
 func runBumpAudit(ctx context.Context, args []string) error {
@@ -317,35 +335,53 @@ func runBumpAudit(ctx context.Context, args []string) error {
 	fmt.Printf("  Pending Upgrades:    %d\n", len(report.PendingUpgrades))
 	fmt.Printf("  Deprecations:        %d\n\n", len(report.Deprecations))
 
-	if len(report.Actions) > 0 {
-		fmt.Println("GitHub Actions Inventory:")
-		for _, a := range report.Actions {
-			status := "[UP-TO-DATE]"
-			if a.Deprecated {
-				status = "[DEPRECATED]"
-			} else if a.CurrentVersion != a.LatestVersion {
-				status = "[DRIFT]"
-			}
-			fmt.Printf("  %-12s %-32s %s -> %s (%s)\n", status, a.Action, a.CurrentVersion, a.LatestVersion, a.WorkflowFile)
-		}
-		fmt.Println()
-	}
-
-	if len(report.PendingUpgrades) > 0 {
-		fmt.Println("Pending Dependency Upgrades:")
-		for _, u := range report.PendingUpgrades {
-			fmt.Printf("  - [%s] %-32s %s -> %s (%s)\n", u.Channel, u.Package, u.CurrentVersion, u.TargetVersion, u.ManifestType)
-		}
-		fmt.Println()
-	}
-
-	if len(report.Deprecations) > 0 {
-		fmt.Println("Deprecation Warnings & Breaking Advisories:")
-		for _, d := range report.Deprecations {
-			fmt.Printf("  ! [%s] %s: %s\n", d.Kind, d.Component, d.Details)
-		}
-		fmt.Println()
-	}
-
+	printActionsInventory(report.Actions)
+	printPendingUpgrades(report.PendingUpgrades)
+	printDeprecations(report.Deprecations)
 	return nil
+}
+
+func printActionsInventory(actions []bump.ActionCandidate) {
+	if len(actions) == 0 {
+		return
+	}
+	fmt.Println("GitHub Actions Inventory:")
+	for _, a := range actions {
+		fmt.Printf("  %-12s %-32s %s -> %s (%s)\n",
+			actionDriftStatus(a), a.Action, a.CurrentVersion, a.LatestVersion, a.WorkflowFile)
+	}
+	fmt.Println()
+}
+
+func actionDriftStatus(a bump.ActionCandidate) string {
+	switch {
+	case a.Deprecated:
+		return "[DEPRECATED]"
+	case a.CurrentVersion != a.LatestVersion:
+		return "[DRIFT]"
+	default:
+		return "[UP-TO-DATE]"
+	}
+}
+
+func printPendingUpgrades(upgrades []bump.UpgradeCandidate) {
+	if len(upgrades) == 0 {
+		return
+	}
+	fmt.Println("Pending Dependency Upgrades:")
+	for _, u := range upgrades {
+		fmt.Printf("  - [%s] %-32s %s -> %s (%s)\n", u.Channel, u.Package, u.CurrentVersion, u.TargetVersion, u.ManifestType)
+	}
+	fmt.Println()
+}
+
+func printDeprecations(deprecations []bump.DeprecationWarning) {
+	if len(deprecations) == 0 {
+		return
+	}
+	fmt.Println("Deprecation Warnings & Breaking Advisories:")
+	for _, d := range deprecations {
+		fmt.Printf("  ! [%s] %s: %s\n", d.Kind, d.Component, d.Details)
+	}
+	fmt.Println()
 }

@@ -3,14 +3,18 @@ package bump
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
+
+// errNoJSONObject is returned when a package manager's output carries no JSON object.
+var errNoJSONObject = errors.New("bump: no JSON object in command output")
 
 type pnpmOutdatedItem struct {
 	Current string `json:"current"`
@@ -35,7 +39,7 @@ func DiscoverNodePackages(repoPath string) []string {
 	// 1. Check pnpm-workspace.yaml
 	wsPath := filepath.Join(repoPath, "pnpm-workspace.yaml")
 	if util.FileExists(wsPath) {
-		wsDirs := parsePnpmWorkspace(repoPath, wsPath)
+		wsDirs := parsePnpmWorkspace(repoPath)
 		if len(wsDirs) > 0 {
 			return wsDirs
 		}
@@ -50,9 +54,20 @@ func DiscoverNodePackages(repoPath string) []string {
 	return pkgDirs
 }
 
-func parsePnpmWorkspace(repoPath, wsPath string) []string {
+// readConfined reads rel below root after confining it with util.ConfinePath, so a
+// workspace glob or a caller-supplied repository path can never read outside root.
+func readConfined(root, rel string) ([]byte, error) {
+	path, err := util.ConfinePath(root, rel)
+	if err != nil {
+		return nil, err
+	}
+	// #nosec G304 -- path is confined to root by util.ConfinePath above.
+	return os.ReadFile(path)
+}
+
+func parsePnpmWorkspace(repoPath string) []string {
 	var dirs []string
-	data, err := os.ReadFile(wsPath)
+	data, err := readConfined(repoPath, "pnpm-workspace.yaml")
 	if err != nil {
 		return dirs
 	}
@@ -63,20 +78,32 @@ func parsePnpmWorkspace(repoPath, wsPath string) []string {
 	}
 
 	for _, pattern := range cfg.Packages {
-		cleanPattern := strings.TrimPrefix(pattern, "./")
-		matches, err := filepath.Glob(filepath.Join(repoPath, cleanPattern))
-		if err == nil {
-			for _, m := range matches {
-				if util.FileExists(filepath.Join(m, "package.json")) {
-					rel, relErr := filepath.Rel(repoPath, m)
-					if relErr == nil {
-						dirs = append(dirs, rel)
-					}
-				}
-			}
-		}
+		dirs = append(dirs, globWorkspacePackages(repoPath, pattern)...)
 	}
 
+	return dirs
+}
+
+// globWorkspacePackages expands one pnpm workspace pattern to the repo-relative
+// directories under it that carry a package.json.
+func globWorkspacePackages(repoPath, pattern string) []string {
+	cleanPattern := strings.TrimPrefix(pattern, "./")
+	matches, err := filepath.Glob(filepath.Join(repoPath, cleanPattern))
+	if err != nil {
+		return nil
+	}
+
+	dirs := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if !util.FileExists(filepath.Join(m, "package.json")) {
+			continue
+		}
+		rel, relErr := filepath.Rel(repoPath, m)
+		if relErr != nil {
+			continue
+		}
+		dirs = append(dirs, rel)
+	}
 	return dirs
 }
 
@@ -93,9 +120,9 @@ func ScanNodeDependencies(ctx context.Context, repoPath string, opts ScanOptions
 		candidates, err := scanNodePackageDir(ctx, dir, dirRel, opts)
 		if err != nil {
 			var fbErr error
-			candidates, fbErr = scanPackageJSONStatic(dir, dirRel, opts)
+			candidates, fbErr = scanPackageJSONStatic(repoPath, dirRel, opts)
 			if fbErr != nil {
-				continue
+				return nil, fmt.Errorf("scan Node package %s: %w", dirRel, errors.Join(err, fbErr))
 			}
 		}
 		allCandidates = append(allCandidates, candidates...)
@@ -104,40 +131,43 @@ func ScanNodeDependencies(ctx context.Context, repoPath string, opts ScanOptions
 	return allCandidates, nil
 }
 
-func scanNodePackageDir(ctx context.Context, dir, dirRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
-	cmd := exec.CommandContext(ctx, "pnpm", "outdated", "--json")
-	cmd.Dir = dir
+// extractJSONObject returns the outermost JSON object embedded in combined command
+// output. Package managers interleave warnings on stderr with their JSON report, so the
+// report is located by its first '{' and last '}' rather than parsed verbatim.
+func extractJSONObject(out string) ([]byte, error) {
+	start := strings.Index(out, "{")
+	end := strings.LastIndex(out, "}")
+	if start < 0 || end < start {
+		return nil, errNoJSONObject
+	}
+	return []byte(out[start : end+1]), nil
+}
 
-	out, err := cmd.Output()
+func scanNodePackageDir(ctx context.Context, dir, dirRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
+	// pnpm exits non-zero when outdated packages exist, so the exit status alone is
+	// not an error: only an empty report is.
+	out, err := util.RunCommand(ctx, dir, "pnpm", "outdated", "--json")
 	if err != nil && len(out) == 0 {
+		return nil, fmt.Errorf("pnpm outdated in %s: %w", dirRel, err)
+	}
+
+	raw, err := extractJSONObject(out)
+	if err != nil {
 		return nil, err
 	}
 
 	var outdated map[string]pnpmOutdatedItem
-	if err := json.Unmarshal(out, &outdated); err != nil {
-		return nil, err
+	if err := json.Unmarshal(raw, &outdated); err != nil {
+		return nil, fmt.Errorf("parse pnpm outdated report for %s: %w", dirRel, err)
 	}
 
 	var candidates []UpgradeCandidate
 	for pkg, item := range outdated {
-		if item.Latest == "" || item.Current == item.Latest {
+		cand, ok := nodeUpgradeCandidate(pkg, item, dirRel, opts)
+		if !ok {
 			continue
 		}
-
-		ch := ClassifyChannel(item.Latest)
-		if !opts.IncludePrerelease && ch != ChannelStable {
-			continue
-		}
-
-		candidates = append(candidates, UpgradeCandidate{
-			Package:        pkg,
-			CurrentVersion: item.Current,
-			TargetVersion:  item.Latest,
-			Channel:        ch,
-			ManifestType:   "package.json",
-			ModuleDir:      dirRel,
-		})
-
+		candidates = append(candidates, cand)
 		if opts.MaxCandidates > 0 && len(candidates) >= opts.MaxCandidates {
 			break
 		}
@@ -146,9 +176,28 @@ func scanNodePackageDir(ctx context.Context, dir, dirRel string, opts ScanOption
 	return candidates, nil
 }
 
-func scanPackageJSONStatic(dir, dirRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
-	pkgFile := filepath.Join(dir, "package.json")
-	data, err := os.ReadFile(pkgFile)
+// nodeUpgradeCandidate converts one pnpm outdated entry into an upgrade candidate,
+// reporting false when the package is current or filtered out by the channel policy.
+func nodeUpgradeCandidate(pkg string, item pnpmOutdatedItem, dirRel string, opts ScanOptions) (UpgradeCandidate, bool) {
+	if item.Latest == "" || item.Current == item.Latest {
+		return UpgradeCandidate{}, false
+	}
+	ch := ClassifyChannel(item.Latest)
+	if !opts.IncludePrerelease && ch != ChannelStable {
+		return UpgradeCandidate{}, false
+	}
+	return UpgradeCandidate{
+		Package:        pkg,
+		CurrentVersion: item.Current,
+		TargetVersion:  item.Latest,
+		Channel:        ch,
+		ManifestType:   "package.json",
+		ModuleDir:      dirRel,
+	}, true
+}
+
+func scanPackageJSONStatic(repoPath, dirRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
+	data, err := readConfined(repoPath, filepath.Join(dirRel, "package.json"))
 	if err != nil {
 		return nil, err
 	}

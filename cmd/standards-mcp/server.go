@@ -1,31 +1,42 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"io"
-	"net/http"
-	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/cordanaLLM/praetor/internal/baseline"
+	"bytes"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 	"github.com/cordanaLLM/praetor/internal/needs"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
+	// maxScannerBuffer is the largest accepted JSON-RPC line (stdio) or body (http).
 	maxScannerBuffer = 1024 * 1024 // 1MB
-	maxFilesToScan   = 500
+	// defaultToolTimeout bounds every tools/call (HISS-02). The per-tool budgets inside
+	// the handlers (2-3 minutes) fit within it, and the HTTP write deadline is derived
+	// from it so a long tool never outlives the response that reports its outcome.
+	defaultToolTimeout = 5 * time.Minute
+)
+
+var (
+	// ErrOutsideRoot is returned for path arguments that resolve outside -root.
+	ErrOutsideRoot = errors.New("path resolves outside the server root; start standards-mcp with -allow-outside-root to permit it")
+	// ErrArgType is returned when a tool argument has the wrong JSON type.
+	ErrArgType = errors.New("argument has the wrong type")
+	// ErrRemoteBenchmarksDisabled is returned when benchmark_popular is requested
+	// without -allow-remote-benchmarks.
+	ErrRemoteBenchmarksDisabled = errors.New("remote benchmark clones are disabled; start standards-mcp with -allow-remote-benchmarks to permit them")
 )
 
 // JSONRPCRequest represents a JSON-RPC 2.0 request payload.
@@ -51,24 +62,71 @@ type JSONRPCError struct {
 	Data    any    `json:"data,omitempty"`
 }
 
+// ServerOptions configures a standards-mcp server instance.
+type ServerOptions struct {
+	// RootDir is the repository the server governs; "" means the working directory.
+	RootDir string
+	// Version is reported in initialize and /health responses.
+	Version string
+	// AllowOutsideRoot permits path arguments outside RootDir (cross-repository
+	// adoption, workstation harvests). Off by default: every path is confined.
+	AllowOutsideRoot bool
+	// AllowRemoteBenchmarks permits standards_dogfood to clone public repositories.
+	AllowRemoteBenchmarks bool
+	// AuthToken, when set, is required as a bearer token on every http/sse request and
+	// is mandatory to bind a non-loopback address.
+	AuthToken string
+	// AllowedOrigins lists browser origins accepted on http/sse besides loopback.
+	AllowedOrigins []string
+	// ToolTimeout bounds one tools/call; zero selects defaultToolTimeout.
+	ToolTimeout time.Duration
+}
+
 // Server implements the MCP server instance.
 type Server struct {
 	rootDir string
 	version string
+	opts    ServerOptions
 	tools   map[string]mcp.Tool
 	order   []string
+
+	sessions *sseRegistry
+
+	boundMu   sync.Mutex
+	boundHost string
+	boundAddr string
 }
 
-// NewServer initializes a standards-mcp server and registers standard tools.
+// NewServer initializes a standards-mcp server confined to rootDir with default options.
 func NewServer(rootDir, version string) (*Server, error) {
-	if rootDir == "" {
-		rootDir = "."
+	return NewServerWithOptions(ServerOptions{RootDir: rootDir, Version: version})
+}
+
+// NewServerWithOptions initializes a standards-mcp server and registers the standard
+// tools. The root is resolved to an absolute path once so relative defaults are never
+// joined onto a relative root again.
+func NewServerWithOptions(opts ServerOptions) (*Server, error) {
+	if opts.RootDir == "" {
+		opts.RootDir = "."
 	}
+	root, err := filepath.Abs(filepath.Clean(opts.RootDir))
+	if err != nil {
+		return nil, fmt.Errorf("resolve root %q: %w", opts.RootDir, err)
+	}
+	if !util.DirExists(root) {
+		return nil, fmt.Errorf("root %q is not a directory", root)
+	}
+	if opts.ToolTimeout <= 0 {
+		opts.ToolTimeout = defaultToolTimeout
+	}
+
 	s := &Server{
-		rootDir: rootDir,
-		version: version,
-		tools:   make(map[string]mcp.Tool),
-		order:   make([]string, 0, 5),
+		rootDir:  root,
+		version:  opts.Version,
+		opts:     opts,
+		tools:    make(map[string]mcp.Tool),
+		order:    make([]string, 0, 13),
+		sessions: newSSERegistry(),
 	}
 
 	if err := s.registerStandardTools(); err != nil {
@@ -78,7 +136,7 @@ func NewServer(rootDir, version string) (*Server, error) {
 	return s, nil
 }
 
-// registerStandardTools registers the 5 mandatory standards MCP tools.
+// registerStandardTools registers the standards MCP tools.
 func (s *Server) registerStandardTools() error {
 	tools := []func() (mcp.Tool, error){
 		s.createAuditTool,
@@ -94,6 +152,16 @@ func (s *Server) registerStandardTools() error {
 		s.createVersionAuditTool,
 		s.createMemoryRecallTool,
 		s.createHindsightOptimizeTool,
+		s.createTranscriptIngestTool,
+		s.createNotebookPrepareTool,
+		s.createContextAnalyzeTool,
+		s.createDogfoodSuiteTool,
+		s.createDogfoodDiscoveryTool,
+		s.createDogfoodScheduleStatusTool,
+		s.createDogfoodRepairStatusTool,
+		s.createWishesStatusTool,
+		s.createWishesUpdateTool,
+		s.createClientCapabilitiesTool,
 	}
 
 	limit := len(tools)
@@ -107,6 +175,90 @@ func (s *Server) registerStandardTools() error {
 	}
 	return nil
 }
+
+// ---- argument helpers ------------------------------------------------------------------
+
+// argBool reads an optional boolean argument, rejecting a value of any other type so a
+// string "true" is never silently treated as false.
+func argBool(args map[string]any, key string, def bool) (bool, error) {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return def, nil
+	}
+	b, isBool := raw.(bool)
+	if !isBool {
+		return false, fmt.Errorf("%w: %s must be a boolean, got %T", ErrArgType, key, raw)
+	}
+	return b, nil
+}
+
+// argString reads an optional string argument ("" when absent), rejecting other types.
+func argString(args map[string]any, key string) (string, error) {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return "", nil
+	}
+	str, isString := raw.(string)
+	if !isString {
+		return "", fmt.Errorf("%w: %s must be a string, got %T", ErrArgType, key, raw)
+	}
+	return str, nil
+}
+
+// resolvePath resolves a path argument against the server root. An absent or empty
+// argument yields defaultVal (an absolute server-owned path, or a name relative to the
+// root); both supplied and default values are confined unless AllowOutsideRoot is set.
+func (s *Server) resolvePath(args map[string]any, key, defaultVal string) (string, error) {
+	val, err := argString(args, key)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(val) == "" {
+		val = defaultVal
+	}
+	return s.confinePath(val)
+}
+
+// resolveOptionalPath is resolvePath for arguments whose absence means "none".
+func (s *Server) resolveOptionalPath(args map[string]any, key string) (string, error) {
+	val, err := argString(args, key)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(val) == "" {
+		return "", nil
+	}
+	return s.confinePath(val)
+}
+
+// confinePath resolves val (relative to the root, or absolute) and verifies that it
+// stays under the root lexically and through symlinks (util.ConfinePath). Paths outside
+// the root are permitted only with AllowOutsideRoot.
+func (s *Server) confinePath(val string) (string, error) {
+	abs := filepath.Clean(val)
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(s.rootDir, abs)
+	}
+
+	rel, err := filepath.Rel(s.rootDir, abs)
+	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		confined, cErr := util.ConfinePath(s.rootDir, rel)
+		if cErr == nil {
+			return confined, nil
+		}
+		if !s.opts.AllowOutsideRoot {
+			return "", fmt.Errorf("%w: %q: %w", ErrOutsideRoot, val, cErr)
+		}
+		return abs, nil
+	}
+
+	if !s.opts.AllowOutsideRoot {
+		return "", fmt.Errorf("%w: %q is not under %s", ErrOutsideRoot, val, s.rootDir)
+	}
+	return abs, nil
+}
+
+// ---- tools ------------------------------------------------------------------------------
 
 // createAuditTool builds the read-only standards_audit tool.
 func (s *Server) createAuditTool() (mcp.Tool, error) {
@@ -125,48 +277,66 @@ func (s *Server) createAuditTool() (mcp.Tool, error) {
 				Type:        "string",
 				Description: "Path to canonical AGENTS.md (default: AGENTS.md)",
 			},
+			"catalog_root": {
+				Type: "string", Description: "Root containing pinned .config/archetypes (default: server root)",
+			},
+			"fleet_config_path": {
+				Type: "string", Description: "Explicit fleet complexity policy file for this audit",
+			},
+			"organization_config_path": {
+				Type: "string", Description: "Explicit organization complexity policy file for this audit",
+			},
+			"deployment_config_path": {
+				Type: "string", Description: "Explicit deployment complexity policy file for this audit",
+			},
+			"workstation_config_path": {
+				Type: "string", Description: "Explicit workstation complexity policy file for this audit",
+			},
 		},
 	}
 
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
-		confPath := s.resolvePath(args, "config_path", ".standards.yaml")
-		basePath := s.resolvePath(args, "baseline_path", ".standards-baseline.json")
-		agentPath := s.resolvePath(args, "agents_path", "AGENTS.md")
-
-		var report strings.Builder
-		report.WriteString("=== cordanaLLM/praetor Governance Audit ===\n")
-
-		manifest, err := config.LoadManifest(confPath)
+		p, err := s.resolveAuditPaths(args)
 		if err != nil {
-			return mcp.ErrorResult(fmt.Sprintf("[FAIL] Manifest audit failed: %v", err)), nil
+			return mcp.ErrorResult(err.Error()), nil
 		}
-		report.WriteString(fmt.Sprintf("[PASS] Manifest verified: %s/%s (Version %d)\n",
-			manifest.Repository.Owner, manifest.Repository.Name, manifest.Version))
-
-		lockPath := filepath.Join(s.rootDir, ".standards.lock")
-		if _, err := os.Stat(lockPath); os.IsNotExist(err) {
-			return mcp.ErrorResult("[FAIL] .standards.lock is missing"), nil
-		}
-		report.WriteString("[PASS] SemVer lockfile .standards.lock verified.\n")
-
-		base, err := baseline.LoadBaseline(basePath)
-		if err != nil {
-			return mcp.ErrorResult(fmt.Sprintf("[FAIL] Baseline audit failed: %v", err)), nil
-		}
-		report.WriteString(fmt.Sprintf("[PASS] Technical debt baseline verified: %d recorded legacy infractions.\n",
-			base.TotalInfractions))
-
-		tr := compiler.NewTranspiler()
-		if err := tr.Verify(agentPath, s.rootDir); err != nil {
-			return mcp.ErrorResult(fmt.Sprintf("[FAIL] Agent context targets out of sync: %v", err)), nil
-		}
-		report.WriteString("[PASS] Cross-agent context targets verified in sync.\n")
-		report.WriteString("\nAudit Summary: 100% Compliance with cordanaLLM/praetor HISS-16 baseline.")
-
-		return mcp.TextResult(report.String()), nil
+		return s.runAuditGates(ctx, p), nil
 	}
 
 	return mcp.NewReadOnlyTool("standards_audit", "Audit repository against declared HISS-16 standards", schema, handler)
+}
+
+// resolveAuditPaths preserves confinement for both existing and optional audit inputs.
+// An omitted external policy path contributes no layer and performs no discovery.
+func (s *Server) resolveAuditPaths(args map[string]any) (auditPaths, error) {
+	var p auditPaths
+	inputs := []struct {
+		key, fallback string
+		target        *string
+	}{
+		{"config_path", ".standards.yaml", &p.manifest},
+		{"baseline_path", ".standards-baseline.json", &p.baseline},
+		{"agents_path", "AGENTS.md", &p.agents},
+		{"catalog_root", "", &p.policy.CatalogRoot},
+		{"fleet_config_path", "", &p.policy.FleetPath},
+		{"organization_config_path", "", &p.policy.OrganizationPath},
+		{"deployment_config_path", "", &p.policy.DeploymentPath},
+		{"workstation_config_path", "", &p.policy.WorkstationPath},
+	}
+	for _, input := range inputs {
+		var path string
+		var err error
+		if input.fallback == "" {
+			path, err = s.resolveOptionalPath(args, input.key)
+		} else {
+			path, err = s.resolvePath(args, input.key, input.fallback)
+		}
+		if err != nil {
+			return p, err
+		}
+		*input.target = path
+	}
+	return p, nil
 }
 
 // createPlanTool builds the read-only standards_plan tool.
@@ -182,32 +352,54 @@ func (s *Server) createPlanTool() (mcp.Tool, error) {
 	}
 
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
-		confPath := s.resolvePath(args, "config_path", ".standards.yaml")
+		confPath, err := s.resolvePath(args, "config_path", ".standards.yaml")
+		if err != nil {
+			return mcp.ErrorResult(err.Error()), nil
+		}
 		manifest, err := config.LoadManifest(confPath)
 		if err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to load manifest: %v", err)), nil
+		}
+		if err := ctx.Err(); err != nil {
+			return mcp.ErrorResult(fmt.Sprintf("plan cancelled: %v", err)), nil
 		}
 
 		policy := config.DefaultPolicy()
 		policy.ApplyOverrides(manifest.Overrides)
 
 		var b strings.Builder
-		b.WriteString("=== cordanaLLM/praetor Reconcile Plan (Dry Run) ===\n")
-		b.WriteString(fmt.Sprintf("Repository: %s/%s\n", manifest.Repository.Owner, manifest.Repository.Name))
-		b.WriteString(fmt.Sprintf("Profiles:   %v\nFacets:     %v\n\nTarget Invariants:\n", manifest.Profiles, manifest.Facets))
-		b.WriteString(fmt.Sprintf("  - Max Cyclomatic Complexity: <= %d\n", policy.Complexity.MaxCyclomatic))
-		b.WriteString(fmt.Sprintf("  - Max Function LOC:          <= %d\n", policy.Complexity.MaxFuncLOC))
-		b.WriteString(fmt.Sprintf("  - Linear History Required:    %t\n", policy.BranchProtection.EnforceLinearHistory))
-		b.WriteString(fmt.Sprintf("  - Signed Commits Required:   %t\n", policy.BranchProtection.RequireSignedCommits))
-		b.WriteString(fmt.Sprintf("  - Approving Reviewers:       %d\n", policy.BranchProtection.RequiredApprovingReviewers))
-		b.WriteString(fmt.Sprintf("  - SLSA Provenance Level:     %d\n", policy.SupplyChain.SLSALevel))
-		b.WriteString(fmt.Sprintf("  - Cosign Attestation:        %t\n", policy.SupplyChain.EnforceCosign))
-		b.WriteString("\nStatus: Local state matches declared policy. No changes required.")
+		if err := writePlanHeader(&b, manifest, policy); err != nil {
+			return mcp.ErrorResult(fmt.Sprintf("Failed to resolve plan policy: %v", err)), nil
+		}
+		missing, drift := planDrift(s.rootDir, policy)
+		writePlanStatus(&b, missing, drift)
 
 		return mcp.TextResult(b.String()), nil
 	}
 
 	return mcp.NewReadOnlyTool("standards_plan", "Plan standards enforcement and policy reconciliation", schema, handler)
+}
+
+// writePlanHeader prints the resolved policy values of a reconcile plan.
+func writePlanHeader(b *strings.Builder, manifest *config.Manifest, policy *config.ResolvedPolicy) error {
+	reviewCount, _, err := policy.BranchProtection.EffectiveReviewRequirements()
+	if err != nil {
+		return fmt.Errorf("resolve branch protection reviews: %w", err)
+	}
+	b.WriteString("=== cordanaLLM/praetor Reconcile Plan (Dry Run) ===\n")
+	fmt.Fprintf(b, "Repository: %s/%s\n", manifest.Repository.Owner, manifest.Repository.Name)
+	fmt.Fprintf(b, "Profiles:   %v\nFacets:     %v\n\nTarget Invariants:\n", manifest.Profiles, manifest.Facets)
+	fmt.Fprintf(b, "  - Max Cyclomatic Complexity: <= %d\n", policy.Complexity.MaxCyclomatic)
+	fmt.Fprintf(b, "  - Max Function LOC:          <= %d\n", policy.Complexity.MaxFuncLOC)
+	fmt.Fprintf(b, "  - Linear History Required:    %t\n", policy.BranchProtection.EnforceLinearHistory)
+	fmt.Fprintf(b, "  - Signed Commits Required:   %t\n", policy.BranchProtection.RequireSignedCommits)
+	fmt.Fprintf(b, "  - Approving Reviewers:       %d\n", reviewCount)
+	fmt.Fprintf(b, "  - Configured Reviewer Minimum: %d\n", policy.BranchProtection.RequiredApprovingReviewers)
+	fmt.Fprintf(b, "  - Review Mode:               %s\n", policy.BranchProtection.ReviewMode)
+	fmt.Fprintf(b, "  - SLSA Provenance Level:     %d\n", policy.SupplyChain.SLSALevel)
+	fmt.Fprintf(b, "  - Cosign Attestation:        %t\n", policy.SupplyChain.EnforceCosign)
+	fmt.Fprintf(b, "  - SBOM Generation Required:  %t\n", policy.SupplyChain.RequireSBOM)
+	return nil
 }
 
 // createCompileContextTool builds the standards_compile_context tool.
@@ -221,7 +413,7 @@ func (s *Server) createCompileContextTool() (mcp.Tool, error) {
 			},
 			"target_dir": {
 				Type:        "string",
-				Description: "Root directory to write target files (default: .)",
+				Description: "Root directory to write target files (default: server root)",
 			},
 			"verify_only": {
 				Type:        "boolean",
@@ -231,59 +423,148 @@ func (s *Server) createCompileContextTool() (mcp.Tool, error) {
 	}
 
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
-		source := s.resolvePath(args, "source", "AGENTS.md")
-		targetDir := s.resolvePath(args, "target_dir", s.rootDir)
-		verifyOnly, _ := args["verify_only"].(bool)
-
-		tr := compiler.NewTranspiler()
-		if verifyOnly {
-			if err := tr.Verify(source, targetDir); err != nil {
-				return mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err)), nil
-			}
-			return mcp.TextResult("All agent context targets are 100% in sync with canonical AGENTS.md."), nil
-		}
-
-		res, err := tr.Compile(source)
+		source, err := s.resolvePath(args, "source", "AGENTS.md")
 		if err != nil {
-			return mcp.ErrorResult(fmt.Sprintf("Context compilation failed: %v", err)), nil
+			return mcp.ErrorResult(err.Error()), nil
 		}
-
-		if err := tr.WriteOutputs(res, targetDir); err != nil {
-			return mcp.ErrorResult(fmt.Sprintf("Failed writing outputs: %v", err)), nil
+		targetDir, err := s.resolvePath(args, "target_dir", s.rootDir)
+		if err != nil {
+			return mcp.ErrorResult(err.Error()), nil
 		}
-
-		var b strings.Builder
-		b.WriteString("Cross-agent context transpilation completed successfully:\n")
-		for _, f := range res.Files {
-			b.WriteString(fmt.Sprintf("  [COMPILED] %-35s (%d lines, budget <= %d)\n",
-				f.RelativePath, f.LineCount, compiler.MaxLineBudget))
+		verifyOnly, err := argBool(args, "verify_only", false)
+		if err != nil {
+			return mcp.ErrorResult(err.Error()), nil
 		}
-		return mcp.TextResult(b.String()), nil
+		return s.compileContext(ctx, source, targetDir, verifyOnly), nil
 	}
 
-	return mcp.NewMutatingTool("standards_compile_context", "Compile or verify cross-agent instructions from AGENTS.md", schema, handler, false, true)
+	// Writing overwrites the six vendor files in target_dir, so the tool is destructive.
+	return mcp.NewMutatingTool("standards_compile_context", "Compile or verify cross-agent instructions from AGENTS.md", schema, handler, true, true)
+}
+
+// compileContext verifies or (re)writes the vendor targets compiled from source.
+func (s *Server) compileContext(ctx context.Context, source, targetDir string, verifyOnly bool) *mcp.ToolResult {
+	tr := compiler.NewTranspiler()
+	source, err := s.resolveContextPath(ctx, source)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Sprintf("Context source confinement failed: %v", err))
+	}
+	res, err := tr.CompileContext(ctx, source)
+	if err != nil {
+		if verifyOnly {
+			return mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
+		}
+		return mcp.ErrorResult(fmt.Sprintf("Context compilation failed: %v", err))
+	}
+	paths, err := s.confineContextOutputs(ctx, res, targetDir)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Sprintf("Context output confinement failed: %v", err))
+	}
+	if verifyOnly {
+		if err := verifyContextFiles(ctx, res, paths); err != nil {
+			return mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
+		}
+		return mcp.TextResult("All agent context targets are 100% in sync with canonical AGENTS.md.")
+	}
+
+	if err := ctx.Err(); err != nil {
+		return mcp.ErrorResult(fmt.Sprintf("compile-context cancelled before writing: %v", err))
+	}
+	if err := writeContextFiles(ctx, res, paths); err != nil {
+		return mcp.ErrorResult(fmt.Sprintf("Failed writing outputs: %v", err))
+	}
+
+	var b strings.Builder
+	b.WriteString("Cross-agent context transpilation completed successfully:\n")
+	for _, f := range res.Files {
+		fmt.Fprintf(&b, "  [COMPILED] %-35s (%d lines, budget <= %d)\n", f.RelativePath, f.LineCount, compiler.MaxLineBudget)
+	}
+	return mcp.TextResult(b.String())
+}
+
+// confineContextOutputs resolves every permitted descendant before any writes.
+// The concrete paths are then opened without following any additional symlinks.
+func (s *Server) confineContextOutputs(ctx context.Context, result *compiler.CompileResult, targetDir string) ([]string, error) {
+	paths := make([]string, len(result.Files))
+	for i, file := range result.Files {
+		path, err := s.resolveContextPath(ctx, filepath.Join(targetDir, file.RelativePath))
+		if err != nil {
+			return nil, fmt.Errorf("target %s: %w", file.RelativePath, err)
+		}
+		paths[i] = path
+	}
+	return paths, nil
+}
+
+func (s *Server) resolveContextPath(ctx context.Context, path string) (string, error) {
+	if _, err := s.confinePath(path); err != nil {
+		return "", err
+	}
+	resolved, err := util.ResolveExistingPath(ctx, path)
+	if err != nil {
+		return "", err
+	}
+	if s.opts.AllowOutsideRoot {
+		return resolved, nil
+	}
+	root, err := util.ResolveExistingPath(ctx, s.rootDir)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("%w: resolved context path", ErrOutsideRoot)
+	}
+	return resolved, nil
+}
+
+func verifyContextFiles(ctx context.Context, result *compiler.CompileResult, paths []string) error {
+	for i, file := range result.Files {
+		actual, err := contextopt.ReadSnapshot(ctx, paths[i])
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(bytes.TrimSpace(actual), bytes.TrimSpace([]byte(file.Content))) {
+			return fmt.Errorf("target %s is out of sync", file.RelativePath)
+		}
+	}
+	return nil
+}
+
+func writeContextFiles(ctx context.Context, result *compiler.CompileResult, paths []string) error {
+	for i, file := range result.Files {
+		if err := contextopt.WriteSnapshot(ctx, paths[i], []byte(file.Content), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // createExplainRuleTool builds the read-only standards_explain_rule tool.
 func (s *Server) createExplainRuleTool() (mcp.Tool, error) {
+	ruleList := strings.Join(knownRuleIDs(), ", ")
 	schema := mcp.ToolInputSchema{
 		Type: "object",
 		Properties: map[string]mcp.PropertySchema{
 			"rule_id": {
 				Type:        "string",
-				Description: "The HISS rule identifier to explain (e.g. HISS-01, HISS-02, HISS-04, HISS-07, HISS-10, HISS-15, HISS-16)",
+				Description: "The HISS rule identifier to explain (one of: " + ruleList + ")",
+				Enum:        knownRuleIDs(),
 			},
 		},
 		Required: []string{"rule_id"},
 	}
 
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
-		ruleID, _ := args["rule_id"].(string)
+		ruleID, err := argString(args, "rule_id")
+		if err != nil {
+			return mcp.ErrorResult(err.Error()), nil
+		}
 		ruleID = strings.ToUpper(strings.TrimSpace(ruleID))
 
 		explanation, found := lookupRuleExplanation(ruleID)
 		if !found {
-			return mcp.ErrorResult(fmt.Sprintf("Unknown rule %q. Valid rules: HISS-01, HISS-02, HISS-03, HISS-04, HISS-07, HISS-08, HISS-09, HISS-10, HISS-11, HISS-14, HISS-15, HISS-16", ruleID)), nil
+			return mcp.ErrorResult(fmt.Sprintf("Unknown rule %q. Valid rules: %s", ruleID, ruleList)), nil
 		}
 
 		return mcp.TextResult(explanation), nil
@@ -299,21 +580,22 @@ func (s *Server) createInspectSymbolsTool() (mcp.Tool, error) {
 		Properties: map[string]mcp.PropertySchema{
 			"path": {
 				Type:        "string",
-				Description: "Relative file or directory path to inspect Go AST symbols",
+				Description: "File or directory path (relative to the server root) to inspect Go AST symbols",
 			},
 		},
 		Required: []string{"path"},
 	}
 
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
-		relPath, _ := args["path"].(string)
-		if relPath == "" {
+		targetPath, err := s.resolveOptionalPath(args, "path")
+		if err != nil {
+			return mcp.ErrorResult(err.Error()), nil
+		}
+		if targetPath == "" {
 			return mcp.ErrorResult("path parameter is required"), nil
 		}
-
-		targetPath := relPath
-		if !filepath.IsAbs(targetPath) {
-			targetPath = filepath.Join(s.rootDir, targetPath)
+		if err := ctx.Err(); err != nil {
+			return mcp.ErrorResult(fmt.Sprintf("inspection cancelled: %v", err)), nil
 		}
 
 		report, err := s.inspectSymbolsAtPath(targetPath)
@@ -324,7 +606,7 @@ func (s *Server) createInspectSymbolsTool() (mcp.Tool, error) {
 		return mcp.TextResult(report), nil
 	}
 
-	return mcp.NewReadOnlyTool("standards_inspect_symbols", "Inspect Go AST symbols and analyze HISS-04 complexity bounds", schema, handler)
+	return mcp.NewReadOnlyTool("standards_inspect_symbols", "Inspect Go AST symbols and analyze HISS-04 complexity bounds (LOC, statements, cyclomatic, cognitive)", schema, handler)
 }
 
 // createNeedsReportTool builds the read-only standards_needs_report tool.
@@ -334,20 +616,23 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 		Properties: map[string]mcp.PropertySchema{
 			"path": {
 				Type:        "string",
-				Description: "Path to repository to scan (default: .)",
+				Description: "Path to repository to scan (default: server root)",
 			},
 			"framework": {
 				Type:        "string",
-				Description: "Path to target framework repository (default: /home/kilian/dev/golusoris/golusoris)",
+				Description: "Path to a local checkout of the target framework (default: built-in capability index)",
 			},
 		},
 	}
 
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
-		targetPath := s.resolvePath(args, "path", s.rootDir)
-		fwPath, _ := args["framework"].(string)
-		if fwPath == "" {
-			fwPath = "/home/kilian/dev/golusoris/golusoris"
+		targetPath, err := s.resolvePath(args, "path", s.rootDir)
+		if err != nil {
+			return mcp.ErrorResult(err.Error()), nil
+		}
+		fwPath, err := s.resolveOptionalPath(args, "framework")
+		if err != nil {
+			return mcp.ErrorResult(err.Error()), nil
 		}
 
 		fwIndex, err := needs.InspectFramework(ctx, fwPath)
@@ -355,22 +640,16 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to inspect framework: %v", err)), nil
 		}
 
-		rep, err := needs.ScanRepo(ctx, targetPath)
+		rep, err := needs.ScanRepoWithFramework(ctx, targetPath, fwIndex)
 		if err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to scan repository: %v", err)), nil
 		}
 
 		var b strings.Builder
-		b.WriteString(fmt.Sprintf("=== Golusoris Migration Report: %s ===\n", rep.Repository))
-		b.WriteString(fmt.Sprintf("Framework: %s (%s) | Readiness Score: %.1f%%\n\n", fwIndex.Name, fwIndex.Version, rep.Readiness.Score))
-		b.WriteString("Drop-In Replacement Matrix:\n")
-		for _, dep := range rep.Dependencies {
-			if dep.Status == needs.StatusCovered || dep.Status == needs.StatusAdapterAvailable {
-				b.WriteString(fmt.Sprintf("  ✓ %-35s -> %s\n", dep.Package, dep.GolusorisReplacement))
-			} else {
-				b.WriteString(fmt.Sprintf("  ✗ %-35s -> NO DIRECT EQUIVALENT (Gap)\n", dep.Package))
-			}
-		}
+		fmt.Fprintf(&b, "=== Golusoris Migration Report: %s ===\n", rep.Repository)
+		fmt.Fprintf(&b, "Framework: %s (%s) | Mapping availability: %.1f%%\n\n", fwIndex.Name, fwIndex.Version, rep.Readiness.Score)
+		fmt.Fprintf(&b, "Coverage basis: %s; builds and tests not run\n\n", fwIndex.Basis)
+		b.WriteString(needs.FormatLibraryRelationships(rep))
 
 		return mcp.TextResult(b.String()), nil
 	}
@@ -378,107 +657,7 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 	return mcp.NewReadOnlyTool("standards_needs_report", "Evaluate repository needs and Golusoris migration compatibility", schema, handler)
 }
 
-// resolvePath helper for parameter path resolution.
-func (s *Server) resolvePath(args map[string]any, key, defaultVal string) string {
-	val, ok := args[key].(string)
-	if !ok || val == "" {
-		val = defaultVal
-	}
-	if filepath.IsAbs(val) {
-		return val
-	}
-	return filepath.Join(s.rootDir, val)
-}
-
-// inspectSymbolsAtPath inspects Go files at path without recursion.
-func (s *Server) inspectSymbolsAtPath(path string) (string, error) {
-	stat, err := os.Stat(path)
-	if err != nil {
-		return "", fmt.Errorf("failed stat on %s: %w", path, err)
-	}
-
-	files := make([]string, 0, 10)
-	if stat.IsDir() {
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return "", fmt.Errorf("failed reading directory: %w", err)
-		}
-		for i := 0; i < len(entries) && len(files) < maxFilesToScan; i++ {
-			if !entries[i].IsDir() && strings.HasSuffix(entries[i].Name(), ".go") {
-				files = append(files, filepath.Join(path, entries[i].Name()))
-			}
-		}
-	} else {
-		files = append(files, path)
-	}
-
-	if len(files) == 0 {
-		return "No Go source files found for symbol inspection.", nil
-	}
-
-	fset := token.NewFileSet()
-	var b strings.Builder
-	b.WriteString("=== Go AST Symbol & HISS-04 Complexity Inspection ===\n\n")
-
-	limit := len(files)
-	for i := 0; i < limit; i++ {
-		s.inspectSingleFile(fset, files[i], &b)
-	}
-
-	return b.String(), nil
-}
-
-// inspectSingleFile parses a single Go file and prints its top-level declarations.
-func (s *Server) inspectSingleFile(fset *token.FileSet, filePath string, b *strings.Builder) {
-	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
-	if err != nil {
-		b.WriteString(fmt.Sprintf("File: %s (Parse error: %v)\n\n", filepath.Base(filePath), err))
-		return
-	}
-
-	rel, err := filepath.Rel(s.rootDir, filePath)
-	if err != nil {
-		rel = filePath
-	}
-	b.WriteString(fmt.Sprintf("File: %s (Package: %s)\n", rel, node.Name.Name))
-
-	declLimit := len(node.Decls)
-	for d := 0; d < declLimit; d++ {
-		decl := node.Decls[d]
-		switch fn := decl.(type) {
-		case *ast.FuncDecl:
-			start := fset.Position(fn.Pos()).Line
-			end := fset.Position(fn.End()).Line
-			loc := end - start + 1
-			stmts := 0
-			if fn.Body != nil {
-				stmts = len(fn.Body.List)
-			}
-
-			status := "PASS"
-			if loc > 75 || stmts > 50 {
-				status = "HISS-04 WARN"
-			}
-
-			receiver := ""
-			if fn.Recv != nil && len(fn.Recv.List) > 0 {
-				receiver = "(recv) "
-			}
-			b.WriteString(fmt.Sprintf("  - %sFunc: %s | LOC: %d (<=75) | Stmts: %d (<=50) [%s]\n",
-				receiver, fn.Name.Name, loc, stmts, status))
-
-		case *ast.GenDecl:
-			if fn.Tok == token.TYPE {
-				for _, spec := range fn.Specs {
-					if ts, ok := spec.(*ast.TypeSpec); ok {
-						b.WriteString(fmt.Sprintf("  - Type: %s\n", ts.Name.Name))
-					}
-				}
-			}
-		}
-	}
-	b.WriteString("\n")
-}
+// ---- HISS rule explanations ----------------------------------------------------------------
 
 var hissRuleExplanations = map[string]string{
 	"HISS-01": `Rule: HISS-01 (Control Flow - Acyclic DAG Control Flow)
@@ -501,7 +680,7 @@ Formal Specification:
   - Cognitive Complexity <= 15
   - Function Length <= 75 LOC
   - Executable Statements <= 50
-Enforcement: gocyclo, gocognit, AST scanners.
+Enforcement: gocyclo, gocognit and funlen via golangci-lint (.golangci.yml), plus the standards_inspect_symbols AST scanner.
 Failure Action: Build sweep blocker.`,
 	"HISS-07": `Rule: HISS-07 (Checked Errors & Zero Unwrap)
 Formal Specification: Zero .unwrap() and .expect() in non-test code. Total ban on unchecked Go error returns. All error flows must be handled or wrapped with context.
@@ -529,12 +708,30 @@ Enforcement: Git log and API diff analyzer.
 Failure Action: PR blocker.`,
 	"HISS-15": `Rule: HISS-15 (3D Test Discipline)
 Formal Specification: Mandatory Positive, Negative, and Boundary tests for all public interfaces. Touched-file clean rule enforced.
-Enforcement: Coverage gates and test matrix.
+Enforcement: CI coverage gate (go test -race -coverprofile with a minimum statement-coverage floor enforced by 'go tool cover') and PR checklist validation of the 3D test attestation.
 Failure Action: Merge gate rejection.`,
 	"HISS-16": `Rule: HISS-16 (Canonical AGENTS.md & Server Gates)
-Formal Specification: Single source of agent instructions (AGENTS.md). Vendor targets compiled via standardsctl compile-context. Sandboxed verification.
+Formal Specification: Single source of agent instructions (AGENTS.md). Vendor targets compiled via praetorctl compile-context. Sandboxed verification.
 Enforcement: Pre-commit blocker, server-side admission.
 Failure Action: Merge blocker.`,
+	"HISS-17": `Rule: HISS-17 (State Ledger Discipline)
+Formal Specification: Every agent turn starts by inspecting .workingdir/STATE.md and .workingdir/OPEN.md; tasks are tracked via 'praetorctl state task'; every turn ends with 'praetorctl state sync .'.
+Enforcement: Pre-commit state-sync hook and the CI / pre-push state audit.
+Failure Action: Pre-commit / CI gate rejection.`,
+	"HISS-18": `Rule: HISS-18 (CI Efficiency)
+Formal Specification: Diff-aware change gating: heavy race and security gates are skipped on docs-only or state-only changes as classified by 'praetorctl ci filter'.
+Enforcement: CI filter step exporting run_* outputs that every heavy gate's condition consumes.
+Failure Action: CI optimization gate.`,
+}
+
+// knownRuleIDs returns the explainable rule identifiers in ascending order.
+func knownRuleIDs() []string {
+	ids := make([]string, 0, len(hissRuleExplanations))
+	for id := range hissRuleExplanations {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // lookupRuleExplanation returns authoritative HISS rule descriptions.
@@ -542,6 +739,8 @@ func lookupRuleExplanation(ruleID string) (string, bool) {
 	val, ok := hissRuleExplanations[ruleID]
 	return val, ok
 }
+
+// ---- JSON-RPC dispatch ----------------------------------------------------------------------
 
 // handleInitialize returns MCP initialization metadata.
 func (s *Server) handleInitialize(req JSONRPCRequest) *JSONRPCResponse {
@@ -582,45 +781,43 @@ func (s *Server) handleToolsList(req JSONRPCRequest) *JSONRPCResponse {
 	}
 }
 
-// handleToolsCall dispatches tool execution to the appropriate tool handler.
+// errorResponse builds a JSON-RPC error response.
+func errorResponse(id any, code int, message string) *JSONRPCResponse {
+	return &JSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error:   &JSONRPCError{Code: code, Message: message},
+	}
+}
+
+// handleToolsCall dispatches tool execution to the appropriate tool handler under the
+// per-call deadline (HISS-02).
 func (s *Server) handleToolsCall(ctx context.Context, req JSONRPCRequest) *JSONRPCResponse {
 	var params struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &JSONRPCError{
-				Code:    -32602,
-				Message: fmt.Sprintf("Invalid params for tools/call: %v", err),
-			},
-		}
+		return errorResponse(req.ID, -32602, fmt.Sprintf("Invalid params for tools/call: %v", err))
 	}
 
 	tool, exists := s.tools[params.Name]
 	if !exists {
-		return &JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &JSONRPCError{
-				Code:    -32601,
-				Message: fmt.Sprintf("Tool not found: %s", params.Name),
-			},
-		}
+		return errorResponse(req.ID, -32601, fmt.Sprintf("Tool not found: %s", params.Name))
+	}
+	if tool.Handler == nil {
+		return errorResponse(req.ID, -32603, fmt.Sprintf("Tool %s has no handler", params.Name))
+	}
+	if params.Arguments == nil {
+		params.Arguments = map[string]any{}
 	}
 
-	res, err := tool.Handler(ctx, params.Arguments)
+	callCtx, cancel := context.WithTimeout(ctx, s.opts.ToolTimeout)
+	defer cancel()
+
+	res, err := tool.Handler(callCtx, params.Arguments)
 	if err != nil {
-		return &JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &JSONRPCError{
-				Code:    -32603,
-				Message: fmt.Sprintf("Internal tool execution error: %v", err),
-			},
-		}
+		return errorResponse(req.ID, -32603, fmt.Sprintf("Internal tool execution error: %v", err))
 	}
 
 	return &JSONRPCResponse{
@@ -653,218 +850,6 @@ func (s *Server) HandleRequest(ctx context.Context, req JSONRPCRequest) *JSONRPC
 		return s.handleToolsCall(ctx, req)
 
 	default:
-		return &JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &JSONRPCError{
-				Code:    -32601,
-				Message: fmt.Sprintf("Method not found: %s", req.Method),
-			},
-		}
-	}
-}
-
-// RunStdio executes the stdio JSON-RPC 2.0 loop.
-func (s *Server) RunStdio(ctx context.Context) error {
-	scanner := bufio.NewScanner(os.Stdin)
-	buf := make([]byte, 64*1024)
-	scanner.Buffer(buf, maxScannerBuffer)
-
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		line := scanner.Bytes()
-		if len(strings.TrimSpace(string(line))) == 0 {
-			continue
-		}
-
-		var req JSONRPCRequest
-		if err := json.Unmarshal(line, &req); err != nil {
-			resp := JSONRPCResponse{
-				JSONRPC: "2.0",
-				Error: &JSONRPCError{
-					Code:    -32700,
-					Message: "Parse error: invalid JSON-RPC payload",
-				},
-			}
-			s.writeStdioResponse(&resp)
-			continue
-		}
-
-		resp := s.HandleRequest(ctx, req)
-		if resp != nil {
-			s.writeStdioResponse(resp)
-		}
-	}
-
-	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("scanner error: %w", err)
-	}
-	return nil
-}
-
-// writeStdioResponse serializes a JSON-RPC response to stdout.
-func (s *Server) writeStdioResponse(resp *JSONRPCResponse) {
-	data, err := json.Marshal(resp)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to marshal response: %v\n", err)
-		return
-	}
-	fmt.Fprintf(os.Stdout, "%s\n", string(data))
-}
-
-// writeJSON encodes an HTTP JSON payload without unchecked error suppression.
-func writeJSON(w http.ResponseWriter, payload any) {
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to encode response: %v\n", err)
-	}
-}
-
-// RunHTTP serves JSON-RPC 2.0 requests over HTTP.
-func (s *Server) RunHTTP(ctx context.Context, addr string) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","server":"standards-mcp","version":%q}`, s.version)
-	})
-
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxScannerBuffer))
-		if err != nil {
-			http.Error(w, "Payload Too Large", http.StatusRequestEntityTooLarge)
-			return
-		}
-
-		var req JSONRPCRequest
-		if err := json.Unmarshal(body, &req); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			writeJSON(w, JSONRPCResponse{
-				JSONRPC: "2.0",
-				Error:   &JSONRPCError{Code: -32700, Message: "Parse error"},
-			})
-			return
-		}
-
-		resp := s.HandleRequest(r.Context(), req)
-		w.Header().Set("Content-Type", "application/json")
-		if resp != nil {
-			writeJSON(w, resp)
-		}
-	})
-
-	server := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
-
-	return s.runHTTPServer(ctx, server)
-}
-
-// handleSSEEndpoint handles incoming SSE connections.
-func (s *Server) handleSSEEndpoint(ctx context.Context) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-
-		sessionID := fmt.Sprintf("session-%d", time.Now().UnixNano())
-		fmt.Fprintf(w, "event: endpoint\ndata: /messages?sessionId=%s\n\n", sessionID)
-		flusher.Flush()
-
-		select {
-		case <-r.Context().Done():
-			return
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-// handleSSEMessages handles POST JSON-RPC messages for SSE sessions.
-func (s *Server) handleSSEMessages(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxScannerBuffer))
-	if err != nil {
-		http.Error(w, "Payload Too Large", http.StatusRequestEntityTooLarge)
-		return
-	}
-
-	var req JSONRPCRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		writeJSON(w, JSONRPCResponse{
-			JSONRPC: "2.0",
-			Error:   &JSONRPCError{Code: -32700, Message: "Parse error"},
-		})
-		return
-	}
-
-	resp := s.HandleRequest(r.Context(), req)
-	w.Header().Set("Content-Type", "application/json")
-	if resp != nil {
-		writeJSON(w, resp)
-	}
-}
-
-// RunSSE serves the MCP Server-Sent Events transport.
-func (s *Server) RunSSE(ctx context.Context, addr string) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","server":"standards-mcp","version":%q}`, s.version)
-	})
-	mux.HandleFunc("/sse", s.handleSSEEndpoint(ctx))
-	mux.HandleFunc("/messages", s.handleSSEMessages)
-
-	server := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
-
-	return s.runHTTPServer(ctx, server)
-}
-
-// runHTTPServer gracefully runs and terminates an HTTP server.
-func (s *Server) runHTTPServer(ctx context.Context, server *http.Server) error {
-	errChan := make(chan error, 1)
-	go func() {
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errChan <- err
-		}
-		close(errChan)
-	}()
-
-	select {
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return server.Shutdown(shutdownCtx)
-	case err := <-errChan:
-		return err
+		return errorResponse(req.ID, -32601, fmt.Sprintf("Method not found: %s", req.Method))
 	}
 }

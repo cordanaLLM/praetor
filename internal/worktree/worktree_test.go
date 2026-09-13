@@ -12,6 +12,10 @@ import (
 
 func setupTestGitRepo(t *testing.T) string {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	t.Setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	dir := t.TempDir()
 
 	runCmd := func(args ...string) {
@@ -121,12 +125,185 @@ func verifyListAndRemoval(t *testing.T, mgr *Manager, ctx context.Context, wtA, 
 	if _, err := os.Stat(wtA.Path); !os.IsNotExist(err) {
 		t.Errorf("expected wtA directory to be deleted after Remove")
 	}
+	if got := runInDir(t, mgr.RootDir(), "rev-parse", "--verify", wtA.Branch); strings.TrimSpace(got) == "" {
+		t.Errorf("expected safe removal to preserve branch %s", wtA.Branch)
+	}
 
 	if err := mgr.Remove(ctx, "task-beta", true); err != nil {
 		t.Fatalf("expected Remove(force=true) on task-beta to succeed: %v", err)
 	}
 	if _, err := os.Stat(wtB.Path); !os.IsNotExist(err) {
 		t.Errorf("expected wtB directory to be deleted after Remove")
+	}
+}
+
+func TestWorktree_Positive_SafeRemovalPreservesUnpublishedCommit(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+	mgr := NewManager(repoDir)
+	ctx := context.Background()
+
+	wt, err := mgr.Create(ctx, "task-preserve", "main")
+	if err != nil {
+		t.Fatalf("failed creating worktree: %v", err)
+	}
+	commitFile := filepath.Join(wt.Path, "unpublished.txt")
+	if err := os.WriteFile(commitFile, []byte("unpublished commit\n"), 0o644); err != nil {
+		t.Fatalf("failed writing commit file: %v", err)
+	}
+	runInDir(t, wt.Path, "add", "unpublished.txt")
+	runInDir(t, wt.Path, "commit", "-m", "unpublished work")
+	commitSHA := strings.TrimSpace(runInDir(t, wt.Path, "rev-parse", "HEAD"))
+
+	if err := mgr.Remove(ctx, wt.TaskID, false); err != nil {
+		t.Fatalf("safe removal failed: %v", err)
+	}
+	if _, err := os.Stat(wt.Path); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree directory to be removed, stat error: %v", err)
+	}
+	gotSHA := strings.TrimSpace(runInDir(t, repoDir, "rev-parse", "--verify", wt.Branch))
+	if gotSHA != commitSHA {
+		t.Fatalf("safe removal lost unpublished branch commit: got %s, want %s", gotSHA, commitSHA)
+	}
+}
+
+func TestWorktree_Negative_ReleasedRemovalRejectsIgnoredOnlyFiles(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+	mgr := NewManager(repoDir)
+	ctx := context.Background()
+	wt, err := mgr.Create(ctx, "task-ignored-only", "main")
+	if err != nil {
+		t.Fatalf("failed creating worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wt.Path, ".gitignore"), []byte("ignored/\n"), 0o644); err != nil {
+		t.Fatalf("failed creating gitignore: %v", err)
+	}
+	runInDir(t, wt.Path, "add", ".gitignore")
+	runInDir(t, wt.Path, "commit", "-m", "ignore disposable files")
+	ignored := filepath.Join(wt.Path, "ignored", "secret.txt")
+	if err := os.MkdirAll(filepath.Dir(ignored), 0o755); err != nil {
+		t.Fatalf("failed creating ignored directory: %v", err)
+	}
+	if err := os.WriteFile(ignored, []byte("keep me\n"), 0o644); err != nil {
+		t.Fatalf("failed creating ignored file: %v", err)
+	}
+	if err := mgr.CheckRemoval(ctx, wt.Path); err == nil || !strings.Contains(err.Error(), "ignored files") {
+		t.Fatalf("expected ignored-only removal refusal, got %v", err)
+	}
+	if err := mgr.RemoveReleased(ctx, wt.Path); err == nil {
+		t.Fatal("expected released removal to refuse ignored-only worktree")
+	}
+	if _, err := os.Stat(ignored); err != nil {
+		t.Fatalf("ignored file should survive refusal: %v", err)
+	}
+}
+
+func TestWorktree_Negative_ReleasedRemovalRejectsUnownedPrimaryAndDetached(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+	mgr := NewManager(repoDir)
+	ctx := context.Background()
+	if err := mgr.CheckRemoval(ctx, repoDir); err == nil || !strings.Contains(err.Error(), "primary") {
+		t.Fatalf("expected primary worktree refusal, got %v", err)
+	}
+
+	foreignDir := setupTestGitRepo(t)
+	if err := mgr.CheckRemoval(ctx, foreignDir); err == nil || !strings.Contains(err.Error(), "not a registered worktree") {
+		t.Fatalf("expected foreign worktree refusal, got %v", err)
+	}
+
+	detachedPath := filepath.Join(repoDir, "detached-worktree")
+	runInDir(t, repoDir, "worktree", "add", "--detach", detachedPath, "main")
+	defer func() { runInDir(t, repoDir, "worktree", "remove", "--force", detachedPath) }()
+	if err := mgr.CheckRemoval(ctx, detachedPath); err == nil || !strings.Contains(err.Error(), "unsafe registered worktree") {
+		t.Fatalf("expected detached worktree refusal, got %v", err)
+	}
+}
+
+func TestWorktree_Negative_ReleasedRemovalRejectsSymlinkAlias(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+	mgr := NewManager(repoDir)
+	ctx := context.Background()
+	wt, err := mgr.Create(ctx, "task-symlink", "main")
+	if err != nil {
+		t.Fatalf("failed creating worktree: %v", err)
+	}
+	alias := filepath.Join(repoDir, ".standards", "worktrees", "task-symlink-alias")
+	if err := os.Symlink(wt.Path, alias); err != nil {
+		t.Fatalf("failed creating worktree alias: %v", err)
+	}
+	if err := mgr.CheckRemoval(ctx, alias); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("expected symlink alias refusal, got %v", err)
+	}
+	if err := mgr.RemoveReleased(ctx, alias); err == nil {
+		t.Fatal("expected released removal to refuse symlink alias")
+	}
+	if _, err := os.Stat(wt.Path); err != nil {
+		t.Fatalf("registered worktree should survive alias refusal: %v", err)
+	}
+}
+
+func TestWorktree_Positive_MutatingGitIgnoresAmbientRepositoryRedirect(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+	foreignDir := setupTestGitRepo(t)
+	mgr := NewManager(repoDir)
+	ctx := context.Background()
+	wt, err := mgr.Create(ctx, "task-ambient-git", "main")
+	if err != nil {
+		t.Fatalf("failed creating worktree: %v", err)
+	}
+	t.Setenv("GIT_DIR", filepath.Join(foreignDir, ".git"))
+	if err := mgr.Remove(ctx, wt.TaskID, false); err != nil {
+		t.Fatalf("mutating removal should ignore ambient GIT_DIR: %v", err)
+	}
+	if _, err := os.Stat(wt.Path); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree removal, stat error: %v", err)
+	}
+}
+
+func TestWorktree_Negative_ReleasedProbeRejectsAmbientFilterAndFsmonitor(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config string
+		marker string
+		want   string
+		attrs  bool
+	}{
+		{name: "filter", config: "[filter \"malicious\"]\n\tclean = !touch MARKER\n", marker: "filter marker", want: "configured filters", attrs: true},
+		{name: "fsmonitor", config: "[core]\n\tfsmonitor = !touch MARKER\n", marker: "fsmonitor marker", want: "attributes, excludes, or fsmonitor"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoDir := setupTestGitRepo(t)
+			mgr := NewManager(repoDir)
+			ctx := context.Background()
+			wt, err := mgr.Create(ctx, "task-ambient-"+tc.name, "main")
+			if err != nil {
+				t.Fatalf("failed creating worktree: %v", err)
+			}
+			if tc.attrs {
+				if err := os.WriteFile(filepath.Join(wt.Path, ".gitattributes"), []byte("*.txt filter=malicious\n"), 0o644); err != nil {
+					t.Fatalf("failed writing attributes: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(wt.Path, "sample.txt"), []byte("sample\n"), 0o644); err != nil {
+					t.Fatalf("failed writing filtered file: %v", err)
+				}
+				runInDir(t, wt.Path, "add", ".gitattributes")
+				runInDir(t, wt.Path, "add", "sample.txt")
+				runInDir(t, wt.Path, "commit", "-m", "configure filter attribute")
+			}
+			home := t.TempDir()
+			marker := filepath.Join(home, tc.marker)
+			config := strings.ReplaceAll(tc.config, "MARKER", marker)
+			if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(config), 0o600); err != nil {
+				t.Fatalf("failed writing global Git config: %v", err)
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, ".gitconfig"))
+			if err := mgr.CheckRemoval(ctx, wt.Path); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected ambient %s refusal, got %v", tc.name, err)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("ambient %s command executed unexpectedly: %v", tc.name, err)
+			}
+		})
 	}
 }
 
@@ -140,10 +317,28 @@ func TestWorktree_Positive_DirtyWorktreeForceRemoval(t *testing.T) {
 		t.Fatalf("failed creating task-dirty: %v", err)
 	}
 
-	// Create untracked file to make the worktree dirty
+	// Commit the ignore rule so the fixture exercises both untracked and ignored
+	// content during the safe-removal refusal.
+	if err := os.WriteFile(filepath.Join(wt.Path, ".gitignore"), []byte("ignored/\n"), 0o644); err != nil {
+		t.Fatalf("failed creating gitignore: %v", err)
+	}
+	runInDir(t, wt.Path, "add", ".gitignore")
+	runInDir(t, wt.Path, "commit", "-m", "ignore disposable files")
+
+	// Create untracked file to make the worktree dirty.
 	dirtyFile := filepath.Join(wt.Path, "dirty.txt")
 	if err := os.WriteFile(dirtyFile, []byte("uncommitted change\n"), 0o644); err != nil {
 		t.Fatalf("failed creating dirty file: %v", err)
+	}
+	ignoredDir := filepath.Join(wt.Path, "ignored")
+	if err := os.MkdirAll(ignoredDir, 0o755); err != nil {
+		t.Fatalf("failed creating ignored directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ignoredDir, "secret.txt"), []byte("ignored change\n"), 0o644); err != nil {
+		t.Fatalf("failed creating ignored file: %v", err)
+	}
+	if ignored := runInDir(t, wt.Path, "check-ignore", "ignored/secret.txt"); strings.TrimSpace(ignored) == "" {
+		t.Fatal("fixture file should be ignored by the committed ignore rule")
 	}
 
 	// Non-force remove must fail because worktree contains untracked files
@@ -155,6 +350,9 @@ func TestWorktree_Positive_DirtyWorktreeForceRemoval(t *testing.T) {
 	if _, err := os.Stat(wt.Path); os.IsNotExist(err) {
 		t.Errorf("worktree path should still exist after failed safe removal")
 	}
+	if _, err := os.Stat(filepath.Join(ignoredDir, "secret.txt")); err != nil {
+		t.Errorf("ignored file should survive failed safe removal: %v", err)
+	}
 
 	// Force remove must succeed
 	if err := mgr.Remove(ctx, "task-dirty", true); err != nil {
@@ -162,6 +360,36 @@ func TestWorktree_Positive_DirtyWorktreeForceRemoval(t *testing.T) {
 	}
 	if _, err := os.Stat(wt.Path); !os.IsNotExist(err) {
 		t.Errorf("worktree directory should be deleted after force Remove")
+	}
+	cmd := exec.Command("git", "rev-parse", "--verify", "wt/task-dirty")
+	cmd.Dir = repoDir
+	if cmd.Run() == nil {
+		t.Errorf("force removal should delete managed branch wt/task-dirty")
+	}
+}
+
+func TestWorktree_Negative_ForceRemovalReportsBranchCleanupFailure(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+	mgr := NewManager(repoDir)
+	ctx := context.Background()
+
+	wt, err := mgr.Create(ctx, "task-missing-branch", "main")
+	if err != nil {
+		t.Fatalf("failed creating worktree: %v", err)
+	}
+	// Remove the ref behind Git's back so worktree removal can succeed while
+	// the explicit force cleanup has a precise, observable failure.
+	runInDir(t, repoDir, "update-ref", "-d", "refs/heads/"+wt.Branch)
+
+	err = mgr.Remove(ctx, wt.TaskID, true)
+	if err == nil {
+		t.Fatal("expected force removal to report missing branch cleanup")
+	}
+	if !strings.Contains(err.Error(), "worktree removed") || !strings.Contains(err.Error(), "failed deleting branch wt/task-missing-branch") {
+		t.Fatalf("force cleanup error does not describe both outcomes: %v", err)
+	}
+	if _, statErr := os.Stat(wt.Path); !os.IsNotExist(statErr) {
+		t.Fatalf("worktree should be removed despite branch cleanup failure, stat error: %v", statErr)
 	}
 }
 
@@ -324,7 +552,9 @@ func TestWorktree_Negative_DuplicateWorktree(t *testing.T) {
 		t.Fatalf("initial create failed: %v", err)
 	}
 	defer func() {
-		_ = mgr.Remove(ctx, "task-dup", true)
+		if err := mgr.Remove(ctx, "task-dup", true); err != nil {
+			t.Errorf("cleanup duplicate worktree: %v", err)
+		}
 	}()
 
 	// Re-creating the same task worktree must fail

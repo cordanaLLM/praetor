@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "praetor-dev": {
+      "type": "stdio",
+      "command": "sh",
+      "args": [
+        "-c",
+        "exec python3 \"$CLAUDE_PROJECT_DIR/scripts/dev_mcp.py\" serve"
+      ],
+      "timeout": 120000
+    }
+  }
+}

@@ -318,20 +318,27 @@ func CleanWorkstationTopology(ctx context.Context, devRoot string, dryRun bool) 
 		}
 
 		if !dryRun {
-			if isSymlink(stray.Path) {
-				if err := os.Remove(stray.Path); err != nil {
-					return cleaned, fmt.Errorf("failed to remove stray symlink %s: %w", stray.Path, err)
-				}
-			} else {
-				if err := os.RemoveAll(stray.Path); err != nil {
-					return cleaned, fmt.Errorf("failed to remove stray entry %s: %w", stray.Path, err)
-				}
+			if err := removeStrayEntry(stray.Path); err != nil {
+				return cleaned, err
 			}
 		}
 		cleaned = append(cleaned, stray.Path)
 	}
 
 	return cleaned, nil
+}
+
+func removeStrayEntry(path string) error {
+	if isSymlink(path) {
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("failed to remove stray symlink %s: %w", path, err)
+		}
+		return nil
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("failed to remove stray entry %s: %w", path, err)
+	}
+	return nil
 }
 
 func verifyDeletionSafety(devRoot, path string) error {

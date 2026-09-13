@@ -54,8 +54,11 @@ func runProjectList(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("project list accepts no positional arguments, got %q", fs.Args())
+	}
 
-	pm := forge.NewProjectManager(*owner, *token, *endpoint)
+	pm := forge.NewProjectManager(ctx, *owner, *token, *endpoint)
 	projects, err := pm.ListProjects(ctx, *dir)
 	if err != nil {
 		return fmt.Errorf("list projects failed: %w", err)
@@ -79,12 +82,12 @@ func runProjectAdd(ctx context.Context, args []string) error {
 	dir := fs.String("dir", ".", "Repository root directory")
 	token := fs.String("token", "", "GitHub access token")
 	endpoint := fs.String("endpoint", "", "GitHub GraphQL endpoint")
-	if err := fs.Parse(args); err != nil {
+	remArgs, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
 
-	remArgs := fs.Args()
-	if len(remArgs) < 2 {
+	if len(remArgs) != 2 {
 		return fmt.Errorf("usage: praetorctl project add <project-number> <item-url> [--owner=...] [--dir=.]")
 	}
 
@@ -94,24 +97,38 @@ func runProjectAdd(ctx context.Context, args []string) error {
 	}
 	itemURL := strings.TrimSpace(remArgs[1])
 
-	pm := forge.NewProjectManager(*owner, *token, *endpoint)
+	pm := forge.NewProjectManager(ctx, *owner, *token, *endpoint)
 	item, err := pm.AddItem(ctx, *dir, projectNum, itemURL)
 	if err != nil {
 		return fmt.Errorf("failed adding item to project #%d: %w", projectNum, err)
 	}
 
+	if item.LocalOnly {
+		fmt.Printf("[WARN] Recorded item %s for Project #%d in the local cache only "+
+			"(ID: %s, Status: %s); no forge credentials were available, so the board was not updated\n",
+			itemURL, projectNum, item.ID, item.Status)
+		return nil
+	}
 	fmt.Printf("[PASS] Added item %s to Project #%d (ID: %s, Status: %s)\n",
 		itemURL, projectNum, item.ID, item.Status)
 	return nil
 }
 
 func runProjectStatus(ctx context.Context, args []string) error {
-	dir := "."
-	if len(args) > 0 {
-		dir = args[0]
+	fs := flag.NewFlagSet("project status", flag.ContinueOnError)
+	dirFlag := fs.String("dir", ".", "Repository root directory")
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
 	}
+	if len(positional) > 1 {
+		return fmt.Errorf("project status accepts at most one directory, got %q", positional)
+	}
+	dir := positionalAt(positional, 0, *dirFlag)
 
-	pm := forge.NewProjectManager("cordanaLLM", "", "")
+	// 'status' inspects the cached boards: it resolves no credentials and never reaches
+	// the network, so it can neither block on a keyring nor rewrite the cache.
+	pm := forge.NewCachedProjectManager("cordanaLLM")
 	projects, err := pm.ListProjects(ctx, dir)
 	if err != nil {
 		return err

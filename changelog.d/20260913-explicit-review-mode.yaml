@@ -1,0 +1,4 @@
+type: added
+title: Allow explicit single-maintainer review mode while retaining configured reviewer minimum and other protection gates
+breaking: false
+package: config

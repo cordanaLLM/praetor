@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -25,12 +27,69 @@ type ComplexityPolicy struct {
 	MaxStatements int `yaml:"max_statements"`
 }
 
-// BranchProtectionPolicy defines branch protection invariants.
+// BranchReviewMode selects how pull-request review requirements are enforced.
+type BranchReviewMode string
+
+const (
+	BranchReviewModeIndependent      BranchReviewMode = "independent"
+	BranchReviewModeSingleMaintainer BranchReviewMode = "single_maintainer"
+)
+
+// UnmarshalYAML rejects unknown, empty, and non-string modes at the source
+// boundary. The zero value remains valid only for manifests that omit the field.
+func (m *BranchReviewMode) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
+		return errors.New("branch protection review_mode must be a string enum")
+	}
+	mode := BranchReviewMode(node.Value)
+	if mode != BranchReviewModeIndependent && mode != BranchReviewModeSingleMaintainer {
+		return fmt.Errorf("unsupported branch protection review mode %q", mode)
+	}
+	*m = mode
+	return nil
+}
+
+// BranchProtectionPolicy defines branch protection invariants. Single-maintainer
+// mode changes only the effective review gate; the configured reviewer minimum is
+// retained so returning to independent mode restores it.
 type BranchProtectionPolicy struct {
-	EnforceLinearHistory       bool `yaml:"enforce_linear_history"`
-	RequireSignedCommits       bool `yaml:"require_signed_commits"`
-	RequiredApprovingReviewers int  `yaml:"required_approving_reviewers"`
-	DismissStaleReviews        bool `yaml:"dismiss_stale_reviews"`
+	EnforceLinearHistory       bool             `yaml:"enforce_linear_history"`
+	RequireSignedCommits       bool             `yaml:"require_signed_commits"`
+	RequiredApprovingReviewers int              `yaml:"required_approving_reviewers"`
+	DismissStaleReviews        bool             `yaml:"dismiss_stale_reviews"`
+	ReviewMode                 BranchReviewMode `yaml:"review_mode,omitempty"`
+}
+
+// UnmarshalYAML distinguishes an omitted review mode from an explicitly null
+// value before decoding the remaining branch-protection fields normally.
+func (b *BranchProtectionPolicy) UnmarshalYAML(node *yaml.Node) error {
+	reviewMode := policyMember(node, "review_mode")
+	if reviewMode != nil && (reviewMode.Kind != yaml.ScalarNode || reviewMode.Tag != "!!str") {
+		return errors.New("branch protection review_mode must be a string enum")
+	}
+	type rawBranchProtectionPolicy BranchProtectionPolicy
+	var decoded rawBranchProtectionPolicy
+	if err := node.Decode(&decoded); err != nil {
+		return err
+	}
+	*b = BranchProtectionPolicy(decoded)
+	return nil
+}
+
+// EffectiveReviewRequirements resolves the review gate used by every ruleset
+// consumer. An omitted mode retains the historical independent-review behavior.
+func (b BranchProtectionPolicy) EffectiveReviewRequirements() (int, bool, error) {
+	if b.RequiredApprovingReviewers < 0 {
+		return 0, false, errors.New("required approving review count cannot be negative")
+	}
+	switch b.ReviewMode {
+	case "", BranchReviewModeIndependent:
+		return b.RequiredApprovingReviewers, true, nil
+	case BranchReviewModeSingleMaintainer:
+		return 0, false, nil
+	default:
+		return 0, false, fmt.Errorf("unsupported branch protection review mode %q", b.ReviewMode)
+	}
 }
 
 // SupplyChainPolicy defines supply chain provenance requirements.
@@ -40,7 +99,8 @@ type SupplyChainPolicy struct {
 	RequireSBOM   bool `yaml:"require_sbom"`
 }
 
-// Overrides contains explicit project-level overrides that can only increase strictness.
+// Overrides contains explicit project-level policy overrides. Numeric and boolean
+// controls can only increase strictness; review mode is the bounded exception.
 type Overrides struct {
 	Complexity       *ComplexityPolicy       `yaml:"complexity,omitempty"`
 	BranchProtection *BranchProtectionPolicy `yaml:"branch_protection,omitempty"`
@@ -67,7 +127,9 @@ type ResolvedPolicy struct {
 
 // LoadManifest reads and parses a .standards.yaml file.
 func LoadManifest(path string) (*Manifest, error) {
-	data, err := os.ReadFile(path)
+	// #nosec G304 -- path is the manifest location chosen by the invoking user (a CLI
+	// flag defaulting to the repository root); there is no confinement root to enforce.
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read manifest at %s: %w", path, err)
 	}
@@ -76,8 +138,19 @@ func LoadManifest(path string) (*Manifest, error) {
 	if err := yaml.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("failed to parse manifest at %s: %w", path, err)
 	}
+	if err := validateManifestReviewPolicy(&m); err != nil {
+		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
+	}
 
 	return &m, nil
+}
+
+func validateManifestReviewPolicy(m *Manifest) error {
+	if m == nil || m.Overrides.BranchProtection == nil {
+		return nil
+	}
+	_, _, err := m.Overrides.BranchProtection.EffectiveReviewRequirements()
+	return err
 }
 
 // DefaultPolicy returns a baseline default policy.
@@ -94,6 +167,7 @@ func DefaultPolicy() *ResolvedPolicy {
 			RequireSignedCommits:       false,
 			RequiredApprovingReviewers: 1,
 			DismissStaleReviews:        true,
+			ReviewMode:                 BranchReviewModeIndependent,
 		},
 		SupplyChain: SupplyChainPolicy{
 			SLSALevel:     1,
@@ -112,10 +186,10 @@ func Join(a, b *ResolvedPolicy) *ResolvedPolicy {
 		return DefaultPolicy()
 	}
 	if a == nil {
-		return b
+		return clonePolicy(b)
 	}
 	if b == nil {
-		return a
+		return clonePolicy(a)
 	}
 
 	res := &ResolvedPolicy{}
@@ -131,6 +205,7 @@ func Join(a, b *ResolvedPolicy) *ResolvedPolicy {
 	res.BranchProtection.RequireSignedCommits = a.BranchProtection.RequireSignedCommits || b.BranchProtection.RequireSignedCommits
 	res.BranchProtection.DismissStaleReviews = a.BranchProtection.DismissStaleReviews || b.BranchProtection.DismissStaleReviews
 	res.BranchProtection.RequiredApprovingReviewers = max(a.BranchProtection.RequiredApprovingReviewers, b.BranchProtection.RequiredApprovingReviewers)
+	res.BranchProtection.ReviewMode = joinReviewMode(a.BranchProtection.ReviewMode, b.BranchProtection.ReviewMode)
 
 	// Supply Chain: Strictest is higher SLSA level and mandatory signing
 	res.SupplyChain.SLSALevel = max(a.SupplyChain.SLSALevel, b.SupplyChain.SLSALevel)
@@ -144,40 +219,74 @@ func Join(a, b *ResolvedPolicy) *ResolvedPolicy {
 	return res
 }
 
-// ApplyOverrides applies project-level overrides on top of the resolved policy,
-// enforcing that overrides can only increase strictness.
+func clonePolicy(p *ResolvedPolicy) *ResolvedPolicy {
+	clone := *p
+	clone.Linters = append([]string(nil), p.Linters...)
+	clone.DevFeatures = append([]string(nil), p.DevFeatures...)
+	return &clone
+}
+
+// ApplyOverrides applies project-level overrides on top of the resolved policy.
+// ReviewMode is the sole explicit relaxation; every other control stays monotonic.
 func (p *ResolvedPolicy) ApplyOverrides(o Overrides) {
 	if o.Complexity != nil {
-		if o.Complexity.MaxCyclomatic > 0 {
-			p.Complexity.MaxCyclomatic = minPositive(p.Complexity.MaxCyclomatic, o.Complexity.MaxCyclomatic)
-		}
-		if o.Complexity.MaxCognitive > 0 {
-			p.Complexity.MaxCognitive = minPositive(p.Complexity.MaxCognitive, o.Complexity.MaxCognitive)
-		}
-		if o.Complexity.MaxFuncLOC > 0 {
-			p.Complexity.MaxFuncLOC = minPositive(p.Complexity.MaxFuncLOC, o.Complexity.MaxFuncLOC)
-		}
-		if o.Complexity.MaxStatements > 0 {
-			p.Complexity.MaxStatements = minPositive(p.Complexity.MaxStatements, o.Complexity.MaxStatements)
-		}
+		p.Complexity.applyOverride(o.Complexity)
 	}
-
 	if o.BranchProtection != nil {
-		p.BranchProtection.EnforceLinearHistory = p.BranchProtection.EnforceLinearHistory || o.BranchProtection.EnforceLinearHistory
-		p.BranchProtection.RequireSignedCommits = p.BranchProtection.RequireSignedCommits || o.BranchProtection.RequireSignedCommits
-		p.BranchProtection.DismissStaleReviews = p.BranchProtection.DismissStaleReviews || o.BranchProtection.DismissStaleReviews
-		if o.BranchProtection.RequiredApprovingReviewers > p.BranchProtection.RequiredApprovingReviewers {
-			p.BranchProtection.RequiredApprovingReviewers = o.BranchProtection.RequiredApprovingReviewers
-		}
+		p.BranchProtection.applyOverride(o.BranchProtection)
 	}
-
 	if o.SupplyChain != nil {
-		if o.SupplyChain.SLSALevel > p.SupplyChain.SLSALevel {
-			p.SupplyChain.SLSALevel = o.SupplyChain.SLSALevel
-		}
-		p.SupplyChain.EnforceCosign = p.SupplyChain.EnforceCosign || o.SupplyChain.EnforceCosign
-		p.SupplyChain.RequireSBOM = p.SupplyChain.RequireSBOM || o.SupplyChain.RequireSBOM
+		p.SupplyChain.applyOverride(o.SupplyChain)
 	}
+}
+
+// tightenPositive lowers *current to override when override is a stricter positive cap.
+func tightenPositive(current *int, override int) {
+	if override > 0 {
+		*current = minPositive(*current, override)
+	}
+}
+
+// applyOverride keeps the stricter (lower, positive) complexity caps.
+func (c *ComplexityPolicy) applyOverride(o *ComplexityPolicy) {
+	tightenPositive(&c.MaxCyclomatic, o.MaxCyclomatic)
+	tightenPositive(&c.MaxCognitive, o.MaxCognitive)
+	tightenPositive(&c.MaxFuncLOC, o.MaxFuncLOC)
+	tightenPositive(&c.MaxStatements, o.MaxStatements)
+}
+
+// applyOverride keeps stricter branch settings while allowing the explicit review mode.
+func (b *BranchProtectionPolicy) applyOverride(o *BranchProtectionPolicy) {
+	b.EnforceLinearHistory = b.EnforceLinearHistory || o.EnforceLinearHistory
+	b.RequireSignedCommits = b.RequireSignedCommits || o.RequireSignedCommits
+	b.DismissStaleReviews = b.DismissStaleReviews || o.DismissStaleReviews
+	b.RequiredApprovingReviewers = max(b.RequiredApprovingReviewers, o.RequiredApprovingReviewers)
+	if o.ReviewMode != "" {
+		b.ReviewMode = o.ReviewMode
+	}
+}
+
+// joinReviewMode preserves invalid input for downstream rejection while ensuring
+// policy-layer joins never enable the repository-only relaxation implicitly.
+func joinReviewMode(a, b BranchReviewMode) BranchReviewMode {
+	if !knownBranchReviewMode(a) {
+		return a
+	}
+	if !knownBranchReviewMode(b) {
+		return b
+	}
+	return BranchReviewModeIndependent
+}
+
+func knownBranchReviewMode(mode BranchReviewMode) bool {
+	return mode == "" || mode == BranchReviewModeIndependent || mode == BranchReviewModeSingleMaintainer
+}
+
+// applyOverride keeps the stricter supply-chain settings.
+func (s *SupplyChainPolicy) applyOverride(o *SupplyChainPolicy) {
+	s.SLSALevel = max(s.SLSALevel, o.SLSALevel)
+	s.EnforceCosign = s.EnforceCosign || o.EnforceCosign
+	s.RequireSBOM = s.RequireSBOM || o.RequireSBOM
 }
 
 func minPositive(a, b int) int {

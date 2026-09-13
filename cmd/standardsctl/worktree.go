@@ -22,21 +22,18 @@ func runWorktree(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	mgr := worktree.NewManager(".")
-
 	switch sub {
-	case "create":
-		return handleWorktreeCreate(ctx, mgr, subArgs)
-	case "list":
-		return handleWorktreeList(ctx, mgr)
-	case "remove":
-		return handleWorktreeRemove(ctx, mgr, subArgs)
-	case "prune":
-		if err := mgr.Prune(ctx); err != nil {
-			return fmt.Errorf("failed pruning worktrees: %w", err)
-		}
-		fmt.Println("[OK] Orphaned worktrees pruned successfully.")
+	case "-h", "--help", "help":
+		printWorktreeUsage()
 		return nil
+	case "create":
+		return handleWorktreeCreate(ctx, subArgs)
+	case "list":
+		return handleWorktreeList(ctx, subArgs)
+	case "remove":
+		return handleWorktreeRemove(ctx, subArgs)
+	case "prune":
+		return handleWorktreePrune(ctx, subArgs)
 	default:
 		return fmt.Errorf("unknown worktree subcommand: %s", sub)
 	}
@@ -45,20 +42,39 @@ func runWorktree(args []string) error {
 func printWorktreeUsage() {
 	fmt.Println("Usage: standardsctl worktree <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  create <task-id> [base-branch]  Create isolated ephemeral git worktree")
-	fmt.Println("  list                           List all active git worktrees")
-	fmt.Println("  remove <task-id> [--force]      Remove worktree and ephemeral branch")
-	fmt.Println("  prune                          Prune orphaned worktree references")
+	fmt.Println("  create <task-id> [base-branch] [--path=.] Create isolated ephemeral git worktree")
+	fmt.Println("  list [--path=.]                 List all active git worktrees")
+	fmt.Println("  remove <task-id> [--force] [--path=.] Remove worktree (ordinary removal preserves branch; --force deletes it)")
+	fmt.Println("  prune [--path=.]                Prune orphaned worktree references")
 }
 
-func handleWorktreeCreate(ctx context.Context, mgr *worktree.Manager, subArgs []string) error {
-	if len(subArgs) < 1 {
+// worktreeManager parses the repository path shared by every worktree subcommand and
+// returns a manager bound to it, together with the remaining positional arguments. The
+// --path flag is honoured by every subcommand instead of being silently ignored.
+func worktreeManager(name string, args []string, extra func(*flag.FlagSet)) (*worktree.Manager, []string, error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	path := fs.String("path", ".", "Repository path owning the worktrees")
+	if extra != nil {
+		extra(fs)
+	}
+	if err := fs.Parse(reorderArgs(args, boolFlagNames(fs))); err != nil {
+		return nil, nil, err
+	}
+	return worktree.NewManager(*path), fs.Args(), nil
+}
+
+func handleWorktreeCreate(ctx context.Context, subArgs []string) error {
+	mgr, rest, err := worktreeManager("worktree create", subArgs, nil)
+	if err != nil {
+		return err
+	}
+	if len(rest) < 1 {
 		return fmt.Errorf("task-id required: standardsctl worktree create <task-id> [base-branch]")
 	}
-	taskID := subArgs[0]
+	taskID := rest[0]
 	baseBranch := "main"
-	if len(subArgs) > 1 {
-		baseBranch = subArgs[1]
+	if len(rest) > 1 {
+		baseBranch = rest[1]
 	}
 	wt, err := mgr.Create(ctx, taskID, baseBranch)
 	if err != nil {
@@ -69,46 +85,95 @@ func handleWorktreeCreate(ctx context.Context, mgr *worktree.Manager, subArgs []
 	return nil
 }
 
-func handleWorktreeList(ctx context.Context, mgr *worktree.Manager) error {
+func handleWorktreeList(ctx context.Context, subArgs []string) error {
+	mgr, rest, err := worktreeManager("worktree list", subArgs, nil)
+	if err != nil {
+		return err
+	}
+	if len(rest) > 0 {
+		return fmt.Errorf("worktree list takes no positional arguments, got %q", rest[0])
+	}
 	trees, err := mgr.List(ctx)
 	if err != nil {
 		return fmt.Errorf("failed listing worktrees: %w", err)
 	}
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "BRANCH\tHEAD\tSTATUS\tPATH")
-	for _, wt := range trees {
-		status := "clean"
-		if wt.Locked {
-			status = "locked: " + wt.LockReason
-		} else if wt.Prunable {
-			status = "prunable"
-		}
-		branch := wt.Branch
-		if wt.Detached {
-			branch = "(detached)"
-		}
-		head := wt.HEAD
-		if len(head) > 8 {
-			head = head[:8]
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", branch, head, status, wt.Path)
+	if _, err := fmt.Fprintln(w, "BRANCH\tHEAD\tSTATUS\tPATH"); err != nil {
+		return fmt.Errorf("write worktree table header: %w", err)
 	}
-	return w.Flush()
+	for _, wt := range trees {
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", worktreeBranch(wt), shortHead(wt.HEAD), worktreeStatus(wt), wt.Path); err != nil {
+			return fmt.Errorf("write worktree row %q: %w", wt.Path, err)
+		}
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flush worktree table: %w", err)
+	}
+	return nil
 }
 
-func handleWorktreeRemove(ctx context.Context, mgr *worktree.Manager, subArgs []string) error {
-	fs := flag.NewFlagSet("worktree remove", flag.ContinueOnError)
-	force := fs.Bool("force", false, "Force removal even if uncommitted or locked")
-	if err := fs.Parse(subArgs); err != nil {
+// worktreeStatus renders the lock and prune state of one worktree.
+func worktreeStatus(wt worktree.WorktreeInfo) string {
+	if wt.Locked {
+		return "locked: " + wt.LockReason
+	}
+	if wt.Prunable {
+		return "prunable"
+	}
+	return "registered"
+}
+
+// worktreeBranch renders the branch column, marking detached heads.
+func worktreeBranch(wt worktree.WorktreeInfo) string {
+	if wt.Detached {
+		return "(detached)"
+	}
+	return wt.Branch
+}
+
+// shortHead truncates a commit SHA to its display length.
+func shortHead(head string) string {
+	if len(head) > 8 {
+		return head[:8]
+	}
+	return head
+}
+
+func handleWorktreeRemove(ctx context.Context, subArgs []string) error {
+	var force *bool
+	mgr, rest, err := worktreeManager("worktree remove", subArgs, func(fs *flag.FlagSet) {
+		force = fs.Bool("force", false, "Force removal even if uncommitted or locked")
+	})
+	if err != nil {
 		return err
 	}
-	if fs.NArg() < 1 {
+	if len(rest) < 1 {
 		return fmt.Errorf("task-id required: standardsctl worktree remove <task-id> [--force]")
 	}
-	taskID := fs.Arg(0)
+	taskID := rest[0]
 	if err := mgr.Remove(ctx, taskID, *force); err != nil {
 		return fmt.Errorf("failed removing worktree: %w", err)
 	}
-	fmt.Printf("[OK] Worktree and branch for task %s removed.\n", taskID)
+	if *force {
+		fmt.Printf("[OK] Worktree and branch for task %s removed.\n", taskID)
+	} else {
+		fmt.Printf("[OK] Worktree for task %s removed; branch preserved.\n", taskID)
+	}
+	return nil
+}
+
+func handleWorktreePrune(ctx context.Context, subArgs []string) error {
+	mgr, rest, err := worktreeManager("worktree prune", subArgs, nil)
+	if err != nil {
+		return err
+	}
+	if len(rest) > 0 {
+		return fmt.Errorf("worktree prune takes no positional arguments, got %q", rest[0])
+	}
+	if err := mgr.Prune(ctx); err != nil {
+		return fmt.Errorf("failed pruning worktrees: %w", err)
+	}
+	fmt.Println("[OK] Orphaned worktrees pruned successfully.")
 	return nil
 }

@@ -1,0 +1,33 @@
+id: "planning-artifacts"
+name: "Governed Planning Artifacts"
+description: "Research and concept repositories with bounded preparation governance; runtime, build, boot, and release evidence remain explicitly unverified until supplied by the repository."
+runtime: "planning"
+
+# Keep the repository's preparation and future implementation within the strict
+# HISS limits used by the Praetor harness. This does not certify a runtime.
+complexity:
+  max_cyclomatic: 10
+  max_cognitive: 15
+  max_func_loc: 75
+  max_statements: 50
+
+branch_protection:
+  enforce_linear_history: true
+  require_signed_commits: true
+  required_approving_reviewers: 1
+  dismiss_stale_reviews: true
+
+supply_chain:
+  slsa_level: 3
+  enforce_cosign: true
+  require_sbom: true
+
+linters:
+  - "semgrep"
+  - "gitleaks"
+
+# The profile selects only baseline shell/editor utilities. It selects no
+# project language runtime or GPU stack; adoption's existing bootstrap builder
+# may still use its own tool when preparing the governance harness.
+devcontainer_features:
+  - "ghcr.io/devcontainers/features/common-utils:2"

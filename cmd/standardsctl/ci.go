@@ -10,6 +10,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/cifilter"
 )
 
+// gitHubOutputPerm is the mode used when appending to the runner's $GITHUB_OUTPUT file.
+const gitHubOutputPerm os.FileMode = 0o600
+
 func runCI(args []string) error {
 	if len(args) < 1 {
 		printCIUsage()
@@ -50,6 +53,9 @@ func runCIFilter(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("ci filter accepts no positional arguments, got %q", fs.Args())
+	}
 
 	opts := cifilter.FilterOptions{
 		RepoDir:  *dir,
@@ -62,38 +68,50 @@ func runCIFilter(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("ci filter failed: %w", err)
 	}
+	return emitCIDecision(dec, *asJSON, *asEnv)
+}
 
-	if *asJSON {
-		data, jErr := dec.ToJSON()
-		if jErr != nil {
-			return jErr
+// emitCIDecision renders the decision in the requested format.
+func emitCIDecision(dec *cifilter.FilterDecision, asJSON, asEnv bool) error {
+	switch {
+	case asJSON:
+		data, err := dec.ToJSON()
+		if err != nil {
+			return err
 		}
 		fmt.Println(string(data))
 		return nil
-	}
-
-	if *asEnv {
+	case asEnv:
 		outStr := dec.FormatGitHubOutput()
 		fmt.Print(outStr)
-		// If running inside GitHub Actions, append to GITHUB_OUTPUT directly if set
-		if ghOutput := os.Getenv("GITHUB_OUTPUT"); ghOutput != "" {
-			f, fErr := os.OpenFile(ghOutput, os.O_APPEND|os.O_WRONLY, 0600)
-			if fErr != nil {
-				return fmt.Errorf("failed opening GITHUB_OUTPUT: %w", fErr)
-			}
-			defer func() {
-				if cErr := f.Close(); cErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: error closing GITHUB_OUTPUT: %v\n", cErr)
-				}
-			}()
-			if _, wErr := f.WriteString(outStr); wErr != nil {
-				return fmt.Errorf("failed writing to GITHUB_OUTPUT: %w", wErr)
-			}
-		}
+		return appendGitHubOutput(outStr)
+	default:
+		printCIDecisionSummary(dec)
 		return nil
 	}
+}
 
-	printCIDecisionSummary(dec)
+// appendGitHubOutput appends the decision lines to $GITHUB_OUTPUT when the process runs
+// inside GitHub Actions, so later steps can read them as step outputs.
+func appendGitHubOutput(outStr string) (err error) {
+	ghOutput := os.Getenv("GITHUB_OUTPUT")
+	if ghOutput == "" {
+		return nil
+	}
+	// #nosec G304 G703 -- GITHUB_OUTPUT is set by the GitHub Actions runner to its own
+	// per-step output file; it is not derived from repository content or user input.
+	f, err := os.OpenFile(ghOutput, os.O_APPEND|os.O_WRONLY, gitHubOutputPerm)
+	if err != nil {
+		return fmt.Errorf("failed opening GITHUB_OUTPUT: %w", err)
+	}
+	defer func() {
+		if cErr := f.Close(); cErr != nil && err == nil {
+			err = fmt.Errorf("failed closing GITHUB_OUTPUT: %w", cErr)
+		}
+	}()
+	if _, wErr := f.WriteString(outStr); wErr != nil {
+		return fmt.Errorf("failed writing to GITHUB_OUTPUT: %w", wErr)
+	}
 	return nil
 }
 

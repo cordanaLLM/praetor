@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - 'lts-*'
+      - 'checkpoint/**'
   pull_request:
     types: [opened, synchronize, reopened, edited]
     branches:
@@ -48,11 +49,32 @@ jobs:
           fi
           go run ./cmd/standardsctl ci filter --base="$BASE_REF" --head=HEAD --env
 
+      - name: Setup Node Toolchain
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
       - name: Install Security Toolchains (govulncheck & gosec)
         if: steps.filter.outputs.run_security != 'false' || github.event_name == 'push'
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: Install Pinned Git Hook Toolchain
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        run: |
+          go install github.com/evilmartians/lefthook/v2@v2.1.12
+          lefthook version
+
+      - name: Install Pinned HISS Rule Test Engine
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/praetor-semgrep"
+          "$RUNNER_TEMP/praetor-semgrep/bin/python" -m pip install -r .config/semgrep/requirements.txt
+          echo "$RUNNER_TEMP/praetor-semgrep/bin" >> "$GITHUB_PATH"
 
       - name: Verify Go Formatting (gofmt)
         if: steps.filter.outputs.run_linters != 'false' || github.event_name == 'push'
@@ -76,39 +98,71 @@ jobs:
           fi
           echo "Linear history verified: zero merge commits."
 
+      # The gate runs unconditionally: an empty PR body is the one input the validator
+      # treats as a hard failure, so skipping the step for it would disable the gate
+      # exactly where it matters. The body is passed through the environment, never
+      # interpolated into the shell script.
       - name: Validate PR Governance Checklist & Exit-0 Receipts
-        if: github.event_name == 'pull_request' && github.event.pull_request.body != ''
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          cat << 'EOF' > /tmp/pr_body.txt
-          ${{ github.event.pull_request.body }}
-          EOF
-          go run ./cmd/standardsctl forge validate-pr /tmp/pr_body.txt
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr_body.txt"
+          go run ./cmd/standardsctl forge validate-pr \
+            --config=.standards.yaml \
+            --head-sha="$PR_HEAD_SHA" \
+            "$RUNNER_TEMP/pr_body.txt"
+
+      - name: Enforce HISS-14 Migration Footers (Commit Lint)
+        if: github.event_name == 'pull_request'
+        run: go run ./cmd/standardsctl forge check-commits --base="origin/${{ github.base_ref }}" --head=HEAD
 
       - name: Verify Cross-Agent Context Synchronization (HISS-16)
-        if: steps.filter.outputs.run_context_sync != 'false' || github.event_name == 'push'
+        if: steps.filter.outputs.skip_heavy_gates == 'true' && steps.filter.outputs.run_context_sync != 'false' && github.event_name != 'push'
         run: go run ./cmd/standardsctl compile-context --verify
 
       - name: Documentation Integrity Audit
         if: steps.filter.outputs.docs_only == 'true' && github.event_name == 'pull_request'
         run: |
-          echo "Pure documentation change detected. Running docs verification."
-          go run ./cmd/standardsctl docs audit --all
+          echo "Pure documentation change detected. Running MkDocs verification."
+          python3 -m pip install -r docs/presets/mkdocs/requirements.txt
+          mkdocs build --strict
 
-      - name: Run Race Detection & Unit Tests (HISS-15)
-        if: steps.filter.outputs.run_tests != 'false' || github.event_name == 'push'
-        run: go test -v -race ./...
-
-      - name: Run Repository Governance Audit (HISS Invariants & Rulesets)
-        if: steps.filter.outputs.run_audit != 'false' || github.event_name == 'push'
-        run: go run ./cmd/standardsctl audit
-
-      - name: Run Linter & Static Analysis (HISS-10)
-        if: steps.filter.outputs.run_linters != 'false' || github.event_name == 'push'
-        run: go vet ./...
-
+      # Heavy changes use the complete local authority once, including race tests,
+      # context, audit, all configured linters, vulnerability and AST security scans.
+      # Lightweight changes retain their selective governance checks below.
       - name: Full Verification Harness Gate
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        env:
+          TEST_COVERPROFILE: ${{ runner.temp }}/praetor-coverage.out
         run: make verify-all
+
+      - name: Enforce Statement Coverage Floor (HISS-15 coverage gate)
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        env:
+          TEST_COVERPROFILE: ${{ runner.temp }}/praetor-coverage.out
+          # HISS-15 is advertised as a CI coverage gate: the total statement coverage
+          # must not fall below this floor (the tree sits above it; raise it as
+          # coverage grows, never lower it).
+          COVERAGE_FLOOR: "65"
+        run: |
+          TOTAL=$(go tool cover -func="$TEST_COVERPROFILE" | awk '/^total:/ { sub("%", "", $3); print $3 }')
+          if [ -z "$TOTAL" ]; then
+            echo "::error::Could not read total statement coverage from $TEST_COVERPROFILE"
+            exit 1
+          fi
+          echo "Total statement coverage: ${TOTAL}% (floor ${COVERAGE_FLOOR}%)"
+          awk -v total="$TOTAL" -v floor="$COVERAGE_FLOOR" 'BEGIN {
+            if (total + 0 < floor + 0) {
+              printf "::error::Statement coverage %.1f%% is below the HISS-15 floor of %s%%\n", total, floor
+              exit 1
+            }
+          }'
+
+      - name: Run Repository Governance Audit (HISS Invariants & Rulesets)
+        if: steps.filter.outputs.skip_heavy_gates == 'true' && steps.filter.outputs.run_audit != 'false' && github.event_name != 'push'
+        run: go run ./cmd/standardsctl audit
 
       - name: Verify Binary Compilation
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'

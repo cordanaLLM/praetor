@@ -1,16 +1,15 @@
 {
-  "name": "praetor-main-protection",
-  "target": "branch",
-  "enforcement": "active",
   "conditions": {
     "ref_name": {
+      "exclude": [],
       "include": [
         "refs/heads/main",
         "refs/heads/lts-*"
-      ],
-      "exclude": []
+      ]
     }
   },
+  "enforcement": "active",
+  "name": "praetor-main-protection",
   "rules": [
     {
       "type": "deletion"
@@ -22,31 +21,35 @@
       "type": "required_linear_history"
     },
     {
-      "type": "pull_request",
+      "type": "required_signatures"
+    },
+    {
       "parameters": {
-        "required_approving_review_count": 0,
         "dismiss_stale_reviews_on_push": true,
         "require_code_owner_review": false,
         "require_last_push_approval": false,
+        "required_approving_review_count": 0,
         "required_review_thread_resolution": true
-      }
+      },
+      "type": "pull_request"
     },
     {
-      "type": "required_status_checks",
       "parameters": {
-        "strict_required_status_checks_policy": true,
         "required_status_checks": [
           {
-            "context": "Standards & Invariant Verification Gate"
+            "context": "Standards \u0026 Invariant Verification Gate"
           },
           {
-            "context": "DCO 1.1 & REUSE Compliance Gate"
+            "context": "DCO 1.1 \u0026 REUSE Compliance Gate"
           },
           {
-            "context": "Go Vulnerability & AST Security Scan"
+            "context": "Go Vulnerability \u0026 AST Security Scan"
           }
-        ]
-      }
+        ],
+        "strict_required_status_checks_policy": true
+      },
+      "type": "required_status_checks"
     }
-  ]
+  ],
+  "target": "branch"
 }

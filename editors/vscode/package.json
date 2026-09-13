@@ -1,10 +1,10 @@
 {
   "name": "standards-vscode",
   "displayName": "cordanaLLM Standards & Fleet Governance",
-  "description": "Hermetic High-Integrity Systems Standards (HISS-16) and AI Agent Governance for VS Code, Cursor, and Windsurf",
+  "description": "Praetor CLI integration, LSP support and shared agent MCP configuration for VS Code-compatible editors",
   "version": "1.0.0",
   "publisher": "cordanaLLM",
-  "license": "Apache-2.0",
+  "license": "EUPL-1.2",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -17,7 +17,8 @@
   "activationEvents": [
     "onLanguage:go",
     "workspaceContains:.standards.yaml",
-    "workspaceContains:AGENTS.md"
+    "workspaceContains:AGENTS.md",
+    "onCommand:standards.setupAgents"
   ],
   "contributes": {
     "commands": [
@@ -33,12 +34,17 @@
       },
       {
         "command": "standards.runGC",
-        "title": "Standards: Run Garbage Collection & Ratchet Sweep",
+        "title": "Standards: Run Verification",
         "category": "Standards"
       },
       {
         "command": "standards.checkSentinel",
         "title": "Standards: Check Sentinel Host Headroom",
+        "category": "Standards"
+      },
+      {
+        "command": "standards.setupAgents",
+        "title": "Standards: Prepare Agent MCP Configuration",
         "category": "Standards"
       }
     ],
@@ -54,33 +60,54 @@
         "standards.lsp.path": {
           "type": "string",
           "default": "${workspaceFolder}/bin/standards-lsp",
-          "description": "Path to the standards-lsp executable binary."
+          "description": "LSP executable for the selected trusted workspace; never started in Restricted Mode."
         },
         "standards.lsp.trace.server": {
           "type": "string",
-          "enum": ["off", "messages", "verbose"],
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
           "default": "messages",
           "description": "LSP trace communication level."
-        },
-        "standards.mcp.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable Model Context Protocol (standards-mcp) integration."
-        },
-        "standards.mcp.path": {
-          "type": "string",
-          "default": "${workspaceFolder}/bin/standards-mcp",
-          "description": "Path to the standards-mcp executable binary."
         },
         "standards.sentinel.headroomMB": {
           "type": "number",
           "default": 1024,
           "description": "Minimum required host RAM headroom in megabytes."
         },
+        "standards.cli.path": {
+          "type": "string",
+          "default": "praetorctl",
+          "scope": "machine",
+          "description": "Absolute Praetor CLI path or PATH command; executed without a shell."
+        },
+        "standards.verificationTimeoutSeconds": {
+          "type": "integer",
+          "default": 300,
+          "minimum": 10,
+          "maximum": 600,
+          "scope": "machine",
+          "description": "Timeout for explicit repository verification; expiration is reported as incomplete."
+        },
+        "standards.mcp.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Legacy setting; does not activate MCP or select a running model.",
+          "deprecationMessage": "Use Standards: Prepare Agent MCP Configuration and the shared routing configuration."
+        },
+        "standards.mcp.path": {
+          "type": "string",
+          "default": "",
+          "description": "Legacy setting; does not activate MCP or select a running model.",
+          "deprecationMessage": "Use Standards: Prepare Agent MCP Configuration and the shared routing configuration."
+        },
         "standards.modelTier": {
           "type": "string",
-          "default": "gemini-2.5-pro",
-          "description": "Default active LLM router model tier."
+          "default": "",
+          "description": "Legacy setting; does not activate MCP or select a running model.",
+          "deprecationMessage": "Use Standards: Prepare Agent MCP Configuration and the shared routing configuration."
         }
       }
     }
@@ -88,12 +115,30 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test dist/*.test.js",
+    "test:host": "npm run compile && node scripts/host-smoke.mjs"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "@types/vscode": "^1.90.0",
-    "typescript": "^5.4.0",
-    "vscode-languageclient": "^9.0.1"
+    "@types/node": "20.19.43",
+    "@types/vscode": "1.90.0",
+    "typescript": "5.9.3"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Read-only browsing is available; commands and subprocesses require Workspace Trust.",
+      "restrictedConfigurations": [
+        "standards.cli.path",
+        "standards.lsp.path"
+      ]
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Praetor invokes local tools on the selected extension host filesystem."
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
   }
 }

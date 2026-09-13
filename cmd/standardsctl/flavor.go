@@ -87,14 +87,11 @@ func runFlavorInspect(args []string) error {
 func runFlavorAudit(args []string) error {
 	fs := flag.NewFlagSet("flavor audit", flag.ContinueOnError)
 	targetFlv := fs.String("flavor", "auto", "Target flavor (default: auto-detect)")
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
-
-	dir := "."
-	if len(fs.Args()) > 0 {
-		dir = fs.Args()[0]
-	}
+	dir := positionalAt(positional, 0, ".")
 
 	report, err := flavor.AuditFlavor(dir, *targetFlv)
 	if err != nil {
@@ -131,14 +128,11 @@ func runFlavorApply(args []string) error {
 	fs := flag.NewFlagSet("flavor apply", flag.ContinueOnError)
 	targetFlv := fs.String("flavor", "auto", "Target flavor (default: auto-detect)")
 	force := fs.Bool("force", false, "Force overwrite existing templates")
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
-
-	dir := "."
-	if len(fs.Args()) > 0 {
-		dir = fs.Args()[0]
-	}
+	dir := positionalAt(positional, 0, ".")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -160,6 +154,8 @@ func runFlavorApply(args []string) error {
 		for _, e := range report.Errors {
 			fmt.Printf("    - %s\n", e)
 		}
+		return fmt.Errorf("flavor apply completed with %d error(s): %s",
+			len(report.Errors), strings.Join(report.Errors, "; "))
 	}
 	return nil
 }

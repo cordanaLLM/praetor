@@ -39,16 +39,41 @@ func AuditWorkingDir(rootPath string) (*StateAuditReport, error) {
 	requiredFiles := []string{"STATE.md", "OPEN.md", "BACKLOG.md", "BUGS.md", "QUESTIONS.md"}
 	for _, f := range requiredFiles {
 		target := filepath.Join(wDir, f)
-		if !util.FileExists(target) {
+		exists, err := ledgerFileExists(target)
+		if err != nil {
+			rep.Valid = false
+			return rep, fmt.Errorf("audit ledger %s: %w", f, err)
+		}
+		if !exists {
 			rep.Valid = false
 			rep.MissingFiles = append(rep.MissingFiles, f)
 			rep.Violations = append(rep.Violations, fmt.Sprintf("missing required working directory file: %s", f))
 		}
 	}
 
-	allBugs, _ := ListBugs(rootPath, "all")
+	allBugs, err := ListBugs(rootPath, "all")
+	if err != nil {
+		rep.Valid = false
+		return rep, fmt.Errorf("audit list bugs: %w", err)
+	}
 	rep.TotalBugs = len(allBugs)
-	for _, b := range allBugs {
+	countOpenAuditBugs(rep, allBugs)
+
+	allQs, err := ListQuestions(rootPath, "pending")
+	if err != nil {
+		rep.Valid = false
+		return rep, fmt.Errorf("audit list questions: %w", err)
+	}
+	rep.PendingQuestions = len(allQs)
+
+	if len(rep.Violations) > 0 {
+		rep.Valid = false
+	}
+	return rep, nil
+}
+
+func countOpenAuditBugs(rep *StateAuditReport, bugs []BugEntry) {
+	for _, b := range bugs {
 		if strings.EqualFold(b.Status, "open") || strings.EqualFold(b.Status, "investigating") {
 			rep.OpenBugs++
 			if strings.EqualFold(b.Severity, "p0") {
@@ -57,12 +82,4 @@ func AuditWorkingDir(rootPath string) (*StateAuditReport, error) {
 			}
 		}
 	}
-
-	allQs, _ := ListQuestions(rootPath, "pending")
-	rep.PendingQuestions = len(allQs)
-
-	if len(rep.Violations) > 0 {
-		rep.Valid = false
-	}
-	return rep, nil
 }

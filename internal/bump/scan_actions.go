@@ -4,6 +4,8 @@
 package bump
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,11 +65,14 @@ var deprecatedActionVersions = map[string]map[string]string{
 
 // ScanWorkflowActions inspects all workflow YAML files in repoPath/.github/workflows/.
 func ScanWorkflowActions(repoPath string) ([]ActionCandidate, []DeprecationWarning, error) {
-	workflowDir := filepath.Join(repoPath, ".github", "workflows")
-	if !util.DirExists(workflowDir) {
-		return nil, nil, nil
+	workflowDir, err := util.ConfinePath(repoPath, filepath.Join(".github", "workflows"))
+	if err != nil {
+		return nil, nil, err
 	}
 	entries, err := os.ReadDir(workflowDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil, nil
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -81,17 +86,20 @@ func ScanWorkflowActions(repoPath string) ([]ActionCandidate, []DeprecationWarni
 		if entry.IsDir() || (filepath.Ext(entry.Name()) != ".yml" && filepath.Ext(entry.Name()) != ".yaml") {
 			continue
 		}
-		cands, deps := parseWorkflowFile(filepath.Join(workflowDir, entry.Name()), entry.Name(), seen)
+		cands, deps, err := parseWorkflowFile(repoPath, entry.Name(), seen)
+		if err != nil {
+			return nil, nil, err
+		}
 		candidates = append(candidates, cands...)
 		deprecations = append(deprecations, deps...)
 	}
 	return candidates, deprecations, nil
 }
 
-func parseWorkflowFile(filePath, fileName string, seen map[string]bool) ([]ActionCandidate, []DeprecationWarning) {
-	content, err := os.ReadFile(filePath)
+func parseWorkflowFile(repoPath, fileName string, seen map[string]bool) ([]ActionCandidate, []DeprecationWarning, error) {
+	content, err := readManifest(repoPath, filepath.Join(".github", "workflows", fileName))
 	if err != nil {
-		return nil, nil
+		return nil, nil, fmt.Errorf("read workflow %s: %w", fileName, err)
 	}
 	matches := workflowActionRegex.FindAllStringSubmatch(string(content), 100)
 	var candidates []ActionCandidate
@@ -114,7 +122,7 @@ func parseWorkflowFile(filePath, fileName string, seen map[string]bool) ([]Actio
 			deprecations = append(deprecations, *dep)
 		}
 	}
-	return candidates, deprecations
+	return candidates, deprecations, nil
 }
 
 func buildActionCandidate(actName, curVer, fileName string) (ActionCandidate, *DeprecationWarning) {

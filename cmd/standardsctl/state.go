@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/state"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func runState(args []string) error {
@@ -46,41 +47,95 @@ func runState(args []string) error {
 func printStateUsage() {
 	fmt.Println("Usage: praetorctl state <subcommand> [args]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  init [dir]                     Initialize .workingdir/ session state structure")
-	fmt.Println("  sync [dir] [--log=\"message\"]     Synchronize git & working state into STATE.md")
-	fmt.Println("  status [dir]                   Inspect active session state and pending items")
-	fmt.Println("  audit [dir]                    Audit .workingdir/ for required files and P0 blockers")
+	fmt.Println("  init [dir|--dir=.] [--if-absent] Initialize private state; --if-absent preserves all existing ledgers")
+	fmt.Println("  sync [dir|--dir=.] [--log=\"message\"] [--verify] Synchronize state, or verify its freshness without writes")
+	fmt.Println("  status [dir|--dir=.]           Inspect active session state (read-only; never writes)")
+	fmt.Println("  audit [dir|--dir=.]            Audit .workingdir/ for required files and P0 blockers")
 	fmt.Println("  task [add|complete|list|archive] Manage active tasks in OPEN.md & BACKLOG.md")
 	fmt.Println("  bug [add|list|resolve] [args]  Manage bugs ledger (BUGS.md)")
 	fmt.Println("  question [add|list|decide]     Manage user questions and decisions (QUESTIONS.md)")
 }
 
+// stateArgs parses a state subcommand argument list. Flags may appear before or after the
+// positional arguments (Go's flag package alone stops at the first positional, which is
+// what silently dropped `state sync <dir> --log=...`). It returns the value of --dir and
+// the remaining positional arguments.
+func stateArgs(name string, args []string, extra func(*flag.FlagSet)) (dirFlag string, rest []string, err error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	dir := fs.String("dir", "", "Repository directory (defaults to the positional argument, else .)")
+	if extra != nil {
+		extra(fs)
+	}
+	if parseErr := fs.Parse(reorderArgs(args, boolFlagNames(fs))); parseErr != nil {
+		return "", nil, parseErr
+	}
+	return *dir, fs.Args(), nil
+}
+
+// stateDir picks the repository directory: --dir wins, then the positional argument at
+// index, then the current directory.
+func stateDir(dirFlag string, rest []string, index int) string {
+	if dirFlag != "" {
+		return dirFlag
+	}
+	if len(rest) > index && rest[index] != "" {
+		return rest[index]
+	}
+	return "."
+}
+
 func runStateInit(args []string) error {
-	dir := "."
-	if len(args) > 0 {
-		dir = args[0]
+	var ifAbsent *bool
+	dirFlag, rest, err := stateArgs("state init", args, func(fs *flag.FlagSet) {
+		ifAbsent = fs.Bool("if-absent", false, "Initialize only when .workingdir is entirely absent; never repair existing ledgers")
+	})
+	if err != nil {
+		return err
+	}
+	dir := stateDir(dirFlag, rest, 0)
+	if *ifAbsent {
+		return bootstrapState(dir)
 	}
 	if err := state.InitWorkingDir(dir); err != nil {
 		return fmt.Errorf("state init failed: %w", err)
 	}
-	fmt.Printf("Initialized .workingdir/ in %s\n", dir)
+	fmt.Printf("Initialized %s/ in %s\n", state.WorkingDirName, dir)
+	return nil
+}
+
+func bootstrapState(dir string) error {
+	created, err := state.InitWorkingDirIfAbsentContext(context.Background(), dir)
+	if err != nil {
+		return fmt.Errorf("state bootstrap failed: %w", err)
+	}
+	if created {
+		fmt.Printf("Initialized private %s/ in %s; audit still required\n", state.WorkingDirName, dir)
+	} else {
+		fmt.Printf("Existing %s/ left unchanged in %s; audit still required\n", state.WorkingDirName, dir)
+	}
 	return nil
 }
 
 func runStateSync(args []string) error {
-	fs := flag.NewFlagSet("state sync", flag.ContinueOnError)
-	logMsg := fs.String("log", "", "Optional log message to append to STATE.md")
-	if err := fs.Parse(args); err != nil {
+	var logMsg *string
+	var verify *bool
+	dirFlag, rest, err := stateArgs("state sync", args, func(fs *flag.FlagSet) {
+		logMsg = fs.String("log", "", "Optional log message to append to STATE.md")
+		verify = fs.Bool("verify", false, "Verify current state synchronization without writes")
+	})
+	if err != nil {
 		return err
 	}
-
-	dir := "."
-	if len(fs.Args()) > 0 {
-		dir = fs.Args()[0]
-	}
+	dir := stateDir(dirFlag, rest, 0)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if *verify {
+		if *logMsg != "" {
+			return fmt.Errorf("state sync --verify does not accept --log")
+		}
+		return state.VerifyStateSync(ctx, dir)
+	}
 
 	snap, err := state.SyncState(ctx, dir, *logMsg)
 	if err != nil {
@@ -97,35 +152,50 @@ func runStateSync(args []string) error {
 }
 
 func runStateStatus(args []string) error {
-	dir := "."
-	if len(args) > 0 {
-		dir = args[0]
+	dirFlag, rest, err := stateArgs("state status", args, nil)
+	if err != nil {
+		return err
+	}
+	dir := stateDir(dirFlag, rest, 0)
+
+	if !util.DirExists(filepath.Join(dir, state.WorkingDirName)) {
+		return fmt.Errorf("state status: %s/ does not exist in %s (run 'praetorctl state init %s' first)",
+			state.WorkingDirName, dir, dir)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	snap, err := state.SyncState(ctx, dir, "")
+	snap, err := inspectState(ctx, dir)
 	if err != nil {
-		return err
+		return fmt.Errorf("state status failed: %w", err)
 	}
 
 	fmt.Printf("=== Praetor Session State: %s ===\n", filepath.Base(snap.RepoPath))
 	fmt.Printf("  Branch:            %s\n", snap.Branch)
 	fmt.Printf("  Head SHA:          %s\n", snap.HeadSHA)
+	fmt.Printf("  Git State:         %s\n", snap.GitState)
 	fmt.Printf("  Working Tree:      %v (%d dirty)\n", snap.Clean, snap.DirtyCount)
 	fmt.Printf("  Tasks:             %d open, %d completed\n", snap.OpenTasks, snap.CompletedTasks)
 	fmt.Printf("  Open Bugs:         %d\n", snap.OpenBugs)
 	fmt.Printf("  Pending Questions: %d\n", snap.PendingQs)
-	fmt.Printf("  Last Synced:       %s\n", snap.LastUpdated.Format(time.RFC3339))
+	fmt.Printf("  Inspected At:      %s\n", snap.LastUpdated.Format(time.RFC3339))
 	return nil
 }
 
+// inspectState builds a read-only snapshot of the session ledger. Unlike state.SyncState
+// it neither scaffolds .workingdir/ nor appends an entry to STATE.md, so `state status`
+// cannot mutate the ledger it reports on.
+func inspectState(ctx context.Context, dir string) (*state.StateSnapshot, error) {
+	return state.InspectState(ctx, dir)
+}
+
 func runStateAudit(args []string) error {
-	dir := "."
-	if len(args) > 0 {
-		dir = args[0]
+	dirFlag, rest, err := stateArgs("state audit", args, nil)
+	if err != nil {
+		return err
 	}
+	dir := stateDir(dirFlag, rest, 0)
 
 	report, err := state.AuditWorkingDir(dir)
 	if err != nil {
@@ -160,11 +230,11 @@ func runStateBug(args []string) error {
 	case "add":
 		return runStateBugAdd(args[1:])
 	case "list":
-		dir := "."
-		if len(args) > 1 {
-			dir = args[1]
+		dirFlag, rest, err := stateArgs("state bug list", args[1:], nil)
+		if err != nil {
+			return err
 		}
-		return runStateBugList(dir)
+		return runStateBugList(stateDir(dirFlag, rest, 0))
 	case "resolve":
 		return runStateBugResolve(args[1:])
 	default:
@@ -217,15 +287,16 @@ func runStateBugList(dir string) error {
 }
 
 func runStateBugResolve(args []string) error {
-	if len(args) < 2 {
+	dirFlag, rest, err := stateArgs("state bug resolve", args, nil)
+	if err != nil {
+		return err
+	}
+	if len(rest) < 2 {
 		return fmt.Errorf("usage: praetorctl state bug resolve <id> <resolution> [--dir=.]")
 	}
-	id := args[0]
-	res := args[1]
-	dir := "."
-	if len(args) > 2 {
-		dir = args[2]
-	}
+	id := rest[0]
+	res := rest[1]
+	dir := stateDir(dirFlag, rest, 2)
 	if err := state.ResolveBug(dir, id, res); err != nil {
 		return err
 	}
@@ -241,11 +312,11 @@ func runStateQuestion(args []string) error {
 	case "add":
 		return runStateQuestionAdd(args[1:])
 	case "list":
-		dir := "."
-		if len(args) > 1 {
-			dir = args[1]
+		dirFlag, rest, err := stateArgs("state question list", args[1:], nil)
+		if err != nil {
+			return err
 		}
-		return runStateQuestionList(dir)
+		return runStateQuestionList(stateDir(dirFlag, rest, 0))
 	case "decide":
 		return runStateQuestionDecide(args[1:])
 	default:
@@ -309,15 +380,16 @@ func runStateQuestionList(dir string) error {
 }
 
 func runStateQuestionDecide(args []string) error {
-	if len(args) < 2 {
+	dirFlag, rest, err := stateArgs("state question decide", args, nil)
+	if err != nil {
+		return err
+	}
+	if len(rest) < 2 {
 		return fmt.Errorf("usage: praetorctl state question decide <id> <decision> [--dir=.]")
 	}
-	id := args[0]
-	dec := args[1]
-	dir := "."
-	if len(args) > 2 {
-		dir = args[2]
-	}
+	id := rest[0]
+	dec := rest[1]
+	dir := stateDir(dirFlag, rest, 2)
 	if err := state.DecideQuestion(dir, id, dec); err != nil {
 		return err
 	}
@@ -358,14 +430,15 @@ func printTaskUsage() error {
 }
 
 func runTaskAdd(args []string) error {
-	if len(args) == 0 {
+	dirFlag, rest, err := stateArgs("state task add", args, nil)
+	if err != nil {
+		return err
+	}
+	if len(rest) == 0 {
 		return fmt.Errorf("usage: praetorctl state task add <description> [--dir=.]")
 	}
-	desc := args[0]
-	dir := "."
-	if len(args) > 1 {
-		dir = args[1]
-	}
+	desc := rest[0]
+	dir := stateDir(dirFlag, rest, 1)
 	if err := state.AddTask(dir, desc); err != nil {
 		return err
 	}
@@ -374,14 +447,15 @@ func runTaskAdd(args []string) error {
 }
 
 func runTaskComplete(args []string) error {
-	if len(args) == 0 {
+	dirFlag, rest, err := stateArgs("state task complete", args, nil)
+	if err != nil {
+		return err
+	}
+	if len(rest) == 0 {
 		return fmt.Errorf("usage: praetorctl state task complete <index|text> [--dir=.]")
 	}
-	selector := args[0]
-	dir := "."
-	if len(args) > 1 {
-		dir = args[1]
-	}
+	selector := rest[0]
+	dir := stateDir(dirFlag, rest, 1)
 	if err := state.CompleteTask(dir, selector); err != nil {
 		return err
 	}
@@ -390,10 +464,11 @@ func runTaskComplete(args []string) error {
 }
 
 func runTaskList(args []string) error {
-	dir := "."
-	if len(args) > 0 {
-		dir = args[0]
+	dirFlag, rest, err := stateArgs("state task list", args, nil)
+	if err != nil {
+		return err
 	}
+	dir := stateDir(dirFlag, rest, 0)
 	tasks, err := state.ListTasks(dir)
 	if err != nil {
 		return err
@@ -410,10 +485,11 @@ func runTaskList(args []string) error {
 }
 
 func runTaskArchive(args []string) error {
-	dir := "."
-	if len(args) > 0 {
-		dir = args[0]
+	dirFlag, rest, err := stateArgs("state task archive", args, nil)
+	if err != nil {
+		return err
 	}
+	dir := stateDir(dirFlag, rest, 0)
 	count, err := state.ArchiveCompletedTasks(dir, "")
 	if err != nil {
 		return err

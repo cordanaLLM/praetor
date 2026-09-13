@@ -11,6 +11,7 @@ type CatalogEntry struct {
 	Status               CapabilityStatus
 	GolusorisReplacement string
 	Notes                string
+	Relationship         *LibraryRelationship
 }
 
 // CanonicalCatalog provides the authoritative fleet mapping of Go libraries to Golusoris.
@@ -83,6 +84,14 @@ var CanonicalCatalog = []CatalogEntry{
 	},
 
 	// HTTP & Routing
+	{
+		Package:    "github.com/ogen-go/ogen",
+		Capability: "http.openapi",
+		Status:     StatusCovered,
+		Relationship: &LibraryRelationship{Kind: RelationshipTooling,
+			FrameworkPackage: "github.com/golusoris/golusoris/ogenkit", Basis: FrameworkCatalogDeclared},
+		Notes: "Retain ogen for OpenAPI generation and runtime imports; ogenkit supplies integration helpers, not replacement APIs (Golusoris ADR-0004). A module dependency alone does not prove generator execution.",
+	},
 	{
 		Package:              "github.com/go-chi/chi",
 		Capability:           "http.router",
@@ -176,6 +185,14 @@ var CanonicalCatalog = []CatalogEntry{
 
 	// Configuration
 	{
+		Package:    "github.com/knadh/koanf/v2",
+		Capability: "config.loader",
+		Status:     StatusCovered,
+		Relationship: &LibraryRelationship{Kind: RelationshipWrappedBy,
+			FrameworkPackage: "github.com/golusoris/golusoris/config", Basis: FrameworkCatalogDeclared},
+		Notes: "Retain koanf as the modular configuration engine; Golusoris config provides the application adapter (Golusoris ADR-0002).",
+	},
+	{
 		Package:              "github.com/spf13/viper",
 		Capability:           "config.loader",
 		Status:               StatusCovered,
@@ -184,6 +201,21 @@ var CanonicalCatalog = []CatalogEntry{
 	},
 
 	// Telemetry & Observability
+	{
+		Package:      "log/slog",
+		Capability:   "telemetry.logging",
+		Status:       StatusNative,
+		Relationship: &LibraryRelationship{Kind: RelationshipFoundation, Basis: FrameworkCatalogDeclared},
+		Notes:        "Retain the standard-library structured logging API; Golusoris log configures its handlers (Golusoris ADR-0003).",
+	},
+	{
+		Package:    "github.com/lmittmann/tint",
+		Capability: "telemetry.logging",
+		Status:     StatusCovered,
+		Relationship: &LibraryRelationship{Kind: RelationshipWrappedBy,
+			FrameworkPackage: "github.com/golusoris/golusoris/log", Basis: FrameworkCatalogDeclared},
+		Notes: "Retain tint as an optional slog handler; Golusoris log configures tint or JSON without changing the application logging API (Golusoris ADR-0003).",
+	},
 	{
 		Package:              "go.opentelemetry.io/otel",
 		Capability:           "telemetry.otel",
@@ -256,11 +288,11 @@ var CanonicalCatalog = []CatalogEntry{
 		Notes:                "Testify assertions and mocks mapped to Golusoris testutil",
 	},
 	{
-		Package:              "go.uber.org/fx",
-		Capability:           "clikit.ioc",
-		Status:               StatusCovered,
-		GolusorisReplacement: "github.com/golusoris/golusoris/clikit",
-		Notes:                "Dependency injection container mapped to Golusoris clikit",
+		Package:      "go.uber.org/fx",
+		Capability:   "runtime.di",
+		Status:       StatusNative,
+		Relationship: &LibraryRelationship{Kind: RelationshipFoundation, Basis: FrameworkCatalogDeclared},
+		Notes:        "Retain fx as the dependency-injection and lifecycle foundation; compose Golusoris modules through fx rather than replacing it with clikit (Golusoris ADR-0001).",
 	},
 
 	// Serialization & Configuration Formats
@@ -296,31 +328,38 @@ var CanonicalCatalog = []CatalogEntry{
 	},
 }
 
-// MatchPackage searches the catalog for the best prefix match for a given import path.
+// MatchPackage searches the catalog for the longest module-path match for a given import
+// path.
+//
+// The match is anchored on a path boundary: an entry matches the import path itself or a
+// package inside it, never a different module that merely starts with the same
+// characters. Without the boundary, "github.com/uptrace/bunrouter" would inherit the
+// "github.com/uptrace/bun" mapping and be reported as covered by an unrelated
+// replacement.
 func MatchPackage(importPath string) (CatalogEntry, bool) {
 	var bestMatch CatalogEntry
 	longestPrefix := 0
 
 	for _, entry := range CanonicalCatalog {
-		if strings.HasPrefix(importPath, entry.Package) {
-			if len(entry.Package) > longestPrefix {
-				longestPrefix = len(entry.Package)
-				bestMatch = entry
-			}
+		if !matchesModuleBoundary(importPath, entry.Package) {
+			continue
+		}
+		if len(entry.Package) > longestPrefix {
+			longestPrefix = len(entry.Package)
+			bestMatch = entry
 		}
 	}
 
 	return bestMatch, longestPrefix > 0
 }
 
-// MapCapabilityToReplacement returns the default replacement package for a capability.
-func MapCapabilityToReplacement(capKey CapabilityKey) string {
-	for _, entry := range CanonicalCatalog {
-		if entry.Capability == capKey && entry.Status == StatusCovered {
-			return entry.GolusorisReplacement
-		}
+// matchesModuleBoundary reports whether importPath is modulePath itself or a package
+// nested inside it.
+func matchesModuleBoundary(importPath, modulePath string) bool {
+	if modulePath == "" {
+		return false
 	}
-	return ""
+	return importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/")
 }
 
 // CatalogMapping defines the framework mapping for a non-Go dependency.

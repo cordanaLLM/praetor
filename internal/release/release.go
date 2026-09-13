@@ -3,11 +3,11 @@ package release
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/changelog"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 var semverRegex = regexp.MustCompile(`^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
@@ -31,28 +31,24 @@ func PrepareRelease(ctx context.Context, opts ReleaseOptions) error {
 
 	// 1. Verify working tree is clean
 	if !opts.SkipClean {
-		cmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
-		cmd.Dir = opts.RepoPath
-		out, err := cmd.CombinedOutput()
+		out, err := util.RunGit(ctx, opts.RepoPath, "status", "--porcelain")
 		if err != nil {
 			return fmt.Errorf("check git status: %w", err)
 		}
-		if len(strings.TrimSpace(string(out))) > 0 {
+		if len(strings.TrimSpace(out)) > 0 {
 			return fmt.Errorf("release: working tree has uncommitted changes")
 		}
 	}
 
 	// 2. Execute verification gates
 	if !opts.SkipVerify {
-		cmd := exec.CommandContext(ctx, "make", "verify-all")
-		cmd.Dir = opts.RepoPath
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("make verify-all failed: %w\n%s", err, string(out))
+		if out, err := util.RunCommandBytes(ctx, opts.RepoPath, "make", 16<<20, "verify-all"); err != nil {
+			return fmt.Errorf("make verify-all failed: %w\n%s\n%s", err, out.Stdout, out.Stderr)
 		}
 	}
 
 	// 3. Render changelog release section
-	if err := changelog.RenderRelease(opts.RepoPath, cleanVer, opts.Date); err != nil {
+	if err := changelog.RenderReleaseContext(ctx, opts.RepoPath, cleanVer, opts.Date); err != nil {
 		return fmt.Errorf("render changelog: %w", err)
 	}
 

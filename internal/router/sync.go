@@ -3,13 +3,14 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"gopkg.in/yaml.v3"
 )
 
@@ -47,9 +48,9 @@ func matchParamTag(s string, tags ...string) bool {
 	for _, tag := range tags {
 		idx := strings.Index(s, tag)
 		for idx != -1 {
-			prefixOk := (idx == 0) || (s[idx-1] < '0' || s[idx-1] > '9')
+			prefixOk := idx == 0 || !asciiDigit(s[idx-1])
 			endIdx := idx + len(tag)
-			suffixOk := (endIdx == len(s)) || ((s[endIdx] < 'a' || s[endIdx] > 'z') && (s[endIdx] < '0' || s[endIdx] > '9'))
+			suffixOk := endIdx == len(s) || !asciiAlphanumeric(s[endIdx])
 			if prefixOk && suffixOk {
 				return true
 			}
@@ -63,91 +64,78 @@ func matchParamTag(s string, tags ...string) bool {
 	return false
 }
 
-// ClassifyTier dynamically assigns a cognitive tier based on model family, parameter weight, and benchmark score.
-func ClassifyTier(modelID string, family ModelFamily, benchmarkELO float64) string {
-	lowerID := strings.ToLower(modelID)
+func asciiDigit(b byte) bool        { return b >= '0' && b <= '9' }
+func asciiAlphanumeric(b byte) bool { return asciiDigit(b) || (b >= 'a' && b <= 'z') }
 
-	// 1. Nano & Micro (<= 4B): Pre-commit, instant micro-linting, inline completions
-	if matchParamTag(lowerID, "0.5b", "1b", "1.5b", "1.7b", "2b", "3b", "3.8b", "4b") ||
-		strings.Contains(lowerID, "smollm") ||
-		strings.Contains(lowerID, "tiny") ||
-		strings.Contains(lowerID, "nano") ||
-		strings.Contains(lowerID, "micro") ||
-		strings.Contains(lowerID, "phi-3-mini") ||
-		strings.Contains(lowerID, "phi-3.5-mini") {
+func containsModelTag(model string, tags ...string) bool {
+	for _, tag := range tags {
+		if strings.Contains(model, tag) {
+			return true
+		}
+	}
+	return false
+}
+
+// ClassifyTier preserves the legacy name heuristic; it is not measured capability evidence.
+func ClassifyTier(modelID string, family ModelFamily, benchmarkELO float64) string {
+	id := strings.ToLower(modelID)
+	if matchParamTag(id, "0.5b", "1b", "1.5b", "1.7b", "2b", "3b", "3.8b", "4b") || containsModelTag(id, "smollm", "tiny", "nano", "micro", "phi-3-mini", "phi-3.5-mini") {
 		return "nano"
 	}
-
-	// 2. Mid-Weight Workhorse (20B - 35B: 20B, 22B, 27B, 30B, 32B)
-	if matchParamTag(lowerID, "20b", "22b", "27b", "30b", "32b", "35b") ||
-		strings.Contains(lowerID, "qwen3.8") ||
-		strings.Contains(lowerID, "qwen3") ||
-		strings.Contains(lowerID, "codestral") ||
-		strings.Contains(lowerID, "gpt-oss:20b") ||
-		strings.Contains(lowerID, "gpt-oss-small") {
+	if matchParamTag(id, "20b", "22b", "27b", "30b", "32b", "35b") || containsModelTag(id, "qwen3.8", "qwen3", "codestral", "gpt-oss:20b", "gpt-oss-small") {
 		return "midweight"
 	}
-
-	// 3. Lightweight (5B - 16B: 7B, 8B, 9B, 14B): Fast local GPU / consumer hardware
-	if matchParamTag(lowerID, "5b", "6b", "7b", "8b", "9b", "14b", "16b") ||
-		strings.Contains(lowerID, "qwythos") ||
-		strings.Contains(lowerID, "gemma-2-9b") ||
-		strings.Contains(lowerID, "phi-4") ||
-		strings.Contains(lowerID, "haiku") {
+	if matchParamTag(id, "5b", "6b", "7b", "8b", "9b", "14b", "16b") || containsModelTag(id, "qwythos", "gemma-2-9b", "phi-4", "haiku") {
 		return "lightweight"
 	}
-
-	// 4. Heavy & Frontier Reasoning (70B+ & Cloud Frontier APIs)
 	return "heavy-frontier"
 }
 
-// DetectFamily identifies provider family from model naming.
+// DetectFamily preserves legacy catalog naming; dispatch requires an explicit binding.
 func DetectFamily(modelID string) ModelFamily {
 	lower := strings.ToLower(modelID)
-	switch {
-	case strings.Contains(lower, "claude"):
-		return FamilyAnthropic
-	case strings.Contains(lower, "gemini"):
-		return FamilyGoogle
-	case strings.Contains(lower, "gpt") || strings.Contains(lower, "o1") || strings.Contains(lower, "o3"):
-		return FamilyOpenAI
-	case strings.Contains(lower, "grok"):
-		return "xai"
-	case strings.Contains(lower, "deepseek"):
-		return "deepseek"
-	case strings.Contains(lower, "mistral") || strings.Contains(lower, "codestral"):
-		return "mistral"
-	case strings.Contains(lower, "qwen"):
-		return "qwen"
-	case strings.Contains(lower, "command"):
-		return "cohere"
-	default:
-		return FamilyOpenWeights
+	families := []struct {
+		family ModelFamily
+		tags   []string
+	}{
+		{FamilyAnthropic, []string{"claude"}}, {FamilyGoogle, []string{"gemini"}},
+		{FamilyOpenAI, []string{"gpt", "o1", "o3"}}, {"xai", []string{"grok"}},
+		{"deepseek", []string{"deepseek"}}, {"mistral", []string{"mistral", "codestral"}},
+		{"qwen", []string{"qwen"}}, {"cohere", []string{"command"}},
 	}
+	for _, entry := range families {
+		if containsModelTag(lower, entry.tags...) {
+			return entry.family
+		}
+	}
+	return FamilyOpenWeights
 }
 
 // queryOllamaEndpoint queries a single Ollama API endpoint for installed models.
-func queryOllamaEndpoint(ctx context.Context, client *http.Client, ep string) []ModelDescriptor {
+func queryOllamaEndpoint(ctx context.Context, client *http.Client, ep string) (models []ModelDescriptor, resultErr error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", ep+"/api/tags", nil)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil
+		return nil, fmt.Errorf("local catalog returned HTTP %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxRoutingFileBytes+1))
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
+	if len(body) > MaxRoutingFileBytes {
+		return nil, errors.New("local catalog exceeds byte limit")
+	}
 	var payload struct {
 		Models []struct {
 			Name string `json:"name"`
@@ -155,9 +143,12 @@ func queryOllamaEndpoint(ctx context.Context, client *http.Client, ep string) []
 	}
 
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil
+		return nil, err
 	}
 
+	if len(payload.Models) > MaxRoutingModels {
+		return nil, errors.New("local catalog exceeds model limit")
+	}
 	res := make([]ModelDescriptor, 0, len(payload.Models))
 	for _, m := range payload.Models {
 		res = append(res, ModelDescriptor{
@@ -169,7 +160,7 @@ func queryOllamaEndpoint(ctx context.Context, client *http.Client, ep string) []
 			CostPerMOut: 0.0,
 		})
 	}
-	return res
+	return res, nil
 }
 
 // DiscoverLocalModels queries local Ollama/vLLM daemon endpoints.
@@ -179,7 +170,10 @@ func DiscoverLocalModels(ctx context.Context, endpoints []string) ([]ModelDescri
 
 	for _, ep := range endpoints {
 		if strings.Contains(ep, "11434") {
-			models := queryOllamaEndpoint(ctx, client, ep)
+			models, err := queryOllamaEndpoint(ctx, client, ep)
+			if err != nil {
+				return nil, fmt.Errorf("discover local models: %w", err)
+			}
 			discovered = append(discovered, models...)
 		}
 	}
@@ -196,7 +190,7 @@ type catalogEntry struct {
 	costOut float64
 }
 
-var defaultVerifiedCatalog = []catalogEntry{
+var legacySeedCatalog = []catalogEntry{
 	// Nano / Micro (<= 4B)
 	{"smollm2:1.7b", 1120, 50000, 20000000, 0.0, 0.0},
 	{"qwen2.5-coder:1.5b", 1150, 50000, 20000000, 0.0, 0.0},
@@ -266,10 +260,10 @@ func defaultRoutingTiers() map[string]Tier {
 	}
 }
 
-func populateLocalModels(ctx context.Context, endpoints []string, tiers map[string]Tier, result *SyncResult) {
+func populateLocalModels(ctx context.Context, endpoints []string, tiers map[string]Tier, result *SyncResult) error {
 	localModels, err := DiscoverLocalModels(ctx, endpoints)
 	if err != nil {
-		return
+		return err
 	}
 	for _, lm := range localModels {
 		tierName := ClassifyTier(lm.ID, lm.Family, 0.0)
@@ -281,6 +275,7 @@ func populateLocalModels(ctx context.Context, endpoints []string, tiers map[stri
 		result.TotalModels++
 		recordTierCount(result, tierName)
 	}
+	return nil
 }
 
 func recordTierCount(result *SyncResult, tierName string) {
@@ -296,12 +291,13 @@ func recordTierCount(result *SyncResult, tierName string) {
 	}
 }
 
-// SyncCatalog reconciles and updates .config/models/routing.yaml with live model metadata.
+// SyncCatalog writes legacy seed metadata and optional local model inventory.
+// Seed prices, quota values and naming heuristics are not live provider observations.
 func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*SyncResult, error) {
 	tiers := defaultRoutingTiers()
 	result := &SyncResult{}
 
-	for _, m := range defaultVerifiedCatalog {
+	for _, m := range legacySeedCatalog {
 		family := DetectFamily(m.id)
 		tierName := ClassifyTier(m.id, family, m.elo)
 
@@ -323,7 +319,9 @@ func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*Syn
 	}
 
 	if opts.DiscoverLocal && len(opts.LocalEndpoints) > 0 {
-		populateLocalModels(ctx, opts.LocalEndpoints, tiers, result)
+		if err := populateLocalModels(ctx, opts.LocalEndpoints, tiers, result); err != nil {
+			return nil, err
+		}
 	}
 
 	cfg := RoutingConfig{
@@ -341,7 +339,11 @@ func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*Syn
 		return nil, fmt.Errorf("failed to marshal updated routing config: %w", err)
 	}
 
-	if err := os.WriteFile(targetPath, data, 0644); err != nil {
+	before, exists, err := contextopt.ObserveSnapshot(ctx, targetPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := contextopt.ReplaceSnapshot(ctx, targetPath, data, contextopt.ReplaceOptions{Expected: before, Exists: exists, Mode: 0644}); err != nil {
 		return nil, fmt.Errorf("failed to write routing config to %s: %w", targetPath, err)
 	}
 

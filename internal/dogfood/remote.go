@@ -2,20 +2,29 @@ package dogfood
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
-	MaxRemoteTargets     = 20
+	// MaxRemoteTargets bounds how many remote repositories are cloned in one run.
+	MaxRemoteTargets = 20
+	// DefaultRemoteTimeout bounds a single clone.
 	DefaultRemoteTimeout = 2 * time.Minute
+	// MaxSkippedRemotes bounds how many dropped URLs are named in the report (HISS-02).
+	MaxSkippedRemotes = 100
 )
+
+// ErrInvalidRepoURL identifies invalid remote repository arguments.
+var ErrInvalidRepoURL = errors.New("dogfood: invalid remote repository URL")
 
 // PopularBenchmarks contains curated open-source repositories representing diverse archetypes.
 var PopularBenchmarks = []string{
@@ -56,80 +65,123 @@ func calculateReadinessGrade(debtCount, hissInfractions int) string {
 	return "F"
 }
 
-// cloneEphemeralRepo clones a remote repository into a temporary directory with depth 1.
-func cloneEphemeralRepo(ctx context.Context, repoURL, targetDir string) error {
+// validateRepoURL rejects URLs that cannot safely be handed to git as a positional
+// argument: empty values, values git would parse as an option, and values carrying shell
+// metacharacters or control bytes (util.ValidateExecArg).
+func validateRepoURL(repoURL string) (string, error) {
 	trimmed := strings.TrimSpace(repoURL)
 	if trimmed == "" {
-		return fmt.Errorf("empty repository URL provided")
+		return "", fmt.Errorf("%w: empty", ErrInvalidRepoURL)
+	}
+	if err := util.ValidateExecArg(trimmed); err != nil {
+		return "", fmt.Errorf("%w: %q: %w", ErrInvalidRepoURL, trimmed, err)
+	}
+	return trimmed, nil
+}
+
+// cloneEphemeralRepo clones a remote repository into a temporary directory with depth 1.
+//
+// The URL is validated before it reaches git and is passed after an explicit "--", so a
+// value such as "--upload-pack=..." or "-c" can never be parsed as a git option. The clone
+// runs through util.RunGit, which enforces a deadline and a WaitDelay so that an orphaned
+// git-remote-https helper holding the inherited pipes cannot outlive the timeout.
+func cloneEphemeralRepo(ctx context.Context, repoURL, targetDir string) error {
+	trimmed, err := validateRepoURL(repoURL)
+	if err != nil {
+		return fmt.Errorf("refusing to clone %q: %w", repoURL, err)
 	}
 
 	cloneCtx, cancel := context.WithTimeout(ctx, DefaultRemoteTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(cloneCtx, "git", "clone", "--depth", "1", "--single-branch", trimmed, targetDir)
-	output, err := cmd.CombinedOutput()
+	output, err := util.RunGit(cloneCtx, "", "clone", "--depth", "1", "--single-branch", "--", trimmed, targetDir)
 	if err != nil {
-		return fmt.Errorf("git clone failed (%s): %w", strings.TrimSpace(string(output)), err)
+		return fmt.Errorf("git clone failed (%s): %w", strings.TrimSpace(output), err)
 	}
 	return nil
+}
+
+// remoteSandbox is an ephemeral clone directory plus its cleanup.
+type remoteSandbox struct {
+	dir string
+}
+
+// cleanup removes the sandbox, reporting a failure through res rather than dropping it.
+func (s *remoteSandbox) cleanup(res *RemoteAdoptionResult) {
+	if err := os.RemoveAll(s.dir); err != nil && res.Error == "" {
+		res.Error = fmt.Sprintf("cleanup ephemeral sandbox %s: %v", s.dir, err)
+		res.Passed = false
+	}
+}
+
+// scanRemoteInfractions records the HISS infraction count of the cloned repository. A scan
+// failure is recorded as the result's error: a repository whose scan never completed must
+// not be graded as if it had zero infractions.
+func scanRemoteInfractions(ctx context.Context, dir string, res *RemoteAdoptionResult) {
+	scanRes, sErr := hiss.Scan(ctx, dir, hiss.ScanOptions{})
+	if sErr != nil {
+		res.Error = fmt.Sprintf("hiss scan error: %v", sErr)
+		return
+	}
+	if scanRes != nil {
+		res.HISSInfractions = scanRes.TotalInfractions
+	}
 }
 
 // testSingleRemoteAdoption executes dry-run adoption and HISS audit on a single remote URL.
 func testSingleRemoteAdoption(ctx context.Context, repoURL string) (*RemoteAdoptionResult, error) {
 	startTime := time.Now()
-	res := &RemoteAdoptionResult{
-		RepoURL: repoURL,
-	}
+	res := &RemoteAdoptionResult{RepoURL: repoURL}
 
 	tempDir, err := os.MkdirTemp("", "praetor-remote-dogfood-*")
 	if err != nil {
 		return nil, fmt.Errorf("creating ephemeral sandbox: %w", err)
 	}
-	defer func() {
-		rmErr := os.RemoveAll(tempDir)
-		if rmErr != nil {
-			return
-		}
-	}()
+	sandbox := &remoteSandbox{dir: tempDir}
+	defer sandbox.cleanup(res)
 
-	if cloneErr := cloneEphemeralRepo(ctx, repoURL, tempDir); cloneErr != nil {
+	// git clone refuses to write into an existing non-empty directory, so hand it a fresh
+	// child of the sandbox rather than the sandbox root itself.
+	cloneDir := filepath.Join(tempDir, "repo")
+
+	if cloneErr := cloneEphemeralRepo(ctx, repoURL, cloneDir); cloneErr != nil {
 		res.Error = cloneErr.Error()
 		res.DurationMs = time.Since(startTime).Milliseconds()
 		return res, nil
 	}
 
-	plan, aErr := adopt.Adopt(ctx, adopt.AdoptOptions{
-		Path:   tempDir,
-		DryRun: true,
-	})
+	plan, aErr := adopt.Adopt(ctx, adopt.AdoptOptions{Path: cloneDir, DryRun: true})
 	if aErr != nil {
 		res.Error = fmt.Sprintf("adoption simulation error: %v", aErr)
 		res.DurationMs = time.Since(startTime).Milliseconds()
 		return res, nil
 	}
 
-	scanRes, sErr := hiss.Scan(ctx, tempDir, hiss.ScanOptions{})
-	if sErr == nil && scanRes != nil {
-		res.HISSInfractions = scanRes.TotalInfractions
-	}
-
+	scanRemoteInfractions(ctx, cloneDir, res)
 	if plan != nil {
 		res.Archetype = plan.Archetype
 		res.DebtCount = plan.LegacyDebtCount
 		res.SimulatedActions = len(plan.CreatedFiles) + len(plan.ReconciledFiles)
 	}
 
-	res.ReadinessGrade = calculateReadinessGrade(res.DebtCount, res.HISSInfractions)
+	if res.Error == "" {
+		res.ReadinessGrade = calculateReadinessGrade(res.DebtCount, res.HISSInfractions)
+	}
 	res.Passed = res.Error == ""
 	res.DurationMs = time.Since(startTime).Milliseconds()
 	return res, nil
 }
 
-// testRemoteAdoptions runs dogfooding simulation across a list of remote public repositories.
+// testRemoteAdoptions runs dogfooding simulation across a list of remote public
+// repositories. Anything beyond MaxRemoteTargets is recorded in the report as skipped
+// instead of vanishing from it.
 func testRemoteAdoptions(ctx context.Context, remoteURLs []string, report *DogfoodReport) error {
 	limit := len(remoteURLs)
 	if limit > MaxRemoteTargets {
 		limit = MaxRemoteTargets
+		for i := MaxRemoteTargets; i < len(remoteURLs) && i < MaxRemoteTargets+MaxSkippedRemotes; i++ {
+			report.SkippedRemotes = append(report.SkippedRemotes, remoteURLs[i])
+		}
 	}
 
 	for i := 0; i < limit; i++ {

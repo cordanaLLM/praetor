@@ -1,6 +1,6 @@
 # Praetor Fast Adoption Guide
 
-Transform any legacy or greenfield repository into a 100% compliant Praetor-governed codebase in a single command or AI chat turn.
+Apply Praetor governance scaffolding to a legacy or greenfield repository and retain explicit errors for incomplete steps. Verify the resulting repository before treating adoption as complete.
 
 ---
 
@@ -10,13 +10,13 @@ Run `standardsctl adopt` (or `praetorctl adopt`):
 
 ```bash
 # Adopt current repository (auto-detects language and frameworks)
-standardsctl adopt
+praetorctl adopt --lock-source-root=/path/to/praetor
 
 # Dry-run simulation: inspect proposed changes without writing files
 standardsctl adopt --dry-run
 
 # Force overwrite existing configurations & record technical debt
-standardsctl adopt --force --record-baseline
+praetorctl adopt --force --record-baseline --lock-source-root=/path/to/praetor
 ```
 
 ### What Adoption Scaffolds Automatically:
@@ -45,7 +45,8 @@ Under the hood, the agent executes the `standards_adopt` tool:
     "path": ".",
     "dry_run": false,
     "force": false,
-    "record_baseline": true
+    "record_baseline": true,
+    "source_root": "/path/to/praetor"
   }
 }
 ```
@@ -78,3 +79,18 @@ jobs:
 ```
 
 Comment `/adopt` on any PR to have `cordana-standards[bot]` automatically scaffold Praetor governance and commit the baseline.
+
+## Migration: explicit sources for missing lockfiles
+
+Live adoption no longer creates the old placeholder lock. Pass
+`--lock-source-root=/path/to/praetor` (MCP: `source_root`) when a target has no
+valid lock. The source must have a valid manifest/lock and every selected local
+archetype source. Version pins come from that validated bundle, and digests come
+from actual source bytes. The MCP source path obeys server root confinement.
+
+An existing valid target lock is preserved. An invalid lock fails unless both
+`--force` and an explicit source permit rebuilding it. A dry run without a source
+reports lock generation as skipped; it cannot promise a complete adoption. Live
+errors retain the partial report, since earlier scaffolding may already exist.
+The same source option applies to `adopt --all-missing`; integrations invoking
+adoption must supply it or arrange an already valid target lock.

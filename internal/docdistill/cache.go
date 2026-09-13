@@ -20,11 +20,27 @@ const (
 	DocsDirRel      = ".workingdir/docs"
 	DistilledDirRel = ".workingdir/docs/distilled"
 	CatalogFileRel  = ".workingdir/docs/catalog.json"
+	// cacheDirPerm is the mode of the docs cache directories.
+	cacheDirPerm os.FileMode = 0o755
+	// cacheFilePerm is the mode of the catalog and distilled markdown files.
+	cacheFilePerm os.FileMode = 0o644
 )
+
+// cachePath confines a cache-relative path to repoPath.
+func cachePath(repoPath, rel string) (string, error) {
+	path, err := util.ConfinePath(repoPath, rel)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", rel, err)
+	}
+	return path, nil
+}
 
 // LoadCatalog reads the doc catalog from the repo's .workingdir/docs/catalog.json.
 func LoadCatalog(repoPath string) (*DocCatalog, error) {
-	catPath := filepath.Join(repoPath, CatalogFileRel)
+	catPath, err := cachePath(repoPath, CatalogFileRel)
+	if err != nil {
+		return nil, err
+	}
 	if !util.FileExists(catPath) {
 		return &DocCatalog{
 			Version:      CatalogVersion,
@@ -33,6 +49,7 @@ func LoadCatalog(repoPath string) (*DocCatalog, error) {
 		}, nil
 	}
 
+	// #nosec G304 -- catPath is confined to repoPath by ConfinePath.
 	data, err := os.ReadFile(catPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read doc catalog: %w", err)
@@ -50,8 +67,14 @@ func LoadCatalog(repoPath string) (*DocCatalog, error) {
 
 // SaveCatalog writes the doc catalog to the repo's .workingdir/docs/catalog.json.
 func SaveCatalog(repoPath string, cat *DocCatalog) error {
-	dir := filepath.Join(repoPath, DocsDirRel)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if cat == nil {
+		return fmt.Errorf("doc catalog cannot be nil")
+	}
+	dir, err := cachePath(repoPath, DocsDirRel)
+	if err != nil {
+		return err
+	}
+	if err := util.MkdirSecure(dir, cacheDirPerm); err != nil {
 		return fmt.Errorf("failed to create docs dir: %w", err)
 	}
 
@@ -61,8 +84,35 @@ func SaveCatalog(repoPath string, cat *DocCatalog) error {
 		return fmt.Errorf("failed to marshal doc catalog: %w", err)
 	}
 
-	catPath := filepath.Join(repoPath, CatalogFileRel)
-	return os.WriteFile(catPath, data, 0644)
+	catPath, err := cachePath(repoPath, CatalogFileRel)
+	if err != nil {
+		return err
+	}
+	if err := util.WriteFileSecure(catPath, data, cacheFilePerm); err != nil {
+		return fmt.Errorf("failed to write doc catalog: %w", err)
+	}
+	return nil
+}
+
+// writeDistilledDoc writes the distilled markdown body of doc into the cache directory.
+// It is the single writer shared by SaveCachedDoc and SyncRepositoryDocs.
+func writeDistilledDoc(repoPath string, doc *DistilledDoc) error {
+	distilledDir, err := cachePath(repoPath, DistilledDirRel)
+	if err != nil {
+		return err
+	}
+	if err := util.MkdirSecure(distilledDir, cacheDirPerm); err != nil {
+		return fmt.Errorf("failed creating distilled dir: %w", err)
+	}
+	filename := sanitizeDocFilename(doc.PackageName, doc.Version)
+	filePath, err := cachePath(repoPath, filepath.Join(DistilledDirRel, filename))
+	if err != nil {
+		return err
+	}
+	if err := util.WriteFileSecure(filePath, []byte(doc.RawMarkdown), cacheFilePerm); err != nil {
+		return fmt.Errorf("failed writing distilled doc file: %w", err)
+	}
+	return nil
 }
 
 // GetCachedDoc retrieves a cached distilled doc if present.
@@ -81,15 +131,11 @@ func GetCachedDoc(repoPath, pkgName, version string) (*DistilledDoc, bool) {
 
 // SaveCachedDoc writes a distilled doc to the local markdown cache and updates the catalog.
 func SaveCachedDoc(repoPath string, doc *DistilledDoc) error {
-	distilledDir := filepath.Join(repoPath, DistilledDirRel)
-	if err := os.MkdirAll(distilledDir, 0755); err != nil {
-		return fmt.Errorf("failed creating distilled dir: %w", err)
+	if doc == nil {
+		return fmt.Errorf("distilled doc cannot be nil")
 	}
-
-	filename := sanitizeDocFilename(doc.PackageName, doc.Version)
-	filePath := filepath.Join(distilledDir, filename)
-	if err := os.WriteFile(filePath, []byte(doc.RawMarkdown), 0644); err != nil {
-		return fmt.Errorf("failed writing distilled doc file: %w", err)
+	if err := writeDistilledDoc(repoPath, doc); err != nil {
+		return err
 	}
 
 	cat, err := LoadCatalog(repoPath)
@@ -121,18 +167,13 @@ func SyncRepositoryDocs(ctx context.Context, repoPath string, opts DistillOption
 
 		raw, harvestErr := HarvestDocumentation(ctx, ref, opts.OfflineOnly)
 		if harvestErr != nil {
-			raw = fmt.Sprintf("# %s@%s\n\nHarvesting error: %v\n", ref.Name, ref.Version, harvestErr)
+			return nil, fmt.Errorf("harvest %s@%s: %w", ref.Name, ref.Version, harvestErr)
 		}
 
 		distilled := CompressDocumentation(ref, raw, opts)
 		cat.Packages[key] = *distilled
 
-		distilledDir := filepath.Join(repoPath, DistilledDirRel)
-		if mkErr := os.MkdirAll(distilledDir, 0755); mkErr != nil {
-			return nil, fmt.Errorf("failed to create distilled dir: %w", mkErr)
-		}
-		filename := sanitizeDocFilename(ref.Name, ref.Version)
-		if writeErr := os.WriteFile(filepath.Join(distilledDir, filename), []byte(distilled.RawMarkdown), 0644); writeErr != nil {
+		if writeErr := writeDistilledDoc(repoPath, distilled); writeErr != nil {
 			return nil, fmt.Errorf("failed to write distilled doc for %s: %w", ref.Name, writeErr)
 		}
 	}
@@ -145,6 +186,13 @@ func SyncRepositoryDocs(ctx context.Context, repoPath string, opts DistillOption
 
 // AuditDocumentationCoverage evaluates the ratio of declared dependencies with active distilled docs.
 func AuditDocumentationCoverage(ctx context.Context, repoPath string) (*DocAuditResult, error) {
+	info, err := os.Stat(repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("audit docs: invalid repository root: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("audit docs: repository root %q is not a directory", repoPath)
+	}
 	refs, err := ScanDeclaredDependencies(ctx, repoPath, false)
 	if err != nil {
 		return nil, fmt.Errorf("audit docs: manifest scan failed: %w", err)
@@ -168,17 +216,24 @@ func AuditDocumentationCoverage(ctx context.Context, repoPath string) (*DocAudit
 	}
 
 	total := len(refs)
-	var score float64 = 100.0
+	score := 0.0
 	if total > 0 {
 		score = (float64(documented) / float64(total)) * 100.0
 	}
 
+	status := "observed"
+	passed := len(missing) == 0
+	if total == 0 {
+		status = "not_applicable"
+		passed = false
+	}
 	return &DocAuditResult{
 		TotalDeclared: total,
 		Documented:    documented,
 		Missing:       missing,
 		CoverageScore: score,
-		Passed:        len(missing) == 0,
+		Passed:        passed,
+		Status:        status,
 	}, nil
 }
 

@@ -2,10 +2,16 @@ package forge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 )
+
+// ErrNotImplemented marks a Forge method that has no implementation for the selected
+// provider. Drivers return it instead of a fabricated success so that a caller can never
+// mistake a stub for an enforced governance action. It wraps errors.ErrUnsupported.
+var ErrNotImplemented = fmt.Errorf("%w: forge driver method is not implemented", errors.ErrUnsupported)
 
 // Label represents a canonical repository label.
 type Label struct {
@@ -30,6 +36,7 @@ type PRRequest struct {
 	Body  string `json:"body"`
 	Head  string `json:"head"`
 	Base  string `json:"base"`
+	Draft bool   `json:"draft"`
 }
 
 // PRResponse represents the result of creating a pull request.
@@ -53,6 +60,8 @@ type Forge interface {
 }
 
 // NewForge returns the appropriate forge implementation based on provider identifier.
+// Only the GitHub driver performs real enforcement; the GitLab and Gitea drivers
+// authenticate but fail every enforcement method with ErrNotImplemented.
 func NewForge(provider string, token string, endpoint string) (Forge, error) {
 	switch provider {
 	case "github":

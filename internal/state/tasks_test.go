@@ -1,11 +1,61 @@
 package state
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestInitWorkingDirContext(t *testing.T) {
+	dir := t.TempDir()
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := InitWorkingDirContext(cancelled, dir); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancelled initialization: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, WorkingDirName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled initialization wrote working directory: %v", err)
+	}
+	var absent context.Context
+	if err := InitWorkingDirContext(absent, dir); err == nil {
+		t.Fatal("nil context must fail")
+	}
+	if err := InitWorkingDirContext(t.Context(), dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ListTasksContext(t.Context(), dir); err != nil {
+		t.Fatalf("initialized ledger unreadable: %v", err)
+	}
+}
+
+func TestArchiveCompletedTasksPreservesOpenWhenBacklogUnreadable(t *testing.T) {
+	dir := t.TempDir()
+	if err := InitWorkingDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	open := filepath.Join(dir, WorkingDirName, "OPEN.md")
+	original := "# Open\n- [x] Preserve this task\n"
+	if err := os.WriteFile(open, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	backlog := filepath.Join(dir, WorkingDirName, "BACKLOG.md")
+	if err := os.Remove(backlog); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(backlog, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := ArchiveCompletedTasks(dir, "fixture"); err == nil || count != 0 {
+		t.Fatalf("unreadable backlog should fail: %d, %v", count, err)
+	}
+	content, err := os.ReadFile(open)
+	if err != nil || string(content) != original {
+		t.Fatalf("archive lost OPEN content: %q, %v", content, err)
+	}
+}
 
 func TestTasks_Positive_Lifecycle(t *testing.T) {
 	tempDir := t.TempDir()
@@ -85,11 +135,14 @@ func TestTasks_Boundary_MultipleAndNumeric(t *testing.T) {
 
 	// Clear OPEN.md to test numeric indexes from 1
 	openPath := filepath.Join(tempDir, WorkingDirName, "OPEN.md")
-	_ = os.WriteFile(openPath, []byte("# Open Items\n"), 0644)
-
-	_ = AddTask(tempDir, "Alpha")
-	_ = AddTask(tempDir, "Beta")
-	_ = AddTask(tempDir, "Gamma")
+	if err := os.WriteFile(openPath, []byte("# Open Items\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, description := range []string{"Alpha", "Beta", "Gamma"} {
+		if err := AddTask(tempDir, description); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// Complete 2nd task by numeric index "2"
 	if err := CompleteTask(tempDir, "2"); err != nil {

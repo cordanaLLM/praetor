@@ -1,0 +1,3 @@
+type: fixed
+title: Share selected framework evidence across migration candidates and epics; reject unverified application
+breaking: true

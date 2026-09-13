@@ -21,14 +21,6 @@ type TemplateContext struct {
 	LicenseIdentifier string `json:"license_identifier"`
 }
 
-// DefaultCopyrightHolder returns the configured copyright holder or defaults to Lusoris.
-func DefaultCopyrightHolder(owner string) string {
-	if owner != "" {
-		return owner
-	}
-	return "Lusoris"
-}
-
 // RenderTemplate parses and executes a Go template string with the provided context.
 func RenderTemplate(name, tmplStr string, ctx TemplateContext) (string, error) {
 	if tmplStr == "" {

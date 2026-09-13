@@ -35,13 +35,14 @@ func DistillWorkspace(ctx context.Context, repoPath string) (*DistillationReport
 	}
 
 	// 2. Session State & Bug Ledger Facts
-	stateFacts, err := distillStateFacts(repoPath)
-	if err == nil {
-		facts = append(facts, stateFacts...)
+	stateFacts, err := distillStateFacts(ctx, repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("distill workspace bug ledger: %w", err)
 	}
+	facts = append(facts, stateFacts...)
 
 	// 3. Deduplication & Canonical Utility Facts
-	dedupeFacts, err := distillDedupeFacts(repoPath)
+	dedupeFacts, err := distillDedupeFacts(ctx, repoPath)
 	if err == nil {
 		facts = append(facts, dedupeFacts...)
 	}
@@ -79,23 +80,24 @@ func distillFlavorFacts(ctx context.Context, repoPath string) ([]MemoryFact, err
 	return facts, nil
 }
 
-func distillStateFacts(repoPath string) ([]MemoryFact, error) {
+func distillStateFacts(ctx context.Context, repoPath string) ([]MemoryFact, error) {
 	var facts []MemoryFact
 
-	bugs, err := state.ListBugs(repoPath, "resolved")
-	if err == nil {
-		for _, b := range bugs {
-			stmt := fmt.Sprintf("Resolved Bug %s (%s): %s.", b.ID, b.Severity, b.Title)
-			facts = append(facts, createFact(CategoryBugRuling, b.ID, stmt, ".workingdir/BUGS.md", []string{"bug", b.Severity}))
-		}
+	bugs, err := state.ListBugsContext(ctx, repoPath, "resolved")
+	if err != nil {
+		return nil, fmt.Errorf("read resolved bug ledger: %w", err)
+	}
+	for _, b := range bugs {
+		stmt := fmt.Sprintf("Resolved Bug %s (%s): %s.", b.ID, b.Severity, b.Title)
+		facts = append(facts, createFact(CategoryBugRuling, b.ID, stmt, ".workingdir/BUGS.md", []string{"bug", b.Severity}))
 	}
 
 	return facts, nil
 }
 
-func distillDedupeFacts(repoPath string) ([]MemoryFact, error) {
+func distillDedupeFacts(ctx context.Context, repoPath string) ([]MemoryFact, error) {
 	var facts []MemoryFact
-	report, err := dedupe.ScanRepo(repoPath)
+	report, err := dedupe.ScanRepoContext(ctx, repoPath)
 	if err != nil {
 		return nil, err
 	}

@@ -20,7 +20,14 @@
 coverage.txt
 coverage.html
 /tmp/
-/.standards-receipt.json
+
+# .standards-receipt.json is deliberately NOT ignored: the Exit-0 receipt is the tracked
+# evidence that `praetorctl gate run` passed for a commit, and `praetorctl gate verify`
+# checks it against the receipt.public_key pinned in .standards.yaml.
+
+# Isolated gate/test worktrees (created by `praetorctl gate run`, removed afterwards;
+# ignored so a failed cleanup cannot pollute the next scan).
+/.standards/worktrees/
 
 # Dependency directories
 /vendor/
@@ -41,9 +48,9 @@ coverage.html
 extracted_plan.txt
 plan_clean.md
 all_github_repos.json
-# Local working directory evidence and scratch
-.workingdir/evidence/
-.workingdir/docs/
-.workingdir/memory/
-.workingdir/*.tmp
-.workingdir/cadence.json
+# Private workstation state, cluster connection guides, memory and scratch.
+# Publish explicitly reviewed, sanitized documentation under docs/ instead.
+/.workingdir/
+
+# Workflow agent worktrees
+/.claude/worktrees/

@@ -1,19 +1,29 @@
 {
   "name": "cordanaLLM/praetor",
   "build": {
-    "dockerfile": "../docker/dev/Dockerfile",
-    "context": ".."
+    "dockerfile": "Dockerfile.praetor",
+    "context": "."
   },
   "features": {
-    "ghcr.io/devcontainers/features/common-utils:2": {
-      "installZsh": false,
-      "upgradePackages": true
-    },
-    "ghcr.io/devcontainers/features/go:1": {
-      "version": "1.27"
+    "ghcr.io/devcontainers/features/common-utils:2": {},
+    "ghcr.io/devcontainers/features/go:1": {},
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24"
     }
   },
   "customizations": {
+    "praetor": {
+      "bootstrap": {
+        "version": 1,
+        "state": "source-bundle",
+        "builderImage": "docker.io/library/golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125",
+        "baseImage": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae",
+        "sourceSHA256": "sha256:fd28d40a408d852d820ac713229de6e852da3b8db2c1bc0f0dbad31c1d2f4174",
+        "archiveSHA256": "sha256:b8c750a8571a3aee820e30006830a9e66363c4dd6fddc06382f146b673593814",
+        "archiveParts": 3,
+        "dockerfileSHA256": "sha256:4b22fb7fc9188a298645236aa1b3e1d2c00ed888be525155c7c98849d777669e"
+      }
+    },
     "vscode": {
       "extensions": [
         "GitHub.vscode-pull-request-github",
@@ -36,5 +46,5 @@
     }
   },
   "remoteUser": "vscode",
-  "postCreateCommand": "go run ./cmd/standardsctl compile-context && make verify-all"
+  "postCreateCommand": "export PATH=\"/usr/local/bin:$PATH\"; /usr/local/bin/praetorctl compile-context && /usr/bin/make verify-all"
 }

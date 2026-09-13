@@ -1,0 +1,3 @@
+type: fixed
+title: Initialize the private ledger before flavor audit on a fresh checkout
+breaking: false

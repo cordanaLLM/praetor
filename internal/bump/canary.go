@@ -2,17 +2,31 @@ package bump
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/worktree"
 )
+
+// CanaryStatus describes planning or execution, not certification.
+type CanaryStatus string
+
+const (
+	CanaryPlanned   CanaryStatus = "planned"
+	CanaryPassed    CanaryStatus = "passed"
+	CanaryFailed    CanaryStatus = "failed"
+	maxCanaryOutput              = 64 << 10
+)
+
+// ErrCanaryFailed identifies an unsuccessful update or configured test attempt.
+var ErrCanaryFailed = errors.New("canary execution failed")
 
 // CanaryOptions specifies operational parameters for speculative bump testing.
 type CanaryOptions struct {
@@ -24,6 +38,9 @@ type CanaryOptions struct {
 }
 
 // CanaryResult details speculative test execution outcome and diagnosed errors.
+// Success means only that the configured test command exited zero. The current
+// runner issues no certification; CanaryCertified remains false. Diagnostics are
+// not adaptation patches, so StagedPatchPath remains empty.
 type CanaryResult struct {
 	Candidate       UpgradeCandidate `json:"candidate"`
 	Success         bool             `json:"success"`
@@ -32,6 +49,8 @@ type CanaryResult struct {
 	DistilledErrors string           `json:"distilled_errors,omitempty"`
 	StagedPatchPath string           `json:"staged_patch_path,omitempty"`
 	CanaryCertified bool             `json:"canary_certified"`
+	Status          CanaryStatus     `json:"status"`
+	DiagnosticPath  string           `json:"diagnostic_path,omitempty"`
 }
 
 // RunCanary speculatively tests an upgrade candidate in an isolated ephemeral worktree.
@@ -45,13 +64,12 @@ func RunCanary(ctx context.Context, opts CanaryOptions) (*CanaryResult, error) {
 
 	res := &CanaryResult{
 		Candidate: opts.Candidate,
-		Success:   false,
+		Status:    CanaryFailed,
 	}
 
 	if opts.DryRun {
-		res.Success = true
-		res.CanaryCertified = true
-		res.ExecutionLog = fmt.Sprintf("[DRY-RUN] Speculative canary validated for %s -> %s", opts.Candidate.Package, opts.Candidate.TargetVersion)
+		res.Status = CanaryPlanned
+		res.ExecutionLog = fmt.Sprintf("[DRY-RUN] Canary planned for %s -> %s; update and tests were not executed or certified", opts.Candidate.Package, opts.Candidate.TargetVersion)
 		return res, nil
 	}
 
@@ -66,7 +84,7 @@ func RunCanary(ctx context.Context, opts CanaryOptions) (*CanaryResult, error) {
 
 	defer func() {
 		if !opts.Retention {
-			if rmErr := wtManager.Remove(context.Background(), taskID, true); rmErr != nil {
+			if rmErr := wtManager.Remove(context.WithoutCancel(ctx), taskID, true); rmErr != nil {
 				res.ExecutionLog += fmt.Sprintf("\nwarning: failed removing worktree %s: %v", taskID, rmErr)
 			}
 		}
@@ -75,73 +93,89 @@ func RunCanary(ctx context.Context, opts CanaryOptions) (*CanaryResult, error) {
 	// Apply candidate version modification in worktree
 	if err := ApplyUpdate(ctx, wt.Path, opts.Candidate); err != nil {
 		res.ExecutionLog = fmt.Sprintf("failed updating manifest in worktree: %v", err)
-		return res, nil
+		return res, fmt.Errorf("%w: update manifest: %w", ErrCanaryFailed, err)
 	}
 
-	executeCanaryTest(ctx, wt.Path, opts.TestCmd, opts.RepoPath, taskID, res)
-	return res, nil
+	return res, executeCanaryTest(ctx, wt.Path, opts.TestCmd, opts.RepoPath, res)
 }
 
-func executeCanaryTest(ctx context.Context, wtPath, testCmdStr, repoPath, taskID string, res *CanaryResult) {
+func executeCanaryTest(ctx context.Context, wtPath, testCmdStr, repoPath string, res *CanaryResult) error {
 	if testCmdStr == "" {
 		testCmdStr = "go test -v ./..."
 	}
 
 	parts := strings.Fields(testCmdStr)
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-	cmd.Dir = wtPath
-	out, err := cmd.CombinedOutput()
-	res.ExecutionLog = string(out)
+	if len(parts) == 0 {
+		res.ExecutionLog = "canary test command is empty"
+		return fmt.Errorf("%w: %s", ErrCanaryFailed, res.ExecutionLog)
+	}
+	if err := util.ValidateExecArg(parts[0]); err != nil {
+		res.ExecutionLog = fmt.Sprintf("invalid canary executable: %v", err)
+		return fmt.Errorf("%w: executable: %w", ErrCanaryFailed, err)
+	}
+	out, err := util.RunCommandBytes(ctx, wtPath, parts[0], maxCanaryOutput, parts[1:]...)
+	res.ExecutionLog = string(out.Stdout) + string(out.Stderr)
 
 	if err == nil {
 		res.Success = true
-		res.CanaryCertified = true
-	} else {
-		distillBreakage(ctx, repoPath, taskID, string(out), res)
+		res.Status = CanaryPassed
+		return nil
 	}
+	res.Status = CanaryFailed
+	res.ExecutionLog += fmt.Sprintf("\nConfigured test command failed: %v", err)
+	diagnosticErr := distillBreakage(ctx, repoPath, res.ExecutionLog, res)
+	return errors.Join(fmt.Errorf("%w: test command: %w", ErrCanaryFailed, err), diagnosticErr)
 }
 
-func distillBreakage(ctx context.Context, repoPath, taskID, output string, res *CanaryResult) {
-	// Synthesize SARIF wrapper around compiler/test output for distillation
-	sarifJSON := fmt.Sprintf(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"bump-canary"}},"results":[{"ruleId":"CANARY-BREAK","level":"error","message":{"text":%q},"locations":[]}]}]}`, output)
-
-	ephemeralDir := filepath.Join(repoPath, ".standards", "ephemeral")
-	dRes, err := lockdown.DistillSARIF(ctx, []byte(sarifJSON), repoPath, ephemeralDir)
-	if err == nil {
-		res.DistilledErrors = dRes.Summary
-	} else {
-		res.DistilledErrors = output
+func distillBreakage(ctx context.Context, repoPath, output string, res *CanaryResult) error {
+	log := lockdown.SarifLog{Version: "2.1.0", Runs: []lockdown.SarifRun{{
+		Tool:    lockdown.SarifTool{Driver: lockdown.SarifDriver{Name: "bump-canary"}},
+		Results: []lockdown.SarifResult{{RuleID: "CANARY-BREAK", Level: "error", Message: lockdown.SarifMessage{Text: output}}},
+	}}}
+	sarifJSON, err := json.Marshal(log)
+	if err != nil {
+		return fmt.Errorf("encode canary diagnostics: %w", err)
 	}
 
-	// Stage an adaptation patch stub in .standards/patches/
-	patchDir := filepath.Join(repoPath, ".standards", "patches")
-	if mkErr := os.MkdirAll(patchDir, 0755); mkErr == nil {
-		patchFile := filepath.Join(patchDir, fmt.Sprintf("%s.patch", taskID))
-		patchContent := fmt.Sprintf("# Canary Breakage Adaptation Patch for %s\n# Target: %s\n# Output:\n%s\n", res.Candidate.Package, res.Candidate.TargetVersion, output)
-		if err := os.WriteFile(patchFile, []byte(patchContent), 0644); err == nil {
-			res.StagedPatchPath = patchFile
-		}
+	ephemeralDir := filepath.Join(repoPath, ".workingdir", "evidence", "canary")
+	if err := contextopt.EnsureDirectory(ctx, ephemeralDir, 0700); err != nil {
+		return fmt.Errorf("prepare canary diagnostics: %w", err)
 	}
+	dRes, err := lockdown.DistillSARIF(ctx, sarifJSON, repoPath, ephemeralDir)
+	if err != nil {
+		return fmt.Errorf("distill canary diagnostics: %w", err)
+	}
+	res.DistilledErrors = dRes.Summary
+	res.DiagnosticPath = dRes.FullReportPath
+	return nil
 }
 
-// ApplyBump updates the target repository with the verified candidate and applies patch if present.
-func ApplyBump(ctx context.Context, repoPath string, c UpgradeCandidate, patchPath string) error {
+// ApplyBump updates a requested candidate and applies an optional patch snapshot.
+// It does not verify certification. Patch syntax is checked before the update;
+// applicability is checked afterward, and an application failure does not roll back.
+func ApplyBump(ctx context.Context, repoPath string, c UpgradeCandidate, patchPath string) (resultErr error) {
 	if ctx == nil {
 		return fmt.Errorf("apply: context cannot be nil")
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("apply cancelled: %w", err)
 	}
+	if patchPath != "" {
+		snapshot, err := prepareBumpPatch(ctx, repoPath, patchPath)
+		if err != nil {
+			return err
+		}
+		defer func() { resultErr = errors.Join(resultErr, removeBumpPatch(snapshot)) }()
+		patchPath = snapshot
+	}
 
 	if err := ApplyUpdate(ctx, repoPath, c); err != nil {
 		return fmt.Errorf("failed applying bump: %w", err)
 	}
 
-	if patchPath != "" && util.FileExists(patchPath) {
-		cmd := exec.CommandContext(ctx, "git", "apply", "--ignore-whitespace", patchPath)
-		cmd.Dir = repoPath
-		if applyErr := cmd.Run(); applyErr != nil {
-			return fmt.Errorf("apply patch %s: %w", patchPath, applyErr)
+	if patchPath != "" {
+		if _, applyErr := util.RunGit(ctx, repoPath, "apply", "--ignore-whitespace", "--", patchPath); applyErr != nil {
+			return fmt.Errorf("dependency update applied but adaptation patch failed; no rollback performed: %w", applyErr)
 		}
 	}
 

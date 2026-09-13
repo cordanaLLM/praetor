@@ -49,15 +49,17 @@ func ScanDependencies(ctx context.Context, repoPath string, includePrerelease bo
 
 	// 1. Go dependencies
 	goCandidates, err := ScanGoDependencies(ctx, repoPath, opts)
-	if err == nil {
-		appendCandidates(report, goCandidates)
+	if err != nil {
+		return nil, fmt.Errorf("scan Go dependencies: %w", err)
 	}
+	appendCandidates(report, goCandidates)
 
 	// 2. Node dependencies
 	nodeCandidates, err := ScanNodeDependencies(ctx, repoPath, opts)
-	if err == nil {
-		appendCandidates(report, nodeCandidates)
+	if err != nil {
+		return nil, fmt.Errorf("scan Node dependencies: %w", err)
 	}
+	appendCandidates(report, nodeCandidates)
 
 	report.TotalCandidates = len(report.Prereleases) + len(report.Stables)
 	return report, nil

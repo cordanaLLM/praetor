@@ -2,6 +2,54 @@
 
 ## [Unreleased]
 
+### Added
+
+- Configurable local and pinned-public dogfood capability discovery through shared
+  CLI and MCP adapters, bounded evidence, deduplicated review candidates, and a
+  100-repository cohort. Incomplete observations stay outside candidate ranking.
+- Native discovery now covers Meson markers and HISS-dispatched CXX, CUDA, and
+  HIP sources, while recording observed CUDA-header, Metal, Objective-C++, and shader
+  extensions as unsupported adapter candidates.
+
+- Configurable agent checkpoint cadence for reviewed commits, gated pushes and
+  draft PR visibility, with a shared Lefthook check and native lifecycle adapter.
+- Draft creation support in the existing GitHub forge request contract.
+
+### Fixed
+
+- Preflight composed agent context before writing canonical instructions, so
+  projection-budget failures preserve existing canonical and vendor files.
+- Skill audits retain bounded per-root outcomes and fail invalid or incomplete
+  scans before optional hygiene actions.
+- Public dogfood snapshots stream file hashes under explicit bounded input
+  budgets shared by suite and discovery configs. Native metadata planning uses
+  the same configured limits throughout repeated adoption and discovery readback;
+  reports retain budgets and incomplete-input diagnostics.
+- Checkpoint publication distinguishes local advances from remote-ahead and
+  divergent branches, and reports missing or shallow history before suggesting
+  a push.
+- Adoption CLI and MCP distinguish observed baseline debt from skipped or failed
+  scans and describe dry-run files as planned. Bare repository inventory treats
+  working-tree privacy probes as not applicable.
+- Resolve security scan scope from actual Go packages so private dogfood corpora
+  stay outside project gates; first-party findings still fail with zero exclusions.
+
+- Repair HISS Semgrep HTTP, Python eval and Rust test-boundary matching; add pinned
+  real-engine regression checks. Document remaining enforcement gaps and staged
+  bidirectional module contracts without replacing the HISS policy.
+
+### Changed
+
+- Garbage collection requires explicit release and retention checks, confines
+  complete scans, preserves unpublished worktree branches, and reports partial
+  failures. Shared Go test cache clearing is now opt-in.
+- **Breaking:** GC dry-runs populate planned fields instead of completed deletion
+  fields; ordinary worktree removal preserves branches. GC no longer prunes Git
+  administration or sweeps repository-root and `bin/` files automatically.
+  Migration: supply each quiescent resource with `--released-path`, consume
+  `planned_*` report fields for previews, and handle nonzero partial-result exits.
+  See [garbage collection](docs/guides/garbage-collection.md).
+
 
 ## [Unreleased] - 2026-09-11
 

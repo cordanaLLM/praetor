@@ -2,11 +2,36 @@ package cifilter_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/cifilter"
 )
+
+func TestAnalyzeChangesRejectsMissingOrCancelledContext(t *testing.T) {
+	var absent context.Context
+	if decision, err := cifilter.AnalyzeChanges(absent, cifilter.FilterOptions{}); err == nil || decision != nil {
+		t.Fatalf("nil context must fail: %+v, %v", decision, err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := cifilter.AnalyzeChanges(ctx, cifilter.FilterOptions{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled context must fail: %v", err)
+	}
+}
+
+func TestClassifyChangesOverflowRunsHeavyGates(t *testing.T) {
+	files := make([]string, 5001)
+	for i := range files {
+		files[i] = "docs/example.md"
+	}
+	files[len(files)-1] = "late.go"
+	decision := cifilter.MakeDecision(cifilter.ClassifyChanges(files), false)
+	if !decision.RunLinters || !decision.RunTests || !decision.RunSecurity || decision.SkipHeavyGates {
+		t.Fatalf("source past inspection bound must not skip gates: %+v", decision)
+	}
+}
 
 func TestClassifyChanges_DocsOnly(t *testing.T) {
 	files := []string{
@@ -199,5 +224,42 @@ func TestAnalyzeChanges_FallbackOnInvalidDir(t *testing.T) {
 	}
 	if !dec.RunTests || !dec.RunLinters || !dec.RunSecurity {
 		t.Errorf("expected fail-safe execution (all true) on git diff error")
+	}
+}
+
+func TestConfigClassificationCoversEditorLockAndTypeScriptConfigs(t *testing.T) {
+	for _, path := range []string{"package-lock.json", "tsconfig.json", "tsconfig.editor.json", "TSConfig.custom.JSON"} {
+		decision := cifilter.MakeDecision(cifilter.ClassifyChanges([]string{path}), false)
+		if !decision.RunTests || !decision.RunLinters || !decision.RunSecurity {
+			t.Fatalf("%s did not select editor/config validation: %+v", path, decision)
+		}
+	}
+}
+
+func TestDocsOnlyStillSkipsHeavyGates(t *testing.T) {
+	decision := cifilter.MakeDecision(cifilter.ClassifyChanges([]string{"docs/editor.md"}), false)
+	if decision.RunTests || !decision.RunAudit || !decision.SkipHeavyGates || !decision.RunDocsOnly {
+		t.Fatalf("documentation change changed policy: %+v", decision)
+	}
+}
+
+// CI runs race, lint and security checks through make verify-all only when heavy
+// gates are selected. Any new selective decision must preserve this contract.
+func TestLightweightDecisionsNeverRequireHeavyChecks(t *testing.T) {
+	for flags := range 128 {
+		changes := &cifilter.ChangeSet{
+			TotalFiles:    1,
+			CodeChanged:   flags&1 != 0,
+			TestsChanged:  flags&2 != 0,
+			DocsChanged:   flags&4 != 0,
+			ConfigChanged: flags&8 != 0,
+			AgentChanged:  flags&16 != 0,
+			StateOnly:     flags&32 != 0,
+			DocsOnly:      flags&64 != 0,
+		}
+		decision := cifilter.MakeDecision(changes, false)
+		if decision.SkipHeavyGates && (decision.RunTests || decision.RunLinters || decision.RunSecurity) {
+			t.Fatalf("CI would omit requested checks for flags %d: %+v", flags, decision)
+		}
 	}
 }

@@ -164,13 +164,17 @@ func TestStress_ConcurrentCompilerAndScanner(t *testing.T) {
 
 			for iter := 0; iter < 10; iter++ {
 				rep, err := hiss.Scan(ctx, tmpDir, hiss.ScanOptions{MaxFuncLOC: 60})
-				if err != nil || rep == nil {
-					errCh <- fmt.Errorf("worker %d scan failed: %v", workerID, err)
+				if err != nil {
+					errCh <- fmt.Errorf("worker %d scan failed: %w", workerID, err)
+					return
+				}
+				if rep == nil {
+					errCh <- fmt.Errorf("worker %d scan returned no report", workerID)
 					return
 				}
 				content := fmt.Sprintf("# Agent Worker %d-%d\nmake verify-all\n", workerID, iter)
 				if _, err := tr.CompileContent(content); err != nil {
-					errCh <- fmt.Errorf("worker %d compile failed: %v", workerID, err)
+					errCh <- fmt.Errorf("worker %d compile failed: %w", workerID, err)
 					return
 				}
 			}

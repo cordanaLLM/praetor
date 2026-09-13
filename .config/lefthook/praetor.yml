@@ -1,0 +1,67 @@
+# Compatible with Lefthook 2.1.12. One stdin consumer per hook is intentional.
+agent-pre-tool:
+  commands:
+    command-policy:
+      use_stdin: true
+      run: python3 -B .config/agent/hooks/block_evasion.py
+agent-checkpoint-tool:
+  commands:
+    checkpoint:
+      run: python3 -B .config/lefthook/scripts/checkpoint.py --event tool --json --marker
+agent-checkpoint-pre-edit:
+  commands:
+    checkpoint-scope:
+      use_stdin: true
+      run: python3 -B .config/lefthook/scripts/checkpoint_scope.py
+agent-state-stop:
+  commands:
+    state-verify:
+      run: python3 -B .config/lefthook/scripts/hooks.py state-verify
+agent-checkpoint-stop:
+  commands:
+    checkpoint:
+      run: python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json --marker
+pre-commit:
+  commands:
+    staged-checks:
+      run: python3 .config/lefthook/scripts/hooks.py pre-commit
+prepare-commit-msg:
+  commands:
+    message-help:
+      run: python3 .config/lefthook/scripts/hooks.py prepare-commit-msg "{1}" "{2}"
+commit-msg:
+  commands:
+    message-policy:
+      run: python3 .config/lefthook/scripts/hooks.py commit-msg "{1}"
+pre-push:
+  # Script jobs consume the actual ref protocol even when Lefthook's HEAD-based
+  # push-file estimate is empty (for example, add-then-delete history).
+  scripts:
+    pushed-checks.sh:
+      use_stdin: true
+      runner: sh
+post-commit:
+  commands:
+    cadence:
+      run: python3 .config/lefthook/scripts/hooks.py post-commit
+post-checkout:
+  commands:
+    refresh:
+      run: python3 .config/lefthook/scripts/hooks.py post-checkout "{1}" "{2}" "{3}"
+post-merge:
+  commands:
+    refresh:
+      run: python3 .config/lefthook/scripts/hooks.py post-merge
+post-rewrite:
+  commands:
+    refresh:
+      use_stdin: true
+      run: python3 .config/lefthook/scripts/hooks.py post-rewrite
+pre-merge-commit:
+  commands:
+    staged-checks:
+      run: python3 .config/lefthook/scripts/hooks.py pre-commit
+pre-rebase:
+  commands:
+    environment:
+      run: python3 .config/agent/hooks/block_evasion.py --environment

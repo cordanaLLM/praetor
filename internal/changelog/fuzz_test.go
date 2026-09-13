@@ -24,14 +24,18 @@ func FuzzChangelogRender(f *testing.F) {
 		tmpDir := t.TempDir()
 		initChangelog := "# Changelog\n\n## [Unreleased]\n\n"
 		if err := os.WriteFile(filepath.Join(tmpDir, "CHANGELOG.md"), []byte(initChangelog), 0644); err != nil {
-			return
+			t.Fatal(err)
 		}
 
 		frag := Fragment{
 			Type:  FragmentType(typ),
 			Title: title,
 		}
-		_, _ = CreateFragment(tmpDir, frag)
-		_ = RenderRelease(tmpDir, version, date)
+		if _, err := CreateFragment(tmpDir, frag); err != nil {
+			return
+		}
+		if err := RenderRelease(tmpDir, version, date); err != nil {
+			t.Fatal(err)
+		}
 	})
 }

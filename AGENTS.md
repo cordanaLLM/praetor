@@ -1,5 +1,12 @@
 # cordanaLLM/praetor Agent Operating Harness
 
+Start repository work with `python3 scripts/dev_mcp.py probe` and verify its source
+identity. Exercise MCP-facing changes through the relevant real tool, using
+temporary roots and write/readback for mutations. Discovery alone is insufficient;
+report errors, stubs, and unverified behavior explicitly, then continue code tests.
+Native servers snapshot source at startup: reconnect after edits or use fresh
+`call`/`probe`. Follow the [development MCP guide](docs/guides/development-mcp.md).
+
 Run verification before concluding any turn:
 ```bash
 make verify-all
@@ -55,10 +62,19 @@ flowchart LR
    If the same AST diff and error category repeats $\ge 3$ times, halt execution immediately. Re-evaluate the underlying design instead of making micro-textual retries.
 
 7. **State Ledger Discipline (HISS-17)**:
-   Agents MUST maintain the local `.workingdir` session state ledger on every turn:
+   Agents MUST maintain the local `.workingdir` session state ledger on every turn. The entire directory is private and Git-ignored, including cluster connection guides, backend settings, memory, and scratch files. Never stage its contents, including with force. Publish explicitly reviewed, sanitized documentation under `docs/` instead.
+   - **Fresh Checkout**: Run `make state-audit` to initialize a missing local ledger and audit it. Existing incomplete or invalid ledgers must be repaired explicitly.
    - **Turn Start**: Inspect `.workingdir/STATE.md` and `.workingdir/OPEN.md` (or run `praetorctl state status`).
    - **During Work**: Register discrete tasks via `praetorctl state task add "<desc>"`, mark progress with `praetorctl state task complete "<selector>"`, and archive finished items with `praetorctl state task archive`.
    - **Turn End**: Execute `praetorctl state sync .` to record working tree status, dirty count, open tasks, and cryptographic state hash into `STATE.md`.
+
+   **Checkpoint cadence**: Run `lefthook run agent-checkpoint-tool` between work
+   chunks and `lefthook run agent-checkpoint-stop` before finishing. Act on due
+   results: review owned public changes, verify, commit with sign-off, push through
+   normal hooks, and create or reuse a draft PR for the pushed branch. Follow
+   [checkpoint workflow](docs/guides/checkpoint-cadence.md) for policy, blockers,
+   local-only repositories and client activation. Publication needs session or
+   configured authorization; this repository's checkpoint workflow is authorized.
 
 8. **Diff-Aware CI Efficiency (HISS-18)**:
    CI pipelines MUST evaluate git diffs via `standardsctl ci filter` and execute targeted validation gates. Pure documentation or session-state changes MUST skip heavy race detectors and security suites while maintaining invariant integrity.
@@ -76,9 +92,8 @@ go run ./cmd/standardsctl compile-context --verify
 go run ./cmd/standardsctl audit
 
 # Audit workstation directory topology compliance (DEV-01 to DEV-05)
-go run ./cmd/standardsctl topology audit /home/kilian/dev
+go run ./cmd/standardsctl topology audit "${PRAETOR_DEV_ROOT:-$HOME/dev}"
 
 # Run all formatting, linting, and security gates
 make verify-all
 ```
-

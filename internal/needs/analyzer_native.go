@@ -1,10 +1,10 @@
 package needs
 
 import (
-	"bufio"
 	"context"
-	"os"
+	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +13,14 @@ import (
 
 // NativeAnalyzer extracts C/C++ and GPU accelerator dependencies from Meson/CMake manifests.
 type NativeAnalyzer struct{}
+
+// nativeDep records a native dependency together with the spelling used in the manifest.
+// The map key is the lower-cased name (CMake writes find_package(CUDA), Meson writes
+// dependency('cuda'), and both must resolve to the same catalog entry exactly once).
+type nativeDep struct {
+	name    string
+	version string
+}
 
 // NewNativeAnalyzer initializes a NativeAnalyzer instance.
 func NewNativeAnalyzer() *NativeAnalyzer {
@@ -49,72 +57,84 @@ func (a *NativeAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNee
 		UpdatedAt:    time.Now().UTC(),
 	}
 
-	deps := parseNativeBuildManifests(repoPath)
-	for pkg, ver := range deps {
-		demand := mapNativeDependency(pkg, ver)
+	deps, err := parseNativeBuildManifests(repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse native build manifests in %q: %w", repoPath, err)
+	}
+	keys := make([]string, 0, len(deps))
+	for k := range deps {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		demand := mapNativeDependency(deps[key].name, deps[key].version)
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
 	}
 
-	loadExistingDeclarations(repoPath, repoNeeds)
+	if declErr := loadExistingDeclarations(repoPath, repoNeeds); declErr != nil {
+		return nil, fmt.Errorf("failed to load existing declarations: %w", declErr)
+	}
 	calculateReadiness(repoNeeds)
 	return repoNeeds, nil
 }
 
-func parseNativeBuildManifests(repoPath string) map[string]string {
-	deps := make(map[string]string)
+func parseNativeBuildManifests(repoPath string) (map[string]nativeDep, error) {
+	deps := make(map[string]nativeDep)
+
 	mesonPath := filepath.Join(repoPath, "meson.build")
 	if util.FileExists(mesonPath) {
-		parseMesonBuild(mesonPath, deps)
+		if err := parseMesonBuild(mesonPath, deps); err != nil {
+			return nil, err
+		}
 	}
 
 	cmakePath := filepath.Join(repoPath, "CMakeLists.txt")
 	if util.FileExists(cmakePath) {
-		parseCMakeLists(cmakePath, deps)
-	}
-	return deps
-}
-
-func parseMesonBuild(path string, deps map[string]string) {
-	file, err := os.Open(path)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.Contains(line, "dependency(") {
-			idx := strings.Index(line, "dependency(")
-			pkg := extractQuotedString(line[idx:])
-			if pkg != "" {
-				deps[pkg] = "native"
-			}
+		if err := parseCMakeLists(cmakePath, deps); err != nil {
+			return nil, err
 		}
 	}
+	return deps, nil
 }
 
-func parseCMakeLists(path string, deps map[string]string) {
-	file, err := os.Open(path)
-	if err != nil {
+// recordNativeDep stores a dependency under its normalised key without overwriting a
+// spelling that an earlier manifest already contributed.
+func recordNativeDep(deps map[string]nativeDep, name string) {
+	if name == "" {
 		return
 	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.Contains(line, "find_package(") {
-			idx := strings.Index(line, "find_package(")
-			rest := strings.TrimPrefix(line[idx:], "find_package(")
-			parts := strings.Fields(rest)
-			if len(parts) >= 1 {
-				pkg := strings.Trim(parts[0], "()")
-				deps[pkg] = "native"
-			}
-		}
+	key := strings.ToLower(name)
+	if _, exists := deps[key]; exists {
+		return
 	}
+	deps[key] = nativeDep{name: name, version: "native"}
+}
+
+func parseMesonBuild(path string, deps map[string]nativeDep) error {
+	return scanManifestLines(path, func(line string) {
+		idx := strings.Index(line, "dependency(")
+		if idx == -1 {
+			return
+		}
+		recordNativeDep(deps, extractQuotedString(line[idx:]))
+	})
+}
+
+func parseCMakeLists(path string, deps map[string]nativeDep) error {
+	return scanManifestLines(path, func(line string) {
+		idx := strings.Index(line, "find_package(")
+		if idx == -1 {
+			return
+		}
+		rest := strings.TrimPrefix(line[idx:], "find_package(")
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			return
+		}
+		recordNativeDep(deps, strings.Trim(fields[0], "()"))
+	})
 }
 
 func extractQuotedString(line string) string {
@@ -134,8 +154,11 @@ func extractQuotedString(line string) string {
 	return rest[:end]
 }
 
+// mapNativeDependency resolves a native library against the catalog. The lookup is
+// case-insensitive: CMake's canonical module names are capitalised (CUDA, Vulkan,
+// OpenCL) while the catalog is keyed in lower case.
 func mapNativeDependency(pkg, ver string) DependencyDemand {
-	mapping, found := lookupNativeCatalog(pkg)
+	mapping, found := lookupNativeCatalog(strings.ToLower(pkg))
 	if found {
 		return DependencyDemand{
 			Package:              pkg,
@@ -154,7 +177,7 @@ func mapNativeDependency(pkg, ver string) DependencyDemand {
 		Version:          ver,
 		Language:         "native",
 		Ecosystem:        "system",
-		Capability:       CapabilityKey("native.external." + cleanDepKey(pkg)),
+		Capability:       CapabilityKey("native.external." + cleanDepKey(strings.ToLower(pkg))),
 		Status:           StatusGap,
 		TargetBuilderKit: "golusoris/template-native-gpu",
 		Notes:            "Native C/C++/GPU system library requiring Native-GPU template binding",

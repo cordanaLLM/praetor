@@ -55,7 +55,7 @@ jobs:
 
 // TestScanWorkflowActions_Negative verifies error handling on invalid contexts.
 func TestScanWorkflowActions_Negative(t *testing.T) {
-	if _, err := AuditCodebaseVersions(nil, "/tmp", false); err == nil {
+	if _, err := AuditCodebaseVersions(nilTestContext(), "/tmp", false); err == nil {
 		t.Errorf("expected error with nil context")
 	}
 

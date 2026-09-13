@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"time"
@@ -17,7 +18,7 @@ func runRelease(args []string) error {
 	skipClean := fs.Bool("skip-clean", false, "Skip working tree cleanliness check")
 
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err

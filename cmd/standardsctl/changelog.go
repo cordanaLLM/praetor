@@ -51,7 +51,7 @@ func runChangelogNew(args []string) error {
 	}
 
 	if *title == "" {
-		return fmt.Errorf("title is required: standardsctl changelog new --type=... --title=...")
+		return fmt.Errorf("title is required: standardsctl changelog new --type=<type> --title=<text>")
 	}
 
 	frag := changelog.Fragment{

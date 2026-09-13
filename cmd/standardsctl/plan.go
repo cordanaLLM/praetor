@@ -3,13 +3,18 @@ package main
 import (
 	"flag"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-func printPlanHeader(manifest *config.Manifest, policy *config.ResolvedPolicy) {
+func printPlanHeader(manifest *config.Manifest, policy *config.ResolvedPolicy) error {
+	reviewCount, _, err := policy.BranchProtection.EffectiveReviewRequirements()
+	if err != nil {
+		return fmt.Errorf("resolve branch protection reviews: %w", err)
+	}
 	fmt.Println("=== cordanaLLM/praetor Reconcile Plan (Dry Run) ===")
 	fmt.Printf("Repository: %s/%s\n", manifest.Repository.Owner, manifest.Repository.Name)
 	fmt.Printf("Profiles:   %v\n", manifest.Profiles)
@@ -19,33 +24,33 @@ func printPlanHeader(manifest *config.Manifest, policy *config.ResolvedPolicy) {
 	fmt.Printf("  - Max Function LOC:          <= %d\n", policy.Complexity.MaxFuncLOC)
 	fmt.Printf("  - Linear History Required:    %t\n", policy.BranchProtection.EnforceLinearHistory)
 	fmt.Printf("  - Signed Commits Required:   %t\n", policy.BranchProtection.RequireSignedCommits)
-	fmt.Printf("  - Approving Reviewers:       %d\n", policy.BranchProtection.RequiredApprovingReviewers)
+	fmt.Printf("  - Approving Reviewers:       %d\n", reviewCount)
+	fmt.Printf("  - Configured Reviewer Minimum: %d\n", policy.BranchProtection.RequiredApprovingReviewers)
+	fmt.Printf("  - Review Mode:               %s\n", policy.BranchProtection.ReviewMode)
 	fmt.Printf("  - Dismiss Stale Reviews:     %t\n", policy.BranchProtection.DismissStaleReviews)
 	fmt.Printf("  - SLSA Provenance Level:     %d\n", policy.SupplyChain.SLSALevel)
 	fmt.Printf("  - Cosign Attestation:        %t\n", policy.SupplyChain.EnforceCosign)
 	fmt.Printf("  - SBOM Generation Required:  %t\n", policy.SupplyChain.RequireSBOM)
+	return nil
 }
 
-func checkPlanDrift(policy *config.ResolvedPolicy) ([]string, []string) {
+// checkPlanDrift inspects the companion files next to the manifest, never the cwd.
+func checkPlanDrift(policy *config.ResolvedPolicy, rootDir string) ([]string, []string) {
 	var missing []string
 	var drift []string
 
-	if !util.FileExists(".standards.lock") {
-		missing = append(missing, ".standards.lock")
-	}
-	if !util.FileExists("AGENTS.md") {
-		missing = append(missing, "AGENTS.md")
-	}
-	if !util.FileExists(".config/labels.yaml") {
-		missing = append(missing, ".config/labels.yaml")
+	for _, rel := range []string{".standards.lock", "AGENTS.md", ".config/labels.yaml"} {
+		if !util.FileExists(filepath.Join(rootDir, filepath.FromSlash(rel))) {
+			missing = append(missing, rel)
+		}
 	}
 
 	if policy.BranchProtection.EnforceLinearHistory || policy.BranchProtection.RequireSignedCommits {
-		if !util.FileExists(".github/rulesets/main.json") {
+		if !util.FileExists(filepath.Join(rootDir, ".github", "rulesets", "main.json")) {
 			drift = append(drift, ".github/rulesets/main.json (Branch protection ruleset missing)")
 		}
 	}
-	if policy.SupplyChain.RequireSBOM && !util.FileExists(".github/workflows/sbom.yml") {
+	if policy.SupplyChain.RequireSBOM && !util.FileExists(filepath.Join(rootDir, ".github", "workflows", "sbom.yml")) {
 		drift = append(drift, ".github/workflows/sbom.yml (SBOM & SLSA Level 3 workflow missing)")
 	}
 
@@ -54,10 +59,13 @@ func checkPlanDrift(policy *config.ResolvedPolicy) ([]string, []string) {
 
 func runPlan(args []string) error {
 	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
-	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml")
+	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml; its directory is the planned root")
 
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("plan accepts no positional arguments, got %q", fs.Args())
 	}
 
 	manifest, err := config.LoadManifest(*configPath)
@@ -68,8 +76,10 @@ func runPlan(args []string) error {
 	policy := config.DefaultPolicy()
 	policy.ApplyOverrides(manifest.Overrides)
 
-	printPlanHeader(manifest, policy)
-	missing, drift := checkPlanDrift(policy)
+	if err := printPlanHeader(manifest, policy); err != nil {
+		return err
+	}
+	missing, drift := checkPlanDrift(policy, filepath.Dir(*configPath))
 
 	if len(missing) > 0 || len(drift) > 0 {
 		if len(missing) > 0 {
@@ -81,7 +91,7 @@ func runPlan(args []string) error {
 				fmt.Printf("  - %s\n", d)
 			}
 		}
-		fmt.Println("\nAction: Run 'standardsctl sync' to reconcile repository configuration.")
+		fmt.Println("\nAction: Run 'praetorctl sync' to reconcile repository configuration.")
 	} else {
 		fmt.Println("\nStatus: Local state matches declared policy. No changes required.")
 	}
