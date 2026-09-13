@@ -9,5 +9,6 @@
   "base": "main",
   "repository": "cordanaLLM/praetor",
   "branch_prefixes": ["checkpoint/", "audit/", "fix/", "feat/", "chore/", "docs/", "refactor/", "test/", "ci/"],
-  "require_pr": true
+  "require_pr": true,
+  "enforce_batch_scope": true
 }

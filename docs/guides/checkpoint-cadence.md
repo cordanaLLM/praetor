@@ -35,6 +35,12 @@ gates continue to apply independently.
 The version-1 JSON policy is strict. Its `enabled`, `commit_after_minutes`,
 `commit_after_files`, `on_stop`, `publish`, `remote`, `base`, `repository`,
 `branch_prefixes` and `require_pr` fields control this repository's behavior.
+The optional backward-compatible `enforce_batch_scope` field enables native
+file-tool admission once due: Claude `Edit`/`Write` and Gemini `replace`/
+`write_file` must name one target path, which is allowed only when it is already
+in the current public dirty batch. Confined `.workingdir` paths remain allowed
+for private state and evidence. This is a bounded file-scope check; it does not
+classify semantic repairs, inspect shell wrappers, or cover Codex `apply_patch`.
 Tool events check public changes against file count or age of the HEAD commit.
 Stop additionally applies `on_stop`, so a completed work chunk can be checkpointed
 before its timer expires. A missing policy is explicitly disabled.

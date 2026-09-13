@@ -10,6 +10,16 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "matcher": "^(Edit|Write)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/checkpoint_scope.py\"",
+            "timeout": 15
+          }
+        ]
       }
     ],
     "PostToolUse": [

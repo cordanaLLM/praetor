@@ -10,6 +10,16 @@
             "timeout": 15000
           }
         ]
+      },
+      {
+        "matcher": "^(replace|write_file)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/checkpoint_scope.py\"",
+            "timeout": 15000
+          }
+        ]
       }
     ],
     "AfterTool": [

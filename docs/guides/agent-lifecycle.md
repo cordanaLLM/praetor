@@ -24,8 +24,8 @@ lifecycle configuration and runtime qualification are separate:
 | Client | MCP projection | Native lifecycle definition | Events and current qualification |
 | --- | --- | --- | --- |
 | Codex | native command/export | `.codex/hooks.json` | Bash `PreToolUse`, `PostToolUse`, `Stop`; configuration and process behavior tested, session activation requires trust/readback |
-| Claude Code | merge `.mcp.json` | `.claude/settings.json` | Bash `PreToolUse`, all `PostToolUse`, `Stop`; configuration and process behavior tested, session activation requires approval/reload/readback |
-| Gemini CLI | merge `.gemini/settings.json` | `.gemini/settings.json` | `run_shell_command` `BeforeTool`, all `AfterTool`, `AfterAgent`; configuration and process behavior tested, session activation requires approval/reload/readback |
+| Claude Code | merge `.mcp.json` | `.claude/settings.json` | Bash command guard and `Edit`/`Write` batch-scope `PreToolUse`, all `PostToolUse`, `Stop`; configuration and process behavior tested, session activation requires approval/reload/readback |
+| Gemini CLI | merge `.gemini/settings.json` | `.gemini/settings.json` | `run_shell_command` command guard and `replace`/`write_file` batch-scope `BeforeTool`, all `AfterTool`, `AfterAgent`; configuration and process behavior tested, session activation requires approval/reload/readback |
 | OpenCode v1 | merge `opencode.json` | not implemented | Projection and conflict tests only |
 | Continue | merge `.continue/mcpServers/praetor.yaml` | not implemented | Projection and conflict tests only |
 | Cline | export JSON | not implemented | Export and conflict tests only |

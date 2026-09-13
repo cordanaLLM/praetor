@@ -16,6 +16,9 @@ SCRIPT = Path(".config/agent/hooks/checkpoint.py")
 SPEC = importlib.util.spec_from_file_location("checkpoint_adapter", ROOT / SCRIPT)
 ADAPTER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(ADAPTER)
+SCOPE_SPEC = importlib.util.spec_from_file_location("checkpoint_scope", ROOT / ".config/lefthook/scripts/checkpoint_scope.py")
+SCOPE = importlib.util.module_from_spec(SCOPE_SPEC)
+SCOPE_SPEC.loader.exec_module(SCOPE)
 
 
 class LifecycleOutput(unittest.TestCase):
@@ -79,6 +82,7 @@ class NativeLefthook(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="praetor-checkpoint-hooks-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        SCOPE.ROOT = self.root
         self.git("init", "-q", "-b", "checkpoint/fixture")
         self.git("config", "user.name", "Checkpoint Fixture")
         self.git("config", "user.email", "fixture@example.test")
@@ -88,6 +92,7 @@ class NativeLefthook(unittest.TestCase):
         policy = json.loads((ROOT / ".config/agent/checkpoint.json").read_text())
         policy["publish"] = False
         policy["commit_after_files"] = 1
+        policy["enforce_batch_scope"] = True
         (self.root / ".config/agent/checkpoint.json").write_text(json.dumps(policy))
         (self.root / ".gitignore").write_text("/.workingdir/\n")
         (self.root / "README.md").write_text("fixture\n")
@@ -110,9 +115,9 @@ class NativeLefthook(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
-    def run_registered(self, settings, key, payload):
+    def run_registered(self, settings, key, payload, entry=0):
         spec = json.loads((ROOT / settings).read_text())
-        hook = spec["hooks"][key][0]
+        hook = spec["hooks"][key][entry]
         command = hook["hooks"][0]["command"]
         nested = self.root / "nested path with spaces"
         nested.mkdir(exist_ok=True)
@@ -194,6 +199,125 @@ class NativeLefthook(unittest.TestCase):
         (self.root / ".workingdir/state.txt").write_text("local\n")
         (self.root / ".standards-receipt.json").write_text("unrelated\n")
         self.assertEqual(self.invoke({"hook_event_name": "Stop"}), {})
+
+    def test_native_batch_scope_allows_existing_and_private_but_blocks_new(self):
+        (self.root / "README.md").write_text("dirty\n")
+        existing = {"hook_event_name": "PreToolUse", "tool_name": "Edit",
+                    "tool_input": {"file_path": str(self.root / "README.md")}, "cwd": str(self.root)}
+        self.assertEqual(SCOPE.check(existing), 0)
+        new = {**existing, "tool_input": {"file_path": str(self.root / "new.go")}}
+        self.assertEqual(SCOPE.check(new), 2)
+        private = {**existing, "tool_input": {"file_path": str(self.root / ".workingdir/state")}}
+        self.assertEqual(SCOPE.check(private), 0)
+
+    def test_native_batch_scope_handles_deleted_and_ambiguous_paths(self):
+        (self.root / "README.md").unlink()
+        deleted = {"hook_event_name": "BeforeTool", "tool_name": "replace",
+                   "tool_input": {"file_path": str(self.root / "README.md")}, "cwd": str(self.root)}
+        self.assertEqual(SCOPE.check(deleted), 0)
+        malformed = {**deleted, "tool_input": {"file_path": ["README.md", "other"]}}
+        with self.assertRaises(ValueError):
+            SCOPE.check(malformed)
+        oversized = json.dumps(deleted) + " " * (1 << 20)
+        result = subprocess.run(["python3", "-B", str(self.root / ".config/agent/hooks/checkpoint_scope.py")],
+                                cwd=self.root, input=oversized, text=True, capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 2)
+
+    def test_native_batch_scope_binds_repository_and_rejects_traversal(self):
+        (self.root / "README.md").write_text("dirty\n")
+        nested = self.root / "nested"
+        nested.mkdir()
+        relative_existing = {"hook_event_name": "PreToolUse", "tool_name": "Write",
+                             "tool_input": {"file_path": str(self.root / "README.md")},
+                             "cwd": str(nested)}
+        self.assertEqual(SCOPE.check(relative_existing), 0)
+        with self.assertRaises(ValueError):
+            SCOPE.check({**relative_existing, "tool_input": {"file_path": "../README.md"}})
+        outside = Path(self.temp.name).parent
+        with self.assertRaises(ValueError):
+            SCOPE.check({**relative_existing, "cwd": str(outside)})
+        link = nested / "link"
+        link.symlink_to(self.root)
+        with self.assertRaises(ValueError):
+            SCOPE.check({**relative_existing, "tool_input": {"file_path": "link/README.md"}})
+
+    def scope_payload(self, path="new.go", **changes):
+        return {"hook_event_name": "PreToolUse", "tool_name": "Write",
+                "tool_input": {"file_path": path}, "cwd": str(self.root), **changes}
+
+    def scope_bridge(self, raw):
+        return subprocess.run(["python3", "-B", str(self.root / ".config/agent/hooks/checkpoint_scope.py")],
+                              cwd=self.root, input=raw, capture_output=True, timeout=20)
+
+    def test_registered_file_guards_block_new_paths_before_write(self):
+        (self.root / "README.md").write_text("dirty\n")
+        before = self.git("rev-parse", "HEAD")
+        for settings, event, tools in ((".claude/settings.json", "PreToolUse", ("Edit", "Write")),
+                                       (".gemini/settings.json", "BeforeTool", ("replace", "write_file"))):
+            for tool in tools:
+                payload = self.scope_payload(tool_name=tool, hook_event_name=event)
+                denied = self.run_registered(settings, event, payload, entry=1)
+                self.assertEqual(denied.returncode, 2, denied.stdout + denied.stderr)
+                self.assertFalse((self.root / "new.go").exists())
+                for allowed in ("README.md", ".workingdir/evidence.json"):
+                    payload["tool_input"]["file_path"] = allowed
+                    result = self.run_registered(settings, event, payload, entry=1)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(before, self.git("rev-parse", "HEAD"))
+
+    def test_scope_policy_disabled_legacy_missing_and_not_due(self):
+        clean = self.scope_bridge(json.dumps(self.scope_payload()).encode())
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        path = self.root / ".config/agent/checkpoint.json"
+        original = json.loads(path.read_text())
+        for field in ("enabled", "enforce_batch_scope", "legacy", "missing"):
+            policy = dict(original)
+            if field == "legacy":
+                policy.pop("enforce_batch_scope")
+            elif field == "missing":
+                path.unlink()
+            else:
+                policy[field] = False
+            if field != "missing":
+                path.write_text(json.dumps(policy))
+            result = self.scope_bridge(json.dumps(self.scope_payload()).encode())
+            self.assertEqual(result.returncode, 0, (field, result.stderr))
+        path.write_text(json.dumps({**original, "enforce_batch_scope": "true"}))
+        self.assertEqual(self.scope_bridge(json.dumps(self.scope_payload()).encode()).returncode, 2)
+
+    def test_scope_rejects_ambiguous_inputs_and_missing_job(self):
+        valid = json.dumps(self.scope_payload()).encode()
+        malformed = [b"", b"null", b"{", b"[" * 2000 + b"]" * 2000,
+                     valid[:-1] + b',"tool_name":"Edit"}', b" " * ((1 << 20) + 1)]
+        for change in ({"tool_name": []}, {"tool_name": "Bash"}, {"cwd": "."},
+                       {"tool_input": {"file_path": ["a", "b"]}}):
+            malformed.append(json.dumps(self.scope_payload(**change)).encode())
+        for raw in malformed:
+            self.assertEqual(self.scope_bridge(raw).returncode, 2)
+        config = self.root / ".config/lefthook/praetor.yml"
+        config.write_text(config.read_text().replace("agent-checkpoint-pre-edit:", "missing-scope-job:"))
+        self.assertEqual(self.scope_bridge(valid).returncode, 2)
+
+    def test_scope_uses_root_relative_names_and_rejects_nested_git(self):
+        (self.root / "README.md").write_text("dirty\n")
+        nested = self.root / "nested"
+        nested.mkdir()
+        payload = self.scope_payload("README.md", cwd=str(nested))
+        self.assertEqual(self.scope_bridge(json.dumps(payload).encode()).returncode, 2)
+        payload["tool_input"]["file_path"] = ".workingdir/state"
+        self.assertEqual(self.scope_bridge(json.dumps(payload).encode()).returncode, 2)
+        (nested / "owned.go").write_text("dirty\n")
+        payload["tool_input"]["file_path"] = "owned.go"
+        self.assertEqual(self.scope_bridge(json.dumps(payload).encode()).returncode, 0)
+        self.git("init", "-q", str(nested))
+        self.assertEqual(self.scope_bridge(json.dumps(payload).encode()).returncode, 2)
+
+    def test_normal_checkpoint_output_omits_path_inventory(self):
+        (self.root / "README.md").write_text("dirty\n")
+        result = SCOPE.inspect_checkpoint(self.root, "tool")
+        self.assertNotIn("public_paths", result)
+        scoped = SCOPE.inspect_checkpoint(self.root, "tool", include_paths=True)
+        self.assertEqual(scoped["public_paths"], ["README.md"])
 
 
 if __name__ == "__main__":

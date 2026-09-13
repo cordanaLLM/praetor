@@ -87,9 +87,11 @@ def _config(root):
         raise CheckpointError("checkpoint configuration requires version 1")
     expected = {"version", "enabled", "commit_after_minutes", "commit_after_files", "on_stop",
                 "publish", "remote", "base", "repository", "branch_prefixes", "require_pr"}
-    if set(value) != expected:
+    if not expected.issubset(value) or not set(value).issubset(expected | {"enforce_batch_scope"}):
         raise CheckpointError("checkpoint configuration has unknown or missing fields")
     if any(type(value[name]) is not bool for name in ("enabled", "on_stop", "publish", "require_pr")):
+        raise CheckpointError("checkpoint boolean fields must be booleans")
+    if "enforce_batch_scope" in value and type(value["enforce_batch_scope"]) is not bool:
         raise CheckpointError("checkpoint boolean fields must be booleans")
     if (type(value["commit_after_minutes"]) is not int or not 1 <= value["commit_after_minutes"] <= 1440 or
             type(value["commit_after_files"]) is not int or not 1 <= value["commit_after_files"] <= 1000):
@@ -215,9 +217,12 @@ def _publication(root, cfg, branch, head):
     return "present", []
 
 
-def inspect_checkpoint(root: Path, event: str) -> dict:
+def inspect_checkpoint(root: Path, event: str, include_paths: bool = False) -> dict:
     result = {"schema_version": 1, "enabled": False, "due": False, "actions": [], "branch": "",
-              "head": "", "changed_count": 0, "commit_due": False, "publication_status": "disabled"}
+              "head": "", "changed_count": 0, "commit_due": False,
+              "enforce_batch_scope": False, "publication_status": "disabled"}
+    if include_paths:
+        result["public_paths"] = []
     if event not in {"tool", "stop"}:
         result.update(error="event must be tool or stop", publication_status="error")
         return result
@@ -226,6 +231,7 @@ def inspect_checkpoint(root: Path, event: str) -> dict:
         if not cfg.get("enabled", False):
             return result
         result["enabled"] = True
+        result["enforce_batch_scope"] = cfg.get("enforce_batch_scope", False)
         result["branch"] = _branch(root)
         head = _git(root, "rev-parse", "--verify", "--quiet", "HEAD", allowed=(0, 1)).decode().strip()
         if head and not OID.fullmatch(head):
@@ -233,6 +239,8 @@ def inspect_checkpoint(root: Path, event: str) -> dict:
         result["head"] = head
         public = _worktree(root)
         result["changed_count"] = len(public)
+        if include_paths:
+            result["public_paths"] = sorted(public)
         age = (time.time() - int(_git(root, "show", "-s", "--format=%ct", "HEAD").decode().strip())
                if head else cfg["commit_after_minutes"] * 60)
         threshold_due = bool(public) and (age >= cfg["commit_after_minutes"] * 60 or
@@ -276,8 +284,9 @@ def main(argv=None):
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--marker", action="store_true")
+    parser.add_argument("--include-paths", action="store_true")
     args = parser.parse_args(argv)
-    result = inspect_checkpoint(args.root.resolve(), args.event)
+    result = inspect_checkpoint(args.root.resolve(), args.event, args.include_paths)
     line = json.dumps(result, sort_keys=True)
     print("PRAETOR_CHECKPOINT_RESULT=" + line if args.marker else line)
     return 0 if "error" not in result else 1
