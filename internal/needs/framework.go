@@ -121,6 +121,16 @@ func populateDefaultFrameworkIndex(index *FrameworkIndex) {
 			index.Capabilities[c] = append(index.Capabilities[c], pkgPath)
 		}
 	}
+	// Related adapters come from the same catalog as dependency relationships.
+	for _, entry := range CanonicalCatalog {
+		if entry.Relationship == nil || entry.Relationship.FrameworkPackage == "" {
+			continue
+		}
+		relative, ok := strings.CutPrefix(entry.Relationship.FrameworkPackage, defaultFrameworkModule+"/")
+		if ok {
+			addObservedPackage(index, relative, []CapabilityKey{entry.Capability})
+		}
+	}
 }
 
 // IsCapabilityCovered reports whether the index lists at least one framework package

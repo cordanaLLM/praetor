@@ -235,9 +235,11 @@ func applyFrameworkCoverage(idx *FrameworkIndex, repoNeeds *RepoNeeds) {
 		return
 	}
 
-	demoted := false
 	for i := range repoNeeds.Dependencies {
 		dep := &repoNeeds.Dependencies[i]
+		if reconcileLibraryRelationship(idx, dep) {
+			continue
+		}
 		if dep.Status == StatusGap {
 			continue
 		}
@@ -248,30 +250,15 @@ func applyFrameworkCoverage(idx *FrameworkIndex, repoNeeds *RepoNeeds) {
 		dep.Status = StatusGap
 		dep.GolusorisReplacement = ""
 		dep.Notes = fmt.Sprintf("%s has no observed catalog replacement for capability %s", idx.Name, dep.Capability)
-		demoted = true
 	}
 
-	if demoted {
-		calculateReadiness(repoNeeds)
-	}
+	calculateReadiness(repoNeeds)
 	repoNeeds.Framework = idx.Name
 	repoNeeds.Readiness.Basis = idx.Basis
 }
 
 func frameworkReplacement(idx *FrameworkIndex, dep DependencyDemand) (string, bool) {
-	if !idx.ProvidesCapability(dep.Capability) {
-		return "", false
-	}
-	if idx.Basis != FrameworkSourceObserved {
-		return dep.GolusorisReplacement, true
-	}
-	relative, ok := strings.CutPrefix(dep.GolusorisReplacement, defaultFrameworkModule+"/")
-	if !ok {
-		return "", false
-	}
-	replacement := idx.Name + "/" + relative
-	_, ok = idx.Packages[replacement]
-	return replacement, ok
+	return availableFrameworkPackage(idx, dep.Capability, dep.GolusorisReplacement)
 }
 
 // discoverFleetRepos searches up to depth 5 for repositories across all supported languages.

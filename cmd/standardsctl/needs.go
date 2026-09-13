@@ -84,14 +84,7 @@ func runNeedsScan(ctx context.Context, args []string) error {
 		report.Readiness.Score, report.Readiness.CoveredDeps, report.Readiness.GapDeps, report.Readiness.TotalThirdPartyDeps)
 	fmt.Printf("Coverage basis: %s; builds and tests not run\n\n", report.Readiness.Basis)
 
-	for _, dep := range report.Dependencies {
-		statusIndicator := "[COVERED]"
-		if dep.Status == needs.StatusGap {
-			statusIndicator = "[GAP]    "
-		}
-		fmt.Printf("  %s %-36s -> %-18s (replacement: %s)\n",
-			statusIndicator, dep.Package, dep.Capability, dep.GolusorisReplacement)
-	}
+	fmt.Print(needs.FormatLibraryRelationships(report))
 
 	if *writeManifest {
 		if err := needs.WriteNeedsManifest(*path, report); err != nil {
@@ -128,17 +121,7 @@ func runNeedsReport(ctx context.Context, args []string) error {
 	fmt.Printf("Framework: %s (%s) | Mapping availability: %.1f%%\n\n", fwIndex.Name, fwIndex.Version, rep.Readiness.Score)
 	fmt.Printf("Coverage basis: %s; builds and tests not run\n\n", fwIndex.Basis)
 
-	fmt.Println("Drop-In Replacement Matrix:")
-	for _, dep := range rep.Dependencies {
-		if dep.Status == needs.StatusCovered || dep.Status == needs.StatusAdapterAvailable {
-			fmt.Printf("  ✓ %-35s -> %s\n", dep.Package, dep.GolusorisReplacement)
-			if dep.Notes != "" {
-				fmt.Printf("    Note: %s\n", dep.Notes)
-			}
-		} else {
-			fmt.Printf("  ✗ %-35s -> NO DIRECT EQUIVALENT (Gap)\n", dep.Package)
-		}
-	}
+	fmt.Print(needs.FormatLibraryRelationships(rep))
 	return nil
 }
 

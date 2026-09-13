@@ -128,7 +128,7 @@ func TestDispatchCommand_NeedsSubcommands(t *testing.T) {
 		if err != nil {
 			t.Fatalf("needs report (framework=%s) failed: %v", fw, err)
 		}
-		mustContain(t, out, "=== Golusoris Migration Report:", "Framework: github.com/golusoris/golusoris", "Drop-In Replacement Matrix:", "github.com/spf13/cobra")
+		mustContain(t, out, "=== Golusoris Migration Report:", "Framework: github.com/golusoris/golusoris", "Library relationships and migration candidates:", "github.com/spf13/cobra")
 	}
 
 	// Negative: a directory that is not a repository, and an unknown subcommand

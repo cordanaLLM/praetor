@@ -25,17 +25,36 @@ const (
 	StatusNative           CapabilityStatus = "native"
 )
 
+// LibraryRelationshipKind distinguishes retained libraries from migration candidates.
+type LibraryRelationshipKind string
+
+const (
+	RelationshipFoundation LibraryRelationshipKind = "foundation"
+	RelationshipWrappedBy  LibraryRelationshipKind = "wrapped-by"
+	RelationshipTooling    LibraryRelationshipKind = "tooling"
+)
+
+// LibraryRelationship describes a library's role, not interchangeable APIs.
+// FrameworkPackage is a related adapter, never an import-replacement instruction.
+// Basis applies to this relationship; retained foundations remain catalog-declared.
+type LibraryRelationship struct {
+	Kind             LibraryRelationshipKind `json:"kind" yaml:"kind"`
+	FrameworkPackage string                  `json:"framework_package,omitempty" yaml:"framework_package,omitempty"`
+	Basis            string                  `json:"basis" yaml:"basis"`
+}
+
 // DependencyDemand captures a single dependency requirement and its framework mapping.
 type DependencyDemand struct {
-	Package              string           `json:"package" yaml:"package"`
-	Version              string           `json:"version,omitempty" yaml:"version,omitempty"`
-	Language             string           `json:"language,omitempty" yaml:"language,omitempty"`
-	Ecosystem            string           `json:"ecosystem,omitempty" yaml:"ecosystem,omitempty"`
-	Capability           CapabilityKey    `json:"capability" yaml:"capability"`
-	Status               CapabilityStatus `json:"status" yaml:"status"`
-	GolusorisReplacement string           `json:"golusoris_replacement,omitempty" yaml:"golusoris_replacement,omitempty"`
-	TargetBuilderKit     string           `json:"target_builder_kit,omitempty" yaml:"target_builder_kit,omitempty"`
-	Notes                string           `json:"notes,omitempty" yaml:"notes,omitempty"`
+	Package              string               `json:"package" yaml:"package"`
+	Version              string               `json:"version,omitempty" yaml:"version,omitempty"`
+	Language             string               `json:"language,omitempty" yaml:"language,omitempty"`
+	Ecosystem            string               `json:"ecosystem,omitempty" yaml:"ecosystem,omitempty"`
+	Capability           CapabilityKey        `json:"capability" yaml:"capability"`
+	Status               CapabilityStatus     `json:"status" yaml:"status"`
+	GolusorisReplacement string               `json:"golusoris_replacement,omitempty" yaml:"golusoris_replacement,omitempty"`
+	TargetBuilderKit     string               `json:"target_builder_kit,omitempty" yaml:"target_builder_kit,omitempty"`
+	Notes                string               `json:"notes,omitempty" yaml:"notes,omitempty"`
+	Relationship         *LibraryRelationship `json:"relationship,omitempty" yaml:"relationship,omitempty"`
 }
 
 // CapabilityDeclaration groups required and optional capabilities.
@@ -65,8 +84,11 @@ type RepoNeeds struct {
 	BuilderKits  []string              `json:"builder_kits,omitempty" yaml:"builder_kits,omitempty"`
 	Capabilities CapabilityDeclaration `json:"capabilities" yaml:"capabilities"`
 	Dependencies []DependencyDemand    `json:"dependencies" yaml:"dependencies"`
-	Readiness    ReadinessMetrics      `json:"readiness" yaml:"readiness"`
-	UpdatedAt    time.Time             `json:"updated_at" yaml:"updated_at"`
+	// StandardLibraryImports contains selected catalog imports observed in Go source.
+	// They never contribute to third-party dependency counts or migration candidates.
+	StandardLibraryImports []DependencyDemand `json:"standard_library_imports,omitempty" yaml:"standard_library_imports,omitempty"`
+	Readiness              ReadinessMetrics   `json:"readiness" yaml:"readiness"`
+	UpdatedAt              time.Time          `json:"updated_at" yaml:"updated_at"`
 }
 
 // FrameworkPackage describes an exported package in the framework.

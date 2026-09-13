@@ -66,3 +66,30 @@ func TestNeedsMCPReportMatchesMigrationCandidateEvidence(t *testing.T) {
 		expectText(t, "same source basis", result, plan.CoverageBasis)
 	}
 }
+
+func TestNeedsMCPLibraryRelationshipsUseSharedFormatter(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	writeFixtureFile(t, root, "go.mod", "module example.com/consumer\ngo 1.27\nrequire (\ngo.uber.org/fx v1.24.0\ngithub.com/knadh/koanf/v2 v2.3.0\ngithub.com/lmittmann/tint v1.1.2\ngithub.com/ogen-go/ogen v1.13.0\n)\n")
+	writeFixtureFile(t, root, "consumer.go", "package consumer\nimport _ \"log/slog\"\n")
+	writeFixtureFile(t, root, "framework/go.mod", "module example.com/framework\ngo 1.27\n")
+	for _, name := range []string{"config", "log", "ogenkit"} {
+		writeFixtureFile(t, root, "framework/"+name+"/adapter.go", "package adapter\ntype Available struct{}\n")
+	}
+	index, err := needs.InspectFramework(t.Context(), filepath.Join(root, "framework"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := needs.ScanRepoWithFramework(t.Context(), root, index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := callTool(t, srv, "standards_needs_report", map[string]any{"framework": "framework"})
+	expectText(t, "shared relationship rendering", result, needs.FormatLibraryRelationships(report))
+	output := result.Content[0].Text
+	for _, expected := range []string{"foundation; retain library", "wrapped-by", "tooling", "log/slog", "basis=catalog-declared", "basis=source-observed"} {
+		expectText(t, "library relationship", result, expected)
+	}
+	if strings.Contains(output, "Drop-In") || strings.Contains(output, "replacement candidate:") || report.Readiness.TotalThirdPartyDeps != 4 {
+		t.Fatalf("library roles became replacement claims or changed dependency counts: %s", output)
+	}
+}

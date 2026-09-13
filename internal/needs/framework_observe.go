@@ -131,7 +131,7 @@ func frameworkCandidates() (map[string][]CapabilityKey, error) {
 	}
 	result := make(map[string][]CapabilityKey)
 	for _, entry := range CanonicalCatalog {
-		relative, ok := strings.CutPrefix(entry.GolusorisReplacement, defaultFrameworkModule+"/")
+		relative, ok := strings.CutPrefix(catalogFrameworkPackage(entry), defaultFrameworkModule+"/")
 		if !ok || entry.Status == StatusGap {
 			continue
 		}
@@ -155,10 +155,13 @@ func sortedFrameworkPaths(candidates map[string][]CapabilityKey) []string {
 func addObservedPackage(index *FrameworkIndex, relative string, capabilities []CapabilityKey) {
 	path := index.Name + "/" + relative
 	domain, _, _ := strings.Cut(relative, "/")
-	index.Packages[path] = FrameworkPackage{ImportPath: path, Domain: domain, Capabilities: capabilities}
+	pkg := index.Packages[path]
+	pkg.ImportPath, pkg.Domain = path, domain
 	for _, capability := range capabilities {
-		index.Capabilities[capability] = append(index.Capabilities[capability], path)
+		pkg.Capabilities = appendUniqueCap(pkg.Capabilities, capability)
+		index.Capabilities[capability] = appendUniqueStr(index.Capabilities[capability], path)
 	}
+	index.Packages[path] = pkg
 }
 
 func observeFrameworkPackage(ctx context.Context, base, relative string, total *int) (present bool, err error) {

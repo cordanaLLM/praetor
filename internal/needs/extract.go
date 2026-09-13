@@ -104,7 +104,7 @@ func parseRequireLine(line string, directDeps map[string]string) {
 	}
 }
 
-// scanASTImports traverses the repo and extracts all unique third-party imports.
+// scanASTImports extracts third-party imports and selected catalog stdlib imports.
 func scanASTImports(ctx context.Context, rootDir, modulePath string) (map[string]struct{}, error) {
 	thirdParty := make(map[string]struct{})
 	fset := token.NewFileSet()
@@ -152,7 +152,7 @@ func collectFileImports(fset *token.FileSet, path, modulePath string, thirdParty
 	}
 	for _, imp := range node.Imports {
 		rawPath := strings.Trim(imp.Path.Value, `"`)
-		if isThirdPartyImport(rawPath, modulePath) {
+		if isThirdPartyImport(rawPath, modulePath) || isSelectedStandardImport(rawPath) {
 			thirdParty[rawPath] = struct{}{}
 		}
 	}
@@ -268,6 +268,10 @@ func buildDependencyDemands(directDeps map[string]string, astImports map[string]
 		pkgSet[pkg] = ver
 	}
 	for imp := range astImports {
+		if isSelectedStandardImport(imp) {
+			repoNeeds.StandardLibraryImports = append(repoNeeds.StandardLibraryImports, buildGoDemand(imp, ""))
+			continue
+		}
 		root := ResolveModuleRoot(imp, directDeps)
 		if _, ok := pkgSet[root]; !ok {
 			pkgSet[root] = ""
@@ -283,6 +287,12 @@ func buildDependencyDemands(directDeps map[string]string, astImports map[string]
 		return demands[i].Package < demands[j].Package
 	})
 	repoNeeds.Dependencies = demands
+	sort.Slice(repoNeeds.StandardLibraryImports, func(i, j int) bool {
+		return repoNeeds.StandardLibraryImports[i].Package < repoNeeds.StandardLibraryImports[j].Package
+	})
+	for _, d := range repoNeeds.StandardLibraryImports {
+		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, d.Capability)
+	}
 	for _, d := range demands {
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, d.Capability)
 	}
@@ -302,6 +312,7 @@ func buildGoDemand(pkg, ver string) DependencyDemand {
 		demand.Status = entry.Status
 		demand.GolusorisReplacement = entry.GolusorisReplacement
 		demand.Notes = entry.Notes
+		demand.Relationship = cloneRelationship(entry.Relationship)
 		return demand
 	}
 	demand.Capability = CapabilityKey("custom." + cleanDepKey(pkg))

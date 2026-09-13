@@ -112,6 +112,7 @@ func mergeRepoNeeds(dst, src *RepoNeeds) {
 		dst.BuilderKits = appendUniqueStr(dst.BuilderKits, bk)
 	}
 	dst.Dependencies = append(dst.Dependencies, src.Dependencies...)
+	dst.StandardLibraryImports = append(dst.StandardLibraryImports, src.StandardLibraryImports...)
 	for _, capKey := range src.Capabilities.Required {
 		dst.Capabilities.Required = appendUniqueCap(dst.Capabilities.Required, capKey)
 	}

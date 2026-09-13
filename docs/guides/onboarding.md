@@ -34,6 +34,27 @@ standardsctl audit
 
 ---
 
+## Planning-only adoption through MCP
+
+`standards_adopt` accepts `profile` and comma-separated `facets`, matching the
+CLI's `--profile` and `--facets` selection. For example:
+
+```json
+{"path":"/workspace/project","source_root":"/workspace/praetor","profile":"planning-artifacts","facets":"agent:sandboxed","record_baseline":false,"dry_run":true}
+```
+
+Both paths must be allowed by the server's existing root policy. Inspect the
+preview, then use the same selection with `dry_run: false` for an authorized
+application. Omitted or empty selection retains the shared adoption defaults;
+an empty facet string does not clear them. The adapter accepts at most 64
+comma-separated entries and 8192 facet bytes, with a 128-byte profile bound.
+The shared pinned catalog validates selected identities. Existing repository
+configuration retains its normal preservation/force semantics.
+
+The planning profile prepares governance without inventing Go or Rust manifests.
+It does not qualify a native build, boot, release, running DevContainer or agent
+activation. Those stages need their own selected checks and execution evidence.
+
 ## 2. Onboarding Workflow Stages
 
 | Step | Action | Command | Expected Output |

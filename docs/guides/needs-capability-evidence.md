@@ -22,6 +22,59 @@ Every report states its coverage basis:
 - Executed verification is outside this command. Retain separate build/test
   results for the exact repository tree and configuration before migration.
 
+## Library relationships
+
+The existing catalog also records libraries that should remain part of a
+composition. A known relationship is not an import replacement:
+
+- `go.uber.org/fx` is the `runtime.di` foundation. Retain fx and compose framework
+  modules through it; `clikit` does not replace the DI container.
+- `github.com/knadh/koanf/v2` is wrapped by the framework's `config` package;
+  `github.com/lmittmann/tint` is a slog handler configured by `log`.
+- `github.com/ogen-go/ogen` is tooling with related `ogenkit` integration helpers.
+  Its module also contains runtime middleware and error packages. A dependency
+  declaration does not prove generator execution or generated-contract parity.
+
+These roles preserve Golusoris's decisions documented in ADR-0001 through
+ADR-0004. No package versions or dependency preferences are changed. Configurable
+fleet/organization/repository library selection and template options remain
+separate work; these catalog entries do not activate that policy.
+
+JSON/YAML demands gain optional `relationship` metadata with `kind`,
+`framework_package` and `basis`. Related paths identify adapters and are never
+written into `golusoris_replacement`. Each relation has its own evidence basis:
+foundations remain `catalog-declared` even when a selected framework's adapter
+packages have been inspected. `source-observed` for a wrapper/tooling relation
+means only that its exact related package has qualifying declarations under the
+selected module, with the same source-inspection limits as other mappings. It
+does not establish that the package uses the named library or implements a
+compatible API. Missing/header-only adapters remain gaps, retaining their
+relationship and expected path so the result is explainable.
+
+`Readiness.Score` retains its compatibility field and arithmetic: known native
+foundations and available mappings count as covered; all external dependencies
+remain in the denominator. It can therefore include catalog-declared retained
+foundations alongside source-observed adapter availability. Inspect individual
+relationship bases rather than treating the aggregate framework basis as proof
+for every row. A foundation does not become a gap merely because an empty selected
+framework has no replacement for a library that should be retained.
+
+The Go import scan also records selected stdlib `log/slog` imports in the separate
+`standard_library_imports` list. Repeated imports are deduplicated. These entries
+do not affect third-party dependency counts or migration candidates. This is
+syntactic non-test import observation under the existing traversal; it does not
+run a build, resolve build tags or establish a complete runtime usage inventory.
+Other standard-library imports remain outside this focused catalog selection.
+
+CLI scan/report and MCP report share relationship formatting. Former
+“Drop-In Replacement Matrix” wording is replaced by “Library relationships and
+migration candidates”; older candidate mappings explicitly remain unverified.
+Existing manifests that omit the additive fields continue to decode. Old
+harvested fx mappings are refreshed from the same catalog during reconciliation,
+so they cannot reintroduce a clikit replacement. Explicit library relationships
+are excluded from proposed dependency drops/import rewrites, and executable
+migration admission remains closed.
+
 For example, an empty `db/` directory does not provide `db.postgres`. Parseable
 library source under the catalog's `db/pgx` replacement makes that mapping
 available. Other database mappings remain gaps. A fork uses its root `go.mod`

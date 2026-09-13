@@ -24,6 +24,8 @@ const (
 // adoptArgs holds the parsed standards_adopt arguments.
 type adoptArgs struct {
 	path       string
+	profile    string
+	facets     []string
 	dryRun     bool
 	force      bool
 	recordBase bool
@@ -50,7 +52,31 @@ func (s *Server) parseAdoptArgs(args map[string]any) (adoptArgs, error) {
 	if a.recordBase, err = argBool(args, "record_baseline", true); err != nil {
 		return a, err
 	}
-	return a, nil
+	a.profile, a.facets, err = adoptSelection(args)
+	return a, err
+}
+
+// adoptSelection keeps the CLI's comma-separated facet contract and default
+// selection while bounding untrusted tool input before any adoption writes.
+func adoptSelection(args map[string]any) (string, []string, error) {
+	profile, err := argString(args, "profile")
+	if err != nil {
+		return "", nil, err
+	}
+	raw, err := argString(args, "facets")
+	if err != nil {
+		return "", nil, err
+	}
+	if len(profile) > 128 || len(raw) > 8192 || strings.Count(raw, ",") >= 64 {
+		return "", nil, fmt.Errorf("adoption selection exceeds 128 profile bytes, 8192 facet bytes or 64 facet entries")
+	}
+	var facets []string
+	for _, value := range strings.Split(raw, ",") {
+		if value = strings.TrimSpace(value); value != "" {
+			facets = append(facets, value)
+		}
+	}
+	return profile, facets, nil
 }
 
 // createAdoptTool builds the standards_adopt tool for agents.
@@ -58,6 +84,8 @@ func (s *Server) createAdoptTool() (mcp.Tool, error) {
 	schema := mcp.ToolInputSchema{
 		Type: "object",
 		Properties: map[string]mcp.PropertySchema{
+			"profile": {Type: "string", Description: "Primary repository profile, such as planning-artifacts; omitted or empty uses shared auto-detection"},
+			"facets":  {Type: "string", Description: "Comma-separated facets, as in CLI --facets; omitted or empty uses shared defaults (at most 64 entries)"},
 			"path": {
 				Type:        "string",
 				Description: "Path to repository to adopt (default: server root; other repositories require -allow-outside-root)",
@@ -78,39 +106,41 @@ func (s *Server) createAdoptTool() (mcp.Tool, error) {
 		},
 	}
 
-	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
-		a, err := s.parseAdoptArgs(args)
-		if err != nil {
-			return mcp.ErrorResult(err.Error()), nil
-		}
-
-		adoptCtx, cancel := context.WithTimeout(ctx, adoptBudget)
-		defer cancel()
-
-		report, err := adopt.Adopt(adoptCtx, adopt.AdoptOptions{
-			Path:           a.path,
-			LockSourceRoot: a.sourceRoot,
-			DryRun:         a.dryRun,
-			Force:          a.force,
-			RecordBaseline: a.recordBase,
-		})
-		if err != nil {
-			details := ""
-			if report != nil {
-				details = formatAdoptMCPResult(report, a.dryRun)
-			}
-			return mcp.ErrorResult(details + fmt.Sprintf("Adoption failed: %v", err)), nil
-		}
-
-		if len(report.Errors) != 0 {
-			return mcp.ErrorResult(formatAdoptMCPResult(report, a.dryRun)), nil
-		}
-		return mcp.TextResult(formatAdoptMCPResult(report, a.dryRun)), nil
-	}
-
 	// Adoption installs git hooks and, with force, replaces existing configuration
 	// files: destructive, and re-runnable (idempotent) once applied.
-	return mcp.NewMutatingTool("standards_adopt", "Adopt any codebase into Praetor governance in 1 step", schema, handler, true, true)
+	return mcp.NewMutatingTool("standards_adopt", "Adopt any codebase into Praetor governance in 1 step", schema, s.runAdoptTool, true, true)
+}
+
+func (s *Server) runAdoptTool(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
+	a, err := s.parseAdoptArgs(args)
+	if err != nil {
+		return mcp.ErrorResult(err.Error()), nil
+	}
+
+	adoptCtx, cancel := context.WithTimeout(ctx, adoptBudget)
+	defer cancel()
+
+	report, err := adopt.Adopt(adoptCtx, adopt.AdoptOptions{
+		Path:           a.path,
+		Profile:        a.profile,
+		Facets:         a.facets,
+		LockSourceRoot: a.sourceRoot,
+		DryRun:         a.dryRun,
+		Force:          a.force,
+		RecordBaseline: a.recordBase,
+	})
+	if err != nil {
+		details := ""
+		if report != nil {
+			details = formatAdoptMCPResult(report, a.dryRun)
+		}
+		return mcp.ErrorResult(details + fmt.Sprintf("Adoption failed: %v", err)), nil
+	}
+
+	if len(report.Errors) != 0 {
+		return mcp.ErrorResult(formatAdoptMCPResult(report, a.dryRun)), nil
+	}
+	return mcp.TextResult(formatAdoptMCPResult(report, a.dryRun)), nil
 }
 
 func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) string {
@@ -124,6 +154,7 @@ func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) string {
 	}
 	fmt.Fprintf(&sb, "=== Praetor Repository Adoption [%s] ===\n", mode)
 	fmt.Fprintf(&sb, "State: %s | Archetype: %s\n", r.State, r.Archetype)
+	fmt.Fprintf(&sb, "Facets: %s\n", strings.Join(r.Facets, ", "))
 	formatAdoptDebt(&sb, r, dryRun)
 	fileLabel := "Created Files"
 	if dryRun {

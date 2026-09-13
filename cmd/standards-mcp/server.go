@@ -640,14 +640,7 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 		fmt.Fprintf(&b, "=== Golusoris Migration Report: %s ===\n", rep.Repository)
 		fmt.Fprintf(&b, "Framework: %s (%s) | Mapping availability: %.1f%%\n\n", fwIndex.Name, fwIndex.Version, rep.Readiness.Score)
 		fmt.Fprintf(&b, "Coverage basis: %s; builds and tests not run\n\n", fwIndex.Basis)
-		b.WriteString("Drop-In Replacement Matrix:\n")
-		for _, dep := range rep.Dependencies {
-			if dep.Status == needs.StatusCovered || dep.Status == needs.StatusAdapterAvailable {
-				fmt.Fprintf(&b, "  ✓ %-35s -> %s\n", dep.Package, dep.GolusorisReplacement)
-			} else {
-				fmt.Fprintf(&b, "  ✗ %-35s -> NO DIRECT EQUIVALENT (Gap)\n", dep.Package)
-			}
-		}
+		b.WriteString(needs.FormatLibraryRelationships(rep))
 
 		return mcp.TextResult(b.String()), nil
 	}

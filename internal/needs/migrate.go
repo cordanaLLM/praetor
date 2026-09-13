@@ -68,7 +68,7 @@ func planMigrationFromAnalysis(ctx context.Context, repoPath string, analysis *m
 	// and treating those as Go module paths deletes unrelated go.mod lines.
 	importReplacements := make(map[string]string)
 	for _, dep := range repoNeeds.Dependencies {
-		if dep.Status != StatusCovered || dep.GolusorisReplacement == "" || dep.Ecosystem != "go" {
+		if dep.Relationship != nil || dep.Status != StatusCovered || dep.GolusorisReplacement == "" || dep.Ecosystem != "go" {
 			continue
 		}
 		plan.DroppedRequires = append(plan.DroppedRequires, dep.Package)
