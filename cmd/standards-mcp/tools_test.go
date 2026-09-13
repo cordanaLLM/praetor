@@ -101,6 +101,37 @@ func TestFormatAdoptionIncludesSafetyWarnings(t *testing.T) {
 	}
 }
 
+func TestFormatAdoptionBaselineStatesAndDryRunLabels(t *testing.T) {
+	tests := []struct {
+		name   string
+		report adopt.AdoptReport
+		dryRun bool
+		want   string
+		avoid  string
+	}{
+		{name: "scanned zero", report: adopt.AdoptReport{BaselineStatus: "scanned"}, want: "Legacy Debt Baselined: 0"},
+		{name: "scanned nonzero dry run", report: adopt.AdoptReport{BaselineStatus: "scanned", LegacyDebtCount: 2, CreatedFiles: []string{"x"}}, dryRun: true, want: "Legacy Debt Scanned (dry-run; not written): 2", avoid: "Created Files"},
+		{name: "dry run reconciliation", report: adopt.AdoptReport{ReconciledFiles: []string{"x"}}, dryRun: true, want: "Planned Reconciliations: 1", avoid: "Reconciled Files"},
+		{name: "not run", report: adopt.AdoptReport{}, want: "Legacy Debt Baseline: not_run; no usable result", avoid: "0 infractions"},
+		{name: "existing", report: adopt.AdoptReport{BaselineStatus: "existing", LegacyDebtCount: 3}, want: "Existing Legacy Debt Baseline: 3"},
+		{name: "skipped", report: adopt.AdoptReport{BaselineStatus: "skipped"}, want: "Legacy Debt Scan: skipped"},
+		{name: "failed", report: adopt.AdoptReport{BaselineStatus: "failed"}, want: "Legacy Debt Baseline: failed; no usable result"},
+		{name: "failed apply", report: adopt.AdoptReport{Errors: []string{"planning failed"}}, want: "[INCOMPLETE]", avoid: "[APPLIED]"},
+		{name: "unknown", report: adopt.AdoptReport{BaselineStatus: "future"}, want: "Legacy Debt Baseline: future; no usable result"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatAdoptMCPResult(&tc.report, tc.dryRun)
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("missing %q in %s", tc.want, got)
+			}
+			if tc.avoid != "" && strings.Contains(got, tc.avoid) {
+				t.Fatalf("unexpected %q in %s", tc.avoid, got)
+			}
+		})
+	}
+}
+
 func TestServer_MemoryRecallRejectsCorruptCache(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	empty := callTool(t, srv, "standards_memory_recall", map[string]any{"query": "cache"})

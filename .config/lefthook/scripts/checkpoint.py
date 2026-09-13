@@ -179,6 +179,28 @@ def _remote_refs(root, cfg, branch):
     return refs, branch_ref, base_ref
 
 
+def _branch_publication(root, head, remote_oid):
+    if remote_oid == head:
+        return "pushed", []
+    if not remote_oid:
+        return "due_push", [PUSH_ACTION]
+    try:
+        _git(root, "cat-file", "-e", f"{remote_oid}^{{commit}}")
+    except CheckpointError as error:
+        raise CheckpointError("live branch object is unavailable locally; fetch the configured remote") from error
+    if _git(root, "rev-parse", "--is-shallow-repository").decode().strip() != "false":
+        raise CheckpointError("branch ancestry is unverified in shallow history; fetch missing history and review")
+    counts = _git(root, "rev-list", "--left-right", "--count", f"{head}...{remote_oid}").decode().split()
+    if len(counts) != 2 or any(not value.isdecimal() for value in counts):
+        raise CheckpointError("branch ancestry count is malformed")
+    local_only, remote_only = map(int, counts)
+    if remote_only == 0:
+        return "due_push", [PUSH_ACTION]
+    if local_only == 0:
+        return "remote_ahead", ["Review and reconcile the live remote branch ahead of local HEAD before publication."]
+    return "diverged", ["Review and reconcile divergent local and live remote commits before publication."]
+
+
 def _publication(root, cfg, branch, head):
     _validate_remote(_remote_url(root, cfg["remote"]), cfg["repository"])
     refs, branch_ref, base_ref = _remote_refs(root, cfg, branch)
@@ -189,11 +211,14 @@ def _publication(root, cfg, branch, head):
         _git(root, "cat-file", "-e", f"{base_oid}^{{commit}}")
     except CheckpointError as error:
         raise CheckpointError("live base object is unavailable locally; fetch the configured remote") from error
+    status, actions = _branch_publication(root, head, refs.get(branch_ref))
+    if status in {"remote_ahead", "diverged"}:
+        return status, actions
     ahead = int(_git(root, "rev-list", "--count", f"{base_oid}..{head}").decode().strip())
     if ahead <= 0:
         return "not_ahead", []
-    if refs.get(branch_ref) != head:
-        return "due_push", [PUSH_ACTION]
+    if status == "due_push":
+        return status, actions
     if not cfg["require_pr"]:
         return "pushed", []
     repo = cfg["repository"]

@@ -17,6 +17,12 @@
 
 ### Fixed
 
+- Checkpoint publication distinguishes local advances from remote-ahead and
+  divergent branches, and reports missing or shallow history before suggesting
+  a push.
+- Adoption CLI and MCP distinguish observed baseline debt from skipped or failed
+  scans and describe dry-run files as planned. Bare repository inventory treats
+  working-tree privacy probes as not applicable.
 - Resolve security scan scope from actual Go packages so private dogfood corpora
   stay outside project gates; first-party findings still fail with zero exclusions.
 

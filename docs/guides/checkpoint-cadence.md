@@ -49,6 +49,12 @@ Set `publish: false` for local-only repositories: local checkpoint guidance stil
 runs, and no remote or forge lookup occurs. Publication requires an explicit
 GitHub repository matching the configured Git remote. Missing base objects need
 an explicit fetch; the checker never silently changes remote-tracking state.
+An unpublished branch or a verified local advance can request a normal push.
+Live remote advances and divergent commits instead request reconciliation, even
+when local HEAD has no commits beyond the base. Missing branch objects and
+shallow ancestry remain explicit verification errors. The observer uses live
+remote tips and available commit history; cached tracking labels alone do not
+establish whether publication is due.
 Forge failures, ambiguous PRs and stale PR heads cannot certify review visibility.
 Other forge providers need a verified observation adapter before enabling this
 publication policy. Go forge PR requests now separately support the draft flag.

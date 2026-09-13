@@ -183,6 +183,78 @@ class CheckpointTests(unittest.TestCase):
         self.assertFalse(result["due"])
         self.assertEqual(result["changed_count"], 0)
 
+    def publication_fixture(self):
+        git(self.root, "remote", "add", "origin", "https://github.com/acme/demo.git")
+        self.write_config({**CONFIG, "publish": True, "require_pr": False})
+        git(self.root, "add", ".")
+        git(self.root, "commit", "-q", "-m", "local checkpoint")
+        head = git(self.root, "rev-parse", "HEAD").stdout.decode().strip()
+        base = git(self.root, "rev-parse", "main").stdout.decode().strip()
+        git(self.root, "update-ref", "refs/remotes/origin/checkpoint/test", head)
+        return head, base
+
+    def remote_commit(self, name, parent):
+        git(self.root, "switch", "-q", "-c", name, parent)
+        git(self.root, "commit", "-q", "--allow-empty", "-m", name)
+        tip = git(self.root, "rev-parse", "HEAD").stdout.decode().strip()
+        git(self.root, "switch", "-q", "checkpoint/test")
+        return tip
+
+    def observe_remote(self, base, remote):
+        original = checkpoint._run
+        before = git(self.root, "show-ref").stdout
+
+        def fake(argv, root, **kwargs):
+            if argv[:2] == ["git", "ls-remote"]:
+                branch_line = f"{remote}\trefs/heads/checkpoint/test\n" if remote else ""
+                return f"{base}\trefs/heads/main\n{branch_line}".encode()
+            if argv[:2] == ["gh", "pr"]:
+                self.fail("PR lookup is disabled in this fixture")
+            return original(argv, root, **kwargs)
+
+        with mock.patch.object(checkpoint, "_run", side_effect=fake):
+            result = checkpoint.inspect_checkpoint(self.root, "stop")
+        self.assertEqual(git(self.root, "show-ref").stdout, before)
+        self.assertFalse(result["commit_due"])
+        return result
+
+    def test_live_branch_ancestry_controls_publication_action(self):
+        head, base = self.publication_fixture()
+        ahead = self.remote_commit("remote-future", head)
+        fork = self.remote_commit("remote-fork", base)
+        cases = ((None, "due_push"), (base, "due_push"), (head, "pushed"),
+                 (ahead, "remote_ahead"), (fork, "diverged"))
+        for remote, status in cases:
+            with self.subTest(status=status, remote=remote):
+                result = self.observe_remote(base, remote)
+                self.assertEqual(result["publication_status"], status, result)
+                self.assertEqual(result["due"], status != "pushed")
+                self.assertEqual(checkpoint.PUSH_ACTION in result["actions"], status == "due_push")
+                if status in {"remote_ahead", "diverged"}:
+                    self.assertIn("reconcile", " ".join(result["actions"]))
+
+    def test_remote_movement_is_visible_even_without_commits_above_base(self):
+        head, _ = self.publication_fixture()
+        ahead = self.remote_commit("remote-future", head)
+        result = self.observe_remote(head, ahead)
+        self.assertEqual(result["publication_status"], "remote_ahead", result)
+        self.assertTrue(result["due"])
+        self.assertNotIn(checkpoint.PUSH_ACTION, result["actions"])
+        self.assertEqual(self.observe_remote(head, None)["publication_status"], "not_ahead")
+        self.assertEqual(self.observe_remote(head, head)["publication_status"], "not_ahead")
+
+    def test_missing_remote_object_and_shallow_history_require_review(self):
+        head, base = self.publication_fixture()
+        result = self.observe_remote(base, "f" * 40)
+        self.assertEqual(result["publication_status"], "error", result)
+        self.assertIn("live branch object is unavailable", result["error"])
+        self.assertNotIn(checkpoint.PUSH_ACTION, result["actions"])
+        (self.root / ".git" / "shallow").write_text(head + "\n")
+        result = self.observe_remote(base, base)
+        self.assertEqual(result["publication_status"], "error", result)
+        self.assertIn("shallow", result["error"])
+        self.assertNotIn(checkpoint.PUSH_ACTION, result["actions"])
+
     def test_unborn_branch_requests_initial_commit(self):
         git(self.root, "switch", "--orphan", "checkpoint/initial")
         self.write_config()

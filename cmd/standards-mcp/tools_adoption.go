@@ -116,17 +116,28 @@ func (s *Server) createAdoptTool() (mcp.Tool, error) {
 func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) string {
 	var sb strings.Builder
 	mode := "APPLIED"
+	if len(r.Errors) > 0 {
+		mode = "INCOMPLETE"
+	}
 	if dryRun {
 		mode = "SIMULATED (DRY RUN)"
 	}
 	fmt.Fprintf(&sb, "=== Praetor Repository Adoption [%s] ===\n", mode)
 	fmt.Fprintf(&sb, "State: %s | Archetype: %s\n", r.State, r.Archetype)
-	fmt.Fprintf(&sb, "Legacy Debt Recorded: %d infractions\n", r.LegacyDebtCount)
-	fmt.Fprintf(&sb, "Created Files: %d\n", len(r.CreatedFiles))
+	formatAdoptDebt(&sb, r, dryRun)
+	fileLabel := "Created Files"
+	if dryRun {
+		fileLabel = "Planned Files"
+	}
+	fmt.Fprintf(&sb, "%s: %d\n", fileLabel, len(r.CreatedFiles))
 	for _, f := range r.CreatedFiles {
 		fmt.Fprintf(&sb, "  + %s\n", f)
 	}
-	fmt.Fprintf(&sb, "Reconciled Files: %d\n", len(r.ReconciledFiles))
+	reconciledLabel := "Reconciled Files"
+	if dryRun {
+		reconciledLabel = "Planned Reconciliations"
+	}
+	fmt.Fprintf(&sb, "%s: %d\n", reconciledLabel, len(r.ReconciledFiles))
 	for _, f := range r.ReconciledFiles {
 		fmt.Fprintf(&sb, "  ~ %s\n", f)
 	}
@@ -137,6 +148,27 @@ func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) string {
 		fmt.Fprintf(&sb, "[WARN] %s\n", warning)
 	}
 	return sb.String()
+}
+
+func formatAdoptDebt(sb *strings.Builder, r *adopt.AdoptReport, dryRun bool) {
+	switch r.BaselineStatus {
+	case "scanned":
+		if dryRun {
+			fmt.Fprintf(sb, "Legacy Debt Scanned (dry-run; not written): %d infractions\n", r.LegacyDebtCount)
+			return
+		}
+		fmt.Fprintf(sb, "Legacy Debt Baselined: %d infractions\n", r.LegacyDebtCount)
+	case "existing":
+		fmt.Fprintf(sb, "Existing Legacy Debt Baseline: %d infractions\n", r.LegacyDebtCount)
+	case "skipped":
+		sb.WriteString("Legacy Debt Scan: skipped (baseline recording disabled)\n")
+	default:
+		status := r.BaselineStatus
+		if status == "" {
+			status = "not_run"
+		}
+		fmt.Fprintf(sb, "Legacy Debt Baseline: %s; no usable result\n", status)
+	}
 }
 
 // parseDogfoodOptions validates the dogfood arguments. Remote benchmark clones are an
