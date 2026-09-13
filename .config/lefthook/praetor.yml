@@ -1,5 +1,4 @@
 # Compatible with Lefthook 2.1.12. One stdin consumer per hook is intentional.
-source_dir: .config/lefthook
 agent-pre-tool:
   commands:
     command-policy:

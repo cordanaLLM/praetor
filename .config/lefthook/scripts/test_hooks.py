@@ -254,6 +254,7 @@ class GitHooks(unittest.TestCase):
         remote, base, head = self.incoming_private_history(legacy=True, old_topic=True)
         result = command(self.repo, "git", "push", "origin", f"{head}:refs/heads/review/removal")
         self.assertIn(b"pushed-checks", result.stdout + result.stderr)
+        self.assertEqual((result.stdout + result.stderr).count(f"Push: {head[:12]} checked".encode()), 1)
         self.assertEqual(command(remote, "git", "rev-parse", "refs/heads/review/removal").stdout.decode().strip(), head)
         self.assertEqual(command(remote, "git", "rev-parse", "refs/heads/main").stdout.decode().strip(), base)
         self.assertEqual(command(remote, "git", "ls-tree", "-r", "--name-only", head, "--", ".workingdir").stdout, b"")
