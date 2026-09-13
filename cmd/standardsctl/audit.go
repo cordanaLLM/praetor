@@ -130,7 +130,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
 		func() error { return auditAgentProjections(rootDir) },
 		func() error { return auditBranchProtectionAndSupplyChain(manifest, rootDir) },
-		func() error { return auditPaperclipHarness(manifest, rootDir) },
+		func() error { return auditPaperclipHarness(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
 		func() error { return auditPreMigrationTracking(rootDir) },
 		func() error { return auditAgentDefinitions(rootDir) },
@@ -350,12 +350,12 @@ func repoFileContains(rootDir, rel, needle string) (bool, error) {
 	return strings.Contains(string(data), needle), nil
 }
 
-func auditPaperclipHarness(manifest *config.Manifest, rootDir string) error {
+func auditPaperclipHarness(ctx context.Context, manifest *config.Manifest, rootDir string) error {
 	harnessPath := filepath.Join(rootDir, ".paperclip", "harness.json")
 	if !util.FileExists(harnessPath) {
 		return fmt.Errorf("[FAIL] Paperclip agent runtime harness .paperclip/harness.json is missing; run 'praetorctl adopt' to reconcile")
 	}
-	h, err := paperclip.LoadHarness(harnessPath)
+	h, err := paperclip.LoadHarnessContext(ctx, harnessPath)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Paperclip harness validation failed: %w", err)
 	}

@@ -67,7 +67,7 @@ func ExtractMemoryInsights(ctx context.Context, transcriptsRoot string) ([]Memor
 			return nil, fmt.Errorf("confine transcript source: %w", err)
 		}
 		if scanErr := scanTranscript(ctx, transcriptPath, entries[i].Name(), &insights); scanErr != nil {
-			return nil, scanErr
+			return insights, scanErr
 		}
 	}
 
@@ -97,27 +97,37 @@ func scanTranscript(ctx context.Context, transcriptPath, convoID string, insight
 }
 
 // processTranscript appends one governance insight when the transcript mentions a HISS
-// invariant. A scanner failure (including a line above MaxTranscriptLineBytes) is returned
-// rather than silently truncating the scan.
+// invariant. It probes one line past MaxLinesPerLog so bounded input is reported as partial
+// instead of silently truncating the scan.
 func processTranscript(ctx context.Context, file *os.File, convoID string, insights *[]MemoryInsight) error {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, transcriptScanBuffer), MaxTranscriptLineBytes)
 
-	for lines := 0; lines < MaxLinesPerLog && scanner.Scan(); lines++ {
+	foundInsight := false
+	for lines := 0; lines < MaxLinesPerLog; lines++ {
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return fmt.Errorf("read transcript lines: %w", err)
+			}
+			return nil
+		}
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("context cancelled while reading transcript: %w", err)
 		}
 
 		text := scanner.Text()
-		if strings.Contains(text, "HISS-") || strings.Contains(text, "invariant") {
+		if !foundInsight && (strings.Contains(text, "HISS-") || strings.Contains(text, "invariant")) {
 			*insights = append(*insights, MemoryInsight{
 				Source:    convoID,
 				Category:  "governance-invariant",
 				Summary:   "Detected explicit HISS invariant mention in transcript trajectory",
 				Timestamp: time.Now(),
 			})
-			return nil
+			foundInsight = true
 		}
+	}
+	if scanner.Scan() {
+		return fmt.Errorf("transcript exceeds %d lines", MaxLinesPerLog)
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("read transcript lines: %w", err)

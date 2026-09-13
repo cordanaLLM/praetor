@@ -31,6 +31,19 @@ func TestDeclaredDependenciesRejectsIncompleteSources(t *testing.T) {
 	}
 }
 
+func TestAuditDocumentationCoverageRejectsInvalidRoot(t *testing.T) {
+	for _, root := range []string{filepath.Join(t.TempDir(), "missing"), filepath.Join(t.TempDir(), "file")} {
+		if strings.HasSuffix(root, "file") {
+			if err := os.WriteFile(root, []byte("x"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := AuditDocumentationCoverage(t.Context(), root); err == nil {
+			t.Fatalf("invalid root %q accepted", root)
+		}
+	}
+}
+
 func TestDeclaredDependenciesPreservesDirectAndTransitiveFlags(t *testing.T) {
 	root := t.TempDir()
 	body := "module example.com/app\nrequire (\nexample.com/direct v1.0.0\nexample.com/indirect v2.0.0 // indirect\n)\n"

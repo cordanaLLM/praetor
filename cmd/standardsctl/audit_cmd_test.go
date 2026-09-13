@@ -52,7 +52,7 @@ func auditGateFailureCases() []auditGateCase {
 			writeFixtureFile(t, f.dir, ".needs.yaml", "repository: "+legacyModulePath+"\n")
 		}, ".needs.yaml contains obsolete repository reference"},
 		{"harness mismatch", func(t *testing.T, f *auditFixture) {
-			writeFixtureFile(t, f.dir, ".paperclip/harness.json", `{"version":1,"platform":"other/repo","operating_contract":["x"]}`)
+			writeFixtureFile(t, f.dir, ".paperclip/harness.json", `{"version":1,"platform":"other/repo","operating_contract":["x"],"agit_push_format":"fixture push","invariants":["fixture invariant"]}`)
 		}, "Paperclip harness platform mismatch"},
 		{"new violation", func(t *testing.T, f *auditFixture) {
 			f.addViolation(t)

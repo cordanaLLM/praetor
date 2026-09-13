@@ -84,10 +84,15 @@ func runDocsSync(ctx context.Context, args []string) error {
 }
 
 func runDocsAudit(ctx context.Context, args []string) error {
-	repoPath := "."
-	if len(args) > 0 {
-		repoPath = args[0]
+	fs := flag.NewFlagSet("docs audit", flag.ContinueOnError)
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
 	}
+	if len(positional) > 1 {
+		return fmt.Errorf("docs audit accepts at most one repository path, got %d", len(positional))
+	}
+	repoPath := positionalAt(positional, 0, ".")
 
 	result, err := docdistill.AuditDocumentationCoverage(ctx, repoPath)
 	if err != nil {
@@ -95,9 +100,14 @@ func runDocsAudit(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("=== Documentation Coverage Audit: %s ===\n", repoPath)
-	fmt.Printf("  Coverage:   %.1f%%\n", result.CoverageScore)
+	if result.Status == "not_applicable" {
+		fmt.Println("  Coverage:   not applicable (no declared dependencies)")
+	} else {
+		fmt.Printf("  Coverage:   %.1f%%\n", result.CoverageScore)
+	}
 	fmt.Printf("  Documented: %d / %d declared packages\n", result.Documented, result.TotalDeclared)
 	fmt.Printf("  Passed:     %t\n", result.Passed)
+	fmt.Printf("  Status:     %s\n", result.Status)
 
 	if len(result.Missing) > 0 {
 		fmt.Println("\nMissing Distilled Documentation:")
@@ -108,6 +118,9 @@ func runDocsAudit(ctx context.Context, args []string) error {
 		return fmt.Errorf("documentation audit failed: %d missing packages", len(result.Missing))
 	}
 
+	if !result.Passed {
+		return fmt.Errorf("documentation audit did not pass (status: %s)", result.Status)
+	}
 	return nil
 }
 

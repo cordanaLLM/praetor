@@ -186,6 +186,13 @@ func SyncRepositoryDocs(ctx context.Context, repoPath string, opts DistillOption
 
 // AuditDocumentationCoverage evaluates the ratio of declared dependencies with active distilled docs.
 func AuditDocumentationCoverage(ctx context.Context, repoPath string) (*DocAuditResult, error) {
+	info, err := os.Stat(repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("audit docs: invalid repository root: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("audit docs: repository root %q is not a directory", repoPath)
+	}
 	refs, err := ScanDeclaredDependencies(ctx, repoPath, false)
 	if err != nil {
 		return nil, fmt.Errorf("audit docs: manifest scan failed: %w", err)
@@ -209,17 +216,24 @@ func AuditDocumentationCoverage(ctx context.Context, repoPath string) (*DocAudit
 	}
 
 	total := len(refs)
-	score := 100.0
+	score := 0.0
 	if total > 0 {
 		score = (float64(documented) / float64(total)) * 100.0
 	}
 
+	status := "observed"
+	passed := len(missing) == 0
+	if total == 0 {
+		status = "not_applicable"
+		passed = false
+	}
 	return &DocAuditResult{
 		TotalDeclared: total,
 		Documented:    documented,
 		Missing:       missing,
 		CoverageScore: score,
-		Passed:        len(missing) == 0,
+		Passed:        passed,
+		Status:        status,
 	}, nil
 }
 

@@ -125,8 +125,9 @@ jobs:
       - name: Documentation Integrity Audit
         if: steps.filter.outputs.docs_only == 'true' && github.event_name == 'pull_request'
         run: |
-          echo "Pure documentation change detected. Running docs verification."
-          go run ./cmd/standardsctl docs audit --all
+          echo "Pure documentation change detected. Running MkDocs verification."
+          python3 -m pip install -r docs/presets/mkdocs/requirements.txt
+          mkdocs build --strict
 
       - name: Run Race Detection & Unit Tests (HISS-15)
         if: steps.filter.outputs.run_tests != 'false' || github.event_name == 'push'

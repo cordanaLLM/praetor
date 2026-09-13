@@ -161,7 +161,7 @@ func newAuditFixture(t *testing.T) *auditFixture {
 	writeFixtureFile(t, dir, ".config/labels.yaml", "version: 1\nlabels: []\n")
 	writeFixtureFile(t, dir, ".github/rulesets/main.json", "{}\n")
 	writeFixtureFile(t, dir, ".paperclip/harness.json",
-		`{"version":1,"platform":"acme/widgets","operating_contract":["Rule 0: end with a disposition."]}`+"\n")
+		`{"version":1,"platform":"acme/widgets","operating_contract":["Rule 0: end with a disposition."],"agit_push_format":"reviewed fixture push","invariants":["fixture invariant"]}`+"\n")
 	return f
 }
 

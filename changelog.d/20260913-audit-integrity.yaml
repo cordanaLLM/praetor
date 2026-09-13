@@ -1,0 +1,3 @@
+type: fixed
+title: Reject invalid harnesses and empty documentation audits and report transcript scan truncation
+breaking: false

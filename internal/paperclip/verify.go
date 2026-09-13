@@ -3,6 +3,7 @@ package paperclip
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -55,10 +56,13 @@ func VerifyRun(ctx context.Context, repoPath string, d *Disposition) error {
 		}
 	}
 
-	// Verify harness exists in repoPath
+	// A file's presence cannot establish a valid configured harness.
 	harnessPath := filepath.Join(repoPath, ".paperclip", "harness.json")
-	if _, err := os.Stat(harnessPath); os.IsNotExist(err) {
-		return fmt.Errorf("missing .paperclip/harness.json in %s; run 'praetorctl paperclip harness'", repoPath)
+	if _, err := LoadHarnessContext(ctx, harnessPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("missing .paperclip/harness.json in %s; run 'praetorctl paperclip harness'", repoPath)
+		}
+		return fmt.Errorf("verify harness configuration: %w", err)
 	}
 
 	return nil

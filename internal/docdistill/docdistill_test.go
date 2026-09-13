@@ -163,8 +163,8 @@ Note: Caller must close decoder after use.
 		if err != nil {
 			t.Fatalf("unexpected error auditing empty repo: %v", err)
 		}
-		if audit.CoverageScore != 100.0 || !audit.Passed {
-			t.Errorf("expected 100%% pass on empty repo, got score: %f", audit.CoverageScore)
+		if audit.CoverageScore != 0 || audit.Passed || audit.Status != "not_applicable" {
+			t.Errorf("expected not-applicable empty repo, got: %+v", audit)
 		}
 	})
 

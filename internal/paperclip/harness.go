@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
@@ -154,9 +156,14 @@ func renderRules(h *Harness) string {
 
 // LoadHarness reads and validates a Paperclip harness configuration.
 func LoadHarness(path string) (*Harness, error) {
-	// #nosec G304 -- path is the harness location selected by praetor's own callers
-	// (the audit gate and the paperclip CLI), read on the invoking user's machine.
-	data, err := os.ReadFile(path)
+	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDuration)
+	defer cancel()
+	return LoadHarnessContext(ctx, path)
+}
+
+// LoadHarnessContext validates bounded configuration without following symlinks.
+func LoadHarnessContext(ctx context.Context, path string) (*Harness, error) {
+	data, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("read harness file: %w", err)
 	}
@@ -166,9 +173,29 @@ func LoadHarness(path string) (*Harness, error) {
 		return nil, fmt.Errorf("parse harness json: %w", err)
 	}
 
-	if h.Platform == "" || len(h.OperatingContract) == 0 {
-		return nil, fmt.Errorf("invalid harness: missing platform or operating contract")
+	if h.Version != 1 {
+		return nil, fmt.Errorf("invalid harness: expected version 1")
+	}
+	if err := validateHarnessValues([]string{h.Platform, h.AGitPushFormat}); err != nil {
+		return nil, fmt.Errorf("invalid harness identity or push format: %w", err)
+	}
+	for _, values := range [][]string{h.OperatingContract, h.Invariants} {
+		if err := validateHarnessValues(values); err != nil {
+			return nil, fmt.Errorf("invalid harness contract or invariants: %w", err)
+		}
 	}
 
 	return &h, nil
+}
+
+func validateHarnessValues(values []string) error {
+	if len(values) == 0 || len(values) > 64 {
+		return fmt.Errorf("expected 1..64 values")
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" || len(value) > 4096 {
+			return fmt.Errorf("values must be nonempty and at most 4096 bytes")
+		}
+	}
+	return nil
 }
