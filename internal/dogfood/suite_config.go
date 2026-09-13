@@ -27,6 +27,7 @@ type SuiteConfig struct {
 	Version            int               `json:"version"`
 	PublicRepositories []string          `json:"public_repositories"`
 	Transcripts        []SuiteTranscript `json:"transcripts"`
+	InputLimits        *InputLimits      `json:"input_limits,omitempty"`
 }
 
 // SuiteTranscript explicitly identifies private local observations to replay.
@@ -42,7 +43,7 @@ func loadSuiteConfig(ctx context.Context, path string) (*SuiteConfig, string, er
 	if err != nil {
 		return nil, "", err
 	}
-	fields, err := suiteObject(data, []string{"version", "public_repositories", "transcripts"})
+	fields, err := suiteObject(data, []string{"version", "public_repositories", "transcripts"}, "input_limits")
 	if err != nil {
 		return nil, "", err
 	}
@@ -59,6 +60,11 @@ func loadSuiteConfig(ctx context.Context, path string) (*SuiteConfig, string, er
 
 func decodeSuiteConfig(fields map[string]json.RawMessage) (*SuiteConfig, error) {
 	var config SuiteConfig
+	var err error
+	config.InputLimits, err = decodeInputLimits(fields["input_limits"])
+	if err != nil {
+		return nil, err
+	}
 	if err := json.Unmarshal(fields["version"], &config.Version); err != nil {
 		return nil, err
 	}
@@ -87,23 +93,26 @@ func decodeSuiteConfig(fields map[string]json.RawMessage) (*SuiteConfig, error) 
 
 // Decode each fixed object explicitly: struct decoding alone accepts duplicate and
 // case-folded keys, which make a supposedly pinned configuration ambiguous.
-func suiteObject(data []byte, names []string) (map[string]json.RawMessage, error) {
+func suiteObject(data []byte, names []string, optional ...string) (map[string]json.RawMessage, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	token, err := decoder.Token()
 	if err != nil || token != json.Delim('{') {
 		return nil, errors.New("suite configuration requires JSON objects")
 	}
 	fields := make(map[string]json.RawMessage)
-	for i := 0; decoder.More() && i <= len(names); i++ {
-		if err := decodeSuiteField(decoder, fields, names); err != nil {
+	allowed := append(append([]string(nil), names...), optional...)
+	for i := 0; decoder.More() && i <= len(allowed); i++ {
+		if err := decodeSuiteField(decoder, fields, allowed); err != nil {
 			return nil, err
 		}
 	}
 	if _, err := decoder.Token(); err != nil {
 		return nil, err
 	}
-	if len(fields) != len(names) {
-		return nil, errors.New("suite object is missing required fields")
+	for _, name := range names {
+		if fields[name] == nil {
+			return nil, errors.New("suite object is missing required fields")
+		}
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return nil, errors.New("trailing suite JSON content")

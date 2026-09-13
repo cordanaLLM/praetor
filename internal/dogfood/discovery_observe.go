@@ -20,6 +20,7 @@ type discoveryPlannerResult struct {
 }
 
 type discoveryObserver struct {
+	limits       *InputLimits
 	root         string
 	tree         publicTree
 	verification map[string]discoveryPlannerResult
@@ -39,7 +40,13 @@ func ObserveCapabilities(ctx context.Context, root string, policy DiscoveryPolic
 	if err := ValidateDiscoveryPolicy(policy); err != nil {
 		return discoveryFailure(result, err)
 	}
-	tree, err := snapshotDiscoveryTree(ctx, root)
+	limits, err := normalizeInputLimits(policy.InputLimits)
+	if err != nil {
+		return discoveryFailure(result, err)
+	}
+	result.InputLimits = limits
+	tree, snapshot, err := snapshotTreeWithLimits(ctx, root, true, &limits.Snapshot)
+	result.Snapshot = &snapshot
 	if err != nil {
 		return discoveryFailure(result, err)
 	}
@@ -52,7 +59,7 @@ func ObserveCapabilities(ctx context.Context, root string, policy DiscoveryPolic
 	if result.FilesObserved == 0 {
 		return discoveryFailure(result, errors.New("discovery snapshot contains no regular files"))
 	}
-	observer := discoveryObserver{root: root, tree: tree, verification: make(map[string]discoveryPlannerResult), matched: make(map[string]bool)}
+	observer := discoveryObserver{root: root, tree: tree, limits: limits, verification: make(map[string]discoveryPlannerResult), matched: make(map[string]bool)}
 	err = observer.observe(ctx, policy, result)
 	result.FilesMatched = len(observer.matched)
 	result.Status = "observed"
@@ -179,7 +186,11 @@ func (o *discoveryObserver) verificationStatus(ctx context.Context, root string)
 		if len(o.verification) >= maxDiscoveryRoots {
 			return "unknown", "verification-root-bound", errors.New("discovery exceeds 128 verification roots")
 		}
-		cached.plan, cached.err = adopt.ObserveVerificationPlan(ctx, root)
+		limits, err := normalizeInputLimits(o.limits)
+		if err != nil {
+			return "unknown", "verification-limits-error", err
+		}
+		cached.plan, cached.err = adopt.ObserveVerificationPlanWithLimits(ctx, root, &limits.Verification)
 		o.verification[root] = cached
 	}
 	if cached.err != nil {

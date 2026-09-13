@@ -26,8 +26,11 @@ type publicTree map[string]string
 type publicSnapshot struct {
 	tree     publicTree
 	dirs     []string
+	limits   SnapshotLimits
+	report   *SnapshotReport
 	total    int64
 	entries  int
+	files    int
 	filtered bool
 }
 
@@ -35,25 +38,44 @@ func snapshotPublicTree(ctx context.Context, dir string) (tree publicTree, err e
 	return snapshotTree(ctx, dir, false)
 }
 
-// snapshotDiscoveryTree reuses the bounded snapshot reader while excluding
-// generated/dependency/private state according to the existing scanner policy.
-func snapshotDiscoveryTree(ctx context.Context, dir string) (publicTree, error) {
-	return snapshotTree(ctx, dir, true)
+func snapshotTree(ctx context.Context, dir string, filtered bool) (tree publicTree, err error) {
+	tree, _, err = snapshotTreeWithLimits(ctx, dir, filtered, nil)
+	return tree, err
 }
 
-func snapshotTree(ctx context.Context, dir string, filtered bool) (tree publicTree, err error) {
+func snapshotTreeWithLimits(ctx context.Context, dir string, filtered bool, input *SnapshotLimits) (tree publicTree, report SnapshotReport, err error) {
+	if ctx == nil {
+		report.Status = "failed"
+		return nil, report, errors.New("snapshot requires context")
+	}
+	limits, err := NormalizeSnapshotLimits(input)
+	if err != nil {
+		report.Status = "failed"
+		return nil, report, err
+	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return nil, err
+		report.Status = "failed"
+		return nil, report, err
 	}
-	defer func() { err = errors.Join(err, root.Close()) }()
-	snapshot := publicSnapshot{tree: make(publicTree), dirs: []string{"."}, entries: 1, filtered: filtered}
-	for i := 0; i < len(snapshot.dirs) && i < maxPublicTreeEntries; i++ {
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+			tree = nil
+			report.Status = "failed"
+		}
+	}()
+	snapshot := publicSnapshot{tree: make(publicTree), dirs: []string{"."}, entries: 1, filtered: filtered, limits: limits, report: &report}
+	for i := 0; i < len(snapshot.dirs) && i < limits.MaxEntries; i++ {
 		if err := snapshot.addDirectory(ctx, root, snapshot.dirs[i]); err != nil {
-			return nil, err
+			report.Status = "partial"
+			report.EntriesObserved, report.FilesObserved, report.BytesObserved = snapshot.entries, snapshot.files, snapshot.total
+			return nil, report, err
 		}
 	}
-	return snapshot.tree, nil
+	report.Status = "complete"
+	report.EntriesObserved, report.FilesObserved, report.BytesObserved = snapshot.entries, snapshot.files, snapshot.total
+	return snapshot.tree, report, nil
 }
 
 func (snapshot *publicSnapshot) addDirectory(ctx context.Context, root *os.Root, dir string) error {
@@ -86,8 +108,10 @@ func (snapshot *publicSnapshot) addEntry(ctx context.Context, root *os.Root, rel
 		return nil
 	}
 	snapshot.entries++
-	if snapshot.entries > maxPublicTreeEntries {
-		return errors.New("public checkout exceeds 20000 entries")
+	if snapshot.entries > snapshot.limits.MaxEntries {
+		snapshot.report.OffendingPath = rel
+		snapshot.report.Limit = "max_entries"
+		return fmt.Errorf("public checkout exceeds %d entries", snapshot.limits.MaxEntries)
 	}
 	if snapshot.filtered && discoveryIgnored(rel, entry) {
 		return nil
@@ -110,15 +134,23 @@ func discoveryIgnored(rel string, entry os.DirEntry) bool {
 }
 
 func (snapshot *publicSnapshot) addFile(ctx context.Context, root *os.Root, rel string) error {
-	digest, size, err := publicFileDigest(ctx, root, rel)
+	readLimit := snapshot.limits.MaxFileBytes
+	limitName := "max_file_bytes"
+	if remaining := snapshot.limits.MaxTreeBytes - snapshot.total; remaining < readLimit {
+		readLimit, limitName = remaining, "max_tree_bytes"
+	}
+	digest, size, err := publicFileDigestWithLimit(ctx, root, rel, readLimit)
 	if err != nil {
+		snapshot.report.OffendingPath = rel
+		snapshot.report.Limit = "file_read"
+		if strings.Contains(err.Error(), "exceeds") {
+			snapshot.report.Limit = limitName
+		}
 		return fmt.Errorf("snapshot %s: %w", rel, err)
 	}
 	snapshot.total += size
-	if snapshot.total > maxPublicTreeBytes {
-		return errors.New("public checkout exceeds 256 MiB")
-	}
 	snapshot.tree[filepath.ToSlash(rel)] = digest
+	snapshot.files++
 	return nil
 }
 
@@ -141,7 +173,7 @@ func readPublicDirectory(root *os.Root, rel string) ([]os.DirEntry, error) {
 	return entries, nil
 }
 
-func publicFileDigest(ctx context.Context, root *os.Root, rel string) (string, int64, error) {
+func publicFileDigestWithLimit(ctx context.Context, root *os.Root, rel string, limit int64) (digest string, size int64, err error) {
 	if err := ctx.Err(); err != nil {
 		return "", 0, err
 	}
@@ -151,14 +183,57 @@ func publicFileDigest(ctx context.Context, root *os.Root, rel string) (string, i
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		target, err := root.Readlink(rel)
+		if int64(len(target)) > limit {
+			return "", 0, fmt.Errorf("%s exceeds %d bytes", rel, limit)
+		}
 		return "symlink:" + target, int64(len(target)), err
 	}
-	data, err := readPublicFile(root, rel, maxPublicFileBytes)
+	if !info.Mode().IsRegular() {
+		return "", 0, fmt.Errorf("%s is not a regular file", rel)
+	}
+	if info.Size() > limit {
+		return "", 0, fmt.Errorf("%s exceeds %d bytes", rel, limit)
+	}
+	return digestPublicRegularFile(ctx, root, rel, info, limit)
+}
+
+func digestPublicRegularFile(ctx context.Context, root *os.Root, rel string, info os.FileInfo, limit int64) (digest string, size int64, err error) {
+	f, err := openSuiteConfigFile(root, rel)
 	if err != nil {
 		return "", 0, err
 	}
-	sum := sha256.Sum256(data)
-	return fmt.Sprintf("%04o:%x", info.Mode().Perm(), sum), int64(len(data)), nil
+	defer func() { err = errors.Join(err, f.Close()) }()
+	actual, err := f.Stat()
+	if err != nil {
+		return "", 0, err
+	}
+	if !os.SameFile(info, actual) {
+		return "", 0, fmt.Errorf("%s changed while opening", rel)
+	}
+	hasher := sha256.New()
+	count, err := io.Copy(hasher, io.LimitReader(contextReader{ctx: ctx, reader: f}, limit+1))
+	if err != nil {
+		return "", 0, err
+	}
+	if count > limit {
+		return "", 0, fmt.Errorf("%s exceeds %d bytes", rel, limit)
+	}
+	if err := checkPublicFileStable(root, rel, f, actual, int(count)); err != nil {
+		return "", 0, err
+	}
+	return fmt.Sprintf("%04o:%x", info.Mode().Perm(), hasher.Sum(nil)), count, nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }
 
 func readPublicFile(root *os.Root, rel string, limit int64) (data []byte, err error) {

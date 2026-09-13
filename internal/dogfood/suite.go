@@ -39,6 +39,7 @@ type SuiteCase struct {
 // SuiteReport never equates planned declarations, empty inputs or partial runs
 // with verification. Transcript payloads are retained only in private caches.
 type SuiteReport struct {
+	InputLimits  *InputLimits      `json:"input_limits,omitempty"`
 	Version      int               `json:"version"`
 	Options      SuiteOptions      `json:"options"`
 	ConfigSHA256 string            `json:"config_sha256"`
@@ -67,6 +68,10 @@ func RunSuite(ctx context.Context, opts SuiteOptions) (*SuiteReport, error) {
 	if err != nil {
 		return nil, err
 	}
+	limits, err := normalizeInputLimits(config.InputLimits)
+	if err != nil {
+		return nil, err
+	}
 	if err := validateSuitePolicy(config, opts); err != nil {
 		return nil, err
 	}
@@ -74,7 +79,7 @@ func RunSuite(ctx context.Context, opts SuiteOptions) (*SuiteReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	report := &SuiteReport{Version: 1, Options: opts, ConfigSHA256: sum, Engine: suiteEngine(), StartedAt: time.Now().UTC(), Status: "planned",
+	report := &SuiteReport{Version: 1, Options: opts, InputLimits: limits, ConfigSHA256: sum, Engine: suiteEngine(), StartedAt: time.Now().UTC(), Status: "planned",
 		Cases: suiteCases(config), Scope: "Plan validates declarations only. Verify checks Praetor public adoption stability and complete observed-event ingestion/replay; no upstream application tests, verified-fact extraction, provider dispatch or promotion"}
 	if err := savePublicJSON(filepath.Join(opts.ArtifactDir, "plan.json"), report); err != nil {
 		return report, err
@@ -111,7 +116,7 @@ func executeSuite(ctx context.Context, report *SuiteReport) error {
 	var failures []error
 	for i := 0; i < len(report.Cases) && i < MaxSuiteCases; i++ {
 		result := &report.Cases[i]
-		caseErr := executeSuiteCase(ctx, report.Options, i, result)
+		caseErr := executeSuiteCase(ctx, report.Options, report.InputLimits, i, result)
 		if caseErr != nil {
 			result.Error = caseErr.Error()
 			failures = append(failures, fmt.Errorf("case %d (%s): %w", i+1, result.ID, caseErr))
@@ -129,7 +134,7 @@ func executeSuite(ctx context.Context, report *SuiteReport) error {
 	return errors.Join(failures...)
 }
 
-func executeSuiteCase(ctx context.Context, opts SuiteOptions, index int, result *SuiteCase) error {
+func executeSuiteCase(ctx context.Context, opts SuiteOptions, limits *InputLimits, index int, result *SuiteCase) error {
 	result.Status = "failed"
 	if err := ctx.Err(); err != nil {
 		result.Status = "skipped_due_to_context"
@@ -138,7 +143,7 @@ func executeSuiteCase(ctx context.Context, opts SuiteOptions, index int, result 
 	dir := filepath.Join(opts.ArtifactDir, fmt.Sprintf("case-%02d", index+1))
 	var err error
 	if result.Kind == "public" {
-		result.Public, err = RunPublicLoop(ctx, PublicLoopOptions{Repositories: []string{result.Repository}, SourceRoot: opts.SourceRoot, ArtifactDir: dir, Apply: true, MaxAttempts: 2})
+		result.Public, err = RunPublicLoop(ctx, PublicLoopOptions{Repositories: []string{result.Repository}, SourceRoot: opts.SourceRoot, ArtifactDir: dir, Apply: true, MaxAttempts: 2, InputLimits: limits})
 		if err == nil && (result.Public == nil || !result.Public.Verified) {
 			err = errors.New("public case did not verify")
 		}

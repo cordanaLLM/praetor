@@ -9,6 +9,9 @@ import (
 
 // ValidateDiscoveryPolicy validates the bounded, path-local discovery vocabulary.
 func ValidateDiscoveryPolicy(policy DiscoveryPolicy) error {
+	if _, err := normalizeInputLimits(policy.InputLimits); err != nil {
+		return err
+	}
 	if policy.Version != 1 || len(policy.Rules) == 0 || len(policy.Rules) > maxDiscoveryRules {
 		return errors.New("discovery policy requires version 1 and 1..128 rules")
 	}

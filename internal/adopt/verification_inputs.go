@@ -33,6 +33,14 @@ func (v verificationInputs) has(path string) bool {
 }
 
 func loadVerificationInputs(ctx context.Context, path string) (result verificationInputs, err error) {
+	return loadVerificationInputsWithLimits(ctx, path, VerificationLimits{MaxEntries: maxVerificationEntries, MaxFiles: maxVerificationInputs, MaxDepth: maxVerificationDepth, MaxFileBytes: maxVerificationInputBytes, MaxTotalBytes: maxVerificationTotalBytes})
+}
+
+func loadVerificationInputsWithLimits(ctx context.Context, path string, requested VerificationLimits) (result verificationInputs, err error) {
+	limits, normalizeErr := NormalizeVerificationLimits(&requested)
+	if normalizeErr != nil {
+		return result, normalizeErr
+	}
 	result.files = make(map[string][]byte)
 	result.pythonDirectories = make(map[string]bool)
 	if ctx == nil {
@@ -40,25 +48,25 @@ func loadVerificationInputs(ctx context.Context, path string) (result verificati
 	}
 	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
 	defer cancel()
-	err = walkVerificationInputs(ctx, path, &result)
+	err = walkVerificationInputs(ctx, path, &result, limits)
 	return result, err
 }
 
-func walkVerificationInputs(ctx context.Context, path string, result *verificationInputs) error {
+func walkVerificationInputs(ctx context.Context, path string, result *verificationInputs, limits VerificationLimits) error {
 	queue := []string{"."}
 	count, total := 0, 0
-	for i := 0; i < len(queue) && i <= maxVerificationEntries; i++ {
-		entries, err := readVerificationDirectory(ctx, filepath.Join(path, queue[i]))
+	for i := 0; i < len(queue) && i <= limits.MaxEntries; i++ {
+		entries, err := readVerificationDirectory(ctx, filepath.Join(path, queue[i]), limits.MaxEntries)
 		if err != nil {
 			return err
 		}
 		count += len(entries)
-		if count > maxVerificationEntries {
-			return errors.New("verification discovery exceeds 4096 entries")
+		if count > limits.MaxEntries {
+			return fmt.Errorf("verification discovery exceeds %d entries", limits.MaxEntries)
 		}
 		for _, entry := range entries {
 			rel := filepath.ToSlash(filepath.Join(queue[i], entry.Name()))
-			if err := visitVerificationInput(ctx, path, rel, entry, result, &total, &queue); err != nil {
+			if err := visitVerificationInput(ctx, path, rel, entry, result, &total, &queue, limits); err != nil {
 				return err
 			}
 		}
@@ -66,7 +74,7 @@ func walkVerificationInputs(ctx context.Context, path string, result *verificati
 	return nil
 }
 
-func readVerificationDirectory(ctx context.Context, path string) (entries []fs.DirEntry, err error) {
+func readVerificationDirectory(ctx context.Context, path string, entryLimit int) (entries []fs.DirEntry, err error) {
 	root, err := contextopt.OpenDirectory(ctx, path)
 	if err != nil {
 		return nil, err
@@ -77,14 +85,14 @@ func readVerificationDirectory(ctx context.Context, path string) (entries []fs.D
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, dir.Close()) }()
-	entries, err = dir.ReadDir(maxVerificationEntries + 1)
+	entries, err = dir.ReadDir(entryLimit + 1)
 	if errors.Is(err, io.EOF) {
 		err = nil
 	}
 	return entries, err
 }
 
-func visitVerificationInput(ctx context.Context, root, rel string, entry fs.DirEntry, result *verificationInputs, total *int, queue *[]string) error {
+func visitVerificationInput(ctx context.Context, root, rel string, entry fs.DirEntry, result *verificationInputs, total *int, queue *[]string, limits VerificationLimits) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -94,14 +102,14 @@ func visitVerificationInput(ctx context.Context, root, rel string, entry fs.DirE
 	if strings.ContainsAny(rel, "\r\n") {
 		return errors.New("verification discovery refuses filenames containing line breaks")
 	}
-	if strings.Count(rel, "/") > maxVerificationDepth {
-		return errors.New("verification discovery exceeds directory depth")
+	if strings.Count(rel, "/") > limits.MaxDepth {
+		return fmt.Errorf("verification discovery exceeds directory depth %d", limits.MaxDepth)
 	}
 	if entry.IsDir() {
 		*queue = append(*queue, rel)
 		return nil
 	}
-	if err := result.capture(ctx, root, rel, entry, total); err != nil {
+	if err := result.capture(ctx, root, rel, entry, total, limits); err != nil {
 		return err
 	}
 	return nil
@@ -116,29 +124,29 @@ func skipVerificationDirectory(name string) bool {
 	}
 }
 
-func (v *verificationInputs) capture(ctx context.Context, root, rel string, entry fs.DirEntry, total *int) error {
+func (v *verificationInputs) capture(ctx context.Context, root, rel string, entry fs.DirEntry, total *int, limits VerificationLimits) error {
 	if strings.HasPrefix(rel, "tests/") && strings.HasPrefix(entry.Name(), "test") && strings.HasSuffix(rel, ".py") {
 		if entry.Type()&fs.ModeSymlink != 0 {
 			return errors.New("verification discovery refuses symlinked Python tests")
 		}
 		v.pythonDirectories[filepath.ToSlash(filepath.Dir(rel))] = true
-		if len(v.pythonDirectories) > maxVerificationInputs {
-			return errors.New("verification discovery exceeds 128 Python test directories")
+		if len(v.pythonDirectories) > limits.MaxFiles {
+			return fmt.Errorf("verification discovery exceeds %d Python test directories", limits.MaxFiles)
 		}
 	}
 	if !verificationMarker(rel) {
 		return nil
 	}
-	if len(v.files) >= maxVerificationInputs {
-		return errors.New("verification discovery exceeds 128 metadata files")
+	if len(v.files) >= limits.MaxFiles {
+		return fmt.Errorf("verification discovery exceeds %d metadata files", limits.MaxFiles)
 	}
 	data, err := contextopt.ReadSnapshot(ctx, filepath.Join(root, filepath.FromSlash(rel)))
 	if err != nil {
 		return fmt.Errorf("verification input %s: %w", rel, err)
 	}
 	*total += len(data)
-	if len(data) > maxVerificationInputBytes || *total > maxVerificationTotalBytes {
-		return errors.New("verification metadata exceeds byte bounds")
+	if int64(len(data)) > limits.MaxFileBytes || int64(*total) > limits.MaxTotalBytes {
+		return fmt.Errorf("verification metadata exceeds byte bounds (file=%d total=%d)", limits.MaxFileBytes, limits.MaxTotalBytes)
 	}
 	v.files[rel] = data
 	return nil

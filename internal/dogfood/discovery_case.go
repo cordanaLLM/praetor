@@ -71,7 +71,14 @@ func finishDiscoveryCase(ctx context.Context, root string, item *DiscoveryCase, 
 		return observeErr
 	}
 	item.TreeSHA256 = item.Discovery.TreeSHA256
-	after, snapshotErr := snapshotDiscoveryTree(ctx, root)
+	if item.TreeSHA256 == "" && observeErr != nil {
+		return observeErr
+	}
+	limits, err := normalizeInputLimits(item.Discovery.InputLimits)
+	if err != nil {
+		return errors.Join(observeErr, err)
+	}
+	after, _, snapshotErr := snapshotTreeWithLimits(ctx, root, true, &limits.Snapshot)
 	if snapshotErr != nil {
 		return errors.Join(observeErr, snapshotErr)
 	}

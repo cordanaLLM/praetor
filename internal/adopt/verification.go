@@ -8,11 +8,12 @@ import (
 // VerificationPlan declares selected project commands, never an execution result.
 // Unavailable plans produce failing scaffold recipes; custom recipes are preserved.
 type VerificationPlan struct {
-	Status   string     `json:"status"`
-	Runtimes []string   `json:"runtimes"`
-	Build    [][]string `json:"build"`
-	Test     [][]string `json:"test"`
-	Reasons  []string   `json:"reasons,omitempty"`
+	Status   string              `json:"status"`
+	Runtimes []string            `json:"runtimes"`
+	Build    [][]string          `json:"build"`
+	Test     [][]string          `json:"test"`
+	Reasons  []string            `json:"reasons,omitempty"`
+	Limits   *VerificationLimits `json:"verification_limits,omitempty"`
 }
 
 const (
@@ -31,11 +32,19 @@ func containsRuntime(plan *VerificationPlan, runtime string) bool {
 }
 
 func resolveVerificationPlan(ctx context.Context, root string) (*VerificationPlan, error) {
-	inputs, err := loadVerificationInputs(ctx, root)
+	return resolveVerificationPlanWithLimits(ctx, root, nil)
+}
+
+func resolveVerificationPlanWithLimits(ctx context.Context, root string, requested *VerificationLimits) (*VerificationPlan, error) {
+	limits, err := NormalizeVerificationLimits(requested)
 	if err != nil {
 		return nil, err
 	}
-	plan := &VerificationPlan{Status: verificationDeclared, Runtimes: []string{}, Build: [][]string{}, Test: [][]string{}}
+	inputs, err := loadVerificationInputsWithLimits(ctx, root, limits)
+	if err != nil {
+		return nil, err
+	}
+	plan := &VerificationPlan{Status: verificationDeclared, Runtimes: []string{}, Build: [][]string{}, Test: [][]string{}, Limits: &limits}
 	if err := addNodeVerification(plan, inputs); err != nil {
 		return nil, err
 	}
@@ -60,6 +69,11 @@ func resolveVerificationPlan(ctx context.Context, root string) (*VerificationPla
 // observers. It does not adopt files or execute project commands.
 func ObserveVerificationPlan(ctx context.Context, root string) (*VerificationPlan, error) {
 	return resolveVerificationPlan(ctx, root)
+}
+
+// ObserveVerificationPlanWithLimits exposes the bounded planner with explicit limits.
+func ObserveVerificationPlanWithLimits(ctx context.Context, root string, limits *VerificationLimits) (*VerificationPlan, error) {
+	return resolveVerificationPlanWithLimits(ctx, root, limits)
 }
 
 func (p *VerificationPlan) unavailable(reason string) {

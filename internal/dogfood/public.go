@@ -32,15 +32,17 @@ var ErrPublicLoopFailed = errors.New("public dogfood loop did not verify every r
 // Apply authorizes Praetor scaffolding only inside newly created disposable clones;
 // upstream code, hooks, build scripts and tests are never executed.
 type PublicLoopOptions struct {
-	Repositories []string `json:"repositories"`
-	SourceRoot   string   `json:"source_root"`
-	ArtifactDir  string   `json:"artifact_dir"`
-	Apply        bool     `json:"apply"`
-	MaxAttempts  int      `json:"max_attempts"`
+	InputLimits  *InputLimits `json:"input_limits,omitempty"`
+	Repositories []string     `json:"repositories"`
+	SourceRoot   string       `json:"source_root"`
+	ArtifactDir  string       `json:"artifact_dir"`
+	Apply        bool         `json:"apply"`
+	MaxAttempts  int          `json:"max_attempts"`
 }
 
 // PublicAttempt retains actual reconciliation and verification outcomes.
 type PublicAttempt struct {
+	Snapshot     *SnapshotReport     `json:"snapshot,omitempty"`
 	Number       int                 `json:"number"`
 	Adoption     *adopt.AdoptReport  `json:"adoption,omitempty"`
 	Verification *PublicVerification `json:"verification,omitempty"`
@@ -51,6 +53,7 @@ type PublicAttempt struct {
 
 // PublicRepositoryResult distinguishes plans, verified applications and failures.
 type PublicRepositoryResult struct {
+	OriginalSnapshot   *SnapshotReport    `json:"original_snapshot,omitempty"`
 	Repository         string             `json:"repository"`
 	RequestedSHA       string             `json:"requested_sha,omitempty"`
 	SourceSHA          string             `json:"source_sha,omitempty"`
@@ -138,17 +141,18 @@ func executePublicRepository(ctx context.Context, opts PublicLoopOptions, source
 		return err
 	}
 	result.SourceSHA = sha
-	original, err := snapshotPublicTree(ctx, result.Checkout)
+	original, snapshot, err := snapshotTreeWithLimits(ctx, result.Checkout, false, &opts.InputLimits.Snapshot)
+	result.OriginalSnapshot = &snapshot
 	if err != nil {
 		return err
 	}
 	result.OriginalTreeDigest = original.digest()
-	adoptOpts := adopt.AdoptOptions{Path: result.Checkout, DryRun: true, RecordBaseline: true, SkipHookActivation: true, LockSourceRoot: opts.SourceRoot}
+	adoptOpts := adopt.AdoptOptions{Path: result.Checkout, DryRun: true, RecordBaseline: true, SkipHookActivation: true, LockSourceRoot: opts.SourceRoot, VerificationLimits: &opts.InputLimits.Verification}
 	result.Plan, err = adopt.Adopt(ctx, adoptOpts)
 	if err := publicAdoptionError(result.Plan, err); err != nil {
 		return fmt.Errorf("plan: %w", err)
 	}
-	if err := scanPublicOriginal(ctx, result); err != nil {
+	if err := scanPublicOriginalWithLimits(ctx, result, &opts.InputLimits.Snapshot); err != nil {
 		return err
 	}
 	if !opts.Apply {
@@ -159,7 +163,11 @@ func executePublicRepository(ctx context.Context, opts PublicLoopOptions, source
 }
 
 func scanPublicOriginal(ctx context.Context, result *PublicRepositoryResult) error {
-	afterPlan, err := snapshotPublicTree(ctx, result.Checkout)
+	return scanPublicOriginalWithLimits(ctx, result, nil)
+}
+
+func scanPublicOriginalWithLimits(ctx context.Context, result *PublicRepositoryResult, limits *SnapshotLimits) error {
+	afterPlan, _, err := snapshotTreeWithLimits(ctx, result.Checkout, false, limits)
 	if err != nil {
 		return err
 	}
@@ -175,7 +183,7 @@ func scanPublicOriginal(ctx context.Context, result *PublicRepositoryResult) err
 
 func reconcilePublicRepository(ctx context.Context, opts PublicLoopOptions, result *PublicRepositoryResult, original publicTree, adoptOpts adopt.AdoptOptions) error {
 	previous := ""
-	anchor := publicPolicyAnchor{Policy: result.Plan.EffectivePolicy, Scan: result.OriginalScan}
+	anchor := publicPolicyAnchor{Policy: result.Plan.EffectivePolicy, Scan: result.OriginalScan, snapshotLimits: &opts.InputLimits.Snapshot}
 	for i := 0; i < opts.MaxAttempts && i < MaxPublicAttempts; i++ {
 		adoptOpts.DryRun = false
 		adoptOpts.RecordBaseline = i == 0

@@ -59,7 +59,9 @@ func normalizePublicBounds(opts *PublicLoopOptions) error {
 	if opts.MaxAttempts < 2 || opts.MaxAttempts > MaxPublicAttempts {
 		return fmt.Errorf("public loop attempts must be 2..%d", MaxPublicAttempts)
 	}
-	return nil
+	var err error
+	opts.InputLimits, err = normalizeInputLimits(opts.InputLimits)
+	return err
 }
 
 func parsePublicSources(inputs []string) ([]publicSource, error) {

@@ -63,6 +63,8 @@ type AdoptOptions struct {
 	SkipHookActivation bool `json:"skip_hook_activation,omitempty"`
 	// LockSourceRoot selects the verified Praetor bundle used for new lock pins.
 	LockSourceRoot string `json:"lock_source_root,omitempty"`
+	// VerificationLimits overrides bounded metadata discovery for explicit adopters.
+	VerificationLimits *VerificationLimits `json:"verification_limits,omitempty"`
 }
 
 // ActionDetail describes a specific planned or executed action on a target file.
@@ -130,7 +132,7 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 		return nil, err
 	}
 	report := newAdoptionReport(normPath, opts)
-	verification, err := resolveVerificationPlan(ctx, normPath)
+	verification, err := resolveVerificationPlanWithLimits(ctx, normPath, opts.VerificationLimits)
 	if err != nil {
 		report.Errors = append(report.Errors, err.Error())
 		return report, fmt.Errorf("resolve project verification: %w", err)

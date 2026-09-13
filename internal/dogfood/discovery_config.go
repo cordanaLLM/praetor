@@ -109,7 +109,7 @@ func loadDiscoveryPolicy(ctx context.Context, path string) (DiscoveryPolicy, str
 	if err != nil {
 		return policy, "", err
 	}
-	fields, err := suiteObject(data, []string{"version", "rules"})
+	fields, err := suiteObject(data, []string{"version", "rules"}, "input_limits")
 	if err != nil {
 		return policy, "", err
 	}
@@ -126,6 +126,10 @@ func loadDiscoveryPolicy(ctx context.Context, path string) (DiscoveryPolicy, str
 		}
 	}
 	if err := json.Unmarshal(data, &policy); err != nil {
+		return policy, "", err
+	}
+	policy.InputLimits, err = decodeInputLimits(fields["input_limits"])
+	if err != nil {
 		return policy, "", err
 	}
 	return policy, discoveryDigest(data), ValidateDiscoveryPolicy(policy)

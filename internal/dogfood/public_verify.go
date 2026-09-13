@@ -26,8 +26,9 @@ type PublicVerification struct {
 }
 
 type publicPolicyAnchor struct {
-	Policy *config.EffectivePolicy
-	Scan   *hiss.ScanReport
+	snapshotLimits *SnapshotLimits
+	Policy         *config.EffectivePolicy
+	Scan           *hiss.ScanReport
 }
 
 func applyPublicAttempt(ctx context.Context, opts adopt.AdoptOptions, original publicTree, anchor publicPolicyAnchor, number int) PublicAttempt {
@@ -42,7 +43,8 @@ func applyPublicAttempt(ctx context.Context, opts adopt.AdoptOptions, original p
 		attempt.Error = err.Error()
 		return attempt
 	}
-	after, err := snapshotPublicTree(ctx, opts.Path)
+	after, snapshot, err := snapshotTreeWithLimits(ctx, opts.Path, false, anchor.snapshotLimits)
+	attempt.Snapshot = &snapshot
 	if err != nil {
 		attempt.Error = err.Error()
 		return attempt

@@ -10,8 +10,9 @@ const (
 )
 
 type DiscoveryPolicy struct {
-	Version int             `json:"version"`
-	Rules   []DiscoveryRule `json:"rules"`
+	Version     int             `json:"version"`
+	Rules       []DiscoveryRule `json:"rules"`
+	InputLimits *InputLimits    `json:"input_limits,omitempty"`
 }
 
 type DiscoveryRule struct {
@@ -38,6 +39,8 @@ type CapabilityEvidence struct {
 }
 
 type CapabilityDiscovery struct {
+	InputLimits   *InputLimits            `json:"input_limits,omitempty"`
+	Snapshot      *SnapshotReport         `json:"snapshot,omitempty"`
 	Version       int                     `json:"version"`
 	Status        string                  `json:"status"`
 	TreeSHA256    string                  `json:"tree_sha256"`
