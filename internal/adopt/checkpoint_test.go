@@ -85,6 +85,11 @@ func TestAdoptCheckpointBundlePreservesNonDefaultPolicy(t *testing.T) {
 }
 
 func TestAdoptCheckpointBundleRunsActualEvaluator(t *testing.T) {
+	// Capture the required interpreter before the Git fixture isolates PATH.
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatalf("checkpoint integration requires python3: %v", err)
+	}
 	session := checkpointSession(t, checkpointSourceFixture(t, false))
 	for _, name := range []string{checkpointScript, checkpointCommon} {
 		data, err := os.ReadFile(filepath.Join("..", "..", ".config", "lefthook", "scripts", filepath.FromSlash(filepath.Base(name))))
@@ -100,7 +105,7 @@ func TestAdoptCheckpointBundleRunsActualEvaluator(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(session.repoPath, ".git", "HEAD"), []byte("ref: refs/heads/checkpoint/fixture\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.CommandContext(t.Context(), "python3", "-B", filepath.FromSlash(checkpointScript), "--event", "tool", "--json", "--marker")
+	cmd := exec.CommandContext(t.Context(), python, "-B", filepath.FromSlash(checkpointScript), "--event", "tool", "--json", "--marker")
 	cmd.Dir = session.repoPath
 	raw, err := cmd.CombinedOutput()
 	if err != nil {
