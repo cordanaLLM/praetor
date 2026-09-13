@@ -96,3 +96,13 @@ artifacts in private ignored storage.
 The [first 100-repository observation](../research/dogfood-capability-discovery.md)
 records candidate recurrence and incomplete cases. Discovery is an explicit
 stage today; it does not start a scheduler or automatically implement candidates.
+
+## Configured snapshot and metadata bounds
+
+The version-1 discovery policy accepts the optional `input_limits` object shown in
+[dogfood suites](dogfood-suites.md#configured-input-limits). Its complete snapshot
+and verification groups are part of the policy hash. The observer uses these
+bounds for both tree snapshots and every selected native metadata root, retaining
+resolved limits and snapshot counters in each result. Omitting the object keeps
+existing defaults. Raising a reviewed input budget permits a larger observation;
+it does not qualify native application execution or reduce compliance thresholds.

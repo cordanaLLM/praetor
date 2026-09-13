@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // MaxSkillsScan bounds every skill directory iteration (HISS-02).
@@ -48,12 +50,26 @@ type SkillAuditReport struct {
 	UniqueSkills int                        `json:"unique_skills"`
 	Duplicates   map[string][]SkillLocation `json:"duplicates"`
 	StaleBackups []string                   `json:"stale_backups"`
+	RootStatuses []SkillRootStatus          `json:"root_statuses"`
+	Complete     bool                       `json:"complete"`
+}
+
+// SkillRootStatus records whether one bounded root scan was actually examined.
+type SkillRootStatus struct {
+	Path            string `json:"path"`
+	Origin          string `json:"origin"`
+	Configured      bool   `json:"configured"`
+	Status          string `json:"status"`
+	EntriesExamined int    `json:"entries_examined"`
+	SkillsFound     int    `json:"skills_found"`
+	Error           string `json:"error,omitempty"`
 }
 
 // skillRoot is a directory scanned for skills plus the origin label recorded for it.
 type skillRoot struct {
-	dir    string
-	origin string
+	dir        string
+	origin     string
+	configured bool
 }
 
 // isGeminiDir reports whether baseDir already points at a .gemini directory.
@@ -75,15 +91,16 @@ func absOrClean(dir string) string {
 // roots are the very same directories as the "gemini-*" roots; scanning both would count
 // every Gemini skill twice and report it as a duplicate of itself.
 func dedupeSkillRoots(roots []skillRoot) []skillRoot {
-	seen := make(map[string]bool, len(roots))
+	seen := make(map[string]int, len(roots))
 	unique := make([]skillRoot, 0, len(roots))
 	for i := 0; i < len(roots) && i < MaxSkillsScan; i++ {
 		resolved := absOrClean(roots[i].dir)
-		if seen[resolved] {
+		if index, ok := seen[resolved]; ok {
+			unique[index].configured = unique[index].configured || roots[i].configured
 			continue
 		}
-		seen[resolved] = true
-		unique = append(unique, skillRoot{dir: resolved, origin: roots[i].origin})
+		seen[resolved] = len(unique)
+		unique = append(unique, skillRoot{dir: resolved, origin: roots[i].origin, configured: roots[i].configured})
 	}
 	return unique
 }
@@ -96,17 +113,17 @@ func agentSkillRoots(baseDir, repoSkillsDir string) []skillRoot {
 	}
 
 	roots := []skillRoot{
-		{filepath.Join(home, ".copilot", "skills"), OriginCopilot},
-		{filepath.Join(home, ".codex", "skills"), OriginCodex},
-		{filepath.Join(home, ".claude", "skills"), OriginClaude},
-		{filepath.Join(home, ".gemini", "skills"), OriginGeminiRoot},
-		{filepath.Join(home, ".gemini", "config", "skills"), OriginGeminiConfig},
-		{filepath.Join(home, ".agents", "skills"), OriginUniversal},
-		{filepath.Join(baseDir, "skills"), OriginDirectRoot},
-		{filepath.Join(baseDir, "config", "skills"), OriginDirectConfig},
+		{filepath.Join(home, ".copilot", "skills"), OriginCopilot, false},
+		{filepath.Join(home, ".codex", "skills"), OriginCodex, false},
+		{filepath.Join(home, ".claude", "skills"), OriginClaude, false},
+		{filepath.Join(home, ".gemini", "skills"), OriginGeminiRoot, false},
+		{filepath.Join(home, ".gemini", "config", "skills"), OriginGeminiConfig, false},
+		{filepath.Join(home, ".agents", "skills"), OriginUniversal, false},
+		{filepath.Join(baseDir, "skills"), OriginDirectRoot, false},
+		{filepath.Join(baseDir, "config", "skills"), OriginDirectConfig, false},
 	}
 	if repoSkillsDir != "" {
-		roots = append(roots, skillRoot{repoSkillsDir, OriginRepoLocal})
+		roots = append(roots, skillRoot{repoSkillsDir, OriginRepoLocal, true})
 	}
 	return dedupeSkillRoots(roots)
 }
@@ -114,21 +131,31 @@ func agentSkillRoots(baseDir, repoSkillsDir string) []skillRoot {
 // AuditSkills scans all agent skill roots across Copilot, Codex, Claude, Gemini, Universal
 // and (optionally) a repository-local skills directory.
 func AuditSkills(ctx context.Context, baseDir, repoSkillsDir string) (*SkillAuditReport, error) {
+	if ctx == nil {
+		return nil, errors.New("skill audit requires a context")
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context cancelled before skill audit: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
+	defer cancel()
 	report := &SkillAuditReport{
 		Duplicates:   make(map[string][]SkillLocation),
 		StaleBackups: make([]string, 0),
+		RootStatuses: make([]SkillRootStatus, 0),
+		Complete:     true,
 	}
 
 	registry := make(map[string][]SkillLocation)
+	var scanErrs []error
 	for _, root := range agentSkillRoots(baseDir, repoSkillsDir) {
-		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("context cancelled during skill audit: %w", err)
+		status, err := scanSkillDir(ctx, root, registry)
+		report.RootStatuses = append(report.RootStatuses, status)
+		if err != nil {
+			report.Complete = false
+			scanErrs = append(scanErrs, err)
 		}
-		scanSkillDir(root, registry)
 	}
 
 	report.UniqueSkills = len(registry)
@@ -139,42 +166,14 @@ func AuditSkills(ctx context.Context, baseDir, repoSkillsDir string) (*SkillAudi
 		}
 	}
 
-	scanGeminiBackups(baseDir, report)
+	if err := scanGeminiBackups(ctx, baseDir, report); err != nil {
+		report.Complete = false
+		scanErrs = append(scanErrs, err)
+	}
+	if len(scanErrs) > 0 {
+		return report, errors.Join(scanErrs...)
+	}
 	return report, nil
-}
-
-// scanSkillDir registers every <dir>/<name>/SKILL.md under the root's origin label.
-func scanSkillDir(root skillRoot, registry map[string][]SkillLocation) {
-	entries, err := os.ReadDir(root.dir)
-	if err != nil {
-		return
-	}
-
-	for i := 0; i < len(entries) && i < MaxSkillsScan; i++ {
-		entry := entries[i]
-		if !entry.IsDir() {
-			continue
-		}
-		skillFile := filepath.Join(root.dir, entry.Name(), "SKILL.md")
-		if _, statErr := os.Stat(skillFile); statErr != nil {
-			continue
-		}
-		registry[entry.Name()] = append(registry[entry.Name()], SkillLocation{Path: skillFile, Origin: root.origin})
-	}
-}
-
-// scanGeminiBackups collects stale GEMINI.md backup files in the gemini directory.
-func scanGeminiBackups(geminiDir string, report *SkillAuditReport) {
-	entries, err := os.ReadDir(geminiDir)
-	if err != nil {
-		return
-	}
-
-	for i := 0; i < len(entries) && i < MaxSkillsScan; i++ {
-		if strings.HasPrefix(entries[i].Name(), "GEMINI.md.bak-") {
-			report.StaleBackups = append(report.StaleBackups, entries[i].Name())
-		}
-	}
 }
 
 // DedupeReport summarizes removed duplicate skills and purged backups.
@@ -354,6 +353,9 @@ func DeduplicateSkills(ctx context.Context, report *SkillAuditReport, dryRun boo
 	result := &DedupeReport{DryRun: dryRun, PrunedSkills: []string{}, PurgedBackups: []string{}, Errors: []string{}}
 	if err := ctx.Err(); err != nil {
 		return dedupeFailure(result, err)
+	}
+	if report != nil && report.RootStatuses != nil && !report.Complete {
+		return dedupeFailure(result, errors.New("cannot deduplicate an incomplete skill audit"))
 	}
 	removals, err := preflightSkillRemovals(ctx, report)
 	if err != nil {

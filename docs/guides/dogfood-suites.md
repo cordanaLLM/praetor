@@ -73,7 +73,8 @@ Use [workstation inventory](workstation-inventory.md) to precheck local reposito
 worktrees and local-only identities through the CLI or MCP before selecting cases.
 
 Store private configuration and evidence outside the public repository. A config
-must contain exactly `version`, `public_repositories` and `transcripts`. All case
+must contain `version`, `public_repositories` and `transcripts`, with optional
+`input_limits` as described below. All case
 fields below are required; replace the example path and SHA with a reviewed source:
 
 ```json
@@ -104,6 +105,54 @@ zero additional writes on replay. Metadata/thinking exclusions remain explicit;
 their whole-source counts in page reports must not be summed across pages.
 The result establishes observed-event persistence and replay, not verified facts
 or working semantic memory recall.
+
+## Configured input limits
+
+Suite configs and discovery policies accept an optional `input_limits` object.
+Omitting it keeps the defaults below. If present, both groups and every field are
+required positive integers; unknown, duplicate, null, and case-variant keys fail
+before execution. Limits affect input admission, not HISS compliance thresholds.
+
+```json
+"input_limits": {
+  "snapshot": {
+    "max_entries": 20000,
+    "max_file_bytes": 33554432,
+    "max_tree_bytes": 268435456
+  },
+  "verification": {
+    "max_entries": 32768,
+    "max_files": 128,
+    "max_depth": 32,
+    "max_file_bytes": 262144,
+    "max_total_bytes": 2097152
+  }
+}
+```
+
+This example admits larger model assets and monorepo metadata. It is part of the
+pinned config or policy hash; CLI and MCP consume the same file. A suite records
+resolved limits and uses them for the original snapshot, every repeat application,
+and native command planning. Discovery records the limits and reuses them for its
+final tree readback.
+
+| Bound | Default | Maximum configurable value |
+| :--- | ---: | ---: |
+| Snapshot entries, including root | 20,000 | 20,000 |
+| Snapshot bytes per file | 16 MiB | 256 MiB |
+| Snapshot tree bytes | 256 MiB | 1 GiB |
+| Native planning entries | 4,096 | 200,000 |
+| Native metadata files | 128 | 512 |
+| Native metadata depth | 32 | 64 |
+| Native metadata bytes per file | 64 KiB | 1 MiB |
+| Native metadata total bytes | 2 MiB | 16 MiB |
+
+A per-file limit cannot exceed its corresponding total. Snapshot hashes stream
+file contents; symlinks record targets without reading linked content. Snapshots
+retain completion status, observed counters, and file/entry failure details.
+Over-budget or failed reads cannot produce a complete tree identity or a verified
+case. Input completeness does not qualify native application commands: these
+remain declared, unavailable, or preserved until independently exercised.
 
 ## Evidence, bounds and failure behavior
 

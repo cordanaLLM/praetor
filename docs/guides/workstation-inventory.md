@@ -57,3 +57,20 @@ explicit transcript inputs; an inventory does not enroll or upload a local repo.
 `harvest fleet` displays static reference examples and does not establish live
 remote inventory. Live GitHub or Gitea coverage requires a configured remote
 inventory source and its own completion evidence.
+
+## Skill-root audit
+
+`praetorctl harvest skills --gemini /path/to/.gemini --repo /path/to/repo`
+audits the supported agent roots and the selected repository's `.agents/skills`.
+It prints completion and each root's status, examined entries, and skill count.
+An explicit repository selection requires that skill directory to exist; use
+`--repo ''` to omit it. With the default repository selection, an absent local
+skill directory is optional. Absent auto-detected agent roots are not applicable.
+
+Directory reads are limited to 500 entries and a 30-second audit context. Invalid
+roots, symlink roots or manifests, non-regular manifests, read failures, and
+overflow leave an incomplete report and a nonzero exit. Partial evidence remains
+visible; optional dedupe or backup removal does not run after an incomplete audit.
+Duplicate names are reported deterministically; matching names alone do not
+establish identical content. The workstation MCP inventory does not currently
+expose this separate skill audit.

@@ -170,6 +170,9 @@ func resolveAgentsContent(s *adoptSession) (string, error) {
 		return "", err
 	}
 	if !fileExists(full) {
+		if err := validateHarnessProjection(harness); err != nil {
+			return "", err
+		}
 		if err := s.write(full, []byte(harness), filePerm); err != nil {
 			return "", err
 		}
@@ -183,6 +186,13 @@ func resolveAgentsContent(s *adoptSession) (string, error) {
 	return mergeExistingAgentsContent(s, full, string(existingBytes), harness)
 }
 
+func validateHarnessProjection(content string) error {
+	if _, err := compiler.NewTranspiler().CompileContent(content); err != nil {
+		return fmt.Errorf("context composition cannot produce valid projections: %w", err)
+	}
+	return nil
+}
+
 // mergeExistingAgentsContent prepends the harness to a foreign AGENTS.md, leaves an
 // existing harness alone without Force, and with Force replaces only the harness part
 // while keeping everything after its boundary. When the boundary of an existing harness
@@ -191,6 +201,9 @@ func resolveAgentsContent(s *adoptSession) (string, error) {
 func mergeExistingAgentsContent(s *adoptSession, full, existing, harness string) (string, error) {
 	if !hasHarness(existing) {
 		merged := harness + harnessSeparator + "\n" + existing
+		if err := validateHarnessProjection(merged); err != nil {
+			return "", err
+		}
 		if err := s.write(full, []byte(merged), filePerm); err != nil {
 			return "", err
 		}
@@ -213,6 +226,9 @@ func mergeExistingAgentsContent(s *adoptSession, full, existing, harness string)
 	merged := strings.TrimSpace(harness) + "\n"
 	if tail != "" {
 		merged = strings.TrimSpace(harness) + "\n" + harnessSeparator + "\n" + tail + "\n"
+	}
+	if err := validateHarnessProjection(merged); err != nil {
+		return "", err
 	}
 	if err := s.write(full, []byte(merged), filePerm); err != nil {
 		return "", err

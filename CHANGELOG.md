@@ -17,6 +17,14 @@
 
 ### Fixed
 
+- Preflight composed agent context before writing canonical instructions, so
+  projection-budget failures preserve existing canonical and vendor files.
+- Skill audits retain bounded per-root outcomes and fail invalid or incomplete
+  scans before optional hygiene actions.
+- Public dogfood snapshots stream file hashes under explicit bounded input
+  budgets shared by suite and discovery configs. Native metadata planning uses
+  the same configured limits throughout repeated adoption and discovery readback;
+  reports retain budgets and incomplete-input diagnostics.
 - Checkpoint publication distinguishes local advances from remote-ahead and
   divergent branches, and reports missing or shallow history before suggesting
   a push.

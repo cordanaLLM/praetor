@@ -64,3 +64,17 @@ This correction does not repair language-specific devcontainer or editor setup:
 BUG-651 and BUG-438 remain open in the private local ledger. Archetype catalogs
 and these downstream consumers still require separate reconciliation; a C# command
 plan does not imply a configured .NET development container or complete C# scanning.
+
+## Canonical context preparation
+
+Adoption preserves repository-specific `AGENTS.md` instructions when composing
+the Praetor harness. The combined canonical content must fit every generated
+client projection's 300-line budget. Context compilation is preflighted before
+writing the composed canonical file, so a budget failure leaves canonical and
+vendor context files unchanged. Other adoption stages may already have run;
+this check does not make the entire adoption operation transactional.
+
+An oversized composition remains an explicit preparation failure. Review and
+condense the repository's instructions before retrying; adoption does not silently
+discard them or raise the limit. A dry-run reports the same compilation failure
+without writing context files.

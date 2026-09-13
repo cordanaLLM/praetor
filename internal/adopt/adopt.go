@@ -156,6 +156,7 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	report.addWarning("%s", verification.notice())
 
 	if err := executeAdoptSteps(ctx, s); err != nil {
+		report.addError("%s", err)
 		return report, err
 	}
 	report.EffectivePolicy = s.policy

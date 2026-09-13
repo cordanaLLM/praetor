@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -126,12 +127,12 @@ func runHarvestSkills(ctx context.Context, args []string) error {
 		return fmt.Errorf("harvest skills: %w", err)
 	}
 
-	repoSkills := ""
-	if *repoFlag != "" {
-		repoSkills = filepath.Join(*repoFlag, ".agents", "skills")
-	}
+	repoSkills := selectedSkillRoot(fs, *repoFlag)
 	rep, err := harvester.AuditSkills(ctx, geminiDir, repoSkills)
 	if err != nil {
+		if rep != nil {
+			printSkillsAudit(rep)
+		}
 		return fmt.Errorf("failed auditing skills: %w", err)
 	}
 
@@ -139,13 +140,43 @@ func runHarvestSkills(ctx context.Context, args []string) error {
 	return applySkillHygiene(ctx, geminiDir, rep, *dedupe, *cleanBackups, *dryRun)
 }
 
+func selectedSkillRoot(fs *flag.FlagSet, repo string) string {
+	repoSkills := ""
+	if repo != "" {
+		candidate := filepath.Join(repo, ".agents", "skills")
+		explicit := false
+		fs.Visit(func(f *flag.Flag) {
+			explicit = explicit || f.Name == "repo"
+		})
+		if explicit {
+			repoSkills = candidate
+		} else if _, statErr := os.Lstat(candidate); statErr == nil || !errors.Is(statErr, os.ErrNotExist) {
+			repoSkills = candidate
+		}
+	}
+	return repoSkills
+}
+
 // printSkillsAudit renders the read-only part of the skills audit.
 func printSkillsAudit(rep *harvester.SkillAuditReport) {
 	fmt.Println("=== Agent Skills & Hygiene Audit ===")
+	fmt.Printf("Complete:              %t\n", rep.Complete)
+	for _, root := range rep.RootStatuses {
+		fmt.Printf("  [%s] %s: %s (entries=%d skills=%d)\n", root.Origin, root.Path, root.Status, root.EntriesExamined, root.SkillsFound)
+		if root.Error != "" {
+			fmt.Printf("    %s\n", root.Error)
+		}
+	}
 	fmt.Printf("Total Skill Manifests: %d\n", rep.TotalSkills)
 	fmt.Printf("Unique Skills:         %d\n", rep.UniqueSkills)
 	fmt.Printf("Duplicate Skills (%d):\n", len(rep.Duplicates))
-	for name, paths := range rep.Duplicates {
+	names := make([]string, 0, len(rep.Duplicates))
+	for name := range rep.Duplicates {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		paths := rep.Duplicates[name]
 		fmt.Printf("  - %s (%d copies)\n", name, len(paths))
 		for _, loc := range paths {
 			fmt.Printf("      [%s] %s\n", loc.Origin, loc.Path)

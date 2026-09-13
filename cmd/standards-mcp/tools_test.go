@@ -401,3 +401,19 @@ func TestServer_MemoryRecallAndHindsightOptimize(t *testing.T) {
 	outside := callTool(t, srv, "standards_hindsight_optimize", map[string]any{"path": t.TempDir()})
 	expectError(t, "optimize outside", outside, "outside the server root")
 }
+
+func TestServer_AdoptionStepErrorRetainsIncompleteReport(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	initial := "# Repository rules\n" + strings.Repeat("Preserve this instruction.\n", 400)
+	writeFixtureFile(t, root, "AGENTS.md", initial)
+	writeFixtureFile(t, root, "CLAUDE.md", "incumbent context\n")
+	result := callTool(t, srv, "standards_adopt", map[string]any{"record_baseline": false})
+	expectError(t, "context overflow", result, "context composition cannot produce valid projections")
+	if !strings.Contains(result.Content[0].Text, "[INCOMPLETE]") || strings.Contains(result.Content[0].Text, "[APPLIED]") {
+		t.Fatalf("failed apply claimed success: %s", result.Content[0].Text)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if err != nil || string(content) != initial {
+		t.Fatalf("failed context composition mutated canonical content: %v", err)
+	}
+}
