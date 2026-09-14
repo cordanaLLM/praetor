@@ -7,10 +7,35 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
+
+// ErrRenderTextUnrepresentable reports a version or date that cannot be recorded in the
+// recovery journal or written to the changelog.
+var ErrRenderTextUnrepresentable = errors.New("changelog render arguments must be UTF-8 text without NUL bytes")
+
+// RenderTextRepresentable reports whether a release argument can be journaled and written.
+// It mirrors the constraint the snapshot writer enforces (internal/contextopt validateText),
+// so the boundary refuses exactly what the storage layer would refuse, rather than a
+// narrower subset that lets the difference surface later as an opaque write failure.
+func RenderTextRepresentable(s string) bool {
+	return utf8.ValidString(s) && !strings.ContainsRune(s, 0)
+}
+
+// validateRenderText refuses release arguments the recovery journal cannot represent.
+func validateRenderText(version, date string) error {
+	if !RenderTextRepresentable(version) {
+		return fmt.Errorf("%w: version", ErrRenderTextUnrepresentable)
+	}
+	if !RenderTextRepresentable(date) {
+		return fmt.Errorf("%w: date", ErrRenderTextUnrepresentable)
+	}
+	return nil
+}
 
 // RenderReleaseContext publishes once and safely resumes interrupted fragment
 // cleanup. The retained journal binds recovery to exact input and output hashes.
@@ -18,6 +43,13 @@ import (
 func RenderReleaseContext(ctx context.Context, repoPath, version, date string) (err error) {
 	if ctx == nil {
 		return errors.New("changelog rendering requires a context")
+	}
+	// The version and date are written verbatim into the recovery journal, which is JSON.
+	// Rejecting them here names the offending argument; without this the render fails deep
+	// inside journal serialization with a jsontext offset that identifies nothing a caller
+	// can act on, after the fragment lock has already been taken.
+	if err := validateRenderText(version, date); err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

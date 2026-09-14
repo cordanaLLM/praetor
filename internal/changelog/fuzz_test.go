@@ -1,6 +1,7 @@
 package changelog
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,8 +35,20 @@ func FuzzChangelogRender(f *testing.F) {
 		if _, err := CreateFragment(tmpDir, frag); err != nil {
 			return
 		}
-		if err := RenderRelease(tmpDir, version, date); err != nil {
-			t.Fatal(err)
+
+		// The contract is not "never errors": the version and date are recorded verbatim in
+		// a JSON recovery journal, so input it cannot represent must be refused. What must
+		// hold is that the refusal is a named validation error rather than a leaked
+		// serialization failure, and that anything representable renders.
+		err := RenderRelease(tmpDir, version, date)
+		validText := RenderTextRepresentable(version) && RenderTextRepresentable(date)
+		switch {
+		case err == nil && !validText:
+			t.Fatalf("invalid UTF-8 was accepted: version=%q date=%q", version, date)
+		case err != nil && validText:
+			t.Fatalf("representable input was refused: version=%q date=%q: %v", version, date, err)
+		case err != nil && !errors.Is(err, ErrRenderTextUnrepresentable):
+			t.Fatalf("refusal must name the offending argument, got a leaked error: %v", err)
 		}
 	})
 }

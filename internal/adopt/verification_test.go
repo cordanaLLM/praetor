@@ -162,7 +162,11 @@ func TestVerificationActualScaffoldBuildAndTestFailurePropagates(t *testing.T) {
 			writeStub(t, stubs, "standardsctl", "printf '%s\\n' \"$*\" >> calls\n[ \"$1\" != '"+failure+"' ]\n")
 			hermeticPath(t, stubs)
 			mustWrite(t, filepath.Join(root, "Makefile"), buildMakefile(plan))
-			_, err := util.RunCommand(context.Background(), root, makePath, "--no-print-directory", "verify-all")
+			// -j1 pins serial execution: this assertion compares an exact call order, and
+			// make inherits parallelism through MAKEFLAGS from whatever invoked the test.
+			// Run under `make verify-all` with a jobserver the targets interleave and the
+			// order assertion fails for a scaffold that is correct.
+			_, err := util.RunCommand(context.Background(), root, makePath, "--no-print-directory", "-j1", "verify-all")
 			if (err == nil) != (failure == "none") {
 				t.Fatalf("failure %q did not propagate: %v", failure, err)
 			}

@@ -55,6 +55,13 @@ func CreateFragment(repoPath string, f Fragment) (string, error) {
 	if strings.TrimSpace(f.Title) == "" {
 		return "", fmt.Errorf("changelog: title cannot be empty")
 	}
+	// A title that cannot be represented is refused at creation rather than at release.
+	// Accepting it writes a fragment that renders into the journaled section and fails the
+	// release for whoever runs it next, with an error pointing at a JSON offset rather than
+	// at the fragment that caused it.
+	if !RenderTextRepresentable(f.Title) || !RenderTextRepresentable(f.Issue) {
+		return "", fmt.Errorf("%w: fragment title and issue", ErrRenderTextUnrepresentable)
+	}
 	f.Type = FragmentType(strings.ToLower(string(f.Type)))
 	if _, ok := sectionTitles[f.Type]; !ok {
 		return "", fmt.Errorf("changelog: invalid fragment type %q", f.Type)
@@ -74,6 +81,14 @@ func CreateFragment(repoPath string, f Fragment) (string, error) {
 	data, err := yaml.Marshal(f)
 	if err != nil {
 		return "", fmt.Errorf("marshal fragment: %w", err)
+	}
+	// Refuse a fragment this repository's own reader could not load back. Enumerating the
+	// characters that break the encoding is a losing game -- a tab in a title emits a block
+	// scalar the parser rejects, and that is only one shape -- so the encoding is asked
+	// directly instead. Without this the write succeeds and the next release fails for
+	// whoever runs it, naming a YAML line rather than the fragment that caused it.
+	if err := verifyFragmentRoundTrip(data, f); err != nil {
+		return "", err
 	}
 
 	if err := contextopt.ReplaceSnapshot(ctx, target, data, contextopt.ReplaceOptions{Mode: 0644}); err != nil {
