@@ -67,8 +67,9 @@ func dispatchAgentTask(agentName string, extraArgs []string) error {
 }
 
 func runAuditorAgent(ctx context.Context) error {
-	opts := hiss.ScanOptions{Cap: 1000, MaxFuncLOC: 60}
-	rep, err := hiss.Scan(ctx, ".", opts)
+	// Bounds come from the package defaults so this agent reports the same scope that audit
+	// and the gate do; divergent literals made the three disagree (BUG-829).
+	rep, err := hiss.Scan(ctx, ".", hiss.ScanOptions{})
 	if err != nil {
 		return fmt.Errorf("auditor execution error: %w", err)
 	}

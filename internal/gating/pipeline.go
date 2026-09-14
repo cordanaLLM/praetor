@@ -102,6 +102,10 @@ type stageConfig struct {
 	run      commandRunner
 	lookPath func(string) (string, error)
 	rep      *PipelineReport
+	// scanOpts overrides the HISS scan bounds. Production leaves it zero so the package
+	// defaults apply and the gate sees exactly the scope `praetorctl audit` sees; tests set
+	// it to reach the truncation path without synthesizing a repository of that size.
+	scanOpts hiss.ScanOptions
 }
 
 // newStageConfig builds a stage configuration backed by the real toolchain.
@@ -234,13 +238,18 @@ func runPrefetchStage(ctx context.Context, cfg *stageConfig) (string, error) {
 // `praetorctl audit`, so an adopted brownfield repository is gated on new violations
 // rather than on its total legacy debt.
 func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
-	opts := hiss.ScanOptions{Cap: 1000, MaxFuncLOC: 60}
-	scanRep, err := hiss.Scan(ctx, cfg.repoDir, opts)
+	// The scan bounds are left to the package defaults. A lower cap here than the one
+	// `praetorctl audit` uses made the gate truncate on a report audit completes, so a
+	// repository could pass audit and fail the gate for a reason unrelated to its
+	// compliance (BUG-829).
+	scanRep, err := hiss.Scan(ctx, cfg.repoDir, cfg.scanOpts)
 	if err != nil {
 		return "", fmt.Errorf("hiss scan error: %w", err)
 	}
-	if scanRep.Truncated {
-		return "", fmt.Errorf("hiss scan error: %w", hiss.ErrScanTruncated)
+	// Incomplete covers truncation and files that yielded no analyzable structure. Checking
+	// only truncation let an unparseable file through as a clean gate.
+	if scanRep.Incomplete() {
+		return "", fmt.Errorf("hiss scan error: %w: %s", hiss.ErrScanIncomplete, scanRep.CoverageEvidence())
 	}
 
 	base, err := baseline.LoadBaseline(filepath.Join(cfg.repoDir, ".standards-baseline.json"))

@@ -1,0 +1,3 @@
+type: fixed
+title: The gate scans the same scope as audit and refuses an incomplete one, and the MCP server can explain all nineteen invariants
+breaking: false

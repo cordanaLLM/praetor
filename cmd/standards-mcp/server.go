@@ -724,6 +724,22 @@ Failure Action: Pre-commit / CI gate rejection.`,
 Formal Specification: Diff-aware change gating: heavy race and security gates are skipped on docs-only or state-only changes as classified by 'praetorctl ci filter'.
 Enforcement: CI filter step exporting run_* outputs that every heavy gate's condition consumes.
 Failure Action: CI optimization gate.`,
+	"HISS-05": `Rule: HISS-05 (Variable Scoping)
+Formal Specification: Identifiers are declared in the smallest lexical scope that serves them.
+Enforcement: NOT ENFORCED. No executable check exists in this repository; the matrix names a linter that is not configured for this rule.
+Failure Action: None today; the rule is advisory until a check is attached.`,
+	"HISS-06": `Rule: HISS-06 (Bounded Concurrency)
+Formal Specification: Worker pools and concurrent fan-out carry an explicit scalar upper bound.
+Enforcement: NOT ENFORCED for the axiom. The matrix names the race detector, which cannot observe an unbounded pool: a lock-order inversion or an unbounded but race-free fan-out produces no data race. 'go test -race' runs, but it does not decide this rule.
+Failure Action: None today; the rule is advisory until a check is attached.`,
+	"HISS-12": `Rule: HISS-12 (Secret Leak Prevention)
+Formal Specification: Zero credentials in Git history.
+Enforcement: 'make secrets' runs gitleaks over repository history inside verify-all.
+Failure Action: Verification gate rejection.`,
+	"HISS-13": `Rule: HISS-13 (Monotonic Debt Ratchet)
+Formal Specification: Total recorded infractions never grow against the committed baseline; an increase requires a deliberately recorded rationale.
+Enforcement: 'praetorctl baseline' and the gate's HISS stage, evaluated against .standards-baseline.json. The scan feeding it refuses to certify a scope it did not fully examine.
+Failure Action: PR status gate rejection.`,
 	"HISS-19": `Rule: HISS-19 (Reuse Before Writing)
 Formal Specification: One behavior has exactly one implementation. An existing function, loader, parser or command is extended or called rather than reimplemented, and configuration formats are held to the same rule: a second config system beside an existing loader is the same defect. Duplication that is genuinely unavoidable is justified in the commit body.
 Enforcement: 'praetorctl dedupe scan .' function-level clone and utility-sprawl detection, run by 'make dedupe' inside verify-all.

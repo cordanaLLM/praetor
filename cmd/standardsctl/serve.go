@@ -74,8 +74,9 @@ func startPeriodicAudit(ctx context.Context, interval time.Duration, auditPath s
 // real HISS infraction both make the container unready, but they are distinct operational
 // conditions, so each is reported on stderr instead of turning /readyz into a silent 503.
 func runAuditCheck(ctx context.Context, auditPath string, hs *container.HealthServer) {
-	opts := hiss.ScanOptions{Cap: 500, MaxFuncLOC: 60}
-	rep, err := hiss.Scan(ctx, auditPath, opts)
+	// Bounds come from the package defaults: a lower cap here reported a smaller scope than
+	// audit for the same tree, which readiness then certified (BUG-829).
+	rep, err := hiss.Scan(ctx, auditPath, hiss.ScanOptions{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[ERROR] periodic HISS scan of %s failed: %v\n", auditPath, err)
 		hs.SetReady(false)
