@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 const (
@@ -474,11 +476,11 @@ func (s *Server) checkHISS01DAG(fset *token.FileSet, nodes []ast.Node) []Diagnos
 			continue
 		}
 
-		recv := receiverName(fn)
+		recv := hiss.ReceiverName(fn)
 		bodyNodes, _ := s.collectASTNodes(fn.Body)
 		for j := 0; j < len(bodyNodes); j++ {
 			call, isCall := bodyNodes[j].(*ast.CallExpr)
-			if !isCall || !isCallToFunction(call.Fun, fn.Name.Name, recv) {
+			if !isCall || !hiss.CallTargetsEnclosing(call.Fun, fn.Name.Name, recv) {
 				continue
 			}
 			diags = append(diags, s.newDiagnostic(fset, call, 1, "HISS-01",
@@ -486,33 +488,6 @@ func (s *Server) checkHISS01DAG(fset *token.FileSet, nodes []ast.Node) []Diagnos
 		}
 	}
 	return diags
-}
-
-// receiverName returns the bound receiver identifier of a method, or "" for a plain
-// function or an unnamed receiver.
-func receiverName(fn *ast.FuncDecl) string {
-	if fn.Recv == nil || len(fn.Recv.List) == 0 || len(fn.Recv.List[0].Names) == 0 {
-		return ""
-	}
-	return fn.Recv.List[0].Names[0].Name
-}
-
-// isCallToFunction reports whether a call targets the enclosing function itself: a bare
-// identifier for a plain function, or recv.method for a method. A same-named method on
-// any other value (the delegation idiom `return x.inner.Close()`) is not recursion.
-func isCallToFunction(fun ast.Expr, fnName, recv string) bool {
-	switch expr := fun.(type) {
-	case *ast.Ident:
-		return recv == "" && expr.Name == fnName
-	case *ast.SelectorExpr:
-		if recv == "" || expr.Sel.Name != fnName {
-			return false
-		}
-		x, isIdent := expr.X.(*ast.Ident)
-		return isIdent && x.Name == recv
-	default:
-		return false
-	}
 }
 
 // checkHISS02BoundedLoops verifies loops have bounds and timeout context on I/O.

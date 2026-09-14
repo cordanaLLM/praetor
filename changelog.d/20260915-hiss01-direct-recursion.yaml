@@ -1,0 +1,3 @@
+type: fixed
+title: HISS-01 detects direct recursion instead of only goto, and the LSP and scanner now share one implementation
+breaking: false
