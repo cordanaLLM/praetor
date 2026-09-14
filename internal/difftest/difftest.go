@@ -17,6 +17,9 @@ import (
 const (
 	maxFunctionsToSynthesize = 100
 	defaultDiffTimeout       = 5 * time.Second
+	// maxTypeExprDepth bounds how many pointer or slice layers a rendered type may carry
+	// before it degrades to "any" (HISS-02).
+	maxTypeExprDepth = 64
 )
 
 // Options configures test synthesis behavior.
@@ -213,22 +216,35 @@ func extractReceiverTypeName(expr ast.Expr) string {
 	}
 }
 
+// formatTypeExpr renders a type expression for a synthesized signature.
+//
+// Pointer and slice types are peeled in a bounded loop rather than by recursion: HISS-01
+// requires the call graph to form a DAG, and this function was a direct-recursion
+// violation that the scanner did not report because HISS-01 only ever matched `goto`.
+// Behaviour is unchanged for every shape the previous implementation handled; a type
+// nested deeper than the bound degrades to "any" rather than spinning (HISS-02).
 func formatTypeExpr(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.SelectorExpr:
-		if x, ok := t.X.(*ast.Ident); ok {
-			return x.Name + "." + t.Sel.Name
+	var prefix strings.Builder
+	for i := 0; i < maxTypeExprDepth; i++ {
+		switch t := expr.(type) {
+		case *ast.StarExpr:
+			prefix.WriteString("*")
+			expr = t.X
+		case *ast.ArrayType:
+			prefix.WriteString("[]")
+			expr = t.Elt
+		case *ast.Ident:
+			return prefix.String() + t.Name
+		case *ast.SelectorExpr:
+			if x, ok := t.X.(*ast.Ident); ok {
+				return prefix.String() + x.Name + "." + t.Sel.Name
+			}
+			return prefix.String() + t.Sel.Name
+		default:
+			return prefix.String() + "any"
 		}
-		return t.Sel.Name
-	case *ast.StarExpr:
-		return "*" + formatTypeExpr(t.X)
-	case *ast.ArrayType:
-		return "[]" + formatTypeExpr(t.Elt)
-	default:
-		return "any"
 	}
+	return prefix.String() + "any"
 }
 
 func filterFunctions(all []funcMetadata, changed []string) []funcMetadata {

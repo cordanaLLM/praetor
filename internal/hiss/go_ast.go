@@ -75,6 +75,64 @@ func (g *goScanner) walk(file *ast.File) {
 	})
 }
 
+// ReceiverName returns the bound receiver identifier of a method, or "" for a plain
+// function or an unnamed receiver.
+func ReceiverName(fn *ast.FuncDecl) string {
+	if fn == nil || fn.Recv == nil || len(fn.Recv.List) == 0 || len(fn.Recv.List[0].Names) == 0 {
+		return ""
+	}
+	return fn.Recv.List[0].Names[0].Name
+}
+
+// CallTargetsEnclosing reports whether a call targets the enclosing function itself: a bare
+// identifier for a plain function, or recv.method for a method. A same-named method on any
+// other value -- the delegation idiom `return x.inner.Close()` -- is not recursion.
+func CallTargetsEnclosing(fun ast.Expr, fnName, recv string) bool {
+	switch expr := fun.(type) {
+	case *ast.Ident:
+		return recv == "" && expr.Name == fnName
+	case *ast.SelectorExpr:
+		if recv == "" || expr.Sel.Name != fnName {
+			return false
+		}
+		x, isIdent := expr.X.(*ast.Ident)
+		return isIdent && x.Name == recv
+	default:
+		return false
+	}
+}
+
+// enclosingFunc returns the innermost function declaration on the walk stack, or nil when
+// the node is not inside one. The stack is already maintained by walk and is bounded by
+// maxNodeStack, so this costs a bounded scan rather than a second traversal (HISS-02).
+func (g *goScanner) enclosingFunc() *ast.FuncDecl {
+	for i := len(g.stack) - 1; i >= 0; i-- {
+		if fn, ok := g.stack[i].(*ast.FuncDecl); ok {
+			return fn
+		}
+	}
+	return nil
+}
+
+// checkSelfRecursion reports a call that targets the function enclosing it.
+//
+// HISS-01 requires the call graph to form a DAG and declares an immediate build failure,
+// but the scanner reported only `goto`, so every form of recursion passed the gate. This
+// closes direct recursion, which is the shape a single file can decide. Mutual and
+// indirect recursion need a whole-program call graph and remain uncovered: that gap is
+// real and is not claimed to be closed here.
+func (g *goScanner) checkSelfRecursion(call *ast.CallExpr) {
+	fn := g.enclosingFunc()
+	if fn == nil || fn.Name == nil {
+		return
+	}
+	if !CallTargetsEnclosing(call.Fun, fn.Name.Name, ReceiverName(fn)) {
+		return
+	}
+	g.record("HISS-01", call.Pos(), fn.Name.Name,
+		"Direct recursion in "+fn.Name.Name+"; the call graph must form an acyclic DAG")
+}
+
 func (g *goScanner) inspect(n ast.Node) {
 	switch node := n.(type) {
 	case *ast.FuncDecl:
@@ -89,6 +147,7 @@ func (g *goScanner) inspect(n ast.Node) {
 		}
 	case *ast.CallExpr:
 		g.checkPanic(node)
+		g.checkSelfRecursion(node)
 	case *ast.AssignStmt:
 		g.checkBlankAssign(node)
 	case *ast.IfStmt:
