@@ -54,3 +54,13 @@ all_github_repos.json
 
 # Workflow agent worktrees
 /.claude/worktrees/
+
+# Operational configuration belongs to the operational fork, never to the public engine:
+# organisation and repository names, runner routing and cluster manifests are operator
+# data. The engine reads these paths when an operator supplies them locally and reports
+# the capability as not configured when they are absent.
+/.config/fleet.yaml
+/.config/fleet-topology.yaml
+/.config/orgs/
+/deploy/arc/
+/deploy/k8s/
