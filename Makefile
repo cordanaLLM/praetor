@@ -36,6 +36,7 @@ fuzz:
 	go test -fuzz=FuzzASTMerge -fuzztime=5s ./internal/astmerge/...
 	go test -fuzz=FuzzChangelogRender -fuzztime=5s ./internal/changelog/...
 	go test -fuzz=FuzzLSPHandleMessage -fuzztime=5s ./cmd/standards-lsp/...
+	go test -fuzz=FuzzBugRecordRoundTrip -fuzztime=5s ./internal/state/...
 
 compile-context:
 	go run ./cmd/standardsctl compile-context
@@ -115,7 +116,7 @@ dedupe:
 topology-audit:
 	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
 
-verify-all: semgrep-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec secrets flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: semgrep-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec secrets fuzz flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
 
 .PHONY: vscode-test

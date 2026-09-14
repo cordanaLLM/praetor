@@ -1,0 +1,3 @@
+type: fixed
+title: Fuzz targets run in the verification gate and the changelog refuses fragments it cannot read back
+breaking: false

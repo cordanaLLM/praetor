@@ -104,6 +104,24 @@ func loadFragmentSnapshots(ctx context.Context, root *os.Root) ([]Fragment, []fr
 	return fragments, snapshots, nil
 }
 
+// ErrFragmentNotRoundTrippable reports an encoded fragment that this package's own reader
+// cannot load back, or that loads back as different content.
+var ErrFragmentNotRoundTrippable = errors.New("fragment does not survive its own encoding")
+
+// verifyFragmentRoundTrip decodes freshly encoded fragment bytes and checks that the
+// fields that reach the changelog come back unchanged, so an unwritable fragment is
+// refused at creation instead of failing the next release.
+func verifyFragmentRoundTrip(raw []byte, want Fragment) error {
+	got, err := decodeFragment(raw)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrFragmentNotRoundTrippable, err)
+	}
+	if got.Title != want.Title || got.Issue != want.Issue || got.Breaking != want.Breaking {
+		return fmt.Errorf("%w: decoded content differs from the fragment written", ErrFragmentNotRoundTrippable)
+	}
+	return nil
+}
+
 func decodeFragment(raw []byte) (Fragment, error) {
 	var fragment Fragment
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
