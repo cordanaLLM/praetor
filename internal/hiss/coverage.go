@@ -72,6 +72,9 @@ func (r *ScanReport) CoverageEvidence() string {
 		evidence = fmt.Sprintf("HISS file scope: %d files read by supported scanners; %d files outside supported extensions; %d ignored directories, %d symlinks and %d oversized inputs skipped. Native application tests are separate.",
 			c.FilesRead, c.UnscannedFiles, r.Skips.DirCount, r.Skips.Symlinks, r.Skips.Oversize)
 	}
+	if r.Skips.Unparsed > 0 {
+		evidence += fmt.Sprintf(" %d file(s) yielded no analyzable structure and were never examined by any rule.", r.Skips.Unparsed)
+	}
 	if r.Truncated {
 		evidence += " Scan was truncated; file scope is partial."
 	}

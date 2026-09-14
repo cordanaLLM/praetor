@@ -65,6 +65,10 @@ type ScanSkips struct {
 	Symlinks int `json:"symlinks"`
 	// Oversize counts files above MaxScanFileSize that were not read.
 	Oversize int `json:"oversize"`
+	// Unparsed counts files that were read but yielded no analyzable structure, so no
+	// rule ever ran against their contents. They are not clean: they are unexamined, and
+	// a zero-infraction report covering them is a lower bound rather than a verdict.
+	Unparsed int `json:"unparsed"`
 }
 
 // ScanReport aggregates all discovered invariant violations.
@@ -82,6 +86,18 @@ type ScanReport struct {
 	Coverage *ScanCoverage `json:"coverage,omitempty"`
 
 	capLimit int
+}
+
+// Incomplete reports whether the scan left part of its scope unexamined, so that
+// TotalInfractions is a lower bound rather than a verdict. A caller that turns a scan
+// into a pass/fail decision must consult this: zero infractions over an incomplete scope
+// is not evidence of compliance, and treating it as such is how a truncated or
+// unparseable tree reports clean.
+func (r *ScanReport) Incomplete() bool {
+	if r == nil {
+		return true
+	}
+	return r.Truncated || r.Skips.Unparsed > 0
 }
 
 // Scan audits repository source code against HISS-01, HISS-02, HISS-04, HISS-07,

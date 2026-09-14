@@ -20,7 +20,18 @@ func scanGoSource(data []byte, rel string, rep *ScanReport, opts ScanOptions) {
 	// Identifier resolution is unused by this syntax scanner and can replace a deep
 	// valid file with a package-only AST when the deprecated resolver hits its limit.
 	file, parseErr := parser.ParseFile(fset, rel, data, parser.ParseComments|parser.SkipObjectResolution)
-	if file == nil || (parseErr != nil && file.Name == nil) {
+	// Any parse error means the AST is partial at best, so the rules below never saw the
+	// whole file. Recording it keeps the report honest: otherwise deleting a single
+	// character from a source file removes its infractions from the baseline with no
+	// signal, and the debt ratchet reads the loss as an improvement.
+	//
+	// The parser recovers rather than giving up, returning a non-nil File whose Name is a
+	// non-nil Ident with an empty string, so neither a nil File nor a nil Name identifies
+	// a failure; parseErr is the only reliable signal.
+	if parseErr != nil {
+		rep.Skips.Unparsed++
+	}
+	if file == nil || file.Name == nil || file.Name.Name == "" {
 		return
 	}
 	g := &goScanner{
