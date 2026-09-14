@@ -18,6 +18,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/builder"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/harvester"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 )
 
@@ -1365,6 +1366,9 @@ func TestDispatchCommand_HarvestSubcommandsAreInjectable(t *testing.T) {
 	}
 }
 
+// TestDispatchCommand_HarvestFleetOutput is the boundary dimension: an engine checkout
+// carries no operational fleet configuration, so the command must report that state
+// rather than printing a built-in fleet. It must never name a repository of its own.
 func TestDispatchCommand_HarvestFleetOutput(t *testing.T) {
 	out, err := captureStdout(t, func() error {
 		return dispatchCommand("harvest", []string{"fleet"})
@@ -1372,7 +1376,15 @@ func TestDispatchCommand_HarvestFleetOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("harvest fleet failed: %v", err)
 	}
-	if !strings.Contains(out, "Fleet Topology") || !strings.Contains(out, "cordanaLLM") {
-		t.Errorf("unexpected harvest fleet output:\n%s", out)
+	if !strings.Contains(out, "Fleet Topology: not configured") {
+		t.Errorf("expected the unconfigured report, got:\n%s", out)
+	}
+	if !strings.Contains(out, harvester.FleetTopologyFile) {
+		t.Errorf("expected the report to name the expected configuration path, got:\n%s", out)
+	}
+	for _, name := range []string{"watershed", "northlight", "thedesknook", "home-zeus", "xe-telemetry"} {
+		if strings.Contains(out, name) {
+			t.Errorf("harvest fleet disclosed the private repository %q:\n%s", name, out)
+		}
 	}
 }

@@ -37,7 +37,7 @@ func runHarvest(args []string) error {
 	case "skills":
 		return runHarvestSkills(ctx, args[1:])
 	case "fleet":
-		return runHarvestFleet(args[1:])
+		return runHarvestFleet(ctx, args[1:])
 	case "memory":
 		return runHarvestMemory(ctx, args[1:])
 	case "transcript":
@@ -213,26 +213,48 @@ func applySkillHygiene(ctx context.Context, geminiDir string, rep *harvester.Ski
 	return nil
 }
 
-// runHarvestFleet prints the static fleet topology. It takes no arguments; trailing
-// tokens are rejected so a flag the command does not implement cannot look accepted.
-func runHarvestFleet(args []string) error {
+// maxFleetArchetypeLines bounds the report so a large configured topology cannot produce
+// unbounded output on a terminal.
+const maxFleetArchetypeLines = 128
+
+// runHarvestFleet prints the fleet topology the operator configured. It takes no
+// arguments; trailing tokens are rejected so a flag the command does not implement cannot
+// look accepted.
+func runHarvestFleet(ctx context.Context, args []string) error {
 	if len(args) > 0 {
 		return fmt.Errorf("harvest fleet takes no arguments, got %q", args[0])
 	}
-	return printHarvestFleet()
+	return printHarvestFleet(ctx, ".")
 }
 
-func printHarvestFleet() error {
-	fmt.Println("=== cordanaLLM Multi-Org Fleet Topology (static reference; no live inventory probe) ===")
-	orgs := []string{"cordanaLLM", "golusoris", "VMAFx", "jellysin", "goph-arr", "lusoris"}
-	fmt.Printf("Governance Orgs Monitored (static reference only): %v\n", orgs)
+// printHarvestFleet reports the configured fleet. The engine ships no fleet of its own:
+// organisation and repository names are operational data owned by the operational fork,
+// so a public engine that embedded them would disclose private repositories and drift
+// from reality the moment the fleet changed. An unconfigured engine reports that state.
+func printHarvestFleet(ctx context.Context, rootDir string) error {
+	topology, err := harvester.LoadFleetTopology(ctx, rootDir)
+	if err != nil {
+		if errors.Is(err, harvester.ErrFleetTopologyAbsent) {
+			fmt.Println("=== Fleet Topology: not configured ===")
+			fmt.Printf("No fleet topology is configured at %s.\n", harvester.TopologyPath(rootDir))
+			fmt.Println("Declare orgs and archetype membership there, or supply the file from the")
+			fmt.Println("operational fork, then re-run this command.")
+			return nil
+		}
+		return fmt.Errorf("harvest fleet: %w", err)
+	}
+
+	fmt.Println("=== Fleet Topology (configured reference; no live inventory probe) ===")
+	fmt.Printf("Governance Orgs Monitored (configured reference only): %v\n", topology.Orgs)
+	names := topology.ArchetypeNames()
+	if len(names) == 0 {
+		fmt.Println("Archetype Match Distribution: none configured")
+		return nil
+	}
 	fmt.Println("Archetype Match Distribution:")
-	fmt.Println("  - native-gpu-systems: vmafx, pelorus, template-native-gpu, model_server")
-	fmt.Println("  - gitops-infra:       k8s, home-zeus, helm-charts, dockge-stacks")
-	fmt.Println("  - framework:          golusoris, sveltesentio, watershed")
-	fmt.Println("  - library-client:     goenvoy, claude-api-schemas, llama-swap")
-	fmt.Println("  - app-service:        dispatcher, gateway, workstation-connector, qdo, xe-telemetry")
-	fmt.Println("  - pages-site:         northlight, thedesknook, lusoris.github.io")
+	for i := 0; i < len(names) && i < maxFleetArchetypeLines; i++ {
+		fmt.Printf("  - %s: %v\n", names[i], topology.Archetypes[names[i]])
+	}
 	return nil
 }
 
