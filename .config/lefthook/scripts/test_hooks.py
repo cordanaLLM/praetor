@@ -25,6 +25,9 @@ import sandbox
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = Path(".config/lefthook/scripts/hooks.py")
 GUARD = ROOT / ".config/agent/hooks/block_evasion.py"
+# Make and Git localize their diagnostics; pin the message catalogue so
+# assertions on tool output hold on workstations with non-English locales.
+LOCALE_ENV = {"LC_ALL": "C", "LANGUAGE": "C"}
 
 
 def command(repo, *args, data=None, ok=True, maintain_state=True):
@@ -33,7 +36,7 @@ def command(repo, *args, data=None, ok=True, maintain_state=True):
     if (maintain_state and args[:2] in (("git", "commit"), ("git", "push"))
             and (repo / "bin/praetorctl").is_file()):
         command(repo, "bin/praetorctl", "state", "sync", ".", ok=ok)
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", **LOCALE_ENV)
     for key in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
         env.pop(key, None)
     result = subprocess.run(args, cwd=repo, env=env, input=data, capture_output=True,
