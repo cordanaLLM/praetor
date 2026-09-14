@@ -1,0 +1,3 @@
+type: fixed
+title: build reports each target's refusal class and reason instead of an unreachable success summary
+breaking: false
