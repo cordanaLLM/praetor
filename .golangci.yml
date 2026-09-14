@@ -84,6 +84,19 @@ linters:
         - pattern: ^http\.(Get|Post|Head|PostForm)$
           pkg: ^net/http$
           msg: these helpers use http.DefaultClient and carry no context or timeout; use http.NewRequestWithContext with an explicit client (HISS-02)
+        # HISS-08 had no Go rule at all: the invariant bans dynamic code loading and unsafe
+        # primitives, and the scanner implemented that only for C (gets/strcpy/sprintf) and
+        # Python (eval/exec). These are Go's equivalents. None is used in this tree today,
+        # so the rules are a fence rather than a cleanup.
+        - pattern: ^plugin\.Open$
+          pkg: ^plugin$
+          msg: loading a Go plugin executes code chosen at runtime, which HISS-08 forbids; link the capability in or dispatch through an audited interface
+        - pattern: ^os\.StartProcess$
+          pkg: ^os$
+          msg: os.StartProcess bypasses the audited exec boundary and carries no context; use internal/util.RunCommand (HISS-08, HISS-02)
+        - pattern: ^syscall\.(Exec|ForkExec)$
+          pkg: ^syscall$
+          msg: direct syscall execution replaces or forks the process outside the audited exec boundary (HISS-08)
 
   exclusions:
     generated: lax
