@@ -72,6 +72,11 @@ func runAuditorAgent(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("auditor execution error: %w", err)
 	}
+	if rep.Incomplete() {
+		fmt.Printf("[praetor-auditor] AST sweep INCOMPLETE: %d infraction(s) detected so far; %s\n",
+			rep.TotalInfractions, rep.CoverageEvidence())
+		return fmt.Errorf("auditor scan did not cover its scope: %s", rep.CoverageEvidence())
+	}
 	fmt.Printf("[praetor-auditor] AST sweep complete: %d infractions detected\n", rep.TotalInfractions)
 	return nil
 }

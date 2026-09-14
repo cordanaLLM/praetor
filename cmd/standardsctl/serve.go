@@ -87,5 +87,13 @@ func runAuditCheck(ctx context.Context, auditPath string, hs *container.HealthSe
 		hs.SetReady(false)
 		return
 	}
+	// Zero infractions over an incomplete scope proves nothing, so readiness fails closed
+	// rather than reporting the unexamined remainder as clean.
+	if rep.Incomplete() {
+		fmt.Fprintf(os.Stderr, "[WARN] periodic HISS scan of %s did not cover its scope (%s); marking unready\n",
+			auditPath, rep.CoverageEvidence())
+		hs.SetReady(false)
+		return
+	}
 	hs.SetReady(true)
 }

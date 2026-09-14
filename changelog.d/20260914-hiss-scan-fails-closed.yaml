@@ -1,0 +1,3 @@
+type: fixed
+title: HISS scan records files it could not parse and reports the scan incomplete, so zero infractions over an unexamined scope is no longer read as a pass
+breaking: false
