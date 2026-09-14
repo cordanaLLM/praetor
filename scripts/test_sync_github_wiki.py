@@ -13,6 +13,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "sync_github_wiki.sh"
+# Git localizes its diagnostics; pin the message catalogue so assertions on Git
+# output hold on developer workstations with non-English locales.
+LOCALE_ENV = {"LC_ALL": "C", "LANGUAGE": "C"}
 
 
 def run(
@@ -28,7 +31,7 @@ def run(
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env={**os.environ, "WIKI_TOKEN": "", **(extra_env or {})},
+        env={**os.environ, **LOCALE_ENV, "WIKI_TOKEN": "", **(extra_env or {})},
         timeout=10,
     )
 
