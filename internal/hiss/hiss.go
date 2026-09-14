@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	slashpath "path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -101,7 +102,11 @@ func Scan(ctx context.Context, repoPath string, opts ScanOptions) (*ScanReport, 
 	}
 
 	rep := newScanReport(opts.Cap)
-	w := &scanWalker{ctx: ctx, root: repoPath, opts: opts, rep: rep, extra: ignoreSet(opts.IgnoreDirs)}
+	w := &scanWalker{
+		ctx: ctx, root: repoPath, opts: opts, rep: rep,
+		extra:   ignoreSet(opts.IgnoreDirs),
+		visible: gitVisiblePaths(ctx, repoPath),
+	}
 	if err := filepath.Walk(repoPath, w.visit); err != nil {
 		return nil, fmt.Errorf("hiss: scan %q: %w", repoPath, err)
 	}
@@ -143,11 +148,89 @@ func newScanReport(capLimit int) *ScanReport {
 
 // scanWalker carries the per-scan state through the filepath.Walk callback.
 type scanWalker struct {
-	ctx   context.Context
-	root  string
-	opts  ScanOptions
-	rep   *ScanReport
-	extra map[string]struct{}
+	ctx     context.Context
+	root    string
+	opts    ScanOptions
+	rep     *ScanReport
+	extra   map[string]struct{}
+	visible *gitVisibleTree
+}
+
+// maxGitFileListBytes bounds the file list read from git (HISS-02). A listing larger than
+// this yields no git answer at all, so the scan walks the directory instead of trusting a
+// truncated set: a short list would silently exclude real source files.
+const maxGitFileListBytes = 8 << 20
+
+// maxGitPathDepth bounds the ancestor walk of a single repository path (HISS-02).
+const maxGitPathDepth = 64
+
+// maxGitVisibleFiles bounds how many repository paths a single git listing contributes
+// (HISS-02).
+const maxGitVisibleFiles = 200000
+
+// gitVisibleTree is the set of paths git reports as belonging to the repository, plus the
+// directories on the way to them. A nil tree means git gave no answer, and every path is
+// then treated as visible.
+type gitVisibleTree struct {
+	files map[string]struct{}
+	dirs  map[string]struct{}
+}
+
+// gitVisiblePaths asks git which paths belong to the repository: tracked files plus
+// untracked files that are not ignored. Gitignored material — vendored caches, build
+// output, an audit clone of another repository — is therefore never counted as this
+// repository's own debt, which is what inflated a downstream baseline more than tenfold.
+//
+// Any failure (not a work tree, git absent, output over the cap) returns nil and the scan
+// falls back to walking everything. Failing open over-reports; failing closed on a
+// truncated list would under-report, and for a gate that is the worse error.
+func gitVisiblePaths(ctx context.Context, repoPath string) *gitVisibleTree {
+	out, err := util.RunGitProbe(ctx, repoPath, maxGitFileListBytes,
+		"ls-files", "--cached", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil
+	}
+	tree := &gitVisibleTree{files: make(map[string]struct{}), dirs: make(map[string]struct{})}
+	entries := strings.Split(string(out.Stdout), "\x00")
+	for i := 0; i < len(entries) && i < maxGitVisibleFiles; i++ {
+		rel := entries[i]
+		if rel == "" {
+			continue
+		}
+		tree.files[rel] = struct{}{}
+		tree.addAncestors(rel)
+	}
+	return tree
+}
+
+// addAncestors records every parent directory of rel so the walk still descends into a
+// directory whose own name git never prints.
+func (t *gitVisibleTree) addAncestors(rel string) {
+	dir := slashpath.Dir(rel)
+	for i := 0; i < maxGitPathDepth && dir != "." && dir != "/" && dir != ""; i++ {
+		t.dirs[dir] = struct{}{}
+		dir = slashpath.Dir(dir)
+	}
+}
+
+// hasFile reports whether a file belongs to the repository. Without a git answer every
+// file is in scope, preserving the pre-git behaviour outside a work tree.
+func (t *gitVisibleTree) hasFile(rel string) bool {
+	if t == nil {
+		return true
+	}
+	_, ok := t.files[rel]
+	return ok
+}
+
+// hasDir reports whether a directory can contain repository files. The scan root itself is
+// always entered; otherwise a directory git never mentioned holds only ignored material.
+func (t *gitVisibleTree) hasDir(rel string) bool {
+	if t == nil || rel == "." {
+		return true
+	}
+	_, ok := t.dirs[rel]
+	return ok
 }
 
 func (w *scanWalker) visit(path string, info os.FileInfo, err error) error {
@@ -168,13 +251,19 @@ func (w *scanWalker) visit(path string, info os.FileInfo, err error) error {
 		return fmt.Errorf("walk %q: %w", path, err)
 	}
 	if info.IsDir() {
-		if w.isIgnoredDir(info, rel) {
-			w.rep.recordSkippedDir(rel)
-			return filepath.SkipDir
-		}
-		return nil
+		return w.visitDir(rel, info)
 	}
 	return w.visitFile(path, rel, info)
+}
+
+// visitDir skips a directory the scan must not descend into: one the ignore policy
+// excludes, or one git never mentioned, which therefore holds only ignored material.
+func (w *scanWalker) visitDir(rel string, info os.FileInfo) error {
+	if w.isIgnoredDir(info, rel) || !w.visible.hasDir(filepath.ToSlash(rel)) {
+		w.rep.recordSkippedDir(rel)
+		return filepath.SkipDir
+	}
+	return nil
 }
 
 func (w *scanWalker) isIgnoredDir(info os.FileInfo, rel string) bool {
@@ -184,6 +273,11 @@ func (w *scanWalker) isIgnoredDir(info os.FileInfo, rel string) bool {
 func (w *scanWalker) visitFile(path, rel string, info os.FileInfo) error {
 	if w.rep.Truncated {
 		return filepath.SkipAll
+	}
+	// A file git does not report is not this repository's source, so it is neither
+	// scanned nor counted as unscanned coverage.
+	if !w.visible.hasFile(filepath.ToSlash(rel)) {
+		return nil
 	}
 	if ShouldIgnorePath(rel) {
 		return nil

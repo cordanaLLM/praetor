@@ -1,0 +1,3 @@
+type: fixed
+title: HISS scan counts only git-visible files, so gitignored material is no longer the repository's debt
+breaking: false
