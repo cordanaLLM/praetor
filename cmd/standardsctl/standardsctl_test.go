@@ -337,6 +337,88 @@ func TestDispatchCommand_EditorsAndFlavors(t *testing.T) {
 	mustContain(t, out, "Release Flavor Reconciler", "flavors sync")
 }
 
+func TestEditorsGenerateReportsCreatedMergedAndPresent(t *testing.T) {
+	root := t.TempDir()
+	out, err := captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "created", "0 merged", "[CREATED] [vscode] .vscode/settings.json")
+
+	settingsPath := filepath.Join(root, ".vscode", "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(`{"editor.fontSize":42}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err = captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "1 merged", "[MERGED] [vscode] .vscode/settings.json")
+	settings, err := os.ReadFile(settingsPath)
+	if err != nil || !strings.Contains(string(settings), `"editor.fontSize": 42`) {
+		t.Fatalf("merge report lost the existing setting: %s %v", settings, err)
+	}
+
+	out, err = captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "0 created", "0 merged", "already present", "0 rewritten")
+	if strings.Contains(out, "[UNVERIFIED]") {
+		t.Fatalf("an untouched generation reported preserved files: %s", out)
+	}
+}
+
+func TestEditorsVerifyReportsPreservedNonJSONAsUnverified(t *testing.T) {
+	root := t.TempDir()
+	if _, err := captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) }); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return runEditors([]string{"verify", "--path=" + root}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "Managed requirements verified")
+	if strings.Contains(out, "[UNVERIFIED]") {
+		t.Fatalf("freshly generated files were reported as unverified: %s", out)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, ".editorconfig"), []byte("root = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err = captureStdout(t, func() error { return runEditors([]string{"verify", "--path=" + root}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "Managed requirements verified", "[UNVERIFIED]", ".editorconfig")
+	out, err = captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "[PRESERVED] [universal] .editorconfig", "[UNVERIFIED] 1 existing human-owned file(s)")
+}
+
+func TestEditorsRejectDuplicateJSONKeysWithoutWriting(t *testing.T) {
+	root := t.TempDir()
+	if _, err := captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) }); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(root, ".vscode", "settings.json")
+	duplicate := `{"editor.fontSize":41,"editor.fontSize":42}`
+	if err := os.WriteFile(settingsPath, []byte(duplicate), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureStdout(t, func() error { return runEditors([]string{"verify", "--path=" + root}) }); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("verify accepted duplicate JSON keys: %v", err)
+	}
+	if _, err := captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) }); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("generate accepted duplicate JSON keys: %v", err)
+	}
+	if after, err := os.ReadFile(settingsPath); err != nil || string(after) != duplicate {
+		t.Fatalf("rejected generation changed the file: %s %v", after, err)
+	}
+}
+
 func TestDispatchCommand_ModelsAndHarvest(t *testing.T) {
 	// Models list with existing routing config
 	if err := dispatchCommand("models", []string{"--config=../../.config/models/routing.yaml", "list"}); err != nil {
