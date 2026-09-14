@@ -110,6 +110,7 @@ nav:
       - Capability Discovery: guides/capability-discovery.md
       - Wishes and Polls: guides/wishes-and-polls.md
       - Effective Policy: guides/effective-policy.md
+      - Operational Configuration: guides/operational-configuration.md
       - Git Hooks: guides/git-hooks.md
       - GitHub Wiki Sync: guides/github-wiki-sync.md
       - Issue Sync Integrity: guides/issue-sync-integrity.md
