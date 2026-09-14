@@ -1,6 +1,6 @@
 # High-Integrity Systems Standard (HISS-16) Compliance Matrix
 
-The formal specification matrix across the 16 deterministic engineering invariants in `cordanaLLM/praetor`.
+The formal specification matrix across the 19 deterministic engineering invariants in `cordanaLLM/praetor`.
 
 | Invariant | Title | Domain | Mathematical Axiom / Threshold | Enforcement Layer | Failure Action |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -20,6 +20,9 @@ The formal specification matrix across the 16 deterministic engineering invarian
 | **HISS-14** | Append-Only ABI | Architecture | Append-only public contracts; `Migration:` footer | `standardsctl forge check-commits` (CI) | PR merge blocker |
 | **HISS-15** | 3D Test Discipline | Quality | Positive + Negative + Boundary tests required | `go test -race` | Coverage gate |
 | **HISS-16** | Context Integrity | Agentic Fleet | Single `AGENTS.md` source; compiled $< 300$ LOC | `compile-context --verify` | Pre-commit blocker |
+| **HISS-17** | State Ledger Discipline | Agentic Fleet | Turn starts on `STATE.md`/`OPEN.md`, ends on `state sync .` | `praetorctl state sync --verify` | Pre-commit / CI gate |
+| **HISS-18** | CI Efficiency | Governance | Docs-only and state-only diffs skip heavy race and security gates | `praetorctl ci filter` | CI optimization gate |
+| **HISS-19** | Reuse Before Writing | Maintainability | One behavior, one implementation; configuration formats included | `praetorctl dedupe scan` | Verification gate rejection |
 
 ---
 

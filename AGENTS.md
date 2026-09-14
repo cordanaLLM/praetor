@@ -37,31 +37,37 @@ flowchart LR
 | **HISS-16** | Context Integrity | Single canonical `AGENTS.md`; vendor files compiled via `standardsctl compile-context`. | Pre-commit blocker |
 | **HISS-17** | State Ledger Discipline | Agent turn-start inspects `.workingdir/STATE.md` & `.workingdir/OPEN.md`; tasks tracked via `standardsctl state task`; turn-end `standardsctl state sync .` required. | Pre-commit / CI gate |
 | **HISS-18** | CI Efficiency | Diff-aware change gating; skip heavy race & security gates on docs/state changes via `standardsctl ci filter`. | CI optimization gate |
+| **HISS-19** | Reuse Before Writing | One behavior, one implementation; extend or call what exists instead of reimplementing it, configuration formats included. | `dedupe scan` in verify-all |
 
 ## Operational Rules
 
 1. **Act on Verified State**:
    Read source files and run real commands before hypothesizing or editing. Never guess flag names, library signatures, or repo configurations from memory.
 
-2. **Lead with Output**:
+2. **Reuse Before Writing (HISS-19)**:
+   Search for an existing implementation before adding one. Before writing a function, config loader, parser, or command, grep the repository for the capability and extend or call what is already there. Two implementations of one behavior is a defect, not redundancy: they drift, and the second one silently stops matching the first. This applies to configuration formats as strictly as to code — a second config system beside an existing loader is the same defect.
+
+   Enforcement already exists; do not build another checker. `praetorctl dedupe scan .` detects function-level clones and utility sprawl, it runs inside `make verify-all`, and it fails the gate when the report does not pass. When a duplicate is unavoidable, state why in the commit body rather than leaving the reader to infer it.
+
+3. **Lead with Output**:
    Provide direct answers, diffs, and commands. Avoid filler preambles, "Based on", restatements, or conversational chatter.
 
-3. **Context Transpiler First**:
+4. **Context Transpiler First**:
    Never edit `CLAUDE.md`, `.cursor/rules/*.mdc`, `.windsurfrules`, or `.github/copilot-instructions.md` manually. Make all agent instruction updates in `AGENTS.md` and execute:
    ```bash
    standardsctl compile-context
    ```
 
-4. **SARIF Diagnostic Distillation**:
+5. **SARIF Diagnostic Distillation**:
    When reporting compiler or linter errors, distill output to $\le 1,500$ tokens ($< 60$ lines). Print the top 3 root-cause failures with file/line pointers and write full SARIF logs to ephemeral storage.
 
-5. **No Evasion Tolerated**:
+6. **No Evasion Tolerated**:
    Do not attempt `--no-verify`, `LEFTHOOK=0`, or modifying `.git/hooks`. All pull requests are authoritatively re-checked in an ephemeral isolated sandbox by `cordana-standards[bot]`.
 
-6. **Anti-Loop Interception**:
+7. **Anti-Loop Interception**:
    If the same AST diff and error category repeats $\ge 3$ times, halt execution immediately. Re-evaluate the underlying design instead of making micro-textual retries.
 
-7. **State Ledger Discipline (HISS-17)**:
+8. **State Ledger Discipline (HISS-17)**:
    Agents MUST maintain the local `.workingdir` session state ledger on every turn. The entire directory is private and Git-ignored, including cluster connection guides, backend settings, memory, and scratch files. Never stage its contents, including with force. Publish explicitly reviewed, sanitized documentation under `docs/` instead.
    - **Fresh Checkout**: Run `make state-audit` to initialize a missing local ledger and audit it. Existing incomplete or invalid ledgers must be repaired explicitly.
    - **Turn Start**: Inspect `.workingdir/STATE.md` and `.workingdir/OPEN.md` (or run `praetorctl state status`).
@@ -76,7 +82,7 @@ flowchart LR
    local-only repositories and client activation. Publication needs session or
    configured authorization; this repository's checkpoint workflow is authorized.
 
-8. **Diff-Aware CI Efficiency (HISS-18)**:
+9. **Diff-Aware CI Efficiency (HISS-18)**:
    CI pipelines MUST evaluate git diffs via `standardsctl ci filter` and execute targeted validation gates. Pure documentation or session-state changes MUST skip heavy race detectors and security suites while maintaining invariant integrity.
 
 ## Primary Verification Commands
