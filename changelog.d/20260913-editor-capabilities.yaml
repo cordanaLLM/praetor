@@ -1,0 +1,4 @@
+type: fixed
+package: editor
+title: Derive editor settings from repository capabilities and preserve user configuration while reporting unsupported legacy settings
+breaking: true

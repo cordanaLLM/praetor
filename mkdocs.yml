@@ -91,6 +91,7 @@ nav:
   - Guides & Adoption:
       - Detailed Planning Drafts: guides/planning-drafts.md
       - Developer Onboarding: guides/onboarding.md
+      - Editor Capabilities: guides/editor-capabilities.md
       - Checkpoint Cadence: guides/checkpoint-cadence.md
       - Agent Lifecycle Coverage: guides/agent-lifecycle.md
       - Garbage Collection: guides/garbage-collection.md

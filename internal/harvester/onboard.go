@@ -159,23 +159,20 @@ func writeAgentHarness(ctx context.Context, repoPath string) error {
 }
 
 func writeOnboardEditors(ctx context.Context, repoPath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	opts := editor.DefaultOptions()
 	opts.WorkspaceRoot = repoPath
-	set, err := editor.Synthesize(opts)
+	set, err := editor.SynthesizeContext(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("synthesize editor configs: %w", err)
 	}
 	if len(set.Files) > maxOnboardOutputs {
 		return fmt.Errorf("too many editor outputs: %d", len(set.Files))
 	}
-	for i := 0; i < len(set.Files) && i < maxOnboardOutputs; i++ {
-		f := set.Files[i]
-		if (f.Path == ".clang-tidy" || f.Path == ".editorconfig") && util.FileExists(filepath.Join(repoPath, f.Path)) {
-			continue
-		}
-		if err := writeOnboardFile(ctx, repoPath, f.Path, []byte(f.Content)); err != nil {
-			return err
-		}
+	if err := editor.WriteContext(ctx, set, repoPath); err != nil {
+		return fmt.Errorf("write editor configs: %w", err)
 	}
 	return ctx.Err()
 }

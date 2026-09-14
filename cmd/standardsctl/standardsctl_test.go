@@ -337,6 +337,50 @@ func TestDispatchCommand_EditorsAndFlavors(t *testing.T) {
 	mustContain(t, out, "Release Flavor Reconciler", "flavors sync")
 }
 
+func TestEditorsGenerateReportsCreatedMergedAndPresent(t *testing.T) {
+	root := t.TempDir()
+	out, err := captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "created", "0 merged")
+
+	settingsPath := filepath.Join(root, ".vscode", "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(`{"editor.fontSize":42}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err = captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "1 merged")
+	settings, err := os.ReadFile(settingsPath)
+	if err != nil || !strings.Contains(string(settings), `"editor.fontSize": 42`) {
+		t.Fatalf("merge report lost the existing setting: %s %v", settings, err)
+	}
+
+	out, err = captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "0 merged", "already present")
+}
+
+func TestEditorsVerifyReportsPreservedNonJSONAsUnverified(t *testing.T) {
+	root := t.TempDir()
+	if _, err := captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".editorconfig"), []byte("root = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return runEditors([]string{"verify", "--path=" + root}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "Managed requirements verified", "[UNVERIFIED]", ".editorconfig")
+}
+
 func TestDispatchCommand_ModelsAndHarvest(t *testing.T) {
 	// Models list with existing routing config
 	if err := dispatchCommand("models", []string{"--config=../../.config/models/routing.yaml", "list"}); err != nil {

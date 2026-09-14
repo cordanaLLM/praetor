@@ -106,6 +106,44 @@ func TestOnboardRepositoryVerifiedCallerLock(t *testing.T) {
 	}
 }
 
+func TestWriteOnboardEditorsMergesExistingHumanConfiguration(t *testing.T) {
+	repo := t.TempDir()
+	settingsPath := filepath.Join(repo, ".vscode", "settings.json")
+	extensionsPath := filepath.Join(repo, ".vscode", "extensions.json")
+	editorConfigPath := filepath.Join(repo, ".editorconfig")
+	mustWriteFile(t, settingsPath, `{"editor.fontSize":42}`)
+	mustWriteFile(t, extensionsPath, `{"recommendations":["human.extension"]}`)
+	mustWriteFile(t, editorConfigPath, "root = true\n# human policy\n")
+
+	if err := writeOnboardEditors(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := os.ReadFile(settingsPath)
+	if err != nil || !strings.Contains(string(settings), `"editor.fontSize": 42`) || !strings.Contains(string(settings), `"files.insertFinalNewline": true`) {
+		t.Fatalf("existing VS Code settings were not safely merged: %s %v", settings, err)
+	}
+	extensions, err := os.ReadFile(extensionsPath)
+	if err != nil || !strings.Contains(string(extensions), "human.extension") {
+		t.Fatalf("existing extension recommendation was lost: %s %v", extensions, err)
+	}
+	if editorConfig, err := os.ReadFile(editorConfigPath); err != nil || string(editorConfig) != "root = true\n# human policy\n" {
+		t.Fatalf("human non-JSON editor config changed: %s %v", editorConfig, err)
+	}
+}
+
+func TestWriteOnboardEditorsPropagatesCancellation(t *testing.T) {
+	repo := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := writeOnboardEditors(ctx, repo); !errors.Is(err, context.Canceled) {
+		t.Fatalf("editor onboarding lost cancellation: %v", err)
+	}
+	entries, err := os.ReadDir(repo)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("cancelled editor onboarding mutated workspace: %v %v", entries, err)
+	}
+}
+
 func TestOnboardRepositoryReportsInvalidExistingLock(t *testing.T) {
 	repo := verifiedOnboardFixture(t)
 	path := filepath.Join(repo, ".standards.lock")
