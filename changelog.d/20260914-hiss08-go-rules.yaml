@@ -1,0 +1,3 @@
+type: fixed
+title: HISS-08 gains Go rules; plugin loading and direct process execution are refused instead of passing every gate
+breaking: false
