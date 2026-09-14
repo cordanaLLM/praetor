@@ -474,10 +474,22 @@ func canonicalGitPath(repoPath, common string) string {
 // touched for DefaultStaleWorktreeAge. A worktree that is still being worked in is not
 // stale: reporting every worktree as stale invites an operator or agent to delete live
 // work, and contradicts the age criterion internal/gc uses when it actually prunes them.
+//
+// A container this scan cannot read, or one holding more entries than MaxWorktreeScan,
+// yields a partial StaleWorktrees list. Such a scan marks the report incomplete and
+// records why, so the partial list is never published as an exhaustive one.
 func scanWorktreeDir(path string, report *WorkstationReport) {
+	container := filepath.Base(path)
 	subEntries, err := readBoundedDir(path, MaxWorktreeScan)
 	if err != nil {
+		report.RepositoryInventoryComplete = false
+		report.RepositoryInventoryErrors = appendBoundedError(report.RepositoryInventoryErrors, fmt.Sprintf("stale worktree scan of %s failed: %v", container, err))
 		return
+	}
+	if len(subEntries) > MaxWorktreeScan {
+		report.RepositoryInventoryComplete = false
+		report.RepositoryInventoryTruncated = true
+		report.RepositoryInventoryErrors = appendBoundedError(report.RepositoryInventoryErrors, fmt.Sprintf("stale worktree scan of %s exceeds %d entries", container, MaxWorktreeScan))
 	}
 	for i := 0; i < len(subEntries) && i < MaxWorktreeScan; i++ {
 		sub := subEntries[i]

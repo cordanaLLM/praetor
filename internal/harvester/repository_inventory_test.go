@@ -3,11 +3,13 @@ package harvester
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -119,6 +121,119 @@ func TestScanLocalWorkstationRepositoryInventoryBoundAndFailure(t *testing.T) {
 
 func containsTestSecret(value string) bool {
 	return strings.Contains(value, "private/token=secret")
+}
+
+// TestScanWorktreeContainerReadableStaysComplete is the positive dimension: a readable
+// worktree container produces an exhaustive stale list and leaves the report complete.
+func TestScanWorktreeContainerReadableStaysComplete(t *testing.T) {
+	root, container := newTestWorktreeContainer(t)
+	addTestStaleWorktree(t, container, "task-1")
+	report, err := ScanLocalWorkstation(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.RepositoryInventoryComplete || report.RepositoryInventoryTruncated {
+		t.Fatalf("readable worktree container was reported incomplete: %+v", report)
+	}
+	if len(report.RepositoryInventoryErrors) != 0 || len(report.StaleWorktrees) != 1 {
+		t.Fatalf("complete scan lost its result: errors=%v stale=%v", report.RepositoryInventoryErrors, report.StaleWorktrees)
+	}
+}
+
+// TestScanWorktreeContainerEmptyStaysComplete is the zero-entry boundary: an empty
+// container is a complete scan with no stale worktrees and no recorded failure.
+func TestScanWorktreeContainerEmptyStaysComplete(t *testing.T) {
+	root, _ := newTestWorktreeContainer(t)
+	report, err := ScanLocalWorkstation(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.RepositoryInventoryComplete || report.RepositoryInventoryTruncated ||
+		len(report.RepositoryInventoryErrors) != 0 || len(report.StaleWorktrees) != 0 {
+		t.Fatalf("empty worktree container was not an exhaustive empty scan: %+v", report)
+	}
+}
+
+// TestScanWorktreeContainerUnreadableIsReportedIncomplete is the negative dimension: a
+// container the scan cannot read drops every stale candidate, so the report must say so
+// instead of publishing the empty list as exhaustive.
+func TestScanWorktreeContainerUnreadableIsReportedIncomplete(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permission checks")
+	}
+	root, container := newTestWorktreeContainer(t)
+	addTestStaleWorktree(t, container, "task-1")
+	if err := os.Chmod(container, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(container, 0o755); err != nil {
+			t.Error(err)
+		}
+	})
+	report, err := ScanLocalWorkstation(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.RepositoryInventoryComplete || len(report.StaleWorktrees) != 0 {
+		t.Fatalf("unreadable worktree container was reported as a complete scan: %+v", report)
+	}
+	if !hasTestInventoryError(report, "stale worktree scan of demo-worktrees failed") {
+		t.Fatalf("read failure was not attributed to the stale worktree scan: %v", report.RepositoryInventoryErrors)
+	}
+}
+
+// TestScanWorktreeContainerOverLimitIsReportedTruncated is the N_max boundary: a container
+// holding more than MaxWorktreeScan entries is reported truncated, not complete.
+func TestScanWorktreeContainerOverLimitIsReportedTruncated(t *testing.T) {
+	root, container := newTestWorktreeContainer(t)
+	for i := 0; i <= MaxWorktreeScan; i++ {
+		if err := os.Mkdir(filepath.Join(container, fmt.Sprintf("task-%03d", i)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := ScanLocalWorkstation(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.RepositoryInventoryComplete || !report.RepositoryInventoryTruncated {
+		t.Fatalf("over-limit worktree container was not reported truncated: %+v", report)
+	}
+	want := fmt.Sprintf("stale worktree scan of demo-worktrees exceeds %d entries", MaxWorktreeScan)
+	if !hasTestInventoryError(report, want) {
+		t.Fatalf("truncation was not attributed to the stale worktree scan: %v", report.RepositoryInventoryErrors)
+	}
+}
+
+func newTestWorktreeContainer(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	container := filepath.Join(root, "demo-worktrees")
+	if err := os.Mkdir(container, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return root, container
+}
+
+func addTestStaleWorktree(t *testing.T, container, name string) {
+	t.Helper()
+	path := filepath.Join(container, name)
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-2 * DefaultStaleWorktreeAge)
+	if err := os.Chtimes(path, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func hasTestInventoryError(report *WorkstationReport, fragment string) bool {
+	for i := 0; i < len(report.RepositoryInventoryErrors) && i < MaxDevScanEntries; i++ {
+		if strings.Contains(report.RepositoryInventoryErrors[i], fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestScanLocalWorkstationCancelled(t *testing.T) {
