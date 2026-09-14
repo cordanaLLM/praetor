@@ -1,0 +1,4 @@
+type: fixed
+package: editor
+title: Merge existing editor JSON instead of replacing it, keep exact number literals, reject duplicate keys before any write, and report preserved .editorconfig and .clang-tidy files as unverified
+breaking: true

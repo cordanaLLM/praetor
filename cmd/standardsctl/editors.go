@@ -3,10 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
-	"os"
 
 	"github.com/cordanaLLM/praetor/internal/editor"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // maxReportedEditorFiles is the scalar upper bound (HISS-02) on the per-file lines the
@@ -48,18 +46,19 @@ func runEditorsGenerate(opts editor.Options, root string) error {
 	if err != nil {
 		return fmt.Errorf("failed synthesizing editor configurations: %w", err)
 	}
-	if err := editor.Write(set, root); err != nil {
+	// The outcome of each file is the decision editor.WriteWithReport made before
+	// writing, not a later comparison of workspace bytes against a template: a merged
+	// JSON file legitimately differs from its template.
+	report, err := editor.WriteWithReport(set, root)
+	if err != nil {
 		return fmt.Errorf("failed writing editor configurations: %w", err)
 	}
-
-	// editor.Write deliberately preserves a pre-existing .editorconfig/.clang-tidy and
-	// truncates at its own file cap, so the synthesized file list is not the written
-	// file list. Each file is classified from what is actually on disk.
-	written, preserved := reportEditorFiles(set, root)
-	fmt.Printf("[OK] Generated %d of %d IDE configuration file(s) across: %v\n",
-		written, len(set.Files), set.Editors)
-	if preserved > 0 {
-		fmt.Printf("     %d file(s) left untouched because they already exist or exceed the write cap.\n", preserved)
+	counts := reportEditorFiles(report)
+	fmt.Printf("[OK] Editor requirements: %d created, %d merged, %d already present, %d rewritten across: %v\n",
+		counts[editor.WriteCreated], counts[editor.WriteMerged], counts[editor.WritePresent],
+		counts[editor.WriteRewritten], set.Editors)
+	if preserved := counts[editor.WritePreserved]; preserved > 0 {
+		fmt.Printf("[UNVERIFIED] %d existing human-owned file(s) preserved without verification.\n", preserved)
 	}
 	return nil
 }
@@ -69,49 +68,25 @@ func runEditorsVerify(opts editor.Options, root string) error {
 	if err != nil {
 		return fmt.Errorf("failed synthesizing editor configurations: %w", err)
 	}
-	if err := editor.Verify(set, root); err != nil {
+	report, err := editor.VerifyWithReport(set, root)
+	if err != nil {
 		return fmt.Errorf("[FAIL] Editor configurations out of sync: %w", err)
 	}
-	fmt.Println("[PASS] All declared editor configurations verified in sync.")
+	fmt.Printf("[PASS] Managed requirements verified in %d editor configuration file(s).\n", len(report.Verified))
+	if len(report.PreservedUnverified) > 0 {
+		fmt.Printf("[UNVERIFIED] Preserved %d non-JSON file(s) without semantic verification: %v\n",
+			len(report.PreservedUnverified), report.PreservedUnverified)
+	}
 	return nil
 }
 
-// reportEditorFiles prints and counts the per-file outcome of a generate run by comparing
-// the synthesized content against what the workspace now holds.
-func reportEditorFiles(set *editor.EditorConfigSet, root string) (written, preserved int) {
-	if set == nil {
-		return 0, 0
+// reportEditorFiles prints the per-file outcome of a generate run and counts each outcome.
+func reportEditorFiles(report editor.WriteReport) map[editor.WriteOutcome]int {
+	counts := make(map[editor.WriteOutcome]int)
+	for i := 0; i < len(report.Files) && i < maxReportedEditorFiles; i++ {
+		f := report.Files[i]
+		counts[f.Outcome]++
+		fmt.Printf("  - [%s] [%s] %s\n", f.Outcome, f.Editor, f.Path)
 	}
-	for i := 0; i < len(set.Files) && i < maxReportedEditorFiles; i++ {
-		f := set.Files[i]
-		status, delta := classifyEditorFile(root, f)
-		if delta {
-			written++
-		} else {
-			preserved++
-		}
-		fmt.Printf("  - [%s] [%s] %s\n", status, f.Editor, f.Path)
-	}
-	return written, preserved
-}
-
-// classifyEditorFile reports whether the synthesized file is the one now on disk. The
-// candidate path is confined to the workspace root, so a synthesized path that tried to
-// escape it is reported as skipped rather than read.
-func classifyEditorFile(root string, f editor.GeneratedFile) (status string, written bool) {
-	full, err := util.ConfinePath(root, f.Path)
-	if err != nil {
-		return "SKIPPED", false
-	}
-	// #nosec G304,G703 -- full is the output of util.ConfinePath, which rejects absolute
-	// paths and anything resolving outside root; the content is only compared, never executed.
-	onDisk, err := os.ReadFile(full)
-	switch {
-	case err == nil && string(onDisk) == f.Content:
-		return "WRITTEN", true
-	case err == nil:
-		return "PRESERVED", false
-	default:
-		return "SKIPPED", false
-	}
+	return counts
 }

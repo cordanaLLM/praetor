@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -31,14 +32,15 @@ func TestWriteRejectsSymlinkAndPreservesPrivateMode(t *testing.T) {
 	if err := os.Symlink(outside, path); err != nil {
 		t.Fatal(err)
 	}
-	set := &EditorConfigSet{Files: []GeneratedFile{{Path: "config.json", Content: "{}"}}}
+	// The managed key is absent from the existing file, so the merge really rewrites it.
+	set := &EditorConfigSet{Files: []GeneratedFile{{Path: "config.json", Content: `{"managed":true}`}}}
 	if err := Write(set, root); err == nil {
 		t.Fatal("followed output symlink")
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"human":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := Write(set, root); err != nil {
@@ -50,6 +52,9 @@ func TestWriteRejectsSymlinkAndPreservesPrivateMode(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("private permissions widened: %o", info.Mode().Perm())
+	}
+	if merged, err := os.ReadFile(path); err != nil || !strings.Contains(string(merged), `"human": true`) || !strings.Contains(string(merged), `"managed": true`) {
+		t.Fatalf("private file was not merged in place: %s %v", merged, err)
 	}
 	actual, err := os.ReadFile(outside)
 	if err != nil || string(actual) != "unchanged" {

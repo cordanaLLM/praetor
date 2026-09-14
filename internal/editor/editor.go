@@ -61,6 +61,43 @@ type EditorConfigSet struct {
 	Files   []GeneratedFile `json:"files"`
 }
 
+// WriteOutcome names what Write resolved for one generated file.
+type WriteOutcome string
+
+// Write outcomes reported by WriteWithReport.
+const (
+	// WriteCreated means the file was absent and its template was written.
+	WriteCreated WriteOutcome = "CREATED"
+	// WriteMerged means missing managed values were added to an existing JSON file.
+	WriteMerged WriteOutcome = "MERGED"
+	// WritePresent means the existing file already held every managed value.
+	WritePresent WriteOutcome = "PRESENT"
+	// WriteRewritten means an existing non-JSON template file that differed was replaced.
+	WriteRewritten WriteOutcome = "REWRITTEN"
+	// WritePreserved means a differing or unreadable .editorconfig or .clang-tidy was
+	// left untouched and is not verified.
+	WritePreserved WriteOutcome = "PRESERVED"
+)
+
+// WriteResult records the resolved outcome for one generated file.
+type WriteResult struct {
+	Path    string       `json:"path"`
+	Editor  string       `json:"editor"`
+	Outcome WriteOutcome `json:"outcome"`
+}
+
+// WriteReport lists the outcome of every generated file in set order.
+type WriteReport struct {
+	Files []WriteResult `json:"files"`
+}
+
+// VerificationReport distinguishes files whose managed requirements were checked
+// from preserved non-JSON files that have no format-aware verifier.
+type VerificationReport struct {
+	Verified            []string `json:"verified"`
+	PreservedUnverified []string `json:"preserved_unverified"`
+}
+
 // DefaultOptions returns standard configuration targeting all supported IDEs.
 func DefaultOptions() Options {
 	return Options{
@@ -774,10 +811,29 @@ func fileExists(path string) bool {
 	return util.FileExists(path)
 }
 
-// Write writes all generated files to the target workspace root directory.
+// isPreservedEditorFile reports whether an existing file carries hand-tuned project
+// settings that Write never replaces.
+func isPreservedEditorFile(path string) bool {
+	return path == ".clang-tidy" || path == ".editorconfig"
+}
+
+// Write writes all generated files to the target workspace root directory; see
+// WriteWithReport for how existing files are treated.
 func Write(set *EditorConfigSet, rootDir string) error {
+	_, err := WriteWithReport(set, rootDir)
+	return err
+}
+
+// WriteWithReport resolves every generated file before the first mutation and
+// reports the outcome per file. An existing JSON file keeps its unrelated keys,
+// list entries and exact number literals while missing managed values are added;
+// invalid JSON, duplicate keys or a conflicting managed value abort the whole run
+// without writing any file. An existing .editorconfig or .clang-tidy is preserved,
+// and any other existing file that differs from its template is rewritten.
+func WriteWithReport(set *EditorConfigSet, rootDir string) (WriteReport, error) {
+	report := WriteReport{Files: []WriteResult{}}
 	if err := validateEditorFiles(set); err != nil {
-		return err
+		return report, err
 	}
 	if rootDir == "" {
 		rootDir = "."
@@ -786,23 +842,82 @@ func Write(set *EditorConfigSet, rootDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultIOTimeout)
 	defer cancel()
 
-	limit := len(set.Files)
-
-	for i := 0; i < limit; i++ {
-		f := set.Files[i]
-		fullPath := filepath.Join(rootDir, f.Path)
-
-		// For .clang-tidy or existing custom .editorconfig, preserve existing file if present
-		if (f.Path == ".clang-tidy" || f.Path == ".editorconfig") && fileExists(fullPath) {
-			continue
-		}
-
-		if err := writeSingleFileWithContext(ctx, fullPath, f.Content); err != nil {
-			return fmt.Errorf("failed writing %s: %w", fullPath, err)
-		}
+	pending, err := prepareEditorWrites(ctx, set, rootDir)
+	if err != nil {
+		return report, err
 	}
+	for _, write := range pending {
+		if write.write {
+			if err := writeSingleFileWithContext(ctx, write.path, write.content); err != nil {
+				return WriteReport{Files: []WriteResult{}}, fmt.Errorf("failed writing %s: %w", write.path, err)
+			}
+		}
+		report.Files = append(report.Files, write.result)
+	}
+	return report, nil
+}
 
-	return nil
+type pendingEditorWrite struct {
+	path    string
+	content string
+	write   bool
+	result  WriteResult
+}
+
+func prepareEditorWrites(ctx context.Context, set *EditorConfigSet, rootDir string) ([]pendingEditorWrite, error) {
+	pending := make([]pendingEditorWrite, 0, len(set.Files))
+	for _, file := range set.Files {
+		write, err := prepareEditorWrite(ctx, file, filepath.Join(rootDir, file.Path))
+		if err != nil {
+			return nil, err
+		}
+		pending = append(pending, write)
+	}
+	return pending, nil
+}
+
+func prepareEditorWrite(ctx context.Context, file GeneratedFile, fullPath string) (pendingEditorWrite, error) {
+	write := pendingEditorWrite{path: fullPath, content: file.Content, write: true,
+		result: WriteResult{Path: file.Path, Editor: file.Editor, Outcome: WriteCreated}}
+	if !fileExists(fullPath) {
+		return write, nil
+	}
+	existing, err := readSingleFileWithContext(ctx, fullPath)
+	if err != nil {
+		if isPreservedEditorFile(file.Path) {
+			// Preserved files are never replaced, so an unreadable one is left as is.
+			write.write, write.result.Outcome = false, WritePreserved
+			return write, nil
+		}
+		return write, fmt.Errorf("read existing %s: %w", file.Path, err)
+	}
+	outcome, content, err := resolveExistingEditorFile(file, existing)
+	if err != nil {
+		return write, err
+	}
+	write.content, write.result.Outcome = content, outcome
+	write.write = outcome == WriteMerged || outcome == WriteRewritten
+	return write, nil
+}
+
+func resolveExistingEditorFile(file GeneratedFile, existing []byte) (WriteOutcome, string, error) {
+	switch {
+	case isJSONEditorFile(file.Path):
+		merged, changed, err := mergeJSONDocument(existing, []byte(file.Content))
+		if err != nil {
+			return "", "", fmt.Errorf("cannot safely merge existing %s: %w", file.Path, err)
+		}
+		if !changed {
+			return WritePresent, "", nil
+		}
+		return WriteMerged, string(merged), nil
+	case string(existing) == file.Content:
+		return WritePresent, "", nil
+	case isPreservedEditorFile(file.Path):
+		return WritePreserved, "", nil
+	default:
+		return WriteRewritten, file.Content, nil
+	}
 }
 
 func validateEditorFiles(set *EditorConfigSet) error {
@@ -824,10 +939,21 @@ func writeSingleFileWithContext(ctx context.Context, path, content string) error
 	return contextopt.WriteSnapshot(ctx, path, []byte(content), 0o644)
 }
 
-// Verify checks that all files in set exist and match content in rootDir.
+// Verify is the compatibility wrapper for VerifyWithReport.
 func Verify(set *EditorConfigSet, rootDir string) error {
+	_, err := VerifyWithReport(set, rootDir)
+	return err
+}
+
+// VerifyWithReport checks that every generated file exists in rootDir. A JSON file
+// must contain every managed value, with unrelated keys and list entries allowed;
+// any other file must match its template exactly. An .editorconfig or .clang-tidy
+// that differs from its template is preserved by Write, so it is reported as
+// PreservedUnverified instead of being counted as verified.
+func VerifyWithReport(set *EditorConfigSet, rootDir string) (VerificationReport, error) {
+	report := VerificationReport{Verified: []string{}, PreservedUnverified: []string{}}
 	if err := validateEditorFiles(set); err != nil {
-		return err
+		return report, err
 	}
 	if rootDir == "" {
 		rootDir = "."
@@ -839,23 +965,42 @@ func Verify(set *EditorConfigSet, rootDir string) error {
 	limit := len(set.Files)
 	for i := 0; i < limit && i < maxFilesToGenerate; i++ {
 		f := set.Files[i]
-		fullPath := filepath.Join(rootDir, f.Path)
-
-		existingBytes, err := readSingleFileWithContext(ctx, fullPath)
+		verified, err := verifyEditorFile(ctx, rootDir, f)
 		if err != nil {
-			return fmt.Errorf("missing expected configuration file %s: %w", f.Path, err)
+			return report, err
 		}
-
-		if f.Path == ".clang-tidy" || f.Path == ".editorconfig" {
-			continue
-		}
-
-		if string(existingBytes) != f.Content {
-			return fmt.Errorf("configuration file %s is out of sync with standards policy", f.Path)
+		if verified {
+			report.Verified = append(report.Verified, f.Path)
+		} else {
+			report.PreservedUnverified = append(report.PreservedUnverified, f.Path)
 		}
 	}
 
-	return nil
+	return report, nil
+}
+
+func verifyEditorFile(ctx context.Context, rootDir string, file GeneratedFile) (bool, error) {
+	existing, err := readSingleFileWithContext(ctx, filepath.Join(rootDir, file.Path))
+	if err != nil {
+		return false, fmt.Errorf("missing expected configuration file %s: %w", file.Path, err)
+	}
+	switch {
+	case isJSONEditorFile(file.Path):
+		contains, err := jsonDocumentContains(existing, []byte(file.Content))
+		if err != nil {
+			return false, fmt.Errorf("cannot verify managed configuration in %s: %w", file.Path, err)
+		}
+		if !contains {
+			return false, fmt.Errorf("configuration file %s is missing managed standards policy", file.Path)
+		}
+		return true, nil
+	case string(existing) == file.Content:
+		return true, nil
+	case isPreservedEditorFile(file.Path):
+		return false, nil
+	default:
+		return false, fmt.Errorf("configuration file %s is out of sync with standards policy", file.Path)
+	}
 }
 
 func readSingleFileWithContext(ctx context.Context, path string) ([]byte, error) {
