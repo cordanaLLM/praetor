@@ -1,4 +1,4 @@
-.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec nosec-justified flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test verify-all clean hooks setup
+.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec secrets nosec-justified flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test verify-all clean hooks setup
 
 BIN_DIR := bin
 PRAETORCTL := $(BIN_DIR)/praetorctl
@@ -50,6 +50,21 @@ lint:
 	go vet ./...
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run
 
+# HISS-12 declares "zero credentials in Git history" and gitleaks as its mechanism, but
+# gitleaks appeared only in the archetypes this engine scaffolds INTO other repositories:
+# the invariant was enforced on adopters and never on praetor itself. It scans history, not
+# just the working tree, which is what the axiom actually claims. Measured on this
+# repository: 234 commits, 23 MB, 2.5s, zero findings -- cheap enough to be unconditional.
+secrets:
+	@if command -v gitleaks >/dev/null 2>&1; then \
+		gitleaks detect --no-banner --redact; \
+	elif [ -x "$$(go env GOPATH)/bin/gitleaks" ]; then \
+		"$$(go env GOPATH)/bin/gitleaks" detect --no-banner --redact; \
+	else \
+		echo "gitleaks not found; installing..."; \
+		go install github.com/zricethezav/gitleaks/v8@latest && "$$(go env GOPATH)/bin/gitleaks" detect --no-banner --redact; \
+	fi
+
 vuln:
 	@if command -v govulncheck >/dev/null 2>&1; then \
 		govulncheck ./...; \
@@ -100,7 +115,7 @@ dedupe:
 topology-audit:
 	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
 
-verify-all: semgrep-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: semgrep-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec secrets flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
 
 .PHONY: vscode-test
