@@ -1,11 +1,13 @@
 package editor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +19,7 @@ import (
 const (
 	maxFilesToGenerate = 50
 	maxLoopBound       = 1000
+	maxJSONNodes       = 4096
 	defaultIOTimeout   = 5 * time.Second
 )
 
@@ -38,10 +41,16 @@ const (
 
 // Options configures editor generation.
 type Options struct {
-	WorkspaceRoot string   `json:"workspace_root"`
-	BinaryDir     string   `json:"binary_dir"`
-	Archetype     string   `json:"archetype"`
-	Editors       []string `json:"editors"`
+	WorkspaceRoot     string                    `json:"workspace_root"`
+	BinaryDir         string                    `json:"binary_dir"`
+	Archetype         string                    `json:"archetype"`
+	Editors           []string                  `json:"editors"`
+	Languages         []string                  `json:"languages,omitempty"`
+	Commands          []Command                 `json:"commands,omitempty"`
+	Extensions        []ExtensionRecommendation `json:"extensions,omitempty"`
+	ExtensionRegistry string                    `json:"extension_registry,omitempty"`
+	LSPPath           string                    `json:"lsp_path,omitempty"`
+	PrivateDirs       []string                  `json:"private_dirs,omitempty"`
 	// IncludeMCP is retained for input compatibility; MCP setup belongs to the
 	// client setup pipeline and is never asserted by workspace settings.
 	IncludeMCP bool `json:"include_mcp"`
@@ -61,12 +70,21 @@ type EditorConfigSet struct {
 	Files   []GeneratedFile `json:"files"`
 }
 
-// DefaultOptions returns standard configuration targeting all supported IDEs.
+// VerificationReport distinguishes files whose managed requirements were
+// checked from preserved non-JSON files that have no format-aware verifier.
+type VerificationReport struct {
+	Verified            []string `json:"verified"`
+	PreservedUnverified []string `json:"preserved_unverified"`
+}
+
+// DefaultOptions targets all supported IDEs without assuming a runtime, local
+// binary, registry publication, or build command. Synthesize derives only
+// observed repository capabilities and literal supported command targets.
 func DefaultOptions() Options {
 	return Options{
 		WorkspaceRoot: ".",
 		BinaryDir:     "bin",
-		Archetype:     "framework",
+		Archetype:     "",
 		Editors: []string{
 			EditorUniversal,
 			EditorVSCode,
@@ -82,60 +100,63 @@ func DefaultOptions() Options {
 			EditorVisualStudio,
 		},
 		IncludeMCP: true,
-		IncludeLSP: true,
+		IncludeLSP: false,
 	}
 }
 
-// Synthesize generates all declared IDE configuration files with hermetic zero-lookup templates.
+// Synthesize observes bounded local workspace capabilities, resolves one plan,
+// and renders that same plan across the selected editor families.
 func Synthesize(opts Options) (*EditorConfigSet, error) {
-	editors := normalizeEditors(opts.Editors)
-	if len(editors) == 0 {
-		return nil, errors.New("no valid editors declared for synthesis")
-	}
+	return SynthesizeContext(context.Background(), opts)
+}
 
-	binDir := opts.BinaryDir
-	if binDir == "" {
-		binDir = "bin"
+// SynthesizeContext observes capabilities within the caller's bounded context.
+func SynthesizeContext(ctx context.Context, opts Options) (*EditorConfigSet, error) {
+	if ctx == nil {
+		return nil, errors.New("editor synthesis requires a context")
 	}
-
-	arch := opts.Archetype
-	if arch == "" {
-		arch = "framework"
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-
+	ctx, cancel := context.WithTimeout(ctx, defaultIOTimeout)
+	defer cancel()
+	plan, err := resolvePlan(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
 	editorMap := make(map[string]bool)
-	limit := len(editors)
+	limit := len(plan.Editors)
 	if limit > maxLoopBound {
 		limit = maxLoopBound
 	}
 
 	for i := 0; i < limit; i++ {
-		e := editors[i]
+		e := plan.Editors[i]
 		editorMap[e] = true
 	}
 
-	files := dispatchEditorFiles(editorMap, opts, binDir, arch)
+	files := dispatchEditorFiles(editorMap, plan)
 
 	return &EditorConfigSet{
-		Editors: editors,
+		Editors: plan.Editors,
 		Files:   files,
 	}, nil
 }
 
-func dispatchEditorFiles(editorMap map[string]bool, opts Options, binDir, arch string) []GeneratedFile {
+func dispatchEditorFiles(editorMap map[string]bool, plan Plan) []GeneratedFile {
 	var files []GeneratedFile
 	if editorMap[EditorUniversal] {
-		files = append(files, generateUniversalEditorConfig()...)
+		files = append(files, generateUniversalEditorConfig(plan)...)
 	}
 	if editorMap[EditorVSCode] || editorMap[EditorCursor] || editorMap[EditorWindsurf] {
-		files = append(files, generateVSCodeFamily(binDir, opts.IncludeLSP, arch)...)
+		files = append(files, generateVSCodeFamily(plan)...)
 	}
 	for _, generator := range []struct {
 		editor   string
-		generate func(string) []GeneratedFile
+		generate func(Plan) []GeneratedFile
 	}{
 		{EditorJetBrains, generateJetBrains},
-		{EditorNeovim, func(arch string) []GeneratedFile { return generateNeovim(binDir, arch) }},
+		{EditorNeovim, generateNeovim},
 		{EditorZed, generateZed},
 		{EditorHelix, generateHelix},
 		{EditorEmacs, generateEmacs},
@@ -144,7 +165,7 @@ func dispatchEditorFiles(editorMap map[string]bool, opts Options, binDir, arch s
 		{EditorVisualStudio, generateVisualStudio},
 	} {
 		if editorMap[generator.editor] {
-			files = append(files, generator.generate(arch)...)
+			files = append(files, generator.generate(plan)...)
 		}
 	}
 	return files
@@ -189,10 +210,10 @@ func normalizeEditors(input []string) []string {
 	return normalized
 }
 
-func generateVSCodeFamily(binDir string, includeLSP bool, arch string) []GeneratedFile {
-	settings := buildVSCodeSettings(binDir, includeLSP, arch)
-	extensions := buildVSCodeExtensions(arch)
-	tasks := buildVSCodeTasks()
+func generateVSCodeFamily(plan Plan) []GeneratedFile {
+	settings := buildVSCodeSettings(plan)
+	extensions := buildVSCodeExtensions(plan)
+	tasks := buildVSCodeTasks(plan)
 
 	return []GeneratedFile{
 		{
@@ -213,37 +234,21 @@ func generateVSCodeFamily(binDir string, includeLSP bool, arch string) []Generat
 	}
 }
 
-func buildVSCodeSettings(binDir string, includeLSP bool, arch string) string {
-	data := map[string]any{
-		"standards.lsp.enabled":         includeLSP,
-		"standards.lsp.path":            fmt.Sprintf("${workspaceFolder}/%s/standards-lsp", binDir),
-		"standards.lsp.trace.server":    "messages",
-		"standards.sentinel.headroomMB": 1024,
+func buildVSCodeSettings(plan Plan) string {
+	data := map[string]any{"files.insertFinalNewline": true}
+	search := make(map[string]bool)
+	watch := make(map[string]bool)
+	for _, dir := range plan.PrivateDirs {
+		search[dir+"/"] = true
+		watch["**/"+dir+"/**"] = true
 	}
-
-	if arch == "native-gpu-systems" {
-		data["clangd.path"] = "clangd"
-		data["clangd.arguments"] = []string{
-			"--compile-commands-dir=core/build",
-			"--header-insertion=never",
-		}
-		data["[c]"] = map[string]any{
-			"editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
-			"editor.formatOnSave":     true,
-		}
-		data["[cpp]"] = map[string]any{
-			"editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
-			"editor.formatOnSave":     true,
-		}
-	} else {
-		data["go.useLanguageServer"] = true
-		data["[go]"] = map[string]any{
-			"editor.defaultFormatter": "golang.go",
-			"editor.formatOnSave":     true,
-			"editor.codeActionsOnSave": map[string]any{
-				"source.organizeImports": "always",
-			},
-		}
+	if len(search) > 0 {
+		data["search.exclude"] = search
+		data["files.watcherExclude"] = watch
+	}
+	if plan.LSPPath != "" {
+		data["standards.lsp.enabled"] = true
+		data["standards.lsp.path"] = "${workspaceFolder}/" + plan.LSPPath
 	}
 
 	bytes, err := json.MarshalIndent(data, "", "  ")
@@ -253,19 +258,13 @@ func buildVSCodeSettings(binDir string, includeLSP bool, arch string) string {
 	return string(bytes) + "\n"
 }
 
-func buildVSCodeExtensions(arch string) string {
-	recs := []string{
-		"cordanaLLM.standards-vscode",
-		"github.copilot",
-		"eamodio.gitlens",
-	}
-	if arch == "native-gpu-systems" {
-		recs = append(recs, "llvm-vs-code-extensions.vscode-clangd", "mesonbuild.mesonbuild")
-	} else {
-		recs = append(recs, "golang.go")
+func buildVSCodeExtensions(plan Plan) string {
+	recommendations := plan.Extensions
+	if recommendations == nil {
+		recommendations = []string{}
 	}
 	data := map[string]any{
-		"recommendations": recs,
+		"recommendations": recommendations,
 	}
 	bytes, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
@@ -274,43 +273,24 @@ func buildVSCodeExtensions(arch string) string {
 	return string(bytes) + "\n"
 }
 
-func buildVSCodeTasks() string {
+func buildVSCodeTasks(plan Plan) string {
+	tasks := make([]map[string]any, 0, len(plan.Commands))
+	for _, command := range plan.Commands {
+		task := map[string]any{
+			"label":          "Praetor: " + command.Label,
+			"type":           "process",
+			"command":        command.Program,
+			"args":           command.Args,
+			"problemMatcher": []string{},
+		}
+		if command.Group != "" {
+			task["group"] = command.Group
+		}
+		tasks = append(tasks, task)
+	}
 	data := map[string]any{
 		"version": "2.0.0",
-		"tasks": []map[string]any{
-			{
-				"label":   "Standards: Verify All",
-				"type":    "shell",
-				"command": "make verify-all",
-				"group": map[string]any{
-					"kind":      "test",
-					"isDefault": true,
-				},
-				"problemMatcher": []string{"$go"},
-			},
-			{
-				"label":   "Standards: Build Binaries",
-				"type":    "shell",
-				"command": "make build",
-				"group": map[string]any{
-					"kind":      "build",
-					"isDefault": true,
-				},
-				"problemMatcher": []string{"$go"},
-			},
-			{
-				"label":          "Standards: Compile Context",
-				"type":           "shell",
-				"command":        "standardsctl compile-context",
-				"problemMatcher": []string{},
-			},
-			{
-				"label":          "Standards: Audit Invariants",
-				"type":           "shell",
-				"command":        "standardsctl audit",
-				"problemMatcher": []string{},
-			},
-		},
+		"tasks":   tasks,
 	}
 	bytes, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
@@ -319,64 +299,22 @@ func buildVSCodeTasks() string {
 	return string(bytes) + "\n"
 }
 
-func jetBrainsExtraTools(arch string) string {
-	if arch == "native-gpu-systems" {
-		return `
-    <inspection_tool class="ClangTidyInspection" enabled="true" level="ERROR" enabled_by_default="true" />
-    <inspection_tool class="OCUnusedGlobalDeclarationInspection" enabled="true" level="WARNING" enabled_by_default="true" />
-    <inspection_tool class="OCUnusedMacroInspection" enabled="true" level="WARNING" enabled_by_default="true" />
-    <inspection_tool class="OCDFAInspection" enabled="true" level="ERROR" enabled_by_default="true" />
-    <inspection_tool class="PyUnresolvedReferencesInspection" enabled="true" level="ERROR" enabled_by_default="true" />
-    <inspection_tool class="PyPep8Inspection" enabled="true" level="WARNING" enabled_by_default="true" />
-    <inspection_tool class="PyBroadExceptionInspection" enabled="true" level="ERROR" enabled_by_default="true" />`
-	}
-	if arch == "app-service" {
-		return `
-    <inspection_tool class="PyUnresolvedReferencesInspection" enabled="true" level="ERROR" enabled_by_default="true" />
-    <inspection_tool class="PyPep8Inspection" enabled="true" level="WARNING" enabled_by_default="true" />
-    <inspection_tool class="PyBroadExceptionInspection" enabled="true" level="ERROR" enabled_by_default="true" />`
-	}
-	return ""
-}
-
-func generateJetBrains(arch string) []GeneratedFile {
-	extraTools := jetBrainsExtraTools(arch)
-	inspectionProfile := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+func generateJetBrains(_ Plan) []GeneratedFile {
+	inspectionProfile := `<?xml version="1.0" encoding="UTF-8"?>
 <component name="InspectionProjectProfileManager">
   <profile version="1.0">
-    <option name="myName" value="standards" />
-    <inspection_tool class="GoCyclomaticComplexity" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="m_limit" value="10" />
-    </inspection_tool>
-    <inspection_tool class="GoUnhandledErrorResult" enabled="true" level="ERROR" enabled_by_default="true" />
-    <inspection_tool class="GoInfiniteFor" enabled="true" level="ERROR" enabled_by_default="true" />
-    <inspection_tool class="HISS01DAGControlFlow" enabled="true" level="ERROR" enabled_by_default="true" />
-    <inspection_tool class="HISS02BoundedLoops" enabled="true" level="ERROR" enabled_by_default="true" />
-    <inspection_tool class="HISS04ComplexityLOC" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="maxLoc" value="75" />
-      <option name="maxStatements" value="50" />
-    </inspection_tool>
-    <inspection_tool class="HISS07ZeroUnwrap" enabled="true" level="ERROR" enabled_by_default="true" />%s
+    <option name="myName" value="praetor" />
   </profile>
 </component>
-`, extraTools)
+`
 
 	workspaceHooks := `<?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="InspectionProjectProfileManager">
     <settings>
-      <option name="PROJECT_PROFILE" value="standards" />
+      <option name="PROJECT_PROFILE" value="praetor" />
       <version value="1.0" />
     </settings>
-  </component>
-  <component name="ExternalTools">
-    <tool name="Standards Audit" showInMainMenu="true" showInEditor="true">
-      <exec>
-        <option name="COMMAND" value="make" />
-        <option name="PARAMETERS" value="audit" />
-        <option name="WORKING_DIRECTORY" value="$ProjectFileDir$" />
-      </exec>
-    </tool>
   </component>
 </project>
 `
@@ -395,20 +333,19 @@ func generateJetBrains(arch string) []GeneratedFile {
 	}
 }
 
-func neovimLuaConfig(binDir, arch string) string {
-	ft := `"go"`
-	if arch == "native-gpu-systems" {
-		ft = `"c", "cpp", "cuda", "go", "python"`
+func neovimLuaConfig(plan Plan) string {
+	if plan.LSPPath == "" {
+		return "-- Praetor: no verified Neovim language-server capability selected.\n"
 	}
-	return fmt.Sprintf(`-- cordanaLLM/praetor Neovim LSP and Tool Configuration
+	return fmt.Sprintf(`-- cordanaLLM/praetor Neovim LSP configuration
 local lspconfig = require("lspconfig")
 local configs = require("lspconfig.configs")
 
 if not configs.standards_lsp then
   configs.standards_lsp = {
     default_config = {
-      cmd = { "./%s/standards-lsp" },
-      filetypes = { %s },
+      cmd = { "./%s" },
+      filetypes = { "go" },
       root_dir = function(fname)
         return lspconfig.util.root_pattern(".standards.yaml", "meson.build", "go.mod", ".git")(fname)
       end,
@@ -424,23 +361,11 @@ if not configs.standards_lsp then
 end
 
 lspconfig.standards_lsp.setup({})
-
-vim.api.nvim_create_user_command("StandardsAudit", function()
-  vim.cmd("!standardsctl audit")
-end, { desc = "Audit repository against declared HISS invariants" })
-
-vim.api.nvim_create_user_command("StandardsCompileContext", function()
-  vim.cmd("!standardsctl compile-context")
-end, { desc = "Compile AGENTS.md cross-agent contexts" })
-
-vim.api.nvim_create_user_command("StandardsVerifyAll", function()
-  vim.cmd("!make verify-all")
-end, { desc = "Run full standards verification pipeline" })
-`, binDir, ft)
+`, plan.LSPPath)
 }
 
-func generateNeovim(binDir, arch string) []GeneratedFile {
-	luaConfig := neovimLuaConfig(binDir, arch)
+func generateNeovim(plan Plan) []GeneratedFile {
+	luaConfig := neovimLuaConfig(plan)
 	nvimRootLua := `-- Load project-level standards configuration
 local status_ok, res = pcall(require, "standards")
 if not status_ok then
@@ -466,8 +391,9 @@ end
 	}
 }
 
-func generateUniversalEditorConfig() []GeneratedFile {
-	content := `# http://editorconfig.org
+func generateUniversalEditorConfig(plan Plan) []GeneratedFile {
+	var content strings.Builder
+	content.WriteString(`# http://editorconfig.org
 root = true
 
 [*]
@@ -478,127 +404,98 @@ charset = utf-8
 trim_trailing_whitespace = true
 insert_final_newline = true
 max_line_length = 120
-
-[*.{c,cpp,cc,cxx,h,hpp,cu,hip}]
-indent_style = space
-indent_size = 4
-
-[*.py]
-indent_style = space
-indent_size = 4
-
-[*.go]
-indent_style = tab
-indent_size = 4
-
-[*.rs]
-indent_style = space
-indent_size = 4
-
-[*.{json,yaml,yml}]
-indent_style = space
-indent_size = 2
-
-[*.md]
-indent_style = space
-indent_size = 2
-trim_trailing_whitespace = false
-
-[Makefile]
-indent_style = tab
-`
+`)
+	if hasLanguage(plan, "yaml") {
+		content.WriteString("\n[*.{yaml,yml}]\nindent_style = space\nindent_size = 2\n")
+	}
+	if hasLanguage(plan, "markdown") {
+		content.WriteString("\n[*.md]\nindent_style = space\nindent_size = 2\ntrim_trailing_whitespace = false\n")
+	}
+	if hasLanguage(plan, "make") {
+		content.WriteString("\n[Makefile]\nindent_style = tab\n")
+	}
+	if hasLanguage(plan, "c") || hasLanguage(plan, "cpp") {
+		content.WriteString("\n[*.{c,cpp,cc,cxx,h,hpp}]\nindent_style = space\nindent_size = 4\n")
+	}
+	if hasLanguage(plan, "python") {
+		content.WriteString("\n[*.py]\nindent_style = space\nindent_size = 4\n")
+	}
+	if hasLanguage(plan, "go") {
+		content.WriteString("\n[*.go]\nindent_style = tab\nindent_size = 4\n")
+	}
+	if hasLanguage(plan, "rust") {
+		content.WriteString("\n[*.rs]\nindent_style = space\nindent_size = 4\n")
+	}
 	return []GeneratedFile{
 		{
 			Path:    ".editorconfig",
-			Content: content,
+			Content: content.String(),
 			Editor:  EditorUniversal,
 		},
 	}
 }
 
-func zedSettings() string {
-	return `{
-  "format_on_save": "on",
-  "buffer_font_size": 14,
-  "tab_size": 4,
-  "hard_tabs": false,
-  "preferred_line_length": 120,
-  "languages": {
-    "C": {
-      "tab_size": 4,
-      "preferred_line_length": 100
-    },
-    "C++": {
-      "tab_size": 4,
-      "preferred_line_length": 100
-    },
-    "Python": {
-      "tab_size": 4
-    },
-    "Go": {
-      "hard_tabs": true,
-      "tab_size": 4
-    }
-  },
-  "lsp": {
-    "clangd": {
-      "binary": {
-        "path_lookup": true
-      }
-    }
-  }
-}
-`
+func zedSettings(plan Plan) string {
+	languages := make(map[string]any)
+	for _, language := range plan.Languages {
+		name := map[string]string{"c": "C", "cpp": "C++", "go": "Go", "python": "Python", "rust": "Rust", "svelte": "Svelte", "typescript": "TypeScript"}[language]
+		if name != "" {
+			languages[name] = map[string]any{"tab_size": 4}
+		}
+	}
+	data := map[string]any{
+		"format_on_save":        "off",
+		"preferred_line_length": 120,
+		"languages":             languages,
+	}
+	bytes, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return "{}\n"
+	}
+	return string(bytes) + "\n"
 }
 
-func zedTasks() string {
-	return `[
-  {
-    "label": "Standards: Verify All",
-    "command": "make",
-    "args": ["verify-all"],
-    "use_new_terminal": false,
-    "allow_concurrent_runs": false
-  },
-  {
-    "label": "Standards: Audit",
-    "command": "standardsctl",
-    "args": ["audit"],
-    "use_new_terminal": false
-  },
-  {
-    "label": "Standards: Compile Context",
-    "command": "standardsctl",
-    "args": ["compile-context", "--verify"],
-    "use_new_terminal": false
-  }
-]
-`
+func zedTasks(plan Plan) string {
+	tasks := make([]map[string]any, 0, len(plan.Commands))
+	for _, command := range plan.Commands {
+		tasks = append(tasks, map[string]any{
+			"label":                 "Praetor: " + command.Label,
+			"command":               command.Program,
+			"args":                  command.Args,
+			"use_new_terminal":      false,
+			"allow_concurrent_runs": false,
+		})
+	}
+	bytes, err := json.MarshalIndent(tasks, "", "  ")
+	if err != nil {
+		return "[]\n"
+	}
+	return string(bytes) + "\n"
 }
 
-func generateZed(arch string) []GeneratedFile {
+func generateZed(plan Plan) []GeneratedFile {
 	return []GeneratedFile{
 		{
 			Path:    filepath.Join(".zed", "settings.json"),
-			Content: zedSettings(),
+			Content: zedSettings(plan),
 			Editor:  EditorZed,
 		},
 		{
 			Path:    filepath.Join(".zed", "tasks.json"),
-			Content: zedTasks(),
+			Content: zedTasks(plan),
 			Editor:  EditorZed,
 		},
 	}
 }
 
-func generateHelix(arch string) []GeneratedFile {
+func generateHelix(plan Plan) []GeneratedFile {
 	config := `theme = "default"
 
 [editor]
 line-number = "relative"
 cursorline = true
 color-modes = true
-auto-format = true
+auto-format = false
 
 [editor.whitespace.render]
 space = "all"
@@ -609,27 +506,14 @@ newline = "none"
 render = true
 character = "│"
 `
-	languages := `# Language configurations for Helix
-[[language]]
-name = "c"
-auto-format = true
-formatter = { command = "clang-format" }
-
-[[language]]
-name = "cpp"
-auto-format = true
-formatter = { command = "clang-format" }
-
-[[language]]
-name = "python"
-auto-format = true
-formatter = { command = "ruff", args = ["format", "-"] }
-
-[[language]]
-name = "go"
-auto-format = true
-formatter = { command = "gofmt" }
-`
+	var languages strings.Builder
+	languages.WriteString("# Praetor observed languages; formatter/LSP selection requires an explicit capability.\n")
+	for _, language := range plan.Languages {
+		if language == "markdown" || language == "make" || language == "shell" || language == "yaml" {
+			continue
+		}
+		fmt.Fprintf(&languages, "\n[[language]]\nname = %q\nauto-format = false\n", language)
+	}
 	return []GeneratedFile{
 		{
 			Path:    filepath.Join(".helix", "config.toml"),
@@ -638,27 +522,32 @@ formatter = { command = "gofmt" }
 		},
 		{
 			Path:    filepath.Join(".helix", "languages.toml"),
-			Content: languages,
+			Content: languages.String(),
 			Editor:  EditorHelix,
 		},
 	}
 }
 
-func generateEmacs(arch string) []GeneratedFile {
-	content := `;;; Directory Local Variables
+func generateEmacs(plan Plan) []GeneratedFile {
+	var modes strings.Builder
+	if hasLanguage(plan, "c") {
+		modes.WriteString("\n (c-mode . ((c-basic-offset . 4)))")
+	}
+	if hasLanguage(plan, "cpp") {
+		modes.WriteString("\n (c++-mode . ((c-basic-offset . 4)))")
+	}
+	if hasLanguage(plan, "python") {
+		modes.WriteString("\n (python-mode . ((python-indent-offset . 4)))")
+	}
+	if hasLanguage(plan, "go") {
+		modes.WriteString("\n (go-mode . ((indent-tabs-mode . t) (tab-width . 4)))")
+	}
+	content := fmt.Sprintf(`;;; Directory Local Variables
 ;;; For more information see (info "(emacs) Directory Variables")
 
 ((nil . ((indent-tabs-mode . nil)
-         (fill-column . 100)
-         (compile-command . "make verify-all")))
- (c-mode . ((c-basic-offset . 4)
-            (c-file-style . "linux")))
- (c++-mode . ((c-basic-offset . 4)
-              (c-file-style . "linux")))
- (python-mode . ((python-indent-offset . 4)))
- (go-mode . ((indent-tabs-mode . t)
-             (tab-width . 4))))
-`
+         (fill-column . 100)))%s)
+`, modes.String())
 	return []GeneratedFile{
 		{
 			Path:    ".dir-locals.el",
@@ -668,30 +557,22 @@ func generateEmacs(arch string) []GeneratedFile {
 	}
 }
 
-func generateFleet(arch string) []GeneratedFile {
+func generateFleet(plan Plan) []GeneratedFile {
 	settings := `{
   "editor.tabSize": 4,
   "editor.insertSpaces": true,
-  "editor.formatOnSave": true
+  "editor.formatOnSave": false
 }
 `
-	run := `{
-  "configurations": [
-    {
-      "type": "command",
-      "name": "Standards: Verify All",
-      "program": "make",
-      "args": ["verify-all"]
-    },
-    {
-      "type": "command",
-      "name": "Standards: Audit",
-      "program": "standardsctl",
-      "args": ["audit"]
-    }
-  ]
-}
-`
+	configurations := make([]map[string]any, 0, len(plan.Commands))
+	for _, command := range plan.Commands {
+		configurations = append(configurations, map[string]any{"type": "command", "name": "Praetor: " + command.Label, "program": command.Program, "args": command.Args})
+	}
+	runBytes, err := json.MarshalIndent(map[string]any{"configurations": configurations}, "", "  ")
+	if err != nil {
+		runBytes = []byte("{}")
+	}
+	run := string(runBytes) + "\n"
 	return []GeneratedFile{
 		{
 			Path:    filepath.Join(".fleet", "settings.json"),
@@ -706,33 +587,22 @@ func generateFleet(arch string) []GeneratedFile {
 	}
 }
 
-func generateSublime(arch string) []GeneratedFile {
-	content := `{
-  "folders": [
-    {
-      "path": "."
-    }
-  ],
-  "build_systems": [
-    {
-      "name": "Standards: Verify All",
-      "shell_cmd": "make verify-all",
-      "working_dir": "$project_path"
-    },
-    {
-      "name": "Standards: Audit",
-      "shell_cmd": "standardsctl audit",
-      "working_dir": "$project_path"
-    }
-  ],
-  "settings": {
-    "tab_size": 4,
-    "translate_tabs_to_spaces": true,
-    "trim_trailing_white_space_on_save": true,
-    "ensure_newline_at_eof_on_save": true
-  }
-}
-`
+func generateSublime(plan Plan) []GeneratedFile {
+	builds := make([]map[string]any, 0, len(plan.Commands))
+	for _, command := range plan.Commands {
+		builds = append(builds, map[string]any{"name": "Praetor: " + command.Label, "cmd": append([]string{command.Program}, command.Args...), "working_dir": "$project_path"})
+	}
+	data := map[string]any{
+		"folders":       []map[string]string{{"path": "."}},
+		"build_systems": builds,
+		"settings": map[string]any{"tab_size": 4, "translate_tabs_to_spaces": true,
+			"trim_trailing_white_space_on_save": true, "ensure_newline_at_eof_on_save": true},
+	}
+	contentBytes, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		contentBytes = []byte("{}")
+	}
+	content := string(contentBytes) + "\n"
 	return []GeneratedFile{
 		{
 			Path:    "standards.sublime-project",
@@ -742,7 +612,10 @@ func generateSublime(arch string) []GeneratedFile {
 	}
 }
 
-func generateVisualStudio(arch string) []GeneratedFile {
+func generateVisualStudio(plan Plan) []GeneratedFile {
+	if !hasLanguage(plan, "c") && !hasLanguage(plan, "cpp") {
+		return nil
+	}
 	tidy := `# cordanaLLM/praetor High-Integrity Systems Standards (HISS-16) Clang-Tidy Configuration
 ---
 Checks: >
@@ -776,6 +649,17 @@ func fileExists(path string) bool {
 
 // Write writes all generated files to the target workspace root directory.
 func Write(set *EditorConfigSet, rootDir string) error {
+	return WriteContext(context.Background(), set, rootDir)
+}
+
+// WriteContext merges and writes editor files within the caller's context.
+func WriteContext(ctx context.Context, set *EditorConfigSet, rootDir string) error {
+	if ctx == nil {
+		return errors.New("editor write requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := validateEditorFiles(set); err != nil {
 		return err
 	}
@@ -783,26 +667,62 @@ func Write(set *EditorConfigSet, rootDir string) error {
 		rootDir = "."
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultIOTimeout)
+	ctx, cancel := context.WithTimeout(ctx, defaultIOTimeout)
 	defer cancel()
 
-	limit := len(set.Files)
-
-	for i := 0; i < limit; i++ {
-		f := set.Files[i]
-		fullPath := filepath.Join(rootDir, f.Path)
-
-		// For .clang-tidy or existing custom .editorconfig, preserve existing file if present
-		if (f.Path == ".clang-tidy" || f.Path == ".editorconfig") && fileExists(fullPath) {
-			continue
-		}
-
-		if err := writeSingleFileWithContext(ctx, fullPath, f.Content); err != nil {
-			return fmt.Errorf("failed writing %s: %w", fullPath, err)
+	writes, err := prepareEditorWrites(ctx, set, rootDir)
+	if err != nil {
+		return err
+	}
+	for _, write := range writes {
+		if err := writeSingleFileWithContext(ctx, write.path, write.content); err != nil {
+			return fmt.Errorf("failed writing %s: %w", write.path, err)
 		}
 	}
-
 	return nil
+}
+
+type pendingEditorWrite struct {
+	path    string
+	content string
+}
+
+// prepareEditorWrites resolves every merge before the first mutation so an
+// unsupported human-file conflict cannot leave a partially updated workspace.
+func prepareEditorWrites(ctx context.Context, set *EditorConfigSet, rootDir string) ([]pendingEditorWrite, error) {
+	writes := make([]pendingEditorWrite, 0, len(set.Files))
+	for _, file := range set.Files {
+		fullPath := filepath.Join(rootDir, file.Path)
+		write, err := prepareEditorWrite(ctx, file, fullPath)
+		if err != nil {
+			return nil, err
+		}
+		if write != nil {
+			writes = append(writes, *write)
+		}
+	}
+	return writes, nil
+}
+
+func prepareEditorWrite(ctx context.Context, file GeneratedFile, fullPath string) (*pendingEditorWrite, error) {
+	if !fileExists(fullPath) {
+		return &pendingEditorWrite{path: fullPath, content: file.Content}, nil
+	}
+	existing, err := readSingleFileWithContext(ctx, fullPath)
+	if err != nil {
+		return nil, fmt.Errorf("read existing %s: %w", file.Path, err)
+	}
+	if !isJSONEditorFile(file.Path) {
+		return nil, legacyTextConflict(file.Path, existing, []byte(file.Content))
+	}
+	merged, changed, err := mergeJSONDocument(file.Path, existing, []byte(file.Content))
+	if err != nil {
+		return nil, fmt.Errorf("cannot safely merge existing %s: %w", file.Path, err)
+	}
+	if !changed {
+		return nil, nil
+	}
+	return &pendingEditorWrite{path: fullPath, content: string(merged)}, nil
 }
 
 func validateEditorFiles(set *EditorConfigSet) error {
@@ -824,10 +744,18 @@ func writeSingleFileWithContext(ctx context.Context, path, content string) error
 	return contextopt.WriteSnapshot(ctx, path, []byte(content), 0o644)
 }
 
-// Verify checks that all files in set exist and match content in rootDir.
+// Verify is the compatibility wrapper for VerifyWithReport.
 func Verify(set *EditorConfigSet, rootDir string) error {
+	_, err := VerifyWithReport(set, rootDir)
+	return err
+}
+
+// VerifyWithReport checks managed JSON requirements and exact generated files.
+// Existing non-JSON files are preserved and reported as semantically unverified.
+func VerifyWithReport(set *EditorConfigSet, rootDir string) (VerificationReport, error) {
+	report := VerificationReport{Verified: []string{}, PreservedUnverified: []string{}}
 	if err := validateEditorFiles(set); err != nil {
-		return err
+		return report, err
 	}
 	if rootDir == "" {
 		rootDir = "."
@@ -839,25 +767,476 @@ func Verify(set *EditorConfigSet, rootDir string) error {
 	limit := len(set.Files)
 	for i := 0; i < limit && i < maxFilesToGenerate; i++ {
 		f := set.Files[i]
-		fullPath := filepath.Join(rootDir, f.Path)
-
-		existingBytes, err := readSingleFileWithContext(ctx, fullPath)
+		verified, err := verifyEditorFile(ctx, rootDir, f)
 		if err != nil {
-			return fmt.Errorf("missing expected configuration file %s: %w", f.Path, err)
+			return report, err
 		}
-
-		if f.Path == ".clang-tidy" || f.Path == ".editorconfig" {
-			continue
-		}
-
-		if string(existingBytes) != f.Content {
-			return fmt.Errorf("configuration file %s is out of sync with standards policy", f.Path)
+		if verified {
+			report.Verified = append(report.Verified, f.Path)
+		} else {
+			report.PreservedUnverified = append(report.PreservedUnverified, f.Path)
 		}
 	}
 
-	return nil
+	return report, nil
+}
+
+func verifyEditorFile(ctx context.Context, rootDir string, file GeneratedFile) (bool, error) {
+	existing, err := readSingleFileWithContext(ctx, filepath.Join(rootDir, file.Path))
+	if err != nil {
+		return false, fmt.Errorf("missing expected configuration file %s: %w", file.Path, err)
+	}
+	desired := []byte(file.Content)
+	if !isJSONEditorFile(file.Path) {
+		if err := legacyTextConflict(file.Path, existing, desired); err != nil {
+			return false, err
+		}
+		return bytes.Equal(existing, desired), nil
+	}
+	contains, err := jsonDocumentContainsForPath(file.Path, existing, desired)
+	if err != nil {
+		return false, fmt.Errorf("cannot verify managed configuration in %s: %w", file.Path, err)
+	}
+	if !contains {
+		return false, fmt.Errorf("configuration file %s is missing managed standards policy", file.Path)
+	}
+	return true, nil
 }
 
 func readSingleFileWithContext(ctx context.Context, path string) ([]byte, error) {
 	return contextopt.ReadSnapshot(ctx, path)
+}
+
+func isJSONEditorFile(path string) bool {
+	return filepath.Ext(path) == ".json" || strings.HasSuffix(path, ".sublime-project")
+}
+
+func mergeJSONDocument(path string, existing, desired []byte) ([]byte, bool, error) {
+	have, err := decodeEditorJSON(existing)
+	if err != nil {
+		return nil, false, fmt.Errorf("existing JSON is invalid: %w", err)
+	}
+	want, err := decodeEditorJSON(desired)
+	if err != nil {
+		return nil, false, fmt.Errorf("generated JSON is invalid: %w", err)
+	}
+	if err := legacyJSONConflict(path, have, want); err != nil {
+		return nil, false, err
+	}
+	merged, changed, err := mergeJSONValue(have, want)
+	if err != nil {
+		return nil, false, err
+	}
+	if !changed {
+		return existing, false, nil
+	}
+	data, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		return nil, false, err
+	}
+	return append(data, '\n'), true, nil
+}
+
+type jsonMergeFrame struct {
+	have   any
+	want   any
+	parent map[string]any
+	key    string
+}
+
+func sortedJSONKeys(value map[string]any) []string {
+	keys := make([]string, 0, len(value))
+	for key := range value {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func mergeJSONValue(have, want any) (any, bool, error) {
+	root := have
+	changed := false
+	queue := []jsonMergeFrame{{have: have, want: want}}
+	for index := 0; index < len(queue) && index < maxJSONNodes; index++ {
+		frameChanged, err := mergeJSONFrameValue(&root, queue[index], &queue)
+		if err != nil {
+			return nil, false, err
+		}
+		changed = changed || frameChanged
+	}
+	return root, changed, nil
+}
+
+func mergeJSONFrameValue(root *any, frame jsonMergeFrame, queue *[]jsonMergeFrame) (bool, error) {
+	switch desired := frame.want.(type) {
+	case map[string]any:
+		return mergeJSONObject(frame, desired, queue)
+	case []any:
+		return mergeJSONArray(root, frame, desired)
+	default:
+		if !reflect.DeepEqual(frame.have, frame.want) {
+			return false, errors.New("managed scalar conflicts with existing value")
+		}
+		return false, nil
+	}
+}
+
+func mergeJSONObject(frame jsonMergeFrame, desired map[string]any, queue *[]jsonMergeFrame) (bool, error) {
+	existing, ok := frame.have.(map[string]any)
+	if !ok {
+		return false, errors.New("managed object conflicts with existing value")
+	}
+	changed := false
+	for _, key := range sortedJSONKeys(desired) {
+		desiredValue := desired[key]
+		existingValue, found := existing[key]
+		if !found {
+			existing[key] = desiredValue
+			changed = true
+			continue
+		}
+		*queue = append(*queue, jsonMergeFrame{have: existingValue, want: desiredValue, parent: existing, key: key})
+	}
+	return changed, nil
+}
+
+func mergeJSONArray(root *any, frame jsonMergeFrame, desired []any) (bool, error) {
+	existing, ok := frame.have.([]any)
+	if !ok {
+		return false, errors.New("managed array conflicts with existing value")
+	}
+	changed := false
+	for _, desiredItem := range desired {
+		if !jsonArrayContains(existing, desiredItem) {
+			existing = append(existing, desiredItem)
+			changed = true
+		}
+	}
+	if frame.parent == nil {
+		*root = existing
+	} else {
+		frame.parent[frame.key] = existing
+	}
+	return changed, nil
+}
+
+// JSONDocumentContains reports whether existing contains every managed value in
+// desired while allowing unrelated human keys and list items.
+func JSONDocumentContains(existing, desired []byte) (bool, error) {
+	have, err := decodeEditorJSON(existing)
+	if err != nil {
+		return false, err
+	}
+	want, err := decodeEditorJSON(desired)
+	if err != nil {
+		return false, err
+	}
+	return jsonContains(have, want), nil
+}
+
+func jsonDocumentContainsForPath(path string, existing, desired []byte) (bool, error) {
+	have, err := decodeEditorJSON(existing)
+	if err != nil {
+		return false, err
+	}
+	want, err := decodeEditorJSON(desired)
+	if err != nil {
+		return false, err
+	}
+	if err := legacyJSONConflict(path, have, want); err != nil {
+		return false, err
+	}
+	return jsonContains(have, want), nil
+}
+
+func jsonContains(have, want any) bool {
+	queue := []jsonMergeFrame{{have: have, want: want}}
+	for index := 0; index < len(queue) && index < maxJSONNodes; index++ {
+		if !jsonFrameContains(queue[index], &queue) {
+			return false
+		}
+	}
+	return len(queue) <= maxJSONNodes
+}
+
+func jsonFrameContains(frame jsonMergeFrame, queue *[]jsonMergeFrame) bool {
+	switch desired := frame.want.(type) {
+	case map[string]any:
+		return jsonObjectContains(frame.have, desired, queue)
+	case []any:
+		return jsonArrayContainsAll(frame.have, desired)
+	default:
+		return reflect.DeepEqual(frame.have, frame.want)
+	}
+}
+
+func jsonObjectContains(have any, desired map[string]any, queue *[]jsonMergeFrame) bool {
+	existing, ok := have.(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, key := range sortedJSONKeys(desired) {
+		existingValue, found := existing[key]
+		if !found {
+			return false
+		}
+		*queue = append(*queue, jsonMergeFrame{have: existingValue, want: desired[key]})
+	}
+	return true
+}
+
+func jsonArrayContainsAll(have any, desired []any) bool {
+	existing, ok := have.([]any)
+	if !ok {
+		return false
+	}
+	for _, desiredItem := range desired {
+		if !jsonArrayContains(existing, desiredItem) {
+			return false
+		}
+	}
+	return true
+}
+
+func jsonArrayContains(existing []any, desired any) bool {
+	desiredID := jsonItemIdentity(desired)
+	for i := 0; i < len(existing) && i < maxJSONNodes; i++ {
+		item := existing[i]
+		if reflect.DeepEqual(item, desired) {
+			return true
+		}
+		if desiredID != "" && desiredID == jsonItemIdentity(item) {
+			return true
+		}
+	}
+	return false
+}
+
+func validateJSONNodeBound(root any) error {
+	queue := []any{root}
+	for index := 0; index < len(queue) && index < maxJSONNodes; index++ {
+		switch value := queue[index].(type) {
+		case map[string]any:
+			for _, child := range value {
+				queue = append(queue, child)
+				if len(queue) > maxJSONNodes {
+					return errors.New("editor JSON exceeds node bound")
+				}
+			}
+		case []any:
+			if len(value) > maxJSONNodes-len(queue) {
+				return errors.New("editor JSON exceeds node bound")
+			}
+			queue = append(queue, value...)
+		}
+	}
+	if len(queue) > maxJSONNodes {
+		return errors.New("editor JSON exceeds node bound")
+	}
+	return nil
+}
+
+func jsonItemIdentity(value any) string {
+	item, ok := value.(map[string]any)
+	if !ok {
+		return ""
+	}
+	program := stringJSONValue(item["program"])
+	if program == "" {
+		program = stringJSONValue(item["command"])
+	}
+	args := arrayJSONValue(item["args"])
+	parts := []string{program}
+	for _, arg := range args {
+		if text, ok := arg.(string); ok {
+			parts = append(parts, text)
+		}
+	}
+	if len(args) == 0 {
+		parts = strings.Fields(program)
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func stringJSONValue(value any) string {
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return text
+}
+
+func arrayJSONValue(value any) []any {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	return items
+}
+
+func objectJSONValue(value any) map[string]any {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return object
+}
+
+func legacyTextConflict(path string, existing, desired []byte) error {
+	markers := map[string][]string{
+		".editorconfig": {"[*.go]"},
+		filepath.Join(".helix", "languages.toml"): {`name = "go"`, "formatter = { command ="},
+		".dir-locals.el": {"(go-mode"},
+		filepath.Join(".idea", "inspectionProfiles", "standards.xml"): {"HISS04ComplexityLOC", "GoCyclomaticComplexity"},
+		filepath.Join("lua", "standards.lua"):                         {"standards_lsp", "StandardsAudit", "StandardsCompileContext"},
+	}
+	for _, marker := range markers[path] {
+		if strings.Contains(string(existing), marker) && !strings.Contains(string(desired), marker) {
+			return fmt.Errorf("existing %s retains unsupported legacy editor policy %q", path, marker)
+		}
+	}
+	return nil
+}
+
+func legacyJSONConflict(path string, have, want any) error {
+	for _, check := range []func(string, any, any) error{
+		legacyVSCodeSettingsConflict, legacyVSCodeExtensionConflict,
+		legacyTaskConflict, legacyZedSettingsConflict,
+	} {
+		if err := check(path, have, want); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func legacyVSCodeSettingsConflict(path string, have, want any) error {
+	if path != filepath.Join(".vscode", "settings.json") {
+		return nil
+	}
+	existing, existingOK := have.(map[string]any)
+	desired, desiredOK := want.(map[string]any)
+	if !existingOK || !desiredOK {
+		return nil
+	}
+	if key := unsupportedLegacySetting(existing, desired); key != "" {
+		return fmt.Errorf("existing %s retains unsupported legacy key %q", path, key)
+	}
+	return nil
+}
+
+func legacyVSCodeExtensionConflict(path string, have, want any) error {
+	if path != filepath.Join(".vscode", "extensions.json") {
+		return nil
+	}
+	existing, existingOK := have.(map[string]any)
+	desired, desiredOK := want.(map[string]any)
+	if existingOK && desiredOK && legacyExtensionRecommendation(existing["recommendations"], desired["recommendations"]) {
+		return fmt.Errorf("existing %s retains an unverified legacy extension recommendation", path)
+	}
+	return nil
+}
+
+func legacyTaskConflict(path string, have, want any) error {
+	if legacyTaskItem(path, have, want) {
+		return fmt.Errorf("existing %s retains an unsupported legacy task", path)
+	}
+	return nil
+}
+
+func legacyZedSettingsConflict(path string, have, want any) error {
+	if path != filepath.Join(".zed", "settings.json") {
+		return nil
+	}
+	existing, existingOK := have.(map[string]any)
+	desired, desiredOK := want.(map[string]any)
+	if existingOK && desiredOK && legacyZedGoLanguage(existing, desired) {
+		return fmt.Errorf("existing %s retains an inapplicable legacy Go language block", path)
+	}
+	return nil
+}
+
+func unsupportedLegacySetting(existing, desired map[string]any) string {
+	for _, key := range []string{"go.useLanguageServer", "[go]", "standards.lsp.trace.server", "standards.lsp.path"} {
+		_, stale := existing[key]
+		_, selected := desired[key]
+		if stale && !selected {
+			return key
+		}
+	}
+	return ""
+}
+
+func legacyExtensionRecommendation(have, want any) bool {
+	existing, ok := have.([]any)
+	if !ok {
+		return false
+	}
+	desired := arrayJSONValue(want)
+	for i := 0; i < len(existing) && i < maxJSONNodes; i++ {
+		id := stringJSONValue(existing[i])
+		if id == "cordanaLLM.standards-vscode" && !jsonArrayContains(desired, id) {
+			return true
+		}
+	}
+	return false
+}
+
+func legacyTaskItem(path string, have, want any) bool {
+	existing := taskArray(path, have)
+	desired := taskArray(path, want)
+	for i := 0; i < len(existing) && i < maxJSONNodes; i++ {
+		item, ok := existing[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		label := stringJSONValue(item[taskLabelKey(path)])
+		if legacyTaskLabel(label) && !jsonArrayContains(desired, item) {
+			return true
+		}
+		if label == "Standards: Verify All" && reflect.DeepEqual(item["problemMatcher"], []any{"$go"}) {
+			return true
+		}
+	}
+	return false
+}
+
+func taskArray(path string, root any) []any {
+	if path == filepath.Join(".zed", "tasks.json") {
+		return arrayJSONValue(root)
+	}
+	object, ok := root.(map[string]any)
+	if !ok {
+		return nil
+	}
+	key := map[string]string{
+		filepath.Join(".vscode", "tasks.json"): "tasks",
+		filepath.Join(".fleet", "run.json"):    "configurations",
+		"standards.sublime-project":            "build_systems",
+	}[path]
+	return arrayJSONValue(object[key])
+}
+
+func taskLabelKey(path string) string {
+	if path == filepath.Join(".fleet", "run.json") || path == "standards.sublime-project" {
+		return "name"
+	}
+	return "label"
+}
+
+func legacyTaskLabel(label string) bool {
+	switch label {
+	case "Standards: Build Binaries", "Standards: Audit", "Standards: Audit Invariants", "Standards: Compile Context":
+		return true
+	default:
+		return false
+	}
+}
+
+func legacyZedGoLanguage(existing, desired map[string]any) bool {
+	existingLanguages := objectJSONValue(existing["languages"])
+	desiredLanguages := objectJSONValue(desired["languages"])
+	_, stale := existingLanguages["Go"]
+	_, selected := desiredLanguages["Go"]
+	return stale && !selected
 }

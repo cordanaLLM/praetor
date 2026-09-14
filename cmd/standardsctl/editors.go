@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"flag"
 	"fmt"
-	"os"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/editor"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -48,19 +50,14 @@ func runEditorsGenerate(opts editor.Options, root string) error {
 	if err != nil {
 		return fmt.Errorf("failed synthesizing editor configurations: %w", err)
 	}
+	before := snapshotEditorFiles(set, root)
 	if err := editor.Write(set, root); err != nil {
 		return fmt.Errorf("failed writing editor configurations: %w", err)
 	}
 
-	// editor.Write deliberately preserves a pre-existing .editorconfig/.clang-tidy and
-	// truncates at its own file cap, so the synthesized file list is not the written
-	// file list. Each file is classified from what is actually on disk.
-	written, preserved := reportEditorFiles(set, root)
-	fmt.Printf("[OK] Generated %d of %d IDE configuration file(s) across: %v\n",
-		written, len(set.Files), set.Editors)
-	if preserved > 0 {
-		fmt.Printf("     %d file(s) left untouched because they already exist or exceed the write cap.\n", preserved)
-	}
+	created, merged, present := reportEditorFiles(set, root, before)
+	fmt.Printf("[OK] Editor requirements: %d created, %d merged, %d already present across: %v\n",
+		created, merged, present, set.Editors)
 	return nil
 }
 
@@ -69,49 +66,79 @@ func runEditorsVerify(opts editor.Options, root string) error {
 	if err != nil {
 		return fmt.Errorf("failed synthesizing editor configurations: %w", err)
 	}
-	if err := editor.Verify(set, root); err != nil {
+	report, err := editor.VerifyWithReport(set, root)
+	if err != nil {
 		return fmt.Errorf("[FAIL] Editor configurations out of sync: %w", err)
 	}
-	fmt.Println("[PASS] All declared editor configurations verified in sync.")
+	fmt.Printf("[PASS] Managed requirements verified in %d editor configuration file(s).\n", len(report.Verified))
+	if len(report.PreservedUnverified) > 0 {
+		fmt.Printf("[UNVERIFIED] Preserved %d non-JSON file(s) without semantic verification: %v\n",
+			len(report.PreservedUnverified), report.PreservedUnverified)
+	}
 	return nil
 }
 
-// reportEditorFiles prints and counts the per-file outcome of a generate run by comparing
-// the synthesized content against what the workspace now holds.
-func reportEditorFiles(set *editor.EditorConfigSet, root string) (written, preserved int) {
+// editorFileSnapshot records the pre-write state needed to distinguish a merge
+// from a requirement that was already present.
+type editorFileSnapshot struct {
+	data   []byte
+	exists bool
+}
+
+func snapshotEditorFiles(set *editor.EditorConfigSet, root string) map[string]editorFileSnapshot {
+	result := make(map[string]editorFileSnapshot)
 	if set == nil {
-		return 0, 0
+		return result
+	}
+	for i := 0; i < len(set.Files) && i < maxReportedEditorFiles; i++ {
+		file := set.Files[i]
+		full, err := util.ConfinePath(root, file.Path)
+		if err != nil {
+			continue
+		}
+		data, err := contextopt.ReadSnapshot(context.Background(), full)
+		if err == nil {
+			result[file.Path] = editorFileSnapshot{data: data, exists: true}
+		}
+	}
+	return result
+}
+
+func reportEditorFiles(set *editor.EditorConfigSet, root string, before map[string]editorFileSnapshot) (created, merged, present int) {
+	if set == nil {
+		return 0, 0, 0
 	}
 	for i := 0; i < len(set.Files) && i < maxReportedEditorFiles; i++ {
 		f := set.Files[i]
-		status, delta := classifyEditorFile(root, f)
-		if delta {
-			written++
-		} else {
-			preserved++
+		status := classifyEditorFile(root, f, before[f.Path])
+		switch status {
+		case "CREATED":
+			created++
+		case "MERGED":
+			merged++
+		case "PRESENT":
+			present++
 		}
 		fmt.Printf("  - [%s] [%s] %s\n", status, f.Editor, f.Path)
 	}
-	return written, preserved
+	return created, merged, present
 }
 
-// classifyEditorFile reports whether the synthesized file is the one now on disk. The
-// candidate path is confined to the workspace root, so a synthesized path that tried to
-// escape it is reported as skipped rather than read.
-func classifyEditorFile(root string, f editor.GeneratedFile) (status string, written bool) {
+// classifyEditorFile compares the pinned snapshots from before and after Write.
+func classifyEditorFile(root string, f editor.GeneratedFile, before editorFileSnapshot) string {
 	full, err := util.ConfinePath(root, f.Path)
 	if err != nil {
-		return "SKIPPED", false
+		return "SKIPPED"
 	}
-	// #nosec G304,G703 -- full is the output of util.ConfinePath, which rejects absolute
-	// paths and anything resolving outside root; the content is only compared, never executed.
-	onDisk, err := os.ReadFile(full)
+	onDisk, err := contextopt.ReadSnapshot(context.Background(), full)
 	switch {
-	case err == nil && string(onDisk) == f.Content:
-		return "WRITTEN", true
-	case err == nil:
-		return "PRESERVED", false
+	case err != nil:
+		return "SKIPPED"
+	case !before.exists:
+		return "CREATED"
+	case bytes.Equal(before.data, onDisk):
+		return "PRESENT"
 	default:
-		return "SKIPPED", false
+		return "MERGED"
 	}
 }
