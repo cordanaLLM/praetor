@@ -1,0 +1,3 @@
+type: changed
+title: Lint suppressions must name the linters they disable and explain why, and every #nosec justification is now verified rather than asserted
+breaking: false
