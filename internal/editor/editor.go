@@ -253,7 +253,7 @@ func generateVSCodeFamily(binDir string, includeLSP bool, arch string) []Generat
 func buildVSCodeSettings(binDir string, includeLSP bool, arch string) string {
 	data := map[string]any{
 		"standards.lsp.enabled":         includeLSP,
-		"standards.lsp.path":            fmt.Sprintf("${workspaceFolder}/%s/standards-lsp", binDir),
+		"standards.lsp.path":            fmt.Sprintf("${workspaceFolder}/%s/praetor-lsp", binDir),
 		"standards.lsp.trace.server":    "messages",
 		"standards.sentinel.headroomMB": 1024,
 	}
@@ -444,7 +444,7 @@ local configs = require("lspconfig.configs")
 if not configs.standards_lsp then
   configs.standards_lsp = {
     default_config = {
-      cmd = { "./%s/standards-lsp" },
+      cmd = { "./%s/praetor-lsp" },
       filetypes = { %s },
       root_dir = function(fname)
         return lspconfig.util.root_pattern(".standards.yaml", "meson.build", "go.mod", ".git")(fname)

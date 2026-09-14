@@ -25,13 +25,13 @@
       "type": "shell"
     },
     {
-      "command": "go run ./cmd/standardsctl compile-context",
+      "command": "go run ./cmd/praetorctl compile-context",
       "label": "Standards: Compile Context",
       "problemMatcher": [],
       "type": "shell"
     },
     {
-      "command": "go run ./cmd/standardsctl audit",
+      "command": "go run ./cmd/praetorctl audit",
       "label": "Standards: Audit Invariants",
       "problemMatcher": [],
       "type": "shell"

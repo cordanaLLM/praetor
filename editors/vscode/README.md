@@ -58,7 +58,7 @@ termination. This is not a sandbox or proof that detached descendants stopped.
 The optional LSP starts only for a trusted workspace, using its scoped
 `standards.lsp.path`. With multiple roots it binds to the active editor's root;
 it does not start against an arbitrary first folder. The default is
-`${workspaceFolder}/bin/standards-lsp`. All paths and processes belong to the
+`${workspaceFolder}/bin/praetor-lsp`. All paths and processes belong to the
 actual extension host, which may be remote or in a container.
 
 Legacy `standards.mcp.enabled`, `standards.mcp.path` and `standards.modelTier`

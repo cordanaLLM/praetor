@@ -5,7 +5,7 @@ local M = {}
 
 function M.setup(opts)
   opts = opts or {}
-  local bin_path = opts.bin_path or "./bin/standards-lsp"
+  local bin_path = opts.bin_path or "./bin/praetor-lsp"
 
   local has_lspconfig, lspconfig = pcall(require, "lspconfig")
   if not has_lspconfig then
@@ -50,11 +50,11 @@ function M.setup(opts)
 
   -- User commands for standards governance
   vim.api.nvim_create_user_command("StandardsAudit", function()
-    vim.cmd("!go run ./cmd/standardsctl audit")
+    vim.cmd("!go run ./cmd/praetorctl audit")
   end, { desc = "Audit repository against declared HISS invariants" })
 
   vim.api.nvim_create_user_command("StandardsCompileContext", function()
-    vim.cmd("!go run ./cmd/standardsctl compile-context")
+    vim.cmd("!go run ./cmd/praetorctl compile-context")
   end, { desc = "Compile AGENTS.md cross-agent contexts" })
 
   vim.api.nvim_create_user_command("StandardsVerifyAll", function()
@@ -62,7 +62,7 @@ function M.setup(opts)
   end, { desc = "Run full standards verification pipeline" })
 
   vim.api.nvim_create_user_command("StandardsRatchetSweep", function()
-    vim.cmd("!go run ./cmd/standardsctl baseline --check")
+    vim.cmd("!go run ./cmd/praetorctl baseline --check")
   end, { desc = "Evaluate technical debt baseline ratchet sweep" })
 end
 

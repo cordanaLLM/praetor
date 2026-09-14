@@ -1,0 +1,9 @@
+type: changed
+title: >-
+  Launch praetor-lsp and praetor-mcp from bin/ in the VS Code extension default,
+  generated VS Code and Neovim editor settings and the Praetor repository Cursor,
+  Gemini, Claude, VS Code and Neovim configurations, and drop the standards MCP
+  client entry that pointed at the removed alias. Migration: set
+  standards.lsp.path (or the Neovim bin_path option) to a praetor-lsp binary if
+  it still names standards-lsp, and point MCP client entries at praetor-mcp.
+breaking: true

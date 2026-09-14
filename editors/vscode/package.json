@@ -55,11 +55,11 @@
         "standards.lsp.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable standards-lsp language server daemon for real-time HISS invariant checking."
+          "description": "Enable praetor-lsp language server daemon for real-time HISS invariant checking."
         },
         "standards.lsp.path": {
           "type": "string",
-          "default": "${workspaceFolder}/bin/standards-lsp",
+          "default": "${workspaceFolder}/bin/praetor-lsp",
           "description": "LSP executable for the selected trusted workspace; never started in Restricted Mode."
         },
         "standards.lsp.trace.server": {

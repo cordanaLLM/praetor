@@ -42,8 +42,11 @@ func verifyVSCodeAndJetBrains(t *testing.T, fileMap map[string]string) {
 	if err := json.Unmarshal([]byte(vscodeSettings), &settingsJSON); err != nil {
 		t.Errorf(".vscode/settings.json is not valid JSON: %v", err)
 	}
-	if !strings.Contains(vscodeSettings, "standards-lsp") {
-		t.Errorf(".vscode/settings.json missing standards-lsp reference")
+	if !strings.Contains(vscodeSettings, `"${workspaceFolder}/bin/praetor-lsp"`) {
+		t.Errorf(".vscode/settings.json missing praetor-lsp binary path: %s", vscodeSettings)
+	}
+	if strings.Contains(vscodeSettings, "standards-lsp") {
+		t.Errorf(".vscode/settings.json still launches the removed standards-lsp alias: %s", vscodeSettings)
 	}
 	for _, forbidden := range []string{"standards.mcp.", "standards.modelTier", "gemini-2.5-pro"} {
 		if strings.Contains(vscodeSettings, forbidden) {
@@ -79,6 +82,9 @@ func verifyNeovimAndZed(t *testing.T, fileMap map[string]string) {
 	}
 	if !strings.Contains(nvimLua, "StandardsAudit") {
 		t.Errorf("lua/standards.lua missing user commands")
+	}
+	if !strings.Contains(nvimLua, `cmd = { "./bin/praetor-lsp" }`) || strings.Contains(nvimLua, "standards-lsp") {
+		t.Errorf("lua/standards.lua must launch bin/praetor-lsp, not the removed alias: %s", nvimLua)
 	}
 
 	if _, ok := fileMap[filepath.Join(".zed", "settings.json")]; !ok {
@@ -247,7 +253,7 @@ func TestEditor_Boundary_CustomBinaryDirAndFlags(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(settingsContent, customBin+"/standards-lsp") {
+	if !strings.Contains(settingsContent, customBin+"/praetor-lsp") || strings.Contains(settingsContent, "standards-lsp") {
 		t.Errorf("settings missing custom binary path: %s", settingsContent)
 	}
 	for _, forbidden := range []string{"standards.mcp.", "standards.modelTier", "gemini-2.5-pro"} {

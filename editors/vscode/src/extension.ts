@@ -30,7 +30,7 @@ async function startOptionalLSP(context: vscode.ExtensionContext): Promise<void>
   if (!folder) return;
   const config = vscode.workspace.getConfiguration("standards", folder.uri);
   if (!config.get<boolean>("lsp.enabled", true)) return;
-  const executable = config.get<string>("lsp.path", "${workspaceFolder}/bin/standards-lsp").replaceAll("${workspaceFolder}", folder.uri.fsPath);
+  const executable = config.get<string>("lsp.path", "${workspaceFolder}/bin/praetor-lsp").replaceAll("${workspaceFolder}", folder.uri.fsPath);
   const pattern = new vscode.RelativePattern(folder, "**/*.go");
   const watcher = vscode.workspace.createFileSystemWatcher(pattern);
   context.subscriptions.push(watcher);

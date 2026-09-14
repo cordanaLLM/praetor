@@ -5,7 +5,7 @@ local configs = require("lspconfig.configs")
 if not configs.standards_lsp then
   configs.standards_lsp = {
     default_config = {
-      cmd = { "./bin/standards-lsp" },
+      cmd = { "./bin/praetor-lsp" },
       filetypes = { "go" },
       root_dir = function(fname)
         return lspconfig.util.root_pattern(".standards.yaml", "go.mod", ".git")(fname)
@@ -24,11 +24,11 @@ end
 lspconfig.standards_lsp.setup({})
 
 vim.api.nvim_create_user_command("StandardsAudit", function()
-  vim.cmd("!go run ./cmd/standardsctl audit")
+  vim.cmd("!go run ./cmd/praetorctl audit")
 end, { desc = "Audit repository against declared HISS invariants" })
 
 vim.api.nvim_create_user_command("StandardsCompileContext", function()
-  vim.cmd("!go run ./cmd/standardsctl compile-context")
+  vim.cmd("!go run ./cmd/praetorctl compile-context")
 end, { desc = "Compile AGENTS.md cross-agent contexts" })
 
 vim.api.nvim_create_user_command("StandardsVerifyAll", function()
