@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "id": "plan-example-workshop",
+  "project": {
+    "id": "project-example-workshop",
+    "title": "Example Workshop",
+    "repository": "example/workshop",
+    "revision": "fixture-revision-1"
+  },
+  "sources": [
+    {
+      "id": "source-research",
+      "kind": "research",
+      "locator": "fixture:research",
+      "revision": "fixture-revision-1",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "provenance": "caller_asserted",
+      "verified": false
+    },
+    {
+      "id": "source-request",
+      "kind": "planning",
+      "locator": "caller request",
+      "revision": "fixture-revision-1",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "provenance": "caller_asserted",
+      "verified": false
+    }
+  ],
+  "requirements": [
+    {
+      "id": "requirement-contract",
+      "detail": "Compile one bounded typed draft into deterministic proposal artifacts.",
+      "disposition": "proposed",
+      "source_refs": [
+        {
+          "source_id": "source-research",
+          "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "quote": "Create a bounded typed workshop plan."
+        }
+      ]
+    },
+    {
+      "id": "requirement-truth",
+      "detail": "Keep source assertions and completion claims explicitly unverified.",
+      "disposition": "proposed",
+      "source_refs": [
+        {
+          "source_id": "source-request",
+          "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "quote": "No invented evidence or completion."
+        }
+      ]
+    }
+  ],
+  "milestones": [
+    {
+      "id": "milestone-contract",
+      "title": "Contract",
+      "outcome": "A typed and strictly validated planning graph exists.",
+      "depends_on": [],
+      "acceptance": {
+        "positive": ["A valid graph compiles."],
+        "negative": ["An unknown reference is rejected."],
+        "boundary": ["Configured count and byte limits are enforced."]
+      }
+    },
+    {
+      "id": "milestone-projection",
+      "title": "Projection",
+      "outcome": "All four draft proposal artifacts share one canonical graph.",
+      "depends_on": ["milestone-contract"],
+      "acceptance": {
+        "positive": ["Every step is cross-linked in each relevant projection."],
+        "negative": ["No projection claims acceptance or execution."],
+        "boundary": ["All generated files remain within artifact byte limits."]
+      }
+    }
+  ],
+  "steps": [
+    {
+      "id": "step-render",
+      "title": "Render proposal artifacts",
+      "detail": "Derive canonical JSON and three Markdown projections from the normalized graph.",
+      "kind": "implementation",
+      "status": "proposed",
+      "requirement_ids": ["requirement-contract", "requirement-truth"],
+      "milestone_id": "milestone-projection",
+      "depends_on": ["step-validate"],
+      "actions": ["Render canonical plan JSON from normalized data.", "Render cross-linked draft Markdown projections."],
+      "expected_outputs": [
+        {"id": "output-projections", "description": "One canonical JSON file and three Markdown proposal files."}
+      ],
+      "acceptance": {
+        "positive": ["A second compile of plan.json has the same digest."],
+        "negative": ["Rendered text does not claim source verification."],
+        "boundary": ["Generated output stays below the configured byte ceiling."]
+      },
+      "link": {"todo_id": "todo-render", "roadmap_id": "roadmap-render", "milestone_id": "milestone-projection"}
+    },
+    {
+      "id": "step-research",
+      "title": "Review contract limits",
+      "detail": "Review the conservative first-version bounds before adapter expansion.",
+      "kind": "research",
+      "status": "proposed",
+      "requirement_ids": ["requirement-contract"],
+      "milestone_id": "milestone-contract",
+      "depends_on": [],
+      "actions": ["Inspect the documented graph limits.", "Record any proposed policy changes for review."],
+      "expected_outputs": [
+        {"id": "output-limit-review", "description": "A review note about the conservative graph bounds."}
+      ],
+      "acceptance": {
+        "positive": ["Every exported limit has an exact-boundary test."],
+        "negative": ["No review note changes runtime policy automatically."],
+        "boundary": ["The review covers the maximum collection sizes."]
+      },
+      "link": {"todo_id": "todo-research", "roadmap_id": "roadmap-research", "milestone_id": "milestone-contract"}
+    },
+    {
+      "id": "step-validate",
+      "title": "Validate the graph",
+      "detail": "Reject ambiguous JSON, invalid references, uncovered requirements, and dependency cycles.",
+      "kind": "manual",
+      "status": "proposed",
+      "requirement_ids": ["requirement-contract", "requirement-truth"],
+      "milestone_id": "milestone-contract",
+      "depends_on": ["step-research"],
+      "actions": ["Inspect every typed reference against the draft graph.", "Confirm positive, negative, and boundary acceptance cases are present."],
+      "expected_outputs": [
+        {"id": "output-validation", "description": "A structurally valid draft result requiring review."}
+      ],
+      "acceptance": {
+        "positive": ["The complete fixture validates."],
+        "negative": ["A dependency cycle fails closed."],
+        "boundary": ["The exact input byte limit is accepted."]
+      },
+      "link": {"todo_id": "todo-validate", "roadmap_id": "roadmap-validate", "milestone_id": "milestone-contract"}
+    }
+  ]
+}
