@@ -444,7 +444,11 @@ func TestServer_Positive_ExplainRuleCoversDocumentedInvariants(t *testing.T) {
 	srv, _ := newFixtureServer(t)
 
 	// Every invariant documented in AGENTS.md must resolve, including HISS-17/18.
-	for _, id := range []string{"HISS-01", "HISS-02", "HISS-04", "HISS-07", "HISS-10", "HISS-15", "HISS-16", "HISS-17", "HISS-18", "HISS-19"} {
+	for _, id := range []string{
+		"HISS-01", "HISS-02", "HISS-03", "HISS-04", "HISS-05", "HISS-06", "HISS-07",
+		"HISS-08", "HISS-09", "HISS-10", "HISS-11", "HISS-12", "HISS-13", "HISS-14",
+		"HISS-15", "HISS-16", "HISS-17", "HISS-18", "HISS-19",
+	} {
 		res := callTool(t, srv, "standards_explain_rule", map[string]any{"rule_id": id})
 		expectText(t, id, res, "Rule: "+id)
 	}

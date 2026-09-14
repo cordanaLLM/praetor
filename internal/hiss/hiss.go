@@ -32,6 +32,11 @@ const (
 // ErrScanTruncated is wrapped by callers that refuse to certify a partial report.
 var ErrScanTruncated = errors.New("hiss: scan truncated at an analysis bound; the report is a lower bound")
 
+// ErrScanIncomplete is wrapped by callers that refuse to certify a report whose scope was
+// not fully examined, whether because the scan truncated or because a file yielded no
+// analyzable structure. It is the error form of ScanReport.Incomplete.
+var ErrScanIncomplete = errors.New("hiss: scan did not cover its scope; the report is a lower bound")
+
 // ScanOptions configures the static invariant scanner.
 type ScanOptions struct {
 	MaxFuncLOC int
