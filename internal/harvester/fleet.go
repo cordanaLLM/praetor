@@ -94,18 +94,32 @@ func decodeFleetTopology(data []byte) (*FleetTopology, error) {
 // validateFleetTopology enforces the declared bounds and rejects an entry that carries no
 // name, which would otherwise print as an empty line in the report.
 func validateFleetTopology(topology *FleetTopology) error {
-	if len(topology.Orgs) > maxFleetEntries {
+	if err := validateFleetOrgs(topology.Orgs); err != nil {
+		return err
+	}
+	return validateFleetArchetypes(topology.Archetypes)
+}
+
+// validateFleetOrgs bounds the organisation list and refuses an unnamed entry.
+func validateFleetOrgs(orgs []string) error {
+	if len(orgs) > maxFleetEntries {
 		return fmt.Errorf("fleet topology declares more than %d organisations", maxFleetEntries)
 	}
-	if len(topology.Archetypes) > maxFleetEntries {
-		return fmt.Errorf("fleet topology declares more than %d archetypes", maxFleetEntries)
-	}
-	for i := 0; i < len(topology.Orgs) && i < maxFleetEntries; i++ {
-		if topology.Orgs[i] == "" {
+	for i := 0; i < len(orgs) && i < maxFleetEntries; i++ {
+		if orgs[i] == "" {
 			return errors.New("fleet topology declares an empty organisation name")
 		}
 	}
-	for name, members := range topology.Archetypes {
+	return nil
+}
+
+// validateFleetArchetypes bounds the archetype groups and their membership, refusing an
+// unnamed archetype or repository.
+func validateFleetArchetypes(archetypes map[string][]string) error {
+	if len(archetypes) > maxFleetEntries {
+		return fmt.Errorf("fleet topology declares more than %d archetypes", maxFleetEntries)
+	}
+	for name, members := range archetypes {
 		if name == "" {
 			return errors.New("fleet topology declares an empty archetype name")
 		}
