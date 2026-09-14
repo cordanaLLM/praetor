@@ -1,0 +1,3 @@
+type: fixed
+title: .standards.yaml refuses unknown keys instead of silently discarding them and governing the repository by the built-in defaults
+breaking: true

@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -105,6 +107,24 @@ type Overrides struct {
 	Complexity       *ComplexityPolicy       `yaml:"complexity,omitempty"`
 	BranchProtection *BranchProtectionPolicy `yaml:"branch_protection,omitempty"`
 	SupplyChain      *SupplyChainPolicy      `yaml:"supply_chain,omitempty"`
+	// CI is declared by the schema and currently has no consumer: internal/cifilter
+	// computes its decision without reading the manifest, so these values do not change
+	// behaviour. Declared here so the manifest parses rather than being silently dropped,
+	// and so the gap is visible instead of invisible.
+	CI *CIPolicy `yaml:"ci,omitempty"`
+}
+
+// CIPolicy declares diff-aware gating intent (HISS-18).
+type CIPolicy struct {
+	DiffAwareFiltering          bool `yaml:"diff_aware_filtering"`
+	SkipHeavyGatesOnDocsOrState bool `yaml:"skip_heavy_gates_on_docs_or_state"`
+}
+
+// ReceiptAnchor pins the Ed25519 public key that `gate verify` accepts. The canonical
+// manifest declares it so the schema is complete; internal/lockdown reads it through its
+// own narrow parse of the same file.
+type ReceiptAnchor struct {
+	PublicKey string `yaml:"public_key"`
 }
 
 // Manifest represents the parsed .standards.yaml file.
@@ -114,6 +134,12 @@ type Manifest struct {
 	Profiles   []string           `yaml:"profiles"`
 	Facets     []string           `yaml:"facets"`
 	Overrides  Overrides          `yaml:"overrides,omitempty"`
+	// Receipt and Needs are consumed by internal/lockdown and internal/needs through their
+	// own narrow parses of this same file. They are declared here because this is the
+	// canonical manifest type: a schema that omits keys the file legitimately carries
+	// cannot tell a real key from a typo.
+	Receipt *ReceiptAnchor         `yaml:"receipt,omitempty"`
+	Needs   map[string]interface{} `yaml:"needs,omitempty"`
 }
 
 // ResolvedPolicy is the composite unbypassable policy produced by lattice join (supremum).
@@ -134,14 +160,31 @@ func LoadManifest(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to read manifest at %s: %w", path, err)
 	}
 
-	var m Manifest
-	if err := yaml.Unmarshal(data, &m); err != nil {
+	m, err := decodeManifest(data)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse manifest at %s: %w", path, err)
 	}
-	if err := validateManifestReviewPolicy(&m); err != nil {
+	if err := validateManifestReviewPolicy(m); err != nil {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 
+	return m, nil
+}
+
+// decodeManifest parses the manifest with no unknown fields, so a misspelled key is an
+// error rather than a silently ignored line. A key that is quietly dropped reads as
+// configured while the repository is governed by the built-in defaults instead, which
+// silently loosens policy exactly where an operator believed they had tightened it.
+func decodeManifest(data []byte) (*Manifest, error) {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	var m Manifest
+	if err := decoder.Decode(&m); err != nil {
+		if errors.Is(err, io.EOF) {
+			return &m, nil
+		}
+		return nil, err
+	}
 	return &m, nil
 }
 
