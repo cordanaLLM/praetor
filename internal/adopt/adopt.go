@@ -267,7 +267,7 @@ func reconcileManifest(repoPath, repoName, arch string, facets []string, opts Ad
 			return fmt.Errorf("marshal manifest: %w", err)
 		}
 		if !opts.DryRun {
-			if err := os.WriteFile(manifestPath, data, 0644); err != nil {
+			if err := os.WriteFile(manifestPath, data, 0o644); err != nil {
 				return fmt.Errorf("write %s: %w", manifestPath, err)
 			}
 		}
@@ -293,7 +293,7 @@ func reconcileLockfile(repoPath string, opts AdoptOptions, report *AdoptReport) 
 	if !fileExists(lockPath) || opts.Force {
 		content := []byte("# SemVer lockfile\nversion: 1\npinned_version: \"v1.0.0\"\n")
 		if !opts.DryRun {
-			if err := os.WriteFile(lockPath, content, 0644); err != nil {
+			if err := os.WriteFile(lockPath, content, 0o644); err != nil {
 				return fmt.Errorf("write %s: %w", lockPath, err)
 			}
 		}
@@ -366,7 +366,7 @@ func scanLegacyDebt(repoPath string, base *baseline.Baseline, report *AdoptRepor
 	defer cancel()
 
 	scanRep, err := hiss.Scan(ctx, repoPath, hiss.ScanOptions{
-		MaxFuncLOC: defaultMaxFuncLOC,
+		MaxFuncLOC: manifestMaxFuncLOC(repoPath),
 		Cap:        maxInfractionsCap,
 	})
 	if err != nil {
@@ -387,6 +387,21 @@ func scanLegacyDebt(repoPath string, base *baseline.Baseline, report *AdoptRepor
 	for k, count := range scanRep.Breakdown {
 		report.DebtBreakdown[k] = count
 	}
+}
+
+// manifestMaxFuncLOC returns the function-length cap the (just reconciled)
+// manifest declares, falling back to the adopt default when unreadable.
+func manifestMaxFuncLOC(repoPath string) int {
+	manifest, err := config.LoadManifest(filepath.Join(repoPath, ".standards.yaml"))
+	if err != nil {
+		return defaultMaxFuncLOC
+	}
+	policy := config.DefaultPolicy()
+	policy.ApplyOverrides(manifest.Overrides)
+	if policy.Complexity.MaxFuncLOC > 0 {
+		return policy.Complexity.MaxFuncLOC
+	}
+	return defaultMaxFuncLOC
 }
 
 func buildAgentHarness(repoName, arch string) string {
@@ -433,16 +448,16 @@ func buildAgentHarnessDirectives() string {
 
 | Invariant | Scope | NASA Rule | Enforcement Mechanism | Failure Action |
 | :--- | :--- | :--- | :--- | :--- |
-| **HISS-01** | Control Flow | Rule 1 | Recursion strictly prohibited; call graph must be DAG; zero `+"`goto`"+`. | Immediate build failure |
-| **HISS-02** | Loops & I/O | Rule 2 | Scalar upper bound on all loops; explicit `+"`context.Context`"+` timeout on all I/O. | Semgrep / AST error |
-| **HISS-03** | Memory | Rule 3 | Zero dynamic heap allocation (`+"`malloc` / `free`"+`) in hot simulation/tick loops. | Allocation audit sweep |
+| **HISS-01** | Control Flow | Rule 1 | Recursion strictly prohibited; call graph must be DAG; zero ` + "`goto`" + `. | Immediate build failure |
+| **HISS-02** | Loops & I/O | Rule 2 | Scalar upper bound on all loops; explicit ` + "`context.Context`" + ` timeout on all I/O. | Semgrep / AST error |
+| **HISS-03** | Memory | Rule 3 | Zero dynamic heap allocation (` + "`malloc` / `free`" + `) in hot simulation/tick loops. | Allocation audit sweep |
 | **HISS-04** | Complexity | Rule 4 | Function length $\le 60$ LOC, McCabe Cyclomatic $\le 10$, Statements $\le 50$. | AST sweep blocker |
-| **HISS-07** | Error Handling | Rule 7 | Zero `+"`.unwrap()` / `.expect()`"+`; all errors handled or wrapped with context. | Linter / Compiler error |
-| **HISS-08** | Determinism | Rule 8 | Zero dynamic execution (`+"`eval` / `exec`"+`); zero banned unsafe libc (`+"`gets` / `strcpy` / `sprintf`"+`). | AST / Linter error |
-| **HISS-09** | Reference Safety | Rule 9 | Mandatory `+"`// SAFETY:`"+` proofs for all pointer arithmetic and `+"`unsafe`"+` blocks. | AST check blocker |
+| **HISS-07** | Error Handling | Rule 7 | Zero ` + "`.unwrap()` / `.expect()`" + `; all errors handled or wrapped with context. | Linter / Compiler error |
+| **HISS-08** | Determinism | Rule 8 | Zero dynamic execution (` + "`eval` / `exec`" + `); zero banned unsafe libc (` + "`gets` / `strcpy` / `sprintf`" + `). | AST / Linter error |
+| **HISS-09** | Reference Safety | Rule 9 | Mandatory ` + "`// SAFETY:`" + ` proofs for all pointer arithmetic and ` + "`unsafe`" + ` blocks. | AST check blocker |
 | **HISS-10** | Warning Hygiene | Rule 10 | Zero-warning tolerance across compiler, linter, and format sweeps. | Exit code 1 |
 | **HISS-15** | 3D Testing | Rule 5 | Positive, negative, and boundary tests mandatory for all public interfaces. | CI coverage gate |
-| **HISS-16** | Context Integrity | Fleet | Single canonical `+"`AGENTS.md`"+`; vendor files compiled via `+"`standardsctl compile-context`"+`. | Pre-commit blocker |
+| **HISS-16** | Context Integrity | Fleet | Single canonical ` + "`AGENTS.md`" + `; vendor files compiled via ` + "`standardsctl compile-context`" + `. | Pre-commit blocker |
 
 ## Operational Rules
 
@@ -453,13 +468,13 @@ func buildAgentHarnessDirectives() string {
    Provide direct answers, diffs, and commands. Avoid filler preambles, "Based on", restatements, or conversational chatter.
 
 3. **Context Transpiler First**:
-   Never edit `+"`CLAUDE.md`"+`, `+"`.cursor/rules/*.mdc`"+`, `+"`.windsurfrules`"+`, or `+"`.github/copilot-instructions.md`"+` manually. Make all agent instruction updates in `+"`AGENTS.md`"+` and execute:
+   Never edit ` + "`CLAUDE.md`" + `, ` + "`.cursor/rules/*.mdc`" + `, ` + "`.windsurfrules`" + `, or ` + "`.github/copilot-instructions.md`" + ` manually. Make all agent instruction updates in ` + "`AGENTS.md`" + ` and execute:
 
-   `+"```bash\n   standardsctl compile-context\n   ```\n\n"+`4. **SARIF Diagnostic Distillation**:
+   ` + "```bash\n   standardsctl compile-context\n   ```\n\n" + `4. **SARIF Diagnostic Distillation**:
    When reporting compiler or linter errors, distill output to $\le 1,500$ tokens ($< 60$ lines). Print the top 3 root-cause failures with file/line pointers and write full SARIF logs to ephemeral storage.
 
 5. **No Evasion Tolerated**:
-   Do not attempt `+"`--no-verify`"+`, `+"`LEFTHOOK=0`"+`, or modifying `+"`.git/hooks`"+`. All pull requests are authoritatively re-checked in an ephemeral isolated sandbox by `+"`cordana-standards[bot]`"+`.
+   Do not attempt ` + "`--no-verify`" + `, ` + "`LEFTHOOK=0`" + `, or modifying ` + "`.git/hooks`" + `. All pull requests are authoritatively re-checked in an ephemeral isolated sandbox by ` + "`cordana-standards[bot]`" + `.
 
 6. **Anti-Loop Interception**:
    If the same AST diff and error category repeats $\ge 3$ times, halt execution immediately. Re-evaluate the underlying design instead of making micro-textual retries.
@@ -480,7 +495,7 @@ func resolveAgentsContent(repoPath, repoName, arch string, opts AdoptOptions, re
 	if !fileExists(agentsPath) {
 		agentsContent := buildAgentHarness(repoName, arch)
 		if !opts.DryRun {
-			if err := os.WriteFile(agentsPath, []byte(agentsContent), 0644); err != nil {
+			if err := os.WriteFile(agentsPath, []byte(agentsContent), 0o644); err != nil {
 				return "", fmt.Errorf("write %s: %w", agentsPath, err)
 			}
 		}
@@ -512,7 +527,7 @@ func mergeExistingAgentsContent(agentsPath, existing, repoName, arch string, opt
 				agentsContent = harness + "\n"
 			}
 			if !opts.DryRun {
-				if err := os.WriteFile(agentsPath, []byte(agentsContent), 0644); err != nil {
+				if err := os.WriteFile(agentsPath, []byte(agentsContent), 0o644); err != nil {
 					return "", fmt.Errorf("write %s: %w", agentsPath, err)
 				}
 			}
@@ -535,7 +550,7 @@ func mergeExistingAgentsContent(agentsPath, existing, repoName, arch string, opt
 		harness := buildAgentHarness(repoName, arch)
 		agentsContent = harness + "\n---\n\n" + existing
 		if !opts.DryRun {
-			if err := os.WriteFile(agentsPath, []byte(agentsContent), 0644); err != nil {
+			if err := os.WriteFile(agentsPath, []byte(agentsContent), 0o644); err != nil {
 				return "", fmt.Errorf("write %s: %w", agentsPath, err)
 			}
 		}
@@ -597,10 +612,10 @@ func reconcileDevContainer(repoPath, repoName, arch string, facets []string, opt
 			return fmt.Errorf("marshal devcontainer: %w", err)
 		}
 		if !opts.DryRun {
-			if err := os.MkdirAll(devDir, 0755); err != nil {
+			if err := os.MkdirAll(devDir, 0o755); err != nil {
 				return fmt.Errorf("mkdir %s: %w", devDir, err)
 			}
-			if err := os.WriteFile(jsonPath, append(data, '\n'), 0644); err != nil {
+			if err := os.WriteFile(jsonPath, append(data, '\n'), 0o644); err != nil {
 				return fmt.Errorf("write %s: %w", jsonPath, err)
 			}
 		}
@@ -669,7 +684,7 @@ func reconcileMakefile(repoPath string, opts AdoptOptions, report *AdoptReport) 
 	if !fileExists(makefilePath) {
 		content := []byte(".PHONY: all verify-all audit compile-context build test\n\nverify-all:\n\t@echo \"Running verification...\"\n\ncompile-context:\n\t@standardsctl compile-context\n\naudit:\n\t@standardsctl audit\n\ntest:\n\t@go test -v -race ./...\n\nbuild:\n\t@go build -v ./...\n")
 		if !opts.DryRun {
-			if err := os.WriteFile(makefilePath, content, 0644); err != nil {
+			if err := os.WriteFile(makefilePath, content, 0o644); err != nil {
 				return fmt.Errorf("write %s: %w", makefilePath, err)
 			}
 		}
@@ -690,7 +705,7 @@ func reconcileMakefile(repoPath string, opts AdoptOptions, report *AdoptReport) 
 	if !strings.Contains(content, "verify-all:") {
 		appendTargets := "\n# cordanaLLM/praetor Governance Targets\n.PHONY: verify-all compile-context audit\n\nverify-all:\n\t@standardsctl audit && standardsctl compile-context --verify\n\ncompile-context:\n\t@standardsctl compile-context\n\naudit:\n\t@standardsctl audit\n"
 		if !opts.DryRun {
-			f, err := os.OpenFile(makefilePath, os.O_APPEND|os.O_WRONLY, 0644)
+			f, err := os.OpenFile(makefilePath, os.O_APPEND|os.O_WRONLY, 0o644)
 			if err != nil {
 				return fmt.Errorf("open %s: %w", makefilePath, err)
 			}
@@ -720,7 +735,7 @@ func reconcileGitIgnore(repoPath string, opts AdoptOptions, report *AdoptReport)
 	if !fileExists(gitIgnorePath) {
 		content := []byte("bin/\n*.test\n*.out\n.DS_Store\n")
 		if !opts.DryRun {
-			if err := os.WriteFile(gitIgnorePath, content, 0644); err != nil {
+			if err := os.WriteFile(gitIgnorePath, content, 0o644); err != nil {
 				return fmt.Errorf("write %s: %w", gitIgnorePath, err)
 			}
 		}
@@ -763,7 +778,7 @@ func reconcileContributing(repoPath, repoName string, opts AdoptOptions, report 
 	if !fileExists(contribPath) {
 		contrib := buildContributingGuide(repoName)
 		if !opts.DryRun {
-			if err := os.WriteFile(contribPath, []byte(contrib), 0644); err != nil {
+			if err := os.WriteFile(contribPath, []byte(contrib), 0o644); err != nil {
 				return fmt.Errorf("write %s: %w", contribPath, err)
 			}
 		}
@@ -790,10 +805,10 @@ func reconcilePullRequestTemplate(repoPath, repoName string, opts AdoptOptions, 
 	if !fileExists(prTmplPath) && !fileExists(prTmplUpperPath) {
 		prTmpl := buildPullRequestTemplate(repoName)
 		if !opts.DryRun {
-			if err := os.MkdirAll(filepath.Dir(prTmplPath), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(prTmplPath), 0o755); err != nil {
 				return fmt.Errorf("mkdir .github: %w", err)
 			}
-			if err := os.WriteFile(prTmplPath, []byte(prTmpl), 0644); err != nil {
+			if err := os.WriteFile(prTmplPath, []byte(prTmpl), 0o644); err != nil {
 				return fmt.Errorf("write %s: %w", prTmplPath, err)
 			}
 		}
@@ -823,7 +838,7 @@ func reconcileSecurityPolicy(repoPath, repoName string, opts AdoptOptions, repor
 	if !fileExists(secPath) {
 		sec := buildSecurityPolicy(repoName)
 		if !opts.DryRun {
-			if err := os.WriteFile(secPath, []byte(sec), 0644); err != nil {
+			if err := os.WriteFile(secPath, []byte(sec), 0o644); err != nil {
 				return fmt.Errorf("write %s: %w", secPath, err)
 			}
 		}
@@ -850,13 +865,13 @@ func reconcileADR(repoPath, repoName string, opts AdoptOptions, report *AdoptRep
 	adrTmplPath := filepath.Join(adrDir, "0000-template.md")
 	if !fileExists(adrIndexPath) {
 		if !opts.DryRun {
-			if err := os.MkdirAll(adrDir, 0755); err != nil {
+			if err := os.MkdirAll(adrDir, 0o755); err != nil {
 				return fmt.Errorf("mkdir %s: %w", adrDir, err)
 			}
-			if err := os.WriteFile(adrIndexPath, []byte(buildADRIndex(repoName)), 0644); err != nil {
+			if err := os.WriteFile(adrIndexPath, []byte(buildADRIndex(repoName)), 0o644); err != nil {
 				return fmt.Errorf("write %s: %w", adrIndexPath, err)
 			}
-			if err := os.WriteFile(adrTmplPath, []byte(buildADRTemplate(repoName)), 0644); err != nil {
+			if err := os.WriteFile(adrTmplPath, []byte(buildADRTemplate(repoName)), 0o644); err != nil {
 				return fmt.Errorf("write %s: %w", adrTmplPath, err)
 			}
 		}
@@ -910,7 +925,7 @@ func reconcileReadme(repoPath string, opts AdoptOptions, report *AdoptReport) er
 	}
 	if modified {
 		if !opts.DryRun {
-			if err := os.WriteFile(readmePath, []byte(content), 0644); err != nil {
+			if err := os.WriteFile(readmePath, []byte(content), 0o644); err != nil {
 				return fmt.Errorf("write %s: %w", readmePath, err)
 			}
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -61,26 +62,77 @@ func Scan(ctx context.Context, repoPath string, opts ScanOptions) (*ScanReport, 
 		Violations: make([]InvariantViolation, 0),
 	}
 
+	files, err := listSourceFiles(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < len(files) && i < MaxScanFiles; i++ {
+		if len(rep.Violations) >= opts.Cap {
+			break
+		}
+		rel := files[i]
+		if ShouldIgnorePath(rel) {
+			continue
+		}
+		if err := dispatchFileScan(filepath.Join(repoPath, rel), rel, rep, opts); err != nil {
+			return nil, err
+		}
+	}
+
+	rep.TotalInfractions = len(rep.Violations)
+	return rep, nil
+}
+
+// MaxScanFiles bounds a single scan (HISS-02).
+const MaxScanFiles = 200000
+
+// listSourceFiles returns repo-relative, slash-separated paths to scan. Inside
+// a git work tree it asks git for tracked + untracked-but-not-ignored files, so
+// gitignored material (audit clones, build output, vendored caches) is never
+// counted as the repository's own debt. Outside git it walks the directory.
+func listSourceFiles(ctx context.Context, repoPath string) ([]string, error) {
+	if files, ok := gitListFiles(ctx, repoPath); ok {
+		return files, nil
+	}
+	var files []string
 	err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
-		if len(rep.Violations) >= opts.Cap {
+		if len(files) >= MaxScanFiles {
 			return filepath.SkipDir
 		}
-		rel, err := filepath.Rel(repoPath, path)
-		if err != nil {
+		rel, relErr := filepath.Rel(repoPath, path)
+		if relErr != nil {
 			return nil
 		}
-		if ShouldIgnorePath(rel) {
-			return nil
-		}
-
-		return dispatchFileScan(path, rel, rep, opts)
+		files = append(files, filepath.ToSlash(rel))
+		return nil
 	})
+	if err != nil {
+		return nil, fmt.Errorf("hiss: walk %s: %w", repoPath, err)
+	}
+	return files, nil
+}
 
-	rep.TotalInfractions = len(rep.Violations)
-	return rep, err
+// gitListFiles runs `git ls-files -co --exclude-standard -z`; ok is false when
+// repoPath is not inside a git work tree or git is unavailable.
+func gitListFiles(ctx context.Context, repoPath string) ([]string, bool) {
+	cctx, cancel := context.WithTimeout(ctx, DefaultScanTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "git", "-C", repoPath, "ls-files", "-co", "--exclude-standard", "-z")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, false
+	}
+	parts := strings.Split(string(out), "\x00")
+	files := make([]string, 0, len(parts))
+	for i := 0; i < len(parts) && i < MaxScanFiles; i++ {
+		if parts[i] != "" {
+			files = append(files, parts[i])
+		}
+	}
+	return files, true
 }
 
 // ShouldIgnorePath filters out build, dependency, and tool directories.

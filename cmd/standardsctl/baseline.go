@@ -30,7 +30,7 @@ func runBaseline(args []string) error {
 		if repoDir == "" || repoDir == "." {
 			repoDir = "."
 		}
-		scanRep, err := hiss.Scan(ctx, repoDir, hiss.ScanOptions{})
+		scanRep, err := hiss.Scan(ctx, repoDir, scanOptionsFor(repoDir))
 		if err != nil {
 			return fmt.Errorf("failed to scan for baseline infractions: %w", err)
 		}

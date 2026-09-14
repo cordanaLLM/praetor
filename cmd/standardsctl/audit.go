@@ -73,7 +73,7 @@ func auditBaselineAndInvariants(baselinePath string) error {
 
 	ctx := context.Background()
 	root := filepath.Dir(baselinePath)
-	scanRep, err := hiss.Scan(ctx, root, hiss.ScanOptions{})
+	scanRep, err := hiss.Scan(ctx, root, scanOptionsFor(root))
 	if err != nil {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}

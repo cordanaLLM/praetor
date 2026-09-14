@@ -175,8 +175,10 @@ func scanGoLines(lines []string, rel string, rep *ScanReport, opts ScanOptions) 
 }
 
 func scanGoLineInvariants(line, trimmed, rel string, lineNum int, rep *ScanReport) {
-	blankAssign := "_" + " = "
-	if strings.Contains(line, blankAssign) && !strings.Contains(rel, "_test.go") {
+	if strings.HasPrefix(trimmed, "//") {
+		return // comments never carry invariant violations
+	}
+	if isDiscardedValue(trimmed) && !strings.Contains(rel, "_test.go") {
 		recordViolation(rep, "HISS-07", rel, lineNum, "", "Legacy unchecked error assignment")
 	}
 	if trimmed == "for {" || strings.HasPrefix(trimmed, "for { ") {
@@ -189,6 +191,17 @@ func scanGoLineInvariants(line, trimmed, rel string, lineNum int, rep *ScanRepor
 	if strings.HasPrefix(trimmed, "goto ") {
 		recordViolation(rep, "HISS-01", rel, lineNum, "", "Legacy non-DAG control flow jump (goto)")
 	}
+}
+
+// isDiscardedValue reports whether a Go line throws a value away with the
+// blank identifier. Compile-time interface assertions (`var _ io.Closer =
+// (*T)(nil)`) declare, they do not discard, and are exempt.
+func isDiscardedValue(trimmed string) bool {
+	blankAssign := "_" + " = "
+	if !strings.Contains(trimmed, blankAssign) {
+		return false
+	}
+	return !strings.HasPrefix(trimmed, "var _")
 }
 
 func extractGoFuncName(trimmed string) string {
