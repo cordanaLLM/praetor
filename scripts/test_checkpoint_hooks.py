@@ -124,7 +124,7 @@ class NativeLefthook(unittest.TestCase):
         cls.build = tempfile.TemporaryDirectory(prefix="praetor-state-hook-cli-")
         cls.addClassCleanup(cls.build.cleanup)
         cls.binary = Path(cls.build.name) / "praetorctl"
-        subprocess.run(["go", "build", "-o", str(cls.binary), "./cmd/standardsctl"],
+        subprocess.run(["go", "build", "-o", str(cls.binary), "./cmd/praetorctl"],
                        cwd=ROOT, capture_output=True, timeout=180, check=True)
 
     def setUp(self):

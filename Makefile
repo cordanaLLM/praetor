@@ -2,11 +2,11 @@
 
 BIN_DIR := bin
 PRAETORCTL := $(BIN_DIR)/praetorctl
-STANDARDSCTL := $(BIN_DIR)/standardsctl
 PRAETOR_MCP := $(BIN_DIR)/praetor-mcp
-STANDARDS_MCP := $(BIN_DIR)/standards-mcp
 PRAETOR_LSP := $(BIN_DIR)/praetor-lsp
-STANDARDS_LSP := $(BIN_DIR)/standards-lsp
+# Hard-cut migration only: symlinks an older build target left behind are removed,
+# never recreated. Regular files under these names are left for the owner to inspect.
+LEGACY_BIN_LINKS := standardsctl standards-mcp standards-lsp
 # CI obtains coverage from the same race run used by verify-all.
 TEST_COVERPROFILE ?=
 
@@ -14,12 +14,12 @@ all: build
 
 build:
 	@mkdir -p $(BIN_DIR)
-	go build -v -o $(PRAETORCTL) ./cmd/standardsctl
-	@ln -sf praetorctl $(STANDARDSCTL)
-	go build -v -o $(PRAETOR_MCP) ./cmd/standards-mcp
-	@ln -sf praetor-mcp $(STANDARDS_MCP)
-	go build -v -o $(PRAETOR_LSP) ./cmd/standards-lsp
-	@ln -sf praetor-lsp $(STANDARDS_LSP)
+	go build -v -o $(PRAETORCTL) ./cmd/praetorctl
+	go build -v -o $(PRAETOR_MCP) ./cmd/praetor-mcp
+	go build -v -o $(PRAETOR_LSP) ./cmd/praetor-lsp
+	@for legacy in $(LEGACY_BIN_LINKS); do \
+		if [ -L "$(BIN_DIR)/$$legacy" ]; then rm -f "$(BIN_DIR)/$$legacy"; fi; \
+	done
 
 test:
 	go test -v -race $(if $(TEST_COVERPROFILE),-covermode=atomic -coverprofile="$(TEST_COVERPROFILE)") ./...
@@ -35,16 +35,16 @@ fuzz:
 	go test -fuzz=FuzzValidateRobotsTxt -fuzztime=5s ./internal/seo/...
 	go test -fuzz=FuzzASTMerge -fuzztime=5s ./internal/astmerge/...
 	go test -fuzz=FuzzChangelogRender -fuzztime=5s ./internal/changelog/...
-	go test -fuzz=FuzzLSPHandleMessage -fuzztime=5s ./cmd/standards-lsp/...
+	go test -fuzz=FuzzLSPHandleMessage -fuzztime=5s ./cmd/praetor-lsp/...
 
 compile-context:
-	go run ./cmd/standardsctl compile-context
+	go run ./cmd/praetorctl compile-context
 
 compile-context-verify:
-	go run ./cmd/standardsctl compile-context --verify
+	go run ./cmd/praetorctl compile-context --verify
 
 audit:
-	go run ./cmd/standardsctl audit
+	go run ./cmd/praetorctl audit
 
 lint:
 	go vet ./...
@@ -73,20 +73,20 @@ sec:
 	fi
 
 flavor-audit: state-init
-	go run ./cmd/standardsctl flavor audit .
+	go run ./cmd/praetorctl flavor audit .
 
 .PHONY: state-init
 state-init:
-	go run ./cmd/standardsctl state init --if-absent .
+	go run ./cmd/praetorctl state init --if-absent .
 
 state-audit: state-init
-	go run ./cmd/standardsctl state audit .
+	go run ./cmd/praetorctl state audit .
 
 dedupe:
-	go run ./cmd/standardsctl dedupe scan .
+	go run ./cmd/praetorctl dedupe scan .
 
 topology-audit:
-	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
+	@if [ -d "$$HOME/dev" ]; then go run ./cmd/praetorctl topology audit "$$HOME/dev"; fi
 
 verify-all: semgrep-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
@@ -158,7 +158,7 @@ hook-cli: $(PRAETORCTL)
 
 $(PRAETORCTL): $(HOOK_GO_SOURCES) go.mod go.sum Makefile
 	@mkdir -p $(BIN_DIR)
-	go build -o $(PRAETORCTL) ./cmd/standardsctl
+	go build -o $(PRAETORCTL) ./cmd/praetorctl
 
 hooks-check:
 	lefthook validate

@@ -14,14 +14,14 @@
   "customizations": {
     "praetor": {
       "bootstrap": {
-        "version": 1,
+        "version": 2,
         "state": "source-bundle",
         "builderImage": "docker.io/library/golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125",
         "baseImage": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae",
-        "sourceSHA256": "sha256:fd28d40a408d852d820ac713229de6e852da3b8db2c1bc0f0dbad31c1d2f4174",
-        "archiveSHA256": "sha256:b8c750a8571a3aee820e30006830a9e66363c4dd6fddc06382f146b673593814",
+        "sourceSHA256": "sha256:389b34e17c93695f74b5162468789748f98611ebb81aa01436c5c4e31b4f17be",
+        "archiveSHA256": "sha256:7ae0b12759a6be6cf6870194182ae886cb027b714908d9923edcb2d9d557cfa2",
         "archiveParts": 3,
-        "dockerfileSHA256": "sha256:4b22fb7fc9188a298645236aa1b3e1d2c00ed888be525155c7c98849d777669e"
+        "dockerfileSHA256": "sha256:ccba62547e6d7305b6cd19665c6ba6e45aa5ec92379413f113a2c0e98a7d9b87"
       }
     },
     "vscode": {

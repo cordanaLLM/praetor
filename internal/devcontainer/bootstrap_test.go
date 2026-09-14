@@ -16,7 +16,7 @@ func TestBootstrapMissingSourceNeverReferencesAdopterPraetorFiles(t *testing.T) 
 	if bundle.Spec().State != BootstrapUnavailable {
 		t.Fatal("missing selected source was called available")
 	}
-	if bundle.Config.Build != nil || strings.Contains(bundle.Config.PostCreateCommand, "./cmd/standardsctl") {
+	if bundle.Config.Build != nil || strings.Contains(bundle.Config.PostCreateCommand, "./cmd/praetorctl") || strings.Contains(bundle.Config.PostCreateCommand, "standardsctl") {
 		t.Fatal("missing bootstrap still references adopter-local Praetor files")
 	}
 	if !strings.Contains(bundle.Config.PostCreateCommand, "exit 1") {
@@ -69,7 +69,7 @@ func bootstrapSourceFixture(t *testing.T) string {
 	writeBootstrapFile(t, root, "go.mod", "module github.com/cordanaLLM/praetor\n\ngo 1.27\n")
 	writeBootstrapFile(t, root, "go.sum", "")
 	writeBootstrapFile(t, root, "LICENSE", "Synthetic test license\n")
-	writeBootstrapFile(t, root, "cmd/standardsctl/main.go", "package main\nfunc main() {}\n")
+	writeBootstrapFile(t, root, "cmd/praetorctl/main.go", "package main\nfunc main() {}\n")
 	if _, err := runSourceGit(t.Context(), root, "init", "-q"); err != nil {
 		t.Fatal(err)
 	}

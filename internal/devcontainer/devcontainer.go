@@ -261,7 +261,7 @@ func synthesizePostCreateCommand(profiles []string) string {
 	for i := 0; i < len(profiles) && i < MaxLoopLimit; i++ {
 		p := strings.ToLower(strings.TrimSpace(profiles[i]))
 		if p == "framework" {
-			return "go run ./cmd/standardsctl compile-context && make verify-all"
+			return "go run ./cmd/praetorctl compile-context && make verify-all"
 		}
 	}
 	return "make verify-all"
@@ -374,6 +374,10 @@ func Verify(ctx context.Context, path string, expected *DevContainer) error {
 	}
 	if (&Bundle{Config: actual}).Spec() != nil {
 		return verifyRecordedBootstrap(ctx, path, raw, actual, expected)
+	}
+	// Report the renamed CLI before the generic mismatch so the remedy is actionable.
+	if err := rejectLegacyPostCreate(actual); err != nil {
+		return err
 	}
 
 	actualBytes, err := Render(actual)

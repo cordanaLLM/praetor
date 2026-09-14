@@ -90,7 +90,7 @@ def file_checks(directory, names):
         if (directory / "scripts/test_checkpoint_hooks.py").exists():
             commands.append(["python3", "-B", "scripts/test_checkpoint_hooks.py"])
     if context_changed(names):
-        commands.append(["go", "run", "./cmd/standardsctl", "compile-context", "--verify"])
+        commands.append(["go", "run", "./cmd/praetorctl", "compile-context", "--verify"])
     parallel(commands, directory)
 
 
@@ -215,7 +215,7 @@ def source_checks(directory, names, gate="all", base=None):
 
 
 def run_full_gate(directory):
-    command = ["go", "run", "./cmd/standardsctl", "gate"]
+    command = ["go", "run", "./cmd/praetorctl", "gate"]
     for subcommand in ("run", "verify"):
         run([*command, subcommand, "--path=."], cwd=directory, env=clean_env(),
             timeout=600, capture=False)
@@ -236,7 +236,7 @@ def semgrep_commands(directory, names):
 def governance_commands(directory, names, source, base=None):
     """Retain governance, flavor and ledger controls where changes affect them."""
     commands = []
-    cli = ["go", "run", "./cmd/standardsctl"]
+    cli = ["go", "run", "./cmd/praetorctl"]
     config = context_changed(names) or any(
         name.startswith((".standards", ".config/", ".agents/", ".claude/", ".codex/",
                          ".gemini/", ".cursor/", ".devcontainer/", ".github/", "templates/"))

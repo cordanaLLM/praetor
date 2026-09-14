@@ -16,7 +16,7 @@ func cliBootstrapSource(t *testing.T) string {
 	root := t.TempDir()
 	for name, content := range map[string]string{
 		"go.mod": "module github.com/cordanaLLM/praetor\n\ngo 1.27\n", "go.sum": "", "LICENSE": "Synthetic test license\n",
-		"cmd/standardsctl/main.go": "package main\nfunc main() {}\n",
+		"cmd/praetorctl/main.go": "package main\nfunc main() {}\n",
 	} {
 		writeFixtureFile(t, root, name, content)
 	}

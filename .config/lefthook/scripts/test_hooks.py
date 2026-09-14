@@ -52,7 +52,7 @@ class GitHooks(unittest.TestCase):
         cls.cli_temp = tempfile.TemporaryDirectory(prefix="praetor-hook-cli-")
         cls.addClassCleanup(cls.cli_temp.cleanup)
         cls.binary = Path(cls.cli_temp.name) / "praetorctl"
-        command(ROOT, "go", "build", "-o", str(cls.binary), "./cmd/standardsctl")
+        command(ROOT, "go", "build", "-o", str(cls.binary), "./cmd/praetorctl")
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="praetor-hook-test-")
@@ -906,10 +906,10 @@ class ScopeAndGuard(unittest.TestCase):
             with mock.patch("checks.parallel"), mock.patch("checks.run", side_effect=process):
                 self.assertTrue(source_checks(root, [".standards.yaml"], base=base))
                 self.assertEqual(calls, [["make", "--no-print-directory", "state-audit"],
-                                        ["go", "run", "./cmd/standardsctl", "gate", "run", "--path=."],
-                                        ["go", "run", "./cmd/standardsctl", "gate", "verify", "--path=."]])
+                                        ["go", "run", "./cmd/praetorctl", "gate", "run", "--path=."],
+                                        ["go", "run", "./cmd/praetorctl", "gate", "verify", "--path=."]])
             def reject_pin(argv, **kwargs):
-                if argv[:5] == ["go", "run", "./cmd/standardsctl", "gate", "verify"]:
+                if argv[:5] == ["go", "run", "./cmd/praetorctl", "gate", "verify"]:
                     raise HookError("pin mismatch")
                 return process(argv, **kwargs)
             with mock.patch("checks.parallel"), mock.patch("checks.run", side_effect=reject_pin):

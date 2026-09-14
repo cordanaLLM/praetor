@@ -34,7 +34,7 @@ func TestSynthesize_3D(t *testing.T) {
 	if dc.RemoteUser != "vscode" {
 		t.Fatalf("expected remoteUser vscode, got: %s", dc.RemoteUser)
 	}
-	if !strings.Contains(dc.PostCreateCommand, "standardsctl compile-context") {
+	if !strings.Contains(dc.PostCreateCommand, "go run ./cmd/praetorctl compile-context") {
 		t.Fatalf("expected postCreateCommand to contain compile-context, got: %s", dc.PostCreateCommand)
 	}
 

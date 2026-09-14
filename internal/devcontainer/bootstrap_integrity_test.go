@@ -34,7 +34,7 @@ func TestBootstrapIdentityIsStableAndIncludesTests(t *testing.T) {
 	if !reflect.DeepEqual(first, second) {
 		t.Fatal("unchanged capture changed bootstrap identity")
 	}
-	writeBootstrapFile(t, root, "cmd/standardsctl/main_test.go", "package main\nimport \"testing\"\nfunc TestSource(t *testing.T) {}\n")
+	writeBootstrapFile(t, root, "cmd/praetorctl/main_test.go", "package main\nimport \"testing\"\nfunc TestSource(t *testing.T) {}\n")
 	third, err := PrepareBundle(t.Context(), "adopted/app", []string{"framework"}, nil, options)
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ func TestBootstrapSourceChangeDuringCaptureRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeBootstrapFile(t, root, "cmd/standardsctl/main_test.go", "package main\n")
+	writeBootstrapFile(t, root, "cmd/praetorctl/main_test.go", "package main\n")
 	bundle := &Bundle{}
 	err = bundle.prepareSource(t.Context(), files, BootstrapOptions{SourceRoot: root}, &BootstrapSpec{})
 	if err == nil || !strings.Contains(err.Error(), "changed during") {
@@ -64,7 +64,7 @@ func TestBootstrapSourceChangeDuringCaptureRejected(t *testing.T) {
 func TestBootstrapRejectsUnsupportedSource(t *testing.T) {
 	for name, change := range map[string]func(*testing.T, string){
 		"embedded-assets": func(t *testing.T, root string) {
-			writeBootstrapFile(t, root, "cmd/standardsctl/assets.go", "package main\nimport _ \"embed\"\n//go:embed secret.txt\nvar asset string\n")
+			writeBootstrapFile(t, root, "cmd/praetorctl/assets.go", "package main\nimport _ \"embed\"\n//go:embed secret.txt\nvar asset string\n")
 		},
 		"wrong-module": func(t *testing.T, root string) {
 			writeBootstrapFile(t, root, "go.mod", "module attacker.invalid/tool\n// module github.com/cordanaLLM/praetor\n")
@@ -73,12 +73,12 @@ func TestBootstrapRejectsUnsupportedSource(t *testing.T) {
 			writeBootstrapFile(t, root, "go.mod", "module github.com/cordanaLLM/praetor\nmodule other\n")
 		},
 		"missing-cli": func(t *testing.T, root string) {
-			if err := os.Remove(filepath.Join(root, "cmd/standardsctl/main.go")); err != nil {
+			if err := os.Remove(filepath.Join(root, "cmd/praetorctl/main.go")); err != nil {
 				t.Fatal(err)
 			}
 		},
 		"invalid-go": func(t *testing.T, root string) {
-			writeBootstrapFile(t, root, "cmd/standardsctl/main.go", "not go source")
+			writeBootstrapFile(t, root, "cmd/praetorctl/main.go", "not go source")
 		},
 		"symlink-go": func(t *testing.T, root string) {
 			target := filepath.Join(t.TempDir(), "outside.go")
@@ -204,7 +204,7 @@ func TestLegacyAdoptedPathsFailAndSelfHostedInputsPass(t *testing.T) {
 		t.Fatal("legacy matching strings hid absent Praetor source")
 	}
 	writeBootstrapFile(t, root, "go.mod", "module github.com/cordanaLLM/praetor\n")
-	writeBootstrapFile(t, root, "cmd/standardsctl/main.go", "package main\n")
+	writeBootstrapFile(t, root, "cmd/praetorctl/main.go", "package main\n")
 	if err := Verify(t.Context(), path, dc); err != nil {
 		t.Fatalf("actual legacy self-host inputs rejected: %v", err)
 	}

@@ -1,0 +1,12 @@
+type: changed
+title: >-
+  Move the command packages to cmd/praetorctl, cmd/praetor-mcp and cmd/praetor-lsp
+  and stop creating the standardsctl, standards-mcp and standards-lsp aliases;
+  make build and scripts/dev_install.py remove the old alias links, the installer
+  refuses any other entry under those names, and DevContainer bootstrap v2
+  rejects v1 source bundles and postCreate commands that run ./cmd/standardsctl.
+  Migration: build or install from ./cmd/praetorctl, ./cmd/praetor-mcp and
+  ./cmd/praetor-lsp, call praetorctl, praetor-mcp and praetor-lsp by name, and
+  regenerate source-bundle DevContainers with praetorctl devcontainer generate
+  --source-root <praetor checkout> --force.
+breaking: true

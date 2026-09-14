@@ -475,7 +475,7 @@ def probe(binary, root, metadata):
         required.update({"standards_planning_validate", "standards_planning_prepare"})
         require(required <= set(names), "required tools are absent")
         inspected = tool_text(client.call("standards_inspect_symbols",
-                                         {"path": "cmd/standards-mcp/main.go"}))
+                                         {"path": "cmd/praetor-mcp/main.go"}))
         require("runTransport" in inspected, "checkout inspection did not read the actual entry point")
     with tempfile.TemporaryDirectory(prefix="praetor-mcp-fixture-") as directory:
         fixture = Path(directory)

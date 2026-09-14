@@ -193,7 +193,7 @@ func bootstrapSourceAvailable(ctx context.Context, root string) (bool, error) {
 }
 
 func validateBootstrapSourceSet(files []bootstrapSourceFile) error {
-	if !containsBootstrapSource(files, "cmd/standardsctl/main.go") || !containsBootstrapSource(files, "go.mod") || !containsBootstrapSource(files, "go.sum") || !containsBootstrapSource(files, "LICENSE") {
+	if !containsBootstrapSource(files, bootstrapCLIMain) || !containsBootstrapSource(files, "go.mod") || !containsBootstrapSource(files, "go.sum") || !containsBootstrapSource(files, "LICENSE") {
 		return errors.New("bootstrap requires CLI sources, go.mod, go.sum and LICENSE")
 	}
 	for _, file := range files {

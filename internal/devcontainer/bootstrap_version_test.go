@@ -12,7 +12,7 @@ func TestBootstrapBuildPreservesSelectedSourceVersion(t *testing.T) {
 	root := bootstrapSourceFixture(t)
 	// A mutable fixture symbol makes accidental linker rewriting observable even
 	// though the production CLI currently declares its version as a constant.
-	writeBootstrapFile(t, root, "cmd/standardsctl/main.go", "package main\nimport \"fmt\"\nvar version = \"selected-source-v42\"\nfunc main() { fmt.Println(version) }\n")
+	writeBootstrapFile(t, root, "cmd/praetorctl/main.go", "package main\nimport \"fmt\"\nvar version = \"selected-source-v42\"\nfunc main() { fmt.Println(version) }\n")
 	bundle, err := PrepareBundle(t.Context(), "app", nil, nil, BootstrapOptions{SourceRoot: root})
 	if err != nil {
 		t.Fatal(err)

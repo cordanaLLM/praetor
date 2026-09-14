@@ -17,7 +17,7 @@ func adoptBootstrapSource(t *testing.T) string {
 	initTestGit(t, root)
 	for name, content := range map[string]string{
 		"go.mod": "module github.com/cordanaLLM/praetor\n\ngo 1.27\n", "go.sum": "", "LICENSE": "Synthetic test license\n",
-		"cmd/standardsctl/main.go": "package main\nfunc main() {}\n",
+		"cmd/praetorctl/main.go": "package main\nfunc main() {}\n",
 	} {
 		mustWrite(t, filepath.Join(root, name), content)
 	}

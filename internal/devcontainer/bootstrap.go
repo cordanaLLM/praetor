@@ -14,12 +14,16 @@ import (
 const (
 	BootstrapReady       = "source-bundle"
 	BootstrapUnavailable = "unavailable"
-	bootstrapVersion     = 1
-	bootstrapDockerfile  = "Dockerfile.praetor"
-	maxBootstrapParts    = 4
-	bootstrapPartBytes   = 512 * 1024
-	DefaultBuilderImage  = "docker.io/library/golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125"
-	DefaultBaseImage     = "mcr.microsoft.com/devcontainers/base:ubuntu-24.04@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae"
+	bootstrapVersion     = 2
+	// legacyBootstrapVersion predates the praetorctl rename. Its source bundles build
+	// a command directory that no longer exists; its unavailable specs name no build input.
+	legacyBootstrapVersion = 1
+	bootstrapCLIMain       = "cmd/praetorctl/main.go"
+	bootstrapDockerfile    = "Dockerfile.praetor"
+	maxBootstrapParts      = 4
+	bootstrapPartBytes     = 512 * 1024
+	DefaultBuilderImage    = "docker.io/library/golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125"
+	DefaultBaseImage       = "mcr.microsoft.com/devcontainers/base:ubuntu-24.04@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae"
 )
 
 // BootstrapOptions selects a local Praetor source snapshot and immutable images.
@@ -171,8 +175,17 @@ func validateBootstrapImages(images ...string) error {
 	return nil
 }
 
+// ErrLegacyBootstrapVersion rejects a v1 source bundle instead of reporting a digest mismatch.
+var ErrLegacyBootstrapVersion = errors.New("bootstrap specification v1 predates the praetorctl rename; regenerate with 'praetorctl devcontainer generate --source-root <praetor checkout> --force'")
+
 func validateBootstrapSpec(spec *BootstrapSpec) error {
-	if spec == nil || spec.Version != bootstrapVersion {
+	if spec == nil {
+		return errors.New("unsupported or absent bootstrap specification")
+	}
+	if spec.Version == legacyBootstrapVersion && spec.State != BootstrapUnavailable {
+		return ErrLegacyBootstrapVersion
+	}
+	if spec.Version != bootstrapVersion && spec.Version != legacyBootstrapVersion {
 		return errors.New("unsupported or absent bootstrap specification")
 	}
 	if err := validateBootstrapImages(spec.BaseImage); err != nil {
@@ -207,14 +220,14 @@ func validateReadyBootstrap(spec *BootstrapSpec) error {
 
 func renderBootstrapDockerfile(spec *BootstrapSpec) string {
 	var s strings.Builder
-	fmt.Fprintf(&s, "# Praetor bootstrap v1; selected source digest %s\nFROM %s AS praetor_build\nWORKDIR /praetor-source\n", spec.SourceSHA256, spec.BuilderImage)
+	fmt.Fprintf(&s, "# Praetor bootstrap v%d; selected source digest %s\nFROM %s AS praetor_build\nWORKDIR /praetor-source\n", bootstrapVersion, spec.SourceSHA256, spec.BuilderImage)
 	for i := 0; i < spec.ArchiveParts && i < maxBootstrapParts; i++ {
 		fmt.Fprintf(&s, "COPY [\"%s\", \"/tmp/praetor-source/%03d.b64\"]\n", bootstrapPartName(i), i)
 	}
 	fmt.Fprintf(&s, "RUN cat /tmp/praetor-source/*.b64 | base64 -d > /tmp/praetor-source.tar.gz\nRUN echo '%s  /tmp/praetor-source.tar.gz' | sha256sum -c - && tar -xzf /tmp/praetor-source.tar.gz -C /praetor-source\n", strings.TrimPrefix(spec.ArchiveSHA256, "sha256:"))
 	s.WriteString("ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org\nRUN sha256sum go.mod go.sum > /tmp/praetor-modules.sha256 && /usr/local/go/bin/go mod download && /usr/local/go/bin/go mod verify && sha256sum -c /tmp/praetor-modules.sha256\n")
-	s.WriteString("RUN /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -o /out/praetorctl ./cmd/standardsctl\n")
-	fmt.Fprintf(&s, "FROM %s\nCOPY --from=praetor_build --chmod=0444 /praetor-source/LICENSE /usr/local/share/praetor/LICENSE\nCOPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/praetorctl\nCOPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/standardsctl\nUSER vscode\n", spec.BaseImage)
+	s.WriteString("RUN /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -o /out/praetorctl ./cmd/praetorctl\n")
+	fmt.Fprintf(&s, "FROM %s\nCOPY --from=praetor_build --chmod=0444 /praetor-source/LICENSE /usr/local/share/praetor/LICENSE\nCOPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/praetorctl\nUSER vscode\n", spec.BaseImage)
 	return s.String()
 }
 

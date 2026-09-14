@@ -18,10 +18,19 @@ sys.dont_write_bytecode = True
 import dev_mcp
 from dev_mcp_probe import probe
 
+# Installed binary name -> Go package directory under ./cmd.
 COMMANDS = {
-    "praetorctl": "standardsctl",
-    "praetor-mcp": "standards-mcp",
-    "praetor-lsp": "standards-lsp",
+    "praetorctl": "praetorctl",
+    "praetor-mcp": "praetor-mcp",
+    "praetor-lsp": "praetor-lsp",
+}
+# Hard cut: names retired by the Praetor rename. The previous installer linked each
+# one to its binary; such a link is removed (with backup and rollback) and nothing is
+# ever installed under these names again. Any other entry is refused.
+LEGACY_LINKS = {
+    "standardsctl": "praetorctl",
+    "standards-mcp": "praetor-mcp",
+    "standards-lsp": "praetor-lsp",
 }
 MANIFEST = ".praetor-dev-install.json"
 
@@ -40,14 +49,23 @@ def installation_lock(bin_dir):
         lock.rmdir()
 
 
+def legacy_state(path):
+    """Accept only a retired link to its own binary; the link is never followed."""
+    expected = LEGACY_LINKS[path.name]
+    if not os.path.lexists(path):
+        return {"kind": "absent"}
+    if not path.is_symlink() or os.readlink(path) != expected:
+        raise RuntimeError(f"Refusing legacy installation entry {path}: it is not a symlink to "
+                           f"{expected}; remove it manually, Praetor installs only {expected}")
+    return {"kind": "symlink", "target": expected}
+
+
 def file_state(path):
     """Reject special files and foreign links before touching an installation."""
+    if path.name in LEGACY_LINKS:
+        return legacy_state(path)
     if path.is_symlink():
-        target = os.readlink(path)
-        expected = {alias: name for name, alias in COMMANDS.items()}.get(path.name)
-        if target != expected:
-            raise RuntimeError(f"Refusing unexpected installation symlink: {path}")
-        return {"kind": "symlink", "target": target}
+        raise RuntimeError(f"Refusing unexpected installation symlink: {path}")
     if not path.exists():
         return {"kind": "absent"}
     if not stat.S_ISREG(path.stat().st_mode):
@@ -91,7 +109,7 @@ def restore(backup, bin_dir, previous, changed):
 
 
 def install_files(staging, bin_dir, backup_root, metadata):
-    """Install exactly three binaries and their aliases; preserve rollback evidence."""
+    """Install exactly three binaries and retire legacy links; preserve rollback evidence."""
     bin_dir.mkdir(parents=True, exist_ok=True)
     with installation_lock(bin_dir):
         return install_locked(staging, bin_dir, backup_root, metadata)
@@ -99,19 +117,19 @@ def install_files(staging, bin_dir, backup_root, metadata):
 
 def install_locked(staging, bin_dir, backup_root, metadata):
     """Caller holds the destination lock for backup, replacement, and rollback."""
-    names = [item for pair in COMMANDS.items() for item in pair] + [MANIFEST]
-    backup, previous = prepare_backup(bin_dir, backup_root, names)
-    report = dict(metadata, bin_dir=str(bin_dir), backup_dir=str(backup), binaries={})
-    for name, alias in COMMANDS.items():
+    names = [*COMMANDS, MANIFEST]
+    backup, previous = prepare_backup(bin_dir, backup_root, [*names, *LEGACY_LINKS])
+    retired = [name for name in LEGACY_LINKS if previous[name]["kind"] != "absent"]
+    report = dict(metadata, bin_dir=str(bin_dir), backup_dir=str(backup), binaries={},
+                  removed_legacy_links=retired)
+    for name in COMMANDS:
         mode = stat.S_IMODE((staging / name).stat().st_mode) & 0o755
-        for target in (name, alias):
-            if previous[target]["kind"] == "file":
-                mode &= previous[target]["mode"]
+        if previous[name]["kind"] == "file":
+            mode &= previous[name]["mode"]
         if not mode & 0o111:
             raise RuntimeError(f"Existing permissions prevent executable installation: {name}; backup: {backup}")
         (staging / name).chmod(mode)
         report["binaries"][name] = hashlib.sha256(dev_mcp.read_bounded(staging / name)).hexdigest()
-        (staging / alias).symlink_to(name)
     manifest = staging / MANIFEST
     manifest.write_text(json.dumps(report, indent=2) + "\n")
     manifest.chmod(0o600 & previous[MANIFEST].get("mode", 0o600))
@@ -122,6 +140,11 @@ def install_locked(staging, bin_dir, backup_root, metadata):
                 raise RuntimeError(f"Installation changed before replacement: {name}")
             changed.append(name)
             replace_from(staging / name, bin_dir / name)
+        for name in retired:
+            if file_state(bin_dir / name) != previous[name]:
+                raise RuntimeError(f"Installation changed before legacy link removal: {name}")
+            changed.append(name)
+            (bin_dir / name).unlink()
         for name, expected in report["binaries"].items():
             if file_state(bin_dir / name).get("sha256") != expected:
                 raise RuntimeError(f"Installed binary readback mismatch: {name}")

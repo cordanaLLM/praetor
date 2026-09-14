@@ -40,7 +40,7 @@ test("extension setup arguments execute against actual shared Go CLI", async () 
   const repo = path.resolve(__dirname, "../../..");
   const binary = path.join(root, process.platform === "win32" ? "praetorctl.exe" : "praetorctl");
   try {
-    execFileSync("go", ["build", "-o", binary, "./cmd/standardsctl"], { cwd: repo, timeout: 120_000, stdio: "pipe" });
+    execFileSync("go", ["build", "-o", binary, "./cmd/praetorctl"], { cwd: repo, timeout: 120_000, stdio: "pipe" });
     const inventory = await runCLI(binary, ["clients", "capabilities"], root);
     assert.equal(inventory.exitCode, 0);
     const clients = parseCapabilities(inventory.stdout);
