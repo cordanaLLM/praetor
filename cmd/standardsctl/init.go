@@ -9,7 +9,7 @@ import (
 	"github.com/cordanallm/praetor/internal/baseline"
 	"github.com/cordanallm/praetor/internal/compiler"
 	"github.com/cordanallm/praetor/internal/config"
-	"gopkg.in/yaml.v3"
+	"github.com/golusoris/golusoris/core/codec/yaml"
 )
 
 func runInit(args []string) error {
@@ -61,12 +61,7 @@ func createInitialManifest(outputPath, profile string, facets []string) error {
 		Facets:   facets,
 	}
 
-	data, err := yaml.Marshal(&manifest)
-	if err != nil {
-		return fmt.Errorf("failed to marshal manifest: %w", err)
-	}
-
-	if err := os.WriteFile(outputPath, data, 0644); err != nil {
+	if err := yaml.WriteFile(outputPath, &manifest, 0o644); err != nil {
 		return fmt.Errorf("failed to write %s: %w", outputPath, err)
 	}
 	fmt.Printf("[CREATED] %s (Profile: %s, Facets: %v)\n", outputPath, profile, facets)

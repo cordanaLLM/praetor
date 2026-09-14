@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/cordanallm/praetor/internal/util"
-	"gopkg.in/yaml.v3"
+	"github.com/golusoris/golusoris/core/codec/yaml"
 )
 
 type pnpmOutdatedItem struct {
@@ -58,7 +58,7 @@ func parsePnpmWorkspace(repoPath, wsPath string) []string {
 	}
 
 	var cfg pnpmWorkspaceConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := yaml.UnmarshalLenient(data, &cfg); err != nil {
 		return dirs
 	}
 

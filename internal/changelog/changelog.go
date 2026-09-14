@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/cordanallm/praetor/internal/util"
-	"gopkg.in/yaml.v3"
+	"github.com/golusoris/golusoris/core/codec/yaml"
 )
 
 // FragmentType represents valid Keep-a-Changelog section types.
@@ -68,12 +68,7 @@ func CreateFragment(repoPath string, f Fragment) (string, error) {
 	filename := fmt.Sprintf("%d-%s.yaml", time.Now().UnixNano()%1000000, slug)
 	target := filepath.Join(dir, filename)
 
-	data, err := yaml.Marshal(f)
-	if err != nil {
-		return "", fmt.Errorf("marshal fragment: %w", err)
-	}
-
-	if err := os.WriteFile(target, data, 0644); err != nil {
+	if err := yaml.WriteFile(target, f, 0o644); err != nil {
 		return "", fmt.Errorf("write fragment: %w", err)
 	}
 	return target, nil
@@ -105,7 +100,7 @@ func LoadFragments(repoPath string) ([]Fragment, []string, error) {
 		}
 
 		var f Fragment
-		if err := yaml.Unmarshal(data, &f); err == nil && f.Title != "" {
+		if err := yaml.UnmarshalLenient(data, &f); err == nil && f.Title != "" {
 			f.Type = FragmentType(strings.ToLower(string(f.Type)))
 			fragments = append(fragments, f)
 			files = append(files, filePath)

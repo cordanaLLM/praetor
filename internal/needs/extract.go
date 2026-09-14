@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/cordanallm/praetor/internal/util"
-	"gopkg.in/yaml.v3"
+	"github.com/golusoris/golusoris/core/codec/yaml"
 )
 
 // ScanRepo extracts framework capability needs and dependency mappings from a
@@ -169,7 +169,7 @@ func loadExistingDeclarations(repoPath string, repoNeeds *RepoNeeds) {
 		data, err := os.ReadFile(needsPath)
 		if err == nil {
 			var existing RepoNeeds
-			if yaml.Unmarshal(data, &existing) == nil {
+			if yaml.UnmarshalLenient(data, &existing) == nil {
 				repoNeeds.Capabilities = existing.Capabilities
 				return
 			}
@@ -183,7 +183,7 @@ func loadExistingDeclarations(repoPath string, repoNeeds *RepoNeeds) {
 			var st struct {
 				Needs CapabilityDeclaration `yaml:"needs"`
 			}
-			if yaml.Unmarshal(data, &st) == nil && len(st.Needs.Required) > 0 {
+			if yaml.UnmarshalLenient(data, &st) == nil && len(st.Needs.Required) > 0 {
 				repoNeeds.Capabilities = st.Needs
 			}
 		}
@@ -338,9 +338,8 @@ func calculateReadiness(repoNeeds *RepoNeeds) {
 // WriteNeedsManifest serializes the RepoNeeds to .needs.yaml.
 func WriteNeedsManifest(repoPath string, repoNeeds *RepoNeeds) error {
 	targetFile := filepath.Join(repoPath, ".needs.yaml")
-	data, err := yaml.Marshal(repoNeeds)
-	if err != nil {
-		return fmt.Errorf("failed to marshal needs manifest: %w", err)
+	if err := yaml.WriteFile(targetFile, repoNeeds, 0o644); err != nil {
+		return fmt.Errorf("failed to write needs manifest: %w", err)
 	}
-	return os.WriteFile(targetFile, data, 0o644)
+	return nil
 }

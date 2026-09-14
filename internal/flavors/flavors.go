@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"gopkg.in/yaml.v3"
+	"github.com/golusoris/golusoris/core/codec/yaml"
 )
 
 // Flavor defines a release track and its tag convention.
@@ -38,7 +38,7 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := yaml.UnmarshalLenient(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse flavors config at %s: %w", path, err)
 	}
 

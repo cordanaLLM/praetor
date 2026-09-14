@@ -6,11 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"github.com/golusoris/golusoris/core/codec/yaml"
 )
 
 // RawModelInfo represents metadata from upstream LiteLLM/OpenRouter catalogs.
@@ -336,12 +335,7 @@ func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*Syn
 		},
 	}
 
-	data, err := yaml.Marshal(&cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal updated routing config: %w", err)
-	}
-
-	if err := os.WriteFile(targetPath, data, 0644); err != nil {
+	if err := yaml.WriteFile(targetPath, &cfg, 0o644); err != nil {
 		return nil, fmt.Errorf("failed to write routing config to %s: %w", targetPath, err)
 	}
 

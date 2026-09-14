@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/cordanallm/praetor/internal/util"
-	"gopkg.in/yaml.v3"
+	"github.com/golusoris/golusoris/core/codec/yaml"
 )
 
 const (
@@ -139,7 +139,7 @@ func loadCapabilitiesContract(path string, index *FrameworkIndex) error {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
 	var doc capabilitiesDoc
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := yaml.UnmarshalLenient(data, &doc); err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
 	if doc.Version != 1 {

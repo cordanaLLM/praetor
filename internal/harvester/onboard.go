@@ -10,7 +10,7 @@ import (
 	"github.com/cordanallm/praetor/internal/compiler"
 	"github.com/cordanallm/praetor/internal/config"
 	"github.com/cordanallm/praetor/internal/editor"
-	"gopkg.in/yaml.v3"
+	"github.com/golusoris/golusoris/core/codec/yaml"
 )
 
 // OnboardPlan captures planned or applied onboarding actions for a repository.
@@ -137,11 +137,7 @@ func ensureOnboardingManifest(repoPath, repoName, arch string, facets []string) 
 			Profiles: []string{arch},
 			Facets:   facets,
 		}
-		data, err := yaml.Marshal(&manifest)
-		if err != nil {
-			return fmt.Errorf("marshal manifest: %w", err)
-		}
-		if err := os.WriteFile(manifestPath, data, 0644); err != nil {
+		if err := yaml.WriteFile(manifestPath, &manifest, 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", manifestPath, err)
 		}
 	}

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"gopkg.in/yaml.v3"
+	"github.com/golusoris/golusoris/core/codec/yaml"
 )
 
 // ModelFamily identifies provider architecture families for orthogonal auditing.
@@ -57,7 +57,7 @@ func LoadRoutingConfig(path string) (*RoutingConfig, error) {
 	}
 
 	var cfg RoutingConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := yaml.UnmarshalLenient(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse model routing config at %s: %w", path, err)
 	}
 

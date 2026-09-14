@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"gopkg.in/yaml.v3"
+	"github.com/golusoris/golusoris/core/codec/yaml"
 )
 
 // RepositoryMetadata describes the identity and public metadata of the target repository.
@@ -73,7 +73,7 @@ func LoadManifest(path string) (*Manifest, error) {
 	}
 
 	var m Manifest
-	if err := yaml.Unmarshal(data, &m); err != nil {
+	if err := yaml.UnmarshalLenient(data, &m); err != nil {
 		return nil, fmt.Errorf("failed to parse manifest at %s: %w", path, err)
 	}
 
