@@ -224,7 +224,7 @@ func TestAggregateFleet(t *testing.T) {
 	if err := os.MkdirAll(repo1, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo1, "go.mod"), []byte("module r1\ngo 1.24\nrequire github.com/jackc/pgx v5.0.0\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo1, "go.mod"), []byte("module r1\ngo 1.24\nrequire github.com/jackc/pgx/v5 v5.0.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -232,7 +232,7 @@ func TestAggregateFleet(t *testing.T) {
 	if err := os.MkdirAll(repo2, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo2, "go.mod"), []byte("module r2\ngo 1.24\nrequire github.com/jackc/pgx v5.0.0\nrequire github.com/unknown/lib v1.0.0\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo2, "go.mod"), []byte("module r2\ngo 1.24\nrequire github.com/jackc/pgx/v5 v5.0.0\nrequire github.com/unknown/lib v1.0.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

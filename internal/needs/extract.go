@@ -1,11 +1,8 @@
 package needs
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordanallm/praetor/internal/util"
+	"github.com/golusoris/golusoris/core/astx"
 	"github.com/golusoris/golusoris/core/codec/yaml"
 )
 
@@ -57,87 +55,46 @@ func ScanRepoWith(ctx context.Context, repoPath string, idx *FrameworkIndex) (*R
 	return repoNeeds, nil
 }
 
-// parseGoMod extracts the module path, go version, and direct dependencies from go.mod.
+// parseGoMod extracts the module path, go version, and direct dependencies
+// from go.mod via golang.org/x/mod (astx.ParseGoMod) — the go command's own parser.
 func parseGoMod(goModPath string) (string, string, map[string]string, error) {
 	if !util.FileExists(goModPath) {
 		return "unknown", "1.27", make(map[string]string), nil
 	}
-
-	file, err := os.Open(goModPath)
+	mod, err := astx.ParseGoMod(goModPath)
 	if err != nil {
 		return "", "", nil, err
 	}
-	defer file.Close()
-
-	var modulePath, goVer string
 	directDeps := make(map[string]string)
-	scanner := bufio.NewScanner(file)
-	inRequireBlock := false
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "module ") {
-			modulePath = strings.TrimSpace(strings.TrimPrefix(line, "module"))
-		} else if strings.HasPrefix(line, "go ") {
-			goVer = strings.TrimSpace(strings.TrimPrefix(line, "go"))
-		} else if strings.HasPrefix(line, "require (") {
-			inRequireBlock = true
-		} else if inRequireBlock && line == ")" {
-			inRequireBlock = false
-		} else if inRequireBlock || strings.HasPrefix(line, "require ") {
-			parseRequireLine(line, directDeps)
-		}
+	for _, r := range mod.Direct() {
+		directDeps[r.Path] = r.Version
 	}
-
-	return modulePath, goVer, directDeps, scanner.Err()
+	return mod.Module, mod.Go, directDeps, nil
 }
 
-// parseRequireLine extracts a dependency if it is not marked as indirect.
-func parseRequireLine(line string, directDeps map[string]string) {
-	clean := strings.TrimPrefix(line, "require ")
-	clean = strings.TrimSpace(clean)
-	if strings.HasPrefix(clean, "//") || strings.HasPrefix(clean, "#") ||
-		strings.Contains(clean, "// indirect") || clean == "" || clean == "(" || clean == ")" {
-		return
-	}
-	parts := strings.Fields(clean)
-	if len(parts) >= 2 {
-		directDeps[parts[0]] = parts[1]
-	}
-}
+// legacySkipDirs are praetor-specific directories excluded on top of the astx
+// defaults (vendor, testdata, node_modules, dot- and underscore-prefixed).
+var legacySkipDirs = []string{"scratch", "cache"}
 
 // scanASTImports traverses the repo and extracts all unique third-party imports.
 func scanASTImports(ctx context.Context, rootDir, modulePath string) (map[string]struct{}, error) {
 	thirdParty := make(map[string]struct{})
-	fset := token.NewFileSet()
-
-	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil || ctx.Err() != nil {
-			return walkErr
-		}
-		if shouldSkipDir(info, path) {
-			return filepath.SkipDir
-		}
-		if info.IsDir() || !strings.HasSuffix(info.Name(), ".go") || strings.HasSuffix(info.Name(), "_test.go") {
-			return nil
-		}
-		node, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+	err := astx.Walk(ctx, rootDir, astx.WalkOptions{SkipDirs: legacySkipDirs}, func(path string) error {
+		imports, parseErr := astx.Imports(path)
 		if parseErr != nil {
 			return nil // Skip unparseable generated code gracefully
 		}
-		for _, imp := range node.Imports {
-			rawPath := strings.Trim(imp.Path.Value, `"`)
-			if isThirdPartyImport(rawPath, modulePath) {
-				thirdParty[rawPath] = struct{}{}
+		for _, imp := range imports {
+			if astx.IsThirdParty(imp, modulePath) {
+				thirdParty[imp] = struct{}{}
 			}
 		}
 		return nil
 	})
-
 	return thirdParty, err
 }
 
-// shouldSkipDir checks whether the directory should be skipped during AST traversal.
+// shouldSkipDir checks whether the directory should be skipped during fleet traversal.
 func shouldSkipDir(info os.FileInfo, path string) bool {
 	if !info.IsDir() {
 		return false
@@ -151,15 +108,6 @@ func shouldSkipDir(info os.FileInfo, path string) bool {
 		name == "node_modules" || strings.HasPrefix(name, ".") ||
 		name == "scratch" || name == "cache" || strings.Contains(path, "/scratch") ||
 		strings.Contains(path, "/.workingdir")
-}
-
-// isThirdPartyImport determines if an import path is external to stdlib and the current module.
-func isThirdPartyImport(importPath, modulePath string) bool {
-	if strings.HasPrefix(importPath, modulePath) {
-		return false
-	}
-	firstSeg := strings.Split(importPath, "/")[0]
-	return strings.Contains(firstSeg, ".")
 }
 
 // loadExistingDeclarations checks for existing .needs.yaml or .standards.yaml declarations.

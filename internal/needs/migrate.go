@@ -1,7 +1,6 @@
 package needs
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -10,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/cordanallm/praetor/internal/util"
+	"github.com/golusoris/golusoris/core/astx"
+	"golang.org/x/mod/modfile"
 )
 
 // PlanMigration analyzes a repository and builds an actionable migration plan.
@@ -80,55 +81,32 @@ func moduleForImport(idx *FrameworkIndex, importPath string) string {
 	return best
 }
 
-// findFileImportReplacements scans source files for import lines matching replaceable packages.
+// findFileImportReplacements walks every Go source file (tests included) and
+// resolves its import declarations against the replacement map via the AST,
+// so string literals and comments never produce false positives.
 func findFileImportReplacements(ctx context.Context, rootDir string, replacements map[string]string) ([]ReplacementAction, error) {
 	var actions []ReplacementAction
-
-	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil || ctx.Err() != nil {
-			return walkErr
+	opts := astx.WalkOptions{IncludeTests: true, SkipDirs: legacySkipDirs}
+	err := astx.Walk(ctx, rootDir, opts, func(path string) error {
+		imports, parseErr := astx.Imports(path)
+		if parseErr != nil {
+			return nil // unparseable files are the compiler's problem, not the planner's
 		}
-		if shouldSkipDir(info, path) {
-			return filepath.SkipDir
-		}
-		if info.IsDir() || !strings.HasSuffix(info.Name(), ".go") {
-			return nil
-		}
-
-		fileActions, scanErr := scanFileForReplacements(path, replacements)
-		if scanErr == nil && len(fileActions) > 0 {
-			actions = append(actions, fileActions...)
+		for _, imp := range imports {
+			target, ok := astx.Resolve(imp, replacements)
+			if !ok || target == imp {
+				continue
+			}
+			actions = append(actions, ReplacementAction{
+				File:        path,
+				OldImport:   imp,
+				NewImport:   target,
+				Description: fmt.Sprintf("Replace %s with Golusoris %s", imp, target),
+			})
 		}
 		return nil
 	})
-
 	return actions, err
-}
-
-// scanFileForReplacements inspects a single file for matching import statements.
-func scanFileForReplacements(filePath string, replacements map[string]string) ([]ReplacementAction, error) {
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, err
-	}
-
-	var actions []ReplacementAction
-	lines := strings.Split(string(content), "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		for oldPkg, newPkg := range replacements {
-			if strings.Contains(trimmed, `"`+oldPkg) {
-				actions = append(actions, ReplacementAction{
-					File:        filePath,
-					OldImport:   oldPkg,
-					NewImport:   newPkg,
-					Description: fmt.Sprintf("Replace %s with Golusoris %s", oldPkg, newPkg),
-				})
-			}
-		}
-	}
-
-	return actions, nil
 }
 
 // ApplyMigration applies the planned migration changes to the target repository.
@@ -142,12 +120,7 @@ func ApplyMigration(ctx context.Context, repoPath string, plan *MigrationPlan) (
 		// Log or handle non-fatal git command failure if not in git repo
 	}
 
-	changedFilesMap := make(map[string]struct{})
-	for _, act := range plan.Replacements {
-		if err := applyFileImportReplacement(act.File, act.OldImport, act.NewImport); err == nil {
-			changedFilesMap[act.File] = struct{}{}
-		}
-	}
+	changedFilesMap := applyImportReplacements(plan.Replacements)
 
 	goModPath := filepath.Join(repoPath, "go.mod")
 	if util.FileExists(goModPath) {
@@ -177,47 +150,53 @@ func ApplyMigration(ctx context.Context, repoPath string, plan *MigrationPlan) (
 	}, nil
 }
 
-// applyFileImportReplacement updates the import string inside a source file.
-func applyFileImportReplacement(filePath, oldImport, newImport string) error {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return err
+// applyImportReplacements groups planned actions per file and rewrites each
+// file's import declarations in one AST pass (aliases and comments preserved).
+func applyImportReplacements(actions []ReplacementAction) map[string]struct{} {
+	byFile := make(map[string]map[string]string)
+	for _, act := range actions {
+		if byFile[act.File] == nil {
+			byFile[act.File] = make(map[string]string)
+		}
+		byFile[act.File][act.OldImport] = act.NewImport
 	}
-	content := string(data)
-	replaced := strings.ReplaceAll(content, `"`+oldImport+`"`, `"`+newImport+`"`)
-	replaced = strings.ReplaceAll(replaced, `"`+oldImport+`/`, `"`+newImport+`/`)
-	return os.WriteFile(filePath, []byte(replaced), 0o644)
+	changed := make(map[string]struct{})
+	for file, mapping := range byFile {
+		if did, err := astx.RewriteImportsFile(file, mapping); err == nil && did {
+			changed[file] = struct{}{}
+		}
+	}
+	return changed
 }
 
-// updateGoMod drops superseded packages and appends the Golusoris framework require.
+// updateGoMod drops superseded requirements and adds the framework modules
+// using golang.org/x/mod/modfile, the go command's own go.mod editor.
 func updateGoMod(goModPath string, added, dropped []string) error {
-	file, err := os.Open(goModPath)
+	data, err := astx.ReadFileBounded(goModPath, astx.MaxGoModSize)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-
-	var newLines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		shouldDrop := false
-		for _, d := range dropped {
-			if strings.Contains(line, d) {
-				shouldDrop = true
-				break
-			}
-		}
-		if !shouldDrop {
-			newLines = append(newLines, line)
+	f, err := modfile.Parse(goModPath, data, nil)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", goModPath, err)
+	}
+	for _, d := range dropped {
+		if err := f.DropRequire(d); err != nil {
+			return fmt.Errorf("drop require %s: %w", d, err)
 		}
 	}
-
 	for _, add := range added {
-		newLines = append(newLines, "require "+add)
+		path, version, _ := strings.Cut(add, " ")
+		if err := f.AddRequire(path, version); err != nil {
+			return fmt.Errorf("add require %s: %w", add, err)
+		}
 	}
-
-	return os.WriteFile(goModPath, []byte(strings.Join(newLines, "\n")+"\n"), 0o644)
+	f.Cleanup()
+	out, err := f.Format()
+	if err != nil {
+		return fmt.Errorf("format %s: %w", goModPath, err)
+	}
+	return os.WriteFile(goModPath, out, 0o644)
 }
 
 // generateMigrationGuide creates a concise markdown walkthrough for the developer.
