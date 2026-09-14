@@ -1,0 +1,6 @@
+---
+type: fixed
+title: >-
+  Preserve the source wiki path and report uninitialized or inaccessible
+  GitHub wikis truthfully
+breaking: false
