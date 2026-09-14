@@ -37,13 +37,14 @@ flowchart LR
 | **HISS-16** | Context Integrity | Single canonical `AGENTS.md`; vendor files compiled via `standardsctl compile-context`. | Pre-commit blocker |
 | **HISS-17** | State Ledger Discipline | Agent turn-start inspects `.workingdir/STATE.md` & `.workingdir/OPEN.md`; tasks tracked via `standardsctl state task`; turn-end `standardsctl state sync .` required. | Pre-commit / CI gate |
 | **HISS-18** | CI Efficiency | Diff-aware change gating; skip heavy race & security gates on docs/state changes via `standardsctl ci filter`. | CI optimization gate |
+| **HISS-19** | Reuse Before Writing | One behavior, one implementation; extend or call what exists instead of reimplementing it, configuration formats included. | `dedupe scan` in verify-all |
 
 ## Operational Rules
 
 1. **Act on Verified State**:
    Read source files and run real commands before hypothesizing or editing. Never guess flag names, library signatures, or repo configurations from memory.
 
-2. **Reuse Before Writing**:
+2. **Reuse Before Writing (HISS-19)**:
    Search for an existing implementation before adding one. Before writing a function, config loader, parser, or command, grep the repository for the capability and extend or call what is already there. Two implementations of one behavior is a defect, not redundancy: they drift, and the second one silently stops matching the first. This applies to configuration formats as strictly as to code — a second config system beside an existing loader is the same defect.
 
    Enforcement already exists; do not build another checker. `praetorctl dedupe scan .` detects function-level clones and utility sprawl, it runs inside `make verify-all`, and it fails the gate when the report does not pass. When a duplicate is unavoidable, state why in the commit body rather than leaving the reader to infer it.
