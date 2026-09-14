@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanallm/praetor/internal/util"
 )
 
 // PlanMigration analyzes a repository and builds an actionable migration plan.
@@ -17,24 +18,41 @@ func PlanMigration(ctx context.Context, repoPath, frameworkPath string) (*Migrat
 		return nil, ctx.Err()
 	}
 
-	needs, err := ScanRepo(ctx, repoPath)
+	idx, err := InspectFramework(ctx, frameworkPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect framework: %w", err)
+	}
+	needs, err := ScanRepoWith(ctx, repoPath, idx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan repo for migration: %w", err)
 	}
 
+	version := idx.Version
+	if version == "" || version == UnknownVersion {
+		version = "latest"
+	}
 	plan := &MigrationPlan{
-		Repository:    needs.Repository,
-		Framework:     defaultFrameworkModule + " v0.8.0",
-		AddedRequires: []string{defaultFrameworkModule + " v0.8.0"},
+		Repository: needs.Repository,
+		Framework:  idx.Name + " " + version,
 	}
 
 	importReplacements := make(map[string]string)
+	requiredModules := map[string]bool{}
 	for _, dep := range needs.Dependencies {
 		if dep.GolusorisReplacement != "" && dep.Status == StatusCovered {
 			plan.DroppedRequires = append(plan.DroppedRequires, dep.Package)
 			importReplacements[dep.Package] = dep.GolusorisReplacement
+			requiredModules[moduleForImport(idx, dep.GolusorisReplacement)] = true
 		}
 	}
+	if len(requiredModules) == 0 {
+		requiredModules[idx.Name] = true
+	}
+	for m := range requiredModules {
+		plan.AddedRequires = append(plan.AddedRequires, m+" "+version)
+	}
+	sort.Strings(plan.AddedRequires)
+	sort.Strings(plan.DroppedRequires)
 
 	actions, err := findFileImportReplacements(ctx, repoPath, importReplacements)
 	if err != nil {
@@ -44,6 +62,22 @@ func PlanMigration(ctx context.Context, repoPath, frameworkPath string) (*Migrat
 	plan.GuideMarkdown = generateMigrationGuide(plan)
 
 	return plan, nil
+}
+
+// moduleForImport returns the Go module that publishes importPath according
+// to the framework index (its sub-modules, e.g. …/core), else the framework
+// root module.
+func moduleForImport(idx *FrameworkIndex, importPath string) string {
+	if p, ok := idx.Packages[importPath]; ok && p.Module != "" {
+		return p.Module
+	}
+	best := idx.Name
+	for _, m := range idx.Modules {
+		if strings.HasPrefix(importPath, m+"/") && len(m) > len(best) {
+			best = m
+		}
+	}
+	return best
 }
 
 // findFileImportReplacements scans source files for import lines matching replaceable packages.
@@ -126,7 +160,7 @@ func ApplyMigration(ctx context.Context, repoPath string, plan *MigrationPlan) (
 	}
 
 	guidePath := filepath.Join(repoPath, "MIGRATION.md")
-	if err := os.WriteFile(guidePath, []byte(plan.GuideMarkdown), 0644); err == nil {
+	if err := os.WriteFile(guidePath, []byte(plan.GuideMarkdown), 0o644); err == nil {
 		changedFilesMap[guidePath] = struct{}{}
 	}
 
@@ -152,7 +186,7 @@ func applyFileImportReplacement(filePath, oldImport, newImport string) error {
 	content := string(data)
 	replaced := strings.ReplaceAll(content, `"`+oldImport+`"`, `"`+newImport+`"`)
 	replaced = strings.ReplaceAll(replaced, `"`+oldImport+`/`, `"`+newImport+`/`)
-	return os.WriteFile(filePath, []byte(replaced), 0644)
+	return os.WriteFile(filePath, []byte(replaced), 0o644)
 }
 
 // updateGoMod drops superseded packages and appends the Golusoris framework require.
@@ -183,7 +217,7 @@ func updateGoMod(goModPath string, added, dropped []string) error {
 		newLines = append(newLines, "require "+add)
 	}
 
-	return os.WriteFile(goModPath, []byte(strings.Join(newLines, "\n")+"\n"), 0644)
+	return os.WriteFile(goModPath, []byte(strings.Join(newLines, "\n")+"\n"), 0o644)
 }
 
 // generateMigrationGuide creates a concise markdown walkthrough for the developer.

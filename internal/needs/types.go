@@ -57,18 +57,23 @@ type RepoNeeds struct {
 // FrameworkPackage describes an exported package in the framework.
 type FrameworkPackage struct {
 	ImportPath   string          `json:"import_path"`
+	Module       string          `json:"module,omitempty"` // Go module containing the package ("" = framework root)
 	Domain       string          `json:"domain"`
 	Capabilities []CapabilityKey `json:"capabilities"`
 	Description  string          `json:"description,omitempty"`
+	Replaces     []string        `json:"replaces,omitempty"` // third-party modules this package supersedes
 }
 
-// FrameworkIndex represents the indexed capability offerings of the framework.
+// FrameworkIndex represents the indexed capability offerings of the framework,
+// sourced from its capabilities.yaml contract when available.
 type FrameworkIndex struct {
 	Name         string                      `json:"name"`
 	RootPath     string                      `json:"root_path"`
 	Version      string                      `json:"version"`
+	Modules      []string                    `json:"modules,omitempty"`
 	Packages     map[string]FrameworkPackage `json:"packages"`
 	Capabilities map[CapabilityKey][]string  `json:"capabilities"` // capability -> list of import paths
+	Replacements map[string]string           `json:"replacements"` // third-party module -> framework import
 }
 
 // GapDetail documents an unmet capability demand across the fleet.
@@ -81,16 +86,16 @@ type GapDetail struct {
 
 // FleetDemandReport aggregates all downstream needs across the fleet.
 type FleetDemandReport struct {
-	GeneratedAt          time.Time                    `json:"generated_at"`
-	FleetRoot            string                       `json:"fleet_root"`
-	Framework            string                       `json:"framework"`
-	TotalRepositories    int                          `json:"total_repositories"`
-	ScannedRepositories  int                          `json:"scanned_repositories"`
-	DemandFrequency      map[CapabilityKey]int        `json:"demand_frequency"`
-	CapabilityConsumers  map[CapabilityKey][]string   `json:"capability_consumers"`
-	Gaps                 []GapDetail                  `json:"gaps"`
-	Leaderboard          []RepoNeeds                  `json:"leaderboard"`
-	OverallFleetCoverage float64                      `json:"overall_fleet_coverage"`
+	GeneratedAt          time.Time                  `json:"generated_at"`
+	FleetRoot            string                     `json:"fleet_root"`
+	Framework            string                     `json:"framework"`
+	TotalRepositories    int                        `json:"total_repositories"`
+	ScannedRepositories  int                        `json:"scanned_repositories"`
+	DemandFrequency      map[CapabilityKey]int      `json:"demand_frequency"`
+	CapabilityConsumers  map[CapabilityKey][]string `json:"capability_consumers"`
+	Gaps                 []GapDetail                `json:"gaps"`
+	Leaderboard          []RepoNeeds                `json:"leaderboard"`
+	OverallFleetCoverage float64                    `json:"overall_fleet_coverage"`
 }
 
 // ReplacementAction defines an import or dependency substitution.
@@ -103,12 +108,12 @@ type ReplacementAction struct {
 
 // MigrationPlan represents the planned actions to migrate a repo to the framework.
 type MigrationPlan struct {
-	Repository     string              `json:"repository"`
-	Framework      string              `json:"framework"`
-	AddedRequires  []string            `json:"added_requires"`
-	DroppedRequires []string           `json:"dropped_requires"`
-	Replacements   []ReplacementAction `json:"replacements"`
-	GuideMarkdown  string              `json:"guide_markdown"`
+	Repository      string              `json:"repository"`
+	Framework       string              `json:"framework"`
+	AddedRequires   []string            `json:"added_requires"`
+	DroppedRequires []string            `json:"dropped_requires"`
+	Replacements    []ReplacementAction `json:"replacements"`
+	GuideMarkdown   string              `json:"guide_markdown"`
 }
 
 // MigrationResult summarizes the outcome of an applied migration.

@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/baseline"
-	"github.com/cordanaLLM/standards/internal/compiler"
-	"github.com/cordanaLLM/standards/internal/config"
-	"github.com/cordanaLLM/standards/internal/devcontainer"
-	"github.com/cordanaLLM/standards/internal/editor"
-	"github.com/cordanaLLM/standards/internal/hiss"
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanallm/praetor/internal/baseline"
+	"github.com/cordanallm/praetor/internal/compiler"
+	"github.com/cordanallm/praetor/internal/config"
+	"github.com/cordanallm/praetor/internal/devcontainer"
+	"github.com/cordanallm/praetor/internal/editor"
+	"github.com/cordanallm/praetor/internal/hiss"
+	"github.com/cordanallm/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -550,7 +550,7 @@ func mergeExistingAgentsContent(agentsPath, existing, repoName, arch string, opt
 }
 
 func transpileAgentTargets(repoPath, agentsContent string, opts AdoptOptions, report *AdoptReport) error {
-	tr := compiler.NewTranspiler()
+	tr := compiler.NewTranspiler().WithRepoName(compiler.RepoNameFromDir(repoPath))
 	res, err := tr.CompileContent(agentsContent)
 	if err != nil {
 		report.Errors = append(report.Errors, fmt.Sprintf("context compilation: %v", err))

@@ -1,5 +1,5 @@
 version: 1
-repository: github.com/cordanaLLM/standards
+repository: github.com/cordanallm/praetor
 language: go
 go_version: "1.27"
 framework: github.com/golusoris/golusoris
@@ -17,12 +17,12 @@ dependencies:
     - package: gopkg.in/yaml.v3
       version: v3.0.1
       capability: config.yaml
-      status: gap
-      golusoris_replacement: github.com/golusoris/golusoris/config
-      notes: YAML parser and serializer; use Golusoris config or await zero-dependency codec
+      status: covered
+      golusoris_replacement: github.com/golusoris/golusoris/core/codec/yaml
+      notes: Fleet YAML codec (strict, bounded) over go.yaml.in/yaml/v3
 readiness:
-    score: 0
+    score: 100
     total_third_party_deps: 1
-    covered_deps: 0
-    gap_deps: 1
-updated_at: 2026-09-11T00:47:27.837318013Z
+    covered_deps: 1
+    gap_deps: 0
+updated_at: 2026-09-14T11:24:34.4950977Z

@@ -1,5 +1,5 @@
 <!-- markdownlint-disable MD013 -->
-# Google Antigravity / Gemini Instructions: cordanaLLM/standards
+# Google Antigravity / Gemini Instructions: cordanaLLM/praetor
 <!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->
 
 ## Operating Directives

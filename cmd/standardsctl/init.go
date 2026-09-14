@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cordanaLLM/standards/internal/baseline"
-	"github.com/cordanaLLM/standards/internal/compiler"
-	"github.com/cordanaLLM/standards/internal/config"
+	"github.com/cordanallm/praetor/internal/baseline"
+	"github.com/cordanallm/praetor/internal/compiler"
+	"github.com/cordanallm/praetor/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -100,7 +100,7 @@ func initAgentContext() error {
 	if _, err := os.Stat("AGENTS.md"); os.IsNotExist(err) {
 		return nil
 	}
-	tr := compiler.NewTranspiler()
+	tr := compiler.NewTranspiler().WithRepoName(compiler.RepoNameFromDir("."))
 	res, err := tr.Compile("AGENTS.md")
 	if err != nil {
 		return fmt.Errorf("failed to compile AGENTS.md: %w", err)

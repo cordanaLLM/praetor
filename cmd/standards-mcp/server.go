@@ -16,11 +16,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/baseline"
-	"github.com/cordanaLLM/standards/internal/compiler"
-	"github.com/cordanaLLM/standards/internal/config"
-	"github.com/cordanaLLM/standards/internal/mcp"
-	"github.com/cordanaLLM/standards/internal/needs"
+	"github.com/cordanallm/praetor/internal/baseline"
+	"github.com/cordanallm/praetor/internal/compiler"
+	"github.com/cordanallm/praetor/internal/config"
+	"github.com/cordanallm/praetor/internal/mcp"
+	"github.com/cordanallm/praetor/internal/needs"
 )
 
 const (
@@ -152,7 +152,7 @@ func (s *Server) createAuditTool() (mcp.Tool, error) {
 		report.WriteString(fmt.Sprintf("[PASS] Technical debt baseline verified: %d recorded legacy infractions.\n",
 			base.TotalInfractions))
 
-		tr := compiler.NewTranspiler()
+		tr := compiler.NewTranspiler().WithRepoName(compiler.RepoNameFromDir(s.rootDir))
 		if err := tr.Verify(agentPath, s.rootDir); err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("[FAIL] Agent context targets out of sync: %v", err)), nil
 		}
@@ -231,7 +231,7 @@ func (s *Server) createCompileContextTool() (mcp.Tool, error) {
 		targetDir := s.resolvePath(args, "target_dir", s.rootDir)
 		verifyOnly, _ := args["verify_only"].(bool)
 
-		tr := compiler.NewTranspiler()
+		tr := compiler.NewTranspiler().WithRepoName(compiler.RepoNameFromDir(s.rootDir))
 		if verifyOnly {
 			if err := tr.Verify(source, targetDir); err != nil {
 				return mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err)), nil

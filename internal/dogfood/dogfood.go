@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/adopt"
-	"github.com/cordanaLLM/standards/internal/compiler"
-	"github.com/cordanaLLM/standards/internal/harvester"
-	"github.com/cordanaLLM/standards/internal/hiss"
+	"github.com/cordanallm/praetor/internal/adopt"
+	"github.com/cordanallm/praetor/internal/compiler"
+	"github.com/cordanallm/praetor/internal/harvester"
+	"github.com/cordanallm/praetor/internal/hiss"
 )
 
 const (
@@ -59,7 +59,7 @@ func verifySelfGovernance(ctx context.Context, hostPath string) (bool, bool, err
 
 	// 1. Verify Context Synchronization
 	agentsFile := filepath.Join(hostPath, "AGENTS.md")
-	tr := compiler.NewTranspiler()
+	tr := compiler.NewTranspiler().WithRepoName(compiler.RepoNameFromDir(hostPath))
 	vErr := tr.Verify(agentsFile, hostPath)
 	synced := vErr == nil
 

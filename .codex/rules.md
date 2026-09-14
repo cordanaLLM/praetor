@@ -1,5 +1,5 @@
 <!-- markdownlint-disable MD013 -->
-# OpenAI Codex Context & Operating Rules
+# OpenAI Codex Context & Operating Rules: cordanaLLM/praetor
 <!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->
 
 ## Directives & Invariants

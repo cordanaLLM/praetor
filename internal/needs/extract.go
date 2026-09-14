@@ -8,16 +8,25 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanallm/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
-// ScanRepo extracts framework capability needs and dependency mappings from a repository.
+// ScanRepo extracts framework capability needs and dependency mappings from a
+// repository using the static catalog only. Prefer ScanRepoWith when a
+// framework index (capabilities.yaml) is available.
 func ScanRepo(ctx context.Context, repoPath string) (*RepoNeeds, error) {
+	return ScanRepoWith(ctx, repoPath, nil)
+}
+
+// ScanRepoWith is ScanRepo resolving dependencies against idx first (the
+// framework's own capabilities.yaml contract), then the static catalog.
+func ScanRepoWith(ctx context.Context, repoPath string, idx *FrameworkIndex) (*RepoNeeds, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -42,7 +51,7 @@ func ScanRepo(ctx context.Context, repoPath string) (*RepoNeeds, error) {
 	}
 
 	loadExistingDeclarations(repoPath, repoNeeds)
-	buildDependencyDemands(directDeps, astImports, repoNeeds)
+	buildDependencyDemands(directDeps, astImports, repoNeeds, idx)
 	calculateReadiness(repoNeeds)
 
 	return repoNeeds, nil
@@ -134,6 +143,10 @@ func shouldSkipDir(info os.FileInfo, path string) bool {
 		return false
 	}
 	name := info.Name()
+	if name == "." || name == ".." {
+		// The walk root itself ("." when --path=.) must never be skipped.
+		return false
+	}
 	return name == "vendor" || name == ".git" || name == ".devcontainer" ||
 		name == "node_modules" || strings.HasPrefix(name, ".") ||
 		name == "scratch" || name == "cache" || strings.Contains(path, "/scratch") ||
@@ -177,8 +190,10 @@ func loadExistingDeclarations(repoPath string, repoNeeds *RepoNeeds) {
 	}
 }
 
-// buildDependencyDemands maps discovered packages to capabilities and Golusoris replacements.
-func buildDependencyDemands(directDeps map[string]string, astImports map[string]struct{}, repoNeeds *RepoNeeds) {
+// buildDependencyDemands maps discovered packages to capabilities and Golusoris
+// replacements. Resolution order: the framework's own contract (idx), the
+// static catalog, native Go ecosystem libraries, then a custom gap.
+func buildDependencyDemands(directDeps map[string]string, astImports map[string]struct{}, repoNeeds *RepoNeeds, idx *FrameworkIndex) {
 	pkgSet := make(map[string]string)
 	for pkg, ver := range directDeps {
 		pkgSet[pkg] = ver
@@ -191,22 +206,7 @@ func buildDependencyDemands(directDeps map[string]string, astImports map[string]
 
 	demands := make([]DependencyDemand, 0, len(pkgSet))
 	for pkg, ver := range pkgSet {
-		entry, found := MatchPackage(pkg)
-		demand := DependencyDemand{
-			Package: pkg,
-			Version: ver,
-		}
-		if found {
-			demand.Capability = entry.Capability
-			demand.Status = entry.Status
-			demand.GolusorisReplacement = entry.GolusorisReplacement
-			demand.Notes = entry.Notes
-		} else {
-			demand.Capability = CapabilityKey("custom." + sanitizePackageName(pkg))
-			demand.Status = StatusGap
-			demand.Notes = "Third-party package without native Golusoris equivalent"
-		}
-		demands = append(demands, demand)
+		demands = append(demands, classifyDependency(pkg, ver, idx))
 	}
 
 	sort.Slice(demands, func(i, j int) bool {
@@ -215,11 +215,95 @@ func buildDependencyDemands(directDeps map[string]string, astImports map[string]
 	repoNeeds.Dependencies = demands
 }
 
-// sanitizePackageName converts an import path into a safe capability identifier.
+// nativePrefixes are Go-ecosystem runtime libraries that need no framework
+// replacement: the extended standard library and protobuf/grpc codegen runtimes.
+var nativePrefixes = []string{"golang.org/x/", "google.golang.org/protobuf", "google.golang.org/genproto"}
+
+// FleetPrefixEnv lists extra first-party module prefixes (comma-separated)
+// that must never be reported as framework gaps.
+const FleetPrefixEnv = "PRAETOR_FLEET_PREFIXES"
+
+// FleetPrefixes are module prefixes owned by the fleet itself: the framework,
+// its org libraries, and sibling organisations. Dependencies on them are
+// first-party, never gaps.
+var FleetPrefixes = []string{
+	defaultFrameworkModule, "github.com/golusoris/", "github.com/lusoris/",
+	"github.com/cordanallm/", "github.com/cordanaLLM/", "cauda.dev/", "cordana.dev/",
+}
+
+func fleetPrefixes() []string {
+	out := append([]string{}, FleetPrefixes...)
+	for _, p := range strings.Split(os.Getenv(FleetPrefixEnv), ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func classifyDependency(pkg, ver string, idx *FrameworkIndex) DependencyDemand {
+	demand := DependencyDemand{Package: pkg, Version: ver}
+	for _, p := range fleetPrefixes() {
+		if strings.HasPrefix(pkg, p) {
+			demand.Capability = CapabilityKey("fleet." + sanitizePackageName(pkg))
+			demand.Status = StatusNative
+			demand.Notes = "First-party fleet module; not a framework gap"
+			return demand
+		}
+	}
+	if idx != nil {
+		if target, caps, ok := idx.ResolveReplacement(pkg); ok {
+			demand.Status = StatusCovered
+			demand.GolusorisReplacement = target
+			if len(caps) > 0 {
+				demand.Capability = caps[0]
+			} else {
+				demand.Capability = CapabilityKey("custom." + sanitizePackageName(pkg))
+			}
+			demand.Notes = "Superseded per the framework capabilities.yaml contract"
+			return demand
+		}
+	}
+	if entry, found := MatchPackage(pkg); found {
+		demand.Capability = entry.Capability
+		demand.Status = entry.Status
+		demand.GolusorisReplacement = entry.GolusorisReplacement
+		demand.Notes = entry.Notes
+		return demand
+	}
+	for _, p := range nativePrefixes {
+		if strings.HasPrefix(pkg, p) {
+			demand.Capability = CapabilityKey("native." + sanitizePackageName(pkg))
+			demand.Status = StatusNative
+			demand.Notes = "Go ecosystem runtime library; no framework replacement needed"
+			return demand
+		}
+	}
+	demand.Capability = CapabilityKey("custom." + sanitizePackageName(pkg))
+	demand.Status = StatusGap
+	demand.Notes = "Third-party package without native Golusoris equivalent"
+	return demand
+}
+
+// majorSuffixRE matches a trailing Go major-version path element (/v2, /v10).
+var majorSuffixRE = regexp.MustCompile(`^v[0-9]+$`)
+
+// sanitizePackageName converts an import path into a capability identifier.
+// Major-version suffixes and generic leaf names (api, v2, pkg, lib, internal)
+// are skipped so that github.com/foo/bar/v2/api yields "bar", not "api".
 func sanitizePackageName(pkg string) string {
+	generic := map[string]bool{"api": true, "pkg": true, "lib": true, "internal": true, "go": true, "core": true, "client": true, "server": true, "types": true}
 	parts := strings.Split(pkg, "/")
-	if len(parts) > 0 {
-		return parts[len(parts)-1]
+	for i := len(parts) - 1; i >= 0; i-- {
+		p := strings.ToLower(parts[i])
+		if p == "" || majorSuffixRE.MatchString(p) || generic[p] {
+			continue
+		}
+		if i == 0 && strings.Contains(p, ".") {
+			// Only a host is left (e.g. gopkg.in) — use the next element.
+			continue
+		}
+		return strings.NewReplacer("-", "_", ".", "_").Replace(strings.TrimPrefix(p, "go-"))
 	}
 	return "lib"
 }
@@ -258,5 +342,5 @@ func WriteNeedsManifest(repoPath string, repoNeeds *RepoNeeds) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal needs manifest: %w", err)
 	}
-	return os.WriteFile(targetFile, data, 0644)
+	return os.WriteFile(targetFile, data, 0o644)
 }

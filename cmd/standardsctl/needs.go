@@ -5,11 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/needs"
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanallm/praetor/internal/needs"
+	"github.com/cordanallm/praetor/internal/util"
 )
 
 func runNeeds(args []string) error {
@@ -40,6 +41,25 @@ func runNeeds(args []string) error {
 	}
 }
 
+// resolveFleetDir picks the fleet root: the flag, $PRAETOR_FLEET_DIR, else the
+// grandparent of the current directory (dev/<org>/<repo> layout) or its parent.
+func resolveFleetDir(explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if env := os.Getenv("PRAETOR_FLEET_DIR"); env != "" {
+		return env
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	if gp := filepath.Dir(filepath.Dir(cwd)); util.DirExists(gp) {
+		return gp
+	}
+	return filepath.Dir(cwd)
+}
+
 func printNeedsUsage() {
 	fmt.Println("Usage: standardsctl needs <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
@@ -52,12 +72,17 @@ func printNeedsUsage() {
 func runNeedsScan(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs scan", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
+	framework := fs.String("framework", "", "Framework checkout (default: $"+needs.FrameworkPathEnv+", then the module cache)")
 	writeManifest := fs.Bool("write", false, "Write discovered needs to .needs.yaml")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	report, err := needs.ScanRepo(ctx, *path)
+	fwIndex, err := needs.InspectFramework(ctx, needs.ResolveFrameworkPath(ctx, *framework))
+	if err != nil {
+		return fmt.Errorf("failed to inspect framework: %w", err)
+	}
+	report, err := needs.ScanRepoWith(ctx, *path, fwIndex)
 	if err != nil {
 		return fmt.Errorf("failed to scan repository needs: %w", err)
 	}
@@ -88,17 +113,17 @@ func runNeedsScan(ctx context.Context, args []string) error {
 func runNeedsReport(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs report", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
-	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Target framework repository path")
+	framework := fs.String("framework", "", "Framework checkout (default: $"+needs.FrameworkPathEnv+", then the module cache)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	fwIndex, err := needs.InspectFramework(ctx, *framework)
+	fwIndex, err := needs.InspectFramework(ctx, needs.ResolveFrameworkPath(ctx, *framework))
 	if err != nil {
 		return fmt.Errorf("failed to inspect framework: %w", err)
 	}
 
-	rep, err := needs.ScanRepo(ctx, *path)
+	rep, err := needs.ScanRepoWith(ctx, *path, fwIndex)
 	if err != nil {
 		return fmt.Errorf("failed to scan repository: %w", err)
 	}
@@ -122,21 +147,22 @@ func runNeedsReport(ctx context.Context, args []string) error {
 
 func runNeedsAggregate(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs aggregate", flag.ContinueOnError)
-	devDir := fs.String("dev-dir", "/home/kilian/dev", "Fleet dev root directory")
-	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Framework repository path")
+	devDir := fs.String("dev-dir", "", "Fleet dev root directory (default: $PRAETOR_FLEET_DIR, then the parent of the current repository)")
+	framework := fs.String("framework", "", "Framework checkout (default: $"+needs.FrameworkPathEnv+", then the module cache)")
 	outputFile := fs.String("output", "", "Optional file path to write markdown report")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	fleetRoot := resolveFleetDir(*devDir)
 
-	report, err := needs.AggregateFleet(ctx, *devDir, *framework)
+	report, err := needs.AggregateFleet(ctx, fleetRoot, needs.ResolveFrameworkPath(ctx, *framework))
 	if err != nil {
 		return fmt.Errorf("fleet aggregation failed: %w", err)
 	}
 
 	md := needs.RenderFrameworkDemandMarkdown(report)
 	if *outputFile != "" {
-		if err := os.WriteFile(*outputFile, []byte(md), 0644); err != nil {
+		if err := os.WriteFile(*outputFile, []byte(md), 0o644); err != nil {
 			return fmt.Errorf("failed to write output markdown: %w", err)
 		}
 		fmt.Printf("[PASS] Framework demand report written to %s\n", *outputFile)
@@ -149,14 +175,14 @@ func runNeedsAggregate(ctx context.Context, args []string) error {
 func runNeedsMigrate(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs migrate", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
-	framework := fs.String("framework", "/home/kilian/dev/golusoris/golusoris", "Framework repository path")
+	framework := fs.String("framework", "", "Framework checkout (default: $"+needs.FrameworkPathEnv+", then the module cache)")
 	dryRun := fs.Bool("dry-run", true, "Preview migration without mutating files")
 	apply := fs.Bool("apply", false, "Apply migration changes and create branch")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	plan, err := needs.PlanMigration(ctx, *path, *framework)
+	plan, err := needs.PlanMigration(ctx, *path, needs.ResolveFrameworkPath(ctx, *framework))
 	if err != nil {
 		return fmt.Errorf("failed to plan migration: %w", err)
 	}

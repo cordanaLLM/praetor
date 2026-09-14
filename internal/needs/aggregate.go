@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanallm/praetor/internal/util"
 )
 
 // AggregateFleet scans all Go repositories in fleetRoot and produces a FleetDemandReport.
@@ -39,7 +39,7 @@ func AggregateFleet(ctx context.Context, fleetRoot, frameworkPath string) (*Flee
 
 	gapPackages := make(map[CapabilityKey]map[string]struct{})
 	for _, dir := range repoDirs {
-		processRepoForAggregate(ctx, dir, report, gapPackages)
+		processRepoForAggregate(ctx, dir, fwIndex, report, gapPackages)
 	}
 
 	compileGapsAndLeaderboard(report, gapPackages)
@@ -72,8 +72,8 @@ func discoverGoRepos(ctx context.Context, root string) ([]string, error) {
 }
 
 // processRepoForAggregate scans an individual repo and updates fleet aggregation counters.
-func processRepoForAggregate(ctx context.Context, dir string, report *FleetDemandReport, gapPackages map[CapabilityKey]map[string]struct{}) {
-	needs, err := ScanRepo(ctx, dir)
+func processRepoForAggregate(ctx context.Context, dir string, idx *FrameworkIndex, report *FleetDemandReport, gapPackages map[CapabilityKey]map[string]struct{}) {
+	needs, err := ScanRepoWith(ctx, dir, idx)
 	if err != nil {
 		return
 	}

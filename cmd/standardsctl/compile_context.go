@@ -3,8 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"path/filepath"
 
-	"github.com/cordanaLLM/standards/internal/compiler"
+	"github.com/cordanallm/praetor/internal/compiler"
 )
 
 func runCompileContext(args []string) error {
@@ -17,7 +18,7 @@ func runCompileContext(args []string) error {
 		return err
 	}
 
-	tr := compiler.NewTranspiler()
+	tr := compiler.NewTranspiler().WithRepoName(compiler.RepoNameFromDir(filepath.Dir(*source)))
 
 	if *verify {
 		fmt.Printf("Verifying agent context synchronization against %s...\n", *source)

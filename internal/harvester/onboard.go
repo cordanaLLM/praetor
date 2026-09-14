@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cordanaLLM/standards/internal/baseline"
-	"github.com/cordanaLLM/standards/internal/compiler"
-	"github.com/cordanaLLM/standards/internal/config"
-	"github.com/cordanaLLM/standards/internal/editor"
+	"github.com/cordanallm/praetor/internal/baseline"
+	"github.com/cordanallm/praetor/internal/compiler"
+	"github.com/cordanallm/praetor/internal/config"
+	"github.com/cordanallm/praetor/internal/editor"
 	"gopkg.in/yaml.v3"
 )
 
@@ -106,7 +106,7 @@ func executeOnboarding(repoPath, repoName, arch string, facets []string) error {
 		}
 	}
 
-	tr := compiler.NewTranspiler()
+	tr := compiler.NewTranspiler().WithRepoName(compiler.RepoNameFromDir(repoPath))
 	if res, err := tr.Compile(agentsPath); err == nil {
 		if err := tr.WriteOutputs(res, repoPath); err != nil {
 			return fmt.Errorf("write transpiled outputs: %w", err)

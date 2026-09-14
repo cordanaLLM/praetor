@@ -1,13 +1,15 @@
 <!-- markdownlint-disable MD013 -->
-# Claude Code Guidelines: cordanaLLM/standards
+# Claude Code Guidelines: cordanaLLM/praetor
 <!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->
+
+Read `AGENTS.md` first — it is the canonical operating harness; this file is compiled from it.
 
 ## Commands
 
 ```bash
 go test -v -race ./...
-go run ./cmd/standardsctl compile-context --verify
-go run ./cmd/standardsctl audit
+standardsctl compile-context --verify
+standardsctl audit
 make verify-all
 ```
 

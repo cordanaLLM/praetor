@@ -179,7 +179,7 @@ var CanonicalCatalog = []CatalogEntry{
 		Package:              "github.com/spf13/viper",
 		Capability:           "config.loader",
 		Status:               StatusCovered,
-		GolusorisReplacement: "github.com/golusoris/golusoris/config",
+		GolusorisReplacement: "github.com/golusoris/golusoris/core/config",
 		Notes:                "Hierarchical configuration with environment override",
 	},
 
@@ -202,14 +202,14 @@ var CanonicalCatalog = []CatalogEntry{
 		Package:              "go.uber.org/zap",
 		Capability:           "telemetry.logging",
 		Status:               StatusCovered,
-		GolusorisReplacement: "github.com/golusoris/golusoris/log",
+		GolusorisReplacement: "github.com/golusoris/golusoris/core/log",
 		Notes:                "High-performance structured JSON logging",
 	},
 	{
 		Package:              "github.com/sirupsen/logrus",
 		Capability:           "telemetry.logging",
 		Status:               StatusCovered,
-		GolusorisReplacement: "github.com/golusoris/golusoris/log",
+		GolusorisReplacement: "github.com/golusoris/golusoris/core/log",
 		Notes:                "Migrate legacy Logrus calls to Golusoris slog/log",
 	},
 
@@ -218,14 +218,14 @@ var CanonicalCatalog = []CatalogEntry{
 		Package:              "github.com/spf13/cobra",
 		Capability:           "clikit.cobra",
 		Status:               StatusCovered,
-		GolusorisReplacement: "github.com/golusoris/golusoris/clikit",
+		GolusorisReplacement: "github.com/golusoris/golusoris/core/clikit",
 		Notes:                "Command line interface framework with flags",
 	},
 	{
 		Package:              "github.com/charmbracelet/bubbletea",
 		Capability:           "clikit.tui",
 		Status:               StatusCovered,
-		GolusorisReplacement: "github.com/golusoris/golusoris/clikit",
+		GolusorisReplacement: "github.com/golusoris/golusoris/core/clikit",
 		Notes:                "The Elm Architecture terminal user interface",
 	},
 
@@ -234,7 +234,7 @@ var CanonicalCatalog = []CatalogEntry{
 		Package:              "github.com/google/uuid",
 		Capability:           "id.uuid",
 		Status:               StatusCovered,
-		GolusorisReplacement: "github.com/golusoris/golusoris/id",
+		GolusorisReplacement: "github.com/golusoris/golusoris/core/id",
 		Notes:                "V4 and V7 UUID generation",
 	},
 
@@ -259,7 +259,7 @@ var CanonicalCatalog = []CatalogEntry{
 		Package:              "go.uber.org/fx",
 		Capability:           "clikit.ioc",
 		Status:               StatusCovered,
-		GolusorisReplacement: "github.com/golusoris/golusoris/clikit",
+		GolusorisReplacement: "github.com/golusoris/golusoris/core/clikit",
 		Notes:                "Dependency injection container mapped to Golusoris clikit",
 	},
 
@@ -267,16 +267,16 @@ var CanonicalCatalog = []CatalogEntry{
 	{
 		Package:              "gopkg.in/yaml.v3",
 		Capability:           "config.yaml",
-		Status:               StatusGap,
-		GolusorisReplacement: "github.com/golusoris/golusoris/config",
-		Notes:                "YAML parser and serializer; use Golusoris config or await zero-dependency codec",
+		Status:               StatusCovered,
+		GolusorisReplacement: "github.com/golusoris/golusoris/core/codec/yaml",
+		Notes:                "Fleet YAML codec (strict, bounded) over go.yaml.in/yaml/v3",
 	},
 	{
 		Package:              "gopkg.in/yaml.v2",
 		Capability:           "config.yaml",
-		Status:               StatusGap,
-		GolusorisReplacement: "github.com/golusoris/golusoris/config",
-		Notes:                "Legacy YAML v2 parser; upgrade to v3 or Golusoris config",
+		Status:               StatusCovered,
+		GolusorisReplacement: "github.com/golusoris/golusoris/core/codec/yaml",
+		Notes:                "Legacy YAML v2 parser; migrate to the fleet codec core/codec/yaml",
 	},
 
 	// Model Context Protocol (MCP)
@@ -284,14 +284,14 @@ var CanonicalCatalog = []CatalogEntry{
 		Package:              "github.com/mark3labs/mcp-go",
 		Capability:           "mcp.server",
 		Status:               StatusCovered,
-		GolusorisReplacement: "github.com/golusoris/golusoris/mcp",
+		GolusorisReplacement: "github.com/golusoris/golusoris/core/mcp",
 		Notes:                "Migrate community mcp-go server to Golusoris mcp module",
 	},
 	{
 		Package:              "github.com/modelcontextprotocol/go-sdk",
 		Capability:           "mcp.server",
 		Status:               StatusCovered,
-		GolusorisReplacement: "github.com/golusoris/golusoris/mcp",
+		GolusorisReplacement: "github.com/golusoris/golusoris/core/mcp",
 		Notes:                "Official MCP Go SDK wrapped in Golusoris mcp module",
 	},
 }

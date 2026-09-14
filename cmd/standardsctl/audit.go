@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cordanaLLM/standards/internal/baseline"
-	"github.com/cordanaLLM/standards/internal/compiler"
-	"github.com/cordanaLLM/standards/internal/config"
-	"github.com/cordanaLLM/standards/internal/devcontainer"
-	"github.com/cordanaLLM/standards/internal/hiss"
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanallm/praetor/internal/baseline"
+	"github.com/cordanallm/praetor/internal/compiler"
+	"github.com/cordanallm/praetor/internal/config"
+	"github.com/cordanallm/praetor/internal/devcontainer"
+	"github.com/cordanallm/praetor/internal/hiss"
+	"github.com/cordanallm/praetor/internal/util"
 )
 
 func runAudit(args []string) error {
@@ -104,7 +104,7 @@ func auditBaselineAndInvariants(baselinePath string) error {
 
 func auditAgentContextAndDevcontainer(manifest *config.Manifest, agentsPath string) error {
 	root := filepath.Dir(agentsPath)
-	tr := compiler.NewTranspiler()
+	tr := compiler.NewTranspiler().WithRepoName(compiler.RepoNameFromDir(root))
 	if err := tr.Verify(agentsPath, root); err != nil {
 		return fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
 	}

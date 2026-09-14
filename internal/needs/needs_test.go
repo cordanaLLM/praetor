@@ -31,10 +31,11 @@ func TestCatalogMatching(t *testing.T) {
 		t.Fatalf("expected http.router for gin, got %v", entry)
 	}
 
-	// Positive: YAML serialization
+	// Positive: YAML serialization is covered by the fleet codec
 	entry, found = MatchPackage("gopkg.in/yaml.v3")
-	if !found || entry.Capability != "config.yaml" || entry.Status != StatusGap {
-		t.Fatalf("expected config.yaml gap for yaml.v3, got %v", entry)
+	if !found || entry.Capability != "config.yaml" || entry.Status != StatusCovered ||
+		entry.GolusorisReplacement != "github.com/golusoris/golusoris/core/codec/yaml" {
+		t.Fatalf("expected config.yaml covered by core/codec/yaml, got %v", entry)
 	}
 
 	// Positive: MCP community server
@@ -81,12 +82,12 @@ func setupFixtureRepo(t *testing.T) string {
 	t.Helper()
 	tmpDir := t.TempDir()
 	goModContent := "module example.com/testservice\n\ngo 1.24\n\nrequire (\n\tgithub.com/gin-gonic/gin v1.10.0\n\tgithub.com/jackc/pgx/v5 v5.7.2\n\tgithub.com/redis/rueidis v1.0.51\n\tgithub.com/unknown/gap-lib v1.0.0\n)\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goModContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goModContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	mainGoContent := "package main\n\nimport (\n\t\"fmt\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/jackc/pgx/v5\"\n\t\"github.com/redis/rueidis\"\n\t\"github.com/unknown/gap-lib\"\n)\n\nfunc main() {\n\tfmt.Println(\"test\")\n}\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(mainGoContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(mainGoContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return tmpDir
@@ -148,7 +149,7 @@ func TestScanRepoBoundaries(t *testing.T) {
 	// Boundary 1: Empty repo (no third-party dependencies)
 	tmpEmpty := t.TempDir()
 	goModEmpty := "module example.com/empty\n\ngo 1.24\n"
-	if err := os.WriteFile(filepath.Join(tmpEmpty, "go.mod"), []byte(goModEmpty), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpEmpty, "go.mod"), []byte(goModEmpty), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -163,7 +164,7 @@ func TestScanRepoBoundaries(t *testing.T) {
 	// Boundary 2: 0% Readiness (only unknown gap libraries)
 	tmpGap := t.TempDir()
 	goModGap := "module example.com/gap\n\ngo 1.24\n\nrequire github.com/foo/bar v1.0.0\n"
-	if err := os.WriteFile(filepath.Join(tmpGap, "go.mod"), []byte(goModGap), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpGap, "go.mod"), []byte(goModGap), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -181,12 +182,12 @@ func TestPlanAndApplyMigration(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	goMod := "module example.com/migratesvc\n\ngo 1.24\n\nrequire github.com/gin-gonic/gin v1.10.0\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goMod), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	src := "package main\n\nimport \"github.com/gin-gonic/gin\"\n\nfunc main() {}\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(src), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -220,18 +221,18 @@ func TestAggregateFleet(t *testing.T) {
 	tmpRoot := t.TempDir()
 
 	repo1 := filepath.Join(tmpRoot, "repo1")
-	if err := os.MkdirAll(repo1, 0755); err != nil {
+	if err := os.MkdirAll(repo1, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo1, "go.mod"), []byte("module r1\ngo 1.24\nrequire github.com/jackc/pgx v5.0.0\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo1, "go.mod"), []byte("module r1\ngo 1.24\nrequire github.com/jackc/pgx v5.0.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	repo2 := filepath.Join(tmpRoot, "repo2")
-	if err := os.MkdirAll(repo2, 0755); err != nil {
+	if err := os.MkdirAll(repo2, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo2, "go.mod"), []byte("module r2\ngo 1.24\nrequire github.com/jackc/pgx v5.0.0\nrequire github.com/unknown/lib v1.0.0\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo2, "go.mod"), []byte("module r2\ngo 1.24\nrequire github.com/jackc/pgx v5.0.0\nrequire github.com/unknown/lib v1.0.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
