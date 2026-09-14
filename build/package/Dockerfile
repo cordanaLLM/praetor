@@ -22,7 +22,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath \
     -ldflags="-s -w -X main.version=${VERSION} -extldflags '-static'" \
-    -o /out/praetorctl ./cmd/standardsctl
+    -o /out/praetorctl ./cmd/praetorctl
 
 # Stage 2: Distroless minimal runtime (< 30MB, zero shell, non-root)
 FROM gcr.io/distroless/static-debian12:nonroot
@@ -37,7 +37,6 @@ WORKDIR /workspace
 
 # Copy binary from builder
 COPY --from=builder /out/praetorctl /usr/local/bin/praetorctl
-COPY --from=builder /out/praetorctl /usr/local/bin/standardsctl
 
 # Run as standard distroless nonroot user
 USER 65532:65532

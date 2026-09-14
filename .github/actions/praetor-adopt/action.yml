@@ -42,18 +42,18 @@ runs:
         go-version: ${{ inputs.go-version }}
         check-latest: true
 
-    - name: Build standardsctl
+    - name: Build praetorctl
       shell: bash
       run: |
-        go install github.com/cordanaLLM/praetor/cmd/standardsctl@latest || go build -o /tmp/standardsctl ./cmd/standardsctl
+        go install github.com/cordanaLLM/praetor/cmd/praetorctl@latest || go build -o /tmp/praetorctl ./cmd/praetorctl
 
     - name: Execute Praetor Action
       id: run-praetor
       shell: bash
       run: |
-        CMD="standardsctl"
-        if [ -f /tmp/standardsctl ]; then
-          CMD="/tmp/standardsctl"
+        CMD="praetorctl"
+        if [ -f /tmp/praetorctl ]; then
+          CMD="/tmp/praetorctl"
         fi
 
         if [ "${{ inputs.mode }}" = "dogfood" ]; then

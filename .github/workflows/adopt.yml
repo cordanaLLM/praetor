@@ -43,18 +43,18 @@ jobs:
 
       - name: Build Praetor CLI
         run: |
-          go build -o /usr/local/bin/standardsctl ./cmd/standardsctl
+          go build -o /usr/local/bin/praetorctl ./cmd/praetorctl
 
       - name: Execute Dogfood Benchmark
         if: contains(github.event.comment.body, '/dogfood')
         run: |
-          standardsctl dogfood --path=.
+          praetorctl dogfood --path=.
 
       - name: Execute Fast Adoption
         if: "!contains(github.event.comment.body, '/dogfood')"
         run: |
-          standardsctl adopt --path=. --force --record-baseline
-          standardsctl compile-context --verify
+          praetorctl adopt --path=. --force --record-baseline
+          praetorctl compile-context --verify
 
       # HISS-13: a re-recorded baseline must not grow versus the default branch. The audit
       # fails before anything is committed when --record-baseline absorbed new debt without
@@ -64,7 +64,7 @@ jobs:
         env:
           CI: "true"
         run: |
-          standardsctl audit --base=origin/${{ github.event.repository.default_branch }}
+          praetorctl audit --base=origin/${{ github.event.repository.default_branch }}
 
       - name: Commit & Push Adoption Changes
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run != true

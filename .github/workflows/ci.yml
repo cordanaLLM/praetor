@@ -47,7 +47,7 @@ jobs:
           else
             BASE_REF="HEAD~1"
           fi
-          go run ./cmd/standardsctl ci filter --base="$BASE_REF" --head=HEAD --env
+          go run ./cmd/praetorctl ci filter --base="$BASE_REF" --head=HEAD --env
 
       - name: Setup Node Toolchain
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
@@ -109,18 +109,18 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr_body.txt"
-          go run ./cmd/standardsctl forge validate-pr \
+          go run ./cmd/praetorctl forge validate-pr \
             --config=.standards.yaml \
             --head-sha="$PR_HEAD_SHA" \
             "$RUNNER_TEMP/pr_body.txt"
 
       - name: Enforce HISS-14 Migration Footers (Commit Lint)
         if: github.event_name == 'pull_request'
-        run: go run ./cmd/standardsctl forge check-commits --base="origin/${{ github.base_ref }}" --head=HEAD
+        run: go run ./cmd/praetorctl forge check-commits --base="origin/${{ github.base_ref }}" --head=HEAD
 
       - name: Verify Cross-Agent Context Synchronization (HISS-16)
         if: steps.filter.outputs.skip_heavy_gates == 'true' && steps.filter.outputs.run_context_sync != 'false' && github.event_name != 'push'
-        run: go run ./cmd/standardsctl compile-context --verify
+        run: go run ./cmd/praetorctl compile-context --verify
 
       - name: Documentation Integrity Audit
         if: steps.filter.outputs.docs_only == 'true' && github.event_name == 'pull_request'
@@ -162,7 +162,7 @@ jobs:
 
       - name: Run Repository Governance Audit (HISS Invariants & Rulesets)
         if: steps.filter.outputs.skip_heavy_gates == 'true' && steps.filter.outputs.run_audit != 'false' && github.event_name != 'push'
-        run: go run ./cmd/standardsctl audit
+        run: go run ./cmd/praetorctl audit
 
       - name: Verify Binary Compilation
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'

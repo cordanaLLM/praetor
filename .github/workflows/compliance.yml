@@ -57,7 +57,7 @@ jobs:
         uses: fsfe/reuse-action@v5
 
       - name: Verify Cross-Agent Context Synchronization (HISS-16)
-        run: go run ./cmd/standardsctl compile-context --verify
+        run: go run ./cmd/praetorctl compile-context --verify
 
       - name: Verify Governance Audit (HISS Invariants & Rulesets)
-        run: go run ./cmd/standardsctl audit
+        run: go run ./cmd/praetorctl audit

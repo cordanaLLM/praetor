@@ -34,7 +34,7 @@ jobs:
           cache: true
 
       - name: Reconcile Declared Flavors
-        run: go run ./cmd/standardsctl flavors sync
+        run: go run ./cmd/praetorctl flavors sync
 
       - name: Configure Git Bot Identity
         run: |

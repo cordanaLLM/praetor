@@ -6,11 +6,11 @@ set -euo pipefail
 
 PRAETOR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN_DIR="${PRAETOR_ROOT}/bin"
-STANDARDSCTL="${BIN_DIR}/standardsctl"
+PRAETORCTL="${BIN_DIR}/praetorctl"
 
 mkdir -p "${BIN_DIR}"
-echo "=== Building standardsctl ==="
-go build -o "${STANDARDSCTL}" "${PRAETOR_ROOT}/cmd/standardsctl"
+echo "=== Building praetorctl ==="
+go build -o "${PRAETORCTL}" "${PRAETOR_ROOT}/cmd/praetorctl"
 
 PRIORITY_REPOS=(
     "/home/kilian/dev/golusoris/golusoris"
@@ -26,13 +26,13 @@ for repo in "${PRIORITY_REPOS[@]}"; do
         echo "--> Processing repository: ${repo}"
         
         # 1. Adopt and scaffold Praetor standards
-        "${STANDARDSCTL}" adopt --path="${repo}" --force || true
+        "${PRAETORCTL}" adopt --path="${repo}" --force || true
         
         # 2. Scan needs and write .needs.yaml
-        "${STANDARDSCTL}" needs scan --path="${repo}" --write || true
+        "${PRAETORCTL}" needs scan --path="${repo}" --write || true
         
         # 3. Generate and publish Pre-Migration Epic
-        "${STANDARDSCTL}" needs epic --path="${repo}" --output="${repo}/PRE_MIGRATION_EPIC.md" --publish=true || true
+        "${PRAETORCTL}" needs epic --path="${repo}" --output="${repo}/PRE_MIGRATION_EPIC.md" --publish=true || true
         
         echo "    [PASS] ${repo} adopted and PRE_MIGRATION_EPIC.md published to remote."
     else
@@ -41,7 +41,7 @@ for repo in "${PRIORITY_REPOS[@]}"; do
 done
 
 echo "=== Reconciling Cross-Repo Issue Dependencies ==="
-"${STANDARDSCTL}" issue reconcile --owner="golusoris" --repos="golusoris/golusoris,golusoris/sveltesentio,golusoris/goenvoy" --dry-run=false || true
-"${STANDARDSCTL}" issue reconcile --owner="VMAFx" --repos="VMAFx/vmafx" --dry-run=false || true
+"${PRAETORCTL}" issue reconcile --owner="golusoris" --repos="golusoris/golusoris,golusoris/sveltesentio,golusoris/goenvoy" --dry-run=false || true
+"${PRAETORCTL}" issue reconcile --owner="VMAFx" --repos="VMAFx/vmafx" --dry-run=false || true
 
 echo "=== Priority Adoption Sweep Complete ==="

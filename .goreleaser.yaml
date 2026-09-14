@@ -2,16 +2,16 @@
 # GoReleaser configuration for cordanaLLM/praetor
 version: 2
 
-project_name: standards
+project_name: praetor
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - id: standardsctl
-    main: ./cmd/standardsctl
-    binary: standardsctl
+  - id: praetorctl
+    main: ./cmd/praetorctl
+    binary: praetorctl
     goos:
       - linux
       - darwin
@@ -21,12 +21,13 @@ builds:
       - arm64
     env:
       - CGO_ENABLED=0
+    # praetorctl declares its version as a constant; -X cannot rewrite it.
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w
 
-  - id: standards-mcp
-    main: ./cmd/standards-mcp
-    binary: standards-mcp
+  - id: praetor-mcp
+    main: ./cmd/praetor-mcp
+    binary: praetor-mcp
     goos:
       - linux
       - darwin
@@ -37,11 +38,11 @@ builds:
     env:
       - CGO_ENABLED=0
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w -X main.mcpVersion={{.Version}}
 
-  - id: standards-lsp
-    main: ./cmd/standards-lsp
-    binary: standards-lsp
+  - id: praetor-lsp
+    main: ./cmd/praetor-lsp
+    binary: praetor-lsp
     goos:
       - linux
       - darwin
@@ -51,8 +52,9 @@ builds:
       - arm64
     env:
       - CGO_ENABLED=0
+    # praetor-lsp declares its version as a constant; -X cannot rewrite it.
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w
 
 archives:
   - id: default

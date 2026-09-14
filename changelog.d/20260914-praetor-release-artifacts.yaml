@@ -1,0 +1,9 @@
+type: changed
+title: >-
+  Name GoReleaser archives praetor_<version>_<os>_<arch> with only the praetorctl,
+  praetor-mcp and praetor-lsp binaries, drop the standardsctl copy from the
+  container image, and build CI, adopt workflows and the praetor-adopt action from
+  ./cmd/praetorctl. Migration: replace standardsctl, standards-mcp and
+  standards-lsp in scripts that consume release archives, the container image or
+  the adopt action with the praetor names.
+breaking: true

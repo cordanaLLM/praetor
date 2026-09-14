@@ -7,9 +7,6 @@
 *.dll
 *.so
 *.dylib
-/standardsctl
-/standards-mcp
-/standards-lsp
 /praetorctl
 /praetor-mcp
 /praetor-lsp
