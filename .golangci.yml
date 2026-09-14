@@ -34,15 +34,25 @@ linters:
     # Structure
     - gochecknoinits # no hidden init() side effects
     - forbidigo # unaudited exec / http entry points
+    - nolintlint # HISS-10: a suppressed warning is a hidden warning
 
   settings:
     errcheck:
       check-type-assertions: true
       check-blank: true
+    # min-complexity is the value a function must EXCEED to be reported: the message reads
+    # "is high (> N)". Setting it to the declared cap therefore permits exactly one step past
+    # the cap, so these two lines currently allow cyclomatic 11 and cognitive 16 while
+    # HISS-04 declares 10 and 15. Verified with boundary fixtures: at min-complexity 11 a
+    # function at cyclomatic 11 produced no finding and only 12 was reported.
+    #
+    # Correcting them to 10 and 15 reports 57 existing functions (50 cyclomatic, 7
+    # cognitive) that sit exactly on the boundary, so the correction lands with that
+    # refactor rather than ahead of it. Tracked as BUG-830.
     gocyclo:
-      min-complexity: 11 # HISS-04: McCabe cyclomatic <= 10
+      min-complexity: 11 # HISS-04: McCabe cyclomatic <= 10 (off by one, see above)
     gocognit:
-      min-complexity: 16 # HISS-04: cognitive <= 15
+      min-complexity: 16 # HISS-04: cognitive <= 15 (off by one, see above)
     funlen:
       lines: 75 # HISS-04: function LOC <= 75
       statements: 50 # HISS-04: statements <= 50
@@ -50,6 +60,15 @@ linters:
       errorf: true
       asserts: true
       comparison: true
+    # HISS-10 is only real if suppressions are visible. A bare `//nolint` disables every
+    # enabled linter for its scope, and since HISS-04's complexity caps and half of HISS-07
+    # exist only inside golangci-lint, one unexplained comment can remove three invariants.
+    # Each suppression must therefore name the linters it disables and say why, and a
+    # suppression that no longer suppresses anything is itself reported.
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
     forbidigo:
       analyze-types: true
       forbid:

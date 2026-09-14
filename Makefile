@@ -1,4 +1,4 @@
-.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test verify-all clean hooks setup
+.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec nosec-justified flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test verify-all clean hooks setup
 
 BIN_DIR := bin
 PRAETORCTL := $(BIN_DIR)/praetorctl
@@ -62,7 +62,19 @@ vuln:
 
 # gosec runs with ZERO exclusions: .gosec.json carries an empty exclude list and every
 # finding is fixed or carries a per-line "#nosec Gxxx -- <reason>" justification.
-sec:
+#
+# That justification rule is checked rather than merely asserted: an unexplained suppression
+# is a hidden finding, and a claim no target verifies is free to drift out of truth.
+nosec-justified:
+	@bad=$$(git grep -n '#nosec' -- '*.go' | grep -v ' -- ' || true); \
+	if [ -n "$$bad" ]; then \
+		echo "[FAIL] every #nosec must carry a 'Gxxx -- <reason>' justification:"; \
+		echo "$$bad"; \
+		exit 1; \
+	fi; \
+	echo "[PASS] all $$(git grep -h '#nosec' -- '*.go' | wc -l | tr -d ' ') #nosec suppressions carry a reason."
+
+sec: nosec-justified
 	@if command -v gosec >/dev/null 2>&1; then \
 		python3 -B .config/lefthook/scripts/security_scope.py -- gosec -conf .gosec.json; \
 	elif [ -x "$$(go env GOPATH)/bin/gosec" ]; then \
