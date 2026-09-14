@@ -4,7 +4,7 @@ import (
 	"flag"
 	"fmt"
 
-	"github.com/cordanaLLM/standards/internal/changelog"
+	"github.com/cordanallm/praetor/internal/changelog"
 )
 
 func runChangelog(args []string) error {

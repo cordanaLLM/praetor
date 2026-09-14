@@ -44,7 +44,7 @@ func TestSoftwareSourceCode_Positive(t *testing.T) {
 		"@type": "SoftwareSourceCode",
 		"name": "cordanaLLM/standards",
 		"programmingLanguage": "Go",
-		"codeRepository": "https://github.com/cordanaLLM/standards",
+		"codeRepository": "https://github.com/cordanallm/praetor",
 		"runtimePlatform": "Linux / POSIX",
 		"license": "https://spdx.org/licenses/Apache-2.0.html",
 		"description": "Enterprise Fleet Governance & Universal AI Agent Engineering Engine"

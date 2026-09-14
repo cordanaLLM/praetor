@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/lockdown"
-	"github.com/cordanaLLM/standards/internal/util"
-	"github.com/cordanaLLM/standards/internal/worktree"
+	"github.com/cordanallm/praetor/internal/lockdown"
+	"github.com/cordanallm/praetor/internal/util"
+	"github.com/cordanallm/praetor/internal/worktree"
 )
 
 // CanaryOptions specifies operational parameters for speculative bump testing.

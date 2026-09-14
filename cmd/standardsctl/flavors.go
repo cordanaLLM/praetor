@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/cordanaLLM/standards/internal/flavors"
+	"github.com/cordanallm/praetor/internal/flavors"
 )
 
 func fetchCurrentTags() map[string]string {

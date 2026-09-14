@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cordanaLLM/standards/internal/config"
-	"github.com/cordanaLLM/standards/internal/util"
+	"github.com/cordanallm/praetor/internal/config"
+	"github.com/cordanallm/praetor/internal/util"
 )
 
 func printPlanHeader(manifest *config.Manifest, policy *config.ResolvedPolicy) {
@@ -88,4 +88,3 @@ func runPlan(args []string) error {
 
 	return nil
 }
-

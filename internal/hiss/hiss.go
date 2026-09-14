@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/baseline"
+	"github.com/cordanallm/praetor/internal/baseline"
 )
 
 const (

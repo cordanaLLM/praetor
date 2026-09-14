@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/forge"
+	"github.com/cordanallm/praetor/internal/forge"
 )
 
 func runForge(args []string) error {

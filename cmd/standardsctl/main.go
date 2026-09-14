@@ -110,4 +110,3 @@ func dispatchCommand(cmd string, args []string) error {
 		return fmt.Errorf("unknown command: %s", cmd)
 	}
 }
-

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/release"
+	"github.com/cordanallm/praetor/internal/release"
 )
 
 func runRelease(args []string) error {

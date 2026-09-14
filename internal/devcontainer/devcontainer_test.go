@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/config"
+	"github.com/cordanallm/praetor/internal/config"
 )
 
 // TestSynthesize_3D verifies Synthesize against positive, negative, and boundary inputs.

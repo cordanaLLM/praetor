@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/lockdown"
+	"github.com/cordanallm/praetor/internal/lockdown"
 )
 
 // DispositionStatus defines allowable terminal statuses for Paperclip runs.

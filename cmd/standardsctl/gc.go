@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/gc"
+	"github.com/cordanallm/praetor/internal/gc"
 )
 
 func runGC(args []string) error {

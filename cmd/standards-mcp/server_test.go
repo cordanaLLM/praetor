@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/mcp"
+	"github.com/cordanallm/praetor/internal/mcp"
 )
 
 func TestServer_ToolsRegistrationAndAnnotations(t *testing.T) {

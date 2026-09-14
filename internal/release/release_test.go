@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cordanaLLM/standards/internal/changelog"
+	"github.com/cordanallm/praetor/internal/changelog"
 )
 
 func TestPrepareRelease_Positive(t *testing.T) {

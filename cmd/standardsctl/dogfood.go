@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/dogfood"
+	"github.com/cordanallm/praetor/internal/dogfood"
 )
 
 func runDogfood(args []string) error {

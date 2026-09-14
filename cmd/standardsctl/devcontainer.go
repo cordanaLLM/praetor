@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/config"
-	"github.com/cordanaLLM/standards/internal/devcontainer"
+	"github.com/cordanallm/praetor/internal/config"
+	"github.com/cordanallm/praetor/internal/devcontainer"
 )
 
 func runDevContainer(args []string) error {

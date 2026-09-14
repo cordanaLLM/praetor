@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/config"
+	"github.com/cordanallm/praetor/internal/config"
 )
 
 const (

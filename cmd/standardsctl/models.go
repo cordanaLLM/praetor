@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/standards/internal/router"
+	"github.com/cordanallm/praetor/internal/router"
 )
 
 func runModels(args []string) error {

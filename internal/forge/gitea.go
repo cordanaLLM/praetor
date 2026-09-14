@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cordanaLLM/standards/internal/config"
+	"github.com/cordanallm/praetor/internal/config"
 )
 
 // GiteaDriver implements Forge for Gitea / Forgejo instances.

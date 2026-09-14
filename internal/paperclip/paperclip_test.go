@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cordanaLLM/standards/internal/lockdown"
+	"github.com/cordanallm/praetor/internal/lockdown"
 )
 
 // =========================================================================

@@ -4,7 +4,7 @@ import (
 	"flag"
 	"fmt"
 
-	"github.com/cordanaLLM/standards/internal/sentinel"
+	"github.com/cordanallm/praetor/internal/sentinel"
 )
 
 func runSentinel(args []string) error {
