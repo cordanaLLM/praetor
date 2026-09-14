@@ -724,6 +724,10 @@ Failure Action: Pre-commit / CI gate rejection.`,
 Formal Specification: Diff-aware change gating: heavy race and security gates are skipped on docs-only or state-only changes as classified by 'praetorctl ci filter'.
 Enforcement: CI filter step exporting run_* outputs that every heavy gate's condition consumes.
 Failure Action: CI optimization gate.`,
+	"HISS-19": `Rule: HISS-19 (Reuse Before Writing)
+Formal Specification: One behavior has exactly one implementation. An existing function, loader, parser or command is extended or called rather than reimplemented, and configuration formats are held to the same rule: a second config system beside an existing loader is the same defect. Duplication that is genuinely unavoidable is justified in the commit body.
+Enforcement: 'praetorctl dedupe scan .' function-level clone and utility-sprawl detection, run by 'make dedupe' inside verify-all.
+Failure Action: Verification gate rejection.`,
 }
 
 // knownRuleIDs returns the explainable rule identifiers in ascending order.
