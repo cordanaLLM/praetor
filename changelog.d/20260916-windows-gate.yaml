@@ -1,0 +1,3 @@
+type: fixed
+title: The gate runs on Windows, and its self-tests skip the legs that need a C toolchain instead of failing
+breaking: false

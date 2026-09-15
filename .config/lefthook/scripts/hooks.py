@@ -2,6 +2,7 @@
 """Git-stage entry points. Use exact index/ref snapshots for blocking checks."""
 
 import os
+import pathlib
 import json
 from pathlib import Path
 import re
@@ -154,15 +155,31 @@ def preserve_receipt(directory, head):
     print(f"Verified receipt preserved at {receipt}")
 
 
+def praetorctl_path():
+    """Absolute path to the CLI built for the repository being hooked.
+
+    CreateProcessW cannot resolve a bare relative path that uses forward slashes and lacks a
+    ``./`` prefix, so ``bin/praetorctl`` raised FileNotFoundError on Windows before a single check
+    ran. The path is therefore absolute, and the ``.exe`` suffix matches what the Makefile now
+    produces for the host.
+
+    It resolves from the working directory rather than from this file. The hook runs inside the
+    repository being committed, which during the harness self-tests is a temporary fixture with
+    its own ``bin/``; anchoring to this script's location would have pointed every fixture at the
+    real repository's binary instead.
+    """
+    suffix = ".exe" if os.name == "nt" else ""
+    return os.path.abspath(os.path.join("bin", "praetorctl" + suffix))
+
 def cli(args):
     run(["make", "--always-make", "--no-print-directory", "-s", "hook-cli"], capture=False, timeout=180)
-    run(["bin/praetorctl", *args], capture=False, timeout=180)
+    run([praetorctl_path(), *args], capture=False, timeout=180)
 
 
 def verify_live_state():
     """Check private workstation state outside the exported Git snapshot."""
     audit_live_state()
-    run(["bin/praetorctl", "state", "sync", "--verify", "."], capture=False, timeout=30)
+    run([praetorctl_path(), "state", "sync", "--verify", "."], capture=False, timeout=30)
     print('PRAETOR_STATE_RESULT={"schema_version":1,"verified":true}', flush=True)
 
 

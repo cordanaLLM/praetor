@@ -14,11 +14,32 @@ class HookError(Exception):
     """An actionable local gate failure."""
 
 
-def _stop_bounded(process):
+def _kill_bounded(process):
+    """Kill a bounded child and everything it started.
+
+    ``run_bounded`` starts children with ``start_new_session=True``, so on POSIX the whole
+    process group is killed -- a bounded command that forks must not leave orphans behind. That
+    call is POSIX-only: on Windows ``os.killpg`` does not exist, and the timeout path raised
+    ``AttributeError`` instead of reporting that a process had exceeded its bound. The failure
+    therefore appeared only when a gate was already failing, which is the worst time to lose the
+    reason.
+
+    Windows gets ``Popen.kill``, which terminates the child itself. Grandchildren are not reaped,
+    and that is a real difference rather than a hidden one: a full equivalent needs
+    ``CREATE_NEW_PROCESS_GROUP`` at spawn plus ``CTRL_BREAK_EVENT`` here, which is worth doing
+    when a bounded command on Windows is observed to fork.
+    """
     try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass  # The group already exited.
+        if hasattr(os, "killpg"):
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+    except (ProcessLookupError, PermissionError):
+        pass  # The process or group already exited.
+
+
+def _stop_bounded(process):
+    _kill_bounded(process)
     process.wait(timeout=5)
 
 
@@ -85,10 +106,7 @@ def run(args, cwd=None, *, data=None, timeout=180, capture=True, env=None, allow
             try:
                 stdout, stderr = process.communicate(input=data, timeout=timeout)
             except (subprocess.TimeoutExpired, KeyboardInterrupt):
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass  # The group exited between timeout detection and cleanup.
+                _kill_bounded(process)
                 process.communicate(timeout=5)
                 raise
     except (OSError, subprocess.TimeoutExpired) as error:

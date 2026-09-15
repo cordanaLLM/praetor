@@ -46,6 +46,38 @@ def command(repo, *args, data=None, ok=True, maintain_state=True):
     return result
 
 
+
+def race_detector_available():
+    """Report whether `go test -race` can build here, and why not when it cannot.
+
+    The race detector needs cgo and a host C toolchain. On a Windows box without gcc every race
+    leg fails to build, so the harness self-tests could never pass there -- and those tests run
+    precisely when `.config/lefthook/` changes, which is exactly what a contributor fixing Windows
+    support has to touch. The gate could not be repaired from the platform it was broken on.
+
+    Skipping is reported rather than silent. A skipped race leg that reads as a pass would be the
+    same defect this repository keeps finding elsewhere: an unexamined thing certified as clean.
+    CI runs on Linux with cgo, so coverage is not lost, only deferred to where it can run.
+    """
+    if os.environ.get("CGO_ENABLED") == "0":
+        return False, "CGO_ENABLED=0"
+    try:
+        enabled = subprocess.run(["go", "env", "CGO_ENABLED"], capture_output=True, text=True,
+                                 timeout=30, check=False).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, f"go env unavailable: {error}"
+    if enabled == "0":
+        return False, "go env CGO_ENABLED=0"
+    return True, ""
+
+
+def skip_without_race_detector(test):
+    """Skip one test when the race detector cannot build, naming the reason."""
+    available, reason = race_detector_available()
+    if not available:
+        test.skipTest(f"race detector unavailable ({reason}); CI runs these legs on Linux with cgo")
+
+
 class GitHooks(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -625,6 +657,7 @@ class GitHooks(unittest.TestCase):
             os.chdir(original)
 
     def test_real_checkpoint_push_builds_and_tests_without_release_receipt(self):
+        skip_without_race_detector(self)
         self.write("go.mod", "module example.test/checkpoint\n\ngo 1.27\n")
         self.write("value.go", "package checkpoint\n\nfunc Value() int { return 1 }\n")
         self.write("value_test.go", 'package checkpoint\n\nimport "testing"\n\n'
@@ -944,6 +977,7 @@ class ScopeAndGuard(unittest.TestCase):
                     audit_scope(root, unrepresentable, base)
 
     def test_real_scoped_race_test_propagates_failure(self):
+        skip_without_race_detector(self)
         with tempfile.TemporaryDirectory(prefix="praetor-race-") as temp:
             root = Path(temp)
             (root / "go.mod").write_text("module example.test/race\n\ngo 1.27\n")
@@ -975,6 +1009,7 @@ class ScopeAndGuard(unittest.TestCase):
                 source_checks(root, ["core/core.go"], "lint")
 
     def test_checkpoint_test_only_packages_still_run_and_propagate_failure(self):
+        skip_without_race_detector(self)
         with tempfile.TemporaryDirectory(prefix="praetor-checkpoint-test-only-") as temp:
             root = Path(temp)
             (root / "go.mod").write_text("module example.test/onlytests\n\ngo 1.27\n")
@@ -988,6 +1023,7 @@ class ScopeAndGuard(unittest.TestCase):
                 checkpoint_checks(root, ["only_test.go"])
 
     def test_checkpoint_real_build_rejects_broken_reverse_dependency(self):
+        skip_without_race_detector(self)
         with tempfile.TemporaryDirectory(prefix="praetor-checkpoint-build-") as temp:
             root = Path(temp)
             (root / "go.mod").write_text("module example.test/checkpoint\n\ngo 1.27\n")
@@ -1004,6 +1040,7 @@ class ScopeAndGuard(unittest.TestCase):
             self.assertIn("undefined: core.Missing", str(failure.exception))
 
     def test_checkpoint_real_race_detector_rejects_consumer_test_race(self):
+        skip_without_race_detector(self)
         with tempfile.TemporaryDirectory(prefix="praetor-checkpoint-race-") as temp:
             root = Path(temp)
             (root / "go.mod").write_text("module example.test/checkpoint\n\ngo 1.27\n")

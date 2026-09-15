@@ -276,3 +276,40 @@ positive fixtures violate an invariant — a file that fails to be a bounded loo
 proven to fire. Scanning them reports the engine's own test data as the repository's debt and blocks
 every push that touches the corpus. The HISS scanner, the dedupe scan, gitleaks and the CI gofmt
 sweep all skip the same directory name, which is Go's own convention for the same reason.
+
+## Running the gate on Windows
+
+Four platform assumptions previously made `git commit` impossible on a Windows checkout. Each one
+was only reachable after the previous was fixed, so they behaved as a single blocker.
+
+- The binary is built as `praetorctl.exe` on Windows. `Makefile` derives the suffix from `$(OS)`,
+  so every target names the binary for the host rather than for the developer's platform.
+- The hook launches it by absolute path. `CreateProcessW` cannot resolve a bare relative path that
+  uses forward slashes and lacks a `./` prefix, so `bin/praetorctl` failed before any check ran.
+  The path resolves from the working directory, because the hook runs inside the repository being
+  committed — during the harness self-tests that is a temporary fixture with its own `bin/`.
+- Directory `fsync` is skipped on Windows. It is POSIX-only and NTFS refuses it on a directory
+  handle, which failed the `commit-msg` live-state gate on every commit.
+- The harness self-tests run everywhere, and skip only what they cannot build.
+
+### A fresh worktree needs its ledger
+
+`praetorctl state init --if-absent .` is required in every new worktree, on any platform, or the
+gate fails with `working directory .workingdir does not exist`. `.workingdir/` is gitignored and
+per-worktree, so it does not arrive with a checkout.
+
+### Race-detector legs need cgo
+
+`go test -race` requires cgo and a host C toolchain. Where `CGO_ENABLED` is `0` — a Windows box
+without gcc, for instance — five self-test legs skip and **say why**:
+
+```
+skipped 'race detector unavailable (CGO_ENABLED=0); CI runs these legs on Linux with cgo'
+```
+
+A skipped leg that read as a pass would certify what it never ran. CI runs on Linux with cgo, so
+the coverage is deferred rather than lost.
+
+This mattered beyond convenience. The self-tests trigger on any change under `.config/lefthook/`,
+which is exactly where a contributor fixing Windows support has to work — so the gate could not be
+repaired from the platform it was broken on.
