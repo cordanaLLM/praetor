@@ -58,12 +58,21 @@ def text_checks(directory, names):
                 raise HookError(f"{name}: {error}") from error
 
 
+def is_fixture(name):
+    """Report whether a path is fixture input rather than source this repository owns."""
+    slashed = name.replace("\\", "/")
+    return slashed.startswith("testdata/") or "/testdata/" in slashed
+
+
 def file_checks(directory, names):
     files = present_files(directory, names)
     if any(name == ".workingdir" or name.startswith(".workingdir/") for name in files):
         raise HookError(PRIVATE_STATE_ERROR)
     text_checks(directory, files)
-    gofiles = [name for name in files if name.endswith(".go")]
+    # testdata holds inputs to the rules, not source governed by them: a HISS-10 fixture is
+    # deliberately unformatted because that is what it demonstrates, and a semgrep fixture
+    # deliberately violates an invariant. Go itself never builds testdata either.
+    gofiles = [name for name in files if name.endswith(".go") and not is_fixture(name)]
     if gofiles:
         output = run(["gofmt", "-l", *gofiles], cwd=directory)
         if output:
@@ -229,7 +238,7 @@ def semgrep_commands(directory, names):
     # every push that touches the corpus. The HISS scanner skips it for the same reason.
     source = [name for name in present_files(directory, names)
               if Path(name).suffix in {".go", ".py", ".rs", ".c", ".cpp", ".js", ".ts"}
-              and not name.startswith(".config/hiss/testdata/")]
+              and not is_fixture(name)]
     if any(name.startswith(".config/semgrep/") for name in names):
         source = ["."]
     if source and (directory / rules).exists():
