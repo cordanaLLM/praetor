@@ -19,6 +19,23 @@ standardsctl adopt --dry-run
 praetorctl adopt --force --record-baseline --lock-source-root=/path/to/praetor
 ```
 
+### Large repositories
+
+Adoption discovers verification inputs (Makefiles, manifests, scripts) through a bounded
+walk of the target: 4096 directory entries, 512 files and a fixed depth by default. A
+repository above those bounds fails with `verification discovery exceeds 4096 entries`.
+Raise a bound explicitly instead of trimming the tree:
+
+```bash
+standardsctl adopt --dry-run --path /path/to/large-repo \
+  --lock-source-root=/path/to/praetor --verification-max-entries=32768
+```
+
+`--verification-max-files` and `--verification-max-depth` raise the other two bounds.
+Each value is validated against its ceiling (200000 entries, 512 files, 64 levels); an
+unset flag keeps the default. The flags apply to single-repository adoption; batch
+`--all-missing` keeps the defaults.
+
 ### What Adoption Scaffolds Automatically:
 1. **`.standards.yaml`**: Declarative repository manifest containing profile, facets, tool versions, and policy locks.
 2. **`.standards.lock`**: Cryptographic SemVer lockfile binding your repo to exact governance standard releases.

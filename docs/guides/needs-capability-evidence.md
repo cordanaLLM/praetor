@@ -94,6 +94,41 @@ same reconciliation to local and harvested demands. JSON readiness entries carry
 optional `basis`, framework indexes carry `basis`, and fleet reports carry
 `coverage_basis`. Existing numeric coverage fields remain available.
 
+## Capability contract
+
+A framework checkout may publish `capabilities.yaml` at its root (golusoris
+`core/capabilities`, schema version 1). When the selected checkout has one, it is the
+package inventory: every declared package, the Go module the contract says contains it,
+the capability keys it satisfies and the third-party modules it `replaces`. The static
+catalog's directory candidates are not consulted for such a checkout.
+
+The contract changes what is declared, not what counts as evidence:
+
+- Every declared package is still source-observed under the same rules as catalog
+  candidates: parseable non-test Go source with a declaration, in the exact declared
+  directory, inside the module the contract declares for it. A declared nested module
+  (for example `github.com/golusoris/golusoris/core`) is honoured instead of being
+  rejected as a foreign module, but its `go.mod` must exist and no other module may sit
+  between the checkout root and the package. Header-only packages remain unavailable.
+- `replaces` maps a consumer's third-party module onto an observed package, ignoring a
+  `/vN` major-version suffix on either side. When several packages claim the same
+  module, the one declaring the demanded capability wins, then the first in import
+  order. A library the catalog does not know adopts the package's first declared
+  capability instead of a `custom.*` gap. A catalog mapping whose replacement path
+  predates the framework's layout is corrected by the contract.
+- Catalog library relationships (retained foundations, wrappers, tooling) keep their
+  roles; the contract never turns a retained library into an import replacement.
+- The framework's own modules imported by a consumer (`github.com/golusoris/golusoris`,
+  `…/core`) are `native` under the `fleet.framework` capability and count as covered.
+
+The report prints `Capability contract: capabilities.yaml` next to its basis, which
+stays `source-observed`; `FrameworkIndex` carries `contract` and `replacements`. A
+contract that fails validation (unsupported version, `framework` not matching the
+checkout's `go.mod` module, packages outside the framework, undeclared modules, invalid
+capability keys, more than 512 packages or 1 MiB) fails inspection rather than
+degrading to heuristics. None of this proves API compatibility, runs a build, or
+admits `needs migrate --apply`.
+
 ## Selecting the source
 
 ```bash

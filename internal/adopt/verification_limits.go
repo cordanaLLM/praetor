@@ -24,9 +24,22 @@ const (
 	maxVerificationTotalCeiling   = 16 << 20
 )
 
+// Ceilings an operator-raised discovery bound may not exceed.
+const (
+	VerificationEntriesCeiling = maxVerificationEntriesCeiling
+	VerificationFilesCeiling   = maxVerificationFilesCeiling
+	VerificationDepthCeiling   = maxVerificationDepthCeiling
+)
+
+// DefaultVerificationLimits is the bounded reader policy adoption applies when the caller
+// declares none. A caller raising one bound keeps the others at these defaults.
+func DefaultVerificationLimits() VerificationLimits {
+	return VerificationLimits{MaxEntries: maxVerificationEntries, MaxFiles: maxVerificationInputs, MaxDepth: maxVerificationDepth, MaxFileBytes: maxVerificationInputBytes, MaxTotalBytes: maxVerificationTotalBytes}
+}
+
 // NormalizeVerificationLimits validates and fills the bounded reader policy.
 func NormalizeVerificationLimits(input *VerificationLimits) (VerificationLimits, error) {
-	defaults := VerificationLimits{MaxEntries: maxVerificationEntries, MaxFiles: maxVerificationInputs, MaxDepth: maxVerificationDepth, MaxFileBytes: maxVerificationInputBytes, MaxTotalBytes: maxVerificationTotalBytes}
+	defaults := DefaultVerificationLimits()
 	if input == nil {
 		return defaults, nil
 	}

@@ -38,8 +38,8 @@ func TestCatalogMatching(t *testing.T) {
 
 	// Positive: YAML serialization
 	entry, found = MatchPackage("gopkg.in/yaml.v3")
-	if !found || entry.Capability != "config.yaml" || entry.Status != StatusGap {
-		t.Fatalf("expected config.yaml gap for yaml.v3, got %v", entry)
+	if !found || entry.Capability != "config.yaml" || entry.Status != StatusCovered || entry.GolusorisReplacement != "github.com/golusoris/golusoris/core/codec/yaml" {
+		t.Fatalf("expected config.yaml covered by core/codec/yaml for yaml.v3, got %v", entry)
 	}
 
 	// Positive: MCP community server

@@ -1,0 +1,3 @@
+type: added
+title: Resolve needs against a framework's capabilities.yaml contract, classify the framework's own modules as native, and let adopt raise its verification discovery bounds
+breaking: false

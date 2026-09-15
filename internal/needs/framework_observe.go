@@ -38,6 +38,13 @@ func observeFramework(ctx context.Context, index *FrameworkIndex) (err error) {
 	if module != "" {
 		index.Name = module
 	}
+	contract, found, err := loadFrameworkContract(ctx, root, module)
+	if err != nil {
+		return err
+	}
+	if found {
+		return observeContractFramework(ctx, index, contract)
+	}
 	candidates, err := frameworkCandidates()
 	if err != nil {
 		return err

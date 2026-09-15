@@ -81,8 +81,10 @@ func validateCatalogPath(rel string) error {
 	if !utf8.ValidString(rel) || strings.ContainsFunc(rel, unicode.IsControl) {
 		return errors.New("catalog artifact path requires UTF-8 without controls")
 	}
-	dir := filepath.Dir(rel)
-	if dir != archetypeDirName && dir != filepath.Join(archetypeDirName, facetDirName) {
+	// Compare slash-normalised: the catalog constants are slash paths, while filepath.Dir
+	// yields the host separator, so a Windows path would otherwise never match.
+	dir := filepath.ToSlash(filepath.Dir(rel))
+	if dir != archetypeDirName && dir != archetypeDirName+"/"+facetDirName {
 		return errors.New("catalog artifact must be directly inside the profiles or facets directory")
 	}
 	return nil
