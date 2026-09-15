@@ -70,6 +70,57 @@ rules:
         rationale: >-
           while True is reported with arbitrary spacing. Other unbounded shapes such as
           while 1 and the I/O-timeout half are not decided.
+  - id: HISS-04
+    title: Complexity Bounds
+    coverage:
+      - language: go
+        state: partial
+        mechanism: internal/hiss go_ast.go checkFuncLOC, with gocyclo, gocognit and funlen in golangci-lint
+        rationale: >-
+          The scanner decides function length only. The cyclomatic, cognitive and statement
+          caps HISS-04 also declares are golangci-lint's, so fixtures for them are held as
+          gaps here rather than counted as scanner coverage.
+      - language: rust
+        state: partial
+        mechanism: internal/hiss rules.go braceTracker
+        rationale: >-
+          Function length is decided by brace tracking. The other three caps have no Rust
+          check at all.
+      - language: python
+        state: partial
+        mechanism: internal/hiss rules.go python indentation tracker
+        rationale: >-
+          Function length is decided by indentation. The other three caps have no Python
+          check, and Python test files carry no length exemption.
+      - language: c
+        state: partial
+        mechanism: internal/hiss rules.go braceTracker
+        rationale: >-
+          Function length is decided by brace tracking. The other three caps have no native
+          check.
+  - id: HISS-08
+    title: Static Determinism
+    coverage:
+      - language: c
+        state: partial
+        mechanism: internal/hiss rules.go hasBannedCall
+        rationale: >-
+          gets, strcpy and sprintf are refused, with arbitrary spacing before the argument
+          list. Other unsafe native primitives are not decided.
+      - language: python
+        state: partial
+        mechanism: internal/hiss rules.go hasBannedCall
+        rationale: >-
+          eval and exec are refused as bare calls. A method of the same name reached through
+          a selector is not a builtin and is not reported. Dynamic import and compile are not
+          decided.
+      - language: go
+        state: unsupported
+        mechanism: none in internal/hiss; forbidigo in golangci-lint fences the primitives
+        rationale: >-
+          The scanner carries no HISS-08 case for Go. plugin.Open, os.StartProcess and the
+          syscall exec family are refused by forbidigo in the same gate, so the fixtures are
+          held as gaps for the scanner rather than as coverage it does not have.
   - id: HISS-07
     title: Checked Errors
     coverage:
@@ -96,3 +147,17 @@ rules:
         rationale: >-
           An unsafe block without a preceding SAFETY proof is reported, and one with a proof is
           not. Whether the proof is truthful is not decided by any check.
+      - language: go
+        state: partial
+        mechanism: internal/hiss go_ast.go checkUnsafe with a preceding SAFETY proof
+        rationale: >-
+          An unsafe selector without a SAFETY proof is reported, and a local that shadows the
+          package name is not. Whether a proof is truthful is not decided.
+      - language: c
+        state: unsupported
+        mechanism: none
+        rationale: No native reference-safety rule exists; the gap fixtures record what goes undetected.
+      - language: python
+        state: unsupported
+        mechanism: none
+        rationale: No Python reference-safety rule exists.

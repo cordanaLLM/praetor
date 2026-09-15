@@ -322,6 +322,13 @@ func (g *goScanner) checkUnsafe(sel *ast.SelectorExpr) {
 	if !ok || pkg.Name != "unsafe" {
 		return
 	}
+	// A local named unsafe shadows the package, so the selector reaches that value and no
+	// unsafe operation occurs. The rule matched the identifier spelling rather than what it
+	// resolved to, so `var unsafe shim; return unsafe.Pointer` was reported as needing a
+	// SAFETY proof for reading a plain struct field.
+	if fn := g.enclosingFunc(); fn != nil && declaresLocal(fn.Body, "unsafe") {
+		return
+	}
 	useLine := g.line(sel.Pos())
 	stmtLine := g.enclosingStatementLine(useLine)
 	if g.hasSafety(stmtLine, useLine) {
