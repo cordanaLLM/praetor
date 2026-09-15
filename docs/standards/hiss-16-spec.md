@@ -114,5 +114,6 @@ All public methods require three-dimensional test coverage:
 ### HISS-16: Agentic Fleet Governance & Server-Side Enforcement
 Agent instructions originate from a single canonical source (`AGENTS.md`):
 - All vendor harnesses (`CLAUDE.md`, Cursor rules, Copilot) are compiled via `standardsctl compile-context`.
+- Every line outside a `## <Vendor>` heading is shared by all targets. A `## <Vendor>` section (`Claude Code`, `Cursor`, `GitHub Copilot`, `Windsurf`, `Gemini`, `Codex`) compiles into that target alone and is removed from the other five, so one agent's guidance never reaches another.
 - Authoritative verification executes inside non-root ephemeral sandboxes with cgroup limits and default-deny egress.
 - The "## Text Register" block in AGENTS.md is generated from the `register:` section of `.standards.yaml` by `standardsctl compile-context` and verified by `--verify`; hand edits between its markers are reported as drift.
