@@ -1,0 +1,39 @@
+id: "org-health"
+name: "Organisation Health Repository"
+description: "The .github repository an organisation publishes its shared community health files, issue templates and reusable workflows from; documentation and configuration only, with no application code"
+runtime: "planning"
+
+# Present because every profile declares it, not because this repository class carries
+# functions to measure. A health repository that grows executable logic beyond a
+# workflow has outgrown this profile and should declare the one matching that code.
+complexity:
+  max_cyclomatic: 10
+  max_cognitive: 15
+  max_func_loc: 75
+  max_statements: 50
+
+# One reviewer, not two. These files are defaults inherited by every repository in the
+# organisation, so a change is high-blast-radius, but the repositories that need this
+# profile are the ones currently least maintained -- requiring two approvals is how a
+# health repository goes 155 days without an update.
+branch_protection:
+  enforce_linear_history: true
+  require_signed_commits: true
+  required_approving_reviewers: 1
+  dismiss_stale_reviews: true
+
+# No build, no artifact, nothing to attest. Declaring SLSA here would claim provenance
+# over files that are read by GitHub rather than produced by a pipeline.
+supply_chain:
+  slsa_level: 0
+  enforce_cosign: false
+  require_sbom: false
+
+linters:
+  - "markdownlint"
+  - "yamllint"
+  - "actionlint"
+  - "codespell"
+
+devcontainer_features:
+  - "ghcr.io/devcontainers/features/common-utils:2"
