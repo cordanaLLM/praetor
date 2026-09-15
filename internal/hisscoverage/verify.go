@@ -107,6 +107,10 @@ type Report struct {
 	// reported separately because an unbacked claim is not yet wrong, it is merely
 	// undemonstrated, and the distinction matters while the corpus is being filled in.
 	Unbacked []string
+	// Delegated lists claims decided by a tool this package does not run. Their enforcement
+	// is not proven here, only their attribution, and saying so is the point: a claim this
+	// gate cannot replay must not be indistinguishable from one it verified.
+	Delegated []string
 }
 
 // Passed reports whether every claim survived its fixtures.
@@ -147,6 +151,9 @@ func Verify(ctx context.Context, rootDir string, catalog *Catalog) (*Report, err
 func verifyClaim(ctx context.Context, rootDir, ruleID string, cov *Coverage, report *Report) error {
 	report.Claims++
 	base := filepath.Join(rootDir, filepath.FromSlash(FixtureDir), ruleID, cov.Language)
+	if !cov.ReplayedHere() {
+		return verifyDelegatedClaim(ctx, base, ruleID, cov, report)
+	}
 
 	positives, err := replayBucket(ctx, base, bucketPositive, ruleID, report)
 	if err != nil {
@@ -177,6 +184,31 @@ func verifyClaim(ctx context.Context, rootDir, ruleID string, cov *Coverage, rep
 	}
 	appendDetected(report, ruleID, cov.Language, bucketGap, gaps,
 		"a fixture recorded as an undetected gap is now reported; close the gap in the catalog")
+	return nil
+}
+
+// verifyDelegatedClaim checks a claim whose runner is not the HISS scanner.
+//
+// What can be verified here is the attribution, not the enforcement: the deciding tool is
+// golangci-lint, gitleaks, the forge commit check or a CI step, none of which this package
+// runs. So every bucket is held to one expectation -- the scanner must report none of them.
+// If it reports one, the claim names the wrong mechanism, and a rule credited to a tool that
+// is not actually deciding it is precisely the defect the catalog exists to surface.
+//
+// The delegation itself is recorded so a reader can see which claims this gate proves and
+// which it only attributes. An unreplayed claim that passes silently would be indistinguishable
+// from a verified one, which is the state this whole mechanism replaced.
+func verifyDelegatedClaim(ctx context.Context, base, ruleID string, cov *Coverage, report *Report) error {
+	report.Delegated = append(report.Delegated,
+		fmt.Sprintf("%s/%s is decided by %s, not replayed here", ruleID, cov.Language, cov.Runner))
+	for _, bucket := range []string{bucketPositive, bucketNegative, bucketGap} {
+		results, err := replayBucket(ctx, base, bucket, ruleID, report)
+		if err != nil {
+			return err
+		}
+		appendDetected(report, ruleID, cov.Language, bucket, results,
+			"attributed to "+cov.Runner+" yet the HISS scanner reports it; the runner is wrong")
+	}
 	return nil
 }
 
