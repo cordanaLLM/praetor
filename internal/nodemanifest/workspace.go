@@ -124,7 +124,7 @@ func workspacePatterns(repoPath string, rootHasManifest bool) ([]string, error) 
 	var patterns []string
 
 	if util.FileExists(filepath.Join(repoPath, "pnpm-workspace.yaml")) {
-		data, err := readConfined(repoPath, "pnpm-workspace.yaml")
+		data, err := util.ReadConfined(repoPath, "pnpm-workspace.yaml")
 		if err != nil {
 			return nil, fmt.Errorf("read pnpm-workspace.yaml: %w", err)
 		}
@@ -137,7 +137,7 @@ func workspacePatterns(repoPath string, rootHasManifest bool) ([]string, error) 
 	}
 
 	if rootHasManifest {
-		data, err := readConfined(repoPath, "package.json")
+		data, err := util.ReadConfined(repoPath, "package.json")
 		if err != nil {
 			return nil, fmt.Errorf("read package.json: %w", err)
 		}
@@ -191,16 +191,4 @@ func globWorkspacePackages(repoPath, pattern string) []string {
 		dirs = append(dirs, filepath.ToSlash(rel))
 	}
 	return dirs
-}
-
-// readConfined reads rel below root after confining it with util.ConfinePath, so
-// a workspace glob or a caller-supplied repository path can never read outside
-// root.
-func readConfined(root, rel string) ([]byte, error) {
-	path, err := util.ConfinePath(root, rel)
-	if err != nil {
-		return nil, err
-	}
-	// #nosec G304 -- path is confined to root by util.ConfinePath above.
-	return os.ReadFile(path)
 }

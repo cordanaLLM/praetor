@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -42,17 +41,6 @@ func DiscoverNodePackages(repoPath string) []string {
 		return nil
 	}
 	return dirs
-}
-
-// readConfined reads rel below root after confining it with util.ConfinePath, so
-// a caller-supplied repository path can never read outside root.
-func readConfined(root, rel string) ([]byte, error) {
-	path, err := util.ConfinePath(root, rel)
-	if err != nil {
-		return nil, err
-	}
-	// #nosec G304 -- path is confined to root by util.ConfinePath above.
-	return os.ReadFile(path)
 }
 
 // ScanNodeDependencies inspects Node/pnpm packages in repoPath for upgrades.
@@ -145,7 +133,7 @@ func nodeUpgradeCandidate(pkg string, item pnpmOutdatedItem, dirRel string, opts
 }
 
 func scanPackageJSONStatic(repoPath, dirRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
-	data, err := readConfined(repoPath, filepath.Join(dirRel, "package.json"))
+	data, err := util.ReadConfined(repoPath, filepath.Join(dirRel, "package.json"))
 	if err != nil {
 		return nil, err
 	}
