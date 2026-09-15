@@ -1,0 +1,64 @@
+/* A 61-line function in K&R style. isNativeFuncHeader requires a brace on the header
+ * line, so the tracked function starts at the brace line instead and is measured as 60
+ * LOC. The identical function with the brace on the header line is reported. */
+int knr_sixty_one(int count)
+{
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    count++;
+    return count;
+}
