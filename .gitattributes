@@ -1,0 +1,12 @@
+# Default: let git handle text normally.
+* text=auto
+
+# The CRLF fixtures assert that the line-based matchers are not silenced by a Windows
+# checkout. Two attributes are needed and they defend different things.
+#
+#   -text              stops checkout normalisation from deleting the carriage returns,
+#                      which are the entire property these files exist to carry.
+#   whitespace=cr-at-eol  stops `git diff --check` from rejecting those same carriage
+#                      returns as trailing whitespace. Without it the commit hook refuses
+#                      the fixtures, so the rule could never be pinned at all.
+.config/hiss/testdata/**/crlf-* -text whitespace=cr-at-eol
