@@ -448,8 +448,19 @@ func (f *TypeScriptNodeFlavor) Detect(repoPath string) bool {
 
 func (f *TypeScriptNodeFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: "tsconfig.json", Description: "TypeScript compiler options and strict type checking"},
-		{Path: ".eslintrc.json", Description: "TypeScript / Node.js static analysis rules"},
+		{
+			Path:        "tsconfig.json",
+			Description: "TypeScript compiler options and strict type checking",
+			AltPaths:    []string{"tsconfig.base.json", "jsconfig.json"},
+		},
+		{
+			Path:        ".eslintrc.json",
+			Description: "TypeScript / Node.js static analysis rules",
+			AltPaths: []string{
+				"eslint.config.js", "eslint.config.mjs", "eslint.config.cjs",
+				"eslint.config.ts", "eslint.config.mts", ".eslintrc.cjs", ".eslintrc.js",
+			},
+		},
 		{Path: ".github/workflows/ci.yml", Description: "Node.js CI test and build matrix"},
 		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
 		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
@@ -467,8 +478,18 @@ func (f *TypeScriptNodeFlavor) RequiredSettings() []SettingItem {
 func (f *TypeScriptNodeFlavor) RequiredToolchains() []ToolchainItem {
 	return []ToolchainItem{
 		{Binary: "node", Purpose: "Node.js JavaScript runtime", InstallGuide: "https://nodejs.org/"},
-		{Binary: "npm", Purpose: "Node package manager", InstallGuide: "https://nodejs.org/"},
-		{Binary: "tsc", Purpose: "TypeScript compiler", InstallGuide: "npm install -g typescript"},
+		{
+			Binary:       "npm",
+			Purpose:      "Node package manager",
+			InstallGuide: "https://nodejs.org/",
+			AltBinaries:  []string{"pnpm", "yarn", "bun"},
+		},
+		{
+			Binary:       "tsc",
+			Purpose:      "TypeScript compiler",
+			InstallGuide: "npm install -g typescript",
+			ProjectLocal: true,
+		},
 	}
 }
 

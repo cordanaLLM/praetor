@@ -121,7 +121,7 @@ func AuditFlavor(repoPath string, targetFlavor string) (*FlavorAuditReport, erro
 
 	auditTemplates(repoPath, flv.RequiredTemplates(), report)
 	auditSettings(repoPath, flv.RequiredSettings(), report)
-	auditToolchains(flv.RequiredToolchains(), report)
+	auditToolchains(repoPath, flv.RequiredToolchains(), report)
 
 	total := report.TemplatesTotal + report.SettingsTotal + report.ToolchainsTotal
 	present := report.TemplatesPresent + report.SettingsValid + report.ToolchainsAvailable
@@ -138,13 +138,26 @@ func AuditFlavor(repoPath string, targetFlavor string) (*FlavorAuditReport, erro
 func auditTemplates(repoPath string, templates []TemplateItem, report *FlavorAuditReport) {
 	report.TemplatesTotal = len(templates)
 	for _, t := range templates {
-		fullPath := filepath.Join(repoPath, t.Path)
-		if util.PathExists(fullPath) {
+		if TemplateSatisfied(repoPath, t) {
 			report.TemplatesPresent++
 		} else {
 			report.MissingTemplates = append(report.MissingTemplates, t)
 		}
 	}
+}
+
+// TemplateSatisfied reports whether the repository carries the template under its
+// canonical path or any accepted alternative.
+func TemplateSatisfied(repoPath string, t TemplateItem) bool {
+	if util.PathExists(filepath.Join(repoPath, t.Path)) {
+		return true
+	}
+	for _, alt := range t.AltPaths {
+		if util.PathExists(filepath.Join(repoPath, alt)) {
+			return true
+		}
+	}
+	return false
 }
 
 func auditSettings(repoPath string, settings []SettingItem, report *FlavorAuditReport) {
@@ -159,13 +172,25 @@ func auditSettings(repoPath string, settings []SettingItem, report *FlavorAuditR
 	}
 }
 
-func auditToolchains(toolchains []ToolchainItem, report *FlavorAuditReport) {
+func auditToolchains(repoPath string, toolchains []ToolchainItem, report *FlavorAuditReport) {
 	report.ToolchainsTotal = len(toolchains)
 	for _, tc := range toolchains {
-		if _, err := exec.LookPath(tc.Binary); err == nil {
+		if toolchainAvailable(repoPath, tc) {
 			report.ToolchainsAvailable++
 		} else {
 			report.MissingToolchains = append(report.MissingToolchains, tc)
 		}
 	}
+}
+
+func toolchainAvailable(repoPath string, tc ToolchainItem) bool {
+	for _, binary := range append([]string{tc.Binary}, tc.AltBinaries...) {
+		if _, err := exec.LookPath(binary); err == nil {
+			return true
+		}
+		if tc.ProjectLocal && util.PathExists(filepath.Join(repoPath, "node_modules", ".bin", binary)) {
+			return true
+		}
+	}
+	return false
 }

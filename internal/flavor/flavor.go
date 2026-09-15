@@ -12,6 +12,15 @@ type TemplateItem struct {
 	Path        string                                     `json:"path"`
 	Description string                                     `json:"description"`
 	ContentFunc func(repoName string, owner string) string `json:"-"`
+
+	// AltPaths lists equally valid alternatives to Path. A repository satisfies the
+	// template when Path or any AltPath is present, and scaffolding is skipped in that
+	// case. This exists because ecosystems rename their configuration without changing
+	// its meaning: ESLint 9 replaced .eslintrc.json with eslint.config.*, and a workspace
+	// commonly carries its compiler options in tsconfig.base.json. Demanding the older
+	// name makes a conforming repository fail, and scaffolding it writes a second,
+	// contradictory config that the toolchain then ignores.
+	AltPaths []string `json:"alt_paths,omitempty"`
 }
 
 // SettingItem defines a configuration setting required by a flavor.
@@ -27,6 +36,16 @@ type ToolchainItem struct {
 	Binary       string `json:"binary"`
 	Purpose      string `json:"purpose"`
 	InstallGuide string `json:"install_guide"`
+
+	// AltBinaries lists other binaries that satisfy the same purpose, such as pnpm or
+	// yarn in place of npm.
+	AltBinaries []string `json:"alt_binaries,omitempty"`
+
+	// ProjectLocal allows the tool to be resolved from the repository's own
+	// node_modules/.bin rather than $PATH. Node projects pin their compilers as
+	// devDependencies and invoke them through the package manager, so requiring a
+	// global install reports a missing toolchain for a repository that builds fine.
+	ProjectLocal bool `json:"project_local,omitempty"`
 }
 
 // Flavor represents an authoritative repository engineering archetype.

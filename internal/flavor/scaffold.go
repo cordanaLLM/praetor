@@ -70,9 +70,37 @@ func ApplyFlavor(ctx context.Context, repoPath string, targetFlavor string, forc
 	return report, nil
 }
 
-func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool, report *ApplyReport) {
+// templateDisposition decides, before any filesystem mutation, whether a template is
+// safe to write, already covered, or must be refused outright.
+func templateDisposition(repoPath string, tmpl TemplateItem, force bool) (skip bool, err error) {
 	if !filepath.IsLocal(tmpl.Path) || filepath.Clean(tmpl.Path) != tmpl.Path {
-		report.Errors = append(report.Errors, fmt.Sprintf("template path must remain within the repository: %s", tmpl.Path))
+		return false, fmt.Errorf("template path must remain within the repository: %s", tmpl.Path)
+	}
+	// An accepted alternative already covers this template, so scaffolding the canonical
+	// name would add a second configuration file that contradicts the one in use.
+	if !force && TemplateSatisfied(repoPath, tmpl) {
+		return true, nil
+	}
+	return false, nil
+}
+
+// templateContent resolves a template's body from its generator, falling back to the
+// built-in default for that filename.
+func templateContent(tmpl TemplateItem, repoName, owner string) string {
+	if tmpl.ContentFunc != nil {
+		return tmpl.ContentFunc(repoName, owner)
+	}
+	return defaultTemplateContent(tmpl.Path, repoName, owner)
+}
+
+func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool, report *ApplyReport) {
+	skip, dispErr := templateDisposition(repoPath, tmpl, force)
+	if dispErr != nil {
+		report.Errors = append(report.Errors, dispErr.Error())
+		return
+	}
+	if skip {
+		report.SkippedTemplates = append(report.SkippedTemplates, tmpl.Path)
 		return
 	}
 	destPath := filepath.Join(repoPath, tmpl.Path)
@@ -87,12 +115,7 @@ func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem
 		return
 	}
 
-	var content string
-	if tmpl.ContentFunc != nil {
-		content = tmpl.ContentFunc(repoName, owner)
-	} else {
-		content = defaultTemplateContent(tmpl.Path, repoName, owner)
-	}
+	content := templateContent(tmpl, repoName, owner)
 
 	if err := contextopt.EnsureDirectory(ctx, filepath.Dir(destPath), 0o755); err != nil {
 		report.Errors = append(report.Errors, fmt.Sprintf("mkdir %s: %v", tmpl.Path, err))
