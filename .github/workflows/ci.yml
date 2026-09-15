@@ -79,7 +79,10 @@ jobs:
       - name: Verify Go Formatting (gofmt)
         if: steps.filter.outputs.run_linters != 'false' || github.event_name == 'push'
         run: |
-          UNFORMATTED=$(gofmt -l .)
+          # testdata is fixture input, not source: a HISS-10 fixture is deliberately
+          # unformatted because that is what it demonstrates. Go never builds testdata
+          # either, and the pre-commit hook applies the same exclusion.
+          UNFORMATTED=$(git ls-files -z '*.go' ':!:*testdata/*' | xargs -0 --no-run-if-empty gofmt -l)
           if [ -n "$UNFORMATTED" ]; then
             echo "Formatting error: Unformatted Go files detected:"
             echo "$UNFORMATTED"

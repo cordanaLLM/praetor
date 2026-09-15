@@ -81,6 +81,13 @@ func verifyCoverage(ctx context.Context, root string, catalog *hisscoverage.Cata
 	for i := 0; i < len(report.Unbacked) && i < maxCoverageFindingsPrinted; i++ {
 		fmt.Printf("  [WARN] %s\n", report.Unbacked[i])
 	}
+	if len(report.Delegated) > 0 {
+		fmt.Printf("\n  %d claim(s) are decided by another tool; their attribution is checked here, not their enforcement:\n",
+			len(report.Delegated))
+		for i := 0; i < len(report.Delegated) && i < maxCoverageFindingsPrinted; i++ {
+			fmt.Printf("    [INFO] %s\n", report.Delegated[i])
+		}
+	}
 	if !report.Passed() {
 		fmt.Printf("\n=== Coverage claims contradicted by their fixtures ===\n")
 		for i := 0; i < len(report.Findings) && i < maxCoverageFindingsPrinted; i++ {
@@ -92,8 +99,8 @@ func verifyCoverage(ctx context.Context, root string, catalog *hisscoverage.Cata
 		return fmt.Errorf("%w: %d of %d claim(s) contradicted across %d fixture(s)",
 			hisscoverage.ErrClaimUnsupported, len(report.Findings), report.Claims, report.Fixtures)
 	}
-	fmt.Printf("\n[PASS] %d claim(s) replayed against %d fixture(s); every claim holds.\n",
-		report.Claims, report.Fixtures)
+	fmt.Printf("\n[PASS] %d claim(s) checked against %d fixture(s) (%d replayed here, %d attributed elsewhere); every claim holds.\n",
+		report.Claims, report.Fixtures, report.Claims-len(report.Delegated), len(report.Delegated))
 	return nil
 }
 

@@ -68,10 +68,26 @@ func (s State) ClaimsDetection() bool {
 	return s == StateEnforced || s == StatePartial
 }
 
+// ReplayedHere reports whether this package can replay the claim's verdicts directly, which
+// is true only for the HISS scanner. A delegated claim is still checked, but for attribution.
+func (c Coverage) ReplayedHere() bool {
+	return c.Runner == "" || c.Runner == RunnerHISS
+}
+
+// RunnerHISS is the default runner: the HISS scanner itself, which this package replays.
+const RunnerHISS = "hiss"
+
 // Coverage is one invariant's evidence in one language.
 type Coverage struct {
 	Language string `yaml:"language" json:"language"`
 	State    State  `yaml:"state" json:"state"`
+	// Runner names the tool that decides this rule. Empty means the HISS scanner, whose
+	// verdicts this package replays directly. Any other value -- golangci-lint, gitleaks,
+	// the forge commit check, a CI step -- is a delegated claim: the fixtures are still
+	// replayed, but against the opposite expectation, because what can be verified here is
+	// the *attribution* rather than the enforcement. If the scanner reports a fixture whose
+	// rule is attributed elsewhere, the attribution is wrong and the catalog says so.
+	Runner string `yaml:"runner,omitempty" json:"runner,omitempty"`
 	// Mechanism names what actually decides the rule: internal/hiss, golangci-lint,
 	// semgrep, a Makefile target, or none. A state above unsupported without a mechanism
 	// is the exact defect this package exists to catch.

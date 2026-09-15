@@ -58,12 +58,12 @@ lint:
 # repository: 234 commits, 23 MB, 2.5s, zero findings -- cheap enough to be unconditional.
 secrets:
 	@if command -v gitleaks >/dev/null 2>&1; then \
-		gitleaks detect --no-banner --redact; \
+		gitleaks detect --no-banner --redact --config .gitleaks.toml; \
 	elif [ -x "$$(go env GOPATH)/bin/gitleaks" ]; then \
-		"$$(go env GOPATH)/bin/gitleaks" detect --no-banner --redact; \
+		"$$(go env GOPATH)/bin/gitleaks" detect --no-banner --redact --config .gitleaks.toml; \
 	else \
 		echo "gitleaks not found; installing..."; \
-		go install github.com/zricethezav/gitleaks/v8@latest && "$$(go env GOPATH)/bin/gitleaks" detect --no-banner --redact; \
+		go install github.com/zricethezav/gitleaks/v8@latest && "$$(go env GOPATH)/bin/gitleaks" detect --no-banner --redact --config .gitleaks.toml; \
 	fi
 
 vuln:

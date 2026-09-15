@@ -87,8 +87,15 @@ func ScanRepoContext(ctx context.Context, repoPath string) (*DedupeReport, error
 	return report, nil
 }
 
+// shouldSkipDir excludes directories whose contents are not this repository's own source.
+//
+// testdata is Go's own convention for inputs rather than code, and a fixture corpus is
+// deliberately repetitive: a rule needing a tested and an untested copy of the same function
+// must contain two near-identical files, so scanning them reports duplication that is the
+// point of the fixture rather than a defect. The HISS scanner skips the same name.
 func shouldSkipDir(name string) bool {
-	return name == ".git" || name == "vendor" || name == "node_modules" || name == ".workingdir"
+	return name == ".git" || name == "vendor" || name == "node_modules" ||
+		name == ".workingdir" || name == "testdata"
 }
 
 func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, hashMap map[string][]FileLocation, locMap map[string]int, report *DedupeReport) error {

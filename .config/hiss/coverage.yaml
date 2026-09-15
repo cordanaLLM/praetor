@@ -161,3 +161,482 @@ rules:
         state: unsupported
         mechanism: none
         rationale: No Python reference-safety rule exists.
+  - id: HISS-10
+    title: Zero-Warning Cascade
+    coverage:
+      - language: go
+        state: partial
+        runner: golangci-lint
+        mechanism: >-
+          golangci-lint v2 run by make lint with the repository's .golangci.yml (govet, staticcheck,
+          errcheck, errorlint, nilerr, unused, ineffassign, wastedassign, nolintlint, plus the gofmt
+          formatter), go vet ./..., the CI gofmt -l . step and the lefthook pre-commit gofmt check.
+          internal/hiss implements no HISS-10 rule.
+        rationale: >-
+          6/6 positive fixtures reported by the real stack: ineffassign (ineffectual-assignment),
+          nolintlint 'should provide explanation' (unexplained-nolint), nolintlint 'is unused for
+          linter errcheck' (unused-nolint), gofmt 'File is not properly formatted'
+          (unformatted-gofmt), unused 'func unusedHelper is unused', govet printf 'format %d has arg
+          of wrong type string'. 2/2 negatives produced '0 issues.' internal/hiss scanned
+      - language: typescript
+        state: partial
+        runner: tsc
+        mechanism: >-
+          tsc -p ./ with editors/vscode/tsconfig.json (strict: true), reached through make vscode-test
+          -> npm test -> npm run compile. No ESLint runs anywhere in this repository; the only tracked
+          eslint config is templates/svelte/.eslintrc.cjs.tmpl, a template scaffolded into adopters.
+        rationale: >-
+          Measured with tsc 5.9.3 and the repository's compilerOptions verbatim. 2/2 positives
+          reported: TS7006 'Parameter name implicitly has an any type' and TS18048 'label is possibly
+          undefined'. The negative compiled clean. 4/4 gap fixtures compiled clean under the
+          repository's options; the SAME compiler reports three of them the moment the hygiene flags
+          are on -- TS6133 for the unused local, TS6133 for the unused paramete
+      - language: python
+        state: unsupported
+        runner: ruff
+        mechanism: >-
+          none. No ruff/flake8/mypy/pylint/black config or invocation exists in Makefile,
+          .github/workflows/ci.yml, lefthook.yml, .config/lefthook/praetor.yml or
+          .config/lefthook/scripts/checks.py (checks.py lints only Go with gofmt, plus
+          shellcheck/actionlint/hadolint/yamllint on staged files). verify-all only *executes* python
+          test scripts. internal/hiss reads .py but implements only HISS-02/04/07/08.
+        rationale: >-
+          positive/ is empty because no mechanism reports any Python warning. All 4 gap fixtures are
+          real warnings proven locally: CPython emits 'SyntaxWarning: "is" with int literal' and
+          'SyntaxWarning: invalid escape sequence' at compile time and still exits 0, which directly
+          contradicts the rule's declared 'Exit code 1' failure action; flake8 reports F632, F401
+          'json imported but unused' and F841 'local variable scale is as
+      - language: rust
+        state: unsupported
+        runner: cargo
+        mechanism: >-
+          none. The repository contains zero .rs files and no cargo/rustc/clippy invocation in
+          Makefile, ci.yml or any lefthook hook (grep for 'cargo |rustc |clippy' over those files
+          returns nothing). internal/hiss reads .rs but implements only HISS-02/04/07/09. The
+          rust-systems flavor scaffolds a clippy.toml into adopters containing only
+          'avoid-breaking-exported-api = true' -- no -D warnings.
+        rationale: >-
+          positive/ is empty because no mechanism reports any Rust warning. All 3 gap fixtures
+          verified as real warnings with the installed toolchain: rustc prints 'warning: unused
+          variable: factor' and 'warning: function helper is never used'; clippy-driver prints those
+          plus 'warning: unneeded return statement'. internal/hiss scanned all 3 and returned total=0.
+          HISS-10's formal specification names -Werror, and rustc is one of
+      - language: c
+        state: unsupported
+        mechanism: >-
+          none. The repository contains zero .c/.h files and no gcc/clang invocation in any gate.
+          internal/hiss reads native extensions but implements only HISS-01/02/04/08.
+        rationale: >-
+          positive/ is empty because no mechanism reports any C warning. All 3 gap fixtures verified
+          with gcc -std=c17 -Wall -Wextra: [-Wunused-variable], [-Wreturn-type] 'control reaches end
+          of non-void function', [-Wsign-compare]. internal/hiss scanned all 3 and returned total=0.
+          -Wreturn-type in particular is undefined behaviour at runtime, and HISS-10's own
+          specification names -Werror as the enforcement.
+      - language: svelte
+        state: unsupported
+        mechanism: >-
+          none. No svelte-check, no svelte compiler and no eslint run anywhere (grep for
+          'svelte-check' across the tree returns nothing). internal/hiss has no .svelte dispatch: the
+          scan report counted the fixtures under UnscannedByExtension as .svelte:3.
+        rationale: >-
+          positive/ is empty because no mechanism reports any Svelte warning. All 3 gap fixtures
+          compiled with the real Svelte 5 compiler (installed into a temp dir) and each returned
+          exactly one warning: css_unused_selector, a11y_missing_attribute,
+          element_invalid_self_closing_tag. The engine ships a usable adopter template
+          (templates/svelte/.eslintrc.cjs.tmpl extending plugin:svelte/recommended) but never applies
+          or runs it
+  - id: HISS-11
+    title: Hermetic Supply Chain
+    coverage:
+      - language: go
+        state: partial
+        runner: golangci-lint
+        mechanism: >-
+          Go toolchain go.sum verification, reached by go build/go test ./... in make test (a
+          verify-all prerequisite). NOT internal/hiss (no HISS-11 rule exists), NOT golangci-lint
+          (.golangci.yml enables no supply-chain linter), NOT semgrep
+          (.config/semgrep/hiss-invariants.yml has 6 rules, none HISS-11), and NOT the gate:
+          internal/gating.VerifyLockfiles, called by the stage named 'Prefetch & Lockfiles', only
+          stats .standards.
+        rationale: >-
+          internal/hiss over HISS-11/go: total=0, filesRead=5. golangci-lint with the repo's
+          .golangci.yml over all Go fixtures: '0 issues.' semgrep over HISS-11: 0 findings. gitleaks
+          over HISS-11: no leaks found. The one thing that does fire:
+          positive/missing-lockfile-entry.go in a module whose go.sum lacks the entry -> go build
+          ./... exits 1 with 'missing go.sum entry for module providing package gopkg.in/yaml.v3';
+          after go
+      - language: rust
+        state: unsupported
+        mechanism: >-
+          none
+        rationale: >-
+          internal/hiss over HISS-11/rust: total=0, filesRead=4 (the Rust scanner only implements
+          HISS-02 loop, HISS-07 unwrap/expect and HISS-09 unsafe). semgrep: 0 findings (its two Rust
+          rules are hiss-07-banned-unwrap/expect). gitleaks: no leaks. No Cargo.lock / cargo build
+          --locked check exists anywhere in the repository, and the gate's lockfile stage never looks
+          at Cargo.lock. Both gap fixtures are real hermeticity violat
+      - language: python
+        state: unsupported
+        mechanism: >-
+          none
+        rationale: >-
+          internal/hiss over HISS-11/python: total=0, filesRead=4 (the Python scanner implements only
+          HISS-02 while True, HISS-08 eval/exec and HISS-07 bare except). semgrep: 0 findings.
+          gitleaks: no leaks. No requirements/pip --require-hashes or lockfile check exists in the
+          repository. gap/pip-install-unpinned.py installs an unversioned, unhashed dependency at run
+          time and is not reported by any mechanism.
+      - language: c
+        state: unsupported
+        mechanism: >-
+          none
+        rationale: >-
+          internal/hiss over HISS-11/c: total=0, filesRead=4 (the native scanner implements only
+          HISS-02 unbounded loop, HISS-08 gets/strcpy/sprintf and HISS-01 goto). semgrep's only C rule
+          is hiss-08-banned-c-memory: 0 findings here. gitleaks: no leaks. gap/dlopen-unverified.c
+          maps an unpinned, unsigned shared object into the process at run time and nothing reports
+          it.
+      - language: typescript
+        state: unsupported
+        mechanism: >-
+          none
+        rationale: >-
+          internal/hiss never reads TypeScript at all: isScannableExt covers only
+          .c/.cpp/.cc/.cxx/.h/.hpp/.cu/.hip/.py/.go/.rs, so the scan of HISS-11/typescript reports
+          filesRead=0 with UnscannedByExtension map[.ts:4]. semgrep has a TypeScript rule
+          (hiss-08-banned-eval) but none for HISS-11: 0 findings. No pnpm-lock.yaml /
+          --frozen-lockfile check exists. gap/cdn-import-latest.ts imports executable code from a CDN
+          at a floati
+      - language: svelte
+        state: unsupported
+        mechanism: >-
+          none
+        rationale: >-
+          Same as TypeScript and worse: internal/hiss over HISS-11/svelte reports filesRead=0 with
+          UnscannedByExtension map[.svelte:3], and the repo's semgrep ruleset declares no svelte
+          language at all, so 0 rules even attempt these files. gitleaks: no leaks. Both gap fixtures
+          pull unpinned third-party code into the browser at run time (a CDN script tag without
+          subresource integrity, and a floating dynamic import) and neither
+  - id: HISS-12
+    title: Secret Leak Prevention
+    coverage:
+      - language: go
+        state: partial
+        runner: gitleaks
+        mechanism: >-
+          gitleaks default ruleset (the repository has no .gitleaks.toml) via make secrets -> gitleaks
+          detect --no-banner --redact, reached by make verify-all. It is NOT in the praetorctl gate
+          pipeline (internal/gating.runSecurityStage runs govulncheck and gosec only) and NOT in any
+          lefthook hook. internal/hiss, golangci-lint and semgrep have no HISS-12 rule.
+        rationale: >-
+          All 8 Go fixtures behaved exactly as declared in a real git repository. positive:
+          aws-access-key-id.go -> aws-access-token; private-key-pem.go -> private-key;
+          base64-wrapped-token.go -> github-pat (tag decoded:base64) + generic-api-key. negative: both
+          clean. gap: all three clean, i.e. undetected. internal/hiss over HISS-12/go: total=0,
+          filesRead=8; golangci-lint: 0 issues; semgrep: 0 findings — no cross-attribution.
+      - language: rust
+        state: partial
+        runner: gitleaks
+        mechanism: >-
+          gitleaks default ruleset via make secrets inside make verify-all; content-based and
+          language-independent. internal/hiss, golangci-lint and semgrep have no HISS-12 rule.
+        rationale: >-
+          3/3 positives detected (aws-access-token, private-key, github-pat via base64 decode), 2/2
+          negatives clean, 3/3 gaps undetected. internal/hiss over HISS-12/rust: total=0, filesRead=8
+          — its Rust rules (unwrap/expect/unsafe/loop) never look at string content. The language
+          dimension is essentially vacuous here: gitleaks matched the identical credential shapes in
+          all six languages, and the three gap shapes were missed in
+      - language: python
+        state: partial
+        runner: gitleaks
+        mechanism: >-
+          gitleaks default ruleset via make secrets inside make verify-all; content-based and
+          language-independent. internal/hiss, golangci-lint and semgrep have no HISS-12 rule.
+        rationale: >-
+          3/3 positives detected (base64-wrapped-token.py raised both github-pat and generic-api-key),
+          2/2 negatives clean, 3/3 gaps undetected. internal/hiss over HISS-12/python: total=0,
+          filesRead=8. The gap fixtures were checked individually against the report and appear in
+          none of the 22 findings.
+      - language: c
+        state: partial
+        runner: gitleaks
+        mechanism: >-
+          gitleaks default ruleset via make secrets inside make verify-all; content-based and
+          language-independent. internal/hiss, golangci-lint and semgrep have no HISS-12 rule.
+        rationale: >-
+          3/3 positives detected, 2/2 negatives clean, 3/3 gaps undetected. gap/split-literal-token.c
+          is the sharpest case for C: adjacent string-literal concatenation is idiomatic C, splits the
+          key across two physical lines, and defeats the scanner completely while the compiler
+          reassembles the credential verbatim. internal/hiss over HISS-12/c: total=0, filesRead=8.
+      - language: typescript
+        state: partial
+        runner: gitleaks
+        mechanism: >-
+          gitleaks default ruleset via make secrets inside make verify-all. This is the only mechanism
+          in the cluster that covers TypeScript at all, because it reads bytes rather than parsing a
+          language: internal/hiss does not read .ts files (filesRead=0, UnscannedByExtension
+          map[.ts:8]).
+        rationale: >-
+          3/3 positives detected, 2/2 negatives clean, 3/3 gaps undetected — identical to the Go and
+          Python results, confirming the scan is extension-independent. Worth recording explicitly:
+          for a TypeScript codebase, gitleaks is the ONLY HISS mechanism that examines the file
+          contents at all.
+      - language: svelte
+        state: partial
+        runner: gitleaks
+        mechanism: >-
+          gitleaks default ruleset via make secrets inside make verify-all. As with TypeScript this is
+          the only mechanism that reads .svelte files at all: internal/hiss reports filesRead=0 with
+          UnscannedByExtension map[.svelte:8] and the repo's semgrep ruleset declares no svelte
+          language.
+        rationale: >-
+          3/3 positives detected inside <script> blocks (aws-access-token, private-key, github-pat via
+          base64 decode plus generic-api-key), 2/2 negatives clean, 3/3 gaps undetected. The .svelte
+          extension changed nothing about gitleaks' behaviour, which is the point: the secret scan is
+          the one cluster mechanism whose coverage does not collapse on the two unparsed languages.
+  - id: HISS-13
+    title: Monotonic Debt Ratchet
+    coverage:
+      - language: go
+        state: partial
+        runner: baseline
+        mechanism: >-
+          internal/baseline.EvaluateRatchet + baseline.CheckMonotonic over internal/hiss.Scan output,
+          driven by cmd/standardsctl/audit.go and audit_ratchet.go against .standards-baseline.json
+          (praetorctl audit, optionally --base). The ratchet's reach is exactly the scanner's six
+          rules; nothing else feeds V_total.
+        rationale: >-
+          Replayed with a before/after tree and the fixture as the touched file.
+          positive/new-goto-debt.go moved V_total 0 -> 1, CheckMonotonic returned 'total infractions
+          increased: 0 -> 1' and EvaluateRatchet failed on the touched-file clean rule with '[HISS-01]
+          Legacy non-DAG control flow jump (goto)'. negative/clean-addition.go left V_total at 0 and
+          passed. gap/cyclomatic-debt.go is real HISS-04 debt -- golangci-lint repor
+      - language: rust
+        state: partial
+        runner: baseline
+        mechanism: >-
+          Same mechanism as Go: baseline.EvaluateRatchet + CheckMonotonic over hiss.Scan, which for
+          .rs implements HISS-02 (loop/while true), HISS-04 (LOC), HISS-07 (unwrap/expect) and HISS-09
+          (unsafe without SAFETY:).
+        rationale: >-
+          positive/new-unwrap-debt.rs moved V_total 0 -> 1 with '[HISS-07] Legacy .unwrap() invocation
+          bypassing error propagation'; both monotonic and ratchet failed.
+          negative/clean-propagation.rs left V_total at 0. gap/panic-macro-debt.rs is real HISS-07
+          debt -- clippy-driver -W clippy::panic prints 'warning: panic should not be present in
+          production code', and the Go scanner reports the identical shape as 'Legacy panic invo
+      - language: python
+        state: partial
+        runner: baseline
+        mechanism: >-
+          Same mechanism: baseline.EvaluateRatchet + CheckMonotonic over hiss.Scan, which for .py
+          implements HISS-02 (while True), HISS-04 (LOC), HISS-07 (bare except) and HISS-08
+          (eval/exec).
+        rationale: >-
+          positive/new-bare-except-debt.py moved V_total 0 -> 1 with '[HISS-07] Bare except catches
+          and suppresses unhandled exceptions'; both checks failed. negative/clean-explicit-except.py
+          left V_total at 0. gap/os-system-debt.py is real HISS-08 debt -- the rule's own formal
+          specification bans 'dynamic runtime code evaluation' and os.system hands a runtime-built
+          string to a shell -- but hasBannedCall matches only 'eval' and
+      - language: c
+        state: partial
+        runner: baseline
+        mechanism: >-
+          Same mechanism: baseline.EvaluateRatchet + CheckMonotonic over hiss.Scan, which for native
+          extensions implements HISS-01 (goto only), HISS-02 (while(1)/for(;;)), HISS-04 (LOC) and
+          HISS-08 (gets/strcpy/sprintf).
+        rationale: >-
+          positive/new-strcpy-debt.c moved V_total 0 -> 1 with '[HISS-08] Banned unsafe strcpy()
+          invocation; bounded string copy required'; both checks failed. negative/clean-bounded-copy.c
+          left V_total at 0. gap/direct-recursion-debt.c is real HISS-01 debt -- the invariant demands
+          a DAG call graph, and the Go scanner now reports exactly this shape ('Direct recursion in
+          ...; the call graph must form an acyclic DAG'), which I c
+      - language: typescript
+        state: unsupported
+        runner: semgrep
+        mechanism: >-
+          none. hiss.SupportsExtension covers only .c/.cpp/.cc/.cxx/.h/.hpp/.cu/.hip/.py/.go/.rs, so
+          .ts files are never scanned and can never contribute to V_total. Semgrep DOES cover
+          TypeScript, but semgrep findings never reach internal/baseline.
+        rationale: >-
+          positive/ is empty because no amount of TypeScript debt can raise V_total. Both gap fixtures
+          are real violations: the repository's OWN semgrep rule hiss-08-banned-eval (languages:
+          [javascript, typescript]) flags eval-debt.ts with '[HISS-08] Dynamic runtime eval() is
+          strictly prohibited', and unbounded-loop-debt.ts is the HISS-02 shape the scanner reports
+          for Go, Rust, Python and C. Both ratchet replays returned V_tot
+      - language: svelte
+        state: unsupported
+        runner: semgrep
+        mechanism: >-
+          none. .svelte is outside every scanner extension, so component debt can never enter
+          .standards-baseline.json. No semgrep rule targets svelte either.
+        rationale: >-
+          positive/ is empty because no amount of Svelte debt can raise V_total. The gap fixture
+          carries the HISS-02 unbounded-loop shape the scanner reports in four other languages; the
+          ratchet replay returned V_total 0 -> 0, monotonic=PASS, ratchet=PASS, and the scan report
+          counted it under UnscannedByExtension as .svelte:1.
+  - id: HISS-14
+    title: Append-Only ABI
+    coverage:
+      - language: go
+        state: partial
+        runner: forge
+        mechanism: >-
+          standardsctl forge check-commits --base=<ref> --head=HEAD (internal/forge.AnalyzeCommit,
+          regexes at internal/forge/pr.go:64-68), wired ONLY into the CI step 'Enforce HISS-14
+          Migration Footers (Commit Lint)' at .github/workflows/ci.yml:117-119 under if:
+          github.event_name == 'pull_request'. It is in neither make verify-all nor any lefthook hook.
+          It reads commit messages and never opens a source file. The append-only ha
+        rationale: >-
+          Measured in a throwaway git repo: committing positive/removed-exported-func.go as
+          'feat(api)!: remove the published symbol' with no Migration: footer exits 1 with the HISS-14
+          violation message; the same file with a 'Migration:' footer exits 0. Committing
+          gap/narrowed-exported-signature.go — an equally breaking change, a required context.Context
+          prepended to an exported function — as 'fix(api): thread a ctx through th
+      - language: rust
+        state: partial
+        runner: forge
+        mechanism: >-
+          standardsctl forge check-commits (commit messages only), PR-CI-only as for Go. No Rust
+          API-diff analyzer (cargo-semver-checks or equivalent) exists in the repository.
+        rationale: >-
+          positive/removed-pub-fn.rs committed as 'feat(api)!: ...' without a footer -> exit 1.
+          gap/narrowed-pub-signature.rs (a required &Ctx prepended to a pub fn, breaking every
+          downstream crate) committed as 'fix(api): ...' -> exit 0. negative/added-pub-fn.rs -> exit
+          0. internal/hiss over HISS-14/rust: total=0, filesRead=3. The outcome is decided purely by
+          the commit message; the fixture content is inert to the gate, which
+      - language: python
+        state: partial
+        runner: forge
+        mechanism: >-
+          standardsctl forge check-commits (commit messages only), PR-CI-only. No Python
+          public-surface diff analyzer exists in the repository.
+        rationale: >-
+          positive/removed-public-function.py as 'feat(api)!: ...' -> exit 1;
+          gap/narrowed-public-signature.py (a required leading ctx argument added, so every existing
+          caller raises TypeError) as 'fix(api): ...' -> exit 0; negative/added-public-function.py ->
+          exit 0. internal/hiss over HISS-14/python: total=0, filesRead=3. Python is the worst case
+          for the undeclared half: the breakage is not even a build error, it surfaces on
+      - language: c
+        state: partial
+        runner: forge
+        mechanism: >-
+          standardsctl forge check-commits (commit messages only), PR-CI-only. No ABI-diff tool
+          (abi-compliance-checker, abidiff) is wired anywhere.
+        rationale: >-
+          positive/removed-exported-symbol.c as 'feat(api)!: ...' -> exit 1;
+          gap/reordered-struct-field.c as 'feat(api): ...' -> exit 0; negative/appended-struct-field.c
+          -> exit 0. internal/hiss over HISS-14/c: total=0, filesRead=3. The C gap is the most
+          dangerous shape in the cluster: inserting a member in the middle of a public struct instead
+          of appending it keeps the source compiling and the header declaring the same functi
+      - language: typescript
+        state: partial
+        runner: forge
+        mechanism: >-
+          standardsctl forge check-commits (commit messages only), PR-CI-only. No .d.ts /
+          api-extractor surface diff exists. internal/hiss does not read .ts files at all
+          (filesRead=0, UnscannedByExtension map[.ts:3]).
+        rationale: >-
+          positive/removed-exported-function.ts as 'feat(api)!: ...' -> exit 1;
+          gap/required-param-added.ts (a required leading ctx parameter added to an exported function)
+          as 'fix(api): ...' -> exit 0; negative/added-optional-field.ts (a new optional interface
+          field plus a new exported function) -> exit 0. The gate produced byte-identical behaviour
+          for .ts as for .go, confirming the language dimension is vacuous for the enfor
+      - language: svelte
+        state: partial
+        runner: forge
+        mechanism: >-
+          standardsctl forge check-commits (commit messages only), PR-CI-only. No component-contract
+          analyzer exists, and internal/hiss does not read .svelte files (filesRead=0,
+          UnscannedByExtension map[.svelte:3]).
+        rationale: >-
+          positive/removed-exported-prop.svelte as 'feat(api)!: ...' -> exit 1;
+          gap/renamed-exported-prop.svelte as 'fix(api): ...' -> exit 0;
+          negative/added-exported-prop.svelte -> exit 0. A Svelte component's export let props are a
+          public contract, so renaming one is a breaking change; it is undetectable here and also
+          fails silently at run time rather than at build time, since a parent passing the removed
+          prop keeps compilin
+  - id: HISS-15
+    title: 3D Test Discipline
+    coverage:
+      - language: go
+        state: partial
+        runner: forge
+        mechanism: >-
+          The CI step 'Enforce Statement Coverage Floor (HISS-15 coverage gate)' in
+          .github/workflows/ci.yml: go tool cover -func total versus COVERAGE_FLOOR=65, fed by make
+          verify-all's go test -race -covermode=atomic -coverprofile. Plus praetorctl forge
+          validate-pr, which rejects a PR body lacking a checked 3D-testing box (self-attestation, not
+          a measurement). internal/difftest SYNTHESIZES 3D tests but analyses none.
+        rationale: >-
+          Replayed the CI awk logic with real coverage profiles. positive/untested-public-func.go
+          measured 0.0% -> below the 65% floor -> the gate reports it. negative/clamp.go +
+          clamp_test.go (positive, negative and boundary rows in one table) measured 100.0% -> passes,
+          so the gate is not over-strict. The gap pair is the honest limit: gap/double.go is a
+          branchless public function and gap/double_test.go asserts only the happy
+      - language: python
+        state: manual
+        runner: forge
+        mechanism: >-
+          No coverage tool and no dimension check. make verify-all executes the unittest suites under
+          scripts/ and .config/lefthook/scripts/, so a test that exists and fails does gate, but
+          nothing observes a missing test or a missing dimension. The only HISS-15-specific decision
+          for Python is the PR-body checkbox validated by praetorctl forge validate-pr -- a human
+          attestation.
+        rationale: >-
+          grep for coverage tooling across Makefile, .github/workflows/ and .config/lefthook/ returns
+          only the Go coverprofile and COVERAGE_FLOOR lines; there is no pytest-cov, coverage run,
+          ruff or mypy anywhere. positive/ is empty because no mechanism reports a missing dimension.
+          The gap fixtures are real: untested-public-function.py is a public interface with no test of
+          any dimension, and positive-only-test.py asserts only
+      - language: typescript
+        state: manual
+        runner: forge
+        mechanism: >-
+          editors/vscode npm test = npm run compile && node --test dist/*.test.js, run by make
+          vscode-test inside verify-all. It runs whichever compiled *.test.js files happen to exist;
+          there is no coverage flag, no dimension check and no way to notice a file that has no test.
+          The only HISS-15-specific decision is the PR-body checkbox validated by praetorctl forge
+          validate-pr.
+        rationale: >-
+          Read from editors/vscode/package.json: the test script carries no
+          --experimental-test-coverage and no threshold. positive/ is empty because no mechanism
+          reports a missing dimension. untested-exported-function.ts has no sibling .test.ts and
+          nothing complains; positive-only-test.ts asserts only clamp(5,0,10) with the negative (NaN,
+          inverted range) and boundary (at low, at high, MAX_SAFE_INTEGER) dimensions absent, and
+      - language: rust
+        state: unsupported
+        runner: ci
+        mechanism: >-
+          none. grep for 'cargo ', 'rustc ' and 'tarpaulin|llvm-cov' across Makefile,
+          .github/workflows/ci.yml, lefthook and .config/lefthook/scripts/checks.py returns nothing:
+          no test runner, no coverage tool, no compiler. The repo-wide PR checkbox is the only
+          artefact that mentions 3D tests, and it cannot see a language the tree does not contain.
+        rationale: >-
+          positive/ is empty because nothing mechanical decides this rule for Rust. Both gap fixtures
+          are real violations of the axiom: untested-public-fn.rs is a public interface with no
+          #[test] at all, and positive-only-test.rs asserts only the in-range case while the negative
+          dimension (inverted range) and the boundary dimension (i32::MIN, i32::MAX, exactly at low
+          and high) are absent. Neither is observed by anything.
+      - language: c
+        state: unsupported
+        runner: ci
+        mechanism: >-
+          none. No C compiler, test runner, gcov or any other coverage tool is invoked by Makefile,
+          ci.yml or any lefthook hook.
+        rationale: >-
+          positive/ is empty because nothing mechanical decides this rule for C.
+          untested-public-func.c is a public interface with no test of any dimension;
+          positive-only-test.c asserts only clamp(5,0,10) with the negative (inverted range) and
+          boundary (INT_MIN, INT_MAX, exactly at low and high) dimensions absent. Neither is compiled
+          or run by any gate.
+      - language: svelte
+        state: unsupported
+        mechanism: >-
+          none. No vitest, no playwright run, no svelte-check, no component test runner in any gate
+          (the repo ships templates/svelte/playwright.config.ts.tmpl for adopters but never executes
+          it).
+        rationale: >-
+          positive/ is empty because nothing mechanical decides this rule for Svelte.
+          untested-component.svelte exposes a public prop contract with no positive render assertion,
+          no negative case for a missing prop and no boundary case for an empty or maximal label;
+          internal/hiss counted it under UnscannedByExtension as .svelte:1 and no other mechanism
+          reads it.
