@@ -47,6 +47,10 @@ type DedupeReport struct {
 	SprawlItems       []SprawlItem     `json:"sprawl_items"`
 	CleanlinessScore  float64          `json:"cleanliness_score"`
 	Passed            bool             `json:"passed"`
+	// Applicable reports whether there was anything to scan. This detector reads Go sources
+	// only, so a repository with none is not clean -- it is unexamined, and the difference
+	// matters to every caller that reads the score.
+	Applicable bool `json:"applicable"`
 }
 
 // ScanRepo scans a repository for function-level clones and utility sprawl.
@@ -198,6 +202,19 @@ func collectDuplicates(hashMap map[string][]FileLocation, locMap map[string]int,
 }
 
 func calculateScore(report *DedupeReport) {
+	// A score over an empty set is not a result. This detector reads Go sources only, so on a
+	// TypeScript, Rust or Python repository it scanned nothing -- and reporting 100% and
+	// Passed for a tree it never opened is a clean bill of health nobody earned. Measured on a
+	// repository with 510 TypeScript and Svelte files: zero scanned, 100.0%, passed.
+	//
+	// Applicable is false instead, the score stays zero, and the caller reports that the check
+	// did not apply rather than that the repository is clean.
+	report.Applicable = report.TotalFilesScanned > 0
+	if !report.Applicable {
+		report.CleanlinessScore = 0
+		report.Passed = false
+		return
+	}
 	deduction := float64(len(report.Duplicates)*15 + len(report.SprawlItems)*5)
 	score := 100.0 - deduction
 	if score < 0.0 {

@@ -50,6 +50,13 @@ func runDedupeScan(args []string) error {
 	}
 
 	fmt.Printf("=== Codebase Deduplication & Unification Audit: %s ===\n", dir)
+	if !report.Applicable {
+		// Neither a pass nor a failure. The detector reads Go sources and found none, so it
+		// has no verdict to give; printing one would certify a tree it never opened.
+		fmt.Println("  Not applicable: no Go sources found; this detector reads Go only.")
+		fmt.Println("  Clone detection for other languages is not implemented.")
+		return nil
+	}
 	fmt.Printf("  Files Scanned:     %d\n", report.TotalFilesScanned)
 	fmt.Printf("  Functions Scanned: %d\n", report.TotalFuncsScanned)
 	fmt.Printf("  Cleanliness Score: %.1f%%\n", report.CleanlinessScore)

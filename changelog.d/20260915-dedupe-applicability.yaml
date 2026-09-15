@@ -1,0 +1,3 @@
+type: fixed
+title: dedupe scan reports that it did not apply instead of scoring a repository it never read
+breaking: false
