@@ -179,25 +179,43 @@ func Record(previous *Baseline, infractions []Infraction, opts RecordOptions) (*
 	return next, nil
 }
 
+// NormalizePath renders a repository-relative path with forward slashes.
+//
+// Baseline records are committed and compared across platforms. A scan on Windows writes
+// "scripts\\tunnel_hindsight.py" while the same scan on Linux writes
+// "scripts/tunnel_hindsight.py", so the same infraction produced two different fingerprints and
+// the ratchet silently stopped recognising its own baseline. Measured in cordanaLLM/imago, whose
+// committed baseline could not suppress its own recorded infraction on a Linux checkout.
+//
+// filepath.ToSlash is not enough: it rewrites nothing on Linux, so a baseline written on Windows
+// would still fail to match there. The replacement is unconditional in both directions.
+//
+// The cost is that a path genuinely containing a backslash -- legal on Linux, vanishingly rare,
+// and impossible in a Git-tracked path on Windows -- collapses onto the separator form. That
+// trades a false match in one pathological filename for a gate that works on every platform.
+func NormalizePath(path string) string {
+	return strings.ReplaceAll(path, "\\", "/")
+}
+
 // EvaluateRatchet enforces monotonic debt reduction and the touched-file clean rule.
 // Invariant: V_total(t1) <= V_total(t0) AND touched files must have 0 violations.
 func EvaluateRatchet(b *Baseline, currentViolations []Infraction, touchedFiles []string) *RatchetResult {
 	touchedMap := make(map[string]struct{}, len(touchedFiles))
 	for _, f := range touchedFiles {
-		touchedMap[f] = struct{}{}
+		touchedMap[NormalizePath(f)] = struct{}{}
 	}
 
 	baselinedFingerprints := make(map[string]struct{}, len(b.Infractions))
 	for _, inf := range b.Infractions {
-		baselinedFingerprints[inf.Fingerprint] = struct{}{}
+		baselinedFingerprints[NormalizePath(inf.Fingerprint)] = struct{}{}
 	}
 
 	var newViolations []Infraction
 	var touchedCleanViolations []Infraction
 
 	for _, curr := range currentViolations {
-		_, isTouched := touchedMap[curr.FilePath]
-		_, isBaselined := baselinedFingerprints[curr.Fingerprint]
+		_, isTouched := touchedMap[NormalizePath(curr.FilePath)]
+		_, isBaselined := baselinedFingerprints[NormalizePath(curr.Fingerprint)]
 
 		if isTouched {
 			// Touched-File Clean Rule: Any touched file revokes prior baseline exemptions!

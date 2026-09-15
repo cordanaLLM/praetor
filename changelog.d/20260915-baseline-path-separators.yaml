@@ -1,0 +1,3 @@
+type: fixed
+title: Baseline fingerprints and the touched-file rule compare paths across platforms instead of by OS separator
+breaking: false
