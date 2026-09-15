@@ -1,0 +1,3 @@
+type: added
+title: Coverage claims declare which tool decides them, so a rule credited to golangci-lint or gitleaks has its attribution checked rather than passing unverified
+breaking: false
