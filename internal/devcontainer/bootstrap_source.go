@@ -60,7 +60,12 @@ func captureBootstrapSource(ctx context.Context, root string) ([]bootstrapSource
 }
 
 func bootstrapSourcePaths(ctx context.Context, root string) ([]string, error) {
-	data, err := runSourceGit(ctx, root, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.go", "go.mod", "go.sum", "LICENSE", "*.s", "*.S", "*.c", "*.h", "*.syso")
+	// The pathspec lists exactly what validateBootstrapSourceName accepts. It previously
+	// also globbed *.s, *.S, *.c, *.h and *.syso, which that validator rejects as
+	// "non-Go build inputs", so the first native file committed anywhere in the tree --
+	// including a scanner fixture under testdata -- failed the bootstrap. Asking git for
+	// files the validator refuses is a contradiction that can only ever produce an error.
+	data, err := runSourceGit(ctx, root, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.go", "go.mod", "go.sum", "LICENSE")
 	if err != nil {
 		return nil, err
 	}

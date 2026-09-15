@@ -16,6 +16,14 @@ func printUsage() {
 	fmt.Println("\nUsage:")
 	fmt.Println("  praetorctl <command> [arguments]  (alias: standardsctl)")
 	fmt.Println("\nAvailable Commands:")
+	printCoreCommands()
+	printFleetCommands()
+	fmt.Println("\nRun 'standardsctl <command> -h' for more information on a command.")
+}
+
+// printCoreCommands lists the repository-scoped commands. The listing is split across two
+// functions to stay inside the HISS-04 statement bound rather than suppressing it.
+func printCoreCommands() {
 	fmt.Println("  init               Scaffold configuration, baseline, and agent context for new repo")
 	fmt.Println("  compile-context    Transpile canonical AGENTS.md to vendor-native formats (< 300 LOC)")
 	fmt.Println("  context-optimize   Analyze explicit context files and optionally write a private review pack")
@@ -32,12 +40,17 @@ func printUsage() {
 	fmt.Println("  hindsight          Manage local zero-token memory cache and sync with Hindsight server")
 	fmt.Println("  state              Manage .workingdir/ session state, bugs ledger, and questions")
 	fmt.Println("  dedupe             Scan for AST clones, utility sprawl, and cadence enforcement")
+	fmt.Println("  hiss               Inspect and verify declared HISS enforcement evidence")
 	fmt.Println("  models             Sync or list active model tiers and benchmark limits")
 	fmt.Println("  plan               Dry-run comparison of repository settings against policy")
 	fmt.Println("  sync               Reconcile repository settings, labels, and branch rulesets")
 	fmt.Println("  operational        Plan or prepare an operational fork from reviewed local commits")
 	fmt.Println("  sentinel           Inspect workstation RAM/disk health and model headroom")
 	fmt.Println("  worktree           Manage isolated ephemeral git worktrees")
+}
+
+// printFleetCommands lists the fleet, forge and delivery commands.
+func printFleetCommands() {
 	fmt.Println("  gc                 Garbage collect stale worktrees, caches, and logs")
 	fmt.Println("  editors            Synthesize or verify IDE configurations (VSCode, Cursor, JetBrains, Neovim)")
 	fmt.Println("  forge              Synchronize git provider wiki, issues, or validate PRs")
@@ -62,7 +75,6 @@ func printUsage() {
 	fmt.Println("  ci                 Analyze git diff and filter CI verification gates")
 	fmt.Println("  topology           Audit and clean workstation directory topology (DEV-01 to DEV-05)")
 	fmt.Println("  version            Print CLI version information")
-	fmt.Println("\nRun 'standardsctl <command> -h' for more information on a command.")
 }
 
 func main() {
@@ -102,6 +114,7 @@ func commandTable() map[string]commandFunc {
 		"hindsight":        runHindsight,
 		"state":            runState,
 		"dedupe":           runDedupe,
+		"hiss":             runHiss,
 		"models":           runModels,
 		"operational":      runOperational,
 		"plan":             runPlan,
