@@ -1,0 +1,49 @@
+id: "upstream-fork"
+name: "Upstream Contribution Fork"
+description: "A fork tracked against a third-party upstream so changes can be contributed back; the upstream's conventions govern the code, and local standards are deliberately not imposed on it"
+runtime: "polyglot"
+
+# This profile exists to say "governed as a fork", not to govern the code. Every bound
+# below is the loosest the schema permits, and that is the point rather than an
+# oversight.
+#
+# A contribution fork must match the upstream it submits to. Reformatting it to local
+# standards makes every patch unmergeable and every diff unreviewable, so a gate that
+# rewrites the tree is worse than no gate. Measured on VMAFx/netflix-vmaf-contributions,
+# which tracks Netflix/vmaf: it shares 57,044 lines with its sibling by lineage, and
+# imposing local complexity bounds on inherited C would fail the repository for code it
+# did not write and must not change.
+#
+# What this profile still buys: the repository is declared rather than ungoverned, so
+# it appears in the fleet inventory with a stated reason instead of as an omission, and
+# secret scanning, licence and provenance checks -- which do not alter the source --
+# still apply.
+complexity:
+  max_cyclomatic: 0
+  max_cognitive: 0
+  max_func_loc: 0
+  max_statements: 0
+
+# A fork's history must stay rebaseable onto its upstream, so linear history is not
+# enforced and merge commits from upstream syncs are expected. Review is still required
+# before anything leaves for the upstream.
+branch_protection:
+  enforce_linear_history: false
+  require_signed_commits: false
+  required_approving_reviewers: 1
+  dismiss_stale_reviews: false
+
+# Nothing is released from a contribution fork; the artifact ships from upstream.
+supply_chain:
+  slsa_level: 0
+  enforce_cosign: false
+  require_sbom: false
+
+# Secret and licence scanning only. Both read the tree without rewriting it, so neither
+# can make a patch unmergeable upstream. No formatter, no complexity linter.
+linters:
+  - "gitleaks"
+  - "reuse"
+
+devcontainer_features:
+  - "ghcr.io/devcontainers/features/common-utils:2"

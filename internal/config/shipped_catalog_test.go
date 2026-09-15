@@ -106,3 +106,75 @@ func archetypeID(body string) string {
 	}
 	return ""
 }
+
+// TestShippedArchetypes_Boundary_UpstreamForkDeclaresNoBoundsOnPurpose guards a profile whose
+// correctness looks like a mistake.
+//
+// upstream-fork declares zero for every complexity bound and disables linear history and signed
+// commits. Each of those reads as an unfinished profile, and the obvious "fix" is to fill in real
+// numbers. Doing so would break the profile: a contribution fork must match the upstream it submits
+// to, so any gate that rewrites the tree makes every patch unmergeable and every diff unreviewable.
+// The looseness is the feature, and this test is where that is written down in executable form.
+func TestShippedArchetypes_Boundary_UpstreamForkDeclaresNoBoundsOnPurpose(t *testing.T) {
+	body := readShippedProfile(t, "upstream-fork.yaml")
+	for _, want := range []string{
+		"max_cyclomatic: 0", "max_cognitive: 0", "max_func_loc: 0", "max_statements: 0",
+		"enforce_linear_history: false", "require_signed_commits: false",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("upstream-fork no longer declares %q; a contribution fork must not be reformatted to local standards", want)
+		}
+	}
+	// The scanners it does keep are the ones that read without rewriting.
+	for _, keep := range []string{"gitleaks", "reuse"} {
+		if !strings.Contains(body, keep) {
+			t.Errorf("upstream-fork must keep %q: it inspects the tree without altering it", keep)
+		}
+	}
+	// A formatter or complexity linter here would defeat the profile.
+	for _, banned := range []string{"prettier", "clang-format", "gofmt", "clippy"} {
+		if strings.Contains(body, banned) {
+			t.Errorf("upstream-fork must not run %q; it rewrites source a fork has to keep matching upstream", banned)
+		}
+	}
+}
+
+// TestShippedArchetypes_Negative_NoProfileRequiresLegacyESLintConfig pins the lesson from the
+// frontend-svelte and typescript-node defect: ESLint v10 states that "the old configuration format
+// is no longer supported", so naming .eslintrc.* anywhere requires a file the linter cannot load.
+func TestShippedArchetypes_Negative_NoProfileRequiresLegacyESLintConfig(t *testing.T) {
+	for _, name := range shippedProfileNames(t) {
+		if strings.Contains(declarationsOnly(readShippedProfile(t, name)), ".eslintrc") {
+			t.Errorf("%s names a legacy eslintrc file; ESLint v10 cannot load that format", name)
+		}
+	}
+}
+
+// declarationsOnly strips comment lines so a rule that inspects what a profile *declares* is not
+// tripped by prose explaining the rule. web-package's own comment names .eslintrc.* precisely to
+// record why it must not be required, and an earlier version of this test failed on that comment --
+// which is the check being wrong about where to look, not the profile being wrong.
+func declarationsOnly(body string) string {
+	var kept []string
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+// TestShippedArchetypes_Positive_NoCodeProfilesClaimNoProvenance checks that profiles governing
+// repositories which build nothing do not assert supply-chain guarantees over artifacts that are
+// never produced. Claiming SLSA over a directory of Markdown is the same defect class as a flavor
+// audit scoring a repository against a stack it does not have.
+func TestShippedArchetypes_Positive_NoCodeProfilesClaimNoProvenance(t *testing.T) {
+	for _, name := range []string{"org-health.yaml", "upstream-fork.yaml"} {
+		body := readShippedProfile(t, name)
+		for _, want := range []string{"slsa_level: 0", "enforce_cosign: false", "require_sbom: false"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s declares %q; it builds no artifact to attest", name, strings.TrimSuffix(want, ": false"))
+			}
+		}
+	}
+}
