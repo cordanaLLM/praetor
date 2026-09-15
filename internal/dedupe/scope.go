@@ -101,6 +101,16 @@ func directorySourceFiles(ctx context.Context, repoPath string) ([]string, error
 	return files, err
 }
 
+// isGoSource reports whether path is Go source this repository owns.
+//
+// testdata is excluded on both scope paths, the git listing and the directory walk, so the
+// two agree. Go itself never builds testdata, and a fixture corpus is deliberately
+// repetitive: a rule needing a tested and an untested copy of the same function must contain
+// two near-identical files, so reporting them as clones reports the evidence as the defect.
 func isGoSource(path string) bool {
-	return strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go")
+	if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		return false
+	}
+	slashed := filepath.ToSlash(path)
+	return !strings.HasPrefix(slashed, "testdata/") && !strings.Contains(slashed, "/testdata/")
 }
