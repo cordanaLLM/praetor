@@ -106,3 +106,84 @@ func TestLoadBaseline_NegativeAndSaveErrors(t *testing.T) {
 		t.Fatal("expected error saving to invalid path")
 	}
 }
+
+// =========================================================================
+// Cross-platform path separators (BUG-948)
+// =========================================================================
+
+// windowsInfraction is the record cordanaLLM/imago actually has committed, written by a scan on
+// Windows. The Linux scan of the same file produces the forward-slash form below.
+func windowsInfraction() Infraction {
+	return Infraction{
+		RuleID:      "HISS-02",
+		FilePath:    `scripts\tunnel_hindsight.py`,
+		LineNumber:  53,
+		Message:     "Legacy unbounded while True loop in Python",
+		Fingerprint: `scripts\tunnel_hindsight.py:53:HISS-02`,
+	}
+}
+
+// linuxInfraction is the same infraction as a Linux scan reports it.
+func linuxInfraction() Infraction {
+	return Infraction{
+		RuleID:      "HISS-02",
+		FilePath:    "scripts/tunnel_hindsight.py",
+		LineNumber:  53,
+		Message:     "Legacy unbounded while True loop in Python",
+		Fingerprint: "scripts/tunnel_hindsight.py:53:HISS-02",
+	}
+}
+
+// TestEvaluateRatchet_Positive_BaselineWrittenOnAnotherPlatformStillSuppresses is the measured
+// defect. A baseline recorded on Windows must suppress the same infraction scanned on Linux;
+// before this, the separators differed, the fingerprints did not match, and the ratchet reported
+// a decade-old baselined violation as brand new, blocking every commit.
+func TestEvaluateRatchet_Positive_BaselineWrittenOnAnotherPlatformStillSuppresses(t *testing.T) {
+	b := &Baseline{Version: 1, TotalInfractions: 1, Infractions: []Infraction{windowsInfraction()}}
+	res := EvaluateRatchet(b, []Infraction{linuxInfraction()}, nil)
+	if len(res.NewViolations) != 0 {
+		t.Errorf("a Windows-written baseline must suppress the Linux scan of the same infraction, got %d new", len(res.NewViolations))
+	}
+	if !res.Passed {
+		t.Error("the ratchet must pass when the only infraction is baselined on another platform")
+	}
+	// And the reverse direction, for a Windows checkout of a Linux-written baseline.
+	rev := &Baseline{Version: 1, TotalInfractions: 1, Infractions: []Infraction{linuxInfraction()}}
+	if got := EvaluateRatchet(rev, []Infraction{windowsInfraction()}, nil); len(got.NewViolations) != 0 {
+		t.Errorf("the reverse direction must hold too, got %d new", len(got.NewViolations))
+	}
+}
+
+// TestEvaluateRatchet_Negative_TouchedFileRuleFiresAcrossSeparators covers the worse half.
+// Touched files come from Git, which always reports forward slashes, while a Windows scan
+// reports backslashes. The two never compared equal, so on Windows the touched-file clean rule
+// silently never fired and a violation in an edited file passed the gate.
+func TestEvaluateRatchet_Negative_TouchedFileRuleFiresAcrossSeparators(t *testing.T) {
+	b := &Baseline{Version: 1, TotalInfractions: 1, Infractions: []Infraction{windowsInfraction()}}
+	res := EvaluateRatchet(b, []Infraction{windowsInfraction()}, []string{"scripts/tunnel_hindsight.py"})
+	if len(res.TouchedCleanViolations) != 1 {
+		t.Errorf("editing a file must revoke its baseline exemption whatever separator the scan used, got %d", len(res.TouchedCleanViolations))
+	}
+	if res.Passed {
+		t.Error("a violation in a touched file must fail the ratchet")
+	}
+}
+
+// TestNormalizePath_Boundary covers the normalisation itself, including the cases it must not
+// change and the pathological one whose cost is accepted deliberately.
+func TestNormalizePath_Boundary(t *testing.T) {
+	cases := map[string]string{
+		`scripts\tunnel_hindsight.py`: "scripts/tunnel_hindsight.py",
+		"scripts/tunnel_hindsight.py": "scripts/tunnel_hindsight.py",
+		`a\b\c.go:12:HISS-01`:         "a/b/c.go:12:HISS-01",
+		"":                            "",
+		"no-separators.go":            "no-separators.go",
+		`mixed/style\path.go`:         "mixed/style/path.go",
+		`weird\\double.go`:            "weird//double.go",
+	}
+	for in, want := range cases {
+		if got := NormalizePath(in); got != want {
+			t.Errorf("NormalizePath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

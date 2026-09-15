@@ -400,13 +400,17 @@ func scanLegacyDebt(ctx context.Context, repoPath string, base *baseline.Baselin
 
 	for i := 0; i < len(scanRep.Violations) && i < maxInfractionsCap; i++ {
 		v := scanRep.Violations[i]
+		// The recorded path is normalised so a baseline written on one platform is readable
+		// as the same record on another. Comparison normalises too, so an already-committed
+		// Windows baseline keeps working; this stops new ones from being written that way.
+		path := baseline.NormalizePath(v.FilePath)
 		base.Infractions = append(base.Infractions, baseline.Infraction{
 			RuleID:      v.RuleID,
-			FilePath:    v.FilePath,
+			FilePath:    path,
 			LineNumber:  v.LineNumber,
 			Symbol:      v.Symbol,
 			Message:     v.Message,
-			Fingerprint: fmt.Sprintf("%s:%d:%s", v.FilePath, v.LineNumber, v.RuleID),
+			Fingerprint: fmt.Sprintf("%s:%d:%s", path, v.LineNumber, v.RuleID),
 		})
 	}
 	base.TotalInfractions = len(base.Infractions)
