@@ -61,22 +61,40 @@ flowchart LR
 
    Exceptions, where prose is correct: single-path confirmation with no alternatives; an explicit request for a recommendation, which is answered in prose with the recommendation and its main trade-off; and surfacing a situation that carries no decision for the operator to make.
 
-5. **Context Transpiler First**:
+5. **Report Upstream, and Check Your Own Work**:
+   Every defect found in Praetor while working in any repository is reported as an issue in
+   `cordanaLLM/praetor`, whichever repository surfaced it. A fleet repository that works around an
+   engine defect locally leaves the engine broken for every other adopter, and the next agent
+   rediscovers it from scratch.
+
+   **Check the forge before filing.** Search open issues and pull requests first: the defect may
+   already be tracked, already fixed on an unmerged branch, or already contradicted by something
+   shipped. Filing a duplicate costs a reviewer more than it costs the agent.
+
+   **Check your own open work periodically**, not only at the end of a task. Your pull requests go
+   stale when the base moves, a receipt certifies a commit that no longer exists after a rebase, and
+   a branch that was green an hour ago can be blocked by a merge that landed since. Re-read the
+   state rather than assuming the last result still holds.
+
+   This rule exists because the alternative is an operator repeating it to every agent, every
+   session.
+
+6. **Context Transpiler First**:
    Never edit `CLAUDE.md`, `.cursor/rules/*.mdc`, `.windsurfrules`, or `.github/copilot-instructions.md` manually. Make all agent instruction updates in `AGENTS.md` and execute:
    ```bash
    standardsctl compile-context
    ```
 
-6. **SARIF Diagnostic Distillation**:
+7. **SARIF Diagnostic Distillation**:
    When reporting compiler or linter errors, distill output to $\le 1,500$ tokens ($< 60$ lines). Print the top 3 root-cause failures with file/line pointers and write full SARIF logs to ephemeral storage.
 
-7. **No Evasion Tolerated**:
+8. **No Evasion Tolerated**:
    Do not attempt `--no-verify`, `LEFTHOOK=0`, or modifying `.git/hooks`. All pull requests are authoritatively re-checked in an ephemeral isolated sandbox by `cordana-standards[bot]`.
 
-8. **Anti-Loop Interception**:
+9. **Anti-Loop Interception**:
    If the same AST diff and error category repeats $\ge 3$ times, halt execution immediately. Re-evaluate the underlying design instead of making micro-textual retries.
 
-9. **State Ledger Discipline (HISS-17)**:
+10. **State Ledger Discipline (HISS-17)**:
    Agents MUST maintain the local `.workingdir` session state ledger on every turn. The entire directory is private and Git-ignored, including cluster connection guides, backend settings, memory, and scratch files. Never stage its contents, including with force. Publish explicitly reviewed, sanitized documentation under `docs/` instead.
    - **Fresh Checkout**: Run `make state-audit` to initialize a missing local ledger and audit it. Existing incomplete or invalid ledgers must be repaired explicitly.
    - **Turn Start**: Inspect `.workingdir/STATE.md` and `.workingdir/OPEN.md` (or run `praetorctl state status`).
@@ -91,7 +109,7 @@ flowchart LR
    local-only repositories and client activation. Publication needs session or
    configured authorization; this repository's checkpoint workflow is authorized.
 
-10. **Diff-Aware CI Efficiency (HISS-18)**:
+11. **Diff-Aware CI Efficiency (HISS-18)**:
    CI pipelines MUST evaluate git diffs via `standardsctl ci filter` and execute targeted validation gates. Pure documentation or session-state changes MUST skip heavy race detectors and security suites while maintaining invariant integrity.
 
 ## Primary Verification Commands

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // ReplaceOptions binds a write to observed contents or explicit absence. Mode is
@@ -161,6 +162,13 @@ func SyncDirectory(ctx context.Context, root *os.Root) error {
 	dir, err := root.Open(".")
 	if err != nil {
 		return err
+	}
+	// Directory fsync is POSIX-only. Windows refuses it on a directory handle with
+	// "Zugriff verweigert"/access denied, which failed the commit-msg live-state gate on every
+	// Windows commit. Closing is the whole contract there: NTFS metadata durability does not
+	// depend on a caller-issued directory flush the way a POSIX filesystem's does.
+	if runtime.GOOS == "windows" {
+		return dir.Close()
 	}
 	return errors.Join(dir.Sync(), dir.Close())
 }

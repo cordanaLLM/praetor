@@ -1,11 +1,14 @@
 .PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec secrets nosec-justified hiss-coverage flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test verify-all clean hooks setup
 
 BIN_DIR := bin
-PRAETORCTL := $(BIN_DIR)/praetorctl
-STANDARDSCTL := $(BIN_DIR)/standardsctl
-PRAETOR_MCP := $(BIN_DIR)/praetor-mcp
-STANDARDS_MCP := $(BIN_DIR)/standards-mcp
-PRAETOR_LSP := $(BIN_DIR)/praetor-lsp
+# Windows cannot execute an extension-less PE, so the binary is named for the host rather than
+# for the developer's platform. Every other target derives from these, so the suffix is set once.
+EXE_SUFFIX := $(if $(filter Windows_NT,$(OS)),.exe,)
+PRAETORCTL := $(BIN_DIR)/praetorctl$(EXE_SUFFIX)
+STANDARDSCTL := $(BIN_DIR)/standardsctl$(EXE_SUFFIX)
+PRAETOR_MCP := $(BIN_DIR)/praetor-mcp$(EXE_SUFFIX)
+STANDARDS_MCP := $(BIN_DIR)/standards-mcp$(EXE_SUFFIX)
+PRAETOR_LSP := $(BIN_DIR)/praetor-lsp$(EXE_SUFFIX)
 STANDARDS_LSP := $(BIN_DIR)/standards-lsp
 # CI obtains coverage from the same race run used by verify-all.
 TEST_COVERPROFILE ?=
