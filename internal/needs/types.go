@@ -93,7 +93,10 @@ type RepoNeeds struct {
 
 // FrameworkPackage describes an exported package in the framework.
 type FrameworkPackage struct {
-	ImportPath   string          `json:"import_path"`
+	ImportPath string `json:"import_path"`
+	// Module is the Go module containing the package when a capability contract
+	// declares one; empty means the framework root module or an unknown owner.
+	Module       string          `json:"module,omitempty"`
 	Domain       string          `json:"domain"`
 	Capabilities []CapabilityKey `json:"capabilities"`
 	Description  string          `json:"description,omitempty"`
@@ -101,12 +104,19 @@ type FrameworkPackage struct {
 
 // FrameworkIndex represents the indexed capability offerings of the framework.
 type FrameworkIndex struct {
-	Basis        string                      `json:"basis,omitempty"`
-	Name         string                      `json:"name"`
-	RootPath     string                      `json:"root_path"`
-	Version      string                      `json:"version"`
+	Basis    string `json:"basis,omitempty"`
+	Name     string `json:"name"`
+	RootPath string `json:"root_path"`
+	Version  string `json:"version"`
+	// Contract names the capability contract file the inventory came from; empty when
+	// the packages came from the static catalog or directory heuristics.
+	Contract     string                      `json:"contract,omitempty"`
 	Packages     map[string]FrameworkPackage `json:"packages"`
 	Capabilities map[CapabilityKey][]string  `json:"capabilities"` // capability -> list of import paths
+	// Replacements maps third-party module paths (major-version suffix stripped) onto
+	// every observed framework package whose contract entry replaces them, in import
+	// order; reconciliation prefers the claimant declaring the demanded capability.
+	Replacements map[string][]string `json:"replacements,omitempty"`
 }
 
 // GapDetail documents an unmet capability demand across the fleet.
