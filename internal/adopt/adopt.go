@@ -309,13 +309,28 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 	return nil
 }
 
+// forcedManifestNote explains why --force left the manifest alone, and says what to do instead.
+// A repository whose manifest is genuinely wrong has to remove it deliberately; that is a
+// visible act, whereas the previous behaviour overwrote the declaration without saying so.
+func forcedManifestNote(forced bool) string {
+	if forced {
+		return "Existing standards manifest preserved; --force refreshes scaffolds, not declared " +
+			"profiles and facets. Remove " + manifestFile + " to rescaffold it deliberately"
+	}
+	return "Existing standards manifest verified present"
+}
+
 func reconcileManifest(ctx context.Context, s *adoptSession) error {
 	full, err := repoFile(s.repoPath, manifestFile)
 	if err != nil {
 		return err
 	}
-	if fileExists(full) && !s.opts.Force {
-		s.report.recordReconciled(manifestFile, "Existing standards manifest verified present")
+	// --force regenerates scaffolds, never the manifest. The manifest is the repository's own
+	// declaration of what it is: an input to governance rather than an output of it. Rewriting
+	// it from detected markers replaced a declared profile and facet set with guessed ones and
+	// still reported success, which is governance data loss dressed as adoption.
+	if fileExists(full) {
+		s.report.recordReconciled(manifestFile, forcedManifestNote(s.opts.Force))
 		return nil
 	}
 	manifest := newAdoptionManifest(ctx, s)

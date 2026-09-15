@@ -1,0 +1,3 @@
+type: fixed
+title: adopt --force no longer overwrites a repository's declared profile and facets, and now re-pins the lockfile to them
+breaking: false

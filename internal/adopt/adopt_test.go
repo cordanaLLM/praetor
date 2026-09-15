@@ -1179,3 +1179,73 @@ func TestRulesetMatchesCheckedInFile(t *testing.T) {
 		t.Fatalf("generator drifted from .github/rulesets/main.json\nchecked in:\n%s\ngenerated:\n%s", checkedIn, generated)
 	}
 }
+
+// =========================================================================
+// A repository's declaration survives --force (BUG-942, BUG-943)
+// =========================================================================
+
+// adoptedRepoDeclaring adopts a fresh repository, then rewrites its manifest to declare a
+// different profile, returning the repository path and the shared lock source.
+func adoptedRepoDeclaring(t *testing.T, name, profile string) (string, string) {
+	t.Helper()
+	repoPath := newTestRepo(t, name)
+	source := newAdoptLockSource(t)
+	if _, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: source, Path: repoPath, Profile: "framework"}); err != nil {
+		t.Fatalf("initial adoption failed: %v", err)
+	}
+	manifestPath := filepath.Join(repoPath, ".standards.yaml")
+	declared := strings.Replace(mustRead(t, manifestPath), "- framework", "- "+profile, 1)
+	mustWrite(t, manifestPath, declared)
+	return repoPath, source
+}
+
+// TestAdopt_Positive_ForceRepinsLockToNewlyDeclaredProfile covers the re-pin path that did not
+// exist. Publishing an archetype was useless to any repository that already had a lockfile: the
+// lock did not pin the new profile, so audit and adopt both refused it, and the only way through
+// was deleting .standards.lock outright and discarding every other pin.
+func TestAdopt_Positive_ForceRepinsLockToNewlyDeclaredProfile(t *testing.T) {
+	repoPath, source := adoptedRepoDeclaring(t, "repin-repo", "app-service")
+	if lock := mustRead(t, filepath.Join(repoPath, ".standards.lock")); !strings.Contains(lock, "framework") {
+		t.Fatalf("precondition: the lock should still pin the original profile, got %s", lock)
+	}
+	if _, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: source, Path: repoPath, Force: true}); err != nil {
+		t.Fatalf("forced re-pin failed: %v", err)
+	}
+	lock := mustRead(t, filepath.Join(repoPath, ".standards.lock"))
+	if !strings.Contains(lock, "app-service") {
+		t.Errorf("--force must re-pin the lock to the declared profile, got %s", lock)
+	}
+}
+
+// TestAdopt_Negative_ForceDoesNotRewriteTheDeclaration is the defect's own shape. The manifest is
+// the repository's statement of what it is, not an artifact adoption generates, so a forced run
+// must leave it byte for byte. The previous behaviour replaced a declared profile and facet set
+// with detected ones and still reported the repository successfully adopted.
+func TestAdopt_Negative_ForceDoesNotRewriteTheDeclaration(t *testing.T) {
+	repoPath, source := adoptedRepoDeclaring(t, "declaration-repo", "app-service")
+	manifestPath := filepath.Join(repoPath, ".standards.yaml")
+	before := mustRead(t, manifestPath)
+	if _, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: source, Path: repoPath, Force: true}); err != nil {
+		t.Fatalf("forced adoption failed: %v", err)
+	}
+	if after := mustRead(t, manifestPath); after != before {
+		t.Errorf("--force rewrote the declaration.\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// TestAdopt_Boundary_ForceStillScaffoldsAnAbsentManifest pins the other side of the same
+// condition. Preserving a declaration must not stop adoption from creating one where there is
+// none, which is the case the synthesized manifest exists for.
+func TestAdopt_Boundary_ForceStillScaffoldsAnAbsentManifest(t *testing.T) {
+	repoPath := newTestRepo(t, "absent-manifest-repo")
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework", Force: true})
+	if err != nil {
+		t.Fatalf("Adopt --force failed: %v", err)
+	}
+	if !contains(rep.CreatedFiles, ".standards.yaml") {
+		t.Fatalf("a repository with no manifest must still get one, got created=%v", rep.CreatedFiles)
+	}
+	if manifest := mustRead(t, filepath.Join(repoPath, ".standards.yaml")); !strings.Contains(manifest, "framework") {
+		t.Errorf("the scaffolded manifest must record the resolved profile, got %s", manifest)
+	}
+}
