@@ -177,18 +177,30 @@ func hasBannedCall(line, name string) bool {
 			return false
 		}
 		at := offset + pos
-		// Whitespace between the identifier and its argument list does not change the
-		// call, so `gets (buf)` must not escape a rule that catches `gets(buf)`.
-		after := at + len(name)
-		for after < len(line) && (line[after] == ' ' || line[after] == '\t') {
-			after++
-		}
-		if (at == 0 || !isIdentByte(line[at-1])) && after < len(line) && line[after] == '(' {
+		if isBannedCallSite(line, at, len(name)) {
 			return true
 		}
 		offset = at + 1
 	}
 	return false
+}
+
+// isBannedCallSite reports whether the occurrence at `at` invokes the bare builtin: a whole
+// identifier, not reached through a selector, followed by an argument list.
+//
+// Whitespace between the identifier and the parenthesis does not change the call, so
+// `gets (buf)` must not escape a rule that catches `gets(buf)`. A leading dot means the name
+// resolves to a method rather than the builtin, which is why `interpreter.eval(node)` on a
+// hand-written AST walker is not dynamic execution.
+func isBannedCallSite(line string, at, nameLen int) bool {
+	if at > 0 && (isIdentByte(line[at-1]) || line[at-1] == '.') {
+		return false
+	}
+	after := at + nameLen
+	for after < len(line) && (line[after] == ' ' || line[after] == '\t') {
+		after++
+	}
+	return after < len(line) && line[after] == '('
 }
 
 func isIdentByte(c byte) bool {
@@ -342,7 +354,12 @@ func scanPythonLineInvariants(code, rel string, lineNum int, rep *ScanReport) {
 	if pythonWhileTrue.MatchString(code) {
 		recordViolation(rep, "HISS-02", rel, lineNum, "", "Legacy unbounded while True loop in Python")
 	}
-	if hasBannedCall(code, "eval") || hasBannedCall(code, "exec") {
+	// Defining a method named eval or exec is not invoking the builtin. A hand-written AST
+	// interpreter with an `eval` method executes nothing dynamically, and reporting its
+	// definition makes the rule unusable for exactly the programs most likely to have one.
+	isDefinition := strings.HasPrefix(strings.TrimSpace(code), "def ") ||
+		strings.HasPrefix(strings.TrimSpace(code), "async def ")
+	if !isDefinition && (hasBannedCall(code, "eval") || hasBannedCall(code, "exec")) {
 		recordViolation(rep, "HISS-08", rel, lineNum, "", "Banned dynamic eval/exec execution in Python")
 	}
 	if pythonBareExcept.MatchString(code) {
