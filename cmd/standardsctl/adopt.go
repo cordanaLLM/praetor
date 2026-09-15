@@ -112,6 +112,10 @@ func runAdopt(args []string) error {
 	allMissing := fs.Bool("all-missing", false, "Adopt all detected unmanaged repositories under --dev-dir")
 	devDir := fs.String("dev-dir", "", "Root directory scanned by --all-missing (default: $HOME/dev)")
 	path := fs.String("path", ".", "Target repository path to adopt")
+	defaults := adopt.DefaultVerificationLimits()
+	maxEntries := fs.Int("verification-max-entries", 0, fmt.Sprintf("Directory entries verification discovery may walk (default %d, ceiling %d)", defaults.MaxEntries, adopt.VerificationEntriesCeiling))
+	maxFiles := fs.Int("verification-max-files", 0, fmt.Sprintf("Verification input files discovery may read (default %d, ceiling %d)", defaults.MaxFiles, adopt.VerificationFilesCeiling))
+	maxDepth := fs.Int("verification-max-depth", 0, fmt.Sprintf("Directory depth verification discovery may descend (default %d, ceiling %d)", defaults.MaxDepth, adopt.VerificationDepthCeiling))
 
 	if err := fs.Parse(reorderArgs(args, boolFlagNames(fs))); err != nil {
 		return err
@@ -133,13 +137,14 @@ func runAdopt(args []string) error {
 	}
 
 	opts := adopt.AdoptOptions{
-		Path:           *path,
-		LockSourceRoot: *lockSource,
-		Profile:        *profile,
-		Facets:         splitCommaList(*facets),
-		DryRun:         *dryRun,
-		Force:          *force,
-		RecordBaseline: *recordBaseline,
+		Path:               *path,
+		LockSourceRoot:     *lockSource,
+		Profile:            *profile,
+		Facets:             splitCommaList(*facets),
+		DryRun:             *dryRun,
+		Force:              *force,
+		RecordBaseline:     *recordBaseline,
+		VerificationLimits: verificationLimitsFromFlags(*maxEntries, *maxFiles, *maxDepth),
 	}
 
 	report, err := adopt.Adopt(ctx, opts)
@@ -153,6 +158,26 @@ func runAdopt(args []string) error {
 		return fmt.Errorf("%w: %d error(s) listed above", errAdoptIncomplete, len(report.Errors))
 	}
 	return nil
+}
+
+// verificationLimitsFromFlags returns nil when no discovery bound was raised so adoption
+// keeps its defaults. A raised bound leaves the others at their defaults; adoption itself
+// validates every value against its ceilings, nothing is widened here.
+func verificationLimitsFromFlags(entries, files, depth int) *adopt.VerificationLimits {
+	if entries == 0 && files == 0 && depth == 0 {
+		return nil
+	}
+	limits := adopt.DefaultVerificationLimits()
+	if entries != 0 {
+		limits.MaxEntries = entries
+	}
+	if files != 0 {
+		limits.MaxFiles = files
+	}
+	if depth != 0 {
+		limits.MaxDepth = depth
+	}
+	return &limits
 }
 
 func batchAdoptMissing(ctx context.Context, devDir string, dryRun, force, recordBaseline bool, sourceRoots ...string) error {
