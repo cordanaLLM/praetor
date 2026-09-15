@@ -350,8 +350,11 @@ func TestRunTestStage_3D(t *testing.T) {
 	}
 
 	// Negative: a directory that is not a git repository cannot yield an isolated
-	// worktree, and the stage must fail rather than test the live tree.
-	notGit, notGitRecorded := newTestConfig(t, t.TempDir(), false)
+	// worktree, and the stage must fail rather than test the live tree. It carries a
+	// go.mod so the stage reaches worktree creation instead of skipping as non-Go.
+	notGitDir := t.TempDir()
+	seedGoModule(t, notGitDir)
+	notGit, notGitRecorded := newTestConfig(t, notGitDir, false)
 	if _, err := notGit.runTestStageForTest(ctx); err == nil {
 		t.Error("expected worktree creation failure to fail the stage")
 	}
@@ -361,6 +364,7 @@ func TestRunTestStage_3D(t *testing.T) {
 
 	// Positive: the race detector runs inside the worktree, not in the repository.
 	repoDir := newHermeticGitRepo(t)
+	seedGoModule(t, repoDir)
 	cfg, recorded := newTestConfig(t, repoDir, false)
 	if _, err := runTestStage(ctx, cfg); err != nil {
 		t.Fatalf("test stage failed: %v", err)
@@ -377,7 +381,9 @@ func TestRunTestStage_3D(t *testing.T) {
 	}
 
 	// Negative: a failing test run fails the stage and names the worktree.
-	failing, _ := newTestConfig(t, newHermeticGitRepo(t), false)
+	failDir := newHermeticGitRepo(t)
+	seedGoModule(t, failDir)
+	failing, _ := newTestConfig(t, failDir, false)
 	failRecorded := &[]recordedCommand{}
 	failing.run = fakeRunner(failRecorded, "FAIL example.test", errors.New("exit status 1"))
 	if _, err := runTestStage(ctx, failing); err == nil {
@@ -555,5 +561,48 @@ func TestRunGatedPipeline_Negative_And_Boundary(t *testing.T) {
 	cancelNow()
 	if _, cancelErr := RunGatedPipeline(cancelled, tmpDir, true); cancelErr == nil {
 		t.Error("expected error for a cancelled context, got nil")
+	}
+}
+
+// A pnpm/TypeScript repository adopted by praetor has no go.mod. The race-detector
+// stage must skip it, exactly as the prefetch and security stages do, rather than
+// failing the whole pipeline with "directory prefix . does not contain main module".
+func TestRunTestStage_Boundary_NonGoRepository(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{\"name\":\"x\"}\n"), 0o600); err != nil {
+		t.Fatalf("seed package.json: %v", err)
+	}
+
+	ran := false
+	cfg := &stageConfig{
+		repoDir: dir,
+		run: func(context.Context, string, string, ...string) (string, error) {
+			ran = true
+			return "", nil
+		},
+	}
+
+	msg, err := runTestStage(ctx, cfg)
+	if err != nil {
+		t.Fatalf("expected a non-Go repository to be skipped, got: %v", err)
+	}
+	if msg != "no go.mod: Go race-detector tests skipped" {
+		t.Errorf("unexpected skip message: %q", msg)
+	}
+	if ran {
+		t.Error("go test was executed in a repository with no go.mod")
+	}
+}
+
+// seedGoModule writes a minimal go.mod so a fixture is recognised as a Go repository.
+// The prefetch, security and test stages all skip where there is none, so a fixture
+// exercising the Go path has to declare a module.
+func seedGoModule(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module gating.test\n\ngo 1.27\n"), 0o600); err != nil {
+		t.Fatalf("seed go.mod: %v", err)
 	}
 }

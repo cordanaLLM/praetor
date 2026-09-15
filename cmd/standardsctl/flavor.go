@@ -71,6 +71,9 @@ func runFlavorInspect(args []string) error {
 	fmt.Println("Required Templates:")
 	for _, t := range flv.RequiredTemplates() {
 		fmt.Printf("  - %-30s (%s)\n", t.Path, t.Description)
+		if len(t.AltPaths) > 0 {
+			fmt.Printf("    %-30s or: %s\n", "", strings.Join(t.AltPaths, ", "))
+		}
 	}
 
 	fmt.Println("\nRequired Settings:")
@@ -81,6 +84,12 @@ func runFlavorInspect(args []string) error {
 	fmt.Println("\nRequired Toolchains:")
 	for _, tc := range flv.RequiredToolchains() {
 		fmt.Printf("  - %-15s : %s\n", tc.Binary, tc.Purpose)
+		if len(tc.AltBinaries) > 0 {
+			fmt.Printf("    %-15s   or: %s\n", "", strings.Join(tc.AltBinaries, ", "))
+		}
+		if tc.ProjectLocal {
+			fmt.Printf("    %-15s   (project-local node_modules/.bin accepted)\n", "")
+		}
 	}
 	return nil
 }
