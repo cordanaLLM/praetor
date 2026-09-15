@@ -44,6 +44,8 @@ SURFACE_MAP: list[tuple[str, str, str]] = [
      "gating pipeline"),
     (r"^internal/wishes/", r"^docs/guides/wishes-and-polls\.md$", "wish ledger"),
     (r"^internal/state/", r"^docs/guides/state-ledger-integrity\.md$", "state ledger"),
+    (r"^(\.github/workflows/portability\.yml|scripts/portability_selftest\.py)$",
+     r"^docs/standards/hiss-21-platform-neutrality\.md$", "platform neutrality gate"),
     # The check guards its own documentation. Changing which surfaces are mapped changes what
     # contributors are required to document, which is itself user-discoverable.
     (r"^scripts/docs_drift\.py$", r"^docs/guides/documentation-drift\.md$", "docs-drift surface map"),

@@ -43,6 +43,15 @@
             "context": "DCO 1.1 \u0026 REUSE Compliance Gate"
           },
           {
+            "context": "Platform Neutrality (Linux)"
+          },
+          {
+            "context": "Platform Neutrality (macOS)"
+          },
+          {
+            "context": "Platform Neutrality (Windows)"
+          },
+          {
             "context": "Go Vulnerability \u0026 AST Security Scan"
           }
         ],
