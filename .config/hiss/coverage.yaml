@@ -71,6 +71,14 @@ rules:
   - id: HISS-07
     title: Checked Errors
     coverage:
+      - language: go
+        state: partial
+        mechanism: internal/hiss go_ast.go checkBlankAssign, with errcheck in golangci-lint
+        rationale: >-
+          A discarded call result is reported. Discarding a non-call value is not, because it
+          cannot carry an error. A bare call statement that drops an error needs type
+          information this syntax scanner does not build and is held as a gap; errcheck
+          decides that case with types in the same gate.
       - language: rust
         state: partial
         mechanism: internal/hiss rules.go rustUnwrapCall and rustExpectCall

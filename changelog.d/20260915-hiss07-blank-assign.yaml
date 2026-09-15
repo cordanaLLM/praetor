@@ -1,0 +1,3 @@
+type: fixed
+title: HISS-07 no longer reports discarding a non-call value as an unchecked error, and its Go coverage is declared with the gap errcheck covers
+breaking: false

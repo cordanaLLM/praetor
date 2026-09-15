@@ -223,17 +223,17 @@ func TestScan_GoRulesAreAttributed(t *testing.T) {
 	writeFixture(t, root, "p.go", src)
 
 	rep := scanFixture(t, root, ScanOptions{})
+	// Lines 12, 24 and 26 discard a function value, two pointers and a string. None is a
+	// call and none can carry an error, so HISS-07 does not report them; asserting that it
+	// did encoded three false positives as the contract.
 	assertViolations(t, rep, []expectedViolation{
 		{"HISS-02", "p.go", 6},
 		{"HISS-02", "p.go", 8},
-		{"HISS-07", "p.go", 12},
 		{"HISS-07", "p.go", 13},
 		{"HISS-07", "p.go", 15},
 		{"HISS-07", "p.go", 18},
 		{"HISS-01", "p.go", 19},
 		{"HISS-09", "p.go", 21},
-		{"HISS-07", "p.go", 24},
-		{"HISS-07", "p.go", 26},
 	})
 }
 
