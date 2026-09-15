@@ -156,3 +156,20 @@ through a confined private configuration. Probe it with an actual failed suite
 report, then verify that status leaves both the report and absent execution state
 unchanged. It never invokes credential helpers or providers. Only the explicit
 `praetorctl dogfood repairs run` command starts an execution attempt.
+
+## Rule explanations state when a rule is not enforced
+
+`explain_rule` answers for every HISS identifier, including the ones with no executable check. Those
+answers say so explicitly:
+
+```
+Rule: HISS-05 (Variable Scoping)
+Enforcement: NOT ENFORCED. No executable check exists in this repository; the matrix names a
+linter that is not configured for this rule.
+Failure Action: None today; the rule is advisory until a check is attached.
+```
+
+An agent asking about a rule needs to know whether anything will stop it. Returning a formal
+specification with no enforcement note reads as a gate that exists, which is the defect the HISS-20
+coverage catalog was built to remove — a declared mechanism nothing implements. The same honesty
+applies here: the tool reports the rule *and* whether it bites.

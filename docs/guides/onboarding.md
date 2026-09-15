@@ -13,6 +13,26 @@ flowchart LR
 
 ---
 
+## Flavor detection does not guess
+
+Detection reports what matched, or reports that nothing did. It no longer falls back to a plausible
+answer, because a repository that matched nothing was previously indistinguishable from one that is
+a Go library.
+
+- A declared profile **narrows** detection: candidates are restricted to the flavors implementing
+  that profile, and detection picks among those. Where the profile has no flavors, `flavor audit`
+  reports not applicable.
+- `python-ml` requires a declared machine-learning dependency. It previously fired on any
+  `pyproject.toml`, so every Python repository was reported as a PyTorch pipeline and then audited
+  against ML tooling it had no reason to install.
+- `agentic-autonomous` never auto-detects and must be selected by name. Its markers — `.agents/` and
+  `.paperclip/harness.json` — are both written by adoption itself, so detecting on them describes
+  the governance tool rather than the repository.
+- Where nothing matches, `flavor audit` and `flavor apply` refuse with `ErrNoFlavorMatched` instead
+  of scoring the repository against a flavor that describes nothing about it. Pass `--flavor=<name>`
+  to audit against one deliberately.
+
+
 ## 1. Quickstart Onboarding Command
 Execute the single-shot onboarding pipeline in your repository root:
 ```bash

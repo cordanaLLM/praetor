@@ -40,6 +40,31 @@ previous scanner ceiling; it can be tightened further. Omitted fields do not
 contribute. Explicit zero, negative, null, noninteger and unknown complexity fields
 are errors.
 
+### What `plan` reports
+
+`praetorctl plan` resolves this same policy, with the audit compatibility constraint applied, so a
+dry run previews what the audit will enforce. It previously reported the built-in defaults with only
+the repository's own overrides applied, which meant it never read the pinned profiles: one
+repository's archetype declared `max_func_loc: 75`, `plan` printed `100` and `audit` enforced `60`.
+
+Resolving the policy needs a lockfile. In a repository that has not been adopted there are no pinned
+profiles, so defaults plus the repository's overrides is the whole policy, and `plan` says so:
+
+```
+[INFO] no .standards.lock: built-in defaults and repository overrides only
+```
+
+### Consequence of the compatibility constraint
+
+Because strictness only tightens, `max_func_loc: 60` wins against any archetype declaring more.
+Ten of the fourteen shipped archetypes declare a looser bound -- `template-seed` 100,
+`app-service` 80, seven at 75, `library-client` 70 -- and every one of them is enforced at 60 while
+that constraint is in place.
+
+An archetype's declared `max_func_loc` above 60 is therefore documentation of intent rather than an
+effective limit. Read the `audit` output, not the archetype file, to learn what a repository is held
+to.
+
 An explicitly selected external file must contain a root `complexity` mapping:
 
 ```yaml

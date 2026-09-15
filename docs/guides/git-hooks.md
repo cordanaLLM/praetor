@@ -264,3 +264,15 @@ review and the repository gates are still required after implementation changes.
 The client shares MCP's bounded stdio transport, including deadlines, byte and
 request limits, and child-process cleanup. Tests cover stale/foreign/duplicate
 selection, failed discovery and readback, and real native-protocol pipe exchange.
+
+## Fixture inputs are excluded from source scans
+
+`is_fixture()` in `.config/lefthook/scripts/checks.py` treats any path under a `testdata/`
+directory as input to the rules rather than source governed by them, and the gofmt and semgrep
+selections skip it.
+
+This is not a convenience. The HISS-20 corpus under `.config/hiss/testdata/` exists *because* its
+positive fixtures violate an invariant — a file that fails to be a bounded loop is how the rule is
+proven to fire. Scanning them reports the engine's own test data as the repository's debt and blocks
+every push that touches the corpus. The HISS scanner, the dedupe scan, gitleaks and the CI gofmt
+sweep all skip the same directory name, which is Go's own convention for the same reason.
