@@ -1,0 +1,21 @@
+# gitleaks configuration for cordanaLLM/praetor (HISS-12).
+#
+# Extends the upstream default rules; nothing is disabled.
+[extend]
+useDefault = true
+
+# The HISS-12 corpus demonstrates that gitleaks catches leaked secrets, so its positive
+# fixtures must contain strings that look exactly like leaked secrets. Scanning them reports
+# the evidence as the defect, and every push carrying the corpus would fail.
+#
+# The exemption is a path rather than a set of fingerprints because this repository
+# squash-merges: a fingerprint binds the commit that introduced the finding, so every one of
+# them would stop matching the moment the branch is squashed and main would fail instead.
+#
+# The cost is stated rather than hidden: a real credential committed under this path would not
+# be reported. The path is therefore as narrow as it can be -- one rule's fixture directory,
+# which holds nothing but deliberately fake secrets, and whose contents the coverage gate
+# replays on every run.
+[[allowlists]]
+description = "HISS-12 fixture corpus: deliberately fake secrets that exist to prove the rule fires"
+paths = ['''^\.config/hiss/testdata/HISS-12/''']
