@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -82,55 +83,14 @@ type RepositoryObservation struct {
 	WorkingdirTrackedState   string   `json:"workingdir_tracked_state"`
 }
 
-// archetypeHint maps description keywords and language names to an archetype. Rules are
-// evaluated in order; the first match wins.
-type archetypeHint struct {
-	keywords  []string // matched as substrings of the lower-cased description
-	languages []string // matched exactly against the lower-cased language
-	archetype string
-}
-
-// maxArchetypeHints bounds the hint table scan (HISS-02).
-const maxArchetypeHints = 16
-
-// archetypeHints returns the detection table in priority order.
-func archetypeHints() []archetypeHint {
-	return []archetypeHint{
-		{keywords: []string{"gpu", "vulkan", "ffmpeg", "kernel", "sycl", "cuda"}, archetype: "native-gpu-systems"},
-		{keywords: []string{"kubernetes", "argocd", "terraform", "gitops", "helm"}, archetype: "gitops-infra"},
-		{keywords: []string{"framework", "composable"}, archetype: "framework"},
-		{keywords: []string{"client", "sdk", "modules"}, archetype: "library-client"},
-		{keywords: []string{"static", "pages"}, languages: []string{"astro"}, archetype: "pages-site"},
-		{languages: []string{"rust", "go", "python", "typescript", "dart", "flutter", "java", "kotlin"}, archetype: "app-service"},
-	}
-}
-
-// matches reports whether the hint applies to the lower-cased language and description.
-func (h archetypeHint) matches(lowerLang, lowerDesc string) bool {
-	for i := 0; i < len(h.keywords) && i < maxArchetypeHints; i++ {
-		if strings.Contains(lowerDesc, h.keywords[i]) {
-			return true
-		}
-	}
-	for i := 0; i < len(h.languages) && i < maxArchetypeHints; i++ {
-		if lowerLang == h.languages[i] {
-			return true
-		}
-	}
-	return false
-}
-
-// DetectArchetype recommends an archetype based on language and descriptions.
+// DetectArchetype recommends an archetype from a repository's language and description.
+//
+// The keyword table this used to carry now lives in internal/classify alongside the marker
+// table, because they answered the same question in two vocabularies and drifted apart. This is
+// the metadata path: it runs over remote repository listings where there is no working tree to
+// inspect, which is why it reads prose, and why it is the weakest evidence in the chain.
 func DetectArchetype(lang, desc string) string {
-	lowerDesc := strings.ToLower(desc)
-	lowerLang := strings.ToLower(lang)
-	hints := archetypeHints()
-	for i := 0; i < len(hints) && i < maxArchetypeHints; i++ {
-		if hints[i].matches(lowerLang, lowerDesc) {
-			return hints[i].archetype
-		}
-	}
-	return "template-seed"
+	return classify.ByMetadata(lang, desc).Or(classify.FallbackArchetype)
 }
 
 // ScanLocalWorkstation audits directories under devDir for repos and worktrees.

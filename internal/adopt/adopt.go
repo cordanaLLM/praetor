@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/editor"
@@ -26,8 +27,6 @@ const (
 	maxAdoptSteps       = 32
 	maxTranspileTargets = 64
 	maxEditorFiles      = 256
-	maxArchetypeRules   = 16
-	maxMarkersPerRule   = 16
 )
 
 // Canonical repository-relative paths written by adoption.
@@ -214,36 +213,18 @@ func DetectState(repoPath string) RepositoryState {
 	return StatePartial
 }
 
-// archetypeRule maps build-system marker files to the archetype they imply.
-type archetypeRule struct {
-	markers   []string
-	archetype string
-}
-
-// archetypeRules returns the marker table in priority order.
-func archetypeRules() []archetypeRule {
-	return []archetypeRule{
-		{[]string{"meson.build", "core/meson.build", "libvmaf/meson.build", "CMakeLists.txt"}, "native-gpu-systems"},
-		{[]string{"go.mod"}, "framework"},
-		{[]string{"Cargo.toml"}, "native-gpu-systems"},
-		{[]string{"pubspec.yaml", "pom.xml", "build.gradle", "build.gradle.kts", "package.json", "pyproject.toml"}, "app-service"},
-		{[]string{"Dockerfile"}, "container-image"},
-	}
-}
-
+// resolveArchetype decides which profile a repository is adopted under.
+//
+// The marker table this used to carry now lives in internal/classify, because it was one of
+// three copies that disagreed with each other. What is left here is the precedence: an operator's
+// explicit profile beats detection, and where nothing matches the fallback is named rather than
+// returned as though it were a match.
 func resolveArchetype(repoPath, explicitProfile string) string {
-	if explicitProfile != "" {
-		return explicitProfile
-	}
-	rules := archetypeRules()
-	for i := 0; i < len(rules) && i < maxArchetypeRules; i++ {
-		for j := 0; j < len(rules[i].markers) && j < maxMarkersPerRule; j++ {
-			if fileExists(filepath.Join(repoPath, filepath.FromSlash(rules[i].markers[j]))) {
-				return rules[i].archetype
-			}
-		}
-	}
-	return "template-seed"
+	decision := classify.Resolve(
+		classify.Explicit(explicitProfile),
+		classify.ByMarkers(repoPath),
+	)
+	return decision.Or(classify.FallbackArchetype)
 }
 
 // resolveOwner returns the owner from the origin remote or directory layout, falling
