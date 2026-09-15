@@ -52,22 +52,31 @@ flowchart LR
 3. **Lead with Output**:
    Provide direct answers, diffs, and commands. Avoid filler preambles, "Based on", restatements, or conversational chatter.
 
-4. **Context Transpiler First**:
+4. **Ask in a Popup, Never in Prose**:
+   Every question that offers the operator a choice MUST go through the client's structured question interface, never as options embedded in a message. In Claude Code that is the `AskUserQuestion` tool; other clients expose an equivalent prompt surface. A question buried in prose scrolls away unanswered and forces the operator to retype an answer the interface could have captured in one click.
+
+   This applies to binary choices too. Do not judge whether a trade-off is "big enough" to deserve the interface; default to it whenever discrete alternatives exist.
+
+   **Check before asking.** A question whose answer is already in the repository, the ledger or the API is not a question, it is unperformed work. Enumerate the directory, read the manifest, query the forge, then ask only about what measurement cannot settle. An answerable question asked anyway costs the operator more than it costs the agent, which is why it reads as noise.
+
+   Exceptions, where prose is correct: single-path confirmation with no alternatives; an explicit request for a recommendation, which is answered in prose with the recommendation and its main trade-off; and surfacing a situation that carries no decision for the operator to make.
+
+5. **Context Transpiler First**:
    Never edit `CLAUDE.md`, `.cursor/rules/*.mdc`, `.windsurfrules`, or `.github/copilot-instructions.md` manually. Make all agent instruction updates in `AGENTS.md` and execute:
    ```bash
    standardsctl compile-context
    ```
 
-5. **SARIF Diagnostic Distillation**:
+6. **SARIF Diagnostic Distillation**:
    When reporting compiler or linter errors, distill output to $\le 1,500$ tokens ($< 60$ lines). Print the top 3 root-cause failures with file/line pointers and write full SARIF logs to ephemeral storage.
 
-6. **No Evasion Tolerated**:
+7. **No Evasion Tolerated**:
    Do not attempt `--no-verify`, `LEFTHOOK=0`, or modifying `.git/hooks`. All pull requests are authoritatively re-checked in an ephemeral isolated sandbox by `cordana-standards[bot]`.
 
-7. **Anti-Loop Interception**:
+8. **Anti-Loop Interception**:
    If the same AST diff and error category repeats $\ge 3$ times, halt execution immediately. Re-evaluate the underlying design instead of making micro-textual retries.
 
-8. **State Ledger Discipline (HISS-17)**:
+9. **State Ledger Discipline (HISS-17)**:
    Agents MUST maintain the local `.workingdir` session state ledger on every turn. The entire directory is private and Git-ignored, including cluster connection guides, backend settings, memory, and scratch files. Never stage its contents, including with force. Publish explicitly reviewed, sanitized documentation under `docs/` instead.
    - **Fresh Checkout**: Run `make state-audit` to initialize a missing local ledger and audit it. Existing incomplete or invalid ledgers must be repaired explicitly.
    - **Turn Start**: Inspect `.workingdir/STATE.md` and `.workingdir/OPEN.md` (or run `praetorctl state status`).
@@ -82,7 +91,7 @@ flowchart LR
    local-only repositories and client activation. Publication needs session or
    configured authorization; this repository's checkpoint workflow is authorized.
 
-9. **Diff-Aware CI Efficiency (HISS-18)**:
+10. **Diff-Aware CI Efficiency (HISS-18)**:
    CI pipelines MUST evaluate git diffs via `standardsctl ci filter` and execute targeted validation gates. Pure documentation or session-state changes MUST skip heavy race detectors and security suites while maintaining invariant integrity.
 
 ## Primary Verification Commands
