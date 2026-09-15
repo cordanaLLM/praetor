@@ -344,6 +344,14 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 	if cfg.dryRun {
 		return "dry run: race-detector tests skipped", nil
 	}
+	// `go test -race ./...` cannot run where there is no module, exactly as the prefetch
+	// and security stages already recognise. Without this the stage failed every adopted
+	// non-Go repository with "directory prefix . does not contain main module", which
+	// reads as a broken repository rather than an inapplicable stage. Those repositories
+	// are gated on their own suites by the verification contract, not here.
+	if !util.FileExists(filepath.Join(cfg.repoDir, "go.mod")) {
+		return "no go.mod: Go race-detector tests skipped", nil
+	}
 
 	tCtx, cancel := context.WithTimeout(ctx, TestStageTimeout)
 	defer cancel()
