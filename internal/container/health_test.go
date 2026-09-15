@@ -215,8 +215,8 @@ func TestWaitForGracefulDrain_Positive_SignalDrainsServer(t *testing.T) {
 	// Give the goroutine a moment to register its signal handler before raising SIGTERM.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
-			t.Fatalf("raise SIGTERM: %v", err)
+		if err := raiseTermination(); err != nil {
+			t.Skipf("cannot exercise the drain path here: %v", err)
 		}
 		select {
 		case err := <-done:

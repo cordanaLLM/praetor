@@ -1,0 +1,151 @@
+# SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+#
+# SPDX-License-Identifier: EUPL-1.2
+
+name: Platform Neutrality
+
+# HISS-21. This repository's git hooks were unusable on Windows through four stacked
+# defects (#84), and each one was hidden behind the one before it. The last of them was
+# that the harness self-tests could not build there at all, so the gate could not be
+# repaired from the platform it was broken on. Nothing was wrong with the fixes; what was
+# missing was a runner that would have failed the day any of them landed.
+#
+# Enforcement is a matrix rather than a rule, because a rule only catches the defects
+# somebody thought to enumerate. This catches the class.
+#
+# Structure is taken from VMAFx/vmafx's build matrix, which solved the same problem first
+# across eighteen cells: fail-fast off so one platform's failure cannot mask another's,
+# advisory legs marked rather than hidden, and legs that cannot run their tests saying so
+# in the workflow instead of quietly omitting the step.
+
+on:
+  push:
+    branches:
+      - main
+      - 'lts-*'
+  pull_request:
+    branches:
+      - main
+      - 'lts-*'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  harness:
+    name: Platform Neutrality (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      # One platform failing must never cancel the others. Which platforms are broken is
+      # the entire output of this job; cancelling the rest discards it.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux
+          - os: macos-latest
+            name: macOS
+          - os: windows-latest
+            name: Windows
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Go Toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: true
+
+      - name: Setup Python Toolchain
+        id: python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # Build before test: a compile error on one OS is the cheapest portability defect to
+      # find and the one most likely to be a build-constraint or path-separator mistake.
+      - name: Compile Every Package
+        run: go build ./...
+
+      # Every step below runs even when an earlier one failed. #84 was four portability
+      # defects stacked so that each was invisible until the one before it was fixed, which
+      # cost four separate round trips to discover. A job that halts at the first red step
+      # reproduces exactly that. `!cancelled()` does not alter the job's conclusion: a failed
+      # step still fails the leg. It only means one run reports every layer instead of one.
+      - name: Vet Every Package
+        if: ${{ !cancelled() }}
+        run: go vet ./...
+
+      # Not -race here. The race detector needs a host C toolchain, and whether one exists
+      # on each runner image is exactly the kind of thing this matrix is meant to discover
+      # rather than assume. The Linux race legs already run in the main CI gate, so nothing
+      # is lost by keeping this job about portability alone.
+      - name: Test Every Package
+        if: ${{ !cancelled() }}
+        run: go test ./...
+
+      # The self-tests drive the real hooks, so they need the pinned hook runner and the
+      # binary the hooks invoke. Both are installed per platform rather than assumed present:
+      # a suite that silently degrades because a tool is missing is the failure mode this whole
+      # job exists to make visible, and it would be absurd to introduce it here.
+      - name: Install Pinned Git Hook Toolchain
+        if: ${{ !cancelled() }}
+        run: go install github.com/evilmartians/lefthook/v2@v2.1.12
+
+      # test_security_scope.py fails outright when gosec is absent rather than skipping, which
+      # is the right call for a security regression -- so the tool is a real dependency of this
+      # job, not an optional extra. The first run of this matrix failed here for exactly that
+      # reason, which is the intended behaviour working.
+      - name: Install Security Scanner
+        if: ${{ !cancelled() }}
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      # `make` is not on PATH on the Windows runner image (MSYS2 ships it but is unlisted),
+      # so the Makefile target cannot be reused here. The executable extension comes from
+      # `go env GOEXE` rather than a second copy of the Makefile's EXE_SUFFIX rule: the
+      # toolchain already knows it, and a duplicate would be free to drift (HISS-19).
+      # checks.py shells out to yamllint, which is pinned and installed nowhere: it happens to
+      # be present on the ubuntu image and absent on macOS, so the hook failed closed there.
+      # Installing it explicitly makes the dependency real on every leg rather than accidental
+      # on one.
+      - name: Install YAML Linter
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: '"$PYTHON" -m pip install --disable-pip-version-check yamllint'
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+
+      - name: Build praetorctl
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: go build -o "bin/praetorctl$(go env GOEXE)" ./cmd/standardsctl
+
+      # The self-tests are the part that could not run on Windows at all before #102, and the
+      # part that governs the hooks, so they are the highest-value cell in the matrix. The
+      # driver refuses to report a pass that executed nothing and prints every skip with its
+      # reason, so a platform losing coverage shows up as a number that moved.
+      #
+      # Python is invoked through the path the setup action reports rather than by name:
+      # `python3` is not guaranteed to exist on a Windows runner, and assuming a platform's
+      # binary naming is the exact defect this job exists to catch.
+      - name: Harness Self-Tests
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: '"$PYTHON" -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED"'
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          # Deliberately a collapse detector, not a coverage assertion. The honest floor per
+          # platform is not yet measured on macOS or Windows -- this matrix is what measures
+          # it. Raise it to each platform's real figure once the first green run reports one,
+          # and never lower it to make a red run green.
+          MIN_EXECUTED: '10'

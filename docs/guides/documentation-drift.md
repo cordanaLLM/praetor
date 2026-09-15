@@ -29,6 +29,7 @@ Only what an adopter reads about before using it. The map in `SURFACE_MAP` is de
 | `cmd/standards-mcp/` | `docs/guides/development-mcp.md` |
 | `internal/gating/pipeline.go` | `docs/guides/adoption-verification.md` |
 | `internal/wishes/`, `internal/state/` | their respective guides |
+| `.github/workflows/portability.yml`, `scripts/portability_selftest.py` | `docs/standards/hiss-21-platform-neutrality.md` |
 | `scripts/docs_drift.py` | this document |
 
 Everything else is internal. A refactor that changes no listed surface is never accused, and that

@@ -124,7 +124,7 @@ hiss-coverage:
 topology-audit:
 	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
 
-verify-all: semgrep-test docs-drift-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: semgrep-test docs-drift-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
 
 .PHONY: docs-drift-test
@@ -188,7 +188,7 @@ clean:
 
 # Hooks inspect the index or committed push refs in disposable snapshots. The full
 # verify-all target above remains the repository-wide authority.
-.PHONY: hook-cli hooks-check hooks-test check-staged changed-packages test-changed lint-changed sec-changed check-changed sandbox-verify
+.PHONY: hook-cli hooks-check hooks-test portability-test check-staged changed-packages test-changed lint-changed sec-changed check-changed sandbox-verify
 HOOK_RUNNER := python3 .config/lefthook/scripts/hooks.py
 HOOK_GO_SOURCES := $(shell git ls-files '*.go')
 BASE ?= HEAD~1
@@ -203,6 +203,9 @@ $(PRAETORCTL): $(HOOK_GO_SOURCES) go.mod go.sum Makefile
 hooks-check:
 	lefthook validate
 	lefthook check-install
+
+portability-test:
+	python3 -B scripts/test_portability_selftest.py
 
 hooks-test:
 	python3 -B .config/lefthook/scripts/test_security_scope.py

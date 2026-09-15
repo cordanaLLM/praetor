@@ -18,6 +18,7 @@ import (
 const (
 	maxWorkflowFiles  = 64
 	maxJobsPerFile    = 64
+	maxMatrixLegs     = 64
 	pullRequestEvent  = "pull_request"
 	workflowPathsKey  = "paths"
 	workflowIgnoreKey = "paths-ignore"
@@ -97,8 +98,18 @@ type workflowSpec struct {
 }
 
 type workflowJob struct {
-	Name string `yaml:"name"`
-	If   string `yaml:"if"`
+	Name            string           `yaml:"name"`
+	If              string           `yaml:"if"`
+	ContinueOnError string           `yaml:"continue-on-error"`
+	Strategy        workflowStrategy `yaml:"strategy"`
+}
+
+// workflowStrategy carries the matrix legs a job expands into. A matrix job reports one
+// check per leg, so one `name:` here is several required contexts on the forge.
+type workflowStrategy struct {
+	Matrix struct {
+		Include []map[string]string `yaml:"include"`
+	} `yaml:"matrix"`
 }
 
 // workflowPullRequestContexts returns the check contexts of one workflow file, or nil
@@ -125,13 +136,79 @@ func workflowPullRequestContexts(data []byte) ([]string, error) {
 		if strings.TrimSpace(job.If) != "" {
 			continue
 		}
-		if job.Name != "" {
-			contexts = append(contexts, job.Name)
+		// An advisory leg is reported to the forge as successful whether or not it passed,
+		// so requiring it would install a check that can never fail. That is the same
+		// unfalsifiable green this invariant exists to forbid, arrived at from the other
+		// side. Advisory legs stay advisory; they do not become required checks.
+		if advisoryJob(job.ContinueOnError) {
 			continue
 		}
-		contexts = append(contexts, ids[i])
+		names, err := jobCheckContexts(ids[i], job)
+		if err != nil {
+			return nil, err
+		}
+		contexts = append(contexts, names...)
 	}
 	return contexts, nil
+}
+
+// advisoryJob reports whether continue-on-error makes a job's result non-binding. An
+// expression is treated as advisory: its value is not knowable from the file, and assuming
+// the binding case would require a check that may always report success.
+func advisoryJob(continueOnError string) bool {
+	value := strings.TrimSpace(continueOnError)
+	return value != "" && value != "false"
+}
+
+// jobCheckContexts returns every check context one job reports under, expanding a matrix
+// name into one context per leg.
+func jobCheckContexts(id string, job workflowJob) ([]string, error) {
+	if job.Name == "" {
+		return []string{id}, nil
+	}
+	if !strings.Contains(job.Name, "${{") {
+		return []string{job.Name}, nil
+	}
+	return expandMatrixName(id, job.Name, job.Strategy.Matrix.Include)
+}
+
+// expandMatrixName substitutes ${{ matrix.<key> }} in a job name from each include leg.
+//
+// An unresolved expression must never reach the ruleset. A required status check whose
+// context no run can ever report does not fail the pull request, it leaves it "expected"
+// forever -- so the branch would be permanently unmergeable by a generator that thought it
+// was protecting it. Emitting the literal text is the same defect class this repository
+// keeps removing: a value nothing evaluated, presented as one something did.
+func expandMatrixName(id, name string, include []map[string]string) ([]string, error) {
+	if len(include) == 0 {
+		return nil, fmt.Errorf("job %q: name %q references a matrix but declares no strategy.matrix.include", id, name)
+	}
+	if len(include) > maxMatrixLegs {
+		return nil, fmt.Errorf("job %q: matrix exceeds %d legs", id, maxMatrixLegs)
+	}
+	contexts := make([]string, 0, len(include))
+	for i := 0; i < len(include) && i < maxMatrixLegs; i++ {
+		expanded := substituteMatrixKeys(name, include[i])
+		if strings.Contains(expanded, "${{") {
+			return nil, fmt.Errorf("job %q: leg %d leaves %q unresolved; a required check context that no run reports blocks the branch permanently", id, i, expanded)
+		}
+		contexts = append(contexts, expanded)
+	}
+	return contexts, nil
+}
+
+// substituteMatrixKeys replaces every ${{ matrix.<key> }} form of one leg's keys.
+func substituteMatrixKeys(name string, leg map[string]string) string {
+	keys := make([]string, 0, len(leg))
+	for key := range leg {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for i := 0; i < len(keys) && i < maxMatrixLegs; i++ {
+		name = strings.ReplaceAll(name, "${{ matrix."+keys[i]+" }}", leg[keys[i]])
+		name = strings.ReplaceAll(name, "${{matrix."+keys[i]+"}}", leg[keys[i]])
+	}
+	return name
 }
 
 // triggersOnEveryPullRequest reports whether an "on" node declares a pull_request
