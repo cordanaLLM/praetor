@@ -3,7 +3,24 @@ package hiss
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
+)
+
+// The non-Go rules matched exact strings, so one space silenced them: `while ( 1 )`,
+// `for ( ;; )`, `loop{`, a labelled `'outer: loop {`, `x. unwrap()` and `while True :` all
+// passed a gate that claims to catch them, and a reformatter could erase a finding without
+// changing behaviour. These patterns tolerate arbitrary internal spacing instead. They are
+// still line matchers rather than parsers, which bounds what they can claim, but they can no
+// longer be defeated by whitespace alone.
+var (
+	nativeUnboundedLoop = regexp.MustCompile(`\bwhile\s*\(\s*(?:1|true)\s*\)|\bfor\s*\(\s*;\s*;\s*\)`)
+	rustUnboundedLoop   = regexp.MustCompile(`(?:^|[^\w])loop\s*\{|(?:^|[^\w])while\s+true\s*\{`)
+	rustUnwrapCall      = regexp.MustCompile(`\.\s*unwrap\s*\(\s*\)`)
+	rustExpectCall      = regexp.MustCompile(`\.\s*expect\s*\(`)
+	rustUnsafeBlock     = regexp.MustCompile(`(?:^|[^\w])unsafe\s*\{`)
+	pythonWhileTrue     = regexp.MustCompile(`^\s*while\s+True\s*:`)
+	pythonBareExcept    = regexp.MustCompile(`^\s*except\s*:`)
 )
 
 const (
@@ -153,15 +170,20 @@ func charLiteralWidth(line string, i int) int {
 // hasBannedCall reports whether line calls name (name followed by '(') as a whole
 // identifier, so fgets( never matches gets( and retrieval( never matches eval(.
 func hasBannedCall(line, name string) bool {
-	needle := name + "("
 	offset := 0
 	for i := 0; i < len(line); i++ {
-		pos := strings.Index(line[offset:], needle)
+		pos := strings.Index(line[offset:], name)
 		if pos < 0 {
 			return false
 		}
 		at := offset + pos
-		if at == 0 || !isIdentByte(line[at-1]) {
+		// Whitespace between the identifier and its argument list does not change the
+		// call, so `gets (buf)` must not escape a rule that catches `gets(buf)`.
+		after := at + len(name)
+		for after < len(line) && (line[after] == ' ' || line[after] == '\t') {
+			after++
+		}
+		if (at == 0 || !isIdentByte(line[at-1])) && after < len(line) && line[after] == '(' {
 			return true
 		}
 		offset = at + 1
@@ -216,9 +238,7 @@ func scanNativeLines(lines []string, rel string, rep *ScanReport, opts ScanOptio
 
 // scanNativeLineInvariants inspects one line with literals and comments stripped.
 func scanNativeLineInvariants(code, rel string, lineNum int, rep *ScanReport) {
-	if strings.Contains(code, "while (1)") || strings.Contains(code, "while(1)") ||
-		strings.Contains(code, "while (true)") || strings.Contains(code, "while(true)") ||
-		strings.Contains(code, "for (;;)") || strings.Contains(code, "for(;;)") {
+	if nativeUnboundedLoop.MatchString(code) {
 		recordViolation(rep, "HISS-02", rel, lineNum, "", "Legacy unbounded loop in native code")
 	}
 	if hasBannedCall(code, "gets") {
@@ -319,14 +339,13 @@ func closePythonFuncs(open []pythonFunc, indent, lastCode int, rel string, rep *
 
 // scanPythonLineInvariants inspects one line with literals and comments stripped.
 func scanPythonLineInvariants(code, rel string, lineNum int, rep *ScanReport) {
-	trimmed := strings.TrimSpace(code)
-	if strings.HasPrefix(trimmed, "while True:") {
+	if pythonWhileTrue.MatchString(code) {
 		recordViolation(rep, "HISS-02", rel, lineNum, "", "Legacy unbounded while True loop in Python")
 	}
 	if hasBannedCall(code, "eval") || hasBannedCall(code, "exec") {
 		recordViolation(rep, "HISS-08", rel, lineNum, "", "Banned dynamic eval/exec execution in Python")
 	}
-	if trimmed == "except:" || strings.HasPrefix(trimmed, "except: ") {
+	if pythonBareExcept.MatchString(code) {
 		recordViolation(rep, "HISS-07", rel, lineNum, "", "Bare except catches and suppresses unhandled exceptions")
 	}
 }
@@ -399,16 +418,16 @@ func scanRustLineInvariants(lines []string, idx int, rel string, rep *ScanReport
 	code := stripLiterals(lines[idx], cLikeSyntax)
 	trimmed := strings.TrimSpace(code)
 	lineNum := idx + 1
-	if trimmed == "loop {" || strings.HasPrefix(trimmed, "loop { ") {
+	if rustUnboundedLoop.MatchString(code) {
 		recordViolation(rep, "HISS-02", rel, lineNum, "", "Legacy unbounded loop {} in Rust without explicit scalar bound")
 	}
-	if !testCode && strings.Contains(code, ".unwrap()") {
+	if !testCode && rustUnwrapCall.MatchString(code) {
 		recordViolation(rep, "HISS-07", rel, lineNum, "", "Legacy .unwrap() invocation bypassing error propagation")
 	}
-	if !testCode && strings.Contains(code, ".expect(") {
+	if !testCode && rustExpectCall.MatchString(code) {
 		recordViolation(rep, "HISS-07", rel, lineNum, "", "Legacy .expect() invocation in production Rust code")
 	}
-	isUnsafe := strings.Contains(code, "unsafe {") || strings.HasPrefix(trimmed, "unsafe fn")
+	isUnsafe := rustUnsafeBlock.MatchString(code) || strings.HasPrefix(trimmed, "unsafe fn")
 	if isUnsafe && !hasSafetyComment(lines, idx) {
 		recordViolation(rep, "HISS-09", rel, lineNum, "", "unsafe block without a preceding // SAFETY: proof comment")
 	}
