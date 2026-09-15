@@ -88,6 +88,17 @@ func ReceiverName(fn *ast.FuncDecl) string {
 // identifier for a plain function, or recv.method for a method. A same-named method on any
 // other value -- the delegation idiom `return x.inner.Close()` -- is not recursion.
 func CallTargetsEnclosing(fun ast.Expr, fnName, recv string) bool {
+	// A generic call carries its type arguments as an index expression around the callee,
+	// so Count[T](k) reaches here as IndexExpr{X: Ident("Count")}. Without unwrapping, an
+	// explicitly instantiated self-call was invisible while the inferred Count(k) form was
+	// reported -- the same recursion, detected or not according to whether the author
+	// wrote the type argument.
+	switch indexed := fun.(type) {
+	case *ast.IndexExpr:
+		fun = indexed.X
+	case *ast.IndexListExpr:
+		fun = indexed.X
+	}
 	switch expr := fun.(type) {
 	case *ast.Ident:
 		return recv == "" && expr.Name == fnName
@@ -100,6 +111,54 @@ func CallTargetsEnclosing(fun ast.Expr, fnName, recv string) bool {
 	default:
 		return false
 	}
+}
+
+// declaresLocal reports whether body declares name as a local identifier, by short variable
+// declaration or by a var statement.
+//
+// A call to that name reaches the local, not the enclosing function, so it is not recursion.
+// Without this, a closure that shadows its enclosing function's name was reported as direct
+// recursion: the rule compared identifiers without asking what the identifier resolved to.
+func declaresLocal(body *ast.BlockStmt, name string) bool {
+	if body == nil || name == "" {
+		return false
+	}
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		if found || n == nil {
+			return false
+		}
+		switch decl := n.(type) {
+		case *ast.AssignStmt:
+			if decl.Tok == token.DEFINE {
+				found = identListDeclares(decl.Lhs, name)
+			}
+		case *ast.ValueSpec:
+			found = identsDeclare(decl.Names, name)
+		}
+		return !found
+	})
+	return found
+}
+
+// identListDeclares reports whether any expression is an identifier with the given name.
+func identListDeclares(exprs []ast.Expr, name string) bool {
+	for i := 0; i < len(exprs); i++ {
+		if ident, ok := exprs[i].(*ast.Ident); ok && ident.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// identsDeclare reports whether any identifier carries the given name.
+func identsDeclare(idents []*ast.Ident, name string) bool {
+	for i := 0; i < len(idents); i++ {
+		if idents[i] != nil && idents[i].Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // enclosingFunc returns the innermost function declaration on the walk stack, or nil when
@@ -127,6 +186,12 @@ func (g *goScanner) checkSelfRecursion(call *ast.CallExpr) {
 		return
 	}
 	if !CallTargetsEnclosing(call.Fun, fn.Name.Name, ReceiverName(fn)) {
+		return
+	}
+	// A local of the same name shadows the function, so the call reaches the local rather
+	// than recursing. Checked only once a name match is found, so the cost is paid only by
+	// candidate findings.
+	if declaresLocal(fn.Body, fn.Name.Name) {
 		return
 	}
 	g.record("HISS-01", call.Pos(), fn.Name.Name,
