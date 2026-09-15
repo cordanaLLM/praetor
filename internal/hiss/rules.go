@@ -49,10 +49,10 @@ type braceTracker struct {
 	level      int
 }
 
-// observe feeds one line. isHeader reports whether the line opens a function
-// signature; name is the function name for that case.
-func (t *braceTracker) observe(line, trimmed string, idx int, isHeader bool, name string) {
-	code := stripLiterals(line, cLikeSyntax)
+// observe feeds one line, already stripped of literals and comments by the caller so the
+// tracker shares the caller's cross-line comment state. isHeader reports whether the line
+// opens a function signature; name is the function name for that case.
+func (t *braceTracker) observe(code, trimmed string, idx int, isHeader bool, name string) {
 	opens := strings.Count(code, "{")
 	closes := strings.Count(code, "}")
 	switch {
@@ -116,43 +116,101 @@ var (
 	pythonSyntax = literalSyntax{apostropheIsString: true, lineComment: "#"}
 )
 
-// stripLiterals blanks the contents of string and character literals and drops a
-// trailing line comment, so that braces or banned identifiers inside "{" or '}' or a
-// comment never desynchronise the line-based scanners.
-func stripLiterals(line string, syn literalSyntax) string {
+// literalStripper strips literals and comments across a whole file, carrying the state that
+// a single line cannot hold: a C-style block comment and a Python triple-quoted string both
+// span lines.
+//
+// Without that state every construct inside a multi-line comment or docstring was scanned as
+// code, so documenting a counter-example reported it as a live infraction. A gate that
+// punishes explaining the thing it forbids teaches people to stop explaining it.
+type literalStripper struct {
+	syn literalSyntax
+	// fence is the delimiter that closes the span currently open, or empty outside one.
+	fence string
+}
+
+// strip returns line with the contents of literals and comments removed, updating the
+// cross-line state. Each line must be passed exactly once and in order.
+func (s *literalStripper) strip(line string) string {
 	var b strings.Builder
-	var quote byte
-	n := len(line)
-	for i := 0; i < n; i++ {
-		c := line[i]
-		if quote != 0 {
-			switch c {
-			case '\\':
-				i++
-			case quote:
-				quote = 0
-			}
+	for i := 0; i < len(line); {
+		if s.fence != "" {
+			i = s.consumeFence(line, i)
 			continue
 		}
-		if strings.HasPrefix(line[i:], syn.lineComment) {
+		if next, opened := s.openFence(line, i); opened {
+			i = next
+			continue
+		}
+		if strings.HasPrefix(line[i:], s.syn.lineComment) {
 			return b.String()
 		}
-		switch c {
-		case '"':
-			quote = c
-		case '\'':
-			if syn.apostropheIsString {
-				quote = c
-			} else if width := charLiteralWidth(line, i); width > 0 {
-				i += width - 1
-			} else {
-				b.WriteByte(c)
-			}
-		default:
-			b.WriteByte(c)
-		}
+		i = s.copyOne(line, i, &b)
 	}
 	return b.String()
+}
+
+// consumeFence skips bytes until the open span's closing delimiter, which may not appear on
+// this line at all.
+func (s *literalStripper) consumeFence(line string, i int) int {
+	if idx := strings.Index(line[i:], s.fence); idx >= 0 {
+		end := i + idx + len(s.fence)
+		s.fence = ""
+		return end
+	}
+	return len(line)
+}
+
+// openFence reports whether a multi-line span starts at i and records its closing delimiter.
+// Python triple quotes are checked before ordinary quotes so a docstring is never read as an
+// empty string followed by code.
+func (s *literalStripper) openFence(line string, i int) (int, bool) {
+	if s.syn.apostropheIsString {
+		for _, fence := range []string{`"""`, `'''`} {
+			if strings.HasPrefix(line[i:], fence) {
+				s.fence = fence
+				return i + len(fence), true
+			}
+		}
+		return i, false
+	}
+	if strings.HasPrefix(line[i:], "/*") {
+		s.fence = "*/"
+		return i + 2, true
+	}
+	return i, false
+}
+
+// copyOne copies or skips the token at i, blanking the contents of a single-line literal.
+func (s *literalStripper) copyOne(line string, i int, b *strings.Builder) int {
+	switch c := line[i]; c {
+	case '"', '\'':
+		if c == '\'' && !s.syn.apostropheIsString {
+			if width := charLiteralWidth(line, i); width > 0 {
+				return i + width
+			}
+			b.WriteByte(c)
+			return i + 1
+		}
+		return skipQuoted(line, i, c)
+	default:
+		b.WriteByte(c)
+		return i + 1
+	}
+}
+
+// skipQuoted returns the index just past a single-line quoted run opened at i, honouring
+// backslash escapes. An unterminated quote consumes the rest of the line.
+func skipQuoted(line string, i int, quote byte) int {
+	for j := i + 1; j < len(line); j++ {
+		switch line[j] {
+		case '\\':
+			j++
+		case quote:
+			return j + 1
+		}
+	}
+	return len(line)
 }
 
 // charLiteralWidth returns the byte width of a character literal starting at i ('x' or
@@ -236,15 +294,20 @@ func isCommentLine(trimmed string) bool {
 
 func scanNativeLines(lines []string, rel string, rep *ScanReport, opts ScanOptions) {
 	t := &braceTracker{rel: rel, rep: rep, maxLOC: opts.MaxFuncLOC}
+	// One stripper for the whole file, and one strip per line: the invariant scan, the
+	// header test and the brace tracker must all see the same view, or a block comment
+	// closes for one of them and not the others.
+	stripper := &literalStripper{syn: cLikeSyntax}
 	for idx, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		scanNativeLineInvariants(stripLiterals(line, cLikeSyntax), rel, idx+1, rep)
-		isHeader := !t.inFunc && isNativeFuncHeader(line, trimmed)
+		code := stripper.strip(line)
+		scanNativeLineInvariants(code, rel, idx+1, rep)
+		isHeader := !t.inFunc && isNativeFuncHeader(code, trimmed)
 		name := ""
 		if isHeader {
 			name = extractNativeFuncName(trimmed, lines, idx)
 		}
-		t.observe(line, trimmed, idx, isHeader, name)
+		t.observe(code, trimmed, idx, isHeader, name)
 	}
 }
 
@@ -267,8 +330,8 @@ func scanNativeLineInvariants(code, rel string, lineNum int, rep *ScanReport) {
 	}
 }
 
-func isNativeFuncHeader(line, trimmed string) bool {
-	return strings.Contains(stripLiterals(line, cLikeSyntax), "{") && !strings.HasPrefix(trimmed, "//") &&
+func isNativeFuncHeader(code, trimmed string) bool {
+	return strings.Contains(code, "{") && !strings.HasPrefix(trimmed, "//") &&
 		!strings.HasPrefix(trimmed, "/*") && !strings.HasPrefix(trimmed, "struct ") &&
 		!strings.HasPrefix(trimmed, "enum ") && !strings.HasPrefix(trimmed, "union ") &&
 		!strings.HasPrefix(trimmed, "typedef ") && !strings.HasPrefix(trimmed, "class ") &&
@@ -315,9 +378,10 @@ type pythonFunc struct {
 func scanPythonLines(lines []string, rel string, rep *ScanReport, opts ScanOptions) {
 	var open []pythonFunc
 	lastCode := 0
+	stripper := &literalStripper{syn: pythonSyntax}
 	for idx, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		scanPythonLineInvariants(stripLiterals(line, pythonSyntax), rel, idx+1, rep)
+		scanPythonLineInvariants(stripper.strip(line), rel, idx+1, rep)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
@@ -391,18 +455,20 @@ func checkPythonFuncLen(start, end int, name, rel string, rep *ScanReport, maxLO
 func scanRustLines(lines []string, rel string, rep *ScanReport, opts ScanOptions) {
 	t := &braceTracker{rel: rel, rep: rep, maxLOC: opts.MaxFuncLOC}
 	testCode := isRustTestPath(rel)
+	stripper := &literalStripper{syn: cLikeSyntax}
 	for idx, line := range lines {
 		trimmed := strings.TrimSpace(line)
+		code := stripper.strip(line)
 		if strings.HasPrefix(trimmed, "#[cfg(test)]") {
 			testCode = true
 		}
-		scanRustLineInvariants(lines, idx, rel, rep, testCode)
+		scanRustLineInvariants(code, lines, idx, rel, rep, testCode)
 		isHeader := !t.inFunc && !t.pending && isRustFnHeader(trimmed)
 		name := ""
 		if isHeader {
 			name = extractRustFuncName(trimmed)
 		}
-		t.observe(line, trimmed, idx, isHeader, name)
+		t.observe(code, trimmed, idx, isHeader, name)
 	}
 }
 
@@ -429,10 +495,10 @@ func isRustTestPath(rel string) bool {
 	return strings.HasSuffix(base, "_test.rs") || base == "tests.rs" || base == "test.rs"
 }
 
-// scanRustLineInvariants inspects lines[idx] with literals and comments stripped; the
-// raw surrounding lines are consulted only for the SAFETY: proof comment.
-func scanRustLineInvariants(lines []string, idx int, rel string, rep *ScanReport, testCode bool) {
-	code := stripLiterals(lines[idx], cLikeSyntax)
+// scanRustLineInvariants inspects code, which is lines[idx] already stripped by the caller
+// so that block-comment state carries across lines; the raw surrounding lines are consulted
+// only for the SAFETY: proof comment.
+func scanRustLineInvariants(code string, lines []string, idx int, rel string, rep *ScanReport, testCode bool) {
 	trimmed := strings.TrimSpace(code)
 	lineNum := idx + 1
 	if rustUnboundedLoop.MatchString(code) {
