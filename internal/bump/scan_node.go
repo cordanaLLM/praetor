@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/nodemanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
 )
 
 // errNoJSONObject is returned when a package manager's output carries no JSON object.
@@ -28,34 +28,24 @@ type packageJSONFormat struct {
 	DevDependencies map[string]string `json:"devDependencies"`
 }
 
-type pnpmWorkspaceConfig struct {
-	Packages []string `yaml:"packages"`
-}
-
-// DiscoverNodePackages finds all directories containing package.json.
+// DiscoverNodePackages finds all directories containing package.json: the root
+// plus every workspace member.
+//
+// This used to return the workspace members *instead of* the root, so a pnpm
+// monorepo's root toolchain — turbo, prettier, eslint, lefthook, commitlint —
+// never reported drift (issue #97). Resolution now lives in
+// internal/nodemanifest, shared with internal/docdistill, which had the
+// mirror-image bug of reading only the root.
 func DiscoverNodePackages(repoPath string) []string {
-	var pkgDirs []string
-
-	// 1. Check pnpm-workspace.yaml
-	wsPath := filepath.Join(repoPath, "pnpm-workspace.yaml")
-	if util.FileExists(wsPath) {
-		wsDirs := parsePnpmWorkspace(repoPath)
-		if len(wsDirs) > 0 {
-			return wsDirs
-		}
+	dirs, err := nodemanifest.DiscoverPackageDirs(repoPath)
+	if err != nil {
+		return nil
 	}
-
-	// 2. Check root package.json
-	if util.FileExists(filepath.Join(repoPath, "package.json")) {
-		pkgDirs = append(pkgDirs, ".")
-		return pkgDirs
-	}
-
-	return pkgDirs
+	return dirs
 }
 
-// readConfined reads rel below root after confining it with util.ConfinePath, so a
-// workspace glob or a caller-supplied repository path can never read outside root.
+// readConfined reads rel below root after confining it with util.ConfinePath, so
+// a caller-supplied repository path can never read outside root.
 func readConfined(root, rel string) ([]byte, error) {
 	path, err := util.ConfinePath(root, rel)
 	if err != nil {
@@ -63,48 +53,6 @@ func readConfined(root, rel string) ([]byte, error) {
 	}
 	// #nosec G304 -- path is confined to root by util.ConfinePath above.
 	return os.ReadFile(path)
-}
-
-func parsePnpmWorkspace(repoPath string) []string {
-	var dirs []string
-	data, err := readConfined(repoPath, "pnpm-workspace.yaml")
-	if err != nil {
-		return dirs
-	}
-
-	var cfg pnpmWorkspaceConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return dirs
-	}
-
-	for _, pattern := range cfg.Packages {
-		dirs = append(dirs, globWorkspacePackages(repoPath, pattern)...)
-	}
-
-	return dirs
-}
-
-// globWorkspacePackages expands one pnpm workspace pattern to the repo-relative
-// directories under it that carry a package.json.
-func globWorkspacePackages(repoPath, pattern string) []string {
-	cleanPattern := strings.TrimPrefix(pattern, "./")
-	matches, err := filepath.Glob(filepath.Join(repoPath, cleanPattern))
-	if err != nil {
-		return nil
-	}
-
-	dirs := make([]string, 0, len(matches))
-	for _, m := range matches {
-		if !util.FileExists(filepath.Join(m, "package.json")) {
-			continue
-		}
-		rel, relErr := filepath.Rel(repoPath, m)
-		if relErr != nil {
-			continue
-		}
-		dirs = append(dirs, rel)
-	}
-	return dirs
 }
 
 // ScanNodeDependencies inspects Node/pnpm packages in repoPath for upgrades.
