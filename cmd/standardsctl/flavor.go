@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -94,6 +95,12 @@ func runFlavorAudit(args []string) error {
 	dir := positionalAt(positional, 0, ".")
 
 	report, err := flavor.AuditFlavor(dir, *targetFlv)
+	if errors.Is(err, flavor.ErrFlavorNotApplicable) {
+		fmt.Printf("=== Flavor Audit: %s ===\n  Not applicable: %v\n", dir, err)
+		fmt.Println("  The declared profile governs this repository; no flavor describes its stack.")
+		fmt.Println("  Pass --flavor=<name> to audit against one anyway.")
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("flavor audit failed: %w", err)
 	}

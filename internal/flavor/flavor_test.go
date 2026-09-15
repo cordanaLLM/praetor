@@ -359,3 +359,72 @@ func TestList_Boundary_OrderIsStable(t *testing.T) {
 		}
 	}
 }
+
+// =========================================================================
+// The declared profile decides whether a flavor applies at all (BUG-952)
+// =========================================================================
+
+// declaringRepo builds a repository whose manifest declares one profile, plus any extra files.
+func declaringRepo(t *testing.T, profile string, extra map[string]string) string {
+	t.Helper()
+	files := map[string]string{
+		".standards.yaml": "version: 1\nrepository:\n  owner: fixture\n  name: fixture\nprofiles:\n  - " + profile + "\n",
+	}
+	for k, v := range extra {
+		files[k] = v
+	}
+	return repoWithFiles(t, files)
+}
+
+// TestAuditFlavor_Positive_DeclaredProfileNarrowsDetection covers the ordinary case. A declared
+// profile restricts the candidates to the flavors that implement it, and detection picks among
+// those, so a Go framework repository still resolves to the more specific of its two flavors.
+func TestAuditFlavor_Positive_DeclaredProfileNarrowsDetection(t *testing.T) {
+	repo := declaringRepo(t, "framework", map[string]string{
+		"go.mod": "module fixture\n", "cmd/app/main.go": "package main\n", "internal/doc.go": "package internal\n",
+	})
+	report, err := flavor.AuditFlavor(repo, "auto")
+	if err != nil {
+		t.Fatalf("a declared profile with matching flavors must audit: %v", err)
+	}
+	if report.Flavor != "go-service" {
+		t.Errorf("detection must pick the matching flavor within the profile, got %q", report.Flavor)
+	}
+}
+
+// TestAuditFlavor_Negative_ProfileWithNoFlavorIsNotApplicable is the measured defect.
+// cordanaLLM/imago declares os-image, no flavor implements that profile, and it was audited as a
+// Go service and failed its own push gate for lacking a Dockerfile it has no use for.
+func TestAuditFlavor_Negative_ProfileWithNoFlavorIsNotApplicable(t *testing.T) {
+	repo := declaringRepo(t, "os-image", map[string]string{
+		"go.mod": "module fixture\n", "cmd/app/main.go": "package main\n",
+	})
+	report, err := flavor.AuditFlavor(repo, "auto")
+	if !errors.Is(err, flavor.ErrFlavorNotApplicable) {
+		t.Fatalf("a profile with no flavors must be not-applicable, got report=%v err=%v", report, err)
+	}
+	if errors.Is(err, flavor.ErrNoFlavorMatched) {
+		t.Error("not-applicable must be distinguishable from nothing-matched; callers treat them differently")
+	}
+	// The markers alone would have matched go-service, which is exactly the wrong answer.
+	if got, ok := flavor.Detect(repo); !ok || got != "go-service" {
+		t.Errorf("precondition: bare marker detection should still say go-service, got %q ok=%v", got, ok)
+	}
+}
+
+// TestAuditFlavor_Boundary_ExplicitFlavorAndAbsentManifest checks the two escapes. An explicit
+// flavor overrides the declaration, and a repository with no manifest falls back to detection.
+func TestAuditFlavor_Boundary_ExplicitFlavorAndAbsentManifest(t *testing.T) {
+	declared := declaringRepo(t, "os-image", map[string]string{"go.mod": "module fixture\n", "internal/doc.go": "package internal\n"})
+	if _, err := flavor.AuditFlavor(declared, "go-library"); err != nil {
+		t.Errorf("an explicit flavor must override a not-applicable profile: %v", err)
+	}
+	undeclared := repoWithFiles(t, map[string]string{"go.mod": "module fixture\n", "internal/doc.go": "package internal\n"})
+	report, err := flavor.AuditFlavor(undeclared, "auto")
+	if err != nil {
+		t.Fatalf("a repository with no manifest must fall back to detection: %v", err)
+	}
+	if report.Flavor != "go-library" {
+		t.Errorf("expected detection to decide, got %q", report.Flavor)
+	}
+}
