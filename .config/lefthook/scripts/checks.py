@@ -224,8 +224,12 @@ def run_full_gate(directory):
 
 def semgrep_commands(directory, names):
     rules = ".config/semgrep/hiss-invariants.yml"
+    # The HISS-20 corpus is input to the rules, not source governed by them: its positive
+    # fixtures exist precisely because they violate an invariant, so scanning them blocks
+    # every push that touches the corpus. The HISS scanner skips it for the same reason.
     source = [name for name in present_files(directory, names)
-              if Path(name).suffix in {".go", ".py", ".rs", ".c", ".cpp", ".js", ".ts"}]
+              if Path(name).suffix in {".go", ".py", ".rs", ".c", ".cpp", ".js", ".ts"}
+              and not name.startswith(".config/hiss/testdata/")]
     if any(name.startswith(".config/semgrep/") for name in names):
         source = ["."]
     if source and (directory / rules).exists():
