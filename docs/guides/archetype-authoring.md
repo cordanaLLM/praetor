@@ -14,6 +14,33 @@ flowchart TD
 
 ---
 
+## 0. The shipped catalog
+
+Fourteen profiles ship in `.config/archetypes/`:
+
+`app-service` · `closed-private` · `container-image` · `framework` · `gitops-infra` ·
+`library-client` · `native-gpu-systems` · `org-health` · `os-image` · `pages-site` ·
+`planning-artifacts` · `template-seed` · `upstream-fork` · `web-package`
+
+Six facets ship in `.config/archetypes/facets/`.
+
+**A profile is not a flavor.** A profile says what governance applies; a flavor says which templates,
+settings and toolchains the language stack requires. Only four profiles currently have any flavor
+implementing them — `app-service`, `framework`, `native-gpu-systems` and `container-image`. For the
+other ten, `flavor audit` reports **not applicable** rather than measuring the repository against an
+inferred language flavor, which is correct: `os-image` describes what a repository builds, not what
+it is written in.
+
+Two profiles are worth reading before writing a new one, because their correctness looks like a
+mistake:
+
+- **`upstream-fork`** declares every complexity bound as `0` and disables linear history and signed
+  commits. A contribution fork must match the upstream it submits to, so a gate that rewrites the
+  tree makes every patch unmergeable. The looseness is the feature.
+- **`org-health`** requires one approving reviewer rather than two despite its blast radius, because
+  the repositories that need it are the least maintained ones and a two-approval rule on a
+  repository nobody watches is how it goes stale.
+
 ## 1. Profile Definition Anatomy
 Profiles represent the primary technology stack or architecture. Create `.config/archetypes/{profile-id}.yaml`:
 

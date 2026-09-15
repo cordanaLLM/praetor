@@ -1,0 +1,3 @@
+type: added
+title: A pull request changing a user-discoverable surface must ship its documentation in the same change
+breaking: false

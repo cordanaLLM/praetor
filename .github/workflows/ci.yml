@@ -117,6 +117,21 @@ jobs:
             --head-sha="$PR_HEAD_SHA" \
             "$RUNNER_TEMP/pr_body.txt"
 
+      # Backported from VMAFx/vmafx, which built this first and runs it as a blocking gate.
+      # compile-context --verify proves the agent instructions stay in sync with AGENTS.md, and
+      # docs sync harvests dependency documentation; neither checks whether this repository's own
+      # docs still describe what its code does. Nothing did, so documentation drifted silently.
+      - name: Documentation Drift (user-discoverable surfaces)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null || git fetch --no-tags origin "${BASE_SHA}"
+          git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null || git fetch --no-tags origin "${HEAD_SHA}"
+          python3 -B scripts/docs_drift.py
+
       - name: Enforce HISS-14 Migration Footers (Commit Lint)
         if: github.event_name == 'pull_request'
         run: go run ./cmd/standardsctl forge check-commits --base="origin/${{ github.base_ref }}" --head=HEAD

@@ -11,6 +11,20 @@ runtimes, status, and any reasons requiring review.
 | `unavailable` | A required build/test command is missing or ambiguous. Generated recipes fail explicitly. |
 | `preserved-unverified` | Existing custom Makefile ownership is preserved. Review and exercise its `verify-all` contract. |
 
+### Stages that do not apply are skipped, not failed
+
+`praetorctl gate run` reports a stage it cannot meaningfully run as skipped, with the reason, rather
+than failing the repository for it:
+
+- The module prefetch, Go security scanners and race-detector stages skip where there is no
+  `go.mod`. Without this a TypeScript or Python repository failed its own pre-push gate at
+  `FAIL ./... [setup failed]`, which reads as a broken repository rather than an inapplicable stage.
+- Flavor conformance reports **not applicable** where the repository's declared profile has no
+  flavor implementing it -- an OS image forge is not a Go service and should not be measured as one.
+
+A skipped stage prints its reason. That distinction matters: a skipped stage that reads as a pass is
+how a gate comes to certify what it never examined.
+
 Governance profile names no longer select Go or Meson commands. A shared plan
 renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
 
