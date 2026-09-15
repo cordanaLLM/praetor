@@ -1,0 +1,3 @@
+type: fixed
+title: Flavor detection stops reporting a guess as a match, and two detectors no longer fire on artifacts adoption itself writes
+breaking: true

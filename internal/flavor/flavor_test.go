@@ -2,6 +2,7 @@ package flavor_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -120,14 +121,29 @@ func TestApplyFlavor_Negative_UnknownFlavor(t *testing.T) {
 	}
 }
 
+// TestAuditFlavor_Boundary_EmptyDir asserts that a repository matching nothing is refused rather
+// than audited against a guess.
+//
+// This test previously required the opposite: that an empty directory audits successfully. It
+// did, by falling through to go-library, and then scored the directory against the templates,
+// settings and toolchains of a flavor that described nothing about it. That is the defect, so
+// the expectation is inverted rather than the behaviour preserved.
 func TestAuditFlavor_Boundary_EmptyDir(t *testing.T) {
 	tmp := t.TempDir()
 	report, err := flavor.AuditFlavor(tmp, "auto")
-	if err != nil {
-		t.Fatalf("audit flavor on empty dir failed: %v", err)
+	if !errors.Is(err, flavor.ErrNoFlavorMatched) {
+		t.Fatalf("an unmatched repository must be refused, got report=%v err=%v", report, err)
 	}
-	if report.Score < 0 || report.Score > 100 {
-		t.Fatalf("unexpected score on empty dir: %f", report.Score)
+	if report != nil {
+		t.Errorf("a refused audit must not also return a report, got %v", report)
+	}
+	// An explicit flavor still audits, so the refusal is recoverable rather than a dead end.
+	explicit, err := flavor.AuditFlavor(tmp, "go-library")
+	if err != nil {
+		t.Fatalf("an explicit flavor must still audit: %v", err)
+	}
+	if explicit.Score < 0 || explicit.Score > 100 {
+		t.Fatalf("unexpected score: %f", explicit.Score)
 	}
 }
 
@@ -236,6 +252,110 @@ func TestApplyFlavor_NewArchetypes(t *testing.T) {
 		targetPath := filepath.Join(tmp, tc.expectedFile)
 		if _, err := os.Stat(targetPath); err != nil {
 			t.Fatalf("expected template %s to be created for flavor %s: %v", tc.expectedFile, tc.flavorName, err)
+		}
+	}
+}
+
+// =========================================================================
+// Detection honesty (BUG-935, BUG-938, BUG-939, BUG-946)
+// =========================================================================
+
+// repoWithFiles builds a repository containing exactly the named files.
+func repoWithFiles(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range files {
+		full := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatalf("mkdir for %s: %v", name, err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	return dir
+}
+
+// TestDetect_Positive_PythonMLRequiresAnMLDependency pins the corrected predicate. python-ml
+// must describe a machine-learning pipeline, not every repository that contains Python.
+func TestDetect_Positive_PythonMLRequiresAnMLDependency(t *testing.T) {
+	ml := repoWithFiles(t, map[string]string{"pyproject.toml": "[project]\ndependencies = [\"torch>=2.0\"]\n"})
+	if got, ok := flavor.Detect(ml); !ok || got != "python-ml" {
+		t.Errorf("a declared torch dependency must detect python-ml, got %q ok=%v", got, ok)
+	}
+	req := repoWithFiles(t, map[string]string{"requirements.txt": "openvino==2025.1\n"})
+	if got, ok := flavor.Detect(req); !ok || got != "python-ml" {
+		t.Errorf("requirements.txt naming openvino must detect python-ml, got %q ok=%v", got, ok)
+	}
+}
+
+// TestDetect_Negative_PlainPythonIsNotAnMLPipeline is the measured defect. cordanaLLM/nucleus is
+// a Linux kernel build forge and cordanaLLM/imago an OS image forge; both carried a
+// pyproject.toml and both were reported as PyTorch/OpenVINO pipelines, then audited against ML
+// tooling they had no reason to install.
+func TestDetect_Negative_PlainPythonIsNotAnMLPipeline(t *testing.T) {
+	plain := repoWithFiles(t, map[string]string{
+		"pyproject.toml":   "[project]\nname = \"kernel-forge\"\ndependencies = [\"click\", \"pyyaml\"]\n",
+		"requirements.txt": "pytest\nruff\n",
+	})
+	if got, ok := flavor.Detect(plain); ok {
+		t.Errorf("a Python project with no ML dependency must not detect python-ml, got %q", got)
+	}
+}
+
+// TestDetect_Negative_AdoptionArtifactsDoNotDecideAFlavor covers both markers that adoption
+// itself writes. A flavor detected from the governance tool's own output describes the tool, not
+// the repository, and agentic-autonomous had no other evidence.
+func TestDetect_Negative_AdoptionArtifactsDoNotDecideAFlavor(t *testing.T) {
+	for name, files := range map[string]map[string]string{
+		"scaffolded agents dir":     {".agents/agents/repo-auditor.md": "# auditor\n"},
+		"scaffolded paperclip file": {".paperclip/harness.json": "{}\n"},
+		"both":                      {".agents/agents/x.md": "x\n", ".paperclip/harness.json": "{}\n"},
+	} {
+		if got, ok := flavor.Detect(repoWithFiles(t, files)); ok {
+			t.Errorf("%s: adoption output must not decide a flavor, got %q", name, got)
+		}
+	}
+	// It remains selectable by name, so the flavor is not unreachable.
+	if _, err := flavor.Get("agentic-autonomous"); err != nil {
+		t.Errorf("agentic-autonomous must stay selectable explicitly: %v", err)
+	}
+}
+
+// TestDetect_Boundary_NoMatchIsDistinguishableFromGoLibrary is the whole point of the second
+// return value. Both of these used to report go-library: one because it genuinely matched
+// nothing, the other because it genuinely is a Go library.
+func TestDetect_Boundary_NoMatchIsDistinguishableFromGoLibrary(t *testing.T) {
+	if got, ok := flavor.Detect(repoWithFiles(t, map[string]string{"Rakefile": "task :default\n"})); ok {
+		t.Errorf("an unrecognised repository must report no match, got %q", got)
+	}
+	real := repoWithFiles(t, map[string]string{"go.mod": "module x\n", "internal/doc.go": "package internal\n"})
+	if got, ok := flavor.Detect(real); !ok || got != "go-library" {
+		t.Errorf("a genuine Go library must still detect, got %q ok=%v", got, ok)
+	}
+	// DetectFlavor keeps the old shape for callers that must name something, but the
+	// substitution is now named rather than hidden.
+	if got := flavor.DetectFlavor(repoWithFiles(t, map[string]string{"Rakefile": "x\n"})); got != flavor.FallbackFlavor {
+		t.Errorf("DetectFlavor must substitute the named fallback, got %q", got)
+	}
+}
+
+// TestList_Boundary_OrderIsStable pins the ordering that used to come from map iteration, so the
+// catalog the CLI prints and the precedence detection uses are one thing and are reproducible.
+func TestList_Boundary_OrderIsStable(t *testing.T) {
+	first := flavor.List()
+	if len(first) < 2 {
+		t.Fatalf("expected a populated catalog, got %d", len(first))
+	}
+	for i := 0; i < 5; i++ {
+		next := flavor.List()
+		if len(next) != len(first) {
+			t.Fatalf("catalog length changed between calls: %d then %d", len(first), len(next))
+		}
+		for j := range first {
+			if first[j].Name() != next[j].Name() {
+				t.Fatalf("catalog order changed at %d: %q then %q", j, first[j].Name(), next[j].Name())
+			}
 		}
 	}
 }

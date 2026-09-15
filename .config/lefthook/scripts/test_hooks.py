@@ -211,7 +211,12 @@ class GitHooks(unittest.TestCase):
         command(public, "git", "init", "-q", "-b", "main")
         command(public, "git", "config", "user.name", "Snapshot Fixture")
         command(public, "git", "config", "user.email", "snapshot@example.test")
+        # The fixture carries a go.mod and an internal package so it genuinely matches a
+        # registered flavor. It previously matched nothing and was classified go-library only by
+        # the silent fallback that detection no longer has; the .golangci.yml it already shipped
+        # made sense for no other language.
         files = {".standards.yaml": "repository: {}\n", ".standards.lock": "{}\n",
+                 "go.mod": "module fixture\n\ngo 1.25\n", "internal/doc.go": "package internal\n",
                  ".golangci.yml": "version: '2'\n", ".github/workflows/ci.yml": "name: fixture\n",
                  "lefthook.yml": "{}\n", ".github/rulesets/main.json": "{}\n",
                  ".gitignore": "/.workingdir/\n",

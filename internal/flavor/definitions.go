@@ -2,15 +2,43 @@ package flavor
 
 import (
 	"path/filepath"
+	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-func builtinFlavors() map[string]Flavor {
-	flavors := []Flavor{
-		&GoServiceFlavor{}, &GoLibraryFlavor{}, &NativeGPUSystemsFlavor{},
-		&FrontendSvelteFlavor{}, &PythonMLFlavor{}, &InfraK8sFlavor{},
-		&AgenticAutonomousFlavor{}, &RustSystemsFlavor{}, &TypeScriptNodeFlavor{},
-		&JVMServiceFlavor{}, &MobileFlutterFlavor{},
+// builtinFlavorList returns every built-in flavor in detection precedence order, most specific
+// first. This slice is the single source of that order.
+//
+// It used to be stated twice: once here as registration order, and again inside DetectFlavor as a
+// hardcoded list of the same eleven names. The two disagreed, and a flavor registered but left
+// out of the second list fell through to map iteration order, so its precedence was whatever the
+// runtime happened to produce that execution.
+//
+// The ordering principle is specificity. An agent harness manifest or a Helm chart says what a
+// repository is for. A dependency on a machine-learning framework is likewise a positive
+// statement, which is why python-ml sits high now that it requires one rather than firing on any
+// Python project at all. Language build files come next, and the two Go entries are ordered
+// service before library because the service detector is the stricter of the two.
+func builtinFlavorList() []Flavor {
+	return []Flavor{
+		&InfraK8sFlavor{},
+		&PythonMLFlavor{},
+		&NativeGPUSystemsFlavor{},
+		&RustSystemsFlavor{},
+		&FrontendSvelteFlavor{},
+		&TypeScriptNodeFlavor{},
+		&MobileFlutterFlavor{},
+		&JVMServiceFlavor{},
+		&GoServiceFlavor{},
+		&GoLibraryFlavor{},
+		// Never auto-detects; listed last so its position does not imply precedence.
+		&AgenticAutonomousFlavor{},
 	}
+}
+
+func builtinFlavors() map[string]Flavor {
+	flavors := builtinFlavorList()
 	result := make(map[string]Flavor, len(flavors))
 	for _, flavor := range flavors {
 		result[flavor.Name()] = flavor
@@ -198,10 +226,61 @@ func (f *PythonMLFlavor) Name() string        { return "python-ml" }
 func (f *PythonMLFlavor) Description() string { return "Python / PyTorch / OpenVINO ML Pipeline" }
 func (f *PythonMLFlavor) HISSProfile() string { return "app-service" }
 
+// Detect requires evidence that this is a machine-learning pipeline, not merely that Python is
+// present. The previous predicate fired on any pyproject.toml or requirements.txt, so every
+// Python repository in the fleet was reported as a PyTorch/OpenVINO pipeline and was then audited
+// against ML tooling it had no reason to install. Measured on cordanaLLM/nucleus, a Linux kernel
+// build forge, and cordanaLLM/imago, an OS image forge that is majority Go.
+//
+// A Python project with no ML dependency now matches nothing here, which is the honest answer:
+// no Python library or Python service flavor exists yet, and reporting one that does exist but
+// does not fit is worse than reporting none.
 func (f *PythonMLFlavor) Detect(repoPath string) bool {
-	return CheckFileExists(filepath.Join(repoPath, "pyproject.toml")) ||
-		CheckFileExists(filepath.Join(repoPath, "requirements.txt"))
+	for _, name := range []string{"pyproject.toml", "requirements.txt"} {
+		if declaresMLDependency(filepath.Join(repoPath, name)) {
+			return true
+		}
+	}
+	return false
 }
+
+// mlDependencyMarkers name the frameworks that make a Python project an ML pipeline. They are
+// matched as substrings of the lower-cased dependency declaration, which deliberately accepts
+// the family around each name -- torch also matches pytorch-lightning and torchvision, which are
+// the same signal -- at the cost of a false positive on any unrelated package whose name happens
+// to contain one. No package in common use does.
+var mlDependencyMarkers = []string{
+	"torch", "tensorflow", "openvino", "scikit-learn", "sklearn",
+	"transformers", "onnx", "keras", "lightgbm", "xgboost", "jax",
+}
+
+// maxDependencyFileBytes bounds the dependency read (HISS-02).
+const maxDependencyFileBytes = 256 * 1024
+
+// declaresMLDependency reports whether a dependency file names a machine-learning framework.
+// An unreadable or absent file is not evidence, so it reports false rather than guessing.
+func declaresMLDependency(path string) bool {
+	// ReadFileNoFollow is reused rather than reimplemented: it already refuses symlinks and
+	// non-regular files, which matters here because this reads a path inside a repository the
+	// engine does not own. The scan is then bounded independently of the file's size.
+	data, err := util.ReadFileNoFollow(path)
+	if err != nil {
+		return false
+	}
+	if len(data) > maxDependencyFileBytes {
+		data = data[:maxDependencyFileBytes]
+	}
+	lowered := strings.ToLower(string(data))
+	for i := 0; i < len(mlDependencyMarkers) && i < maxMLMarkers; i++ {
+		if strings.Contains(lowered, mlDependencyMarkers[i]) {
+			return true
+		}
+	}
+	return false
+}
+
+// maxMLMarkers bounds the marker scan (HISS-02).
+const maxMLMarkers = 32
 
 func (f *PythonMLFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
@@ -270,9 +349,20 @@ func (f *AgenticAutonomousFlavor) Description() string {
 }
 func (f *AgenticAutonomousFlavor) HISSProfile() string { return "framework" }
 
-func (f *AgenticAutonomousFlavor) Detect(repoPath string) bool {
-	return CheckFileExists(filepath.Join(repoPath, ".paperclip", "harness.json")) ||
-		CheckFileExists(filepath.Join(repoPath, ".agents"))
+// Detect never matches. This flavor has to be selected explicitly.
+//
+// It had two markers and adoption writes both of them. A bare .agents directory is scaffolded
+// into every governed repository, and so is .paperclip/harness.json, so every adopted repository
+// looked like an agent runtime harness. That was masked only because this flavor sat last in a
+// hardcoded precedence list that disagreed with the registry; ordering the two consistently
+// exposed it immediately, and cordanaLLM/imago -- an OS image forge -- audited as an agent
+// runtime at 100%.
+//
+// A flavor whose only evidence is produced by the governance tool itself cannot be detected from
+// that evidence. Reporting so is the honest contract: `--flavor=agentic-autonomous` still works,
+// and the repository is left unmatched rather than confidently misdescribed.
+func (f *AgenticAutonomousFlavor) Detect(_ string) bool {
+	return false
 }
 
 func (f *AgenticAutonomousFlavor) RequiredTemplates() []TemplateItem {

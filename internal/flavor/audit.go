@@ -1,6 +1,7 @@
 package flavor
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -25,10 +26,23 @@ type FlavorAuditReport struct {
 	MissingToolchains   []ToolchainItem `json:"missing_toolchains"`
 }
 
+// ErrNoFlavorMatched reports that nothing in the catalog fits the repository.
+//
+// This is returned rather than auditing against a guess. The audit drives which templates,
+// settings and toolchains a repository is required to have, so auditing a repository against a
+// flavor that does not describe it demands tooling it has no reason to install and reports a
+// score that means nothing. Measured on cordanaLLM/imago, an OS image forge audited as a
+// PyTorch pipeline and failed for lacking uv and ruff.
+var ErrNoFlavorMatched = errors.New("flavor: no registered flavor matches this repository; pass an explicit --flavor")
+
 // AuditFlavor audits a repository against a target flavor (or auto-detected if empty/"auto").
 func AuditFlavor(repoPath string, targetFlavor string) (*FlavorAuditReport, error) {
 	if targetFlavor == "" || targetFlavor == "auto" {
-		targetFlavor = DetectFlavor(repoPath)
+		detected, ok := Detect(repoPath)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrNoFlavorMatched, repoPath)
+		}
+		targetFlavor = detected
 	}
 
 	flv, err := Get(targetFlavor)
