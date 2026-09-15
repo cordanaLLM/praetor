@@ -57,15 +57,18 @@ func manifestForLock(ctx context.Context, s *adoptSession) (*config.Manifest, er
 	if err != nil {
 		return nil, err
 	}
-	manifest := &config.Manifest{Version: 1, Profiles: []string{s.arch}, Facets: s.facets}
-	if !fileExists(path) || s.opts.Force {
-		return manifest, nil
+	// The synthesized manifest is for a repository that has none. Where one exists it is read
+	// even under --force, so a forced run re-pins the lock to what the repository *declares*
+	// rather than to what detection guesses. That is also the only way to take up a newly
+	// published archetype: declare it, then force the lock to be rebuilt against it.
+	if !fileExists(path) {
+		return &config.Manifest{Version: 1, Profiles: []string{s.arch}, Facets: s.facets}, nil
 	}
 	data, err := readRepoFile(path)
 	if err != nil {
 		return nil, err
 	}
-	manifest = &config.Manifest{}
+	manifest := &config.Manifest{}
 	if err := yaml.Unmarshal(data, manifest); err != nil {
 		return nil, fmt.Errorf("parse target manifest for lock: %w", err)
 	}
