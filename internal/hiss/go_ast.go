@@ -201,7 +201,30 @@ func (g *goScanner) checkBlankAssign(assign *ast.AssignStmt) {
 			return
 		}
 	}
+	// Only a discarded CALL can be discarding an error. The rule previously fired on any
+	// all-blank assignment, so `_ = 1`, `_ = v` and `_ = <-ch` were each reported as a
+	// "legacy unchecked error assignment" -- three shapes that cannot produce an error at
+	// all. A rule that reports obviously-correct code is the kind that gets suppressed
+	// wholesale, taking its true findings with it.
+	//
+	// Deciding which calls actually return an error needs type information, which this
+	// syntax scanner does not build; errcheck does that with types and runs in the same
+	// gate. This narrows the false positives without claiming the stronger check.
+	if !discardsCallResult(assign.Rhs) {
+		return
+	}
 	g.record("HISS-07", assign.Pos(), "", "Legacy unchecked error assignment")
+}
+
+// discardsCallResult reports whether any discarded expression is a call, which is the only
+// shape on the right of a blank assignment that can carry an error.
+func discardsCallResult(rhs []ast.Expr) bool {
+	for i := 0; i < len(rhs); i++ {
+		if _, ok := rhs[i].(*ast.CallExpr); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // checkEmptyErrBranch flags `if err != nil { }` bodies that swallow the error.
