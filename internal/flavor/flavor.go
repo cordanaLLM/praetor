@@ -43,12 +43,28 @@ type Flavor interface {
 var (
 	registryMu sync.RWMutex
 	registry   = builtinFlavors()
+	// detectionOrder is the precedence order, derived from the same list that builds the
+	// registry rather than restated. Keeping one source is the whole point: the previous
+	// second copy could omit a registered flavor, which then fell through to map iteration
+	// order and had no stable precedence at all.
+	detectionOrder = builtinFlavorList()
 )
 
-// Register registers a flavor archetype into the global registry.
+// Register registers a flavor archetype into the global registry. A replacement keeps the
+// position the original held, so re-registering cannot silently reorder detection.
 func Register(f Flavor) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
+	if _, replacing := registry[f.Name()]; replacing {
+		for i := 0; i < len(detectionOrder) && i < maxDetectionCandidates; i++ {
+			if detectionOrder[i].Name() == f.Name() {
+				detectionOrder[i] = f
+				break
+			}
+		}
+	} else {
+		detectionOrder = append(detectionOrder, f)
+	}
 	registry[f.Name()] = f
 }
 
@@ -63,48 +79,48 @@ func Get(name string) (Flavor, error) {
 	return f, nil
 }
 
-// List returns all registered flavors.
+// List returns all registered flavors in detection precedence order. It used to range over the
+// registry map, so the command that prints the catalog produced a different order on every run.
 func List() []Flavor {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	res := make([]Flavor, 0, len(registry))
-	for _, f := range registry {
-		res = append(res, f)
-	}
+	res := make([]Flavor, 0, len(detectionOrder))
+	res = append(res, detectionOrder...)
 	return res
 }
 
-// DetectFlavor inspects repository markers and returns the best-matching flavor name.
-func DetectFlavor(repoPath string) string {
+// FallbackFlavor is what callers that must name something use when nothing matched. It is
+// exported so the substitution is visible at the call site rather than hidden inside detection.
+const FallbackFlavor = "go-library"
+
+// maxDetectionCandidates bounds the detection scan (HISS-02).
+const maxDetectionCandidates = 64
+
+// Detect returns the best-matching flavor and whether anything matched at all.
+//
+// The second return value is the point. Detection used to end in an unconditional "go-library",
+// so a repository that matched nothing was indistinguishable from one that is a Go library, and
+// callers acted on the guess. Measured on a bare Dockerfile and on a bare agent harness, both of
+// which reported go-library through that fallback while a second classifier reported
+// container-image and framework respectively.
+func Detect(repoPath string) (string, bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-
-	// High-precedence checks
-	for _, name := range []string{
-		"native-gpu-systems",
-		"rust-systems",
-		"frontend-svelte",
-		"typescript-node",
-		"python-ml",
-		"jvm-service",
-		"mobile-flutter",
-		"go-service",
-		"go-library",
-		"infra-k8s",
-		"agentic-autonomous",
-	} {
-		if f, ok := registry[name]; ok && f.Detect(repoPath) {
-			return f.Name()
+	for i := 0; i < len(detectionOrder) && i < maxDetectionCandidates; i++ {
+		if detectionOrder[i].Detect(repoPath) {
+			return detectionOrder[i].Name(), true
 		}
 	}
+	return "", false
+}
 
-	// Fallback to any matching flavor
-	for _, f := range registry {
-		if f.Detect(repoPath) {
-			return f.Name()
-		}
+// DetectFlavor returns the best-matching flavor name, substituting FallbackFlavor when nothing
+// matched. Prefer Detect, which lets the caller see the difference.
+func DetectFlavor(repoPath string) string {
+	if name, ok := Detect(repoPath); ok {
+		return name
 	}
-	return "go-library"
+	return FallbackFlavor
 }
 
 // CheckFileExists is an internal helper for flavor detection.

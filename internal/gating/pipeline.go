@@ -319,6 +319,12 @@ func runFlavorStage(ctx context.Context, cfg *stageConfig) (string, error) {
 		return "", fmt.Errorf("flavor audit cancelled: %w", err)
 	}
 	rep, err := flavor.AuditFlavor(cfg.repoDir, "auto")
+	if errors.Is(err, flavor.ErrFlavorNotApplicable) {
+		// Not a pass and not a failure: this repository's declared profile has no flavor, so
+		// there is nothing for this stage to check. Reporting it is the point -- a skipped
+		// stage that reads as a pass is how a gate comes to certify what it never examined.
+		return "skipped: " + err.Error(), nil
+	}
 	if err != nil {
 		return "", fmt.Errorf("flavor audit failed: %w", err)
 	}

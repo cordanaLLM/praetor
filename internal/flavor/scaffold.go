@@ -31,7 +31,11 @@ func ApplyFlavor(ctx context.Context, repoPath string, targetFlavor string, forc
 		return nil, err
 	}
 	if targetFlavor == "" || targetFlavor == "auto" {
-		targetFlavor = DetectFlavor(repoPath)
+		detected, ok := Detect(repoPath)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrNoFlavorMatched, repoPath)
+		}
+		targetFlavor = detected
 	}
 
 	flv, err := Get(targetFlavor)
