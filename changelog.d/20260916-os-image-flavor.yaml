@@ -1,0 +1,4 @@
+type: added
+title: An os-image flavor implements the archetype so an OS image forge is audited instead of refused, detected by packer/*.pkr.hcl, mkosi.conf or build/mkosi.conf ahead of the language markers
+issue: "#93"
+breaking: false

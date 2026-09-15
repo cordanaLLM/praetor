@@ -25,6 +25,12 @@ a Go library.
 - `python-ml` requires a declared machine-learning dependency. It previously fired on any
   `pyproject.toml`, so every Python repository was reported as a PyTorch pipeline and then audited
   against ML tooling it had no reason to install.
+- `os-image` is matched by `packer/*.pkr.hcl`, `mkosi.conf` or `build/mkosi.conf`, and is tried
+  **before** the language flavors. An image forge carries a `go.mod` for its build CLI and a
+  `pyproject.toml` for its verification suite, so whichever language flavor claimed it first would
+  describe the tooling rather than the product. The Packer marker is a glob and matches only regular
+  files: an empty `packer/`, or one holding only a README, is not a forge. See
+  [archetype authoring](archetype-authoring.md#the-os-image-flavor-a-forge-is-what-it-builds).
 - `agentic-autonomous` never auto-detects and must be selected by name. Its markers — `.agents/` and
   `.paperclip/harness.json` — are both written by adoption itself, so detecting on them describes
   the governance tool rather than the repository.
