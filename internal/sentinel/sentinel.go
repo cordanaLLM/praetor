@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
 )
@@ -23,8 +22,8 @@ const (
 
 // Package-level configurable paths and hooks for testability and cross-platform execution.
 var (
-	meminfoPath = "/proc/meminfo"
-	loadavgPath = "/proc/loadavg"
+	defaultMeminfoPath = "/proc/meminfo"
+	loadavgPath        = "/proc/loadavg"
 )
 
 // HostStats holds measured system metrics for memory, disk, and CPU load.
@@ -131,6 +130,13 @@ func EvaluateHostStats(stats HostStats) *HostReport {
 
 // checkRAMInvariants verifies RAM reservation and detects memory pressure above 85%.
 func checkRAMInvariants(stats HostStats, report *HostReport) {
+	// An unmeasured host yields no RAM verdict. Deciding pressure from zero bytes would read as
+	// a machine under no load at all, which is the opposite of the truth and worse than silence.
+	if stats.RAMTotalBytes == 0 {
+		report.ViolatedInvariants = append(report.ViolatedInvariants,
+			"RAM unavailable: no readable source on this platform; memory checks skipped")
+		return
+	}
 	if stats.RAMTotalBytes == 0 {
 		report.ViolatedInvariants = append(report.ViolatedInvariants, "RAM total cannot be zero")
 		return
@@ -181,6 +187,9 @@ func checkDiskInvariants(stats HostStats, report *HostReport) {
 // CanAllocateModel evaluates whether a model requiring vramRequiredGB can safely be loaded
 // without violating the host reservation invariant or driving memory utilization past 85%.
 func CanAllocateModel(stats *HostStats, vramRequiredGB float64) bool {
+	// A zero total means memory was never measured, and admission is refused rather than decided
+	// against unknown headroom. This guard already existed; it is what makes the unmeasured case
+	// safe without a second check.
 	if stats == nil || vramRequiredGB <= 0 || stats.RAMTotalBytes == 0 {
 		return false
 	}
@@ -203,29 +212,35 @@ func CanAllocateModel(stats *HostStats, vramRequiredGB float64) bool {
 	return newUtil <= RAMPressureThreshold
 }
 
-// readHostMemory inspects /proc/meminfo or utilizes fallback logic.
+// meminfoPath is a variable so the absent-source path can be exercised on a host that does have
+// /proc/meminfo. Without this the regression is only reachable on macOS or Windows, which is
+// precisely where nobody runs the tests -- and a test that cannot run where the bug was introduced
+// does not defend against it.
+var meminfoPath = defaultMeminfoPath
+
 func readHostMemory() (total uint64, free uint64, resultErr error) {
 	f, err := os.Open(meminfoPath)
 	if err != nil {
-		return readMemoryFallback()
+		// Unreadable, not zero-sized. Callers distinguish the two by the total being zero,
+		// which no real machine reports.
+		return 0, 0, nil
 	}
 	defer func() { resultErr = errors.Join(resultErr, f.Close()) }()
 
 	return parseMeminfo(f)
 }
 
-// readMemoryFallback provides cross-platform heuristic memory stats when /proc is unavailable.
-func readMemoryFallback() (uint64, uint64, error) {
-	var ms runtime.MemStats
-	runtime.ReadMemStats(&ms)
-
-	const fallbackTotal = uint64(16 * 1024 * 1024 * 1024) // 16 GB baseline
-	fallbackFree := uint64(8 * 1024 * 1024 * 1024)        // 8 GB baseline
-	if ms.Sys > 0 && ms.Sys < fallbackTotal {
-		fallbackFree = fallbackTotal - ms.Sys
-	}
-	return fallbackTotal, fallbackFree, nil
-}
+// readHostMemory reports host memory, and whether it could be read at all.
+//
+// It previously returned a hardcoded 16 GB total and 8 GB free wherever /proc/meminfo was absent --
+// every macOS and Windows host -- with a nil error, so no caller could tell the numbers were
+// invented. The "free" figure was worse than a constant: it was derived from runtime.MemStats,
+// which measures this Go process's heap rather than the machine. RAM pressure, the reserve ratio
+// and model admission were all decided from that.
+//
+// There is no estimate now. Where the platform exposes no source this repository can read, the
+// figures are zero -- a total no real machine reports -- and every decision that would have used
+// them is skipped and reported as unavailable.
 
 // parseMeminfo parses MemTotal, MemAvailable, MemFree, Buffers, and Cached fields from meminfo.
 func parseMeminfo(r io.Reader) (uint64, uint64, error) {

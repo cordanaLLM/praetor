@@ -1,6 +1,8 @@
 package sentinel
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -347,5 +349,104 @@ func TestEvaluateHostStats_Boundary_ZeroAndMax(t *testing.T) {
 	}
 	if CanAllocateModel(&hugeStats, 1e9) {
 		t.Errorf("expected false for extreme vram requirement")
+	}
+}
+
+// =========================================================================
+// Unmeasured memory is reported, never invented (praetor#89)
+// =========================================================================
+
+// TestSentinel_Negative_UnmeasuredRAMIsNotInvented is the regression.
+//
+// readHostMemory returned a hardcoded 16 GB total and 8 GB free wherever /proc/meminfo was absent
+// -- every macOS and Windows host -- with a nil error, so no caller could tell. The free figure was
+// derived from runtime.MemStats, which measures this process's Go heap rather than the machine.
+// RAM pressure, the reserve ratio and model admission were all decided from it.
+func TestSentinel_Negative_UnmeasuredRAMIsNotInvented(t *testing.T) {
+	report := EvaluateHostStats(HostStats{
+		DiskTotalBytes: 500 * 1024 * 1024 * 1024,
+		DiskFreeBytes:  400 * 1024 * 1024 * 1024,
+	})
+	var found bool
+	for _, v := range report.ViolatedInvariants {
+		if strings.Contains(v, "RAM unavailable") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("unmeasured memory must be reported, got %v", report.ViolatedInvariants)
+	}
+	if report.RAMPressure {
+		t.Error("no pressure verdict may be reached without a reading")
+	}
+	if report.RAMUtilizationPercent != 0 {
+		t.Errorf("utilisation computed from no reading: %v", report.RAMUtilizationPercent)
+	}
+}
+
+// TestSentinel_Negative_AdmissionRefusedWithoutAReading pins behaviour that already held: the
+// existing zero-total guard in CanAllocateModel makes the unmeasured case safe. An added second
+// guard was removed as duplication once a mutation showed it changed nothing.
+func TestSentinel_Negative_AdmissionRefusedWithoutAReading(t *testing.T) {
+	if CanAllocateModel(&HostStats{}, 8) {
+		t.Error("model admission must refuse where memory was never measured")
+	}
+	if CanAllocateModel(nil, 8) {
+		t.Error("a nil host must not admit")
+	}
+}
+
+// TestSentinel_Positive_MeasuredRAMStillDecides confirms the guard did not disable the real path.
+func TestSentinel_Positive_MeasuredRAMStillDecides(t *testing.T) {
+	report := EvaluateHostStats(HostStats{
+		RAMTotalBytes:  64 * 1024 * 1024 * 1024,
+		RAMFreeBytes:   2 * 1024 * 1024 * 1024,
+		DiskTotalBytes: 500 * 1024 * 1024 * 1024,
+		DiskFreeBytes:  400 * 1024 * 1024 * 1024,
+	})
+	if !report.RAMPressure {
+		t.Error("a measured host at 97% must still report pressure")
+	}
+	for _, v := range report.ViolatedInvariants {
+		if strings.Contains(v, "RAM unavailable") {
+			t.Errorf("a measured host must not report unavailability: %v", v)
+		}
+	}
+}
+
+// TestReadHostMemory_Boundary_AbsentSourceReportsZeroNotAnError is the test that actually defends
+// the regression, and it runs everywhere.
+//
+// An earlier version skipped on any host exposing /proc/meminfo, which is every machine the tests
+// are run on -- so restoring the fabricated 16 GB fallback passed it. A test that cannot run where
+// the bug lives does not defend against it. Pointing meminfoPath at a missing file reaches the
+// absent-source path on Linux.
+func TestReadHostMemory_Boundary_AbsentSourceReportsZeroNotAnError(t *testing.T) {
+	original := meminfoPath
+	t.Cleanup(func() { meminfoPath = original })
+	meminfoPath = filepath.Join(t.TempDir(), "absent-meminfo")
+
+	total, free, err := readHostMemory()
+	if err != nil {
+		t.Fatalf("an absent source must not error; the sentinel still has good disk and CPU readings: %v", err)
+	}
+	if total != 0 || free != 0 {
+		t.Errorf("an absent source must report zero, not an invented baseline; got total=%d free=%d",
+			total, free)
+	}
+}
+
+// TestReadHostMemory_Positive_RealSourceStillParses confirms injecting the path did not break the
+// ordinary case.
+func TestReadHostMemory_Positive_RealSourceStillParses(t *testing.T) {
+	if _, err := os.Stat(defaultMeminfoPath); err != nil {
+		t.Skip("no /proc/meminfo on this host")
+	}
+	total, _, err := readHostMemory()
+	if err != nil {
+		t.Fatalf("reading the real source failed: %v", err)
+	}
+	if total == 0 {
+		t.Error("a readable /proc/meminfo must report a nonzero total")
 	}
 }
