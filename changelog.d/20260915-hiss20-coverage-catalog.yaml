@@ -1,0 +1,3 @@
+type: added
+title: HISS-20 declares enforcement evidence per invariant and per language, and verify-all replays the fixture corpus that backs every claim
+breaking: false
