@@ -61,8 +61,8 @@ func TestLibraryRelationshipCatalogBoundaries(t *testing.T) {
 		target     string
 	}{
 		{"go.uber.org/fx", "runtime.di", RelationshipFoundation, ""},
-		{"github.com/knadh/koanf/v2", "config.loader", RelationshipWrappedBy, "/config"},
-		{"github.com/lmittmann/tint", "telemetry.logging", RelationshipWrappedBy, "/log"},
+		{"github.com/knadh/koanf/v2", "config.loader", RelationshipWrappedBy, "/core/config"},
+		{"github.com/lmittmann/tint", "telemetry.logging", RelationshipWrappedBy, "/core/log"},
 		{"github.com/ogen-go/ogen", "http.openapi", RelationshipTooling, "/ogenkit"},
 	} {
 		t.Run(tc.pkg, func(t *testing.T) {
@@ -126,8 +126,8 @@ func TestLibraryRelationshipTargetsRequireObservedPackages(t *testing.T) {
 		{"declarations", "package adapter\ntype Available struct{}\n", StatusCovered},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			framework := setupFrameworkCheckout(t, "example.com/selected", "config", "log", "ogenkit")
-			for _, target := range []string{"config", "log", "ogenkit"} {
+			framework := setupFrameworkCheckout(t, "example.com/selected", "core/config", "core/log", "ogenkit")
+			for _, target := range []string{"core/config", "core/log", "ogenkit"} {
 				writeFixture(t, framework, target+"/sibling/adapter.go", "package sibling\ntype Available struct{}\n")
 				if tc.source != "" {
 					writeFixture(t, framework, target+"/adapter.go", tc.source)
@@ -149,8 +149,8 @@ func TestLibraryRelationshipTargetsRequireObservedPackages(t *testing.T) {
 func checkObservedRelationships(t *testing.T, report *RepoNeeds, status CapabilityStatus) {
 	t.Helper()
 	for pkg, target := range map[string]string{
-		"github.com/knadh/koanf/v2": "/config",
-		"github.com/lmittmann/tint": "/log",
+		"github.com/knadh/koanf/v2": "/core/config",
+		"github.com/lmittmann/tint": "/core/log",
 		"github.com/ogen-go/ogen":   "/ogenkit",
 	} {
 		dep := relationshipDemand(t, report, pkg)
@@ -172,8 +172,8 @@ func checkObservedRelationships(t *testing.T, report *RepoNeeds, status Capabili
 
 func TestLibraryRelationshipScansDoNotContaminateCatalog(t *testing.T) {
 	repo := libraryRelationshipFixture(t)
-	framework := setupFrameworkCheckout(t, "example.com/first", "config")
-	writeFixture(t, framework, "config/adapter.go", "package config\ntype Available struct{}\n")
+	framework := setupFrameworkCheckout(t, "example.com/first", "core/config")
+	writeFixture(t, framework, "core/config/adapter.go", "package config\ntype Available struct{}\n")
 	index, err := InspectFramework(t.Context(), framework)
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +191,7 @@ func TestLibraryRelationshipScansDoNotContaminateCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := LibraryRelationship{Kind: RelationshipWrappedBy, FrameworkPackage: defaultFrameworkModule + "/config", Basis: FrameworkCatalogDeclared}
+	want := LibraryRelationship{Kind: RelationshipWrappedBy, FrameworkPackage: defaultFrameworkModule + "/core/config", Basis: FrameworkCatalogDeclared}
 	fresh := relationshipDemand(t, declared, "github.com/knadh/koanf/v2")
 	if fresh.Relationship == nil || *fresh.Relationship != want {
 		t.Fatalf("one scan or caller mutation contaminated later declarations: %+v", fresh)
@@ -200,7 +200,7 @@ func TestLibraryRelationshipScansDoNotContaminateCatalog(t *testing.T) {
 
 func TestLibraryRelationshipsNeverBecomeMigrationActions(t *testing.T) {
 	repo := libraryRelationshipFixture(t)
-	framework := setupFrameworkCheckout(t, "example.com/selected", "config", "log", "ogenkit", "db/pgx")
+	framework := setupFrameworkCheckout(t, "example.com/selected", "core/config", "core/log", "ogenkit", "db/pgx")
 	for _, target := range []string{"config", "log", "ogenkit", "db/pgx"} {
 		writeFixture(t, framework, target+"/adapter.go", "package adapter\ntype Available struct{}\n")
 	}

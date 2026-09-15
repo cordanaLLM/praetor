@@ -119,7 +119,11 @@ func runNeedsReport(ctx context.Context, args []string) error {
 
 	fmt.Printf("=== Golusoris Migration Report: %s ===\n", rep.Repository)
 	fmt.Printf("Framework: %s (%s) | Mapping availability: %.1f%%\n\n", fwIndex.Name, fwIndex.Version, rep.Readiness.Score)
-	fmt.Printf("Coverage basis: %s; builds and tests not run\n\n", fwIndex.Basis)
+	fmt.Printf("Coverage basis: %s; builds and tests not run\n", fwIndex.Basis)
+	if fwIndex.Contract != "" {
+		fmt.Printf("Capability contract: %s (declared packages source-observed)\n", fwIndex.Contract)
+	}
+	fmt.Println()
 
 	fmt.Print(needs.FormatLibraryRelationships(rep))
 	return nil

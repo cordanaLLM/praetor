@@ -16,31 +16,41 @@ const (
 	defaultFrameworkModule   = "github.com/golusoris/golusoris"
 	// defaultFrameworkVersion is a legacy catalog label, not a verified release pin.
 	defaultFrameworkVersion = "v0.8.0"
+	// FrameworkContractFile is the capability contract a framework checkout may publish
+	// at its root; when present it is the package inventory, not directory heuristics.
+	FrameworkContractFile = "capabilities.yaml"
+	// FrameworkNativeCapability classifies a consumer's imports of the selected
+	// framework's own modules: they are retained, never third-party demand.
+	FrameworkNativeCapability CapabilityKey = "fleet.framework"
 )
 
-// KnownDomainCapabilities maps Golusoris root directories to standard capabilities.
+// KnownDomainCapabilities maps Golusoris package directories to standard capabilities.
+// Since golusoris v0.9.0 the lean core packages live in the nested core/ module.
 var KnownDomainCapabilities = map[string][]CapabilityKey{
-	"db":            {"db.postgres", "db.orm", "db.clickhouse", "db.timescale", "db.cdc"},
-	"cache":         {"cache.redis", "cache.inmemory", "cache.twotier"},
-	"httpx":         {"http.router", "http.middleware", "http.openapi", "http.cors"},
-	"http":          {"http.router", "http.middleware"},
-	"jobs":          {"jobs.queue", "jobs.cron", "jobs.workflow"},
-	"auth":          {"auth.jwt", "auth.oidc", "auth.apikey", "auth.session", "auth.passkeys"},
-	"pubsub":        {"pubsub.nats", "pubsub.kafka"},
-	"config":        {"config.loader", "config.yaml"},
-	"log":           {"telemetry.logging"},
-	"otel":          {"telemetry.otel"},
-	"observability": {"telemetry.prometheus"},
-	"clikit":        {"clikit.cobra", "clikit.tui"},
-	"id":            {"id.uuid", "id.nanoid"},
-	"ebpf":          {"kernel.ebpf"},
-	"apidocs":       {"http.openapi"},
-	"storage":       {"storage.s3", "storage.tus"},
-	"ai":            {"ai.llm_client", "ai.embeddings"},
-	"realtime":      {"realtime.sse", "realtime.webrtc"},
-	"idempotency":   {"http.idempotency"},
-	"notify":        {"notify.email", "notify.push"},
-	"secrets":       {"security.secrets"},
+	"db":              {"db.postgres", "db.orm", "db.clickhouse", "db.timescale", "db.cdc"},
+	"cache":           {"cache.redis", "cache.inmemory", "cache.twotier"},
+	"httpx":           {"http.router", "http.middleware", "http.openapi", "http.cors"},
+	"http":            {"http.router", "http.middleware"},
+	"jobs":            {"jobs.queue", "jobs.cron", "jobs.workflow"},
+	"auth":            {"auth.jwt", "auth.oidc", "auth.apikey", "auth.session", "auth.passkeys"},
+	"pubsub":          {"pubsub.nats", "pubsub.kafka"},
+	"core/config":     {"config.loader"},
+	"core/codec/yaml": {"config.yaml"},
+	"core/log":        {"telemetry.logging"},
+	"core/mcp":        {"mcp.server"},
+	"otel":            {"telemetry.otel"},
+	"observability":   {"telemetry.prometheus"},
+	"core/clikit":     {"clikit.cobra"},
+	"clikit/tui":      {"clikit.tui"},
+	"core/id":         {"id.uuid", "id.nanoid"},
+	"ebpf":            {"kernel.ebpf"},
+	"apidocs":         {"http.openapi"},
+	"storage":         {"storage.s3", "storage.tus"},
+	"ai":              {"ai.llm_client", "ai.embeddings"},
+	"realtime":        {"realtime.sse", "realtime.webrtc"},
+	"idempotency":     {"http.idempotency"},
+	"notify":          {"notify.email", "notify.push"},
+	"secrets":         {"security.secrets"},
 }
 
 // ResolveFrameworkModule maps the operator-supplied framework location onto the module
