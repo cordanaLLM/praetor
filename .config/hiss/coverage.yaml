@@ -30,8 +30,10 @@ rules:
         state: partial
         mechanism: internal/hiss go_ast.go checkSelfRecursion and the goto branch
         rationale: >-
-          Direct recursion and goto are reported, including a recursive method and a call from
-          inside a closure the function declares. Mutual and indirect recursion need a
+          Direct recursion and goto are reported, including a recursive method, a call from
+          inside a closure the function declares, and a generic self-call written with an
+          explicit type argument. A local that shadows the function name is not reported,
+          because the call reaches the local. Mutual and indirect recursion need a
           whole-program call graph and are held as gaps.
       - language: c
         state: partial
