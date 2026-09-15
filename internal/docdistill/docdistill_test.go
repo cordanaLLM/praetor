@@ -159,7 +159,7 @@ Note: Caller must close decoder after use.
 			t.Errorf("expected 0 refs, got %d", len(refs))
 		}
 
-		audit, err := AuditDocumentationCoverage(context.Background(), tmpDir)
+		audit, err := AuditDocumentationCoverage(context.Background(), tmpDir, DefaultDistillOptions())
 		if err != nil {
 			t.Fatalf("unexpected error auditing empty repo: %v", err)
 		}

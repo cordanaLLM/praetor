@@ -183,3 +183,38 @@ func TestWorkflowScanRejectsUnreadableSource(t *testing.T) {
 		t.Fatalf("unreadable workflow accepted: %v, %v", got, err)
 	}
 }
+
+// Regression for #97: discovery used to return the workspace members *instead
+// of* the root, so in a pnpm monorepo the root manifest — which is where the
+// whole toolchain (turbo, prettier, eslint, lefthook, commitlint) is declared —
+// was silently excluded from drift detection. The two sets were mutually
+// exclusive: removing pnpm-workspace.yaml did not add the root, it swapped which
+// manifests were visible.
+func TestDiscoverNodePackagesIncludesRootAlongsideWorkspaceMembers(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("package.json", `{"name":"root","devDependencies":{"turbo":"^2.10.12"}}`)
+	write("pnpm-workspace.yaml", "packages:\n  - 'packages/*'\n")
+	write("packages/alpha/package.json", `{"name":"alpha"}`)
+
+	dirs := DiscoverNodePackages(root)
+	found := make(map[string]bool, len(dirs))
+	for _, dir := range dirs {
+		found[dir] = true
+	}
+	if !found["."] {
+		t.Errorf("root manifest missing from %v", dirs)
+	}
+	if !found["packages/alpha"] {
+		t.Errorf("workspace member missing from %v", dirs)
+	}
+}

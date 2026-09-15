@@ -85,6 +85,7 @@ func runDocsSync(ctx context.Context, args []string) error {
 
 func runDocsAudit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("docs audit", flag.ContinueOnError)
+	transitive := fs.Bool("transitive", false, "Include transitive dependencies")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -94,7 +95,10 @@ func runDocsAudit(ctx context.Context, args []string) error {
 	}
 	repoPath := positionalAt(positional, 0, ".")
 
-	result, err := docdistill.AuditDocumentationCoverage(ctx, repoPath)
+	opts := docdistill.DefaultDistillOptions()
+	opts.IncludeTransitive = *transitive
+
+	result, err := docdistill.AuditDocumentationCoverage(ctx, repoPath, opts)
 	if err != nil {
 		return err
 	}
