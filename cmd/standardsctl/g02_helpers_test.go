@@ -179,8 +179,11 @@ func (f *auditFixture) writeBaseline(t *testing.T, infractions []baseline.Infrac
 	}
 }
 
-// legacyGoSource is a Go file carrying one HISS-07 infraction on line 4.
-const legacyGoSource = "package legacy\n\nfunc legacy() {\n\t" + "_" + " = 1\n}\n"
+// legacyGoSource is a Go file carrying one HISS-07 infraction on line 4: a discarded call
+// result. It previously discarded an integer literal, which HISS-07 no longer reports
+// because a non-call cannot carry an error, so the fixture demonstrated a false positive
+// rather than the rule it stands for.
+const legacyGoSource = "package legacy\n\nfunc legacy() {\n\t" + "_" + " = fail()\n}\n\nfunc fail() error { return nil }\n"
 
 // addViolation writes legacy.go into the fixture and returns its baseline infraction.
 func (f *auditFixture) addViolation(t *testing.T) baseline.Infraction {
