@@ -33,7 +33,7 @@ func (v verificationInputs) has(path string) bool {
 }
 
 func loadVerificationInputs(ctx context.Context, path string) (result verificationInputs, err error) {
-	return loadVerificationInputsWithLimits(ctx, path, VerificationLimits{MaxEntries: maxVerificationEntries, MaxFiles: maxVerificationInputs, MaxDepth: maxVerificationDepth, MaxFileBytes: maxVerificationInputBytes, MaxTotalBytes: maxVerificationTotalBytes})
+	return loadVerificationInputsWithLimits(ctx, path, DefaultVerificationLimits())
 }
 
 func loadVerificationInputsWithLimits(ctx context.Context, path string, requested VerificationLimits) (result verificationInputs, err error) {
