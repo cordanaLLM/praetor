@@ -1,0 +1,3 @@
+type: changed
+title: Repository classification is decided in one place, with the evidence recorded and no-match representable
+breaking: false
