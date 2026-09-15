@@ -1,0 +1,88 @@
+# Declared enforcement evidence for the HISS invariants (HISS-20).
+#
+# Every claim here is replayed against .config/hiss/testdata by `praetorctl hiss coverage
+# --verify`, which runs inside verify-all. A claim is only as good as the fixture that
+# demonstrates it.
+#
+# The check runs in BOTH directions. A state claiming detection must report each of its
+# positive fixtures; a state claiming none must leave its gap fixtures undetected. So the
+# catalog fails when it becomes too optimistic AND when it becomes too pessimistic: the day a
+# rule gains coverage, the gap fixture it was supposed to miss fires and this file must be
+# updated to say so.
+#
+# States:
+#   enforced       every shape the corpus describes is reported
+#   partial        some shapes reported; gap/ names the rest
+#   unsupported    nothing reported for this language; gap/ records what goes undetected
+#   not_applicable the axiom does not apply to this language
+#   manual         upheld by review, not by a runnable check -- never report it as a gate
+#
+# This file is deliberately incomplete. It covers the invariants whose behaviour has been
+# measured directly; the remaining rules and languages are being added with their fixtures
+# rather than declared ahead of the evidence. An absent claim is honest; an unbacked one is
+# the defect this mechanism exists to prevent.
+version: 1
+rules:
+  - id: HISS-01
+    title: Acyclic Control Flow
+    coverage:
+      - language: go
+        state: partial
+        mechanism: internal/hiss go_ast.go checkSelfRecursion and the goto branch
+        rationale: >-
+          Direct recursion and goto are reported, including a recursive method and a call from
+          inside a closure the function declares. Mutual and indirect recursion need a
+          whole-program call graph and are held as gaps.
+      - language: c
+        state: partial
+        mechanism: internal/hiss rules.go native goto matcher
+        rationale: >-
+          Only goto is reported. Recursion in native code is not decided by the line scanner
+          and is held as a gap.
+      - language: rust
+        state: unsupported
+        mechanism: none
+        rationale: No Rust control-flow rule exists; neither recursion nor an equivalent jump is decided.
+      - language: python
+        state: unsupported
+        mechanism: none
+        rationale: No Python control-flow rule exists.
+  - id: HISS-02
+    title: Bounded Loops and I/O Timeouts
+    coverage:
+      - language: c
+        state: partial
+        mechanism: internal/hiss rules.go nativeUnboundedLoop
+        rationale: >-
+          Unbounded loop shapes are reported with arbitrary internal spacing. The I/O-timeout
+          half of the axiom has no native check.
+      - language: rust
+        state: partial
+        mechanism: internal/hiss rules.go rustUnboundedLoop
+        rationale: >-
+          loop and while true are reported, including a labelled loop and a missing space
+          before the brace. The I/O-timeout half has no Rust check.
+      - language: python
+        state: partial
+        mechanism: internal/hiss rules.go pythonWhileTrue
+        rationale: >-
+          while True is reported with arbitrary spacing. Other unbounded shapes such as
+          while 1 and the I/O-timeout half are not decided.
+  - id: HISS-07
+    title: Checked Errors
+    coverage:
+      - language: rust
+        state: partial
+        mechanism: internal/hiss rules.go rustUnwrapCall and rustExpectCall
+        rationale: >-
+          unwrap and expect are reported in production code with arbitrary spacing. Errors
+          discarded by other means are not decided by a line scanner.
+  - id: HISS-09
+    title: Reference Safety
+    coverage:
+      - language: rust
+        state: partial
+        mechanism: internal/hiss rules.go rustUnsafeBlock with hasSafetyComment
+        rationale: >-
+          An unsafe block without a preceding SAFETY proof is reported, and one with a proof is
+          not. Whether the proof is truthful is not decided by any check.
