@@ -35,6 +35,34 @@ It cannot resolve a name, follow a call, or know a type. A rule whose axiom need
 cannot be decided this way, and the coverage catalog records such a rule as `unsupported` with its
 gap fixtures rather than claiming an enforcement that does not exist.
 
+## Go: one pass reads a package, not a file
+
+Most matchers decide a line. HISS-01 cannot be decided that way in full: a function that calls
+itself is visible in one file, but a cycle through two functions is not, because no single file's
+AST shows the loop closing. `internal/hiss/go_callgraph.go` therefore runs after the walk, builds
+each package's call graph from the Go files the scan read, and reports every strongly connected
+component of two or more functions, naming the path.
+
+Package scope is complete here rather than convenient. A call cycle spanning two packages would
+need each package to import the other, and the Go compiler rejects that outright, so every call
+cycle a buildable program can contain is inside one package.
+
+Two limits are deliberate and recorded as gap fixtures rather than left implicit:
+
+- **Methods are not in the graph.** Resolving `x.foo()` needs the receiver's type, and guessing it
+  would invent edges that do not exist. `HISS-01/go/gap/method-cycle.go` records this.
+- **A call through a function value or interface is undecidable statically**, for the same reason
+  the section above gives.
+
+Direct recursion keeps its own finding from the per-file scanner; the graph pass skips
+single-node components so one defect is not reported twice.
+
+The check is verified by planting cycles rather than by watching it pass — the failure mode
+[#90](https://github.com/cordanaLLM/praetor/issues/90) recorded, where `dedupe scan` reported
+100% cleanliness having read no files. The approach is backported from
+[golusoris/sveltesentio#252](https://github.com/golusoris/sveltesentio/pull/252), which built the
+equivalent import-graph check for TypeScript.
+
 ## HISS-20: claims are replayed
 
 Every enforcement claim in `.config/hiss/coverage.yaml` is replayed against the fixture corpus by

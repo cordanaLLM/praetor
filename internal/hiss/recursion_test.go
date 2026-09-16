@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,15 +82,29 @@ func TestScanRecursionInsideClosure(t *testing.T) {
 	}
 }
 
-// TestScanMutualRecursionRemainsUncovered is the boundary dimension that records a known
-// gap rather than hiding it. Deciding mutual recursion needs a whole-program call graph,
-// which this single-file scanner does not build. The test exists so the limit is explicit
-// and so that closing it later is a visible change rather than a silent one.
-func TestScanMutualRecursionRemainsUncovered(t *testing.T) {
-	rep := scanSource(t, "package p\n\nfunc IsEven(n int) bool {\n\tif n == 0 {\n\t\treturn true\n\t}\n\treturn IsOdd(n - 1)\n}\n\nfunc IsOdd(n int) bool {\n\tif n == 0 {\n\t\treturn false\n\t}\n\treturn IsEven(n - 1)\n}\n")
-
-	if got := rep.Breakdown["HISS-01"]; got != 0 {
-		t.Fatalf("mutual recursion is now detected (%d findings): close this gap in the matrix "+
-			"and replace this test with a positive one", got)
+// TestScanMutualRecursionIsReported replaces the gap test that used to sit here. That test
+// asserted mutual recursion went undetected and instructed whoever closed the gap to swap it
+// for a positive one, which is what happened: the call-graph pass in go_callgraph.go now
+// builds each package's graph after the walk and reports its cycles.
+//
+// The gap it recorded has moved rather than vanished. A cycle through methods is still
+// undecided, and .config/hiss/testdata/HISS-01/go/gap/method-cycle.go records that.
+func TestScanMutualRecursionIsReported(t *testing.T) {
+	dir := t.TempDir()
+	source := "package p\n\nfunc IsEven(n int) bool {\n\tif n == 0 {\n\t\treturn true\n\t}\n" +
+		"\treturn IsOdd(n - 1)\n}\n\nfunc IsOdd(n int) bool {\n\tif n == 0 {\n\t\treturn false\n\t}\n" +
+		"\treturn IsEven(n - 1)\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "mutual.go"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Scan(context.Background(), dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rep.Breakdown["HISS-01"]; got != 1 {
+		t.Fatalf("mutual recursion must be reported exactly once, got %d: %+v", got, rep.Violations)
+	}
+	if !strings.Contains(rep.Violations[0].Message, "IsOdd") {
+		t.Errorf("the finding must name the cycle path, got %q", rep.Violations[0].Message)
 	}
 }
