@@ -47,6 +47,13 @@ func verifyCompiledContext(ctx context.Context, tr *compiler.Transpiler, source,
 	if err != nil {
 		return fmt.Errorf("agent persona verification failed: %w", err)
 	}
+	skills, err := verifyPluginSkills(targetDir)
+	if err != nil {
+		return fmt.Errorf("plugin skill verification failed: %w", err)
+	}
+	if skills > 0 {
+		fmt.Printf("  %d plugin skill projections verified (%s).\n", skills, pluginSkillsRel)
+	}
 	fmt.Printf("All agent context targets are 100%% in sync with canonical AGENTS.md (%d persona projections verified).\n", verified)
 	return nil
 }
@@ -80,6 +87,13 @@ func compileContext(ctx context.Context, tr *compiler.Transpiler, source, target
 	}
 	if pluginFiles > 0 {
 		fmt.Printf("  [COMPILED] %d plugin agent projections (%s).\n", pluginFiles, pluginAgentsRel)
+	}
+	pluginSkills, err := projectPluginSkills(targetDir)
+	if err != nil {
+		return fmt.Errorf("plugin skill projection failed: %w", err)
+	}
+	if pluginSkills > 0 {
+		fmt.Printf("  [COMPILED] %d plugin skill projections (%s).\n", pluginSkills, pluginSkillsRel)
 	}
 
 	fmt.Println("Cross-agent context transpilation completed successfully.")
