@@ -234,27 +234,36 @@ func applyFrameworkCoverage(idx *FrameworkIndex, repoNeeds *RepoNeeds) {
 	if idx == nil || repoNeeds == nil {
 		return
 	}
-
 	for i := range repoNeeds.Dependencies {
-		dep := &repoNeeds.Dependencies[i]
-		if reconcileLibraryRelationship(idx, dep) {
-			continue
-		}
-		if dep.Status == StatusGap {
-			continue
-		}
-		if replacement, available := frameworkReplacement(idx, *dep); available {
-			dep.GolusorisReplacement = replacement
-			continue
-		}
-		dep.Status = StatusGap
-		dep.GolusorisReplacement = ""
-		dep.Notes = fmt.Sprintf("%s has no observed catalog replacement for capability %s", idx.Name, dep.Capability)
+		reconcileDependency(idx, &repoNeeds.Dependencies[i])
 	}
-
 	calculateReadiness(repoNeeds)
 	repoNeeds.Framework = idx.Name
 	repoNeeds.Readiness.Basis = idx.Basis
+}
+
+// reconcileDependency classifies one demand against the selected framework: the
+// framework's own modules are native, catalog relationships keep their retained roles, a
+// capability contract maps explicit replacements, and otherwise the catalog path must be
+// an observed package or the demand is a gap.
+func reconcileDependency(idx *FrameworkIndex, dep *DependencyDemand) {
+	if isFrameworkModule(idx, dep.Package) {
+		markFrameworkNative(idx, dep)
+		return
+	}
+	if reconcileLibraryRelationship(idx, dep) || reconcileContractDemand(idx, dep) {
+		return
+	}
+	if dep.Status == StatusGap {
+		return
+	}
+	if replacement, available := frameworkReplacement(idx, *dep); available {
+		dep.GolusorisReplacement = replacement
+		return
+	}
+	dep.Status = StatusGap
+	dep.GolusorisReplacement = ""
+	dep.Notes = fmt.Sprintf("%s has no observed catalog replacement for capability %s", idx.Name, dep.Capability)
 }
 
 func frameworkReplacement(idx *FrameworkIndex, dep DependencyDemand) (string, bool) {
