@@ -3,16 +3,106 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 )
 
-const version = "v1.0.0"
+// version is written at release time with -X main.version. It must stay a var: the Go linker
+// cannot write a const, so every -X injection was silently discarded and every build ever
+// produced -- releases included -- reported the same literal (#119). A build that carries no
+// injected version says what it can prove instead of naming one it cannot.
+var version = ""
+
+// buildVersion reports the version this binary can actually prove it is.
+//
+// A release carries an injected version. Any other build carries the revision Go records in
+// its build information, which identifies the tree exactly. When neither is present the answer
+// is "unknown", never a plausible-looking constant: .standards.lock records this string as
+// pinned_version, and a lock naming a version nothing measured cannot say which praetor
+// governed a repository, which is the whole point of writing it down.
+func buildVersion() string {
+	if trimmed := strings.TrimSpace(version); trimmed != "" {
+		return trimmed
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown (no build information)"
+	}
+	revision, modified := vcsStamp(info)
+	if revision == "" {
+		return "unknown (untagged build, no VCS stamp)"
+	}
+	if modified {
+		return revision + "-dirty"
+	}
+	return revision
+}
+
+// lockVersion is the string init records as .standards.lock pinned_version.
+//
+// The lock is how a repository says which praetor governed it, and the field is validated as
+// SemVer. A release writes its own version. Any other build writes v0.0.0 with the revision as
+// build metadata -- still valid SemVer, and it names the exact tree, which "v1.0.0" never did.
+// A build that can identify nothing returns ok=false so the caller can say so rather than
+// writing a version it cannot stand behind.
+func lockVersion() (string, bool) {
+	if trimmed := strings.TrimSpace(version); trimmed != "" {
+		return trimmed, true
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return unidentifiedLockVersion, false
+	}
+	revision, modified := vcsStamp(info)
+	if revision == "" {
+		return unidentifiedLockVersion, false
+	}
+	return formatDevLockVersion(revision, modified), true
+}
+
+// formatDevLockVersion renders an unreleased build's pinned_version.
+//
+// The revision goes in SemVer build metadata, where a dot separates identifiers and a second
+// plus sign would be invalid. Getting that wrong produces a lock the validator rejects, so the
+// shape is pinned by a test rather than left to inspection.
+func formatDevLockVersion(revision string, modified bool) string {
+	if modified {
+		return "v0.0.0+" + revision + ".dirty"
+	}
+	return "v0.0.0+" + revision
+}
+
+// unidentifiedLockVersion is written only when the build can prove nothing about itself. It is
+// deliberately the zero version rather than a plausible release number.
+const unidentifiedLockVersion = "v0.0.0"
+
+// vcsStamp extracts the revision and dirty flag Go embeds at build time.
+func vcsStamp(info *debug.BuildInfo) (revision string, modified bool) {
+	for i := 0; i < len(info.Settings) && i < maxBuildSettings; i++ {
+		switch info.Settings[i].Key {
+		case "vcs.revision":
+			revision = info.Settings[i].Value
+			if len(revision) > shortRevisionLen {
+				revision = revision[:shortRevisionLen]
+			}
+		case "vcs.modified":
+			modified = info.Settings[i].Value == "true"
+		}
+	}
+	return revision, modified
+}
+
+// maxBuildSettings bounds the build-information scan (HISS-02).
+const maxBuildSettings = 256
+
+// shortRevisionLen is how much of a commit hash identifies a build in output.
+const shortRevisionLen = 12
 
 // maxCSVFields bounds the comma-separated list parser (HISS-02).
 const maxCSVFields = 1024
 
 func printUsage() {
-	fmt.Println("praetorctl (formerly standardsctl) - Autonomous Fleet Governance & Workstation Sentinel (" + version + ")")
+	fmt.Println("praetorctl (formerly standardsctl) - Autonomous Fleet Governance & Workstation Sentinel (" + buildVersion() + ")")
 	fmt.Println("\nUsage:")
 	fmt.Println("  praetorctl <command> [arguments]  (alias: standardsctl)")
 	fmt.Println("\nAvailable Commands:")
@@ -163,7 +253,7 @@ func dispatchCommand(cmd string, args []string) error {
 }
 
 func runVersion(_ []string) error {
-	fmt.Printf("standardsctl version %s\n", version)
+	fmt.Printf("praetorctl version %s\n", buildVersion())
 	return nil
 }
 

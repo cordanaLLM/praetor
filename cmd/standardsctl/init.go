@@ -125,7 +125,14 @@ func initBaselineAndLockfile(rootDir string) error {
 		return err
 	}
 	if missing {
-		content := []byte("# SemVer lockfile\nversion: 1\npinned_version: \"v1.0.0\"\n")
+		pinned, identified := lockVersion()
+		if !identified {
+			fmt.Printf("[WARN] %s records pinned_version %q: this build carries no release "+
+				"version and no VCS stamp, so the lock cannot say which praetor governed this "+
+				"repository. Re-run init from a released binary or a VCS-stamped build.\n",
+				lockPath, pinned)
+		}
+		content := fmt.Appendf(nil, "# SemVer lockfile\nversion: 1\npinned_version: %q\n", pinned)
 		if err := util.WriteFileSecure(lockPath, content, initFilePerm); err != nil {
 			return fmt.Errorf("failed to create lockfile: %w", err)
 		}
