@@ -14,5 +14,34 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
+          # Left to the two steps below. setup-go's own cache covers the module cache and
+          # the build cache under one key that carries no job name, so every job in the
+          # repository shares one entry: the first job to finish writes it, and every later
+          # job restores whatever that job happened to build. A job running `go test -race`
+          # then starts from objects compiled without the race detector and rebuilds them all.
+          cache: false
+
+      - name: Restore Go module cache
+        uses: actions/cache@v6
+        with:
+          path: ~/go/pkg/mod
+          key: gomod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            gomod-${{ runner.os }}-${{ runner.arch }}-
+
+      # The commit SHA in the key is deliberate. Without it the key is stable, the restore is
+      # an exact hit, and actions/cache skips the save -- so the entry freezes at the first
+      # build and no later run can improve it. With it every run misses, restores the newest
+      # prefix match, and saves what it actually built. `test` names this job's build cache;
+      # give every job in the repository a different name here.
+      - name: Restore Go build cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/go-build
+          key: gobuild-${{ runner.os }}-${{ runner.arch }}-test-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            gobuild-${{ runner.os }}-${{ runner.arch }}-test-${{ hashFiles('**/go.sum') }}-
+            gobuild-${{ runner.os }}-${{ runner.arch }}-test-
+
       - name: Verify All Gates
         run: make verify-all

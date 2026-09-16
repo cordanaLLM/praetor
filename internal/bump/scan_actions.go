@@ -19,6 +19,7 @@ var workflowActionRegex = regexp.MustCompile(`uses:\s*([a-zA-Z0-9\-_/]+)@([a-zA-
 // Known canonical latest versions for standard CI actions.
 var knownActionLatest = map[string]string{
 	"actions/checkout":                  "v4",
+	"actions/cache":                     "v6",
 	"actions/setup-go":                  "v5",
 	"actions/setup-python":              "v5",
 	"actions/upload-artifact":           "v4",
