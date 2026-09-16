@@ -76,12 +76,45 @@ def push_updates(text):
     return updates
 
 
+# MAX_LS_REMOTE_LINES bounds the remote listing this hook reads (HISS-02).
+MAX_LS_REMOTE_LINES = 64
+
+
+def remote_default_ref(remote):
+    """Return the remote's own default branch ref, or None when it cannot be established.
+
+    refs/remotes/<remote>/HEAD is a local symref set once at clone time. Git never updates it
+    when the remote's default changes, it is inherited when a clone is cloned, and
+    `git remote set-head` can point it anywhere. Trusting it made the push scan scope depend on
+    a local ref nobody set deliberately: in one checkout it named a feature branch, the base
+    resolved six merges stale, and the staged scan grew from 3 files to 36 -- enough for
+    semgrep-core to exhaust the host memlock limit and refuse the push with an allocation error
+    that named nothing relevant (#113).
+
+    A push is already a network operation, so the remote is asked directly and the answer is
+    authoritative. An offline or slow remote falls back to the local symref rather than failing
+    the push, and says which answer it used.
+    """
+    result = run(["git", "ls-remote", "--symref", remote, "HEAD"], allowed=(0, 1, 128))
+    for line in result.decode(errors="replace").splitlines()[:MAX_LS_REMOTE_LINES]:
+        fields = line.split()
+        if len(fields) >= 3 and fields[0] == "ref:" and fields[2] == "HEAD":
+            return f"refs/remotes/{remote}/" + fields[1].removeprefix("refs/heads/")
+    return None
+
+
 def new_branch_base(head, remote, include_checkpoints=False):
-    """Prefer the known remote default ancestor; otherwise check known refs or all history."""
+    """Prefer the remote's own default branch; otherwise check known refs or all history."""
     prefix = f"refs/remotes/{remote}/"
     records = git("for-each-ref", "--format=%(refname) %(objectname) %(symref)", prefix).decode().splitlines()
     candidates = [record.split() for record in records]
-    default = next((row[2] for row in candidates if len(row) == 3 and row[0] == prefix + "HEAD"), None)
+    default = remote_default_ref(remote)
+    if default is None:
+        # The local symref is the fallback, not the source of truth. Naming it keeps a stale
+        # one visible instead of silently choosing the scan scope.
+        default = next((row[2] for row in candidates if len(row) == 3 and row[0] == prefix + "HEAD"), None)
+        if default:
+            print(f"Push baseline: remote default unavailable; using local {default}")
     candidates.sort(key=lambda row: row[0] != default)
     for ref, oid, *symbolic in candidates:
         # A WIP checkpoint has never satisfied the strict gates. It cannot be a
@@ -124,6 +157,13 @@ def pre_push(remote):
         checked.add(key)
         check_private_history(head, base)
         names = changed(base, head) if base else paths(git("ls-tree", "-r", "--name-only", "-z", head))
+        # Say what is being scanned and which base produced it. A scope that is wrong because the
+        # base is wrong otherwise surfaces only as whatever the scanner does when handed too much
+        # work -- in #113 that was semgrep-core exhausting the host memlock limit and reporting an
+        # allocation failure, which points at memory, the kernel and semgrep, and never at the
+        # scope. One line here is the difference between a five-minute diagnosis and an hour.
+        print(f"Push scope: {len(names)} file(s) versus "
+              f"{base[:12] if base else 'the full tree'}")
         if not names:
             continue
         check_pushed_snapshot(head, base, mode, names)

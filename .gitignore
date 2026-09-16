@@ -25,6 +25,12 @@ coverage.html
 # evidence that `praetorctl gate run` passed for a commit, and `praetorctl gate verify`
 # checks it against the receipt.public_key pinned in .standards.yaml.
 
+# Python bytecode. The hooks run with -B so the tree normally stays clean, but any direct
+# python3 invocation (a unittest run, a manual script) writes it, and `git add -A` then stages
+# compiled bytes nobody reviewed.
+__pycache__/
+*.py[cod]
+
 # Isolated gate/test worktrees (created by `praetorctl gate run`, removed afterwards;
 # ignored so a failed cleanup cannot pollute the next scan).
 /.standards/worktrees/
