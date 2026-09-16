@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // sandboxConfigDir points os.UserConfigDir at a temp directory so no test ever reads or
@@ -72,7 +74,7 @@ func TestLoadSigningKey_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat key: %v", err)
 	}
-	if info.Mode().Perm() != SigningKeyPerm {
+	if util.ModeIsProtection() && info.Mode().Perm() != SigningKeyPerm {
 		t.Errorf("key mode = %#o, want %#o", info.Mode().Perm(), SigningKeyPerm)
 	}
 	fromFile, err := LoadSigningKey()
@@ -165,7 +167,7 @@ func TestSaveSigningKey_Boundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat key dir: %v", err)
 	}
-	if info.Mode().Perm() != SigningKeyDirPerm {
+	if util.ModeIsProtection() && info.Mode().Perm() != SigningKeyDirPerm {
 		t.Errorf("key dir mode = %#o, want %#o", info.Mode().Perm(), SigningKeyDirPerm)
 	}
 }

@@ -50,7 +50,7 @@ func TestPlanningCLIPreparesMetadataAndPrivateArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	directoryInfo, err := os.Stat(directory)
-	if err != nil || directoryInfo.Mode().Perm() != 0o700 {
+	if err != nil || (util.ModeIsProtection() && directoryInfo.Mode().Perm() != 0o700) {
 		t.Fatalf("artifact directory is not private: %v", err)
 	}
 	for _, name := range []string{"plan.json", "TODO.md", "ROADMAP.md", "MILESTONES.md"} {

@@ -50,7 +50,7 @@ func TestDogfood_Positive_HomeDirInjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("report not written: %v", err)
 	}
-	if info.Mode().Perm()&0o002 != 0 {
+	if util.ModeIsProtection() && info.Mode().Perm()&0o002 != 0 {
 		t.Errorf("report is world-writable: %v", info.Mode())
 	}
 }

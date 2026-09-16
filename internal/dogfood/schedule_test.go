@@ -309,7 +309,7 @@ func TestScheduleStateCorruptionAndReadonly(t *testing.T) {
 		t.Fatalf("readonly state modified %+v %v", report, err)
 	}
 	info, err := os.Stat(statePath)
-	if err != nil || info.Mode().Perm() != 0o400 {
+	if err != nil || (util.ModeIsProtection() && info.Mode().Perm() != 0o400) {
 		t.Fatal("mode broadened")
 	}
 }

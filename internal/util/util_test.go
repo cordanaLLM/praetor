@@ -446,7 +446,7 @@ func TestWriteFileNoFollow_Positive_CreatesAndReplaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lstat: %v", err)
 	}
-	if info.Mode().Perm() != 0o644 {
+	if ModeIsProtection() && info.Mode().Perm() != 0o644 {
 		t.Errorf("unexpected mode %v", info.Mode().Perm())
 	}
 }

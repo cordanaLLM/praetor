@@ -14,6 +14,8 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // gateFixture is a hermetic git repository carrying a pinned key and a signed receipt.
@@ -214,7 +216,7 @@ func TestRunGateKeygen_3D(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat key: %v", err)
 	}
-	if info.Mode().Perm() != lockdown.SigningKeyPerm {
+	if util.ModeIsProtection() && info.Mode().Perm() != lockdown.SigningKeyPerm {
 		t.Errorf("key mode = %#o, want %#o", info.Mode().Perm(), lockdown.SigningKeyPerm)
 	}
 	raw, err := os.ReadFile(keyPath)

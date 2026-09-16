@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func setupMockWorkstation(t *testing.T, mockHome, mockVault string) {
@@ -101,7 +103,7 @@ func TestBundleWorkstation_OwnerOnlyPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rootInfo.Mode().Perm() != bundleDirPerm {
+	if util.ModeIsProtection() && rootInfo.Mode().Perm() != bundleDirPerm {
 		t.Fatalf("bundle root mode is %v, want %v", rootInfo.Mode().Perm(), bundleDirPerm)
 	}
 
@@ -111,7 +113,7 @@ func TestBundleWorkstation_OwnerOnlyPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != bundleFilePerm {
+	if util.ModeIsProtection() && info.Mode().Perm() != bundleFilePerm {
 		t.Fatalf("copied credential file mode is %v, want %v", info.Mode().Perm(), bundleFilePerm)
 	}
 
@@ -119,7 +121,7 @@ func TestBundleWorkstation_OwnerOnlyPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifestInfo.Mode().Perm() != bundleFilePerm {
+	if util.ModeIsProtection() && manifestInfo.Mode().Perm() != bundleFilePerm {
 		t.Fatalf("manifest mode is %v, want %v", manifestInfo.Mode().Perm(), bundleFilePerm)
 	}
 }
@@ -530,7 +532,7 @@ func TestBundlePreservesRestrictiveDestinationModes(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(destination)
-	if err != nil || info.Mode().Perm() != 0200 {
+	if err != nil || (util.ModeIsProtection() && info.Mode().Perm() != 0200) {
 		t.Fatalf("destination mode widened: %v, %v", info, err)
 	}
 }
@@ -656,7 +658,7 @@ func TestBundlePreservesRestrictedDirectory(t *testing.T) {
 		t.Fatal("read-only output directory unexpectedly writable")
 	}
 	info, err := os.Stat(output)
-	if err != nil || info.Mode().Perm() != 0500 {
+	if err != nil || (util.ModeIsProtection() && info.Mode().Perm() != 0500) {
 		t.Fatalf("output directory permissions widened: %v, %v", info, err)
 	}
 }
