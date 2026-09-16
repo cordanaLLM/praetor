@@ -267,6 +267,7 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 		reconcileEditors,
 		reconcileMakefile,
 		reconcileGitIgnore,
+		reconcileFormatterIgnore,
 		reconcileContributing,
 		reconcilePullRequestTemplate,
 		reconcileSecurityPolicy,
