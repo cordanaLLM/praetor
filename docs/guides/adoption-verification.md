@@ -25,6 +25,33 @@ than failing the repository for it:
 A skipped stage prints its reason. That distinction matters: a skipped stage that reads as a pass is
 how a gate comes to certify what it never examined.
 
+### The race stage's bound, and what firing it means
+
+The race-detector stage is bounded, because an unbounded stage is how a gate hangs instead of
+failing (HISS-02). The default is 180 seconds, and `PRAETOR_TEST_STAGE_TIMEOUT` raises it up to a
+30-minute ceiling.
+
+The override is clamped rather than trusted. An empty, unparseable, zero, negative or
+over-ceiling value falls back to the default or the ceiling and **says which**, so a typo cannot
+quietly remove the bound or shrink it to nothing. A raised bound is printed as the stage's reason,
+so it appears in the receipt: an override that changed the gate's strictness without showing up in
+its output would be an invisible difference between what one operator verified and what every
+reviewer reads.
+
+When the bound fires, the stage says so rather than reporting a test failure. These are different
+outcomes and used to print identically:
+
+```
+5. [FAIL] Race-Detector Tests  (3m0.024s)
+   Reason: tests failed in .standards/worktrees/gate-2856-...: ok github.com/... 1.437s
+```
+
+That message is the tail of a *successful* run that was cut off, so the first reading is always
+"my change broke the tests" — and the suite had not broken at all. The stage now names the bound,
+the variable that raises it and the ceiling, so the reader is pointed at the real cause. A suite
+that genuinely fails inside the bound still reports as a test failure; the fix must not trade one
+wrong diagnosis for another.
+
 Governance profile names no longer select Go or Meson commands. A shared plan
 renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
 
