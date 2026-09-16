@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -138,8 +139,8 @@ func publicCommandContext(ctx context.Context, dir string) (context.Context, err
 	if err := util.MkdirSecure(tmp, 0o700); err != nil {
 		return nil, err
 	}
-	env := []string{"HOME=" + home, "TMPDIR=" + tmp, "LANG=C.UTF-8", "PATH=" + filepath.Dir(git) + ":/usr/bin:/bin",
-		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=https",
+	env := []string{"HOME=" + home, "TMPDIR=" + tmp, "LANG=C.UTF-8", "PATH=" + scrubbedPath(git),
+		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=https",
 		"GIT_ATTR_NOSYSTEM=1", "GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0=",
 		"GIT_CONFIG_KEY_1=core.fsmonitor", "GIT_CONFIG_VALUE_1=false"}
 	return util.WithCommandEnvironment(ctx, env)
@@ -172,4 +173,24 @@ func clonePublicSource(ctx context.Context, source publicSource, target string) 
 		return "", errors.New("clone revision does not match the requested immutable source")
 	}
 	return sha, nil
+}
+
+// scrubbedPath returns a minimal PATH that can still find the resolved tool and the
+// helpers it shells out to.
+//
+// The previous form appended ":/usr/bin:/bin" with a literal colon. os.PathListSeparator
+// is ';' on Windows, so the whole value collapsed into one malformed entry and the tool
+// could not be found at all. Joining with the platform separator fixes that.
+//
+// The POSIX directories are kept rather than dropped, and only where they exist: git
+// shells out to helpers of its own, and removing them would trade a Windows failure for
+// a Linux one. On Windows they are not present and contribute nothing.
+func scrubbedPath(tool string) string {
+	entries := []string{filepath.Dir(tool)}
+	for _, dir := range []string{"/usr/bin", "/bin"} {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			entries = append(entries, dir)
+		}
+	}
+	return strings.Join(entries, string(os.PathListSeparator))
 }
