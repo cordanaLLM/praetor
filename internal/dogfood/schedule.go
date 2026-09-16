@@ -117,7 +117,7 @@ func (s *scheduleSession) inspect(ctx context.Context, execute bool) error {
 		}
 		s.state.LastAttempt.Error = "Previous process exited before recording a result; retained evidence is incomplete"
 		if execute {
-			if err := saveScheduleJSON(s.root, "state.json", s.state); err != nil {
+			if err := saveScheduleJSON(ctx, s.root, "state.json", s.state); err != nil {
 				return err
 			}
 		}
@@ -179,7 +179,7 @@ func (s *scheduleSession) run(ctx context.Context) error {
 	s.state.LastAttempt = &ScheduleAttempt{Number: number, Fingerprint: s.snapshot.fingerprint, ArtifactDir: filepath.Join(s.snapshot.config.StateDir, name), Status: "running", StartedAt: s.now().UTC()}
 	s.report.Status = "running"
 	s.refreshReport()
-	if err := saveScheduleJSON(s.root, "state.json", s.state); err != nil {
+	if err := saveScheduleJSON(ctx, s.root, "state.json", s.state); err != nil {
 		return err
 	}
 	suite, runErr := s.execute(ctx, name)
@@ -237,7 +237,7 @@ func (s *scheduleSession) finish(ctx context.Context, runErr error) error {
 	if usage != nil {
 		s.report.RetainedBytes, s.report.RetainedRuns = usage.bytes, usage.runs
 	}
-	persistErr := saveScheduleJSON(s.root, "state.json", s.state)
+	persistErr := saveScheduleJSON(ctx, s.root, "state.json", s.state)
 	s.report.Status = a.Status
 	s.report.Verified = runErr == nil && scanErr == nil && persistErr == nil
 	if persistErr != nil {
