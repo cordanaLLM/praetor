@@ -199,7 +199,25 @@ func NormalizePath(path string) string {
 
 // EvaluateRatchet enforces monotonic debt reduction and the touched-file clean rule.
 // Invariant: V_total(t1) <= V_total(t0) AND touched files must have 0 violations.
+// RatchetOptions selects how the touched-file clean rule decides a touched file.
+type RatchetOptions struct {
+	// DebtDelta judges a touched file on whether its debt grew rather than on whether it was
+	// touched. The default is off, deliberately: the touched-file rule is a boy-scout rule --
+	// working in a file obliges cleaning it -- and turning that off for everyone would remove
+	// the pressure that pays debt down. It exists for changes that are provably mechanical,
+	// where that obligation makes the change impossible rather than cleaner: renaming a Go
+	// module path edits one import line per file, introduces no infraction, and failed 75
+	// files that merely already carried baselined debt (#150).
+	DebtDelta bool
+}
+
+// EvaluateRatchet applies the HISS-13 ratchet with the default touched-file clean rule.
 func EvaluateRatchet(b *Baseline, currentViolations []Infraction, touchedFiles []string) *RatchetResult {
+	return EvaluateRatchetWithOptions(b, currentViolations, touchedFiles, RatchetOptions{})
+}
+
+// EvaluateRatchetWithOptions applies the HISS-13 ratchet under explicit options.
+func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, touchedFiles []string, opts RatchetOptions) *RatchetResult {
 	touchedMap := make(map[string]struct{}, len(touchedFiles))
 	for _, f := range touchedFiles {
 		touchedMap[NormalizePath(f)] = struct{}{}
@@ -213,14 +231,19 @@ func EvaluateRatchet(b *Baseline, currentViolations []Infraction, touchedFiles [
 	var newViolations []Infraction
 	var touchedCleanViolations []Infraction
 
+	// Under DebtDelta a touched file is judged on whether it got worse; otherwise any touch
+	// revokes the file's exemptions, which is the default boy-scout rule.
+	revokes := touchedRuleRevokes(b.Infractions, currentViolations, touchedMap, opts)
+
 	for _, curr := range currentViolations {
-		_, isTouched := touchedMap[NormalizePath(curr.FilePath)]
+		file := NormalizePath(curr.FilePath)
+		_, isTouched := touchedMap[file]
 		_, isBaselined := baselinedFingerprints[NormalizePath(curr.Fingerprint)]
 
-		if isTouched {
-			// Touched-File Clean Rule: Any touched file revokes prior baseline exemptions!
+		if isTouched && revokes(file) {
+			// Touched-File Clean Rule: the file's baseline exemptions are revoked.
 			touchedCleanViolations = append(touchedCleanViolations, curr)
-		} else if !isBaselined {
+		} else if !isTouched && !isBaselined {
 			// Brand new violation in an untouched file
 			newViolations = append(newViolations, curr)
 		}
@@ -235,4 +258,57 @@ func EvaluateRatchet(b *Baseline, currentViolations []Infraction, touchedFiles [
 		TouchedCleanViolations: touchedCleanViolations,
 		Passed:                 passed,
 	}
+}
+
+// worsenedFiles reports which touched files carry more infractions of some rule than the
+// baseline recorded for them.
+//
+// It compares per-file, per-rule counts rather than fingerprints, on purpose. A fingerprint is
+// path:line:rule, so adding or removing a line above a baselined infraction changes its
+// fingerprint without changing the debt. Comparing fingerprints would read any line shift as new
+// debt and reproduce the defect this function exists to fix. A count for one rule in one file
+// is independent of where in the file the infraction sits.
+//
+// A file is worse when any single rule's count rose. Trading one rule's infraction for another's
+// is still a new infraction of the second rule, and a lower total must not hide it.
+func worsenedFiles(recorded, current []Infraction, touched map[string]struct{}) map[string]bool {
+	before := countByFileRule(recorded, touched)
+	after := countByFileRule(current, touched)
+	worsened := make(map[string]bool, len(after))
+	for key, count := range after {
+		if count > before[key] {
+			worsened[key.file] = true
+		}
+	}
+	return worsened
+}
+
+// fileRule identifies one rule within one file.
+type fileRule struct {
+	file string
+	rule string
+}
+
+// countByFileRule counts infractions per file and rule, restricted to the touched files.
+func countByFileRule(infractions []Infraction, touched map[string]struct{}) map[fileRule]int {
+	counts := make(map[fileRule]int)
+	for i := 0; i < len(infractions); i++ {
+		file := NormalizePath(infractions[i].FilePath)
+		if _, ok := touched[file]; !ok {
+			continue
+		}
+		counts[fileRule{file: file, rule: infractions[i].RuleID}]++
+	}
+	return counts
+}
+
+// touchedRuleRevokes decides, per touched file, whether the touched-file clean rule revokes its
+// baseline exemptions. By default any touch revokes them. Under DebtDelta only a file whose debt
+// grew does. Deciding it here keeps the ratchet's own loop within the complexity bound.
+func touchedRuleRevokes(recorded, current []Infraction, touched map[string]struct{}, opts RatchetOptions) func(string) bool {
+	if !opts.DebtDelta {
+		return func(string) bool { return true }
+	}
+	worsened := worsenedFiles(recorded, current, touched)
+	return func(file string) bool { return worsened[file] }
 }
