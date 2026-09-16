@@ -174,35 +174,48 @@ func TestStateIntegrityInitRejectsInvalidWorkingDirectory(t *testing.T) {
 	}
 }
 
-func TestStateIntegrityRootSymlinksFailBeforeInitialization(t *testing.T) {
-	for _, kind := range []string{"root", "ancestor"} {
-		t.Run(kind, func(t *testing.T) {
-			outside := t.TempDir()
-			link := filepath.Join(t.TempDir(), "linked-project")
-			if err := os.Symlink(outside, link); err != nil {
-				t.Fatal(err)
-			}
-			root, destination := link, outside
-			if kind == "ancestor" {
-				root, destination = filepath.Join(link, "project"), filepath.Join(outside, "project")
-				if err := os.Mkdir(destination, 0700); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if err := InitWorkingDir(root); err == nil {
-				t.Fatal("initialization accepted a root symlink")
-			}
-			if _, err := AddBug(root, BugEntry{Title: "must not initialize"}); err == nil {
-				t.Fatal("bug mutation accepted a root symlink")
-			}
-			if _, err := SyncState(context.Background(), root, "must not initialize"); err == nil {
-				t.Fatal("sync accepted a root symlink")
-			}
-			entries, err := os.ReadDir(destination)
-			if err != nil || len(entries) != 0 {
-				t.Fatalf("rejected root wrote to symlink destination: %v, %v", entries, err)
-			}
-		})
+func TestStateIntegrityRootSymlinkFailsBeforeInitialization(t *testing.T) {
+	outside := t.TempDir()
+	link := filepath.Join(t.TempDir(), "linked-project")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	// The project root itself must be a real directory. Accepting a symlink here would let the
+	// ledger be written somewhere other than the repository the operator named.
+	if err := InitWorkingDir(link); err == nil {
+		t.Fatal("initialization accepted a root symlink")
+	}
+	if _, err := AddBug(link, BugEntry{Title: "must not initialize"}); err == nil {
+		t.Fatal("bug mutation accepted a root symlink")
+	}
+	if _, err := SyncState(context.Background(), link, "must not initialize"); err == nil {
+		t.Fatal("sync accepted a root symlink")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("rejected root wrote to symlink destination: %v, %v", entries, err)
+	}
+}
+
+// A real project reached through a symlinked ancestor initializes. This assertion is the inverse
+// of what it used to be: macOS ships /var and /tmp as symlinks, so refusing a symlinked ancestor
+// refused every project under the platform's own temporary directory (#109). The root itself is
+// still required to be a real directory, which is the check that actually protects the ledger.
+func TestStateIntegrityAcceptsAProjectBehindASymlinkedAncestor(t *testing.T) {
+	outside := t.TempDir()
+	link := filepath.Join(t.TempDir(), "linked-parent")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(outside, "project")
+	if err := os.Mkdir(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := InitWorkingDir(filepath.Join(link, "project")); err != nil {
+		t.Fatalf("a real project behind a symlinked ancestor must initialize: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, WorkingDirName)); err != nil {
+		t.Fatalf("the ledger must land in the real project directory: %v", err)
 	}
 }
 

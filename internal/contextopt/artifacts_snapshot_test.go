@@ -141,21 +141,34 @@ func TestRootSnapshotRejectsLeafSymlinks(t *testing.T) {
 	}
 }
 
-func TestOpenDirectoryRejectsLeafAndAncestorSymlinks(t *testing.T) {
+func TestOpenDirectoryRejectsALeafSymlinkButAcceptsASymlinkedAncestor(t *testing.T) {
 	dir := contextFixture(t, map[string][]byte{"child/file": []byte("content")})
 	link := filepath.Join(filepath.Dir(dir), "linked")
 	if err := os.Symlink(dir, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	for _, path := range []string{link, filepath.Join(link, "child")} {
-		root, err := OpenDirectory(context.Background(), path)
-		if root != nil {
-			if closeErr := root.Close(); closeErr != nil {
-				t.Error(closeErr)
-			}
+
+	// The named root stays strict. Handing in a symlink is the caller naming one directory and
+	// being given another, which is the substitution this package exists to prevent.
+	root, err := OpenDirectory(context.Background(), link)
+	if root != nil {
+		if closeErr := root.Close(); closeErr != nil {
+			t.Error(closeErr)
 		}
-		if err == nil || root != nil {
-			t.Fatalf("symlink directory accepted: %v", err)
-		}
+	}
+	if err == nil || root != nil {
+		t.Fatalf("a symlink handed in as the root must be refused: %v", err)
+	}
+
+	// Reaching a real directory *through* a symlinked ancestor is accepted, and this assertion
+	// is the inverse of what it used to be. macOS ships /var and /tmp as symlinks, so the old
+	// rule rejected every path under the platform's own temporary directory and left 30 of 56
+	// packages unrunnable there (#109). An attacker holding /var does not need a symlink.
+	viaAncestor, err := OpenDirectory(context.Background(), filepath.Join(link, "child"))
+	if err != nil {
+		t.Fatalf("a real directory behind a symlinked ancestor must open: %v", err)
+	}
+	if err := viaAncestor.Close(); err != nil {
+		t.Error(err)
 	}
 }

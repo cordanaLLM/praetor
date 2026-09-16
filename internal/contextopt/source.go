@@ -59,33 +59,112 @@ func validatePath(path string) error {
 	return nil
 }
 
-// openDirectory pins every ancestor separately. Lstat/identity checks reject
-// symlinks while os.Root confines a concurrently replaced child to its parent.
+// openDirectory pins a directory the caller names as its own confinement root.
+//
+// The named directory is the boundary. Its ancestry is the operator's filesystem, not praetor's
+// threat surface, and treating it as hostile had a concrete cost: macOS ships /var and /tmp as
+// symlinks, so rejecting a symlinked ancestor rejected every path under the platform's own
+// temporary directory and left 30 of 56 packages unable to run there at all (#109). An attacker
+// who controls /var does not need a symlink to defeat this.
+//
+// Strictness moves to where the untrusted content actually is. Everything *below* a root is
+// walked component by component with no symlink tolerated -- see OpenDirectoryIn -- and the
+// os.Root returned here confines every subsequent open to this subtree.
 func openDirectory(ctx context.Context, absolute string) (*os.Root, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := validatePath(absolute); err != nil {
 		return nil, err
 	}
-	volume := filepath.VolumeName(absolute) + string(filepath.Separator)
-	root, err := os.OpenRoot(volume)
+	// Resolve the ancestry only. The named directory itself stays strict: a symlink handed in
+	// as the root is still refused, because that is the caller naming one thing and getting
+	// another. What is relaxed is the path *to* it, which the operator's platform chooses.
+	parent, leaf := filepath.Dir(absolute), filepath.Base(absolute)
+	if parent == absolute {
+		// The filesystem root has no ancestry to resolve and no leaf to check.
+		return os.OpenRoot(absolute)
+	}
+	resolvedParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
 		return nil, err
 	}
-	parts := strings.Split(strings.TrimPrefix(absolute, volume), string(filepath.Separator))
-	for i := 0; i < len(parts); i++ {
-		if parts[i] == "" {
+	if err := validatePath(resolvedParent); err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(filepath.Join(resolvedParent, leaf))
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("confinement root must be a directory, never a symlink: %s", absolute)
+	}
+	return os.OpenRoot(filepath.Join(resolvedParent, leaf))
+}
+
+// OpenDirectoryIn pins root/rel, with root as the confinement boundary.
+//
+// The root's ancestry is resolved once; every component of rel is then walked strictly, so a
+// symlink introduced inside the tree under audit is rejected rather than followed. That is the
+// direction that matters. Repository content is attacker-influenceable; the operator's own
+// filesystem above the root is not, and conflating the two is what #109 was.
+//
+// Prefer this over OpenDirectory wherever the caller already holds a root and a path beneath it.
+func OpenDirectoryIn(ctx context.Context, root, rel string) (*os.Root, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	parts, err := relativeComponents(rel)
+	if err != nil {
+		return nil, err
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	current, err := openDirectory(ctx, absRoot)
+	if err != nil {
+		return nil, err
+	}
+	return walkComponents(ctx, current, parts)
+}
+
+// relativeComponents splits a root-relative path into the components to walk.
+//
+// An over-deep path is refused rather than truncated: walking a prefix would return a root for
+// a directory the caller never named. HISS-02 bounds the loop; it does not license a different
+// answer than the one asked for.
+func relativeComponents(rel string) ([]string, error) {
+	if !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("path %q must stay inside the confinement root", rel)
+	}
+	parts := strings.Split(filepath.Clean(rel), string(filepath.Separator))
+	if len(parts) > MaxPathDepth {
+		return nil, fmt.Errorf("path exceeds %d components: %q", MaxPathDepth, rel)
+	}
+	return parts, nil
+}
+
+// walkComponents descends each component strictly, closing whichever root it does not return.
+func walkComponents(ctx context.Context, current *os.Root, parts []string) (_ *os.Root, err error) {
+	for i := 0; i < len(parts) && i < MaxPathDepth; i++ {
+		if parts[i] == "" || parts[i] == "." {
 			continue
 		}
-		next, openErr := childDirectory(ctx, root, parts[i])
-		err = errors.Join(openErr, root.Close())
+		next, openErr := childDirectory(ctx, current, parts[i])
+		err = errors.Join(openErr, current.Close())
 		if err != nil {
 			if next != nil {
 				err = errors.Join(err, next.Close())
 			}
 			return nil, err
 		}
-		root = next
+		current = next
 	}
-	return root, nil
+	return current, nil
 }
 
 func childDirectory(ctx context.Context, parent *os.Root, name string) (*os.Root, error) {

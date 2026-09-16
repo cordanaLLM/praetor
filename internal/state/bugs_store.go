@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -68,7 +67,7 @@ func updateBugLedger(rootPath string, change func(*bugDocument) (string, error))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	root, err := contextopt.OpenDirectory(ctx, filepath.Join(rootPath, WorkingDirName))
+	root, err := contextopt.OpenDirectoryIn(ctx, rootPath, WorkingDirName)
 	if err != nil {
 		return err
 	}
