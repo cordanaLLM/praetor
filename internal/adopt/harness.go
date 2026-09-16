@@ -29,8 +29,8 @@ Run verification before concluding any turn:
 
 ` + "```bash\n{{ .VerifyCmd }}\n```\n\n```mermaid\n" + `flowchart LR
     AGENT["Autonomous Agent"] --> CHECK["{{ .VerifyCmd }}"]
-    CHECK --> AUDIT["standardsctl audit"]
-    CHECK --> COMPILER["standardsctl compile-context --verify"]
+    CHECK --> AUDIT["praetorctl audit"]
+    CHECK --> COMPILER["praetorctl compile-context --verify"]
     CHECK --> GATE{"All checks Pass?"}
     GATE -- Yes --> RECEIPT["Ed25519 Exit-0 Receipt"]
     GATE -- No --> DISTILL["SARIF Diagnostic Distillation (<= 1500 tokens)"]
@@ -42,10 +42,10 @@ const agentHarnessFooterTemplate = harnessFooterHeading + `
 {{ .TestCmd }}
 
 # Recompile and verify cross-agent context outputs
-standardsctl compile-context --verify
+praetorctl compile-context --verify
 
 # Audit repository against declared HISS-16 standards
-standardsctl audit
+praetorctl audit
 
 # Run all formatting, linting, and security gates
 {{ .VerifyCmd }}
@@ -85,7 +85,7 @@ func buildAgentHarnessDirectives() string {
 | **HISS-09** | Reference Safety | Rule 9 | Mandatory ` + "`// SAFETY:`" + ` proofs for all pointer arithmetic and ` + "`unsafe`" + ` blocks. | AST check blocker |
 | **HISS-10** | Warning Hygiene | Rule 10 | Zero-warning tolerance across compiler, linter, and format sweeps. | Exit code 1 |
 | **HISS-15** | 3D Testing | Rule 5 | Positive, negative, and boundary tests mandatory for all public interfaces. | CI coverage gate |
-| **HISS-16** | Context Integrity | Fleet | Single canonical ` + "`AGENTS.md`" + `; vendor files compiled via ` + "`standardsctl compile-context`" + `. | Pre-commit blocker |
+| **HISS-16** | Context Integrity | Fleet | Single canonical ` + "`AGENTS.md`" + `; vendor files compiled via ` + "`praetorctl compile-context`" + `. | Pre-commit blocker |
 
 ## Operational Rules
 
@@ -98,7 +98,7 @@ func buildAgentHarnessDirectives() string {
 3. **Context Transpiler First**:
    Never edit ` + "`CLAUDE.md`" + `, ` + "`.cursor/rules/*.mdc`" + `, ` + "`.windsurfrules`" + `, or ` + "`.github/copilot-instructions.md`" + ` manually. Make all agent instruction updates in ` + "`AGENTS.md`" + ` and execute:
 
-   ` + "```bash\n   standardsctl compile-context\n   ```\n\n" + `4. **SARIF Diagnostic Distillation**:
+   ` + "```bash\n   praetorctl compile-context\n   ```\n\n" + `4. **SARIF Diagnostic Distillation**:
    When reporting compiler or linter errors, distill output to $\le 1,500$ tokens ($< 60$ lines). Print the top 3 root-cause failures with file/line pointers and write full SARIF logs to ephemeral storage.
 
 5. **No Evasion Tolerated**:

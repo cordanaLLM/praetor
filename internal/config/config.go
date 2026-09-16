@@ -140,6 +140,20 @@ type Manifest struct {
 	// cannot tell a real key from a typo.
 	Receipt *ReceiptAnchor         `yaml:"receipt,omitempty"`
 	Needs   map[string]interface{} `yaml:"needs,omitempty"`
+	// Adoption records which generated surfaces this repository accepts. It belongs in the
+	// manifest rather than in a command flag so the decision survives the next adoption run
+	// instead of depending on whoever typed the command.
+	Adoption *AdoptionPolicy `yaml:"adoption,omitempty"`
+}
+
+// AdoptionPolicy declares generated artefacts this repository refuses.
+//
+// A repository can have a real reason to refuse one. README.md is the common case: a project
+// that pins a published artefact to a digest over its source set has README.md inside that
+// set, so injecting a badge invalidates the artefact's provenance and fails the project's own
+// gate, for a badge (#145).
+type AdoptionPolicy struct {
+	Decline []string `yaml:"decline,omitempty"`
 }
 
 // ResolvedPolicy is the composite unbypassable policy produced by lattice join (supremum).

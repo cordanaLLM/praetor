@@ -97,7 +97,7 @@ func (t *Transpiler) VerifyContext(ctx context.Context, agentsMdPath, targetDir 
 			return fmt.Errorf("target %s missing or unreadable: %w", f.RelativePath, err)
 		}
 		if !bytes.Equal(bytes.TrimSpace(existing), bytes.TrimSpace([]byte(f.Content))) {
-			return fmt.Errorf("target %s is out of sync with %s; run 'standardsctl compile-context' to reconcile", f.RelativePath, agentsMdPath)
+			return fmt.Errorf("target %s is out of sync with %s; run 'praetorctl compile-context' to reconcile", f.RelativePath, agentsMdPath)
 		}
 	}
 	return nil

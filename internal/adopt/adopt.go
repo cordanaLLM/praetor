@@ -109,6 +109,9 @@ type adoptSession struct {
 	report       *AdoptReport
 	policy       *config.EffectivePolicy
 	verification *VerificationPlan
+	// declined carries adoption.decline from the repository's existing manifest, read before
+	// the chain runs so a repository's recorded decision applies to the run that follows it.
+	declined []string
 }
 
 // adoptStep is one reconciliation step of the adoption chain.
@@ -151,6 +154,7 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 		opts:         opts,
 		report:       report,
 		verification: verification,
+		declined:     declaredDeclines(ctx, normPath),
 	}
 	report.addWarning("%s", verification.notice())
 
@@ -254,37 +258,57 @@ func resolveFacets(input []string) []string {
 	return []string{"security:high", "api:public-contract", "docs:seo-portal", "agent:sandboxed"}
 }
 
+// adoptSteps is the reconciliation chain, in order. It is a function so the step names
+// have exactly one definition: a second list would drift from the one that runs.
+func adoptSteps() []namedStep {
+	return []namedStep{
+		{"manifest", reconcileManifest},
+		{"lockfile", reconcileLockfile},
+		{"policy-catalog", reconcilePolicyCatalog},
+		{"baseline", reconcileBaseline},
+		{"agent-harness", reconcileAgentHarness},
+		{"dev-container", reconcileDevContainer},
+		{"editors", reconcileEditors},
+		{"makefile", reconcileMakefile},
+		{"git-ignore", reconcileGitIgnore},
+		{"formatter-ignore", reconcileFormatterIgnore},
+		{"contributing", reconcileContributing},
+		{"pull-request-template", reconcilePullRequestTemplate},
+		{"security-policy", reconcileSecurityPolicy},
+		{"adr", reconcileADR},
+		{"readme", reconcileReadme},
+		{"branch-ruleset", reconcileBranchRuleset},
+		{"labels", reconcileLabels},
+		{"paperclip", reconcilePaperclip},
+		{"agent-definitions", reconcileAgentDefinitions},
+		{"working-dir-and-flavor", reconcileWorkingDirAndFlavor},
+		{"git-hooks", reconcileGitHooks},
+	}
+}
+
 // executeAdoptSteps runs the reconciliation chain in order, stopping at the first
 // failure and observing context cancellation between steps.
 func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
-	steps := []adoptStep{
-		reconcileManifest,
-		reconcileLockfile,
-		reconcilePolicyCatalog,
-		reconcileBaseline,
-		reconcileAgentHarness,
-		reconcileDevContainer,
-		reconcileEditors,
-		reconcileMakefile,
-		reconcileGitIgnore,
-		reconcileFormatterIgnore,
-		reconcileContributing,
-		reconcilePullRequestTemplate,
-		reconcileSecurityPolicy,
-		reconcileADR,
-		reconcileReadme,
-		reconcileBranchRuleset,
-		reconcileLabels,
-		reconcilePaperclip,
-		reconcileAgentDefinitions,
-		reconcileWorkingDirAndFlavor,
-		reconcileGitHooks,
+	steps := adoptSteps()
+	known := make([]string, 0, len(steps))
+	for i := 0; i < len(steps) && i < maxAdoptSteps; i++ {
+		known = append(known, steps[i].name)
+	}
+	declined, err := declinedArtifacts(s.declined, known)
+	if err != nil {
+		return err
 	}
 	for i := 0; i < len(steps) && i < maxAdoptSteps; i++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("adopt cancelled: %w", err)
 		}
-		if err := steps[i](ctx, s); err != nil {
+		// A decline is recorded, not silent: the report says the artefact was refused by the
+		// manifest, so a reader can tell a declined surface from one adoption forgot.
+		if declined[steps[i].name] {
+			s.report.recordSkipped(steps[i].name, "Declined by adoption.decline in "+manifestFile)
+			continue
+		}
+		if err := steps[i].run(ctx, s); err != nil {
 			return err
 		}
 	}

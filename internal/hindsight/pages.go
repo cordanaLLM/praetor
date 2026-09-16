@@ -43,7 +43,7 @@ func buildConventionsPage() string {
 	lines = append(lines, "- **HISS-07**: Zero `.unwrap()` / `.expect()`; wrap all errors with context.")
 	lines = append(lines, "- **HISS-10**: Zero-warning tolerance across compilers, linters, and formatters.")
 	lines = append(lines, "- **HISS-15**: 3D testing mandatory for all public interfaces (Positive, Negative, Boundary).")
-	lines = append(lines, "- **HISS-16**: Single canonical `AGENTS.md`; compile via `standardsctl compile-context`.")
+	lines = append(lines, "- **HISS-16**: Single canonical `AGENTS.md`; compile via `praetorctl compile-context`.")
 	return strings.Join(lines, "\n")
 }
 
