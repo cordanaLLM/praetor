@@ -32,8 +32,15 @@ const (
 	// GosecConfigFile is the gosec configuration the security stage must use. It carries
 	// an empty exclusion list: every finding is fixed or annotated per line.
 	GosecConfigFile = ".gosec.json"
-	// TestStageTimeout bounds the race-detector test stage.
+	// TestStageTimeout is the default bound on the race-detector test stage. The effective
+	// value comes from testStageTimeout, which lets an operator raise it within a ceiling.
 	TestStageTimeout = 180 * time.Second
+	// MaxTestStageTimeout caps what the environment may ask for. HISS-02 requires an upper
+	// bound on the stage, not that the bound be unreachable, so the override is clamped
+	// rather than trusted.
+	MaxTestStageTimeout = 30 * time.Minute
+	// TestStageTimeoutEnv names the variable that overrides TestStageTimeout.
+	TestStageTimeoutEnv = "PRAETOR_TEST_STAGE_TIMEOUT"
 	// CleanupTimeout bounds worktree removal after the test stage.
 	CleanupTimeout = 30 * time.Second
 	// GitQueryTimeout bounds the short git queries used to describe the scanned tree.
@@ -353,7 +360,8 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 		return "no go.mod: Go race-detector tests skipped", nil
 	}
 
-	tCtx, cancel := context.WithTimeout(ctx, TestStageTimeout)
+	bound, boundNote := testStageTimeout(os.Getenv(TestStageTimeoutEnv))
+	tCtx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
 
 	wtMgr := worktree.NewManager(cfg.repoDir)
@@ -372,9 +380,45 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 	}()
 
 	if out, testErr := cfg.run(tCtx, wt.Path, "go", "test", "-race", "./..."); testErr != nil {
+		// A stage killed by its own deadline is not a failing suite, and printing it as one
+		// sends every reader to diagnose a change that was never the cause. The context is
+		// the authoritative witness: the child dies of a signal and reports nothing useful.
+		if deadlineErr := tCtx.Err(); errors.Is(deadlineErr, context.DeadlineExceeded) {
+			return "", fmt.Errorf(
+				"race-detector tests hit the %s stage bound in %s before finishing; "+
+					"this is the bound firing, not a test failure. Raise it with %s "+
+					"(maximum %s). Output up to the cut: %s",
+				bound, wt.Path, TestStageTimeoutEnv, MaxTestStageTimeout, out)
+		}
 		return "", fmt.Errorf("tests failed in %s: %s (%w)", wt.Path, out, testErr)
 	}
-	return "", nil
+	return boundNote, nil
+}
+
+// testStageTimeout resolves the race stage's bound from the environment.
+//
+// An unusable value is ignored rather than honoured: an empty, unparseable, zero, negative or
+// over-ceiling setting falls back to the default and says why, so a typo cannot quietly remove
+// the bound or shrink it to nothing. The returned note is surfaced as the stage's reason, so a
+// raised bound is visible in the receipt rather than being an invisible local difference.
+func testStageTimeout(raw string) (time.Duration, string) {
+	if strings.TrimSpace(raw) == "" {
+		return TestStageTimeout, ""
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return TestStageTimeout, fmt.Sprintf("%s=%q is not a duration; using the %s default",
+			TestStageTimeoutEnv, raw, TestStageTimeout)
+	}
+	if parsed <= 0 {
+		return TestStageTimeout, fmt.Sprintf("%s=%s is not positive; using the %s default",
+			TestStageTimeoutEnv, parsed, TestStageTimeout)
+	}
+	if parsed > MaxTestStageTimeout {
+		return MaxTestStageTimeout, fmt.Sprintf("%s=%s exceeds the %s ceiling; clamped",
+			TestStageTimeoutEnv, parsed, MaxTestStageTimeout)
+	}
+	return parsed, fmt.Sprintf("race stage bound raised to %s by %s", parsed, TestStageTimeoutEnv)
 }
 
 // removeWorktree tears down the isolated test worktree. It keeps the caller's context
