@@ -9,6 +9,8 @@ import (
 )
 
 func TestReadHostMemory_Positive_WindowsReportsPhysicalMemory(t *testing.T) {
+	// SAFETY: unsafe.Sizeof is evaluated at compile time and dereferences nothing; it pins the
+	// Go mirror of MEMORYSTATUSEX to the 64-byte layout kernel32 writes into.
 	if size := unsafe.Sizeof(memoryStatusEx{}); size != 64 {
 		t.Fatalf("memoryStatusEx is %d bytes; MEMORYSTATUSEX is 64", size)
 	}

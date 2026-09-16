@@ -29,6 +29,8 @@ type memoryStatusEx struct {
 // succeeds.
 var globalMemoryStatusFunc = func() (memoryStatusEx, error) {
 	status := memoryStatusEx{}
+	// SAFETY: unsafe.Sizeof is evaluated at compile time and dereferences nothing. It is the
+	// structure's layout size, which the API requires in dwLength before it writes the rest.
 	status.length = uint32(unsafe.Sizeof(status))
 	// The conversion stays inside the call expression: hoisting uintptr(unsafe.Pointer(x)) into a
 	// local would stop it keeping status reachable (see statfs_windows.go and #106).
