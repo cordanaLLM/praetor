@@ -137,6 +137,28 @@ comment: legs that build *and* test, legs that build only because no runner has 
 and legs that are advisory because their toolchain is not pinned. A backend with no leg of any
 kind is an uncovered backend.
 
+## The matrix caches per platform, and the cache step is itself platform-neutral
+
+The matrix restores its Go caches through `.github/actions/go-cache` like every other job, and
+two details of that action exist because this gate runs on three runners.
+
+The cache keys carry `runner.os` and `runner.arch`, so the Windows leg cannot restore objects a
+Linux leg compiled. Without that the legs would silently share one entry and a green Windows leg
+would prove nothing about Windows.
+
+The action resolves its paths by asking the toolchain rather than naming them:
+
+```yaml
+echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+```
+
+A hardcoded `~/.cache/go-build` is correct on Linux, wrong on Windows, and -- because it is a
+path that merely fails to exist rather than an error -- would produce a cache step that reports
+success while caching nothing. That is the shape HISS-21 exists to catch: a gate that cannot do
+its job on a platform but does not say so. `go env` answers per host, so the step is decided by
+the toolchain rather than by the author's machine.
+
 ## Relationship to the other invariants
 
 HISS-21 constrains where a gate runs; [HISS-20](https://github.com/cordanaLLM/praetor/issues/88)

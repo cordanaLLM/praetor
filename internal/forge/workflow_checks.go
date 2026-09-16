@@ -33,6 +33,31 @@ func RequiredStatusContexts(ctx context.Context, repoPath string) (_ []string, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	files, err := readWorkflowFiles(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
+	var contexts []string
+	for i := 0; i < len(files) && i < maxWorkflowFiles; i++ {
+		jobs, err := workflowPullRequestContexts(files[i].Data)
+		if err != nil {
+			return nil, fmt.Errorf("workflow %s: %w", files[i].Name, err)
+		}
+		contexts = append(contexts, jobs...)
+	}
+	return contexts, nil
+}
+
+// workflowFile is one workflow document, read once and reused by every workflow audit
+// so the bounded, symlink-rejecting read has a single implementation.
+type workflowFile struct {
+	Name string
+	Data []byte
+}
+
+// readWorkflowFiles reads every workflow document under .github/workflows in name order.
+// A repository without the directory yields no files rather than an error.
+func readWorkflowFiles(ctx context.Context, repoPath string) (_ []workflowFile, err error) {
 	repository, err := contextopt.OpenDirectory(ctx, repoPath)
 	if err != nil {
 		return nil, err
@@ -52,19 +77,15 @@ func RequiredStatusContexts(ctx context.Context, repoPath string) (_ []string, e
 	if err != nil {
 		return nil, err
 	}
-	var contexts []string
+	files := make([]workflowFile, 0, len(names))
 	for i := 0; i < len(names) && i < maxWorkflowFiles; i++ {
 		data, err := contextopt.ReadRootSnapshot(ctx, root, names[i])
 		if err != nil {
 			return nil, fmt.Errorf("workflow %s: %w", names[i], err)
 		}
-		jobs, err := workflowPullRequestContexts(data)
-		if err != nil {
-			return nil, fmt.Errorf("workflow %s: %w", names[i], err)
-		}
-		contexts = append(contexts, jobs...)
+		files = append(files, workflowFile{Name: names[i], Data: data})
 	}
-	return contexts, nil
+	return files, nil
 }
 
 func workflowNames(root *os.Root) (_ []string, err error) {
@@ -102,6 +123,15 @@ type workflowJob struct {
 	If              string           `yaml:"if"`
 	ContinueOnError string           `yaml:"continue-on-error"`
 	Strategy        workflowStrategy `yaml:"strategy"`
+	Steps           []workflowStep   `yaml:"steps"`
+}
+
+// workflowStep is the step subset the Go cache audit decides on. `with:` values are not all
+// strings -- `cache: false` is a bool, `fetch-depth: 0` an int -- so the map is untyped.
+type workflowStep struct {
+	Name string         `yaml:"name"`
+	Uses string         `yaml:"uses"`
+	With map[string]any `yaml:"with"`
 }
 
 // workflowStrategy carries the matrix legs a job expands into. A matrix job reports one

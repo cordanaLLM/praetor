@@ -1,0 +1,51 @@
+name: Go module and build cache
+description: >
+  Restores the Go module cache and a per-job Go build cache. The module cache is shared
+  because every job resolves the same go.sum; the build cache is not, because jobs compile
+  with different flags and a job that never builds with -race must not be able to publish
+  a cache that a job which does will then restore.
+
+inputs:
+  job:
+    description: >
+      Cache discriminator, unique across every job in the repository. Two jobs sharing one
+      discriminator share one build cache, which is the defect this action exists to prevent.
+    required: true
+  go-version:
+    description: Go toolchain version, included in both keys so a toolchain bump cannot reuse objects.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve Go cache directories
+      id: directories
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+        echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+
+    # Keyed on go.sum alone: the module set is a pure function of it, so every job wants the
+    # same entry and sharing is correct. The restore-key lets a changed go.sum start from the
+    # previous module set instead of an empty one.
+    - name: Restore Go module cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.directories.outputs.modules }}
+        key: praetor-gomod-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          praetor-gomod-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-
+
+    # The commit SHA is in the key on purpose. Without it the key is stable, the restore is an
+    # exact hit, and actions/cache then skips the save -- so the entry freezes at whatever the
+    # first job to miss happened to build, and no later run can ever improve it. With it every
+    # run misses, restores the newest prefix match, and saves the cache it actually produced.
+    - name: Restore Go build cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.directories.outputs.build }}
+        key: praetor-gobuild-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+        restore-keys: |
+          praetor-gobuild-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-${{ hashFiles('**/go.sum') }}-
+          praetor-gobuild-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-

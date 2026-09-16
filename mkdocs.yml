@@ -98,6 +98,7 @@ nav:
       - Archetype Authoring: guides/archetype-authoring.md
       - Adoption Verification: guides/adoption-verification.md
       - Canary Evidence: guides/canary-evidence.md
+      - CI Caching: guides/ci-caching.md
       - Client Bootstrap: guides/client-bootstrap.md
       - Client Connections: guides/client-connections.md
       - DevContainer Bootstrap: guides/devcontainer-bootstrap.md

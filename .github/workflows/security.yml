@@ -35,7 +35,13 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.27'
-          cache: true
+          cache: false
+
+      - name: Restore Go Module And Build Caches
+        uses: ./.github/actions/go-cache
+        with:
+          job: security-scan
+          go-version: '1.27'
 
       - name: Install Toolchains
         run: |
