@@ -36,3 +36,7 @@ func lockState(root *os.Root, create bool) (*os.File, bool, error) {
 	}
 	return file, false, nil
 }
+
+// ExecutionSupported reports whether repair execution can run on this platform. It needs
+// Linux file isolation and locking, which this build provides.
+func ExecutionSupported() error { return nil }

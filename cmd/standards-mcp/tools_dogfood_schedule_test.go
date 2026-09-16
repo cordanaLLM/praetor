@@ -32,6 +32,9 @@ func writeScheduleMCPFixture(t *testing.T, root string, changes map[string]any) 
 }
 
 func TestScheduleStatusMCPReadsWithoutRunningOrCreatingState(t *testing.T) {
+	if err := dogfood.SchedulingSupported(); err != nil {
+		t.Skipf("dogfood scheduling unavailable on this platform: %v", err)
+	}
 	srv, root := newFixtureServer(t)
 	writeScheduleMCPFixture(t, root, nil)
 	result := callTool(t, srv, "standards_dogfood_schedule_status", map[string]any{"config_path": "schedule.json"})

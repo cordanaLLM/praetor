@@ -34,6 +34,9 @@ func repairExecutionCLIFixture(t *testing.T) (string, string, string) {
 }
 
 func TestDogfoodRepairExecutionCLIStatusNoSideEffects(t *testing.T) {
+	if err := repairrun.ExecutionSupported(); err != nil {
+		t.Skipf("repair execution unavailable on this platform: %v", err)
+	}
 	config, reportPath, state := repairExecutionCLIFixture(t)
 	output, err := captureStdout(t, func() error {
 		return runDogfood([]string{"repairs", "status", "--config", config, "--report", reportPath})
@@ -90,6 +93,9 @@ func TestDogfoodRepairExecutionCLIRejectsCorruptReport(t *testing.T) {
 }
 
 func TestDogfoodRepairExecutionCLIResolvesExplicitRelativePaths(t *testing.T) {
+	if err := repairrun.ExecutionSupported(); err != nil {
+		t.Skipf("repair execution unavailable on this platform: %v", err)
+	}
 	config, reportPath, state := repairExecutionCLIFixture(t)
 	t.Chdir(filepath.Dir(config))
 	output, err := captureStdout(t, func() error {
@@ -114,6 +120,9 @@ func TestDogfoodRepairExecutionCLIResolvesExplicitRelativePaths(t *testing.T) {
 }
 
 func TestDogfoodRepairExecutionCLIRetainsFailedAttemptAndNonzeroError(t *testing.T) {
+	if err := repairrun.ExecutionSupported(); err != nil {
+		t.Skipf("repair execution unavailable on this platform: %v", err)
+	}
 	config, reportPath, _ := repairExecutionCLIFixture(t)
 	output, runErr := captureStdout(t, func() error {
 		return runDogfood([]string{"repairs", "run", "--config", config, "--report", reportPath})

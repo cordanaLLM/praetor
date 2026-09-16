@@ -66,3 +66,7 @@ func hashRunningScheduleFile(ctx context.Context, file *os.File) (string, int, e
 
 	return hex.EncodeToString(hash.Sum(nil)), size, nil
 }
+
+// SchedulingSupported reports whether dogfood scheduling can run on this platform. It
+// identifies its own executable through Linux procfs, which this build provides.
+func SchedulingSupported() error { return nil }

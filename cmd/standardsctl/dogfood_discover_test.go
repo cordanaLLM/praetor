@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,11 +88,16 @@ func TestDogfoodDiscoveryCLIRejectsInvalidArguments(t *testing.T) {
 		name string
 		args []string
 		want string
+		// is names a sentinel for cases whose message comes from the operating system.
+		// The OS text is locale- and platform-specific -- Windows reports a missing path as
+		// "Das System kann die angegebene Datei nicht finden." on a German host -- so
+		// matching "no such file or directory" tested the host's language, not the refusal.
+		is error
 	}{
-		{"unknown flag", append(append([]string{}, valid...), "--unknown"), "flag provided but not defined"},
-		{"positional argument", append(append([]string{}, valid...), "extra"), "dogfood discover accepts flags only"},
-		{"invalid stage", append(append([]string{}, valid...), "--stage", "execute"), "discovery stage must be plan or observe"},
-		{"missing artifact parent", []string{"--path", source, "--policy", policy, "--artifacts", filepath.Join(t.TempDir(), "nested", "run")}, "no such file or directory"},
+		{"unknown flag", append(append([]string{}, valid...), "--unknown"), "flag provided but not defined", nil},
+		{"positional argument", append(append([]string{}, valid...), "extra"), "dogfood discover accepts flags only", nil},
+		{"invalid stage", append(append([]string{}, valid...), "--stage", "execute"), "discovery stage must be plan or observe", nil},
+		{"missing artifact parent", []string{"--path", source, "--policy", policy, "--artifacts", filepath.Join(t.TempDir(), "nested", "run")}, "", fs.ErrNotExist},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := runDogfoodDiscovery(context.Background(), tc.args)
@@ -99,6 +106,9 @@ func TestDogfoodDiscoveryCLIRejectsInvalidArguments(t *testing.T) {
 			}
 			if tc.want != "" && !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error %q does not contain %q", err, tc.want)
+			}
+			if tc.is != nil && !errors.Is(err, tc.is) {
+				t.Fatalf("error %q is not %v", err, tc.is)
 			}
 		})
 	}
