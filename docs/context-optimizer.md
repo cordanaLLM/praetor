@@ -10,7 +10,7 @@ Analyze selected files without writing contents anywhere:
 standardsctl context-optimize --root "$PWD" AGENTS.md CLAUDE.md .codex/rules.md
 ```
 
-Write a candidate to a **new** directory under an existing, symlink-free parent:
+Write a candidate to a **new** directory under an existing parent:
 
 ```sh
 standardsctl context-optimize --root "$PWD" \
@@ -56,7 +56,18 @@ and vendor outputs must be generated with `compile-context`.
 Analysis accepts 1–64 unique, clean relative paths, at most 1 MiB per file and
 8 MiB total, with 4096-byte paths and 128 components. It rejects symlinks,
 non-regular files, non-UTF-8/NUL contents, unstable reads, cancellation, and every
-limit overflow without returning a partial plan. Each operation carries a
+limit overflow without returning a partial plan.
+
+"Rejects symlinks" is bounded by the confinement root, and the boundary matters. The root the
+caller names must itself be a real directory -- handing in a symlink is naming one directory and
+being given another. Every component *below* that root is walked strictly, so a symlink
+introduced inside a repository under audit is refused rather than followed. The path *to* the
+root is resolved instead of rejected: macOS ships `/var` and `/tmp` as symlinks, so refusing a
+symlinked ancestor refused every path under the platform's own temporary directory and left 30
+of 56 packages unable to run there at all (#109). An attacker holding `/var` does not need a
+symlink.
+
+Each operation carries a
 30-second context budget, checked between local filesystem operations. Unix
 source opens are nonblocking to reject FIFO replacement; a stalled kernel or
 filesystem operation cannot be forcibly interrupted by a Go context.

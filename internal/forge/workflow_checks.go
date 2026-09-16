@@ -40,7 +40,7 @@ func RequiredStatusContexts(ctx context.Context, repoPath string) (_ []string, e
 	if err := repository.Close(); err != nil {
 		return nil, err
 	}
-	root, err := contextopt.OpenDirectory(ctx, filepath.Join(repoPath, ".github", "workflows"))
+	root, err := contextopt.OpenDirectoryIn(ctx, repoPath, filepath.Join(".github", "workflows"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}

@@ -98,7 +98,7 @@ func scanSkillDir(ctx context.Context, root skillRoot, registry map[string][]Ski
 }
 
 func inspectSkillManifest(ctx context.Context, path, name string) (found bool, err error) {
-	root, err := contextopt.OpenDirectory(ctx, filepath.Join(path, name))
+	root, err := contextopt.OpenDirectoryIn(ctx, path, name)
 	if err != nil {
 		return false, err
 	}

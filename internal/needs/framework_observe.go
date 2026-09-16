@@ -165,7 +165,7 @@ func addObservedPackage(index *FrameworkIndex, relative string, capabilities []C
 }
 
 func observeFrameworkPackage(ctx context.Context, base, relative string, total *int) (present bool, err error) {
-	root, err := contextopt.OpenDirectory(ctx, filepath.Join(base, filepath.FromSlash(relative)))
+	root, err := contextopt.OpenDirectoryIn(ctx, base, filepath.FromSlash(relative))
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}

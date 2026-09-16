@@ -44,8 +44,19 @@ their source identity; see [development MCP](development-mcp.md).
 ## Persistence and failure handling
 
 Initialization and snapshots reuse the confined directory and file operations in
-`contextopt`. Project and ledger symlinks are rejected before initialization writes.
-Caller-aware reads preserve cancellation and use bounded file snapshots.
+`contextopt`. Caller-aware reads preserve cancellation and use bounded file snapshots.
+
+**The project root must be a real directory, and so must every component of the ledger beneath
+it.** Initialization refuses a project root that is itself a symlink: accepting one would write
+the ledger somewhere other than the repository the operator named. `.workingdir` is opened with
+`contextopt.OpenDirectoryIn`, which walks each component below the root strictly, so a symlink
+planted inside a repository under audit is refused rather than followed.
+
+What is *not* rejected is a symlink in the path leading **to** the project root. That path is the
+operator's filesystem, not repository content: macOS reaches its own temporary directory through
+`/var`, a symlink, so refusing a symlinked ancestor refused every project under it and left much
+of the suite unrunnable on that platform (#109). An attacker holding `/var` does not need a
+symlink to defeat anything here.
 
 On Unix, cooperating writers hold a persistent `.workingdir/.bugs.lock` inode
 through read, validation, ID allocation and replacement. Contention returns a

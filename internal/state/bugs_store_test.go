@@ -15,7 +15,7 @@ func TestBugIntegrityPendingAndLockPreserveSource(t *testing.T) {
 	rootPath := writeBugFixture(t, defaultBugsMD())
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	root, err := contextopt.OpenDirectory(ctx, filepath.Join(rootPath, WorkingDirName))
+	root, err := contextopt.OpenDirectoryIn(ctx, rootPath, WorkingDirName)
 	if err != nil {
 		t.Fatal(err)
 	}
