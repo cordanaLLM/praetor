@@ -23,6 +23,21 @@ func isLegacyVerificationMakefile(data string) bool {
 	return false
 }
 
+// isPriorGeneratedMakefile reports whether data is exactly the Makefile plan rendered before
+// command lines began with exec. Like the historical forms above it is replaced, so repositories
+// adopted earlier receive the corrected recipes; an edited copy is not exact and stays untouched.
+// Where both renderings coincide -- a plan with no runnable commands -- the file is already current.
+func isPriorGeneratedMakefile(data string, plan *VerificationPlan) bool {
+	prior := buildMakefileWith(plan, priorVerificationRecipePrefix)
+	return data == prior && prior != buildMakefile(plan)
+}
+
+// isReplaceableVerificationMakefile reports whether data is earlier Praetor output that adoption
+// replaces with the current rendering.
+func isReplaceableVerificationMakefile(data string, plan *VerificationPlan) bool {
+	return isLegacyVerificationMakefile(data) || isPriorGeneratedMakefile(data, plan)
+}
+
 const legacyVerificationStub = "\n.PHONY: all verify-all audit compile-context build test\n\nverify-all:\n\t@echo \"Running verification...\"\n\ncompile-context:\n\t@standardsctl compile-context\n\naudit:\n\t@standardsctl audit\n\ntest:\n\t@go test -v -race ./...\n\nbuild:\n\t@go build -v ./...\n"
 
 func legacyVerificationMakefile(test, build string) string {
@@ -35,7 +50,7 @@ func legacyVerificationMakefile(test, build string) string {
 
 func preserveCustomVerification(plan *VerificationPlan, data []byte) {
 	text := string(data)
-	if !mayDefineVerificationTarget(text) || isLegacyVerificationMakefile(text) || text == buildMakefile(plan) {
+	if !mayDefineVerificationTarget(text) || isReplaceableVerificationMakefile(text, plan) || text == buildMakefile(plan) {
 		return
 	}
 	plan.Status = verificationPreserved

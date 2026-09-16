@@ -100,3 +100,40 @@ func TestVerificationAdoptionDetectsDotnetWithoutExecutingProject(t *testing.T) 
 		}
 	}
 }
+
+// TestVerificationPriorGeneratedRecipesAreStillPraetorOwned covers the recipe prefix change. A
+// Makefile generated before command lines began with exec is Praetor's own output: adoption must
+// regenerate it in the current form rather than preserve it as a custom verify-all. Edited, it is
+// the operator's, and stays untouched.
+func TestVerificationPriorGeneratedRecipesAreStillPraetorOwned(t *testing.T) {
+	for _, edited := range []bool{false, true} {
+		root := newTestRepo(t, "prior-generated")
+		mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
+		plan, err := resolveVerificationPlan(t.Context(), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		existing := buildMakefileWith(plan, priorVerificationRecipePrefix)
+		if existing == buildMakefile(plan) || !strings.Contains(existing, "\t@'cargo' 'test'") {
+			t.Fatalf("fixture is not the prior rendering: %q", existing)
+		}
+		if edited {
+			existing = "# operator changes\n" + existing
+		}
+		mustWrite(t, filepath.Join(root, "Makefile"), existing)
+		report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := mustRead(t, filepath.Join(root, "Makefile"))
+		if edited {
+			if got != existing || report.Verification.Status != verificationPreserved {
+				t.Fatalf("an edited Makefile was not preserved: %+v %q", report.Verification, got)
+			}
+			continue
+		}
+		if got != buildMakefile(plan) || report.Verification.Status != verificationDeclared {
+			t.Fatalf("a prior generated Makefile was not regenerated: %+v %q", report.Verification, got)
+		}
+	}
+}
