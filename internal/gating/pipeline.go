@@ -381,16 +381,9 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 		return "", fmt.Errorf("cannot create a worktree manager for %s", cfg.repoDir)
 	}
 	taskID := fmt.Sprintf("gate-%d-%d", os.Getpid(), time.Now().UnixNano())
-	wt, createErr := wtMgr.Create(tCtx, taskID, "HEAD")
+	wt, createErr := createStageWorktree(tCtx, wtMgr, taskID, bound, cfg.repoDir)
 	if createErr != nil {
-		// The worktree is created under the stage bound too, so the bound can fire here first.
-		// On Windows it did at 50ms: git worktree add outlasted the bound, the kill surfaced as a
-		// bare "exit status 1", and the stage reported a repository whose worktree could not be
-		// created -- the misattribution #100 describes, one step earlier.
-		if errors.Is(tCtx.Err(), context.DeadlineExceeded) {
-			return "", stageBoundError("creating the isolated test worktree", bound, cfg.repoDir, createErr.Error())
-		}
-		return "", fmt.Errorf("isolated test worktree could not be created in %s: %w", cfg.repoDir, createErr)
+		return "", createErr
 	}
 	defer func() {
 		if cleanErr := removeWorktree(ctx, wtMgr, taskID); cleanErr != nil {
@@ -408,6 +401,23 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 		return "", fmt.Errorf("tests failed in %s: %s (%w)", wt.Path, out, testErr)
 	}
 	return boundNote, nil
+}
+
+// createStageWorktree creates the isolated test worktree under the stage context.
+//
+// The worktree is created under the stage bound too, so the bound can fire here first. On
+// Windows it did at 50ms: git worktree add outlasted the bound, the kill surfaced as a bare
+// "exit status 1", and the stage reported a repository whose worktree could not be created --
+// the misattribution #100 describes, one step earlier.
+func createStageWorktree(tCtx context.Context, wtMgr *worktree.Manager, taskID string, bound time.Duration, repoDir string) (*worktree.Worktree, error) {
+	wt, err := wtMgr.Create(tCtx, taskID, "HEAD")
+	if err == nil {
+		return wt, nil
+	}
+	if errors.Is(tCtx.Err(), context.DeadlineExceeded) {
+		return nil, stageBoundError("creating the isolated test worktree", bound, repoDir, err.Error())
+	}
+	return nil, fmt.Errorf("isolated test worktree could not be created in %s: %w", repoDir, err)
 }
 
 // stageBoundError reports the test stage cut off by its own deadline while doing what, in dir.
