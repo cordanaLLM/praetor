@@ -42,6 +42,16 @@ type Options struct {
 	BinaryDir     string   `json:"binary_dir"`
 	Archetype     string   `json:"archetype"`
 	Editors       []string `json:"editors"`
+	// The fields below carry observed or explicitly declared repository capabilities.
+	// Editor configuration is derived from them rather than assumed: a repository without
+	// Go no longer receives Go settings, inspections or problem matchers, and an LSP path
+	// or extension recommendation needs evidence before it is written (BUG-776..778).
+	Languages         []string                  `json:"languages,omitempty"`
+	Commands          []Command                 `json:"commands,omitempty"`
+	Extensions        []ExtensionRecommendation `json:"extensions,omitempty"`
+	ExtensionRegistry string                    `json:"extension_registry,omitempty"`
+	LSPPath           string                    `json:"lsp_path,omitempty"`
+	PrivateDirs       []string                  `json:"private_dirs,omitempty"`
 	// IncludeMCP is retained for input compatibility; MCP setup belongs to the
 	// client setup pipeline and is never asserted by workspace settings.
 	IncludeMCP bool `json:"include_mcp"`
@@ -123,8 +133,29 @@ func DefaultOptions() Options {
 	}
 }
 
-// Synthesize generates all declared IDE configuration files with hermetic zero-lookup templates.
+// Synthesize generates all declared IDE configuration files from observed repository
+// capabilities. It observes the workspace, so it takes a background context; callers that
+// already hold one should use SynthesizeContext.
 func Synthesize(opts Options) (*EditorConfigSet, error) {
+	return SynthesizeContext(context.Background(), opts)
+}
+
+// SynthesizeContext resolves one capability plan within the caller's bounded context and
+// generates editor configuration from it.
+//
+// Deriving rather than assuming is the point. Configuration used to follow the archetype, so
+// every repository that was not native received Go settings, a Go language server and $go
+// problem matchers whether or not it contained a line of Go (BUG-776, BUG-778).
+func SynthesizeContext(ctx context.Context, opts Options) (_ *EditorConfigSet, err error) {
+	if ctx == nil {
+		return nil, errors.New("editor synthesis requires a context")
+	}
+	ctx, cancel := context.WithTimeout(ctx, defaultIOTimeout)
+	defer cancel()
+	plan, err := resolvePlan(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
 	editors := normalizeEditors(opts.Editors)
 	if len(editors) == 0 {
 		return nil, errors.New("no valid editors declared for synthesis")
@@ -151,7 +182,7 @@ func Synthesize(opts Options) (*EditorConfigSet, error) {
 		editorMap[e] = true
 	}
 
-	files := dispatchEditorFiles(editorMap, opts, binDir, arch)
+	files := dispatchEditorFiles(editorMap, opts, binDir, arch, plan)
 
 	return &EditorConfigSet{
 		Editors: editors,
@@ -159,13 +190,13 @@ func Synthesize(opts Options) (*EditorConfigSet, error) {
 	}, nil
 }
 
-func dispatchEditorFiles(editorMap map[string]bool, opts Options, binDir, arch string) []GeneratedFile {
+func dispatchEditorFiles(editorMap map[string]bool, opts Options, binDir, arch string, plan Plan) []GeneratedFile {
 	var files []GeneratedFile
 	if editorMap[EditorUniversal] {
 		files = append(files, generateUniversalEditorConfig()...)
 	}
 	if editorMap[EditorVSCode] || editorMap[EditorCursor] || editorMap[EditorWindsurf] {
-		files = append(files, generateVSCodeFamily(binDir, opts.IncludeLSP, arch)...)
+		files = append(files, generateVSCodeFamily(binDir, opts.IncludeLSP, arch, plan)...)
 	}
 	for _, generator := range []struct {
 		editor   string
@@ -226,10 +257,10 @@ func normalizeEditors(input []string) []string {
 	return normalized
 }
 
-func generateVSCodeFamily(binDir string, includeLSP bool, arch string) []GeneratedFile {
-	settings := buildVSCodeSettings(binDir, includeLSP, arch)
+func generateVSCodeFamily(binDir string, includeLSP bool, arch string, plan Plan) []GeneratedFile {
+	settings := buildVSCodeSettings(binDir, includeLSP, arch, plan)
 	extensions := buildVSCodeExtensions(arch)
-	tasks := buildVSCodeTasks()
+	tasks := buildVSCodeTasks(plan)
 
 	return []GeneratedFile{
 		{
@@ -250,7 +281,7 @@ func generateVSCodeFamily(binDir string, includeLSP bool, arch string) []Generat
 	}
 }
 
-func buildVSCodeSettings(binDir string, includeLSP bool, arch string) string {
+func buildVSCodeSettings(binDir string, includeLSP bool, arch string, plan Plan) string {
 	data := map[string]any{
 		"standards.lsp.enabled":         includeLSP,
 		"standards.lsp.path":            fmt.Sprintf("${workspaceFolder}/%s/standards-lsp", binDir),
@@ -272,7 +303,7 @@ func buildVSCodeSettings(binDir string, includeLSP bool, arch string) string {
 			"editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
 			"editor.formatOnSave":     true,
 		}
-	} else {
+	} else if hasLanguage(plan, "go") {
 		data["go.useLanguageServer"] = true
 		data["[go]"] = map[string]any{
 			"editor.defaultFormatter": "golang.go",
@@ -311,7 +342,7 @@ func buildVSCodeExtensions(arch string) string {
 	return string(bytes) + "\n"
 }
 
-func buildVSCodeTasks() string {
+func buildVSCodeTasks(plan Plan) string {
 	data := map[string]any{
 		"version": "2.0.0",
 		"tasks": []map[string]any{
@@ -323,7 +354,7 @@ func buildVSCodeTasks() string {
 					"kind":      "test",
 					"isDefault": true,
 				},
-				"problemMatcher": []string{"$go"},
+				"problemMatcher": goProblemMatcher(plan),
 			},
 			{
 				"label":   "Standards: Build Binaries",
@@ -333,7 +364,7 @@ func buildVSCodeTasks() string {
 					"kind":      "build",
 					"isDefault": true,
 				},
-				"problemMatcher": []string{"$go"},
+				"problemMatcher": goProblemMatcher(plan),
 			},
 			{
 				"label":          "Standards: Compile Context",
@@ -1005,4 +1036,14 @@ func verifyEditorFile(ctx context.Context, rootDir string, file GeneratedFile) (
 
 func readSingleFileWithContext(ctx context.Context, path string) ([]byte, error) {
 	return contextopt.ReadSnapshot(ctx, path)
+}
+
+// goProblemMatcher returns the Go problem matcher only when the repository actually contains
+// Go. A matcher for a language that is not present parses build output that can never appear,
+// and VS Code reports it as a task misconfiguration rather than ignoring it (BUG-778).
+func goProblemMatcher(plan Plan) []string {
+	if hasLanguage(plan, "go") {
+		return []string{"$go"}
+	}
+	return []string{}
 }

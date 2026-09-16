@@ -161,7 +161,7 @@ func writeAgentHarness(ctx context.Context, repoPath string) error {
 func writeOnboardEditors(ctx context.Context, repoPath string) error {
 	opts := editor.DefaultOptions()
 	opts.WorkspaceRoot = repoPath
-	set, err := editor.Synthesize(opts)
+	set, err := editor.SynthesizeContext(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("synthesize editor configs: %w", err)
 	}

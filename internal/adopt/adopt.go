@@ -477,11 +477,13 @@ func reconcileDevContainer(ctx context.Context, s *adoptSession) error {
 // reconcileEditors writes IDE configurations that do not exist yet. Existing files are
 // only regenerated with Force, and .clang-tidy/.editorconfig are always preserved
 // because they carry hand-tuned project settings.
-func reconcileEditors(_ context.Context, s *adoptSession) error {
+func reconcileEditors(ctx context.Context, s *adoptSession) error {
 	edOpts := editor.DefaultOptions()
 	edOpts.WorkspaceRoot = s.repoPath
 	edOpts.Archetype = s.arch
-	set, err := editor.Synthesize(edOpts)
+	// Synthesis observes the workspace to decide which languages are present, so it needs the
+	// caller's deadline rather than a background one.
+	set, err := editor.SynthesizeContext(ctx, edOpts)
 	if err != nil {
 		return fmt.Errorf("synthesize editors: %w", err)
 	}
