@@ -67,6 +67,6 @@ func countLines(s string) int {
 
 // Vendor wrappers carry metadata only. Policy must come entirely from AGENTS.md.
 const generatedHeader = "<!-- markdownlint-disable MD013 -->\n" +
-	"<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n"
+	"<!-- Compiled automatically by praetorctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n"
 
 const cursorFrontmatter = "---\ndescription: Canonical agent instructions\nglobs: \"*\"\nalwaysApply: true\n---\n\n"

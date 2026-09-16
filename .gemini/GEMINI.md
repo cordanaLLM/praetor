@@ -1,5 +1,5 @@
 <!-- markdownlint-disable MD013 -->
-<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->
+<!-- Compiled automatically by praetorctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->
 
 # cordanaLLM/praetor Agent Operating Harness
 

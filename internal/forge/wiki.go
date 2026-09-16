@@ -113,7 +113,7 @@ Welcome to the official repository governance wiki for cordanaLLM.
 
 `+"```mermaid"+`
 flowchart LR
-    MANIFEST[".standards.yaml"] --> TRANSPILER["standardsctl compile-context"]
+    MANIFEST[".standards.yaml"] --> TRANSPILER["praetorctl compile-context"]
     TRANSPILER --> AGENTS["AGENTS.md\n(Canonical Truth)"]
     AGENTS --> GATES["Verification Cascade\n(make verify-all)"]
     GATES --> RECEIPT["Ed25519 Exit-0 Receipt"]
@@ -200,20 +200,20 @@ flowchart TD
 func generateAPIReferenceWiki() WikiPage {
 	content := `# API & CLI Reference Manual
 
-## standardsctl CLI Commands
+## praetorctl CLI Commands
 
-- ` + "`standardsctl init`" + `: Scaffolds a new .standards.yaml manifest with profiles and facets.
-- ` + "`standardsctl plan`" + `: Computes the lattice supremum and performs a dry-run drift calculation.
-- ` + "`standardsctl sync`" + `: Applies declarative standards to branch protections, labels, and CI.
-- ` + "`standardsctl compile-context`" + `: Transpiles AGENTS.md to CLAUDE.md, Cursor rules, and Copilot.
-- ` + "`standardsctl baseline`" + `: Records or verifies legacy brownfield technical debt.
-- ` + "`standardsctl audit`" + `: Validates 100% compliance against the active standards baseline.
+- ` + "`praetorctl init`" + `: Scaffolds a new .standards.yaml manifest with profiles and facets.
+- ` + "`praetorctl plan`" + `: Computes the lattice supremum and performs a dry-run drift calculation.
+- ` + "`praetorctl sync`" + `: Applies declarative standards to branch protections, labels, and CI.
+- ` + "`praetorctl compile-context`" + `: Transpiles AGENTS.md to CLAUDE.md, Cursor rules, and Copilot.
+- ` + "`praetorctl baseline`" + `: Records or verifies legacy brownfield technical debt.
+- ` + "`praetorctl audit`" + `: Validates 100% compliance against the active standards baseline.
 
 ## Multi-Forge Federation
 
 ` + "```mermaid" + `
 sequenceDiagram
-    participant CLI as standardsctl
+    participant CLI as praetorctl
     participant GH as GitHub Driver
     participant GL as GitLab Driver
     participant GT as Gitea Driver

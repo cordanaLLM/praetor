@@ -1,6 +1,10 @@
 package adopt
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
+)
 
 // Only exact historical Praetor output is eligible for automatic replacement.
 // Arbitrary user recipes, including edited generated files, remain untouched.
@@ -60,12 +64,13 @@ func hasVerificationTarget(data, target string) bool {
 func appendVerificationTargets(existing string, plan *VerificationPlan) string {
 	var result strings.Builder
 	result.WriteString(existing)
-	result.WriteString("\n# Praetor declared verification; existing project recipes remain unchanged.\n.PHONY: verify-all\nverify-all:\n\t@standardsctl compile-context --verify\n\t@standardsctl audit\n")
+	result.WriteString("\n# Praetor declared verification; existing project recipes remain unchanged.\n" +
+		util.MakefileCLIVariable + ".PHONY: verify-all\nverify-all:\n\t@$(PRAETORCTL) compile-context --verify\n\t@$(PRAETORCTL) audit\n")
 	result.WriteString(verificationRecipe(plan, plan.Build))
 	result.WriteString(verificationRecipe(plan, plan.Test))
 	for _, target := range []string{"compile-context", "audit"} {
 		if !hasVerificationTarget(existing, target) {
-			result.WriteString("\n" + target + ":\n\t@standardsctl " + target + "\n")
+			result.WriteString("\n" + target + ":\n\t@$(PRAETORCTL) " + target + "\n")
 		}
 	}
 	return result.String()

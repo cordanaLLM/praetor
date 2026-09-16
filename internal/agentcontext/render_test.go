@@ -12,7 +12,7 @@ func TestCompileContentGoldenAndBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	header := "<!-- markdownlint-disable MD013 -->\n<!-- Compiled automatically by standardsctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n"
+	header := "<!-- markdownlint-disable MD013 -->\n<!-- Compiled automatically by praetorctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n"
 	paths := []string{"CLAUDE.md", ".cursor/rules/hiss-invariants.mdc", ".github/copilot-instructions.md", ".windsurfrules", ".gemini/GEMINI.md", ".codex/rules.md"}
 	if len(result.Files) != len(paths) {
 		t.Fatalf("got %d outputs", len(result.Files))

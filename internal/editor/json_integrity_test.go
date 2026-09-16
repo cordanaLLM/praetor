@@ -277,7 +277,7 @@ func TestEditorJSONMergeKeepsLiteralsAndUnchangedBytes(t *testing.T) {
 
 func TestEditorJSONMergeArraysAndTypeConflicts(t *testing.T) {
 	existing := []byte(`[{"label":"Human verify","command":"make","args":["verify-all"]}]`)
-	desired := []byte(`[{"label":"Standards: Verify All","command":"make","args":["verify-all"]},{"label":"Standards: Audit","command":"standardsctl","args":["audit"]}]`)
+	desired := []byte(`[{"label":"Standards: Verify All","command":"make","args":["verify-all"]},{"label":"Standards: Audit","command":"praetorctl","args":["audit"]}]`)
 	merged, changed, err := mergeJSONDocument(existing, desired)
 	if err != nil || !changed {
 		t.Fatalf("root array merge failed: %v %v", changed, err)

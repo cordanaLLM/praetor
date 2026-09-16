@@ -154,7 +154,7 @@ func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 
 const defaultAuditorAgentMD = `---
 name: repo-auditor
-description: "Autonomous agent for repository HISS invariant sweeps and standardsctl compliance."
+description: "Autonomous agent for repository HISS invariant sweeps and praetorctl compliance."
 mainAgent: true
 subagent: true
 commandExecutionPolicy: auto
@@ -165,7 +165,7 @@ commandExecutionPolicy: auto
 You are the authoritative repository governance auditor. Your purpose is to run autonomous sweeps across codebases and git commits to guarantee 100% adherence to declared standards.
 
 ## Execution Command
-` + "```bash\nstandardsctl audit\n```\n"
+` + "```bash\npraetorctl audit\n```\n"
 
 const defaultGatekeeperAgentMD = `---
 name: repo-gatekeeper
@@ -180,4 +180,4 @@ commandExecutionPolicy: auto
 You are the repository gatekeeper. Your mission is to strictly enforce the anti-direct-merge policy and verify all verification gates before shipping.
 
 ## Execution Command
-` + "```bash\nstandardsctl gate run --target=. --dry-run\n```\n"
+` + "```bash\npraetorctl gate run --target=. --dry-run\n```\n"

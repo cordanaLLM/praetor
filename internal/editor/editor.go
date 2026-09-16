@@ -338,13 +338,13 @@ func buildVSCodeTasks() string {
 			{
 				"label":          "Standards: Compile Context",
 				"type":           "shell",
-				"command":        "standardsctl compile-context",
+				"command":        "praetorctl compile-context",
 				"problemMatcher": []string{},
 			},
 			{
 				"label":          "Standards: Audit Invariants",
 				"type":           "shell",
-				"command":        "standardsctl audit",
+				"command":        "praetorctl audit",
 				"problemMatcher": []string{},
 			},
 		},
@@ -463,11 +463,11 @@ end
 lspconfig.standards_lsp.setup({})
 
 vim.api.nvim_create_user_command("StandardsAudit", function()
-  vim.cmd("!standardsctl audit")
+  vim.cmd("!praetorctl audit")
 end, { desc = "Audit repository against declared HISS invariants" })
 
 vim.api.nvim_create_user_command("StandardsCompileContext", function()
-  vim.cmd("!standardsctl compile-context")
+  vim.cmd("!praetorctl compile-context")
 end, { desc = "Compile AGENTS.md cross-agent contexts" })
 
 vim.api.nvim_create_user_command("StandardsVerifyAll", function()
@@ -599,13 +599,13 @@ func zedTasks() string {
   },
   {
     "label": "Standards: Audit",
-    "command": "standardsctl",
+    "command": "praetorctl",
     "args": ["audit"],
     "use_new_terminal": false
   },
   {
     "label": "Standards: Compile Context",
-    "command": "standardsctl",
+    "command": "praetorctl",
     "args": ["compile-context", "--verify"],
     "use_new_terminal": false
   }
@@ -723,7 +723,7 @@ func generateFleet(arch string) []GeneratedFile {
     {
       "type": "command",
       "name": "Standards: Audit",
-      "program": "standardsctl",
+      "program": "praetorctl",
       "args": ["audit"]
     }
   ]
@@ -758,7 +758,7 @@ func generateSublime(arch string) []GeneratedFile {
     },
     {
       "name": "Standards: Audit",
-      "shell_cmd": "standardsctl audit",
+      "shell_cmd": "praetorctl audit",
       "working_dir": "$project_path"
     }
   ],
