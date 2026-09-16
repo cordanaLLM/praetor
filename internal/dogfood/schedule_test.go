@@ -143,7 +143,7 @@ func TestScheduleOverlapAndCrashRecovery(t *testing.T) {
 	state.LastAttempt.Status = "running"
 	state.LastAttempt.FinishedAt = time.Time{}
 	state.ConsecutiveFailures = 1
-	if err := saveScheduleJSON(root, "state.json", state); err != nil {
+	if err := saveScheduleJSON(t.Context(), root, "state.json", state); err != nil {
 		t.Fatal(err)
 	}
 	if err := root.Close(); err != nil {
@@ -460,7 +460,7 @@ func TestScheduleInterruptedClockRollbackKeepsValidState(t *testing.T) {
 	state.LastAttempt.Status = "running"
 	state.LastAttempt.FinishedAt = time.Time{}
 	state.ConsecutiveFailures = 1
-	if err := saveScheduleJSON(root, "state.json", state); err != nil {
+	if err := saveScheduleJSON(t.Context(), root, "state.json", state); err != nil {
 		t.Fatal(err)
 	}
 	clock := func() time.Time { return fixedScheduleTime().Add(-time.Hour) }

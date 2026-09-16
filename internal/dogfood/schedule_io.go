@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 func readSchedulePrivate(ctx context.Context, path string) ([]byte, error) {
@@ -82,7 +84,7 @@ func openScheduleState(ctx context.Context, path string, create bool) (*os.Root,
 
 // Atomic replace plus fsync of both file and directory keeps attempts durable.
 // A failed staging file is retained and blocks reuse instead of being deleted.
-func saveScheduleJSON(root *os.Root, name string, value any) (err error) {
+func saveScheduleJSON(ctx context.Context, root *os.Root, name string, value any) (err error) {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
@@ -105,11 +107,12 @@ func saveScheduleJSON(root *os.Root, name string, value any) (err error) {
 	if err := root.Rename(name+".pending", name); err != nil {
 		return err
 	}
-	directory, err := root.Open(".")
-	if err != nil {
-		return err
-	}
-	return errors.Join(directory.Sync(), directory.Close())
+	// Persisting a rename needs the directory flushed, and that flush is POSIX-only: Windows
+	// refuses FlushFileBuffers on a directory handle with access denied, so doing it inline
+	// returned an error after the write had already landed (#125). contextopt.SyncDirectory
+	// already carries that platform split; a second copy here would be a second thing to get
+	// wrong (HISS-19).
+	return contextopt.SyncDirectory(ctx, root)
 }
 
 func readScheduleState(ctx context.Context, root *os.Root) (*scheduleState, error) {
