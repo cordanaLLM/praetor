@@ -135,6 +135,7 @@ func printCoreCommands() {
 	fmt.Println("  plan               Dry-run comparison of repository settings against policy")
 	fmt.Println("  sync               Reconcile repository settings, labels, and branch rulesets")
 	fmt.Println("  operational        Plan or prepare an operational fork from reviewed local commits")
+	fmt.Println("  adr verify         Replay the machine-checkable clauses of decision records")
 	fmt.Println("  sentinel           Inspect workstation RAM/disk health and model headroom")
 	fmt.Println("  worktree           Manage isolated ephemeral git worktrees")
 }
@@ -196,6 +197,7 @@ func commandTable() map[string]commandFunc {
 		"planning":         runPlanning,
 		"prompt-optimize":  runPromptOptimize,
 		"audit":            runAudit,
+		"adr":              runADR,
 		"baseline":         runBaseline,
 		"devcontainer":     runDevContainer,
 		"flavor":           runFlavor,

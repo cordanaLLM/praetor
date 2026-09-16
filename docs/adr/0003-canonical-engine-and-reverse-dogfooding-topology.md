@@ -18,3 +18,23 @@ We establish a two-tiered repository topology:
 - **Positive**: Core engine remains pristine, stable, and hermetic with 100% test coverage and zero regressions.
 - **Positive**: Downstream operations have a dedicated sandbox to discover edge cases and prototype real workflows before standardization.
 - **Negative**: Requires synchronization discipline and automated prefetch/gating checks before promoting code upstream.
+
+## Checkable clauses
+
+The decision above is recorded in prose, and prose is enforced by whoever remembers to read it.
+The clause below is the part a machine replays, so the repository is measured against this
+decision on every run rather than when a reviewer happens to notice.
+
+```adr-constraint
+id: engine-scope-has-no-exempt-tier
+kind: universal-scope
+gate: hiss-scan
+forbids:
+  - "internal/"
+  - "cmd/"
+rationale: >-
+  The engine governs itself by the same rules it ships. Excluding a directory of the engine's
+  own source from the invariant scan would make the governed set smaller than the shipped set,
+  inverting the reverse-dogfooding topology: the engine would enforce on adopters what it had
+  exempted itself from.
+```
