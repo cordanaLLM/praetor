@@ -31,10 +31,10 @@ All PRs must strictly adhere to the declared HISS invariants before merging:
 ## 2. Three-Dimensional (3D) Testing Verification (HISS-15)
 
 Every public method and modified component must include three dimensions of automated testing:
-- [ ] **Dimension 1: Positive Tests**: Validated expected outputs against normal and golden operational inputs.
-- [ ] **Dimension 2: Negative Tests**: Validated deterministic error propagation on corrupted, unauthorized, or invalid inputs.
-- [ ] **Dimension 3: Boundary Tests**: Validated limits ($0$, $1$, $N_{\max}$, empty buffers, max field limits).
-- [ ] **Touched-File Clean Rule**: All historical technical debt recorded in `.standards-baseline.json` for files touched in this PR has been eliminated.
+- [ ] **HISS-15 Dimension 1: Positive Tests**: Validated expected outputs against normal and golden operational inputs.
+- [ ] **HISS-15 Dimension 2: Negative Tests**: Validated deterministic error propagation on corrupted, unauthorized, or invalid inputs.
+- [ ] **HISS-15 Dimension 3: Boundary Tests**: Validated limits ($0$, $1$, $N_{\max}$, empty buffers, max field limits).
+- [ ] **HISS-15 Touched-File Clean Rule**: All historical technical debt recorded in `.standards-baseline.json` for files touched in this PR has been eliminated.
 
 ---
 
@@ -49,11 +49,16 @@ Every public method and modified component must include three dimensions of auto
 
 ## 4. Ed25519 Exit-0 Verification Receipt
 
-Attach the terminal execution receipt from `make verify-all`:
+Paste the **signed receipt JSON** below, inside the fence labelled `receipt`. The label is what
+the validator looks for: an unlabelled or `text` fence is treated as a code snippet in a
+description and never read.
 
-```text
-<!-- Paste stdout/stderr from `make verify-all` here -->
+`praetorctl gate run` writes it to `.standards-receipt.json`, and the pre-push hook keeps a copy
+at `.git/praetor-receipts/<sha>.json`. It must certify the pull request's head commit; a rebase
+invalidates it, so re-mint after one.
+
+```receipt
+<!-- Paste the contents of .standards-receipt.json here, replacing this line. -->
 ```
 
-- **Receipt Signature / Hash**: `[PASTE_ED25519_RECEIPT_OR_COMMIT_SHA]`
 - **Local Race Detector Status**: `go test -v -race ./...` (PASS)
