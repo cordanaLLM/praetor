@@ -107,11 +107,26 @@ type Overrides struct {
 	Complexity       *ComplexityPolicy       `yaml:"complexity,omitempty"`
 	BranchProtection *BranchProtectionPolicy `yaml:"branch_protection,omitempty"`
 	SupplyChain      *SupplyChainPolicy      `yaml:"supply_chain,omitempty"`
+	// Actions governs the repository's GitHub Actions workflow permissions. It is modelled here
+	// because it is load-bearing in the same way branch protection is and was not modelled at
+	// all: a bot-opened pull request is either possible or it is not, and a release flow built
+	// on one fails on a red main with nothing reporting the setting that caused it (#153).
+	Actions *ActionsPolicy `yaml:"actions,omitempty"`
 	// CI is declared by the schema and currently has no consumer: internal/cifilter
 	// computes its decision without reading the manifest, so these values do not change
 	// behaviour. Declared here so the manifest parses rather than being silently dropped,
 	// and so the gap is visible instead of invisible.
 	CI *CIPolicy `yaml:"ci,omitempty"`
+}
+
+// ActionsPolicy declares GitHub Actions workflow permissions for a repository.
+type ActionsPolicy struct {
+	// DefaultWorkflowPermissions is the GITHUB_TOKEN default: "read" or "write".
+	DefaultWorkflowPermissions string `yaml:"default_workflow_permissions"`
+	// AllowCreateAndApprovePullRequests decides whether a workflow may open or approve a pull
+	// request. release-please, dependency bumpers and flavor sync all need it; a repository
+	// whose release flow does not should leave it false.
+	AllowCreateAndApprovePullRequests bool `yaml:"allow_create_and_approve_pull_requests"`
 }
 
 // CIPolicy declares diff-aware gating intent (HISS-18).
