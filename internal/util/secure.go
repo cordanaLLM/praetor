@@ -54,6 +54,20 @@ var (
 // G305 (file traversal when extracting an archive). Pass user-, config- or
 // archive-supplied relative paths through ConfinePath before handing them to os.Open,
 // os.ReadFile, WriteFileSecure or MkdirSecure.
+// ReadConfined reads rel below root after confining it with ConfinePath, so a
+// caller-supplied repository path or a workspace glob can never read outside
+// root. It is the read half of the confinement contract: callers that only ever
+// read a file below a root should reach for this rather than pairing ConfinePath
+// with their own os.ReadFile.
+func ReadConfined(root, rel string) ([]byte, error) {
+	path, err := ConfinePath(root, rel)
+	if err != nil {
+		return nil, err
+	}
+	// #nosec G304 -- path is confined to root by ConfinePath above.
+	return os.ReadFile(path)
+}
+
 func ConfinePath(root, rel string) (string, error) {
 	if strings.TrimSpace(root) == "" {
 		return "", ErrEmptyRoot

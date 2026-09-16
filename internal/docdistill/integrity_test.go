@@ -38,7 +38,7 @@ func TestAuditDocumentationCoverageRejectsInvalidRoot(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := AuditDocumentationCoverage(t.Context(), root); err == nil {
+		if _, err := AuditDocumentationCoverage(t.Context(), root, DefaultDistillOptions()); err == nil {
 			t.Fatalf("invalid root %q accepted", root)
 		}
 	}
@@ -87,7 +87,7 @@ func TestFailedHarvestDoesNotBecomeCoverage(t *testing.T) {
 	if err != nil || len(cat.Packages) != 0 {
 		t.Fatalf("failed harvest cached: %v, %v", cat, err)
 	}
-	result, err := AuditDocumentationCoverage(t.Context(), root)
+	result, err := AuditDocumentationCoverage(t.Context(), root, DefaultDistillOptions())
 	if err != nil || result.Passed || result.Documented != 0 {
 		t.Fatalf("failed harvest counted as coverage: %+v, %v", result, err)
 	}
@@ -138,5 +138,102 @@ func TestWorkflowActionBoundsAndInputExtraction(t *testing.T) {
 	inputs := extractAPISurface("inputs:\n  token:\n    required: true\noutputs:\n  report:\nruns:\n  using: node20\n", KindGitHubAction)
 	if len(inputs) != 1 || inputs[0] != "token" {
 		t.Fatalf("input extraction drift: %v", inputs)
+	}
+}
+
+// writeNodeFile creates rel below root, making parent directories as needed.
+func writeNodeFile(t *testing.T, root, rel, body string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func nodeRefNames(refs []PackageRef) map[string]bool {
+	names := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		if ref.Kind == KindNodePackage {
+			names[ref.Name] = true
+		}
+	}
+	return names
+}
+
+// Regression for #96: a workspace repository's dependencies live in the member
+// manifests, and its root manifest commonly declares only devDependencies. Both
+// were invisible — the scanner read the root alone, and treated devDependencies
+// as transitive — so the audit reported a confident coverage figure over none of
+// the repository's npm packages.
+func TestDeclaredDependenciesReadsWorkspaceMembersAndDevDependencies(t *testing.T) {
+	root := t.TempDir()
+	writeNodeFile(t, root, "package.json", `{"name":"root","devDependencies":{"turbo":"2.10.12"}}`)
+	writeNodeFile(t, root, "pnpm-workspace.yaml", "packages:\n  - 'packages/*'\n")
+	writeNodeFile(t, root, "packages/alpha/package.json", `{"name":"alpha","dependencies":{"zod":"4.6.1"}}`)
+	writeNodeFile(t, root, "packages/beta/package.json", `{"name":"beta","dependencies":{"marked":"18.0.12"}}`)
+
+	// Without the transitive flag: every declared npm package is still found,
+	// because each is declared in a manifest this repository owns.
+	refs, err := ScanDeclaredDependencies(t.Context(), root, false)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	names := nodeRefNames(refs)
+	for _, want := range []string{"turbo", "zod", "marked"} {
+		if !names[want] {
+			t.Errorf("%s not found; got %v", want, names)
+		}
+	}
+	for _, ref := range refs {
+		if ref.Kind == KindNodePackage && !ref.Direct {
+			t.Errorf("%s reported as indirect; every declared npm dependency is direct", ref.Name)
+		}
+	}
+}
+
+// Boundary: the manifest path is carried through, so a reference from a
+// workspace member is attributable. It used to read "package.json" for every
+// npm reference regardless of which manifest declared it.
+func TestNodeReferencesCarryTheirManifestPath(t *testing.T) {
+	root := t.TempDir()
+	writeNodeFile(t, root, "package.json", `{"name":"root","workspaces":["packages/*"]}`)
+	writeNodeFile(t, root, "packages/alpha/package.json", `{"name":"alpha","dependencies":{"zod":"4.6.1"}}`)
+
+	refs, err := ScanDeclaredDependencies(t.Context(), root, false)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	for _, ref := range refs {
+		if ref.Name == "zod" {
+			if ref.Manifest != "packages/alpha/package.json" {
+				t.Errorf("manifest=%q, want packages/alpha/package.json", ref.Manifest)
+			}
+			return
+		}
+	}
+	t.Fatalf("zod not found in %v", refs)
+}
+
+// Negative: confinement still holds for a workspace member, not just the root.
+func TestWorkspaceMemberCannotEscapeTheRepository(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "package.json"), []byte(`{"dependencies":{"private":"1.0.0"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	writeNodeFile(t, root, "package.json", `{"name":"root","workspaces":["packages/*"]}`)
+	if err := os.MkdirAll(filepath.Join(root, "packages", "alpha"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "packages", "alpha", "package.json")
+	if err := os.Symlink(filepath.Join(outside, "package.json"), link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	refs, err := ScanDeclaredDependencies(t.Context(), root, false)
+	if err == nil && nodeRefNames(refs)["private"] {
+		t.Fatalf("read a manifest outside the repository: %v", refs)
 	}
 }

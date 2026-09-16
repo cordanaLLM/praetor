@@ -16,6 +16,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
+	"github.com/cordanaLLM/praetor/internal/nodemanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -39,7 +40,7 @@ func ScanDeclaredDependencies(ctx context.Context, repoPath string, includeTrans
 		return nil, fmt.Errorf("scan Go dependencies: %w", err)
 	}
 	allRefs = append(allRefs, goRefs...)
-	nodeRefs, err := scanNodeDependencies(ctx, repoPath, includeTransitive)
+	nodeRefs, err := scanNodeDependencies(ctx, repoPath)
 	if err != nil {
 		return nil, fmt.Errorf("scan Node dependencies: %w", err)
 	}
@@ -110,42 +111,72 @@ type packageJSONDeps struct {
 	DevDependencies map[string]string `json:"devDependencies"`
 }
 
-func scanNodeDependencies(ctx context.Context, repoPath string, includeTransitive bool) ([]PackageRef, error) {
-	data, err := readDocumentationFile(ctx, repoPath, "package.json")
+// scanNodeDependencies reads every package.json the repository declares — the
+// root plus each workspace member — not just the root one.
+//
+// Both maps count as direct. npm's `devDependencies` are declared in the
+// repository's own manifest, so they are direct by every definition the
+// ecosystem uses; npm's genuinely transitive set lives in the lockfile, which is
+// not read here. Gating devDependencies behind the transitive flag (issue #96)
+// mirrored Go's `// indirect`, where the distinction is real, and hid every
+// dependency of a repository whose npm deps are all development tooling.
+func scanNodeDependencies(ctx context.Context, repoPath string) ([]PackageRef, error) {
+	dirs, err := nodemanifest.DiscoverPackageDirs(repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("discover node packages: %w", err)
+	}
+
+	var refs []PackageRef
+	for _, dir := range dirs {
+		manifest := "package.json"
+		if dir != "." {
+			manifest = dir + "/package.json"
+		}
+		manifestRefs, readErr := scanOneNodeManifest(ctx, repoPath, manifest)
+		if readErr != nil {
+			return nil, readErr
+		}
+		refs = append(refs, manifestRefs...)
+	}
+	return refs, nil
+}
+
+// scanOneNodeManifest reads the dependency maps of a single package.json.
+func scanOneNodeManifest(ctx context.Context, repoPath, manifest string) ([]PackageRef, error) {
+	data, err := readDocumentationFile(ctx, repoPath, manifest)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read package.json: %w", err)
+		return nil, fmt.Errorf("read %s: %w", manifest, err)
 	}
 
 	var parsed packageJSONDeps
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		return nil, fmt.Errorf("failed unmarshaling package.json: %w", err)
+		return nil, fmt.Errorf("failed unmarshaling %s: %w", manifest, err)
 	}
 
-	var refs []PackageRef
-	addDeps := func(deps map[string]string, direct bool) {
+	refs := make([]PackageRef, 0, len(parsed.Dependencies)+len(parsed.DevDependencies))
+	for _, deps := range []map[string]string{parsed.Dependencies, parsed.DevDependencies} {
 		for pkg, ver := range deps {
-			cleanVer := strings.TrimPrefix(ver, "^")
-			cleanVer = strings.TrimPrefix(cleanVer, "~")
-			refs = append(refs, PackageRef{
-				Name:       pkg,
-				Version:    cleanVer,
-				Kind:       KindNodePackage,
-				Manifest:   "package.json",
-				Direct:     direct,
-				Repository: "https://www.npmjs.com/package/" + pkg,
-			})
+			refs = append(refs, nodePackageRef(pkg, ver, manifest))
 		}
 	}
-
-	addDeps(parsed.Dependencies, true)
-	if includeTransitive {
-		addDeps(parsed.DevDependencies, false)
-	}
-
 	return refs, nil
+}
+
+// nodePackageRef builds one reference, stripping the range prefix from a version.
+func nodePackageRef(pkg, version, manifest string) PackageRef {
+	cleanVer := strings.TrimPrefix(version, "^")
+	cleanVer = strings.TrimPrefix(cleanVer, "~")
+	return PackageRef{
+		Name:       pkg,
+		Version:    cleanVer,
+		Kind:       KindNodePackage,
+		Manifest:   manifest,
+		Direct:     true,
+		Repository: "https://www.npmjs.com/package/" + pkg,
+	}
 }
 
 func scanWorkflowActions(ctx context.Context, repoPath string) ([]PackageRef, error) {
