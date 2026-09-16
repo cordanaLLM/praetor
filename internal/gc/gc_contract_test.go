@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -389,6 +391,10 @@ func TestCollect_RejectsInvalidPoolsAndUnknownOrMissingRelease(t *testing.T) {
 	}
 }
 
+// errorSharingViolation is Windows' ERROR_SHARING_VIOLATION. The number means something else
+// elsewhere (EPIPE on Linux), so it is compared only on Windows.
+const errorSharingViolation syscall.Errno = 32
+
 func TestCheckLiveRootRejectsRenamedAndReplacedRoot(t *testing.T) {
 	parent := t.TempDir()
 	rootPath := filepath.Join(parent, "root")
@@ -399,18 +405,31 @@ func TestCheckLiveRootRejectsRenamedAndReplacedRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := collector{opts: Options{RootDir: rootPath}, root: pinned}
-	if err := os.Rename(rootPath, filepath.Join(parent, "renamed")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(rootPath, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	// Registered before anything can fail: an open handle left at cleanup keeps Windows from
+	// removing the temporary directory.
 	t.Cleanup(func() {
 		if err := pinned.Close(); err != nil {
 			t.Errorf("close root: %v", err)
 		}
 	})
+	c := collector{opts: Options{RootDir: rootPath}, root: pinned}
+	if err := os.Rename(rootPath, filepath.Join(parent, "renamed")); err != nil {
+		// Windows refuses to rename a directory while a handle to it is open, so the pinned root
+		// cannot be swapped there at all. That refusal is the platform holding the invariant,
+		// and it is asserted rather than skipped; the untouched root must still be accepted.
+		var errno syscall.Errno
+		if runtime.GOOS != "windows" || !errors.As(err, &errno) || errno != errorSharingViolation {
+			t.Fatal(err)
+		}
+		t.Logf("rename of the pinned root refused by the platform: %v", err)
+		if err := c.checkLiveRoot(); err != nil {
+			t.Fatalf("the untouched pinned root was rejected: %v", err)
+		}
+		return
+	}
+	if err := os.Mkdir(rootPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := c.checkLiveRoot(); err == nil {
 		t.Fatal("renamed and replacement root was accepted")
 	}

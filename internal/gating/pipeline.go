@@ -383,6 +383,13 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 	taskID := fmt.Sprintf("gate-%d-%d", os.Getpid(), time.Now().UnixNano())
 	wt, createErr := wtMgr.Create(tCtx, taskID, "HEAD")
 	if createErr != nil {
+		// The worktree is created under the stage bound too, so the bound can fire here first.
+		// On Windows it did at 50ms: git worktree add outlasted the bound, the kill surfaced as a
+		// bare "exit status 1", and the stage reported a repository whose worktree could not be
+		// created -- the misattribution #100 describes, one step earlier.
+		if errors.Is(tCtx.Err(), context.DeadlineExceeded) {
+			return "", stageBoundError("creating the isolated test worktree", bound, cfg.repoDir, createErr.Error())
+		}
 		return "", fmt.Errorf("isolated test worktree could not be created in %s: %w", cfg.repoDir, createErr)
 	}
 	defer func() {
@@ -396,15 +403,20 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 		// sends every reader to diagnose a change that was never the cause. The context is
 		// the authoritative witness: the child dies of a signal and reports nothing useful.
 		if deadlineErr := tCtx.Err(); errors.Is(deadlineErr, context.DeadlineExceeded) {
-			return "", fmt.Errorf(
-				"race-detector tests hit the %s stage bound in %s before finishing; "+
-					"this is the bound firing, not a test failure. Raise it with %s "+
-					"(maximum %s). Output up to the cut: %s",
-				bound, wt.Path, TestStageTimeoutEnv, MaxTestStageTimeout, out)
+			return "", stageBoundError("race-detector tests", bound, wt.Path, out)
 		}
 		return "", fmt.Errorf("tests failed in %s: %s (%w)", wt.Path, out, testErr)
 	}
 	return boundNote, nil
+}
+
+// stageBoundError reports the test stage cut off by its own deadline while doing what, in dir.
+func stageBoundError(what string, bound time.Duration, dir, output string) error {
+	return fmt.Errorf(
+		"%s hit the %s stage bound in %s before finishing; "+
+			"this is the bound firing, not a test failure. Raise it with %s "+
+			"(maximum %s). Output up to the cut: %s",
+		what, bound, dir, TestStageTimeoutEnv, MaxTestStageTimeout, output)
 }
 
 // raceDetectorAvailable reports whether `go test -race` can build here, and names what

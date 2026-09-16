@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -153,15 +154,12 @@ func TestPublicAdoptionErrorsCannotPass(t *testing.T) {
 }
 
 func TestPublicEvidenceFailurePreservesApplyError(t *testing.T) {
-	opts, _ := publicLoopFixture(t, map[string]string{".workingdir": "blocked ledger"})
+	// The evidence write is made to fail by a clone that leaves a directory where result.json
+	// belongs. This used to be injected by editing the installed shim's text in place, which on
+	// Windows -- where the shim is a compiled binary -- matched nothing, changed nothing, and
+	// left the case unable to produce its second failure.
+	opts, _ := publicLoopFixtureWith(t, true, map[string]string{".workingdir": "blocked ledger"})
 	opts.Apply = true
-	wrapper, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := publicRead(t, wrapper)
-	script = strings.Replace(script, "if [ \"$1\" = clone ]; then", "if [ \"$1\" = clone ]; then\n for arg do target=$arg; done\n mkdir \"${target%/*}/result.json\" || exit $?", 1)
-	publicWrite(t, wrapper, script, 0o700)
 	report, err := RunPublicLoop(context.Background(), opts)
 	if !errors.Is(err, ErrPublicLoopFailed) {
 		t.Fatalf("write failure did not fail run: %v", err)
@@ -173,6 +171,14 @@ func TestPublicEvidenceFailurePreservesApplyError(t *testing.T) {
 }
 
 func publicLoopFixture(t *testing.T, extraFiles ...map[string]string) (PublicLoopOptions, string) {
+	t.Helper()
+	return publicLoopFixtureWith(t, false, extraFiles...)
+}
+
+// publicLoopFixtureWith is publicLoopFixture whose git shim, when blockEvidence is set, also
+// creates a directory named result.json beside each clone target, so writing the run's
+// evidence there fails.
+func publicLoopFixtureWith(t *testing.T, blockEvidence bool, extraFiles ...map[string]string) (PublicLoopOptions, string) {
 	t.Helper()
 	git, err := exec.LookPath("git")
 	if err != nil {
@@ -204,7 +210,7 @@ func publicLoopFixture(t *testing.T, extraFiles ...map[string]string) (PublicLoo
 	if err != nil {
 		t.Fatal(err)
 	}
-	installPublicGitFixture(t, git, fixture)
+	installPublicGitFixture(t, git, fixture, blockEvidence)
 	source, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -223,20 +229,26 @@ func publicLoopFixture(t *testing.T, extraFiles ...map[string]string) (PublicLoo
 // failed with `exec: "git": executable file not found` before the loop ran. There
 // the same shim is compiled from Go, which keeps the coverage instead of skipping it.
 // POSIX behaviour is unchanged: the same script, the same "tools:/usr/bin:/bin".
-func installPublicGitFixture(t *testing.T, git, fixture string) {
+func installPublicGitFixture(t *testing.T, git, fixture string, blockEvidence bool) {
 	t.Helper()
 	tools := t.TempDir()
 	if runtime.GOOS == "windows" {
-		buildPublicGitShim(t, tools, git, fixture)
+		source := fmt.Sprintf(publicGitShimSource, strconv.Quote(git), strconv.Quote(fixture), blockEvidence)
+		testsupport.BuildExecutable(t, tools, "git", source)
 		t.Setenv("PATH", tools+string(os.PathListSeparator)+filepath.Dir(git))
 		return
 	}
-	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = clone ]; then\n for arg do target=$arg; done\n GIT_ALLOW_PROTOCOL=file %s clone --template= --no-hardlinks --no-checkout %s \"$target\" || exit $?\n exec %s -C \"$target\" remote set-url origin https://github.com/spf13/cobra\nfi\nexec %s \"$@\"\n", publicShellQuote(git), publicShellQuote(fixture), publicShellQuote(git), publicShellQuote(git))
+	block := ""
+	if blockEvidence {
+		block = " mkdir \"${target%/*}/result.json\" || exit $?\n"
+	}
+	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = clone ]; then\n for arg do target=$arg; done\n%s GIT_ALLOW_PROTOCOL=file %s clone --template= --no-hardlinks --no-checkout %s \"$target\" || exit $?\n exec %s -C \"$target\" remote set-url origin https://github.com/spf13/cobra\nfi\nexec %s \"$@\"\n", block, publicShellQuote(git), publicShellQuote(fixture), publicShellQuote(git), publicShellQuote(git))
 	publicWrite(t, filepath.Join(tools, "git"), script, 0o700)
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin")
 }
 
-// publicGitShimSource is the Go form of the POSIX shim above, statement for statement.
+// publicGitShimSource is the Go form of the POSIX shim above, statement for statement. It is
+// built with testsupport.BuildExecutable.
 // The real git and the fixture are baked in as string literals rather than passed by
 // environment, because the loop runs git in a scrubbed environment that would drop them.
 const publicGitShimSource = `package main
@@ -245,15 +257,22 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 const realGit = %s
 const fixture = %s
+const blockEvidence = %t
 
 func main() {
 	args := os.Args[1:]
 	if len(args) > 0 && args[0] == "clone" {
 		target := args[len(args)-1]
+		if blockEvidence {
+			if err := os.Mkdir(filepath.Join(filepath.Dir(target), "result.json"), 0o700); err != nil {
+				os.Exit(1)
+			}
+		}
 		clone := exec.Command(realGit, "clone", "--template=", "--no-hardlinks", "--no-checkout", fixture, target)
 		clone.Env = append(os.Environ(), "GIT_ALLOW_PROTOCOL=file")
 		clone.Stdout, clone.Stderr = os.Stdout, os.Stderr
@@ -277,20 +296,6 @@ func exit(err error) {
 	os.Exit(1)
 }
 `
-
-// buildPublicGitShim compiles publicGitShimSource into tools/git.exe.
-func buildPublicGitShim(t *testing.T, tools, git, fixture string) {
-	t.Helper()
-	src := t.TempDir()
-	source := fmt.Sprintf(publicGitShimSource, strconv.Quote(git), strconv.Quote(fixture))
-	publicWrite(t, filepath.Join(src, "main.go"), source, 0o600)
-	publicWrite(t, filepath.Join(src, "go.mod"), "module gitshim\n\ngo 1.27\n", 0o600)
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", filepath.Join(tools, "git.exe"), ".")
-	build.Dir = src
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build git shim: %v\n%s", err, output)
-	}
-}
 
 func publicShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
