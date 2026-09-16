@@ -3,6 +3,7 @@ package sentinel
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -19,12 +20,39 @@ func TestCheckHostHealth_Positive(t *testing.T) {
 	if report == nil {
 		t.Fatalf("expected non-nil report")
 	}
-	if report.Stats.RAMTotalBytes == 0 {
-		t.Errorf("expected RAMTotalBytes > 0, got %d", report.Stats.RAMTotalBytes)
+	// Which answer is correct depends on whether this host has a memory source, and both answers
+	// are asserted: a reading where one exists, and an explicit "unavailable" where none does.
+	// Asserting a reading everywhere failed on macOS, which by design reports memory unavailable.
+	if hostHasMemorySource() {
+		if report.Stats.RAMTotalBytes == 0 {
+			t.Errorf("expected RAMTotalBytes > 0, got %d", report.Stats.RAMTotalBytes)
+		}
+	} else if report.Stats.RAMTotalBytes != 0 || !reportsRAMUnavailable(report) {
+		t.Errorf("a host without a memory source must report memory unavailable, got total=%d invariants=%v",
+			report.Stats.RAMTotalBytes, report.ViolatedInvariants)
 	}
 	if report.Stats.DiskTotalBytes == 0 {
 		t.Errorf("expected DiskTotalBytes > 0, got %d", report.Stats.DiskTotalBytes)
 	}
+}
+
+// hostHasMemorySource reports whether readHostMemory has something to read on this host:
+// GlobalMemoryStatusEx on Windows, /proc/meminfo elsewhere.
+func hostHasMemorySource() bool {
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	_, err := os.Stat(defaultMeminfoPath)
+	return err == nil
+}
+
+func reportsRAMUnavailable(report *HostReport) bool {
+	for _, v := range report.ViolatedInvariants {
+		if strings.Contains(v, "RAM unavailable") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestEvaluateHostStats_Positive(t *testing.T) {
@@ -414,19 +442,19 @@ func TestSentinel_Positive_MeasuredRAMStillDecides(t *testing.T) {
 	}
 }
 
-// TestReadHostMemory_Boundary_AbsentSourceReportsZeroNotAnError is the test that actually defends
+// TestReadMeminfoMemory_Boundary_AbsentSourceReportsZeroNotAnError is the test that actually defends
 // the regression, and it runs everywhere.
 //
 // An earlier version skipped on any host exposing /proc/meminfo, which is every machine the tests
 // are run on -- so restoring the fabricated 16 GB fallback passed it. A test that cannot run where
 // the bug lives does not defend against it. Pointing meminfoPath at a missing file reaches the
 // absent-source path on Linux.
-func TestReadHostMemory_Boundary_AbsentSourceReportsZeroNotAnError(t *testing.T) {
+func TestReadMeminfoMemory_Boundary_AbsentSourceReportsZeroNotAnError(t *testing.T) {
 	original := meminfoPath
 	t.Cleanup(func() { meminfoPath = original })
 	meminfoPath = filepath.Join(t.TempDir(), "absent-meminfo")
 
-	total, free, err := readHostMemory()
+	total, free, err := readMeminfoMemory()
 	if err != nil {
 		t.Fatalf("an absent source must not error; the sentinel still has good disk and CPU readings: %v", err)
 	}
@@ -436,17 +464,59 @@ func TestReadHostMemory_Boundary_AbsentSourceReportsZeroNotAnError(t *testing.T)
 	}
 }
 
-// TestReadHostMemory_Positive_RealSourceStillParses confirms injecting the path did not break the
+// TestReadMeminfoMemory_Positive_RealSourceStillParses confirms injecting the path did not break the
 // ordinary case.
-func TestReadHostMemory_Positive_RealSourceStillParses(t *testing.T) {
+func TestReadMeminfoMemory_Positive_RealSourceStillParses(t *testing.T) {
 	if _, err := os.Stat(defaultMeminfoPath); err != nil {
 		t.Skip("no /proc/meminfo on this host")
 	}
-	total, _, err := readHostMemory()
+	total, _, err := readMeminfoMemory()
 	if err != nil {
 		t.Fatalf("reading the real source failed: %v", err)
 	}
 	if total == 0 {
 		t.Error("a readable /proc/meminfo must report a nonzero total")
+	}
+}
+
+// withLoadavg points loadavgPath at content, or at a missing file when content is empty.
+func withLoadavg(t *testing.T, content string) {
+	t.Helper()
+	original := loadavgPath
+	t.Cleanup(func() { loadavgPath = original })
+	loadavgPath = filepath.Join(t.TempDir(), "loadavg")
+	if content == "" {
+		return
+	}
+	if err := os.WriteFile(loadavgPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestReadHostCPULoad_Positive_ReadingIsMarkedMeasured: an idle host's zero load is a reading.
+func TestReadHostCPULoad_Positive_ReadingIsMarkedMeasured(t *testing.T) {
+	withLoadavg(t, "0.00 0.00 0.00 1/100 42\n")
+	l1, l5, l15, measured, err := readHostCPULoad()
+	if err != nil || !measured || l1 != 0 || l5 != 0 || l15 != 0 {
+		t.Fatalf("an idle reading was not reported as measured: %v %v %v measured=%v err=%v", l1, l5, l15, measured, err)
+	}
+}
+
+// TestReadHostCPULoad_Negative_MalformedSourceIsNotMeasured: a source that exists but cannot be
+// parsed is an error and never a measurement.
+func TestReadHostCPULoad_Negative_MalformedSourceIsNotMeasured(t *testing.T) {
+	withLoadavg(t, "not a load average\n")
+	if _, _, _, measured, err := readHostCPULoad(); err == nil || measured {
+		t.Fatalf("a malformed source was accepted: measured=%v err=%v", measured, err)
+	}
+}
+
+// TestReadHostCPULoad_Boundary_AbsentSourceIsUnmeasuredNotIdle is the case macOS and Windows hit:
+// no source is not an error, and it is not reported as an idle machine either.
+func TestReadHostCPULoad_Boundary_AbsentSourceIsUnmeasuredNotIdle(t *testing.T) {
+	withLoadavg(t, "")
+	l1, l5, l15, measured, err := readHostCPULoad()
+	if err != nil || measured || l1 != 0 || l5 != 0 || l15 != 0 {
+		t.Fatalf("an absent source was not reported as unmeasured: %v %v %v measured=%v err=%v", l1, l5, l15, measured, err)
 	}
 }
