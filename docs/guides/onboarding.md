@@ -37,19 +37,19 @@ a Go library.
 Execute the single-shot onboarding pipeline in your repository root:
 ```bash
 # 1. Initialize configuration with declared profiles
-standardsctl init --profile framework --facets security:high,api:public-contract
+praetorctl init --profile framework --facets security:high,api:public-contract
 
 # 2. Transpile universal agent harness (AGENTS.md -> CLAUDE.md, Cursor, etc.)
-standardsctl compile-context
+praetorctl compile-context
 
 # 3. Snapshot legacy technical debt infractions to prevent CI failure
-standardsctl baseline --record
+praetorctl baseline --record
 
 # 4. Prepare a portable devcontainer from reviewed Praetor sources
-standardsctl devcontainer generate --source-root /path/to/reviewed/praetor
+praetorctl devcontainer generate --source-root /path/to/reviewed/praetor
 
 # 5. Verify 100% compliance
-standardsctl audit
+praetorctl audit
 ```
 
 ---
@@ -79,11 +79,11 @@ activation. Those stages need their own selected checks and execution evidence.
 
 | Step | Action | Command | Expected Output |
 | :--- | :--- | :--- | :--- |
-| **1. Scaffolding** | Create declarative `.standards.yaml` | `standardsctl init` | `.standards.yaml` created with selected profiles. |
-| **2. Context Transpilation** | Generate vendor agent files | `standardsctl compile-context` | `CLAUDE.md`, `.cursor/rules/*.mdc`, etc. created ($< 300$ LOC). |
-| **3. Brownfield Baselining** | Snapshot legacy debt | `standardsctl baseline --record` | `.standards-baseline.json` populated with existing debt. |
-| **4. Devcontainer Setup** | Prepare a portable bootstrap | `standardsctl devcontainer generate --source-root /path/to/reviewed/praetor` | JSON and exact source companions prepared; build and startup remain separate checks. |
-| **5. Audit Verification** | Final compliance sweep | `standardsctl audit` | Score: 100% Compliance. |
+| **1. Scaffolding** | Create declarative `.standards.yaml` | `praetorctl init` | `.standards.yaml` created with selected profiles. |
+| **2. Context Transpilation** | Generate vendor agent files | `praetorctl compile-context` | `CLAUDE.md`, `.cursor/rules/*.mdc`, etc. created ($< 300$ LOC). |
+| **3. Brownfield Baselining** | Snapshot legacy debt | `praetorctl baseline --record` | `.standards-baseline.json` populated with existing debt. |
+| **4. Devcontainer Setup** | Prepare a portable bootstrap | `praetorctl devcontainer generate --source-root /path/to/reviewed/praetor` | JSON and exact source companions prepared; build and startup remain separate checks. |
+| **5. Audit Verification** | Final compliance sweep | `praetorctl audit` | Score: 100% Compliance. |
 
 ---
 
