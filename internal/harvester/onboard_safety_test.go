@@ -13,14 +13,20 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
+
+// hangingProgram outlives any deadline a test sets, so only cancellation ends it.
+const hangingProgram = `package main
+
+import "time"
+
+func main() { time.Sleep(30 * time.Second) }
+`
 
 func TestOnboardRepositoryCancellationDuringIdentity(t *testing.T) {
 	bin, repo := t.TempDir(), t.TempDir()
-	git := filepath.Join(bin, "git")
-	if err := os.WriteFile(git, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	testsupport.BuildExecutable(t, bin, "git", hangingProgram)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()

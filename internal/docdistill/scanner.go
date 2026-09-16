@@ -185,7 +185,7 @@ func scanWorkflowActions(ctx context.Context, repoPath string) ([]PackageRef, er
 		return nil, err
 	}
 	entries, err := os.ReadDir(workflowDir)
-	if errors.Is(err, os.ErrNotExist) {
+	if util.DirectoryAbsent(workflowDir, err) {
 		return nil, nil
 	}
 	if err != nil {

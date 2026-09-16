@@ -4,7 +4,6 @@
 package bump
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -71,7 +70,7 @@ func ScanWorkflowActions(repoPath string) ([]ActionCandidate, []DeprecationWarni
 		return nil, nil, err
 	}
 	entries, err := os.ReadDir(workflowDir)
-	if errors.Is(err, os.ErrNotExist) {
+	if util.DirectoryAbsent(workflowDir, err) {
 		return nil, nil, nil
 	}
 	if err != nil {

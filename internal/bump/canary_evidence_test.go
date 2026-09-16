@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -31,10 +32,9 @@ func TestCanaryOutputBoundaryCannotCertifyTruncation(t *testing.T) {
 	for _, size := range []int{65536, 65537} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			dir, candidate := canaryFixture(t)
-			executable := filepath.Join(t.TempDir(), "test-command")
-			if err := os.WriteFile(executable, []byte(fmt.Sprintf("#!/bin/sh\nprintf '%%%ds' x\n", size)), 0700); err != nil {
-				t.Fatal(err)
-			}
+			// Prints exactly size bytes, as printf '%<size>s' x did.
+			source := fmt.Sprintf("package main\n\nimport (\n\t\"fmt\"\n\t\"strings\"\n)\n\nfunc main() { fmt.Print(strings.Repeat(\" \", %d) + \"x\") }\n", size-1)
+			executable := testsupport.BuildExecutable(t, t.TempDir(), "test-command", source)
 			result, err := RunCanary(t.Context(), CanaryOptions{RepoPath: dir, Candidate: candidate, TestCmd: executable})
 			if size == 65536 {
 				if err != nil || !result.Success || len(result.ExecutionLog) != size {
@@ -42,6 +42,10 @@ func TestCanaryOutputBoundaryCannotCertifyTruncation(t *testing.T) {
 				}
 			} else if !errors.Is(err, ErrCanaryFailed) || result.Success || result.Status != CanaryFailed {
 				t.Fatalf("overflow misreported as success: %+v, %v", result, err)
+			} else if !strings.Contains(err.Error(), "command output exceeds") {
+				// Any failure satisfied the lines above, including refusing the executable before
+				// it ran -- which is how this case passed on Windows while the boundary went untested.
+				t.Fatalf("overflow case failed for another reason: %v", err)
 			}
 			if result.CanaryCertified {
 				t.Fatal("command output incorrectly certified")

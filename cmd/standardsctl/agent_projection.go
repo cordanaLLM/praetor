@@ -52,7 +52,7 @@ func listCanonicalAgents(rootDir string) ([]string, error) {
 	dir := filepath.Join(rootDir, filepath.FromSlash(canonicalAgentsRel))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if util.DirectoryAbsent(dir, err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read %s: %w", dir, err)

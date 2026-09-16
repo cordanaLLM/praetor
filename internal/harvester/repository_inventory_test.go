@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -89,7 +90,10 @@ func TestScanLocalWorkstationRepositoryObservations(t *testing.T) {
 func TestScanLocalWorkstationRepositoryInventoryBoundAndFailure(t *testing.T) {
 	root := t.TempDir()
 	for i := 0; i < MaxDevScanEntries+1; i++ {
-		if err := os.Mkdir(filepath.Join(root, "entry-"+string(rune('a'+i%26))+string(rune('0'+i/26))), 0o755); err != nil {
+		// A zero-padded index stays a legal file name on every platform. The previous scheme
+		// appended rune('0'+i/26), which walks past '9' into ':', '<', '>' and '?' -- names
+		// POSIX accepts and Windows refuses, so the fixture could not be built there.
+		if err := os.Mkdir(filepath.Join(root, fmt.Sprintf("entry-%03d", i)), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -158,9 +162,7 @@ func TestScanWorktreeContainerEmptyStaysComplete(t *testing.T) {
 // container the scan cannot read drops every stale candidate, so the report must say so
 // instead of publishing the empty list as exhaustive.
 func TestScanWorktreeContainerUnreadableIsReportedIncomplete(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root bypasses directory permission checks")
-	}
+	testsupport.SkipIfDirectoryModeUnenforced(t)
 	root, container := newTestWorktreeContainer(t)
 	addTestStaleWorktree(t, container, "task-1")
 	if err := os.Chmod(container, 0o000); err != nil {

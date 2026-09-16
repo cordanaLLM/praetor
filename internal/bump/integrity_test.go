@@ -5,8 +5,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 func TestDiscoverGoModulesCheckedRejectsIncompleteDiscovery(t *testing.T) {
@@ -150,19 +153,19 @@ func TestCanaryRejectsWhitespaceCommand(t *testing.T) {
 }
 
 func TestToolchainProbeActuallyChecksGoBin(t *testing.T) {
-	bin, goPath := t.TempDir(), t.TempDir()
-	t.Setenv("PATH", bin)
+	bin, goPath, staging := t.TempDir(), t.TempDir(), t.TempDir()
 	if err := os.Mkdir(filepath.Join(goPath, "bin"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\nprintf '%s\\n' '" + goPath + "'\n"
-	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
+	// Both stand-ins are built while the real go is still on PATH: once PATH is narrowed to
+	// bin, the only go left is the stand-in, which cannot compile anything.
+	testsupport.BuildExecutable(t, bin, "go", "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println("+strconv.Quote(goPath)+") }\n")
+	gosec := testsupport.BuildExecutable(t, staging, "gosec", "package main\n\nfunc main() {}\n")
+	t.Setenv("PATH", bin)
 	if err := probeToolchain(t.Context(), "gosec"); err == nil {
 		t.Fatal("working go binary hid missing gosec")
 	}
-	if err := os.WriteFile(filepath.Join(goPath, "bin", "gosec"), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+	if err := os.Rename(gosec, filepath.Join(goPath, "bin", filepath.Base(gosec))); err != nil {
 		t.Fatal(err)
 	}
 	if err := probeToolchain(t.Context(), "gosec"); err != nil {

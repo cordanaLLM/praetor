@@ -251,7 +251,7 @@ func ValidateExecArg(s string) error {
 //
 // This exempts exactly one character: the host path separator. On POSIX that is '/',
 // which is not in the metacharacter set, so the exemption removes nothing and this is
-// identical to ValidateExecArg. On Windows only ” is exempted; every other
+// identical to ValidateExecArg. On Windows only the backslash is exempted; every other
 // metacharacter, a leading '-', control bytes and the length bound are still refused.
 // Identifier callers must keep using ValidateExecArg: loosening it globally would have
 // admitted backslashes into package names and URLs to fix a problem that only paths have.
