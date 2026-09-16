@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -101,7 +102,65 @@ func verifyAgentProjections(rootDir string) (int, error) {
 			verified++
 		}
 	}
+	// The loop above proves every canonical persona has a projection. On its own that is only
+	// half a check: a file in a projection directory that matches no canonical persona is never
+	// read, so it is never compared, so it can say anything and drift forever. Six such orphans
+	// accumulated here, and one had gone stale holding an absolute developer path in a plugin
+	// that ships to other machines.
+	if err := rejectOrphanProjections(rootDir, dirs, names); err != nil {
+		return verified, err
+	}
 	return verified, nil
+}
+
+// rejectOrphanProjections fails when a projection directory holds a persona the canonical set
+// does not define.
+func rejectOrphanProjections(rootDir string, dirs, names []string) error {
+	canonical := make(map[string]bool, len(names))
+	for i := 0; i < len(names) && i < maxAgentProjections; i++ {
+		canonical[names[i]] = true
+	}
+	for j := 0; j < len(dirs) && j < maxAgentProjections; j++ {
+		found, err := listProjectedAgents(rootDir, dirs[j])
+		if err != nil {
+			return err
+		}
+		for k := 0; k < len(found) && k < maxAgentProjections; k++ {
+			if canonical[found[k]] {
+				continue
+			}
+			return fmt.Errorf("%s/%s projects no canonical persona; every file in a projection "+
+				"directory is compiled output and must correspond to one in %s",
+				dirs[j], found[k], canonicalAgentsRel)
+		}
+	}
+	return nil
+}
+
+// listProjectedAgents returns the persona files present in one projection directory.
+func listProjectedAgents(rootDir, dir string) (_ []string, err error) {
+	path, err := util.ConfinePath(rootDir, filepath.FromSlash(dir))
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) > maxAgentProjections {
+		return nil, fmt.Errorf("%s holds more than %d files", dir, maxAgentProjections)
+	}
+	var names []string
+	for i := 0; i < len(entries) && i < maxAgentProjections; i++ {
+		if !entries[i].IsDir() && strings.HasSuffix(entries[i].Name(), ".md") {
+			names = append(names, entries[i].Name())
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 // verifyProjection compares one projection with the canonical content.
