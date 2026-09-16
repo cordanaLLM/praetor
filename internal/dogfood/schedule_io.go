@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func readSchedulePrivate(ctx context.Context, path string) ([]byte, error) {
@@ -73,8 +74,12 @@ func openScheduleState(ctx context.Context, path string, create bool) (*os.Root,
 		return nil, err
 	}
 	info, err := root.Stat(".")
-	if err == nil && info.Mode().Perm()&0o077 != 0 {
-		err = errors.New("schedule state directory must be private (0700 or stricter)")
+	if err == nil {
+		if private, unverifiable := util.ArtefactPrivacy(info); !private {
+			err = errors.New("schedule state directory must be private (0700 or stricter)")
+		} else {
+			util.NotePrivacyLimitation(unverifiable)
+		}
 	}
 	if err != nil {
 		return nil, errors.Join(err, root.Close())
@@ -238,7 +243,9 @@ func checkScheduleWriteTarget(root *os.Root, name string) error {
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+	existingPrivate, existingUnverifiable := util.ArtefactPrivacy(info)
+	util.NotePrivacyLimitation(existingUnverifiable)
+	if !info.Mode().IsRegular() || !existingPrivate {
 		return errors.New("existing schedule state must permit owner read/write only (0600)")
 	}
 	return nil
@@ -248,8 +255,12 @@ func validateScheduleFileInfo(info os.FileInfo, limit int64, private bool) error
 	if !info.Mode().IsRegular() || info.Size() > limit {
 		return errors.New("schedule input must be a bounded regular file")
 	}
-	if private && info.Mode().Perm()&0o077 != 0 {
-		return errors.New("schedule metadata must be private (0600 or stricter)")
+	if private {
+		isPrivate, unverifiable := util.ArtefactPrivacy(info)
+		util.NotePrivacyLimitation(unverifiable)
+		if !isPrivate {
+			return errors.New("schedule metadata must be private (0600 or stricter)")
+		}
 	}
 	return nil
 }
