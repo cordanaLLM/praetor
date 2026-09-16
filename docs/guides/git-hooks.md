@@ -265,6 +265,37 @@ The client shares MCP's bounded stdio transport, including deadlines, byte and
 request limits, and child-process cleanup. Tests cover stale/foreign/duplicate
 selection, failed discovery and readback, and real native-protocol pipe exchange.
 
+## What a push scans, and against what
+
+A push of an existing branch is scanned against the ref it is replacing. A push of a **new**
+branch has no such ref, so the base is the merge-base with the remote's default branch, obtained
+from `git ls-remote --symref <remote> HEAD`.
+
+The remote is asked rather than `refs/remotes/<remote>/HEAD` being trusted. Git writes that
+symref once at clone time and never updates it: it is inherited when a clone is cloned,
+`git remote set-head` can point it anywhere, and nothing resets it when the remote's default
+changes. Trusting it made the scan scope depend on a local ref nobody set deliberately — in one
+checkout it named a feature branch, the base resolved six merges stale, and the staged scan grew
+from 3 files to 36. That was enough for `semgrep-core` to exceed the host's `memlock` limit and
+refuse the push with `Cannot allocate memory io_uring_queue_init`, an error naming memory, the
+kernel and semgrep, and never the scope.
+
+A push is already a network operation, so asking costs nothing new. An unreachable remote falls
+back to the local symref rather than failing the push, and says so:
+
+```
+Push baseline: remote default unavailable; using local refs/remotes/origin/main
+```
+
+Every push then prints what it is about to scan and the base that produced it:
+
+```
+Push scope: 3 file(s) versus 028dad44db90
+```
+
+That line exists so a wrong scope reads as a wrong number rather than as whatever the scanner
+does when handed too much work.
+
 ## Fixture inputs are excluded from source scans
 
 `is_fixture()` in `.config/lefthook/scripts/checks.py` treats any path under a `testdata/`

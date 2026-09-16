@@ -18,6 +18,7 @@ from unittest import mock
 from common import HookError, run, snapshot
 from checks import (go_packages, source_checks, governance_commands, context_changed,
                     audit_scope, local_package_patterns, checkpoint_checks)
+import hooks
 from hooks import push_updates, new_branch_base, pre_push, push_check_mode
 from privacy import check_private_history, check_private_index
 import sandbox
@@ -788,6 +789,67 @@ class ScopeAndGuard(unittest.TestCase):
             with self.assertRaisesRegex(HookError, "missing ancestry"):
                 new_branch_base("head", "origin")
             self.assertEqual(process.call_count, 1)
+
+    def test_new_branch_prefers_the_remote_default_over_a_stale_local_symref(self):
+        """The local HEAD symref is not the source of truth for the scan scope.
+
+        Git sets refs/remotes/<remote>/HEAD once at clone time and never updates it. In a real
+        checkout it pointed at a feature branch, the base resolved six merges stale, and the
+        staged scan grew from 3 files to 36 -- enough for semgrep-core to exhaust the host
+        memlock limit and refuse the push with an allocation error naming nothing relevant.
+        """
+        refs = (b"refs/remotes/origin/HEAD stale refs/remotes/origin/feature\n"
+                b"refs/remotes/origin/main current\n"
+                b"refs/remotes/origin/feature stale\n")
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            if "ls-remote" in cmd:
+                return b"ref: refs/heads/main\tHEAD\nabc123\tHEAD\n"
+            return b"base\n"
+
+        with mock.patch("hooks.git", return_value=refs), mock.patch("hooks.run", side_effect=fake_run):
+            self.assertEqual(new_branch_base("head", "origin"), "base")
+        merge_bases = [cmd for cmd in calls if cmd[:2] == ["git", "merge-base"]]
+        self.assertTrue(merge_bases, "a merge-base must be attempted")
+        self.assertEqual(merge_bases[0][-1], "current",
+                         "the base must come from the remote's default branch, not the stale symref")
+
+    def test_new_branch_falls_back_to_the_local_symref_when_the_remote_is_unreachable(self):
+        """Offline must not fail the push, but the fallback has to be visible."""
+        refs = (b"refs/remotes/origin/HEAD local refs/remotes/origin/trunk\n"
+                b"refs/remotes/origin/trunk local\n")
+
+        def fake_run(cmd, **kwargs):
+            if "ls-remote" in cmd:
+                return b""
+            return b"base\n"
+
+        with mock.patch("hooks.git", return_value=refs), \
+                mock.patch("hooks.run", side_effect=fake_run), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            self.assertEqual(new_branch_base("head", "origin"), "base")
+        self.assertIn("remote default unavailable", out.getvalue())
+
+    def test_remote_default_ref_reads_only_a_bounded_listing(self):
+        """A remote answer is bounded input, and a malformed one yields no default at all."""
+        # The bound has to be exercised, not merely present: put the only usable answer past it
+        # and require that it is not found. A flood whose first line already matches would pass
+        # with or without the limit and prove nothing.
+        padding = b"\n".join(b"%040d\trefs/heads/pad%d" % (i, i) for i in range(hooks.MAX_LS_REMOTE_LINES + 40))
+        buried = padding + b"\nref: refs/heads/main\tHEAD\n"
+        with mock.patch("hooks.run", return_value=buried):
+            self.assertIsNone(hooks.remote_default_ref("origin"),
+                              "a default past the listing bound must not be read")
+
+        within = b"ref: refs/heads/main\tHEAD\n" + padding
+        with mock.patch("hooks.run", return_value=within):
+            self.assertEqual(hooks.remote_default_ref("origin"), "refs/remotes/origin/main")
+        for malformed in (b"", b"garbage\n", b"ref: refs/heads/main\tNOTHEAD\n"):
+            with mock.patch("hooks.run", return_value=malformed):
+                self.assertIsNone(hooks.remote_default_ref("origin"),
+                                  f"malformed listing {malformed!r} must yield no default")
 
     def test_push_protocol_boundaries(self):
         self.assertEqual(push_updates(""), [])
