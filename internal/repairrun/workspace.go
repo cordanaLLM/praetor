@@ -26,11 +26,11 @@ func materialize(ctx context.Context, cfg Config, attempt *os.Root, directory st
 	if err := source.Close(); err != nil {
 		return nil, err
 	}
-	kind, err := command(ctx, cfg.SourceRoot, gitEnvironment(), 128, "/usr/bin/git", "cat-file", "-t", cfg.SourceSHA)
+	kind, err := runGit(ctx, cfg.SourceRoot, 128, "cat-file", "-t", cfg.SourceSHA)
 	if err != nil || string(kind) != "commit\n" {
 		return nil, errors.New("source_sha must identify an immutable commit")
 	}
-	data, err := command(ctx, cfg.SourceRoot, gitEnvironment(), maxWorkspaceBytes, "/usr/bin/git", "ls-tree", "-rz", cfg.SourceSHA)
+	data, err := runGit(ctx, cfg.SourceRoot, maxWorkspaceBytes, "ls-tree", "-rz", cfg.SourceSHA)
 	if err != nil {
 		return nil, errors.New("pinned source tree listing failed")
 	}
@@ -73,7 +73,7 @@ func extractBlob(ctx context.Context, cfg Config, root *os.Root, manifest source
 	if _, found := manifest[path]; found {
 		return 0, errors.New("source tree repeats a path")
 	}
-	data, err := command(ctx, cfg.SourceRoot, gitEnvironment(), min(8<<20, remaining), "/usr/bin/git", "cat-file", "blob", fields[2])
+	data, err := runGit(ctx, cfg.SourceRoot, min(8<<20, remaining), "cat-file", "blob", fields[2])
 	if err != nil {
 		return 0, errors.New("pinned source blob extraction failed")
 	}
