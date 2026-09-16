@@ -16,6 +16,8 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func contextFixture(t *testing.T, files map[string][]byte) string {
@@ -84,7 +86,7 @@ func TestAnalyzeAndWritePreserveBytesAndScopes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm()&0o077 != 0 {
+		if util.ModeIsProtection() && info.Mode().Perm()&0o077 != 0 {
 			t.Fatalf("non-private mode: %s", name)
 		}
 	}

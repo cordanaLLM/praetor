@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -92,6 +93,7 @@ func noProvider(t *testing.T) generator {
 }
 
 func TestRunReadOnlyStatusAndStableConsumption(t *testing.T) {
+	requireRepairIsolation(t)
 	f := newRunFixture(t, 2)
 	status, err := Status(t.Context(), f.configPath, f.reportPath)
 	if err != nil || status.Status != "ready" || len(status.Jobs) != 2 {
@@ -123,6 +125,7 @@ func TestRunReadOnlyStatusAndStableConsumption(t *testing.T) {
 }
 
 func TestRunFailClosedAndProviderExactlyOnce(t *testing.T) {
+	requireRepairIsolation(t)
 	f := newRunFixture(t, 1)
 	calls := 0
 	generate := func(context.Context, ProviderConfig, string) (*Proposal, error) {
@@ -140,6 +143,7 @@ func TestRunFailClosedAndProviderExactlyOnce(t *testing.T) {
 }
 
 func TestRunRejectsMismatchedRouteAndConfinement(t *testing.T) {
+	requireRepairIsolation(t)
 	f := newRunFixture(t, 1)
 	f.config.Provider.Model = "other-model"
 	f.save(t)
@@ -156,4 +160,43 @@ func TestRunRejectsMismatchedRouteAndConfinement(t *testing.T) {
 	if _, err := StatusWithinRoot(t.Context(), f.configPath, f.reportPath, f.root); err == nil {
 		t.Fatal("outside embedded path accepted")
 	}
+}
+
+// requireRepairIsolation skips a case where repair execution cannot run, naming why.
+//
+// Repair execution confines itself with Linux file isolation and locking, and the
+// non-Linux build says so: openRegular returns "repair execution requires Linux file
+// isolation". These cases did not ask. On Windows run() returned (nil, err), and
+// TestRunFailClosedAndProviderExactlyOnce then read result.Status off the nil result and
+// panicked, aborting every later case in the package. They were previously masked,
+// failing earlier on a git environment that could not find git; fixing that let them
+// reach run() and exposed the crash. The printed reason is the production code's own.
+//
+// openRegular is only called off Linux, where it returns immediately. On Linux the
+// guard returns before calling it, so the nil root it is given is never used.
+func requireRepairIsolation(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "linux" {
+		return
+	}
+	_, err := openRegular(nil, "")
+	t.Skipf("repair execution unavailable on this platform: %v", err)
+}
+
+// requireCredentialHelper skips a case where the repair credential helper cannot run.
+//
+// The helper checks file ownership and opens without following symlinks, and the non-Unix
+// build says so: providerOpenHelper returns "repair credential helper requires Unix
+// ownership and nofollow support". Its own tests are build-tagged accordingly; these
+// generation cases reach it through the provider and did not ask, so on Windows they
+// failed with "credential helper open failed" rather than stating the platform limit.
+// Windows is the only non-Unix platform in the Platform Neutrality matrix, and the guard
+// returns before calling the helper everywhere else.
+func requireCredentialHelper(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return
+	}
+	_, err := providerOpenHelper("")
+	t.Skipf("repair credential helper unavailable on this platform: %v", err)
 }

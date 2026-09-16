@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func scheduleFixture(t *testing.T, record string) (string, *ScheduleConfig) {
@@ -49,6 +51,7 @@ func failedScheduleRunner(_ context.Context, _ SuiteOptions) (*SuiteReport, erro
 }
 
 func TestScheduleActualSuiteAndReadOnlyStatus(t *testing.T) {
+	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
 	status, err := ScheduleStatus(context.Background(), path)
 	if err != nil || status.Status != "due" || status.Verified {
@@ -77,6 +80,7 @@ func TestScheduleActualSuiteAndReadOnlyStatus(t *testing.T) {
 }
 
 func TestScheduleTimingCircuitAndChangedInput(t *testing.T) {
+	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
 	now := fixedScheduleTime()
 	clock := func() time.Time { return now }
@@ -110,6 +114,7 @@ func TestScheduleTimingCircuitAndChangedInput(t *testing.T) {
 }
 
 func TestScheduleOverlapAndCrashRecovery(t *testing.T) {
+	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
 	entered, release := make(chan struct{}), make(chan struct{})
 	runner := func(ctx context.Context, opts SuiteOptions) (*SuiteReport, error) {
@@ -156,6 +161,7 @@ func TestScheduleOverlapAndCrashRecovery(t *testing.T) {
 }
 
 func TestScheduleQuotaIncludesPartialGitAndCache(t *testing.T) {
+	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
 	cfg.MaxBytes = 1 << 20
 	writeScheduleFixture(t, path, cfg)
@@ -177,6 +183,7 @@ func TestScheduleQuotaIncludesPartialGitAndCache(t *testing.T) {
 }
 
 func TestScheduleFailurePrefixAndFalseGreen(t *testing.T) {
+	requireScheduling(t)
 	for _, runner := range []scheduleRunner{
 		func(context.Context, SuiteOptions) (*SuiteReport, error) { return nil, nil },
 		func(context.Context, SuiteOptions) (*SuiteReport, error) {
@@ -196,6 +203,7 @@ func TestScheduleFailurePrefixAndFalseGreen(t *testing.T) {
 }
 
 func TestScheduleCancelledAndNilContext(t *testing.T) {
+	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -249,12 +257,26 @@ func TestScheduleConfigStrictAndBoundary(t *testing.T) {
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Only this assertion is platform-bound. Where the mode cannot express "readable by
+	// others", a 0644 file is indistinguishable from a private one and the config is
+	// correctly treated as private, so the refusal cannot be provoked. The nine strict-
+	// config cases and the defaults above still run everywhere; skipping the whole test
+	// on that account would have discarded them to avoid one assertion.
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, unverifiable := util.ArtefactPrivacy(info); unverifiable != "" {
+		t.Logf("public-schedule refusal not provable here: %s", unverifiable)
+		return
+	}
 	if _, err := LoadScheduleConfig(context.Background(), path); err == nil {
 		t.Fatal("public schedule accepted")
 	}
 }
 
 func TestScheduleStateCorruptionAndReadonly(t *testing.T) {
+	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
 	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
 		t.Fatal(err)
@@ -293,6 +315,7 @@ func TestScheduleStateCorruptionAndReadonly(t *testing.T) {
 }
 
 func TestScheduleSnapshotPinsAndWithinRoot(t *testing.T) {
+	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
 	first, err := loadScheduleSnapshot(context.Background(), path)
 	if err != nil {
@@ -315,6 +338,7 @@ func TestScheduleSnapshotPinsAndWithinRoot(t *testing.T) {
 }
 
 func TestScheduleRunCeilingAndOrphanedPartial(t *testing.T) {
+	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
 	cfg.MaxRuns = 1
 	writeScheduleFixture(t, path, cfg)
@@ -335,6 +359,7 @@ func TestScheduleRunCeilingAndOrphanedPartial(t *testing.T) {
 }
 
 func TestScheduleRunnerIdentityMismatchAndStatus(t *testing.T) {
+	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
 	cfg.RunnerBinary = filepath.Join(t.TempDir(), "other-runner")
 	publicWrite(t, cfg.RunnerBinary, "different executable bytes", 0o700)
@@ -352,6 +377,7 @@ func TestScheduleRunnerIdentityMismatchAndStatus(t *testing.T) {
 }
 
 func TestScheduleRetainedAttemptTypesAndSequence(t *testing.T) {
+	requireScheduling(t)
 	for _, replacement := range []string{"run-junk", "file", "symlink"} {
 		path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
 		if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
@@ -393,6 +419,7 @@ func TestSchedulePrivateMalformedUnicode(t *testing.T) {
 }
 
 func TestScheduleFailureCreatesBoundedPlanAndKeepsBlocked(t *testing.T) {
+	requireScheduling(t)
 	for _, budget := range []float64{0.01, 0} {
 		path, cfg := scheduleFixture(t, "")
 		policy := repairTestPolicy(t)
@@ -424,6 +451,7 @@ func TestScheduleFailureCreatesBoundedPlanAndKeepsBlocked(t *testing.T) {
 }
 
 func TestScheduleCompletedFailureRetainsPlanAfterCancellation(t *testing.T) {
+	requireScheduling(t)
 	path, cfg := scheduleFixture(t, "")
 	policy := repairTestPolicy(t)
 	cfg.RepairPolicy = &policy
@@ -445,6 +473,7 @@ func TestScheduleCompletedFailureRetainsPlanAfterCancellation(t *testing.T) {
 }
 
 func TestScheduleInterruptedClockRollbackKeepsValidState(t *testing.T) {
+	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
 	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
 		t.Fatal(err)
@@ -473,5 +502,21 @@ func TestScheduleInterruptedClockRollbackKeepsValidState(t *testing.T) {
 	}
 	if err := root.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// requireScheduling skips a case where dogfood scheduling cannot run, naming why.
+//
+// Scheduling identifies its own executable through Linux procfs, and the non-Linux
+// build already says so: scheduleExecutableSHA returns "dogfood scheduling requires
+// Linux procfs executable identity". These cases did not ask. On Windows the tick
+// returned (nil, err), and TestScheduleTimingCircuitAndChangedInput then read
+// report.Status off the nil report and panicked -- neither of the two states HISS-21
+// permits, and a panic that takes the rest of the package's cases down with it. The
+// reason printed is the production code's own, not a restatement of it.
+func requireScheduling(t *testing.T) {
+	t.Helper()
+	if _, err := scheduleExecutableSHA(context.Background()); err != nil {
+		t.Skipf("scheduling unavailable on this platform: %v", err)
 	}
 }

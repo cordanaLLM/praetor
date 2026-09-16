@@ -81,6 +81,7 @@ func requireVerificationRuntime(t *testing.T) {
 }
 
 func TestPinnedExtractionIgnoresWorkstationAttributesAndDirtyFiles(t *testing.T) {
+	requireRepairIsolation(t)
 	f := newRunFixture(t, 1)
 	writeFixture(t, filepath.Join(f.config.SourceRoot, ".git/info/attributes"), []byte("internal/fixture/value_test.go export-ignore\n"))
 	writeFixture(t, filepath.Join(f.config.SourceRoot, "internal/fixture/value.go"), []byte("UNCOMMITTED PRIVATE VALUE"))
@@ -133,6 +134,7 @@ func TestTestOracleRejectsOutputSpoofsAndMissingTests(t *testing.T) {
 }
 
 func TestRunRejectsWrongEditsWithoutVerification(t *testing.T) {
+	requireRepairIsolation(t)
 	for name, edit := range map[string]Edit{
 		"outside":   {Path: "../value.go", OriginalSHA256: bytesSHA([]byte(originalFixture)), Content: repairedFixture},
 		"test":      {Path: "internal/fixture/value_test.go", OriginalSHA256: bytesSHA([]byte(originalFixture)), Content: repairedFixture},
@@ -159,6 +161,7 @@ func TestRunRejectsWrongEditsWithoutVerification(t *testing.T) {
 }
 
 func TestRunReproductionPrerequisiteSkipsProvider(t *testing.T) {
+	requireRepairIsolation(t)
 	f := newRunFixture(t, 1)
 	verify := func(context.Context, Config, string) (*TestResult, []byte, error) {
 		return nil, []byte("module unavailable"), errors.New("setup failed")
@@ -170,6 +173,7 @@ func TestRunReproductionPrerequisiteSkipsProvider(t *testing.T) {
 }
 
 func TestInterruptedAttemptIsConsumed(t *testing.T) {
+	requireRepairIsolation(t)
 	f := newRunFixture(t, 1)
 	result, err := run(t.Context(), f.configPath, f.reportPath, noProvider(t), fakeVerification(true))
 	if err != nil {

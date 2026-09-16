@@ -132,7 +132,7 @@ func TestWriteFileSecure_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if ModeIsProtection() && info.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %#o, want 0600", info.Mode().Perm())
 	}
 }

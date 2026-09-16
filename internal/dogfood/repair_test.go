@@ -50,7 +50,7 @@ func repairTestReport(t *testing.T, count int) *SuiteReport {
 	report := &SuiteReport{Version: 1, Status: "failed", ConfigSHA256: strings.Repeat("a", 64), StartedAt: now, FinishedAt: now.Add(time.Second), Options: SuiteOptions{Stage: "verify"}}
 	for i := 0; i < count; i++ {
 		id := "case-" + string(rune('a'+i))
-		report.Cases = append(report.Cases, SuiteCase{ID: id, Kind: "transcript", Status: "failed", Error: "untrusted failure", Transcript: &SuiteTranscript{ID: id, SourcePath: "/nonexistent/" + id, SHA256: strings.Repeat("b", 64), Format: "claude-code-jsonl-v1"}})
+		report.Cases = append(report.Cases, SuiteCase{ID: id, Kind: "transcript", Status: "failed", Error: "untrusted failure", Transcript: &SuiteTranscript{ID: id, SourcePath: absentPath(t, id), SHA256: strings.Repeat("b", 64), Format: "claude-code-jsonl-v1"}})
 	}
 	return report
 }
@@ -257,7 +257,7 @@ func TestRepairAcceptsOnlyCanonicalAntigravityFullCounterpart(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, pass := range []*SuiteReplayPass{loaded.Cases[0].Ingestion, loaded.Cases[0].Replay} {
-		pass.Pages[0].Source.Path = "/unrelated/transcript_full.jsonl"
+		pass.Pages[0].Source.Path = absentPath(t, "unrelated", "transcript_full.jsonl")
 	}
 	if _, err := PlanRepairs(context.Background(), loaded, repairTestPolicy(t)); err == nil {
 		t.Fatal("arbitrary source identity accepted")
@@ -267,4 +267,17 @@ func TestRepairAcceptsOnlyCanonicalAntigravityFullCounterpart(t *testing.T) {
 	if repairSourcePathMatches(claude, full) {
 		t.Fatal("Claude redirected to Antigravity counterpart")
 	}
+}
+
+// absentPath returns an absolute, clean path that does not exist, on every platform.
+//
+// These fixtures used literals such as "/nonexistent/case-a". That is absolute on POSIX
+// and not on Windows, where an absolute path needs a drive or UNC root, so
+// validateSuiteTranscript -- whose filepath.IsAbs check is correct, since a transcript
+// is a real file on the host -- refused every fixture before the case under test ran.
+// The cases only need a path that is absolute, clean and never read; a name inside a
+// fresh temporary directory that nothing creates is all three, wherever it runs.
+func absentPath(t *testing.T, parts ...string) string {
+	t.Helper()
+	return filepath.Join(append([]string{t.TempDir(), "absent"}, parts...)...)
 }

@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestCommandArtifactPreservesPrivateModeAndRefusesLink(t *testing.T) {
@@ -19,7 +21,7 @@ func TestCommandArtifactPreservesPrivateModeAndRefusesLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if util.ModeIsProtection() && info.Mode().Perm() != 0600 {
 		t.Fatalf("existing mode widened to %#o", info.Mode().Perm())
 	}
 	content, err := os.ReadFile(path)

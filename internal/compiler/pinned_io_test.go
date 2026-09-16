@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestCompilerPinnedSourceAndOutputs(t *testing.T) {
@@ -86,7 +88,7 @@ func TestCompilerBoundedSourceAndPrivatePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if util.ModeIsProtection() && info.Mode().Perm() != 0o600 {
 		t.Fatalf("private permissions widened: %o", info.Mode().Perm())
 	}
 	for _, file := range result.Files {

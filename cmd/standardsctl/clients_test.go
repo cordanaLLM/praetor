@@ -14,7 +14,7 @@ func TestClientApplyPreservesSettingsAndBackup(t *testing.T) {
 	registry := filepath.Join(root, "registry.json")
 	target := filepath.Join(root, "settings.json")
 	before := []byte(`{"preferences":{"theme":"dark"},"mcpServers":{"other":{"command":"/existing"}}}`)
-	writeClientFixture(t, registry, []byte(`{"version":1,"servers":[{"name":"shared","command":"/usr/bin/true","args":[]}]}`))
+	writeClientFixture(t, registry, []byte(`{"version":1,"servers":[{"name":"shared","command":`+quoted(trueCommand)+`,"args":[]}]}`))
 	writeClientFixture(t, target, before)
 	output := filepath.Join(root, "backup")
 	if err := runClients([]string{"apply", "--registry", registry, "--client", "gemini", "--target", target, "--out", output}); err != nil {
@@ -31,7 +31,7 @@ func TestClientApplyPreservesSettingsAndBackup(t *testing.T) {
 }
 
 func TestClientApplyRejectsChangedSnapshotAndSymlink(t *testing.T) {
-	registry := clientsetup.Registry{Version: 1, Servers: []clientsetup.Server{{Name: "shared", Command: "/usr/bin/true"}}}
+	registry := clientsetup.Registry{Version: 1, Servers: []clientsetup.Server{{Name: "shared", Command: trueCommand}}}
 	before := []byte(`{}`)
 	plan, err := clientsetup.BuildPlan(t.Context(), registry, clientsetup.Gemini, before)
 	if err != nil {
@@ -64,7 +64,7 @@ func TestClientApplyRejectsArtifactOverlapBeforeWriting(t *testing.T) {
 		t.Run(suffix, func(t *testing.T) {
 			root := t.TempDir()
 			registry := filepath.Join(root, "registry.json")
-			writeClientFixture(t, registry, []byte(`{"version":1,"servers":[{"name":"shared","command":"/usr/bin/true"}]}`))
+			writeClientFixture(t, registry, []byte(`{"version":1,"servers":[{"name":"shared","command":`+quoted(trueCommand)+`}]}`))
 			output := filepath.Join(root, "backup")
 			target := filepath.Join(output, filepath.FromSlash(suffix))
 			if err := runClients([]string{"apply", "--registry", registry, "--client", "gemini", "--target", target, "--out", output}); err == nil {
@@ -78,7 +78,7 @@ func TestClientApplyRejectsArtifactOverlapBeforeWriting(t *testing.T) {
 }
 
 func TestClientPublicationBindsPlanToBackup(t *testing.T) {
-	registry := clientsetup.Registry{Version: 1, Servers: []clientsetup.Server{{Name: "shared", Command: "/usr/bin/true"}}}
+	registry := clientsetup.Registry{Version: 1, Servers: []clientsetup.Server{{Name: "shared", Command: trueCommand}}}
 	plan, err := clientsetup.BuildPlan(t.Context(), registry, clientsetup.Gemini, []byte(`{"wrong":"snapshot"}`))
 	if err != nil {
 		t.Fatal(err)

@@ -15,7 +15,7 @@ import (
 )
 
 func testRegistry() Registry {
-	return Registry{Version: 1, Servers: []Server{{Name: "praetor-dev", Command: "/opt/praetor/bin/praetor-mcp", Args: []string{"-transport=stdio"}}}}
+	return Registry{Version: 1, Servers: []Server{{Name: "praetor-dev", Command: praetorMCP, Args: []string{"-transport=stdio"}}}}
 }
 
 func TestBuildPlanClientShapesAndReplay(t *testing.T) {
@@ -32,14 +32,14 @@ func TestBuildPlanClientShapesAndReplay(t *testing.T) {
 				if p.Mode != "native" || p.RelativePath != "" || len(p.Commands) != 1 {
 					t.Fatalf("invalid native plan: %+v", p)
 				}
-				want := []string{"codex", "mcp", "add", "praetor-dev", "--", "/opt/praetor/bin/praetor-mcp", "-transport=stdio"}
+				want := []string{"codex", "mcp", "add", "praetor-dev", "--", praetorMCP, "-transport=stdio"}
 				if client == AGY {
-					want = []string{"agy", "mcp", "add", "--type", "stdio", "praetor-dev", "--", "/opt/praetor/bin/praetor-mcp", "-transport=stdio"}
+					want = []string{"agy", "mcp", "add", "--type", "stdio", "praetor-dev", "--", praetorMCP, "-transport=stdio"}
 				}
 				if !slices.Equal(p.Commands[0], want) {
 					t.Fatalf("argv differs: %v", p.Commands)
 				}
-				if client == Codex && string(p.Content) != "[mcp_servers.praetor-dev]\ncommand = \"/opt/praetor/bin/praetor-mcp\"\nargs = [\"-transport=stdio\"]\n\n" {
+				if client == Codex && string(p.Content) != "[mcp_servers.praetor-dev]\ncommand = "+quoted(praetorMCP)+"\nargs = [\"-transport=stdio\"]\n\n" {
 					t.Fatalf("bad TOML: %s", p.Content)
 				}
 				return
@@ -93,9 +93,9 @@ func validateClientShape(t *testing.T, p *Plan) {
 }
 
 func TestJSONMergePreservesOtherSettingsAndAccessPolicy(t *testing.T) {
-	existing := []byte(`{"preferences":{"number":9007199254740993,"theme":"dark"},"mcpServers":{"other":{"command":"/other","env":{"TOKEN":"sensitive-existing-value"}},"praetor-dev":{"command":"/opt/praetor/bin/praetor-mcp","args":["-transport=stdio"],"trust":false,"disabled":true}}}`)
+	existing := []byte(`{"preferences":{"number":9007199254740993,"theme":"dark"},"mcpServers":{"other":{"command":"/other","env":{"TOKEN":"sensitive-existing-value"}},"praetor-dev":{"command":` + quoted(praetorMCP) + `,"args":["-transport=stdio"],"trust":false,"disabled":true}}}`)
 	registry := testRegistry()
-	registry.Servers = append(registry.Servers, Server{Name: "second", Command: "/opt/second", Args: []string{}})
+	registry.Servers = append(registry.Servers, Server{Name: "second", Command: hostAbsolute("opt", "second"), Args: []string{}})
 	p, err := BuildPlan(t.Context(), registry, Gemini, existing)
 	if err != nil {
 		t.Fatal(err)
@@ -125,8 +125,8 @@ func TestBuildPlanConflictsAndMalformedConfigs(t *testing.T) {
 		want   error
 	}{
 		{"command conflict", Claude, `{"mcpServers":{"praetor-dev":{"command":"/other"}}}`, ErrConflict},
-		{"args conflict", Gemini, `{"mcpServers":{"praetor-dev":{"command":"/opt/praetor/bin/praetor-mcp","args":[]}}}`, ErrConflict},
-		{"remote conflict", Cline, `{"mcpServers":{"praetor-dev":{"command":"/opt/praetor/bin/praetor-mcp","args":["-transport=stdio"],"url":"https://other"}}}`, ErrConflict},
+		{"args conflict", Gemini, `{"mcpServers":{"praetor-dev":{"command":` + quoted(praetorMCP) + `,"args":[]}}}`, ErrConflict},
+		{"remote conflict", Cline, `{"mcpServers":{"praetor-dev":{"command":` + quoted(praetorMCP) + `,"args":["-transport=stdio"],"url":"https://other"}}}`, ErrConflict},
 		{"null section", Claude, `{"mcpServers":null}`, nil},
 		{"duplicate nested", Claude, `{"unknown":{"secret":"a","secret":"b"}}`, nil},
 		{"duplicate root", Gemini, `{"mcpServers":{},"mcpServers":{}}`, nil},
@@ -182,7 +182,7 @@ func TestYAMLRejectsAmbiguityAndConflicts(t *testing.T) {
 }
 
 func TestRegistryValidationAndBounds(t *testing.T) {
-	valid := `{"version":1,"servers":[{"name":"praetor","command":"/opt/server","args":[]}]}`
+	valid := `{"version":1,"servers":[{"name":"praetor","command":` + quoted(optServer) + `,"args":[]}]}`
 	registry, err := DecodeRegistry(t.Context(), []byte(valid))
 	if err != nil || registry.Version != 1 {
 		t.Fatalf("decode registry: %v", err)
@@ -190,7 +190,7 @@ func TestRegistryValidationAndBounds(t *testing.T) {
 	for _, raw := range []string{
 		strings.Replace(valid, `"version":1`, `"version":2`, 1), strings.Replace(valid, `"version":1`, `"version":1,"env":{}`, 1),
 		strings.Replace(valid, `"args":[]`, `"args":[],"env":{"TOKEN":"private-secret"}`, 1), strings.Replace(valid, `"name":"praetor"`, `"name":"praetor","name":"other"`, 1),
-		strings.Replace(valid, `"command":"/opt/server"`, `"command":null`, 1), strings.Replace(valid, `"command":"/opt/server"`, `"command":"relative"`, 1),
+		strings.Replace(valid, `"command":`+quoted(optServer)+``, `"command":null`, 1), strings.Replace(valid, `"command":`+quoted(optServer)+``, `"command":"relative"`, 1),
 		strings.Replace(valid, `"args":[]`, `"args":["${HOME}"]`, 1), strings.Replace(valid, `"args":[]`, `"args":["{env:TOKEN}"]`, 1), "null", "{}", "{\"version\":1,\"servers\":[]}",
 	} {
 		if _, err := DecodeRegistry(t.Context(), []byte(raw)); err == nil {
@@ -201,7 +201,7 @@ func TestRegistryValidationAndBounds(t *testing.T) {
 	}
 	for _, edit := range []func(*Registry){
 		func(r *Registry) { r.Servers[0].Name = "-invalid" }, func(r *Registry) { r.Servers[0].Name = strings.Repeat("a", 65) },
-		func(r *Registry) { r.Servers[0].Command = "/opt/../server" }, func(r *Registry) { r.Servers[0].Args = []string{"bad\narg"} },
+		func(r *Registry) { r.Servers[0].Command = hostAbsoluteUnclean("opt", "..", "server") }, func(r *Registry) { r.Servers[0].Args = []string{"bad\narg"} },
 		func(r *Registry) { r.Servers[0].Args = make([]string, MaxArgs+1) }, func(r *Registry) { r.Servers[0].Args = []string{strings.Repeat("x", MaxValueBytes+1)} },
 		func(r *Registry) { r.Servers = append(r.Servers, r.Servers[0]) },
 	} {
@@ -241,7 +241,7 @@ func TestBuildPlanBoundaryCancellationOrderingAndSize(t *testing.T) {
 	}
 	r := Registry{Version: 1}
 	for i := MaxServers - 1; i >= 0; i-- {
-		r.Servers = append(r.Servers, Server{Name: fmt.Sprintf("server-%02d", i), Command: "/opt/server", Args: []string{}})
+		r.Servers = append(r.Servers, Server{Name: fmt.Sprintf("server-%02d", i), Command: optServer, Args: []string{}})
 	}
 	before := r.Servers[0].Name
 	p, err := BuildPlan(t.Context(), r, Claude, nil)
@@ -254,7 +254,7 @@ func TestBuildPlanBoundaryCancellationOrderingAndSize(t *testing.T) {
 	if bytes.Index(p.Content, []byte("server-00")) > bytes.Index(p.Content, []byte("server-31")) {
 		t.Fatal("output not deterministic")
 	}
-	r.Servers = append(r.Servers, Server{Name: "extra", Command: "/opt/server"})
+	r.Servers = append(r.Servers, Server{Name: "extra", Command: optServer})
 	if _, err := BuildPlan(t.Context(), r, Claude, nil); err == nil {
 		t.Fatal("too many servers accepted")
 	}

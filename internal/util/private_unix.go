@@ -20,3 +20,7 @@ func ArtefactPrivacy(info os.FileInfo) (private bool, unverifiable string) {
 	}
 	return info.Mode().Perm()&0o077 == 0, ""
 }
+
+// ModeIsProtection reports whether a file's mode is what protects it on this platform.
+// On POSIX it is, so an assertion about the mode is an assertion about access.
+func ModeIsProtection() bool { return true }

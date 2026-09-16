@@ -36,3 +36,14 @@ func ArtefactPrivacy(info os.FileInfo) (private bool, unverifiable string) {
 	}
 	return true, UnverifiablePrivacy
 }
+
+// ModeIsProtection reports whether a file's mode is what protects it on this platform.
+//
+// On Windows it is not -- the ACL is -- so a test asserting a mode such as 0600 is asserting
+// something the platform cannot express, and it fails for a reason unrelated to the code
+// under test. Callers use this as a precondition on exactly that assertion, so the rest of
+// the case still runs. The reason is printed once per process rather than skipped silently.
+func ModeIsProtection() bool {
+	NotePrivacyLimitation(UnverifiablePrivacy)
+	return false
+}

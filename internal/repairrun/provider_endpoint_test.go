@@ -10,6 +10,7 @@ import (
 )
 
 func TestProviderGenerateUsesConfiguredTLSEndpoint(t *testing.T) {
+	requireCredentialHelper(t)
 	for _, basePath := range []string{"", "/api/provider/v2"} {
 		t.Run(basePath, func(t *testing.T) {
 			cfg := providerFixtureConfig(t, "printf '%s\\n' '"+providerFixtureToken+"'")

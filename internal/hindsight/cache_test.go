@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestRecallLocalFactsWithError_Positive(t *testing.T) {
@@ -114,7 +116,7 @@ func TestLocalCacheWriteIsPrivateAndRejectsEscapingDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if util.ModeIsProtection() && info.Mode().Perm() != 0600 {
 		t.Fatalf("private cache mode=%#o", info.Mode().Perm())
 	}
 	linked, outside := t.TempDir(), t.TempDir()

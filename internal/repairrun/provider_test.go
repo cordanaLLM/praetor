@@ -70,6 +70,7 @@ func providerFixtureClient(t *testing.T, handler http.HandlerFunc) *http.Client 
 }
 
 func TestProviderGenerateTLSRequestAndUsage(t *testing.T) {
+	requireCredentialHelper(t)
 	t.Setenv("PROVIDER_TEST_SECRET", "must-not-inherit")
 	cfg := providerFixtureConfig(t, "[ -z \"${PROVIDER_TEST_SECRET:-}\" ]\nprintf '%s\\n' '"+providerFixtureToken+"'")
 	var calls atomic.Int32
@@ -109,6 +110,7 @@ func TestProviderGenerateTLSRequestAndUsage(t *testing.T) {
 }
 
 func TestProviderRejectsRedirectAndHTTPErrorWithoutRetry(t *testing.T) {
+	requireCredentialHelper(t)
 	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusTooManyRequests, http.StatusInternalServerError} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			cfg := providerFixtureConfig(t, "printf '%s\\n' '"+providerFixtureToken+"'")

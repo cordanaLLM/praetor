@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func interruptedRender(t *testing.T) (string, string, []byte) {
@@ -35,7 +37,7 @@ func interruptedRender(t *testing.T) (string, string, []byte) {
 	}
 	assertReleaseCount(t, root, 1)
 	info, err := os.Stat(filepath.Join(root, renderJournalName))
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || (util.ModeIsProtection() && info.Mode().Perm() != 0o600) {
 		t.Fatalf("private recovery journal missing: %v, %v", info, err)
 	}
 	return root, fragment, before

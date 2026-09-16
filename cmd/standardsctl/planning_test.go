@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/planning"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func planningDraftFixture(t *testing.T) []byte {
@@ -53,7 +55,7 @@ func TestPlanningCLIPreparesMetadataAndPrivateArtifacts(t *testing.T) {
 	}
 	for _, name := range []string{"plan.json", "TODO.md", "ROADMAP.md", "MILESTONES.md"} {
 		info, err := os.Stat(filepath.Join(directory, name))
-		if err != nil || info.Mode().Perm() != 0o600 {
+		if err != nil || (util.ModeIsProtection() && info.Mode().Perm() != 0o600) {
 			t.Fatalf("artifact %s missing or not private: %v", name, err)
 		}
 	}

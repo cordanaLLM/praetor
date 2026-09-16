@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // =========================================================================
@@ -461,7 +463,7 @@ func TestDistill_Boundary_EphemeralDirDefaultsToTempDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat ephemeral report: %v", err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if util.ModeIsProtection() && info.Mode().Perm() != 0o600 {
 		t.Errorf("ephemeral SARIF mode = %#o, want 0600", info.Mode().Perm())
 	}
 }
