@@ -194,7 +194,7 @@ func Record(previous *Baseline, infractions []Infraction, opts RecordOptions) (*
 // and impossible in a Git-tracked path on Windows -- collapses onto the separator form. That
 // trades a false match in one pathological filename for a gate that works on every platform.
 func NormalizePath(path string) string {
-	return strings.ReplaceAll(path, "\\", "/")
+	return util.NormalizeSlashes(path)
 }
 
 // EvaluateRatchet enforces monotonic debt reduction and the touched-file clean rule.

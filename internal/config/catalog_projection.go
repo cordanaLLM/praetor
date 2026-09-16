@@ -9,6 +9,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // ValidateCatalogProjectionContext validates the prospective local index without
@@ -74,6 +76,19 @@ func validateCatalogArtifact(artifact PolicyArtifact) error {
 	return nil
 }
 
+// catalogDirAllowed reports whether a catalog artifact's parent directory is one of the two the
+// catalog permits, comparing in slash form on every host.
+//
+// Both sides must be normalised before they are compared. archetypeDirName is a slash constant
+// while filepath.Dir yields the host separator, so on Windows a profile artifact produced
+// `.config\archetypes`, matched nothing, and adoption from a local praetor checkout could not
+// build a lock. Taking the directory as a parameter is what makes the Windows shape testable
+// from a Linux host.
+func catalogDirAllowed(dir string) bool {
+	normalised := util.NormalizeSlashes(dir)
+	return normalised == archetypeDirName || normalised == archetypeDirName+"/"+facetDirName
+}
+
 func validateCatalogPath(rel string) error {
 	if !filepath.IsLocal(rel) || filepath.Clean(rel) != rel || len(rel) > 4096 || !strings.HasSuffix(rel, ".yaml") {
 		return errors.New("catalog artifact requires a bounded clean local YAML path")
@@ -81,8 +96,12 @@ func validateCatalogPath(rel string) error {
 	if !utf8.ValidString(rel) || strings.ContainsFunc(rel, unicode.IsControl) {
 		return errors.New("catalog artifact path requires UTF-8 without controls")
 	}
-	dir := filepath.Dir(rel)
-	if dir != archetypeDirName && dir != filepath.Join(archetypeDirName, facetDirName) {
+	// Both sides must be in slash form before they are compared. archetypeDirName is a slash
+	// constant, while filepath.Dir yields the host separator, so on Windows a profile artifact
+	// produced ".config\\archetypes" and matched nothing -- adoption from a local praetor
+	// checkout could not build a lock at all. filepath.ToSlash would fix Windows and leave the
+	// behaviour untestable everywhere else, so the normalisation is unconditional.
+	if !catalogDirAllowed(filepath.Dir(rel)) {
 		return errors.New("catalog artifact must be directly inside the profiles or facets directory")
 	}
 	return nil
