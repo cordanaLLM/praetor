@@ -1,0 +1,51 @@
+---
+name: adr-scaffold
+description: Scaffold and manage Architectural Decision Records (ADRs) adhering to immutable numbering, status lifecycle, context, decision lattice, and consequences.
+---
+
+# Architectural Decision Record Scaffolder (`adr-scaffold`)
+
+Author and record significant architectural choices, invariant trade-offs, and governance policies in `docs/adr/`.
+
+## ADR Lifecycle & Invariants
+
+- **Sequential Numbering**: Identify the highest existing number in `docs/adr/` and increment (`NNNN-kebab-title.md`).
+- **Immutability**: Once an ADR is marked `Accepted`, its decision text is immutable. Any changes require a new ADR that supersedes the prior one (`Superseded by ADR-NNNN`).
+- **Mathematical / Formal Rigor**: Frame trade-offs against HISS invariants and the strictness lattice.
+
+## Standard ADR Template
+
+Create `docs/adr/{NNNN}-{title}.md`:
+
+```markdown
+# ADR-NNNN: [Descriptive Decision Title]
+
+## Status
+[Proposed | Accepted | Deprecated | Superseded by ADR-XXXX]
+
+## Context
+[What problem are we trying to solve? What are the technological, operational, or fleet constraints? What HISS invariants (HISS-01 through HISS-16) are impacted?]
+
+## Decision
+[What is the architectural or algorithmic choice? State the specific mechanisms, libraries, schemas, or protocols adopted. If resolving conflicts across profiles, demonstrate how the join-semilattice computes the supremum.]
+
+## Consequences
+
+### Positive
+- [Benefit 1: Invariant guarantee, performance improvement, or simplification.]
+- [Benefit 2: Agent clarity or determinism.]
+
+### Negative / Trade-offs
+- [Trade-off 1: Maintenance burden, compilation overhead, or migration cost.]
+
+### Neutral
+- [Observed neutral changes in workflow or tooling.]
+
+## Verification & Compliance
+[What automated test or lint sweep enforces this decision?]
+```
+
+## Checklist Before Submitting
+1. [ ] Correct 4-digit zero-padded index (`0003`, `0004`, etc.).
+2. [ ] Valid markdown with English prose in a neutral professional register.
+3. [ ] Referenced from `README.md` or index docs if foundational.

@@ -1,0 +1,53 @@
+---
+name: adhd-format
+description: Format complex technical reports, architectural reviews, and diagnostic outputs for high cognitive focus, executive clarity, and ADHD readability using visual hierarchy, bionic bolding, chunked lists, and alert callouts.
+---
+
+# High-Focus Technical Formatting (`adhd-format`)
+
+Transform dense engineering outputs, audit findings, and architecture documentation into high-bandwidth, ADHD-optimized visual deliverables.
+
+## Core Formatting Principles
+
+1. **Lead with the Bottom Line (BLUF)**:
+   - State the decision, status, or actionable conclusion in the very first sentence.
+   - Eliminate filler preambles ("Here is the report", "Based on my analysis").
+
+2. **Visual Scannability & Anchor Bolding**:
+   - Bold the **first 2-4 words** or the operative action of every bullet point.
+   - Restrict paragraphs to **at most 2-3 sentences**.
+   - Use high-contrast Markdown tables for multi-attribute comparisons.
+
+3. **Strategic Alert Callouts**:
+   - Use GitHub-style alerts sparingly for immediate cognitive anchoring:
+     - `> [!IMPORTANT]` for blocking requirements or invariants.
+     - `> [!WARNING]` for deprecations or breaking risks.
+     - `> [!TIP]` for operational shortcuts and command patterns.
+
+4. **Diagrammatic Synthesis**:
+   - Whenever explaining a state transition, sequence, or lattice relationship, include a compact Mermaid diagram ($\le 6$ nodes).
+
+5. **Progressive Disclosure**:
+   - Provide summary matrices first, actionable CLI commands second, and deep implementation details collapsed or linked below.
+
+## Transformation Pattern
+
+### ❌ Anti-Pattern (Cognitive Fatigue)
+> "In evaluating the repository against HISS-04, we noticed that several functions in the compiler package have cyclomatic complexity values exceeding the threshold of 10. Specifically, `compileAstNode` has a complexity of 14, and its length is 92 lines which also violates the 75 line limit. We should refactor this into sub-functions."
+
+### ✅ ADHD-Optimized Pattern
+> ### 🚨 HISS-04 Complexity Infraction
+> 
+> | Function | Cyclomatic | Limit | Func LOC | Limit | Status |
+> | :--- | :--- | :--- | :--- | :--- | :--- |
+> | `compiler.compileAstNode` | **14** | $\le 10$ | **92** | $\le 75$ | ❌ Blocked |
+> 
+> **Immediate Action Required**:
+> - **Extract node visit logic** into `visitExpression()` and `visitStatement()`.
+> - **Target reduction**: Reduce cyclomatic complexity from 14 to $\le 8$.
+> 
+> ```mermaid
+> flowchart LR
+>     NODE["compileAstNode (LOC 92)"] --> EXPR["visitExpression (LOC 35)"]
+>     NODE --> STMT["visitStatement (LOC 40)"]
+> ```
