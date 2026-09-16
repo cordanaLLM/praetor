@@ -13,7 +13,12 @@ import (
 )
 
 func validateSuitePath(path string) error {
-	if path == "" || len(path) > 4096 || !utf8.ValidString(path) || strings.ContainsFunc(path, unicode.IsControl) || len(strings.Split(path, string(filepath.Separator))) > 128 {
+	// The component count uses every separator the host accepts. Splitting on
+	// filepath.Separator alone split only on '' on Windows, which also accepts '/', so a
+	// slash-separated path of any depth counted as one component and passed the 128 bound:
+	// measured, a 201-deep slash path was accepted while the same depth in backslashes was
+	// refused. ToSlash is a no-op on POSIX, where '' is a filename character, not a separator.
+	if path == "" || len(path) > 4096 || !utf8.ValidString(path) || strings.ContainsFunc(path, unicode.IsControl) || len(strings.Split(filepath.ToSlash(path), "/")) > 128 {
 		return errors.New("suite path must be bounded UTF-8 without control characters")
 	}
 	return nil

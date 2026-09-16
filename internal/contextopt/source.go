@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -27,7 +28,15 @@ func validateOptions(options Options) (Options, error) {
 	if err := validatePath(root); err != nil {
 		return Options{}, err
 	}
-	selected := Options{Root: root, Sources: append([]string(nil), options.Sources...)}
+	selected := Options{Root: root, Sources: make([]string, len(options.Sources))}
+	// A source is an identity compared against the compiler's vendor targets, which are
+	// slash paths (".cursor/rules/hiss-invariants.mdc"), not a host path. Normalising here
+	// means a Windows user's backslash spelling names the same source and still matches
+	// drift detection, instead of being judged -- and compared -- in a different form.
+	// filepath.ToSlash is a no-op where the separator is already '/'.
+	for i := range options.Sources {
+		selected.Sources[i] = filepath.ToSlash(options.Sources[i])
+	}
 	if err := validateSources(selected.Sources); err != nil {
 		return Options{}, err
 	}
@@ -41,7 +50,11 @@ func validateSources(sources []string) error {
 		if err := validatePath(name); err != nil {
 			return err
 		}
-		if !filepath.IsLocal(name) || filepath.Clean(name) != name || name == "." || seen[name] {
+		// Cleanliness is judged with slash semantics, since the name is now in slash form:
+		// filepath.Clean returns backslashes on Windows and never equalled a slash name, so
+		// every documented spelling was refused. filepath.IsLocal is kept because containment
+		// is a host question, and it is what still rejects an escaping or drive-qualified name.
+		if !filepath.IsLocal(name) || path.Clean(name) != name || name == "." || seen[name] {
 			return fmt.Errorf("source %d must be a unique clean relative file path", i+1)
 		}
 		seen[name] = true
@@ -53,7 +66,13 @@ func validatePath(path string) error {
 	if path == "" || len(path) > MaxPathBytes || !utf8.ValidString(path) || strings.ContainsFunc(path, unicode.IsControl) {
 		return fmt.Errorf("path must be nonempty UTF-8 without controls, at most %d bytes", MaxPathBytes)
 	}
-	if len(strings.Split(path, string(filepath.Separator))) > MaxPathDepth {
+	// Count components across every separator the host accepts. Splitting on
+	// filepath.Separator alone split only on '\' on Windows, which also accepts '/', so
+	// "x/x/.../x" counted as one component and the depth bound never fired: a fail-open
+	// input bound. Sources are normalised to slash form before reaching here, which would
+	// have made the bound unreachable for every source on Windows. ToSlash is a no-op on
+	// POSIX, where '\' is an ordinary filename character and must not be counted.
+	if len(strings.Split(filepath.ToSlash(path), "/")) > MaxPathDepth {
 		return fmt.Errorf("path exceeds %d components", MaxPathDepth)
 	}
 	return nil
