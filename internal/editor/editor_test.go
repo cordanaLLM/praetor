@@ -34,7 +34,7 @@ func TestEditor_Positive_SynthesizeAllEditors(t *testing.T) {
 }
 
 func verifyVSCodeAndJetBrains(t *testing.T, fileMap map[string]string) {
-	vscodeSettings, ok := fileMap[filepath.Join(".vscode", "settings.json")]
+	vscodeSettings, ok := fileMap[".vscode/settings.json"]
 	if !ok {
 		t.Errorf("missing .vscode/settings.json")
 	}
@@ -51,7 +51,7 @@ func verifyVSCodeAndJetBrains(t *testing.T, fileMap map[string]string) {
 		}
 	}
 
-	vscodeTasks, ok := fileMap[filepath.Join(".vscode", "tasks.json")]
+	vscodeTasks, ok := fileMap[".vscode/tasks.json"]
 	if !ok {
 		t.Errorf("missing .vscode/tasks.json")
 	}
@@ -60,7 +60,7 @@ func verifyVSCodeAndJetBrains(t *testing.T, fileMap map[string]string) {
 		t.Errorf(".vscode/tasks.json is not valid JSON: %v", err)
 	}
 
-	ideaInspection, ok := fileMap[filepath.Join(".idea", "inspectionProfiles", "standards.xml")]
+	ideaInspection, ok := fileMap[".idea/inspectionProfiles/standards.xml"]
 	if !ok {
 		t.Errorf("missing .idea/inspectionProfiles/standards.xml")
 	}
@@ -70,7 +70,7 @@ func verifyVSCodeAndJetBrains(t *testing.T, fileMap map[string]string) {
 }
 
 func verifyNeovimAndZed(t *testing.T, fileMap map[string]string) {
-	nvimLua, ok := fileMap[filepath.Join("lua", "standards.lua")]
+	nvimLua, ok := fileMap["lua/standards.lua"]
 	if !ok {
 		t.Errorf("missing lua/standards.lua")
 	}
@@ -81,10 +81,10 @@ func verifyNeovimAndZed(t *testing.T, fileMap map[string]string) {
 		t.Errorf("lua/standards.lua missing user commands")
 	}
 
-	if _, ok := fileMap[filepath.Join(".zed", "settings.json")]; !ok {
+	if _, ok := fileMap[".zed/settings.json"]; !ok {
 		t.Errorf("missing .zed/settings.json")
 	}
-	if _, ok := fileMap[filepath.Join(".zed", "tasks.json")]; !ok {
+	if _, ok := fileMap[".zed/tasks.json"]; !ok {
 		t.Errorf("missing .zed/tasks.json")
 	}
 }
@@ -93,16 +93,16 @@ func verifyRemainingEditors(t *testing.T, fileMap map[string]string) {
 	if _, ok := fileMap[".editorconfig"]; !ok {
 		t.Errorf("missing .editorconfig")
 	}
-	if _, ok := fileMap[filepath.Join(".helix", "config.toml")]; !ok {
+	if _, ok := fileMap[".helix/config.toml"]; !ok {
 		t.Errorf("missing .helix/config.toml")
 	}
-	if _, ok := fileMap[filepath.Join(".helix", "languages.toml")]; !ok {
+	if _, ok := fileMap[".helix/languages.toml"]; !ok {
 		t.Errorf("missing .helix/languages.toml")
 	}
 	if _, ok := fileMap[".dir-locals.el"]; !ok {
 		t.Errorf("missing .dir-locals.el")
 	}
-	if _, ok := fileMap[filepath.Join(".fleet", "settings.json")]; !ok {
+	if _, ok := fileMap[".fleet/settings.json"]; !ok {
 		t.Errorf("missing .fleet/settings.json")
 	}
 	if _, ok := fileMap["standards.sublime-project"]; !ok {
@@ -241,7 +241,7 @@ func TestEditor_Boundary_CustomBinaryDirAndFlags(t *testing.T) {
 
 	var settingsContent string
 	for _, f := range set.Files {
-		if f.Path == filepath.Join(".vscode", "settings.json") {
+		if f.Path == ".vscode/settings.json" {
 			settingsContent = f.Content
 			break
 		}
@@ -271,19 +271,19 @@ func TestEditor_Positive_ArchetypeNativeGPUSystems(t *testing.T) {
 	}
 
 	// Verify clangd in VSCode settings
-	vsSettings := fileMap[filepath.Join(".vscode", "settings.json")]
+	vsSettings := fileMap[".vscode/settings.json"]
 	if !strings.Contains(vsSettings, "clangd") {
 		t.Errorf("expected clangd in VSCode settings for native-gpu-systems: %s", vsSettings)
 	}
 
 	// Verify ClangTidy in JetBrains
-	ideaXML := fileMap[filepath.Join(".idea", "inspectionProfiles", "standards.xml")]
+	ideaXML := fileMap[".idea/inspectionProfiles/standards.xml"]
 	if !strings.Contains(ideaXML, "ClangTidyInspection") {
 		t.Errorf("expected ClangTidyInspection in JetBrains XML for native-gpu-systems")
 	}
 
 	// Verify Neovim filetypes
-	nvimLua := fileMap[filepath.Join("lua", "standards.lua")]
+	nvimLua := fileMap["lua/standards.lua"]
 	if !strings.Contains(nvimLua, "cuda") || !strings.Contains(nvimLua, "cpp") {
 		t.Errorf("expected cpp and cuda in Neovim filetypes for native-gpu-systems")
 	}

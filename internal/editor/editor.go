@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -264,17 +265,17 @@ func generateVSCodeFamily(binDir string, includeLSP bool, arch string, plan Plan
 
 	return []GeneratedFile{
 		{
-			Path:    filepath.Join(".vscode", "settings.json"),
+			Path:    ".vscode/settings.json",
 			Content: settings,
 			Editor:  EditorVSCode,
 		},
 		{
-			Path:    filepath.Join(".vscode", "extensions.json"),
+			Path:    ".vscode/extensions.json",
 			Content: extensions,
 			Editor:  EditorVSCode,
 		},
 		{
-			Path:    filepath.Join(".vscode", "tasks.json"),
+			Path:    ".vscode/tasks.json",
 			Content: tasks,
 			Editor:  EditorVSCode,
 		},
@@ -451,12 +452,12 @@ func generateJetBrains(arch string) []GeneratedFile {
 
 	return []GeneratedFile{
 		{
-			Path:    filepath.Join(".idea", "inspectionProfiles", "standards.xml"),
+			Path:    ".idea/inspectionProfiles/standards.xml",
 			Content: inspectionProfile,
 			Editor:  EditorJetBrains,
 		},
 		{
-			Path:    filepath.Join(".idea", "workspace.xml"),
+			Path:    ".idea/workspace.xml",
 			Content: workspaceHooks,
 			Editor:  EditorJetBrains,
 		},
@@ -522,7 +523,7 @@ end
 
 	return []GeneratedFile{
 		{
-			Path:    filepath.Join("lua", "standards.lua"),
+			Path:    "lua/standards.lua",
 			Content: luaConfig,
 			Editor:  EditorNeovim,
 		},
@@ -647,12 +648,12 @@ func zedTasks() string {
 func generateZed(arch string) []GeneratedFile {
 	return []GeneratedFile{
 		{
-			Path:    filepath.Join(".zed", "settings.json"),
+			Path:    ".zed/settings.json",
 			Content: zedSettings(),
 			Editor:  EditorZed,
 		},
 		{
-			Path:    filepath.Join(".zed", "tasks.json"),
+			Path:    ".zed/tasks.json",
 			Content: zedTasks(),
 			Editor:  EditorZed,
 		},
@@ -700,12 +701,12 @@ formatter = { command = "gofmt" }
 `
 	return []GeneratedFile{
 		{
-			Path:    filepath.Join(".helix", "config.toml"),
+			Path:    ".helix/config.toml",
 			Content: config,
 			Editor:  EditorHelix,
 		},
 		{
-			Path:    filepath.Join(".helix", "languages.toml"),
+			Path:    ".helix/languages.toml",
 			Content: languages,
 			Editor:  EditorHelix,
 		},
@@ -762,12 +763,12 @@ func generateFleet(arch string) []GeneratedFile {
 `
 	return []GeneratedFile{
 		{
-			Path:    filepath.Join(".fleet", "settings.json"),
+			Path:    ".fleet/settings.json",
 			Content: settings,
 			Editor:  EditorFleet,
 		},
 		{
-			Path:    filepath.Join(".fleet", "run.json"),
+			Path:    ".fleet/run.json",
 			Content: run,
 			Editor:  EditorFleet,
 		},
@@ -959,7 +960,10 @@ func validateEditorFiles(set *EditorConfigSet) error {
 		return errors.New("editor output exceeds file bound")
 	}
 	for _, file := range set.Files {
-		if !filepath.IsLocal(file.Path) || filepath.Clean(file.Path) != file.Path || file.Path == "." {
+		// Editor files are declared as slash paths (".vscode/settings.json"); cleanliness is
+		// judged in that form. filepath.Clean returns backslashes on Windows and refused every
+		// declared file. IsLocal still decides containment on the host.
+		if !filepath.IsLocal(file.Path) || path.Clean(file.Path) != file.Path || file.Path == "." {
 			return errors.New("editor output requires a clean relative file path")
 		}
 	}

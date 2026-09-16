@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -73,7 +74,11 @@ func ApplyFlavor(ctx context.Context, repoPath string, targetFlavor string, forc
 // templateDisposition decides, before any filesystem mutation, whether a template is
 // safe to write, already covered, or must be refused outright.
 func templateDisposition(repoPath string, tmpl TemplateItem, force bool) (skip bool, err error) {
-	if !filepath.IsLocal(tmpl.Path) || filepath.Clean(tmpl.Path) != tmpl.Path {
+	// A template path is declared in slash form (".github/workflows/ci.yml"), so its
+	// cleanliness is a slash-path property. filepath.Clean returns backslashes on Windows
+	// and never equalled the declared value, so every template was refused and `flavor
+	// apply` could scaffold nothing there. IsLocal still decides containment on the host.
+	if !filepath.IsLocal(tmpl.Path) || path.Clean(tmpl.Path) != tmpl.Path {
 		return false, fmt.Errorf("template path must remain within the repository: %s", tmpl.Path)
 	}
 	// An accepted alternative already covers this template, so scaffolding the canonical
