@@ -50,11 +50,11 @@ func newRunFixture(t *testing.T, cases int) *runFixture {
 	writeFixture(t, filepath.Join(source, "internal/fixture/value.go"), []byte(originalFixture))
 	writeFixture(t, filepath.Join(source, "internal/fixture/value_test.go"), []byte("package fixture\nimport \"testing\"\nfunc TestValue(t *testing.T) { if Value()!=2 { t.Fatal(\"wrong value\") } }\n"))
 	for _, args := range [][]string{{"init", "--template=", source}, {"-C", source, "add", "."}, {"-C", source, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture"}} {
-		if output, err := command(t.Context(), "", gitEnvironment(), maxLogBytes, "/usr/bin/git", args...); err != nil {
+		if output, err := runGit(t.Context(), "", maxLogBytes, args...); err != nil {
 			t.Fatalf("fixture git: %s %v", output, err)
 		}
 	}
-	sha, err := command(t.Context(), source, gitEnvironment(), 128, "/usr/bin/git", "rev-parse", "HEAD")
+	sha, err := runGit(t.Context(), source, 128, "rev-parse", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}
