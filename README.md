@@ -63,7 +63,7 @@ Praetor resolves context compilation and lattice configuration through a single-
 
 ```mermaid
 flowchart LR
-    AGENTS["AGENTS.md\n(Canonical Source)"] --> COMP["standardsctl compile-context"]
+    AGENTS["AGENTS.md\n(Canonical Source)"] --> COMP["praetorctl compile-context"]
     COMP --> C1["CLAUDE.md (< 300 LOC)"]
     COMP --> C2[".cursor/rules/*.mdc"]
     COMP --> C3[".github/copilot-instructions.md"]
@@ -73,8 +73,8 @@ flowchart LR
     
     STANDARDS[".standards.yaml"] --> LATTICE["Lattice Supremum\n(Highest Standard Wins)"]
     LATTICE --> DEV[".devcontainer & Toolchain"]
-    LATTICE --> AUDIT["standardsctl audit"]
-    LATTICE --> BASE["standardsctl baseline"]
+    LATTICE --> AUDIT["praetorctl audit"]
+    LATTICE --> BASE["praetorctl baseline"]
 ```
 
 ---
@@ -83,11 +83,11 @@ flowchart LR
 
 | Architectural Pillar | Technical Functionality | Primary Tooling |
 | :--- | :--- | :--- |
-| **Universal Context Transpiler** | Single canonical `AGENTS.md` compiled into vendor targets ($\le 300$ lines for `CLAUDE.md`). | `standardsctl compile-context` |
+| **Universal Context Transpiler** | Single canonical `AGENTS.md` compiled into vendor targets ($\le 300$ lines for `CLAUDE.md`). | `praetorctl compile-context` |
 | **Multi-Transport MCP Bridge** | `stdio`, Streamable HTTP, and SSE Model Context Protocol server with tool schema translation. | `standards-mcp` |
 | **HISS-16 Lattice Engine** | Composable archetypes resolved via Join-Semilattice supremum ("Highest Standard Wins"). | `internal/config` |
-| **Hermetic Devcontainers** | Reproducible multi-architecture dev environments pre-wiring toolchains and Editor setups. | `standardsctl devcontainer` |
-| **Monotonic Debt Ratcheting** | Baselined legacy debt with non-increasing debt invariants and touched-file clean rules. | `standardsctl baseline` |
+| **Hermetic Devcontainers** | Reproducible multi-architecture dev environments pre-wiring toolchains and Editor setups. | `praetorctl devcontainer` |
+| **Monotonic Debt Ratcheting** | Baselined legacy debt with non-increasing debt invariants and touched-file clean rules. | `praetorctl baseline` |
 | **Supply Chain Provenance** | SLSA Level 3 attestations, Syft SBOMs, and Sigstore Cosign keyless signatures. | GoReleaser + Actions OIDC |
 | **Dual-Surface Documentation** | Material-for-MkDocs human UI paired with token-efficient `/llms.txt` and `/llms-full.txt` endpoints. | `mkdocs-llmstxt-md` |
 

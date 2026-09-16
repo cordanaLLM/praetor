@@ -9,6 +9,30 @@ before:
     - go mod tidy
 
 builds:
+  # The binary ships as praetorctl because that is the name every governed repository
+  # invokes: AGENTS.md, the lefthook jobs and the generated harness all call praetorctl,
+  # while a release archive used to contain only standardsctl. An adopter who installed a
+  # release and followed the harness got "command not found" (#118).
+  #
+  # The standardsctl build below keeps the old name working for anyone already installing
+  # it. Same source, same flags; the two names are the same program.
+  - id: praetorctl
+    main: ./cmd/standardsctl
+    binary: praetorctl
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  # Compatibility alias: the pre-rename name, same program. Kept so a release does not
+  # break an existing install or script that calls standardsctl.
   - id: standardsctl
     main: ./cmd/standardsctl
     binary: standardsctl
