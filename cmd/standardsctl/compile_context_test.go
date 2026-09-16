@@ -108,7 +108,7 @@ func TestCompileContext_Negative(t *testing.T) {
 }
 
 func TestCompileContext_Negative_ProjectionFailureIsAnError(t *testing.T) {
-	skipIfRoot(t)
+	skipIfPermissionsUnenforced(t)
 	dir := newContextFixture(t, false)
 	claudeDir := filepath.Join(dir, ".claude", "agents")
 	if err := os.MkdirAll(claudeDir, 0o700); err != nil {

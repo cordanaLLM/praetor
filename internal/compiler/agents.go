@@ -76,13 +76,18 @@ func projectAgentToVendors(ctx context.Context, srcPath, filename, targetDir str
 	agentName := strings.TrimSuffix(filename, ".md")
 	content := string(data)
 
+	// Each vendorRel is a declared identity, compared and reported as such, so it is spelled
+	// with slashes like every other vendor target. filepath.Join made it
+	// ".github\agents\x.md" on Windows, which surfaced in drift errors and only passed
+	// projectionPath by accident. The disk write below joins it onto targetDir with
+	// filepath.Join, which normalises the separator for the host.
 	targets := []struct {
 		vendorRel string
 	}{
-		{filepath.Join(".claude", "agents", filename)},
-		{filepath.Join(".codex", "agents", filename)},
-		{filepath.Join(".github", "agents", filename)},
-		{filepath.Join(".gemini", "agents", filename)},
+		{".claude/agents/" + filename},
+		{".codex/agents/" + filename},
+		{".github/agents/" + filename},
+		{".gemini/agents/" + filename},
 	}
 
 	files := make([]AgentFile, 0, len(targets))

@@ -1383,7 +1383,10 @@ func TestDispatchCommand_HarvestFleetOutput(t *testing.T) {
 	if !strings.Contains(out, "Fleet Topology: not configured") {
 		t.Errorf("expected the unconfigured report, got:\n%s", out)
 	}
-	if !strings.Contains(out, harvester.FleetTopologyFile) {
+	// The report tells a person where to create the file, so it prints the host's own
+	// spelling of the location: ".config\fleet-topology.yaml" on Windows. That is the
+	// helpful form there, and the one to expect -- FromSlash is a no-op on POSIX.
+	if !strings.Contains(out, filepath.FromSlash(harvester.FleetTopologyFile)) {
 		t.Errorf("expected the report to name the expected configuration path, got:\n%s", out)
 	}
 	for _, name := range []string{"watershed", "northlight", "thedesknook", "home-zeus", "xe-telemetry"} {

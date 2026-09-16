@@ -92,7 +92,7 @@ func TestAudit_Negative_GateFailures(t *testing.T) {
 
 func TestAudit_Negative_ReadErrorsAndArguments(t *testing.T) {
 	t.Run("unreadable go.mod fails instead of passing", func(t *testing.T) {
-		skipIfRoot(t)
+		skipIfPermissionsUnenforced(t)
 		f := newAuditFixture(t)
 		goMod := writeFixtureFile(t, f.dir, "go.mod", "module example.com/widgets\n\ngo 1.27\n")
 		if err := os.Chmod(goMod, 0); err != nil {

@@ -169,13 +169,17 @@ func verifyProjection(rootDir, rel string, want []byte) error {
 	if err != nil {
 		return err
 	}
+	// rel is the host path the file system needs; the error names the projection, which is a
+	// declared identity and reads the same on every platform. Reporting rel directly printed
+	// ".github\agents\x.md" on Windows. ToSlash is a no-op on POSIX.
+	display := filepath.ToSlash(rel)
 	// #nosec G304 -- path was confined to the repository root by ConfinePath.
 	got, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("projection %s missing or unreadable (run 'praetorctl compile-context'): %w", rel, err)
+		return fmt.Errorf("projection %s missing or unreadable (run 'praetorctl compile-context'): %w", display, err)
 	}
 	if !bytes.Equal(got, want) {
-		return fmt.Errorf("%w: %s (run 'praetorctl compile-context' to regenerate it)", ErrAgentProjectionDrift, rel)
+		return fmt.Errorf("%w: %s (run 'praetorctl compile-context' to regenerate it)", ErrAgentProjectionDrift, display)
 	}
 	return nil
 }

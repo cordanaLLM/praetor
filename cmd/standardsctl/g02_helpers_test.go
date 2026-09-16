@@ -227,10 +227,32 @@ func mustErrContain(t *testing.T, err error, needle string) {
 	}
 }
 
-// skipIfRoot skips permission-based negative tests when running as root.
-func skipIfRoot(t *testing.T) {
+// skipIfPermissionsUnenforced skips a case that provokes a permission failure on a host
+// where file modes are not enforced, and says so.
+//
+// It replaces a check on os.Geteuid() == 0. That inferred the answer from one cause, root,
+// and missed another: on Windows Geteuid returns -1, so it never skipped, yet a mode of 0
+// on a file does not stop it being read and 0o500 on a directory does not stop a write
+// inside it. The two cases built on it then reported a missing failure the platform could
+// not produce. The answer is now measured -- a file with mode 0 is read back -- which is
+// what both root and Windows have in common, and what both callers actually depend on.
+func skipIfPermissionsUnenforced(t *testing.T) {
 	t.Helper()
-	if os.Geteuid() == 0 {
-		t.Skip("permission checks are bypassed for root")
+	probe := filepath.Join(t.TempDir(), "unreadable")
+	if err := os.WriteFile(probe, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(probe, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(probe, 0o600); err != nil {
+			t.Logf("restore probe mode: %v", err)
+		}
+	})
+	// #nosec G304 -- probe is a file this helper just created in its own temporary directory.
+	if _, err := os.ReadFile(probe); err == nil {
+		t.Skip("file modes are not enforced on this host (root, or a platform whose files are " +
+			"protected by ACL), so a permission failure cannot be provoked; covered on the Linux leg")
 	}
 }
