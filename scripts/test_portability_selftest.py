@@ -159,7 +159,39 @@ class PortabilityDriver(unittest.TestCase):
         target = re.search(r"^hooks-test:\n((?:\t.*\n)+)", makefile, re.M)
         self.assertIsNotNone(target, "hooks-test target not found in Makefile")
         declared = re.findall(r"python3 -B (\S+\.py)", target.group(1))
-        self.assertEqual([str(s) for s in driver.SUITES], declared)
+        # The Makefile names suites with slashes; str() of a Path uses the host separator, so on
+        # Windows this compared ".config\\lefthook\\..." with ".config/lefthook/..." and failed.
+        self.assertEqual([s.as_posix() for s in driver.SUITES], declared)
+
+    def test_failing_test_names_survive_the_tail(self):
+        """A failure is named even when later output pushes it out of the printed tail.
+
+        The driver printed only a failing suite's last 25 lines. unittest reports each failure
+        block in order and the hook suites print a lefthook banner per case, so an early failure
+        was routinely cut off and the log said a suite failed without saying which test.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            body = ("def test_a_fails_early(self): self.fail('early')\n"
+                    "def test_b_errors(self):\n"
+                    "    \"\"\"A docstring replaces the name on the outcome line.\"\"\"\n"
+                    "    print('printed before the failure')\n"
+                    "    raise RuntimeError('boom')\n"
+                    "def test_c_noisy(self): print('\\n'.join(['noise'] * 60))\n")
+            suite = write_suite(temp, "named.py", body)
+            code, output = run_driver(temp, [suite], ["--min-executed", "1"])
+        self.assertEqual(code, 1, output)
+        self.assertIn("failed FAIL test_a_fails_early", output)
+        self.assertIn("failed ERROR test_b_errors", output)
+        self.assertNotIn("failed FAIL test_c_noisy", output)
+
+    def test_passing_suite_names_no_failures(self):
+        """Negative: a green suite prints no failure lines, even if its output mentions FAIL."""
+        with tempfile.TemporaryDirectory() as temp:
+            body = "def test_a(self): print('FAIL: not a unittest block')\n"
+            suite = write_suite(temp, "quiet.py", body)
+            code, output = run_driver(temp, [suite], ["--min-executed", "1"])
+        self.assertEqual(code, 0, output)
+        self.assertNotIn("failed ", output)
 
 
 if __name__ == "__main__":
