@@ -17,6 +17,7 @@ func sandboxConfigDir(t *testing.T) string {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	// APPDATA and LOCALAPPDATA are set alongside the POSIX pair because
 	// os.UserConfigDir reads APPDATA on Windows. Without them this sandbox held on
 	// POSIX only, and a keygen case wrote to the real per-user key file -- silently

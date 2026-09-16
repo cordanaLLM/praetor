@@ -13,6 +13,7 @@ import (
 func setupTestGitRepo(t *testing.T) string {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_SYSTEM", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
@@ -296,6 +297,7 @@ func TestWorktree_Negative_ReleasedProbeRejectsAmbientFilterAndFsmonitor(t *test
 				t.Fatalf("failed writing global Git config: %v", err)
 			}
 			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
 			t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, ".gitconfig"))
 			if err := mgr.CheckRemoval(ctx, wt.Path); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("expected ambient %s refusal, got %v", tc.name, err)

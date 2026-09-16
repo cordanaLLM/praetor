@@ -16,8 +16,9 @@ import (
 func gcGitFixture(t *testing.T) (root, worktree string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	root = t.TempDir()
 	runGCTestGit(t, root, "init", "-q")

@@ -39,6 +39,7 @@ func TestValidateAdoptionTarget_WorktreeGitLink(t *testing.T) {
 
 func TestValidateAdoptionTarget_Positive_RepoNamedDev(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	repo := filepath.Join(t.TempDir(), "src", "dev")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -122,6 +123,7 @@ func TestValidateAdoptionTarget_NegativeDevWorkstationRoot(t *testing.T) {
 	// $HOME/dev is rejected even when it carries a .git of its own.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	homeDev := filepath.Join(home, "dev")
 	if err := os.MkdirAll(homeDev, 0o755); err != nil {
 		t.Fatal(err)

@@ -275,6 +275,7 @@ func TestServer_Negative_AdoptConfinement(t *testing.T) {
 
 func TestServer_Positive_DogfoodOnFixture(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	srv, root := newFixtureServer(t)
 
 	targets := filepath.Join(root, "targets")
@@ -292,6 +293,7 @@ func TestServer_Positive_DogfoodOnFixture(t *testing.T) {
 
 func TestServer_Negative_DogfoodGuards(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	srv, _ := newFixtureServer(t)
 
 	remote := callTool(t, srv, "standards_dogfood", map[string]any{"benchmark_popular": true})
@@ -335,6 +337,7 @@ func TestServer_Positive_HarvestWorkstation(t *testing.T) {
 
 func TestServer_Negative_HarvestWorkstation(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	srv, _ := newFixtureServer(t)
 
 	outside := callTool(t, srv, "standards_harvest_workstation", map[string]any{"dev_dir": t.TempDir()})

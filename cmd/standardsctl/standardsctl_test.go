@@ -1094,6 +1094,7 @@ func TestDispatchCommand_TopologyAuditReportsStrayFiles(t *testing.T) {
 func TestDefaultDevRoot_NeverReturnsAForeignPath(t *testing.T) {
 	// Boundary: no home directory at all must be an error, never a hard-coded path.
 	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
 	root, err := defaultDevRoot()
 	if err == nil {
 		t.Fatalf("expected an error without a usable home directory, got %q", root)
@@ -1285,6 +1286,7 @@ func TestResolveHomeSubdir_3D(t *testing.T) {
 	// Positive: the default is anchored at the home directory.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	got, err := resolveHomeSubdir("", "--dir", "dev")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1296,6 +1298,7 @@ func TestResolveHomeSubdir_3D(t *testing.T) {
 	// Negative/boundary: without a home directory the caller gets an error naming the
 	// flag, never a working-directory-relative path such as "dev".
 	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
 	missing, err := resolveHomeSubdir("", "--dir", "dev")
 	if err == nil {
 		t.Fatalf("expected an error without a home directory, got %q", missing)
@@ -1308,6 +1311,7 @@ func TestResolveHomeSubdir_3D(t *testing.T) {
 func TestDispatchCommand_AdoptAllMissingNeverFallsBackToCwd(t *testing.T) {
 	// Negative: an unset HOME must fail loudly instead of scanning ./dev.
 	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
 	if err := dispatchCommand("adopt", []string{"--all-missing", "--dry-run"}); err == nil {
 		t.Fatal("expected adopt --all-missing to fail without a home directory")
 	}
