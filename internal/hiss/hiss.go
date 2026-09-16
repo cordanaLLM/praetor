@@ -131,6 +131,7 @@ func Scan(ctx context.Context, repoPath string, opts ScanOptions) (*ScanReport, 
 	if err := filepath.Walk(repoPath, w.visit); err != nil {
 		return nil, fmt.Errorf("hiss: scan %q: %w", repoPath, err)
 	}
+	reportCallCycles(ctx, rep, w.goFiles, repoPath)
 	rep.TotalInfractions = len(rep.Violations)
 	return rep, nil
 }
@@ -175,6 +176,9 @@ type scanWalker struct {
 	rep     *ScanReport
 	extra   map[string]struct{}
 	visible *gitVisibleTree
+	// goFiles accumulates the Go sources this walk read, so the call-graph pass can close
+	// cycles that span files. No single file's AST shows a two-function loop closing.
+	goFiles []string
 }
 
 // maxGitFileListBytes bounds the file list read from git (HISS-02). A listing larger than
@@ -314,6 +318,11 @@ func (w *scanWalker) visitFile(path, rel string, info os.FileInfo) error {
 	if info.Size() > MaxScanFileSize {
 		w.rep.Skips.Oversize++
 		return nil
+	}
+	// Remember Go sources for the call-graph pass. It runs after the walk because a cycle
+	// through two functions is only visible once every file in the package has been read.
+	if strings.EqualFold(filepath.Ext(rel), ".go") && len(w.goFiles) < maxCallGraphFiles {
+		w.goFiles = append(w.goFiles, path)
 	}
 	return scanFile(w.root, rel, w.rep, w.opts)
 }

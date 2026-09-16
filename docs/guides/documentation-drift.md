@@ -23,7 +23,7 @@ Only what an adopter reads about before using it. The map in `SURFACE_MAP` is de
 | `.config/archetypes/*.yaml`, `facets/*.yaml` | `docs/guides/archetype-authoring.md` |
 | `internal/flavor/definitions.go` | `docs/guides/archetype-authoring.md` or `onboarding.md` |
 | `internal/config/effective*.go` | `docs/guides/effective-policy.md` |
-| `internal/hiss/rules.go` | `docs/standards/` |
+| `internal/hiss/rules.go`, `internal/hiss/go_callgraph.go` | `docs/standards/` |
 | `internal/hisscoverage/` | `docs/guides/` or `docs/standards/` |
 | `.config/lefthook/scripts/*.py`, `lefthook.yml` | `docs/guides/git-hooks.md` |
 | `cmd/standards-mcp/` | `docs/guides/development-mcp.md` |

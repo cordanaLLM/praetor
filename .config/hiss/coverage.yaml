@@ -28,13 +28,19 @@ rules:
     coverage:
       - language: go
         state: partial
-        mechanism: internal/hiss go_ast.go checkSelfRecursion and the goto branch
+        mechanism: internal/hiss go_ast.go checkSelfRecursion, the goto branch, and
+          go_callgraph.go reportCallCycles
         rationale: >-
           Direct recursion and goto are reported, including a recursive method, a call from
           inside a closure the function declares, and a generic self-call written with an
           explicit type argument. A local that shadows the function name is not reported,
-          because the call reaches the local. Mutual and indirect recursion need a
-          whole-program call graph and are held as gaps.
+          because the call reaches the local. Mutual and indirect recursion between plain
+          functions are now reported too: the call-graph pass builds each package's graph
+          after the walk and names every strongly connected component of two or more
+          functions. Package scope is complete rather than convenient, because a call cycle
+          spanning two packages would need each to import the other and the compiler rejects
+          that. A cycle through methods remains a gap: resolving a method call needs the
+          receiver's type, and guessing it would invent edges that do not exist.
       - language: c
         state: partial
         mechanism: internal/hiss rules.go native goto matcher
