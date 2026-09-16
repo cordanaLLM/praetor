@@ -364,16 +364,23 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) error {
 		return s.verifyExistingBaseline(full)
 	}
 
-	base := &baseline.Baseline{Version: 1, Infractions: make([]baseline.Infraction, 0)}
-	if s.opts.RecordBaseline {
-		if err := scanLegacyDebt(ctx, s.repoPath, base, s.report, adoptionScanLimit(s)); err != nil {
-			s.report.BaselineStatus = "failed"
-			return err
-		}
-		s.report.BaselineStatus = "scanned"
-	} else {
+	if !s.opts.RecordBaseline {
+		// Recording was declined and there is no baseline to keep, so write nothing. Writing an
+		// empty one is not neutral: it asserts total_infractions: 0 with a fresh timestamp, it is
+		// indistinguishable on disk from a scan that genuinely found no debt, and the ratchet
+		// then reads every pre-existing infraction as new -- so a repository adopted this way
+		// could not commit, and the audit blamed its existing code rather than this flag (#138).
 		s.report.BaselineStatus = "skipped"
+		s.report.recordSkipped(baselineFile, "Not recorded (--record-baseline=false); no baseline was written. "+
+			"Record one before committing, or every existing infraction is ratcheted as new debt")
+		return nil
 	}
+	base := &baseline.Baseline{Version: 1, Infractions: make([]baseline.Infraction, 0)}
+	if err := scanLegacyDebt(ctx, s.repoPath, base, s.report, adoptionScanLimit(s)); err != nil {
+		s.report.BaselineStatus = "failed"
+		return err
+	}
+	s.report.BaselineStatus = "scanned"
 	s.report.LegacyDebtCount = base.TotalInfractions
 	if !s.opts.DryRun {
 		if err := baseline.SaveBaseline(full, base); err != nil {

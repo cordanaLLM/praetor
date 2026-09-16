@@ -210,6 +210,9 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		fmt.Printf("[WARN] Touched-file clean rule judged by debt delta, not by touch; recorded reason: %s\n",
 			opts.debtDeltaReason)
 	}
+	if !ratchet.Passed && !util.FileExists(opts.baselinePath) && len(current) > 0 {
+		return missingBaselineFailure(opts.baselinePath, len(current))
+	}
 	if !ratchet.Passed {
 		return describeRatchetFailure(ratchet)
 	}
@@ -531,4 +534,17 @@ func resolveDebtDeltaReason(flagValue string) string {
 		return reason
 	}
 	return strings.TrimSpace(os.Getenv(debtDeltaReasonEnv))
+}
+
+// missingBaselineFailure explains a ratchet failure whose real cause is that no baseline exists.
+//
+// A missing baseline loads as zero recorded debt, so the ratchet reports every existing
+// infraction as new. That is the correct verdict for a greenfield repository, which has no debt to
+// record -- and it is why a repository with no infractions still passes here. For a repository
+// that does carry debt, "N new unbaselined" blames code that predates the change, when the fix is
+// to record a baseline. Saying so turns an unexplained wall of violations into one command (#138).
+func missingBaselineFailure(path string, infractions int) error {
+	return fmt.Errorf("[FAIL] no baseline exists at %s, so all %d existing infractions are being ratcheted as new debt; "+
+		"this is not a regression in the change -- record the existing debt with 'praetorctl baseline --record' "+
+		"(or adopt with --record-baseline), then re-run the audit", path, infractions)
 }
