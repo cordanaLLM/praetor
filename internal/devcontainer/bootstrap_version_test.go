@@ -1,6 +1,7 @@
 package devcontainer
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,10 @@ import (
 )
 
 func TestBootstrapBuildPreservesSelectedSourceVersion(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skipf("/bin/sh is not present on this host (%v); the behaviour under test "+
+			"is platform-independent and covered where the tool exists", err)
+	}
 	root := bootstrapSourceFixture(t)
 	// A mutable fixture symbol makes accidental linker rewriting observable even
 	// though the production CLI currently declares its version as a constant.

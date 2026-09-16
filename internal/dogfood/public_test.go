@@ -112,6 +112,10 @@ func TestPublicLoopValidationAndCancellation(t *testing.T) {
 }
 
 func TestPublicCommandEnvironmentIgnoresWorkstation(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/env"); err != nil {
+		t.Skipf("/usr/bin/env is not present on this host (%v); the behaviour under test "+
+			"is platform-independent and covered where the tool exists", err)
+	}
 	t.Setenv("SSH_AUTH_SOCK", "/private/socket")
 	t.Setenv("GIT_CONFIG_VALUE_0", "credential-helper-secret")
 	t.Setenv("PRAETOR_TEST_SECRET", "must-not-copy")

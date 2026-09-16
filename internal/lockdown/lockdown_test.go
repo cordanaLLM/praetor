@@ -451,6 +451,11 @@ func TestDistill_Boundary_ContextWindowClamps(t *testing.T) {
 func TestDistill_Boundary_EphemeralDirDefaultsToTempDir(t *testing.T) {
 	sandbox := t.TempDir()
 	t.Setenv("TMPDIR", sandbox)
+	// os.TempDir reads TMPDIR on POSIX and TMP, then TEMP, on Windows. With TMPDIR alone the
+	// sandbox held on POSIX only, and on Windows the SARIF report was written to the real
+	// temporary directory rather than the sandbox this case asserts it lands in.
+	t.Setenv("TMP", sandbox)
+	t.Setenv("TEMP", sandbox)
 
 	res, err := DistillSARIF(context.Background(), []byte(`{"version":"2.1.0","runs":[]}`), "", "")
 	if err != nil {
