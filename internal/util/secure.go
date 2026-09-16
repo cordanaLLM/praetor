@@ -239,6 +239,27 @@ func checkPerm(perm os.FileMode) error {
 // user-supplied or config-supplied value before appending it to an exec argument list;
 // path-shaped values should additionally go through ConfinePath.
 func ValidateExecArg(s string) error {
+	return validateExecArg(s, execArgMetaChars)
+}
+
+// ValidateExecPathArg validates a filesystem path passed as an exec argument.
+//
+// ValidateExecArg treats a backslash as a shell metacharacter, which is right for the
+// identifiers it guards -- package names, versions, URLs, repository owners -- and wrong
+// for a path on Windows, where the backslash is the separator. Every absolute path there
+// was refused, so internal/operationalsync could not hand git a checkout path at all.
+//
+// This exempts exactly one character: the host path separator. On POSIX that is '/',
+// which is not in the metacharacter set, so the exemption removes nothing and this is
+// identical to ValidateExecArg. On Windows only ” is exempted; every other
+// metacharacter, a leading '-', control bytes and the length bound are still refused.
+// Identifier callers must keep using ValidateExecArg: loosening it globally would have
+// admitted backslashes into package names and URLs to fix a problem that only paths have.
+func ValidateExecPathArg(s string) error {
+	return validateExecArg(s, strings.ReplaceAll(execArgMetaChars, string(filepath.Separator), ""))
+}
+
+func validateExecArg(s, metaChars string) error {
 	if s == "" {
 		return ErrEmptyExecArg
 	}
@@ -248,7 +269,7 @@ func ValidateExecArg(s string) error {
 	if strings.HasPrefix(s, "-") {
 		return fmt.Errorf("%w: %q", ErrExecArgOption, s)
 	}
-	if idx := strings.IndexAny(s, execArgMetaChars); idx >= 0 {
+	if idx := strings.IndexAny(s, metaChars); idx >= 0 {
 		return fmt.Errorf("%w: %q at offset %d", ErrExecArgMeta, s[idx:idx+1], idx)
 	}
 	for i := 0; i < len(s) && i < MaxExecArgLen; i++ {
