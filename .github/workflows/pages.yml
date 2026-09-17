@@ -28,7 +28,10 @@ permissions:
 
 jobs:
   build:
-    name: Build Documentation Site
+    # Engine-only: skipped outside the canonical repository (#189). The literal is the
+    # .standards.yaml identity; internal/forge/workflow_guard_test.go holds the two equal.
+    name: Build Documentation Site (canonical repository only)
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -57,9 +60,11 @@ jobs:
           path: site
 
   deploy:
-    name: Deploy to GitHub Pages
+    # Engine-only: skipped outside the canonical repository (#189). The literal is the
+    # .standards.yaml identity; internal/forge/workflow_guard_test.go holds the two equal.
+    name: Deploy to GitHub Pages (canonical repository only)
     needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
