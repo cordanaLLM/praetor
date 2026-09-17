@@ -60,6 +60,16 @@ class DocsDrift(unittest.TestCase):
         self.assertEqual(len(found), 1, found)
         self.assertIn("effective policy", found[0])
 
+    def test_text_register_pair(self):
+        """Both files of the register policy map to its guide, and only to it."""
+        for surface in ("internal/config/register.go", "internal/config/register_render.go"):
+            found = docs_drift.violations([surface, "docs/guides/effective-policy.md"])
+            self.assertEqual(len(found), 1, surface)
+            self.assertIn("text register policy", found[0])
+            self.assertEqual(docs_drift.violations([surface, "docs/guides/text-register.md"]), [])
+        # A test file of the same package is not a user-discoverable surface.
+        self.assertEqual(docs_drift.violations(["internal/config/register_test.go"]), [])
+
     def test_boundary_several_surfaces_report_separately(self):
         """Two unrelated surfaces in one change produce two messages, not one."""
         self.assertEqual(len(docs_drift.violations([

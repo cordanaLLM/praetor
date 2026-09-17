@@ -35,6 +35,8 @@ SURFACE_MAP: list[tuple[str, str, str]] = [
      "flavor definitions"),
     (r"^internal/config/effective(_load)?\.go$", r"^docs/guides/effective-policy\.md$",
      "effective policy resolution"),
+    (r"^internal/config/register(_render)?\.go$", r"^docs/guides/text-register\.md$",
+     "text register policy"),
     (r"^internal/hiss/rules\.go$", r"^docs/standards/", "HISS rule matchers"),
     (r"^internal/hiss/go_callgraph\.go$", r"^docs/standards/", "Go call-graph matcher"),
     (r"^internal/hisscoverage/", r"^docs/(guides|standards)/", "HISS-20 coverage engine"),

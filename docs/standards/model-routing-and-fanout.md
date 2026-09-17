@@ -47,7 +47,10 @@ capability-constrained request requires explicit configuration first.
 The task must occur in a tier's `target_tasks`. All models in all tiers explicitly
 declaring that task are considered. A cheaper model in an undeclared tier remains
 ineligible, including a tier named by the legacy `fallback_tier` field. No eligible
-candidate is an error, never a silent downgrade or automatic escalation.
+candidate is an error, never a silent downgrade or automatic escalation. The same
+`target_tasks` label also selects the text register and the optional output budget that
+`models route` reports; the register never changes the tier
+(see the [text register guide](../guides/text-register.md)).
 
 For eligible candidates the configured estimate is:
 

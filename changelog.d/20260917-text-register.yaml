@@ -1,0 +1,3 @@
+type: added
+title: Configure the text register per audience and task class, emit it into every agent context, and forward an optional per-task output budget to dispatch
+breaking: true
