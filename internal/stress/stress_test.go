@@ -91,8 +91,15 @@ func TestProperty_ASTMergeOrthogonalIndependence(t *testing.T) {
 	}
 }
 
+// setupTestGitRepo creates the fixture repository the worktree stress test operates on.
+//
+// It runs git under a hermetic environment. Inherited configuration decided the outcome
+// before: a developer carrying commit.gpgsign, a core.hooksPath or a template directory in
+// their global config failed the commit here, and the stress suite then reported their
+// machine rather than the code under test.
 func setupTestGitRepo(t *testing.T, dir string) {
 	t.Helper()
+	env := hermeticGitEnv(t)
 	cmds := [][]string{
 		{"git", "init"},
 		{"git", "config", "user.name", "Test"},
@@ -102,10 +109,29 @@ func setupTestGitRepo(t *testing.T, dir string) {
 	for _, c := range cmds {
 		cmd := exec.Command(c[0], c[1:]...)
 		cmd.Dir = dir
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("failed setup cmd %v: %v", c, err)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("failed setup cmd %v: %v: %s", c, err, strings.TrimSpace(string(out)))
 		}
 	}
+}
+
+// hermeticGitEnv returns an environment no configuration outside the fixture can reach:
+// no system config, no global config, an empty home and no credential or terminal prompt.
+// os.DevNull keeps it correct on Windows, where that path is NUL.
+func hermeticGitEnv(t *testing.T) []string {
+	t.Helper()
+	home := t.TempDir()
+	return append(os.Environ(),
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_SYSTEM="+os.DevNull,
+		"GIT_CONFIG_GLOBAL="+os.DevNull,
+		"HOME="+home,
+		"USERPROFILE="+home,
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ASKPASS=",
+	)
 }
 
 func TestStress_ConcurrentWorktreeOperations(t *testing.T) {
@@ -188,6 +214,44 @@ func TestStress_ConcurrentCompilerAndScanner(t *testing.T) {
 	}
 }
 
+const (
+	// memoryStabilityIterations is the scan count the retention measurement averages over.
+	memoryStabilityIterations = 50
+	// maxRetainedBytesPerScan bounds what one scan of a three-line file may still hold
+	// after a collection. The scan's own working set is kilobytes, so a bound in the tens
+	// of kilobytes is loose enough for allocator noise and tight enough to see a report,
+	// an AST or a file buffer being retained per call. The previous bound was 100 MB over
+	// the whole loop, four orders of magnitude away from the workload, which no realistic
+	// leak could reach.
+	maxRetainedBytesPerScan = 64 * 1024
+)
+
+// retainedBytesPerIteration runs work the given number of times and returns the heap it
+// still holds afterwards, per iteration. Both measurements follow a collection, so what is
+// counted is retention rather than allocation. A workload that retains nothing measures at
+// or below zero, which is reported as zero.
+func retainedBytesPerIteration(t *testing.T, iterations int, work func(i int)) float64 {
+	t.Helper()
+	if iterations <= 0 {
+		t.Fatalf("iterations must be positive, got %d", iterations)
+	}
+	runtime.GC()
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+
+	for i := 0; i < iterations; i++ {
+		work(i)
+	}
+
+	runtime.GC()
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+	if after.HeapAlloc <= before.HeapAlloc {
+		return 0
+	}
+	return float64(after.HeapAlloc-before.HeapAlloc) / float64(iterations)
+}
+
 func TestStress_MemoryStabilityUnderLoad(t *testing.T) {
 	tmpDir := t.TempDir()
 	goCode := "package memcheck\n\nfunc Alpha() string { return \"clean\" }\n"
@@ -195,26 +259,29 @@ func TestStress_MemoryStabilityUnderLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runtime.GC()
-	var mBefore runtime.MemStats
-	runtime.ReadMemStats(&mBefore)
-
 	ctx := context.Background()
-	for i := 0; i < 50; i++ {
-		_, err := hiss.Scan(ctx, tmpDir, hiss.ScanOptions{MaxFuncLOC: 60})
-		if err != nil {
-			t.Fatalf("scan failed: %v", err)
+	retained := retainedBytesPerIteration(t, memoryStabilityIterations, func(i int) {
+		if _, err := hiss.Scan(ctx, tmpDir, hiss.ScanOptions{MaxFuncLOC: 60}); err != nil {
+			t.Fatalf("scan %d failed: %v", i, err)
 		}
+	})
+	if retained > maxRetainedBytesPerScan {
+		t.Fatalf("suspected retention: %.0f bytes still held per scan, bound is %d",
+			retained, maxRetainedBytesPerScan)
 	}
+}
 
-	runtime.GC()
-	var mAfter runtime.MemStats
-	runtime.ReadMemStats(&mAfter)
-
-	if mAfter.HeapAlloc > mBefore.HeapAlloc {
-		diffMB := float64(mAfter.HeapAlloc-mBefore.HeapAlloc) / (1024 * 1024)
-		if diffMB > 100.0 {
-			t.Fatalf("suspected memory leak: heap diff %.2f MB", diffMB)
-		}
+// TestStress_MemoryStabilityDetectorSeesARetainedAllocation pins the detector itself. The
+// bound above is only evidence if it can fail, so the same measurement is run against a
+// workload that deliberately retains a megabyte per iteration and must be caught.
+func TestStress_MemoryStabilityDetectorSeesARetainedAllocation(t *testing.T) {
+	var sink [][]byte
+	retained := retainedBytesPerIteration(t, memoryStabilityIterations, func(int) {
+		sink = append(sink, make([]byte, 1<<20))
+	})
+	if retained <= maxRetainedBytesPerScan {
+		t.Fatalf("a 1 MiB per-iteration retention must exceed the %d byte bound, measured %.0f bytes",
+			maxRetainedBytesPerScan, retained)
 	}
+	runtime.KeepAlive(sink)
 }

@@ -117,29 +117,62 @@ func TestLoadManifestEmptyDocument(t *testing.T) {
 // schema in use: this repository's own manifest must satisfy the strict decoder, which is
 // what proves the declared type matches the file the engine actually ships.
 //
+// It is the only test that reads the working checkout, and it says so: when the manifest is
+// absent — a consumer vendoring the package, a trimmed source tree, a module cache — it
+// skips with that reason instead of failing for the environment. The pre-rename repository
+// name is not accepted: a test that takes either name cannot tell a correct manifest from a
+// stale one.
+//
 // This checkout is not necessarily the canonical repository: internal/operationalsync's owner
-// overlay rewrites this exact file, in place, in an operational fork. So the repository.source
-// assertion accepts either shape this file legitimately has -- absent (canonical, or a fork
-// checkout before the first overlay commit) or a valid "<owner>/<name>" identity that differs
-// from the checkout's own owner/name (an overlaid fork) -- rather than requiring the canonical
-// shape unconditionally, which fails every overlaid fork's own test suite (#263).
+// overlay rewrites this exact file, in place, in an operational fork, replacing
+// repository.owner and recording the public identity as repository.source (#263). So the
+// identity assertion is exact against the public identity the file resolves to -- source
+// when present, owner/name otherwise -- and never against the checkout's own owner, and
+// profiles and facets are required to exist without pinning values a fork may tune.
 func TestLoadManifestRepositoryManifestParses(t *testing.T) {
-	m, err := LoadManifest(filepath.Join("..", "..", ".standards.yaml"))
+	path := filepath.Join("..", "..", ".standards.yaml")
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("this repository's manifest is not present at %s, so there is nothing to check here: %v", path, err)
+	}
+
+	m, err := LoadManifest(path)
 	if err != nil {
 		t.Fatalf("the repository's own manifest must parse strictly: %v", err)
+	}
+	if m.Repository.Name != "praetor" {
+		t.Errorf("repository.name = %q, want praetor", m.Repository.Name)
 	}
 	if m.Receipt == nil || m.Receipt.PublicKey == "" {
 		t.Error("the repository manifest must carry its pinned receipt key")
 	}
-	if m.Repository.Source == "" {
-		return
+	if len(m.Profiles) == 0 || len(m.Facets) == 0 {
+		t.Errorf("the repository manifest must declare its profiles and facets, got %d profile(s) and %d facet(s)",
+			len(m.Profiles), len(m.Facets))
 	}
-	owner, name, ok := strings.Cut(m.Repository.Source, "/")
-	if !ok || owner == "" || name == "" {
-		t.Errorf("repository.source %q is not an owner/name identity", m.Repository.Source)
+	assertRepositorySourceShape(t, m)
+}
+
+// assertRepositorySourceShape checks the two shapes the live manifest legitimately has:
+// no repository.source (canonical, or a fork checkout before the first overlay commit), where
+// owner/name is the public identity; or a well-formed "<owner>/<name>" source that differs
+// from the checkout's own owner/name (an overlaid fork). Either way the public identity the
+// manifest resolves to is exactly cordanaLLM/praetor.
+func assertRepositorySourceShape(t *testing.T, m *Manifest) {
+	t.Helper()
+	own := m.Repository.Owner + "/" + m.Repository.Name
+	public := own
+	if m.Repository.Source != "" {
+		public = m.Repository.Source
+		owner, name, ok := strings.Cut(m.Repository.Source, "/")
+		if !ok || owner == "" || name == "" {
+			t.Errorf("repository.source %q is not an owner/name identity", m.Repository.Source)
+		}
+		if m.Repository.Source == own {
+			t.Errorf("repository.source %q must record the public source, not this checkout's own owner/name", m.Repository.Source)
+		}
 	}
-	if m.Repository.Source == m.Repository.Owner+"/"+m.Repository.Name {
-		t.Errorf("repository.source %q must record the public source, not this checkout's own owner/name", m.Repository.Source)
+	if public != "cordanaLLM/praetor" {
+		t.Errorf("the manifest resolves to public identity %q, want cordanaLLM/praetor", public)
 	}
 }
 

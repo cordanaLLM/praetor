@@ -3,6 +3,7 @@ package gc
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,12 +36,20 @@ func writeFileT(t *testing.T, path, content string) string {
 // ageTree backdates every entry in root and root itself, walking iteratively (HISS-01:
 // no recursion). Backdating only the top-level directory is not enough: staleness is
 // measured from the newest mtime anywhere in the tree.
+//
+// Symlinks are skipped. os.Chtimes follows them, so a link inside a fixture — the nested
+// symlink case in gc_bounds_test.go plants one on purpose — used to backdate its target,
+// which lies outside the fixture and on a developer's machine is an arbitrary file. A test
+// helper may not write outside the tree it was handed.
 func ageTree(t *testing.T, root string, age time.Duration) {
 	t.Helper()
 	stamp := time.Now().Add(-age)
 	info, err := os.Lstat(root)
 	if err != nil {
 		t.Fatalf("failed to stat %s: %v", root, err)
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		t.Fatalf("ageTree refuses a symlink root: backdating %s would write to its target", root)
 	}
 	if !info.IsDir() {
 		if err := os.Chtimes(root, stamp, stamp); err != nil {
@@ -63,6 +72,9 @@ func ageTree(t *testing.T, root string, age time.Duration) {
 			child := filepath.Join(curr, entry.Name())
 			if entry.IsDir() {
 				dirs = append(dirs, child)
+				continue
+			}
+			if entry.Type()&fs.ModeSymlink != 0 {
 				continue
 			}
 			if chErr := os.Chtimes(child, stamp, stamp); chErr != nil {
