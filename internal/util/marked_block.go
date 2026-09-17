@@ -47,33 +47,45 @@ func (f *fenceTracker) inside(trimmed string) bool {
 // ignored inside fenced code. It returns the zero-based line indexes of both markers, or
 // (-1, -1) when neither marker is present.
 func FindMarkedBlock(content, start, end string) (first, last int, err error) {
-	if start == "" || end == "" || start == end {
+	if !distinctMarkers(start, end) {
 		return -1, -1, ErrMarkedBlockArguments
 	}
 	lines := strings.Split(content, "\n")
 	if len(lines) > MaxMarkedBlockLines {
 		return -1, -1, fmt.Errorf("%w: more than %d lines", ErrMarkedBlockBudget, MaxMarkedBlockLines)
 	}
-	first, last = -1, -1
+	starts, ends := markerLines(lines, start, end)
+	switch {
+	case len(starts) > 1 || len(ends) > 1:
+		return -1, -1, fmt.Errorf("%w: %s .. %s", ErrMarkedBlockDuplicated, start, end)
+	case len(starts) == 0 && len(ends) == 0:
+		return -1, -1, nil
+	case len(starts) != len(ends) || ends[0] < starts[0]:
+		return -1, -1, fmt.Errorf("%w: %s .. %s", ErrMarkedBlockUnbalanced, start, end)
+	}
+	return starts[0], ends[0], nil
+}
+
+func distinctMarkers(start, end string) bool {
+	return start != "" && end != "" && start != end
+}
+
+// markerLines returns the line indexes of each marker outside fenced code.
+func markerLines(lines []string, start, end string) (starts, ends []int) {
 	fence := fenceTracker{}
 	for i := 0; i < len(lines) && i < MaxMarkedBlockLines; i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		if fence.inside(trimmed) || (trimmed != start && trimmed != end) {
+		if fence.inside(trimmed) {
 			continue
 		}
-		slot := &first
+		if trimmed == start {
+			starts = append(starts, i)
+		}
 		if trimmed == end {
-			slot = &last
+			ends = append(ends, i)
 		}
-		if *slot >= 0 {
-			return -1, -1, fmt.Errorf("%w: %s", ErrMarkedBlockDuplicated, trimmed)
-		}
-		*slot = i
 	}
-	if (first < 0) != (last < 0) || last < first {
-		return -1, -1, fmt.Errorf("%w: %s .. %s", ErrMarkedBlockUnbalanced, start, end)
-	}
-	return first, last, nil
+	return starts, ends
 }
 
 // ReplaceMarkedBlock replaces the start..end span of content, markers included, with
