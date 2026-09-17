@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,5 +71,20 @@ func TestGoverned(t *testing.T) {
 	}
 	if Governed(directoryNamedLikeTheManifest) {
 		t.Error("a directory named like the manifest is governed")
+	}
+}
+
+func TestResolveRootWithoutGitFailsClosed(t *testing.T) {
+	root := repository(t, true)
+	t.Setenv("PATH", t.TempDir())
+	if got, err := ResolveRoot(context.Background(), nil, root); err == nil || got != "" {
+		t.Fatalf("a host without git resolved %q; that must be an error, not an absent repository", got)
+	}
+	response := Run(context.Background(), Invocation{
+		Client: "claude", Event: "pre-tool", Stdin: strings.NewReader(`{"tool_input":{"command":"go version"}}`),
+		Getenv: noEnvironment, WorkDir: root, Policy: policy(t),
+	})
+	if response.ExitCode != 2 {
+		t.Fatalf("a host without git allowed a command: %s", response)
 	}
 }

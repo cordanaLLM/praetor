@@ -35,6 +35,7 @@ func TestDialectDecode(t *testing.T) {
 	for name, invalid := range map[string]string{
 		"empty": "", "array": "[]", "null": "null", "cwd type": `{"cwd":[],"tool_input":{"command":"x"}}`,
 		"upper-case key is another key": `{"TOOL_INPUT":{"command":"x"}}`,
+		"literal outside JSON grammar":  `{"score":NaN,"tool_input":{"command":"x"}}`,
 		"contradicting event":           `{"hook_event_name":"Stop","tool_input":{"command":"x"}}`,
 	} {
 		if decoded, err := claude.Decode(EventPreTool, []byte(invalid)); err == nil {
