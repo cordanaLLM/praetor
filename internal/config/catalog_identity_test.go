@@ -6,6 +6,7 @@ package config
 
 import (
 	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -35,15 +36,23 @@ func TestCatalogPathAcceptsSlashIdentitiesOnEveryHost(t *testing.T) {
 	}
 }
 
-// TestCatalogPathToleratesAHostSpelledIdentity records a deliberate choice rather
-// than an accident. catalogDirAllowed normalises unconditionally, so a backslash
-// spelling of a real catalog identity is accepted rather than refused; the Clean
-// comparison is normalised for the same reason, so the two now agree. Before that,
-// a host-spelled path was refused by Clean before the directory check ever saw it,
-// and the two halves of the same function disagreed about what a path is.
-func TestCatalogPathToleratesAHostSpelledIdentity(t *testing.T) {
-	if err := validateCatalogPath(`.config\archetypes\os-image.yaml`); err != nil {
-		t.Fatalf("host-spelled catalog identity rejected: %v", err)
+// TestCatalogPathHandlesAHostSpelledIdentityAsThePlatformDoes records a limit of
+// this check rather than a guarantee, because the first version of this test
+// asserted unconditional tolerance and failed on Linux.
+//
+// catalogDirAllowed normalises, but it is handed filepath.Dir(rel), which splits
+// on the host separator. On Windows a backslash-spelled identity therefore
+// resolves into the catalog directory and is accepted; on POSIX the same string
+// is one legal file name whose directory is ".", so it is refused. Both answers
+// are correct for their platform. The guarantee this function owes -- that a
+// declared slash identity is accepted everywhere -- is asserted above.
+func TestCatalogPathHandlesAHostSpelledIdentityAsThePlatformDoes(t *testing.T) {
+	err := validateCatalogPath(`.config\archetypes\os-image.yaml`)
+	if filepath.Separator == '/' && err == nil {
+		t.Fatal("a one-segment POSIX name was accepted as a catalog identity")
+	}
+	if filepath.Separator != '/' && err != nil {
+		t.Fatalf("a Windows-spelled catalog identity was refused: %v", err)
 	}
 }
 

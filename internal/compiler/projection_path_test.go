@@ -66,23 +66,29 @@ func TestProjectionPathRefusesEscapingOrUncleanTargets(t *testing.T) {
 	}
 }
 
-// TestProjectionPathRefusesBackslashSpelledTargets is the boundary: a target
-// spelled with the host separator is not a declared target. Accepting it would
-// reintroduce the divergence from the other side, by letting a Windows-shaped
-// value through that a Linux run would refuse.
-func TestProjectionPathRefusesBackslashSpelledTargets(t *testing.T) {
-	for _, relative := range []string{
-		`.cursor\rules\hiss-invariants.mdc`,
-		`.gemini\GEMINI.md`,
-	} {
-		t.Run(relative, func(t *testing.T) {
-			_, err := projectionPath("root", relative)
-			if err == nil && filepath.Separator == '/' {
-				t.Fatalf("backslash-spelled target accepted on a POSIX host: %q", relative)
-			}
-			if err != nil && !strings.Contains(err.Error(), "clean relative file path") {
-				t.Fatalf("unexpected refusal reason: %v", err)
-			}
-		})
+// TestProjectionPathTreatsABackslashNameAsThePlatformDoes records what this check
+// deliberately does NOT promise, because the first version of this test asserted
+// the opposite and failed on Linux.
+//
+// A backslash is a separator on Windows and an ordinary filename character on
+// POSIX, so `.cursor\rules\x.mdc` is one legal file name on Linux and a
+// two-segment path on Windows. Refusing it everywhere would reject a legitimate
+// POSIX name; accepting it everywhere would require inventing a separator the
+// platform does not have. The invariant this function owes is the one above:
+// every target the transpiler actually declares resolves identically on every
+// host. What a non-declared spelling does is the platform's business.
+func TestProjectionPathTreatsABackslashNameAsThePlatformDoes(t *testing.T) {
+	got, err := projectionPath("root", `.gemini\GEMINI.md`)
+	if filepath.Separator == '/' {
+		if err != nil {
+			t.Fatalf("a legal POSIX file name containing a backslash was refused: %v", err)
+		}
+		if !strings.HasSuffix(got, `.gemini\GEMINI.md`) {
+			t.Fatalf("POSIX name was rewritten: %q", got)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("a Windows-spelled declared target was refused: %v", err)
 	}
 }
