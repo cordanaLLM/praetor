@@ -2,17 +2,25 @@ package operationalsync
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 var ownerPaths = []string{".standards.yaml", ".devcontainer/devcontainer.json", ".paperclip/harness.json", ".paperclip/rules.md"}
+
+// ownerOnlyPrefixes names where an operational repository may carry files the public source never
+// has. The list is engine schema, not operator data: every entry is ignored by the engine's own
+// .gitignore (a test replays that), so upstream cannot grow a colliding path. An entry ending in
+// "/" is a directory prefix matched on whole path segments; any other entry is one exact file.
+var ownerOnlyPrefixes = []string{".config/fleet.yaml", ".config/fleet-topology.yaml", ".config/orgs/", ".config/operator/", "deploy/arc/", "deploy/k8s/"}
 
 type identity struct{ Owner, Name, Visibility string }
 
@@ -183,4 +191,116 @@ func equivalent(path string, a, b []byte) bool {
 	}
 	var av, bv any
 	return yaml.Unmarshal(a, &av) == nil && yaml.Unmarshal(b, &bv) == nil && reflect.DeepEqual(av, bv)
+}
+
+const (
+	maxOwnerOnlyPaths = 256
+	maxOwnerOnlyBytes = 1 << 20
+)
+
+// treeEntry is one recursive ls-tree record; size is -1 for anything that is not a blob.
+type treeEntry struct {
+	mode, kind string
+	size       int64
+}
+
+// ownerOnlyPath matches whole path segments: ".config/orgs/" accepts ".config/orgs/a.yaml" and
+// refuses ".config/orgsx/a.yaml"; an entry without a trailing slash names exactly one file.
+func ownerOnlyPath(path string) bool {
+	for _, prefix := range ownerOnlyPrefixes {
+		if strings.HasSuffix(prefix, "/") {
+			if strings.HasPrefix(path, prefix) && path != prefix {
+				return true
+			}
+			continue
+		}
+		if path == prefix {
+			return true
+		}
+	}
+	return false
+}
+
+// checkOwnerOnly accepts operator files only when the public source never had them, at the
+// incorporated base and at the reviewed source, and when each is a bounded regular 0644 blob.
+func (op *operation) checkOwnerOnly(ctx context.Context, dir, tree string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	if len(paths) > maxOwnerOnlyPaths {
+		return fmt.Errorf("owner-only paths exceed %d: %d", maxOwnerOnlyPaths, len(paths))
+	}
+	for _, sha := range []string{op.opts.BaseSHA, op.opts.SourceSHA} {
+		upstream, err := op.treeEntries(ctx, op.opts.SourcePath, sha)
+		if err != nil {
+			return err
+		}
+		for _, path := range paths {
+			if _, exists := upstream[path]; exists {
+				return fmt.Errorf("owner-only path exists in the public source at %s: %q", sha, path)
+			}
+		}
+	}
+	current, err := op.treeEntries(ctx, dir, tree)
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		entry, exists := current[path]
+		if err := validateOwnerOnlyEntry(path, entry, exists); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateOwnerOnlyEntry(path string, entry treeEntry, exists bool) error {
+	if !exists {
+		return fmt.Errorf("owner-only path is absent from the owner tree: %q", path)
+	}
+	if entry.mode != "100644" || entry.kind != "blob" {
+		return fmt.Errorf("owner-only path must be a regular non-executable file, got %s %s: %q", entry.mode, entry.kind, path)
+	}
+	if entry.size < 0 || entry.size > maxOwnerOnlyBytes {
+		return fmt.Errorf("owner-only path exceeds 1 MiB: %q", path)
+	}
+	return nil
+}
+
+// treeEntries lists everything a tree holds under the owner-only prefixes in one bounded call.
+func (op *operation) treeEntries(ctx context.Context, dir, tree string) (map[string]treeEntry, error) {
+	args := []string{"ls-tree", "-r", "-z", "-l", tree, "--"}
+	for _, prefix := range ownerOnlyPrefixes {
+		args = append(args, strings.TrimSuffix(prefix, "/"))
+	}
+	out, err := op.git.run(ctx, dir, args...)
+	if err != nil {
+		return nil, err
+	}
+	return parseTreeEntries(out)
+}
+
+// parseTreeEntries reads `ls-tree -r -z -l` records: "<mode> <type> <object> <size>\t<path>".
+func parseTreeEntries(out []byte) (map[string]treeEntry, error) {
+	entries := make(map[string]treeEntry)
+	for _, record := range strings.Split(string(out), "\x00") {
+		if record == "" {
+			continue
+		}
+		meta, path, found := strings.Cut(record, "\t")
+		fields := strings.Fields(meta)
+		if !found || path == "" || len(fields) != 4 {
+			return nil, errors.New("unexpected ls-tree record")
+		}
+		entry := treeEntry{mode: fields[0], kind: fields[1], size: -1}
+		if fields[3] != "-" {
+			size, err := strconv.ParseInt(fields[3], 10, 64)
+			if err != nil || size < 0 {
+				return nil, errors.New("unexpected ls-tree object size")
+			}
+			entry.size = size
+		}
+		entries[path] = entry
+	}
+	return entries, nil
 }

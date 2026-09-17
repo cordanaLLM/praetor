@@ -11,7 +11,7 @@ import (
 )
 
 func (op *operation) checkInputConfiguration(ctx context.Context) error {
-	for _, dir := range []string{op.opts.OwnerPath, op.opts.SourcePath} {
+	for _, dir := range op.inputDirs() {
 		if err := op.rejectFilters(ctx, dir); err != nil {
 			return err
 		}
