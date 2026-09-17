@@ -68,7 +68,7 @@ all_github_repos.json
 #
 # This list and ownerOnlyPrefixes in internal/operationalsync/overlay.go are one contract:
 # operational sync accepts operator files only under paths the engine ignores here, and a
-# test replays `git check-ignore` for every prefix so the two cannot drift.
+# test replays `git check-ignore` for every prefix, so removing an entry here fails that test.
 /.config/fleet.yaml
 /.config/fleet-topology.yaml
 /.config/orgs/

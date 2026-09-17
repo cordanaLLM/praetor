@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -323,6 +324,7 @@ func (op *operation) checkPaths(ctx context.Context, dir, base, current string) 
 			return nil, fmt.Errorf("unexpected owner tree difference: %q", path)
 		}
 	}
+	slices.Sort(ownerOnly)
 	return ownerOnly, op.checkOwnerOnly(ctx, dir, current, ownerOnly)
 }
 
