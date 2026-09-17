@@ -58,10 +58,16 @@ def text_checks(directory, names):
                 raise HookError(f"{name}: {error}") from error
 
 
+# Go's own convention: a directory with this name holds inputs, never source. is_fixture
+# applies it to a file list and semgrep_commands applies it to a whole-tree scan, so both
+# forms of one scan agree on what the corpus is.
+FIXTURE_DIRECTORY = "testdata"
+
+
 def is_fixture(name):
     """Report whether a path is fixture input rather than source this repository owns."""
     slashed = name.replace("\\", "/")
-    return slashed.startswith("testdata/") or "/testdata/" in slashed
+    return slashed.startswith(FIXTURE_DIRECTORY + "/") or f"/{FIXTURE_DIRECTORY}/" in slashed
 
 
 def file_checks(directory, names):
@@ -240,7 +246,10 @@ def semgrep_commands(directory, names):
               if Path(name).suffix in {".go", ".py", ".rs", ".c", ".cpp", ".js", ".ts"}
               and not is_fixture(name)]
     if any(name.startswith(".config/semgrep/") for name in names):
-        source = ["."]
+        # A changed rule is judged against the whole tree, and the corpus stays out of that
+        # scan too. Naming "." alone dropped the filter above, so every push whose range
+        # touched the rules failed on the fixtures written to violate them.
+        source = ["--exclude", FIXTURE_DIRECTORY, "."]
     if source and (directory / rules).exists():
         return [["semgrep", "scan", "--error", "--config", rules, *source]]
     return []
