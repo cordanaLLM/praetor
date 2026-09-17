@@ -28,8 +28,34 @@ type recordedCommand struct {
 func fakeRunner(recorded *[]recordedCommand, out string, err error) commandRunner {
 	return func(_ context.Context, dir, name string, args ...string) (string, error) {
 		*recorded = append(*recorded, recordedCommand{dir: dir, name: name, args: args})
+		// The race stage asks the toolchain whether the detector can build before it
+		// runs anything. These cases are about the stage, not about the host they run
+		// on, so the probe is answered as a capable toolchain would answer it; the
+		// probe's own behaviour is covered in race_availability_test.go. Without this
+		// the stage would skip and every assertion below would pass vacuously.
+		if name == "go" && len(args) == 2 && args[0] == "env" {
+			switch args[1] {
+			case "CGO_ENABLED":
+				return "1\n", nil
+			case "CC":
+				return "gcc\n", nil
+			}
+		}
 		return out, err
 	}
+}
+
+// testInvocations returns only the race-detector runs, filtering out the toolchain
+// capability probe the stage performs first. The probe is part of the stage, not a
+// test run, and counting it would make these cases assert the wrong thing.
+func testInvocations(recorded []recordedCommand) []recordedCommand {
+	runs := make([]recordedCommand, 0, len(recorded))
+	for i := 0; i < len(recorded); i++ {
+		if len(recorded[i].args) > 0 && recorded[i].args[0] == "test" {
+			runs = append(runs, recorded[i])
+		}
+	}
+	return runs
 }
 
 // newTestConfig builds a stage configuration whose seams never touch the real toolchain.
@@ -358,8 +384,8 @@ func TestRunTestStage_3D(t *testing.T) {
 	if _, err := notGit.runTestStageForTest(ctx); err == nil {
 		t.Error("expected worktree creation failure to fail the stage")
 	}
-	if len(*notGitRecorded) != 0 {
-		t.Errorf("no test command may run without an isolated worktree, got %+v", *notGitRecorded)
+	if runs := testInvocations(*notGitRecorded); len(runs) != 0 {
+		t.Errorf("no test command may run without an isolated worktree, got %+v", runs)
 	}
 
 	// Positive: the race detector runs inside the worktree, not in the repository.
@@ -369,10 +395,11 @@ func TestRunTestStage_3D(t *testing.T) {
 	if _, err := runTestStage(ctx, cfg); err != nil {
 		t.Fatalf("test stage failed: %v", err)
 	}
-	if len(*recorded) != 1 {
-		t.Fatalf("expected exactly one test invocation, got %+v", *recorded)
+	runs := testInvocations(*recorded)
+	if len(runs) != 1 {
+		t.Fatalf("expected exactly one test invocation, got %+v", runs)
 	}
-	invocation := (*recorded)[0]
+	invocation := runs[0]
 	if invocation.name != "go" || strings.Join(invocation.args, " ") != "test -race ./..." {
 		t.Errorf("expected 'go test -race ./...', got %s %v", invocation.name, invocation.args)
 	}
@@ -472,10 +499,16 @@ func TestRunReceiptStage_Positive_SignsRealStageOutput(t *testing.T) {
 }
 
 func TestRunReceiptStage_Negative_NoSigningKey(t *testing.T) {
-	// Sandbox the key lookup so the developer's own key is never used.
+	// Sandbox the key lookup so the developer's own key is never used. XDG_CONFIG_HOME
+	// and HOME cover POSIX only: os.UserConfigDir reads APPDATA on Windows, so without
+	// it this case reached the real per-user key and passed for the wrong reason --
+	// the key was refused by the mode check rather than absent. Once that check stopped
+	// refusing every Windows key, the omission surfaced as a failure here (HISS-21).
 	home := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", home)
 	t.Setenv("HOME", home)
+	t.Setenv("APPDATA", home)
+	t.Setenv("LOCALAPPDATA", home)
 	t.Setenv("PRAETOR_RECEIPT_KEY", "")
 
 	repoDir := t.TempDir()
