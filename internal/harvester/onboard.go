@@ -137,6 +137,11 @@ func writeAgentHarness(ctx context.Context, repoPath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// The scaffolded harness tells its reader to run compile-context --verify, which requires
+	// the text register block; splice it first so that instruction holds from the start.
+	if _, err := compiler.SyncRegisterBlock(ctx, repoPath, agentsPath, true); err != nil {
+		return fmt.Errorf("splice text register into %s: %w", agentsPath, err)
+	}
 	tr := compiler.NewTranspiler()
 	data, err := readOnboardDocument(ctx, agentsPath)
 	if err != nil {

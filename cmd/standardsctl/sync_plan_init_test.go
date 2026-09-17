@@ -45,6 +45,10 @@ func TestInit_Positive_CompanionsNextToManifest(t *testing.T) {
 			t.Fatalf("expected %s next to the manifest", rel)
 		}
 	}
+	// init compiles the same way compile-context does, so the result verifies at once.
+	if out, err := runCompileContextCmd(t, dir, "--verify"); err != nil {
+		t.Fatalf("a freshly initialised repository must verify: %v\n%s", err, out)
+	}
 	// Nothing leaked into the process working directory.
 	for _, rel := range []string{".standards.lock", ".standards-baseline.json"} {
 		if util.FileExists(rel) {
