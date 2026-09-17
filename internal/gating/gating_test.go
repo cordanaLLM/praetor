@@ -447,6 +447,12 @@ func TestRunReceiptStage_Positive_SignsRealStageOutput(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", home)
 	t.Setenv("HOME", home)
+	// APPDATA and LOCALAPPDATA are set alongside the POSIX pair because
+	// os.UserConfigDir reads APPDATA on Windows. Without them this sandbox held on
+	// POSIX only, and a keygen case wrote to the real per-user key file -- silently
+	// destroying a developer's signing key on every test run (HISS-21).
+	t.Setenv("APPDATA", home)
+	t.Setenv("LOCALAPPDATA", home)
 
 	pub, priv, err := lockdown.GenerateKeyPair()
 	if err != nil {

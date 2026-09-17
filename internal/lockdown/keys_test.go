@@ -11,12 +11,18 @@ import (
 )
 
 // sandboxConfigDir points os.UserConfigDir at a temp directory so no test ever reads or
-// writes the developer's real ~/.config.
+// writes the developer's real per-user configuration directory.
 func sandboxConfigDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
+	// APPDATA and LOCALAPPDATA are set alongside the POSIX pair because
+	// os.UserConfigDir reads APPDATA on Windows. Without them this sandbox held on
+	// POSIX only, and a keygen case wrote to the real per-user key file -- silently
+	// destroying a developer's signing key on every test run (HISS-21).
+	t.Setenv("APPDATA", dir)
+	t.Setenv("LOCALAPPDATA", dir)
 	t.Setenv(SigningKeyEnv, "")
 	return dir
 }
