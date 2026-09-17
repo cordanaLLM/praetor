@@ -127,6 +127,7 @@ nav:
       - Fast Adoption Engine: adoption.md
       - Fleet Dogfooding: dogfooding.md
   - Plans:
+      - Golusoris Core Migration: plans/golusoris-migration-plan.md
       - Infrastructure Development Environments: plans/infrastructure-development-environments.md
       - Bidirectional Module Contracts: plans/bidirectional-contracts.md
       - Lifecycle Management: plans/lifecycle-management.md
