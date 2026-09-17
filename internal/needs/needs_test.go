@@ -562,7 +562,7 @@ func setupFleetRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo1, "go.mod"),
-		[]byte("module r1\ngo 1.24\nrequire github.com/jackc/pgx v5.0.0\n"), 0o600); err != nil {
+		[]byte("module r1\ngo 1.24\nrequire github.com/jackc/pgx/v5 v5.0.0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -571,7 +571,7 @@ func setupFleetRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo2, "go.mod"),
-		[]byte("module r2\ngo 1.24\nrequire github.com/jackc/pgx v5.0.0\nrequire github.com/unknown/lib v1.0.0\n"), 0o600); err != nil {
+		[]byte("module r2\ngo 1.24\nrequire github.com/jackc/pgx/v5 v5.0.0\nrequire github.com/unknown/lib v1.0.0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return tmpRoot
@@ -657,7 +657,7 @@ func TestAggregateFleetWithHarvestDeduplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, "go.mod"),
-		[]byte("module example.com/testservice\ngo 1.24\nrequire github.com/jackc/pgx v5.0.0\n"), 0o600); err != nil {
+		[]byte("module example.com/testservice\ngo 1.24\nrequire github.com/jackc/pgx/v5 v5.0.0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
