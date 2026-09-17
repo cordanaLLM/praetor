@@ -87,7 +87,9 @@ func evaluate(ctx context.Context, dialect Dialect, event Event, in Invocation) 
 }
 
 // readBounded reads at most MaxInputBytes+1 bytes and honours the context, so a client
-// that never closes stdin cannot hold the hook past its budget.
+// that never closes stdin cannot hold the hook past its budget. After a timeout the
+// reader stays blocked on the open stream until the process exits, which is right after
+// the verdict; closing a stream the caller owns would be the worse trade.
 func readBounded(ctx context.Context, stdin io.Reader) ([]byte, error) {
 	if stdin == nil {
 		return nil, errors.New("hook input is missing")

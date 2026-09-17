@@ -37,6 +37,24 @@ func TestPolicyCommandBuiltinRules(t *testing.T) {
 	}
 }
 
+// TestPolicyWordBoundaryIsTheStricterOne pins a measured difference: RE2's word boundary
+// is ASCII, Python's is Unicode, so a flag followed by a non-ASCII letter is denied here
+// and allowed by the Python guard. The difference is on the closed side and stays.
+func TestPolicyWordBoundaryIsTheStricterOne(t *testing.T) {
+	if verdict := policy(t).Command("git commit -né"); verdict.Outcome != Deny {
+		t.Errorf("non-ASCII letter after the short flag: %+v", verdict)
+	}
+	for _, rule := range policy(t).rules {
+		compiled := rule.pattern.String()
+		if strings.Contains(rule.source, `\s`) && !strings.Contains(compiled, pythonSpace) {
+			t.Errorf("rule %q lost Python's whitespace class", rule.source)
+		}
+		if strings.Contains(compiled, "["+pythonSpace) {
+			t.Errorf("rule %q uses the class inside a bracket expression", rule.source)
+		}
+	}
+}
+
 func TestNewPolicyOperatorDenyList(t *testing.T) {
 	compiled := policy(t, `\bterraform\s+destroy\b`, organisationContainerPattern)
 	if verdict := compiled.Command("terraform destroy -auto-approve"); verdict.Outcome != Deny ||

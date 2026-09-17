@@ -3,6 +3,7 @@ package agenthook
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // Bounds of the operator deny list (HISS-02).
@@ -11,11 +12,22 @@ const (
 	MaxOperatorPatternBytes = 512
 )
 
-// denyRule is one compiled pattern with the invariant it enforces and its wording.
+// denyRule is one compiled pattern with its source, the invariant it enforces and its wording.
 type denyRule struct {
 	pattern   *regexp.Regexp
+	source    string
 	invariant string
 	message   string
+}
+
+// pythonSpace is what `\s` matches in Python's `re` on text. RE2's `\s` is ASCII only and
+// has no vertical tab, so a one-to-one port of the built-in rules spells the class out.
+const pythonSpace = `[\s\v\x1c-\x1f\x{85}\p{Z}]`
+
+// builtinRule compiles a built-in source with Python's whitespace class. The sources use
+// `\s` outside bracket expressions only; a test compiles every rule.
+func builtinRule(source, invariant, message string) denyRule {
+	return denyRule{regexp.MustCompile(strings.ReplaceAll(source, `\s`, pythonSpace)), source, invariant, message}
 }
 
 const (
@@ -54,9 +66,9 @@ func NewPolicy(operatorDeny []string) (*Policy, error) {
 	}
 	rules := make([]denyRule, 0, len(builtinEvasion)+1+len(operatorDeny))
 	for _, source := range builtinEvasion {
-		rules = append(rules, denyRule{regexp.MustCompile(source), "HISS-16", evasionMessage})
+		rules = append(rules, builtinRule(source, "HISS-16", evasionMessage))
 	}
-	rules = append(rules, denyRule{regexp.MustCompile(builtinDevRoot), "DEV-01", topologyMessage})
+	rules = append(rules, builtinRule(builtinDevRoot, "DEV-01", topologyMessage))
 	for index, source := range operatorDeny {
 		if source == "" || len(source) > MaxOperatorPatternBytes {
 			return nil, fmt.Errorf("operator deny pattern %d must be 1..%d bytes", index, MaxOperatorPatternBytes)
@@ -65,7 +77,7 @@ func NewPolicy(operatorDeny []string) (*Policy, error) {
 		if err != nil {
 			return nil, fmt.Errorf("operator deny pattern %d: %w", index, err)
 		}
-		rules = append(rules, denyRule{compiled, "operator", operatorMessage})
+		rules = append(rules, denyRule{compiled, source, "operator", operatorMessage})
 	}
 	return &Policy{rules: rules}, nil
 }
@@ -77,7 +89,7 @@ func (p *Policy) Command(command string) Verdict {
 	}
 	for _, rule := range p.rules {
 		if rule.pattern.MatchString(command) {
-			return Verdict{Deny, fmt.Sprintf("[BLOCKED BY %s] %s (pattern %q)", rule.invariant, rule.message, rule.pattern)}
+			return Verdict{Deny, fmt.Sprintf("[BLOCKED BY %s] %s (pattern %q)", rule.invariant, rule.message, rule.source)}
 		}
 	}
 	return Verdict{Outcome: Allow}

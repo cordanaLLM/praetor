@@ -116,10 +116,17 @@ A second test does the same for the environment check. Both skip with a stated r
 a host without a working `python3` or `python`. The replay is removed together with the
 Python guard.
 
-Two deliberate differences, both on the closed side: the Go decoder rejects the
-non-standard JSON literals Python accepts (`NaN`, `Infinity`), and a payload that names a
-tool outside the command-tool list is allowed without a command, which the Python guard
-never sees because its registrations match the shell tool only.
+White space means the same to both: the built-in rules are compiled with the class
+Python's `\s` matches on text (Unicode separators, the vertical tab, the information
+separators), because RE2's `\s` is ASCII only. Operator patterns are plain RE2.
+
+Measured differences, both on the closed side: the Go decoder rejects the non-standard
+JSON literals Python accepts (`NaN`, `Infinity`), and RE2's word boundary is ASCII, so a
+skip flag directly followed by a non-ASCII letter is denied by Go and allowed by Python.
+
+One difference by contract: a payload that names a tool outside the command-tool list is
+allowed without a command. The Python guard never sees such a payload, because its
+registrations match the shell tool only, and the `lefthook` dialect keeps its behaviour.
 
 ## Not in this change
 

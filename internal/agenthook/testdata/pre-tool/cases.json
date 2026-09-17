@@ -36,6 +36,16 @@
    "payload": {"tool_input": {"command": "standardsctl needs scan /home/u/dev/ --json"}}},
   {"name": "deny-dev-root-case-insensitive", "allow": false,
    "payload": {"tool_input": {"command": "PRAETORCTL Bootstrap ~/DEV"}}},
+  {"name": "deny-short-skip-after-no-break-space", "allow": false,
+   "payload": {"tool_input": {"command": "git commit\u00a0-n"}}},
+  {"name": "deny-short-skip-after-vertical-tab", "allow": false,
+   "payload": {"tool_input": {"command": "git\u000bcommit -m x\u000b-n"}}},
+  {"name": "deny-remove-hooks-after-em-space", "allow": false,
+   "payload": {"tool_input": {"command": "rm\u2003-rf\u2003.git/hooks"}}},
+  {"name": "deny-hooks-path-around-next-line-control", "allow": false,
+   "payload": {"tool_input": {"command": "git config core.hooksPath\u0085=\u0085/dev/null"}}},
+  {"name": "deny-dev-root-before-file-separator-control", "allow": false,
+   "payload": {"tool_input": {"command": "praetorctl adopt ~/dev\u001c"}}},
   {"name": "deny-organisation-container", "allow": false, "operator": true,
    "payload": {"tool_input": {"command": "praetorctl adopt ~/dev/scratch"}}},
 
@@ -53,5 +63,6 @@
   {"name": "invalid-command-array", "allow": false, "payload": {"tool_input": {"command": []}}},
   {"name": "invalid-command-object", "allow": false, "payload": {"tool_input": {"command": {}}}},
   {"name": "invalid-command-empty", "allow": false, "payload": {"tool_input": {"command": ""}}},
-  {"name": "invalid-command-whitespace", "allow": false, "payload": {"tool_input": {"command": " \t\r\n"}}}
+  {"name": "invalid-command-whitespace", "allow": false, "payload": {"tool_input": {"command": " \t\r\n"}}},
+  {"name": "invalid-command-information-separators", "allow": false, "payload": {"tool_input": {"command": "\u001c\u001f\u00a0"}}}
 ]

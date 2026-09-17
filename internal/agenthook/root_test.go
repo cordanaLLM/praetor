@@ -28,10 +28,18 @@ func TestResolveRoot(t *testing.T) {
 		{"empty payload entry falls back", []string{""}, other, other},
 	} {
 		got, err := ResolveRoot(context.Background(), tc.workspaces, tc.workDir)
-		if err != nil || got != tc.want {
+		if err != nil || !filepath.IsAbs(got) || !sameDirectory(got, tc.want) {
 			t.Errorf("%s: %q %v, want %q", tc.name, got, err, tc.want)
 		}
 	}
+}
+
+// sameDirectory compares by identity, so a short Windows name or a drive-letter case
+// cannot fail a correct answer.
+func sameDirectory(left, right string) bool {
+	leftInfo, leftErr := os.Stat(left)
+	rightInfo, rightErr := os.Stat(right)
+	return leftErr == nil && rightErr == nil && os.SameFile(leftInfo, rightInfo)
 }
 
 func TestResolveRootFailures(t *testing.T) {

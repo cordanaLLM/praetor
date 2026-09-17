@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -150,10 +151,16 @@ func commandOf(object map[string]json.RawMessage) (string, error) {
 		return "", errors.New("tool_input must be an object")
 	}
 	command, err := optionalString(input, "command")
-	if err != nil || strings.TrimSpace(command) == "" {
+	if err != nil || strings.TrimFunc(command, isPythonSpace) == "" {
 		return "", errors.New("tool_input.command must be nonempty text")
 	}
 	return command, nil
+}
+
+// isPythonSpace is Python's str.isspace for one rune: Unicode white space plus the four
+// information separators, so "nonempty" means the same to both guards.
+func isPythonSpace(r rune) bool {
+	return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f)
 }
 
 // boundReason keeps a diagnostic inside MaxReasonBytes without splitting a rune.

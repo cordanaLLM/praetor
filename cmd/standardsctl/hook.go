@@ -24,7 +24,9 @@ func commandExitCode(stderr io.Writer, err error) int {
 	if errors.As(err, &status) && status.code != 0 {
 		return status.code
 	}
-	fmt.Fprintf(stderr, "Error: %v\n", err)
+	if _, writeErr := fmt.Fprintf(stderr, "Error: %v\n", err); writeErr != nil {
+		return 1 // stderr is gone; the exit code is the only report left
+	}
 	return 1
 }
 
