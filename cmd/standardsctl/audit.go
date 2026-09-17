@@ -44,8 +44,12 @@ type auditOptions struct {
 	agentsPath   string
 	baseRef      string
 	touched      []string
-	policy       config.EffectiveOptions
-	effective    *config.EffectivePolicy
+	// debtDeltaReason, when non-empty, judges touched files on whether their debt grew rather
+	// than on whether they were touched. It is a reason rather than a boolean so the exception
+	// cannot be taken without saying why (#150).
+	debtDeltaReason string
+	policy          config.EffectiveOptions
+	effective       *config.EffectivePolicy
 }
 
 func runAudit(args []string) error {
@@ -85,6 +89,8 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 	agentsPath := fs.String("agents", "", "Path to AGENTS.md (default: <root>/AGENTS.md)")
 	baseRef := fs.String("base", "", "Git ref the change set is compared against (e.g. origin/main); enables the touched-file clean rule over that range and the baseline growth guard")
 	touched := fs.String("touched", "", "Comma-separated files, relative to the audited root, to treat as touched instead of asking git")
+	debtDelta := fs.String("touched-debt-delta-reason", "",
+		"Judge touched files on whether their debt grew rather than on whether they were touched, for a provably mechanical change; the value is the recorded reason. Also read from "+debtDeltaReasonEnv)
 	var policy config.EffectiveOptions
 	fs.StringVar(&policy.CatalogRoot, "catalog-root", "", "Root containing pinned .config/archetypes (default: audited root)")
 	fs.StringVar(&policy.FleetPath, "fleet-config", "", "Explicit fleet complexity policy file")
@@ -102,13 +108,14 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 	rootDir := filepath.Dir(*manifestPath)
 	policy.Root, policy.ManifestPath, policy.Audit = rootDir, *manifestPath, true
 	return &auditOptions{
-		rootDir:      rootDir,
-		manifestPath: *manifestPath,
-		baselinePath: resolveCompanion(rootDir, *baselinePath, ".standards-baseline.json"),
-		agentsPath:   resolveCompanion(rootDir, *agentsPath, "AGENTS.md"),
-		baseRef:      *baseRef,
-		touched:      splitCSV(*touched),
-		policy:       policy,
+		rootDir:         rootDir,
+		manifestPath:    *manifestPath,
+		baselinePath:    resolveCompanion(rootDir, *baselinePath, ".standards-baseline.json"),
+		agentsPath:      resolveCompanion(rootDir, *agentsPath, "AGENTS.md"),
+		baseRef:         *baseRef,
+		touched:         splitCSV(*touched),
+		debtDeltaReason: resolveDebtDeltaReason(*debtDelta),
+		policy:          policy,
 	}, nil
 }
 
@@ -195,7 +202,14 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		return err
 	}
 
-	ratchet := baseline.EvaluateRatchet(base, current, touched)
+	ratchet := baseline.EvaluateRatchetWithOptions(base, current, touched,
+		baseline.RatchetOptions{DebtDelta: opts.debtDeltaReason != ""})
+	if opts.debtDeltaReason != "" {
+		// Stated on every run that takes the exception, so it is visible in the hook output and
+		// in CI rather than being a silent relaxation of the boy-scout rule.
+		fmt.Printf("[WARN] Touched-file clean rule judged by debt delta, not by touch; recorded reason: %s\n",
+			opts.debtDeltaReason)
+	}
 	if !ratchet.Passed {
 		return describeRatchetFailure(ratchet)
 	}
@@ -500,4 +514,21 @@ func auditGitHooks(ctx context.Context, rootDir string) error {
 
 	fmt.Printf("[PASS] Local Git hooks (%s via lefthook) verified active.\n", preCommitPath)
 	return nil
+}
+
+// debtDeltaReasonEnv carries the debt-delta reason for a commit made through the generated
+// pre-commit hook. That hook runs bare "praetorctl audit", so a flag cannot reach it without
+// editing a hook Praetor installs and verifies; an environment variable can, and the reason is
+// still mandatory because the variable's value is the reason:
+//
+//	PRAETOR_TOUCHED_DEBT_DELTA_REASON="rename module path to cordanaLLM" git commit
+const debtDeltaReasonEnv = "PRAETOR_TOUCHED_DEBT_DELTA_REASON"
+
+// resolveDebtDeltaReason prefers an explicit flag over the environment, and treats a value that
+// is only whitespace as no reason at all -- an empty justification is not a justification.
+func resolveDebtDeltaReason(flagValue string) string {
+	if reason := strings.TrimSpace(flagValue); reason != "" {
+		return reason
+	}
+	return strings.TrimSpace(os.Getenv(debtDeltaReasonEnv))
 }
