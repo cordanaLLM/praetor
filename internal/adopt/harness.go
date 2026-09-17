@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -68,7 +70,53 @@ func buildAgentHarness(repoName, arch string, plan *VerificationPlan) (string, e
 	if err != nil {
 		return "", fmt.Errorf("render harness footer: %w", err)
 	}
-	return header + buildAgentHarnessDirectives() + footer + "\n" + harnessEndMarker + "\n", nil
+	register, err := harnessRegisterSection()
+	if err != nil {
+		return "", err
+	}
+	return header + buildAgentHarnessDirectives() + register + footer + "\n" + harnessEndMarker + "\n", nil
+}
+
+// harnessRegisterSection renders the default text register section. Adoption needs neither
+// the adoptee's manifest nor its routing file here: the adoptee's own compile-context
+// re-splices the block from its manifest, and audit reports the difference until it does.
+func harnessRegisterSection() (string, error) {
+	block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy())
+	if err != nil {
+		return "", fmt.Errorf("render harness text register: %w", err)
+	}
+	return config.RegisterSectionPrefix + block + "\n\n", nil
+}
+
+// dropRegisterSection removes a text register section from repository instructions that
+// are about to be joined with a harness carrying its own. compile-context appends the
+// section to an AGENTS.md that has none, so the instructions kept across a harness refresh
+// can hold one; two marker pairs in one file would fail every later compile. Content whose
+// markers cannot be located is returned unchanged for compile-context to report.
+func dropRegisterSection(content string) string {
+	first, last, err := util.FindMarkedBlock(content, config.RegisterBlockStart, config.RegisterBlockEnd)
+	if err != nil || first < 0 {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	start := first
+	switch {
+	case first >= 2 && strings.TrimSpace(lines[first-1]) == "" && strings.TrimSpace(lines[first-2]) == config.RegisterBlockHeading:
+		start = first - 2
+	case first >= 1 && strings.TrimSpace(lines[first-1]) == config.RegisterBlockHeading:
+		start = first - 1
+	}
+	kept := append(append([]string{}, lines[:start]...), lines[last+1:]...)
+	return strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
+// foreignInstructions returns an AGENTS.md that carries no harness yet as it will follow
+// the new one: byte-identical, unless it held a text register section of its own.
+func foreignInstructions(existing string) string {
+	if stripped := dropRegisterSection(existing); stripped != existing {
+		return stripped + "\n"
+	}
+	return existing
 }
 
 func buildAgentHarnessDirectives() string {
@@ -200,7 +248,7 @@ func validateHarnessProjection(content string) error {
 // silently discarding repository instructions.
 func mergeExistingAgentsContent(s *adoptSession, full, existing, harness string) (string, error) {
 	if !hasHarness(existing) {
-		merged := harness + harnessSeparator + "\n" + existing
+		merged := harness + harnessSeparator + "\n" + foreignInstructions(existing)
 		if err := validateHarnessProjection(merged); err != nil {
 			return "", err
 		}
@@ -223,6 +271,7 @@ func mergeExistingAgentsContent(s *adoptSession, full, existing, harness string)
 		s.report.recordReconciled(agentsFile, "Existing harness left untouched: boundary to repository instructions not found")
 		return existing, nil
 	}
+	tail = dropRegisterSection(tail)
 	merged := strings.TrimSpace(harness) + "\n"
 	if tail != "" {
 		merged = strings.TrimSpace(harness) + "\n" + harnessSeparator + "\n" + tail + "\n"
