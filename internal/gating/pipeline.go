@@ -359,6 +359,18 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 	if !util.FileExists(filepath.Join(cfg.repoDir, "go.mod")) {
 		return "no go.mod: Go race-detector tests skipped", nil
 	}
+	// The race detector needs cgo and a host C toolchain. Without this check the stage
+	// does not report "no C compiler", it reports `# runtime/cgo` followed by every
+	// package failing to build -- which reads as a repository whose whole tree is
+	// broken. On a Windows box without gcc that is every push, including a push
+	// fixing Windows support, so the gate could not be repaired from the platform it
+	// was broken on. `.config/lefthook/scripts/test_hooks.py` already reasons exactly
+	// this way for the harness self-tests; this is the same rule for the Go gate.
+	if available, absent := raceDetectorAvailable(ctx, cfg); !available {
+		return fmt.Sprintf(
+			"race detector unavailable (%s): race-detector tests skipped; "+
+				"CI runs this leg on Linux with cgo", absent), nil
+	}
 
 	bound, boundNote := testStageTimeout(os.Getenv(TestStageTimeoutEnv))
 	tCtx, cancel := context.WithTimeout(ctx, bound)
@@ -393,6 +405,42 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 		return "", fmt.Errorf("tests failed in %s: %s (%w)", wt.Path, out, testErr)
 	}
 	return boundNote, nil
+}
+
+// raceDetectorAvailable reports whether `go test -race` can build here, and names what
+// is missing when it cannot.
+//
+// Checking CGO_ENABLED alone is not enough, and the difference is the common case: a
+// stock Windows Go install reports CGO_ENABLED=1 and CC=gcc while no gcc exists on
+// PATH, so the toolchain claims cgo and every race build still fails. The compiler the
+// toolchain actually names is therefore resolved, not assumed.
+//
+// A skip is reported with its reason, never taken silently. A skipped race leg that
+// read as a pass would be an unexamined thing certified as clean, which is the defect
+// this lattice exists to prevent.
+func raceDetectorAvailable(ctx context.Context, cfg *stageConfig) (bool, string) {
+	if os.Getenv("CGO_ENABLED") == "0" {
+		return false, "CGO_ENABLED=0 in the environment"
+	}
+	enabled, err := cfg.run(ctx, cfg.repoDir, "go", "env", "CGO_ENABLED")
+	if err != nil {
+		return false, fmt.Sprintf("go env CGO_ENABLED could not be read: %v", err)
+	}
+	if strings.TrimSpace(enabled) == "0" {
+		return false, "go env reports CGO_ENABLED=0"
+	}
+	compiler, err := cfg.run(ctx, cfg.repoDir, "go", "env", "CC")
+	if err != nil {
+		return false, fmt.Sprintf("go env CC could not be read: %v", err)
+	}
+	compiler = strings.TrimSpace(compiler)
+	if compiler == "" {
+		return false, "go env names no C compiler"
+	}
+	if _, err := cfg.lookPath(compiler); err != nil {
+		return false, fmt.Sprintf("the C compiler %q named by go env is not on PATH", compiler)
+	}
+	return true, ""
 }
 
 // testStageTimeout resolves the race stage's bound from the environment.

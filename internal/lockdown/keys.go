@@ -110,8 +110,8 @@ func readKeyFile(path string) (string, error) {
 		}
 		return "", fmt.Errorf("stat receipt signing key %s: %w", path, err)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("%w: %s is %#o", ErrInsecureKeyPerm, path, info.Mode().Perm())
+	if err := verifyKeyPermissions(path, info); err != nil {
+		return "", err
 	}
 
 	// #nosec G304 -- path is derived from os.UserConfigDir(), never from user input.
