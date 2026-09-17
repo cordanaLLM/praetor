@@ -78,8 +78,8 @@ func runHindsightDistill(ctx context.Context, args []string) error {
 
 	fmt.Printf("=== Distilled Workspace Facts: %s ===\n", repoPath)
 	fmt.Printf("  Total Facts: %d\n", report.TotalFacts)
-	for cat, count := range report.Categories {
-		fmt.Printf("    - %-20s: %d\n", cat, count)
+	for _, cat := range hindsight.SortedCategories(report.Categories) {
+		fmt.Printf("    - %-20s: %d\n", cat, report.Categories[cat])
 	}
 	fmt.Println("Facts cached into .workingdir/memory/distilled.json.")
 	return nil
@@ -128,8 +128,8 @@ func runHindsightAudit(ctx context.Context, args []string) error {
 	for _, f := range facts {
 		catCounts[f.Category]++
 	}
-	for cat, count := range catCounts {
-		fmt.Printf("    - %-20s: %d\n", cat, count)
+	for _, cat := range hindsight.SortedCategories(catCounts) {
+		fmt.Printf("    - %-20s: %d\n", cat, catCounts[cat])
 	}
 	return nil
 }

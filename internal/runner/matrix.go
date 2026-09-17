@@ -23,12 +23,15 @@ func ResolveRunner(policy *config.RunnerPolicy, osName, arch string, isGPU bool)
 
 	spec, found := policy.Routing[key]
 	if !found {
-		// Fallback to default
-		return config.RunnerSpec{
+		// The fallback is a routing decision like any other, so it faces the same
+		// constraint. It names a self-hosted ARC pool, which is Linux; returning it
+		// unchecked scheduled a darwin target there whenever the routing table simply had
+		// no entry — the one case the found-entry path refuses.
+		spec = config.RunnerSpec{
 			Type:      "self-hosted-arc",
 			RunsOn:    []string{policy.Default},
 			Ephemeral: true,
-		}, nil
+		}
 	}
 
 	if err := enforcePlatformConstraints(normOS, spec); err != nil {

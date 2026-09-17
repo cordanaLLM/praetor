@@ -4,6 +4,8 @@
 package hindsight
 
 import (
+	"maps"
+	"slices"
 	"time"
 )
 
@@ -45,6 +47,13 @@ type DistillationReport struct {
 	Facts       []MemoryFact         `json:"facts"`
 	Categories  map[FactCategory]int `json:"categories"`
 	DistilledAt time.Time            `json:"distilled_at"`
+}
+
+// SortedCategories returns a category tally's keys in a stable order. Every caller that
+// prints a tally uses it, so two runs over an unchanged repository produce the same
+// report instead of one ordered by the runtime's map walk.
+func SortedCategories(tally map[FactCategory]int) []FactCategory {
+	return slices.Sorted(maps.Keys(tally))
 }
 
 // ClientConfig specifies network bounds and credentials for Hindsight API interactions.

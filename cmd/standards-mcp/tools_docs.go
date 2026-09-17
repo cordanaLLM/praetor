@@ -56,10 +56,10 @@ func (s *Server) createPackageDocsTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("failed loading doc catalog: %v", err)), nil
 		}
 
-		for _, doc := range cat.Packages {
-			if doc.PackageName == pkgName || strings.HasSuffix(doc.PackageName, "/"+pkgName) {
-				return mcp.TextResult(doc.RawMarkdown), nil
-			}
+		// Shared with the CLI: an exact package name beats a suffix match, and a package
+		// cached at several versions resolves the same way on every call.
+		if doc, found := cat.Lookup(pkgName); found {
+			return mcp.TextResult(doc.RawMarkdown), nil
 		}
 
 		return mcp.ErrorResult(fmt.Sprintf("package '%s' not found in local catalog; run 'praetorctl docs sync' to harvest", pkgName)), nil

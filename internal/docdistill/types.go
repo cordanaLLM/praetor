@@ -4,6 +4,9 @@
 package docdistill
 
 import (
+	"maps"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -47,6 +50,55 @@ type DocCatalog struct {
 	Version      string                  `json:"version"`
 	LastSyncedAt time.Time               `json:"last_synced_at"`
 	Packages     map[string]DistilledDoc `json:"packages"`
+}
+
+// maxCatalogEntries bounds a single pass over the catalog (HISS-02).
+const maxCatalogEntries = 100000
+
+// SortedKeys returns the catalog keys in a stable order, so a report over the catalog
+// reads the same on two runs against an unchanged cache. Ranging the map directly makes
+// every printed order, and every persisted fact order, an artefact of the runtime.
+func (c *DocCatalog) SortedKeys() []string {
+	if c == nil {
+		return nil
+	}
+	keys := slices.Sorted(maps.Keys(c.Packages))
+	if len(keys) > maxCatalogEntries {
+		return keys[:maxCatalogEntries]
+	}
+	return keys
+}
+
+// Lookup returns the documentation sheet for a package name, deterministically.
+//
+// An exact PackageName match always wins; a path-suffix match ("yaml.v3" for
+// "gopkg.in/yaml.v3") is only the answer when no exact match exists, so a suffix can no
+// longer beat a package the caller named in full. When the same package is cached at
+// several versions, the greatest catalog key in sorted order wins, which is stable across
+// runs. That order is lexical over "name@version" rather than semantic: this repository
+// has no version comparator to reuse, and adding a second one here is the duplication
+// HISS-19 forbids.
+func (c *DocCatalog) Lookup(name string) (DistilledDoc, bool) {
+	if c == nil || name == "" {
+		return DistilledDoc{}, false
+	}
+	keys := c.SortedKeys()
+	var exact, suffix string
+	for i := 0; i < len(keys); i++ {
+		switch pkg := c.Packages[keys[i]].PackageName; {
+		case pkg == name:
+			exact = keys[i]
+		case strings.HasSuffix(pkg, "/"+name):
+			suffix = keys[i]
+		}
+	}
+	if exact == "" && suffix == "" {
+		return DistilledDoc{}, false
+	}
+	if exact != "" {
+		return c.Packages[exact], true
+	}
+	return c.Packages[suffix], true
 }
 
 // DistillOptions configures the doc harvesting and compression behavior.

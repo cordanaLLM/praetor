@@ -116,7 +116,10 @@ func distillPackageDocFacts(repoPath string) ([]MemoryFact, error) {
 		return nil, err
 	}
 
-	for _, doc := range cat.Packages {
+	// Sorted, so the distilled cache is byte-identical between two runs over an unchanged
+	// catalog instead of diffing against itself on every distillation.
+	for _, key := range cat.SortedKeys() {
+		doc := cat.Packages[key]
 		stmt := fmt.Sprintf("Package %s@%s: %s (API signatures: %d, Invariants: %d).",
 			doc.PackageName, doc.Version, doc.Summary, len(doc.APISurface), len(doc.Invariants))
 		facts = append(facts, createFact(CategoryDependencyDoc, doc.PackageName, stmt, ".workingdir/docs/catalog.json", []string{"package", doc.PackageName}))

@@ -125,8 +125,8 @@ func (s *Server) createHindsightOptimizeTool() (mcp.Tool, error) {
 
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "Successfully distilled %d atomic facts across workspace subsystems:\n", report.TotalFacts)
-		for cat, count := range report.Categories {
-			fmt.Fprintf(&sb, "  - %-20s: %d\n", cat, count)
+		for _, cat := range hindsight.SortedCategories(report.Categories) {
+			fmt.Fprintf(&sb, "  - %-20s: %d\n", cat, report.Categories[cat])
 		}
 		sb.WriteString("Updated .workingdir/memory/distilled.json.\n")
 
