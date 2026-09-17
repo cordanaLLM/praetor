@@ -1,0 +1,3 @@
+type: changed
+title: Engine-only workflows run only in the canonical repository; portability on a fork follows the PRAETOR_FORK_PORTABILITY variable
+breaking: false

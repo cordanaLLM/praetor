@@ -101,6 +101,25 @@ can enforce, not a way to keep a red leg in the required set.
 immediately, and the branch only afterwards — so **apply the ruleset once the new legs have
 gone green at least once**, never in the same step that introduces them.
 
+## Outside the canonical repository the matrix is opt-in, and says so
+
+A private operational fork receives many commits per sync, and its macOS and Windows minutes
+are billed at a multiple. There the matrix runs only when the repository variable
+`PRAETOR_FORK_PORTABILITY` is `enabled`. The job condition is the repository guard described in
+[operational fork synchronization](../guides/operational-sync.md#which-workflows-run-where)
+or that variable.
+
+A job skipped by its condition reports nothing, which is the silent skip this invariant forbids.
+The workflow therefore carries a second job with the exact negation of that condition. It runs
+on one Linux runner, writes a notice and a step summary naming the repository and the variable,
+and states that no platform was verified. Exactly one of the two jobs runs for any repository.
+
+A job condition normally removes a job from the required contexts, because its check may never
+report. A condition that is only a disjunction containing the repository guard for the
+repository's own `.standards.yaml` identity is the exception: it is always true there, so the
+three legs stay required in the canonical repository. Judged from any other identity the same
+jobs are conditional, so a fork is never told to require a check its runs will not report.
+
 ## Templating: the matrix shape is per language
 
 A single three-OS matrix is correct for Go and wrong for almost everything else. Each archetype

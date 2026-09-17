@@ -86,6 +86,33 @@ for inspection; it is not automatically deleted or overwritten on retry. Runtime
 is capped at two minutes, Git output at 4 MiB per stream, and each configuration
 blob at 1 MiB. Exceeding a bound is an error, never successful partial coverage.
 
+## Which workflows run where
+
+An operational fork carries the engine's workflow files unchanged, because a fork-only
+workflow file would be an unexpected owner tree difference. What differs is which jobs run.
+Engine-only jobs carry one condition:
+
+```yaml
+if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+```
+
+Repository variables are not inherited by a fork, so the literal decides there. It is the
+`repository.owner` and `repository.name` of `.standards.yaml`; a test in `internal/forge`
+parses every workflow and fails when the literal differs from the manifest, or when a
+scheduled or publishing job has no guard.
+
+| Workflow | Canonical repository | Any other copy |
+| :-- | :-- | :-- |
+| `ci.yml`, `compliance.yml`, `security.yml` on push and pull request | runs | runs: verification follows the code, and it gates sync candidates |
+| `security.yml` schedule leg | runs | skipped |
+| `sync-flavors.yml`, `sync-models.yml`, `pages.yml`, `wiki-sync.yml`, `release-binaries.yml`, `sbom.yml` | runs | skipped at job level; the job name says `canonical repository only` |
+| `portability.yml` | runs | skipped with a stated reason unless the repository variable `PRAETOR_FORK_PORTABILITY` is `enabled` |
+| `adopt.yml` | on dispatch or comment | on dispatch or comment: a person asked for it in that repository |
+
+Set `PRAETOR_CANONICAL_REPOSITORY` only when the canonical repository itself moves; the
+manifest identity and the literal then change in the same commit. Guards limit what a copy
+runs on its own. They do not replace disabling Actions on a fork before its first push.
+
 ## Review and later rollout
 
 A prepared candidate is structural evidence, not a test result or an Exit-0
