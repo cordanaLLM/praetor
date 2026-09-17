@@ -184,7 +184,7 @@ func TestAdopt_Positive_Greenfield(t *testing.T) {
 	repoPath := newTestRepo(t, "new-service")
 	mustWrite(t, filepath.Join(repoPath, "go.mod"), "module github.com/test/service\n")
 
-	report, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework"})
+	report, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework", RecordBaseline: true})
 	if err != nil {
 		t.Fatalf("Adopt greenfield failed: %v", err)
 	}
