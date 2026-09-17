@@ -7,6 +7,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -105,7 +106,11 @@ func writeVendorAgent(ctx context.Context, path, content string) error {
 }
 
 func projectionPath(root, relative string) (string, error) {
-	if !filepath.IsLocal(relative) || filepath.Clean(relative) != relative || relative == "." {
+	// Vendor targets are declared as slash paths (".cursor/rules/hiss-invariants.mdc"),
+	// so cleanliness is a slash-path property. filepath.Clean returns backslashes on
+	// Windows and would never equal the declared value, which rejected every
+	// projection and left compile-context unable to write on that platform.
+	if !filepath.IsLocal(relative) || path.Clean(relative) != relative || relative == "." {
 		return "", errors.New("compiled output requires a clean relative file path")
 	}
 	return filepath.Join(root, relative), nil

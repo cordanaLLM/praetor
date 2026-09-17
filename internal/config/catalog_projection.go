@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -90,7 +91,15 @@ func catalogDirAllowed(dir string) bool {
 }
 
 func validateCatalogPath(rel string) error {
-	if !filepath.IsLocal(rel) || filepath.Clean(rel) != rel || len(rel) > 4096 || !strings.HasSuffix(rel, ".yaml") {
+	// Cleanliness is judged on the slash form, for the same reason catalogDirAllowed
+	// normalises below: filepath.Clean returns the host separator, so on Windows this
+	// comparison was unequal for every declared slash identity and refused each one
+	// with "requires a bounded clean local YAML path" -- before the directory check
+	// below was ever reached. filepath.IsLocal is kept as-is because containment is a
+	// host question, and it is what still rejects a drive-qualified or escaping path.
+	normalised := util.NormalizeSlashes(rel)
+	if !filepath.IsLocal(rel) || path.Clean(normalised) != normalised ||
+		len(rel) > 4096 || !strings.HasSuffix(rel, ".yaml") {
 		return errors.New("catalog artifact requires a bounded clean local YAML path")
 	}
 	if !utf8.ValidString(rel) || strings.ContainsFunc(rel, unicode.IsControl) {

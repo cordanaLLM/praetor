@@ -21,6 +21,24 @@ than failing the repository for it:
   `FAIL ./... [setup failed]`, which reads as a broken repository rather than an inapplicable stage.
 - Flavor conformance reports **not applicable** where the repository's declared profile has no
   flavor implementing it -- an OS image forge is not a Go service and should not be measured as one.
+- The race-detector stage skips where the race detector cannot build, naming what is missing:
+
+  ```text
+  5. [PASS] Race-Detector Tests  (62ms)
+     Reason: race detector unavailable (the C compiler "gcc" named by go env is not on PATH):
+             race-detector tests skipped; CI runs this leg on Linux with cgo
+  ```
+
+  The detector needs cgo and a host C toolchain. Checking `CGO_ENABLED` alone is not enough, and
+  the difference is the common case rather than an edge: a stock Windows Go reports
+  `CGO_ENABLED=1` and `CC=gcc` while no gcc is installed, so the toolchain claims cgo and every
+  race build still fails. The compiler the toolchain names is therefore resolved, not assumed.
+
+  Without this the stage did not report a missing compiler -- it reported `# runtime/cgo` followed
+  by every package failing to build, which reads as a repository whose whole tree is broken. On a
+  workstation without a C toolchain that was every push, including a push fixing support for that
+  platform, so the gate could not be repaired from the platform it was broken on. Set
+  `CGO_ENABLED=0` to skip the stage deliberately; install a C toolchain to run it.
 
 A skipped stage prints its reason. That distinction matters: a skipped stage that reads as a pass is
 how a gate comes to certify what it never examined.

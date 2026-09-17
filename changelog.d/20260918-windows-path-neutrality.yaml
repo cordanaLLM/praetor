@@ -1,0 +1,4 @@
+type: fixed
+title: Judge catalog and projection identities with slash semantics, let the gate report an absent C toolchain instead of a broken tree, enforce the signing key's protection per platform, and stop the test suite overwriting the developer's key on Windows
+issue: "#48"
+breaking: false

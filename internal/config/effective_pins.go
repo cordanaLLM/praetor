@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -116,10 +117,15 @@ func (l *effectiveLoader) pinnedLayer(path, kind string, pin lockEntry) (PolicyL
 	return layer, err
 }
 
-func (l *effectiveLoader) retainArtifact(path, kind string, data []byte, digest string) {
-	rel := filepath.Join(archetypeDirName, filepath.Base(path))
+func (l *effectiveLoader) retainArtifact(source, kind string, data []byte, digest string) {
+	// RelativePath is the artifact's identity in the catalog, not a location on
+	// the host that resolved it: it is compared against the slash constants, is
+	// prefix-matched with archetypeDirName+"/", and is written into an adopter's
+	// lock. filepath.Join would spell it with the host separator, so a lock
+	// written on Windows would not match one written on Linux.
+	rel := path.Join(archetypeDirName, filepath.Base(source))
 	if kind == "facet" {
-		rel = filepath.Join(archetypeDirName, facetDirName, filepath.Base(path))
+		rel = path.Join(archetypeDirName, facetDirName, filepath.Base(source))
 	}
 	l.artifacts = append(l.artifacts, PolicyArtifact{RelativePath: rel, SHA256: digest, Content: data})
 }

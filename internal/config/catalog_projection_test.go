@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -80,10 +81,14 @@ func TestCatalogProjectionRejectsUnsafeArtifactsAndFilesystemEntries(t *testing.
 func TestCatalogProjectionBoundaryAndCancellation(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "uncreated")
 	artifacts := make([]PolicyArtifact, 0, 2*maxLockEntries)
-	for _, dir := range []string{archetypeDirName, filepath.Join(archetypeDirName, facetDirName)} {
+	// path.Join, not filepath.Join: a catalog path is a slash identity, and the
+	// literals elsewhere in this file spell it that way. filepath.Join is the same
+	// thing on Linux and a backslash path on Windows, so this loop built inputs the
+	// validator rightly refuses -- while passing on the platform it was written on.
+	for _, dir := range []string{archetypeDirName, path.Join(archetypeDirName, facetDirName)} {
 		for i := 0; i < maxLockEntries; i++ {
 			id := fmt.Sprintf("item%d", i)
-			artifacts = append(artifacts, projectionArtifact(filepath.Join(dir, id+".yaml"), id))
+			artifacts = append(artifacts, projectionArtifact(path.Join(dir, id+".yaml"), id))
 		}
 	}
 	if err := ValidateCatalogProjectionContext(t.Context(), root, artifacts); err != nil {
