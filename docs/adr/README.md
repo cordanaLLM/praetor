@@ -18,6 +18,7 @@ This directory documents all significant architectural and design decisions gove
 | **[ADR-0008](0008-spec-driven-provider-integration.md)** | Spec-Driven Provider Integration | **Proposed** | 2026-09-12 |
 | **[ADR-0009](0009-structural-unification.md)** | Structural Unification Before Further Fix Waves | **Proposed** | 2026-09-12 |
 | **[ADR-0010](0010-text-register-per-task.md)** | Text Register per Audience and Task Class | **Proposed** | 2026-09-17 |
+| **[ADR-0011](0011-agent-client-wrapping-and-operational-rollout.md)** | One Hook Entrypoint, Plugin-First Client Wrapping, and a Governed Operational Rollout | **Proposed** | 2026-09-17 |
 
 ---
 
