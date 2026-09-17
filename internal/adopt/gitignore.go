@@ -8,11 +8,17 @@ import (
 	"github.com/cordanaLLM/praetor/internal/worktree"
 )
 
+// agyWorkspaceIgnore is the Antigravity workspace MCP configuration, written
+// per host by `clients apply --client agy`; it carries host paths and is never
+// tracked.
+const agyWorkspaceIgnore = "/.agents/mcp_config.json"
+
 // managedIgnoreRules are the ignore rules adoption guarantees in every adopted
-// repository: the private session ledger, and the container for the isolated gate
-// worktrees, whose leftovers would otherwise be scanned as repository content and
-// would keep the tree dirty for receipt minting.
-var managedIgnoreRules = []string{"/.workingdir/", "/" + worktree.WorktreeSubdir + "/"}
+// repository: the private session ledger, the container for the isolated gate
+// worktrees, whose leftovers would otherwise be scanned as repository content
+// and would keep the tree dirty for receipt minting, and the per-host AGY
+// workspace configuration.
+var managedIgnoreRules = []string{"/.workingdir/", "/" + worktree.WorktreeSubdir + "/", agyWorkspaceIgnore}
 
 // missingIgnoreRules reports the managed rules that text does not already carry.
 // It compares whole lines rather than testing the end of the file, so a rule that
@@ -45,7 +51,7 @@ func reconcileGitIgnore(ctx context.Context, s *adoptSession) error {
 	text := string(data)
 	missing := missingIgnoreRules(text)
 	if len(missing) == 0 {
-		s.report.recordReconciled(gitIgnoreFile, "Private working directory and gate worktree ignore rules preserved")
+		s.report.recordReconciled(gitIgnoreFile, "Private working directory, gate worktree and AGY workspace ignore rules preserved")
 		return nil
 	}
 	if !exists {
@@ -61,9 +67,9 @@ func reconcileGitIgnore(ctx context.Context, s *adoptSession) error {
 		}
 	}
 	if exists {
-		s.report.recordReconciledAs(gitIgnoreFile, actionAppend, "Preserved existing rules and excluded private working directory and gate worktrees")
+		s.report.recordReconciledAs(gitIgnoreFile, actionAppend, "Preserved existing rules and excluded private working directory, gate worktrees and the AGY workspace configuration")
 	} else {
-		s.report.recordCreated(gitIgnoreFile, "Created ignore rules for build artifacts, private working directory and gate worktrees")
+		s.report.recordCreated(gitIgnoreFile, "Created ignore rules for build artifacts, private working directory, gate worktrees and the AGY workspace configuration")
 	}
 	return nil
 }

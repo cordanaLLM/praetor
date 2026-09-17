@@ -12,7 +12,8 @@ import (
 func TestAdoptionKeepsWorkingDirectoryPrivate(t *testing.T) {
 	for name, existing := range map[string]string{
 		"missing": "", "custom": "# retain exactly\nuser-output/",
-		"old-opt-in": ".workingdir/*\n!.workingdir/STATE.md\n",
+		"old-opt-in":   ".workingdir/*\n!.workingdir/STATE.md\n",
+		"pre-agy-rule": "bin/\n/.workingdir/\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := newTestRepo(t, name)
@@ -39,6 +40,12 @@ func TestAdoptionKeepsWorkingDirectoryPrivate(t *testing.T) {
 					t.Fatalf("private path %s remains publishable: %v", private, err)
 				}
 			}
+			if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", ".agents/mcp_config.json"); err != nil {
+				t.Fatalf("per-host client configuration remains publishable: %v", err)
+			}
+			if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", ".agents/plugins/praetor/plugin.json"); err == nil {
+				t.Fatal("tracked plugin projection became ignored")
+			}
 			if _, err := Adopt(t.Context(), opts); err != nil {
 				t.Fatal(err)
 			}
@@ -62,5 +69,27 @@ func TestAdoptionRejectsLinkedGitignore(t *testing.T) {
 	}
 	if got := mustRead(t, target); got != "preserve" {
 		t.Fatalf("private ignore target changed: %q", got)
+	}
+}
+
+func TestMissingIgnoreRules(t *testing.T) {
+	for name, tc := range map[string]struct {
+		text string
+		want string
+	}{
+		"empty":                  {"", "/.agents/mcp_config.json,/.workingdir/"},
+		"complete":               {"/.agents/mcp_config.json\n/.workingdir/\n", ""},
+		"complete reversed":      {"/.workingdir/\n/.agents/mcp_config.json\n", ""},
+		"complete without EOL":   {"bin/\n/.workingdir/\n\n  /.agents/mcp_config.json  ", ""},
+		"existing adopter":       {"bin/\n/.workingdir/\n", "/.agents/mcp_config.json"},
+		"negation after private": {"/.agents/mcp_config.json\n/.workingdir/\n!.workingdir/STATE.md\n", "/.workingdir/"},
+		"similar rule is not it": {".agents/mcp_config.json.bak\n/.workingdir/\n", "/.agents/mcp_config.json"},
+		"CRLF":                   {"/.agents/mcp_config.json\r\n/.workingdir/\r\n", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := strings.Join(missingIgnoreRules(tc.text), ","); got != tc.want {
+				t.Fatalf("missing rules = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

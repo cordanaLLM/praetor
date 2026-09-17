@@ -1,0 +1,3 @@
+type: added
+title: Merge Antigravity MCP configuration with backup and readback; the agy adapter no longer emits agy mcp add argv
+breaking: true
