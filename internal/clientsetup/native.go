@@ -6,22 +6,21 @@ import (
 	"strconv"
 )
 
-func nativePlan(registry Registry, client Client) ([][]string, []byte) {
+// nativePlan renders the Codex argv and TOML export. Codex is the only adapter
+// whose arbitrary configuration updates stay with its own CLI.
+func nativePlan(registry Registry) ([][]string, []byte) {
 	commands := make([][]string, 0, len(registry.Servers))
 	var content bytes.Buffer
 	for _, server := range registry.Servers {
-		prefix := []string{"agy", "mcp", "add", "--type", "stdio", server.Name, "--", server.Command}
-		if client == Codex {
-			prefix = []string{"codex", "mcp", "add", server.Name, "--", server.Command}
-			fmt.Fprintf(&content, "[mcp_servers.%s]\ncommand = %s\nargs = [", server.Name, tomlString(server.Command))
-			for i, arg := range server.Args {
-				if i > 0 {
-					content.WriteString(", ")
-				}
-				content.WriteString(tomlString(arg))
+		prefix := []string{"codex", "mcp", "add", server.Name, "--", server.Command}
+		fmt.Fprintf(&content, "[mcp_servers.%s]\ncommand = %s\nargs = [", server.Name, tomlString(server.Command))
+		for i, arg := range server.Args {
+			if i > 0 {
+				content.WriteString(", ")
 			}
-			content.WriteString("]\n\n")
+			content.WriteString(tomlString(arg))
 		}
+		content.WriteString("]\n\n")
 		commands = append(commands, append(prefix, server.Args...))
 	}
 	return commands, content.Bytes()

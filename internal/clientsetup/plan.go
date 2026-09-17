@@ -54,13 +54,13 @@ var adapters = map[Client]adapter{
 	Continue:   {"merge", ".continue/mcpServers/praetor.yaml", "continue-mcp.yaml", "https://docs.continue.dev/customize/deep-dives/mcp"},
 	Cline:      {"export", "", "cline-mcp.json", "https://docs.cline.bot/mcp/mcp-overview"},
 	Kilo:       {"export", "", "kilo-mcp.json", "https://kilo.ai/docs/automate/mcp/using-in-kilo-code"},
-	AGY:        {"native", "", "", "installed agy 1.2.2: agy mcp add --help"},
+	AGY:        {"merge", ".agents/mcp_config.json", "agy-mcp_config.json", "https://antigravity.google/docs/plugins"},
 }
 
 // BuildPlan merges explicit existing bytes in memory only. JSON inputs must be
 // strict JSON, not JSONC. YAML aliases and merge keys are unsupported. Existing
 // unrelated settings and server options are retained; conflicting command/args
-// are errors. Codex and AGY delegate arbitrary native config updates to their CLI.
+// are errors. Codex delegates arbitrary native config updates to its CLI.
 func BuildPlan(ctx context.Context, registry Registry, client Client, existing []byte) (*Plan, error) {
 	registry, err := validatedRegistry(ctx, registry)
 	if err != nil {
@@ -95,11 +95,11 @@ func BuildPlan(ctx context.Context, registry Registry, client Client, existing [
 func renderPlan(ctx context.Context, registry Registry, existing []byte, p *Plan) error {
 	var err error
 	switch p.Client {
-	case Codex, AGY:
+	case Codex:
 		if len(existing) != 0 {
 			return ErrUnsupportedMerge
 		}
-		p.Commands, p.Content = nativePlan(registry, p.Client)
+		p.Commands, p.Content = nativePlan(registry)
 	case Continue:
 		p.Content, err = mergeYAML(ctx, registry, existing)
 	default:
