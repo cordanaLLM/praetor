@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"time"
 	"unicode/utf8"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/router"
 )
 
@@ -27,6 +29,11 @@ type RepairPolicy struct {
 	InputTokens   int64   `json:"input_tokens"`
 	OutputTokens  int64   `json:"output_tokens"`
 	MaxCost       float64 `json:"max_cost"`
+	// Register and MaxOutputTokens are the text register row of Task: the voice of each
+	// job's instructions and an optional provider output budget. Both are optional; a
+	// policy written before they existed plans exactly as it did.
+	Register        string `json:"register,omitempty"`
+	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
 }
 
 // RepairEvidence separates untrusted diagnostics and paths from static instructions.
@@ -52,6 +59,8 @@ type RepairJob struct {
 	Instructions      string            `json:"instructions"`
 	UntrustedEvidence RepairEvidence    `json:"untrusted_evidence"`
 	Route             *router.TaskRoute `json:"route,omitempty"`
+	Register          string            `json:"register,omitempty"`
+	MaxOutputTokens   int               `json:"max_output_tokens,omitempty"`
 }
 
 // RepairPlan preserves report and routing fingerprints without reading referenced sources.
@@ -114,7 +123,7 @@ func populateRepairPlan(ctx context.Context, plan *RepairPlan, report *SuiteRepo
 		if report.Cases[i].Status == "verified" {
 			continue
 		}
-		job, err := makeRepairJob(report.Cases[i], plan.ReportSHA256)
+		job, err := makeRepairJob(report.Cases[i], plan.ReportSHA256, plan.Policy)
 		if err != nil {
 			return err
 		}
@@ -143,7 +152,7 @@ func assignRepairRoute(plan *RepairPlan, job *RepairJob, route *router.TaskRoute
 	}
 }
 
-func makeRepairJob(result SuiteCase, reportSum string) (RepairJob, error) {
+func makeRepairJob(result SuiteCase, reportSum string, policy RepairPolicy) (RepairJob, error) {
 	evidence := RepairEvidence{CaseID: result.ID, Kind: result.Kind, CaseStatus: result.Status, Repository: result.Repository,
 		ErrorSHA256: repairBytesHash([]byte(result.Error)), ErrorBytes: len(result.Error)}
 	var err error
@@ -165,7 +174,33 @@ func makeRepairJob(result SuiteCase, reportSum string) (RepairJob, error) {
 		}
 	}
 	evidence.ErrorExcerpt, evidence.ErrorTruncated = excerpt, len(excerpt) != len(result.Error)
-	return RepairJob{ID: repairBytesHash([]byte(reportSum + ":" + evidence.CaseSHA256)), Instructions: repairInstructions, UntrustedEvidence: evidence}, nil
+	return RepairJob{ID: repairBytesHash([]byte(reportSum + ":" + evidence.CaseSHA256)), Instructions: repairInstructions + registerClause(policy.Register),
+		UntrustedEvidence: evidence, Register: policy.Register, MaxOutputTokens: policy.MaxOutputTokens}, nil
+}
+
+// registerClause is the one sentence that tells the job's reader which register to write
+// in. An empty register adds nothing, so older policies keep byte-identical instructions.
+func registerClause(register string) string {
+	directive := config.RegisterDirective(config.TextRegister(register))
+	if directive == "" {
+		return ""
+	}
+	return " " + directive
+}
+
+// validateRepairPolicyFields checks the scalar fields that need no routing data.
+func validateRepairPolicyFields(policy RepairPolicy) error {
+	if math.IsNaN(policy.MaxCost) || math.IsInf(policy.MaxCost, 0) || policy.MaxCost < 0 {
+		return errors.New("repair max_cost must be finite and nonnegative")
+	}
+	if policy.Register != "" && config.RegisterDirective(config.TextRegister(policy.Register)) == "" {
+		return fmt.Errorf("unsupported repair text register %q", policy.Register)
+	}
+	budget := policy.MaxOutputTokens
+	if budget != 0 && (budget < config.RegisterMaxTokensFloor || budget > config.RegisterMaxTokensCeiling) {
+		return fmt.Errorf("repair max_output_tokens must be %d..%d", config.RegisterMaxTokensFloor, config.RegisterMaxTokensCeiling)
+	}
+	return nil
 }
 
 // ValidateRepairPolicy checks bounded routing policy and snapshots without dispatch.
@@ -182,8 +217,8 @@ func prepareRepairRoute(ctx context.Context, policy RepairPolicy) (*router.TaskR
 	if ctx == nil {
 		return nil, "", nil, errors.New("repair routing requires a context")
 	}
-	if math.IsNaN(policy.MaxCost) || math.IsInf(policy.MaxCost, 0) || policy.MaxCost < 0 {
-		return nil, "", nil, errors.New("repair max_cost must be finite and nonnegative")
+	if err := validateRepairPolicyFields(policy); err != nil {
+		return nil, "", nil, err
 	}
 	cfg, err := router.LoadRoutingConfigContext(ctx, policy.RoutingConfig)
 	if err != nil {

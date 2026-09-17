@@ -70,6 +70,9 @@ func auditGateFailureCases() []auditGateCase {
 			}
 			writeFixtureFile(t, f.dir, ".github/agents/gatekeeper.md", "# Gatekeeper\n\nReceipts are optional.\n")
 		}, "Agent persona projections out of sync"},
+		{"stale text register block", func(t *testing.T, f *auditFixture) {
+			staleRegisterBlock(t, f.dir)
+		}, "Agent context text register"},
 		{"empty manifest identity", func(t *testing.T, f *auditFixture) {
 			writeFixtureFile(t, f.dir, ".standards.yaml", "version: 1\nprofiles:\n  - \"framework\"\nfacets:\n  - \"security:high\"\n")
 		}, "owner and name must not be empty"},

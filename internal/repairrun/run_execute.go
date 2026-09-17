@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/dogfood"
 )
 
 type execution struct {
@@ -113,7 +115,8 @@ func (e *execution) generateCandidate(ctx context.Context) error {
 	if err := writeNew(e.root, "prompt.json.txt", []byte(prompt)); err != nil {
 		return err
 	}
-	proposal, err := e.generate(ctx, cfg.Provider, prompt)
+	a.report.Register = a.selected.Register
+	proposal, err := e.generate(ctx, jobProvider(cfg.Provider, a.selected), prompt)
 	if err != nil {
 		a.report.Status, a.report.ErrorCategory = "agent_failed", "provider_request"
 		return errors.New("provider did not produce a candidate")
@@ -135,6 +138,17 @@ func (e *execution) generateCandidate(ctx context.Context) error {
 		return err
 	}
 	return e.verifyCandidate(ctx)
+}
+
+// jobProvider applies the output budget of the job's text register row to the provider
+// request. The budget can only lower the configured limit: the run configuration is the
+// operator's spend cap, and a manifest row must not raise it. The response check reads the
+// same field, so a provider that ignores the budget is rejected like any other overrun.
+func jobProvider(provider ProviderConfig, job *dogfood.RepairJob) ProviderConfig {
+	if job != nil && job.MaxOutputTokens > 0 && job.MaxOutputTokens < provider.MaxOutputTokens {
+		provider.MaxOutputTokens = job.MaxOutputTokens
+	}
+	return provider
 }
 
 func (e *execution) verifyCandidate(ctx context.Context) error {

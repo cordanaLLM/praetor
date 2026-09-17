@@ -132,3 +132,72 @@ func TestModelsRouteCLIRejectsInvalidOrInertArguments(t *testing.T) {
 		t.Fatal("missing price silently became zero")
 	}
 }
+
+// routeRegisterRepo builds a working directory whose manifest gives one routing label a
+// register row, and enters it.
+func routeRegisterRepo(t *testing.T, register string) string {
+	t.Helper()
+	dir := t.TempDir()
+	fixture := strings.Replace(cliRouteFixture, "target_tasks: [implement]", "target_tasks: [implement, summarize]", 1)
+	path := writeFixtureFile(t, dir, ".config/models/routing.yaml", fixture)
+	writeFixtureFile(t, dir, ".standards.yaml", "version: 1\n"+register)
+	t.Chdir(dir)
+	return path
+}
+
+func routeReport(t *testing.T, args ...string) (modelRouteReport, error) {
+	t.Helper()
+	var report modelRouteReport
+	out, err := captureStdout(t, func() error { return runModels(append([]string{"route"}, args...)) })
+	if err != nil {
+		return report, err
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("decode route report: %v\n%s", err, out)
+	}
+	return report, nil
+}
+
+func TestModelsRouteCLIReportsTheTaskRegister(t *testing.T) {
+	path := routeRegisterRepo(t, "register:\n  tasks:\n    summarize: {register: social, max_tokens: 512}\n")
+
+	// Positive: the row decides the register, and its budget seeds a missing output estimate.
+	report, err := routeReport(t, "--config="+path, "--task=summarize", "--input-tokens=100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Register != "social" || report.RegisterSource != "tasks.summarize" || report.MaxTokens != 512 {
+		t.Fatalf("register = %q from %q with %d tokens", report.Register, report.RegisterSource, report.MaxTokens)
+	}
+	if report.Request.OutputTokens != 512 || !strings.Contains(report.Limitations, "seeded from the 512-token budget of tasks.summarize") {
+		t.Fatalf("budget must seed the output estimate and say so: %d / %s", report.Request.OutputTokens, report.Limitations)
+	}
+	explicit, err := routeReport(t, "--config="+path, "--task=summarize", "--input-tokens=100", "--output-tokens=40")
+	if err != nil || explicit.Request.OutputTokens != 40 || strings.Contains(explicit.Limitations, "seeded") {
+		t.Fatalf("an explicit estimate must win: %+v, %v", explicit, err)
+	}
+	if explicit.Tier != report.Tier || explicit.Model.ID != report.Model.ID {
+		t.Fatal("the register must never change the selected tier or model")
+	}
+
+	// Boundary: a routing label without a row falls back to surfaces.agent, no budget.
+	fallback, err := routeReport(t, "--config="+path, "--task=implement", "--input-tokens=100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fallback.Register != "internal" || fallback.RegisterSource != "surfaces.agent" || fallback.MaxTokens != 0 {
+		t.Fatalf("fallback register = %q from %q with %d tokens", fallback.Register, fallback.RegisterSource, fallback.MaxTokens)
+	}
+}
+
+func TestModelsRouteCLIRegisterNegative(t *testing.T) {
+	path := routeRegisterRepo(t, "register:\n  tasks:\n    summarize: social\n")
+	// An unknown task fails as before, whatever the register says.
+	if _, err := routeReport(t, "--config="+path, "--task=unknown", "--input-tokens=1"); err == nil {
+		t.Fatal("an undeclared task must not route")
+	}
+	// A manifest row for an undeclared label stops the route instead of being ignored.
+	writeFixtureFile(t, ".", ".standards.yaml", "version: 1\nregister:\n  tasks:\n    deploy_prod: docs\n")
+	_, err := routeReport(t, "--config="+path, "--task=implement", "--input-tokens=1")
+	mustErrContain(t, err, `register task "deploy_prod" is not a declared target_tasks label`)
+}

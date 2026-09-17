@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/compiler"
 )
 
 // mustMkdirAll creates dir or fails the test.
@@ -509,6 +511,13 @@ func TestOnboardRepository_Positive(t *testing.T) {
 	}
 	if strings.Contains(string(agents), "make verify-all") {
 		t.Fatalf("scaffolded AGENTS.md must not reference a make target onboarding never writes:\n%s", agents)
+	}
+	// The scaffold tells its reader to run compile-context --verify, so it must pass it.
+	if changed, err := compiler.SyncRegisterBlock(ctx, repoPath, filepath.Join(repoPath, "AGENTS.md"), false); err != nil || changed {
+		t.Fatalf("onboarded AGENTS.md must carry an in-sync text register block: changed=%v err=%v", changed, err)
+	}
+	if err := compiler.NewTranspiler().VerifyContext(ctx, filepath.Join(repoPath, "AGENTS.md"), repoPath); err != nil {
+		t.Fatalf("onboarded vendor files must match the spliced source: %v", err)
 	}
 }
 

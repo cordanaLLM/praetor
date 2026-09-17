@@ -18,6 +18,22 @@ func runDogfoodRepairs(ctx context.Context, args []string) error {
 	return runDogfoodRepairPlan(ctx, args)
 }
 
+// loadRepairInputs reads the suite report and completes the policy with the text register
+// row of its task, so every planned job carries the register and the optional output
+// budget that the manifest of the working directory declares for that label.
+func loadRepairInputs(ctx context.Context, reportPath string, policy dogfood.RepairPolicy) (*dogfood.SuiteReport, dogfood.RepairPolicy, error) {
+	report, err := dogfood.LoadRepairReport(ctx, reportPath)
+	if err != nil {
+		return nil, policy, err
+	}
+	resolution, err := resolveTaskRegister(ctx, policy.Task)
+	if err != nil {
+		return nil, policy, err
+	}
+	policy.Register, policy.MaxOutputTokens = string(resolution.Register), resolution.MaxTokens
+	return report, policy, nil
+}
+
 func runDogfoodRepairPlan(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("dogfood repairs", flag.ContinueOnError)
 	reportPath := fs.String("report", "", "Completed suite report JSON")
@@ -34,11 +50,11 @@ func runDogfoodRepairPlan(ctx context.Context, args []string) error {
 	if fs.NArg() != 0 || *reportPath == "" || *routing == "" || *directory == "" {
 		return errors.New("repairs requires --report, --routing-config, --output and flags only")
 	}
-	report, err := dogfood.LoadRepairReport(ctx, *reportPath)
+	policy := dogfood.RepairPolicy{RoutingConfig: *routing, UsagePath: *usage, Task: *task, InputTokens: *input, OutputTokens: *output, MaxCost: *ceiling}
+	report, policy, err := loadRepairInputs(ctx, *reportPath, policy)
 	if err != nil {
 		return err
 	}
-	policy := dogfood.RepairPolicy{RoutingConfig: *routing, UsagePath: *usage, Task: *task, InputTokens: *input, OutputTokens: *output, MaxCost: *ceiling}
 	plan, planErr := dogfood.PlanRepairs(ctx, report, policy)
 	if plan == nil {
 		return planErr

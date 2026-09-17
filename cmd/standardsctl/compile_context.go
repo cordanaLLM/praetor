@@ -40,6 +40,9 @@ func runCompileContext(args []string) error {
 // projection without writing anything.
 func verifyCompiledContext(ctx context.Context, tr *compiler.Transpiler, source, targetDir string) error {
 	fmt.Printf("Verifying agent context synchronization against %s...\n", source)
+	if _, err := compiler.SyncRegisterBlock(ctx, filepath.Dir(source), source, false); err != nil {
+		return fmt.Errorf("context verification failed: %s: %w", source, err)
+	}
 	if err := tr.VerifyContext(ctx, source, targetDir); err != nil {
 		return fmt.Errorf("context verification failed: %w", err)
 	}
@@ -58,10 +61,18 @@ func verifyCompiledContext(ctx context.Context, tr *compiler.Transpiler, source,
 	return nil
 }
 
-// compileContext writes the vendor context files and every persona projection; any
-// projection failure is an error, never a silently skipped success line.
-func compileContext(ctx context.Context, tr *compiler.Transpiler, source, targetDir string) error {
-	fmt.Printf("Compiling agent context from canonical %s...\n", source)
+// compileVendorTargets splices the text register block into the canonical source, then
+// compiles and writes the six vendor files. The splice comes first so that every target
+// receives the block through the unchanged renderer. The manifest that governs the block is
+// the one beside the source, wherever the targets are written.
+func compileVendorTargets(ctx context.Context, tr *compiler.Transpiler, source, targetDir string) error {
+	spliced, err := compiler.SyncRegisterBlock(ctx, filepath.Dir(source), source, true)
+	if err != nil {
+		return fmt.Errorf("compilation failed: text register: %w", err)
+	}
+	if spliced {
+		fmt.Printf("  [SPLICED] %s text register\n", source)
+	}
 	res, err := tr.CompileContext(ctx, source)
 	if err != nil {
 		return fmt.Errorf("compilation failed: %w", err)
@@ -71,6 +82,16 @@ func compileContext(ctx context.Context, tr *compiler.Transpiler, source, target
 	}
 	for _, f := range res.Files {
 		fmt.Printf("  [COMPILED] %-35s (%d lines, budget <= %d)\n", f.RelativePath, f.LineCount, compiler.MaxLineBudget)
+	}
+	return nil
+}
+
+// compileContext writes the vendor context files and every persona projection; any
+// projection failure is an error, never a silently skipped success line.
+func compileContext(ctx context.Context, tr *compiler.Transpiler, source, targetDir string) error {
+	fmt.Printf("Compiling agent context from canonical %s...\n", source)
+	if err := compileVendorTargets(ctx, tr, source, targetDir); err != nil {
+		return err
 	}
 
 	agentsSrc := filepath.Join(targetDir, filepath.FromSlash(canonicalAgentsRel))

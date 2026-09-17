@@ -143,6 +143,9 @@ func formatViolations(violations []baseline.Infraction) string {
 // auditContextSync verifies the compiled vendor targets match the canonical AGENTS.md.
 func auditContextSync(ctx context.Context, agentsPath, root string) (string, error) {
 	tr := compiler.NewTranspiler()
+	if _, err := compiler.SyncRegisterBlock(ctx, root, agentsPath, false); err != nil {
+		return "", fmt.Errorf("[FAIL] Agent context text register: %w", err)
+	}
 	if err := tr.VerifyContext(ctx, agentsPath, root); err != nil {
 		return "", fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
 	}

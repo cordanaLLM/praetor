@@ -167,6 +167,38 @@ func TestLoadEffectivePolicyPinnedLayersAndExternalScopes(t *testing.T) {
 	}
 }
 
+// TestLoadEffectivePolicyIgnoresRegisterSection pins what ADR-0010 relies on: the register
+// is a choice, not a bound, so it never reaches the resolved policy or its field
+// provenance. The sealed digest still moves with the manifest bytes, as it does for any
+// edit of that file, and only through the repository source.
+func TestLoadEffectivePolicyIgnoresRegisterSection(t *testing.T) {
+	overrides := "overrides:\n  complexity:\n    max_func_loc: 70\n"
+	register := "register:\n  surfaces:\n    forge: docs\n  tasks:\n    ci_debugging: {register: social, max_tokens: 512}\n  evidence:\n    inline_max_lines: 40\n"
+	plain, err := LoadEffectivePolicyContext(t.Context(), EffectiveOptions{Root: policyFixture(t, "", "", overrides)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withRegister, err := LoadEffectivePolicyContext(t.Context(), EffectiveOptions{Root: policyFixture(t, "", "", overrides+register)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(plain.Policy, withRegister.Policy) || !reflect.DeepEqual(plain.Fields, withRegister.Fields) {
+		t.Fatalf("register section changed the resolved policy: %+v vs %+v", plain.Policy, withRegister.Policy)
+	}
+	if len(plain.Sources) != len(withRegister.Sources) {
+		t.Fatalf("register section changed the layer set: %+v vs %+v", plain.Sources, withRegister.Sources)
+	}
+	for i, source := range plain.Sources {
+		other := withRegister.Sources[i]
+		if source.ID != other.ID || (source.ID != "repository" && source.SHA256 != other.SHA256) {
+			t.Fatalf("source %d moved: %+v vs %+v", i, source, other)
+		}
+	}
+	if withRegister.Manifest.Register == nil || withRegister.Manifest.EffectiveRegister().Surfaces[SurfaceForge] != TextRegisterDocs {
+		t.Fatalf("register section must still decode: %+v", withRegister.Manifest.Register)
+	}
+}
+
 func TestLoadEffectivePolicyAuditCompatibilityAndCatalogRoot(t *testing.T) {
 	root := policyFixture(t, "complexity:\n  max_func_loc: 75\n", "", "")
 	catalog := t.TempDir()

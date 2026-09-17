@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/docdistill"
 	"github.com/cordanaLLM/praetor/internal/hindsight"
 )
@@ -31,6 +32,39 @@ func TestServer_Positive_CompileContextVerifyAndWrite(t *testing.T) {
 		}
 	}
 	reverify := callTool(t, srv, "standards_compile_context", map[string]any{"target_dir": "out", "verify_only": true})
+	expectText(t, "re-verify", reverify, "100% in sync")
+}
+
+// A verify-only call reports a stale register block and never writes the source; a
+// writing call repairs it, after which both the tool and the audit agree.
+func TestServer_CompileContextRegisterBlock(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	agents := filepath.Join(root, "AGENTS.md")
+	synced, err := os.ReadFile(agents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := config.RegisterBlockStart + "\n"
+	if strings.Count(string(synced), marker) != 1 {
+		t.Fatalf("fixture AGENTS.md must carry the register block once:\n%s", synced)
+	}
+	stale := strings.Replace(string(synced), marker, marker+"Write however you like.\n", 1)
+	writeFixtureFile(t, root, "AGENTS.md", stale)
+
+	verify := callTool(t, srv, "standards_compile_context", map[string]any{"verify_only": true})
+	expectError(t, "stale block", verify, "text register block is out of sync")
+	if got, err := os.ReadFile(agents); err != nil || string(got) != stale {
+		t.Fatalf("verify_only must never write the source: %v", err)
+	}
+	audit := callTool(t, srv, "standards_audit", nil)
+	expectError(t, "audit sees the stale block", audit, "Agent context text register")
+
+	written := callTool(t, srv, "standards_compile_context", nil)
+	expectText(t, "write", written, "[COMPILED] CLAUDE.md")
+	if got, err := os.ReadFile(agents); err != nil || string(got) != string(synced) {
+		t.Fatalf("a writing call must restore the rendered block: %v", err)
+	}
+	reverify := callTool(t, srv, "standards_compile_context", map[string]any{"verify_only": true})
 	expectText(t, "re-verify", reverify, "100% in sync")
 }
 

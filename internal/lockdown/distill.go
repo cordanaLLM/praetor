@@ -2,6 +2,7 @@ package lockdown
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -14,12 +15,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
-	MaxDistillLines  = 58
-	MaxDistillTokens = 1500
+	// MaxDistillLines and MaxDistillTokens alias the default inline evidence bound of the
+	// text register policy: the distilled summary is the oldest instance of that rule, so
+	// the two numbers share one definition.
+	MaxDistillLines  = config.EvidenceInlineMaxLinesDefault
+	MaxDistillTokens = config.EvidenceInlineMaxTokensDefault
 	MaxLoopLimit     = 1000
 	// ContextRadius is the number of source lines shown above and below a diagnostic.
 	ContextRadius = 2
@@ -257,6 +262,20 @@ func writeEphemeralSARIF(dir string, data []byte) (string, error) {
 	return fullPath, nil
 }
 
+// sarifEvidencePointer renders the one pointer line that stands in for the full log.
+func sarifEvidencePointer(path string, data []byte) (string, error) {
+	lines := bytes.Count(data, []byte("\n"))
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		lines++
+	}
+	digest := sha256.Sum256(data)
+	pointer, err := config.EvidencePointer(path, hex.EncodeToString(digest[:]), lines)
+	if err != nil {
+		return "", fmt.Errorf("full SARIF log at %q: %w", path, err)
+	}
+	return pointer, nil
+}
+
 // estimateTokens returns an approximate token count based on whitespace and punctuation.
 func estimateTokens(s string) int {
 	words := strings.Fields(s)
@@ -328,8 +347,9 @@ func buildPointer(res SarifResult, sourceRoot string) DiagnosticPointer {
 	return dp
 }
 
-// capSummary enforces strictly <= maxLines and <= maxTokens constraints.
-func capSummary(rawLines []string, ephemeralPath string) (string, int, int) {
+// capSummary enforces strictly <= maxLines and <= maxTokens constraints. A truncated
+// summary ends with the evidence pointer, so the reader can always reach the full log.
+func capSummary(rawLines []string, pointer string) (string, int, int) {
 	finalLines := make([]string, 0, len(rawLines))
 	truncated := false
 
@@ -348,7 +368,7 @@ func capSummary(rawLines []string, ephemeralPath string) (string, int, int) {
 
 	if truncated {
 		finalLines = append(finalLines, fmt.Sprintf("[Truncated: output capped at <= %d lines / <= %d tokens]", MaxDistillLines, MaxDistillTokens))
-		finalLines = append(finalLines, fmt.Sprintf("Full SARIF log: %s", ephemeralPath))
+		finalLines = append(finalLines, pointer)
 	}
 
 	res := strings.Join(finalLines, "\n")
@@ -399,7 +419,7 @@ func aggregateDiagnostics(log SarifLog) ([]SarifResult, map[string]int, int) {
 }
 
 // buildSummaryLines constructs formatted lines for the distillation summary.
-func buildSummaryLines(allResults []SarifResult, totalErrors int, categories map[string]int, topFailures []DiagnosticPointer, ephemeralPath string) []string {
+func buildSummaryLines(allResults []SarifResult, totalErrors int, categories map[string]int, topFailures []DiagnosticPointer, pointer string) []string {
 	lines := make([]string, 0, 40)
 	lines = append(lines, "=== SARIF Diagnostic Distillation ===")
 	lines = append(lines, fmt.Sprintf("Total Diagnostics: %d (Errors: %d)", len(allResults), totalErrors))
@@ -421,7 +441,7 @@ func buildSummaryLines(allResults []SarifResult, totalErrors int, categories map
 			lines = append(lines, "")
 		}
 	}
-	lines = append(lines, fmt.Sprintf("Full SARIF log written to: %s", ephemeralPath))
+	lines = append(lines, pointer)
 	return lines
 }
 
@@ -443,10 +463,15 @@ func DistillSARIF(ctx context.Context, sarifJSON []byte, sourceRoot string, ephe
 		return nil, err
 	}
 
+	pointer, err := sarifEvidencePointer(ephemeralPath, sarifJSON)
+	if err != nil {
+		return nil, err
+	}
+
 	allResults, categories, totalErrors := aggregateDiagnostics(log)
 	topFailures := extractTopFailures(allResults, sourceRoot, 3)
-	lines := buildSummaryLines(allResults, totalErrors, categories, topFailures, ephemeralPath)
-	summaryText, lineCount, tokenEst := capSummary(lines, ephemeralPath)
+	lines := buildSummaryLines(allResults, totalErrors, categories, topFailures, pointer)
+	summaryText, lineCount, tokenEst := capSummary(lines, pointer)
 
 	return &DistillResult{
 		Summary:        summaryText,

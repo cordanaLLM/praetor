@@ -145,6 +145,9 @@ func newFixtureRepo(t *testing.T) string {
 		writeFixtureFile(t, root, rel, content)
 	}
 
+	if _, err := compiler.SyncRegisterBlock(context.Background(), root, filepath.Join(root, "AGENTS.md"), true); err != nil {
+		t.Fatalf("splice fixture text register: %v", err)
+	}
 	tr := compiler.NewTranspiler()
 	res, err := tr.Compile(filepath.Join(root, "AGENTS.md"))
 	if err != nil {

@@ -447,9 +447,9 @@ func (s *Server) createCompileContextTool() (mcp.Tool, error) {
 // compileContext verifies or (re)writes the vendor targets compiled from source.
 func (s *Server) compileContext(ctx context.Context, source, targetDir string, verifyOnly bool) *mcp.ToolResult {
 	tr := compiler.NewTranspiler()
-	source, err := s.resolveContextPath(ctx, source)
-	if err != nil {
-		return mcp.ErrorResult(fmt.Sprintf("Context source confinement failed: %v", err))
+	source, failure := s.prepareContextSource(ctx, source, verifyOnly)
+	if failure != nil {
+		return failure
 	}
 	res, err := tr.CompileContext(ctx, source)
 	if err != nil {
@@ -482,6 +482,23 @@ func (s *Server) compileContext(ctx context.Context, source, targetDir string, v
 		fmt.Fprintf(&b, "  [COMPILED] %-35s (%d lines, budget <= %d)\n", f.RelativePath, f.LineCount, compiler.MaxLineBudget)
 	}
 	return mcp.TextResult(b.String())
+}
+
+// prepareContextSource confines the canonical source and reconciles its text register
+// block with the manifest beside it. A verify-only call never writes the source; it reports
+// a stale or missing block as a verification failure instead.
+func (s *Server) prepareContextSource(ctx context.Context, source string, verifyOnly bool) (string, *mcp.ToolResult) {
+	source, err := s.resolveContextPath(ctx, source)
+	if err != nil {
+		return "", mcp.ErrorResult(fmt.Sprintf("Context source confinement failed: %v", err))
+	}
+	if _, err := compiler.SyncRegisterBlock(ctx, filepath.Dir(source), source, !verifyOnly); err != nil {
+		if verifyOnly {
+			return "", mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
+		}
+		return "", mcp.ErrorResult(fmt.Sprintf("Text register splice failed: %v", err))
+	}
+	return source, nil
 }
 
 // confineContextOutputs resolves every permitted descendant before any writes.

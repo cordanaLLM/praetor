@@ -26,6 +26,14 @@ The private execution JSON has these required fields:
 | `repair_policy` | Existing routing policy with declared token estimates and cost ceiling |
 | `provider` | Exact endpoint, model, pinned credential helper, input and output bounds |
 
+`repair_policy` accepts two optional fields beside its routing inputs: `register`
+(`social`, `docs` or `internal`) and `max_output_tokens` (256..8192). `dogfood repairs`
+fills them from the [text register](text-register.md) row of `--task`. Each planned job
+carries both, its instructions end with one register sentence, and the run report records
+`register` beside `usage`. A job budget lowers the provider's `max_output_tokens` for that
+request and never raises it above the configured value. A policy without the fields plans
+and runs exactly as before.
+
 `provider` fields are `base_url`, `token_command`, `token_command_sha256`, `model`,
 `max_output_tokens`, and `max_input_bytes`. The routed model must equal the
 configured provider model; there is no fallback. Configured cost is an estimate,

@@ -128,6 +128,11 @@ with tempfile.TemporaryDirectory(prefix="praetor-mcp-case-") as directory:
 PY
 ```
 
+The writing call also splices the [text register](text-register.md) block into the
+fixture's `AGENTS.md`, rendered from the manifest beside it, before the vendor files are
+compiled. A `verify_only` call never writes the source: it reports a stale or missing block
+as `Context verification failed`, and `standards_audit` reports it in its context gate.
+
 For each defect, retain the input, expected behavior, actual response, provenance,
 and filesystem evidence. Exercise positive, negative, and boundary behavior of the
 affected tool. Report placeholder results, missing operations, and blocked

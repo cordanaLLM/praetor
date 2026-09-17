@@ -40,6 +40,9 @@ type Report struct {
 	ActualModel       string      `json:"actual_model"`
 	ErrorCategory     string      `json:"error_category"`
 	Jobs              []JobStatus `json:"jobs"`
+	// Register is the text register the job was planned with, recorded beside Usage so that
+	// output spend can be compared per register once reports accumulate.
+	Register string `json:"register,omitempty"`
 }
 
 type generator func(context.Context, ProviderConfig, string) (*Proposal, error)
