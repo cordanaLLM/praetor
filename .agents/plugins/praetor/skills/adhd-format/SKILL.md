@@ -9,6 +9,8 @@ Transform dense engineering outputs, audit findings, and architecture documentat
 
 ## Core Formatting Principles
 
+Forge-facing prose (issues, PR bodies, review comments, commit bodies) uses the social-text skill, which inherits this one.
+
 1. **Lead with the Bottom Line (BLUF)**:
    - State the decision, status, or actionable conclusion in the very first sentence.
    - Eliminate filler preambles ("Here is the report", "Based on my analysis").
