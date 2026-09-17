@@ -1,0 +1,3 @@
+type: fixed
+title: The Makefile's alias links and the LSP binary carry the .exe suffix on Windows, so they resolve to files the build writes
+breaking: false

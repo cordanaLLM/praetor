@@ -3,13 +3,15 @@
 BIN_DIR := bin
 # Windows cannot execute an extension-less PE, so the binary is named for the host rather than
 # for the developer's platform. Every other target derives from these, so the suffix is set once.
+# The alias links carry the suffix in their target too: a link named standardsctl.exe that points
+# at an extension-less praetorctl dangles, because the build never writes that file on Windows.
 EXE_SUFFIX := $(if $(filter Windows_NT,$(OS)),.exe,)
 PRAETORCTL := $(BIN_DIR)/praetorctl$(EXE_SUFFIX)
 STANDARDSCTL := $(BIN_DIR)/standardsctl$(EXE_SUFFIX)
 PRAETOR_MCP := $(BIN_DIR)/praetor-mcp$(EXE_SUFFIX)
 STANDARDS_MCP := $(BIN_DIR)/standards-mcp$(EXE_SUFFIX)
 PRAETOR_LSP := $(BIN_DIR)/praetor-lsp$(EXE_SUFFIX)
-STANDARDS_LSP := $(BIN_DIR)/standards-lsp
+STANDARDS_LSP := $(BIN_DIR)/standards-lsp$(EXE_SUFFIX)
 # CI obtains coverage from the same race run used by verify-all.
 TEST_COVERPROFILE ?=
 
@@ -18,11 +20,11 @@ all: build
 build:
 	@mkdir -p $(BIN_DIR)
 	go build -v -o $(PRAETORCTL) ./cmd/standardsctl
-	@ln -sf praetorctl $(STANDARDSCTL)
+	@ln -sf praetorctl$(EXE_SUFFIX) $(STANDARDSCTL)
 	go build -v -o $(PRAETOR_MCP) ./cmd/standards-mcp
-	@ln -sf praetor-mcp $(STANDARDS_MCP)
+	@ln -sf praetor-mcp$(EXE_SUFFIX) $(STANDARDS_MCP)
 	go build -v -o $(PRAETOR_LSP) ./cmd/standards-lsp
-	@ln -sf praetor-lsp $(STANDARDS_LSP)
+	@ln -sf praetor-lsp$(EXE_SUFFIX) $(STANDARDS_LSP)
 
 test:
 	go test -v -race $(if $(TEST_COVERPROFILE),-covermode=atomic -coverprofile="$(TEST_COVERPROFILE)") ./...
