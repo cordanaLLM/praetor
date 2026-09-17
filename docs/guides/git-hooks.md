@@ -308,6 +308,11 @@ proven to fire. Scanning them reports the engine's own test data as the reposito
 every push that touches the corpus. The HISS scanner, the dedupe scan, gitleaks and the CI gofmt
 sweep all skip the same directory name, which is Go's own convention for the same reason.
 
+The semgrep stage has two forms and both apply the exclusion. A per-file scan drops fixture paths
+from its file list. When a pushed range touches `.config/semgrep/`, the scan widens to the whole
+tree and passes `--exclude testdata` to semgrep instead, because a bare `.` would walk into the
+corpus. Both forms read the directory name from `FIXTURE_DIRECTORY`, so they cannot disagree.
+
 ## Running the gate on Windows
 
 Four platform assumptions previously made `git commit` impossible on a Windows checkout. Each one

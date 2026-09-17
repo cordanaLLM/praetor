@@ -17,7 +17,8 @@ from unittest import mock
 
 from common import HookError, run, snapshot
 from checks import (go_packages, source_checks, governance_commands, context_changed,
-                    audit_scope, local_package_patterns, checkpoint_checks)
+                    audit_scope, local_package_patterns, checkpoint_checks,
+                    semgrep_commands, is_fixture, FIXTURE_DIRECTORY)
 import hooks
 from hooks import push_updates, new_branch_base, pre_push, push_check_mode
 from privacy import check_private_history, check_private_index
@@ -750,6 +751,44 @@ class GitHooks(unittest.TestCase):
 
 
 class ScopeAndGuard(unittest.TestCase):
+    def semgrep_tree(self, root, *files):
+        rules = root / ".config" / "semgrep" / "hiss-invariants.yml"
+        rules.parent.mkdir(parents=True)
+        rules.write_text("rules: []\n", encoding="utf-8")
+        for name in files:
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x\n", encoding="utf-8")
+        return ".config/semgrep/hiss-invariants.yml"
+
+    def test_semgrep_rule_change_scans_the_tree_without_the_corpus(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rules = self.semgrep_tree(root, "internal/a.go", ".config/hiss/testdata/HISS-08/c/positive/gets.c")
+            commands = semgrep_commands(root, [rules, "internal/a.go"])
+        self.assertEqual(commands, [["semgrep", "scan", "--error", "--config", rules,
+                                     "--exclude", FIXTURE_DIRECTORY, "."]])
+
+    def test_semgrep_file_scan_names_source_and_never_a_fixture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rules = self.semgrep_tree(root, "internal/a.go", "internal/testdata/bad.go", "testdata/bad.py")
+            mixed = semgrep_commands(root, ["internal/a.go", "internal/testdata/bad.go", "testdata/bad.py"])
+            only_fixtures = semgrep_commands(root, ["internal/testdata/bad.go", "testdata/bad.py"])
+        self.assertEqual(mixed, [["semgrep", "scan", "--error", "--config", rules, "internal/a.go"]])
+        self.assertEqual(only_fixtures, [])
+
+    def test_semgrep_boundaries_missing_rules_and_lookalike_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "internal").mkdir()
+            (root / "internal" / "a.go").write_text("x\n", encoding="utf-8")
+            self.assertEqual(semgrep_commands(root, [".config/semgrep/hiss-invariants.yml", "internal/a.go"]), [])
+        self.assertTrue(is_fixture("testdata/a.go"))
+        self.assertTrue(is_fixture("a\\testdata\\b.go"))
+        self.assertFalse(is_fixture("internal/testdatafile.go"))
+        self.assertFalse(is_fixture("mytestdata/a.go"))
+
     def init_governance_repo(self, root):
         command(root, "git", "init", "-q")
         command(root, "git", "config", "user.name", "Hook Test")

@@ -1,0 +1,3 @@
+type: fixed
+title: The pre-push semgrep stage no longer fails on the HISS fixture corpus when a pushed range touches the semgrep rules and the scan widens to the whole tree
+breaking: false
