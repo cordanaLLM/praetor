@@ -85,6 +85,7 @@ func TestMissingIgnoreRules(t *testing.T) {
 		"negation after private": {"/.agents/mcp_config.json\n/.workingdir/\n!.workingdir/STATE.md\n", "/.workingdir/"},
 		"similar rule is not it": {".agents/mcp_config.json.bak\n/.workingdir/\n", "/.agents/mcp_config.json"},
 		"CRLF":                   {"/.agents/mcp_config.json\r\n/.workingdir/\r\n", ""},
+		"CRLF private missing":   {"bin/\r\n/.agents/mcp_config.json\r\n", "/.workingdir/"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := strings.Join(missingIgnoreRules(tc.text), ","); got != tc.want {
