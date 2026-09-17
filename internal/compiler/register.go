@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -89,7 +90,10 @@ func SyncRegisterBlock(ctx context.Context, root, agentsMdPath string, write boo
 	if err != nil {
 		return false, fmt.Errorf("failed to read source %s: %w", agentsMdPath, err)
 	}
-	content := string(data)
+	// A Windows checkout can hold the source with CRLF endings while the block renders
+	// with LF. Compare and splice in LF, then write the file back in its own convention,
+	// so --verify decides the same way on every platform (HISS-21).
+	content, crlf := toLF(string(data))
 	first, _, err := util.FindMarkedBlock(content, config.RegisterBlockStart, config.RegisterBlockEnd)
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", agentsMdPath, err)
@@ -108,8 +112,24 @@ func SyncRegisterBlock(ctx context.Context, root, agentsMdPath string, write boo
 	if !write {
 		return true, ErrRegisterBlockOutOfSync
 	}
-	if err := contextopt.WriteSnapshot(ctx, agentsMdPath, []byte(out), 0o644); err != nil {
+	if err := contextopt.WriteSnapshot(ctx, agentsMdPath, []byte(fromLF(out, crlf)), 0o644); err != nil {
 		return false, fmt.Errorf("failed to write %s: %w", agentsMdPath, err)
 	}
 	return true, nil
+}
+
+// toLF returns content with LF line endings and reports whether it used CRLF.
+func toLF(content string) (string, bool) {
+	if !strings.Contains(content, "\r\n") {
+		return content, false
+	}
+	return strings.ReplaceAll(content, "\r\n", "\n"), true
+}
+
+// fromLF restores CRLF line endings for a document that was read with them.
+func fromLF(content string, crlf bool) string {
+	if !crlf {
+		return content
+	}
+	return strings.ReplaceAll(content, "\n", "\r\n")
 }

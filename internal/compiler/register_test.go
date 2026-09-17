@@ -164,6 +164,34 @@ func TestSyncRegisterBlockBoundary(t *testing.T) {
 	})
 }
 
+// A Windows checkout holds AGENTS.md with CRLF endings. The splice must neither report
+// that as drift nor mix line endings when it writes.
+func TestSyncRegisterBlockIsLineEndingNeutral(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	agents := writeRegisterFixture(t, root, "AGENTS.md", strings.ReplaceAll(registerTestSource, "\n", "\r\n"))
+	if changed, err := SyncRegisterBlock(ctx, root, agents, true); err != nil || !changed {
+		t.Fatalf("append to a CRLF source: changed=%v err=%v", changed, err)
+	}
+	spliced := readRegisterFixture(t, agents)
+	if strings.Count(spliced, "\n") != strings.Count(spliced, "\r\n") || !strings.Contains(spliced, config.RegisterBlockStart+"\r\n") {
+		t.Fatalf("a CRLF source must stay CRLF throughout:\n%q", spliced)
+	}
+	if changed, err := SyncRegisterBlock(ctx, root, agents, false); err != nil || changed {
+		t.Fatalf("an in-sync CRLF source must verify: changed=%v err=%v", changed, err)
+	}
+	// The same block with LF endings is equally in sync: only content counts.
+	writeRegisterFixture(t, root, "AGENTS.md", strings.ReplaceAll(spliced, "\r\n", "\n"))
+	if changed, err := SyncRegisterBlock(ctx, root, agents, false); err != nil || changed {
+		t.Fatalf("an in-sync LF source must verify: changed=%v err=%v", changed, err)
+	}
+	// A stale block is still drift under CRLF.
+	writeRegisterFixture(t, root, "AGENTS.md", strings.Replace(spliced, config.RegisterBlockStart+"\r\n", config.RegisterBlockStart+"\r\nhand edit\r\n", 1))
+	if _, err := SyncRegisterBlock(ctx, root, agents, false); !errors.Is(err, ErrRegisterBlockOutOfSync) {
+		t.Fatalf("stale CRLF block: error = %v, want %v", err, ErrRegisterBlockOutOfSync)
+	}
+}
+
 func TestLoadRegisterBlock(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
