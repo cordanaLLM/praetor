@@ -199,8 +199,8 @@ func TestRenderRegisterBlockGolden(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	lines := strings.Split(block, "\n")
-	if len(lines)+1 > MaxRegisterBlockLines {
-		t.Fatalf("block is %d lines plus its heading, budget %d", len(lines), MaxRegisterBlockLines)
+	if len(lines)+strings.Count(RegisterSectionPrefix, "\n") != MaxRegisterBlockLines {
+		t.Fatalf("default block is %d lines plus its prefix, want exactly the budget %d", len(lines), MaxRegisterBlockLines)
 	}
 	if lines[0] != RegisterBlockStart || lines[len(lines)-1] != RegisterBlockEnd {
 		t.Fatalf("block must open and close with its markers:\n%s", block)
@@ -209,8 +209,8 @@ func TestRenderRegisterBlockGolden(t *testing.T) {
 		"| social | forge: issues, PR bodies, review comments, commit bodies | `social-text` skill:",
 		"| docs | docs/, README, ADR bodies | complete without bloat:",
 		"| internal | briefs, agent-to-agent traffic, research fan-outs, workflow returns | telegraphic:",
-		"Task rows: social = commit_message_synthesis, waiver_signoff; docs = architecture_synthesis, function_docstrings; every other label and any brief without one = internal.",
-		"Evidence above 58 lines or 1500 tokens leaves the message as a file",
+		"- Task rows: social = commit_message_synthesis, waiver_signoff; docs = architecture_synthesis, function_docstrings; every other label and any brief without one = internal.",
+		"- Evidence above 58 lines or 1500 tokens leaves the message as a file",
 		"`evidence: <path> sha256:<12 hex> lines:<n>`",
 	} {
 		if strings.Count(block, want) != 1 {
@@ -223,6 +223,13 @@ func TestRenderRegisterBlockGolden(t *testing.T) {
 	}
 	if strings.Contains(RegisterBlockHeading, "Claude") || !strings.HasPrefix(RegisterBlockHeading, "## ") {
 		t.Errorf("heading %q must be a vendor-neutral H2", RegisterBlockHeading)
+	}
+	if RegisterSectionPrefix != RegisterBlockHeading+"\n\n" {
+		t.Errorf("section prefix %q must be the heading and one blank line", RegisterSectionPrefix)
+	}
+	// The table must stand between blank lines, or the forge renders the next line as a row.
+	if !strings.Contains(block, ".\n\n| Register |") || !strings.Contains(block, "verdict |\n\n- Task rows:") {
+		t.Errorf("table must be surrounded by blank lines:\n%s", block)
 	}
 }
 
@@ -253,7 +260,7 @@ func TestRenderRegisterBlockFollowsThePolicy(t *testing.T) {
 func TestRenderRegisterBlockRejectsOverflow(t *testing.T) {
 	policy := DefaultRegisterPolicy()
 	policy.Tasks["smuggled\nline"] = RegisterTask{Register: TextRegisterDocs}
-	if _, err := RenderRegisterBlock(policy); err == nil || !strings.Contains(err.Error(), "budget 12") {
+	if _, err := RenderRegisterBlock(policy); err == nil || !strings.Contains(err.Error(), "budget 15") {
 		t.Fatalf("a label that adds a line must exceed the block budget, got %v", err)
 	}
 }

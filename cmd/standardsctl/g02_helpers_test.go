@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"os/exec"
@@ -149,6 +150,9 @@ func newAuditFixture(t *testing.T) *auditFixture {
 	f.writeBaseline(t, nil, "")
 
 	agentsPath := writeFixtureFile(t, dir, "AGENTS.md", fixtureAgentsMD)
+	if _, err := compiler.SyncRegisterBlock(context.Background(), dir, agentsPath, true); err != nil {
+		t.Fatalf("splice fixture text register: %v", err)
+	}
 	tr := compiler.NewTranspiler()
 	res, err := tr.Compile(agentsPath)
 	if err != nil {

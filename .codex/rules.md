@@ -55,7 +55,7 @@ flowchart LR
    Enforcement already exists; do not build another checker. `praetorctl dedupe scan .` detects function-level clones and utility sprawl, it runs inside `make verify-all`, and it fails the gate when the report does not pass. When a duplicate is unavoidable, state why in the commit body rather than leaving the reader to infer it.
 
 3. **Lead with Output**:
-   Provide direct answers, diffs, and commands. Avoid filler preambles, "Based on", restatements, or conversational chatter.
+   Provide direct answers, diffs, and commands. Avoid filler preambles, "Based on", restatements, or conversational chatter. Choose the register per audience and task from the "Text Register" section below.
 
 4. **Ask in a Popup, Never in Prose**:
    Every question that offers the operator a choice MUST go through the client's structured question interface, never as options embedded in a message. In Claude Code that is the `AskUserQuestion` tool; other clients expose an equivalent prompt surface. A question buried in prose scrolls away unanswered and forces the operator to retype an answer the interface could have captured in one click.
@@ -131,6 +131,22 @@ flowchart LR
 
    When editing an existing pull request body for any other reason, strip any attribution
    footer already present rather than preserving it.
+
+## Text Register
+
+<!-- praetor:register:start -->
+Register follows the audience, then the task label of your brief (`register:` in `.standards.yaml`; labels are the router's `target_tasks`).
+
+| Register | Where | Form |
+| :--- | :--- | :--- |
+| social | forge: issues, PR bodies, review comments, commit bodies | `social-text` skill: BLUF, full sentences, scannable, enough and no more; PR template, receipt fence, conventional commit subject and changelog fragment unchanged |
+| docs | docs/, README, ADR bodies | complete without bloat: newcomer path first, expert reference after; every claim points at a file, command or test; no restated code |
+| internal | briefs, agent-to-agent traffic, research fan-outs, workflow returns | telegraphic: no filler, no preamble, no restatement; facts, paths, commands, verdict |
+
+- Task rows: social = commit_message_synthesis, waiver_signoff; docs = architecture_synthesis, function_docstrings; every other label and any brief without one = internal.
+- Evidence above 58 lines or 1500 tokens leaves the message as a file under `.workingdir/evidence/`; return `evidence: <path> sha256:<12 hex> lines:<n>` and fetch it only when a decision needs it.
+- An internal return carries verdict, changed paths, commands run, evidence pointers and open questions, nothing else.
+<!-- praetor:register:end -->
 
 ## Primary Verification Commands
 

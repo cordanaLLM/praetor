@@ -61,6 +61,24 @@ overrides:
     diff_aware_filtering: true
     skip_heavy_gates_on_docs_or_state: true
 
+# Text register per audience surface and task class (ADR-0010). Task keys are target_tasks
+# labels of .config/models/routing.yaml; every label without a row writes in the register
+# of surfaces.agent. No output budget (max_tokens) is set: a budget comes from measured
+# dispatch data. `praetorctl compile-context` renders this section into AGENTS.md.
+register:
+  surfaces:
+    forge: social
+    docs: docs
+    agent: internal
+  tasks:
+    architecture_synthesis: docs
+    function_docstrings: docs
+    commit_message_synthesis: social
+    waiver_signoff: social
+  evidence:
+    inline_max_lines: 58
+    inline_max_tokens: 1500
+
 # Framework capability demand declarations towards upstream Golusoris
 needs:
   required:

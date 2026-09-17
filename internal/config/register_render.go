@@ -10,13 +10,16 @@ const (
 	// RegisterBlockHeading is the H2 that carries the rendered block in AGENTS.md. It is
 	// not a vendor name, so every compiled target keeps the section.
 	RegisterBlockHeading = "## Text Register"
+	// RegisterSectionPrefix precedes the block wherever the whole section is written at
+	// once: a document that has no markers yet, and the adopt harness.
+	RegisterSectionPrefix = RegisterBlockHeading + "\n\n"
 	// RegisterBlockStart and RegisterBlockEnd delimit the tool-written region. Between
 	// them .standards.yaml is the source and AGENTS.md only the carrier.
 	RegisterBlockStart = "<!-- praetor:register:start -->"
 	RegisterBlockEnd   = "<!-- praetor:register:end -->"
-	// MaxRegisterBlockLines bounds the heading plus the rendered block, so the section
-	// can never eat the 300-line vendor budget.
-	MaxRegisterBlockLines = 12
+	// MaxRegisterBlockLines bounds the section prefix plus the rendered block, so the
+	// section can never eat the 300-line vendor budget.
+	MaxRegisterBlockLines = 15
 	// evidencePointerDigestHex is how much of a SHA-256 digest a pointer line carries.
 	evidencePointerDigestHex = 12
 	// maxEvidencePointerPathBytes bounds the path embedded in a pointer line.
@@ -58,19 +61,24 @@ func RegisterDirective(r TextRegister) string {
 // RenderRegisterBlock renders the marker-delimited block that compile-context splices
 // under RegisterBlockHeading. The table, the task-row line and the evidence numbers come
 // from the policy; the rest is fixed text. Task budgets are deliberately not printed: they
-// are dispatch parameters, not writing guidance.
+// are dispatch parameters, not writing guidance. Blank lines surround the table so that it
+// renders as a table on the forge and passes an adopter's Markdown lint.
 func RenderRegisterBlock(p RegisterPolicy) (string, error) {
 	lines := []string{
 		RegisterBlockStart,
 		"Register follows the audience, then the task label of your brief (`register:` in `.standards.yaml`; labels are the router's `target_tasks`).",
+		"",
 	}
 	lines = append(lines, renderRegisterTable(p)...)
-	lines = append(lines, renderRegisterTaskRows(p), renderEvidenceRule(p.Evidence),
-		"An internal return carries verdict, changed paths, commands run, evidence pointers and open questions, nothing else.",
+	lines = append(lines, "",
+		"- "+renderRegisterTaskRows(p),
+		"- "+renderEvidenceRule(p.Evidence),
+		"- An internal return carries verdict, changed paths, commands run, evidence pointers and open questions, nothing else.",
 		RegisterBlockEnd)
 	block := strings.Join(lines, "\n")
-	if count := strings.Count(block, "\n") + 2; count > MaxRegisterBlockLines {
-		return "", fmt.Errorf("text register block renders %d lines with its heading, budget %d", count, MaxRegisterBlockLines)
+	prefixLines := strings.Count(RegisterSectionPrefix, "\n")
+	if count := strings.Count(block, "\n") + 1 + prefixLines; count > MaxRegisterBlockLines {
+		return "", fmt.Errorf("text register section renders %d lines, budget %d", count, MaxRegisterBlockLines)
 	}
 	return block, nil
 }

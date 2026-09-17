@@ -226,6 +226,9 @@ func describeRatchetFailure(ratchet *baseline.RatchetResult) error {
 func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
 	root := opts.rootDir
 	tr := compiler.NewTranspiler()
+	if _, err := compiler.SyncRegisterBlock(ctx, root, opts.agentsPath, false); err != nil {
+		return fmt.Errorf("[FAIL] Agent context text register: %w", err)
+	}
 	if err := tr.VerifyContext(ctx, opts.agentsPath, root); err != nil {
 		return fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
 	}
