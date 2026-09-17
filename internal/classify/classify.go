@@ -12,7 +12,6 @@
 package classify
 
 import (
-	"path/filepath"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -83,6 +82,11 @@ type rule struct {
 func rules() []rule {
 	return []rule{
 		{[]string{"harness.json"}, "framework"},
+		// An image forge is known by what it builds, and its Go, Python and shell content is
+		// the tooling that builds it. Ahead of go.mod for that reason: cordanaLLM/imago has a
+		// go.mod for its CLI and was classified framework by it, which described the tool
+		// rather than the product.
+		{[]string{"packer/*.pkr.hcl", "mkosi.conf", "build/mkosi.conf"}, "os-image"},
 		{[]string{"Chart.yaml", "kustomization.yaml", "helmfile.yaml"}, "container-image"},
 		{[]string{"meson.build", "core/meson.build", "libvmaf/meson.build", "CMakeLists.txt"}, "native-gpu-systems"},
 		{[]string{"Cargo.toml"}, "native-gpu-systems"},
@@ -112,7 +116,7 @@ func ByMarkers(repoPath string) Result {
 // ruleMatches reports whether any of the rule's markers is present.
 func ruleMatches(repoPath string, r rule) bool {
 	for i := 0; i < len(r.markers) && i < maxMarkers; i++ {
-		if util.PathExists(filepath.Join(repoPath, filepath.FromSlash(r.markers[i]))) {
+		if util.MarkerExists(repoPath, r.markers[i]) {
 			return true
 		}
 	}

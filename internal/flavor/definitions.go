@@ -22,6 +22,9 @@ import (
 // service before library because the service detector is the stricter of the two.
 func builtinFlavorList() []Flavor {
 	return []Flavor{
+		// Ahead of the language flavors: an image forge carries a go.mod for its CLI and a
+		// pyproject.toml for its verification suite, and either would otherwise claim it.
+		&OSImageFlavor{},
 		&InfraK8sFlavor{},
 		&PythonMLFlavor{},
 		&NativeGPUSystemsFlavor{},
@@ -301,6 +304,53 @@ func (f *PythonMLFlavor) RequiredToolchains() []ToolchainItem {
 	return []ToolchainItem{
 		{Binary: "uv", Purpose: "Extremely fast Python package installer and resolver", InstallGuide: "curl -LsSf https://astral.sh/uv/install.sh | sh"},
 		{Binary: "ruff", Purpose: "Fast Python linter and code formatter", InstallGuide: "pip install ruff"},
+	}
+}
+
+// --- OS Image Forge Flavor ---
+
+type OSImageFlavor struct{}
+
+func (f *OSImageFlavor) Name() string { return "os-image" }
+func (f *OSImageFlavor) Description() string {
+	return "OS & Boot Artifact Forge: Packer, mkosi and UKI pipelines"
+}
+func (f *OSImageFlavor) HISSProfile() string { return "os-image" }
+
+// Detect matches an image forge by what it builds. The markers are deliberately not
+// go.mod or pyproject.toml: such a repository usually has both, for the CLI that drives
+// the build and the suite that verifies the result, and being classified by them
+// describes the tooling rather than the product.
+func (f *OSImageFlavor) Detect(repoPath string) bool {
+	for _, marker := range [...]string{"packer/*.pkr.hcl", "mkosi.conf", "build/mkosi.conf"} {
+		if util.MarkerExists(repoPath, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *OSImageFlavor) RequiredTemplates() []TemplateItem {
+	return []TemplateItem{
+		{Path: ".yamllint.yml", Description: "YAML lint policy for image and workflow definitions"},
+		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
+		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
+		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
+	}
+}
+
+func (f *OSImageFlavor) RequiredSettings() []SettingItem {
+	return []SettingItem{
+		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Pre-commit and pre-push gating"},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+	}
+}
+
+func (f *OSImageFlavor) RequiredToolchains() []ToolchainItem {
+	return []ToolchainItem{
+		{Binary: "packer", Purpose: "Image template build engine", InstallGuide: "https://developer.hashicorp.com/packer/install"},
+		{Binary: "shellcheck", Purpose: "Shell provisioner static analysis", InstallGuide: "https://github.com/koalaman/shellcheck#installing"},
+		{Binary: "yamllint", Purpose: "YAML definition lint", InstallGuide: "pip install yamllint"},
 	}
 }
 

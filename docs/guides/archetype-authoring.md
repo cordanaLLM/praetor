@@ -25,11 +25,44 @@ Fourteen profiles ship in `.config/archetypes/`:
 Six facets ship in `.config/archetypes/facets/`.
 
 **A profile is not a flavor.** A profile says what governance applies; a flavor says which templates,
-settings and toolchains the language stack requires. Only four profiles currently have any flavor
-implementing them — `app-service`, `framework`, `native-gpu-systems` and `container-image`. For the
-other ten, `flavor audit` reports **not applicable** rather than measuring the repository against an
-inferred language flavor, which is correct: `os-image` describes what a repository builds, not what
-it is written in.
+settings and toolchains a repository of that kind requires. Five profiles currently have any flavor
+implementing them — `app-service`, `framework`, `native-gpu-systems`, `container-image` and
+`os-image`. For the other nine, `flavor audit` reports **not applicable** rather than measuring the
+repository against an inferred language flavor.
+
+### The `os-image` flavor: a forge is what it builds
+
+`os-image` is the first profile whose flavor is not a language stack. It requires `packer`,
+`shellcheck` and `yamllint`, plus a `.yamllint.yml` policy for the image and workflow definitions,
+because an image forge is audited on the pipeline that produces a bootable artifact rather than on a
+compiler toolchain.
+
+**What marks a forge.** Three markers, in `internal/flavor/definitions.go` and in the unified
+classification table in `internal/classify/classify.go`:
+
+| Marker | Kind | What it identifies |
+| :--- | :--- | :--- |
+| `packer/*.pkr.hcl` | glob | a Packer template tree |
+| `mkosi.conf` | fixed path | an mkosi image definition |
+| `build/mkosi.conf` | fixed path | the same, under a build directory |
+
+**The glob marker rule.** Most markers are a fixed path: `go.mod` either exists or it does not. A
+Packer tree cannot be written that way, because what identifies the forge is holding *some*
+template, not a particular one. `util.MarkerExists` is the single matcher for both tables: a fixed
+marker stays a `stat`, a pattern containing `*`, `?` or `[` expands with a bounded scan
+(`maxMarkerMatches = 256`, HISS-02) and counts **only regular files**. That last part is what keeps
+the negatives honest — an empty `packer/`, a `packer/` holding only a `README.md`, and a *directory*
+named `x.pkr.hcl` are all non-matches, so no repository becomes an image forge by owning a folder. A
+malformed pattern matches nothing rather than erroring: a marker table describes the world, it is
+not user input to validate.
+
+**Why it outranks `go.mod` and `pyproject.toml`.** `OSImageFlavor` is registered ahead of the
+language flavors, and its markers sit ahead of `go.mod` and `pyproject.toml` in `classify.rules()`.
+An image forge carries both — a Go CLI that drives the build, a Python suite that verifies the
+result — so whichever language flavor claimed it first would describe the *tooling* instead of the
+*product*. That is not hypothetical: `cordanaLLM/imago` was audited as a Go service and told to add
+a Dockerfile it has no use for. Order the markers the same way when you add a profile whose
+repositories are known by their output rather than their source language.
 
 Two profiles are worth reading before writing a new one, because their correctness looks like a
 mistake:

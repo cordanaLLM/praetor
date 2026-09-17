@@ -392,11 +392,13 @@ func TestAuditFlavor_Positive_DeclaredProfileNarrowsDetection(t *testing.T) {
 	}
 }
 
-// TestAuditFlavor_Negative_ProfileWithNoFlavorIsNotApplicable is the measured defect.
-// cordanaLLM/imago declares os-image, no flavor implements that profile, and it was audited as a
-// Go service and failed its own push gate for lacking a Dockerfile it has no use for.
+// TestAuditFlavor_Negative_ProfileWithNoFlavorIsNotApplicable pins the not-applicable
+// outcome. It used to use os-image, the profile cordanaLLM/imago declares, back when
+// no flavor implemented it; os-image has one now, so the case moves to a profile that
+// still has none. The outcome under test is unchanged: a declared profile nothing
+// implements is not-applicable, never a marker guess.
 func TestAuditFlavor_Negative_ProfileWithNoFlavorIsNotApplicable(t *testing.T) {
-	repo := declaringRepo(t, "os-image", map[string]string{
+	repo := declaringRepo(t, "pages-site", map[string]string{
 		"go.mod": "module fixture\n", "cmd/app/main.go": "package main\n",
 	})
 	report, err := flavor.AuditFlavor(repo, "auto")
@@ -426,5 +428,23 @@ func TestAuditFlavor_Boundary_ExplicitFlavorAndAbsentManifest(t *testing.T) {
 	}
 	if report.Flavor != "go-library" {
 		t.Errorf("expected detection to decide, got %q", report.Flavor)
+	}
+}
+
+// TestAuditFlavor_Positive_DeclaredOSImageAuditsAgainstItsFlavor is the other half of the
+// same defect: an image forge that declares os-image is audited against a flavor that
+// describes what it builds, not against the Go tooling it happens to build with.
+func TestAuditFlavor_Positive_DeclaredOSImageAuditsAgainstItsFlavor(t *testing.T) {
+	repo := declaringRepo(t, "os-image", map[string]string{
+		"packer/ubuntu.pkr.hcl": "source \"qemu\" \"ubuntu\" {}\n",
+		"go.mod":                "module fixture\n",
+		"cmd/imago/main.go":     "package main\n",
+	})
+	report, err := flavor.AuditFlavor(repo, "auto")
+	if err != nil {
+		t.Fatalf("a declared profile with a matching flavor must audit: %v", err)
+	}
+	if report.Flavor != "os-image" {
+		t.Fatalf("audited as %q; the Go tooling outranked the product", report.Flavor)
 	}
 }
