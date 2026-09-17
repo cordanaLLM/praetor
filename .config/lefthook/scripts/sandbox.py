@@ -11,6 +11,19 @@ sys.dont_write_bytecode = True
 from common import HookError, clean_env, git, run, snapshot
 
 
+def user_arguments(host=os):
+    """Run the container as the invoking user where the host has one.
+
+    On POSIX a bind mount keeps host ownership, so the gate runs as the host uid:gid and leaves no
+    root-owned files in the snapshot or home. Windows has no uid -- os.getuid does not exist, and
+    the sandbox raised AttributeError before Docker was asked for anything -- and Docker Desktop
+    maps bind-mount ownership itself, so the flag is omitted there.
+    """
+    if not hasattr(host, "getuid"):
+        return []
+    return ["--user", f"{host.getuid()}:{host.getgid()}"]
+
+
 def main(args):
     if len(args) > 1:
         raise HookError("usage: sandbox.py [commit]; default is HEAD")
@@ -22,7 +35,7 @@ def main(args):
     name = "praetor-gate-" + uuid.uuid4().hex
     with snapshot(head) as directory, tempfile.TemporaryDirectory(prefix="praetor-home-") as home:
         try:
-            run(["docker", "run", "--name", name, "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
+            run(["docker", "run", "--name", name, "--rm", *user_arguments(),
                  "--env", "HOME=/sandbox-home", "--env", "GOCACHE=/sandbox-home/go-cache",
                  "--env", "GOPATH=/sandbox-home/go", "--env", "CI=true", "--env", "GOWORK=off",
                  "--env", "GOFLAGS=-mod=readonly", "--env", "PRAETOR_SANDBOX=1",
