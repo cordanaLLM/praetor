@@ -18,7 +18,7 @@ func TestBundlePreservesUmask(t *testing.T) {
 		// the testing runtime writes coverage metadata during process shutdown.
 		previous := syscall.Umask(0o777)
 		defer syscall.Umask(previous)
-		_, err := BundleWorkstation(context.Background(), BundleOptions{HomeDir: filepath.Join(root, "home"), OutputDir: filepath.Join(root, "out")})
+		_, err := BundleWorkstation(context.Background(), BundleOptions{Roots: testClientRoots(filepath.Join(root, "home")), HomeDir: filepath.Join(root, "home"), OutputDir: filepath.Join(root, "out")})
 		if err != nil {
 			t.Fatal(err)
 		}

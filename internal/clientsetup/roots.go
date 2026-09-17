@@ -133,6 +133,7 @@ func Resolve(client Client, scope Scope, env Env, overrides ...string) (Resoluti
 		return Resolution{}, err
 	}
 	if override != "" {
+		override = joinFor(env.GOOS, override)
 		if err := checkChosenDir(env, "root override", override); err != nil {
 			return Resolution{}, err
 		}
@@ -149,7 +150,7 @@ func relocatedRoot(entry globalRoot, env Env) (Resolution, bool, error) {
 		return Resolution{}, false, nil
 	}
 	for _, candidate := range entry.relocations {
-		value := env.Getenv(candidate.variable)
+		value := joinFor(env.GOOS, env.Getenv(candidate.variable))
 		if value == "" {
 			continue
 		}

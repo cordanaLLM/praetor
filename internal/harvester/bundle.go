@@ -86,7 +86,27 @@ type BundleOptions struct {
 	// the canonical place where tokens are exported, and a bundle is a transferable
 	// artefact.
 	IncludeShellHistory bool `json:"include_shell_history,omitempty"`
+	// Roots carries the per-OS client locations. The command layer resolves them through
+	// internal/clientsetup, which this package cannot import (clientsetup reaches the
+	// harvester through repairrun and dogfood), so they arrive as data.
+	Roots ClientRoots `json:"roots"`
 }
+
+// ClientRoots holds the client locations that differ per operating system. An empty
+// field means the location does not apply to the harvested host and is skipped.
+type ClientRoots struct {
+	// AGYConfig is the Antigravity global customization root.
+	AGYConfig string `json:"agy_config,omitempty"`
+	// AGYBrains lists the existing Antigravity brain directories, winner first.
+	AGYBrains []string `json:"agy_brains,omitempty"`
+	// ClaudeDesktopConfig is the Claude desktop configuration file.
+	ClaudeDesktopConfig string `json:"claude_desktop_config,omitempty"`
+	// PowerShellHistory is the PSReadLine console history file.
+	PowerShellHistory string `json:"powershell_history,omitempty"`
+}
+
+// MaxBrainRoots bounds how many brain directories one bundle reads.
+const MaxBrainRoots = 8
 
 // BundleFileRecord records file metadata and integrity checksum.
 type BundleFileRecord struct {
@@ -552,6 +572,36 @@ func (c *bundleCollector) bundleClaudeMemories(ctx context.Context, claudeProjec
 	return nil
 }
 
+// rootedPath joins below root. An empty root stays empty, so a location that does not
+// apply to the host is skipped instead of resolving against the working directory.
+func rootedPath(root string, segments ...string) string {
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(append([]string{root}, segments...)...)
+}
+
+// bundleBrains copies the transcripts of every existing brain directory into one
+// destination. A host can hold several brains (IDE, CLI and the unsuffixed one), so
+// each is read and the fact is recorded; on a duplicate conversation the first wins.
+func (c *bundleCollector) bundleBrains(ctx context.Context, brainDirs []string, dstDir string) error {
+	if len(brainDirs) > 1 {
+		c.note("%d Antigravity brain directories exist; all are bundled: %s", len(brainDirs), strings.Join(brainDirs, ", "))
+	}
+	for i := 0; i < len(brainDirs) && i < MaxBrainRoots; i++ {
+		if brainDirs[i] == "" {
+			continue
+		}
+		if err := c.bundleTranscripts(ctx, brainDirs[i], dstDir); err != nil {
+			return err
+		}
+	}
+	if len(brainDirs) > MaxBrainRoots {
+		c.note("skip %d brain directories: limit %d reached", len(brainDirs)-MaxBrainRoots, MaxBrainRoots)
+	}
+	return nil
+}
+
 // bundleTranscripts copies one transcript per agent conversation directory.
 func (c *bundleCollector) bundleTranscripts(ctx context.Context, brainDir, dstDir string) error {
 	entries := c.readDir(brainDir)
@@ -569,6 +619,10 @@ func (c *bundleCollector) bundleTranscripts(ctx context.Context, brainDir, dstDi
 			continue
 		}
 		dstFile := filepath.Join(dstDir, fmt.Sprintf("%s.transcript.jsonl", entry.Name()))
+		if util.FileExists(dstFile) {
+			c.note("skip %s: conversation %s was already bundled from another brain directory", tPath, entry.Name())
+			continue
+		}
 		c.copyOrNote(ctx, tPath, dstFile, "agent-transcript")
 	}
 	return nil
@@ -576,11 +630,14 @@ func (c *bundleCollector) bundleTranscripts(ctx context.Context, brainDir, dstDi
 
 // bundleCLIHistory copies shell history. It is opt-in: shell history is the canonical
 // place where credentials are exported, and a bundle is a transferable artefact.
-func (c *bundleCollector) bundleCLIHistory(ctx context.Context, homeDir, dstDir string, include bool) error {
+func (c *bundleCollector) bundleCLIHistory(ctx context.Context, opts BundleOptions, dstDir string) error {
+	include := opts.IncludeShellHistory
 	histPaths := []string{
-		filepath.Join(homeDir, "AppData", "Roaming", "Microsoft", "Windows", "PowerShell", "PSReadLine", "ConsoleHost_history.txt"),
-		filepath.Join(homeDir, ".bash_history"),
-		filepath.Join(homeDir, ".zsh_history"),
+		filepath.Join(opts.HomeDir, ".bash_history"),
+		filepath.Join(opts.HomeDir, ".zsh_history"),
+	}
+	if opts.Roots.PowerShellHistory != "" {
+		histPaths = append([]string{opts.Roots.PowerShellHistory}, histPaths...)
 	}
 
 	if !include {
@@ -625,10 +682,11 @@ func (c *bundleCollector) bundlePlugins(ctx context.Context, pluginsDir, dstDir 
 }
 
 // bundleAgentConfigs copies the cross-agent configuration files.
-func (c *bundleCollector) bundleAgentConfigs(ctx context.Context, homeDir, dstDir string) error {
+func (c *bundleCollector) bundleAgentConfigs(ctx context.Context, opts BundleOptions, dstDir string) error {
+	homeDir := opts.HomeDir
 	sources := []bundleFileSpec{
-		{filepath.Join(homeDir, ".gemini", "config", "hooks.json"), "", "agent-config"},
-		{filepath.Join(homeDir, ".gemini", "config", "mcp_config.json"), "", "agent-config"},
+		{rootedPath(opts.Roots.AGYConfig, "hooks.json"), "", "agent-config"},
+		{rootedPath(opts.Roots.AGYConfig, "mcp_config.json"), "", "agent-config"},
 		{filepath.Join(homeDir, ".claude", "CLAUDE.md"), "", "agent-rule"},
 		{filepath.Join(homeDir, ".claude", "settings.json"), "", "agent-config"},
 		{filepath.Join(homeDir, ".hindsight", "coding-agent.json"), "", "hindsight-config"},
@@ -744,7 +802,8 @@ func (c *bundleCollector) bundleCopilotState(ctx context.Context, homeDir string
 }
 
 // bundleClaudeAdditional copies the Claude configuration, rules and plugin registries.
-func (c *bundleCollector) bundleClaudeAdditional(ctx context.Context, homeDir string) error {
+func (c *bundleCollector) bundleClaudeAdditional(ctx context.Context, opts BundleOptions) error {
+	homeDir := opts.HomeDir
 	claudeDir := filepath.Join(homeDir, ".claude")
 	cfg := filepath.Join(c.baseDir, "agent-configs", "claude")
 	plugins := filepath.Join(c.baseDir, "agent-plugins", "claude")
@@ -752,7 +811,7 @@ func (c *bundleCollector) bundleClaudeAdditional(ctx context.Context, homeDir st
 	return c.captureSpecs(ctx, []bundleFileSpec{
 		{filepath.Join(homeDir, ".claude.json"), filepath.Join(cfg, "claude.json"), "claude-config"},
 		{filepath.Join(homeDir, ".claude.json.backup"), filepath.Join(cfg, "claude.json.backup"), "claude-config"},
-		{filepath.Join(homeDir, "AppData", "Roaming", "Claude", "claude_desktop_config.json"), filepath.Join(cfg, "claude_desktop_config.json"), "claude-desktop-config"},
+		{opts.Roots.ClaudeDesktopConfig, filepath.Join(cfg, "claude_desktop_config.json"), "claude-desktop-config"},
 		{filepath.Join(claudeDir, "settings.json"), filepath.Join(cfg, "settings.json"), "claude-config"},
 		{filepath.Join(claudeDir, "CLAUDE.md"), filepath.Join(c.baseDir, "agent-rules", "claude", "CLAUDE.md"), "claude-rule"},
 		{filepath.Join(claudeDir, "plugins", "installed_plugins.json"), filepath.Join(plugins, "installed_plugins.json"), "claude-plugin"},
@@ -762,14 +821,15 @@ func (c *bundleCollector) bundleClaudeAdditional(ctx context.Context, homeDir st
 }
 
 // harvestAllSkills copies every agent's skill and plugin tree into the bundle.
-func (c *bundleCollector) harvestAllSkills(ctx context.Context, homeDir string) error {
+func (c *bundleCollector) harvestAllSkills(ctx context.Context, opts BundleOptions) error {
 	base := c.baseDir
+	homeDir := opts.HomeDir
 	roots := []bundleFileSpec{
 		{filepath.Join(homeDir, ".copilot", "skills"), filepath.Join(base, "agent-skills", "copilot"), "skill"},
 		{filepath.Join(homeDir, ".codex", "skills"), filepath.Join(base, "agent-skills", "codex"), "skill"},
 		{filepath.Join(homeDir, ".codex", "skills", ".system"), filepath.Join(base, "agent-skills", "codex-system"), "skill"},
 		{filepath.Join(homeDir, ".claude", "skills"), filepath.Join(base, "agent-skills", "claude"), "skill"},
-		{filepath.Join(homeDir, ".gemini", "config", "skills"), filepath.Join(base, "agent-skills", "gemini"), "skill"},
+		{rootedPath(opts.Roots.AGYConfig, "skills"), filepath.Join(base, "agent-skills", "gemini"), "skill"},
 		{filepath.Join(homeDir, ".agents", "skills"), filepath.Join(base, "agent-skills", "universal"), "skill"},
 	}
 	for _, r := range roots {
@@ -779,7 +839,7 @@ func (c *bundleCollector) harvestAllSkills(ctx context.Context, homeDir string) 
 	}
 
 	pluginRoots := []bundleFileSpec{
-		{filepath.Join(homeDir, ".gemini", "config", "plugins"), filepath.Join(base, "agent-plugins", "gemini"), ""},
+		{rootedPath(opts.Roots.AGYConfig, "plugins"), filepath.Join(base, "agent-plugins", "gemini"), ""},
 		{filepath.Join(homeDir, ".agents", "plugins"), filepath.Join(base, "agent-plugins", "universal"), ""},
 	}
 	for _, r := range pluginRoots {
@@ -796,22 +856,19 @@ func (c *bundleCollector) harvestAgentState(ctx context.Context, opts BundleOpti
 	home := opts.HomeDir
 
 	steps := []func() error{
-		func() error { return c.bundleAgentConfigs(ctx, home, filepath.Join(base, "agent-configs")) },
+		func() error { return c.bundleAgentConfigs(ctx, opts, filepath.Join(base, "agent-configs")) },
 		func() error { return c.bundleCodexState(ctx, home) },
 		func() error { return c.bundleCodexPlugins(ctx, home) },
 		func() error { return c.bundleCopilotState(ctx, home) },
-		func() error { return c.bundleClaudeAdditional(ctx, home) },
+		func() error { return c.bundleClaudeAdditional(ctx, opts) },
 		func() error {
 			memDst := filepath.Join(base, "agent-memories", "claude")
 			return c.bundleClaudeMemories(ctx, filepath.Join(home, ".claude", "projects"), memDst)
 		},
 		func() error {
-			brain := filepath.Join(home, ".gemini", "antigravity-ide", "brain")
-			return c.bundleTranscripts(ctx, brain, filepath.Join(base, "agent-transcripts"))
+			return c.bundleBrains(ctx, opts.Roots.AGYBrains, filepath.Join(base, "agent-transcripts"))
 		},
-		func() error {
-			return c.bundleCLIHistory(ctx, home, filepath.Join(base, "cli-logs"), opts.IncludeShellHistory)
-		},
+		func() error { return c.bundleCLIHistory(ctx, opts, filepath.Join(base, "cli-logs")) },
 	}
 	for _, step := range steps {
 		if err := step(); err != nil {
@@ -884,7 +941,7 @@ func BundleWorkstation(ctx context.Context, opts BundleOptions) (*WorkstationBun
 	if opts.DevDir != "" {
 		collector.note("development directory %s was not captured: development-repository capture is not implemented", opts.DevDir)
 	}
-	if err := collector.harvestAllSkills(ctx, opts.HomeDir); err != nil {
+	if err := collector.harvestAllSkills(ctx, opts); err != nil {
 		return nil, err
 	}
 	if err := collector.harvestAgentState(ctx, opts); err != nil {
