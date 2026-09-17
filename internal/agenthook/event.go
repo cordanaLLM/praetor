@@ -9,6 +9,7 @@ package agenthook
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 )
 
@@ -62,4 +63,9 @@ type Response struct {
 	Stdout   []byte
 	Stderr   []byte
 	ExitCode int
+}
+
+// String renders a response for diagnostics with its streams as text.
+func (r Response) String() string {
+	return fmt.Sprintf("exit %d stdout %q stderr %q", r.ExitCode, r.Stdout, r.Stderr)
 }
