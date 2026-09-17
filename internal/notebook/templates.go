@@ -1,5 +1,7 @@
 package notebook
 
+import "github.com/cordanaLLM/praetor/internal/config"
+
 func templateFiles() map[string][]byte {
 	return map[string][]byte{
 		"project-plan.md":  []byte("# {{project_title}}\n\nStatus: draft requiring review\n\n## Outcome and scope\n{{cited_outcomes_and_exclusions}}\n\n## Milestones\n{{milestones_with_dependencies_and_acceptance}}\n\n## Risks and open decisions\n{{conflicts_unknowns_and_owners}}\n\n## Evidence\n{{source_ids_hashes_and_quotes}}\n"),
@@ -36,5 +38,5 @@ requirements: array of {id, text, source_id, source_sha256, quote}.
 documents: object with project_plan, specification and tasks, each a Markdown string.
 Use {{unresolved}} placeholders where evidence is missing. Do not claim tests ran.
 The validator checks citation existence, exact quotes and hashes, not semantic entailment.
-`
+` + config.RegisterDirective(config.TextRegisterDocs) + "\n"
 }

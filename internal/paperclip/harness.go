@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
@@ -45,6 +46,8 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 		"Rule 0 Terminal Disposition: every run must end with a structured disposition (in_review or blocked).",
 		"Ed25519 Exit-0 Receipts: attach cryptographic execution receipts to all PR proposals.",
 		"Timeout Resilience: timeout is not failure; re-check open PRs before retrying to prevent duplicate PRs.",
+		// A Paperclip run reports to an orchestrating agent, so its product is internal text.
+		config.RegisterDirective(config.TextRegisterInternal),
 	}
 
 	invariants := []string{

@@ -45,8 +45,8 @@ const (
 	// MaxRegisterTaskRows bounds the per-task rows of one manifest.
 	MaxRegisterTaskRows = router.MaxRoutingTags
 	// RegisterMaxTokensFloor and RegisterMaxTokensCeiling bound a per-task output budget.
-	// They equal the limits internal/repairrun accepts for a provider request, which a
-	// test in that package pins.
+	// internal/repairrun validates a provider request against the same two constants, so
+	// a budget the manifest accepts is one the provider path accepts.
 	RegisterMaxTokensFloor   = 256
 	RegisterMaxTokensCeiling = 8192
 )

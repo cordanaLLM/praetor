@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/httpendpoint"
 )
 
@@ -72,7 +73,8 @@ func ValidateProviderConfig(cfg ProviderConfig) error {
 }
 
 func providerValidLimits(cfg ProviderConfig) bool {
-	return cfg.MaxInputBytes >= 1 && cfg.MaxInputBytes <= providerPromptLimit && cfg.MaxOutputTokens >= 256 && cfg.MaxOutputTokens <= 8192
+	return cfg.MaxInputBytes >= 1 && cfg.MaxInputBytes <= providerPromptLimit &&
+		cfg.MaxOutputTokens >= config.RegisterMaxTokensFloor && cfg.MaxOutputTokens <= config.RegisterMaxTokensCeiling
 }
 
 // Generate performs exactly one HTTP request within a 120-second operation deadline.
