@@ -133,7 +133,7 @@ func nodeUpgradeCandidate(pkg string, item pnpmOutdatedItem, dirRel string, opts
 }
 
 func scanPackageJSONStatic(repoPath, dirRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
-	data, err := util.ReadConfined(repoPath, filepath.Join(dirRel, "package.json"))
+	data, err := readManifest(repoPath, filepath.Join(dirRel, "package.json"))
 	if err != nil {
 		return nil, err
 	}

@@ -2,36 +2,32 @@ package bump
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"path/filepath"
 
-	"fmt"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"io"
-	"os"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// readManifest confines manifest access, including symlinks, to its explicit root.
-func readManifest(root, name string) (data []byte, resultErr error) {
-	file, err := os.OpenInRoot(root, name)
+// readManifest reads a manifest under exactly the rule writeManifest enforces: confined
+// to root, a regular file rather than a symlink, and at most contextopt.MaxSourceBytes.
+// The reader used to accept 16 MiB and to follow in-root symlinks, both of which the
+// write path refuses, so an oversized or linked manifest was scanned, planned and edited
+// and only then failed to be written.
+//
+// The scan entry points on this path carry no context of their own, so the read is bounded
+// by contextopt.MaxDuration here, as internal/config/hierarchy.go does at the same kind of
+// boundary.
+func readManifest(root, name string) ([]byte, error) {
+	path, err := util.ConfinePath(root, name)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { resultErr = errors.Join(resultErr, file.Close()) }()
-	info, err := file.Stat()
+	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDuration)
+	defer cancel()
+	data, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
-		return nil, err
-	}
-	const maxManifestBytes = 16 << 20
-	if !info.Mode().IsRegular() || info.Size() > maxManifestBytes {
-		return nil, fmt.Errorf("manifest must be regular and at most %d bytes", maxManifestBytes)
-	}
-	data, err = io.ReadAll(io.LimitReader(file, maxManifestBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > maxManifestBytes {
-		return nil, fmt.Errorf("manifest exceeds %d bytes", maxManifestBytes)
+		return nil, fmt.Errorf("read manifest %s: %w", name, err)
 	}
 	return data, nil
 }
