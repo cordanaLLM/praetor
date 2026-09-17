@@ -126,9 +126,13 @@ func Resolve(client Client, scope Scope, env Env, overrides ...string) (Resoluti
 		}
 		return Resolution{Path: WorkspaceDir, Source: SourceDefault, Verified: true}, nil
 	case ScopeGlobal:
+		return resolveGlobal(entry, env, override)
 	default:
 		return Resolution{}, fmt.Errorf("unknown scope %q", scope)
 	}
+}
+
+func resolveGlobal(entry globalRoot, env Env, override string) (Resolution, error) {
 	if err := checkHost(env); err != nil {
 		return Resolution{}, err
 	}

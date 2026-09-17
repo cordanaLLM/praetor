@@ -1,0 +1,3 @@
+type: changed
+title: Client configuration roots resolve per operating system in one place; the harvester reads every existing Antigravity brain directory instead of one of two spellings
+breaking: false
