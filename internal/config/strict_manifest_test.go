@@ -41,11 +41,21 @@ overrides:
 needs:
   required:
     - "config.yaml"
+register:
+  surfaces:
+    forge: social
+  tasks:
+    function_docstrings: docs
+  evidence:
+    inline_max_lines: 40
 `)
 
 	m, err := LoadManifest(path)
 	if err != nil {
 		t.Fatalf("load manifest: %v", err)
+	}
+	if m.Register == nil || m.Register.Tasks["function_docstrings"].Register != TextRegisterDocs {
+		t.Errorf("register section was dropped: %+v", m.Register)
 	}
 	if m.Repository.Owner != "exampleOrg" || m.Version != 1 {
 		t.Errorf("unexpected manifest head: %+v", m.Repository)

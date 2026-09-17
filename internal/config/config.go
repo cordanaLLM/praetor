@@ -144,6 +144,10 @@ type Manifest struct {
 	// manifest rather than in a command flag so the decision survives the next adoption run
 	// instead of depending on whoever typed the command.
 	Adoption *AdoptionPolicy `yaml:"adoption,omitempty"`
+	// Register selects the text register per audience surface and task class. It is
+	// repository-only and stays out of ResolvedPolicy, so no fleet or profile layer can set
+	// it and the resolved policy never changes because of it (ADR-0010).
+	Register *RegisterPolicy `yaml:"register,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -179,6 +183,9 @@ func LoadManifest(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to parse manifest at %s: %w", path, err)
 	}
 	if err := validateManifestReviewPolicy(m); err != nil {
+		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
+	}
+	if err := validateManifestRegister(m); err != nil {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 

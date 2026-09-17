@@ -1,0 +1,163 @@
+# ADR-0010: Text Register per Audience and Task Class
+
+## Status
+
+Proposed — 2026-09-17.
+
+## Context
+
+Praetor text reaches three audiences with three different costs. A maintainer reads issues,
+pull-request bodies and review comments on the forge. A newcomer or an expert reads `docs/`.
+An agent reads briefs, fan-out prompts and workflow returns, where every token is paid for
+again on the next hop. Until this record no configuration named these audiences. The only
+register rule was AGENTS.md rule 3 "Lead with Output", which applies one voice to all three,
+and the only bounded surface was the SARIF distillation in `internal/lockdown` (58 lines,
+1500 tokens).
+
+The operator's direction (paraphrased): three registers — social for the forge, docs for
+documentation, internal (terse, telegraphic) for agent-to-agent traffic including research
+fan-outs; logs and long evidence travel as files and are fetched back only when needed; the
+register is configurable and scaled per task class, never a global hard-coded switch; the
+rule applies to this repository's own agent operation and to the product (dispatch,
+personas, compiled context, adopted repositories); grunt work goes to cheap providers, the
+frontier model keeps judgment.
+
+Constraints that shape the decision:
+
+- The router already declares a task vocabulary: `target_tasks` in
+  `.config/models/routing.yaml`, mirrored by `defaultRoutingTiers` in
+  `internal/router/sync.go` and matched exactly by `hasRoutingTag` in
+  `internal/router/task.go`. A second label set would be a HISS-19 defect.
+- `Overrides` is documented as a strictness lattice (`internal/config/config.go`), and
+  `ResolvedPolicy` is sealed into `EffectivePolicy.SHA256` (`internal/config/effective.go`,
+  `seal`). A register is a choice, not a bound, and must not enter that lattice.
+- The compiled context reaches six vendor files through one renderer
+  (`internal/agentcontext/render.go`, budget 300 lines). An in-flight change to that
+  renderer makes a `## <Vendor>` H2 private to one target and every other line shared.
+- AGENTS.md is the hand-edited canonical source (rule 6; `docs/standards/hiss-16-spec.md`).
+
+## Decision
+
+1. **Three registers, one enum.** `social`, `docs`, `internal`, decoded like
+   `BranchReviewMode`: a string enum that rejects unknown, empty and non-string values at
+   the source boundary.
+2. **Manifest-owned, repository-only, outside the lattice.** A top-level `register:`
+   section in `.standards.yaml`, a sibling of `adoption:`. It is not part of
+   `ResolvedPolicy`, `Join` or `ApplyOverrides`, so fleet and profile layers cannot set it
+   and the resolved policy of no repository changes because of it. A repository that writes
+   the section changes its own manifest bytes, and with them the `repository` source digest
+   inside `EffectivePolicy.SHA256`, exactly as any other edit of that file does.
+3. **The surface owns the audience; the task row owns the agent surface.**
+   `surfaces.forge` and `surfaces.docs` fix who reads the forge and the docs.
+   `tasks.<label>` sets the register of that task's own product (its brief and return, the
+   `agent` surface) and an optional `max_tokens` output budget. A `ci_debugging` run
+   therefore writes an internal return and a social pull-request body without a second
+   label. Keys of `tasks` are the router's `target_tasks` labels; an unknown label in the
+   manifest fails `compile-context` and `audit`.
+4. **No default budgets.** The `max_tokens` field is bounded (256..8192, the limits a
+   provider request accepts) and validated, but the shipped defaults carry a register only
+   and the rendered block prints no token numbers for tasks. A budget is a dispatch
+   parameter that must come from measured runs, not from an opinion in a default row.
+5. **One emission block, spliced by the existing pipeline.** `compile-context` renders a
+   bounded block from the manifest and splices it into AGENTS.md under `## Text Register`,
+   between `<!-- praetor:register:start -->` and `<!-- praetor:register:end -->`;
+   `--verify` and `audit` fail on drift. The H2 title is not a vendor name, so all six
+   targets share it. For that block only, `.standards.yaml` is the source and AGENTS.md is
+   the carrier; the markers make that visible and the constraint below keeps it that way.
+6. **Evidence leaves the token path.** Above `register.evidence.inline_max_lines` or
+   `inline_max_tokens` (defaults equal the lockdown bound, and can only be tightened),
+   evidence is written to a file and referenced with one pointer format,
+   `evidence: <path> sha256:<12 hex> lines:<n>`, produced by `config.EvidencePointer`, which
+   the lockdown distillation uses as well.
+7. **Dispatch consumes the same row.** `models route --task X` reports the register;
+   `dogfood repairs --task X` appends one register clause to each job's instructions and
+   forwards a configured `max_tokens` as the provider's `max_output_tokens`; `repairrun`
+   records the register beside provider `Usage`. Cheap-tier labels default to `internal`, so
+   grunt work receives telegraphic prompts and only the frontier tier generates social or
+   docs prose. Tier selection is untouched.
+8. **One skill.** `social-text`, derived from `adhd-format` by reference. The docs and
+   internal rules live in the block and the guide; there is no `docs-text` or
+   `internal-brief` skill, no `internal/register` package and no second configuration file.
+
+```adr-constraint
+id: text-register-has-one-loader-and-one-skill
+kind: forbidden-path
+forbids:
+  - "internal/register/"
+  - ".config/text-register.yaml"
+  - ".agents/skills/docs-text/"
+  - ".agents/skills/internal-brief/"
+rationale: >-
+  The register is one section of the existing manifest loader and one skill derived from
+  adhd-format. A second package, a second configuration file or a second skill per register
+  would be the HISS-19 defect this record decides against: two implementations of one
+  behaviour that drift apart.
+```
+
+The constraint kinds available are `universal-scope` and `forbidden-path`
+(`internal/adr/constraint.go`). The runtime half of the checkable part is
+`compile-context --verify` (block sync) and the task-label validation; both run inside
+`make verify-all`.
+
+## Alternatives considered
+
+- **A global register flag or environment variable.** Rejected: the direction forbids a
+  global switch, and one voice cannot serve three audiences.
+- **`overrides.register`.** Rejected: `Overrides` is the monotone strictness lattice;
+  `CIPolicy` sits there only as a documented gap, not as a precedent, and a `Register` field
+  in `ResolvedPolicy` would move the sealed digest of every repository.
+- **A top-level `text:` section with a twelve-surface enum, float scale multipliers, three
+  skills, a resolve command and proposal-summary rejection.** Rejected as machinery the
+  direction did not ask for; rejecting a schema-valid repair over prose length would discard
+  paid provider spend.
+- **Embedded YAML defaults with an experiment basis, a `register` command group and replay
+  fixtures.** Rejected: a second configuration format is the HISS-19 defect, and no
+  candidate-to-register mapping exists to replay against. The measurable parts survive as
+  `max_tokens` forwarding and the `Register` field of the repair report.
+- **Shipping default budgets** (512 tokens for `commit_message_synthesis`, 1024 for
+  `waiver_signoff`). Rejected by the operator: those numbers were opinion. The rows ship
+  without a budget until repair reports supply data.
+- **Emission inside `internal/agentcontext/render.go`.** Rejected to avoid colliding with
+  the in-flight renderer change; the splice happens before compilation and the renderer
+  stays untouched.
+- **Nesting the block under rule 3 as an H3.** Rejected: an unindented heading inside a
+  numbered list item ends the list in CommonMark, and an indented one renders as list
+  continuation.
+- **Lifting `dropMarkedBlock` out of `internal/milestone`.** Rejected for this change: that
+  function only drops a span and reads to the end of the file on a missing end marker.
+  Replace-or-append with an unterminated-marker error is new behaviour, not a lift, and
+  routing BACKLOG.md through it would change `SyncToBacklog`. The new helper lives in
+  `internal/util`; migrating milestone is a follow-up once tests prove equivalence.
+
+## Consequences
+
+Positive: one label set drives cost tier and text register; every agent context (six vendor
+files, adopted harnesses, repair prompts, notebook and paperclip prompts) carries the same
+rendered rule; drift is caught by the gates that already run; logs stop entering the token
+path by rule and by bound.
+
+Negative and trade-offs: AGENTS.md gains a tool-written region (precedents: the adopt
+harness end marker, the milestone block in BACKLOG.md). Hand edits between the markers are
+overwritten on the next `compile-context` and reported by `--verify`. A repository whose
+AGENTS.md has no block yet fails `--verify` and `audit` until it runs `compile-context`
+once. Register compliance on human-driven surfaces is advisory; only the evidence bound and
+a configured provider budget are machine-enforced, and the guide says so. A renamed
+`target_tasks` label orphans its manifest row until `compile-context` or `audit` runs.
+`lockdown.MaxDistillLines` and `MaxDistillTokens` become aliases of the config defaults,
+which ties the SARIF cap to the evidence bound; tightening the manifest values lowers the
+numbers the block prints but does not yet re-parameterise the distillation cap.
+`internal/config` now imports `internal/router` for the label shape and the row bound, and
+`internal/lockdown` imports `internal/config`; both edges are acyclic.
+
+Neutral: `models route` and `dogfood repairs` JSON gain additive fields (HISS-14,
+append-only); plans written before this change decode with an empty register and keep their
+instructions byte-identical.
+
+## References
+
+- Operator direction of 2026-09-17 (paraphrased above; verbatim in the private
+  `.workingdir/` ledger).
+- [ADR-0001: Universal context transpiler](0001-universal-context-transpiler.md)
+- [ADR-0002: Strictness lattice](0002-highest-standard-wins-lattice.md)
+- [ADR-0009: Structural unification](0009-structural-unification.md)
+- `docs/standards/model-routing-and-fanout.md`, `docs/guides/text-register.md`

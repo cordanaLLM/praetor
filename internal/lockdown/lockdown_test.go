@@ -318,8 +318,8 @@ func TestDistill_Boundary_TruncationActuallyTriggers(t *testing.T) {
 	if !strings.Contains(res.Summary, "[Truncated:") {
 		t.Errorf("expected the truncation marker in the capped summary, got:\n%s", res.Summary)
 	}
-	if !strings.Contains(res.Summary, "Full SARIF log: "+res.FullReportPath) {
-		t.Errorf("expected the ephemeral log pointer after truncation, got:\n%s", res.Summary)
+	if !strings.Contains(res.Summary, "evidence: "+res.FullReportPath+" sha256:") {
+		t.Errorf("expected the evidence pointer to the ephemeral log after truncation, got:\n%s", res.Summary)
 	}
 	if res.LineCount != len(strings.Split(res.Summary, "\n")) {
 		t.Errorf("LineCount %d does not match the rendered summary (%d lines)",
