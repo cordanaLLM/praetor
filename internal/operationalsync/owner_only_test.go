@@ -105,6 +105,14 @@ func TestOwnerOnlyPathsRefuseSourceCollisions(t *testing.T) {
 			t.Fatalf("base collision: %v", err)
 		}
 	})
+	t.Run("differs from a public path only by letter case", func(t *testing.T) {
+		// On a case-insensitive filesystem Git stages this as a change to the public file itself; either way it is refused.
+		f := newSyncFixtureWith(t, map[string]string{"deploy/k8s/app.yaml": "upstream\n"})
+		f.opts.OwnerSHA = forceCommit(t, f.git, f.opts.OwnerPath, map[string]string{"deploy/k8s/APP.yaml": "operator\n"})
+		if _, err := Run(context.Background(), "plan", planOptions(f)); err == nil || !strings.Contains(err.Error(), "exists in the public source at "+f.opts.BaseSHA) {
+			t.Fatalf("case collision: %v", err)
+		}
+	})
 	t.Run("present at source", func(t *testing.T) {
 		f := newSyncFixture(t)
 		f.opts.OwnerSHA = forceCommit(t, f.git, f.opts.OwnerPath, map[string]string{".config/fleet.yaml": "operator\n"})

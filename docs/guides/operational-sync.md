@@ -119,7 +119,9 @@ fixed list of owner-only prefixes:
 Matching is on whole path segments. A path under a prefix is accepted only when
 all of these hold:
 
-- the public source has no such path at `--base-sha` and none at `--source-sha`;
+- the public source has no such path at `--base-sha` and none at `--source-sha`,
+  compared without regard to letter case, because two names that differ only by
+  case are one file in a case-insensitive checkout;
 - the entry is a regular non-executable file, Git mode `100644`: symlinks,
   submodule links and executable files are refused;
 - it is at most 1 MiB;

@@ -231,14 +231,8 @@ func (op *operation) checkOwnerOnly(ctx context.Context, dir, tree string, paths
 		return fmt.Errorf("owner-only paths exceed %d: %d", maxOwnerOnlyPaths, len(paths))
 	}
 	for _, sha := range []string{op.opts.BaseSHA, op.opts.SourceSHA} {
-		upstream, err := op.treeEntries(ctx, op.opts.SourcePath, sha)
-		if err != nil {
+		if err := op.checkAbsentUpstream(ctx, sha, paths); err != nil {
 			return err
-		}
-		for _, path := range paths {
-			if _, exists := upstream[path]; exists {
-				return fmt.Errorf("owner-only path exists in the public source at %s: %q", sha, path)
-			}
 		}
 	}
 	current, err := op.treeEntries(ctx, dir, tree)
@@ -249,6 +243,25 @@ func (op *operation) checkOwnerOnly(ctx context.Context, dir, tree string, paths
 		entry, exists := current[path]
 		if err := validateOwnerOnlyEntry(path, entry, exists); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// checkAbsentUpstream compares case-folded paths: a name that differs from a public one only by
+// letter case would land on the same file in a case-insensitive checkout (Windows, macOS default).
+func (op *operation) checkAbsentUpstream(ctx context.Context, sha string, paths []string) error {
+	upstream, err := op.treeEntries(ctx, op.opts.SourcePath, sha)
+	if err != nil {
+		return err
+	}
+	folded := make(map[string]bool, len(upstream))
+	for path := range upstream {
+		folded[strings.ToLower(path)] = true
+	}
+	for _, path := range paths {
+		if folded[strings.ToLower(path)] {
+			return fmt.Errorf("owner-only path exists in the public source at %s: %q", sha, path)
 		}
 	}
 	return nil
