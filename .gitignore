@@ -65,8 +65,13 @@ all_github_repos.json
 # organisation and repository names, runner routing and cluster manifests are operator
 # data. The engine reads these paths when an operator supplies them locally and reports
 # the capability as not configured when they are absent.
+#
+# This list and ownerOnlyPrefixes in internal/operationalsync/overlay.go are one contract:
+# operational sync accepts operator files only under paths the engine ignores here, and a
+# test replays `git check-ignore` for every prefix so the two cannot drift.
 /.config/fleet.yaml
 /.config/fleet-topology.yaml
 /.config/orgs/
+/.config/operator/
 /deploy/arc/
 /deploy/k8s/

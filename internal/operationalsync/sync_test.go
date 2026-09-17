@@ -43,6 +43,12 @@ func fixtureCommit(t *testing.T, g *gitRunner, dir string) string {
 
 func newSyncFixture(t *testing.T) syncFixture {
 	t.Helper()
+	return newSyncFixtureWith(t, nil)
+}
+
+// newSyncFixtureWith force-adds ignoredBaseFiles to the public base commit, past its own .gitignore.
+func newSyncFixtureWith(t *testing.T, ignoredBaseFiles map[string]string) syncFixture {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	t.Cleanup(cancel)
 	g, err := newGit(ctx)
@@ -59,9 +65,15 @@ func newSyncFixture(t *testing.T) syncFixture {
 		ownerPaths[2]:    "{\n  \"platform\": \"public/praetor\",\n  \"future\": true\n}\n",
 		ownerPaths[3]:    "# Paperclip Operating Rules (public/praetor)\n\nUntouched contracts.\n",
 		".gitattributes": "engine.txt filter=probe\n",
-		"engine.txt":     "base engine\n"}
+		// The public source ignores the owner-only prefixes, as the engine does; a fork force-adds them.
+		".gitignore": "/.config/fleet.yaml\n/.config/fleet-topology.yaml\n/.config/orgs/\n/.config/operator/\n/deploy/arc/\n/deploy/k8s/\n",
+		"engine.txt": "base engine\n"}
 	for path, data := range files {
 		testWrite(t, source, path, data)
+	}
+	for path, data := range ignoredBaseFiles {
+		testWrite(t, source, path, data)
+		testGit(t, g, source, "add", "-f", "--", path)
 	}
 	base := fixtureCommit(t, g, source)
 	testGit(t, g, "", "clone", "--template=", "--no-hardlinks", source, owner)

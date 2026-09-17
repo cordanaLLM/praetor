@@ -71,6 +71,9 @@ func Run(ctx context.Context, stage string, opts Options) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	if stage == "init" {
+		return runInit(ctx, g, opts)
+	}
 	return runSync(ctx, g, stage, opts)
 }
 
@@ -100,10 +103,12 @@ func runSync(ctx context.Context, g *gitRunner, stage string, opts Options) (*Re
 
 func validateOptions(stage string, opts *Options) error {
 	switch stage {
+	case "init":
+		return validateInitOptions(opts)
 	case "plan", "prepare":
 		return validateSyncOptions(stage, opts)
 	}
-	return errors.New("supported stages: plan, prepare")
+	return errors.New("supported stages: init, plan, prepare")
 }
 
 func validateSyncOptions(stage string, opts *Options) error {
