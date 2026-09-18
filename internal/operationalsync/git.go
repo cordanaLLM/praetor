@@ -27,7 +27,7 @@ func newGit(ctx context.Context) (*gitRunner, error) {
 	if err != nil {
 		return nil, err
 	}
-	env := []string{"PATH=" + scrubbedGitPath(binary), "LANG=C.UTF-8",
+	env := []string{"PATH=" + util.ScrubbedToolPath(binary), "LANG=C.UTF-8",
 		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_ATTR_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=file", "GIT_OPTIONAL_LOCKS=0",
 		"GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1"}
@@ -70,17 +70,4 @@ func (g *gitRunner) blob(ctx context.Context, dir, sha, path string) ([]byte, er
 		return nil, fmt.Errorf("%s must be a regular tracked 0644 file", path)
 	}
 	return g.run(ctx, dir, "show", sha+":"+path)
-}
-
-// scrubbedGitPath mirrors internal/dogfood.scrubbedPath: the minimal PATH that still
-// finds git and its helpers, joined with the platform's own list separator rather than
-// a literal colon, and including the POSIX directories only where they exist.
-func scrubbedGitPath(binary string) string {
-	entries := []string{filepath.Dir(binary)}
-	for _, dir := range []string{"/usr/bin", "/bin"} {
-		if info, err := os.Stat(dir); err == nil && info.IsDir() {
-			entries = append(entries, dir)
-		}
-	}
-	return strings.Join(entries, string(os.PathListSeparator))
 }
