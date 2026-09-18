@@ -1,6 +1,7 @@
 package operationalsync
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -72,19 +73,24 @@ func TestOwnerManifestWritesRepositorySource(t *testing.T) {
 	}
 }
 
-// TestOwnerManifestOverwritesStaleRepositorySource is the boundary dimension: a manifest that
-// already declares repository.source (a second sync round, applied to the owner's own
-// previously overlaid file re-read as a base -- or any stray prior value) gets the field
-// forced to the freshly computed source identity, the same way owner and visibility already
-// are, rather than preserving whatever value was already there.
-func TestOwnerManifestOverwritesStaleRepositorySource(t *testing.T) {
-	raw := []byte("version: 1\nrepository:\n  owner: public\n  name: praetor\n  visibility: public\n  source: stale/value\n")
-	out, err := ownerManifest(raw, identity{"private", "praetor", "private"})
+// TestOwnerManifestKeepsExistingRepositorySource is the positive dimension for #268: overlaying
+// an already-overlaid manifest must keep the recorded public source and be byte-identical,
+// rather than rewriting source to the fork's own owner/name.
+func TestOwnerManifestKeepsExistingRepositorySource(t *testing.T) {
+	raw := []byte("version: 1\nrepository:\n  owner: public\n  name: praetor\n  visibility: public\n")
+	first, err := ownerManifest(raw, identity{"private", "praetor", "private"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	second, err := ownerManifest(first, identity{"private", "praetor", "private"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatalf("second overlay was not byte-identical:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
 	var doc map[string]any
-	if err := yaml.Unmarshal(out, &doc); err != nil {
+	if err := yaml.Unmarshal(second, &doc); err != nil {
 		t.Fatal(err)
 	}
 	repo, ok := doc["repository"].(map[string]any)
@@ -92,7 +98,19 @@ func TestOwnerManifestOverwritesStaleRepositorySource(t *testing.T) {
 		t.Fatalf("repository section decoded as %T, want map[string]any", doc["repository"])
 	}
 	if repo["source"] != "public/praetor" {
-		t.Fatalf("repository.source = %v, want public/praetor to overwrite the stale value", repo["source"])
+		t.Fatalf("repository.source = %v, want public/praetor kept across the second overlay", repo["source"])
+	}
+}
+
+// TestOwnerManifestRefusesMalformedRepositorySource is the negative dimension for #268: a
+// present source that is not an owner/name identity, or whose name does not match the
+// repository, is refused rather than rewritten to the current owner/name.
+func TestOwnerManifestRefusesMalformedRepositorySource(t *testing.T) {
+	for _, source := range []string{"stale/value", "not-an-identity", "a/b/c", ""} {
+		raw := []byte("version: 1\nrepository:\n  owner: public\n  name: praetor\n  visibility: public\n  source: " + source + "\n")
+		if _, err := ownerManifest(raw, identity{"private", "praetor", "private"}); err == nil {
+			t.Fatalf("accepted malformed repository.source %q", source)
+		}
 	}
 }
 
