@@ -1,0 +1,21 @@
+{
+  "[go]": {
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "always"
+    },
+    "editor.defaultFormatter": "golang.go",
+    "editor.formatOnSave": true
+  },
+  "antigravity.searchMaxWorkspaceFileCount": 50000,
+  "files.watcherExclude": {
+    "**/.standards/worktrees/**": true,
+    "**/.workingdir*/**": true,
+    "**/bin/**": true,
+    "**/dist/**": true
+  },
+  "go.useLanguageServer": true,
+  "standards.lsp.enabled": true,
+  "standards.lsp.path": "${workspaceFolder}/bin/standards-lsp",
+  "standards.lsp.trace.server": "messages",
+  "standards.sentinel.headroomMB": 1024
+}
