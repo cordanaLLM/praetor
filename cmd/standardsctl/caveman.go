@@ -19,6 +19,7 @@ import (
 
 const (
 	cavemanUsage = "usage: praetorctl caveman check [--surface=<name>] [--root=.] <file|dir|-> [...]\n" +
+		"       praetorctl caveman floor <before> <after>\n" +
 		"       praetorctl caveman estimate <file|dir|-> [...]"
 	// maxCavemanFiles bounds the files one invocation reads, directories expanded (HISS-02).
 	maxCavemanFiles = 4096
@@ -33,7 +34,8 @@ type cavemanInput struct {
 	text string
 }
 
-// runCaveman lints agent-facing text (check) or measures its token cost (estimate).
+// runCaveman lints agent-facing text (check), proves a rewrite lost nothing (floor) or
+// measures its token cost (estimate).
 func runCaveman(args []string) error {
 	return cavemanCommand(context.Background(), args, os.Stdin, os.Stdout)
 }
@@ -47,6 +49,8 @@ func cavemanCommand(ctx context.Context, args []string, stdin io.Reader, out io.
 	switch args[0] {
 	case "check":
 		return cavemanCheck(ctx, args[1:], stdin, out)
+	case "floor":
+		return cavemanFloor(ctx, args[1:], stdin, out)
 	case "estimate":
 		return cavemanEstimate(ctx, args[1:], stdin, out)
 	}
@@ -120,14 +124,56 @@ func formatCavemanReport(out *strings.Builder, name string, report caveman.Repor
 	fmt.Fprintf(out, "%s: %s prose_words=%d articles=%d density=%.1f/100 limit=%.1f off_regions=%d register_block_lines=%d findings=%d\n",
 		name, verdict, report.ProseWords, report.Articles, report.Density(), caveman.DefaultMaxArticleDensity,
 		report.OffRegions, masked, len(report.Findings))
-	for i := 0; i < len(report.Findings) && i < maxPrintedFindings; i++ {
-		f := report.Findings[i]
+	appendCavemanFindings(out, name, report.Findings)
+	return report.Passed()
+}
+
+// appendCavemanFindings prints at most maxPrintedFindings findings as <name>:<line> <rule>:
+// <excerpt>, then a count of the rest.
+func appendCavemanFindings(out *strings.Builder, name string, findings []caveman.Finding) {
+	for i := 0; i < len(findings) && i < maxPrintedFindings; i++ {
+		f := findings[i]
 		fmt.Fprintf(out, "%s:%d %s: %s\n", name, f.Line, f.Rule, f.Excerpt)
 	}
-	if extra := len(report.Findings) - maxPrintedFindings; extra > 0 {
+	if extra := len(findings) - maxPrintedFindings; extra > 0 {
 		fmt.Fprintf(out, "%s: (+%d more findings)\n", name, extra)
 	}
-	return report.Passed()
+}
+
+// cavemanFloor compares a rewrite with its original and fails when the rewrite lost a code
+// span, a fenced command, an id, a link target or a marker, or dropped a MUST, a
+// prohibition or a numbered rule. Exactly two inputs, a file or "-" each (at most one "-");
+// findings name their line in <before>, line 0 for a count.
+func cavemanFloor(ctx context.Context, args []string, stdin io.Reader, out io.Writer) error {
+	if len(args) != 2 {
+		return errors.New(cavemanUsage)
+	}
+	if args[0] == "-" && args[1] == "-" {
+		return errors.New("caveman floor: at most one input can be standard input")
+	}
+	before, err := readCavemanInput(ctx, args[0], stdin)
+	if err != nil {
+		return err
+	}
+	after, err := readCavemanInput(ctx, args[1], stdin)
+	if err != nil {
+		return err
+	}
+	report := caveman.Floor(before.text, after.text)
+	verdict := "PASS"
+	if !report.Passed() {
+		verdict = "FAIL"
+	}
+	var text strings.Builder
+	fmt.Fprintf(&text, "%s -> %s: %s findings=%d\n", before.name, after.name, verdict, len(report.Findings))
+	appendCavemanFindings(&text, before.name, report.Findings)
+	if _, err := io.WriteString(out, text.String()); err != nil {
+		return fmt.Errorf("caveman floor: write report: %w", err)
+	}
+	if !report.Passed() {
+		return fmt.Errorf("caveman floor: %s lost %d fact(s) of %s", after.name, len(report.Findings), before.name)
+	}
+	return nil
 }
 
 // cavemanEstimate prints bytes, lines and estimated tokens per input and in total.

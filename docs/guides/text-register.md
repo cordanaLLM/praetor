@@ -196,6 +196,7 @@ rewrite lost nothing, and estimates tokens; `praetorctl caveman` runs it on file
 
 ```bash
 praetorctl caveman check AGENTS.md .agents/agents/
+praetorctl caveman floor AGENTS.md AGENTS.caveman.md
 praetorctl caveman estimate AGENTS.md
 ```
 
@@ -220,6 +221,13 @@ AGENTS.md: PASS prose_words=721 articles=2 density=0.3/100 limit=2.0 off_regions
 
 `praetorctl caveman estimate` puts the rewrite at 10,333 bytes and about 1,911 tokens,
 down from 12,308 bytes and about 2,315 tokens; CLAUDE.md went from 168 to 115 lines.
+
+`floor <before> <after>` runs the clarity floor on a rewrite: it exits non-zero when
+`<after>` lost a code span, a fenced command, an id, a link target or an HTML marker of
+`<before>`, or carries fewer MUST-type directives, prohibitions or numbered rules. Findings
+name their line in `<before>` (line 0 for a count). Either input can be `-`, not both. A
+rewrite into the internal register is acceptable when `check` passes on it and `floor`
+passes from the original to it. The lint runs on demand only: no gate calls it yet.
 
 ### The context gate
 

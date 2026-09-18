@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -123,5 +124,76 @@ func TestCavemanEstimate(t *testing.T) {
 	}
 	if _, err := runCavemanCLI(t, "", "estimate", filepath.Join(dir, "absent")); err == nil {
 		t.Fatal("a missing input must fail")
+	}
+}
+
+const (
+	floorBefore = "1. **Never** push to `main`; run `make verify-all` first (HISS-16).\n" +
+		"You MUST read [the guide](docs/guides/text-register.md).\n"
+	floorAfter = "1. **Never** push `main`. First: `make verify-all` (HISS-16).\n" +
+		"MUST read [guide](docs/guides/text-register.md).\n"
+)
+
+func TestCavemanFloorPositive(t *testing.T) {
+	dir := t.TempDir()
+	before := writeFixtureFile(t, dir, "before.md", floorBefore)
+	after := writeFixtureFile(t, dir, "after.md", floorAfter)
+	out, err := runCavemanCLI(t, "", "floor", before, after)
+	if err != nil || !strings.Contains(out, "after.md: PASS findings=0") {
+		t.Fatalf("a rewrite that keeps every fact must pass: err=%v\n%s", err, out)
+	}
+	// The rewrite may arrive on standard input.
+	if out, err = runCavemanCLI(t, floorAfter, "floor", before, "-"); err != nil || !strings.Contains(out, "-> -: PASS") {
+		t.Fatalf("stdin rewrite: err=%v\n%s", err, out)
+	}
+}
+
+func TestCavemanFloorNegative(t *testing.T) {
+	dir := t.TempDir()
+	before := writeFixtureFile(t, dir, "before.md", floorBefore)
+	lossy := writeFixtureFile(t, dir, "lossy.md", "1. **Never** push main.\nRead the guide.\n")
+	out, err := runCavemanCLI(t, "", "floor", before, lossy)
+	if err == nil || !strings.Contains(err.Error(), "lossy.md lost") {
+		t.Fatalf("a lossy rewrite must fail: err=%v\n%s", err, out)
+	}
+	for _, want := range []string{"F1 code-span-lost", "F3 id-lost: HISS-16", "F4 link-lost", "F6 must-dropped: 1 -> 0"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing finding %q in:\n%s", want, out)
+		}
+	}
+	for name, args := range map[string][]string{
+		"one input":    {"floor", before},
+		"three inputs": {"floor", before, before, before},
+		"both stdin":   {"floor", "-", "-"},
+		"missing file": {"floor", before, filepath.Join(dir, "absent.md")},
+	} {
+		if _, err := runCavemanCLI(t, "", args...); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+	}
+}
+
+func TestCavemanFloorBoundary(t *testing.T) {
+	dir := t.TempDir()
+	empty := writeFixtureFile(t, dir, "empty.md", "")
+	before := writeFixtureFile(t, dir, "before.md", floorBefore)
+	// Nothing to lose: an empty original passes against anything, including empty.
+	if out, err := runCavemanCLI(t, "", "floor", empty, empty); err != nil || !strings.Contains(out, "PASS findings=0") {
+		t.Fatalf("empty -> empty: err=%v\n%s", err, out)
+	}
+	// Moving a fact is fine; the floor checks presence, not position.
+	moved := writeFixtureFile(t, dir, "moved.md", "MUST read [guide](docs/guides/text-register.md).\n"+
+		"1. **Never** push `main`. First: `make verify-all` (HISS-16).\n")
+	if out, err := runCavemanCLI(t, "", "floor", before, moved); err != nil {
+		t.Fatalf("reordered facts must pass: err=%v\n%s", err, out)
+	}
+	// Findings are bounded like check's; the rest are counted.
+	var many strings.Builder
+	for i := 0; i < maxPrintedFindings+5; i++ {
+		fmt.Fprintf(&many, "see ID-%d\n", i+1)
+	}
+	ids := writeFixtureFile(t, dir, "ids.md", many.String())
+	if out, err := runCavemanCLI(t, "", "floor", ids, empty); err == nil || !strings.Contains(out, "(+5 more findings)") {
+		t.Fatalf("finding bound: err=%v\n%s", err, out)
 	}
 }
