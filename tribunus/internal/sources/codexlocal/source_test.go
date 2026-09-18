@@ -95,7 +95,8 @@ func TestFetch_Negative(t *testing.T) {
 }
 
 // TestFetch_Boundary covers a session with rate_limits present but no
-// primary window (secondary-only), which must skip rather than fabricate.
+// primary window on every line (secondary-only), which must skip rather
+// than fabricate.
 func TestFetch_Boundary(t *testing.T) {
 	dir := t.TempDir()
 	line := `{"timestamp":"2026-09-13T12:56:47.753Z","ordinal":1,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":null,"secondary":null,"plan_type":"pro"}}}`
@@ -104,5 +105,25 @@ func TestFetch_Boundary(t *testing.T) {
 	res := Fetch(context.Background(), dir)
 	if res.Status != catalog.StatusSkip {
 		t.Fatalf("Status = %v, detail=%q, want skip when rate_limits.primary is null", res.Status, res.Detail)
+	}
+}
+
+// TestFetch_SessionEndsWithNullPrimary reproduces a real shape found live on
+// this workstation on 2026-09-18: the newest session's very last
+// rate_limits line has primary:null (a session-end event), while an
+// earlier line in the same file has a real reading. Fetch must report that
+// earlier reading, not skip -- the file has usable data, it just is not on
+// the last line.
+func TestFetch_SessionEndsWithNullPrimary(t *testing.T) {
+	dir := t.TempDir()
+	nullPrimaryLine := `{"timestamp":"2026-09-13T13:13:28.673Z","ordinal":2,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":null,"secondary":null,"plan_type":"pro"}}}`
+	writeSession(t, dir, "new.jsonl", validLine+"\n"+nullPrimaryLine, time.Now())
+
+	res := Fetch(context.Background(), dir)
+	if res.Status != catalog.StatusOK {
+		t.Fatalf("Status = %v, detail = %q, want ok using the earlier non-null reading", res.Status, res.Detail)
+	}
+	if res.Records[0].UsageWindow == nil || res.Records[0].UsageWindow.UsedPercent == nil || *res.Records[0].UsageWindow.UsedPercent != 92.0 {
+		t.Fatalf("UsageWindow = %+v, want the earlier line's used_percent=92.0", res.Records[0].UsageWindow)
 	}
 }

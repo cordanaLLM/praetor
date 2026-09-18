@@ -208,7 +208,12 @@ func latestRateLimits(ctx context.Context, path string) (*rateLimits, error) {
 		if jsonErr := json.Unmarshal(raw, &line); jsonErr != nil {
 			continue // not every line is a rate_limits-bearing event_msg
 		}
-		if line.Payload.RateLimits != nil {
+		// A session's last rate_limits line can itself carry a null primary
+		// window (verified live: this workstation's newest session ends on
+		// exactly that). Tracking only entries with a usable primary avoids
+		// reporting "no data" when an earlier line in the same file has
+		// one, without ever inventing a value the file does not contain.
+		if line.Payload.RateLimits != nil && line.Payload.RateLimits.Primary != nil {
 			latest = line.Payload.RateLimits
 		}
 	}

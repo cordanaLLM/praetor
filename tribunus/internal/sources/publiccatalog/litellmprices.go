@@ -27,24 +27,37 @@ type litellmPriceEntry struct {
 }
 
 // fetchLiteLLMPrices fetches and parses LiteLLM's public price map.
+//
+// The map is decoded key-by-key rather than in one map[string]litellmPriceEntry
+// shot: verified live on 2026-09-18, the map's own "sample_spec" key documents
+// each field with a human-readable *string* ("max input tokens, if the
+// provider specifies it...") in a field the model entries type as an int64.
+// A single json.Unmarshal into a typed map aborts on that first mismatch and
+// discards every real model with it. Decoding entry-by-entry keeps that one
+// documentation key (and any one malformed model entry) from taking down
+// every other model in the same response.
 func fetchLiteLLMPrices(ctx context.Context, url string) ([]catalog.Record, error) {
 	body, err := boundedGet(ctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("litellm-prices: %w", err)
 	}
-	var parsed map[string]litellmPriceEntry
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("litellm-prices: decode response: %w", err)
 	}
-	if len(parsed) > maxEntries {
+	if len(raw) > maxEntries {
 		return nil, fmt.Errorf("litellm-prices: response lists more than %d models", maxEntries)
 	}
 
 	fetchedAt := time.Now().UTC()
-	records := make([]catalog.Record, 0, len(parsed))
-	for id, e := range parsed {
+	records := make([]catalog.Record, 0, len(raw))
+	for id, msg := range raw {
 		if id == "" || id == litellmSampleSpecKey {
 			continue
+		}
+		var e litellmPriceEntry
+		if err := json.Unmarshal(msg, &e); err != nil {
+			continue // one malformed entry does not cost every other model its record
 		}
 		records = append(records, litellmPriceRecord(id, e, fetchedAt))
 	}
