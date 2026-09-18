@@ -734,7 +734,7 @@ Formal Specification: Single source of agent instructions (AGENTS.md). Vendor ta
 Enforcement: Pre-commit blocker, server-side admission.
 Failure Action: Merge blocker.`,
 	"HISS-17": `Rule: HISS-17 (State Ledger Discipline)
-Formal Specification: Every agent turn starts by inspecting .workingdir/STATE.md and .workingdir/OPEN.md; tasks are tracked via 'praetorctl state task'; every turn ends with 'praetorctl state sync .'.
+Formal Specification: Every agent turn starts with 'praetorctl state status' and the open tasks in .workingdir/OPEN.md, never a read of the whole .workingdir/STATE.md; tasks are tracked via 'praetorctl state task'; every turn ends with 'praetorctl state sync .'.
 Enforcement: Pre-commit state-sync hook and the CI / pre-push state audit.
 Failure Action: Pre-commit / CI gate rejection.`,
 	"HISS-18": `Rule: HISS-18 (CI Efficiency)
