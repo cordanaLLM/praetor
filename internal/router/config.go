@@ -39,6 +39,22 @@ func LoadRoutingConfigContext(ctx context.Context, path string) (*RoutingConfig,
 	if err != nil {
 		return nil, err
 	}
+	cfg, err := decodeRoutingConfig(data, path)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// decodeRoutingConfig parses and validates one strict YAML document already read
+// into memory, so a writer can merge exactly the bytes it observed.
+func decodeRoutingConfig(data []byte, path string) (*RoutingConfig, error) {
+	if len(data) > MaxRoutingFileBytes {
+		return nil, fmt.Errorf("%w: %s exceeds 1 MiB", ErrInvalidRoutingConfig, path)
+	}
 	var cfg RoutingConfig
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
@@ -52,23 +68,23 @@ func LoadRoutingConfigContext(ctx context.Context, path string) (*RoutingConfig,
 	if err := ValidateRoutingConfig(&cfg); err != nil {
 		return nil, err
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	cfg.SourceSHA256 = fmt.Sprintf("%x", sha256.Sum256(data))
 	return &cfg, nil
 }
 
+// maxModelFieldNodes bounds one model mapping: eight known keys, a key and a value node each.
+const maxModelFieldNodes = 16
+
 // UnmarshalYAML records actual numeric price presence, including explicit zero.
 func (model *ModelDescriptor) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.MappingNode || len(node.Content) > 14 {
+	if node.Kind != yaml.MappingNode || len(node.Content) > maxModelFieldNodes {
 		return fmt.Errorf("%w: invalid model descriptor", ErrInvalidRoutingConfig)
 	}
 	prices := 0
-	for i := 0; i+1 < len(node.Content) && i < 14; i += 2 {
+	for i := 0; i+1 < len(node.Content) && i < maxModelFieldNodes; i += 2 {
 		key, value := node.Content[i].Value, node.Content[i+1]
 		switch key {
-		case "id", "family", "rpm_limit", "tpm_limit", "capabilities":
+		case "id", "family", "source", "rpm_limit", "tpm_limit", "capabilities":
 		case "cost_per_m_in", "cost_per_m_out":
 			if value.Tag != "!!int" && value.Tag != "!!float" {
 				return fmt.Errorf("%w: %s must be explicitly numeric", ErrInvalidRoutingConfig, key)
@@ -148,7 +164,14 @@ func validateRoutingModel(model ModelDescriptor, seen map[string]bool) error {
 	if model.RPMLimit < 0 || model.TPMLimit < 0 {
 		return fmt.Errorf("%w: negative capacity for %s", ErrInvalidRoutingConfig, model.ID)
 	}
+	if !knownModelSource(model.Source) {
+		return fmt.Errorf("%w: model %s has unknown source %q", ErrInvalidRoutingConfig, model.ID, model.Source)
+	}
 	return validateRoutingTags(model.Capabilities)
+}
+
+func knownModelSource(source ModelSource) bool {
+	return source == SourceOperator || source == SourceSeed || source == SourceLocal
 }
 
 func validateRoutingTags(tags []string) error {

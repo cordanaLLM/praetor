@@ -64,6 +64,7 @@ func TestRoutingConfigRejectsAmbiguousOrInvalidValues(t *testing.T) {
 		strings.Replace(routingFixture, "capabilities: [tools]", "capabilities: [tools, tools]", 1),
 		routingFixture + "unexpected: true\n", routingFixture + "---\nversion: 1\n",
 		strings.Replace(routingFixture, "version: 1", "version: 2", 1),
+		strings.Replace(routingFixture, "family: openai", "family: openai\n        source: remote", 1),
 	}
 	for i, body := range cases {
 		if _, err := LoadRoutingConfig(routingInput(t, body)); err == nil {
@@ -112,5 +113,25 @@ func TestRoutingConfigReadAndTagBounds(t *testing.T) {
 	}
 	if err := validateRoutingTags(append(tags, "overflow")); err == nil {
 		t.Fatal("cap+1 tags accepted")
+	}
+}
+
+func TestRoutingConfigModelSourceField(t *testing.T) {
+	// Every known model key at once: the mapping sits exactly on maxModelFieldNodes.
+	allKeys := strings.Replace(routingFixture, "family: openai", "family: openai\n        source: local\n        rpm_limit: 1\n        tpm_limit: 1", 1)
+	cfg, err := LoadRoutingConfig(routingInput(t, allKeys))
+	if err != nil {
+		t.Fatalf("model with every known key rejected: %v", err)
+	}
+	if source := cfg.Tiers["work"].Models[0].Source; source != SourceLocal {
+		t.Fatalf("source %q, want local", source)
+	}
+	cfg, err = LoadRoutingConfig(routingInput(t, routingFixture))
+	if err != nil || cfg.Tiers["work"].Models[0].Source != SourceOperator {
+		t.Fatalf("absent source must load as operator-declared: %v", err)
+	}
+	extra := strings.Replace(allKeys, "rpm_limit: 1", "rpm_limit: 1\n        unknown: 1", 1)
+	if _, err := LoadRoutingConfig(routingInput(t, extra)); err == nil {
+		t.Fatal("model mapping past the field bound accepted")
 	}
 }

@@ -17,6 +17,7 @@ func runModels(args []string) error {
 	configPath := fs.String("config", ".config/models/routing.yaml", "Path to model routing config")
 	discoverLocal := fs.Bool("discover-local", true, "Auto-discover local Ollama/vLLM models")
 	endpoints := fs.String("local-endpoints", "http://localhost:11434,http://localhost:8000", "Comma-separated local runtime endpoints")
+	prune := fs.Bool("prune", false, "models sync: rebuild the catalog from the seed list and this run's local discovery, removing every other entry")
 	route := addModelRouteFlags(fs)
 
 	positional, err := parseInterspersed(fs, args)
@@ -36,7 +37,7 @@ func runModels(args []string) error {
 
 	switch action {
 	case "sync":
-		return handleModelsSync(ctx, *configPath, *endpoints, *discoverLocal)
+		return handleModelsSync(ctx, *configPath, modelSyncOptions(*endpoints, *discoverLocal, *prune))
 	case "list":
 		return handleModelsList(*configPath)
 	case "route":
@@ -46,27 +47,32 @@ func runModels(args []string) error {
 	}
 }
 
-func handleModelsSync(ctx context.Context, configPath, endpoints string, discoverLocal bool) error {
-	fmt.Println("=== Praetor legacy catalog seed and optional local inventory ===")
+func modelSyncOptions(endpoints string, discoverLocal, prune bool) router.SyncOptions {
 	var localList []string
 	for _, ep := range strings.Split(endpoints, ",") {
 		if trimmed := strings.TrimSpace(ep); trimmed != "" {
 			localList = append(localList, trimmed)
 		}
 	}
-
-	opts := router.SyncOptions{
+	return router.SyncOptions{
 		IncludeOpenWeights: true,
 		DiscoverLocal:      discoverLocal,
 		LocalEndpoints:     localList,
+		Prune:              prune,
 	}
+}
 
+func handleModelsSync(ctx context.Context, configPath string, opts router.SyncOptions) error {
+	fmt.Println("=== Praetor legacy catalog seed and optional local inventory ===")
 	res, err := router.SyncCatalog(ctx, configPath, opts)
+	if errors.Is(err, router.ErrSyncWouldRemove) {
+		return fmt.Errorf("model catalog sync failed, nothing written: %w; pass --prune to remove them", err)
+	}
 	if err != nil {
 		return fmt.Errorf("model catalog sync failed: %w", err)
 	}
 
-	fmt.Printf("Legacy seed written to %s (prices and quotas are not refreshed upstream):\n", configPath)
+	fmt.Printf("Seed merged into %s (prices and quotas are not refreshed upstream):\n", configPath)
 	fmt.Printf("  - Total Models:        %d\n", res.TotalModels)
 	fmt.Printf("  - Tier 3 Frontier:     %d models (Opus, Pro, O3, Grok 3, DeepSeek-R1)\n", res.HeavyFrontier)
 	fmt.Printf("  - Tier 2 Mid-Weight:   %d models (Qwen3.8-27B, Qwen3-30B, Coder-32B, Codestral)\n", res.MidWeight)
@@ -74,6 +80,10 @@ func handleModelsSync(ctx context.Context, configPath, endpoints string, discove
 	fmt.Printf("  - Tier 0 Micro/Nano:   %d models (SmolLM2, 1.5B/3B Qwen, Phi-3.5-mini)\n", res.Nano)
 	if res.LocalModels > 0 {
 		fmt.Printf("  - Local Discovered:    %d models\n", res.LocalModels)
+	}
+	fmt.Printf("  - Kept, not seed-owned: %d models\n", res.Preserved)
+	for _, id := range res.Removed {
+		fmt.Printf("  - Pruned:              %s\n", id)
 	}
 	return nil
 }

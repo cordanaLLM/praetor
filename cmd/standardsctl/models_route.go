@@ -57,6 +57,10 @@ func validateModelRouteFlags(fs *flag.FlagSet, action string) error {
 			if action == "route" {
 				err = fmt.Errorf("--%s does not apply to offline routing", f.Name)
 			}
+		case "prune":
+			if action != "sync" {
+				err = fmt.Errorf("--prune requires models sync")
+			}
 		}
 	})
 	return err
