@@ -27,6 +27,12 @@ func VerifyStateSync(ctx context.Context, rootPath string) error {
 	if err != nil {
 		return fmt.Errorf("read state synchronization: %w", err)
 	}
+	return verifyStateContent(ctx, rootPath, content)
+}
+
+// verifyStateContent checks the last sync marker of one STATE.md snapshot, so a
+// caller that rewrites the file verifies exactly the bytes it read.
+func verifyStateContent(ctx context.Context, rootPath string, content []byte) error {
 	match := syncMarker.FindSubmatchIndex(content)
 	if match == nil {
 		return fmt.Errorf("state synchronization missing; run `praetorctl state sync .`")
