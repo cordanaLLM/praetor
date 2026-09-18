@@ -165,16 +165,17 @@ func failed(outcome Outcome, err error) Outcome {
 }
 
 // report prints one outcome line.
-func report(w io.Writer, o Outcome) {
+func report(w io.Writer, o Outcome) error {
 	if o.Err != nil {
-		fmt.Fprintf(w, "%-12s %s: %v\n", o.Status, o.Archive, o.Err)
-		return
+		_, err := fmt.Fprintf(w, "%-12s %s: %v\n", o.Status, o.Archive, o.Err)
+		return err
 	}
 	note := ""
 	if o.Note != "" {
 		note = " (" + o.Note + ")"
 	}
-	fmt.Fprintf(w, "%-12s %s %s%s\n", o.Status, o.Archive, FormatBytes(o.Bytes), note)
+	_, err := fmt.Fprintf(w, "%-12s %s %s%s\n", o.Status, o.Archive, FormatBytes(o.Bytes), note)
+	return err
 }
 
 // failures summarises failed outcomes as one error.

@@ -169,10 +169,10 @@ func resolvesInside(stack, segments []string, links map[string]bool) bool {
 		return false
 	}
 	for _, segment := range segments {
-		switch {
-		case segment == "" || segment == ".":
+		switch segment {
+		case "", ".":
 			continue
-		case segment == "..":
+		case "..":
 			if len(stack) == 0 {
 				return false
 			}

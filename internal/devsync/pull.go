@@ -43,10 +43,7 @@ func Pull(ctx context.Context, opts PullOptions) ([]Outcome, error) {
 	if err != nil {
 		return nil, err
 	}
-	archives, err := opts.Rclone.listArchives(ctx, remotePath(opts.Remote, opts.Host))
-	if errors.Is(err, ErrRemoteMissing) || (err == nil && len(archives) == 0) {
-		return nil, fmt.Errorf("no archives for host %q on %s", opts.Host, opts.Remote)
-	}
+	archives, err := hostArchives(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -55,12 +52,22 @@ func Pull(ctx context.Context, opts PullOptions) ([]Outcome, error) {
 	}
 	out := writerOrDiscard(opts.Out)
 	outcomes := make([]Outcome, 0, len(archives))
+	var printErr error
 	for _, archive := range archives {
 		outcome := pullArchive(ctx, opts, target, archive)
-		report(out, outcome)
+		printErr = errors.Join(printErr, report(out, outcome))
 		outcomes = append(outcomes, outcome)
 	}
-	return outcomes, failures(outcomes)
+	return outcomes, errors.Join(failures(outcomes), printErr)
+}
+
+// hostArchives lists the archives of opts.Host; a host with none is an error.
+func hostArchives(ctx context.Context, opts PullOptions) ([]RemoteArchive, error) {
+	archives, err := opts.Rclone.listArchives(ctx, remotePath(opts.Remote, opts.Host))
+	if errors.Is(err, ErrRemoteMissing) || (err == nil && len(archives) == 0) {
+		return nil, fmt.Errorf("no archives for host %q on %s", opts.Host, opts.Remote)
+	}
+	return archives, err
 }
 
 // pullTarget resolves target and refuses one inside devDir or one that already holds files.

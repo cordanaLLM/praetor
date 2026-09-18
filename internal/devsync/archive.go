@@ -104,11 +104,7 @@ func discoverUnits(ctx context.Context, devDir string) ([]unit, error) {
 // findRepositories searches top breadth-first for repositories and returns their paths
 // relative to top. It never descends into a repository, a cache folder or a symbolic link.
 func findRepositories(ctx context.Context, top string, budget *int) ([]string, error) {
-	type pending struct {
-		rel   string
-		depth int
-	}
-	queue := []pending{{rel: ".", depth: 1}}
+	queue := []pendingDir{{rel: ".", depth: 1}}
 	var repos []string
 	for len(queue) > 0 && *budget > 0 {
 		if err := ctx.Err(); err != nil {
@@ -117,26 +113,42 @@ func findRepositories(ctx context.Context, top string, budget *int) ([]string, e
 		current := queue[0]
 		queue = queue[1:]
 		*budget--
-		children, err := os.ReadDir(filepath.Join(top, current.rel))
+		found, deeper, err := scanFolder(top, current)
 		if err != nil {
-			return nil, fmt.Errorf("search %s for repositories: %w", top, err)
+			return nil, err
 		}
-		for _, child := range children {
-			if !child.IsDir() || child.Name() == ".git" || cacheDirs[child.Name()] {
-				continue
-			}
-			rel := filepath.Join(current.rel, child.Name())
-			if topology.HasValidGitRepo(filepath.Join(top, rel)) {
-				repos = append(repos, rel)
-			} else if current.depth < maxRepoDepth {
-				queue = append(queue, pending{rel: rel, depth: current.depth + 1})
-			}
-		}
+		repos, queue = append(repos, found...), append(queue, deeper...)
 	}
 	if len(queue) > 0 {
 		return nil, fmt.Errorf("repository search exceeds %d folders", maxDiscoveryDirs)
 	}
 	return repos, nil
+}
+
+// pendingDir is a folder still to be searched, depth levels below the top-level folder.
+type pendingDir struct {
+	rel   string
+	depth int
+}
+
+// scanFolder splits the child folders of current into repositories and folders to search next.
+func scanFolder(top string, current pendingDir) (repos []string, deeper []pendingDir, err error) {
+	children, err := os.ReadDir(filepath.Join(top, current.rel))
+	if err != nil {
+		return nil, nil, fmt.Errorf("search %s for repositories: %w", top, err)
+	}
+	for _, child := range children {
+		if !child.IsDir() || child.Name() == ".git" || cacheDirs[child.Name()] {
+			continue
+		}
+		rel := filepath.Join(current.rel, child.Name())
+		if topology.HasValidGitRepo(filepath.Join(top, rel)) {
+			repos = append(repos, rel)
+		} else if current.depth < maxRepoDepth {
+			deeper = append(deeper, pendingDir{rel: rel, depth: current.depth + 1})
+		}
+	}
+	return repos, deeper, nil
 }
 
 // walkUnit visits, in lexical order, every entry of u that belongs in its archive.

@@ -59,15 +59,16 @@ func Push(ctx context.Context, opts PushOptions) ([]Outcome, error) {
 	}
 	out := writerOrDiscard(opts.Out)
 	outcomes := make([]Outcome, 0, len(units)+1)
+	var printErr error
 	for _, u := range units {
 		outcome := pushUnit(ctx, opts, state, u)
-		report(out, outcome)
+		printErr = errors.Join(printErr, report(out, outcome))
 		outcomes = append(outcomes, outcome)
 	}
 	outcome := pushAgentState(ctx, opts)
-	report(out, outcome)
+	printErr = errors.Join(printErr, report(out, outcome))
 	outcomes = append(outcomes, outcome)
-	return outcomes, failures(outcomes)
+	return outcomes, errors.Join(failures(outcomes), printErr)
 }
 
 func validatePush(opts PushOptions) error {
