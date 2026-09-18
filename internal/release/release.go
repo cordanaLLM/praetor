@@ -3,14 +3,12 @@ package release
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/changelog"
+	"github.com/cordanaLLM/praetor/internal/semver"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
-
-var semverRegex = regexp.MustCompile(`^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
 
 // ReleaseOptions configures release preparation and verification.
 type ReleaseOptions struct {
@@ -23,7 +21,7 @@ type ReleaseOptions struct {
 
 // PrepareRelease validates cleanliness, executes verification gates, and renders changelog.
 func PrepareRelease(ctx context.Context, opts ReleaseOptions) error {
-	if !semverRegex.MatchString(opts.Version) {
+	if _, ok := semver.Parse(opts.Version); !ok {
 		return fmt.Errorf("release: version %q is not valid SemVer", opts.Version)
 	}
 

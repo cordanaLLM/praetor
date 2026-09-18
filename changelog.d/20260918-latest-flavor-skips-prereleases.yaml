@@ -1,0 +1,4 @@
+type: fixed
+title: The latest moving flavor now resolves to the highest SemVer v* tag with no prerelease component, so a release candidate like v0.2.0-rc.1 can never outrank a stable release such as v0.1.0
+issue: "245"
+breaking: false

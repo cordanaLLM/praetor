@@ -66,7 +66,7 @@ that adds it.
 | :--- | :--- | :--- |
 | `bleeding` | `refs/heads/main` | experimental |
 | `edge` | `refs/heads/main` | pre-release |
-| `latest` | `refs/tags/v*`, highest by `git for-each-ref --sort=-v:refname` | stable |
+| `latest` | `refs/tags/v*`, highest SemVer tag with no prerelease component | stable |
 | `lts` | `refs/heads/lts-*`, highest by the same sort | enterprise-stable |
 
 ```bash
@@ -85,11 +85,12 @@ praetorctl flavors sync --strict        # fail if any source ref resolves to not
 | `--dir` | `.` | Repository root |
 
 A flavor whose source ref resolves to no commit is **pending**. That is the normal state for
-`latest` before the first `v*` tag and for `lts` before the first `lts-*` branch. `sync`
-prints it as `Pending <flavor>`, leaves its tag exactly where it is, and still moves every
-other flavor. It never falls back to `HEAD`, so a stable channel is never aliased to
-`main`. The workflow runs `flavors sync --push`, so the tags published are the flavors
-declared in the config, not a list of names kept in YAML.
+`latest` before the first `v*` tag, for `latest` while only prerelease tags exist (a
+`v0.2.0-rc.1` alone never stands in for `latest`, see #245), and for `lts` before the first
+`lts-*` branch. `sync` prints it as `Pending <flavor>`, leaves its tag exactly where it is,
+and still moves every other flavor. It never falls back to `HEAD`, so a stable channel is
+never aliased to `main`. The workflow runs `flavors sync --push`, so the tags published are
+the flavors declared in the config, not a list of names kept in YAML.
 
 Moving tags are lightweight tags created with `git tag --no-sign`. A workstation with
 `tag.gpgSign=true` would otherwise turn them into signed annotated tags that need a
@@ -100,7 +101,7 @@ against a bare repository, and the signing configuration.
 
 ## Known limits
 
-- `latest` takes the highest `v*` tag by version sort, prereleases included. A tag such
-  as `v0.2.0-rc.1` would become `latest`.
+- `latest` ignores tags that do not parse as SemVer even though they match the `v*` glob
+  (for example a stray `v-nightly`); those are treated as absent, not as an error.
 - `lts` matches local branches only. A CI checkout creates a local branch for `main` alone,
   so an `lts-*` branch that exists only on the remote leaves `lts` pending.
