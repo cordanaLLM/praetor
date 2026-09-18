@@ -126,6 +126,7 @@ nav:
       - Transcript Ingestion: guides/transcript-ingestion.md
       - Universal Builder: guides/universal-builder.md
       - Workstation Inventory: guides/workstation-inventory.md
+      - Workstation Sync: guides/devsync.md
       - Fast Adoption Engine: adoption.md
       - Fleet Dogfooding: dogfooding.md
   - Plans:
