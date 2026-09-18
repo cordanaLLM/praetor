@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/caveman"
 )
 
 var (
@@ -37,9 +39,9 @@ func CompressDocumentation(ref PackageRef, rawContent string, opts DistillOption
 		tokenBudget = 400
 	}
 	words := strings.Fields(rawMD)
-	tokenEstimate := int(float64(len(words)) * 1.3)
+	tokenEstimate := caveman.EstimateTokens(rawMD)
 	if tokenEstimate > tokenBudget && len(words) > 0 {
-		maxWords := int(float64(tokenBudget) / 1.3)
+		maxWords := int(float64(tokenBudget) / caveman.TokensPerWord)
 		if maxWords < len(words) {
 			truncatedWords := words[:maxWords]
 			rawMD = strings.Join(truncatedWords, " ") + "\n\n*(Truncated to token budget)*"
