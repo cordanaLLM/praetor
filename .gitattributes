@@ -1,6 +1,12 @@
 # Default: let git handle text normally.
 * text=auto
 
+# Go sources keep LF in the working tree on every platform. gofmt normalises line
+# endings as part of formatting, so a CRLF checkout makes it report every Go file as
+# unformatted -- 793 of them on Windows -- and makes the pre-commit gofmt rewrite files
+# nobody edited. The blobs are already LF; this only pins how they are written out.
+*.go text eol=lf
+
 # The CRLF fixtures assert that the line-based matchers are not silenced by a Windows
 # checkout. Two attributes are needed and they defend different things.
 #

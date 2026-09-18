@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -139,5 +140,29 @@ func TestSyncDirectoryRejectsAbsentRootAndCancellation(t *testing.T) {
 	cancel()
 	if err := SyncDirectory(ctx, root); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation did not propagate: %v", err)
+	}
+}
+
+// TestSyncDirectoryPersistsWrittenEntries is the positive half of SyncDirectory's
+// contract; the case above covers only a nil root and a cancelled context. Directory
+// fsync is refused on Windows with access denied, and the platform split in
+// SyncDirectory exists to close the handle there instead, so this pins that a populated
+// directory syncs without error on every platform the suite runs on.
+func TestSyncDirectoryPersistsWrittenEntries(t *testing.T) {
+	dir := t.TempDir()
+	root, err := OpenDirectory(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := root.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if err := os.WriteFile(filepath.Join(dir, "entry.txt"), []byte("entry"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncDirectory(t.Context(), root); err != nil {
+		t.Fatalf("directory sync refused on %s: %v", runtime.GOOS, err)
 	}
 }
