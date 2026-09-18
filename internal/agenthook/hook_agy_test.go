@@ -54,7 +54,7 @@ func agyStdoutAllows(t *testing.T, event string, response Response) bool {
 	if err := json.Unmarshal(response.Stdout, &body); err != nil {
 		t.Fatalf("agy stdout is not JSON: %q (%v)", response.Stdout, err)
 	}
-	decision, _ := body["decision"].(string)
+	decision, _ := body["decision"].(string) //nolint:errcheck // an absent or non-string decision reads as "", which both checks below already treat as not-allowed
 	if event == "stop" {
 		return decision != "continue"
 	}
