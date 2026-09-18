@@ -75,12 +75,15 @@ Constraints that shape the decision:
    records the register beside provider `Usage`. Cheap-tier labels default to `internal`, so
    grunt work receives telegraphic prompts and only the frontier tier generates social or
    docs prose. Tier selection is untouched.
-8. **One skill.** `social-text`, derived from `adhd-format` by reference. The docs and
-   internal rules live in the block and the guide; there is no `docs-text` or
-   `internal-brief` skill, no `internal/register` package and no second configuration file.
+8. **At most one skill per register.** `social-text`, derived from `adhd-format` by
+   reference, is the social form. `caveman` is the internal form, added on 2026-09-18 after
+   the one-line "telegraphic" rule proved too soft for agents to follow; the configuration
+   value stays `internal`. The docs rules live in the block and the guide; there is no
+   `docs-text` or `internal-brief` skill, no `internal/register` package and no second
+   configuration file.
 
 ```adr-constraint
-id: text-register-has-one-loader-and-one-skill
+id: text-register-has-one-loader-and-one-skill-per-register
 kind: forbidden-path
 forbids:
   - "internal/register/"
@@ -88,10 +91,10 @@ forbids:
   - ".agents/skills/docs-text/"
   - ".agents/skills/internal-brief/"
 rationale: >-
-  The register is one section of the existing manifest loader and one skill derived from
-  adhd-format. A second package, a second configuration file or a second skill per register
-  would be the HISS-19 defect this record decides against: two implementations of one
-  behaviour that drift apart.
+  The register is one section of the existing manifest loader and at most one skill per
+  register (social-text, caveman). A second package, a second configuration file or a second
+  skill for one register would be the HISS-19 defect this record decides against: two
+  implementations of one behaviour that drift apart.
 ```
 
 The constraint kinds available are `universal-scope` and `forbidden-path`

@@ -6,7 +6,7 @@
 - Rule 0 Terminal Disposition: every run must end with a structured disposition (in_review or blocked).
 - Ed25519 Exit-0 Receipts: attach cryptographic execution receipts to all PR proposals.
 - Timeout Resilience: timeout is not failure; re-check open PRs before retrying to prevent duplicate PRs.
-- Text register internal: telegraphic: no filler, no preamble, no restatement; facts, paths, commands, verdict.
+- Text register internal: `caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict.
 
 ## AGit Push Protocol
 ```bash
