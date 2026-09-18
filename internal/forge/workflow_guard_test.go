@@ -326,3 +326,103 @@ func TestManifestIdentity(t *testing.T) {
 		t.Error("guarded workflows beside a malformed manifest must fail closed")
 	}
 }
+
+// manifestWithRepository writes a minimal manifest carrying only the repository fields the
+// case supplies, omitting a blank source rather than writing an empty key.
+func manifestWithRepository(t *testing.T, owner, name, source string) string {
+	t.Helper()
+	dir := t.TempDir()
+	body := "version: 1\nrepository:\n  owner: \"" + owner + "\"\n  name: \"" + name + "\"\n  visibility: \"private\"\n"
+	if source != "" {
+		body += "  source: \"" + source + "\"\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, manifestFileName), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// Positive, negative and boundary coverage for the repository.source precedence #255 adds:
+// an operational fork's overlaid manifest resolves to the public source, a manifest that
+// predates the field is unaffected, a source equal to owner/name still resolves (redundant,
+// not wrong), and a source that is not an owner/name pair fails closed rather than silently
+// falling back to the fork's own owner/name.
+func TestManifestIdentityPrefersRepositorySource(t *testing.T) {
+	overlaid := manifestWithRepository(t, "lusoris", "praetor", "cordanaLLM/praetor")
+	if identity, err := manifestIdentity(overlaid); err != nil || identity != "cordanaLLM/praetor" {
+		t.Errorf("overlaid manifest identity = %q, %v, want cordanaLLM/praetor", identity, err)
+	}
+	canonical := manifestWithRepository(t, "cordanaLLM", "praetor", "")
+	if identity, err := manifestIdentity(canonical); err != nil || identity != "cordanaLLM/praetor" {
+		t.Errorf("manifest without source = %q, %v, want owner/name unchanged", identity, err)
+	}
+	redundant := manifestWithRepository(t, "cordanaLLM", "praetor", "cordanaLLM/praetor")
+	if identity, err := manifestIdentity(redundant); err != nil || identity != "cordanaLLM/praetor" {
+		t.Errorf("source equal to owner/name = %q, %v, want cordanaLLM/praetor", identity, err)
+	}
+	for _, malformed := range []string{"not-an-identity", "cordanaLLM/praetor/extra", "/praetor", "cordanaLLM/"} {
+		dir := manifestWithRepository(t, "lusoris", "praetor", malformed)
+		if _, err := manifestIdentity(dir); err == nil {
+			t.Errorf("malformed source %q yielded an identity instead of failing closed", malformed)
+		}
+	}
+}
+
+// overlaidEngineRoot copies the engine's own checked-in workflow files -- unchanged, exactly
+// as operational sync's owner overlay leaves them -- beside a manifest shaped the way
+// internal/operationalsync's overlay() (owner: lusoris, source: cordanaLLM/praetor) leaves
+// .standards.yaml. It reproduces issue #255's failure shape without touching the real fork
+// checkout or any forge state.
+func overlaidEngineRoot(t *testing.T) string {
+	t.Helper()
+	files, err := readWorkflowFiles(t.Context(), engineRoot)
+	if err != nil {
+		t.Fatalf("read engine workflows: %v", err)
+	}
+	root := manifestWithRepository(t, "lusoris", "praetor", "cordanaLLM/praetor")
+	workflows := filepath.Join(root, ".github", "workflows")
+	if err := os.MkdirAll(workflows, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < len(files) && i < maxWorkflowFiles; i++ {
+		if err := os.WriteFile(filepath.Join(workflows, files[i].Name), files[i].Data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+// TestOverlaidManifestKeepsEngineGuardsAndRequiredContexts is the guard+ruleset regression
+// issue #255 asks for: run against a temp copy of the repository manifest with the owner
+// overlay applied (owner lusoris, source cordanaLLM/praetor), it must guard every scheduled
+// or publishing job exactly as the canonical repository does, and it must derive the same
+// required status contexts -- so a fork's own pushed-checks.sh gate, and internal/adopt's
+// generated ruleset, do not drift from the checked-in one just because the fork carries the
+// overlay.
+func TestOverlaidManifestKeepsEngineGuardsAndRequiredContexts(t *testing.T) {
+	root := overlaidEngineRoot(t)
+	identity, err := manifestIdentity(root)
+	if err != nil || identity != "cordanaLLM/praetor" {
+		t.Fatalf("overlaid manifest identity = %q, %v", identity, err)
+	}
+	workflows, _ := engineWorkflows(t)
+	for name, data := range workflows {
+		violations, err := workflowGuardViolations(name, data, identity)
+		if err != nil || len(violations) != 0 {
+			t.Errorf("%s: violations %v, err %v", name, violations, err)
+		}
+	}
+	overlaidContexts, err := RequiredStatusContexts(t.Context(), root)
+	if err != nil {
+		t.Fatalf("RequiredStatusContexts(overlaid): %v", err)
+	}
+	canonicalContexts, err := RequiredStatusContexts(t.Context(), engineRoot)
+	if err != nil {
+		t.Fatalf("RequiredStatusContexts(canonical): %v", err)
+	}
+	sort.Strings(overlaidContexts)
+	sort.Strings(canonicalContexts)
+	if strings.Join(overlaidContexts, "\n") != strings.Join(canonicalContexts, "\n") {
+		t.Fatalf("required contexts drifted under the overlay:\noverlaid:  %v\ncanonical: %v", overlaidContexts, canonicalContexts)
+	}
+}
