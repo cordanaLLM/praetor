@@ -65,16 +65,144 @@ An archetype's declared `max_func_loc` above 60 is therefore documentation of in
 effective limit. Read the `audit` output, not the archetype file, to learn what a repository is held
 to.
 
-An explicitly selected external file must contain a root `complexity` mapping:
+An explicitly selected external file must contain at least one owned root section:
+`complexity`, or one of the operator sections `clients`, `hooks` and `update`
+described in [Operator settings](#operator-settings-clients-hooks-and-update).
 
 ```yaml
 complexity:
   max_func_loc: 50
 ```
 
-An empty mapping is valid and contributes no limit. Other existing sections may
+An empty mapping is valid and contributes nothing. Other existing sections may
 coexist, but this resolver does not activate them. A misspelled root key or an
 unsupported-only document fails instead of pretending a policy was applied.
+
+## Operator settings: clients, hooks and update
+
+The same external documents carry the operator's settings for agent clients, the
+agent-hook command policy and workstation updates. There is no second settings
+file: a fleet, organization, deployment or workstation document may hold these
+sections beside `complexity`, or on their own. They go through the same loader and
+bounds, and into the same effective digest.
+
+`audit` resolves and seals these sections but does not act on them. The commands
+that act on them read `EffectivePolicy.OperatorSettings()` in
+`internal/config/operator_sections.go`: `praetorctl hook` for `hooks`, the client
+commands for `clients`, and the workstation commands for `update`. Each of those
+commands ships in its own change.
+
+A workstation document, the layer that holds host paths:
+
+```yaml
+clients:
+  selected:
+    agy:
+      binary: /home/operator/.local/bin/agy
+      permissions:
+        manage: true
+        allow: ["mcp(praetor)"]
+hooks:
+  command_policy:
+    deny: ['\bexample-org/']
+update:
+  checkout: /home/operator/dev/example/praetor
+```
+
+### Keys and defaults
+
+Keys inside `clients`, `hooks` and `update` are strict. A misspelled key, an
+unknown client or a value of the wrong type fails the document and names the key.
+Every string passes the literal rule shared with the MCP registry
+(`internal/util/literal.go`): no control byte, `$`, backtick, `{env:` or `{file:`.
+
+| Key | Default | Accepted values |
+| :-- | :-- | :-- |
+| `clients.mode` | `advisory` | `advisory` reports an ungoverned client and lets work continue; `strict` makes the client commands fail instead: a launch below `discovered`, a verify of a required client below `observed` |
+| `clients.verified_max_age` | `168h` | a duration from `1h` to `2160h` |
+| `clients.govern` | `present` | `present` governs every known client installed on the host; `listed` governs only `clients.selected` |
+| `clients.selected.<id>` | every known client | `<id>` is one of `agy`, `claude`, `cline`, `codex`, `continue`, `gemini`, `kilo`, `opencode-v1` (`internal/clientid`) |
+| `clients.selected.<id>.required` | `true` | boolean |
+| `clients.selected.<id>.scopes` | `[global]` | `global` and/or `workspace`, each at most once |
+| `clients.selected.<id>.plugin` | `true` | boolean |
+| `clients.selected.<id>.binary`, `.config_root` | empty (look up at run time) | clean absolute path; workstation layer only |
+| `clients.selected.<id>.registry`, `.connection_profile` | empty | clean path, relative to the file that sets it, or absolute |
+| `clients.selected.<id>.permissions.manage` | `false` | boolean; `true` appends the listed grants to the client's own list and never removes or widens one |
+| `clients.selected.<id>.permissions.allow` | `[]` | at most 32 literals of up to 512 bytes, merged across layers |
+| `hooks.scope` | `governed` | `governed` guards repositories that carry `.standards.yaml`; `all` guards every workspace |
+| `hooks.command_policy.deny` | `[]` | at most 64 RE2 patterns of up to 512 bytes, compiled at load |
+| `hooks.python` | `[python3, python, [py, -3]]` | up to 8 candidates: a bare command, or a list of a command and up to 8 arguments; an absolute path only in the workstation layer |
+| `update.channel` | `push` | `push`; `release` is reserved until release artifacts ship |
+| `update.source` | `checkout` | `checkout`; `artifact` is reserved |
+| `update.checkout`, `update.bin_dir` | empty | clean absolute path; workstation layer only |
+| `update.remote` | `origin` | 1 to 64 letters, digits, `.`, `_` or `-`, starting with a letter or digit |
+| `update.branch` | `main` | 1 to 128 of the same plus `/`, without `..` |
+| `update.pin` | empty | a 40-character lowercase commit id |
+| `update.interval` | `15m` | a duration from `5m` to `24h` |
+| `update.require_signed` | `true` | boolean |
+| `update.allowed_signers` | empty | clean path, relative to the file that sets it, or absolute |
+| `update.receipt_public_key` | empty | 64 lowercase hex characters (Ed25519) |
+
+The engine ships no deny pattern and manages no client's grant list. Both are
+operator decisions: organisation names belong in `hooks.command_policy.deny`, and
+an operator host opts in to grant management by setting `permissions.manage: true`
+for a client in its own layer, as the example above does for `agy`. Adopters who
+set neither get neither.
+`config.ValidateCommandPolicyDeny` is the one check for those bounds; the hook
+policy validates through it.
+
+### How layers merge
+
+Layers apply in the order listed under [Sources and strictness](#sources-and-strictness):
+fleet, organization, deployment, workstation.
+
+- A later layer replaces a scalar. `EffectivePolicy.OperatorFields` records the
+  layers that set each concrete key, for example
+  `clients.selected.agy.permissions.allow`.
+- Once a layer sets `clients.mode: strict`, `clients.govern: present`,
+  `required: true`, `update.require_signed: true` or `hooks.scope: all`, a later
+  layer cannot loosen it. The error names both layers. A built-in default is not a
+  layer, so the first layer may choose either value.
+- `hooks.command_policy.deny` and `permissions.allow` append without duplicates.
+  The bound applies to the merged list, so 40 fleet patterns plus 25 new
+  workstation patterns fail.
+- Two layers giving one client different non-empty `registry` values fail.
+- Client binaries, config roots, the fork checkout, `bin_dir` and absolute
+  interpreter paths are host data. Any layer other than `workstation` that sets
+  one fails.
+
+A relative `registry`, `connection_profile` or `allowed_signers` value keeps its
+spelling in the digest, so moving the documents does not change it.
+`EffectivePolicy.ResolveOperatorPath` resolves it against the directory of the
+file that set it.
+
+A policy whose layers carry no operator section keeps the digest it had before
+these sections existed. Retained plans and repair anchors therefore still verify.
+
+### Which documents the hook, client and workstation commands use
+
+`audit` and `gate` take the explicit flags above and read nothing else. For the
+hook, client and workstation commands, `config.SelectOperatorSettings` in
+`internal/config/install_manifest.go` resolves each document in this order:
+
+1. The command's `--fleet-config` or `--workstation-config` flag.
+2. `PRAETOR_FLEET_CONFIG` or `PRAETOR_WORKSTATION_CONFIG`.
+3. The path the install manifest recorded. The manifest is
+   `praetor/install.json` under the per-user configuration directory; the
+   `workstation install` and `workstation update` commands write it when they
+   ship. The recorded path is used only
+   while the file's bytes still match the digest the manifest recorded. A changed
+   or missing file is an error that says to rerun `workstation update` or pass the
+   path explicitly.
+4. Not configured: the built-in defaults.
+
+There is no separate pointer file. The manifest reader rejects unknown and
+duplicate members and checks every field.
+
+Tests: `internal/config/operator_sections_test.go` (four-layer merge with
+contributors, loosening, host data, bounds, digest) and
+`internal/config/install_manifest_test.go` (manifest and selection order), with
+fixtures under `internal/config/testdata/operator/`.
 
 ## Selecting a shared or private configuration
 

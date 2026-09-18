@@ -1,0 +1,17 @@
+# Fleet layer: defaults for every workstation. Host paths are refused here.
+version: 1
+clients:
+  verified_max_age: 72h
+  selected:
+    agy:
+      scopes: [global, workspace]
+      registry: registry.json
+      permissions:
+        manage: true   # operator hosts opt in; the engine default is false
+        allow: ["mcp(praetor)"]
+hooks:
+  command_policy:
+    deny: ['\bexample-org/']
+update:
+  interval: 30m
+  require_signed: true

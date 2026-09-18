@@ -1,0 +1,3 @@
+type: added
+title: Operator settings for clients, hooks and updates in the layered policy documents, and an install-manifest reader for the settings selection
+breaking: false

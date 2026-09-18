@@ -35,20 +35,26 @@ type PolicySource struct {
 }
 
 // PolicyLayer contributes complexity constraints; every explicit limit must be positive.
+// External layers may also carry operator settings (clients, hooks, update).
 type PolicyLayer struct {
 	Source     PolicySource
 	Complexity ComplexityOverride
+	Settings   []OperatorSetting
 }
 
 // EffectivePolicy is an independently owned snapshot, immutable by convention.
 // Fields records all sources imposing each effective complexity limit, including ties.
-// Only complexity is layered in this slice. Other Policy fields retain defaults and
-// repository overrides; they do not claim fleet or profile policy support.
+// Complexity and the operator settings are layered. Other Policy fields retain defaults
+// and repository overrides; they do not claim fleet or profile policy support.
+// Operator is nil unless a layer carried a clients, hooks or update section; OperatorFields
+// then records the layers that set each concrete settings path.
 type EffectivePolicy struct {
 	Manifest         *Manifest           `json:"-"`
 	Policy           ResolvedPolicy      `json:"policy"`
+	Operator         *OperatorSettings   `json:"operator,omitempty"`
 	Sources          []PolicySource      `json:"sources"`
 	Fields           map[string][]string `json:"fields"`
+	OperatorFields   map[string][]string `json:"operator_fields,omitempty"`
 	SHA256           string              `json:"sha256"`
 	CatalogArtifacts []PolicyArtifact    `json:"-"`
 }
@@ -113,14 +119,8 @@ func ResolvePolicy(ctx context.Context, layers []PolicyLayer) (*EffectivePolicy,
 		return nil, errors.New("policy requires context and bounded layers")
 	}
 	result := newEffectivePolicy()
-	seen := map[string]bool{result.Sources[0].ID: true}
-	for i := 0; i < len(layers) && i < maxPolicyLayers; i++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if err := result.applyLayer(layers[i], seen); err != nil {
-			return nil, err
-		}
+	if err := result.applyLayers(ctx, layers); err != nil {
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -129,6 +129,26 @@ func ResolvePolicy(ctx context.Context, layers []PolicyLayer) (*EffectivePolicy,
 		return nil, err
 	}
 	return result, nil
+}
+
+// applyLayers folds every layer's complexity and operator settings in order.
+func (p *EffectivePolicy) applyLayers(ctx context.Context, layers []PolicyLayer) error {
+	seen := map[string]bool{p.Sources[0].ID: true}
+	operator := newOperatorMerge()
+	for i := 0; i < len(layers) && i < maxPolicyLayers; i++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := p.applyLayer(layers[i], seen); err != nil {
+			return err
+		}
+		if err := operator.apply(layers[i].Source.ID, layers[i].Settings); err != nil {
+			return err
+		}
+	}
+	var err error
+	p.Operator, p.OperatorFields, err = operator.finish()
+	return err
 }
 
 func newEffectivePolicy() *EffectivePolicy {
@@ -210,11 +230,15 @@ func (p *EffectivePolicy) seal() error {
 	for i := 0; i < len(sources) && i <= maxPolicyLayers; i++ {
 		sources[i].Path = ""
 	}
+	// The operator members are omitted when empty, so a policy without operator settings
+	// keeps the digest it had before those sections existed.
 	encoded, err := json.Marshal(struct {
-		Policy  ResolvedPolicy
-		Sources []PolicySource
-		Fields  map[string][]string
-	}{p.Policy, sources, p.Fields})
+		Policy         ResolvedPolicy
+		Sources        []PolicySource
+		Fields         map[string][]string
+		Operator       *OperatorSettings   `json:",omitempty"`
+		OperatorFields map[string][]string `json:",omitempty"`
+	}{p.Policy, sources, p.Fields, p.Operator, p.OperatorFields})
 	if err != nil {
 		return fmt.Errorf("encode effective policy: %w", err)
 	}
