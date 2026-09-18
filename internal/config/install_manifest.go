@@ -6,6 +6,7 @@ package config
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -121,6 +122,60 @@ func DecodeInstallManifest(data []byte) (InstallManifest, error) {
 		return InstallManifest{}, fmt.Errorf("install manifest: %w", err)
 	}
 	return manifest, nil
+}
+
+// WriteInstallManifest validates manifest and writes it to path atomically: a temp file
+// in the same directory, then a rename, so a reader (SelectOperatorSettings included)
+// never observes a partially written manifest. The parent directory is created private to
+// the owner when missing. `workstation install` and `workstation update` are the only
+// callers; nothing else persists this file.
+func WriteInstallManifest(path string, manifest InstallManifest) (err error) {
+	if err := manifest.validate(); err != nil {
+		return fmt.Errorf("install manifest: %w", err)
+	}
+	data, err := json.Marshal(manifest, json.Deterministic(true), jsontext.WithIndent("  "))
+	if err != nil {
+		return fmt.Errorf("encode install manifest: %w", err)
+	}
+	dir := filepath.Dir(path)
+	if err := util.MkdirSecure(dir, 0o700); err != nil {
+		return fmt.Errorf("create install manifest directory %s: %w", dir, err)
+	}
+	temp, err := os.CreateTemp(dir, ".install-*.json.tmp")
+	if err != nil {
+		return fmt.Errorf("stage install manifest in %s: %w", dir, err)
+	}
+	tempPath := temp.Name()
+	defer func() {
+		if removeErr := os.Remove(tempPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) && err == nil {
+			err = fmt.Errorf("remove staged install manifest %s: %w", tempPath, removeErr)
+		}
+	}()
+	if writeErr := writeInstallManifestTemp(temp, data); writeErr != nil {
+		return writeErr
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("place install manifest at %s: %w", path, err)
+	}
+	return nil
+}
+
+// writeInstallManifestTemp writes and closes the staged manifest file with owner-only
+// permissions, isolating the fallible I/O steps WriteInstallManifest's deferred cleanup
+// depends on having a settled file handle for.
+func writeInstallManifestTemp(temp *os.File, data []byte) error {
+	if _, err := temp.Write(append(data, '\n')); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("write install manifest: %w", err)
+	}
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("set install manifest permissions: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close staged install manifest: %w", err)
+	}
+	return nil
 }
 
 func (m InstallManifest) validate() error {
