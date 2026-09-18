@@ -37,6 +37,41 @@ const (
 	SurfaceAgent RegisterSurface = "agent"
 )
 
+// Emission surfaces name text the engine itself writes for agents. Each one resolves to its
+// own key when the manifest writes it and to surfaces.agent otherwise; a task label never
+// changes them. The caveman lint applies where one resolves to internal (LintEnforced), so a
+// repository opts a surface out by writing docs or social. They are not rendered in the
+// register block, which is already at its line budget.
+const (
+	// SurfaceContext covers AGENTS.md, the compiled vendor files, personas and skills.
+	SurfaceContext RegisterSurface = "context"
+	// SurfaceMCP covers MCP tool and property descriptions and MCP text results.
+	SurfaceMCP RegisterSurface = "mcp"
+	// SurfaceHooks covers agent hook decisions, hook denials and git hook messages.
+	SurfaceHooks RegisterSurface = "hooks"
+	// SurfacePrompts covers the static text of provider, repair, notebook and harness prompts.
+	SurfacePrompts RegisterSurface = "prompts"
+	// SurfaceLedger covers the free text of the .workingdir ledger files.
+	SurfaceLedger RegisterSurface = "ledger"
+)
+
+// emissionSurfaces is the closed set of engine-emission surfaces, in documentation order.
+var emissionSurfaces = []RegisterSurface{SurfaceContext, SurfaceMCP, SurfaceHooks, SurfacePrompts, SurfaceLedger}
+
+// KnownRegisterSurface reports whether surface is one the manifest may configure.
+func KnownRegisterSurface(surface RegisterSurface) bool {
+	return surface == SurfaceForge || surface == SurfaceDocs || surface == SurfaceAgent || isEmissionSurface(surface)
+}
+
+func isEmissionSurface(surface RegisterSurface) bool {
+	for _, known := range emissionSurfaces {
+		if surface == known {
+			return true
+		}
+	}
+	return false
+}
+
 const (
 	// EvidenceInlineMaxLinesDefault and EvidenceInlineMaxTokensDefault bound evidence that
 	// may travel inline. internal/lockdown aliases them for the SARIF distillation cap, so
@@ -217,16 +252,35 @@ func (m *Manifest) EffectiveRegister() RegisterPolicy {
 }
 
 // Resolve returns the register for one surface and task label. The forge and the docs
-// surface own their audience, so a task never changes them; on the agent surface (or when
-// no surface is named) the task row wins and surfaces.agent is the fallback.
+// surface own their audience, so a task never changes them. An emission surface (context,
+// mcp, hooks, prompts, ledger) is its own key or, when unset, surfaces.agent; a task never
+// changes it either. On the agent surface (or when no surface is named) the task row wins and
+// surfaces.agent is the fallback.
 func (p RegisterPolicy) Resolve(surface RegisterSurface, task string) Resolution {
 	if surface == SurfaceForge || surface == SurfaceDocs {
 		return Resolution{Register: p.surfaceRegister(surface), Source: "surfaces." + string(surface)}
+	}
+	if isEmissionSurface(surface) {
+		if register, ok := p.Surfaces[surface]; ok && knownTextRegister(register) {
+			return Resolution{Register: register, Source: "surfaces." + string(surface)}
+		}
+		return Resolution{Register: p.surfaceRegister(SurfaceAgent), Source: "surfaces." + string(SurfaceAgent)}
 	}
 	if row, ok := p.Tasks[task]; ok && knownTextRegister(row.Register) {
 		return Resolution{Register: row.Register, MaxTokens: row.MaxTokens, Source: "tasks." + task}
 	}
 	return Resolution{Register: p.surfaceRegister(SurfaceAgent), Source: "surfaces." + string(SurfaceAgent)}
+}
+
+// LintEnforced reports whether the caveman lint applies to text of surface: it does where
+// the surface resolves to the internal register. An unknown surface is an error rather than
+// a silent fallback, because a misspelled surface would otherwise switch the lint on or off
+// without anyone noticing.
+func (p RegisterPolicy) LintEnforced(surface RegisterSurface) (bool, error) {
+	if !KnownRegisterSurface(surface) {
+		return false, fmt.Errorf("unknown register surface %q", surface)
+	}
+	return p.Resolve(surface, "").Register == TextRegisterInternal, nil
 }
 
 // surfaceRegister falls back to the default so that a partially filled policy still
@@ -274,7 +328,7 @@ func validateManifestRegister(m *Manifest) error {
 
 func (p RegisterPolicy) validate() error {
 	for surface, register := range p.Surfaces {
-		if surface != SurfaceForge && surface != SurfaceDocs && surface != SurfaceAgent {
+		if !KnownRegisterSurface(surface) {
 			return fmt.Errorf("unknown register surface %q", surface)
 		}
 		if !knownTextRegister(register) {

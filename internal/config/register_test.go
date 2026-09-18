@@ -309,3 +309,91 @@ func TestEvidencePointer(t *testing.T) {
 		}
 	}
 }
+
+func TestEmissionSurfacesPositive(t *testing.T) {
+	m, err := loadRegisterManifest(t, `register:
+  surfaces:
+    context: internal
+    mcp: docs
+    hooks: internal
+    prompts: social
+    ledger: internal
+`)
+	if err != nil {
+		t.Fatalf("all five emission surfaces must load: %v", err)
+	}
+	policy := m.EffectiveRegister()
+	cases := []struct {
+		surface  RegisterSurface
+		want     Resolution
+		enforced bool
+	}{
+		{SurfaceContext, Resolution{TextRegisterInternal, 0, "surfaces.context"}, true},
+		{SurfaceMCP, Resolution{TextRegisterDocs, 0, "surfaces.mcp"}, false},
+		{SurfaceHooks, Resolution{TextRegisterInternal, 0, "surfaces.hooks"}, true},
+		{SurfacePrompts, Resolution{TextRegisterSocial, 0, "surfaces.prompts"}, false},
+		{SurfaceLedger, Resolution{TextRegisterInternal, 0, "surfaces.ledger"}, true},
+	}
+	for _, tc := range cases {
+		if got := policy.Resolve(tc.surface, "waiver_signoff"); got != tc.want {
+			t.Errorf("Resolve(%s) = %+v, want %+v; a task row must not change an emission surface", tc.surface, got, tc.want)
+		}
+		if got, err := policy.LintEnforced(tc.surface); err != nil || got != tc.enforced {
+			t.Errorf("LintEnforced(%s) = %v, %v; want %v", tc.surface, got, err, tc.enforced)
+		}
+	}
+}
+
+func TestEmissionSurfacesNegative(t *testing.T) {
+	for name, tc := range map[string]struct{ section, want string }{
+		"unknown register on an emission surface": {"register: {surfaces: {mcp: loud}}\n", `unsupported text register "loud"`},
+		"misspelled emission surface":             {"register: {surfaces: {hook: internal}}\n", `unknown register surface "hook"`},
+		"non-string emission register":            {"register: {surfaces: {ledger: 1}}\n", "text register must be a string enum"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := loadRegisterManifest(t, tc.section)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+	for _, surface := range []RegisterSurface{"", "slack", "Context"} {
+		if enforced, err := DefaultRegisterPolicy().LintEnforced(surface); err == nil || enforced {
+			t.Errorf("LintEnforced(%q) = %v, %v; want an unknown-surface error", surface, enforced, err)
+		}
+		if KnownRegisterSurface(surface) {
+			t.Errorf("KnownRegisterSurface(%q) = true", surface)
+		}
+	}
+}
+
+func TestEmissionSurfacesBoundary(t *testing.T) {
+	// Unset emission surfaces follow surfaces.agent, whatever the agent surface says.
+	defaults := DefaultRegisterPolicy()
+	for _, surface := range emissionSurfaces {
+		if got := defaults.Resolve(surface, ""); got != (Resolution{TextRegisterInternal, 0, "surfaces.agent"}) {
+			t.Errorf("default Resolve(%s) = %+v, want the agent fallback", surface, got)
+		}
+		if enforced, err := defaults.LintEnforced(surface); err != nil || !enforced {
+			t.Errorf("default LintEnforced(%s) = %v, %v; want the lint on", surface, enforced, err)
+		}
+	}
+	m := &Manifest{Register: &RegisterPolicy{Surfaces: map[RegisterSurface]TextRegister{SurfaceAgent: TextRegisterDocs}}}
+	if got := m.EffectiveRegister().Resolve(SurfaceMCP, ""); got != (Resolution{TextRegisterDocs, 0, "surfaces.agent"}) {
+		t.Errorf("mcp with agent = docs resolves to %+v, want the docs fallback", got)
+	}
+	// The block stays at its budget: emission surfaces are not rendered.
+	policy := DefaultRegisterPolicy()
+	policy.Surfaces[SurfaceMCP] = TextRegisterDocs
+	withSurface, errWith := RenderRegisterBlock(policy)
+	plain, errPlain := RenderRegisterBlock(DefaultRegisterPolicy())
+	if errWith != nil || errPlain != nil || withSurface != plain {
+		t.Errorf("an emission surface changed the rendered block (%v, %v)", errWith, errPlain)
+	}
+	// The three audience surfaces keep their meaning for LintEnforced.
+	for surface, want := range map[RegisterSurface]bool{SurfaceForge: false, SurfaceDocs: false, SurfaceAgent: true} {
+		if got, err := defaults.LintEnforced(surface); err != nil || got != want {
+			t.Errorf("LintEnforced(%s) = %v, %v; want %v", surface, got, err, want)
+		}
+	}
+}
