@@ -1,0 +1,4 @@
+type: added
+title: Antigravity IDE joins the VS Code-compatible editor targets (aliases agy, antigravity-ide), with confirmed antigravity.searchMaxWorkspaceFileCount and files.watcherExclude keys; editors generate/verify gain --editors=a,b
+issue: "#169"
+breaking: false

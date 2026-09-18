@@ -5,6 +5,36 @@ resolve the same repository capabilities before generating or checking editor
 files. A repository without Go sources or a selected Go profile no longer receives
 unconditional Go settings, Go inspections or a Go problem matcher.
 
+## Selecting editors
+
+Both subcommands take `--editors=id[,id...]`, a comma-separated list of editor ids
+or aliases (`cmd/standardsctl/editors.go`). Omitting the flag, or passing an empty
+or all-separator value, targets every editor in `editor.DefaultOptions()`. Any id
+that does not resolve through `editor.Options.Editors` (`internal/editor/editor.go`)
+fails the whole run with `unknown editor id(s): <ids>; supported: <canonical ids>`
+and writes nothing: a partially-matched `--editors` list used to synthesize only
+the recognized subset and silently drop the rest.
+
+## Antigravity IDE
+
+`antigravity` (aliases `agy`, `antigravity-ide`) joins the VS Code-compatible
+family alongside `vscode`, `cursor` and `windsurf`, and shares their single
+`.vscode/settings.json`. Requesting it adds two keys to that file, confirmed
+against the installed IDE rather than assumed from its docs:
+
+- `antigravity.searchMaxWorkspaceFileCount: 50000` — raises Jetski's per-workspace
+  embedding scan bound above its shipped default of 5,000 (confirmed:
+  `contributes.configuration` in the IDE's `extensions/antigravity/package.json`).
+- `files.watcherExclude` — a core VS Code setting (confirmed: the workbench's own
+  configuration schema) extended with `.workingdir*`, build output (`bin`, `dist`)
+  and the isolated gate/dogfood run worktrees under `.standards/worktrees`, to
+  keep inotify-heavy scratch out of the file watcher.
+
+These two keys are only added when `antigravity` is part of the requested editor
+set; `vscode`/`cursor`/`windsurf`-only runs do not receive them. Run-count
+retention for `~/.local/state/praetor/dogfood-local` is a separate, still-open
+fix tracked on the issue that requested this key.
+
 The shared resolver combines supported project markers and source formats with
 explicit caller options. It excludes private state, dependency/build directories
 and nested agent worktrees. An incomplete scan is an error rather than a claim
