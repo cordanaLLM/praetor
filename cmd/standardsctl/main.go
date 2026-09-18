@@ -133,6 +133,7 @@ func printCoreCommands() {
 	fmt.Println("  state              Manage .workingdir/ session state, bugs ledger, and questions")
 	fmt.Println("  dedupe             Scan for AST clones, utility sprawl, and cadence enforcement")
 	fmt.Println("  hiss               Inspect and verify declared HISS enforcement evidence")
+	fmt.Println("  hook               Serve one agent-hook event: praetorctl hook <client> <event>")
 	fmt.Println("  models             Sync or list active model tiers and benchmark limits")
 	fmt.Println("  plan               Dry-run comparison of repository settings against policy")
 	fmt.Println("  sync               Reconcile repository settings, labels, and branch rulesets")
@@ -180,8 +181,7 @@ func main() {
 	args := os.Args[2:]
 
 	if err := dispatchCommand(cmd, args); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		os.Exit(commandExitCode(os.Stderr, err))
 	}
 }
 
@@ -211,6 +211,7 @@ func commandTable() map[string]commandFunc {
 		"state":            runState,
 		"dedupe":           runDedupe,
 		"hiss":             runHiss,
+		"hook":             runHook,
 		"models":           runModels,
 		"operational":      runOperational,
 		"plan":             runPlan,

@@ -30,6 +30,7 @@ Only what an adopter reads about before using it. The map in `SURFACE_MAP` is de
 | `cmd/standards-mcp/` | `docs/guides/development-mcp.md` |
 | `internal/gating/pipeline.go` | `docs/guides/adoption-verification.md` |
 | `internal/wishes/`, `internal/state/` | their respective guides |
+| `internal/agenthook/*.go` (tests excluded), `cmd/standardsctl/hook.go` | `docs/guides/agent-hooks.md` |
 | `.github/workflows/portability.yml`, `scripts/portability_selftest.py` | `docs/standards/hiss-21-platform-neutrality.md` |
 | `scripts/docs_drift.py` | this document |
 

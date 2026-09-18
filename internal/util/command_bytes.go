@@ -29,8 +29,27 @@ func (b *commandBuffer) Write(p []byte) (int, error) {
 	return n, errors.Join(err, fmt.Errorf("command output exceeds %d bytes", b.limit))
 }
 
+// commandStdinKey scopes child standard input to one operation tree.
+type commandStdinKey struct{}
+
+// MaxCommandStdinBytes bounds the input WithCommandStdin accepts: the cap of an output stream.
+const MaxCommandStdinBytes = 16 << 20
+
+// WithCommandStdin makes RunCommandBytes feed exactly input to the child's standard input.
+// It copies the input. Without it the child reads an empty stream, as before.
+func WithCommandStdin(ctx context.Context, input []byte) (context.Context, error) {
+	if ctx == nil {
+		return nil, errors.New("command stdin requires a context")
+	}
+	if len(input) > MaxCommandStdinBytes {
+		return nil, fmt.Errorf("command stdin exceeds %d bytes", MaxCommandStdinBytes)
+	}
+	return context.WithValue(ctx, commandStdinKey{}, bytes.Clone(input)), nil
+}
+
 // RunCommandBytes executes fixed argv with a deadline and a 1..16 MiB cap per stream.
-// It respects WithCommandEnvironment, cancels on overflow, and preserves whitespace.
+// It respects WithCommandEnvironment and WithCommandStdin, cancels on overflow, and
+// preserves whitespace.
 func RunCommandBytes(ctx context.Context, dir, name string, maxBytes int, args ...string) (result CommandBytes, resultErr error) {
 	if ctx == nil {
 		return CommandBytes{}, errors.New("command bytes requires a context")
@@ -48,6 +67,9 @@ func RunCommandBytes(ctx context.Context, dir, name string, maxBytes int, args .
 	cmd.WaitDelay = CommandWaitDelay
 	if environment, ok := ctx.Value(commandEnvironmentKey{}).([]string); ok {
 		cmd.Env = append([]string{}, environment...)
+	}
+	if input, ok := ctx.Value(commandStdinKey{}).([]byte); ok {
+		cmd.Stdin = bytes.NewReader(input)
 	}
 	cleanup := commandBytesCleanup(cmd)
 	defer func() { resultErr = errors.Join(resultErr, cleanup()) }()

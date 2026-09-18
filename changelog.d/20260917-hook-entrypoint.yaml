@@ -1,0 +1,3 @@
+type: added
+title: "`praetorctl hook`, one portable agent-hook entrypoint with a built-in command policy"
+breaking: false
