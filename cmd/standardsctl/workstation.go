@@ -81,11 +81,24 @@ func resolveInstallOptions(ctx context.Context, sourceFlag, binDirFlag, manifest
 	if err != nil {
 		return workstation.Options{}, err
 	}
+	manifestPath, err := absOrEmpty(manifestFlag)
+	if err != nil {
+		return workstation.Options{}, fmt.Errorf("workstation install: resolve --manifest: %w", err)
+	}
 	return workstation.Options{
-		Checkout: checkout, BinDir: binDir, ManifestPath: manifestFlag,
+		Checkout: checkout, BinDir: binDir, ManifestPath: manifestPath,
 		FleetSettings:       settingsDocumentFlag(fleetFlag),
 		WorkstationSettings: settingsDocumentFlag(workstationFlag),
 	}, nil
+}
+
+// absOrEmpty absolutizes a possibly-relative flag value, and leaves an unset flag ("")
+// alone so the callee's own default (the per-user configuration directory) still applies.
+func absOrEmpty(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	return filepath.Abs(path)
 }
 
 // loadInstallSettings resolves the fleet/workstation layered policy documents (section 6.1)
@@ -122,12 +135,9 @@ func resolveInstallBinDir(explicit string, settings config.OperatorSettings) (st
 }
 
 func settingsDocumentFlag(path string) config.SettingsDocument {
-	if path == "" {
+	abs, err := absOrEmpty(path)
+	if abs == "" || err != nil {
 		return config.SettingsDocument{Origin: config.SettingsNotConfigured}
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
 	}
 	return config.SettingsDocument{Path: abs, Origin: config.SettingsFromFlag}
 }
@@ -156,13 +166,16 @@ func runWorkstationStatus(ctx context.Context, args []string) error {
 }
 
 func resolveStatusOptions(sourceFlag, binDirFlag, manifestFlag, homeFlag string) (workstation.StatusOptions, error) {
-	opts := workstation.StatusOptions{BinDir: binDirFlag, ManifestPath: manifestFlag}
-	if sourceFlag != "" {
-		checkout, err := filepath.Abs(sourceFlag)
-		if err != nil {
-			return workstation.StatusOptions{}, fmt.Errorf("workstation status: resolve --source: %w", err)
-		}
-		opts.Checkout = checkout
+	var opts workstation.StatusOptions
+	var err error
+	if opts.Checkout, err = absOrEmpty(sourceFlag); err != nil {
+		return workstation.StatusOptions{}, fmt.Errorf("workstation status: resolve --source: %w", err)
+	}
+	if opts.BinDir, err = absOrEmpty(binDirFlag); err != nil {
+		return workstation.StatusOptions{}, fmt.Errorf("workstation status: resolve --bin-dir: %w", err)
+	}
+	if opts.ManifestPath, err = absOrEmpty(manifestFlag); err != nil {
+		return workstation.StatusOptions{}, fmt.Errorf("workstation status: resolve --manifest: %w", err)
 	}
 	home, err := resolveHomeSubdir(homeFlag, "--home")
 	if err != nil {

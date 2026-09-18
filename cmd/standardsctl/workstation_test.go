@@ -155,6 +155,18 @@ func TestResolveStatusOptionsWiresHomeIntoClientEnv(t *testing.T) {
 	}
 }
 
+// Boundary: relative --bin-dir and --manifest flags are absolutized like --source, so a
+// status run from an arbitrary working directory resolves them the same way every time.
+func TestResolveStatusOptionsAbsolutizesBinDirAndManifest(t *testing.T) {
+	opts, err := resolveStatusOptions("", "relative-bin", "relative-manifest.json", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(opts.BinDir) || !filepath.IsAbs(opts.ManifestPath) {
+		t.Fatalf("status options must carry absolute paths: %+v", opts)
+	}
+}
+
 // lockPathForTest mirrors internal/workstation's unexported lockPath so this package's
 // wiring test can assert on lock cleanup without exporting installation internals.
 func lockPathForTest(binDir string) string {
