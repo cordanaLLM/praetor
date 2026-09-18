@@ -84,6 +84,23 @@ continue to protect repository changes regardless of the editor used.
    Test multiple workspaces and concurrent IDEs, offline operation, read-only
    homes, changed schemas, native reload requirements and competing editors.
 
+### How ADR-0011 maps onto these stages
+
+[ADR-0011](../adr/0011-agent-client-wrapping-and-operational-rollout.md) decides
+how the stages are built. It does not reorder them, and nothing below is
+implemented by the record itself.
+
+| Stage above | ADR-0011 decision | What it contributes |
+| --- | --- | --- |
+| 1. Observe, setup profile | 5, 6 | Explicit client selection in the `clients` policy section; an install manifest written only by an explicit operator command; `clients verify` reporting states separately |
+| 2. Wrappers, lifecycle reconciliation | 1, 2, 3, 4 | One `praetorctl hook <client> <event>` registration string, a Go command policy, the plugin tree as the single owned wrapper source, one per-OS root helper, MCP through the existing merge adapter |
+| 3. Native activation, session receipts | 5 | States derived by `clients verify`; only `observed`, a native session that ran the hook after install, counts as enforcing |
+| 4. Adapter matrix | 9 | Each further client is a dialect row, a registration row, a root row and a merge adapter, with recorded fixtures; a launcher only where no native hook surface exists |
+| 5. Drift repair, upgrades, uninstall | 7, 8 | Owned-tree removal, pull-based workstation update with pin and rollback, operator files carried by operational sync |
+
+The completion contract is unchanged: `installed` and `discovered` are the
+Configure stage, and they are never displayed as the Verify stage.
+
 The [lifecycle coverage guide](../guides/agent-lifecycle.md) records current
 adapter coverage. The [VS Code research](../research/ide-agent-bootstrap.md)
 records host constraints and test requirements. These boundaries make the goal
