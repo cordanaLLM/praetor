@@ -121,7 +121,7 @@ func TestHookProcessFailsClosed(t *testing.T) {
 		exit            int
 	}{
 		{"no arguments", " ", allowed, "", 2}, {"one argument", "claude", allowed, "", 2},
-		{"three arguments", "claude pre-tool extra", allowed, "", 2}, {"unknown client", "agy pre-tool", allowed, "", 2},
+		{"three arguments", "claude pre-tool extra", allowed, "", 2}, {"unknown client", "cursor pre-tool", allowed, "", 2},
 		{"event of a later change", "claude stop", allowed, "", 2}, {"empty stdin", "claude pre-tool", nil, "", 2},
 		{"malformed stdin", "codex pre-tool", []byte("{"), "", 2},
 		{"disabled lefthook in the environment", "lefthook environment", nil, "LEFTHOOK=0", 1},
