@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	cavemanUsage = "usage: praetorctl caveman check [--surface=<name>] [--root=.] <path|dir|->...\n" +
-		"       praetorctl caveman estimate <path|dir|->..."
+	cavemanUsage = "usage: praetorctl caveman check [--surface=<name>] [--root=.] <file|dir|-> [...]\n" +
+		"       praetorctl caveman estimate <file|dir|-> [...]"
 	// maxCavemanFiles bounds the files one invocation reads, directories expanded (HISS-02).
 	maxCavemanFiles = 4096
 	// maxPrintedFindings bounds the findings printed per file; the count line says how many
@@ -73,11 +73,15 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	if err != nil {
 		return err
 	}
+	var text strings.Builder
 	failed := 0
 	for _, input := range inputs {
-		if !printCavemanReport(out, input.name, caveman.Check(input.text, caveman.Options{})) {
+		if !formatCavemanReport(&text, input.name, caveman.Check(input.text, caveman.Options{})) {
 			failed++
 		}
+	}
+	if _, err := io.WriteString(out, text.String()); err != nil {
+		return fmt.Errorf("caveman check: write report: %w", err)
 	}
 	if failed > 0 {
 		return fmt.Errorf("caveman check: %d of %d input(s) failed", failed, len(inputs))
@@ -96,16 +100,17 @@ func cavemanSurfaceEnforced(ctx context.Context, out io.Writer, root string, sur
 	if err != nil {
 		return false, err
 	}
-	if !enforced {
-		resolution := policy.Resolve(surface, "")
-		fmt.Fprintf(out, "caveman check: skip, %s = %s (lint applies to internal only)\n", resolution.Source, resolution.Register)
+	if enforced {
+		return true, nil
 	}
-	return enforced, nil
+	resolution := policy.Resolve(surface, "")
+	_, err = fmt.Fprintf(out, "caveman check: skip, %s = %s (lint applies to internal only)\n", resolution.Source, resolution.Register)
+	return false, err
 }
 
-// printCavemanReport writes the summary line and the bounded findings; it returns whether
+// formatCavemanReport appends the summary line and the bounded findings; it returns whether
 // the input passed.
-func printCavemanReport(out io.Writer, name string, report caveman.Report) bool {
+func formatCavemanReport(out *strings.Builder, name string, report caveman.Report) bool {
 	verdict := "PASS"
 	if !report.Passed() {
 		verdict = "FAIL"
@@ -129,15 +134,17 @@ func cavemanEstimate(ctx context.Context, args []string, stdin io.Reader, out io
 	if err != nil {
 		return err
 	}
+	var text strings.Builder
 	var bytesTotal, tokensTotal int
 	for _, input := range inputs {
 		tokens := caveman.EstimateTokens(input.text)
-		fmt.Fprintf(out, "%s: bytes=%d lines=%d tokens_est=%d\n", input.name, len(input.text), countLines(input.text), tokens)
+		fmt.Fprintf(&text, "%s: bytes=%d lines=%d tokens_est=%d\n", input.name, len(input.text), countLines(input.text), tokens)
 		bytesTotal += len(input.text)
 		tokensTotal += tokens
 	}
-	fmt.Fprintf(out, "total: inputs=%d bytes=%d tokens_est=%d\n", len(inputs), bytesTotal, tokensTotal)
-	return nil
+	fmt.Fprintf(&text, "total: inputs=%d bytes=%d tokens_est=%d\n", len(inputs), bytesTotal, tokensTotal)
+	_, err = io.WriteString(out, text.String())
+	return err
 }
 
 func countLines(text string) int {

@@ -27,6 +27,8 @@ const (
 	DefaultMinProseWords = 40
 	// DefaultMaxSentenceWords is the longest sentence without a `;`, `->` or `:` break.
 	DefaultMaxSentenceWords = 30
+	// excerptWords is how much of a long sentence a finding quotes.
+	excerptWords = 6
 )
 
 var (
@@ -233,7 +235,8 @@ func checkSentences(found *findings, paras []*paragraph, limit int) {
 		for _, sentence := range sentenceBreakRe.Split(para.text.String(), -1) {
 			words := proseWords(sentence)
 			if len(words) > limit {
-				found.add(para.start, RuleLongSentence, fmt.Sprintf("%d words: %s ...", len(words), strings.Join(words[:6], " ")))
+				lead := words[:min(len(words), excerptWords)]
+				found.add(para.start, RuleLongSentence, fmt.Sprintf("%d words: %s ...", len(words), strings.Join(lead, " ")))
 			}
 		}
 	}

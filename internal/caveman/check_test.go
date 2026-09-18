@@ -130,6 +130,11 @@ func TestCheckOptions(t *testing.T) {
 	if report := Check(words(12), Options{MaxSentenceWords: 10}); report.Passed() {
 		t.Error("a 12-word sentence must fail a 10-word limit")
 	}
+	// A limit below the excerpt length still quotes the sentence without running past it.
+	report := Check("gate run", Options{MaxSentenceWords: 1})
+	if len(report.Findings) != 1 || report.Findings[0].Excerpt != "2 words: gate run ..." {
+		t.Errorf("short-limit excerpt: %v", report.Findings)
+	}
 }
 
 func TestCheckIsDeterministic(t *testing.T) {
