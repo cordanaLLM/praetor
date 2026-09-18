@@ -15,10 +15,24 @@ const (
 	FamilyOpenWeights ModelFamily = "open-weights"
 )
 
+// ModelSource records which writer owns a catalog entry. `models sync` rewrites
+// seed entries and never removes local or operator entries unless told to prune.
+type ModelSource string
+
+const (
+	// SourceOperator marks an entry declared by hand; it is the empty value.
+	SourceOperator ModelSource = ""
+	// SourceSeed marks an entry written from the built-in seed list.
+	SourceSeed ModelSource = "seed"
+	// SourceLocal marks an entry discovered from a local model runtime.
+	SourceLocal ModelSource = "local"
+)
+
 // ModelDescriptor specifies capability and rate-limit metadata for an LLM endpoint.
 type ModelDescriptor struct {
 	ID           string      `yaml:"id" json:"id"`
 	Family       ModelFamily `yaml:"family" json:"family"`
+	Source       ModelSource `yaml:"source,omitempty" json:"source,omitempty"`
 	RPMLimit     int         `yaml:"rpm_limit" json:"rpm_limit"`
 	TPMLimit     int         `yaml:"tpm_limit" json:"tpm_limit"`
 	CostPerMIn   float64     `yaml:"cost_per_m_in" json:"cost_per_m_in"`
