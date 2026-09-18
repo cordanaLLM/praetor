@@ -11,25 +11,36 @@ import (
 const worktreesIgnoreRule = "/.standards/worktrees/"
 
 // TestMissingIgnoreRules covers the membership scan directly: rules that are present
-// anywhere in the file (positive), rules that only look like the managed ones
+// anywhere in the file including across CRLF line endings (positive), rules that only
+// look like the managed ones, such as the AGY rule's own backup-suffix lookalike
 // (negative), and the degenerate texts a repository can actually carry (boundary).
 func TestMissingIgnoreRules(t *testing.T) {
 	for name, tc := range map[string]struct {
 		text string
 		want []string
 	}{
-		"empty":                 {"", []string{"/.workingdir/", worktreesIgnoreRule}},
-		"both-present":          {"/.workingdir/\n" + worktreesIgnoreRule + "\n", nil},
-		"followed-by-two-lines": {"/.workingdir/\nbin/\ncoverage.txt\n", []string{worktreesIgnoreRule}},
-		"worktrees-only":        {worktreesIgnoreRule + "\nbin/\n", []string{"/.workingdir/"}},
-		"no-trailing-newline":   {"bin/\n/.workingdir/", []string{worktreesIgnoreRule}},
-		"padded-lines":          {"  /.workingdir/  \n\t" + worktreesIgnoreRule + "\t\n", nil},
-		"missing-leading-slash": {".workingdir/\n.standards/worktrees/\n", []string{"/.workingdir/", worktreesIgnoreRule}},
+		"empty":                            {"", []string{"/.workingdir/", worktreesIgnoreRule, agyWorkspaceIgnore}},
+		"workingdir-and-worktrees-present": {"/.workingdir/\n" + worktreesIgnoreRule + "\n", []string{agyWorkspaceIgnore}},
+		"all-three-present":                {"/.workingdir/\n" + worktreesIgnoreRule + "\n" + agyWorkspaceIgnore + "\n", nil},
+		"followed-by-two-lines":            {"/.workingdir/\nbin/\ncoverage.txt\n", []string{worktreesIgnoreRule, agyWorkspaceIgnore}},
+		"worktrees-only":                   {worktreesIgnoreRule + "\nbin/\n", []string{"/.workingdir/", agyWorkspaceIgnore}},
+		"no-trailing-newline":              {"bin/\n/.workingdir/", []string{worktreesIgnoreRule, agyWorkspaceIgnore}},
+		"padded-lines":                     {"  /.workingdir/  \n\t" + worktreesIgnoreRule + "\t\n", []string{agyWorkspaceIgnore}},
+		"missing-leading-slash":            {".workingdir/\n.standards/worktrees/\n", []string{"/.workingdir/", worktreesIgnoreRule, agyWorkspaceIgnore}},
 		"missing-trailing-slash": {
 			"/.workingdir\n/.standards/worktrees\n",
-			[]string{"/.workingdir/", worktreesIgnoreRule},
+			[]string{"/.workingdir/", worktreesIgnoreRule, agyWorkspaceIgnore},
 		},
-		"commented-out": {"# /.workingdir/\n#" + worktreesIgnoreRule + "\n", []string{"/.workingdir/", worktreesIgnoreRule}},
+		"commented-out": {
+			"# /.workingdir/\n#" + worktreesIgnoreRule + "\n",
+			[]string{"/.workingdir/", worktreesIgnoreRule, agyWorkspaceIgnore},
+		},
+		"CRLF-all-present": {"/.workingdir/\r\n" + worktreesIgnoreRule + "\r\n" + agyWorkspaceIgnore + "\r\n", nil},
+		"CRLF-agy-missing": {"bin/\r\n/.workingdir/\r\n" + worktreesIgnoreRule + "\r\n", []string{agyWorkspaceIgnore}},
+		"similar-rule-is-not-it": {
+			agyWorkspaceIgnore + ".bak\n/.workingdir/\n" + worktreesIgnoreRule + "\n",
+			[]string{agyWorkspaceIgnore},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := missingIgnoreRules(tc.text)

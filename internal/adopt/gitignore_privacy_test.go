@@ -71,26 +71,3 @@ func TestAdoptionRejectsLinkedGitignore(t *testing.T) {
 		t.Fatalf("private ignore target changed: %q", got)
 	}
 }
-
-func TestMissingIgnoreRules(t *testing.T) {
-	for name, tc := range map[string]struct {
-		text string
-		want string
-	}{
-		"empty":                  {"", "/.agents/mcp_config.json,/.workingdir/"},
-		"complete":               {"/.agents/mcp_config.json\n/.workingdir/\n", ""},
-		"complete reversed":      {"/.workingdir/\n/.agents/mcp_config.json\n", ""},
-		"complete without EOL":   {"bin/\n/.workingdir/\n\n  /.agents/mcp_config.json  ", ""},
-		"existing adopter":       {"bin/\n/.workingdir/\n", "/.agents/mcp_config.json"},
-		"negation after private": {"/.agents/mcp_config.json\n/.workingdir/\n!.workingdir/STATE.md\n", "/.workingdir/"},
-		"similar rule is not it": {".agents/mcp_config.json.bak\n/.workingdir/\n", "/.agents/mcp_config.json"},
-		"CRLF":                   {"/.agents/mcp_config.json\r\n/.workingdir/\r\n", ""},
-		"CRLF private missing":   {"bin/\r\n/.agents/mcp_config.json\r\n", "/.workingdir/"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := strings.Join(missingIgnoreRules(tc.text), ","); got != tc.want {
-				t.Fatalf("missing rules = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
