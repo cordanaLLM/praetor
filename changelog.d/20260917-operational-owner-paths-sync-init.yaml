@@ -1,0 +1,3 @@
+type: added
+title: Operational sync accepts owner-only operator files and can apply the first overlay
+breaking: false

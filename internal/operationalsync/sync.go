@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,6 +23,8 @@ type Options struct {
 	BaseSHA     string `json:"base_sha"`
 	SourceSHA   string `json:"source_sha"`
 	Destination string `json:"destination,omitempty"`
+	// Owner is the operational repository owner. Only init takes it; later stages read the manifest.
+	Owner string `json:"owner,omitempty"`
 }
 
 // Report describes a structural plan or uncommitted merge, never a release receipt.
@@ -34,10 +37,12 @@ type Report struct {
 	Owner        string   `json:"owner"`
 	Source       string   `json:"source"`
 	ChangedPaths []string `json:"changed_paths"`
-	Candidate    string   `json:"candidate,omitempty"`
-	MergePending bool     `json:"merge_pending"`
-	UpToDate     bool     `json:"up_to_date"`
-	Scope        string   `json:"scope"`
+	// OwnerOnlyPaths lists the operator files accepted under the owner-only prefixes; never nil.
+	OwnerOnlyPaths []string `json:"owner_only_paths"`
+	Candidate      string   `json:"candidate,omitempty"`
+	MergePending   bool     `json:"merge_pending"`
+	UpToDate       bool     `json:"up_to_date"`
+	Scope          string   `json:"scope"`
 }
 
 type operation struct {
@@ -46,21 +51,20 @@ type operation struct {
 	owner            identity
 	origin, upstream string
 	expected         map[string][]byte
+	ownerOnly        []string
 }
 
 var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var identityPart = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$`)
 
-// Run validates plan/prepare. Prepare creates only Destination and leaves a normal merge for review.
+// Run validates plan/prepare, or applies the first owner overlay for init. Prepare creates only
+// Destination and leaves a normal merge for review; init writes the four overlay files and stages nothing.
 func Run(ctx context.Context, stage string, opts Options) (*Report, error) {
 	if ctx == nil {
 		return nil, errors.New("operational sync requires a context")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if stage != "plan" && stage != "prepare" {
-		return nil, errors.New("supported stages: plan, prepare")
-	}
 	if err := validateOptions(stage, &opts); err != nil {
 		return nil, err
 	}
@@ -68,12 +72,20 @@ func Run(ctx context.Context, stage string, opts Options) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	if stage == "init" {
+		return runInit(ctx, g, opts)
+	}
+	return runSync(ctx, g, stage, opts)
+}
+
+func runSync(ctx context.Context, g *gitRunner, stage string, opts Options) (*Report, error) {
 	op := operation{git: g, opts: opts}
 	if err := op.validate(ctx); err != nil {
 		return nil, err
 	}
 	report := &Report{Version: 1, Stage: stage, Status: "planned", Options: opts, Owner: op.origin, Source: op.upstream,
-		ChangedPaths: append([]string(nil), ownerPaths...), Scope: "Identity, reviewed ancestry, exact engine tree and owner-only configuration overlay; no tests, publication or bot activation"}
+		ChangedPaths: append([]string(nil), ownerPaths...), OwnerOnlyPaths: append([]string{}, op.ownerOnly...),
+		Scope: "Identity, reviewed ancestry, exact engine tree, owner-only configuration overlay and owner-only operator paths; no tests, publication or bot activation"}
 	if stage == "plan" {
 		return report, nil
 	}
@@ -91,23 +103,28 @@ func Run(ctx context.Context, stage string, opts Options) (*Report, error) {
 }
 
 func validateOptions(stage string, opts *Options) error {
+	switch stage {
+	case "init":
+		return validateInitOptions(opts)
+	case "plan", "prepare":
+		return validateSyncOptions(stage, opts)
+	}
+	return errors.New("supported stages: init, plan, prepare")
+}
+
+func validateSyncOptions(stage string, opts *Options) error {
 	for _, sha := range []string{opts.OwnerSHA, opts.BaseSHA, opts.SourceSHA} {
 		if !commitSHA.MatchString(sha) {
 			return errors.New("owner, base and source require full reviewed lowercase 40-character commit SHAs")
 		}
 	}
 	for _, path := range []*string{&opts.OwnerPath, &opts.SourcePath} {
-		if *path == "" {
-			return errors.New("owner and source checkout paths are required")
-		}
-		absolute, err := filepath.Abs(*path)
-		if err != nil {
+		if err := normalizeCheckoutPath(path); err != nil {
 			return err
 		}
-		*path = absolute
-		if err := util.ValidateExecPathArg(*path); err != nil {
-			return err
-		}
+	}
+	if opts.Owner != "" {
+		return errors.New("owner is only valid for init; later stages read it from the reviewed manifest")
 	}
 	if stage == "plan" && opts.Destination != "" {
 		return errors.New("destination is only valid for prepare")
@@ -116,6 +133,18 @@ func validateOptions(stage string, opts *Options) error {
 		return validateDestination(opts)
 	}
 	return nil
+}
+
+func normalizeCheckoutPath(path *string) error {
+	if *path == "" {
+		return errors.New("owner and source checkout paths are required")
+	}
+	absolute, err := filepath.Abs(*path)
+	if err != nil {
+		return err
+	}
+	*path = absolute
+	return util.ValidateExecPathArg(absolute)
 }
 
 func validateDestination(opts *Options) error {
@@ -192,8 +221,16 @@ func (op *operation) validate(ctx context.Context) error {
 	return err
 }
 
+// inputDirs names the checkouts a stage reads: init has no source checkout.
+func (op *operation) inputDirs() []string {
+	if op.opts.SourcePath == "" {
+		return []string{op.opts.OwnerPath}
+	}
+	return []string{op.opts.OwnerPath, op.opts.SourcePath}
+}
+
 func (op *operation) checkCheckoutRoots(ctx context.Context) error {
-	for _, path := range []string{op.opts.OwnerPath, op.opts.SourcePath} {
+	for _, path := range op.inputDirs() {
 		root, err := op.git.text(ctx, path, "rev-parse", "--show-toplevel")
 		if err != nil {
 			return err
@@ -234,7 +271,8 @@ func (op *operation) validateExisting(ctx context.Context, base map[string][]byt
 	if err := op.checkOverlay(ctx, base, current); err != nil {
 		return identity{}, err
 	}
-	if err := op.checkPaths(ctx, o.OwnerPath, o.BaseSHA, o.OwnerSHA); err != nil {
+	op.ownerOnly, err = op.checkPaths(ctx, o.OwnerPath, o.BaseSHA, o.OwnerSHA)
+	if err != nil {
 		return identity{}, err
 	}
 	return source, nil
@@ -268,20 +306,26 @@ func (op *operation) checkOverlay(ctx context.Context, base, current map[string]
 	return nil
 }
 
-func (op *operation) checkPaths(ctx context.Context, dir, base, current string) error {
-	out, err := op.git.run(ctx, dir, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", base, current, "--")
+// checkPaths refuses any difference outside the overlay and the owner-only prefixes and returns the
+// accepted owner-only paths. Rename detection stays off: a rename reports only its destination and
+// would hide the engine file an owner moved under an owner-only prefix.
+func (op *operation) checkPaths(ctx context.Context, dir, base, current string) ([]string, error) {
+	out, err := op.git.run(ctx, dir, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", base, current, "--")
 	if err != nil {
-		return err
+		return nil, err
 	}
+	ownerOnly := make([]string, 0)
 	for _, path := range strings.Split(string(out), "\x00") {
-		if path == "" {
-			continue
-		}
-		if !allowedPath(path) {
-			return fmt.Errorf("unexpected owner tree difference: %q", path)
+		switch {
+		case path == "" || allowedPath(path):
+		case ownerOnlyPath(path):
+			ownerOnly = append(ownerOnly, path)
+		default:
+			return nil, fmt.Errorf("unexpected owner tree difference: %q", path)
 		}
 	}
-	return nil
+	slices.Sort(ownerOnly)
+	return ownerOnly, op.checkOwnerOnly(ctx, dir, current, ownerOnly)
 }
 
 func allowedPath(path string) bool {

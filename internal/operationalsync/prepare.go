@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -91,8 +92,18 @@ func (op *operation) allowOwnerConflicts(ctx context.Context) error {
 }
 
 func (op *operation) writeOverlay(ctx context.Context) error {
+	if err := op.writeOverlayFiles(op.opts.Destination); err != nil {
+		return err
+	}
+	args := append([]string{"add", "--"}, ownerPaths...)
+	_, err := op.git.run(ctx, op.opts.Destination, args...)
+	return err
+}
+
+// writeOverlayFiles writes the expected overlay into a working tree and touches no index; init shares it.
+func (op *operation) writeOverlayFiles(root string) error {
 	for _, path := range ownerPaths {
-		target, err := util.ConfinePath(op.opts.Destination, path)
+		target, err := util.ConfinePath(root, path)
 		if err != nil {
 			return err
 		}
@@ -100,9 +111,7 @@ func (op *operation) writeOverlay(ctx context.Context) error {
 			return err
 		}
 	}
-	args := append([]string{"add", "--"}, ownerPaths...)
-	_, err := op.git.run(ctx, op.opts.Destination, args...)
-	return err
+	return nil
 }
 
 func (op *operation) verifyCandidate(ctx context.Context) error {
@@ -118,8 +127,12 @@ func (op *operation) verifyCandidate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := op.checkPaths(ctx, dir, op.opts.SourceSHA, tree); err != nil {
+	ownerOnly, err := op.checkPaths(ctx, dir, op.opts.SourceSHA, tree)
+	if err != nil {
 		return err
+	}
+	if !slices.Equal(ownerOnly, op.ownerOnly) {
+		return errors.New("candidate owner-only paths differ from the reviewed owner tree")
 	}
 	for _, path := range ownerPaths {
 		raw, err := op.git.blob(ctx, dir, tree, path)
@@ -161,14 +174,14 @@ func verifyInputsUnchanged(ctx context.Context, op *operation) error {
 		return err
 	}
 	if head != op.opts.OwnerSHA {
-		return errors.New("owner HEAD changed during preparation")
+		return errors.New("owner HEAD differs from the reviewed owner commit")
 	}
 	status, err := op.git.text(ctx, op.opts.OwnerPath, "status", "--porcelain=v1", "--untracked-files=all")
 	if err != nil {
 		return err
 	}
 	if status != "" {
-		return errors.New("owner checkout changed during preparation")
+		return errors.New("owner checkout has uncommitted or untracked changes")
 	}
 	// Preserve evidence on every failure; only the caller may remove this owned candidate.
 	if filepath.Clean(op.opts.Destination) == filepath.Clean(op.opts.OwnerPath) {

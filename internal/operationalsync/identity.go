@@ -40,6 +40,21 @@ func (op *operation) checkIdentity(ctx context.Context, source identity) error {
 	if err := op.checkManifestIdentity(ctx, source); err != nil {
 		return err
 	}
+	if err := op.checkOwnerRemotes(ctx, source); err != nil {
+		return err
+	}
+	public, err := op.remote(ctx, op.opts.SourcePath, "origin")
+	if err != nil {
+		return err
+	}
+	if public != op.upstream {
+		return errors.New("configured origins/upstream disagree with reviewed manifest identities")
+	}
+	return nil
+}
+
+// checkOwnerRemotes binds the owner checkout's remotes to the manifest identities; init shares it.
+func (op *operation) checkOwnerRemotes(ctx context.Context, source identity) error {
 	var err error
 	op.origin, err = op.remote(ctx, op.opts.OwnerPath, "origin")
 	if err != nil {
@@ -49,11 +64,7 @@ func (op *operation) checkIdentity(ctx context.Context, source identity) error {
 	if err != nil {
 		return err
 	}
-	public, err := op.remote(ctx, op.opts.SourcePath, "origin")
-	if err != nil {
-		return err
-	}
-	if op.origin != op.owner.Owner+"/"+op.owner.Name || op.upstream != source.Owner+"/"+source.Name || public != op.upstream {
+	if op.origin != op.owner.Owner+"/"+op.owner.Name || op.upstream != source.Owner+"/"+source.Name {
 		return errors.New("configured origins/upstream disagree with reviewed manifest identities")
 	}
 	return nil

@@ -32,6 +32,7 @@ Supplied locally or from the operational fork, and ignored by this repository:
 | `.config/fleet-topology.yaml` | organisations governed and archetype membership, reported by `harvest fleet` |
 | `.config/fleet.yaml` | fleet-wide runner defaults (tier 1 of the runner matrix) |
 | `.config/orgs/<org>.yaml` | organisation runner overrides (tier 2) |
+| `.config/operator/` | operator settings the fork carries, such as fleet-wide and per-workstation settings files; reserved for the fork, and no engine command reads it yet |
 | `deploy/arc/` | Actions Runner Controller scale sets for the operator's cluster |
 | `deploy/k8s/` | GitOps application and kustomization targeting the operator's cluster |
 
@@ -41,6 +42,19 @@ Supplied locally or from the operational fork, and ignored by this repository:
 
 Place the files at the paths above in your checkout, or have the operational fork carry them. They are listed
 in `.gitignore`, so a local copy cannot be committed to the public engine by accident.
+
+### Carrying it in the operational fork
+
+Because the engine ignores these paths, the fork tracks them with `git add -f`. Operational sync accepts
+operator files only under the paths in the table above, only as regular non-executable files of at most
+1 MiB, at most 256 of them, and only when the public source has no file at the same path; anything else
+outside the four identity overlay files still stops `plan` and `prepare`. The accepted files are reported as
+`owner_only_paths`. The path list is engine schema, and an engine test proves that `.gitignore` ignores every
+entry, so a prefix cannot be added that the public source could also track. See [owner-only operator paths](operational-sync.md#owner-only-operator-paths).
+
+A new fork gets its identity overlay from `praetorctl operational sync init`, not from a hand edit; see
+[apply the first overlay](operational-sync.md#apply-the-first-overlay). Review every operator file for
+secrets before committing it: the fork is private, but credentials belong in a secret store, not in Git.
 
 ### Fleet topology example
 
