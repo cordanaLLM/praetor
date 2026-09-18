@@ -119,30 +119,36 @@ func ResolvePolicy(ctx context.Context, layers []PolicyLayer) (*EffectivePolicy,
 		return nil, errors.New("policy requires context and bounded layers")
 	}
 	result := newEffectivePolicy()
-	seen := map[string]bool{result.Sources[0].ID: true}
-	operator := newOperatorMerge()
-	for i := 0; i < len(layers) && i < maxPolicyLayers; i++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if err := result.applyLayer(layers[i], seen); err != nil {
-			return nil, err
-		}
-		if err := operator.apply(layers[i].Source.ID, layers[i].Settings); err != nil {
-			return nil, err
-		}
-	}
-	if err := ctx.Err(); err != nil {
+	if err := result.applyLayers(ctx, layers); err != nil {
 		return nil, err
 	}
-	var err error
-	if result.Operator, result.OperatorFields, err = operator.finish(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err := result.seal(); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// applyLayers folds every layer's complexity and operator settings in order.
+func (p *EffectivePolicy) applyLayers(ctx context.Context, layers []PolicyLayer) error {
+	seen := map[string]bool{p.Sources[0].ID: true}
+	operator := newOperatorMerge()
+	for i := 0; i < len(layers) && i < maxPolicyLayers; i++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := p.applyLayer(layers[i], seen); err != nil {
+			return err
+		}
+		if err := operator.apply(layers[i].Source.ID, layers[i].Settings); err != nil {
+			return err
+		}
+	}
+	var err error
+	p.Operator, p.OperatorFields, err = operator.finish()
+	return err
 }
 
 func newEffectivePolicy() *EffectivePolicy {

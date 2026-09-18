@@ -223,23 +223,30 @@ func SelectOperatorSettings(ctx context.Context, request SettingsRequest) (Setti
 	if selection.Fleet.Path != "" && selection.Workstation.Path != "" || request.ManifestPath == "" {
 		return selection, nil
 	}
-	manifest, err := ReadInstallManifest(ctx, request.ManifestPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return selection, nil
-	}
-	if err != nil {
-		return SettingsSelection{}, err
-	}
-	if selection.Fleet.Path == "" {
-		selection.Fleet, err = recordedDocument(ctx, "fleet", manifest.Settings.Fleet)
-	}
-	if err == nil && selection.Workstation.Path == "" {
-		selection.Workstation, err = recordedDocument(ctx, "workstation", manifest.Settings.Workstation)
-	}
-	if err != nil {
+	if err := selection.fillFromManifest(ctx, request.ManifestPath); err != nil {
 		return SettingsSelection{}, err
 	}
 	return selection, nil
+}
+
+// fillFromManifest takes each document not chosen explicitly from the install manifest.
+func (s *SettingsSelection) fillFromManifest(ctx context.Context, path string) error {
+	manifest, err := ReadInstallManifest(ctx, path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if s.Fleet.Path == "" {
+		if s.Fleet, err = recordedDocument(ctx, "fleet", manifest.Settings.Fleet); err != nil {
+			return err
+		}
+	}
+	if s.Workstation.Path == "" {
+		s.Workstation, err = recordedDocument(ctx, "workstation", manifest.Settings.Workstation)
+	}
+	return err
 }
 
 func explicitDocument(flag string, getenv func(string) string, variable string) SettingsDocument {

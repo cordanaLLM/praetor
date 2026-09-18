@@ -53,7 +53,7 @@ func checkSetting(layer string, spec settingSpec, setting OperatorSetting) error
 		return err
 	}
 	if spec.kind == kindText && !util.LiteralString(setting.Value, maxSettingValueBytes) {
-		return fmt.Errorf("%s must be a literal of at most %d bytes: no control byte, '$', backtick, {env: or {file:",
+		return fmt.Errorf("%s must be a literal of at most %d bytes without control bytes, '$', backticks, '{env:' or '{file:' markers",
 			setting.Path, maxSettingValueBytes)
 	}
 	if spec.host && setting.Value != "" && layer != workstationLayer {
@@ -65,52 +65,71 @@ func checkSetting(layer string, spec settingSpec, setting OperatorSetting) error
 	return spec.check(layer, setting)
 }
 
+// kindMembers lists which of Value, List and Argv each value kind may carry.
+var kindMembers = map[settingKind][3]bool{
+	kindText: {true, false, false}, kindBool: {true, false, false}, kindList: {false, true, false},
+	kindArgv: {false, false, true}, kindEntry: {false, false, false},
+}
+
 func checkShape(spec settingSpec, setting OperatorSetting) error {
-	valueOnly := setting.List == nil && setting.Argv == nil
-	var ok bool
-	switch spec.kind {
-	case kindText:
-		ok = valueOnly
-	case kindBool:
-		ok = valueOnly && (setting.Value == "true" || setting.Value == "false")
-	case kindList:
-		ok = setting.Value == "" && setting.Argv == nil && len(setting.List) <= spec.maxItems
-	case kindArgv:
-		ok = setting.Value == "" && setting.List == nil
-	case kindEntry:
-		ok = valueOnly && setting.Value == ""
-	}
+	allowed, ok := kindMembers[spec.kind]
 	if !ok {
-		return fmt.Errorf("%s has an invalid value", setting.Path)
+		return fmt.Errorf("%s is a section, not a value", setting.Path)
+	}
+	present := [3]bool{setting.Value != "", setting.List != nil, setting.Argv != nil}
+	for i := range present {
+		if present[i] && !allowed[i] {
+			return fmt.Errorf("%s has an invalid value", setting.Path)
+		}
+	}
+	if spec.kind == kindBool && setting.Value != "true" && setting.Value != "false" {
+		return fmt.Errorf("%s must be true or false", setting.Path)
+	}
+	if len(setting.List) > spec.maxItems {
+		return fmt.Errorf("%s exceeds %d entries", setting.Path, spec.maxItems)
 	}
 	return nil
 }
 
 func (m *operatorMerge) merge(layer string, spec settingSpec, setting OperatorSetting) error {
-	current, set := m.values[setting.Path]
 	switch spec.rule {
 	case ruleAppend:
 		return m.appendList(layer, spec, setting)
 	case ruleTighten:
-		if set && current.Value == spec.strict && setting.Value != spec.strict {
-			return fmt.Errorf("%s loosens %s, set to %s by %s", layer, setting.Path, spec.strict, m.named(setting.Path))
-		}
+		return m.tighten(layer, spec, setting)
 	case ruleConflict:
-		if set && current.Value != "" && setting.Value != "" && current.Value != setting.Value {
-			return fmt.Errorf("%s and %s give different values for %s", m.named(setting.Path), layer, setting.Path)
-		}
-		if set && setting.Value == "" {
-			return nil
-		}
+		return m.mergeConflicting(layer, setting)
 	}
-	m.replace(layer, current, set, setting)
+	m.replace(layer, setting)
+	return nil
+}
+
+// tighten refuses a value that moves away from the strict one a previous layer set.
+func (m *operatorMerge) tighten(layer string, spec settingSpec, setting OperatorSetting) error {
+	current, set := m.values[setting.Path]
+	if set && current.Value == spec.strict && setting.Value != spec.strict {
+		return fmt.Errorf("%s loosens %s, set to %s by %s", layer, setting.Path, spec.strict, m.named(setting.Path))
+	}
+	m.replace(layer, setting)
+	return nil
+}
+
+// mergeConflicting refuses two different non-empty values; an empty value keeps the other.
+func (m *operatorMerge) mergeConflicting(layer string, setting OperatorSetting) error {
+	current, set := m.values[setting.Path]
+	if set && current.Value != "" && setting.Value != "" && current.Value != setting.Value {
+		return fmt.Errorf("%s and %s give different values for %s", m.named(setting.Path), layer, setting.Path)
+	}
+	if !set || setting.Value != "" {
+		m.replace(layer, setting)
+	}
 	return nil
 }
 
 // replace records a scalar. An equal value adds the layer as a further contributor; a
 // different value makes the layer the only one.
-func (m *operatorMerge) replace(layer string, current OperatorSetting, set bool, setting OperatorSetting) {
-	if set && sameSetting(current, setting) {
+func (m *operatorMerge) replace(layer string, setting OperatorSetting) {
+	if current, set := m.values[setting.Path]; set && sameSetting(current, setting) {
 		m.contribute(setting.Path, layer)
 	} else {
 		m.contributors[setting.Path] = []string{layer}
