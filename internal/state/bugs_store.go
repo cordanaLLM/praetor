@@ -141,9 +141,10 @@ func updateBugLedgerContext(ctx context.Context, rootPath string, change func(*b
 	return commitBugFiles(ctx, root, files, updated, doc.meta)
 }
 
-// commitBugFiles writes the sidecar before the ledger. A crash in between
-// leaves sidecar records no row references yet: readers ignore them and the
-// next write replaces them, so no field is lost. Unchanged files are not written.
+// commitBugFiles writes the sidecar before the ledger, so a crash in between
+// never leaves a row without its metadata. It can leave a record no row
+// references yet (readers ignore it; the next add of that ID replaces it) or a
+// resolve's ResolvedAt ahead of its row. Unchanged files are not written.
 func commitBugFiles(ctx context.Context, root *os.Root, files bugFiles, updated string, index bugMetaIndex) error {
 	if files.metaExists || len(index) > 0 {
 		meta, err := encodeBugMeta(index)

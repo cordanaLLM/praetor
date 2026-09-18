@@ -145,8 +145,10 @@ not received the Unix process-contention acceptance.
 A mutation writes and syncs `BUGS.md.pending`, checks that the original bytes have
 not changed, renames the candidate and syncs the directory. When the sidecar
 changes, it goes through the same protocol as `bugs.meta.json.pending` first, under
-the same lock. An interruption between the two renames leaves sidecar records no
-row refers to yet, never a row without its metadata; the next write replaces them.
+the same lock. An interruption between the two renames never leaves a row without
+its metadata. It can leave a sidecar record no row refers to yet (an interrupted
+add; the next add of that ID replaces it), or a ResolvedAt that is ahead of a row
+still shown open (an interrupted resolve; resolving again repairs it).
 A failed staging file is retained and blocks further mutations. Inspect the candidate, original ledger
 and active writers before recovering an interrupted operation. Never treat an
 error as proof that a rename did not occur: directory sync or cleanup can fail
