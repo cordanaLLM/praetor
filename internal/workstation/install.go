@@ -63,22 +63,26 @@ type Result struct {
 // its whole run: a concurrent install or update is refused (ErrLockHeld), never merged. A
 // build or placement failure restores every target this run already touched from a backup
 // taken before anything was written.
-func Install(ctx context.Context, opts Options) (Result, error) {
+func Install(ctx context.Context, opts Options) (result Result, err error) {
 	if ctx == nil {
 		return Result{}, errors.New("workstation: install requires a context")
 	}
-	opts, err := validateInstallOptions(opts)
+	opts, err = validateInstallOptions(opts)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := os.MkdirAll(opts.BinDir, 0o755); err != nil {
-		return Result{}, fmt.Errorf("workstation: create bin directory %s: %w", opts.BinDir, err)
+	if mkErr := os.MkdirAll(opts.BinDir, 0o755); mkErr != nil {
+		return Result{}, fmt.Errorf("workstation: create bin directory %s: %w", opts.BinDir, mkErr)
 	}
 	release, err := acquireLock(opts.BinDir)
 	if err != nil {
 		return Result{}, err
 	}
-	defer func() { _ = release() }()
+	defer func() {
+		if relErr := release(); relErr != nil {
+			err = errors.Join(err, relErr)
+		}
+	}()
 	return install(ctx, opts)
 }
 
@@ -133,7 +137,7 @@ func placeAll(ctx context.Context, opts Options, states map[string]targetState, 
 	if err != nil {
 		return nil, fmt.Errorf("workstation: create build directory: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(buildDir) }()
+	defer os.RemoveAll(buildDir) //nolint:errcheck // best-effort scratch cleanup; the binaries are already placed by the time this runs
 
 	digests := make(map[string]string, len(binaryNames))
 	var done []string

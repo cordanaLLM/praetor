@@ -130,11 +130,13 @@ func copyFileMode(source, destination string, mode os.FileMode) (err error) {
 	if err != nil {
 		return fmt.Errorf("workstation: create %s: %w", destination, err)
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return fmt.Errorf("workstation: copy %s to %s: %w", source, destination, err)
+	if _, copyErr := io.Copy(out, in); copyErr != nil {
+		return errors.Join(fmt.Errorf("workstation: copy %s to %s: %w", source, destination, copyErr), out.Close())
 	}
-	return out.Close()
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("workstation: close %s: %w", destination, err)
+	}
+	return nil
 }
 
 // stageAndSwap writes into a same-directory temporary entry (via write) and then swaps it
@@ -145,7 +147,7 @@ func stageAndSwap(goos, binDir, destinationName string, write func(path string) 
 	if err != nil {
 		return fmt.Errorf("workstation: create staging directory: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(stageDir) }()
+	defer os.RemoveAll(stageDir) //nolint:errcheck // best-effort scratch cleanup; the swap below is what must succeed
 	staged := filepath.Join(stageDir, destinationName)
 	if err := write(staged); err != nil {
 		return err
@@ -187,7 +189,7 @@ func renameAside(destination string) error {
 	if err := os.Rename(destination, aside); err != nil {
 		return fmt.Errorf("workstation: rename %s aside: %w", destination, err)
 	}
-	_ = os.Remove(aside)
+	os.Remove(aside) //nolint:errcheck // best-effort; a leftover aside file self-heals on the next swap
 	return nil
 }
 

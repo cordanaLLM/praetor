@@ -162,18 +162,19 @@ func WriteInstallManifest(path string, manifest InstallManifest) (err error) {
 
 // writeInstallManifestTemp writes and closes the staged manifest file with owner-only
 // permissions, isolating the fallible I/O steps WriteInstallManifest's deferred cleanup
-// depends on having a settled file handle for.
-func writeInstallManifestTemp(temp *os.File, data []byte) error {
-	if _, err := temp.Write(append(data, '\n')); err != nil {
-		_ = temp.Close()
-		return fmt.Errorf("write install manifest: %w", err)
+// depends on having a settled file handle for. The close always runs, and its error is
+// only reported when nothing earlier already failed.
+func writeInstallManifestTemp(temp *os.File, data []byte) (err error) {
+	defer func() {
+		if cerr := temp.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close staged install manifest: %w", cerr)
+		}
+	}()
+	if _, writeErr := temp.Write(append(data, '\n')); writeErr != nil {
+		return fmt.Errorf("write install manifest: %w", writeErr)
 	}
-	if err := temp.Chmod(0o600); err != nil {
-		_ = temp.Close()
-		return fmt.Errorf("set install manifest permissions: %w", err)
-	}
-	if err := temp.Close(); err != nil {
-		return fmt.Errorf("close staged install manifest: %w", err)
+	if chmodErr := temp.Chmod(0o600); chmodErr != nil {
+		return fmt.Errorf("set install manifest permissions: %w", chmodErr)
 	}
 	return nil
 }
