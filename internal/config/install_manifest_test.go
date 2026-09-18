@@ -7,6 +7,7 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,6 +154,53 @@ func TestSelectOperatorSettingsRejectsStaleOrInvalidManifest(t *testing.T) {
 	var noContext context.Context
 	if _, err := SelectOperatorSettings(noContext, SettingsRequest{}); err == nil {
 		t.Fatal("nil context accepted")
+	}
+}
+
+func TestWriteInstallManifestRoundTrip(t *testing.T) {
+	want := manifestFixture(t, recorded(t, "clients: {}\n"), nil)
+	path := filepath.Join(t.TempDir(), "nested", "install.json")
+	if err := WriteInstallManifest(path, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadInstallManifest(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EngineCommit != want.EngineCommit || got.BinDir != want.BinDir || got.Settings.Fleet.Path != want.Settings.Fleet.Path {
+		t.Fatalf("round trip: %+v", got)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("install manifest mode = %v, want 0600", info.Mode().Perm())
+	}
+	// Overwriting an existing manifest replaces it atomically rather than merging.
+	second := manifestFixture(t, nil, nil)
+	second.BinDir = want.BinDir
+	if err := WriteInstallManifest(path, second); err != nil {
+		t.Fatal(err)
+	}
+	got, err = ReadInstallManifest(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Settings.Fleet != nil {
+		t.Fatalf("second write did not replace the first: %+v", got)
+	}
+}
+
+func TestWriteInstallManifestRejectsInvalid(t *testing.T) {
+	manifest := manifestFixture(t, nil, nil)
+	manifest.Version = 2
+	path := filepath.Join(t.TempDir(), "install.json")
+	if err := WriteInstallManifest(path, manifest); err == nil {
+		t.Fatal("an invalid manifest was written")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a rejected manifest must leave no file behind, stat: %v", err)
 	}
 }
 
