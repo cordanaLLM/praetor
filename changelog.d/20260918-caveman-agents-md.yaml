@@ -1,0 +1,3 @@
+type: changed
+title: Write AGENTS.md and the adopter harness in caveman, start each turn from praetorctl state status instead of the whole STATE.md, drop the harness flowchart, and fail compile-context --verify and audit when AGENTS.md is prose; the gate has no opt-out, so adopted repositories refresh the harness with praetorctl adopt --force and rewrite the lines praetorctl caveman check AGENTS.md flags
+breaking: true

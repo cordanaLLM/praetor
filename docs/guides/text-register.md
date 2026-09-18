@@ -49,8 +49,8 @@ register:
     forge: social      # issues, PR bodies, review comments, commit bodies
     docs: docs         # docs/, README, ADR bodies, notebook documents
     agent: internal    # briefs, fan-out prompts, workflow returns; also the fallback
-    # Emission surfaces: unset means "same as agent". See "Caveman lint" below.
-    # context: internal  # AGENTS.md, compiled vendor files, personas, skills
+    # Emission surfaces: unset means internal, whatever agent says. See "Caveman lint" below.
+    # context: internal  # AGENTS.md, compiled vendor files, personas, skills; fixed, no other value
     # mcp: internal      # MCP tool and property descriptions, MCP text results
     # hooks: internal    # agent hook decisions and denials, hook script messages
     # prompts: internal  # provider, repair, notebook and harness prompts
@@ -70,7 +70,8 @@ register:
 | Key | Default | Bound | Error when violated |
 | :--- | :--- | :--- | :--- |
 | `surfaces.<forge\|docs\|agent>` | `social`, `docs`, `internal` | one of the three registers; closed key set | `unsupported text register "<v>"`, `unknown register surface "<k>"` |
-| `surfaces.<context\|mcp\|hooks\|prompts\|ledger>` | unset, resolves as `surfaces.agent` | one of the three registers; closed key set | same as the row above |
+| `surfaces.context` | `internal`, whatever `surfaces.agent` says | `internal` only: the caveman gate on AGENTS.md has no opt-out | `register surface "context" is fixed to internal: ...` |
+| `surfaces.<mcp\|hooks\|prompts\|ledger>` | unset, resolves as `internal` (`surfaces.agent` does not reach it) | one of the three registers; closed key set | same as the first row |
 | `tasks.<label>` | the four rows above, register only | at most 64 rows; label must be a `target_tasks` label | `register tasks exceed 64 rows`, `invalid register task label "<k>"`, `register task "<k>" is not a declared target_tasks label` |
 | `tasks.<label>.max_tokens` | none | 256..8192 when written | `register max_tokens for "<k>" must be 256..8192` |
 | `evidence.inline_max_lines` | 58 | 1..58, tighten only | `register evidence bound must be 1..58` |
@@ -85,9 +86,10 @@ class actually spends.
 `RegisterPolicy.Resolve(surface, task)` decides in this order:
 
 1. The `forge` and `docs` surfaces own their audience. The task never changes who reads the
-   forge or the documentation, and no budget applies. An emission surface (`context`,
-   `mcp`, `hooks`, `prompts`, `ledger`) resolves to its own key when the manifest writes it
-   and to `surfaces.agent` otherwise; the task never changes it either.
+   forge or the documentation, and no budget applies. The `context` surface is always
+   `internal`. Any other emission surface (`mcp`, `hooks`, `prompts`, `ledger`) resolves to
+   its own key when the manifest writes it and to `internal` otherwise; neither the task nor
+   `surfaces.agent` changes it.
 2. On the `agent` surface, or when no surface is named, the task row wins; without a row
    the register is `surfaces.agent`.
 3. The result names the winning row (`surfaces.forge`, `tasks.ci_debugging`,
@@ -183,9 +185,9 @@ docs register, and a reply to a person is full prose.
 
 Register compliance on human-typed surfaces is advisory: nothing measures whether a
 pull-request body reads as social prose, and nothing measures whether an agent return
-follows `caveman`. Two things are mechanical: the block in AGENTS.md
-must match the manifest, and a configured `max_tokens` bounds the provider request of a
-repair run.
+follows `caveman`. Three things are mechanical: the block in AGENTS.md must match the
+manifest, AGENTS.md must pass the caveman lint (see "The context gate" below), and a
+configured `max_tokens` bounds the provider request of a repair run.
 
 ## Caveman lint and token estimate
 
@@ -199,15 +201,57 @@ praetorctl caveman estimate AGENTS.md
 
 `check` prints one summary line per input, then its findings as `<path>:<line> <rule>:
 <excerpt>`, and exits non-zero when any input fails. Line 0 means the whole text. A
-directory expands to the Markdown files below it; `-` reads standard input. Today the lint
-runs on demand only: no gate calls it yet, and the current AGENTS.md fails it because it is
-written in prose.
+directory expands to the Markdown files below it; `-` reads standard input. The text
+register block is blanked before the lint, exactly as the context gate does it, and the
+summary line counts its lines. The prose AGENTS.md that the caveman rewrite replaced,
+frozen as `internal/compiler/testdata/agents-floor.txt`, fails:
 
 ```text
-AGENTS.md: FAIL prose_words=1106 articles=97 density=8.8/100 limit=2.0 off_regions=0 findings=2
-AGENTS.md:0 C1 article-density: 8.8 articles per 100 prose words (97/1106), limit 2.0
-AGENTS.md:76 C5 long-sentence: 39 words: your pull requests go stale when ...
+agents-floor.txt: FAIL prose_words=1035 articles=90 density=8.7/100 limit=2.0 off_regions=0 register_block_lines=13 findings=2
+agents-floor.txt:0 C1 article-density: 8.7 articles per 100 prose words (90/1035), limit 2.0
+agents-floor.txt:76 C5 long-sentence: 39 words: your pull requests go stale when ...
 ```
+
+The current AGENTS.md passes:
+
+```text
+AGENTS.md: PASS prose_words=721 articles=2 density=0.3/100 limit=2.0 off_regions=0 register_block_lines=13 findings=0
+```
+
+`praetorctl caveman estimate` puts the rewrite at 10,333 bytes and about 1,911 tokens,
+down from 12,308 bytes and about 2,315 tokens; CLAUDE.md went from 168 to 115 lines.
+
+### The context gate
+
+`praetorctl compile-context --verify` and `praetorctl audit` run the lint over the
+canonical AGENTS.md, and so do their MCP mirrors (`standards_compile_context` with
+`verify_only`, `standards_audit`). Any finding fails the gate; the error quotes the first
+five findings and names the fix. A pass prints the counts behind it:
+
+```text
+AGENTS.md: caveman lint passed: 721 prose words, 0.3 articles per 100 (limit 2.0), 13 register block lines left to the renderer.
+```
+
+The whole file is linted, including what a repository wrote below the praetor harness. Only
+the text register block is left out: `compile-context` renders it, nobody edits it by hand,
+and its wording belongs to its renderer (`compiler.MaskRegisterBlock`). Compiling without
+`--verify` never lints, so a prose edit still compiles and fails on the next verify.
+
+The gate has no opt-out, no warning mode and no grace period, in praetor and in every
+adopted repository. It reads no manifest, so neither `surfaces.agent` nor any task row can
+switch it off. `register.surfaces.context` is fixed to `internal`: writing `docs` or
+`social` there is rejected when the manifest loads (`config.ContextRegister`,
+`internal/config/register_test.go`).
+
+A repository adopted before this gate carries the old prose harness and fails after the
+upgrade. `praetorctl adopt --force` rewrites the harness in caveman and keeps everything
+below its end marker; `praetorctl caveman check AGENTS.md` then lists what is left to
+rewrite in the repository's own part.
+
+A rewrite of praetor's own AGENTS.md must keep every fact of the prose version:
+`internal/compiler/canonical_floor_test.go` runs the clarity floor below against the frozen
+fixture and fails when a rule id, a `MUST`, a prohibition, a numbered rule, a command or a
+link disappears. The lint and gate code live in `internal/compiler/caveman_lint.go`.
 
 ### Check rules
 
@@ -220,8 +264,8 @@ AGENTS.md:76 C5 long-sentence: 39 words: your pull requests go stale when ...
 | `C5 long-sentence` | a sentence over 30 prose words without a `;`, `->` or `:` break |
 | `C6 unclosed-off-region` | `<!-- caveman:off -->` without a later `<!-- caveman:on -->` |
 
-The 2.0 threshold is measured, not chosen: AGENTS.md reads 8.8 articles per 100 prose words,
-its hand-written caveman rewrite 0.3. C2 and C3 ignore quoted text, so a rule that names a
+The 2.0 threshold is measured, not chosen: the prose AGENTS.md read 8.7 articles per 100
+prose words, its hand-written caveman rewrite reads 0.3. C2 and C3 ignore quoted text, so a rule that names a
 banned phrase in quotes does not trip itself.
 
 Not prose, and never linted as prose: fenced code (C4 still reports ANSI there), inline
@@ -268,7 +312,8 @@ praetorctl caveman check --surface=mcp descriptions.md
 ```
 
 The emission surfaces are `context`, `mcp`, `hooks`, `prompts` and `ledger`; an unset one
-follows `surfaces.agent`. An unknown surface name is an error, never a silent fallback.
+is `internal`, so the lint is on by default, and `surfaces.agent` does not reach it. Only the
+surface's own key opts it out, and `context` accepts no value but `internal`. An unknown surface name is an error, never a silent fallback.
 The decision is recorded in [ADR-0010](../adr/0010-text-register-per-task.md) (decisions
 9 and 10); tests and fixtures are in `internal/caveman` and
 `cmd/standardsctl/caveman_test.go`.

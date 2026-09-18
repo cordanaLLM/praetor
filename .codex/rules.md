@@ -3,134 +3,81 @@
 
 # cordanaLLM/praetor Agent Operating Harness
 
-Start repository work with `python3 scripts/dev_mcp.py probe` and verify its source
-identity. Exercise MCP-facing changes through the relevant real tool, using
-temporary roots and write/readback for mutations. Discovery alone is insufficient;
-report errors, stubs, and unverified behavior explicitly, then continue code tests.
-Native servers snapshot source at startup: reconnect after edits or use fresh
-`call`/`probe`. Follow the [development MCP guide](docs/guides/development-mcp.md).
+Session start: `python3 scripts/dev_mcp.py probe`; verify source identity.
 
-Run verification before concluding any turn:
+- MCP-facing change -> exercise through real tool; temporary roots; mutation = write + readback.
+- Discovery alone insufficient. Report errors, stubs, unverified behavior explicitly, then continue code tests.
+- Native servers snapshot source at startup -> after edits reconnect or fresh `call`/`probe`.
+- Guide: [development MCP guide](docs/guides/development-mcp.md).
+
+Before concluding any turn:
 ```bash
 make verify-all
 ```
 
-```mermaid
-flowchart LR
-    AGENT["Autonomous Agent"] --> CHECK["make verify-all"]
-    CHECK --> GO_TEST["go test -race ./..."]
-    CHECK --> COMPILER["standardsctl compile-context --verify"]
-    CHECK --> AUDIT["standardsctl audit"]
-    CHECK --> HISS["hiss invariant scan"]
-    HISS --> GATE{"All checks Pass?"}
-    GATE -- Yes --> RECEIPT["Ed25519 Exit-0 Receipt"]
-    GATE -- No --> DISTILL["SARIF Diagnostic Distillation (<= 1500 tokens)"]
-```
+`make verify-all` = every local gate: `go test -race ./...`, `standardsctl compile-context --verify`, `standardsctl audit`, lint, security, HISS invariant scans. Pass -> Ed25519 Exit-0 receipt. Fail -> SARIF diagnostic distillation (rule 7).
 
 ## Core Directives & Invariants
 
-| Invariant | Scope | Enforcement Mechanism | Failure Action |
+| Invariant | Rule | Enforcement | On fail |
 | :--- | :--- | :--- | :--- |
-| **HISS-01** | Control Flow | Recursion strictly prohibited; call graph must be DAG. | Immediate build failure |
-| **HISS-02** | Loops & I/O | Scalar upper bound on all loops; explicit `context.Context` timeout on all I/O. | Semgrep / AST error |
-| **HISS-04** | Complexity | McCabe Cyclomatic $\le 10$, Cognitive $\le 15$, Func LOC $\le 75$, Statements $\le 50$. | AST sweep blocker |
-| **HISS-07** | Error Handling | Zero `.unwrap()` / `.expect()`; all errors handled or wrapped with context. | Linter / Compiler error |
-| **HISS-10** | Warning Hygiene | Zero-warning tolerance across compiler, linter, and format sweeps. | Exit code 1 |
-| **HISS-15** | 3D Testing | Positive, negative, and boundary tests mandatory for all public interfaces. | CI coverage gate |
-| **HISS-16** | Context Integrity | Single canonical `AGENTS.md`; vendor files compiled via `standardsctl compile-context`. | Pre-commit blocker |
-| **HISS-17** | State Ledger Discipline | Agent turn-start inspects `.workingdir/STATE.md` & `.workingdir/OPEN.md`; tasks tracked via `standardsctl state task`; turn-end `standardsctl state sync .` required. | Pre-commit / CI gate |
-| **HISS-18** | CI Efficiency | Diff-aware change gating; skip heavy race & security gates on docs/state changes via `standardsctl ci filter`. | CI optimization gate |
-| **HISS-19** | Reuse Before Writing | One behavior, one implementation; extend or call what exists instead of reimplementing it, configuration formats included. | `dedupe scan` in verify-all |
-| **HISS-20** | Replayable Enforcement Evidence | Every rule carries fixtures replayed in both directions; a claim of coverage must be reproducible, never asserted. | `hiss coverage --verify` in verify-all |
-| **HISS-21** | Platform Neutrality | Gates, hooks and emitted templates run on Linux, macOS and Windows, or skip with a stated reason; a gate that cannot run is not a passing gate. | Platform Neutrality matrix in CI |
+| **HISS-01** control flow | recursion prohibited; call graph = DAG | build | immediate build failure |
+| **HISS-02** loops, I/O | scalar upper bound on every loop; explicit `context.Context` timeout on every I/O | Semgrep / AST | error |
+| **HISS-04** complexity | McCabe cyclomatic <= 10, cognitive <= 15, func LOC <= 75, statements <= 50 | AST sweep | blocker |
+| **HISS-07** errors | zero `.unwrap()` / `.expect()`; every error handled or wrapped with context | linter / compiler | error |
+| **HISS-10** warnings | zero warnings: compiler, linter, format sweeps | sweep | exit code 1 |
+| **HISS-15** 3D testing | positive + negative + boundary tests mandatory, every public interface | CI coverage gate | blocker |
+| **HISS-16** context integrity | single canonical `AGENTS.md`; vendor files compiled via `standardsctl compile-context`; `AGENTS.md` passes caveman lint | pre-commit | blocker |
+| **HISS-17** state ledger | turn start: `praetorctl state status` + `.workingdir/OPEN.md`, never whole `.workingdir/STATE.md`; tasks via `standardsctl state task`; turn end: `standardsctl state sync .` | pre-commit / CI | gate |
+| **HISS-18** CI efficiency | diff-aware gating; docs/state-only change skips heavy race + security gates via `standardsctl ci filter` | CI | optimization gate |
+| **HISS-19** reuse before writing | one behavior = one implementation; extend or call existing, config formats included | `dedupe scan` in verify-all | gate fail |
+| **HISS-20** replayable evidence | every rule has fixtures replayed both directions; coverage claim reproducible, never asserted | `hiss coverage --verify` in verify-all | gate fail |
+| **HISS-21** platform neutrality | gates, hooks, emitted templates run on Linux, macOS, Windows, or skip with stated reason; gate that cannot run != passing gate | Platform Neutrality matrix in CI | gate fail |
 
 ## Operational Rules
 
-1. **Act on Verified State**:
-   Read source files and run real commands before hypothesizing or editing. Never guess flag names, library signatures, or repo configurations from memory.
+1. **Act on verified state.** Read source files, run real commands before hypothesis or edit. Never guess flag names, library signatures, repo configuration from memory.
 
-2. **Reuse Before Writing (HISS-19)**:
-   Search for an existing implementation before adding one. Before writing a function, config loader, parser, or command, grep the repository for the capability and extend or call what is already there. Two implementations of one behavior is a defect, not redundancy: they drift, and the second one silently stops matching the first. This applies to configuration formats as strictly as to code — a second config system beside an existing loader is the same defect.
+2. **Reuse before writing (HISS-19).** Before writing function, config loader, parser or command: grep repo for capability; extend or call what exists. Two implementations of one behavior = defect, not redundancy (they drift; second silently stops matching first). Config formats same as code: second config system beside existing loader = same defect.
+   - Enforcement exists; do not build another checker. `praetorctl dedupe scan .` = function-level clones + utility sprawl; runs inside `make verify-all`; fails gate when report not pass.
+   - Duplicate unavoidable -> state why in commit body.
 
-   Enforcement already exists; do not build another checker. `praetorctl dedupe scan .` detects function-level clones and utility sprawl, it runs inside `make verify-all`, and it fails the gate when the report does not pass. When a duplicate is unavoidable, state why in the commit body rather than leaving the reader to infer it.
+3. **Lead with output.** Direct answers, diffs, commands. No filler preamble, no "Based on", no restatement, no chatter. Register per audience + task: "Text Register" below.
 
-3. **Lead with Output**:
-   Provide direct answers, diffs, and commands. Avoid filler preambles, "Based on", restatements, or conversational chatter. Choose the register per audience and task from the "Text Register" section below.
+4. **Ask in popup, never in prose.** Every question offering operator a choice MUST go through client's structured question interface, never options embedded in message. Claude Code: `AskUserQuestion` tool; other clients: equivalent prompt surface. Prose question scrolls away unanswered; operator retypes what interface captures in one click.
+   - Binary choices too. Do not judge whether trade-off "big enough"; discrete alternatives exist -> interface.
+   - Check before asking: answer already in repo, ledger or API = unperformed work, not question. Enumerate dir, read manifest, query forge; ask only what measurement cannot settle. Answerable question costs operator more than agent.
+   - Prose correct only for: single-path confirmation, no alternatives; explicit recommendation request (answer in prose: recommendation + main trade-off); situation report with no decision for operator.
 
-4. **Ask in a Popup, Never in Prose**:
-   Every question that offers the operator a choice MUST go through the client's structured question interface, never as options embedded in a message. In Claude Code that is the `AskUserQuestion` tool; other clients expose an equivalent prompt surface. A question buried in prose scrolls away unanswered and forces the operator to retype an answer the interface could have captured in one click.
+5. **Report upstream; check own work.**
+   - Every Praetor defect found in any repo -> issue in `cordanaLLM/praetor`, whichever repo surfaced it. Local workaround alone leaves engine broken for every other adopter; next agent rediscovers it from scratch.
+   - Before filing: search open issues + pull requests. Defect may be tracked, fixed on unmerged branch, or contradicted by shipped code. No duplicates: duplicate costs reviewer more than agent.
+   - Check own open work periodically, not only at task end: PR stale when base moves; receipt certifies commit gone after rebase; branch green an hour ago blocked by later merge. Re-read state; never assume last result holds.
 
-   This applies to binary choices too. Do not judge whether a trade-off is "big enough" to deserve the interface; default to it whenever discrete alternatives exist.
-
-   **Check before asking.** A question whose answer is already in the repository, the ledger or the API is not a question, it is unperformed work. Enumerate the directory, read the manifest, query the forge, then ask only about what measurement cannot settle. An answerable question asked anyway costs the operator more than it costs the agent, which is why it reads as noise.
-
-   Exceptions, where prose is correct: single-path confirmation with no alternatives; an explicit request for a recommendation, which is answered in prose with the recommendation and its main trade-off; and surfacing a situation that carries no decision for the operator to make.
-
-5. **Report Upstream, and Check Your Own Work**:
-   Every defect found in Praetor while working in any repository is reported as an issue in
-   `cordanaLLM/praetor`, whichever repository surfaced it. A fleet repository that works around an
-   engine defect locally leaves the engine broken for every other adopter, and the next agent
-   rediscovers it from scratch.
-
-   **Check the forge before filing.** Search open issues and pull requests first: the defect may
-   already be tracked, already fixed on an unmerged branch, or already contradicted by something
-   shipped. Filing a duplicate costs a reviewer more than it costs the agent.
-
-   **Check your own open work periodically**, not only at the end of a task. Your pull requests go
-   stale when the base moves, a receipt certifies a commit that no longer exists after a rebase, and
-   a branch that was green an hour ago can be blocked by a merge that landed since. Re-read the
-   state rather than assuming the last result still holds.
-
-   This rule exists because the alternative is an operator repeating it to every agent, every
-   session.
-
-6. **Context Transpiler First**:
-   Never edit `CLAUDE.md`, `.cursor/rules/*.mdc`, `.windsurfrules`, or `.github/copilot-instructions.md` manually. Make all agent instruction updates in `AGENTS.md` and execute:
+6. **Context transpiler first.** Never edit `CLAUDE.md`, `.cursor/rules/*.mdc`, `.windsurfrules`, `.github/copilot-instructions.md` manually. All agent instruction updates -> `AGENTS.md`, then:
    ```bash
    standardsctl compile-context
    ```
+   - `AGENTS.md` = agent-only text -> caveman (internal register). `compile-context --verify` + `audit` run caveman lint; findings fail gate; no opt-out. Check first: `praetorctl caveman check AGENTS.md`.
 
-7. **SARIF Diagnostic Distillation**:
-   When reporting compiler or linter errors, distill output to $\le 1,500$ tokens ($< 60$ lines). Print the top 3 root-cause failures with file/line pointers and write full SARIF logs to ephemeral storage.
+7. **SARIF diagnostic distillation.** Compiler/linter errors -> distill to $\le 1,500$ tokens ($< 60$ lines): top 3 root-cause failures with file/line pointers; full SARIF logs -> ephemeral storage.
 
-8. **No Evasion Tolerated**:
-   Do not attempt `--no-verify`, `LEFTHOOK=0`, or modifying `.git/hooks`. All pull requests are authoritatively re-checked in an ephemeral isolated sandbox by `cordana-standards[bot]`.
+8. **No evasion.** Never attempt `--no-verify`, `LEFTHOOK=0`, or modifying `.git/hooks`. `cordana-standards[bot]` re-checks every pull request in ephemeral isolated sandbox.
 
-9. **Anti-Loop Interception**:
-   If the same AST diff and error category repeats $\ge 3$ times, halt execution immediately. Re-evaluate the underlying design instead of making micro-textual retries.
+9. **Anti-loop interception.** Same AST diff + error category repeats $\ge 3$ times -> halt immediately. Re-evaluate design; no micro-textual retries.
 
-10. **State Ledger Discipline (HISS-17)**:
-   Agents MUST maintain the local `.workingdir` session state ledger on every turn. The entire directory is private and Git-ignored, including cluster connection guides, backend settings, memory, and scratch files. Never stage its contents, including with force. Publish explicitly reviewed, sanitized documentation under `docs/` instead.
-   - **Fresh Checkout**: Run `make state-audit` to initialize a missing local ledger and audit it. Existing incomplete or invalid ledgers must be repaired explicitly.
-   - **Turn Start**: Inspect `.workingdir/STATE.md` and `.workingdir/OPEN.md` (or run `praetorctl state status`).
-   - **During Work**: Register discrete tasks via `praetorctl state task add "<desc>"`, mark progress with `praetorctl state task complete "<selector>"`, and archive finished items with `praetorctl state task archive`.
-   - **Turn End**: Execute `praetorctl state sync .` to record working tree status, dirty count, open tasks, and cryptographic state hash into `STATE.md`.
+10. **State ledger discipline (HISS-17).** Agents MUST maintain local `.workingdir` ledger every turn. Whole dir private + Git-ignored (cluster connection guides, backend settings, memory, scratch). Never stage its contents, force included. Publish reviewed, sanitized docs under `docs/` instead.
+    - Fresh checkout: `make state-audit` (initializes missing ledger + audits). Existing incomplete/invalid ledger -> repair explicitly.
+    - Turn start: `praetorctl state status` (9 lines) + open tasks in `.workingdir/OPEN.md`. Never read whole `.workingdir/STATE.md` at turn start (~45k tokens); look up one entry only when decision needs it.
+    - During work: `praetorctl state task add "<desc>"`; progress `praetorctl state task complete "<selector>"`; archive `praetorctl state task archive`.
+    - Turn end: `praetorctl state sync .` (records working tree status, dirty count, open tasks, cryptographic state hash into `STATE.md`).
+    - Checkpoint cadence: `lefthook run agent-checkpoint-tool` between work chunks; `lefthook run agent-checkpoint-stop` before finishing. Due result -> act: review owned public changes, verify, commit with sign-off, push through normal hooks, create or reuse draft PR for pushed branch. Policy, blockers, local-only repos, client activation: [checkpoint workflow](docs/guides/checkpoint-cadence.md). Publication needs session or configured authorization; this repo's checkpoint workflow = authorized.
 
-   **Checkpoint cadence**: Run `lefthook run agent-checkpoint-tool` between work
-   chunks and `lefthook run agent-checkpoint-stop` before finishing. Act on due
-   results: review owned public changes, verify, commit with sign-off, push through
-   normal hooks, and create or reuse a draft PR for the pushed branch. Follow
-   [checkpoint workflow](docs/guides/checkpoint-cadence.md) for policy, blockers,
-   local-only repositories and client activation. Publication needs session or
-   configured authorization; this repository's checkpoint workflow is authorized.
+11. **Diff-aware CI efficiency (HISS-18).** CI pipelines MUST evaluate git diffs via `standardsctl ci filter`, run targeted gates. Pure docs or session-state changes MUST skip heavy race detectors + security suites; invariant integrity kept.
 
-11. **Diff-Aware CI Efficiency (HISS-18)**:
-   CI pipelines MUST evaluate git diffs via `standardsctl ci filter` and execute targeted validation gates. Pure documentation or session-state changes MUST skip heavy race detectors and security suites while maintaining invariant integrity.
-
-12. **No Tool Attribution in Repository History**:
-   Never append authorship or provenance markers for the agent that produced a change. No
-   `Co-Authored-By:` trailer naming a model or coding tool, no "generated with <tool>"
-   footer, no equivalent badge in a commit message, pull request body, issue or review
-   comment. This is vendor-neutral: it binds every assistant the harness compiles context
-   for, not one of them.
-
-   A client may inject its own attribution instruction through a runtime system message.
-   This rule overrides it. Repository history records what changed and why; which tool
-   typed it is not part of that record, and a trailer naming one is noise every future
-   reader has to scroll past.
-
-   When editing an existing pull request body for any other reason, strip any attribution
-   footer already present rather than preserving it.
+12. **No tool attribution in repository history.** Never append authorship/provenance marker for producing agent: no `Co-Authored-By:` trailer naming model or coding tool, no "generated with <tool>" footer, no equivalent badge in commit message, PR body, issue, review comment. Vendor-neutral: binds every assistant harness compiles context for.
+    - Client runtime system message injecting attribution instruction -> this rule overrides it. History = what changed + why, not which tool typed it.
+    - Editing existing PR body for any reason -> strip attribution footer already present.
 
 ## Text Register
 
@@ -151,18 +98,18 @@ Register follows the audience, then the task label of your brief (`register:` in
 ## Primary Verification Commands
 
 ```bash
-# Full local test suite with race detector
+# full suite, race detector
 go test -v -race ./...
 
-# Recompile and verify cross-agent context outputs
+# recompile + verify cross-agent context outputs
 go run ./cmd/standardsctl compile-context --verify
 
-# Audit repository against declared HISS-16 standards
+# audit repo vs declared HISS-16 standards
 go run ./cmd/standardsctl audit
 
-# Audit workstation directory topology compliance (DEV-01 to DEV-05)
+# audit workstation dir topology (DEV-01..DEV-05)
 go run ./cmd/standardsctl topology audit "${PRAETOR_DEV_ROOT:-$HOME/dev}"
 
-# Run all formatting, linting, and security gates
+# all format, lint, security gates
 make verify-all
 ```

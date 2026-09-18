@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 const (
@@ -73,9 +75,14 @@ func TestCavemanCheckBoundary(t *testing.T) {
 	if out, err := runCavemanCLI(t, "", "check", empty); err != nil || !strings.Contains(out, "PASS prose_words=0") {
 		t.Fatalf("empty file: err=%v\n%s", err, out)
 	}
-	// Without a manifest the mcp surface falls back to agent = internal: the lint applies.
+	// Without a manifest the mcp surface is internal by default: the lint applies.
 	if _, err := runCavemanCLI(t, "", "check", "--surface=mcp", "--root="+dir, prose); err == nil {
 		t.Fatal("mcp defaults to internal; prose must fail")
+	}
+	// surfaces.agent does not reach an emission surface, so agent = docs keeps the lint on.
+	writeFixtureFile(t, dir, ".standards.yaml", "version: 1\nregister:\n  surfaces:\n    agent: docs\n")
+	if _, err := runCavemanCLI(t, "", "check", "--surface=mcp", "--root="+dir, prose); err == nil {
+		t.Fatal("agent = docs must not switch the mcp lint off; prose must fail")
 	}
 	// A manifest that opts the surface out skips the lint and says which row decided it.
 	writeFixtureFile(t, dir, ".standards.yaml", "version: 1\nregister:\n  surfaces:\n    mcp: docs\n")
@@ -90,6 +97,11 @@ func TestCavemanCheckBoundary(t *testing.T) {
 	}
 	if _, err = runCavemanCLI(t, strings.Repeat("a", 1<<20+1), "check", "-"); err == nil {
 		t.Fatal("stdin above 1 MiB must be refused")
+	}
+	// The rendered register block is masked exactly as the context gate masks it.
+	block := config.RegisterBlockStart + "\n" + strings.TrimSuffix(cavemanProse, "\n") + "\n" + config.RegisterBlockEnd + "\n"
+	if out, err = runCavemanCLI(t, cavemanTerse+block, "check", "-"); err != nil || !strings.Contains(out, "PASS") || !strings.Contains(out, "register_block_lines=3") {
+		t.Fatalf("register block: err=%v\n%s", err, out)
 	}
 }
 

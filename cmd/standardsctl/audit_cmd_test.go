@@ -26,6 +26,7 @@ func TestAudit_Positive_RootsFollowManifest(t *testing.T) {
 		"[PASS] Repository identity verified (acme/widgets",
 		"[PASS] HISS invariant scan verified: 0 active violations within 0 baselined limit",
 		"[PASS] Cross-agent context targets",
+		"[PASS] Agent context caveman lint passed",
 		"[PASS] Repository label taxonomy",
 		"[PASS] Paperclip agent runtime harness verified (acme/widgets",
 		"Audit Summary: configured governance gates passed",
@@ -74,6 +75,12 @@ func auditGateFailureCases() []auditGateCase {
 		{"stale text register block", func(t *testing.T, f *auditFixture) {
 			staleRegisterBlock(t, f.dir)
 		}, "Agent context text register"},
+		{"prose AGENTS.md", func(t *testing.T, f *auditFixture) {
+			writeFixtureFile(t, f.dir, "AGENTS.md", proseAgentsMD)
+			if out, err := runCompileContextCmd(t, f.dir); err != nil {
+				t.Fatalf("recompile prose fixture: %v\n%s", err, out)
+			}
+		}, "AGENTS.md fails the caveman lint"},
 		{"empty manifest identity", func(t *testing.T, f *auditFixture) {
 			writeFixtureFile(t, f.dir, ".standards.yaml", "version: 1\nprofiles:\n  - \"framework\"\nfacets:\n  - \"security:high\"\n")
 		}, "owner and name must not be empty"},

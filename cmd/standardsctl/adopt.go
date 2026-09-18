@@ -264,7 +264,7 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 		fmt.Println("\n--- Governance Pillars Synchronized ---")
 	}
 	if len(rep.Errors) == 0 {
-		fmt.Println("  ✓ Universal Harness : Canonical AGENTS.md + Mermaid Verification Flowchart")
+		fmt.Println("  ✓ Universal Harness : Canonical AGENTS.md, caveman-linted by compile-context --verify and audit")
 		fmt.Println("  ✓ AI Context Sync   : 6 targets (Claude Code, Cursor, Copilot, Windsurf, Codex, Gemini)")
 		fmt.Println("  ✓ IDE Ecosystem     : VS Code, JetBrains (CLion/GoLand/PyCharm), Neovim")
 		fmt.Println("  ✓ DevContainer      : Containerized deterministic dev environment (.devcontainer)")

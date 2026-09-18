@@ -1,0 +1,3 @@
+type: changed
+title: An unset mcp, hooks, prompts or ledger register surface is internal, so the caveman lint is on for engine text by default; only that surface's own key opts it out, and surfaces.agent no longer reaches it
+breaking: false

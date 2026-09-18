@@ -132,6 +132,10 @@ The writing call also splices the [text register](text-register.md) block into t
 fixture's `AGENTS.md`, rendered from the manifest beside it, before the vendor files are
 compiled. A `verify_only` call never writes the source: it reports a stale or missing block
 as `Context verification failed`, and `standards_audit` reports it in its context gate.
+Both also run the caveman lint over `AGENTS.md`, as `praetorctl compile-context --verify`
+does: prose there fails with `AGENTS.md fails the caveman lint` and the first findings, and a
+pass names its counts (see [the context gate](text-register.md#the-context-gate)). The
+fixture above is terse, so it passes.
 
 For each defect, retain the input, expected behavior, actual response, provenance,
 and filesystem evidence. Exercise positive, negative, and boundary behavior of the

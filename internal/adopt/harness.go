@@ -24,19 +24,16 @@ const (
 	codeFence = "```"
 )
 
+// agentHarnessTemplate opens the harness. It is agent-only text, so it is written in the
+// internal register and passes the caveman lint that compile-context --verify and audit run
+// over the whole AGENTS.md (TestHarnessPassesCavemanLint).
 const agentHarnessTemplate = `<!-- markdownlint-disable MD013 MD025 -->
 # {{ .RepoName }} Agent Operating Harness
 
-Run verification before concluding any turn:
+Before concluding any turn:
 
-` + "```bash\n{{ .VerifyCmd }}\n```\n\n```mermaid\n" + `flowchart LR
-    AGENT["Autonomous Agent"] --> CHECK["{{ .VerifyCmd }}"]
-    CHECK --> AUDIT["praetorctl audit"]
-    CHECK --> COMPILER["praetorctl compile-context --verify"]
-    CHECK --> GATE{"All checks Pass?"}
-    GATE -- Yes --> RECEIPT["Ed25519 Exit-0 Receipt"]
-    GATE -- No --> DISTILL["SARIF Diagnostic Distillation (<= 1500 tokens)"]
-` + "```\n\n"
+` + "```bash\n{{ .VerifyCmd }}\n```\n\n" + "`{{ .VerifyCmd }}` = `praetorctl audit` + `praetorctl compile-context --verify` + repository tests. " +
+	"All pass -> Ed25519 Exit-0 receipt. Fail -> SARIF diagnostic distillation (<= 1500 tokens).\n\n"
 
 const agentHarnessFooterTemplate = harnessFooterHeading + `
 
@@ -137,23 +134,19 @@ func buildAgentHarnessDirectives() string {
 
 ## Operational Rules
 
-1. **Act on Verified State**:
-   Read source files and run real commands before hypothesizing or editing. Never guess flag names, library signatures, or repo configurations from memory.
+1. **Act on verified state.** Read source files, run real commands before hypothesis or edit. Never guess flag names, library signatures, repo configuration from memory.
 
-2. **Lead with Output**:
-   Provide direct answers, diffs, and commands. Avoid filler preambles, "Based on", restatements, or conversational chatter.
+2. **Lead with output.** Direct answers, diffs, commands. No filler preamble, no "Based on", no restatement, no chatter.
 
-3. **Context Transpiler First**:
-   Never edit ` + "`CLAUDE.md`" + `, ` + "`.cursor/rules/*.mdc`" + `, ` + "`.windsurfrules`" + `, or ` + "`.github/copilot-instructions.md`" + ` manually. Make all agent instruction updates in ` + "`AGENTS.md`" + ` and execute:
+3. **Context transpiler first.** Never edit ` + "`CLAUDE.md`" + `, ` + "`.cursor/rules/*.mdc`" + `, ` + "`.windsurfrules`" + `, ` + "`.github/copilot-instructions.md`" + ` manually. All agent instruction updates -> ` + "`AGENTS.md`" + `, then:
 
-   ` + "```bash\n   praetorctl compile-context\n   ```\n\n" + `4. **SARIF Diagnostic Distillation**:
-   When reporting compiler or linter errors, distill output to $\le 1,500$ tokens ($< 60$ lines). Print the top 3 root-cause failures with file/line pointers and write full SARIF logs to ephemeral storage.
+   ` + "```bash\n   praetorctl compile-context\n   ```\n\n" + `   - ` + "`AGENTS.md`" + ` = agent-only text -> caveman (internal register). ` + "`praetorctl compile-context --verify`" + ` + ` + "`praetorctl audit`" + ` run caveman lint; findings fail gate; no opt-out. Check first:` + "`praetorctl caveman check AGENTS.md`" + `.
 
-5. **No Evasion Tolerated**:
-   Do not attempt ` + "`--no-verify`" + `, ` + "`LEFTHOOK=0`" + `, or modifying ` + "`.git/hooks`" + `. All pull requests are authoritatively re-checked in an ephemeral isolated sandbox by ` + "`cordana-standards[bot]`" + `.
+4. **SARIF diagnostic distillation.** Compiler/linter errors -> distill to $\le 1,500$ tokens ($< 60$ lines): top 3 root-cause failures with file/line pointers; full SARIF logs -> ephemeral storage.
 
-6. **Anti-Loop Interception**:
-   If the same AST diff and error category repeats $\ge 3$ times, halt execution immediately. Re-evaluate the underlying design instead of making micro-textual retries.
+5. **No evasion.** Never attempt ` + "`--no-verify`" + `, ` + "`LEFTHOOK=0`" + `, or modifying ` + "`.git/hooks`" + `. ` + "`cordana-standards[bot]`" + ` re-checks every pull request in ephemeral isolated sandbox.
+
+6. **Anti-loop interception.** Same AST diff + error category repeats $\ge 3$ times -> halt immediately. Re-evaluate design; no micro-textual retries.
 
 `
 }
