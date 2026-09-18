@@ -1,0 +1,3 @@
+type: added
+title: "`praetorctl workstation install` and `status`: build and place this engine's binaries atomically from a checkout, and report what is installed"
+breaking: false

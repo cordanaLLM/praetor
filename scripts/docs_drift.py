@@ -51,6 +51,8 @@ SURFACE_MAP: list[tuple[str, str, str]] = [
      r"^docs/guides/agent-hooks\.md$", "agent-hook entrypoint"),
     (r"^(\.github/workflows/portability\.yml|scripts/portability_selftest\.py)$",
      r"^docs/standards/hiss-21-platform-neutrality\.md$", "platform neutrality gate"),
+    (r"^(internal/workstation/|cmd/standardsctl/workstation\.go$|scripts/dev_install\.py$)",
+     r"^docs/guides/workstation-update\.md$", "workstation install/status"),
     # The check guards its own documentation. Changing which surfaces are mapped changes what
     # contributors are required to document, which is itself user-discoverable.
     (r"^scripts/docs_drift\.py$", r"^docs/guides/documentation-drift\.md$", "docs-drift surface map"),
