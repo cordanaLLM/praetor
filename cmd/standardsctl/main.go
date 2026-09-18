@@ -117,6 +117,7 @@ func printCoreCommands() {
 	fmt.Println("  init               Scaffold configuration, baseline, and agent context for new repo")
 	fmt.Println("  compile-context    Transpile canonical AGENTS.md to vendor-native formats (< 300 LOC)")
 	fmt.Println("  context-optimize   Analyze explicit context files and optionally write a private review pack")
+	fmt.Println("  caveman            Lint agent-facing text (check) or estimate its token cost (estimate)")
 	fmt.Println("  clients            Prepare or apply client configurations from one shared tool registry")
 	fmt.Print("  notebook           Prepare source-grounded planning templates or validate generated drafts\n" +
 		"  planning           Compile a structural planning draft and optionally write private artifacts\n")
@@ -194,6 +195,7 @@ func commandTable() map[string]commandFunc {
 		"init":             runInit,
 		"compile-context":  runCompileContext,
 		"context-optimize": runContextOptimize,
+		"caveman":          runCaveman,
 		"notebook":         runNotebook,
 		"planning":         runPlanning,
 		"prompt-optimize":  runPromptOptimize,
