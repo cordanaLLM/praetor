@@ -14,14 +14,15 @@ import (
 
 // stateCommands maps each state subcommand to its handler.
 var stateCommands = map[string]func([]string) error{
-	"init":     runStateInit,
-	"sync":     runStateSync,
-	"status":   runStateStatus,
-	"audit":    runStateAudit,
-	"compact":  runStateCompact,
-	"task":     runStateTask,
-	"bug":      runStateBug,
-	"question": runStateQuestion,
+	"init":         runStateInit,
+	"sync":         runStateSync,
+	"status":       runStateStatus,
+	"audit":        runStateAudit,
+	"compact":      runStateCompact,
+	"migrate-bugs": runStateMigrateBugs,
+	"task":         runStateTask,
+	"bug":          runStateBug,
+	"question":     runStateQuestion,
 }
 
 func runState(args []string) error {
@@ -44,6 +45,7 @@ func printStateUsage() {
 	fmt.Println("  status [dir|--dir=.]           Inspect active session state (read-only; never writes)")
 	fmt.Println("  audit [dir|--dir=.]            Audit .workingdir/ for required files and P0 blockers")
 	fmt.Println("  compact [dir|--dir=.]          One-time: rewrite old STATE.md entries compact, drop old markers, resync")
+	fmt.Println("  migrate-bugs [dir|--dir=.]     One-time: move BUGS.md inline metadata to bugs.meta.json, verify, resync")
 	fmt.Println("  task [add|complete|list|archive] Manage active tasks in OPEN.md & BACKLOG.md")
 	fmt.Println("  bug [add|list|resolve] [args]  Manage bugs ledger (BUGS.md)")
 	fmt.Println("  question [add|list|decide]     Manage user questions and decisions (QUESTIONS.md)")
@@ -193,6 +195,26 @@ func runStateCompact(args []string) error {
 	}
 	fmt.Printf("compact: %d entries rewritten, %d kept, %d markers dropped, %d -> %d bytes, resynced\n",
 		report.Rewritten, report.Kept, report.MarkersDropped, report.BytesBefore, report.BytesAfter)
+	return nil
+}
+
+func runStateMigrateBugs(args []string) error {
+	dirFlag, rest, err := stateArgs("state migrate-bugs", args, nil)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	report, err := state.MigrateBugMetadata(ctx, stateDir(dirFlag, rest, 0))
+	if err != nil {
+		return fmt.Errorf("state migrate-bugs failed: %w", err)
+	}
+	if !report.Changed {
+		fmt.Printf("migrate-bugs: nothing to migrate, no change (%d rows)\n", report.Rows)
+		return nil
+	}
+	fmt.Printf("migrate-bugs: %d of %d rows moved, round trip ok, BUGS.md %d -> %d bytes, bugs.meta.json %d bytes, resynced\n",
+		report.Migrated, report.Rows, report.BytesBefore, report.BytesAfter, report.SidecarBytes)
 	return nil
 }
 

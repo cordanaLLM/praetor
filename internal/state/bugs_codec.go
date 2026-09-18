@@ -19,12 +19,30 @@ const (
 	bugTableHeader    = "| ID | Title | Severity | Status | Location | Resolution |"
 	bugTableSeparator = "| :--- | :--- | :--- | :--- | :--- | :--- |"
 	bugMetadataPrefix = "<!-- praetor-bug:v1 "
+	// bugMetadataRef marks a row whose metadata lives in the sidecar under its ID.
+	bugMetadataRef = "<!-- praetor-bug:v2 -->"
 )
 
 type bugMetadata struct {
 	Context    string    `json:"context"`
 	CreatedAt  time.Time `json:"created_at"`
 	ResolvedAt time.Time `json:"resolved_at"`
+}
+
+// bugRowForm records how a row carries its metadata.
+type bugRowForm int
+
+const (
+	// bugRowLegacy has no metadata; its cells are read literally.
+	bugRowLegacy bugRowForm = iota
+	// bugRowInline carries Base64 metadata in a v1 comment.
+	bugRowInline
+	// bugRowSidecar points at its metadata in the sidecar with a v2 comment.
+	bugRowSidecar
+)
+
+func metadataOf(bug BugEntry) bugMetadata {
+	return bugMetadata{bug.Context, bug.CreatedAt, bug.ResolvedAt}
 }
 
 func bugNumber(id string) (int, error) {
@@ -69,9 +87,16 @@ func validateBug(bug BugEntry) error {
 		return fmt.Errorf("invalid bug status %q", bug.Status)
 	}
 	for _, field := range []string{bug.Title, bug.Location, bug.Resolution, bug.Context} {
-		if len(field) > maxBugFieldBytes || !utf8.ValidString(field) || strings.ContainsRune(field, 0) {
-			return fmt.Errorf("bug fields must be UTF-8 without NUL, at most %d bytes", maxBugFieldBytes)
+		if err := validateBugText(field); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+func validateBugText(field string) error {
+	if len(field) > maxBugFieldBytes || !utf8.ValidString(field) || strings.ContainsRune(field, 0) {
+		return fmt.Errorf("bug fields must be UTF-8 without NUL, at most %d bytes", maxBugFieldBytes)
 	}
 	return nil
 }
@@ -88,17 +113,53 @@ func encodeBugCell(text string) string {
 	return strings.Repeat("&#32;", left) + text[left:len(text)-right] + strings.Repeat("&#32;", right)
 }
 
-func encodeBugRow(bug BugEntry) (string, error) {
+// encodeBugCells writes the six visible cells and the separator before the
+// metadata comment.
+func encodeBugCells(bug BugEntry) (string, error) {
 	if err := validateBug(bug); err != nil {
 		return "", err
 	}
-	metadata, err := json.Marshal(bugMetadata{bug.Context, bug.CreatedAt, bug.ResolvedAt})
+	return fmt.Sprintf("| `%s` | %s | %s | %s | %s | %s | ",
+		bug.ID, encodeBugCell(bug.Title), bug.Severity, bug.Status, encodeBugCell(bug.Location),
+		encodeBugCell(bug.Resolution)), nil
+}
+
+// encodeBugRow writes the sidecar form. The caller stores metadataOf(bug) in
+// bugs.meta.json under bug.ID.
+func encodeBugRow(bug BugEntry) (string, error) {
+	cells, err := encodeBugCells(bug)
+	if err != nil {
+		return "", err
+	}
+	return cells + bugMetadataRef, nil
+}
+
+// encodeInlineBugRow writes the self-contained v1 form with Base64 metadata.
+// Only whole-document rendering uses it; ledger writers use the sidecar form.
+func encodeInlineBugRow(bug BugEntry) (string, error) {
+	cells, err := encodeBugCells(bug)
+	if err != nil {
+		return "", err
+	}
+	metadata, err := json.Marshal(metadataOf(bug))
 	if err != nil {
 		return "", fmt.Errorf("encode bug metadata: %w", err)
 	}
-	return fmt.Sprintf("| `%s` | %s | %s | %s | %s | %s | %s%s -->",
-		bug.ID, encodeBugCell(bug.Title), bug.Severity, bug.Status, encodeBugCell(bug.Location),
-		encodeBugCell(bug.Resolution), bugMetadataPrefix, base64.StdEncoding.EncodeToString(metadata)), nil
+	return cells + bugMetadataPrefix + base64.StdEncoding.EncodeToString(metadata) + " -->", nil
+}
+
+// rowMetadata resolves a row's metadata comment: the v2 reference reads the
+// sidecar index, anything else must be a valid v1 comment.
+func rowMetadata(id, suffix string, index bugMetaIndex) (*bugMetadata, bugRowForm, error) {
+	if suffix != bugMetadataRef {
+		metadata, err := decodeBugMetadata(suffix)
+		return metadata, bugRowInline, err
+	}
+	metadata, ok := index[id]
+	if !ok {
+		return nil, bugRowSidecar, fmt.Errorf("%s metadata missing from %s", id, bugMetaName)
+	}
+	return &metadata, bugRowSidecar, nil
 }
 
 func decodeBugMetadata(suffix string) (*bugMetadata, error) {
@@ -113,6 +174,12 @@ func decodeBugMetadata(suffix string) (*bugMetadata, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid bug metadata encoding: %w", err)
 	}
+	return decodeBugMetadataJSON(raw)
+}
+
+// decodeBugMetadataJSON is the one strict metadata reader for both forms:
+// unknown, missing, null, duplicate and case-alias fields are rejected.
+func decodeBugMetadataJSON(raw []byte) (*bugMetadata, error) {
 	var wire *struct {
 		Context    *string    `json:"context"`
 		CreatedAt  *time.Time `json:"created_at"`
@@ -127,26 +194,29 @@ func decodeBugMetadata(suffix string) (*bugMetadata, error) {
 	return &bugMetadata{*wire.Context, *wire.CreatedAt, *wire.ResolvedAt}, nil
 }
 
-func decodeBugRow(line string) (BugEntry, error) {
+// decodeBugRow reads one table row. A v2 row takes its metadata from index,
+// which is nil when the caller has no sidecar.
+func decodeBugRow(line string, index bugMetaIndex) (BugEntry, bugRowForm, error) {
 	rawParts := strings.Split(line, "|")
 	parts := append([]string(nil), rawParts...)
 	if len(parts) != 8 || strings.TrimSpace(parts[0]) != "" {
-		return BugEntry{}, fmt.Errorf("expected exactly six bug columns")
+		return BugEntry{}, bugRowLegacy, fmt.Errorf("expected exactly six bug columns")
 	}
 	for i := range parts {
 		parts[i] = strings.TrimSpace(parts[i])
 	}
 	if !strings.HasPrefix(parts[1], "`") || !strings.HasSuffix(parts[1], "`") || strings.Count(parts[1], "`") != 2 {
-		return BugEntry{}, fmt.Errorf("bug ID must be backtick-quoted")
+		return BugEntry{}, bugRowLegacy, fmt.Errorf("bug ID must be backtick-quoted")
 	}
 	bug := BugEntry{ID: strings.Trim(parts[1], "`"), Title: parts[2], Severity: strings.ToLower(parts[3]), Status: strings.ToLower(parts[4]), Location: parts[5], Resolution: parts[6]}
-	if parts[7] != "" {
-		metadata, err := decodeBugMetadata(parts[7])
-		if err != nil {
-			return BugEntry{}, err
-		}
-		bug.Title, bug.Location, bug.Resolution = html.UnescapeString(strings.Trim(rawParts[2], " ")), html.UnescapeString(strings.Trim(rawParts[5], " ")), html.UnescapeString(strings.Trim(rawParts[6], " "))
-		bug.Context, bug.CreatedAt, bug.ResolvedAt = metadata.Context, metadata.CreatedAt, metadata.ResolvedAt
+	if parts[7] == "" {
+		return bug, bugRowLegacy, validateBug(bug)
 	}
-	return bug, validateBug(bug)
+	metadata, form, err := rowMetadata(bug.ID, parts[7], index)
+	if err != nil {
+		return BugEntry{}, form, err
+	}
+	bug.Title, bug.Location, bug.Resolution = html.UnescapeString(strings.Trim(rawParts[2], " ")), html.UnescapeString(strings.Trim(rawParts[5], " ")), html.UnescapeString(strings.Trim(rawParts[6], " "))
+	bug.Context, bug.CreatedAt, bug.ResolvedAt = metadata.Context, metadata.CreatedAt, metadata.ResolvedAt
+	return bug, form, validateBug(bug)
 }

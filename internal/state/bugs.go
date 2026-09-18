@@ -41,6 +41,7 @@ func AddBug(rootPath string, bug BugEntry) (*BugEntry, error) {
 		if err != nil {
 			return "", err
 		}
+		doc.meta[bug.ID] = metadataOf(bug)
 		return doc.insertRow(row), nil
 	})
 	if err != nil {
@@ -62,14 +63,15 @@ func ListBugsContext(ctx context.Context, rootPath, filterStatus string) ([]BugE
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	data, err := readBugLedger(ctx, rootPath)
+	files, err := readBugFiles(ctx, rootPath)
 	if err != nil {
 		return nil, err
 	}
-	all, err := ParseBugsMarkdownStrict(string(data))
+	doc, err := parseBugFiles(files)
 	if err != nil {
 		return nil, err
 	}
+	all := doc.entries()
 	if filterStatus == "" || filterStatus == "all" {
 		return all, nil
 	}
@@ -95,6 +97,7 @@ func ResolveBug(rootPath, id, resolution string) error {
 			if err != nil {
 				return "", err
 			}
+			doc.meta[bug.ID] = metadataOf(bug)
 			return doc.text[:row.start] + encoded + doc.text[row.end:], nil
 		}
 		return "", fmt.Errorf("bug with ID %q not found", id)
@@ -113,16 +116,23 @@ func ParseBugsMarkdown(md string) []BugEntry {
 }
 
 // ParseBugsMarkdownStrict validates the entire ledger before returning records.
+// It reads one self-contained document: a row whose metadata lives in the
+// bugs.meta.json sidecar is an error here, because the sidecar is not given.
+// ListBugsContext reads a ledger directory together with its sidecar.
 func ParseBugsMarkdownStrict(md string) ([]BugEntry, error) {
-	doc, err := parseBugDocument(md)
+	doc, err := parseBugDocument(md, nil)
 	if err != nil {
 		return nil, err
 	}
+	return doc.entries(), nil
+}
+
+func (doc *bugDocument) entries() []BugEntry {
 	bugs := make([]BugEntry, 0, len(doc.rows))
 	for _, row := range doc.rows {
 		bugs = append(bugs, row.bug)
 	}
-	return bugs, nil
+	return bugs
 }
 
 // RenderBugsMarkdown retains its legacy signature. Invalid records produce an
@@ -136,7 +146,9 @@ func RenderBugsMarkdown(bugs []BugEntry) string {
 	return md
 }
 
-// RenderBugsMarkdownStrict writes all BugEntry fields in the versioned format.
+// RenderBugsMarkdownStrict writes all BugEntry fields into one self-contained
+// document, metadata inline in the v1 form. Ledger writers (AddBug, ResolveBug)
+// keep metadata in the bugs.meta.json sidecar instead.
 func RenderBugsMarkdownStrict(bugs []BugEntry) (string, error) {
 	if len(bugs) > maxBugEntries {
 		return "", fmt.Errorf("bug count exceeds %d", maxBugEntries)
@@ -144,14 +156,14 @@ func RenderBugsMarkdownStrict(bugs []BugEntry) (string, error) {
 	var out strings.Builder
 	out.WriteString(defaultBugsMD())
 	for _, bug := range bugs {
-		row, err := encodeBugRow(bug)
+		row, err := encodeInlineBugRow(bug)
 		if err != nil {
 			return "", err
 		}
 		out.WriteString(row + "\n")
 	}
 	result := out.String()
-	if _, err := parseBugDocument(result); err != nil {
+	if _, err := parseBugDocument(result, nil); err != nil {
 		return "", err
 	}
 	return result, nil

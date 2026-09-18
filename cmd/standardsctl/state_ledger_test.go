@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/state"
 )
 
 const cliLegacyState = "# Session State\n\n### [2026-09-11 17:22:14 UTC] Commit `173c565` on `main`\n" +
@@ -41,5 +43,40 @@ func TestStateCompactCommand(t *testing.T) {
 	}
 	if _, err := captureStdout(t, func() error { return dispatchCommand("state", []string{"compact", "--bogus"}) }); err == nil {
 		t.Fatal("unknown flag accepted")
+	}
+}
+
+func TestStateMigrateBugsCommand(t *testing.T) {
+	dir := t.TempDir()
+	md, err := state.RenderBugsMarkdownStrict([]state.BugEntry{{ID: "BUG-001", Title: "inline", Severity: "p1", Status: "open", Context: "keep me"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatchCommand("state", []string{"init", dir}); err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, dir, ".workingdir/BUGS.md", md)
+	if _, err := captureStdout(t, func() error { return dispatchCommand("state", []string{"migrate-bugs", dir}) }); err == nil {
+		t.Fatal("migrate-bugs accepted an unsynchronized ledger")
+	}
+	if err := dispatchCommand("state", []string{"sync", dir}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return dispatchCommand("state", []string{"migrate-bugs", "--dir=" + dir}) })
+	if err != nil || !strings.Contains(out, "migrate-bugs: 1 of 1 rows moved, round trip ok") {
+		t.Fatalf("migrate-bugs output %q, %v", out, err)
+	}
+	if got := readFixtureFile(t, dir, ".workingdir/BUGS.md"); strings.Contains(got, "praetor-bug:v1") {
+		t.Fatalf("inline metadata left in BUGS.md:\n%s", got)
+	}
+	if got := readFixtureFile(t, dir, ".workingdir/bugs.meta.json"); !strings.Contains(got, `"context":"keep me"`) {
+		t.Fatalf("sidecar lost the context: %s", got)
+	}
+	out, err = captureStdout(t, func() error { return dispatchCommand("state", []string{"migrate-bugs", dir}) })
+	if err != nil || !strings.HasPrefix(out, "migrate-bugs: nothing to migrate, no change (1 rows)") {
+		t.Fatalf("second migrate-bugs not a no-op: %q, %v", out, err)
+	}
+	if err := dispatchCommand("state", []string{"sync", "--verify", dir}); err != nil {
+		t.Fatalf("migrated ledger does not verify: %v", err)
 	}
 }
