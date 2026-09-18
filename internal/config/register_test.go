@@ -398,24 +398,28 @@ func TestEmissionSurfacesNegative(t *testing.T) {
 }
 
 func TestEmissionSurfacesBoundary(t *testing.T) {
-	// Unset emission surfaces follow surfaces.agent, whatever the agent surface says; context
-	// is fixed to internal instead (TestContextSurfaceIsFixed).
+	// Unset emission surfaces are internal, so the lint is on by default; context is fixed to
+	// internal as well (TestContextSurfaceIsFixed).
 	defaults := DefaultRegisterPolicy()
 	for _, surface := range emissionSurfaces {
-		want := Resolution{TextRegisterInternal, 0, "surfaces.agent"}
-		if surface == SurfaceContext {
-			want.Source = "surfaces.context"
-		}
+		want := Resolution{TextRegisterInternal, 0, "surfaces." + string(surface)}
 		if got := defaults.Resolve(surface, ""); got != want {
-			t.Errorf("default Resolve(%s) = %+v, want the agent fallback", surface, got)
+			t.Errorf("default Resolve(%s) = %+v, want the internal default", surface, got)
 		}
 		if enforced, err := defaults.LintEnforced(surface); err != nil || !enforced {
 			t.Errorf("default LintEnforced(%s) = %v, %v; want the lint on", surface, enforced, err)
 		}
 	}
+	// surfaces.agent does not reach an emission surface: writing docs for the agent surface
+	// must not switch the lint off for engine text. Only the surface's own key does.
 	m := &Manifest{Register: &RegisterPolicy{Surfaces: map[RegisterSurface]TextRegister{SurfaceAgent: TextRegisterDocs}}}
-	if got := m.EffectiveRegister().Resolve(SurfaceMCP, ""); got != (Resolution{TextRegisterDocs, 0, "surfaces.agent"}) {
-		t.Errorf("mcp with agent = docs resolves to %+v, want the docs fallback", got)
+	for _, surface := range []RegisterSurface{SurfaceMCP, SurfaceHooks, SurfacePrompts, SurfaceLedger} {
+		if got := m.EffectiveRegister().Resolve(surface, ""); got != (Resolution{TextRegisterInternal, 0, "surfaces." + string(surface)}) {
+			t.Errorf("%s with agent = docs resolves to %+v, want the internal default", surface, got)
+		}
+		if enforced, err := m.EffectiveRegister().LintEnforced(surface); err != nil || !enforced {
+			t.Errorf("%s with agent = docs: LintEnforced = %v, %v; want the lint on", surface, enforced, err)
+		}
 	}
 	// The block stays at its budget: emission surfaces are not rendered.
 	policy := DefaultRegisterPolicy()

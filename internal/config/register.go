@@ -38,10 +38,11 @@ const (
 )
 
 // Emission surfaces name text the engine itself writes for agents. Each one resolves to its
-// own key when the manifest writes it and to surfaces.agent otherwise; a task label never
-// changes them. The caveman lint applies where one resolves to internal (LintEnforced), so a
-// repository opts a surface out by writing docs or social. They are not rendered in the
-// register block, which is already at its line budget.
+// own key when the manifest writes it and to internal otherwise, whatever surfaces.agent
+// says; a task label never changes them. The caveman lint applies where one resolves to
+// internal (LintEnforced), so a repository opts a surface out only by writing docs or social
+// for that surface's own key. They are not rendered in the register block, which is already
+// at its line budget.
 const (
 	// SurfaceContext covers AGENTS.md, the compiled vendor files, personas and skills. It
 	// has no opt-out: it always resolves to ContextRegister, and a manifest that writes any
@@ -62,6 +63,12 @@ const (
 // repository, adopters included, with no warn mode and no opt-out (operator decision,
 // 2026-09-18).
 const ContextRegister = TextRegisterInternal
+
+// EmissionDefaultRegister is the register of an emission surface other than context that the
+// manifest leaves unset. The caveman lint is on by default for engine text agents read, and
+// only the surface's own key turns it off; surfaces.agent does not reach it (operator
+// decision, 2026-09-18).
+const EmissionDefaultRegister = TextRegisterInternal
 
 // emissionSurfaces is the closed set of engine-emission surfaces, in documentation order.
 var emissionSurfaces = []RegisterSurface{SurfaceContext, SurfaceMCP, SurfaceHooks, SurfacePrompts, SurfaceLedger}
@@ -262,8 +269,9 @@ func (m *Manifest) EffectiveRegister() RegisterPolicy {
 // Resolve returns the register for one surface and task label. The forge and the docs
 // surface own their audience, so a task never changes them. The context surface is always
 // internal (ContextRegister). Any other emission surface (mcp, hooks, prompts, ledger) is its
-// own key or, when unset, surfaces.agent; a task never changes it either. On the agent
-// surface (or when no surface is named) the task row wins and surfaces.agent is the fallback.
+// own key or, when unset, internal (EmissionDefaultRegister); neither a task nor
+// surfaces.agent changes it. On the agent surface (or when no surface is named) the task row
+// wins and surfaces.agent is the fallback.
 func (p RegisterPolicy) Resolve(surface RegisterSurface, task string) Resolution {
 	if surface == SurfaceContext {
 		return Resolution{Register: ContextRegister, Source: "surfaces." + string(SurfaceContext)}
@@ -275,7 +283,7 @@ func (p RegisterPolicy) Resolve(surface RegisterSurface, task string) Resolution
 		if register, ok := p.Surfaces[surface]; ok && knownTextRegister(register) {
 			return Resolution{Register: register, Source: "surfaces." + string(surface)}
 		}
-		return Resolution{Register: p.surfaceRegister(SurfaceAgent), Source: "surfaces." + string(SurfaceAgent)}
+		return Resolution{Register: EmissionDefaultRegister, Source: "surfaces." + string(surface)}
 	}
 	if row, ok := p.Tasks[task]; ok && knownTextRegister(row.Register) {
 		return Resolution{Register: row.Register, MaxTokens: row.MaxTokens, Source: "tasks." + task}

@@ -49,7 +49,7 @@ register:
     forge: social      # issues, PR bodies, review comments, commit bodies
     docs: docs         # docs/, README, ADR bodies, notebook documents
     agent: internal    # briefs, fan-out prompts, workflow returns; also the fallback
-    # Emission surfaces: unset means "same as agent". See "Caveman lint" below.
+    # Emission surfaces: unset means internal, whatever agent says. See "Caveman lint" below.
     # context: internal  # AGENTS.md, compiled vendor files, personas, skills; fixed, no other value
     # mcp: internal      # MCP tool and property descriptions, MCP text results
     # hooks: internal    # agent hook decisions and denials, hook script messages
@@ -71,7 +71,7 @@ register:
 | :--- | :--- | :--- | :--- |
 | `surfaces.<forge\|docs\|agent>` | `social`, `docs`, `internal` | one of the three registers; closed key set | `unsupported text register "<v>"`, `unknown register surface "<k>"` |
 | `surfaces.context` | `internal`, whatever `surfaces.agent` says | `internal` only: the caveman gate on AGENTS.md has no opt-out | `register surface "context" is fixed to internal: ...` |
-| `surfaces.<mcp\|hooks\|prompts\|ledger>` | unset, resolves as `surfaces.agent` | one of the three registers; closed key set | same as the first row |
+| `surfaces.<mcp\|hooks\|prompts\|ledger>` | unset, resolves as `internal` (`surfaces.agent` does not reach it) | one of the three registers; closed key set | same as the first row |
 | `tasks.<label>` | the four rows above, register only | at most 64 rows; label must be a `target_tasks` label | `register tasks exceed 64 rows`, `invalid register task label "<k>"`, `register task "<k>" is not a declared target_tasks label` |
 | `tasks.<label>.max_tokens` | none | 256..8192 when written | `register max_tokens for "<k>" must be 256..8192` |
 | `evidence.inline_max_lines` | 58 | 1..58, tighten only | `register evidence bound must be 1..58` |
@@ -88,8 +88,8 @@ class actually spends.
 1. The `forge` and `docs` surfaces own their audience. The task never changes who reads the
    forge or the documentation, and no budget applies. The `context` surface is always
    `internal`. Any other emission surface (`mcp`, `hooks`, `prompts`, `ledger`) resolves to
-   its own key when the manifest writes it and to `surfaces.agent` otherwise; the task never
-   changes it either.
+   its own key when the manifest writes it and to `internal` otherwise; neither the task nor
+   `surfaces.agent` changes it.
 2. On the `agent` surface, or when no surface is named, the task row wins; without a row
    the register is `surfaces.agent`.
 3. The result names the winning row (`surfaces.forge`, `tasks.ci_debugging`,
@@ -312,7 +312,8 @@ praetorctl caveman check --surface=mcp descriptions.md
 ```
 
 The emission surfaces are `context`, `mcp`, `hooks`, `prompts` and `ledger`; an unset one
-follows `surfaces.agent`, except `context`, which is always `internal`. An unknown surface name is an error, never a silent fallback.
+is `internal`, so the lint is on by default, and `surfaces.agent` does not reach it. Only the
+surface's own key opts it out, and `context` accepts no value but `internal`. An unknown surface name is an error, never a silent fallback.
 The decision is recorded in [ADR-0010](../adr/0010-text-register-per-task.md) (decisions
 9 and 10); tests and fixtures are in `internal/caveman` and
 `cmd/standardsctl/caveman_test.go`.

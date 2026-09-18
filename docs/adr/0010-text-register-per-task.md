@@ -135,8 +135,10 @@ hand at the source and kept terse by a lint, never rewritten at run time.
    loader and holds no register policy.
 10. **Emission surfaces select where the lint applies.** `register.surfaces` gains
     `context`, `mcp`, `hooks`, `prompts` and `ledger` for text the engine itself writes for
-    agents. Each resolves to its own key when written and to `surfaces.agent` otherwise; a
-    task label never changes it. The lint applies where a surface resolves to `internal`
+    agents. Each resolves to its own key when written and to `internal` otherwise; neither a
+    task label nor `surfaces.agent` changes it, so the lint is on by default for engine text
+    (operator decision, 2026-09-18: caveman by default, overridable only by the surface's own
+    key). The lint applies where a surface resolves to `internal`
     (`RegisterPolicy.LintEnforced`), so a repository opts a surface out by writing `docs` or
     `social`; `context` is the exception (decision 11). The keys go through the existing strict decoder; they are not rendered in the
     block, which is already at its 15-line budget.
