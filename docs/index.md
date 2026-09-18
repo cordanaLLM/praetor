@@ -6,10 +6,10 @@ title: Praetor - Fleet Governance Engine
   <img src="assets/praetor-readme-banner.svg" alt="Praetor Architecture Banner" width="100%" />
 </div>
 
-<div align="center">
+<div align="center" markdown>
 
 [![Go Version](https://img.shields.io/badge/Go-1.27+-00ADD8?style=flat-square&logo=go)](https://go.dev/)
-[![HISS-16 Verified](https://img.shields.io/badge/HISS--16-Verified-0e8a16?style=flat-square&logo=shield)](standards/hiss-16.md)
+[![HISS-16 Verified](https://img.shields.io/badge/HISS--16-Verified-0e8a16?style=flat-square&logo=shield)](standards/hiss-16-spec.md)
 [![License: EUPL 1.2](https://img.shields.io/badge/License-EUPL_1.2-blue?style=flat-square)](https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12)
 [![Polar.sh](https://img.shields.io/badge/Polar.sh-Feature_Bounties-000000?style=flat-square&logo=polar)](sponsoring.md)
 [![llms.txt Enabled](https://img.shields.io/badge/llms.txt-Enabled-0075ca?style=flat-square)](llms.txt)
