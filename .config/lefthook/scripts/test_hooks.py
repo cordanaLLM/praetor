@@ -20,7 +20,7 @@ from checks import (go_packages, source_checks, governance_commands, context_cha
                     audit_scope, local_package_patterns, checkpoint_checks,
                     semgrep_commands, is_fixture, FIXTURE_DIRECTORY)
 import hooks
-from hooks import push_updates, new_branch_base, pre_push, push_check_mode
+from hooks import push_updates, new_branch_base, pre_push, push_check_mode, prepare_message
 from privacy import check_private_history, check_private_index
 import sandbox
 
@@ -30,14 +30,37 @@ GUARD = ROOT / ".config/agent/hooks/block_evasion.py"
 # Make and Git localize their diagnostics; pin the message catalogue so
 # assertions on tool output hold on workstations with non-English locales.
 LOCALE_ENV = {"LC_ALL": "C", "LANGUAGE": "C"}
+# The CLI a fixture carries, named as hooks.praetorctl_path() looks for it: with the host's
+# executable suffix. The fixture used to link an extensionless bin/praetorctl, which the hooks
+# never found on Windows.
+PRAETORCTL = "bin/praetorctl" + (".exe" if os.name == "nt" else "")
+# Registered client hooks are shell commands. POSIX has sh at /bin/sh; Windows has none there, and
+# the clients run hooks through the sh on PATH (Git for Windows ships one).
+POSIX_SHELL = "/bin/sh" if os.name != "nt" else shutil.which("sh")
+
+
+def require_posix_shell(test):
+    """Skip a registered-command case, naming why, where no sh exists to run it."""
+    if POSIX_SHELL is None:
+        test.skipTest("no sh on PATH; registered client hooks are shell commands")
+
+
+def cli_path(repo):
+    """The fixture CLI as an absolute path.
+
+    CreateProcess resolves a relative program path against the parent's working directory, not
+    the cwd it is given, so "bin/praetorctl" ran whatever binary sat under the directory the suite
+    was started from -- on CI the real repository's, and inside a pre-commit snapshot none at all.
+    """
+    return str(repo / PRAETORCTL)
 
 
 def command(repo, *args, data=None, ok=True, maintain_state=True):
     # Most fixtures model an agent obeying the sync obligation. Negative state
     # tests opt out and execute the same real hooks against stale/missing state.
     if (maintain_state and args[:2] in (("git", "commit"), ("git", "push"))
-            and (repo / "bin/praetorctl").is_file()):
-        command(repo, "bin/praetorctl", "state", "sync", ".", ok=ok)
+            and (repo / PRAETORCTL).is_file()):
+        command(repo, cli_path(repo), "state", "sync", ".", ok=ok)
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", **LOCALE_ENV)
     for key in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
         env.pop(key, None)
@@ -70,6 +93,16 @@ def race_detector_available():
         return False, f"go env unavailable: {error}"
     if enabled == "0":
         return False, "go env CGO_ENABLED=0"
+    # CGO_ENABLED defaults to 1 whether or not a compiler exists, so it alone reported the race
+    # detector available on a Windows host without gcc, and every race leg then failed to build.
+    # The compiler go would invoke is what the answer actually depends on.
+    try:
+        compiler = subprocess.run(["go", "env", "CC"], capture_output=True, text=True,
+                                  timeout=30, check=False).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, f"go env unavailable: {error}"
+    if not compiler or shutil.which(compiler.split()[0]) is None:
+        return False, f"C compiler {compiler or '(unset)'!r} not found"
     return True, ""
 
 
@@ -85,7 +118,7 @@ class GitHooks(unittest.TestCase):
     def setUpClass(cls):
         cls.cli_temp = tempfile.TemporaryDirectory(prefix="praetor-hook-cli-")
         cls.addClassCleanup(cls.cli_temp.cleanup)
-        cls.binary = Path(cls.cli_temp.name) / "praetorctl"
+        cls.binary = Path(cls.cli_temp.name) / Path(PRAETORCTL).name
         command(ROOT, "go", "build", "-o", str(cls.binary), "./cmd/standardsctl")
 
     def setUp(self):
@@ -104,8 +137,8 @@ class GitHooks(unittest.TestCase):
         shutil.copy(ROOT / "lefthook.yml", self.repo / "lefthook.yml")
         # Fixture policy self-tests are data, not another recursive full suite.
         (self.repo / ".config/lefthook/scripts/test_hooks.py").write_text(
-            'print("fixture hook self-tests passed")\n')
-        (self.repo / "README.md").write_text("# Fixture\n")
+            'print("fixture hook self-tests passed")\n', newline="\n")
+        (self.repo / "README.md").write_text("# Fixture\n", newline="\n")
         for name, content in initial_files:
             self.write(name, content, stage=False)
         command(self.repo, "git", "add", ".")
@@ -115,22 +148,28 @@ class GitHooks(unittest.TestCase):
 
     def initialize_state(self):
         (self.repo / "bin").mkdir()
-        os.link(self.binary, self.repo / "bin/praetorctl")
+        os.link(self.binary, self.repo / PRAETORCTL)
         (self.repo / ".git/info/exclude").write_text("/bin/\n/.workingdir/\n/Makefile\n")
-        (self.repo / "Makefile").write_text("hook-cli:\n\t@test -x bin/praetorctl\n")
-        command(self.repo, "bin/praetorctl", "state", "init", ".")
-        command(self.repo, "bin/praetorctl", "state", "sync", ".")
+        (self.repo / "Makefile").write_text(f"hook-cli:\n\t@test -x {PRAETORCTL}\n")
+        command(self.repo, cli_path(self.repo), "state", "init", ".")
+        command(self.repo, cli_path(self.repo), "state", "sync", ".")
 
     def write(self, name, data, stage=True):
         path = self.repo / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(data)
+        # Fixture content is the bytes given. Text mode on Windows writes CRLF, which git diff
+        # --check reports as trailing whitespace before the check a test targets can run.
+        path.write_text(data, newline="\n")
         if stage:
             command(self.repo, "git", "add", "--", name)
 
     def hook(self, name="pre-commit", *args, data=None, maintain_state=True):
+        # Path arguments are given as git gives them to hooks, with forward slashes. Lefthook on
+        # Windows substitutes arguments into `sh -c "..."`, and a backslashed native path there
+        # left an unterminated quote, so the message hooks failed before running -- and the
+        # negative message cases passed for that reason alone.
         if maintain_state and name in {"pre-commit", "pre-push", "commit-msg"}:
-            command(self.repo, "bin/praetorctl", "state", "sync", ".")
+            command(self.repo, cli_path(self.repo), "state", "sync", ".")
         return command(self.repo, "lefthook", "run", name, *args, data=data, ok=False)
 
     def test_docs_commit_preserves_unstaged_and_untracked_files(self):
@@ -148,7 +187,7 @@ class GitHooks(unittest.TestCase):
         self.assertEqual((self.repo / "README.md").read_text(), "# Unstaged\n")
         self.assertTrue((self.repo / "private scratch.txt").exists())
         self.assertTrue((self.repo / ".workingdir/STATE.md").is_file())
-        command(self.repo, "bin/praetorctl", "state", "sync", "--verify", ".")
+        command(self.repo, cli_path(self.repo), "state", "sync", "--verify", ".")
 
     def test_staged_python_failure_cannot_be_hidden_by_worktree_fix(self):
         self.write("bad name 'quoted'.py", "def invalid(:\n")
@@ -491,12 +530,13 @@ class GitHooks(unittest.TestCase):
         self.assertNotRegex("Write", registration["matcher"])
         action = registration["hooks"][0]
         self.assertEqual(action["type"], "command")
+        require_posix_shell(self)
         nested = self.repo / "nested directory"
         nested.mkdir()
         for command_text, expected in (("git status", 0), ("git commit --no-verify", 2)):
             payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
                                   "tool_input": {"command": command_text}}).encode()
-            result = command(nested, "/bin/sh", "-c", action["command"],
+            result = command(nested, POSIX_SHELL, "-c", action["command"],
                              data=payload, ok=False)
             self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
 
@@ -555,11 +595,11 @@ class GitHooks(unittest.TestCase):
     def test_message_good_negative_and_missing_dco(self):
         message = self.repo / "message.txt"
         message.write_text("fix(hooks): gate changes\n\nSigned-off-by: Hook Test <hook@example.test>\n")
-        self.assertEqual(self.hook("commit-msg", str(message)).returncode, 0)
+        self.assertEqual(self.hook("commit-msg", message.as_posix()).returncode, 0)
         message.write_text("fix: missing signoff\n")
-        self.assertNotEqual(self.hook("commit-msg", str(message)).returncode, 0)
+        self.assertNotEqual(self.hook("commit-msg", message.as_posix()).returncode, 0)
         message.write_text("bad subject\n\nSigned-off-by: Hook Test <hook@example.test>\n")
-        self.assertNotEqual(self.hook("commit-msg", str(message)).returncode, 0)
+        self.assertNotEqual(self.hook("commit-msg", message.as_posix()).returncode, 0)
 
     def test_commit_requires_explicit_state_sync_after_staging(self):
         self.write("README.md", "# Staged after sync\n")
@@ -569,9 +609,9 @@ class GitHooks(unittest.TestCase):
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn(b"state synchronization stale", rejected.stdout + rejected.stderr)
         self.assertEqual(command(self.repo, "git", "rev-parse", "HEAD").stdout, before)
-        command(self.repo, "bin/praetorctl", "state", "sync", ".")
+        command(self.repo, cli_path(self.repo), "state", "sync", ".")
         command(self.repo, "git", "commit", "-s", "-m", "docs: maintained state", maintain_state=False)
-        command(self.repo, "bin/praetorctl", "state", "sync", "--verify", ".")
+        command(self.repo, cli_path(self.repo), "state", "sync", "--verify", ".")
 
     def test_precommit_missing_and_incomplete_ledger_are_not_repaired(self):
         self.write("README.md", "# Need live ledger\n")
@@ -597,17 +637,34 @@ class GitHooks(unittest.TestCase):
     def test_initial_commit_has_valid_unborn_state(self):
         command(self.repo, "git", "checkout", "--orphan", "new-history")
         command(self.repo, "git", "rm", "-r", "--cached", ".config", "lefthook.yml")
-        command(self.repo, "bin/praetorctl", "state", "sync", ".")
+        command(self.repo, cli_path(self.repo), "state", "sync", ".")
         command(self.repo, "git", "commit", "-s", "-m", "chore: initial history", maintain_state=False)
-        command(self.repo, "bin/praetorctl", "state", "sync", "--verify", ".")
+        command(self.repo, cli_path(self.repo), "state", "sync", "--verify", ".")
 
     def test_prepare_does_not_invent_attestation(self):
         message = self.repo / "message.txt"
         message.write_text("")
-        result = self.hook("prepare-commit-msg", str(message), "")
+        # Invoked as git invokes it for a commit with no message source: one argument, never an
+        # empty second one. The empty string this used to pass is not a shape git produces, and
+        # on Windows Lefthook could not even hand it to sh.
+        result = self.hook("prepare-commit-msg", message.as_posix())
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("type(scope)", message.read_text())
         self.assertNotIn("Signed-off-by:", message.read_text())
+
+    def test_prepare_message_sources(self):
+        message = self.repo / "sourced.txt"
+        for source in ("message", "template", "merge", "squash", "commit"):
+            message.write_text("")
+            prepare_message(str(message), source)
+            self.assertEqual(message.read_text(), "", source)
+        for absent in ("", "2", "{2}"):
+            message.write_text("")
+            prepare_message(str(message), absent)
+            self.assertIn("type(scope)", message.read_text(), absent)
+        message.write_text("fix: already written\n")
+        prepare_message(str(message), "2")
+        self.assertEqual(message.read_text(), "fix: already written\n")
 
     def test_real_push_initial_docs_update_new_branch_and_deletion(self):
         remote = Path(self.temp.name) / "remote.git"
@@ -1223,6 +1280,16 @@ class ScopeAndGuard(unittest.TestCase):
         name = start[start.index("--name") + 1]
         self.assertTrue(name.startswith("praetor-gate-"))
         self.assertEqual(calls[-1], ["docker", "container", "rm", "--force", name])
+        expected = sandbox.user_arguments()
+        after_rm = start[start.index("--rm") + 1:]
+        self.assertEqual(after_rm[:len(expected)], expected)
+
+    def test_sandbox_user_mapping_follows_the_host(self):
+        posix = mock.Mock(getuid=mock.Mock(return_value=1000), getgid=mock.Mock(return_value=100))
+        self.assertEqual(sandbox.user_arguments(posix), ["--user", "1000:100"])
+        root = mock.Mock(getuid=mock.Mock(return_value=0), getgid=mock.Mock(return_value=0))
+        self.assertEqual(sandbox.user_arguments(root), ["--user", "0:0"])
+        self.assertEqual(sandbox.user_arguments(object()), [])
 
 
 if __name__ == "__main__":

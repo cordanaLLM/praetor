@@ -59,8 +59,15 @@ def check_message(filename):
         raise HookError("Commit requires a DCO trailer. Use git commit -s after reviewing your changes.")
 
 
+# The values git passes as prepare-commit-msg's second argument. Git omits the argument for a
+# commit with no message source, and Lefthook then renders "{2}" as its own placeholder text --
+# measured with Lefthook 2.1.14: the literal "2" -- so testing for an empty source meant the help
+# line was never added to a plain editor commit. Any value git does not document means no source.
+GIT_MESSAGE_SOURCES = frozenset({"message", "template", "merge", "squash", "commit"})
+
+
 def prepare_message(filename, source=""):
-    if not source and not Path(filename).read_text().strip():
+    if source not in GIT_MESSAGE_SOURCES and not Path(filename).read_text().strip():
         with Path(filename).open("a") as stream:
             stream.write("# Use type(scope): description; commit -s supplies your DCO sign-off.\n")
 
