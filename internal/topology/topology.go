@@ -226,7 +226,7 @@ func auditOrgContainer(ctx context.Context, devRoot, orgPath, orgName string, re
 		scanCount++
 
 		childPath := filepath.Join(orgPath, entry.Name())
-		if entry.IsDir() && hasValidGitRepo(childPath) {
+		if entry.IsDir() && HasValidGitRepo(childPath) {
 			hasChildRepos = true
 			report.ValidRepos = append(report.ValidRepos, filepath.Join(orgName, entry.Name()))
 		}
@@ -255,7 +255,7 @@ func auditOrgStrayEntries(orgPath, orgName string, entries []os.DirEntry, hasChi
 
 		if StrayGovernanceNames[lowerName] {
 			// Verify it is not a genuine child repository
-			if entry.IsDir() && hasValidGitRepo(entryPath) {
+			if entry.IsDir() && HasValidGitRepo(entryPath) {
 				continue
 			}
 			report.StrayFiles = append(report.StrayFiles, StrayFile{
@@ -283,7 +283,9 @@ func auditStrayGitDir(entryPath, relPath string, hasChildRepos bool, report *Top
 	}
 }
 
-func hasValidGitRepo(path string) bool {
+// HasValidGitRepo reports whether path is a git working tree: a .git gitlink file (worktree or
+// submodule) or a .git directory holding a HEAD file.
+func HasValidGitRepo(path string) bool {
 	gitPath := filepath.Join(path, ".git")
 	info, err := os.Stat(gitPath)
 	if err != nil {
@@ -360,7 +362,7 @@ func verifyDeletionSafety(devRoot, path string) error {
 	}
 
 	// Never delete a directory containing a valid leaf git repository (unless it is a stray symlink)
-	if !isSymlink(cleanPath) && hasValidGitRepo(cleanPath) {
+	if !isSymlink(cleanPath) && HasValidGitRepo(cleanPath) {
 		return fmt.Errorf("cannot delete directory with valid git repository: %s", cleanPath)
 	}
 
