@@ -37,6 +37,10 @@ PRAETORCTL = "bin/praetorctl" + (".exe" if os.name == "nt" else "")
 # Registered client hooks are shell commands. POSIX has sh at /bin/sh; Windows has none there, and
 # the clients run hooks through the sh on PATH (Git for Windows ships one).
 POSIX_SHELL = "/bin/sh" if os.name != "nt" else shutil.which("sh")
+# The policy prints job output and failures only, so a passing job is evidenced by what it
+# printed, never by Lefthook's success line naming it. commit-msg and pre-push print this after
+# verifying the live ledger.
+STATE_VERIFIED = b'PRAETOR_STATE_RESULT={"schema_version":1,"verified":true}'
 
 
 def require_posix_shell(test):
@@ -181,7 +185,8 @@ class GitHooks(unittest.TestCase):
         self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
         self.assertEqual(before, command(self.repo, "git", "diff", "--cached", "--binary").stdout)
         result = command(self.repo, "git", "commit", "-s", "-m", "docs: add staged text")
-        self.assertIn(b"message-policy", result.stdout + result.stderr)
+        self.assertIn(b"Index: 1 changed paths checked", result.stdout + result.stderr)
+        self.assertIn(STATE_VERIFIED, result.stdout + result.stderr)
         self.assertIn(b"Dedupe review due", result.stdout + result.stderr)
         self.assertEqual(command(self.repo, "git", "show", "HEAD:README.md").stdout, b"# Intended\n")
         self.assertEqual((self.repo / "README.md").read_text(), "# Unstaged\n")
@@ -215,7 +220,7 @@ class GitHooks(unittest.TestCase):
         self.write(".gitignore", "/.workingdir/\n")
         command(self.repo, "git", "rm", "--cached", "--", ".workingdir/docs/cluster.md")
         result = command(self.repo, "git", "commit", "-s", "-m", "chore: keep state private")
-        self.assertIn(b"staged-checks", result.stdout + result.stderr)
+        self.assertIn(b"Index: 2 changed paths checked", result.stdout + result.stderr)
         self.assertEqual(command(self.repo, "git", "ls-files", ".workingdir").stdout, b"")
         self.assertEqual((self.repo / ".workingdir/docs/cluster.md").read_text(), "private fixture\n")
 
@@ -334,7 +339,7 @@ class GitHooks(unittest.TestCase):
     def test_new_branch_push_prefers_remote_default_over_older_topic_for_private_removal(self):
         remote, base, head = self.incoming_private_history(legacy=True, old_topic=True)
         result = command(self.repo, "git", "push", "origin", f"{head}:refs/heads/review/removal")
-        self.assertIn(b"pushed-checks", result.stdout + result.stderr)
+        self.assertIn(STATE_VERIFIED, result.stdout + result.stderr)
         self.assertEqual((result.stdout + result.stderr).count(f"Push: {head[:12]} checked".encode()), 1)
         self.assertEqual(command(remote, "git", "rev-parse", "refs/heads/review/removal").stdout.decode().strip(), head)
         self.assertEqual(command(remote, "git", "rev-parse", "refs/heads/main").stdout.decode().strip(), base)
@@ -379,7 +384,7 @@ class GitHooks(unittest.TestCase):
     def test_real_push_allows_removal_of_already_remote_private_state(self):
         remote, _, head = self.incoming_private_history(legacy=True)
         result = command(self.repo, "git", "push", "origin", f"{head}:refs/heads/main")
-        self.assertIn(b"pushed-checks", result.stdout + result.stderr)
+        self.assertIn(f"Push: {head[:12]} checked".encode(), result.stdout + result.stderr)
         self.assertEqual(command(remote, "git", "rev-parse", "refs/heads/main").stdout.decode().strip(), head)
         self.assertEqual(command(remote, "git", "ls-tree", "-r", "--name-only", head, "--", ".workingdir").stdout, b"")
         self.assertEqual((Path(self.temp.name) / "external/.workingdir/private.txt").read_text(),
@@ -521,6 +526,25 @@ class GitHooks(unittest.TestCase):
             self.assertEqual(result.returncode == 0, allowed, result.stdout + result.stderr)
             if allowed:
                 self.assertIn(b"PRAETOR_COMMAND_POLICY_OK", result.stdout)
+
+    def test_hook_output_is_job_output_and_failures_only(self):
+        """Every run lands in an agent's context: a pass prints its payload, a failure its reason."""
+        allowed = b'{"tool_input":{"command":"git status"}}'
+        passed = self.hook("agent-pre-tool", data=allowed)
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        self.assertEqual((passed.stdout + passed.stderr).strip(), b"PRAETOR_COMMAND_POLICY_OK")
+        denied = self.hook("agent-pre-tool", data=json.dumps(
+            {"tool_input": {"command": "git commit --no-" + "verify"}}).encode())
+        output = denied.stdout + denied.stderr
+        self.assertNotEqual(denied.returncode, 0, output)
+        self.assertIn(b"[BLOCKED BY HISS-16]", output)
+        self.assertIn(b"command-policy", output)
+        self.assertNotIn(b"\x1b[", output)
+        # The environment override still restores Lefthook's own reporting for a human.
+        with mock.patch.dict(os.environ, {"LEFTHOOK_OUTPUT": "meta,execution_out"}):
+            verbose = self.hook("agent-pre-tool", data=allowed)
+        self.assertIn(b"agent-pre-tool", verbose.stdout + verbose.stderr)
+        self.assertIn(b"PRAETOR_COMMAND_POLICY_OK\n", verbose.stdout)
 
     def test_codex_hook_configuration_runs_from_nested_directory(self):
         self.write(".codex/hooks.json", (ROOT / ".codex/hooks.json").read_text())
@@ -671,7 +695,7 @@ class GitHooks(unittest.TestCase):
         command(self.repo, "git", "init", "--bare", "-q", str(remote))
         command(self.repo, "git", "remote", "add", "origin", str(remote))
         first = command(self.repo, "git", "push", "-u", "origin", "main")
-        self.assertIn(b"pushed-checks", first.stdout + first.stderr)
+        self.assertIn(STATE_VERIFIED, first.stdout + first.stderr)
         self.assertIn(b"Push:", first.stdout + first.stderr)
         self.write("README.md", "# Pushed docs\n")
         command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: update fixture")

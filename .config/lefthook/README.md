@@ -63,3 +63,28 @@ including forced staging, submodule entries and private content added then remov
 within outgoing history. Removing legacy tracked entries is allowed. Adopters
 must keep this whole directory ignored and publish reviewed documentation under
 `docs/` instead.
+
+## Output policy
+
+The policy sets `output: [execution_out, failure]` and `colors: false`. A hook run
+prints what each job printed and, for a failed job, Lefthook's exit status and one
+`✗ <job>` line. The version banner, the summary block, the per-job success lines
+and every ANSI escape are gone.
+
+The reason is cost. Each run lands in the tool output of the agent that triggered
+it, for the main session and every subagent, on every commit, checkout, push and
+agent lifecycle event. Measured with Lefthook 2.1.12 before this policy, one
+`agent-pre-tool` run printed 1,868 characters, 1,570 of them ANSI escape
+sequences, to carry the 25-character `PRAETOR_COMMAND_POLICY_OK` marker. With the
+policy the same run prints 27 characters.
+
+Contracts that read this output are unaffected. The native adapters in
+`.config/agent/hooks/` look for their markers at the start of a line of job output,
+and job output is exactly what `execution_out` keeps. A failing job still prints its own
+diagnostic and is named on the `✗` line. `colors: false` also exports
+`NO_COLOR=true` to jobs, so tools that honour it stop coloring their output.
+
+To see Lefthook's own reporting while debugging, override the list for one run,
+for example `LEFTHOOK_OUTPUT=meta,summary,execution lefthook run pre-commit`. A
+personal `lefthook-local.yml` may set `output` or `colors` permanently. Both
+override the shared policy because Lefthook loads them after `extends`.

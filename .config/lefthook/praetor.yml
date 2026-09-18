@@ -1,4 +1,10 @@
 # Compatible with Lefthook 2.1.12. One stdin consumer per hook is intentional.
+# Print job output and failures only: the banner, summary and success lines cost
+# about 2,000 characters of agent context per run (README "Output policy").
+output:
+  - execution_out
+  - failure
+colors: false
 agent-pre-tool:
   commands:
     command-policy:
