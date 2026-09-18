@@ -50,6 +50,7 @@ func TestBundleWorkstation_Positive(t *testing.T) {
 		WorkstationName: "test-box",
 		OutputDir:       mockOut,
 		HomeDir:         mockHome,
+		Roots:           testClientRoots(mockHome),
 		VaultDir:        mockVault,
 	}
 
@@ -94,6 +95,7 @@ func TestBundleWorkstation_OwnerOnlyPermissions(t *testing.T) {
 		WorkstationName: "perm-box",
 		OutputDir:       mockOut,
 		HomeDir:         mockHome,
+		Roots:           testClientRoots(mockHome),
 	})
 	if err != nil {
 		t.Fatalf("BundleWorkstation failed: %v", err)
@@ -147,6 +149,7 @@ func TestBundleWorkstation_SkipsSymlinkedSkillFiles(t *testing.T) {
 		WorkstationName: "symlink-box",
 		OutputDir:       mockOut,
 		HomeDir:         mockHome,
+		Roots:           testClientRoots(mockHome),
 	})
 	if err != nil {
 		t.Fatalf("BundleWorkstation failed: %v", err)
@@ -181,6 +184,7 @@ func TestBundleWorkstation_CopiesNestedSkillFiles(t *testing.T) {
 		WorkstationName: "nested-box",
 		OutputDir:       mockOut,
 		HomeDir:         mockHome,
+		Roots:           testClientRoots(mockHome),
 	})
 	if err != nil {
 		t.Fatalf("BundleWorkstation failed: %v", err)
@@ -206,6 +210,7 @@ func TestBundleWorkstation_ShellHistoryIsOptIn(t *testing.T) {
 		WorkstationName: "hist-default",
 		OutputDir:       filepath.Join(tmpDir, "out-default"),
 		HomeDir:         mockHome,
+		Roots:           testClientRoots(mockHome),
 	})
 	if err != nil {
 		t.Fatalf("BundleWorkstation failed: %v", err)
@@ -218,6 +223,7 @@ func TestBundleWorkstation_ShellHistoryIsOptIn(t *testing.T) {
 		WorkstationName:     "hist-optin",
 		OutputDir:           filepath.Join(tmpDir, "out-optin"),
 		HomeDir:             mockHome,
+		Roots:               testClientRoots(mockHome),
 		IncludeShellHistory: true,
 	})
 	if err != nil {
@@ -237,6 +243,7 @@ func TestBundleWorkstation_Negative_CancelledContext(t *testing.T) {
 		WorkstationName: "test-box",
 		OutputDir:       tmpDir,
 		HomeDir:         tmpDir,
+		Roots:           testClientRoots(tmpDir),
 	}
 
 	_, err := BundleWorkstation(ctx, opts)
@@ -260,6 +267,7 @@ func TestBundleWorkstation_Boundary_EmptyInputs(t *testing.T) {
 		WorkstationName: "empty-box",
 		OutputDir:       filepath.Join(tmpDir, "out"),
 		HomeDir:         filepath.Join(tmpDir, "nonexistent"),
+		Roots:           testClientRoots(filepath.Join(tmpDir, "nonexistent")),
 	}
 
 	rep, err := BundleWorkstation(ctx, opts)
@@ -507,7 +515,7 @@ func TestBundleRejectsSymlinkDestinations(t *testing.T) {
 			if err := os.Symlink(target, link); err != nil {
 				t.Fatal(err)
 			}
-			report, err := BundleWorkstation(context.Background(), BundleOptions{HomeDir: home, OutputDir: output})
+			report, err := BundleWorkstation(context.Background(), BundleOptions{Roots: testClientRoots(home), HomeDir: home, OutputDir: output})
 			if err == nil && len(report.Skipped) == 0 {
 				t.Fatal("destination symlink was not rejected")
 			}
@@ -528,7 +536,7 @@ func TestBundlePreservesRestrictiveDestinationModes(t *testing.T) {
 	if err := os.Chmod(destination, 0200); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := BundleWorkstation(context.Background(), BundleOptions{HomeDir: home, OutputDir: output}); err != nil {
+	if _, err := BundleWorkstation(context.Background(), BundleOptions{Roots: testClientRoots(home), HomeDir: home, OutputDir: output}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(destination)
@@ -565,7 +573,7 @@ func TestBundleReportsDirectoryLimit(t *testing.T) {
 			for i := 0; i < count; i++ {
 				mustWriteFile(t, filepath.Join(home, ".agents", "skills", fmt.Sprintf("skill-%04d", i), "SKILL.md"), "skill")
 			}
-			report, err := BundleWorkstation(context.Background(), BundleOptions{HomeDir: home, OutputDir: output})
+			report, err := BundleWorkstation(context.Background(), BundleOptions{Roots: testClientRoots(home), HomeDir: home, OutputDir: output})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -589,7 +597,7 @@ func TestBundleReportsDepthLimit(t *testing.T) {
 			home, output := filepath.Join(root, "home"), filepath.Join(root, "out")
 			nested := strings.Repeat("nested/", depth)
 			mustWriteFile(t, filepath.Join(home, ".agents", "skills", "fixture", nested, "file"), "content")
-			report, err := BundleWorkstation(context.Background(), BundleOptions{HomeDir: home, OutputDir: output})
+			report, err := BundleWorkstation(context.Background(), BundleOptions{Roots: testClientRoots(home), HomeDir: home, OutputDir: output})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -654,7 +662,7 @@ func TestBundlePreservesRestrictedDirectory(t *testing.T) {
 	if err := os.Chmod(output, 0500); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := BundleWorkstation(context.Background(), BundleOptions{HomeDir: filepath.Join(root, "home"), OutputDir: output}); err == nil {
+	if _, err := BundleWorkstation(context.Background(), BundleOptions{Roots: testClientRoots(filepath.Join(root, "home")), HomeDir: filepath.Join(root, "home"), OutputDir: output}); err == nil {
 		t.Fatal("read-only output directory unexpectedly writable")
 	}
 	info, err := os.Stat(output)

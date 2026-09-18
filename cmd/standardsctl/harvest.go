@@ -260,19 +260,26 @@ func printHarvestFleet(ctx context.Context, rootDir string) error {
 
 func runHarvestMemory(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("harvest memory", flag.ContinueOnError)
-	brainFlag := fs.String("brain", "", "Path to brain directory (default: $HOME/.gemini/antigravity/brain)")
+	brainFlag := fs.String("brain", "", "Path to brain directory (default: every existing Antigravity brain under $HOME/.gemini)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	brainDir, err := resolveHomeSubdir(*brainFlag, "--brain", ".gemini", "antigravity", "brain")
+	brainDirs, err := resolveBrainRoots(*brainFlag)
 	if err != nil {
 		return fmt.Errorf("harvest memory: %w", err)
 	}
+	if len(brainDirs) > 1 {
+		fmt.Printf("Reading %d brain directories: %s\n", len(brainDirs), strings.Join(brainDirs, ", "))
+	}
 
-	insights, err := harvester.ExtractMemoryInsights(ctx, brainDir)
-	if err != nil {
-		return fmt.Errorf("failed extracting memory insights: %w", err)
+	insights := make([]harvester.MemoryInsight, 0)
+	for i := 0; i < len(brainDirs) && i < harvester.MaxBrainRoots; i++ {
+		found, extractErr := harvester.ExtractMemoryInsights(ctx, brainDirs[i])
+		if extractErr != nil {
+			return fmt.Errorf("failed extracting memory insights: %w", extractErr)
+		}
+		insights = append(insights, found...)
 	}
 
 	fmt.Printf("=== Agent Memory & Rule Mining (%d insights discovered) ===\n", len(insights))
@@ -370,7 +377,13 @@ func runHarvestBundle(ctx context.Context, args []string) error {
 		return fmt.Errorf("harvest bundle: %w", err)
 	}
 
+	roots, err := harvestClientRoots(hostClientEnv(homeDir, *homeFlag != ""))
+	if err != nil {
+		return fmt.Errorf("harvest bundle: %w", err)
+	}
+
 	opts := harvester.BundleOptions{
+		Roots:               roots,
 		WorkstationName:     *name,
 		OutputDir:           *outDir,
 		HomeDir:             homeDir,

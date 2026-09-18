@@ -25,6 +25,47 @@ trust, dispatch budgets or an independently updating data service. Follow the
 [management data design](../research/compact-management-data.md) for those tracked
 requirements.
 
+## Configuration roots per operating system
+
+One helper in `internal/clientsetup` resolves every client location that differs
+between operating systems. It is pure: the command layer hands it the operating
+system, the home directory, `APPDATA`, `LOCALAPPDATA` and `XDG_CONFIG_HOME`, and the
+helper reads neither the process environment nor the filesystem. The Linux, macOS
+and Windows tables are therefore tested on every CI leg, whatever the host.
+
+| Location | Linux | macOS | Windows |
+| :-- | :-- | :-- | :-- |
+| Antigravity global customization root | `$HOME/.gemini/config` | same | `%USERPROFILE%\.gemini\config` |
+| Antigravity workspace root | `<repo>/.agents` | same | same |
+| Antigravity CLI settings | `$HOME/.gemini/antigravity-cli/settings.json` | same | `%USERPROFILE%\.gemini\antigravity-cli\settings.json` |
+| Antigravity IDE user settings | `<config>/Antigravity/User/settings.json` | `$HOME/Library/Application Support/Antigravity/User/settings.json` | `%APPDATA%\Antigravity\User\settings.json` |
+| Claude desktop configuration | `<config>/Claude/claude_desktop_config.json` | `$HOME/Library/Application Support/Claude/claude_desktop_config.json` | `%APPDATA%\Claude\claude_desktop_config.json` |
+| PowerShell console history | does not apply | does not apply | `%APPDATA%\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt` |
+| Default binary directory | `$HOME/.local/bin` | `$HOME/.local/bin` | `%LOCALAPPDATA%\Programs\praetor` |
+
+`<config>` is `$XDG_CONFIG_HOME`, or `$HOME/.config` when that variable is unset or
+relative; the XDG base directory specification declares a relative value invalid. An
+unset `APPDATA` or `LOCALAPPDATA` derives from the home directory.
+
+The global root resolves in this order: an explicit override, then
+`ANTIGRAVITY_CONFIG_DIR`, then `GEMINI_CONFIG_DIR` plus `/config`, then the default.
+An override or variable that is relative, contains `.` or `..` segments, or names a
+missing directory is an error, never a fallback. Both variables are unverified:
+neither name occurs in the `agy` 1.2.5 binary. A root chosen through them is marked
+unverified and may be relied on only after a native readback agrees.
+`praetorctl harvest` does not consult them.
+
+Antigravity keeps a brain directory per product under `$HOME/.gemini`:
+`antigravity/brain`, `antigravity-ide/brain` and `antigravity-cli/brain`.
+`harvest bundle` and `harvest memory` used to read one directory each, and not the
+same one. Both now read every directory that exists, in that order, and report when
+more than one exists. When two directories hold the same conversation, the first
+wins and the bundle report records the skip. `harvest memory --brain=<dir>` still
+reads exactly that directory.
+
+`harvest bundle --home=<dir>` describes a foreign home, so the `APPDATA`,
+`LOCALAPPDATA` and `XDG_CONFIG_HOME` of the running process are not applied to it.
+
 ## Prepare a configuration
 
 Create a private registry with version 1 and literal executable arguments:

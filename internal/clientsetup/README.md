@@ -34,6 +34,15 @@ intentional and does not imply support for that newer schema. Cline and Kilo are
 separate projections. Existing filenames previously guessed by other modules
 are not proof that an installed client reads them.
 
+`Root`, `Resolve`, `Locate`, `BrainRoots` and `ExistingBrainRoots` (`roots.go`)
+resolve the locations that differ per operating system from an injected `Env`. The
+caller supplies the operating system, home, `APPDATA`, `LOCALAPPDATA`,
+`XDG_CONFIG_HOME`, a variable reader and a directory probe; the package still
+discovers nothing itself, and paths are joined with the separator of the named
+operating system rather than the host's. `Resolution.Verified` is false for a root
+chosen through a relocation variable that has not been observed in a client binary.
+The [client bootstrap guide](../../docs/guides/client-bootstrap.md) holds the table.
+
 Bounds are 32 servers, 64 arguments per server, 4096 bytes per command/argument,
 256 KiB of registry values, 1 MiB of input configuration and 32 nesting levels.
 Candidates are bounded to 2 MiB; callers with a smaller file-write ceiling must
