@@ -22,8 +22,9 @@ and its alternatives are recorded in [ADR-0010](../adr/0010-text-register-per-ta
 | `internal` | another agent | `verdict: pass. changed: internal/compiler/register.go. ran: go test ./internal/compiler/. evidence: .workingdir/evidence/run.log sha256:0123456789ab lines:412. open: none.` |
 
 The social register is the `social-text` skill (`.agents/skills/social-text/SKILL.md`),
-derived from `adhd-format`. The docs and internal registers have no skill; the rendered
-block and this page are their definition.
+derived from `adhd-format`. The internal register is the `caveman` skill
+(`.agents/skills/caveman/SKILL.md`, see [Caveman](#caveman-the-internal-form)). The docs
+register has no skill; the rendered block and this page are its definition.
 
 The block appears under `## Text Register` in AGENTS.md, between
 `<!-- praetor:register:start -->` and `<!-- praetor:register:end -->`, and from there in
@@ -147,9 +148,32 @@ paths, commands run, evidence pointers and open questions, and nothing else. A r
 fan-out saves each fetched page under `.workingdir/evidence/` and returns pointers with a
 one-line finding per page; the orchestrator opens a page only when a decision needs it.
 
+## Caveman: the internal form
+
+Operators call the internal register "caveman", and the `caveman` skill
+(`.agents/skills/caveman/SKILL.md`) makes that form concrete. The
+configuration value stays `internal`, so no manifest changes; the internal row of the
+rendered block names the skill, and so does the one register sentence that repair jobs and
+the Paperclip harness receive (`config.RegisterDirective`).
+
+The skill replaces an adjective ("telegraphic") with rules an agent can apply line by line:
+drop articles, pronouns, copulas, hedges and framing; write fragments, one fact per line;
+use `->`, `=`, `x2`, `!` and `?` for the connective phrases; copy code, paths, commands,
+errors, ids and numbers verbatim. Its clarity floor keeps any fact the reader needs, so the
+line gets shorter without losing information:
+
+```text
+push rejected x2: state stale (gate run wrote receipt after sync). fix: resync, push. no bypass.
+```
+
+Caveman covers text another agent reads: briefs, agent and workflow returns, research
+fan-outs and tool-call notes. Forge text stays `social-text`, documentation stays in the
+docs register, and a reply to a person is full prose.
+
 ## What is not enforced
 
 Register compliance on human-typed surfaces is advisory: nothing measures whether a
-pull-request body reads as social prose. Two things are mechanical: the block in AGENTS.md
+pull-request body reads as social prose, and nothing measures whether an agent return
+follows `caveman`. Two things are mechanical: the block in AGENTS.md
 must match the manifest, and a configured `max_tokens` bounds the provider request of a
 repair run.

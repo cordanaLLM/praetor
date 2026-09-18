@@ -34,7 +34,7 @@ var registerOrder = []TextRegister{TextRegisterSocial, TextRegisterDocs, TextReg
 var registerForms = map[TextRegister]string{
 	TextRegisterSocial:   "`social-text` skill: BLUF, full sentences, scannable, enough and no more; PR template, receipt fence, conventional commit subject and changelog fragment unchanged",
 	TextRegisterDocs:     "complete without bloat: newcomer path first, expert reference after; every claim points at a file, command or test; no restated code",
-	TextRegisterInternal: "telegraphic: no filler, no preamble, no restatement; facts, paths, commands, verdict",
+	TextRegisterInternal: "`caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict",
 }
 
 // surfaceAudiences describes who reads each surface, in rendering order.

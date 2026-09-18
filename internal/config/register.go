@@ -19,7 +19,8 @@ const (
 	TextRegisterSocial TextRegister = "social"
 	// TextRegisterDocs is complete, reference-grade prose for documentation.
 	TextRegisterDocs TextRegister = "docs"
-	// TextRegisterInternal is telegraphic text for agent-to-agent traffic.
+	// TextRegisterInternal is caveman text for agent-to-agent traffic; the value stays
+	// "internal" and the `caveman` skill (.agents/skills/caveman) carries its form.
 	TextRegisterInternal TextRegister = "internal"
 )
 

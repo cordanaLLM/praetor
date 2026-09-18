@@ -208,7 +208,7 @@ func TestRenderRegisterBlockGolden(t *testing.T) {
 	for _, want := range []string{
 		"| social | forge: issues, PR bodies, review comments, commit bodies | `social-text` skill:",
 		"| docs | docs/, README, ADR bodies | complete without bloat:",
-		"| internal | briefs, agent-to-agent traffic, research fan-outs, workflow returns | telegraphic:",
+		"| internal | briefs, agent-to-agent traffic, research fan-outs, workflow returns | `caveman` skill:",
 		"- Task rows: social = commit_message_synthesis, waiver_signoff; docs = architecture_synthesis, function_docstrings; every other label and any brief without one = internal.",
 		"- Evidence above 58 lines or 1500 tokens leaves the message as a file",
 		"`evidence: <path> sha256:<12 hex> lines:<n>`",
@@ -216,6 +216,11 @@ func TestRenderRegisterBlockGolden(t *testing.T) {
 		if strings.Count(block, want) != 1 {
 			t.Errorf("block must contain %q exactly once:\n%s", want, block)
 		}
+	}
+	// The internal row names the caveman skill; the soft one-liner it replaced let agents
+	// keep writing full prose. The config value stays "internal".
+	if strings.Contains(block, "telegraphic:") || !strings.Contains(RegisterDirective(TextRegisterInternal), "`caveman` skill:") {
+		t.Errorf("internal register must render the caveman form, not the old telegraphic line:\n%s", block)
 	}
 	// A vendor-named H2 would make the section private to one compiled target.
 	if regexp.MustCompile(`(?m)^## `).MatchString(block) {
