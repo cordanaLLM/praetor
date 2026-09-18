@@ -6,19 +6,22 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+
+	"github.com/cordanaLLM/praetor/internal/clientid"
 )
 
-type Client string
+// Client is the shared client identifier; the list of known clients lives in clientid.
+type Client = clientid.ID
 
 const (
-	Codex      Client = "codex"
-	Claude     Client = "claude"
-	Gemini     Client = "gemini"
-	OpenCodeV1 Client = "opencode-v1"
-	Continue   Client = "continue"
-	Cline      Client = "cline"
-	Kilo       Client = "kilo"
-	AGY        Client = "agy"
+	Codex      = clientid.Codex
+	Claude     = clientid.Claude
+	Gemini     = clientid.Gemini
+	OpenCodeV1 = clientid.OpenCodeV1
+	Continue   = clientid.Continue
+	Cline      = clientid.Cline
+	Kilo       = clientid.Kilo
+	AGY        = clientid.AGY
 )
 
 var ErrConflict = errors.New("existing server conflicts with registry")
