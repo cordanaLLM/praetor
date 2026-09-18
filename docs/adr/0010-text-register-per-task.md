@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — 2026-09-17; amended 2026-09-18 (decisions 9 and 10, the caveman module).
+Proposed — 2026-09-17; amended 2026-09-18 (decisions 9 and 10, the caveman module; decision 11, the context gate).
 
 ## Context
 
@@ -138,12 +138,25 @@ hand at the source and kept terse by a lint, never rewritten at run time.
     agents. Each resolves to its own key when written and to `surfaces.agent` otherwise; a
     task label never changes it. The lint applies where a surface resolves to `internal`
     (`RegisterPolicy.LintEnforced`), so a repository opts a surface out by writing `docs` or
-    `social`. The keys go through the existing strict decoder; they are not rendered in the
+    `social`; `context` is the exception (decision 11). The keys go through the existing strict decoder; they are not rendered in the
     block, which is already at its 15-line budget.
 
-Wiring `Check` into `compile-context --verify` and `audit`, rewriting AGENTS.md, the MCP
-descriptions, prompts, hook messages and ledger templates, and the adopter harness are
-separate changes that build on this module.
+11. **The context gate fails a prose AGENTS.md.** `compile-context --verify`, `audit` and
+    their MCP mirrors run `Check` over the canonical AGENTS.md, and any finding fails them
+    (`compiler.LintContext`). The gate has no opt-out, no warning mode and no grace period:
+    it reads no manifest, and `surfaces.context` is the one emission surface fixed to
+    `internal`; the manifest decoder rejects any other register for it. The whole file is
+    linted, the adopter's own part below the harness included; the operator chose a red
+    adopter gate over a warning for that part. Only the rendered register block is blanked
+    first, because its renderer owns its wording and no repository edits it by hand;
+    `praetorctl caveman check` applies the same mask, so the command the error names
+    reproduces the verdict. AGENTS.md and the adopter harness are rewritten in caveman in
+    the same change, and a floor test pins the rewrite against the frozen prose version
+    (`internal/compiler/canonical_floor_test.go`). The HISS-17 turn start becomes
+    `praetorctl state status` plus the open tasks, never the whole `STATE.md`.
+
+Rewriting the MCP descriptions, prompts, hook messages, ledger templates and the register
+block wording are separate changes that build on this module.
 
 ## Alternatives considered
 
@@ -206,8 +219,10 @@ Amendment (2026-09-18): every token figure now comes from one estimator, and the
 register becomes measurable (`praetorctl caveman check`). The thresholds are heuristics fixed
 from two measured inputs (8.8 and 0.3 articles per 100 prose words); fixtures under
 `internal/caveman/testdata` replay them in both directions, and a change of threshold has to
-keep both sides passing. Until the gate change lands, the lint runs on demand only, and
-AGENTS.md fails it (it is prose today).
+keep both sides passing. The context gate (decision 11) breaks adopted repositories on
+upgrade: the harness praetor wrote before it is prose. `praetorctl adopt --force` rewrites
+the harness and keeps the repository's own part, which the repository then rewrites in
+caveman; there is no setting that keeps it in prose.
 
 Neutral: `models route` and `dogfood repairs` JSON gain additive fields (HISS-14,
 append-only); plans written before this change decode with an empty register and keep their
