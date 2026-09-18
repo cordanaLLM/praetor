@@ -205,7 +205,7 @@ func assignSetting(settings *OperatorSettings, path string, setting OperatorSett
 	}
 	selection, ok := settings.Clients.Selected[client]
 	if !ok {
-		selection = defaultClientSelection(client)
+		selection = defaultClientSelection()
 	}
 	field := strings.TrimPrefix(strings.TrimPrefix(genericSettingPath(path), selectedPrefix+"*"), ".")
 	if err := assignTarget(selection.targets(), field, setting); err != nil {

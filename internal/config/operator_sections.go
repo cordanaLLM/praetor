@@ -107,12 +107,13 @@ type UpdateSettings struct {
 }
 
 // DefaultOperatorSettings are the built-in values. Every known client is governed and
-// required where its binary is present, ungoverned clients are reported rather than
-// blocking, and Praetor manages the Antigravity grant list.
+// required where its binary is present, and ungoverned clients are reported rather than
+// blocking. Praetor manages no client's grant list by default: operator hosts opt in with
+// permissions.manage in their own layer.
 func DefaultOperatorSettings() OperatorSettings {
 	selected := make(map[clientid.ID]ClientSelection)
 	for _, id := range clientid.Known() {
-		selected[id] = defaultClientSelection(id)
+		selected[id] = defaultClientSelection()
 	}
 	return OperatorSettings{
 		Clients: ClientSettings{Mode: ClientModeAdvisory, VerifiedMaxAge: 168 * time.Hour, Govern: GovernPresent, Selected: selected},
@@ -123,9 +124,9 @@ func DefaultOperatorSettings() OperatorSettings {
 	}
 }
 
-func defaultClientSelection(id clientid.ID) ClientSelection {
+func defaultClientSelection() ClientSelection {
 	return ClientSelection{Required: true, Scopes: []string{ScopeGlobal}, Plugin: true,
-		Permissions: ClientPermissions{Manage: id == clientid.AGY, Allow: []string{}}}
+		Permissions: ClientPermissions{Allow: []string{}}}
 }
 
 // OperatorSettings returns the merged settings, or the built-in values when no layer carried

@@ -100,6 +100,7 @@ clients:
     agy:
       binary: /home/operator/.local/bin/agy
       permissions:
+        manage: true
         allow: ["mcp(praetor)"]
 hooks:
   command_policy:
@@ -126,7 +127,7 @@ Every string passes the literal rule shared with the MCP registry
 | `clients.selected.<id>.plugin` | `true` | boolean |
 | `clients.selected.<id>.binary`, `.config_root` | empty (look up at run time) | clean absolute path; workstation layer only |
 | `clients.selected.<id>.registry`, `.connection_profile` | empty | clean path, relative to the file that sets it, or absolute |
-| `clients.selected.<id>.permissions.manage` | `true` for `agy`, `false` otherwise | boolean; manage appends grants and never removes or widens one |
+| `clients.selected.<id>.permissions.manage` | `false` | boolean; `true` appends the listed grants to the client's own list and never removes or widens one |
 | `clients.selected.<id>.permissions.allow` | `[]` | at most 32 literals of up to 512 bytes, merged across layers |
 | `hooks.scope` | `governed` | `governed` guards repositories that carry `.standards.yaml`; `all` guards every workspace |
 | `hooks.command_policy.deny` | `[]` | at most 64 RE2 patterns of up to 512 bytes, compiled at load |
@@ -142,8 +143,11 @@ Every string passes the literal rule shared with the MCP registry
 | `update.allowed_signers` | empty | clean path, relative to the file that sets it, or absolute |
 | `update.receipt_public_key` | empty | 64 lowercase hex characters (Ed25519) |
 
-The engine ships no deny pattern. Organisation names and other operator data
-belong in `hooks.command_policy.deny` in the operator's own documents.
+The engine ships no deny pattern and manages no client's grant list. Both are
+operator decisions: organisation names belong in `hooks.command_policy.deny`, and
+an operator host opts in to grant management by setting `permissions.manage: true`
+for a client in its own layer, as the example above does for `agy`. Adopters who
+set neither get neither.
 `config.ValidateCommandPolicyDeny` is the one check for those bounds; the hook
 policy validates through it.
 

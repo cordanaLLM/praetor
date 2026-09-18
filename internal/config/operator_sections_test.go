@@ -55,7 +55,8 @@ func TestOperatorSettingsFourLayersMergeWithContributors(t *testing.T) {
 		"max age (fleet)":            {settings.Clients.VerifiedMaxAge, 72 * time.Hour},
 		"scopes (fleet)":             {agy.Scopes, []string{ScopeGlobal, ScopeWorkspace}},
 		"grants append":              {agy.Permissions.Allow, []string{"mcp(praetor)", "run_command(praetorctl)"}},
-		"agy grants managed":         {agy.Permissions.Manage, true},
+		"agy grants opted in":        {agy.Permissions.Manage, true},
+		"codex grants not managed":   {settings.Clients.Selected[clientid.Codex].Permissions.Manage, false},
 		"binary (workstation)":       {agy.Binary, filepath.Join(host, "bin", "agy")},
 		"deny appends de-duplicated": {settings.Hooks.CommandPolicy.Deny, []string{`\bexample-org/`, `\bsecond-org/`}},
 		"hook scope (organization)":  {settings.Hooks.Scope, HookScopeAll},
@@ -85,13 +86,40 @@ func TestOperatorSettingsDefaultsGovernEveryKnownClient(t *testing.T) {
 	}
 	for _, id := range clientid.Known() {
 		selection, ok := settings.Clients.Selected[id]
-		if !ok || !selection.Required || !selection.Plugin || selection.Permissions.Manage != (id == clientid.AGY) {
+		if !ok || !selection.Required || !selection.Plugin || selection.Permissions.Manage {
 			t.Errorf("client %s default: %+v", id, selection)
 		}
 	}
 	var absent *EffectivePolicy
 	if !reflect.DeepEqual(absent.OperatorSettings(), settings) {
 		t.Fatal("nil policy must report the built-in settings")
+	}
+}
+
+// Grant management is an operator-host opt-in: the engine default is false for every client,
+// and only a layer that sets permissions.manage turns it on.
+func TestOperatorSettingsGrantManagementIsAnOperatorOptIn(t *testing.T) {
+	root := policyFixture(t, "", "", "")
+	unmanaged, err := LoadEffectivePolicyContext(t.Context(), EffectiveOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, selection := range unmanaged.OperatorSettings().Clients.Selected {
+		if selection.Permissions.Manage {
+			t.Errorf("client %s manages grants without an operator layer", id)
+		}
+	}
+	operator := writePolicyFile(t, t.TempDir(), "fleet.yaml", "clients: {selected: {agy: {permissions: {manage: true}}}}\n")
+	managed, err := LoadEffectivePolicyContext(t.Context(), EffectiveOptions{Root: root, FleetPath: operator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := managed.OperatorSettings().Clients.Selected
+	if !selected[clientid.AGY].Permissions.Manage || selected[clientid.Claude].Permissions.Manage {
+		t.Fatalf("the operator layer must turn grant management on for agy only: %+v", selected[clientid.AGY])
+	}
+	if got := managed.OperatorFields["clients.selected.agy.permissions.manage"]; len(got) != 1 || got[0] != "fleet" {
+		t.Fatalf("manage contributor: %v", got)
 	}
 }
 
@@ -319,7 +347,7 @@ func TestOperatorSettingsRetainedDigestRoundTripAndTamper(t *testing.T) {
 
 func TestOperatorSchemaKeysHaveFields(t *testing.T) {
 	settings := DefaultOperatorSettings()
-	selection := defaultClientSelection(clientid.AGY)
+	selection := defaultClientSelection()
 	for path, spec := range operatorSpecs {
 		if spec.kind == kindMapping {
 			continue
