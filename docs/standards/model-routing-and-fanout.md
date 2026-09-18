@@ -167,6 +167,63 @@ reset is safe while reservations remain active. Separate processes, trackers or
 CLI invocations do not share this state: this is not fleet persistence, provider
 availability checking, or scheduler integration. `models route` remains advisory.
 
+## Maintain the catalog with models sync
+
+`praetorctl models sync` merges the built-in seed list into `routing.yaml`. With
+discovery on, which is the default, it also adds the models installed on a local
+Ollama endpoint, so a model you pull becomes routable.
+
+```bash
+praetorctl models sync                         # seed list plus this machine's Ollama models
+praetorctl models sync --discover-local=false  # seed list only; no daemon needed
+praetorctl models sync --prune                 # rebuild from the seed list and this run's discovery
+```
+
+Discovery queries only endpoints on port 11434 (Ollama); the default
+`http://localhost:8000` vLLM endpoint is accepted but not queried. An Ollama endpoint
+that does not answer fails the command, so pass `--discover-local=false` on a machine
+without a daemon.
+
+Each model entry records who owns it in `source`:
+
+| `source` | Written by | What a sync does with it |
+| :--- | :--- | :--- |
+| `seed` | the seed list in `internal/router/sync.go` | rewrites it in place from the seed list |
+| `local` | discovery against a local Ollama endpoint | keeps it; a rediscovered ID is never added twice |
+| absent | an operator editing the file | keeps it |
+
+Without `--prune`, a sync never removes an entry. Entries the seed list does not own
+stay in their tier and order, and tiers the defaults do not define stay with their
+descriptions and task labels. An installed model that is also a seed entry keeps its
+seed entry instead of appearing twice. If a sync would still lose an entry, which
+happens when the seed list drops a model the catalog marks `source: seed`, it writes
+nothing and exits with an error that lists the IDs and names `--prune`.
+
+`--prune` is the explicit rebuild. The result holds the seed list plus what this run
+discovered, and the command prints each removed ID. Run it with discovery on, on the
+machine whose models the catalog should list; otherwise it removes every `local`
+entry.
+
+A catalog that does not load, for example with a duplicate ID or an unknown `source`
+value, is refused rather than overwritten; repair or delete it first. The write is
+bound to the bytes the sync read: `contextopt.ReplaceSnapshot` checks them again
+before replacing the file, so an edit made while the sync runs fails it instead of
+being lost, apart from a writer that races that final check. The default tiers'
+descriptions and task labels and the
+`governance` block are still rewritten from the built-in defaults on every sync.
+The behavior is pinned by `internal/router/sync_test.go` and
+`cmd/standardsctl/models_sync_test.go`.
+
+### Nightly catalog check
+
+`.github/workflows/sync-models.yml` runs the offline sync every night and fails when
+the result differs from the tracked catalog, which means a seed-list change landed
+without a regenerated `routing.yaml`. The job has read-only repository access and
+never commits. `main` requires a pull request, signed commits and passing checks with
+no bypass actor, so a bot push cannot land there, and this repository does not let
+`GITHUB_TOKEN` open pull requests. To clear the failure, run `praetorctl models sync`
+and land the result in a pull request.
+
 ## Bounds and configuration migration
 
 Configuration and snapshot files must be regular files no larger than 1 MiB.
@@ -184,6 +241,13 @@ shipped routing data and `models sync` output already include both prices. This
 shared validation prevents listing one ambiguous file as free while routing treats
 it differently. Programmatically constructed task-routing descriptors must set
 `CostRatesDeclared` when both configured rates are intentional.
+
+Migration: model entries accept an optional `source` field whose only values are
+`seed` and `local`; any other value is rejected. `models sync` now merges instead of
+rewriting, and removes entries only with `--prune`. A script that relied on a plain
+`models sync` to discard entries must pass `--prune`. A catalog committed with a
+duplicate ID, which earlier sync runs could produce by listing an installed seed model
+twice, no longer loads; delete the second copy.
 
 Migration: requests that cross a configured RPM/TPM threshold now fail before
 selection, including oversized requests against an empty tracker. Supply realistic
@@ -206,7 +270,8 @@ reservation API. The standalone `.config/agent/hooks/pre_agent_dispatch.py`
 script has no verified hook registration here; this command does not invoke it.
 
 `models list` displays routing configuration. The separate `models sync` path
-serializes a built-in catalog and can query configured local Ollama/vLLM endpoints.
+merges a built-in catalog and can query configured local Ollama endpoints (see
+[Maintain the catalog with models sync](#maintain-the-catalog-with-models-sync)).
 It is not called by `models route`. There is no implemented upstream gateway
 pricing synchronization or `.config/models/catalog.json` writer in this path.
 Future work must connect execution and real observation sources explicitly before

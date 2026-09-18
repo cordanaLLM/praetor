@@ -9,9 +9,14 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
+# Read-only on purpose (#201). The job used to commit catalog drift straight to main,
+# which is how a runner without a model daemon deleted every locally discovered model.
+# main now requires a pull request, signed commits and passing checks with no bypass
+# actor, so a bot push cannot land, and this repository does not let GITHUB_TOKEN open
+# pull requests. The job therefore reports drift and a person lands the regenerated
+# catalog through a reviewed pull request.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   sync-models:
@@ -40,30 +45,17 @@ jobs:
           job: sync-models
           go-version: '1.27'
 
+      # The runner has no Ollama or vLLM daemon, so discovery is off. The sync merges
+      # and exits non-zero, writing nothing, if any existing entry would be removed.
       - name: Sync AI Model Catalog
-        run: go run ./cmd/standardsctl models sync
+        run: go run ./cmd/standardsctl models sync --discover-local=false
 
       - name: Verify Model Routing & Headroom Integrity
         run: go test -v -race ./internal/router/...
 
       - name: Check for Catalog Drift
-        id: git-check
         run: |
-          if [ -n "$(git status --porcelain .config/models/)" ]; then
-            echo "drift_detected=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "drift_detected=false" >> "$GITHUB_OUTPUT"
+          if ! git diff --exit-code -- .config/models/; then
+            echo "::error file=.config/models/routing.yaml::The seed list changed but the tracked catalog was not regenerated. Run 'praetorctl models sync' and land the result in a pull request."
+            exit 1
           fi
-
-      - name: Configure Git Bot Identity
-        if: steps.git-check.outputs.drift_detected == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Commit and Push Model Catalog Updates
-        if: steps.git-check.outputs.drift_detected == 'true'
-        run: |
-          git add .config/models/
-          git commit -m "chore(models): automated sync of frontier and open model catalog [skip ci]"
-          git push origin main

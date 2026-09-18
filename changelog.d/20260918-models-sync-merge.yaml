@@ -1,0 +1,4 @@
+type: fixed
+title: Merge the model catalog on models sync so local and hand-added models survive, remove entries only with --prune, and stop the nightly job from committing to main
+issue: "#201"
+breaking: true
