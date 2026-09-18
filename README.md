@@ -10,7 +10,6 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.27%2B-00ADD8?style=for-the-badge&logo=go)](https://golang.org)
   [![HISS-16 Compliance](https://img.shields.io/badge/Standard-HISS--16_Lattice-06B6D4?style=for-the-badge&logo=nasa)](https://cordanallm.github.io/praetor/standards/hiss-16-spec/)
-  [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub_Sponsors-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/CordanaLLM)
   [![Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white)](https://ko-fi.com/cordana)
   [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP_Server-10B981?style=for-the-badge)](https://modelcontextprotocol.io)
   [![Dual-Surface Docs](https://img.shields.io/badge/llms.txt-Enabled-06B6D4?style=for-the-badge)](https://cordanallm.github.io/praetor/llms.txt)
@@ -39,10 +38,6 @@ Praetor and the CordanaLLM ecosystem are open-source, high-integrity infrastruct
 
 <div align="center">
 
-  <a href="https://github.com/sponsors/CordanaLLM">
-    <img src="https://img.shields.io/badge/Sponsor_on_GitHub_Sponsors-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Sponsor on GitHub Sponsors" />
-  </a>
-  &nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://polar.sh/CordanaLLM">
     <img src="https://img.shields.io/badge/Bounties_on_Polar.sh-000000?style=for-the-badge&logo=polar&logoColor=white" alt="Feature Bounties on Polar.sh" />
   </a>

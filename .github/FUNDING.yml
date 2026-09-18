@@ -1,7 +1,7 @@
 # GitHub Funding Configuration for CordanaLLM & Praetor
 
 # GitHub Sponsors usernames
-github: [CordanaLLM]
+# github: [CordanaLLM]
 
 # Polar.sh integration (Merchant of Record & Issue Bounties)
 polar: CordanaLLM
@@ -15,6 +15,5 @@ open_collective: cordanallm
 # Custom funding URLs
 custom: [
   "https://polar.sh/CordanaLLM",
-  "https://ko-fi.com/cordana",
-  "https://github.com/sponsors/CordanaLLM"
+  "https://ko-fi.com/cordana"
 ]
