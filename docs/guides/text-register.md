@@ -49,6 +49,12 @@ register:
     forge: social      # issues, PR bodies, review comments, commit bodies
     docs: docs         # docs/, README, ADR bodies, notebook documents
     agent: internal    # briefs, fan-out prompts, workflow returns; also the fallback
+    # Emission surfaces: unset means "same as agent". See "Caveman lint" below.
+    # context: internal  # AGENTS.md, compiled vendor files, personas, skills
+    # mcp: internal      # MCP tool and property descriptions, MCP text results
+    # hooks: internal    # agent hook decisions and denials, hook script messages
+    # prompts: internal  # provider, repair, notebook and harness prompts
+    # ledger: internal   # free text in the .workingdir ledger files
   tasks:
     architecture_synthesis: docs
     function_docstrings: docs
@@ -64,6 +70,7 @@ register:
 | Key | Default | Bound | Error when violated |
 | :--- | :--- | :--- | :--- |
 | `surfaces.<forge\|docs\|agent>` | `social`, `docs`, `internal` | one of the three registers; closed key set | `unsupported text register "<v>"`, `unknown register surface "<k>"` |
+| `surfaces.<context\|mcp\|hooks\|prompts\|ledger>` | unset, resolves as `surfaces.agent` | one of the three registers; closed key set | same as the row above |
 | `tasks.<label>` | the four rows above, register only | at most 64 rows; label must be a `target_tasks` label | `register tasks exceed 64 rows`, `invalid register task label "<k>"`, `register task "<k>" is not a declared target_tasks label` |
 | `tasks.<label>.max_tokens` | none | 256..8192 when written | `register max_tokens for "<k>" must be 256..8192` |
 | `evidence.inline_max_lines` | 58 | 1..58, tighten only | `register evidence bound must be 1..58` |
@@ -78,7 +85,9 @@ class actually spends.
 `RegisterPolicy.Resolve(surface, task)` decides in this order:
 
 1. The `forge` and `docs` surfaces own their audience. The task never changes who reads the
-   forge or the documentation, and no budget applies.
+   forge or the documentation, and no budget applies. An emission surface (`context`,
+   `mcp`, `hooks`, `prompts`, `ledger`) resolves to its own key when the manifest writes it
+   and to `surfaces.agent` otherwise; the task never changes it either.
 2. On the `agent` surface, or when no surface is named, the task row wins; without a row
    the register is `surfaces.agent`.
 3. The result names the winning row (`surfaces.forge`, `tasks.ci_debugging`,
@@ -177,3 +186,89 @@ pull-request body reads as social prose, and nothing measures whether an agent r
 follows `caveman`. Two things are mechanical: the block in AGENTS.md
 must match the manifest, and a configured `max_tokens` bounds the provider request of a
 repair run.
+
+## Caveman lint and token estimate
+
+The internal register is measurable. `internal/caveman` lints agent-facing text, proves a
+rewrite lost nothing, and estimates tokens; `praetorctl caveman` runs it on files:
+
+```bash
+praetorctl caveman check AGENTS.md .agents/agents/
+praetorctl caveman estimate AGENTS.md
+```
+
+`check` prints one summary line per input, then its findings as `<path>:<line> <rule>:
+<excerpt>`, and exits non-zero when any input fails. Line 0 means the whole text. A
+directory expands to the Markdown files below it; `-` reads standard input. Today the lint
+runs on demand only: no gate calls it yet, and the current AGENTS.md fails it because it is
+written in prose.
+
+```text
+AGENTS.md: FAIL prose_words=1106 articles=97 density=8.8/100 limit=2.0 off_regions=0 findings=2
+AGENTS.md:0 C1 article-density: 8.8 articles per 100 prose words (97/1106), limit 2.0
+AGENTS.md:76 C5 long-sentence: 39 words: your pull requests go stale when ...
+```
+
+### Check rules
+
+| Rule | Fires when |
+| :--- | :--- |
+| `C1 article-density` | more than 2.0 `a`/`an`/`the` per 100 prose words, judged once the text holds 40 prose words |
+| `C2 filler` | "based on", "I think", "note that", "it is important", "in order to", "as requested", "let me", "please" |
+| `C3 hedge` | "probably", "seems", "might", "basically", "simply", "just", "really", "actually" |
+| `C4 terminal-noise` | an ANSI escape anywhere; box drawing (U+2500-257F) or emoji outside code |
+| `C5 long-sentence` | a sentence over 30 prose words without a `;`, `->` or `:` break |
+| `C6 unclosed-off-region` | `<!-- caveman:off -->` without a later `<!-- caveman:on -->` |
+
+The 2.0 threshold is measured, not chosen: AGENTS.md reads 8.8 articles per 100 prose words,
+its hand-written caveman rewrite 0.3. C2 and C3 ignore quoted text, so a rule that names a
+banned phrase in quotes does not trip itself.
+
+Not prose, and never linted as prose: fenced code (C4 still reports ANSI there), inline
+code, link targets, URLs, headings, table rows, HTML comments, ledger field rows such as
+`- **Tasks**: 3 open | **Open Bugs**: 0`, hook protocol lines (`PRAETOR_*`), evidence
+pointers, and anything between `<!-- caveman:off -->` and `<!-- caveman:on -->`. The
+summary line counts the off regions, so an escape stays visible.
+
+### Clarity floor
+
+`caveman.Floor(before, after)` fails a rewrite that lost a fact. The items below must all
+survive verbatim, anywhere in the new text, and the counts must not fall:
+
+| Rule | Must survive |
+| :--- | :--- |
+| `F1` to `F5` | every inline code span, fenced command line (not diagrams, blanks or `#` comments), id such as `HISS-17` or `ADR-0010`, link target, and HTML marker |
+| `F6` | the count of `MUST`, `SHALL` and `REQUIRED` |
+| `F7` | the count of prohibitions: never, do not, don't, must not, no |
+| `F8` | the count of numbered bold rules (`1. **...**`) |
+
+### Safe compression
+
+`caveman.Compress` removes ANSI escapes, turns CRLF into LF, trims and collapses blanks in
+prose lines outside code spans, collapses blank-line runs and folds identical consecutive
+prose lines into one line ending in `(xN)`. Fenced code, structured lines and off regions
+keep their bytes. It never drops or replaces a word: automatic prose compression saved 1-3%
+on real inputs and inverted one sentence's meaning.
+
+### One token estimator
+
+`caveman.EstimateTokens` (words × 1.3, `caveman.TokensPerWord`) is the only token
+estimator. The SARIF distillation in `internal/lockdown` and the package-docs distiller in
+`internal/docdistill` call it, and `praetorctl caveman estimate` prints it per input and in
+total.
+
+### Surfaces
+
+`--surface=<name>` makes `check` resolve that surface from the repository at `--root`
+(default `.`) through the same loader `compile-context` uses. When the surface resolves to
+`docs` or `social`, the command prints which row decided it and skips the lint:
+
+```bash
+praetorctl caveman check --surface=mcp descriptions.md
+```
+
+The emission surfaces are `context`, `mcp`, `hooks`, `prompts` and `ledger`; an unset one
+follows `surfaces.agent`. An unknown surface name is an error, never a silent fallback.
+The decision is recorded in [ADR-0010](../adr/0010-text-register-per-task.md) (decisions
+9 and 10); tests and fixtures are in `internal/caveman` and
+`cmd/standardsctl/caveman_test.go`.

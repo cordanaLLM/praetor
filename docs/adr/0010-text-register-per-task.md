@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — 2026-09-17.
+Proposed — 2026-09-17; amended 2026-09-18 (decisions 9 and 10, the caveman module).
 
 ## Context
 
@@ -102,6 +102,49 @@ The constraint kinds available are `universal-scope` and `forbidden-path`
 `compile-context --verify` (block sync) and the task-label validation; both run inside
 `make verify-all`.
 
+### Amendment of 2026-09-18: the caveman module
+
+The operator direction of 2026-09-18 (paraphrased): the internal register is applied by the
+engine, not left to advice, and covers everything that does not face a human. Measurement
+on this repository shaped the amendment. A hand-written caveman rewrite of AGENTS.md is 22.0%
+smaller in bytes and 23.8% in estimated tokens and loses no rule, code span, command, id or
+link. A deterministic prose compressor saves 3.2% on the same file, 1.2% across the private
+planning notes, and turned "as strictly as" into "as as". Prose is therefore made terse by
+hand at the source and kept terse by a lint, never rewritten at run time.
+
+9. **One module measures agent-facing text.** `internal/caveman` is a standard-library-only
+   leaf package, so every package that emits agent text can import it. It holds four
+   functions and reads no configuration:
+   - `Check` lints prose: more than 2.0 articles per 100 prose words once 40 words are
+     present (AGENTS.md measures 8.8, its caveman rewrite 0.3), filler phrases, hedges,
+     terminal noise (ANSI, box drawing, emoji), sentences over 30 words without a `;`, `->`
+     or `:` break, and an unclosed `<!-- caveman:off -->` region. Code, inline code, link
+     targets, URLs, headings, tables, HTML comments, ledger field rows, hook protocol lines
+     and evidence pointers are never read as prose.
+   - `Floor` is the clarity floor of a rewrite: it fails when a code span, a fenced command,
+     an id such as `HISS-17`, a link target or an HTML marker disappears, or when the count
+     of `MUST`-type directives, prohibitions or numbered rules falls.
+   - `Compress` applies only cleanups that cannot change meaning: ANSI removal, blank
+     collapsing in prose lines, blank-line runs, identical consecutive prose lines folded to
+     one with a count. It never drops or replaces a word.
+   - `EstimateTokens` is the one token estimator (words × 1.3). `internal/lockdown` and
+     `internal/docdistill` call it instead of their former copies.
+
+   `praetorctl caveman check` and `praetorctl caveman estimate` expose the module. The
+   module is not the `internal/register` package the constraint above forbids: it is not a
+   loader and holds no register policy.
+10. **Emission surfaces select where the lint applies.** `register.surfaces` gains
+    `context`, `mcp`, `hooks`, `prompts` and `ledger` for text the engine itself writes for
+    agents. Each resolves to its own key when written and to `surfaces.agent` otherwise; a
+    task label never changes it. The lint applies where a surface resolves to `internal`
+    (`RegisterPolicy.LintEnforced`), so a repository opts a surface out by writing `docs` or
+    `social`. The keys go through the existing strict decoder; they are not rendered in the
+    block, which is already at its 15-line budget.
+
+Wiring `Check` into `compile-context --verify` and `audit`, rewriting AGENTS.md, the MCP
+descriptions, prompts, hook messages and ledger templates, and the adopter harness are
+separate changes that build on this module.
+
 ## Alternatives considered
 
 - **A global register flag or environment variable.** Rejected: the direction forbids a
@@ -131,6 +174,13 @@ The constraint kinds available are `universal-scope` and `forbidden-path`
   Replace-or-append with an unterminated-marker error is new behaviour, not a lift, and
   routing BACKLOG.md through it would change `SyncToBacklog`. The new helper lives in
   `internal/util`; migrating milestone is a follow-up once tests prove equivalence.
+- **Deterministic prose compression of agent text at compile or run time** (dropping
+  articles, hedges and filler phrases). Rejected on measurement: 1-3% savings against 22%
+  for a hand rewrite, and one meaning inversion in 12 KB. `Compress` keeps only the
+  transforms that cannot change meaning.
+- **A per-register lint package or a second estimator next to the existing ones.** Rejected
+  as HISS-19: the two existing words × 1.3 estimators move into `internal/caveman` instead,
+  and the lint thresholds live in that package, not in a configuration file.
 
 ## Consequences
 
@@ -152,6 +202,13 @@ numbers the block prints but does not yet re-parameterise the distillation cap.
 `internal/config` now imports `internal/router` for the label shape and the row bound, and
 `internal/lockdown` imports `internal/config`; both edges are acyclic.
 
+Amendment (2026-09-18): every token figure now comes from one estimator, and the internal
+register becomes measurable (`praetorctl caveman check`). The thresholds are heuristics fixed
+from two measured inputs (8.8 and 0.3 articles per 100 prose words); fixtures under
+`internal/caveman/testdata` replay them in both directions, and a change of threshold has to
+keep both sides passing. Until the gate change lands, the lint runs on demand only, and
+AGENTS.md fails it (it is prose today).
+
 Neutral: `models route` and `dogfood repairs` JSON gain additive fields (HISS-14,
 append-only); plans written before this change decode with an empty register and keep their
 instructions byte-identical.
@@ -160,6 +217,8 @@ instructions byte-identical.
 
 - Operator direction of 2026-09-17 (paraphrased above; verbatim in the private
   `.workingdir/` ledger).
+- Operator direction and decisions of 2026-09-18 on the caveman module (paraphrased in the
+  amendment; the design note and its measurements are in the private `.workingdir/` ledger).
 - [ADR-0001: Universal context transpiler](0001-universal-context-transpiler.md)
 - [ADR-0002: Strictness lattice](0002-highest-standard-wins-lattice.md)
 - [ADR-0009: Structural unification](0009-structural-unification.md)
