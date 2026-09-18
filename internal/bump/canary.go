@@ -109,7 +109,9 @@ func executeCanaryTest(ctx context.Context, wtPath, testCmdStr, repoPath string,
 		res.ExecutionLog = "canary test command is empty"
 		return fmt.Errorf("%w: %s", ErrCanaryFailed, res.ExecutionLog)
 	}
-	if err := util.ValidateExecArg(parts[0]); err != nil {
+	// The executable may be a path, and on Windows a path is written with backslashes, which
+	// ValidateExecArg refuses as a metacharacter: no absolute canary command could run there.
+	if err := util.ValidateExecPathArg(parts[0]); err != nil {
 		res.ExecutionLog = fmt.Sprintf("invalid canary executable: %v", err)
 		return fmt.Errorf("%w: executable: %w", ErrCanaryFailed, err)
 	}

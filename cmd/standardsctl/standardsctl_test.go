@@ -1094,6 +1094,7 @@ func TestDispatchCommand_TopologyAuditReportsStrayFiles(t *testing.T) {
 func TestDefaultDevRoot_NeverReturnsAForeignPath(t *testing.T) {
 	// Boundary: no home directory at all must be an error, never a hard-coded path.
 	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
 	root, err := defaultDevRoot()
 	if err == nil {
 		t.Fatalf("expected an error without a usable home directory, got %q", root)
@@ -1285,6 +1286,7 @@ func TestResolveHomeSubdir_3D(t *testing.T) {
 	// Positive: the default is anchored at the home directory.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	got, err := resolveHomeSubdir("", "--dir", "dev")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1296,6 +1298,7 @@ func TestResolveHomeSubdir_3D(t *testing.T) {
 	// Negative/boundary: without a home directory the caller gets an error naming the
 	// flag, never a working-directory-relative path such as "dev".
 	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
 	missing, err := resolveHomeSubdir("", "--dir", "dev")
 	if err == nil {
 		t.Fatalf("expected an error without a home directory, got %q", missing)
@@ -1308,6 +1311,7 @@ func TestResolveHomeSubdir_3D(t *testing.T) {
 func TestDispatchCommand_AdoptAllMissingNeverFallsBackToCwd(t *testing.T) {
 	// Negative: an unset HOME must fail loudly instead of scanning ./dev.
 	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
 	if err := dispatchCommand("adopt", []string{"--all-missing", "--dry-run"}); err == nil {
 		t.Fatal("expected adopt --all-missing to fail without a home directory")
 	}
@@ -1379,7 +1383,10 @@ func TestDispatchCommand_HarvestFleetOutput(t *testing.T) {
 	if !strings.Contains(out, "Fleet Topology: not configured") {
 		t.Errorf("expected the unconfigured report, got:\n%s", out)
 	}
-	if !strings.Contains(out, harvester.FleetTopologyFile) {
+	// The report tells a person where to create the file, so it prints the host's own
+	// spelling of the location: ".config\fleet-topology.yaml" on Windows. That is the
+	// helpful form there, and the one to expect -- FromSlash is a no-op on POSIX.
+	if !strings.Contains(out, filepath.FromSlash(harvester.FleetTopologyFile)) {
 		t.Errorf("expected the report to name the expected configuration path, got:\n%s", out)
 	}
 	for _, name := range []string{"watershed", "northlight", "thedesknook", "home-zeus", "xe-telemetry"} {

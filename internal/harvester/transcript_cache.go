@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func storeTranscriptEvent(root *os.Root, event TranscriptEvent, report *TranscriptIngestReport) error {
@@ -46,7 +48,9 @@ func matchTranscriptCache(root *os.Root, name string, expected []byte) (bool, er
 	if err != nil {
 		return false, err
 	}
-	if !before.Mode().IsRegular() || before.Mode().Perm()&0o077 != 0 || before.Size() != int64(len(expected)) {
+	cachePrivate, cacheUnverifiable := util.ArtefactPrivacy(before)
+	util.NotePrivacyLimitation(cacheUnverifiable)
+	if !before.Mode().IsRegular() || !cachePrivate || before.Size() != int64(len(expected)) {
 		return false, fmt.Errorf("existing cache record has unsafe type, mode, or conflicting size")
 	}
 	file, err := openStableTranscriptFile(root, name, before)

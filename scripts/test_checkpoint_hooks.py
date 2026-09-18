@@ -19,6 +19,10 @@ SPEC.loader.exec_module(ADAPTER)
 SCOPE_SPEC = importlib.util.spec_from_file_location("checkpoint_scope", ROOT / ".config/lefthook/scripts/checkpoint_scope.py")
 SCOPE = importlib.util.module_from_spec(SCOPE_SPEC)
 SCOPE_SPEC.loader.exec_module(SCOPE)
+# The fixture CLI under the name hooks.praetorctl_path() resolves: with the host's executable
+# suffix. An extensionless bin/praetorctl was never found by the hooks on Windows, so every state
+# verification there failed and Stop reported the ledger unverifiable.
+PRAETORCTL = "bin/praetorctl" + (".exe" if os.name == "nt" else "")
 
 
 class LifecycleOutput(unittest.TestCase):
@@ -123,7 +127,7 @@ class NativeLefthook(unittest.TestCase):
     def setUpClass(cls):
         cls.build = tempfile.TemporaryDirectory(prefix="praetor-state-hook-cli-")
         cls.addClassCleanup(cls.build.cleanup)
-        cls.binary = Path(cls.build.name) / "praetorctl"
+        cls.binary = Path(cls.build.name) / Path(PRAETORCTL).name
         subprocess.run(["go", "build", "-o", str(cls.binary), "./cmd/standardsctl"],
                        cwd=ROOT, capture_output=True, timeout=180, check=True)
 
@@ -146,9 +150,9 @@ class NativeLefthook(unittest.TestCase):
         policy["enforce_batch_scope"] = True
         (self.root / ".config/agent/checkpoint.json").write_text(json.dumps(policy))
         (self.root / ".gitignore").write_text("/.workingdir/\n/bin/\n")
-        (self.root / "Makefile").write_text(".PHONY: hook-cli\nhook-cli:\n\ttest -x bin/praetorctl\n")
+        (self.root / "Makefile").write_text(f".PHONY: hook-cli\nhook-cli:\n\ttest -x {PRAETORCTL}\n")
         (self.root / "bin").mkdir()
-        os.link(self.binary, self.root / "bin/praetorctl")
+        os.link(self.binary, self.root / PRAETORCTL)
         (self.root / "README.md").write_text("fixture\n")
         self.git("add", ".")
         self.git("commit", "-q", "-s", "-m", "chore: initialize fixture")
@@ -156,7 +160,7 @@ class NativeLefthook(unittest.TestCase):
         self.state("sync")
 
     def state(self, action):
-        result = subprocess.run([str(self.root / "bin/praetorctl"), "state", action, "."],
+        result = subprocess.run([str(self.root / PRAETORCTL), "state", action, "."],
                                 cwd=self.root, text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -182,7 +186,10 @@ class NativeLefthook(unittest.TestCase):
         command = hook["hooks"][0]["command"]
         nested = self.root / "nested path with spaces"
         nested.mkdir(exist_ok=True)
-        result = subprocess.run(["/bin/sh", "-c", command], cwd=nested,
+        shell = "/bin/sh" if os.name != "nt" else shutil.which("sh")
+        if shell is None:
+            self.skipTest("no sh on PATH; registered client hooks are shell commands")
+        result = subprocess.run([shell, "-c", command], cwd=nested,
                                 input=json.dumps(payload), text=True,
                                 capture_output=True, timeout=60, check=False)
         return result

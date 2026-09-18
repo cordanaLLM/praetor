@@ -1,0 +1,4 @@
+type: fixed
+title: Ask one helper whether an artefact is private so the six mode comparisons stop refusing every file on Windows, read a misplaced directory as an error rather than as empty, report memory and CPU load on Windows, build the scrubbed git environment for the platform it runs on, and make the checkpoint hooks and all three self-test suites run there
+issue: "#132"
+breaking: false

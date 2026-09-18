@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func transcriptFixture(t *testing.T, body string) string {
@@ -80,7 +82,7 @@ func assertTranscriptPrivate(t *testing.T, directory string, files []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if util.ModeIsProtection() && info.Mode().Perm()&0o077 != 0 {
 		t.Fatalf("public cache directory mode %o", info.Mode().Perm())
 	}
 	for _, file := range files {
@@ -88,7 +90,7 @@ func assertTranscriptPrivate(t *testing.T, directory string, files []string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm()&0o077 != 0 {
+		if util.ModeIsProtection() && info.Mode().Perm()&0o077 != 0 {
 			t.Fatalf("public cache record mode %o", info.Mode().Perm())
 		}
 	}

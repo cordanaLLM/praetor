@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/dogfood"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 var executionSHA = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -38,7 +40,9 @@ func openState(path string, create bool) (*os.Root, error) {
 		return nil, err
 	}
 	info, err := root.Stat(".")
-	if err != nil || info.Mode().Perm()&0o077 != 0 {
+	statePrivate, stateUnverifiable := util.ArtefactPrivacy(info)
+	util.NotePrivacyLimitation(stateUnverifiable)
+	if err != nil || !statePrivate {
 		return nil, errors.Join(errors.New("repair state must be a private directory"), err, root.Close())
 	}
 	return root, nil

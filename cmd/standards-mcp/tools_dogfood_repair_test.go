@@ -52,6 +52,9 @@ func repairStatusMCPArgs() map[string]any {
 }
 
 func TestRepairStatusMCPRealFailureWithoutExecution(t *testing.T) {
+	if err := repairrun.ExecutionSupported(); err != nil {
+		t.Skipf("repair execution unavailable on this platform: %v", err)
+	}
 	srv, root := newFixtureServer(t)
 	config := writeRepairExecutionMCPFixture(t, srv, root)
 	before, err := os.ReadFile(filepath.Join(root, "failed-suite/report.json"))
@@ -133,6 +136,9 @@ func TestRepairStatusMCPRejectsSymlinksAndMalformedReports(t *testing.T) {
 }
 
 func TestRepairStatusMCPConsumesTerminalWithoutOptionalCost(t *testing.T) {
+	if err := repairrun.ExecutionSupported(); err != nil {
+		t.Skipf("repair execution unavailable on this platform: %v", err)
+	}
 	srv, root := newFixtureServer(t)
 	config := writeRepairExecutionMCPFixture(t, srv, root)
 	first := callTool(t, srv, "standards_dogfood_repair_status", repairStatusMCPArgs())

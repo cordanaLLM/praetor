@@ -7,10 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -110,6 +113,10 @@ func TestPublicLoopValidationAndCancellation(t *testing.T) {
 }
 
 func TestPublicCommandEnvironmentIgnoresWorkstation(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/env"); err != nil {
+		t.Skipf("/usr/bin/env is not present on this host (%v); the behaviour under test "+
+			"is platform-independent and covered where the tool exists", err)
+	}
 	t.Setenv("SSH_AUTH_SOCK", "/private/socket")
 	t.Setenv("GIT_CONFIG_VALUE_0", "credential-helper-secret")
 	t.Setenv("PRAETOR_TEST_SECRET", "must-not-copy")
@@ -147,15 +154,12 @@ func TestPublicAdoptionErrorsCannotPass(t *testing.T) {
 }
 
 func TestPublicEvidenceFailurePreservesApplyError(t *testing.T) {
-	opts, _ := publicLoopFixture(t, map[string]string{".workingdir": "blocked ledger"})
+	// The evidence write is made to fail by a clone that leaves a directory where result.json
+	// belongs. This used to be injected by editing the installed shim's text in place, which on
+	// Windows -- where the shim is a compiled binary -- matched nothing, changed nothing, and
+	// left the case unable to produce its second failure.
+	opts, _ := publicLoopFixtureWith(t, true, map[string]string{".workingdir": "blocked ledger"})
 	opts.Apply = true
-	wrapper, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := publicRead(t, wrapper)
-	script = strings.Replace(script, "if [ \"$1\" = clone ]; then", "if [ \"$1\" = clone ]; then\n for arg do target=$arg; done\n mkdir \"${target%/*}/result.json\" || exit $?", 1)
-	publicWrite(t, wrapper, script, 0o700)
 	report, err := RunPublicLoop(context.Background(), opts)
 	if !errors.Is(err, ErrPublicLoopFailed) {
 		t.Fatalf("write failure did not fail run: %v", err)
@@ -167,6 +171,14 @@ func TestPublicEvidenceFailurePreservesApplyError(t *testing.T) {
 }
 
 func publicLoopFixture(t *testing.T, extraFiles ...map[string]string) (PublicLoopOptions, string) {
+	t.Helper()
+	return publicLoopFixtureWith(t, false, extraFiles...)
+}
+
+// publicLoopFixtureWith is publicLoopFixture whose git shim, when blockEvidence is set, also
+// creates a directory named result.json beside each clone target, so writing the run's
+// evidence there fails.
+func publicLoopFixtureWith(t *testing.T, blockEvidence bool, extraFiles ...map[string]string) (PublicLoopOptions, string) {
 	t.Helper()
 	git, err := exec.LookPath("git")
 	if err != nil {
@@ -198,7 +210,7 @@ func publicLoopFixture(t *testing.T, extraFiles ...map[string]string) (PublicLoo
 	if err != nil {
 		t.Fatal(err)
 	}
-	installPublicGitFixture(t, git, fixture)
+	installPublicGitFixture(t, git, fixture, blockEvidence)
 	source, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -206,13 +218,84 @@ func publicLoopFixture(t *testing.T, extraFiles ...map[string]string) (PublicLoo
 	return PublicLoopOptions{Repositories: []string{"https://github.com/spf13/cobra"}, SourceRoot: source, ArtifactDir: filepath.Join(t.TempDir(), "evidence")}, strings.TrimSpace(sha)
 }
 
-func installPublicGitFixture(t *testing.T, git, fixture string) {
+// installPublicGitFixture puts a git shim first on PATH that turns the loop's network
+// clone of cobra into a local clone of the fixture, and passes every other command to
+// the real git.
+//
+// The shim was a `#!/bin/sh` script named `git`, joined onto PATH with a literal ':'.
+// Neither survives Windows: the shebang is not honoured, exec.LookPath looks for
+// `git.exe` rather than an extensionless file, and ';' is the list separator. The
+// whole process PATH collapsed into one malformed entry, so every public-loop case
+// failed with `exec: "git": executable file not found` before the loop ran. There
+// the same shim is compiled from Go, which keeps the coverage instead of skipping it.
+// POSIX behaviour is unchanged: the same script, the same "tools:/usr/bin:/bin".
+func installPublicGitFixture(t *testing.T, git, fixture string, blockEvidence bool) {
 	t.Helper()
 	tools := t.TempDir()
-	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = clone ]; then\n for arg do target=$arg; done\n GIT_ALLOW_PROTOCOL=file %s clone --template= --no-hardlinks --no-checkout %s \"$target\" || exit $?\n exec %s -C \"$target\" remote set-url origin https://github.com/spf13/cobra\nfi\nexec %s \"$@\"\n", publicShellQuote(git), publicShellQuote(fixture), publicShellQuote(git), publicShellQuote(git))
+	if runtime.GOOS == "windows" {
+		source := fmt.Sprintf(publicGitShimSource, strconv.Quote(git), strconv.Quote(fixture), blockEvidence)
+		testsupport.BuildExecutable(t, tools, "git", source)
+		t.Setenv("PATH", tools+string(os.PathListSeparator)+filepath.Dir(git))
+		return
+	}
+	block := ""
+	if blockEvidence {
+		block = " mkdir \"${target%/*}/result.json\" || exit $?\n"
+	}
+	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = clone ]; then\n for arg do target=$arg; done\n%s GIT_ALLOW_PROTOCOL=file %s clone --template= --no-hardlinks --no-checkout %s \"$target\" || exit $?\n exec %s -C \"$target\" remote set-url origin https://github.com/spf13/cobra\nfi\nexec %s \"$@\"\n", block, publicShellQuote(git), publicShellQuote(fixture), publicShellQuote(git), publicShellQuote(git))
 	publicWrite(t, filepath.Join(tools, "git"), script, 0o700)
-	t.Setenv("PATH", tools+":/usr/bin:/bin")
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin")
 }
+
+// publicGitShimSource is the Go form of the POSIX shim above, statement for statement. It is
+// built with testsupport.BuildExecutable.
+// The real git and the fixture are baked in as string literals rather than passed by
+// environment, because the loop runs git in a scrubbed environment that would drop them.
+const publicGitShimSource = `package main
+
+import (
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+)
+
+const realGit = %s
+const fixture = %s
+const blockEvidence = %t
+
+func main() {
+	args := os.Args[1:]
+	if len(args) > 0 && args[0] == "clone" {
+		target := args[len(args)-1]
+		if blockEvidence {
+			if err := os.Mkdir(filepath.Join(filepath.Dir(target), "result.json"), 0o700); err != nil {
+				os.Exit(1)
+			}
+		}
+		clone := exec.Command(realGit, "clone", "--template=", "--no-hardlinks", "--no-checkout", fixture, target)
+		clone.Env = append(os.Environ(), "GIT_ALLOW_PROTOCOL=file")
+		clone.Stdout, clone.Stderr = os.Stdout, os.Stderr
+		if err := clone.Run(); err != nil {
+			exit(err)
+		}
+		args = []string{"-C", target, "remote", "set-url", "origin", "https://github.com/spf13/cobra"}
+	}
+	cmd := exec.Command(realGit, args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		exit(err)
+	}
+}
+
+func exit(err error) {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		os.Exit(exitErr.ExitCode())
+	}
+	os.Exit(1)
+}
+`
 
 func publicShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"

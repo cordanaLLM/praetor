@@ -447,6 +447,7 @@ func TestRunReceiptStage_Positive_SignsRealStageOutput(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", home)
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	// APPDATA and LOCALAPPDATA are set alongside the POSIX pair because
 	// os.UserConfigDir reads APPDATA on Windows. Without them this sandbox held on
 	// POSIX only, and a keygen case wrote to the real per-user key file -- silently
@@ -513,6 +514,7 @@ func TestRunReceiptStage_Negative_NoSigningKey(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", home)
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("APPDATA", home)
 	t.Setenv("LOCALAPPDATA", home)
 	t.Setenv("PRAETOR_RECEIPT_KEY", "")

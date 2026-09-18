@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/cordanaLLM/praetor/internal/util"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -26,8 +27,8 @@ func newGit(ctx context.Context) (*gitRunner, error) {
 	if err != nil {
 		return nil, err
 	}
-	env := []string{"PATH=" + filepath.Dir(binary) + ":/usr/bin:/bin", "LANG=C.UTF-8",
-		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_ATTR_NOSYSTEM=1",
+	env := []string{"PATH=" + util.ScrubbedToolPath(binary), "LANG=C.UTF-8",
+		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_ATTR_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=file", "GIT_OPTIONAL_LOCKS=0",
 		"GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1"}
 	return &gitRunner{ctx: ctx, binary: binary, env: env}, nil

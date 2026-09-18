@@ -7,6 +7,7 @@ import subprocess
 import signal
 import selectors
 import tempfile
+import threading
 import time
 
 
@@ -43,7 +44,74 @@ def _stop_bounded(process):
     process.wait(timeout=5)
 
 
+class _SharedBound:
+    """Output two reader threads collect under one byte limit."""
+
+    def __init__(self, maximum):
+        self.maximum = maximum
+        self.output = {"stdout": bytearray(), "stderr": bytearray()}
+        self.total = 0
+        self.exceeded = False
+        self.finished = 0
+        self.changed = threading.Condition()
+
+    def add(self, key, chunk):
+        """Record a chunk; False once the limit is passed and reading must stop."""
+        with self.changed:
+            self.total += len(chunk)
+            if self.total > self.maximum:
+                self.exceeded = True
+                self.changed.notify_all()
+                return False
+            self.output[key].extend(chunk)
+            return True
+
+    def finish(self):
+        with self.changed:
+            self.finished += 1
+            self.changed.notify_all()
+
+
+def _drain(stream, key, bound):
+    # Every read consumes at least one byte or observes EOF, so maximum + 2 reads is enough.
+    try:
+        for _ in range(bound.maximum + 2):
+            chunk = os.read(stream.fileno(), min(65536, bound.maximum + 1))
+            if not chunk or not bound.add(key, chunk):
+                return
+    except OSError:
+        return  # The pipe closed because the process was stopped.
+    finally:
+        bound.finish()
+
+
+def _bounded_output_threaded(process, timeout, maximum):
+    """Collect bounded output where select() cannot wait on pipes.
+
+    On Windows ``selectors`` accepts only sockets, so registering a child's pipes raised
+    ``OSError`` and every bounded command failed before it produced a byte -- including each git
+    call the checkpoint planner makes. Each pipe is drained by its own thread instead, under the
+    same shared byte limit and deadline; a reader never blocks the process on a full pipe, and a
+    limit or deadline breach is raised for the caller to stop the process, as on POSIX.
+    """
+    deadline = time.monotonic() + timeout
+    bound = _SharedBound(maximum)
+    for stream, key in ((process.stdout, "stdout"), (process.stderr, "stderr")):
+        threading.Thread(target=_drain, args=(stream, key, bound), daemon=True).start()
+    with bound.changed:
+        done = bound.changed.wait_for(lambda: bound.exceeded or bound.finished == 2,
+                                      timeout=max(0.0, deadline - time.monotonic()))
+        if bound.exceeded:
+            raise HookError("checkpoint command output exceeded its byte limit")
+        if not done:
+            raise HookError("checkpoint command timed out")
+    process.wait(timeout=max(0.001, deadline - time.monotonic()))
+    return bytes(bound.output["stdout"])
+
+
 def _bounded_output(process, timeout, maximum):
+    if os.name == "nt":
+        return _bounded_output_threaded(process, timeout, maximum)
     deadline = time.monotonic() + timeout
     output = {"stdout": bytearray(), "stderr": bytearray()}
     total = 0

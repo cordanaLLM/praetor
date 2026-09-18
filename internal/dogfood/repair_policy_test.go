@@ -2,6 +2,7 @@ package dogfood
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -50,10 +51,11 @@ func TestRepairAcceptsCurrentPublicPolicyEvidenceWithoutSourceReads(t *testing.T
 	item := &report.Cases[0].Public.Results[0]
 	// Reapplying an unchanged baseline retains its count without a fresh breakdown.
 	item.Attempts[len(item.Attempts)-1].Adoption.DebtBreakdown = nil
-	item.Checkout = "/nonexistent/retained-public-checkout"
-	report.Cases[0].Public.Options.SourceRoot = "/nonexistent/policy-source"
+	item.Checkout = absentPath(t, "retained-public-checkout")
+	policySource := absentPath(t, "policy-source")
+	report.Cases[0].Public.Options.SourceRoot = policySource
 	for i := range item.Plan.EffectivePolicy.Sources {
-		item.Plan.EffectivePolicy.Sources[i].Path = "/nonexistent/policy-source/input"
+		item.Plan.EffectivePolicy.Sources[i].Path = filepath.Join(policySource, "input")
 	}
 	loaded, err := loadRepairPolicyFixture(t, report)
 	if err != nil {

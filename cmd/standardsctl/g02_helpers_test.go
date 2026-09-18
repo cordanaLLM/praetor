@@ -226,11 +226,3 @@ func mustErrContain(t *testing.T, err error, needle string) {
 		t.Fatalf("expected error containing %q, got: %v", needle, err)
 	}
 }
-
-// skipIfRoot skips permission-based negative tests when running as root.
-func skipIfRoot(t *testing.T) {
-	t.Helper()
-	if os.Geteuid() == 0 {
-		t.Skip("permission checks are bypassed for root")
-	}
-}

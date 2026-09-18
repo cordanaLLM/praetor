@@ -319,7 +319,7 @@ func assertPersistedNeedsManifest(t *testing.T, manifestPath string, repoNeeds *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
+	if perm := info.Mode().Perm(); util.ModeIsProtection() && perm != 0o600 {
 		t.Errorf("expected the manifest to be owner-only, got %#o", perm)
 	}
 }

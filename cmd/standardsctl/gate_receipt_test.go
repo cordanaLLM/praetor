@@ -14,6 +14,8 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // gateFixture is a hermetic git repository carrying a pinned key and a signed receipt.
@@ -197,6 +199,7 @@ func TestRunGateKeygen_3D(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", home)
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	// APPDATA and LOCALAPPDATA are set alongside the POSIX pair because
 	// os.UserConfigDir reads APPDATA on Windows. Without them this sandbox held on
 	// POSIX only, and a keygen case wrote to the real per-user key file -- silently
@@ -213,7 +216,7 @@ func TestRunGateKeygen_3D(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat key: %v", err)
 	}
-	if info.Mode().Perm() != lockdown.SigningKeyPerm {
+	if util.ModeIsProtection() && info.Mode().Perm() != lockdown.SigningKeyPerm {
 		t.Errorf("key mode = %#o, want %#o", info.Mode().Perm(), lockdown.SigningKeyPerm)
 	}
 	raw, err := os.ReadFile(keyPath)

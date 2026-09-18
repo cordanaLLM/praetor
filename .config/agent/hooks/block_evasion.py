@@ -93,7 +93,10 @@ def main():
     if not audit_command(cmd):
         sys.exit(1)
     if json_input:
-        print("PRAETOR_COMMAND_POLICY_OK")
+        # A protocol marker, written as exact bytes: print() translates the newline to CRLF on
+        # Windows, so the same approval read differently depending on the host.
+        sys.stdout.buffer.write(b"PRAETOR_COMMAND_POLICY_OK\n")
+        sys.stdout.buffer.flush()
 
     sys.exit(0)
 

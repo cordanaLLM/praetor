@@ -12,6 +12,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -246,7 +247,7 @@ func replayBucket(ctx context.Context, base, bucket, ruleID string, report *Repo
 	dir := filepath.Join(base, bucket)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if util.DirectoryAbsent(dir, err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read fixtures %s: %w", dir, err)

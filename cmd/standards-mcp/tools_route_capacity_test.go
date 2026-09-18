@@ -9,6 +9,9 @@ import (
 )
 
 func TestRepairStatusMCPUsesProjectedRequestCapacity(t *testing.T) {
+	if err := repairrun.ExecutionSupported(); err != nil {
+		t.Skipf("repair execution unavailable on this platform: %v", err)
+	}
 	srv, root := newFixtureServer(t)
 	config := writeRepairExecutionMCPFixture(t, srv, root)
 	routing := "version: 1\ntiers:\n  debug:\n    target_tasks: [ci_debugging]\n    models:\n      - {id: cheap, family: openai, rpm_limit: 10, tpm_limit: 1000, cost_per_m_in: 1, cost_per_m_out: 1}\ngovernance:\n  exhaustion_threshold_percent: 80\n"

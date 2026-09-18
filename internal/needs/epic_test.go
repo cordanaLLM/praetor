@@ -14,6 +14,8 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // fakeForge is a Forge stub that hands out increasing issue numbers, so a test can
@@ -173,7 +175,7 @@ func TestWriteEpicMarkdown_Boundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
+	if perm := info.Mode().Perm(); util.ModeIsProtection() && perm != 0o600 {
 		t.Errorf("expected the epic to be owner-only, got %#o", perm)
 	}
 }

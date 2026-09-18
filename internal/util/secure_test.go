@@ -132,7 +132,7 @@ func TestWriteFileSecure_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if ModeIsProtection() && info.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %#o, want 0600", info.Mode().Perm())
 	}
 }
@@ -166,7 +166,7 @@ func TestWriteFileSecure_Boundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if info.Mode().Perm() != SecureFilePerm {
+	if ModeIsProtection() && info.Mode().Perm() != SecureFilePerm {
 		t.Errorf("mode = %#o, want %#o", info.Mode().Perm(), SecureFilePerm)
 	}
 	if info.Size() != int64(len("new")) {
@@ -195,7 +195,7 @@ func TestMkdirSecure_3D(t *testing.T) {
 	if err != nil || !info.IsDir() {
 		t.Fatalf("expected directory at %s, got %v (%v)", nested, info, err)
 	}
-	if info.Mode().Perm() != 0o700 {
+	if ModeIsProtection() && info.Mode().Perm() != 0o700 {
 		t.Errorf("mode = %#o, want 0700", info.Mode().Perm())
 	}
 
@@ -222,7 +222,7 @@ func TestMkdirSecure_3D(t *testing.T) {
 	if err := MkdirSecure(def, 0); err != nil {
 		t.Fatalf("MkdirSecure default perm: %v", err)
 	}
-	if info, err := os.Stat(def); err != nil || info.Mode().Perm() != SecureDirPerm {
+	if info, err := os.Stat(def); err != nil || (ModeIsProtection() && info.Mode().Perm() != SecureDirPerm) {
 		t.Errorf("mode = %v (%v), want %#o", info, err, SecureDirPerm)
 	}
 }
@@ -285,7 +285,7 @@ func assertSecureMode(t *testing.T, path string, want os.FileMode) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != want {
+	if got := info.Mode().Perm(); ModeIsProtection() && got != want {
 		t.Errorf("%s mode = %#o, want %#o", filepath.Base(path), got, want)
 	}
 }

@@ -2,11 +2,16 @@ package util
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
 
 func TestCommandEnvironmentIsCopiedAndDoesNotInherit(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/env"); err != nil {
+		t.Skipf("/usr/bin/env is not present on this host (%v); the behaviour under test "+
+			"is platform-independent and covered where the tool exists", err)
+	}
 	t.Setenv("PRAETOR_TEST_AMBIENT", "private-sentinel")
 	env := []string{"PRAETOR_TEST_EXPLICIT=original"}
 	ctx, err := WithCommandEnvironment(context.Background(), env)
@@ -35,8 +40,12 @@ func TestCommandEnvironmentEmptyAndBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, err := RunCommand(ctx, "", "/usr/bin/env")
-	if err != nil || output != "" {
+	// Only this block needs /usr/bin/env to print the child's environment. The context and
+	// bound checks below do not, so they run on every platform rather than being skipped
+	// with it.
+	if _, statErr := os.Stat("/usr/bin/env"); statErr != nil {
+		t.Logf("/usr/bin/env is not present on this host (%v); empty-environment readback skipped", statErr)
+	} else if output, err := RunCommand(ctx, "", "/usr/bin/env"); err != nil || output != "" {
 		t.Fatalf("explicit empty environment inherited values: %q, %v", output, err)
 	}
 	var nilContext context.Context

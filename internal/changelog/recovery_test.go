@@ -9,10 +9,15 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func interruptedRender(t *testing.T) (string, string, []byte) {
 	t.Helper()
+	if blocked, reason := readOnlyDirectoryBlocksRemoval(t); !blocked {
+		t.Skip(reason)
+	}
 	root := t.TempDir()
 	fragment, err := CreateFragment(root, Fragment{Type: TypeFixed, Title: "Preserve one release entry"})
 	if err != nil {
@@ -35,7 +40,7 @@ func interruptedRender(t *testing.T) (string, string, []byte) {
 	}
 	assertReleaseCount(t, root, 1)
 	info, err := os.Stat(filepath.Join(root, renderJournalName))
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || (util.ModeIsProtection() && info.Mode().Perm() != 0o600) {
 		t.Fatalf("private recovery journal missing: %v, %v", info, err)
 	}
 	return root, fragment, before
@@ -210,4 +215,36 @@ func TestRenderPublishedReadbackRejectsChangedOutput(t *testing.T) {
 	if _, err := os.Stat(fragment); err != nil {
 		t.Fatalf("readback changed source fragments: %v", err)
 	}
+}
+
+// readOnlyDirectoryBlocksRemoval measures whether a directory without write permission
+// stops a file inside it from being removed on this host, and says why not when it does not.
+//
+// interruptedRender provokes a publication whose cleanup fails by making changelog.d
+// read-only. POSIX refuses the unlink; Windows ignores the directory mode and removes the
+// file, so the render completed cleanly and every case built on the helper failed with
+// "expected cleanup failure after publication" -- reporting a missing failure the platform
+// could never have produced. The answer is measured on a throwaway directory rather than
+// inferred from the platform name, because a POSIX process running as root cannot provoke
+// it either, and should skip for the same stated reason rather than fail.
+func readOnlyDirectoryBlocksRemoval(t *testing.T) (bool, string) {
+	t.Helper()
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "probe")
+	if err := os.WriteFile(victim, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			t.Errorf("restore probe directory mode: %v", err)
+		}
+	})
+	if err := os.Remove(victim); err != nil {
+		return true, ""
+	}
+	return false, "this host removes a file from a read-only directory, so an interrupted " +
+		"publication cannot be provoked here; covered on the Linux leg of the platform matrix"
 }

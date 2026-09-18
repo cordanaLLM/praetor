@@ -44,12 +44,17 @@ RAN = re.compile(r"^Ran (\d+) tests? in ", re.M)
 SKIPPED = re.compile(r"skipped=(\d+)")
 # verbosity=2 prints one line per skip: "name (mod.Case.name) ... skipped 'reason'".
 SKIP_REASON = re.compile(r"^(\S+) \([^)]*\) \.\.\. skipped ['\"](.*)['\"]$", re.M)
+# unittest reports each failing case in a block headed by a rule of 70 "=" and then
+# "FAIL: name (mod.Case.name)" or "ERROR: ...". The per-case "... FAIL" outcome line is not
+# usable: a docstring replaces the name on it, and output the case prints lands between the
+# name and the outcome. Anchoring on the rule keeps a test that merely prints "FAIL:" out.
+FAILED_CASE = re.compile(r"^={70}\n(FAIL|ERROR): (\S+) \(", re.M)
 # A per-suite timeout well above the slowest observed run; a hung suite must fail, not hang CI.
 SUITE_TIMEOUT_SECONDS = 1800
 
 
 def run_suite(path):
-    """Execute one suite and return (ok, ran, skipped, reasons, tail)."""
+    """Execute one suite and return (ok, ran, skipped, reasons, failed, tail)."""
     try:
         result = subprocess.run(
             [sys.executable, "-B", str(path)],
@@ -57,7 +62,7 @@ def run_suite(path):
             timeout=SUITE_TIMEOUT_SECONDS, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        return False, 0, 0, [], f"{type(error).__name__}: {error}"
+        return False, 0, 0, [], [], f"{type(error).__name__}: {error}"
     output = result.stdout + result.stderr
     summaries = list(RAN.finditer(output))
     ran_match = summaries[-1] if summaries else None
@@ -68,10 +73,11 @@ def run_suite(path):
     skipped_match = SKIPPED.search(tail_text)
     skipped = int(skipped_match.group(1)) if skipped_match else 0
     reasons = SKIP_REASON.findall(output)
+    failed = list(dict.fromkeys(FAILED_CASE.findall(output)))
     tail = "\n".join(output.splitlines()[-25:])
     # No summary line means the suite died before unittest reported: treat as failure even
     # if the exit code says otherwise, because zero tests is not a pass.
-    return (result.returncode == 0 and ran_match is not None), ran, skipped, reasons, tail
+    return (result.returncode == 0 and ran_match is not None), ran, skipped, reasons, failed, tail
 
 
 def report(name, ok, ran, skipped, reasons):
@@ -94,14 +100,16 @@ def main(argv=None):
     failures = []
     for suite in SUITES:
         if not (ROOT / suite).is_file():
-            print(f"[FAIL] {suite}: missing")
-            failures.append(str(suite))
+            print(f"[FAIL] {suite.as_posix()}: missing")
+            failures.append(suite.as_posix())
             continue
-        ok, ran, skipped, reasons, tail = run_suite(suite)
-        report(str(suite), ok, ran, skipped, reasons)
+        ok, ran, skipped, reasons, failed, tail = run_suite(suite)
+        report(suite.as_posix(), ok, ran, skipped, reasons)
         total_executed += ran - skipped
         if not ok:
-            failures.append(str(suite))
+            failures.append(suite.as_posix())
+            for kind, test in failed:
+                print(f"         failed {kind} {test}")
             print(tail)
 
     print(f"\nTotal executed: {total_executed} (floor {args.min_executed})")

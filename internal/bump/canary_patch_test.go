@@ -6,9 +6,27 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 const readmeAdaptation = "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-before\n+after\n"
+
+// replacingPnpm performs the dependency update in the working directory and then overwrites
+// the file named by PRAETOR_TEST_PATCH, so a caller that re-reads the patch sees the change.
+const replacingPnpm = `package main
+
+import "os"
+
+func main() {
+	if err := os.WriteFile("package.json", []byte("{\"dependencies\":{\"fixture-dep\":\"^2.0.0\"}}\n"), 0o600); err != nil {
+		os.Exit(1)
+	}
+	if err := os.WriteFile(os.Getenv("PRAETOR_TEST_PATCH"), []byte("replacement is not a patch\n"), 0o600); err != nil {
+		os.Exit(1)
+	}
+}
+`
 
 func TestApplyBumpMissingPatchFailsBeforeUpdate(t *testing.T) {
 	dir, candidate := canaryFixture(t)
@@ -70,10 +88,7 @@ func TestApplyBumpUsesRetainedPatchBytes(t *testing.T) {
 	writeCanaryFile(t, patch, readmeAdaptation)
 	writeCanaryFile(t, filepath.Join(dir, "pnpm-lock.yaml"), "fixture\n")
 	bin := t.TempDir()
-	script := "#!/bin/sh\nprintf '%s\\n' '{\"dependencies\":{\"fixture-dep\":\"^2.0.0\"}}' > package.json\nprintf '%s\\n' 'replacement is not a patch' > \"$PRAETOR_TEST_PATCH\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "pnpm"), []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
+	testsupport.BuildExecutable(t, bin, "pnpm", replacingPnpm)
 	t.Setenv("PRAETOR_TEST_PATCH", patch)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if err := ApplyBump(t.Context(), dir, candidate, patch); err != nil {

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestReplaceSnapshotCreateUpdateAndStaleRejection(t *testing.T) {
@@ -24,7 +26,7 @@ func TestReplaceSnapshotCreateUpdateAndStaleRejection(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || (util.ModeIsProtection() && info.Mode().Perm() != 0o600) {
 		t.Fatalf("private permissions widened: %v, %v", info, err)
 	}
 	for _, opts := range []ReplaceOptions{{Mode: 0o600}, {Expected: before, Exists: true, Mode: 0o600}} {

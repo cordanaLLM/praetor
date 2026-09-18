@@ -87,6 +87,37 @@ func TestTestStageDistinguishesItsDeadlineFromAFailingSuite(t *testing.T) {
 	}
 }
 
+// The bound also covers creating the isolated worktree, and firing there is the same event. A
+// one-nanosecond bound expires before git can start, so this reaches that path on every
+// platform, where the test above reaches it only on a host slow enough to outlast 50ms.
+func TestTestStageAttributesABoundFiringDuringWorktreeCreation(t *testing.T) {
+	repoDir := newHermeticGitRepo(t)
+	seedGoModule(t, repoDir)
+	cfg, _ := newTestConfig(t, repoDir, false)
+	testsRan := false
+	cfg.run = func(runCtx context.Context, dir, name string, args ...string) (string, error) {
+		if name == "go" && len(args) > 0 && args[0] == "test" {
+			testsRan = true
+		}
+		return fakeRunner(&[]recordedCommand{}, "", nil)(runCtx, dir, name, args...)
+	}
+
+	t.Setenv(TestStageTimeoutEnv, "1ns")
+	_, err := runTestStage(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("a stage whose bound fired during worktree creation must fail")
+	}
+	message := err.Error()
+	for _, want := range []string{"creating the isolated test worktree", "bound firing", TestStageTimeoutEnv, "1ns"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("message must mention %q, got %q", want, message)
+		}
+	}
+	if strings.Contains(message, "could not be created") || testsRan {
+		t.Errorf("a bound firing was reported as a creation failure, or tests ran anyway: ran=%v %q", testsRan, message)
+	}
+}
+
 // A raised bound must reach the receipt. A local override that changed the gate's strictness
 // without appearing anywhere in its output would be an invisible difference between what one
 // operator verified and what everyone else reads.

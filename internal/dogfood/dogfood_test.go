@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // newHostFixture builds a minimal, self-consistent host repository in a temp directory:
@@ -100,7 +102,7 @@ func TestDogfood_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != reportFilePerm {
+	if util.ModeIsProtection() && info.Mode().Perm() != reportFilePerm {
 		t.Fatalf("report mode is %v, want %v", info.Mode().Perm(), reportFilePerm)
 	}
 }

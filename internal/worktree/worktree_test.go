@@ -13,6 +13,7 @@ import (
 func setupTestGitRepo(t *testing.T) string {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_SYSTEM", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
@@ -267,8 +268,13 @@ func TestWorktree_Negative_ReleasedProbeRejectsAmbientFilterAndFsmonitor(t *test
 		want   string
 		attrs  bool
 	}{
-		{name: "filter", config: "[filter \"malicious\"]\n\tclean = !touch MARKER\n", marker: "filter marker", want: "configured filters", attrs: true},
-		{name: "fsmonitor", config: "[core]\n\tfsmonitor = !touch MARKER\n", marker: "fsmonitor marker", want: "attributes, excludes, or fsmonitor"},
+		// Both values are shell commands git runs as written. They carried a leading "!", which is
+		// alias syntax: git ran "!touch", the shell reported command not found, and no marker could
+		// ever appear -- so the no-execution check passed whether or not the probe ran them.
+		// Measured without it, git add runs the filter and git status the fsmonitor, and each
+		// creates its marker.
+		{name: "filter", config: "[filter \"malicious\"]\n\tclean = touch MARKER\n", marker: "filter marker", want: "configured filters", attrs: true},
+		{name: "fsmonitor", config: "[core]\n\tfsmonitor = touch MARKER\n", marker: "fsmonitor marker", want: "attributes, excludes, or fsmonitor"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repoDir := setupTestGitRepo(t)
@@ -291,11 +297,16 @@ func TestWorktree_Negative_ReleasedProbeRejectsAmbientFilterAndFsmonitor(t *test
 			}
 			home := t.TempDir()
 			marker := filepath.Join(home, tc.marker)
-			config := strings.ReplaceAll(tc.config, "MARKER", marker)
+			// The marker is single-quoted for the shell git runs the command in, and written with
+			// forward slashes. Unquoted, the space in the name split it into two arguments, so an
+			// executed command touched two other files and the check below could never fail. With
+			// backslashes, git read the Windows path as escape sequences and refused the config.
+			config := strings.ReplaceAll(tc.config, "MARKER", "'"+filepath.ToSlash(marker)+"'")
 			if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(config), 0o600); err != nil {
 				t.Fatalf("failed writing global Git config: %v", err)
 			}
 			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
 			t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, ".gitconfig"))
 			if err := mgr.CheckRemoval(ctx, wt.Path); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("expected ambient %s refusal, got %v", tc.name, err)

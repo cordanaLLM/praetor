@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestDiscoveryLocalRetentionAndReplay(t *testing.T) {
@@ -36,7 +38,7 @@ func TestDiscoveryLocalRetentionAndReplay(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm() != 0o600 {
+		if util.ModeIsProtection() && info.Mode().Perm() != 0o600 {
 			t.Fatalf("evidence mode %s: %v", path, info.Mode())
 		}
 	}

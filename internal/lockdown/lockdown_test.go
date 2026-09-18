@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // =========================================================================
@@ -449,6 +451,11 @@ func TestDistill_Boundary_ContextWindowClamps(t *testing.T) {
 func TestDistill_Boundary_EphemeralDirDefaultsToTempDir(t *testing.T) {
 	sandbox := t.TempDir()
 	t.Setenv("TMPDIR", sandbox)
+	// os.TempDir reads TMPDIR on POSIX and TMP, then TEMP, on Windows. With TMPDIR alone the
+	// sandbox held on POSIX only, and on Windows the SARIF report was written to the real
+	// temporary directory rather than the sandbox this case asserts it lands in.
+	t.Setenv("TMP", sandbox)
+	t.Setenv("TEMP", sandbox)
 
 	res, err := DistillSARIF(context.Background(), []byte(`{"version":"2.1.0","runs":[]}`), "", "")
 	if err != nil {
@@ -461,7 +468,7 @@ func TestDistill_Boundary_EphemeralDirDefaultsToTempDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat ephemeral report: %v", err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if util.ModeIsProtection() && info.Mode().Perm() != 0o600 {
 		t.Errorf("ephemeral SARIF mode = %#o, want 0600", info.Mode().Perm())
 	}
 }

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func applyWishFixture(t *testing.T, srv *Server, request string) map[string]any {
@@ -57,7 +59,7 @@ func TestWishesMCPWriteReadback(t *testing.T) {
 		t.Fatalf("status changed ledger: %v", err)
 	}
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || (util.ModeIsProtection() && info.Mode().Perm() != 0o600) {
 		t.Fatalf("ledger is not private: %v", err)
 	}
 }

@@ -10,7 +10,7 @@ import (
 
 func testConnectionProfile() ConnectionProfile {
 	return ConnectionProfile{Version: 1, Gateway: GatewayConnection{
-		BridgeCommand: "/opt/agent/mcp-bridge", TokenFile: "/private/agent-token",
+		BridgeCommand: hostAbsolute("opt", "agent", "mcp-bridge"), TokenFile: agentToken,
 		Endpoints: []GatewayEndpoint{{Name: "shared-tools", URL: "https://tools.example.test/mcp/"},
 			{Name: "knowledge", URL: "https://tools.example.test/knowledge/mcp"}},
 	}}
@@ -18,7 +18,7 @@ func testConnectionProfile() ConnectionProfile {
 
 func TestConnectionRegistryAdapterParity(t *testing.T) {
 	profile := testConnectionProfile()
-	profile.Gateway.LocalServers = []Server{{Name: "local", Command: "/opt/agent/local-mcp"}}
+	profile.Gateway.LocalServers = []Server{{Name: "local", Command: hostAbsolute("opt", "agent", "local-mcp")}}
 	registry, err := ConnectionRegistry(t.Context(), profile)
 	if err != nil {
 		t.Fatal(err)
@@ -37,8 +37,8 @@ func TestConnectionRegistryAdapterParity(t *testing.T) {
 				t.Fatal(err)
 			}
 			combined := string(plan.Content) + string(encoded)
-			for _, want := range []string{"--endpoint", "https://tools.example.test/mcp/", "--token-file", "/private/agent-token", "local"} {
-				if !strings.Contains(combined, want) {
+			for _, want := range []string{"--endpoint", "https://tools.example.test/mcp/", "--token-file", agentToken, "local"} {
+				if !containsSerialized(combined, want) {
 					t.Fatalf("adapter lost %s", want)
 				}
 			}
@@ -68,12 +68,12 @@ func TestConnectionBoundsAndCancellation(t *testing.T) {
 	profile := testConnectionProfile()
 	profile.Gateway.Endpoints = profile.Gateway.Endpoints[:1]
 	for i := 0; i < MaxServers-1; i++ {
-		profile.Gateway.LocalServers = append(profile.Gateway.LocalServers, Server{Name: "local" + strings.Repeat("x", i), Command: "/local"})
+		profile.Gateway.LocalServers = append(profile.Gateway.LocalServers, Server{Name: "local" + strings.Repeat("x", i), Command: hostAbsolute("local")})
 	}
 	if _, err := ConnectionRegistry(t.Context(), profile); err != nil {
 		t.Fatal(err)
 	}
-	profile.Gateway.LocalServers = append(profile.Gateway.LocalServers, Server{Name: "overflow", Command: "/local"})
+	profile.Gateway.LocalServers = append(profile.Gateway.LocalServers, Server{Name: "overflow", Command: hostAbsolute("local")})
 	if _, err := ConnectionRegistry(t.Context(), profile); err == nil {
 		t.Fatal("accepted more than 32 servers")
 	}
@@ -83,7 +83,7 @@ func TestConnectionBoundsAndCancellation(t *testing.T) {
 		t.Fatal("ignored canceled context")
 	}
 	profile = testConnectionProfile()
-	profile.Gateway.LocalServers = []Server{{Name: "shared-tools", Command: "/local"}}
+	profile.Gateway.LocalServers = []Server{{Name: "shared-tools", Command: hostAbsolute("local")}}
 	if _, err := ConnectionRegistry(t.Context(), profile); err == nil {
 		t.Fatal("accepted duplicate projected server identity")
 	}
@@ -91,7 +91,7 @@ func TestConnectionBoundsAndCancellation(t *testing.T) {
 
 func TestMemoryBindingPreservesPrivateSettingsAndIsIdempotent(t *testing.T) {
 	before := []byte(`{"apiToken":"private-fixture","bankIdTemplate":"{gitProject}","mapPathToBank":{"/other":"other-bank"},"unknown":{"keep":true}}`)
-	binding := MemoryBinding{ProjectRoot: "/work/project", BankID: "private::project::example"}
+	binding := MemoryBinding{ProjectRoot: workProject, BankID: "private::project::example"}
 	plan, err := BuildMemoryPlan(t.Context(), binding, before)
 	if err != nil {
 		t.Fatal(err)
@@ -112,8 +112,8 @@ func TestMemoryBindingPreservesPrivateSettingsAndIsIdempotent(t *testing.T) {
 }
 
 func TestMemoryBindingRejectsConflictAndBoundaries(t *testing.T) {
-	binding := MemoryBinding{ProjectRoot: "/work/project", BankID: "bank"}
-	for _, raw := range []string{`{"mapPathToBank":{"/work/project":"different"}}`, `{"mapPathToBank":null}`, `{"mapPathToBank":[]}`, `{`, `{} {}`, `{"duplicate":1,"duplicate":2}`} {
+	binding := MemoryBinding{ProjectRoot: workProject, BankID: "bank"}
+	for _, raw := range []string{`{"mapPathToBank":{` + quoted(workProject) + `:"different"}}`, `{"mapPathToBank":null}`, `{"mapPathToBank":[]}`, `{`, `{} {}`, `{"duplicate":1,"duplicate":2}`} {
 		if _, err := BuildMemoryPlan(t.Context(), binding, []byte(raw)); err == nil {
 			t.Fatalf("accepted conflict or malformed config: %s", raw)
 		}

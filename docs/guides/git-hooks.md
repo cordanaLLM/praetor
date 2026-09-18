@@ -349,3 +349,30 @@ the coverage is deferred rather than lost.
 This mattered beyond convenience. The self-tests trigger on any change under `.config/lefthook/`,
 which is exactly where a contributor fixing Windows support has to work — so the gate could not be
 repaired from the platform it was broken on.
+
+### The hook scripts themselves run on Windows
+
+Four POSIX-only calls in the scripts Lefthook invokes still failed there, each of them after the
+CLI had already started:
+
+- **The checkpoint policy read.** `checkpoint.py` opened the policy with `O_DIRECTORY`,
+  `O_NOFOLLOW` and `dir_fd`, none of which exist on Windows, so the evaluator every adopted
+  repository runs raised `AttributeError` before it read anything. The descriptor path is kept
+  wherever the platform supports it. Elsewhere a checked reader inspects each component without
+  following it, refuses links — junctions and other reparse points included — and non-directories
+  with the same errors, and requires the file it opened to be the file it inspected. It *detects*
+  a component replaced between the two, rather than preventing it, and says so.
+- **Bounded subprocess output.** `common.py` waited on pipes with `selectors`; `select()` on
+  Windows accepts only sockets, so every bounded `git` call raised `OSError`. Windows drains each
+  pipe on its own thread under the same shared byte limit and deadline.
+- **The sandbox's user mapping.** `sandbox.py` passed `--user $(id -u):$(id -g)` so a bind mount
+  keeps host ownership. `os.getuid` does not exist on Windows, where Docker Desktop maps that
+  ownership itself, so the flag is omitted there.
+- **The command-policy marker.** `block_evasion.py` printed `PRAETOR_COMMAND_POLICY_OK` through
+  text mode, which Windows writes with CRLF. It is written as exact bytes.
+
+One `prepare-commit-msg` defect surfaced with them and was never Windows-specific: the
+instructional comment was added only when the message *source* was empty. Git omits that argument
+entirely for a plain editor commit, and Lefthook then renders `{2}` as the literal string `2`, so
+the commit that most needs the comment never received it on any platform. Only the sources git
+documents — `message`, `template`, `merge`, `squash`, `commit` — now count as a source.

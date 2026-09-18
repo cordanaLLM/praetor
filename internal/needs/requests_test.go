@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func demandFixture() []FrameworkDemandRequest {
@@ -115,7 +117,7 @@ func TestEmitDemandRequests_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := dirInfo.Mode().Perm(); perm != 0o700 {
+	if perm := dirInfo.Mode().Perm(); util.ModeIsProtection() && perm != 0o700 {
 		t.Errorf("expected the output directory to be owner-only, got %#o", perm)
 	}
 	for _, f := range []string{manifestFile, specFile} {
@@ -123,7 +125,7 @@ func TestEmitDemandRequests_Positive(t *testing.T) {
 		if statErr != nil {
 			t.Fatal(statErr)
 		}
-		if perm := info.Mode().Perm(); perm != 0o600 {
+		if perm := info.Mode().Perm(); util.ModeIsProtection() && perm != 0o600 {
 			t.Errorf("expected %s to be owner-only, got %#o", f, perm)
 		}
 	}

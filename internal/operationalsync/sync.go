@@ -105,7 +105,7 @@ func validateOptions(stage string, opts *Options) error {
 			return err
 		}
 		*path = absolute
-		if err := util.ValidateExecArg(*path); err != nil {
+		if err := util.ValidateExecPathArg(*path); err != nil {
 			return err
 		}
 	}
@@ -127,7 +127,7 @@ func validateDestination(opts *Options) error {
 		return err
 	}
 	opts.Destination = abs
-	if err := util.ValidateExecArg(abs); err != nil {
+	if err := util.ValidateExecPathArg(abs); err != nil {
 		return err
 	}
 	if _, err := os.Lstat(abs); !os.IsNotExist(err) {
@@ -202,7 +202,12 @@ func (op *operation) checkCheckoutRoots(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if root != resolved {
+		// git reports the top level with forward slashes on every platform, so on Windows it
+		// prints "C:/Users/..." while EvalSymlinks returns "C:\Users\...". Compared as strings
+		// the two never matched and every checkout root was refused as a subdirectory.
+		// FromSlash is a no-op where the separator is already '/', and normalising the
+		// separator cannot let a subdirectory pass: it still differs from its root.
+		if filepath.Clean(filepath.FromSlash(root)) != resolved {
 			return errors.New("owner and source paths must name checkout roots, not subdirectories")
 		}
 	}

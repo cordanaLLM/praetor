@@ -106,7 +106,7 @@ func TestMigrationRewritePrimitivesWithRealGit(t *testing.T) {
 	for _, name := range []string{"main.go", "go.mod", "MIGRATION.md"} {
 		path := filepath.Join(dir, name)
 		info, err := os.Stat(path)
-		if err != nil || info.Mode().Perm() != 0o600 {
+		if err != nil || (util.ModeIsProtection() && info.Mode().Perm() != 0o600) {
 			t.Fatalf("expected private migration file %q: info=%v err=%v", name, info, err)
 		}
 	}
@@ -139,7 +139,7 @@ func TestMigrationRewriteTidyFailureRetainsPartialResult(t *testing.T) {
 			t.Errorf("partial result omitted %s", path)
 		}
 		info, err := os.Stat(path)
-		if err != nil || info.Mode().Perm() != 0o600 {
+		if err != nil || (util.ModeIsProtection() && info.Mode().Perm() != 0o600) {
 			t.Errorf("expected private permissions preserved for %s: info=%v err=%v", path, info, err)
 		}
 	}

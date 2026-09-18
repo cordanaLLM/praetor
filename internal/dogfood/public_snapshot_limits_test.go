@@ -80,6 +80,12 @@ func TestSnapshotReportsCancellationAndFIFO(t *testing.T) {
 	if err := exec.CommandContext(t.Context(), "mkfifo", fifo).Run(); err != nil {
 		t.Skipf("FIFO unavailable: %v", err)
 	}
+	// A successful mkfifo is not a FIFO everywhere. Git for Windows ships an MSYS mkfifo that
+	// emulates one with a regular file, fifo.lnk, which the snapshot correctly records as a
+	// file; asserting a refusal of it failed a case whose precondition never held.
+	if info, err := os.Lstat(fifo); err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+		t.Skipf("mkfifo did not create a named pipe on this platform (%v)", err)
+	}
 	if tree, report, err := snapshotTreeWithLimits(context.Background(), dir, false, nil); err == nil || tree != nil || report.OffendingPath != "fifo" {
 		t.Fatalf("fifo: tree=%v report=%+v err=%v", tree, report, err)
 	}

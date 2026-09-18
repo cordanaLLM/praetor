@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func openDirectory(path string) (*os.Root, error) {
@@ -95,7 +97,9 @@ func readFile(ctx context.Context, root *os.Root, name string, limit int64, priv
 }
 
 func readableFile(info os.FileInfo, limit int64, private bool) bool {
-	return info.Mode().IsRegular() && info.Size() <= limit && (!private || info.Mode().Perm()&0o077 == 0)
+	isPrivate, unverifiable := util.ArtefactPrivacy(info)
+	util.NotePrivacyLimitation(unverifiable)
+	return info.Mode().IsRegular() && info.Size() <= limit && (!private || isPrivate)
 }
 
 func stableFile(before, after os.FileInfo, size, limit int64) bool {

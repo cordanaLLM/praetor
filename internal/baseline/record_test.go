@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // sampleInfractions returns n distinct fingerprinted infractions.
@@ -132,7 +134,7 @@ func TestRecord_Boundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if info.Mode().Perm() != FilePerm {
+	if util.ModeIsProtection() && info.Mode().Perm() != FilePerm {
 		t.Fatalf("baseline mode = %v, want %v", info.Mode().Perm(), FilePerm)
 	}
 }

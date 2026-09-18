@@ -12,6 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent))
 import checkpoint
+import common
 
 
 CONFIG = {
@@ -474,6 +475,94 @@ class CheckpointTests(unittest.TestCase):
                 self.assertEqual(result["publication_status"], status, result)
                 self.assertEqual(result["due"], status != "base_current")
                 self.assertNotIn(checkpoint.PUSH_ACTION, result["actions"])
+
+
+class CheckedPolicyRead(unittest.TestCase):
+    """The reader used where descriptor-relative opens are unavailable, exercised on every host.
+
+    Windows selects it automatically; calling it directly keeps its refusals covered on the
+    POSIX legs as well, where the descriptor-relative reader is the one in use.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="praetor-policy-")
+        self.root = Path(self.temp.name)
+        self.agent = self.root / ".config" / "agent"
+        self.agent.mkdir(parents=True)
+        self.policy = self.agent / "checkpoint.json"
+        self.policy.write_bytes(json.dumps(CONFIG).encode())
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_positive_reads_the_policy_bytes(self):
+        self.assertEqual(checkpoint._policy_bytes_checked(self.root), json.dumps(CONFIG).encode())
+
+    def test_negative_links_and_misplaced_components_are_refused(self):
+        outside = self.root / "outside.json"
+        outside.write_bytes(json.dumps(CONFIG).encode())
+        self.policy.unlink()
+        self.policy.symlink_to(outside)
+        with self.assertRaises(OSError):
+            checkpoint._policy_bytes_checked(self.root)
+        self.policy.unlink()
+        relocated = self.root / "relocated"
+        self.agent.rename(relocated)
+        self.agent.symlink_to(relocated, target_is_directory=True)
+        with self.assertRaises(OSError):
+            checkpoint._policy_bytes_checked(self.root)
+        self.agent.unlink()
+        self.agent.write_text("not a directory")
+        with self.assertRaises(NotADirectoryError):
+            checkpoint._policy_bytes_checked(self.root)
+
+    def test_boundary_absence_size_and_replacement(self):
+        self.policy.write_bytes(b" " * checkpoint.MAX_OUTPUT)
+        self.assertEqual(len(checkpoint._policy_bytes_checked(self.root)), checkpoint.MAX_OUTPUT)
+        self.policy.write_bytes(b" " * (checkpoint.MAX_OUTPUT + 1))
+        with self.assertRaisesRegex(checkpoint.CheckpointError, "regular file"):
+            checkpoint._policy_bytes_checked(self.root)
+        other = os.stat(self.root)
+        with mock.patch.object(checkpoint.os, "fstat", return_value=other):
+            with self.assertRaisesRegex(checkpoint.CheckpointError, "replaced"):
+                checkpoint._policy_bytes_checked(self.root)
+        self.policy.unlink()
+        self.assertIsNone(checkpoint._policy_bytes_checked(self.root))
+        self.assertIsNone(checkpoint._policy_bytes_checked(self.root / "absent"))
+
+
+class ThreadedBoundedOutput(unittest.TestCase):
+    """The pipe reader Windows uses because select() there accepts only sockets."""
+
+    def start(self, code):
+        process = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.addCleanup(self.stop, process)
+        return process
+
+    @staticmethod
+    def stop(process):
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=10)
+        process.stdout.close()
+        process.stderr.close()
+
+    def test_positive_collects_stdout_and_bounds_both_streams(self):
+        process = self.start("import os; os.write(1, b'pass'); os.write(2, b'note')")
+        self.assertEqual(common._bounded_output_threaded(process, 10, 8), b"pass")
+
+    def test_negative_limit_and_deadline_are_raised_while_running(self):
+        process = self.start("import os, time; os.write(1, b'x' * 4096); time.sleep(30)")
+        with self.assertRaisesRegex(common.HookError, "byte limit"):
+            common._bounded_output_threaded(process, 10, 1024)
+        process = self.start("import time; time.sleep(30)")
+        with self.assertRaisesRegex(common.HookError, "timed out"):
+            common._bounded_output_threaded(process, 0.2, 1024)
+
+    def test_boundary_output_exactly_at_the_limit_is_accepted(self):
+        process = self.start("import os; os.write(1, b'x' * 512); os.write(2, b'y' * 512)")
+        self.assertEqual(common._bounded_output_threaded(process, 10, 1024), b"x" * 512)
 
 
 if __name__ == "__main__":

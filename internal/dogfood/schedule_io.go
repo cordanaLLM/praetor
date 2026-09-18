@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func readSchedulePrivate(ctx context.Context, path string) ([]byte, error) {
@@ -73,8 +74,12 @@ func openScheduleState(ctx context.Context, path string, create bool) (*os.Root,
 		return nil, err
 	}
 	info, err := root.Stat(".")
-	if err == nil && info.Mode().Perm()&0o077 != 0 {
-		err = errors.New("schedule state directory must be private (0700 or stricter)")
+	if err == nil {
+		if private, unverifiable := util.ArtefactPrivacy(info); !private {
+			err = errors.New("schedule state directory must be private (0700 or stricter)")
+		} else {
+			util.NotePrivacyLimitation(unverifiable)
+		}
 	}
 	if err != nil {
 		return nil, errors.Join(err, root.Close())
@@ -238,7 +243,15 @@ func checkScheduleWriteTarget(root *os.Root, name string) error {
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+	existingPrivate, existingUnverifiable := util.ArtefactPrivacy(info)
+	util.NotePrivacyLimitation(existingUnverifiable)
+	// This target carries two requirements, and only one of them is a privacy question.
+	// ArtefactPrivacy answers "no other account can read it". That the owner can still write
+	// it is the other half, and unlike the privacy bits the write bit is a property the mode
+	// does express on every platform: Windows synthesises 0444 for a read-only file and 0666
+	// for a writable one. Dropping it would let the tick rewrite state an operator had
+	// deliberately made read-only.
+	if !info.Mode().IsRegular() || !existingPrivate || info.Mode().Perm()&0o200 == 0 {
 		return errors.New("existing schedule state must permit owner read/write only (0600)")
 	}
 	return nil
@@ -248,8 +261,12 @@ func validateScheduleFileInfo(info os.FileInfo, limit int64, private bool) error
 	if !info.Mode().IsRegular() || info.Size() > limit {
 		return errors.New("schedule input must be a bounded regular file")
 	}
-	if private && info.Mode().Perm()&0o077 != 0 {
-		return errors.New("schedule metadata must be private (0600 or stricter)")
+	if private {
+		isPrivate, unverifiable := util.ArtefactPrivacy(info)
+		util.NotePrivacyLimitation(unverifiable)
+		if !isPrivate {
+			return errors.New("schedule metadata must be private (0600 or stricter)")
+		}
 	}
 	return nil
 }

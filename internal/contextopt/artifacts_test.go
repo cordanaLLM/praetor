@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestArtifactsPrivateRoundTripAndNoOverwrite(t *testing.T) {
@@ -22,7 +24,7 @@ func TestArtifactsPrivateRoundTripAndNoOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if util.ModeIsProtection() && info.Mode().Perm() != 0o600 {
 		t.Fatal("artifact permissions")
 	}
 	if err := WriteArtifacts(ctx, dir, files); err == nil {

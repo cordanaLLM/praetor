@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const suiteFixtureRecord = `{"step_index":1,"source":"MODEL","type":"MESSAGE","status":"DONE","created_at":"2026-09-12T12:00:00Z","content":"untrusted fixture observation"}`
@@ -81,7 +83,7 @@ func assertSuitePrivate(t *testing.T, dir string) {
 		if err != nil {
 			return err
 		}
-		if info.Mode().Perm()&0o077 != 0 {
+		if util.ModeIsProtection() && info.Mode().Perm()&0o077 != 0 {
 			t.Errorf("nonprivate evidence: %s", path)
 		}
 		return nil
@@ -138,11 +140,21 @@ func TestSuiteStrictConfigurationBeforeWrites(t *testing.T) {
 		strings.Replace(string(data), `"public_repositories":[]`, `"public_repositories":null`, 1),
 		strings.Replace(string(data), `"id":"fixture"`, `"id":"fixture","id":"again"`, 1),
 		strings.Replace(string(data), source.SHA256, strings.ToUpper(source.SHA256), 1),
-		strings.Replace(string(data), source.SourcePath, "relative.jsonl", 1),
+		// The config is JSON, so the path appears escaped in it: a Windows path's
+		// backslashes are doubled there while source.SourcePath holds them single.
+		// Replacing the raw form matched nothing on Windows and left the valid
+		// configuration in place, so this "invalid" case tested a valid one.
+		strings.Replace(string(data), jsonStringContent(t, source.SourcePath), "relative.jsonl", 1),
 		`{"version":1,"public_repositories":[],"transcripts":[]}`,
 		`{"version":1,"public_repositories":["https://github.com/spf13/cobra"],"transcripts":[]}`,
 		string(data) + "{}",
 	} {
+		// A mutation that changes nothing turns a negative case into a positive one and
+		// reports the wrong failure. Refuse it here rather than let it pass or fail for a
+		// reason unrelated to the rule under test.
+		if invalid == string(data) {
+			t.Fatalf("invalid configuration is identical to the valid one; the mutation did not apply")
+		}
 		opts := valid
 		opts.ConfigPath = filepath.Join(t.TempDir(), "invalid.json")
 		opts.ArtifactDir = filepath.Join(t.TempDir(), "absent")
@@ -198,4 +210,16 @@ func TestSuiteBoundsPolicyAndCancellation(t *testing.T) {
 	if err := validateSuiteConfig(&config); err == nil {
 		t.Fatal("duplicate generated ID")
 	}
+}
+
+// jsonStringContent returns value as it appears inside a JSON string literal, without the
+// surrounding quotes. Search keys for substitutions into serialized JSON have to use this
+// form: a raw value containing a backslash does not occur in the encoded document.
+func jsonStringContent(t *testing.T, value string) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded[1 : len(encoded)-1])
 }

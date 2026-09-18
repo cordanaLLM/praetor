@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestWriteRejectsTraversalBeforeAnyOutput(t *testing.T) {
@@ -50,7 +52,7 @@ func TestWriteRejectsSymlinkAndPreservesPrivateMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if util.ModeIsProtection() && info.Mode().Perm() != 0o600 {
 		t.Fatalf("private permissions widened: %o", info.Mode().Perm())
 	}
 	if merged, err := os.ReadFile(path); err != nil || !strings.Contains(string(merged), `"human": true`) || !strings.Contains(string(merged), `"managed": true`) {

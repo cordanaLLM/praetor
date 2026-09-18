@@ -30,8 +30,12 @@ func runSentinel(args []string) error {
 		float64(report.Stats.DiskFreeBytes)/(1024*1024*1024),
 		float64(report.Stats.DiskTotalBytes)/(1024*1024*1024),
 		report.DiskUtilizationPercent)
-	fmt.Printf("CPU:    load %.2f (1m), %.2f (5m), %.2f (15m)\n",
-		report.Stats.CPULoad1Min, report.Stats.CPULoad5Min, report.Stats.CPULoad15Min)
+	if report.Stats.CPULoadMeasured {
+		fmt.Printf("CPU:    load %.2f (1m), %.2f (5m), %.2f (15m)\n",
+			report.Stats.CPULoad1Min, report.Stats.CPULoad5Min, report.Stats.CPULoad15Min)
+	} else {
+		fmt.Println("CPU:    load unavailable (no load average source on this platform)")
+	}
 
 	if report.Healthy {
 		fmt.Println("\nStatus: [HEALTHY] Host reservation invariants satisfied (RAM >= 20%, Disk >= 15%).")

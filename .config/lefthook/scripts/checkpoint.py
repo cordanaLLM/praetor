@@ -50,28 +50,85 @@ def _git(root, *args, **kwargs):
     return _run(["git", *args], root, **kwargs)
 
 
+# Descriptor-relative opens are how the policy path is confined: each component is opened
+# beneath the previous one and never through a link. Windows has no dir_fd support and no
+# O_DIRECTORY or O_NOFOLLOW, so there the evaluator raised AttributeError before it read
+# anything, and every checkpoint hook in an adopted repository failed.
+DESCRIPTOR_RELATIVE = (os.open in os.supports_dir_fd
+                       and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW"))
+POLICY_PARTS = (".config", "agent")
+POLICY_FILE = "checkpoint.json"
+
+
 def _policy_bytes(root):
+    if DESCRIPTOR_RELATIVE:
+        return _policy_bytes_relative(root)
+    return _policy_bytes_checked(root)
+
+
+def _policy_bytes_relative(root):
     descriptors = []
     try:
         descriptors.append(os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
-        for part in (".config", "agent"):
+        for part in POLICY_PARTS:
             descriptors.append(os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                                        dir_fd=descriptors[-1]))
-        descriptor = os.open("checkpoint.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+        descriptor = os.open(POLICY_FILE, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
                              dir_fd=descriptors[-1])
         with os.fdopen(descriptor, "rb") as stream:
-            info = os.fstat(stream.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_OUTPUT:
-                raise CheckpointError("checkpoint configuration must be a regular file <= 1 MiB")
-            raw = stream.read(MAX_OUTPUT + 1)
-            if len(raw) > MAX_OUTPUT:
-                raise CheckpointError("checkpoint configuration exceeds 1 MiB")
-            return raw
+            return _read_policy(stream)
     except FileNotFoundError:
         return None
     finally:
         for descriptor in reversed(descriptors):
             os.close(descriptor)
+
+
+def _redirects(info):
+    """Whether an lstat result is a link, including a Windows junction or other reparse point."""
+    attributes = getattr(info, "st_file_attributes", 0)
+    return stat.S_ISLNK(info.st_mode) or bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
+def _policy_bytes_checked(root):
+    """Read the policy where descriptor-relative opens are unavailable.
+
+    Every component is inspected without following it and refused if it redirects or is not
+    a directory, with the errors the descriptor path raises for the same layouts. The file is
+    then opened and must be the file that was inspected. Unlike the descriptor path this
+    detects a component replaced between inspection and open rather than preventing it; it
+    is the confinement this platform's API allows.
+    """
+    path = Path(root)
+    try:
+        for index, part in enumerate(("",) + POLICY_PARTS):
+            path = path / part if part else path
+            info = os.lstat(path)
+            if _redirects(info):
+                raise OSError(f"checkpoint policy path component is a link: {index}")
+            if not stat.S_ISDIR(info.st_mode):
+                raise NotADirectoryError(f"checkpoint policy path component is not a directory: {index}")
+        path = path / POLICY_FILE
+        inspected = os.lstat(path)
+        if _redirects(inspected):
+            raise OSError("checkpoint configuration is a link")
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+    except FileNotFoundError:
+        return None
+    with os.fdopen(descriptor, "rb") as stream:
+        if not os.path.samestat(inspected, os.fstat(stream.fileno())):
+            raise CheckpointError("checkpoint configuration was replaced while it was read")
+        return _read_policy(stream)
+
+
+def _read_policy(stream):
+    info = os.fstat(stream.fileno())
+    if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_OUTPUT:
+        raise CheckpointError("checkpoint configuration must be a regular file <= 1 MiB")
+    raw = stream.read(MAX_OUTPUT + 1)
+    if len(raw) > MAX_OUTPUT:
+        raise CheckpointError("checkpoint configuration exceeds 1 MiB")
+    return raw
 
 
 def _config(root):

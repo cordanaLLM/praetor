@@ -70,6 +70,13 @@ the variable that raises it and the ceiling, so the reader is pointed at the rea
 that genuinely fails inside the bound still reports as a test failure; the fix must not trade one
 wrong diagnosis for another.
 
+The isolated worktree is created under the same bound, so the bound can fire one step earlier
+than the tests. On a Windows host with the bound set to 50 ms it did: `git worktree add` outlasted
+it, the kill surfaced as a bare `exit status 1`, and the stage reported a repository whose
+worktree could not be created — the same misattribution, pointing at the checkout instead of at
+the suite. Creation now reports the bound when the deadline is what stopped it, and keeps the
+"could not be created" text for every other cause.
+
 Governance profile names no longer select Go or Meson commands. A shared plan
 renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
 

@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestIngestTranscriptRejectsCacheSymlinksAndConflicts(t *testing.T) {
@@ -247,7 +249,7 @@ func TestIngestTranscriptRejectsSourceAncestorAsCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o750 {
+	if util.ModeIsProtection() && info.Mode().Perm() != 0o750 {
 		t.Fatalf("original mode changed to %o", info.Mode().Perm())
 	}
 }

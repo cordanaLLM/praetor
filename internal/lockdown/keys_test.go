@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // sandboxConfigDir points os.UserConfigDir at a temp directory so no test ever reads or
@@ -17,6 +19,7 @@ func sandboxConfigDir(t *testing.T) string {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	// APPDATA and LOCALAPPDATA are set alongside the POSIX pair because
 	// os.UserConfigDir reads APPDATA on Windows. Without them this sandbox held on
 	// POSIX only, and a keygen case wrote to the real per-user key file -- silently
@@ -71,7 +74,7 @@ func TestLoadSigningKey_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat key: %v", err)
 	}
-	if info.Mode().Perm() != SigningKeyPerm {
+	if util.ModeIsProtection() && info.Mode().Perm() != SigningKeyPerm {
 		t.Errorf("key mode = %#o, want %#o", info.Mode().Perm(), SigningKeyPerm)
 	}
 	fromFile, err := LoadSigningKey()
@@ -126,8 +129,15 @@ func TestLoadSigningKey_Negative(t *testing.T) {
 	if err := os.WriteFile(path, []byte(hex.EncodeToString(priv.Seed())), 0o644); err != nil {
 		t.Fatalf("write loose key: %v", err)
 	}
-	if _, err := LoadSigningKey(); !errors.Is(err, ErrInsecureKeyPerm) {
-		t.Errorf("expected ErrInsecureKeyPerm for a 0644 key file, got %v", err)
+	// "Group-readable" is a POSIX mode, and on POSIX the mode is the key's protection. On
+	// Windows 0644 is not expressible and the key is protected by the per-user directory's
+	// ACL instead, which keyperm_windows.go enforces by containment -- this key is inside
+	// that directory, so accepting it there is the intended outcome, not a gap. The
+	// Windows refusal is covered by keyperm_windows_test.go.
+	if util.ModeIsProtection() {
+		if _, err := LoadSigningKey(); !errors.Is(err, ErrInsecureKeyPerm) {
+			t.Errorf("expected ErrInsecureKeyPerm for a 0644 key file, got %v", err)
+		}
 	}
 }
 
@@ -164,7 +174,7 @@ func TestSaveSigningKey_Boundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat key dir: %v", err)
 	}
-	if info.Mode().Perm() != SigningKeyDirPerm {
+	if util.ModeIsProtection() && info.Mode().Perm() != SigningKeyDirPerm {
 		t.Errorf("key dir mode = %#o, want %#o", info.Mode().Perm(), SigningKeyDirPerm)
 	}
 }

@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-const connectionFixture = `{"version":1,"gateway":{"bridge_command":"/opt/agent/bridge","token_file":"/private/not-read","endpoints":[{"name":"shared","url":"https://example.test/mcp/"}]},"memory":{"project_root":"/work/project","bank_id":"private::project"}}`
+var connectionFixture = `{"version":1,"gateway":{"bridge_command":` + quoted(agentBridge) + `,"token_file":` + quoted(notReadToken) + `,"endpoints":[{"name":"shared","url":"https://example.test/mcp/"}]},"memory":{"project_root":` + quoted(memoryProject) + `,"bank_id":"private::project"}}`
 
 func TestConnectionCLIExportsAndBindsMemory(t *testing.T) {
 	root := t.TempDir()
@@ -33,7 +35,7 @@ func TestConnectionCLIExportsAndBindsMemory(t *testing.T) {
 		t.Fatalf("missing exact private backup: %v", err)
 	}
 	info, err := os.Stat(target)
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || (util.ModeIsProtection() && info.Mode().Perm() != 0o600) {
 		t.Fatalf("target privacy: %v", err)
 	}
 }
@@ -44,7 +46,7 @@ func TestConnectionCLIFailureDoesNotPublish(t *testing.T) {
 		profile := filepath.Join(root, "profile.json")
 		writeClientFixture(t, profile, []byte(raw))
 		target := filepath.Join(root, "memory.json")
-		before := []byte(`{"mapPathToBank":{"/work/project":"another-bank"}}`)
+		before := []byte(`{"mapPathToBank":{` + quoted(memoryProject) + `:"another-bank"}}`)
 		writeClientFixture(t, target, before)
 		output := filepath.Join(root, "backup")
 		if err := runClients([]string{"bind-memory", "--profile", profile, "--target", target, "--out", output}); err == nil {

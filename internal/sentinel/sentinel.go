@@ -35,6 +35,10 @@ type HostStats struct {
 	CPULoad1Min    float64 `json:"cpu_load_1min"`
 	CPULoad5Min    float64 `json:"cpu_load_5min"`
 	CPULoad15Min   float64 `json:"cpu_load_15min"`
+	// CPULoadMeasured is false where the platform has no load average this package can read. The
+	// three loads are then zero, which an idle Linux host can also report, so zero alone cannot
+	// say whether anything was measured.
+	CPULoadMeasured bool `json:"cpu_load_measured"`
 }
 
 // HostReport summarizes health evaluations, invariant checks, and throttling directives.
@@ -81,10 +85,11 @@ func ReadHostStats(path string) (HostStats, error) {
 	stats.DiskTotalBytes = diskTotal
 	stats.DiskFreeBytes = diskFree
 
-	l1, l5, l15, err := readHostCPULoad()
+	l1, l5, l15, measured, err := readHostCPULoad()
 	if err != nil {
 		return stats, fmt.Errorf("read cpu load stats: %w", err)
 	}
+	stats.CPULoadMeasured = measured
 	stats.CPULoad1Min = l1
 	stats.CPULoad5Min = l5
 	stats.CPULoad15Min = l15
@@ -135,10 +140,6 @@ func checkRAMInvariants(stats HostStats, report *HostReport) {
 	if stats.RAMTotalBytes == 0 {
 		report.ViolatedInvariants = append(report.ViolatedInvariants,
 			"RAM unavailable: no readable source on this platform; memory checks skipped")
-		return
-	}
-	if stats.RAMTotalBytes == 0 {
-		report.ViolatedInvariants = append(report.ViolatedInvariants, "RAM total cannot be zero")
 		return
 	}
 
@@ -218,19 +219,9 @@ func CanAllocateModel(stats *HostStats, vramRequiredGB float64) bool {
 // does not defend against it.
 var meminfoPath = defaultMeminfoPath
 
-func readHostMemory() (total uint64, free uint64, resultErr error) {
-	f, err := os.Open(meminfoPath)
-	if err != nil {
-		// Unreadable, not zero-sized. Callers distinguish the two by the total being zero,
-		// which no real machine reports.
-		return 0, 0, nil
-	}
-	defer func() { resultErr = errors.Join(resultErr, f.Close()) }()
-
-	return parseMeminfo(f)
-}
-
-// readHostMemory reports host memory, and whether it could be read at all.
+// readMeminfoMemory reports host memory from meminfoPath, and whether it could be read at all.
+// It is the source readHostMemory uses on every platform except Windows, which has no
+// /proc/meminfo and is read through its own API instead.
 //
 // It previously returned a hardcoded 16 GB total and 8 GB free wherever /proc/meminfo was absent --
 // every macOS and Windows host -- with a nil error, so no caller could tell the numbers were
@@ -241,6 +232,17 @@ func readHostMemory() (total uint64, free uint64, resultErr error) {
 // There is no estimate now. Where the platform exposes no source this repository can read, the
 // figures are zero -- a total no real machine reports -- and every decision that would have used
 // them is skipped and reported as unavailable.
+func readMeminfoMemory() (total uint64, free uint64, resultErr error) {
+	f, err := os.Open(meminfoPath)
+	if err != nil {
+		// Unreadable, not zero-sized. Callers distinguish the two by the total being zero,
+		// which no real machine reports.
+		return 0, 0, nil
+	}
+	defer func() { resultErr = errors.Join(resultErr, f.Close()) }()
+
+	return parseMeminfo(f)
+}
 
 // parseMeminfo parses MemTotal, MemAvailable, MemFree, Buffers, and Cached fields from meminfo.
 func parseMeminfo(r io.Reader) (uint64, uint64, error) {
@@ -284,15 +286,18 @@ func memoryField(line string) (string, uint64, bool) {
 	return key, value * 1024, true
 }
 
-// readHostCPULoad inspects /proc/loadavg or returns safe fallback zero metrics.
-func readHostCPULoad() (load1 float64, load5 float64, load15 float64, resultErr error) {
+// readHostCPULoad inspects /proc/loadavg. Where it cannot be opened -- macOS and Windows have no
+// procfs -- the loads are zero and measured is false, so a caller can say the load is unknown
+// instead of presenting zero as an idle machine.
+func readHostCPULoad() (load1, load5, load15 float64, measured bool, resultErr error) {
 	f, err := os.Open(loadavgPath)
 	if err != nil {
-		return 0.0, 0.0, 0.0, nil
+		return 0, 0, 0, false, nil
 	}
 	defer func() { resultErr = errors.Join(resultErr, f.Close()) }()
 
-	return parseLoadavg(f)
+	load1, load5, load15, resultErr = parseLoadavg(f)
+	return load1, load5, load15, resultErr == nil, resultErr
 }
 
 // parseLoadavg extracts 1, 5, and 15-minute load averages from reader.
