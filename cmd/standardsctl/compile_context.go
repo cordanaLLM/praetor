@@ -46,6 +46,11 @@ func verifyCompiledContext(ctx context.Context, tr *compiler.Transpiler, source,
 	if err := tr.VerifyContext(ctx, source, targetDir); err != nil {
 		return fmt.Errorf("context verification failed: %w", err)
 	}
+	lint, err := compiler.LintContext(ctx, source)
+	if err != nil {
+		return fmt.Errorf("context verification failed: %w", err)
+	}
+	fmt.Printf("  %s: %s.\n", source, lint.Summary())
 	verified, err := verifyAgentProjections(targetDir)
 	if err != nil {
 		return fmt.Errorf("agent persona verification failed: %w", err)

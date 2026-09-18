@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 const (
@@ -90,6 +92,11 @@ func TestCavemanCheckBoundary(t *testing.T) {
 	}
 	if _, err = runCavemanCLI(t, strings.Repeat("a", 1<<20+1), "check", "-"); err == nil {
 		t.Fatal("stdin above 1 MiB must be refused")
+	}
+	// The rendered register block is masked exactly as the context gate masks it.
+	block := config.RegisterBlockStart + "\n" + strings.TrimSuffix(cavemanProse, "\n") + "\n" + config.RegisterBlockEnd + "\n"
+	if out, err = runCavemanCLI(t, cavemanTerse+block, "check", "-"); err != nil || !strings.Contains(out, "PASS") || !strings.Contains(out, "register_block_lines=3") {
+		t.Fatalf("register block: err=%v\n%s", err, out)
 	}
 }
 

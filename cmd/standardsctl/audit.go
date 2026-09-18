@@ -250,6 +250,11 @@ func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Mani
 		return fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
 	}
 	fmt.Println("[PASS] Cross-agent context targets (Claude, Cursor, Copilot, Windsurf, Gemini, Codex) verified in sync.")
+	lint, err := compiler.LintContext(ctx, opts.agentsPath)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Agent context: %w", err)
+	}
+	fmt.Printf("[PASS] Agent context %s.\n", lint.Summary())
 
 	dcPath := filepath.Join(root, ".devcontainer", "devcontainer.json")
 	if !util.FileExists(dcPath) {

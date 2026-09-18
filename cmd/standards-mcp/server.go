@@ -466,7 +466,11 @@ func (s *Server) compileContext(ctx context.Context, source, targetDir string, v
 		if err := verifyContextFiles(ctx, res, paths); err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
 		}
-		return mcp.TextResult("All agent context targets are 100% in sync with canonical AGENTS.md.")
+		lint, err := compiler.LintContext(ctx, source)
+		if err != nil {
+			return mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
+		}
+		return mcp.TextResult("All agent context targets are 100% in sync with canonical AGENTS.md; " + lint.Summary() + ".")
 	}
 
 	if err := ctx.Err(); err != nil {

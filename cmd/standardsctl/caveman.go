@@ -76,7 +76,9 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	var text strings.Builder
 	failed := 0
 	for _, input := range inputs {
-		if !formatCavemanReport(&text, input.name, caveman.Check(input.text, caveman.Options{})) {
+		// The same mask the context gate applies, so this command reproduces its verdict.
+		lintable, masked := compiler.MaskRegisterBlock(input.text)
+		if !formatCavemanReport(&text, input.name, caveman.Check(lintable, caveman.Options{}), masked) {
 			failed++
 		}
 	}
@@ -109,15 +111,15 @@ func cavemanSurfaceEnforced(ctx context.Context, out io.Writer, root string, sur
 }
 
 // formatCavemanReport appends the summary line and the bounded findings; it returns whether
-// the input passed.
-func formatCavemanReport(out *strings.Builder, name string, report caveman.Report) bool {
+// the input passed. masked is the number of register block lines left out of the lint.
+func formatCavemanReport(out *strings.Builder, name string, report caveman.Report, masked int) bool {
 	verdict := "PASS"
 	if !report.Passed() {
 		verdict = "FAIL"
 	}
-	fmt.Fprintf(out, "%s: %s prose_words=%d articles=%d density=%.1f/100 limit=%.1f off_regions=%d findings=%d\n",
+	fmt.Fprintf(out, "%s: %s prose_words=%d articles=%d density=%.1f/100 limit=%.1f off_regions=%d register_block_lines=%d findings=%d\n",
 		name, verdict, report.ProseWords, report.Articles, report.Density(), caveman.DefaultMaxArticleDensity,
-		report.OffRegions, len(report.Findings))
+		report.OffRegions, masked, len(report.Findings))
 	for i := 0; i < len(report.Findings) && i < maxPrintedFindings; i++ {
 		f := report.Findings[i]
 		fmt.Fprintf(out, "%s:%d %s: %s\n", name, f.Line, f.Rule, f.Excerpt)

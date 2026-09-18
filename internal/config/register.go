@@ -43,7 +43,9 @@ const (
 // repository opts a surface out by writing docs or social. They are not rendered in the
 // register block, which is already at its line budget.
 const (
-	// SurfaceContext covers AGENTS.md, the compiled vendor files, personas and skills.
+	// SurfaceContext covers AGENTS.md, the compiled vendor files, personas and skills. It
+	// has no opt-out: it always resolves to ContextRegister, and a manifest that writes any
+	// other register for it is rejected.
 	SurfaceContext RegisterSurface = "context"
 	// SurfaceMCP covers MCP tool and property descriptions and MCP text results.
 	SurfaceMCP RegisterSurface = "mcp"
@@ -54,6 +56,12 @@ const (
 	// SurfaceLedger covers the free text of the .workingdir ledger files.
 	SurfaceLedger RegisterSurface = "ledger"
 )
+
+// ContextRegister is the only register of the context surface. AGENTS.md and the files
+// compiled from it are read by agents alone, so the caveman lint gates them in every
+// repository, adopters included, with no warn mode and no opt-out (operator decision,
+// 2026-09-18).
+const ContextRegister = TextRegisterInternal
 
 // emissionSurfaces is the closed set of engine-emission surfaces, in documentation order.
 var emissionSurfaces = []RegisterSurface{SurfaceContext, SurfaceMCP, SurfaceHooks, SurfacePrompts, SurfaceLedger}
@@ -252,11 +260,14 @@ func (m *Manifest) EffectiveRegister() RegisterPolicy {
 }
 
 // Resolve returns the register for one surface and task label. The forge and the docs
-// surface own their audience, so a task never changes them. An emission surface (context,
-// mcp, hooks, prompts, ledger) is its own key or, when unset, surfaces.agent; a task never
-// changes it either. On the agent surface (or when no surface is named) the task row wins and
-// surfaces.agent is the fallback.
+// surface own their audience, so a task never changes them. The context surface is always
+// internal (ContextRegister). Any other emission surface (mcp, hooks, prompts, ledger) is its
+// own key or, when unset, surfaces.agent; a task never changes it either. On the agent
+// surface (or when no surface is named) the task row wins and surfaces.agent is the fallback.
 func (p RegisterPolicy) Resolve(surface RegisterSurface, task string) Resolution {
+	if surface == SurfaceContext {
+		return Resolution{Register: ContextRegister, Source: "surfaces." + string(SurfaceContext)}
+	}
 	if surface == SurfaceForge || surface == SurfaceDocs {
 		return Resolution{Register: p.surfaceRegister(surface), Source: "surfaces." + string(surface)}
 	}
@@ -333,6 +344,9 @@ func (p RegisterPolicy) validate() error {
 		}
 		if !knownTextRegister(register) {
 			return fmt.Errorf("unsupported text register %q", register)
+		}
+		if surface == SurfaceContext && register != ContextRegister {
+			return fmt.Errorf("register surface %q is fixed to %s: AGENTS.md is agent-only text and its caveman gate has no opt-out", surface, ContextRegister)
 		}
 	}
 	if len(p.Tasks) > MaxRegisterTaskRows {

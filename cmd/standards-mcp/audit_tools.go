@@ -149,7 +149,11 @@ func auditContextSync(ctx context.Context, agentsPath, root string) (string, err
 	if err := tr.VerifyContext(ctx, agentsPath, root); err != nil {
 		return "", fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
 	}
-	return "[PASS] Cross-agent context targets verified in sync.", nil
+	lint, err := compiler.LintContext(ctx, agentsPath)
+	if err != nil {
+		return "", fmt.Errorf("[FAIL] Agent context: %w", err)
+	}
+	return "[PASS] Cross-agent context targets verified in sync.\n[PASS] Agent context " + lint.Summary() + ".", nil
 }
 
 // auditBranchProtection requires the ruleset file whenever the resolved policy demands

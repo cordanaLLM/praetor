@@ -344,6 +344,36 @@ func TestEmissionSurfacesPositive(t *testing.T) {
 	}
 }
 
+// TestContextSurfaceIsFixed: AGENTS.md has no opt-out from the caveman gate. surfaces.agent
+// never reaches the context surface, writing internal for it is accepted, and writing any
+// other register for it is rejected.
+func TestContextSurfaceIsFixed(t *testing.T) {
+	m, err := loadRegisterManifest(t, "register:\n  surfaces:\n    agent: docs\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := m.EffectiveRegister()
+	want := Resolution{Register: ContextRegister, Source: "surfaces.context"}
+	if got := policy.Resolve(SurfaceContext, "waiver_signoff"); got != want {
+		t.Errorf("Resolve(context) = %+v, want %+v whatever surfaces.agent says", got, want)
+	}
+	if enforced, err := policy.LintEnforced(SurfaceContext); err != nil || !enforced {
+		t.Errorf("LintEnforced(context) = %v, %v; want true", enforced, err)
+	}
+	if got := DefaultRegisterPolicy().Resolve(SurfaceContext, ""); got != want {
+		t.Errorf("default Resolve(context) = %+v, want %+v", got, want)
+	}
+	if _, err := loadRegisterManifest(t, "register:\n  surfaces:\n    context: internal\n"); err != nil {
+		t.Errorf("context: internal must load: %v", err)
+	}
+	for _, register := range []string{"docs", "social"} {
+		_, err := loadRegisterManifest(t, "register:\n  surfaces:\n    context: "+register+"\n")
+		if err == nil || !strings.Contains(err.Error(), `register surface "context" is fixed to internal`) {
+			t.Errorf("context: %s: error = %v, want the no-opt-out rejection", register, err)
+		}
+	}
+}
+
 func TestEmissionSurfacesNegative(t *testing.T) {
 	for name, tc := range map[string]struct{ section, want string }{
 		"unknown register on an emission surface": {"register: {surfaces: {mcp: loud}}\n", `unsupported text register "loud"`},
@@ -368,10 +398,15 @@ func TestEmissionSurfacesNegative(t *testing.T) {
 }
 
 func TestEmissionSurfacesBoundary(t *testing.T) {
-	// Unset emission surfaces follow surfaces.agent, whatever the agent surface says.
+	// Unset emission surfaces follow surfaces.agent, whatever the agent surface says; context
+	// is fixed to internal instead (TestContextSurfaceIsFixed).
 	defaults := DefaultRegisterPolicy()
 	for _, surface := range emissionSurfaces {
-		if got := defaults.Resolve(surface, ""); got != (Resolution{TextRegisterInternal, 0, "surfaces.agent"}) {
+		want := Resolution{TextRegisterInternal, 0, "surfaces.agent"}
+		if surface == SurfaceContext {
+			want.Source = "surfaces.context"
+		}
+		if got := defaults.Resolve(surface, ""); got != want {
 			t.Errorf("default Resolve(%s) = %+v, want the agent fallback", surface, got)
 		}
 		if enforced, err := defaults.LintEnforced(surface); err != nil || !enforced {
