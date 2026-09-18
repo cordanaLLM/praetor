@@ -110,6 +110,30 @@ func manifest(raw []byte) (*yaml.Node, identity, error) {
 	return doc, identity{values[0], values[1], values[2]}, nil
 }
 
+// overlaySourceIdentity returns the public identity repository.source should record.
+// Canonical manifests have no source field, so the current owner/name is the source.
+// A well-formed source whose repository name matches is kept, which makes the overlay
+// idempotent. A present source that is not owner/name, or whose name differs from the
+// repository, is refused rather than rewritten to the fork's own identity (#268).
+func overlaySourceIdentity(repo *yaml.Node, current identity) (string, error) {
+	derived := current.Owner + "/" + current.Name
+	node, err := mappingValue(repo, "source")
+	if err != nil {
+		return derived, nil
+	}
+	if node.Kind != yaml.ScalarNode || node.Anchor != "" {
+		return "", errors.New("invalid repository.source")
+	}
+	owner, name, ok := strings.Cut(node.Value, "/")
+	if !ok || strings.Contains(name, "/") || !identityPart.MatchString(owner) || !identityPart.MatchString(name) {
+		return "", errors.New("malformed repository.source")
+	}
+	if name != current.Name {
+		return "", errors.New("repository.source name differs from source")
+	}
+	return owner + "/" + name, nil
+}
+
 func ownerManifest(raw []byte, owner identity) ([]byte, error) {
 	doc, source, err := manifest(raw)
 	if err != nil {
@@ -137,8 +161,15 @@ func ownerManifest(raw []byte, owner identity) ([]byte, error) {
 	}
 	// repository.source records the public identity the overlay is rewriting owner/name away
 	// from, so internal/forge can resolve the fork's guarded workflows and required-context
-	// ruleset against the identity their checked-in literals still name (#255).
-	if err := setMappingScalar(repo, "source", source.Owner+"/"+source.Name); err != nil {
+	// ruleset against the identity their checked-in literals still name (#255). A later
+	// overlay of an already-overlaid manifest must keep that recorded source; deriving it
+	// from the current owner/name makes the fork its own source and the #265 guard fails
+	// inside the fork it protects (#268).
+	sourceIdentity, err := overlaySourceIdentity(repo, source)
+	if err != nil {
+		return nil, err
+	}
+	if err := setMappingScalar(repo, "source", sourceIdentity); err != nil {
 		return nil, err
 	}
 	var out bytes.Buffer
