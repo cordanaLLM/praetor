@@ -150,8 +150,8 @@ one-line finding per page; the orchestrator opens a page only when a decision ne
 
 ## Caveman: the internal form
 
-Operators call the internal register "caveman", and the
-[`caveman` skill](../../.agents/skills/caveman/SKILL.md) makes that form concrete. The
+Operators call the internal register "caveman", and the `caveman` skill
+(`.agents/skills/caveman/SKILL.md`) makes that form concrete. The
 configuration value stays `internal`, so no manifest changes; the internal row of the
 rendered block names the skill, and so does the one register sentence that repair jobs and
 the Paperclip harness receive (`config.RegisterDirective`).
