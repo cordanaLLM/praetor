@@ -33,6 +33,12 @@ var registrationTable = []Registration{
 	{Client: "gemini", Event: EventPreTool, NativeEvent: "BeforeTool", Matcher: "run_shell_command", Timeout: 15 * time.Second},
 	{Client: "lefthook", Event: EventPreTool, NativeEvent: "agent-pre-tool"},
 	{Client: "lefthook", Event: EventEnvironment, NativeEvent: "pre-rebase"},
+	// agy: NativeEvent and Timeout are docs-confirmed (Hook Spec Fields; "Execution
+	// timeout in seconds. Defaults to 30"). Matcher "*" is the docs' own "matches all
+	// tools" spelling: agy classifies by payload, not by registration (3.5). Stop has no
+	// matcher at all (its hooks.json group is a flat handler list, not a matcher group).
+	{Client: "agy", Event: EventPreTool, NativeEvent: "PreToolUse", Matcher: "*", Timeout: 30 * time.Second},
+	{Client: "agy", Event: EventStop, NativeEvent: "Stop", Timeout: 30 * time.Second},
 }
 
 // Registrations returns a copy of the rows of one client, in table order. An unknown

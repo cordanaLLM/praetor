@@ -15,6 +15,7 @@ func TestRegistrationsPerClient(t *testing.T) {
 	for client, events := range map[string][]Event{
 		"claude": {EventPreTool}, "codex": {EventPreTool}, "gemini": {EventPreTool},
 		"lefthook": {EventPreTool, EventEnvironment},
+		"agy":      {EventPreTool, EventStop},
 	} {
 		rows := Registrations(client)
 		if len(rows) != len(events) {
@@ -26,7 +27,7 @@ func TestRegistrationsPerClient(t *testing.T) {
 			}
 		}
 	}
-	for _, client := range []string{"", "agy", "CLAUDE"} {
+	for _, client := range []string{"", "CLAUDE"} {
 		if rows := Registrations(client); len(rows) != 0 {
 			t.Errorf("%q has rows: %+v", client, rows)
 		}
@@ -67,8 +68,14 @@ func TestParseArguments(t *testing.T) {
 	if row, err = ParseArguments("lefthook", "environment"); err != nil || row.NativeEvent != "pre-rebase" {
 		t.Fatalf("lefthook environment: %+v %v", row, err)
 	}
+	if row, err = ParseArguments("agy", "pre-tool"); err != nil || row.NativeEvent != "PreToolUse" || row.Matcher != "*" || row.Timeout != 30*time.Second {
+		t.Fatalf("agy pre-tool: %+v %v", row, err)
+	}
+	if row, err = ParseArguments("agy", "stop"); err != nil || row.NativeEvent != "Stop" || row.Timeout != 30*time.Second {
+		t.Fatalf("agy stop: %+v %v", row, err)
+	}
 	for _, pair := range [][2]string{
-		{"", ""}, {"claude", "stop"}, {"agy", "pre-tool"}, {"claude", "pre-tool\n"}, {"cl4ude", "pre-tool"},
+		{"", ""}, {"claude", "stop"}, {"agy", "post-tool"}, {"claude", "pre-tool\n"}, {"cl4ude", "pre-tool"},
 		{"claude", "PRE-TOOL"}, {"../claude", "pre-tool"}, {"claude", "environment"},
 	} {
 		if row, err := ParseArguments(pair[0], pair[1]); !errors.Is(err, ErrUnsupported) || row != (Registration{}) {

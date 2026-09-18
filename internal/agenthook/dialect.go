@@ -26,6 +26,15 @@ type Dialect struct {
 	denyExit int
 	// allowMarker is the stdout line of an evaluated pre-tool allow; empty for none.
 	allowMarker string
+	// decode overrides Decode below for a client whose payload the shared decoder
+	// cannot express (agy has no tool_input/cwd/hook_event_name shape at all). Nil
+	// selects the generic decoder; the override still gets d, so it can reuse the row's
+	// own data (commandTools) without duplicating the table.
+	decode func(d Dialect, event Event, payload []byte) (Canonical, error)
+	// encode overrides Encode below for the same reason: agy's stdout is always a JSON
+	// decision object, never an exit-code-and-marker pair. Nil selects the generic
+	// encoder.
+	encode func(d Dialect, canonical Canonical, verdict Verdict) Response
 }
 
 // CommandPolicyMarker is the line the Lefthook dialect prints for an evaluated allow. It
@@ -37,6 +46,10 @@ var dialectTable = []Dialect{
 	{Client: "codex", payloadClient: "codex", commandTools: []string{"Bash"}, denyExit: 2},
 	{Client: "gemini", payloadClient: "gemini", commandTools: []string{"run_shell_command"}, denyExit: 2},
 	{Client: "lefthook", payloadClient: "claude", everyToolIsCommand: true, denyExit: 1, allowMarker: CommandPolicyMarker},
+	// agy (Antigravity): commandTools carries the one docs-confirmed command tool
+	// (dialect_agy.go); decode/encode are agy's own functions, not the generic pair
+	// below, because its payload and its stdout are shaped nothing like the other four.
+	{Client: "agy", payloadClient: "agy", commandTools: []string{"run_command"}, decode: agyDecode, encode: agyEncode},
 }
 
 // DialectFor returns the dialect of one client.
@@ -52,6 +65,9 @@ func DialectFor(client string) (Dialect, bool) {
 // Decode turns one bounded stdin payload into the canonical payload of event. The
 // command-line event is authoritative: a payload naming another event is an error.
 func (d Dialect) Decode(event Event, payload []byte) (Canonical, error) {
+	if d.decode != nil {
+		return d.decode(d, event, payload)
+	}
 	object, err := decodeObject(payload)
 	if err != nil {
 		return Canonical{}, err
@@ -78,11 +94,16 @@ func (d Dialect) Decode(event Event, payload []byte) (Canonical, error) {
 	return canonical, nil
 }
 
-// Encode renders a verdict in the client's dialect.
-func (d Dialect) Encode(event Event, verdict Verdict) Response {
+// Encode renders a verdict in the client's dialect. canonical carries the event that
+// produced verdict (canonical.Event) plus whatever else the encoder needs from the
+// decoded payload (agy's Encode reads canonical.StopActive for a Stop verdict).
+func (d Dialect) Encode(canonical Canonical, verdict Verdict) Response {
+	if d.encode != nil {
+		return d.encode(d, canonical, verdict)
+	}
 	switch verdict.Outcome {
 	case Allow:
-		if d.allowMarker != "" && event == EventPreTool {
+		if d.allowMarker != "" && canonical.Event == EventPreTool {
 			return Response{Stdout: []byte(d.allowMarker + "\n")}
 		}
 		return Response{}
