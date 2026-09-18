@@ -61,7 +61,9 @@ Uncommitted changes in those folders are not copied; committed content comes bac
 Push remembers the file count, newest modification time and total size of each archive
 in `<user config dir>/praetor/devsync-state.json` and skips archives whose contents have
 not changed. Delete that file to upload everything again. The agent state bundle is
-uploaded on every push.
+uploaded on every push. It routinely holds credentials from agent configuration files
+(shell history is left out); it is encrypted like every other archive, and its local
+temporary copy is deleted after the upload.
 
 An upload goes to `<archive>.partial` first and replaces the previous archive only when
 it is complete, so a failed push leaves the last good copy in place. Each archive prints
