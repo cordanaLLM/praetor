@@ -235,6 +235,16 @@ func equivalent(path string, a, b []byte) bool {
 // converges instead of failing its own sync gate forever (#263).
 var addableManifestRepositoryFields = []string{"source"}
 
+// mapField reads a nested map[string]any section from a decoded YAML document, returning an
+// empty map when the key is absent or decoded to something other than a section -- both are
+// legitimate shapes here (a manifest with no repository section at all), not decode errors.
+func mapField(doc map[string]any, key string) map[string]any {
+	if section, ok := doc[key].(map[string]any); ok {
+		return section
+	}
+	return map[string]any{}
+}
+
 // equivalentManifestOverlay reports whether current's .standards.yaml is the same overlay as
 // expected's, treating current's absence of a key named in addableManifestRepositoryFields as
 // a match -- never a present key with a different value, which stays a mismatch so a fork
@@ -254,8 +264,8 @@ func equivalentManifestOverlay(expected, current []byte) (bool, error) {
 	if !expOK || !curOK {
 		return reflect.DeepEqual(exp, cur), nil
 	}
-	expRepo, _ := expMap["repository"].(map[string]any)
-	curRepo, _ := curMap["repository"].(map[string]any)
+	expRepo := mapField(expMap, "repository")
+	curRepo := mapField(curMap, "repository")
 	patched := make(map[string]any, len(curRepo)+len(addableManifestRepositoryFields))
 	for key, value := range curRepo {
 		patched[key] = value
