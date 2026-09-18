@@ -1,0 +1,9 @@
+{
+  "name": "pretool-allow-unclassified-view-file",
+  "event": "pre-tool",
+  "allow": true,
+  "payload": {
+    "toolCall": {"name": "view_file", "args": {}},
+    "stepIdx": 1
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "stop-allow-second-execution",
+  "event": "stop",
+  "allow": true,
+  "payload": {
+    "executionNum": 2,
+    "terminationReason": "model_stop",
+    "fullyIdle": true,
+    "conversationId": "ec33ebf9-0cba-4100-8142-c61503f6c587"
+  }
+}
