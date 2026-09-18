@@ -202,6 +202,9 @@ func expandCavemanPaths(ctx context.Context, args []string) ([]string, error) {
 			paths = append(paths, arg)
 			continue
 		}
+		// #nosec G703 -- arg is a file the operator names on the command line to lint, as with
+		// cat; no privilege boundary is crossed, and the read itself goes through the bounded,
+		// symlink-resistant contextopt.ReadSnapshot.
 		info, err := os.Stat(arg)
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", arg, err)
@@ -219,6 +222,9 @@ func expandCavemanPaths(ctx context.Context, args []string) ([]string, error) {
 }
 
 func appendMarkdownFiles(ctx context.Context, paths []string, dir string) ([]string, error) {
+	// #nosec G703 -- dir is a directory the operator names on the command line; WalkDir does
+	// not follow symlinked directories, only regular .md files are kept, and the count is
+	// bounded by maxCavemanFiles.
 	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
