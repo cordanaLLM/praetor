@@ -97,10 +97,16 @@ files and these specific identity fields:
 `repository.owner`/`repository.name` away from, as `<owner>/<name>` -- the fork's
 own manifest describes its own owner while still naming the source it was cloned
 from. The overlay writes it on the first `init` and keeps it current on every
-later `plan`/`prepare`; a manifest that predates the field, or the canonical
-repository's own manifest, simply omits it. See
-[Which workflows run where](#which-workflows-run-where) for why the fork needs
-it at all.
+later `plan`/`prepare`. The canonical repository's own manifest never carries it.
+An owner manifest overlaid before the field existed (any fork that ran `init`
+before this field shipped) has neither: `plan` still accepts it -- a missing
+field the overlay itself adds is not an unexpected owner override -- and
+`prepare` writes it into the candidate, the same way a real merge already
+carries any overlay field through unconditionally. Only a manifest that carries
+a `repository.source` differing from the actual public source is refused, since
+that is a wrong recorded identity rather than a manifest predating the field.
+See [Which workflows run where](#which-workflows-run-where) for why the fork
+needs it at all.
 
 Unexpected engine differences, extra policy overrides, derived configuration drift,
 or missing/symlinked configuration files stop the operation. Unknown upstream YAML

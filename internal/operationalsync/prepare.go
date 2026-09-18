@@ -28,6 +28,9 @@ func (op *operation) prepare(ctx context.Context, report *Report) error {
 		if err := op.git.ancestor(ctx, o.Destination, o.SourceSHA, o.OwnerSHA); err != nil {
 			return errors.New("candidate lost ordinary merge state")
 		}
+		if err := op.backfillManifestOverlay(ctx); err != nil {
+			return err
+		}
 		report.UpToDate = true
 		return op.verifyCandidate(ctx)
 	}
@@ -97,6 +100,34 @@ func (op *operation) writeOverlay(ctx context.Context) error {
 	}
 	args := append([]string{"add", "--"}, ownerPaths...)
 	_, err := op.git.run(ctx, op.opts.Destination, args...)
+	return err
+}
+
+// backfillManifestOverlay writes the current .standards.yaml overlay into an up-to-date
+// candidate -- one whose merge left nothing pending, because the reviewed source is already an
+// ancestor of the reviewed owner commit -- when the checked-out manifest predates an
+// overlay-added field (repository.source; #255/#258) that checkOverlay's
+// equivalentManifestOverlay let through. A real merge always runs writeOverlay unconditionally
+// and so already carries any such field; the up-to-date branch skips that call, so without this
+// step a fork whose manifest was overlaid before the field existed would keep failing every
+// later plan/prepare (#263) even once checkOverlay stopped refusing it. It writes and stages
+// nothing when the checked-out manifest already equals the expected overlay.
+func (op *operation) backfillManifestOverlay(ctx context.Context) error {
+	raw, err := util.ReadConfined(op.opts.Destination, ownerPaths[0])
+	if err != nil {
+		return err
+	}
+	if equivalent(ownerPaths[0], raw, op.expected[ownerPaths[0]]) {
+		return nil
+	}
+	target, err := util.ConfinePath(op.opts.Destination, ownerPaths[0])
+	if err != nil {
+		return err
+	}
+	if err := util.WriteFileSecure(target, op.expected[ownerPaths[0]], 0o644); err != nil {
+		return err
+	}
+	_, err = op.git.run(ctx, op.opts.Destination, "add", "--", ownerPaths[0])
 	return err
 }
 

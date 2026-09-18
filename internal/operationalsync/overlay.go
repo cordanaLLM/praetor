@@ -226,6 +226,61 @@ func equivalent(path string, a, b []byte) bool {
 	return yaml.Unmarshal(a, &av) == nil && yaml.Unmarshal(b, &bv) == nil && reflect.DeepEqual(av, bv)
 }
 
+// addableManifestRepositoryFields lists repository.* keys a later overlay may start writing
+// that an already-overlaid owner manifest predates. Today that is only repository.source
+// (#255/#258): the first overlay #253 shipped never wrote it, so an owner manifest overlaid
+// before #258 has no repository.source at all. equivalentManifestOverlay treats an owner
+// manifest missing exactly these keys as equivalent to the current expected overlay, and
+// prepare backfills them into the candidate, so a fork overlaid before the field existed
+// converges instead of failing its own sync gate forever (#263).
+var addableManifestRepositoryFields = []string{"source"}
+
+// mapField reads a nested map[string]any section from a decoded YAML document, returning an
+// empty map when the key is absent or decoded to something other than a section -- both are
+// legitimate shapes here (a manifest with no repository section at all), not decode errors.
+func mapField(doc map[string]any, key string) map[string]any {
+	if section, ok := doc[key].(map[string]any); ok {
+		return section
+	}
+	return map[string]any{}
+}
+
+// equivalentManifestOverlay reports whether current's .standards.yaml is the same overlay as
+// expected's, treating current's absence of a key named in addableManifestRepositoryFields as
+// a match -- never a present key with a different value, which stays a mismatch so a fork
+// manifest recording the wrong source is still refused. Both arguments are trusted overlay
+// output or a reviewed owner manifest; a decode failure is reported rather than swallowed,
+// since checkOverlay must fail closed on unparsable input.
+func equivalentManifestOverlay(expected, current []byte) (bool, error) {
+	var exp, cur any
+	if err := yaml.Unmarshal(expected, &exp); err != nil {
+		return false, fmt.Errorf("decode expected overlay: %w", err)
+	}
+	if err := yaml.Unmarshal(current, &cur); err != nil {
+		return false, fmt.Errorf("decode owner manifest: %w", err)
+	}
+	expMap, expOK := exp.(map[string]any)
+	curMap, curOK := cur.(map[string]any)
+	if !expOK || !curOK {
+		return reflect.DeepEqual(exp, cur), nil
+	}
+	expRepo := mapField(expMap, "repository")
+	curRepo := mapField(curMap, "repository")
+	patched := make(map[string]any, len(curRepo)+len(addableManifestRepositoryFields))
+	for key, value := range curRepo {
+		patched[key] = value
+	}
+	for _, field := range addableManifestRepositoryFields {
+		if _, present := curRepo[field]; !present {
+			if value, ok := expRepo[field]; ok {
+				patched[field] = value
+			}
+		}
+	}
+	curMap["repository"] = patched
+	return reflect.DeepEqual(expMap, curMap), nil
+}
+
 const (
 	maxOwnerOnlyPaths = 256
 	maxOwnerOnlyBytes = 1 << 20

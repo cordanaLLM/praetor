@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -112,6 +113,85 @@ func TestCandidateVerificationRejectsUnstagedAndUntrackedData(t *testing.T) {
 				t.Fatal("candidate drift accepted")
 			}
 		})
+	}
+}
+
+// preOverlaySourceManifest rewrites owner/visibility the way the #253 overlay always did, but
+// -- unlike newSyncFixture's default owner manifest -- never adds repository.source, the shape
+// #258 started writing. It reproduces the owner manifest of a fork that ran `operational sync
+// init` before #258 shipped (#263).
+func preOverlaySourceManifest(publicManifest string) string {
+	out := strings.ReplaceAll(publicManifest, "owner: public", "owner: private")
+	return strings.ReplaceAll(out, "visibility: public", "visibility: private")
+}
+
+// TestPlanAcceptsAndPrepareBackfillsPreOverlaySourceManifest is the positive dimension for
+// #263's migration: an owner manifest overlaid before repository.source existed must still
+// `plan` (checkOverlay's equivalentManifestOverlay accepts the missing key), and `prepare` must
+// write the field into the candidate rather than silently leaving it missing forever. SourceSHA
+// is set equal to BaseSHA so prepare takes the up-to-date branch (nothing to merge), the same
+// technique TestRunPlanAndUpToDateBoundary uses, which is exactly the shape backfillManifestOverlay
+// exists for: a real merge already carries the field through writeOverlay unconditionally.
+func TestPlanAcceptsAndPrepareBackfillsPreOverlaySourceManifest(t *testing.T) {
+	f := newSyncFixtureCustom(t, nil, preOverlaySourceManifest)
+
+	planOpts := f.opts
+	planOpts.Destination = ""
+	planned, err := Run(context.Background(), "plan", planOpts)
+	if err != nil {
+		t.Fatalf("pre-#258 owner manifest must still plan: %v", err)
+	}
+	if planned.Status != "planned" {
+		t.Fatalf("status = %q, want planned: %+v", planned.Status, planned)
+	}
+
+	f.opts.SourceSHA = f.opts.BaseSHA
+	prepared, err := Run(context.Background(), "prepare", f.opts)
+	if err != nil {
+		t.Fatalf("prepare on a pre-#258 owner manifest: %v", err)
+	}
+	if !prepared.UpToDate || prepared.MergePending {
+		t.Fatalf("unexpected state: %+v", prepared)
+	}
+	got, err := os.ReadFile(filepath.Join(prepared.Candidate, ownerPaths[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, decoded, err := manifest(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Owner != "private" || decoded.Visibility != "private" {
+		t.Fatalf("owner/visibility lost during backfill: %+v", decoded)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	repo, ok := doc["repository"].(map[string]any)
+	if !ok {
+		t.Fatalf("repository section decoded as %T, want map[string]any", doc["repository"])
+	}
+	if repo["source"] != "public/praetor" {
+		t.Fatalf("repository.source = %v, want public/praetor written by prepare", repo["source"])
+	}
+	if status := testGit(t, f.git, prepared.Candidate, "status", "--porcelain"); status == "" {
+		t.Fatal("prepare must stage the backfilled manifest")
+	}
+}
+
+// TestPlanRefusesWrongRepositorySource is the negative dimension: an owner manifest that
+// carries a repository.source differing from the actual public source is not the missing-field
+// migration case equivalentManifestOverlay forgives -- it is a wrong value, and stays refused.
+func TestPlanRefusesWrongRepositorySource(t *testing.T) {
+	f := newSyncFixtureCustom(t, nil, func(publicManifest string) string {
+		out := preOverlaySourceManifest(publicManifest)
+		return strings.Replace(out, "visibility: private\n", "visibility: private\n  source: wrong/praetor\n", 1)
+	})
+	opts := f.opts
+	opts.Destination = ""
+	if _, err := Run(context.Background(), "plan", opts); err == nil {
+		t.Fatal("owner manifest with a wrong repository.source was accepted")
 	}
 }
 
