@@ -1,0 +1,5 @@
+type: fixed
+title: Keep a valid repository.source when the owner overlay is applied again so a fork's guard does not rewrite the public identity to itself
+issue: "#268"
+breaking: false
+
