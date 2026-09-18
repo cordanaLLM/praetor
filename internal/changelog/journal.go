@@ -30,18 +30,8 @@ type renderJournal struct {
 
 func contentHash(data []byte) string { return fmt.Sprintf("%x", sha256.Sum256(data)) }
 
-func observeRenderFile(ctx context.Context, root *os.Root, name string) ([]byte, bool, error) {
-	if _, err := root.Lstat(name); errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
-	} else if err != nil {
-		return nil, false, err
-	}
-	data, err := contextopt.ReadRootSnapshot(ctx, root, name)
-	return data, true, err
-}
-
 func loadRenderJournal(ctx context.Context, root *os.Root) (*renderJournal, []byte, error) {
-	raw, exists, err := observeRenderFile(ctx, root, renderJournalName)
+	raw, exists, err := contextopt.ObserveRootSnapshot(ctx, root, renderJournalName)
 	if err != nil || !exists {
 		return nil, nil, err
 	}
@@ -89,7 +79,7 @@ func prepareRenderJournal(ctx context.Context, repoPath string, repo, fragmentsR
 	if err != nil || len(fragments) == 0 {
 		return nil, nil, err
 	}
-	before, exists, err := observeRenderFile(ctx, repo, "CHANGELOG.md")
+	before, exists, err := contextopt.ObserveRootSnapshot(ctx, repo, "CHANGELOG.md")
 	if err != nil {
 		return nil, nil, err
 	}

@@ -45,27 +45,15 @@ func readBugFiles(ctx context.Context, rootPath string) (files bugFiles, err err
 // readBugFilesIn reads both files from a pinned working directory. A missing
 // ledger reads as the empty default; a missing sidecar as no metadata.
 func readBugFilesIn(ctx context.Context, root *os.Root) (files bugFiles, err error) {
-	files.ledger, files.ledgerExists, err = readOptionalBugFile(ctx, root, bugLedgerName)
+	files.ledger, files.ledgerExists, err = contextopt.ObserveRootSnapshot(ctx, root, bugLedgerName)
 	if err != nil {
 		return files, err
 	}
 	if !files.ledgerExists {
 		files.ledger = []byte(defaultBugsMD())
 	}
-	files.meta, files.metaExists, err = readOptionalBugFile(ctx, root, bugMetaName)
+	files.meta, files.metaExists, err = contextopt.ObserveRootSnapshot(ctx, root, bugMetaName)
 	return files, err
-}
-
-// readOptionalBugFile distinguishes initial absence from a failed read. Once
-// observed, disappearing or replaced files are errors, never absence.
-func readOptionalBugFile(ctx context.Context, root *os.Root, name string) ([]byte, bool, error) {
-	if _, err := root.Lstat(name); errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
-	} else if err != nil {
-		return nil, false, err
-	}
-	data, err := contextopt.ReadRootSnapshot(ctx, root, name)
-	return data, true, err
 }
 
 // parseBugFiles validates the ledger against its sidecar. The document always
