@@ -11,8 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/topology"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -44,6 +46,10 @@ type unit struct {
 	exclude map[string]bool
 	// keepCaches archives cache-named folders too; the agent-state bundle has no build caches.
 	keepCaches bool
+	// ignored lists, for a repository, the folders git ignores as a whole, in host form. A
+	// cache-named folder is then left out only when it or a parent is listed, so a tracked
+	// build/ or dist/ is archived. Nil applies the plain cache list.
+	ignored map[string]bool
 	// folder marks a top-level folder that is not a repository.
 	folder bool
 }
@@ -165,7 +171,7 @@ func walkUnit(ctx context.Context, u unit, visit func(rel string, info fs.FileIn
 		if err != nil || rel == "." {
 			return err
 		}
-		if entry.IsDir() && (u.exclude[rel] || (!u.keepCaches && cacheDirs[entry.Name()])) {
+		if entry.IsDir() && (u.exclude[rel] || u.skipCache(rel, entry.Name())) {
 			return filepath.SkipDir
 		}
 		if count++; count > maxArchiveEntries {
@@ -177,6 +183,41 @@ func walkUnit(ctx context.Context, u unit, visit func(rel string, info fs.FileIn
 		}
 		return visit(rel, info)
 	})
+}
+
+// skipCache reports whether the folder rel, named name, is a build cache to leave out.
+func (u unit) skipCache(rel, name string) bool {
+	if u.keepCaches || !cacheDirs[name] {
+		return false
+	}
+	if u.ignored == nil {
+		return true
+	}
+	for i := 0; i < maxLinkSegments && rel != "." && rel != string(filepath.Separator); i++ {
+		if u.ignored[rel] {
+			return true
+		}
+		rel = filepath.Dir(rel)
+	}
+	return false
+}
+
+// withGitIgnores returns u carrying the folders git ignores in it, read with one bounded
+// "git ls-files" call. When git cannot answer, u keeps the plain cache list and the returned
+// note says so.
+func withGitIgnores(ctx context.Context, u unit) (unit, string) {
+	result, err := util.RunGitProbe(ctx, u.dir, maxRcloneOutput,
+		"ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
+	if err != nil {
+		return u, "git unavailable, cache folders left out by name"
+	}
+	u.ignored = map[string]bool{}
+	for _, entry := range strings.Split(string(result.Stdout), "\x00") {
+		if entry = strings.TrimSuffix(entry, "/"); entry != "" {
+			u.ignored[filepath.FromSlash(entry)] = true
+		}
+	}
+	return u, ""
 }
 
 // fingerprintUnit summarises u without reading file contents.

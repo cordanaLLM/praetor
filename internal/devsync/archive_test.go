@@ -5,10 +5,13 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func unitNames(units []unit) []string {
@@ -126,6 +129,64 @@ func TestWriteArchiveFailureWritesNoTrailer(t *testing.T) {
 	}
 	if err := extractArchive(context.Background(), &buffer, t.TempDir()); err == nil {
 		t.Fatal("a failed archive must not read back as complete")
+	}
+}
+
+// gitRepo initialises a real repository with the given .gitignore and tracked paths.
+func gitRepo(t *testing.T, gitignore string, files map[string]bool) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, ".gitignore"), gitignore)
+	if out, err := util.RunGit(context.Background(), dir, "init", "-q"); err != nil {
+		t.Fatal(err, out)
+	}
+	for name, tracked := range files {
+		writeTestFile(t, filepath.Join(dir, filepath.FromSlash(name)), name)
+		if !tracked {
+			continue
+		}
+		if out, err := util.RunGit(context.Background(), dir, "add", "-f", "--", name); err != nil {
+			t.Fatal(err, out)
+		}
+	}
+	return dir
+}
+
+func archivedNames(t *testing.T, u unit) map[string]bool {
+	t.Helper()
+	names := map[string]bool{}
+	err := walkUnit(context.Background(), u, func(rel string, _ os.FileInfo) error {
+		names[filepath.ToSlash(rel)] = true
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return names
+}
+
+func TestGitIgnoresDecideCacheFolders(t *testing.T) {
+	// Tracked build/ is archived although build/ is ignored; untracked, ignored node_modules is not.
+	repo := gitRepo(t, "node_modules/\nbuild/\n", map[string]bool{"build/package/Dockerfile": true, "node_modules/dep.js": false})
+	u, note := withGitIgnores(context.Background(), unit{dir: repo})
+	names := archivedNames(t, u)
+	if note != "" || !names["build/package/Dockerfile"] || names["node_modules"] {
+		t.Fatalf("note %q, archived %v", note, names)
+	}
+	// Boundary: an ignored build/ holding nothing tracked is left out, like any cache.
+	repo = gitRepo(t, "build/\n", map[string]bool{"main.go": true, "build/out.bin": false, "dist/app.js": false})
+	u, _ = withGitIgnores(context.Background(), unit{dir: repo})
+	names = archivedNames(t, u)
+	if names["build"] || !names["main.go"] || !names["dist/app.js"] {
+		t.Fatalf("archived %v: ignored build/ must go, unignored dist/ must stay", names)
+	}
+	// Negative: without git's answer the plain cache list applies and the note says so.
+	u, note = withGitIgnores(context.Background(), unit{dir: t.TempDir()})
+	if u.ignored != nil || note == "" {
+		t.Fatalf("non-repository kept ignores %v, note %q", u.ignored, note)
 	}
 }
 

@@ -103,6 +103,9 @@ func pushUnit(ctx context.Context, opts PushOptions, state *pushState, u unit) O
 	archive := path.Join(opts.Host, devFolder, filepath.ToSlash(u.rel)) + archiveSuffix
 	outcome := Outcome{Archive: archive}
 	key := remotePath(opts.Remote, archive)
+	if !u.folder {
+		u, outcome.Note = withGitIgnores(ctx, u)
+	}
 	current, err := fingerprintUnit(ctx, u)
 	switch {
 	case err != nil:

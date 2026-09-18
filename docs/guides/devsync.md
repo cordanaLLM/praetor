@@ -55,8 +55,12 @@ Push looks through `~/dev` (or `$PRAETOR_DEV_DIR`, or `--dev`) and writes one
 
 Archives include `.git` and leave out build caches: `node_modules`, `target`, `.venv`,
 `venv`, `__pycache__`, `.cache`, `dist`, `build`, `.next`, `.svelte-kit` and `.gradle`.
-Uncommitted changes in those folders are not copied; committed content comes back from
-`.git`. Loose files directly in the dev folder, sockets and devices are not copied either.
+Inside a repository, such a folder is left out only when git ignores it as a whole
+(one `git ls-files --others --ignored --exclude-standard --directory` call per
+repository), so a `build/` or `dist/` holding tracked files is archived. When git cannot
+answer, the push line notes it and the folders are left out by name. Top-level folder
+archives always leave them out by name. Loose files directly in the dev folder, sockets
+and devices are not copied.
 
 Push remembers the file count, newest modification time and total size of each archive
 in `<user config dir>/praetor/devsync-state.json` and skips archives whose contents have
