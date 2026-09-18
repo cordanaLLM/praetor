@@ -245,7 +245,13 @@ func checkScheduleWriteTarget(root *os.Root, name string) error {
 	}
 	existingPrivate, existingUnverifiable := util.ArtefactPrivacy(info)
 	util.NotePrivacyLimitation(existingUnverifiable)
-	if !info.Mode().IsRegular() || !existingPrivate {
+	// This target carries two requirements, and only one of them is a privacy question.
+	// ArtefactPrivacy answers "no other account can read it". That the owner can still write
+	// it is the other half, and unlike the privacy bits the write bit is a property the mode
+	// does express on every platform: Windows synthesises 0444 for a read-only file and 0666
+	// for a writable one. Dropping it would let the tick rewrite state an operator had
+	// deliberately made read-only.
+	if !info.Mode().IsRegular() || !existingPrivate || info.Mode().Perm()&0o200 == 0 {
 		return errors.New("existing schedule state must permit owner read/write only (0600)")
 	}
 	return nil

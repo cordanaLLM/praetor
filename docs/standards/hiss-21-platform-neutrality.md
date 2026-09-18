@@ -70,6 +70,14 @@ that moved rather than as an unchanged green check. The floor is a collapse dete
 coverage assertion: raise it to a platform's measured figure once a green run reports one, and
 never lower it to turn a red run green.
 
+A failing suite must also be readable from the log alone. The driver used to print a failed
+suite's last 25 lines, which on a `unittest` run is the trailing summary: the Windows leg said a
+suite had failed without naming a single test. It now parses unittest's own block headers and
+names every failed and errored case, so the log states which assertions broke on which platform
+rather than that something did. Its internal Makefile check compares `Path.as_posix()` against
+the slash paths it reads, because a host-shaped string compared against a recorded one is the
+separator defect this invariant forbids, reached from inside the gate itself.
+
 ## Required status checks for a matrix job
 
 A matrix job reports one check per leg, so `name: Platform Neutrality (${{ matrix.name }})`
