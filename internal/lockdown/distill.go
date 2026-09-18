@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -276,13 +277,6 @@ func sarifEvidencePointer(path string, data []byte) (string, error) {
 	return pointer, nil
 }
 
-// estimateTokens returns an approximate token count based on whitespace and punctuation.
-func estimateTokens(s string) int {
-	words := strings.Fields(s)
-	// Heuristic: words * 1.3 roughly approximates BPE token count for code
-	return int(float64(len(words)) * 1.3)
-}
-
 // levelRank orders SARIF levels by severity: error first, then warning, note and any
 // other level. Results carry a resolved level by the time they reach this function.
 func levelRank(level string) int {
@@ -359,7 +353,7 @@ func capSummary(rawLines []string, pointer string) (string, int, int) {
 			break
 		}
 		candidate := strings.Join(append(finalLines, rawLines[i]), "\n")
-		if estimateTokens(candidate) >= MaxDistillTokens-50 {
+		if caveman.EstimateTokens(candidate) >= MaxDistillTokens-50 {
 			truncated = true
 			break
 		}
@@ -372,7 +366,7 @@ func capSummary(rawLines []string, pointer string) (string, int, int) {
 	}
 
 	res := strings.Join(finalLines, "\n")
-	return res, len(finalLines), estimateTokens(res)
+	return res, len(finalLines), caveman.EstimateTokens(res)
 }
 
 // resolveLevel implements SARIF 2.1.0 3.27.10: an absent result.level defaults to the

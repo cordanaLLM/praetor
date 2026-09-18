@@ -1,0 +1,3 @@
+type: added
+title: Lint agent-facing text with praetorctl caveman check, estimate its tokens with praetorctl caveman estimate, and choose per emission surface (context, mcp, hooks, prompts, ledger) where the lint applies; the SARIF and package-docs distillers now share one token estimator
+breaking: false
