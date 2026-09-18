@@ -12,7 +12,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -116,22 +117,8 @@ func serverName(name string) bool {
 
 func asciiLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
 
-func literal(value string) bool {
-	if len(value) > MaxValueBytes || !utf8.ValidString(value) {
-		return false
-	}
-	for _, marker := range []string{"$", "`", "{env:", "{file:"} {
-		if strings.Contains(value, marker) {
-			return false
-		}
-	}
-	for _, c := range value {
-		if c < 0x20 || c == 0x7f {
-			return false
-		}
-	}
-	return true
-}
+// literal applies the one shared literal rule at the registry's value bound.
+func literal(value string) bool { return util.LiteralString(value, MaxValueBytes) }
 
 func checkContext(ctx context.Context) error {
 	if ctx == nil {

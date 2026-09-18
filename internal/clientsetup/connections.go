@@ -5,11 +5,11 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/httpendpoint"
 	"github.com/cordanaLLM/praetor/internal/repairrun"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // ConnectionProfile contains deployment settings and credential references, never
@@ -93,9 +93,7 @@ func validateConnections(profile ConnectionProfile) error {
 	return nil
 }
 
-func absoluteLiteral(value string) bool {
-	return literal(value) && filepath.IsAbs(value) && filepath.Clean(value) == value && value != string(filepath.Separator)
-}
+func absoluteLiteral(value string) bool { return util.CleanAbsoluteLiteral(value, MaxValueBytes) }
 
 func validateGatewayURL(value string) error {
 	if !literal(value) || strings.TrimSpace(value) != value {
