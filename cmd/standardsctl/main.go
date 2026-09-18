@@ -169,6 +169,7 @@ func printFleetCommands() {
 	fmt.Println("  ci                 Analyze git diff and filter CI verification gates")
 	fmt.Println("  topology           Audit and clean workstation directory topology (DEV-01 to DEV-05)")
 	fmt.Println("  workstation        Install this engine's binaries from a checkout, or report install status")
+	fmt.Println("  devsync            Copy project folders to Google Drive through rclone and back (stopgap)")
 	fmt.Println("  version            Print CLI version information")
 }
 
@@ -219,6 +220,7 @@ func coreCommandTable() map[string]commandFunc {
 		"bugs":             runBugs,
 		"baseline":         runBaseline,
 		"devcontainer":     runDevContainer,
+		"devsync":          runDevsync,
 		"flavor":           runFlavor,
 		"flavors":          runFlavors,
 		"docs":             runDocs,
