@@ -36,6 +36,33 @@ func mappingValue(node *yaml.Node, key string) (*yaml.Node, error) {
 	return nil, fmt.Errorf("required manifest field missing: %s", key)
 }
 
+// setMappingScalar sets an existing top-level string scalar of node to value, or appends a new
+// key/value pair when node does not yet declare key. It is used only for repository.source: the
+// overlay is that field's only writer, in both a first init (the canonical manifest never
+// declares it) and a later sync (the owner's own manifest already carries the value a prior
+// overlay wrote). Every other overlaid field already exists in the canonical manifest and goes
+// through mappingValue, so it is never reordered.
+func setMappingScalar(node *yaml.Node, key, value string) error {
+	if node.Kind != yaml.MappingNode {
+		return errors.New("expected YAML mapping")
+	}
+	for i := 0; i < len(node.Content) && i < 10000; i += 2 {
+		if node.Content[i].Value == key {
+			if node.Content[i+1].Anchor != "" {
+				return fmt.Errorf("repository.%s anchor could change unrelated aliases", key)
+			}
+			node.Content[i+1].Kind = yaml.ScalarNode
+			node.Content[i+1].Tag = "!!str"
+			node.Content[i+1].Value = value
+			return nil
+		}
+	}
+	node.Content = append(node.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
+	return nil
+}
+
 func decodeManifest(raw []byte) (*yaml.Node, error) {
 	var doc yaml.Node
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
@@ -107,6 +134,12 @@ func ownerManifest(raw []byte, owner identity) ([]byte, error) {
 			return nil, fmt.Errorf("repository.%s anchor could change unrelated aliases", key)
 		}
 		node.Value = value
+	}
+	// repository.source records the public identity the overlay is rewriting owner/name away
+	// from, so internal/forge can resolve the fork's guarded workflows and required-context
+	// ruleset against the identity their checked-in literals still name (#255).
+	if err := setMappingScalar(repo, "source", source.Owner+"/"+source.Name); err != nil {
+		return nil, err
 	}
 	var out bytes.Buffer
 	encoder := yaml.NewEncoder(&out)
