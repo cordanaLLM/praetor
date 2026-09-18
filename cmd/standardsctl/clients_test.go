@@ -100,6 +100,81 @@ func TestClientPublicationBindsPlanToBackup(t *testing.T) {
 	}
 }
 
+func TestClientApplyMergesAGYConfiguration(t *testing.T) {
+	root := t.TempDir()
+	registry := filepath.Join(root, "registry.json")
+	target := filepath.Join(root, "config", "mcp_config.json")
+	before, err := os.ReadFile(filepath.Join("..", "..", "internal", "clientsetup", "testdata", "agy-mcp_config.live-shape.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Dir(target), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeClientFixture(t, registry, []byte(`{"version":1,"servers":[{"name":"shared","command":"/usr/bin/true","args":[]}]}`))
+	writeClientFixture(t, target, before)
+	output := filepath.Join(root, "backup")
+	if err := runClients([]string{"apply", "--registry", registry, "--client", "agy", "--target", target, "--out", output}); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kept := range []string{`"shared"`, `"serverUrl"`, `"MEMORY_HARNESS": "redacted-harness"`} {
+		if !bytes.Contains(merged, []byte(kept)) {
+			t.Fatalf("merge lost %s: %s", kept, merged)
+		}
+	}
+	backup, err := os.ReadFile(filepath.Join(output, "config.before"))
+	if err != nil || !bytes.Equal(backup, before) {
+		t.Fatalf("exact backup missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "agy-mcp_config.json")); err != nil {
+		t.Fatalf("retained candidate missing: %v", err)
+	}
+	if err := runClients([]string{"apply", "--registry", registry, "--client", "agy", "--target", target, "--out", filepath.Join(root, "second")}); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := os.ReadFile(target)
+	if err != nil || !bytes.Equal(replay, merged) {
+		t.Fatalf("second apply changed the configuration: %v", err)
+	}
+}
+
+func TestClientApplyAGYCreatesAbsentAndRefusesConflict(t *testing.T) {
+	root := t.TempDir()
+	registry := filepath.Join(root, "registry.json")
+	writeClientFixture(t, registry, []byte(`{"version":1,"servers":[{"name":"shared","command":"/usr/bin/true","args":[]}]}`))
+	created := filepath.Join(root, ".agents", "mcp_config.json")
+	if err := runClients([]string{"apply", "--registry", registry, "--client", "agy", "--target", created, "--out", filepath.Join(root, "created")}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(created); err != nil || !bytes.Contains(got, []byte(`"shared"`)) {
+		t.Fatalf("absent configuration not created: %v", err)
+	}
+	for name, conflict := range map[string]string{
+		"remote": `{"mcpServers":{"shared":{"serverUrl":"https://other.example.test/sse"}}}`,
+		"jsonc":  "{ // note\n\"mcpServers\":{}}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, "mcp_config.json")
+			writeClientFixture(t, target, []byte(conflict))
+			output := filepath.Join(dir, "backup")
+			if err := runClients([]string{"apply", "--registry", registry, "--client", "agy", "--target", target, "--out", output}); err == nil {
+				t.Fatal("conflicting configuration was accepted")
+			}
+			if got, err := os.ReadFile(target); err != nil || string(got) != conflict {
+				t.Fatalf("refused target changed: %v", err)
+			}
+			if _, err := os.Lstat(output); !os.IsNotExist(err) {
+				t.Fatalf("refused apply created artifacts: %v", err)
+			}
+		})
+	}
+}
+
 func writeClientFixture(t *testing.T, path string, content []byte) {
 	t.Helper()
 	if err := os.WriteFile(path, content, 0o600); err != nil {

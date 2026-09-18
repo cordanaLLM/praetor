@@ -58,6 +58,10 @@ all_github_repos.json
 # Publish explicitly reviewed, sanitized documentation under docs/ instead.
 /.workingdir/
 
+# Antigravity workspace MCP configuration: written per host by
+# `praetorctl clients apply --client agy`, it carries absolute host paths.
+/.agents/mcp_config.json
+
 # Workflow agent worktrees
 /.claude/worktrees/
 

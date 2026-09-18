@@ -3,6 +3,7 @@ package clientsetup
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 )
 
@@ -35,13 +36,13 @@ func Capabilities(ctx context.Context) (*CapabilityReport, error) {
 		return nil, ctx.Err()
 	default:
 	}
-	paths := map[Client]string{Codex: ".codex/hooks.json", Claude: ".claude/settings.json", Gemini: ".gemini/settings.json"}
+	paths := map[Client][]string{Codex: {".codex/hooks.json"}, Claude: {".claude/settings.json"}, Gemini: {".gemini/settings.json"}, AGY: {".agents/mcp_config.json"}}
 	items := make([]Capability, 0, len(adapters))
 	for client, spec := range adapters {
 		item := Capability{Client: client, Mode: spec.mode, RelativePath: spec.path, Documentation: spec.documentation, Lifecycle: LifecycleCapability{State: "unsupported", DefinitionPaths: []string{}, Activation: "unverified"}}
-		if path, ok := paths[client]; ok {
+		if defined, ok := paths[client]; ok {
 			item.Lifecycle.State = "adapter-defined"
-			item.Lifecycle.DefinitionPaths = []string{path}
+			item.Lifecycle.DefinitionPaths = slices.Clone(defined)
 		}
 		items = append(items, item)
 	}

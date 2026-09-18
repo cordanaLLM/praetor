@@ -12,7 +12,8 @@ import (
 func TestAdoptionKeepsWorkingDirectoryPrivate(t *testing.T) {
 	for name, existing := range map[string]string{
 		"missing": "", "custom": "# retain exactly\nuser-output/",
-		"old-opt-in": ".workingdir/*\n!.workingdir/STATE.md\n",
+		"old-opt-in":   ".workingdir/*\n!.workingdir/STATE.md\n",
+		"pre-agy-rule": "bin/\n/.workingdir/\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := newTestRepo(t, name)
@@ -38,6 +39,12 @@ func TestAdoptionKeepsWorkingDirectoryPrivate(t *testing.T) {
 				if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", private); err != nil {
 					t.Fatalf("private path %s remains publishable: %v", private, err)
 				}
+			}
+			if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", ".agents/mcp_config.json"); err != nil {
+				t.Fatalf("per-host client configuration remains publishable: %v", err)
+			}
+			if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", ".agents/plugins/praetor/plugin.json"); err == nil {
+				t.Fatal("tracked plugin projection became ignored")
 			}
 			if _, err := Adopt(t.Context(), opts); err != nil {
 				t.Fatal(err)

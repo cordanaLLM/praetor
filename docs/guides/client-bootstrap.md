@@ -122,10 +122,37 @@ prove the target stayed unchanged: inspect the target and retained artifacts
 before retrying. Cooperating writers serialize, but external editors can still
 race the final comparison and rename.
 
-Codex and AGY require their native command workflow and cannot use `clients
-apply`. Their prepared plans contain argument arrays for inspection and native
-configuration. Cline and Kilo require an explicitly selected profile destination;
+Codex requires its native command workflow and cannot use `clients apply`. Its
+prepared plan contains argument arrays for inspection and native configuration.
+Cline and Kilo require an explicitly selected profile destination;
 the command does not guess a client profile path.
+
+### Antigravity (`agy`)
+
+Antigravity reads one strict-JSON `mcp_config.json` with an `mcpServers` map. The
+`agy` adapter merges into it like any other JSON adapter: existing servers, their
+`env` blocks and unknown keys are kept, and the replaced file is retained as
+`config.before`. Name the destination explicitly:
+
+```bash
+# Host-wide configuration (default root; Windows: %USERPROFILE%\.gemini\config)
+praetorctl clients apply --registry /private/registry.json --client agy \
+  --target "$HOME/.gemini/config/mcp_config.json" --out /private/agy-backup
+
+# One workspace
+praetorctl clients apply --registry /private/registry.json --client agy \
+  --target .agents/mcp_config.json --out /private/agy-workspace-backup
+```
+
+An existing entry of the same name that is remote (`serverUrl`, `url`, `httpUrl`)
+or that names another executable or other arguments is a conflict, and nothing is
+written. The workspace file holds absolute host paths, so it is written per host
+and never committed: `/.agents/mcp_config.json` is ignored here, and `praetorctl
+adopt` adds the same rule to an adopting repository. On Windows the registry
+still demands an absolute literal executable, so an `npx` server is declared as
+`C:\Windows\System32\cmd.exe` with the arguments `/c`, `npx` and the package.
+After applying, check discovery with `agy mcp list`; the merge itself proves
+nothing about the running client.
 
 These are adapter-specific workflows, not a universal lifecycle integration.
 Configuration is only the first acceptance stage. Verify native discovery,

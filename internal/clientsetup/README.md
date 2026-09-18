@@ -27,7 +27,7 @@ Adapter schemas were verified on 2026-09-12:
 | `continue` | `.continue/mcpServers/praetor.yaml`, schema v1 block metadata and server sequence | [Continue MCP](https://docs.continue.dev/customize/deep-dives/mcp) |
 | `cline` | Explicit JSON export, `mcpServers`; caller selects the actual profile path | [Cline MCP](https://docs.cline.bot/mcp/mcp-overview) |
 | `kilo` | Explicit JSON export, direct `mcp` server map and local command array; caller selects the actual profile path | [Kilo MCP](https://kilo.ai/docs/automate/mcp/using-in-kilo-code) |
-| `agy` | Native `agy mcp add --type stdio NAME -- COMMAND ARGS...` argv | Installed AGY 1.2.2 `agy mcp add --help` |
+| `agy` | `.agents/mcp_config.json` (workspace) or `<config root>/mcp_config.json` (host), `mcpServers`, stdio entries as `command`/`args` without a `type` key; remote entries are spelled `serverUrl` | [Antigravity plugins](https://antigravity.google/docs/plugins); shape measured on 2026-09-17 against a live `mcp_config.json` written by AGY 1.2.5 |
 
 OpenCode v2 uses a different `mcp.servers` schema. The `opencode-v1` identifier is
 intentional and does not imply support for that newer schema. Cline and Kilo are
@@ -46,7 +46,7 @@ The [client bootstrap guide](../../docs/guides/client-bootstrap.md) holds the ta
 Bounds are 32 servers, 64 arguments per server, 4096 bytes per command/argument,
 256 KiB of registry values, 1 MiB of input configuration and 32 nesting levels.
 Candidates are bounded to 2 MiB; callers with a smaller file-write ceiling must
-reject larger candidates before mutation. Native plans do not know current
-client state and therefore mark `Changed` true; inspect and compare that state
-before applying them. These artifacts configure tool availability. They do not
+reject larger candidates before mutation. Codex is the only native plan. It
+does not know current client state and therefore marks `Changed` true; inspect
+and compare that state before running its commands. These artifacts configure tool availability. They do not
 prove that an agent used those tools or that model dispatch and caps are enforced.

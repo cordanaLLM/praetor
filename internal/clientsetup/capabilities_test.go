@@ -2,6 +2,7 @@ package clientsetup
 
 import (
 	"context"
+	"slices"
 	"testing"
 )
 
@@ -20,7 +21,11 @@ func TestCapabilitiesInventory(t *testing.T) {
 		if item.Lifecycle.Activation != "unverified" {
 			t.Fatalf("activation claimed: %+v", item)
 		}
-		if item.Client == Codex || item.Client == Claude || item.Client == Gemini {
+		if item.Client == AGY {
+			if item.Mode != "merge" || item.RelativePath != ".agents/mcp_config.json" || item.Lifecycle.State != "adapter-defined" || !slices.Equal(item.Lifecycle.DefinitionPaths, []string{".agents/mcp_config.json"}) {
+				t.Fatalf("agy merge adapter not declared: %+v", item)
+			}
+		} else if item.Client == Codex || item.Client == Claude || item.Client == Gemini {
 			if item.Lifecycle.State != "adapter-defined" || len(item.Lifecycle.DefinitionPaths) != 1 {
 				t.Fatalf("native lifecycle missing: %+v", item)
 			}
@@ -39,5 +44,26 @@ func TestCapabilitiesContext(t *testing.T) {
 	cancel()
 	if _, err := Capabilities(ctx); err == nil {
 		t.Fatal("canceled context accepted")
+	}
+}
+
+func TestCapabilitiesDefinitionPathsAreCopies(t *testing.T) {
+	first, err := Capabilities(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range first.Clients {
+		for j := range first.Clients[i].Lifecycle.DefinitionPaths {
+			first.Clients[i].Lifecycle.DefinitionPaths[j] = "mutated"
+		}
+	}
+	second, err := Capabilities(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range second.Clients {
+		if slices.Contains(item.Lifecycle.DefinitionPaths, "mutated") {
+			t.Fatalf("caller mutation reached the inventory: %+v", item)
+		}
 	}
 }

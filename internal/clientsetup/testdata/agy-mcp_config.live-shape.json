@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "bridge": {
+      "command": "/opt/example/libexec/mcp-bridge",
+      "args": ["--endpoint", "https://tools.example.test/mcp/"]
+    },
+    "remote-index": {
+      "serverUrl": "https://index.example.test/mcp"
+    },
+    "memory": {
+      "command": "/opt/example/bin/memory-mcp",
+      "args": ["serve"],
+      "env": {
+        "MEMORY_HARNESS": "redacted-harness"
+      }
+    },
+    "warehouse": {
+      "command": "/opt/example/bin/toolbox",
+      "args": ["--prebuilt", "warehouse", "--stdio"],
+      "env": {
+        "WAREHOUSE_PROJECT": "redacted-project",
+        "WAREHOUSE_LOCATION": "redacted-location",
+        "APPLICATION_CREDENTIALS": "/redacted/credentials.json"
+      }
+    }
+  }
+}

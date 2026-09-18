@@ -147,7 +147,7 @@ func matchingJSONServer(raw []byte, client Client, server Server) bool {
 	if stringField(fields, "command") != server.Command {
 		return false
 	}
-	for _, remote := range []string{"url", "httpUrl", "http_url"} {
+	for _, remote := range []string{"url", "httpUrl", "http_url", "serverUrl"} {
 		if _, ok := fields[remote]; ok {
 			return false
 		}

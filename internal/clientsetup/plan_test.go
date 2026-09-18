@@ -28,18 +28,15 @@ func TestBuildPlanClientShapesAndReplay(t *testing.T) {
 			if p.Client != client || !p.Changed || p.Documentation == "" || len(p.SourceSHA256) != 64 || len(p.RegistrySHA256) != 64 {
 				t.Fatalf("invalid plan: %+v", p)
 			}
-			if client == Codex || client == AGY {
+			if client == Codex {
 				if p.Mode != "native" || p.RelativePath != "" || len(p.Commands) != 1 {
 					t.Fatalf("invalid native plan: %+v", p)
 				}
 				want := []string{"codex", "mcp", "add", "praetor-dev", "--", praetorMCP, "-transport=stdio"}
-				if client == AGY {
-					want = []string{"agy", "mcp", "add", "--type", "stdio", "praetor-dev", "--", praetorMCP, "-transport=stdio"}
-				}
 				if !slices.Equal(p.Commands[0], want) {
 					t.Fatalf("argv differs: %v", p.Commands)
 				}
-				if client == Codex && string(p.Content) != "[mcp_servers.praetor-dev]\ncommand = "+quoted(praetorMCP)+"\nargs = [\"-transport=stdio\"]\n\n" {
+				if string(p.Content) != "[mcp_servers.praetor-dev]\ncommand = "+quoted(praetorMCP)+"\nargs = [\"-transport=stdio\"]\n\n" {
 					t.Fatalf("bad TOML: %s", p.Content)
 				}
 				return
@@ -137,7 +134,6 @@ func TestBuildPlanConflictsAndMalformedConfigs(t *testing.T) {
 		{"malformed", Cline, `{"mcpServers":`, nil},
 		{"invalid UTF8", Claude, string([]byte{'{', '"', 0xff, '"', ':', '1', '}'}), nil},
 		{"codex native", Codex, `model = "existing"`, ErrUnsupportedMerge},
-		{"agy native", AGY, `{}`, ErrUnsupportedMerge},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := []byte(tc.raw)
