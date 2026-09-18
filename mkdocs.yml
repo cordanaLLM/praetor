@@ -119,6 +119,7 @@ nav:
       - Issue Sync Integrity: guides/issue-sync-integrity.md
       - Needs Capability Evidence: guides/needs-capability-evidence.md
       - Operational Sync: guides/operational-sync.md
+      - Releasing and Release Flavors: guides/releasing.md
       - Scheduled Dogfood: guides/scheduled-dogfood.md
       - State Ledger Integrity: guides/state-ledger-integrity.md
       - Transcript Ingestion: guides/transcript-ingestion.md
