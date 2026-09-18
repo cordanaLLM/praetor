@@ -88,10 +88,19 @@ files and these specific identity fields:
 
 | File | Allowed owner difference |
 | --- | --- |
-| `.standards.yaml` | `repository.owner` and `repository.visibility` |
+| `.standards.yaml` | `repository.owner`, `repository.visibility`, and `repository.source` |
 | `.devcontainer/devcontainer.json` | root `name` |
 | `.paperclip/harness.json` | root `platform` |
 | `.paperclip/rules.md` | repository identity in the generated first heading |
+
+`repository.source` records the public identity the overlay is rewriting
+`repository.owner`/`repository.name` away from, as `<owner>/<name>` -- the fork's
+own manifest describes its own owner while still naming the source it was cloned
+from. The overlay writes it on the first `init` and keeps it current on every
+later `plan`/`prepare`; a manifest that predates the field, or the canonical
+repository's own manifest, simply omits it. See
+[Which workflows run where](#which-workflows-run-where) for why the fork needs
+it at all.
 
 Unexpected engine differences, extra policy overrides, derived configuration drift,
 or missing/symlinked configuration files stop the operation. Unknown upstream YAML
@@ -193,10 +202,19 @@ Engine-only jobs carry one condition:
 if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
 ```
 
-Repository variables are not inherited by a fork, so the literal decides there. It is the
-`repository.owner` and `repository.name` of `.standards.yaml`; a test in `internal/forge`
-parses every workflow and fails when the literal differs from the manifest, or when a
-scheduled or publishing job has no guard.
+Repository variables are not inherited by a fork, so the literal decides there. The guard
+resolves the repository identity from `.standards.yaml`: `repository.source` when the
+manifest carries one, otherwise `repository.owner`/`repository.name`. This is why the overlay
+records `repository.source` (see [Plan from reviewed
+commits](#plan-from-reviewed-commits)): the overlay rewrites `repository.owner` to the fork's
+own identity but never touches the checked-in workflow files, whose guard literals keep
+naming the public source. Reading `repository.owner`/`repository.name` there instead would
+compare the fork's own identity against a literal that still names the source, read every
+guarded job as conditional, and desynchronize the fork's required status contexts from the
+checked-in ruleset -- the fork's own guard and ruleset tests failing against its own checkout
+(#255). A test in `internal/forge` parses every workflow and fails when the literal differs
+from the manifest identity, or when a scheduled or publishing job has no guard, and a second
+test replays both checks against a temp copy of the manifest with the owner overlay applied.
 
 | Workflow | Canonical repository | Any other copy |
 | :-- | :-- | :-- |

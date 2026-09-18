@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -19,6 +20,15 @@ type RepositoryMetadata struct {
 	Description string   `yaml:"description"`
 	Homepage    string   `yaml:"homepage"`
 	Topics      []string `yaml:"topics"`
+	// Source records the public repository this manifest was overlaid from, as
+	// "<owner>/<name>". internal/operationalsync's owner overlay writes it because the
+	// overlay rewrites Owner to the operational fork's own identity; every consumer that
+	// must agree with files the overlay never touches (workflow repository guards in
+	// internal/forge, and the ruleset context computation built on them) prefers Source
+	// over Owner/Name so a fork's own tests pass against the public identity those files
+	// still carry. Empty on the canonical repository and on any manifest that predates
+	// the field.
+	Source string `yaml:"source,omitempty"`
 }
 
 // ComplexityPolicy defines bounds on code complexity and function size.
@@ -203,6 +213,9 @@ func LoadManifest(path string) (*Manifest, error) {
 	if err := validateManifestRegister(m); err != nil {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
+	if err := validateManifestRepositorySource(m); err != nil {
+		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
+	}
 
 	return m, nil
 }
@@ -230,6 +243,21 @@ func validateManifestReviewPolicy(m *Manifest) error {
 	}
 	_, _, err := m.Overrides.BranchProtection.EffectiveReviewRequirements()
 	return err
+}
+
+// validateManifestRepositorySource rejects a repository.source that is not an "<owner>/<name>"
+// identity. Empty is valid: it is the canonical repository's shape, and the shape every
+// manifest had before the field existed. A source equal to owner/name is valid too -- it is
+// redundant, not wrong, and manifestIdentity in internal/forge reads it the same either way.
+func validateManifestRepositorySource(m *Manifest) error {
+	if m == nil || m.Repository.Source == "" {
+		return nil
+	}
+	owner, name, ok := strings.Cut(m.Repository.Source, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return fmt.Errorf("repository.source %q is not an owner/name identity", m.Repository.Source)
+	}
+	return nil
 }
 
 // DefaultPolicy returns a baseline default policy.

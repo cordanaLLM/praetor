@@ -1,0 +1,3 @@
+type: fixed
+title: Resolve the repository identity from the recorded public source so an operational fork's own guard and ruleset tests pass after the owner overlay
+breaking: false

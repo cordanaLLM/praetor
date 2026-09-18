@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestJSONRejectsNestedReplacementAndDuplicateKeys(t *testing.T) {
@@ -32,10 +34,64 @@ func TestManifestRejectsIdentityAnchors(t *testing.T) {
 	for _, raw := range []string{
 		"version: 1\nrepository:\n owner: &owner public\n name: praetor\n visibility: public\nother: *owner\n",
 		"version: 1\nrepository: &repo\n owner: public\n name: praetor\n visibility: public\nother: *repo\n",
+		"version: 1\nrepository:\n owner: public\n name: praetor\n visibility: public\n source: &source public/praetor\nother: *source\n",
 	} {
 		if _, err := ownerManifest([]byte(raw), identity{"private", "praetor", "private"}); err == nil {
 			t.Fatal("anchor allowed unrelated alias mutation")
 		}
+	}
+}
+
+// TestOwnerManifestWritesRepositorySource is the positive dimension for #255: overlaying a
+// canonical manifest that has never carried repository.source inserts it, set to the source
+// identity the overlay is rewriting owner/name away from.
+func TestOwnerManifestWritesRepositorySource(t *testing.T) {
+	raw := []byte("version: 1\nrepository:\n  owner: public\n  name: praetor\n  visibility: public\n")
+	out, err := ownerManifest(raw, identity{"private", "praetor", "private"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, decoded, err := manifest(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Owner != "private" || decoded.Visibility != "private" {
+		t.Fatalf("owner/visibility not overlaid: %+v", decoded)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(out, &doc); err != nil {
+		t.Fatal(err)
+	}
+	repo, ok := doc["repository"].(map[string]any)
+	if !ok {
+		t.Fatalf("repository section decoded as %T, want map[string]any", doc["repository"])
+	}
+	if repo["source"] != "public/praetor" {
+		t.Fatalf("repository.source = %v, want public/praetor", repo["source"])
+	}
+}
+
+// TestOwnerManifestOverwritesStaleRepositorySource is the boundary dimension: a manifest that
+// already declares repository.source (a second sync round, applied to the owner's own
+// previously overlaid file re-read as a base -- or any stray prior value) gets the field
+// forced to the freshly computed source identity, the same way owner and visibility already
+// are, rather than preserving whatever value was already there.
+func TestOwnerManifestOverwritesStaleRepositorySource(t *testing.T) {
+	raw := []byte("version: 1\nrepository:\n  owner: public\n  name: praetor\n  visibility: public\n  source: stale/value\n")
+	out, err := ownerManifest(raw, identity{"private", "praetor", "private"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(out, &doc); err != nil {
+		t.Fatal(err)
+	}
+	repo, ok := doc["repository"].(map[string]any)
+	if !ok {
+		t.Fatalf("repository section decoded as %T, want map[string]any", doc["repository"])
+	}
+	if repo["source"] != "public/praetor" {
+		t.Fatalf("repository.source = %v, want public/praetor to overwrite the stale value", repo["source"])
 	}
 }
 

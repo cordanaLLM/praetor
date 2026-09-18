@@ -54,6 +54,14 @@ func guardIdentity(files []workflowFile, repoPath string) (string, error) {
 // manifestIdentity returns "<owner>/<name>" from the repository manifest, or "" when the
 // repository has no manifest or the manifest names no repository. Without an identity a
 // guarded job stays conditional, which is the behaviour before guards existed.
+//
+// repository.source, when present, is preferred over owner/name. An operational fork's owner
+// overlay (internal/operationalsync) rewrites owner/name to the fork's own identity but never
+// touches the checked-in workflow files, so their repository guard literals keep naming the
+// public source. Resolving owner/name there would make guardHoldsInRepository compare the
+// fork's identity against a literal that still names the source and read every guarded job as
+// conditional, which is exactly issue #255: the fork's own guard and ruleset tests fail against
+// its own checkout. config.LoadManifest has already rejected a malformed source.
 func manifestIdentity(repoPath string) (string, error) {
 	manifest, err := config.LoadManifest(filepath.Join(repoPath, manifestFileName))
 	if errors.Is(err, os.ErrNotExist) {
@@ -61,6 +69,9 @@ func manifestIdentity(repoPath string) (string, error) {
 	}
 	if err != nil {
 		return "", fmt.Errorf("repository identity: %w", err)
+	}
+	if manifest.Repository.Source != "" {
+		return manifest.Repository.Source, nil
 	}
 	if manifest.Repository.Owner == "" || manifest.Repository.Name == "" {
 		return "", nil

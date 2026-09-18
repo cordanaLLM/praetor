@@ -84,6 +84,7 @@ func newSyncFixtureWith(t *testing.T, ignoredBaseFiles map[string]string) syncFi
 		if path == ownerPaths[0] {
 			data = strings.ReplaceAll(data, "owner: public", "owner: private")
 			data = strings.ReplaceAll(data, "visibility: public", "visibility: private")
+			data = strings.Replace(data, "visibility: private\n", "visibility: private\n  source: public/praetor\n", 1)
 		}
 		testWrite(t, owner, path, data)
 	}

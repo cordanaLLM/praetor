@@ -124,4 +124,48 @@ func TestLoadManifestRepositoryManifestParses(t *testing.T) {
 	if m.Receipt == nil || m.Receipt.PublicKey == "" {
 		t.Error("the repository manifest must carry its pinned receipt key")
 	}
+	if m.Repository.Source != "" {
+		t.Errorf("the canonical manifest must not carry an overlay source, got %q", m.Repository.Source)
+	}
+}
+
+// TestLoadManifestAcceptsRepositorySource is the positive dimension for #255: the field
+// internal/operationalsync's owner overlay writes into a fork's manifest, and
+// internal/forge's manifestIdentity reads in preference to owner/name, round-trips.
+func TestLoadManifestAcceptsRepositorySource(t *testing.T) {
+	path := writeManifest(t, "version: 1\nrepository:\n  owner: \"lusoris\"\n  name: \"praetor\"\n  visibility: \"private\"\n  source: \"cordanaLLM/praetor\"\n")
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	if m.Repository.Source != "cordanaLLM/praetor" {
+		t.Errorf("repository.source = %q, want cordanaLLM/praetor", m.Repository.Source)
+	}
+}
+
+// TestLoadManifestRejectsMalformedRepositorySource is the negative dimension: a source that
+// is not an "<owner>/<name>" identity must fail closed at load time rather than reach
+// manifestIdentity, which would otherwise have to choose between an unusable identity and a
+// silent fallback to owner/name -- exactly the ambiguity this field exists to remove.
+func TestLoadManifestRejectsMalformedRepositorySource(t *testing.T) {
+	for _, source := range []string{"not-an-identity", "cordanaLLM/praetor/extra", "/praetor", "cordanaLLM/", "/"} {
+		path := writeManifest(t, "version: 1\nrepository:\n  owner: \"lusoris\"\n  name: \"praetor\"\n  visibility: \"private\"\n  source: \""+source+"\"\n")
+		if _, err := LoadManifest(path); err == nil {
+			t.Errorf("repository.source %q was accepted", source)
+		}
+	}
+}
+
+// TestLoadManifestRepositorySourceBoundary is the boundary dimension: an omitted source keeps
+// today's canonical-repository behaviour (the zero value, not an error), and a source equal
+// to the manifest's own owner/name is accepted -- redundant, not malformed.
+func TestLoadManifestRepositorySourceBoundary(t *testing.T) {
+	omitted, err := LoadManifest(writeManifest(t, "version: 1\nrepository:\n  owner: \"cordanaLLM\"\n  name: \"praetor\"\n  visibility: \"public\"\n"))
+	if err != nil || omitted.Repository.Source != "" {
+		t.Errorf("omitted source: %+v, %v", omitted, err)
+	}
+	redundant, err := LoadManifest(writeManifest(t, "version: 1\nrepository:\n  owner: \"cordanaLLM\"\n  name: \"praetor\"\n  visibility: \"public\"\n  source: \"cordanaLLM/praetor\"\n"))
+	if err != nil || redundant.Repository.Source != "cordanaLLM/praetor" {
+		t.Errorf("source equal to owner/name: %+v, %v", redundant, err)
+	}
 }
