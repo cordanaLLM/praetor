@@ -62,7 +62,10 @@ func TestOwnerManifestWritesRepositorySource(t *testing.T) {
 	if err := yaml.Unmarshal(out, &doc); err != nil {
 		t.Fatal(err)
 	}
-	repo, _ := doc["repository"].(map[string]any)
+	repo, ok := doc["repository"].(map[string]any)
+	if !ok {
+		t.Fatalf("repository section decoded as %T, want map[string]any", doc["repository"])
+	}
 	if repo["source"] != "public/praetor" {
 		t.Fatalf("repository.source = %v, want public/praetor", repo["source"])
 	}
@@ -83,7 +86,10 @@ func TestOwnerManifestOverwritesStaleRepositorySource(t *testing.T) {
 	if err := yaml.Unmarshal(out, &doc); err != nil {
 		t.Fatal(err)
 	}
-	repo, _ := doc["repository"].(map[string]any)
+	repo, ok := doc["repository"].(map[string]any)
+	if !ok {
+		t.Fatalf("repository section decoded as %T, want map[string]any", doc["repository"])
+	}
 	if repo["source"] != "public/praetor" {
 		t.Fatalf("repository.source = %v, want public/praetor to overwrite the stale value", repo["source"])
 	}
