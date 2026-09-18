@@ -1,0 +1,4 @@
+type: fixed
+title: "changelog verify and the release render load every tracked fragment again: three fragments carried a package key the strict loader rejects, and a test now fails the change that adds such a key"
+issue: "194"
+breaking: false
