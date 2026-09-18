@@ -1,0 +1,4 @@
+type: fixed
+title: The flavor sync moves every flavor whose source exists and leaves a pending one untouched instead of failing the whole run, publishes the moved tags itself with one atomic push, no longer aliases latest to main before the first release, and creates moving tags that survive tag.gpgSign
+issue: "205"
+breaking: false

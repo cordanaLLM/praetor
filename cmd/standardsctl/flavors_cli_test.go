@@ -5,16 +5,17 @@ package main
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/flavors"
 )
 
-func TestApplyFlavorTransitions_Negative_RefusesUnresolvedSourceRef(t *testing.T) {
+func TestApplyFlavorTransitions_Negative_StrictRefusesUnresolvedSourceRef(t *testing.T) {
 	transitions := []flavors.TagTransition{
-		// A resolvable transition listed first: the plan must be rejected whole, so this
-		// tag is never moved even though it precedes the unresolvable one.
+		// A resolvable transition listed first: under --strict the plan must be rejected
+		// whole, so this tag is never moved even though it precedes the unresolvable one.
 		{FlavorName: "bleeding", TargetRef: "refs/heads/main", TargetCommit: "abc", Action: flavors.ActionUpdate},
 		{
 			FlavorName: "latest",
@@ -24,35 +25,54 @@ func TestApplyFlavorTransitions_Negative_RefusesUnresolvedSourceRef(t *testing.T
 		},
 	}
 
-	if err := validateFlavorPlan(transitions); err == nil {
-		t.Fatal("expected plan validation to reject the unresolvable transition")
+	if err := validateFlavorPlan(transitions, true); err == nil {
+		t.Fatal("expected strict plan validation to reject the unresolvable transition")
+	}
+	if err := validateFlavorPlan(transitions, false); err != nil {
+		t.Fatalf("without --strict an unresolved flavor is pending, not an error: %v", err)
 	}
 
 	// The target directory does not matter: the refusal happens before any git call, so
-	// an unresolvable release pointer can never be force-moved onto the checkout.
-	err := applyFlavorTransitions(context.Background(), t.TempDir(), transitions)
+	// under --strict nothing moves when one flavor cannot resolve.
+	moved, err := applyFlavorTransitions(context.Background(), t.TempDir(), transitions, true)
 	if err == nil {
-		t.Fatal("expected an unresolved transition to abort the sync")
+		t.Fatal("expected an unresolved transition to abort the strict sync")
 	}
-	if !strings.Contains(err.Error(), "resolves to no commit") {
-		t.Errorf("unexpected error text: %v", err)
+	if len(moved) != 0 || !strings.Contains(err.Error(), "resolves to no commit") {
+		t.Errorf("unexpected result: moved=%v err=%v", moved, err)
 	}
 }
 
-func TestApplyFlavorTransitions_Positive_NoopsAreNotRetagged(t *testing.T) {
+func TestApplyFlavorTransitions_Negative_RejectsOptionShapedTagName(t *testing.T) {
+	transitions := []flavors.TagTransition{
+		{FlavorName: "--delete", TargetRef: "refs/heads/main", TargetCommit: "abc", Action: flavors.ActionCreate},
+	}
+	if _, err := applyFlavorTransitions(context.Background(), t.TempDir(), transitions, false); err == nil {
+		t.Fatal("a flavor name that git would parse as an option must be refused")
+	}
+}
+
+func TestApplyFlavorTransitions_Positive_NoopsAndPendingAreNotRetagged(t *testing.T) {
 	transitions := []flavors.TagTransition{
 		{FlavorName: "latest", CurrentRef: "abc", TargetRef: "refs/tags/v1.0.0", TargetCommit: "abc", Action: flavors.ActionNoop},
-		{FlavorName: "lts", CurrentRef: "def", TargetRef: "refs/heads/lts-1.x", TargetCommit: "def", Action: flavors.ActionNoop},
+		{FlavorName: "lts", TargetRef: "refs/heads/lts-*", Action: flavors.ActionUnresolved},
 	}
 
-	if err := applyFlavorTransitions(context.Background(), t.TempDir(), transitions); err != nil {
-		t.Fatalf("a plan of noops must not fail: %v", err)
+	// No git repository exists here, so any git call would fail: success proves that
+	// neither the noop nor the pending flavor reached git.
+	moved, err := applyFlavorTransitions(context.Background(), t.TempDir(), transitions, false)
+	if err != nil {
+		t.Fatalf("a plan of noops and pending flavors must not fail: %v", err)
+	}
+	if len(moved) != 0 {
+		t.Errorf("nothing should have moved, got %v", moved)
 	}
 }
 
 func TestApplyFlavorTransitions_Boundary_EmptyPlan(t *testing.T) {
-	if err := applyFlavorTransitions(context.Background(), t.TempDir(), nil); err != nil {
-		t.Fatalf("an empty plan must succeed: %v", err)
+	moved, err := applyFlavorTransitions(context.Background(), t.TempDir(), nil, true)
+	if err != nil || len(moved) != 0 {
+		t.Fatalf("an empty plan must succeed and move nothing: moved=%v err=%v", moved, err)
 	}
 }
 
@@ -74,5 +94,145 @@ func TestResolveFlavorRef_Negative_RejectsShellMetacharacters(t *testing.T) {
 	}
 	if _, ok := resolveFlavorRef(context.Background(), t.TempDir(), ""); ok {
 		t.Error("an empty ref must not resolve")
+	}
+}
+
+// flavorFixture is a repository shaped like this one before its first release: main has
+// moved past an old `latest` tag, no v* tag and no lts-* branch exist, and a bare
+// repository stands in for the forge.
+type flavorFixture struct {
+	repo, remote, config string
+	env                  []string
+	oldCommit, head      string
+}
+
+const flavorFixtureConfig = `version: 1
+flavors:
+  bleeding: {source_ref: "refs/heads/main"}
+  edge:     {source_ref: "refs/heads/main"}
+  latest:   {source_ref: "refs/tags/v*"}
+  lts:      {source_ref: "refs/heads/lts-*"}
+`
+
+func newFlavorFixture(t *testing.T) flavorFixture {
+	t.Helper()
+	root := t.TempDir()
+	f := flavorFixture{repo: filepath.Join(root, "repo"), remote: filepath.Join(root, "remote.git")}
+	f.config = writeFixtureFile(t, root, "flavors.yaml", flavorFixtureConfig)
+	writeFixtureFile(t, f.repo, "README.md", "one\n")
+	f.env = initGitFixture(t, f.repo)
+	// The code under test inherits the process environment; keep it off the developer's
+	// git configuration the way the fixture's own git calls are.
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(root, "no-such-gitconfig"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(root, "no-such-gitconfig"))
+
+	f.oldCommit = fixtureGit(t, f.repo, f.env, "rev-parse", "HEAD")
+	fixtureGit(t, f.repo, f.env, "tag", "latest")
+	writeFixtureFile(t, f.repo, "README.md", "two\n")
+	gitCommitAll(t, f.repo, f.env, "second")
+	f.head = fixtureGit(t, f.repo, f.env, "rev-parse", "HEAD")
+
+	fixtureGit(t, root, f.env, "init", "-q", "--bare", f.remote)
+	fixtureGit(t, f.repo, f.env, "remote", "add", "origin", f.remote)
+	fixtureGit(t, f.repo, f.env, "push", "-q", "origin", "main", "refs/tags/latest")
+	return f
+}
+
+func fixtureGit(t *testing.T, dir string, env []string, args ...string) string {
+	t.Helper()
+	out, err := runFixtureGit(t, dir, env, args...)
+	if err != nil {
+		t.Fatalf("git %v: %v (%s)", args, err, out)
+	}
+	return strings.TrimSpace(out)
+}
+
+// tagAt returns the commit a tag points at in dir, or "" when the tag is absent.
+func (f flavorFixture) tagAt(t *testing.T, dir, name string) string {
+	t.Helper()
+	out, err := runFixtureGit(t, dir, f.env, "rev-parse", "--verify", "--quiet", "refs/tags/"+name+"^{commit}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+func (f flavorFixture) sync(t *testing.T, extra ...string) (string, error) {
+	t.Helper()
+	args := append([]string{"sync", "--config=" + f.config, "--dir=" + f.repo}, extra...)
+	return captureStdout(t, func() error { return runFlavors(args) })
+}
+
+func TestRunFlavorsSync_Positive_MovesResolvableFlavorsAndPublishesThem(t *testing.T) {
+	f := newFlavorFixture(t)
+
+	out, err := f.sync(t, "--push")
+	if err != nil {
+		t.Fatalf("sync must succeed while latest and lts are pending: %v\n%s", err, out)
+	}
+	for _, dir := range []string{f.repo, f.remote} {
+		for _, name := range []string{"bleeding", "edge"} {
+			if got := f.tagAt(t, dir, name); got != f.head {
+				t.Errorf("%s in %s = %q, want main %q", name, filepath.Base(dir), got, f.head)
+			}
+		}
+		// The stale stable pointer is left where it was, never aliased to main.
+		if got := f.tagAt(t, dir, "latest"); got != f.oldCommit {
+			t.Errorf("latest in %s = %q, want untouched %q", filepath.Base(dir), got, f.oldCommit)
+		}
+		if got := f.tagAt(t, dir, "lts"); got != "" {
+			t.Errorf("lts must stay absent in %s, got %q", filepath.Base(dir), got)
+		}
+	}
+	mustContain(t, out, "Pending latest", "Pending lts", "2 tag(s) moved, 0 already current, 2 pending",
+		"Published 2 flavor tag(s) to origin: bleeding, edge")
+}
+
+func TestRunFlavorsSync_Negative_StrictRefusesBeforeAnyTagMoves(t *testing.T) {
+	f := newFlavorFixture(t)
+
+	if out, err := f.sync(t, "--strict", "--push"); err == nil {
+		t.Fatalf("--strict must fail while latest cannot resolve:\n%s", out)
+	}
+	for _, dir := range []string{f.repo, f.remote} {
+		if got := f.tagAt(t, dir, "bleeding"); got != "" {
+			t.Errorf("a refused strict sync moved bleeding in %s to %q", filepath.Base(dir), got)
+		}
+	}
+}
+
+func TestRunFlavorsSync_Boundary_SigningConfigAndNothingToPublish(t *testing.T) {
+	f := newFlavorFixture(t)
+	// A workstation that signs every tag. Without --no-sign, `git tag -f` fails here
+	// with "no tag message" and the sync never gets past its first flavor.
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "tag.gpgSign")
+	t.Setenv("GIT_CONFIG_VALUE_0", "true")
+
+	if out, err := f.sync(t); err != nil {
+		t.Fatalf("sync under tag.gpgSign=true failed: %v\n%s", err, out)
+	}
+	if kind := fixtureGit(t, f.repo, f.env, "cat-file", "-t", "refs/tags/bleeding"); kind != "commit" {
+		t.Errorf("moving tag should be lightweight, got a %s object", kind)
+	}
+
+	// Second run: every resolvable flavor is current, so --push must not contact the
+	// remote at all. The remote named here does not exist and would fail a push.
+	out, err := f.sync(t, "--push", "--remote=no-such-remote")
+	if err != nil {
+		t.Fatalf("a sync with nothing to publish must not push: %v\n%s", err, out)
+	}
+	mustContain(t, out, "0 tag(s) moved, 2 already current, 2 pending", "Nothing to publish")
+}
+
+func TestPushFlavorTags_Negative_UnusableOrMissingRemote(t *testing.T) {
+	f := newFlavorFixture(t)
+	ctx := context.Background()
+
+	if err := pushFlavorTags(ctx, f.repo, "--upload-pack=touch", []string{"latest"}); err == nil {
+		t.Error("an option-shaped remote must be refused before git runs")
+	}
+	if err := pushFlavorTags(ctx, f.repo, "no-such-remote", []string{"latest"}); err == nil {
+		t.Error("a push to a remote that does not exist must fail")
 	}
 }
