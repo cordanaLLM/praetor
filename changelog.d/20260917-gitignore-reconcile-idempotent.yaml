@@ -1,0 +1,3 @@
+type: fixed
+title: Reconcile the adopted .gitignore line by line and ignore the gate worktree directory
+breaking: false
