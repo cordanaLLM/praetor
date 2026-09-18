@@ -12,36 +12,29 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// stateCommands maps each state subcommand to its handler.
+var stateCommands = map[string]func([]string) error{
+	"init":         runStateInit,
+	"sync":         runStateSync,
+	"status":       runStateStatus,
+	"audit":        runStateAudit,
+	"compact":      runStateCompact,
+	"migrate-bugs": runStateMigrateBugs,
+	"task":         runStateTask,
+	"bug":          runStateBug,
+	"question":     runStateQuestion,
+}
+
 func runState(args []string) error {
-	if len(args) == 0 {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		printStateUsage()
 		return nil
 	}
-
-	sub := args[0]
-	subArgs := args[1:]
-
-	switch sub {
-	case "init":
-		return runStateInit(subArgs)
-	case "sync":
-		return runStateSync(subArgs)
-	case "status":
-		return runStateStatus(subArgs)
-	case "audit":
-		return runStateAudit(subArgs)
-	case "task":
-		return runStateTask(subArgs)
-	case "bug":
-		return runStateBug(subArgs)
-	case "question":
-		return runStateQuestion(subArgs)
-	case "-h", "--help", "help":
-		printStateUsage()
-		return nil
-	default:
-		return fmt.Errorf("unknown state subcommand: %s", sub)
+	run, ok := stateCommands[args[0]]
+	if !ok {
+		return fmt.Errorf("unknown state subcommand: %s", args[0])
 	}
+	return run(args[1:])
 }
 
 func printStateUsage() {
@@ -51,6 +44,8 @@ func printStateUsage() {
 	fmt.Println("  sync [dir|--dir=.] [--log=\"message\"] [--verify] Synchronize state, or verify its freshness without writes")
 	fmt.Println("  status [dir|--dir=.]           Inspect active session state (read-only; never writes)")
 	fmt.Println("  audit [dir|--dir=.]            Audit .workingdir/ for required files and P0 blockers")
+	fmt.Println("  compact [dir|--dir=.]          One-time: rewrite old STATE.md entries compact, drop old markers, resync")
+	fmt.Println("  migrate-bugs [dir|--dir=.]     One-time: move BUGS.md inline metadata to bugs.meta.json, verify, resync")
 	fmt.Println("  task [add|complete|list|archive] Manage active tasks in OPEN.md & BACKLOG.md")
 	fmt.Println("  bug [add|list|resolve] [args]  Manage bugs ledger (BUGS.md)")
 	fmt.Println("  question [add|list|decide]     Manage user questions and decisions (QUESTIONS.md)")
@@ -180,6 +175,46 @@ func runStateStatus(args []string) error {
 	fmt.Printf("  Open Bugs:         %d\n", snap.OpenBugs)
 	fmt.Printf("  Pending Questions: %d\n", snap.PendingQs)
 	fmt.Printf("  Inspected At:      %s\n", snap.LastUpdated.Format(time.RFC3339))
+	return nil
+}
+
+func runStateCompact(args []string) error {
+	dirFlag, rest, err := stateArgs("state compact", args, nil)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	report, err := state.CompactState(ctx, stateDir(dirFlag, rest, 0))
+	if err != nil {
+		return fmt.Errorf("state compact failed: %w", err)
+	}
+	if !report.Changed {
+		fmt.Printf("compact: already compact, no change (%d bytes)\n", report.BytesBefore)
+		return nil
+	}
+	fmt.Printf("compact: %d entries rewritten, %d kept, %d markers dropped, %d -> %d bytes, resynced\n",
+		report.Rewritten, report.Kept, report.MarkersDropped, report.BytesBefore, report.BytesAfter)
+	return nil
+}
+
+func runStateMigrateBugs(args []string) error {
+	dirFlag, rest, err := stateArgs("state migrate-bugs", args, nil)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	report, err := state.MigrateBugMetadata(ctx, stateDir(dirFlag, rest, 0))
+	if err != nil {
+		return fmt.Errorf("state migrate-bugs failed: %w", err)
+	}
+	if !report.Changed {
+		fmt.Printf("migrate-bugs: nothing to migrate, no change (%d rows)\n", report.Rows)
+		return nil
+	}
+	fmt.Printf("migrate-bugs: %d of %d rows moved, round trip ok, BUGS.md %d -> %d bytes, bugs.meta.json %d bytes, resynced\n",
+		report.Migrated, report.Rows, report.BytesBefore, report.BytesAfter, report.SidecarBytes)
 	return nil
 }
 

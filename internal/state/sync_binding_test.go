@@ -36,7 +36,7 @@ func TestVerifyStateSyncReadOnlyAndPrivateEvidenceExcluded(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertIntegrityFile(t, path, string(before))
-	if !strings.Contains(string(before), "**Dirty Paths**: 0") {
+	if !strings.Contains(string(before), " | git available clean\n") {
 		t.Fatal("sync did not persist working tree observation")
 	}
 }

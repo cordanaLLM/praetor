@@ -8,6 +8,7 @@ import (
 
 type bugRow struct {
 	bug        BugEntry
+	form       bugRowForm
 	start, end int
 }
 
@@ -19,13 +20,18 @@ type bugDocument struct {
 	header, table, separator bool
 	fence                    string
 	seen                     map[string]bool
+	// meta is the sidecar index v2 rows read from. Writers update it in place;
+	// it is persisted with the document.
+	meta bugMetaIndex
 }
 
-func parseBugDocument(text string) (*bugDocument, error) {
+// parseBugDocument validates a whole ledger. index is the sidecar content, or
+// nil when there is none; a v2 row without an index entry is an error.
+func parseBugDocument(text string, index bugMetaIndex) (*bugDocument, error) {
 	if len(text) > maxBugLedgerBytes || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
 		return nil, fmt.Errorf("bug ledger must be UTF-8 without NUL, at most %d bytes", maxBugLedgerBytes)
 	}
-	doc := &bugDocument{text: text, newline: "\n", seen: make(map[string]bool)}
+	doc := &bugDocument{text: text, newline: "\n", seen: make(map[string]bool), meta: index}
 	if strings.Contains(text, "\r\n") {
 		doc.newline = "\r\n"
 	}
@@ -109,7 +115,7 @@ func claimsBugRow(line string) bool {
 }
 
 func (doc *bugDocument) addRow(body string, start, end int) error {
-	bug, err := decodeBugRow(body)
+	bug, form, err := decodeBugRow(body, doc.meta)
 	if err != nil {
 		return err
 	}
@@ -120,7 +126,7 @@ func (doc *bugDocument) addRow(body string, start, end int) error {
 		return fmt.Errorf("bug count exceeds %d", maxBugEntries)
 	}
 	doc.seen[bug.ID] = true
-	doc.rows = append(doc.rows, bugRow{bug, start, end})
+	doc.rows = append(doc.rows, bugRow{bug, form, start, end})
 	doc.insert = end
 	return nil
 }

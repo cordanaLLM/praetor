@@ -148,24 +148,32 @@ func appendStateLog(ctx context.Context, rootPath string, snap *StateSnapshot, s
 	if err != nil {
 		return fmt.Errorf("read STATE.md before append: %w", err)
 	}
+	_, err = writeStateEntry(ctx, stateFile, content, supersededBase(content), snap, summary)
+	return err
+}
 
-	timeStr := snap.LastUpdated.Format("2006-01-02 15:04:05 UTC")
-	logMsg := summary
-	if logMsg == "" {
-		logMsg = "Automated state synchronization"
+// supersededBase drops the trailing sync marker. Only the last marker is ever
+// verified, and the marker written with the new entry supersedes it.
+func supersededBase(content []byte) string {
+	if match := syncMarker.FindIndex(content); match != nil {
+		return string(content[:match[0]])
 	}
+	return string(content)
+}
 
-	entry := fmt.Sprintf("\n### [%s] Commit `%s` on `%s`\n- **Activity**: %s\n- **Tasks**: %d open, %d completed | **Open Bugs**: %d | **Pending Questions**: %d\n",
-		timeStr, snap.HeadSHA, snap.Branch, logMsg, snap.OpenTasks, snap.CompletedTasks, snap.OpenBugs, snap.PendingQs)
-	entry += fmt.Sprintf("- **Git State**: %s | **Clean**: %t | **Dirty Paths**: %d\n", snap.GitState, snap.Clean, snap.DirtyCount)
-	updated := string(content) + entry
+// writeStateEntry appends one compact entry and its sync marker to base and
+// replaces STATE.md, provided the file still holds expected. snap.StateHash
+// carries the binding in and the marker hash out. It returns the bytes written.
+func writeStateEntry(ctx context.Context, stateFile string, expected []byte, base string, snap *StateSnapshot, summary string) (int, error) {
+	updated := base + "\n" + entryFromSnapshot(snap, summary).render()
 	snap.StateHash = stateLogHash(snap.StateHash, []byte(updated))
 	updated += "\n<!-- praetor-state:v1 sha256:" + snap.StateHash + " -->\n"
 
 	if len(updated) > contextopt.MaxSourceBytes {
-		return fmt.Errorf("STATE.md append exceeds %d bytes", contextopt.MaxSourceBytes)
+		return 0, fmt.Errorf("STATE.md append exceeds %d bytes", contextopt.MaxSourceBytes)
 	}
-	return contextopt.ReplaceSnapshot(ctx, stateFile, []byte(updated), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: 0o600})
+	options := contextopt.ReplaceOptions{Expected: expected, Exists: true, Mode: 0o600}
+	return len(updated), contextopt.ReplaceSnapshot(ctx, stateFile, []byte(updated), options)
 }
 
 func defaultStateMD() string {

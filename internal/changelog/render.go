@@ -123,7 +123,7 @@ func verifyPublishedChangelog(ctx context.Context, root *os.Root, journal *rende
 }
 
 func publishJournalChangelog(ctx context.Context, repoPath string, repo, fragmentsRoot *os.Root, journal *renderJournal) error {
-	current, exists, err := observeRenderFile(ctx, repo, "CHANGELOG.md")
+	current, exists, err := contextopt.ObserveRootSnapshot(ctx, repo, "CHANGELOG.md")
 	if err != nil {
 		return err
 	}
@@ -159,7 +159,7 @@ func verifyPendingFragments(ctx context.Context, root *os.Root, fragments []frag
 
 func removeRenderedFragments(ctx context.Context, root *os.Root, fragments []fragmentSnapshot) error {
 	for _, fragment := range fragments {
-		data, exists, err := observeRenderFile(ctx, root, fragment.Name)
+		data, exists, err := contextopt.ObserveRootSnapshot(ctx, root, fragment.Name)
 		if err != nil {
 			return err
 		}

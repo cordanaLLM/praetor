@@ -27,6 +27,12 @@ func VerifyStateSync(ctx context.Context, rootPath string) error {
 	if err != nil {
 		return fmt.Errorf("read state synchronization: %w", err)
 	}
+	return verifyStateContent(ctx, rootPath, content)
+}
+
+// verifyStateContent checks the last sync marker of one STATE.md snapshot, so a
+// caller that rewrites the file verifies exactly the bytes it read.
+func verifyStateContent(ctx context.Context, rootPath string, content []byte) error {
 	match := syncMarker.FindSubmatchIndex(content)
 	if match == nil {
 		return fmt.Errorf("state synchronization missing; run `praetorctl state sync .`")
@@ -58,6 +64,11 @@ func stateBinding(ctx context.Context, rootPath string, snap *StateSnapshot) (st
 		}
 		parts = append(parts, name, fmt.Sprintf("%x", sha256.Sum256(content)))
 	}
+	sidecar, err := bindBugSidecar(ctx, root)
+	if err != nil {
+		return "", err
+	}
+	parts = append(parts, sidecar...)
 	if snap.GitState == "available" || snap.GitState == "unborn" {
 		gitParts, err := stateGitBinding(ctx, root, snap.GitState)
 		if err != nil {
@@ -70,6 +81,19 @@ func stateBinding(ctx context.Context, rootPath string, snap *StateSnapshot) (st
 		return "", err
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
+}
+
+// bindBugSidecar binds the bug metadata sidecar when it exists. Ledgers without
+// one keep the binding they had before the sidecar was introduced.
+func bindBugSidecar(ctx context.Context, root string) ([]string, error) {
+	content, present, err := contextopt.ObserveSnapshot(ctx, filepath.Join(root, WorkingDirName, bugMetaName))
+	if err != nil {
+		return nil, fmt.Errorf("bind state ledger %s: %w", bugMetaName, err)
+	}
+	if !present {
+		return nil, nil
+	}
+	return []string{bugMetaName, fmt.Sprintf("%x", sha256.Sum256(content))}, nil
 }
 
 func stateGitBinding(ctx context.Context, root, gitState string) ([]string, error) {
