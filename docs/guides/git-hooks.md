@@ -56,6 +56,38 @@ The root `.dockerignore` also excludes this directory and Git history from local
 container builds; Docker applies its [build-context ignore rules](https://docs.docker.com/build/concepts/context/#dockerignore-files)
 separately from Git.
 
+## What a hook run prints
+
+A hook run prints the output of its jobs and, when a job fails, Lefthook's exit
+status plus one `✗ <job>` line naming it. There is no version banner, summary block,
+per-job success line or color. `.config/lefthook/praetor.yml` sets this with
+`output: [execution_out, failure]` and `colors: false`.
+
+Every run is read by an agent: the hooks fire on each commit, checkout and push and
+on agent lifecycle events, for the main session and for every subagent. Measured
+with Lefthook 2.1.12 on the same inputs, before and after the policy:
+
+| Run | Characters before | Characters after | Escape sequences before |
+| --- | ---: | ---: | ---: |
+| `agent-pre-tool`, allowed command | 1,868 | 27 | 106 |
+| `agent-pre-tool`, blocked command | 2,074 | 266 | 106 |
+| `agent-checkpoint-tool` | 2,379 | 319 | 120 |
+| `agent-state-stop` | 2,092 | 185 | 110 |
+| `pre-commit`, one staged file | 1,857 | 158 | 98 |
+
+None of these runs prints an escape sequence after the change. The markers the native adapters
+read (`PRAETOR_COMMAND_POLICY_OK`, `PRAETOR_CHECKPOINT_SCOPE_OK`,
+`PRAETOR_CHECKPOINT_RESULT=`, `PRAETOR_STATE_RESULT=`) are job output, so they are
+printed exactly as before. `test_hook_output_is_job_output_and_failures_only` in
+`.config/lefthook/scripts/test_hooks.py` pins both halves: a pass prints only its
+marker, and a blocked command still prints its reason and the failed job's name.
+
+For Lefthook's full reporting on one run, set `LEFTHOOK_OUTPUT`, for example
+`LEFTHOOK_OUTPUT=meta,summary,execution git commit -s`. The
+[pinned Lefthook `output` reference](https://github.com/evilmartians/lefthook/blob/v2.1.12/docs/configuration/output.md)
+lists the values. A personal `lefthook-local.yml` can set `output` or `colors`; it is
+loaded after `extends` and wins.
+
 ## Remote checkpoints
 
 The owner approved a separate `checkpoint/*` namespace for unfinished audit work.
