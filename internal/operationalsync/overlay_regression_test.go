@@ -1,6 +1,7 @@
 package operationalsync
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -72,19 +73,28 @@ func TestOwnerManifestWritesRepositorySource(t *testing.T) {
 	}
 }
 
-// TestOwnerManifestOverwritesStaleRepositorySource is the boundary dimension: a manifest that
-// already declares repository.source (a second sync round, applied to the owner's own
-// previously overlaid file re-read as a base -- or any stray prior value) gets the field
-// forced to the freshly computed source identity, the same way owner and visibility already
-// are, rather than preserving whatever value was already there.
-func TestOwnerManifestOverwritesStaleRepositorySource(t *testing.T) {
-	raw := []byte("version: 1\nrepository:\n  owner: public\n  name: praetor\n  visibility: public\n  source: stale/value\n")
-	out, err := ownerManifest(raw, identity{"private", "praetor", "private"})
+// TestOwnerManifestReapplicationIsIdempotent is the positive dimension for #268: applying the
+// overlay to a manifest the same overlay already produced -- the exact shape #265's guard hits
+// when it runs inside the fork it protects, and any real re-sync of an owner checkout -- must
+// keep the recorded repository.source rather than rederiving it from the manifest's own
+// owner/name, which on an already-overlaid manifest names the fork, not the public source. The
+// second application's output must be byte-identical to its input: nothing left to overlay.
+func TestOwnerManifestReapplicationIsIdempotent(t *testing.T) {
+	raw := []byte("version: 1\nrepository:\n  owner: public\n  name: praetor\n  visibility: public\n")
+	owner := identity{"private", "praetor", "private"}
+	once, err := ownerManifest(raw, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
+	twice, err := ownerManifest(once, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(once, twice) {
+		t.Fatalf("reapplying the overlay changed the manifest:\nfirst:  %s\nsecond: %s", once, twice)
+	}
 	var doc map[string]any
-	if err := yaml.Unmarshal(out, &doc); err != nil {
+	if err := yaml.Unmarshal(twice, &doc); err != nil {
 		t.Fatal(err)
 	}
 	repo, ok := doc["repository"].(map[string]any)
@@ -92,7 +102,26 @@ func TestOwnerManifestOverwritesStaleRepositorySource(t *testing.T) {
 		t.Fatalf("repository section decoded as %T, want map[string]any", doc["repository"])
 	}
 	if repo["source"] != "public/praetor" {
-		t.Fatalf("repository.source = %v, want public/praetor to overwrite the stale value", repo["source"])
+		t.Fatalf("repository.source = %v, want public/praetor kept across reapplication", repo["source"])
+	}
+}
+
+// TestOwnerManifestRefusesUntrustworthyRepositorySource is the negative dimension: a manifest
+// whose repository.source cannot be trusted as the public identity -- either malformed, or
+// syntactically fine but naming a repository different from the manifest's own -- is refused
+// rather than silently kept or silently recomputed. A stray or hand-edited source is exactly the
+// case a silent overwrite used to paper over; failing closed forces it to be looked at instead.
+func TestOwnerManifestRefusesUntrustworthyRepositorySource(t *testing.T) {
+	for _, source := range []string{"stale/value", "no-slash", "/praetor", "public/", "a/b/c", " ", "public/ praetor"} {
+		raw := []byte("version: 1\nrepository:\n  owner: public\n  name: praetor\n  visibility: public\n  source: " + source + "\n")
+		if _, err := ownerManifest(raw, identity{"private", "praetor", "private"}); err == nil {
+			t.Fatalf("untrustworthy repository.source accepted: %q", source)
+		}
+	}
+	// A non-string source (here an inline mapping) is refused the same way.
+	raw := []byte("version: 1\nrepository:\n  owner: public\n  name: praetor\n  visibility: public\n  source: {a: b}\n")
+	if _, err := ownerManifest(raw, identity{"private", "praetor", "private"}); err == nil {
+		t.Fatal("non-string repository.source accepted")
 	}
 }
 

@@ -1,0 +1,4 @@
+type: fixed
+title: Keep an already-overlaid manifest's repository.source across a later owner-overlay run instead of rederiving it from the fork's own owner/name, so reapplying the overlay stays idempotent
+issue: "#268"
+breaking: false

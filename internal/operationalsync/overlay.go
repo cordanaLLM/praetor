@@ -111,12 +111,9 @@ func manifest(raw []byte) (*yaml.Node, identity, error) {
 }
 
 func ownerManifest(raw []byte, owner identity) ([]byte, error) {
-	doc, source, err := manifest(raw)
+	doc, current, err := manifest(raw)
 	if err != nil {
 		return nil, err
-	}
-	if source.Name != owner.Name {
-		return nil, errors.New("repository name differs from source")
 	}
 	repo, err := mappingValue(doc.Content[0], "repository")
 	if err != nil {
@@ -124,6 +121,13 @@ func ownerManifest(raw []byte, owner identity) ([]byte, error) {
 	}
 	if repo.Anchor != "" {
 		return nil, errors.New("repository anchor could change unrelated manifest aliases")
+	}
+	source, err := sourceIdentity(repo, current)
+	if err != nil {
+		return nil, err
+	}
+	if source.Name != owner.Name {
+		return nil, errors.New("repository name differs from source")
 	}
 	for key, value := range map[string]string{"owner": owner.Owner, "visibility": owner.Visibility} {
 		node, err := mappingValue(repo, key)
@@ -151,6 +155,30 @@ func ownerManifest(raw []byte, owner identity) ([]byte, error) {
 		return nil, err
 	}
 	return out.Bytes(), nil
+}
+
+// sourceIdentity reports the public identity ownerManifest should record as repository.source.
+// A manifest with no source field yet derives it from the manifest's own current owner/name --
+// the first overlay applied to the canonical manifest (#255). A manifest that already carries a
+// well-formed repository.source keeps that value instead of rederiving it from owner/name: on an
+// already-overlaid manifest owner/name name the fork, not the public source, so rederiving there
+// recorded the fork as its own source every time the overlay ran again (#268, surfaced by #265's
+// guard replaying it inside a real fork). A present source whose name segment differs from the
+// manifest's own name is refused by ownerManifest's existing name check below, the same as a
+// first-overlay manifest whose name never matched owner in the first place.
+func sourceIdentity(repo *yaml.Node, current identity) (identity, error) {
+	node, err := mappingValue(repo, "source")
+	if err != nil {
+		return current, nil
+	}
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" || node.Anchor != "" || node.Value == "" {
+		return identity{}, errors.New("invalid repository.source")
+	}
+	owner, name, ok := strings.Cut(node.Value, "/")
+	if !ok || !identityPart.MatchString(owner) || !identityPart.MatchString(name) {
+		return identity{}, errors.New("invalid repository.source")
+	}
+	return identity{Owner: owner, Name: name}, nil
 }
 
 func ownerJSON(raw []byte, key, before, after string) ([]byte, error) {
