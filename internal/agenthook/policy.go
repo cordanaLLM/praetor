@@ -4,12 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-)
 
-// Bounds of the operator deny list (HISS-02).
-const (
-	MaxOperatorDenyPatterns = 64
-	MaxOperatorPatternBytes = 512
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // denyRule is one compiled pattern with its source, the invariant it enforces and its wording.
@@ -59,10 +55,11 @@ type Policy struct {
 
 // NewPolicy compiles the built-in rules plus the operator deny patterns (RE2). It fails
 // on a pattern that is empty, oversized or does not compile, and on a list over the bound;
-// a policy is never built from a partially accepted list.
+// a policy is never built from a partially accepted list. The bound and the per-pattern
+// checks are config's (`config.ValidateCommandPolicyDeny`), so this package keeps no copy.
 func NewPolicy(operatorDeny []string) (*Policy, error) {
-	if len(operatorDeny) > MaxOperatorDenyPatterns {
-		return nil, fmt.Errorf("operator deny list exceeds %d patterns", MaxOperatorDenyPatterns)
+	if err := config.ValidateCommandPolicyDeny(operatorDeny); err != nil {
+		return nil, err
 	}
 	rules := make([]denyRule, 0, len(builtinEvasion)+1+len(operatorDeny))
 	for _, source := range builtinEvasion {
@@ -70,9 +67,6 @@ func NewPolicy(operatorDeny []string) (*Policy, error) {
 	}
 	rules = append(rules, builtinRule(builtinDevRoot, "DEV-01", topologyMessage))
 	for index, source := range operatorDeny {
-		if source == "" || len(source) > MaxOperatorPatternBytes {
-			return nil, fmt.Errorf("operator deny pattern %d must be 1..%d bytes", index, MaxOperatorPatternBytes)
-		}
 		compiled, err := regexp.Compile(source)
 		if err != nil {
 			return nil, fmt.Errorf("operator deny pattern %d: %w", index, err)

@@ -3,6 +3,8 @@ package agenthook
 import (
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 func TestPolicyCommandBuiltinRules(t *testing.T) {
@@ -69,8 +71,8 @@ func TestNewPolicyOperatorDenyList(t *testing.T) {
 	}
 	for name, list := range map[string][]string{
 		"empty pattern": {""}, "does not compile": {"("}, "lookahead is not RE2": {"(?=x)"},
-		"oversized pattern": {strings.Repeat("a", MaxOperatorPatternBytes+1)},
-		"oversized list":    make([]string, MaxOperatorDenyPatterns+1),
+		"oversized pattern": {strings.Repeat("a", config.MaxCommandPolicyPatternBytes+1)},
+		"oversized list":    make([]string, config.MaxCommandPolicyDenyPatterns+1),
 	} {
 		if compiled, err := NewPolicy(list); err == nil || compiled != nil {
 			t.Errorf("%s accepted", name)
@@ -79,9 +81,9 @@ func TestNewPolicyOperatorDenyList(t *testing.T) {
 }
 
 func TestNewPolicyBounds(t *testing.T) {
-	full := make([]string, MaxOperatorDenyPatterns)
+	full := make([]string, config.MaxCommandPolicyDenyPatterns)
 	for index := range full {
-		full[index] = strings.Repeat("a", MaxOperatorPatternBytes)
+		full[index] = strings.Repeat("a", config.MaxCommandPolicyPatternBytes)
 	}
 	if _, err := NewPolicy(full); err != nil {
 		t.Fatalf("list and patterns at the bound refused: %v", err)
