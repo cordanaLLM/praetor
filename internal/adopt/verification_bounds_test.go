@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -89,8 +90,15 @@ func TestVerificationInputsRejectLinksNewlinesAndCancellation(t *testing.T) {
 		})
 	}
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "injected\nrecipe.csproj"), "<Project/>")
-	if _, err := loadVerificationInputs(t.Context(), root); err == nil {
+	injected := filepath.Join(root, "injected\nrecipe.csproj")
+	// Windows refuses control characters in file names, so a repository there cannot contain
+	// this input at all. Anywhere the name can be created, the refusal is asserted.
+	if err := os.WriteFile(injected, []byte("<Project/>"), 0o644); err != nil {
+		if runtime.GOOS != "windows" {
+			t.Fatalf("write %s: %v", injected, err)
+		}
+		t.Logf("line-break case not run: this platform cannot create the file name (%v)", err)
+	} else if _, err := loadVerificationInputs(t.Context(), root); err == nil {
 		t.Fatal("line break in command path accepted")
 	}
 	cancelled, cancel := context.WithCancel(t.Context())

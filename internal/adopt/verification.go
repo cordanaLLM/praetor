@@ -100,13 +100,33 @@ func addStandardVerification(p *VerificationPlan, inputs verificationInputs) {
 	}
 }
 
+// verificationRecipePrefix starts every generated command line with the shell's exec builtin, so
+// make hands the line to the shell instead of running it directly.
+//
+// GNU make runs a line without a shell metacharacter itself, splitting it with its own parser, and
+// its Windows build does that differently from sh. Measured with GNU Make 4.4.1 for Windows32 and
+// Git for Windows' sh: the argument project'quote.csproj, quoted as below, arrived merged with
+// every argument after it, and a quoted ~ arrived as the home directory. With exec in the line
+// make recognizes a builtin and passes the line to sh, which delivers every argument as quoted;
+// exec still replaces the shell, so the exit status is the command's own.
+const verificationRecipePrefix = "\t@exec "
+
+// priorVerificationRecipePrefix is how generated command lines began before
+// verificationRecipePrefix. A Makefile rendered that way is still Praetor's own output and must
+// not be mistaken for a custom verify-all that adoption has to preserve.
+const priorVerificationRecipePrefix = "\t@"
+
 func verificationRecipe(plan *VerificationPlan, commands [][]string) string {
+	return verificationRecipeWith(plan, commands, verificationRecipePrefix)
+}
+
+func verificationRecipeWith(plan *VerificationPlan, commands [][]string, prefix string) string {
 	if plan.Status == verificationUnavailable || emptyVerificationCommands(commands) {
 		return "\t@printf '%s\\n' 'Project verification unavailable; see the adoption report and AGENTS.md.' >&2\n\t@exit 1\n"
 	}
 	var result strings.Builder
 	for _, command := range commands {
-		result.WriteString("\t@")
+		result.WriteString(prefix)
 		result.WriteString(strings.ReplaceAll(verificationCommand(command), "$", "$$"))
 		result.WriteByte('\n')
 	}
