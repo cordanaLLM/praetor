@@ -155,8 +155,10 @@ func defaultTemplateContent(path, repoName, owner string) string {
 		return "# Clippy linting configuration\navoid-breaking-exported-api = true\n"
 	case "tsconfig.json":
 		return "{\n  \"compilerOptions\": {\n    \"target\": \"es2022\",\n    \"module\": \"commonjs\",\n    \"strict\": true,\n    \"esModuleInterop\": true,\n    \"skipLibCheck\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"outDir\": \"./dist\"\n  },\n  \"include\": [\"src/**/*\"]\n}\n"
-	case ".eslintrc.json":
-		return "{\n  \"env\": {\n    \"node\": true,\n    \"es2022\": true\n  },\n  \"extends\": [\"eslint:recommended\"],\n  \"parserOptions\": {\n    \"ecmaVersion\": \"latest\",\n    \"sourceType\": \"module\"\n  }\n}\n"
+	case eslintConfigPath:
+		return eslintFlatConfig
+	case "playwright.config.ts":
+		return playwrightConfig
 	case "checkstyle.xml":
 		return "<?xml version=\"1.0\"?>\n<!DOCTYPE module PUBLIC\n  \"-//Checkstyle//DTD Checkstyle Configuration 1.3//EN\"\n  \"https://checkstyle.org/dtds/configuration_1_3.dtd\">\n<module name=\"Checker\">\n  <module name=\"TreeWalker\">\n    <module name=\"AvoidStarImport\"/>\n    <module name=\"NeedBraces\"/>\n  </module>\n</module>\n"
 	case "analysis_options.yaml":

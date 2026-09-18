@@ -1,0 +1,3 @@
+type: fixed
+title: The typescript-node and frontend-svelte flavors scaffold a flat eslint.config.mjs instead of a legacy eslintrc file, accept any existing ESLint config, and no longer scaffold JavaScript that cannot parse
+breaking: false

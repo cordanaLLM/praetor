@@ -200,7 +200,7 @@ func (f *FrontendSvelteFlavor) Detect(repoPath string) bool {
 func (f *FrontendSvelteFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
 		{Path: "playwright.config.ts", Description: "E2E testing configuration"},
-		{Path: ".eslintrc.cjs", Description: "ECMAScript & Svelte linter"},
+		{Path: eslintConfigPath, Description: "ECMAScript & Svelte linter", AltPaths: eslintConfigAlternatives},
 		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
 		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
 		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
@@ -504,12 +504,9 @@ func (f *TypeScriptNodeFlavor) RequiredTemplates() []TemplateItem {
 			AltPaths:    []string{"tsconfig.base.json", "jsconfig.json"},
 		},
 		{
-			Path:        ".eslintrc.json",
+			Path:        eslintConfigPath,
 			Description: "TypeScript / Node.js static analysis rules",
-			AltPaths: []string{
-				"eslint.config.js", "eslint.config.mjs", "eslint.config.cjs",
-				"eslint.config.ts", "eslint.config.mts", ".eslintrc.cjs", ".eslintrc.js",
-			},
+			AltPaths:    eslintConfigAlternatives,
 		},
 		{Path: ".github/workflows/ci.yml", Description: "Node.js CI test and build matrix"},
 		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},

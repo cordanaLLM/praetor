@@ -64,6 +64,28 @@ result — so whichever language flavor claimed it first would describe the *too
 a Dockerfile it has no use for. Order the markers the same way when you add a profile whose
 repositories are known by their output rather than their source language.
 
+### JavaScript flavors: flat ESLint config, never a second one
+
+`typescript-node` and `frontend-svelte` require ESLint configuration through one shared definition in
+`internal/flavor/eslint.go`:
+
+- **What counts as configured.** Any file ESLint already loads: `eslint.config.{js,mjs,cjs,ts,mts,cts}`,
+  or a legacy `.eslintrc`, `.eslintrc.{js,cjs,json,yaml,yml}`. A repository carrying one conforms, and
+  `flavor apply` writes nothing beside it unless `--force` is passed.
+- **What gets scaffolded.** Only for a repository with none of those: `eslint.config.mjs`, holding
+  ESLint's recommended JavaScript rules in the form the `@eslint/js` README documents. It is `.mjs`
+  because a `.js` file is ESM or CommonJS depending on `package.json` `"type"`, and `.mjs` loads in
+  both kinds of repository.
+- **What is never scaffolded.** Legacy eslintrc files. ESLint v10 cannot load them, which is why the
+  shipped catalog already refuses to name them (`internal/config/shipped_catalog_test.go`).
+
+Two guards in `internal/flavor/eslint_guard_test.go` hold every flavor to this. One fails if any flavor
+requires a legacy eslintrc file. The other fails if any JavaScript or TypeScript template has no content
+of its own and falls through to the `# ... configuration` default, because `#` is a syntax error in
+those languages. `frontend-svelte`'s `playwright.config.ts` now carries the configuration the
+`@playwright/test` documentation shows, without a `baseURL` or `webServer`, since those depend on an
+application server the flavor cannot know about.
+
 Two profiles are worth reading before writing a new one, because their correctness looks like a
 mistake:
 
