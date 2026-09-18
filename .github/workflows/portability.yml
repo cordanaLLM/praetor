@@ -37,8 +37,29 @@ permissions:
   contents: read
 
 jobs:
+  # Outside the canonical repository the matrix is an operator's choice (#189): the macOS
+  # and Windows legs are billed at a multiple on a private repository, and an operational
+  # fork receives many commits per sync. It runs there only when the repository variable
+  # PRAETOR_FORK_PORTABILITY is 'enabled'. HISS-21 forbids a silent skip, so the job below
+  # states the reason on one Linux runner instead of leaving three legs quietly absent.
+  skipped:
+    name: Platform Neutrality skipped (set PRAETOR_FORK_PORTABILITY=enabled to run)
+    if: "!(github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: State Why The Matrix Did Not Run
+        shell: bash
+        run: |
+          reason="Platform Neutrality did not run: ${GITHUB_REPOSITORY} is not the canonical repository and the repository variable PRAETOR_FORK_PORTABILITY is not 'enabled'. No platform was verified by this run."
+          echo "::notice title=Platform Neutrality skipped::${reason}"
+          echo "${reason}" >> "${GITHUB_STEP_SUMMARY}"
+
   harness:
     name: Platform Neutrality (${{ matrix.name }})
+    # The literal is the .standards.yaml identity; internal/forge/workflow_guard_test.go
+    # holds the two equal. The names are required status contexts and stay unchanged.
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:

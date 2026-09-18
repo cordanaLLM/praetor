@@ -37,9 +37,13 @@ func RequiredStatusContexts(ctx context.Context, repoPath string) (_ []string, e
 	if err != nil {
 		return nil, err
 	}
+	identity, err := guardIdentity(files, repoPath)
+	if err != nil {
+		return nil, err
+	}
 	var contexts []string
 	for i := 0; i < len(files) && i < maxWorkflowFiles; i++ {
-		jobs, err := workflowPullRequestContexts(files[i].Data)
+		jobs, err := workflowContextsIn(files[i].Data, identity)
 		if err != nil {
 			return nil, fmt.Errorf("workflow %s: %w", files[i].Name, err)
 		}
@@ -143,8 +147,16 @@ type workflowStrategy struct {
 }
 
 // workflowPullRequestContexts returns the check contexts of one workflow file, or nil
-// when the workflow does not run unconditionally on pull requests.
+// when the workflow does not run unconditionally on pull requests. No repository identity
+// is known, so every job condition makes its job conditional.
 func workflowPullRequestContexts(data []byte) ([]string, error) {
+	return workflowContextsIn(data, "")
+}
+
+// workflowContextsIn is workflowPullRequestContexts inside the repository named identity
+// ("<owner>/<name>", or "" when unknown). A job whose only condition is a repository guard
+// that holds for identity reports on every pull request there and stays a required check.
+func workflowContextsIn(data []byte, identity string) ([]string, error) {
 	var spec workflowSpec
 	if err := yaml.Unmarshal(data, &spec); err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
@@ -163,7 +175,7 @@ func workflowPullRequestContexts(data []byte) ([]string, error) {
 	var contexts []string
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
 		job := spec.Jobs[ids[i]]
-		if strings.TrimSpace(job.If) != "" {
+		if strings.TrimSpace(job.If) != "" && !guardHoldsInRepository(job.If, identity) {
 			continue
 		}
 		// An advisory leg is reported to the forge as successful whether or not it passed,

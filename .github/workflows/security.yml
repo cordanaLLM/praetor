@@ -21,7 +21,11 @@ permissions:
 
 jobs:
   security:
+    # Push and pull request legs run everywhere: verification follows the code. Only the
+    # schedule leg is engine-only and is skipped outside the canonical repository (#189).
+    # The name is a required status context and therefore carries no skip reason.
     name: Go Vulnerability & AST Security Scan
+    if: github.event_name != 'schedule' || github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
     runs-on: ubuntu-latest
     timeout-minutes: 15
 

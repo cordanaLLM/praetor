@@ -16,7 +16,10 @@ permissions:
 
 jobs:
   sync-wiki:
-    name: Mirror docs/wiki to GitHub Wiki
+    # Engine-only: skipped outside the canonical repository (#189). The literal is the
+    # .standards.yaml identity; internal/forge/workflow_guard_test.go holds the two equal.
+    name: Mirror docs/wiki to GitHub Wiki (canonical repository only)
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -17,7 +17,10 @@ permissions:
 
 jobs:
   sync-tags:
-    name: Reconcile Moving Flavor Tags
+    # Engine-only: skipped outside the canonical repository (#189). The literal is the
+    # .standards.yaml identity; internal/forge/workflow_guard_test.go holds the two equal.
+    name: Reconcile Moving Flavor Tags (canonical repository only)
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
