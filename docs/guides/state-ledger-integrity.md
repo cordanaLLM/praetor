@@ -20,26 +20,103 @@ without overwriting another finding's already assigned bug number.
 ## Record format and compatibility
 
 The six visible columns remain ID, Title, Severity, Status, Location and Resolution.
-Legacy rows retain their original interpretation, including literal backslashes
-and HTML entities. New or modified rows encode pipes, line breaks and edge spaces
-and carry a `praetor-bug:v1` HTML comment. That comment contains Base64-encoded JSON
-for Context, CreatedAt and ResolvedAt. Its version, fields and encoding are strict;
-unknown, missing, null, duplicate and case-alias metadata fields are rejected.
+A row ends in one of three forms, and readers accept all three in the same ledger:
+
+| Row ending | Written by | Cells | Context, CreatedAt, ResolvedAt |
+| :--- | :--- | :--- | :--- |
+| nothing | hand-written legacy rows | read literally, including backslashes and HTML entities | none |
+| `<!-- praetor-bug:v1 BASE64 -->` | writers before the sidecar | pipes, line breaks and edge spaces encoded | Base64 JSON inside the comment |
+| `<!-- praetor-bug:v2 -->` | `state bug add` and `state bug resolve` today | encoded as in v1 | `.workingdir/bugs.meta.json`, keyed by bug ID |
+
+The sidecar exists so the file agents read carries no Base64: on this repository
+the v1 comments were 45% of a 505 KB `BUGS.md`. It is one JSON object,
+`{"version":1,"bugs":{"BUG-001":{"context":…,"created_at":…,"resolved_at":…}}}`,
+written with sorted keys. Metadata is strict in both forms: unknown, missing, null,
+duplicate and case-alias fields are rejected, and so are a wrong version, a
+noncanonical ID and a v2 row whose ID has no sidecar record. A sidecar record no
+row refers to is ignored; it is what an interrupted write leaves behind (see below).
 
 The parser requires one complete ledger table. Fenced examples and unrelated
 Markdown are preserved. A claimed bug row outside the table is an error. Limits
-are 1 MiB per ledger, 10,000 records, 16 KiB per text field and IDs through
-`BUG-999999999`. Invalid or oversized updates leave the original ledger intact.
+are 1 MiB per ledger and per sidecar, 10,000 records, 16 KiB per text field and IDs
+through `BUG-999999999`. Invalid or oversized updates leave both files intact.
 
-Go callers should use `ListBugsContext`, `ParseBugsMarkdownStrict` and
-`RenderBugsMarkdownStrict`. The old slice/string-only parser and renderer remain
-for source compatibility but cannot communicate detailed errors. They return no
-partial records or an explicitly invalid document when validation fails.
+Go callers should use `ListBugsContext`, which reads the ledger together with its
+sidecar. `ParseBugsMarkdownStrict` and `RenderBugsMarkdownStrict` work on one
+self-contained document with v1 metadata; the strict parser reports a v2 row as an
+error because the sidecar is not part of its input. The old slice/string-only
+parser and renderer remain for source compatibility but cannot communicate detailed
+errors. They return no partial records or an explicitly invalid document when
+validation fails.
 
 **Refresh older local binaries before writing this format.** An older writer can
-discard the metadata comment or reinterpret encoded cells. `make dev-install`
-refreshes this checkout's local binaries, retains rollback executables and records
-their source identity; see [development MCP](development-mcp.md).
+discard the metadata comment, reinterpret encoded cells, or reject a v2 row it does
+not know. `make dev-install` refreshes this checkout's local binaries, retains
+rollback executables and records their source identity; see
+[development MCP](development-mcp.md).
+
+## STATE.md entries
+
+`praetorctl state sync` appends one entry per call: a `### [time]` heading with the
+commit and branch, then one line with the activity and the counts.
+
+```text
+### [2026-09-18 06:21:57 UTC] `a7c646ac044d9d382dd51fc13862884c7ab937fa` on `main`
+- sync | tasks 130 open 42 done | bugs 569 open | qs 4 pending | git available dirty 1
+
+<!-- praetor-state:v1 sha256:… -->
+```
+
+The activity is the `--log` text collapsed to one line, so it cannot forge a heading
+or a marker. The engine's own texts shorten: no `--log` becomes `sync`, and the
+post-commit hook's text becomes `post-commit sync`.
+
+The marker binds the Git state and the other ledgers (`OPEN.md`, `BACKLOG.md`,
+`BUGS.md`, `QUESTIONS.md`, and `bugs.meta.json` once it exists), so editing any of
+them stales it. Sync removes the previous marker before it appends its own.
+`state sync --verify` and every hook check only the last marker, whose hash covers
+the whole file before it, so older markers were never read. Earlier versions wrote four labelled bullets
+per entry and kept every marker; those entries still verify and are rewritten only
+by `state compact`.
+
+## One-time ledger compaction
+
+Two commands shrink an existing ledger once. Both refuse a ledger whose last sync
+marker no longer verifies, because they finish with a fresh sync and must not
+certify changes nobody synchronized. Run `praetorctl state sync .` first if a hook
+reports the ledger as stale. Both are idempotent: a second run prints
+`no change` and writes nothing.
+
+```bash
+praetorctl state migrate-bugs .   # BUGS.md v1 metadata -> bugs.meta.json
+praetorctl state compact .        # old STATE.md entries -> compact form
+```
+
+`state migrate-bugs` rewrites every v1 row as a v2 row and moves its metadata into
+the sidecar. Legacy rows carry no metadata and stay byte for byte, as does all
+surrounding Markdown. Before writing, it parses the migrated ledger together with
+the new sidecar and compares every record with the original, field by field and in
+order, down to time offsets and nanoseconds. Any difference refuses the migration
+with both files unchanged. On success it resynchronizes.
+
+`state compact` rewrites every engine-written legacy entry into the compact form and
+drops every superseded marker, then appends a certifying entry and the new marker in
+the same atomic write. An entry it does not recognise, including hand-written notes
+under a `### [` heading, is kept line for line; only trailing blank lines are
+normalized. Values are carried over unchanged.
+
+Measured on a copy of this repository's ledger on 2026-09-18 (the real ledger was
+not touched):
+
+| File | Before | After |
+| :--- | ---: | ---: |
+| `STATE.md` (527 entries, 307 markers) | 181,987 B | 100,870 B (-45%) |
+| `BUGS.md` (957 rows, 557 with v1 metadata) | 505,097 B | 291,376 B (-42%) |
+| `bugs.meta.json` | none | 165,190 B |
+
+The `BUGS.md` rows and prose that carried no v1 metadata were byte-identical after
+migration, and an independent decode of every original v1 comment matched its
+sidecar record.
 
 ## Persistence and failure handling
 
@@ -66,8 +143,11 @@ interrupted writer can leave a claim requiring inspection. Those platforms have
 not received the Unix process-contention acceptance.
 
 A mutation writes and syncs `BUGS.md.pending`, checks that the original bytes have
-not changed, renames the candidate and syncs the directory. A failed staging file
-is retained and blocks further mutations. Inspect the candidate, original ledger
+not changed, renames the candidate and syncs the directory. When the sidecar
+changes, it goes through the same protocol as `bugs.meta.json.pending` first, under
+the same lock. An interruption between the two renames leaves sidecar records no
+row refers to yet, never a row without its metadata; the next write replaces them.
+A failed staging file is retained and blocks further mutations. Inspect the candidate, original ledger
 and active writers before recovering an interrupted operation. Never treat an
 error as proof that a rename did not occur: directory sync or cleanup can fail
 after replacement; read back the ledger before retrying.
