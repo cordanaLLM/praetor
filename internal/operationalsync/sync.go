@@ -293,12 +293,27 @@ func (op *operation) readFiles(ctx context.Context, dir, sha string) (map[string
 	return files, nil
 }
 
+// checkOverlay compares the owner tree's four overlay files against what the current engine
+// would generate. .standards.yaml uses equivalentManifestOverlay rather than plain equivalent:
+// an owner manifest overlaid before a field existed (#255/#258 added repository.source) must
+// still pass here so plan/prepare stay usable, while a manifest carrying a present-but-wrong
+// value stays refused (#263).
 func (op *operation) checkOverlay(ctx context.Context, base, current map[string][]byte) error {
 	expected, err := overlay(base, op.owner)
 	if err != nil {
 		return err
 	}
 	for _, path := range ownerPaths {
+		if path == ownerPaths[0] {
+			ok, err := equivalentManifestOverlay(expected[path], current[path])
+			if err != nil {
+				return fmt.Errorf("unexpected owner override in %s: %w", path, err)
+			}
+			if !ok {
+				return fmt.Errorf("unexpected owner override in %s", path)
+			}
+			continue
+		}
 		if !equivalent(path, expected[path], current[path]) {
 			return fmt.Errorf("unexpected owner override in %s", path)
 		}

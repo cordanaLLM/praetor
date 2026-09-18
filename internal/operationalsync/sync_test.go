@@ -49,6 +49,16 @@ func newSyncFixture(t *testing.T) syncFixture {
 // newSyncFixtureWith force-adds ignoredBaseFiles to the public base commit, past its own .gitignore.
 func newSyncFixtureWith(t *testing.T, ignoredBaseFiles map[string]string) syncFixture {
 	t.Helper()
+	return newSyncFixtureCustom(t, ignoredBaseFiles, nil)
+}
+
+// newSyncFixtureCustom builds the same owner/source checkout pair as newSyncFixtureWith, except
+// the owner's .standards.yaml is produced by ownerManifest(publicManifest) when ownerManifest is
+// non-nil, in place of the default owner/visibility/source rewrite. It lets a test build an
+// owner manifest shaped like a fork overlaid before repository.source existed (#255/#258), or
+// one carrying a wrong recorded source, without duplicating the rest of the fixture (#263).
+func newSyncFixtureCustom(t *testing.T, ignoredBaseFiles map[string]string, ownerManifestOverride func(publicManifest string) string) syncFixture {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	t.Cleanup(cancel)
 	g, err := newGit(ctx)
@@ -82,9 +92,13 @@ func newSyncFixtureWith(t *testing.T, ignoredBaseFiles map[string]string) syncFi
 	for _, path := range ownerPaths {
 		data := strings.ReplaceAll(files[path], "public/praetor", "private/praetor")
 		if path == ownerPaths[0] {
-			data = strings.ReplaceAll(data, "owner: public", "owner: private")
-			data = strings.ReplaceAll(data, "visibility: public", "visibility: private")
-			data = strings.Replace(data, "visibility: private\n", "visibility: private\n  source: public/praetor\n", 1)
+			if ownerManifestOverride != nil {
+				data = ownerManifestOverride(files[path])
+			} else {
+				data = strings.ReplaceAll(data, "owner: public", "owner: private")
+				data = strings.ReplaceAll(data, "visibility: public", "visibility: private")
+				data = strings.Replace(data, "visibility: private\n", "visibility: private\n  source: public/praetor\n", 1)
+			}
 		}
 		testWrite(t, owner, path, data)
 	}

@@ -116,6 +116,13 @@ func TestLoadManifestEmptyDocument(t *testing.T) {
 // TestLoadManifestRepositoryManifestParses is the boundary dimension against the real
 // schema in use: this repository's own manifest must satisfy the strict decoder, which is
 // what proves the declared type matches the file the engine actually ships.
+//
+// This checkout is not necessarily the canonical repository: internal/operationalsync's owner
+// overlay rewrites this exact file, in place, in an operational fork. So the repository.source
+// assertion accepts either shape this file legitimately has -- absent (canonical, or a fork
+// checkout before the first overlay commit) or a valid "<owner>/<name>" identity that differs
+// from the checkout's own owner/name (an overlaid fork) -- rather than requiring the canonical
+// shape unconditionally, which fails every overlaid fork's own test suite (#263).
 func TestLoadManifestRepositoryManifestParses(t *testing.T) {
 	m, err := LoadManifest(filepath.Join("..", "..", ".standards.yaml"))
 	if err != nil {
@@ -124,8 +131,15 @@ func TestLoadManifestRepositoryManifestParses(t *testing.T) {
 	if m.Receipt == nil || m.Receipt.PublicKey == "" {
 		t.Error("the repository manifest must carry its pinned receipt key")
 	}
-	if m.Repository.Source != "" {
-		t.Errorf("the canonical manifest must not carry an overlay source, got %q", m.Repository.Source)
+	if m.Repository.Source == "" {
+		return
+	}
+	owner, name, ok := strings.Cut(m.Repository.Source, "/")
+	if !ok || owner == "" || name == "" {
+		t.Errorf("repository.source %q is not an owner/name identity", m.Repository.Source)
+	}
+	if m.Repository.Source == m.Repository.Owner+"/"+m.Repository.Name {
+		t.Errorf("repository.source %q must record the public source, not this checkout's own owner/name", m.Repository.Source)
 	}
 }
 

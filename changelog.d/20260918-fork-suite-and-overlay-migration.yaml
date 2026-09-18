@@ -1,0 +1,4 @@
+type: fixed
+title: Accept the operational form of the repository manifest in the engine's own identity-bound tests, and let plan/prepare migrate an owner manifest overlaid before repository.source existed instead of refusing it forever
+issue: "#263"
+breaking: false
