@@ -108,6 +108,37 @@ func TestExtractArchiveBoundary(t *testing.T) {
 	}
 }
 
+func TestExtractEntriesLimit(t *testing.T) {
+	for _, c := range []struct {
+		entries int
+		ok      bool
+	}{{2, true}, {3, false}} {
+		entries := make([]craftedEntry, 0, c.entries)
+		for i := 0; i < c.entries; i++ {
+			entries = append(entries, file(string(rune('a'+i)), "x"))
+		}
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		compressed, err := gzip.NewReader(craftArchive(t, entries...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = extractEntries(context.Background(), root, tar.NewReader(compressed), 2)
+		if (err == nil) != c.ok {
+			t.Fatalf("%d entries with limit 2: %v", c.entries, err)
+		}
+		if _, statErr := os.Stat(filepath.Join(dir, "c")); statErr == nil {
+			t.Fatal("entry past the limit was written")
+		}
+		if err := errors.Join(root.Close(), compressed.Close()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestLinkStaysInside(t *testing.T) {
 	links := map[string]bool{"lnk": true, "a/inner": true}
 	cases := []struct {

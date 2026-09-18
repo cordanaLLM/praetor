@@ -37,7 +37,7 @@ func extractArchive(ctx context.Context, r io.Reader, dir string) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, decompressed.Close()) }()
-	links, err := extractEntries(ctx, root, tar.NewReader(decompressed))
+	links, err := extractEntries(ctx, root, tar.NewReader(decompressed), maxArchiveEntries)
 	if err != nil {
 		return err
 	}
@@ -47,9 +47,11 @@ func extractArchive(ctx context.Context, r io.Reader, dir string) (err error) {
 	return createLinks(root, links)
 }
 
-func extractEntries(ctx context.Context, root *os.Root, archive *tar.Reader) ([]pendingLink, error) {
+// extractEntries writes every entry but the links, which it returns. An archive holding more
+// than limit entries fails before the first entry past the limit is written.
+func extractEntries(ctx context.Context, root *os.Root, archive *tar.Reader, limit int) ([]pendingLink, error) {
 	var links []pendingLink
-	for i := 0; i <= maxArchiveEntries; i++ {
+	for i := 0; i <= limit; i++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -59,6 +61,9 @@ func extractEntries(ctx context.Context, root *os.Root, archive *tar.Reader) ([]
 		}
 		if err != nil {
 			return nil, err
+		}
+		if i == limit {
+			break
 		}
 		name, err := entryName(header.Name)
 		if err != nil {
@@ -72,7 +77,7 @@ func extractEntries(ctx context.Context, root *os.Root, archive *tar.Reader) ([]
 			return nil, fmt.Errorf("extract %s: %w", header.Name, err)
 		}
 	}
-	return nil, fmt.Errorf("archive holds more than %d entries", maxArchiveEntries)
+	return nil, fmt.Errorf("archive holds more than %d entries", limit)
 }
 
 // entryName converts an archive name to a local host path, refusing absolute names and any
