@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -118,11 +119,36 @@ func TestVerificationRejectsMalformedMetadataBeforeMutation(t *testing.T) {
 	}
 }
 
+// argumentRecorder writes each argument it receives on its own line to "received" in its working
+// directory, as printf '%s\n' "$@" > received did.
+const argumentRecorder = `package main
+
+import (
+	"os"
+	"strings"
+)
+
+func main() {
+	data := ""
+	if len(os.Args) > 1 {
+		data = strings.Join(os.Args[1:], "\n") + "\n"
+	}
+	if err := os.WriteFile("received", []byte(data), 0o600); err != nil {
+		os.Exit(1)
+	}
+}
+`
+
 func TestVerificationCommandArgumentsRemainInertThroughMake(t *testing.T) {
 	root := t.TempDir()
-	writeStub(t, root, "record", "printf '%s\\n' \"$@\" > received\n")
+	// The recorder is a native program, so what it records is what make delivered. As a
+	// "#!/bin/sh" script it was itself an MSYS program on Windows, and the MSYS runtime re-parses
+	// the command line it is started with: project'quote.csproj arrived merged with the
+	// arguments after it and ~ as the home directory. A native recorder measured under GNU Make
+	// 4.4.1 for Windows32 received all nine arguments exactly, with and without sh on PATH.
+	record := testsupport.BuildExecutable(t, root, "record", argumentRecorder)
 	arguments := []string{"project`touch INJECTED_BACKTICK`.csproj", "project$(touch INJECTED_DOLLAR).csproj", "#not-comment", "project'quote.csproj", "~", "$HOME", "semi;touch INJECTED_SEMI", "back\\slash", ""}
-	command := append([]string{filepath.Join(root, "record")}, arguments...)
+	command := append([]string{record}, arguments...)
 	plan := &VerificationPlan{Status: verificationDeclared, Build: [][]string{command}, Test: [][]string{command}}
 	mustWrite(t, filepath.Join(root, "Makefile"), "test:\n"+verificationRecipe(plan, plan.Test))
 	if out, err := util.RunCommand(t.Context(), root, "make", "--no-print-directory", "test"); err != nil {
