@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"testing"
@@ -115,6 +116,13 @@ func TestCommandBytesHelper(t *testing.T) {
 		}
 	case "delay":
 		time.Sleep(3 * time.Second)
+	case "echo":
+		if _, err := io.Copy(os.Stdout, os.Stdin); err != nil {
+			os.Exit(7)
+		}
+		if _, err := fmt.Fprint(os.Stderr, "echoed"); err != nil {
+			os.Exit(7)
+		}
 	default:
 		t.Fatal("unexpected helper mode")
 	}
