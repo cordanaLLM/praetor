@@ -1,0 +1,4 @@
+type: fixed
+title: Classify AGENTS.md, CLAUDE.md and .agents/**/*.md changes as agent paths before documentation, so a pull request touching only those files runs the HISS-16 compile-context --verify gate instead of being skipped as docs-only
+issue: "#256"
+breaking: false

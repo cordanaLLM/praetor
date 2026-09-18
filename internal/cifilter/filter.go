@@ -159,6 +159,16 @@ func ClassifyChanges(files []string) *ChangeSet {
 		}
 		nonStateCount++
 
+		// Agent instruction files (AGENTS.md, CLAUDE.md, .agents/**, .paperclip/**) are
+		// classified before documentation: a docs-only decision skips the HISS-16
+		// compile-context --verify gate, and an agent-only change set must never
+		// take that path even though the files end in .md.
+		if isAgent(p) {
+			nonDocsCount++
+			cs.classifySource(p)
+			continue
+		}
+
 		if isDocumentation(p) {
 			cs.DocsChanged = true
 			continue
