@@ -263,3 +263,99 @@ func TestLightweightDecisionsNeverRequireHeavyChecks(t *testing.T) {
 		}
 	}
 }
+
+// Issue #256: an AGENTS.md-only change set was classified DocsOnly, so
+// ci.yml's run_context_sync gate never fired and the HISS-16
+// compile-context --verify step silently skipped.
+func TestClassifyChanges_AgentOnlyRunsContextSync(t *testing.T) {
+	cs := cifilter.ClassifyChanges([]string{"AGENTS.md"})
+	if cs.DocsOnly {
+		t.Errorf("expected DocsOnly=false for an agent-only change, got true")
+	}
+	if !cs.AgentChanged {
+		t.Errorf("expected AgentChanged=true, got false")
+	}
+
+	decision := cifilter.MakeDecision(cs, false)
+	if !decision.RunContextSync {
+		t.Errorf("expected RunContextSync=true for AGENTS.md-only, got false")
+	}
+	if decision.RunDocsOnly {
+		t.Errorf("expected RunDocsOnly=false for AGENTS.md-only, got true")
+	}
+	if !decision.SkipHeavyGates {
+		t.Errorf("expected SkipHeavyGates=true for AGENTS.md-only (no code/config), got false")
+	}
+}
+
+// Negative: a plain documentation change must stay on the docs-only path and
+// keep skipping context sync.
+func TestClassifyChanges_DocsOnlyStillSkipsContextSync(t *testing.T) {
+	cs := cifilter.ClassifyChanges([]string{"docs/guide.md"})
+	if !cs.DocsOnly {
+		t.Errorf("expected DocsOnly=true for a plain docs change, got false")
+	}
+	if cs.AgentChanged {
+		t.Errorf("expected AgentChanged=false for a plain docs change, got true")
+	}
+
+	decision := cifilter.MakeDecision(cs, false)
+	if decision.RunContextSync {
+		t.Errorf("expected RunContextSync=false for docs-only, got true")
+	}
+	if !decision.RunDocsOnly {
+		t.Errorf("expected RunDocsOnly=true for docs-only, got false")
+	}
+}
+
+// Boundary: a mix of an agent file and a plain doc must still run context
+// sync — the agent path outweighs the docs path in the change set.
+func TestClassifyChanges_AgentAndDocsMixRunsContextSync(t *testing.T) {
+	cs := cifilter.ClassifyChanges([]string{"AGENTS.md", "docs/guide.md"})
+	if cs.DocsOnly {
+		t.Errorf("expected DocsOnly=false for a mixed agent+docs change, got true")
+	}
+	if !cs.AgentChanged || !cs.DocsChanged {
+		t.Errorf("expected both AgentChanged and DocsChanged true, got AgentChanged=%t DocsChanged=%t", cs.AgentChanged, cs.DocsChanged)
+	}
+
+	decision := cifilter.MakeDecision(cs, false)
+	if !decision.RunContextSync {
+		t.Errorf("expected RunContextSync=true for a mixed agent+docs change, got false")
+	}
+}
+
+// Boundary: a skill file under .agents/ is an agent path, not documentation,
+// even though it ends in .md.
+func TestClassifyChanges_AgentsDirSkillRunsContextSync(t *testing.T) {
+	cs := cifilter.ClassifyChanges([]string{".agents/skills/x/SKILL.md"})
+	if cs.DocsOnly {
+		t.Errorf("expected DocsOnly=false for a .agents/ skill file, got true")
+	}
+	if !cs.AgentChanged {
+		t.Errorf("expected AgentChanged=true for a .agents/ skill file, got false")
+	}
+
+	decision := cifilter.MakeDecision(cs, false)
+	if !decision.RunContextSync {
+		t.Errorf("expected RunContextSync=true for a .agents/ skill file, got false")
+	}
+}
+
+// Boundary: isAgent matches CLAUDE.md by base name regardless of directory
+// depth, so a subdirectory copy must also run context sync, not fall
+// through to docs-only. Pins current isAgent semantics.
+func TestClassifyChanges_ClaudeMdInSubdirectoryRunsContextSync(t *testing.T) {
+	cs := cifilter.ClassifyChanges([]string{"services/worker/CLAUDE.md"})
+	if cs.DocsOnly {
+		t.Errorf("expected DocsOnly=false for a nested CLAUDE.md, got true")
+	}
+	if !cs.AgentChanged {
+		t.Errorf("expected AgentChanged=true for a nested CLAUDE.md, got false")
+	}
+
+	decision := cifilter.MakeDecision(cs, false)
+	if !decision.RunContextSync {
+		t.Errorf("expected RunContextSync=true for a nested CLAUDE.md, got false")
+	}
+}
