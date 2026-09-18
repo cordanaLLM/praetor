@@ -1,0 +1,3 @@
+# Deployment layer: a section-only document without complexity.
+clients:
+  mode: strict

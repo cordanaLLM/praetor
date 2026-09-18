@@ -16,7 +16,8 @@ const maxPolicyBytes = 8 << 20
 
 // EffectiveOptions selects explicit sources without consulting the process home,
 // environment, network, or implicit user configuration. CatalogRoot contains
-// .config/archetypes. External documents contribute their root complexity mapping.
+// .config/archetypes. External documents contribute their root complexity mapping and
+// their clients, hooks and update sections.
 // Omitted paths add no layer; explicitly selected missing files are errors.
 // Callers enforce authorization/confinement for these explicit paths. Root selects
 // the lockfile location, while ManifestPath can deliberately select another file.
@@ -190,21 +191,36 @@ func (l *effectiveLoader) externalLayers(opts EffectiveOptions, layers []PolicyL
 		if source.path == "" {
 			continue
 		}
-		node, layer, err := l.document(source.path, source.id)
+		layer, err := l.externalLayer(source.id, source.path)
 		if err != nil {
 			return nil, err
-		}
-		complexity := policyMember(node, "complexity")
-		if complexity == nil {
-			return nil, fmt.Errorf("%s policy requires an explicit complexity mapping", source.id)
-		}
-		layer.Complexity, err = decodeComplexity(complexity)
-		if err != nil {
-			return nil, fmt.Errorf("%s policy: %w", source.id, err)
 		}
 		layers = append(layers, layer)
 	}
 	return layers, nil
+}
+
+// externalLayer decodes one explicitly selected document. It must carry at least one owned
+// section: complexity, clients, hooks or update. Other root keys stay tolerated.
+func (l *effectiveLoader) externalLayer(id, path string) (PolicyLayer, error) {
+	node, layer, err := l.document(path, id)
+	if err != nil {
+		return layer, err
+	}
+	var owned bool
+	layer.Settings, owned, err = decodeOperatorSections(node)
+	if err != nil {
+		return layer, fmt.Errorf("%s policy: %w", id, err)
+	}
+	complexity := policyMember(node, "complexity")
+	if complexity == nil && !owned {
+		return layer, fmt.Errorf("%s policy requires a complexity, clients, hooks or update section", id)
+	}
+	layer.Complexity, err = decodeComplexity(complexity)
+	if err != nil {
+		return layer, fmt.Errorf("%s policy: %w", id, err)
+	}
+	return layer, nil
 }
 
 func auditCompatibilityLayer() PolicyLayer {

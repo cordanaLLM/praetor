@@ -41,7 +41,29 @@ func (p *EffectivePolicy) verifyDigestMetadata() error {
 	if err := verifyDigestFields(names, p.Fields, seen); err != nil {
 		return err
 	}
+	if err := verifyOperatorFields(p.Operator, p.OperatorFields, seen); err != nil {
+		return err
+	}
 	return errors.Join(verifyDigestNames(p.Policy.Linters), verifyDigestNames(p.Policy.DevFeatures))
+}
+
+// verifyOperatorFields checks that operator settings and their contributors appear together,
+// stay within the settings bound and name only retained sources.
+func verifyOperatorFields(operator *OperatorSettings, fields map[string][]string, seen map[string]bool) error {
+	if (operator == nil) != (len(fields) == 0) || len(fields) > maxOperatorSettings {
+		return errors.New("effective operator settings and contributors must appear together and stay bounded")
+	}
+	for key, contributors := range fields {
+		if len(key) > 512 || len(contributors) == 0 || len(contributors) > len(seen) {
+			return errors.New("effective operator contributors exceed their bounds")
+		}
+		for i := 0; i < len(contributors) && i <= maxPolicyLayers; i++ {
+			if !seen[contributors[i]] {
+				return errors.New("effective operator contributor has no source")
+			}
+		}
+	}
+	return nil
 }
 
 func verifyDigestFields(names [4]string, fields map[string][]string, seen map[string]bool) error {

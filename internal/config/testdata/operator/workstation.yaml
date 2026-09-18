@@ -1,0 +1,15 @@
+# Workstation layer: host data. HOST is replaced with a temporary directory by the test,
+# so the absolute paths are valid on every operating system.
+clients:
+  selected:
+    agy:
+      binary: HOST/bin/agy
+      config_root: HOST/gemini
+update:
+  checkout: HOST/fork
+  bin_dir: HOST/bin
+  pin: 0123456789abcdef0123456789abcdef01234567
+hooks:
+  python:
+    - [HOST/python/python3, -X, utf8]
+    - python3

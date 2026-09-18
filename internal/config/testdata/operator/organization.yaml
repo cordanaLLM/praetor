@@ -1,0 +1,11 @@
+# Organisation layer: carries complexity beside the operator sections.
+complexity: {}
+hooks:
+  scope: all
+  command_policy:
+    deny: ['\bexample-org/', '\bsecond-org/']
+clients:
+  selected:
+    agy:
+      permissions:
+        allow: ["run_command(praetorctl)"]
