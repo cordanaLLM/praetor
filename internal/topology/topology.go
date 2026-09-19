@@ -12,6 +12,8 @@ import (
 const (
 	// MaxScanEntries limits directory scan iterations to prevent unbounded execution (HISS-02).
 	MaxScanEntries = 1000
+	// maxGitlinkBytes caps a .git gitlink file. Real gitlinks are one short line.
+	maxGitlinkBytes = 4096
 )
 
 var (
@@ -283,16 +285,20 @@ func auditStrayGitDir(entryPath, relPath string, hasChildRepos bool, report *Top
 	}
 }
 
-// HasValidGitRepo reports whether path is a git working tree: a .git gitlink file (worktree or
-// submodule) or a .git directory holding a HEAD file.
+// HasValidGitRepo reports whether path is a git working tree: a .git gitlink file whose
+// gitdir: target exists, or a .git directory holding a HEAD file. An empty path is never
+// a repository, including when the process working directory itself is a checkout.
 func HasValidGitRepo(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
 	gitPath := filepath.Join(path, ".git")
 	info, err := os.Stat(gitPath)
 	if err != nil {
 		return false
 	}
 	if info.Mode().IsRegular() {
-		return true // gitlink file for worktree or submodule
+		return gitlinkTargetExists(path, gitPath, info.Size())
 	}
 	if !info.IsDir() {
 		return false
@@ -300,6 +306,36 @@ func HasValidGitRepo(path string) bool {
 	headPath := filepath.Join(gitPath, "HEAD")
 	headInfo, err := os.Stat(headPath)
 	return err == nil && !headInfo.IsDir()
+}
+
+// gitlinkTargetExists reports whether a .git file is a gitlink whose target exists.
+// Relative targets resolve against the working tree directory, matching git submodule layout.
+func gitlinkTargetExists(worktree, gitPath string, size int64) bool {
+	if size <= 0 || size > maxGitlinkBytes {
+		return false
+	}
+	data, err := os.ReadFile(gitPath)
+	if err != nil {
+		return false
+	}
+	line := string(data)
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	line = strings.TrimSpace(line)
+	const prefix = "gitdir:"
+	if !strings.HasPrefix(line, prefix) {
+		return false
+	}
+	target := strings.TrimSpace(line[len(prefix):])
+	if target == "" {
+		return false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(worktree, target)
+	}
+	_, err = os.Stat(filepath.Clean(target))
+	return err == nil
 }
 
 // CleanWorkstationTopology removes identified stray files and directories adhering to strict safety rules.
