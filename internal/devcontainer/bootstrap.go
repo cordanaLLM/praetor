@@ -111,6 +111,12 @@ func validateBootstrapInputs(ctx context.Context, name string, profiles, facets 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	return validateSynthesisBounds(name, profiles, facets)
+}
+
+// validateSynthesisBounds is the single scalar bound on the declared inputs,
+// shared by PrepareBundle and by synthesize so both refuse the same input.
+func validateSynthesisBounds(name string, profiles, facets []string) error {
 	if len(name) > 512 || len(profiles) > MaxLoopLimit || len(facets) > MaxLoopLimit {
 		return errors.New("devcontainer name, profile or facet inputs exceed bounds")
 	}

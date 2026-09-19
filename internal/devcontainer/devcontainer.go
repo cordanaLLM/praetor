@@ -255,8 +255,15 @@ func shouldAddGoTooling(selected []config.DevContainerFeature) bool {
 	return selected == nil || hasGoFeature(selected)
 }
 
-// synthesizePostCreateCommand determines appropriate startup command.
+// synthesizePostCreateCommand determines appropriate startup command. Profiles
+// is a list, so framework and native-gpu-systems can both be declared; the Go
+// startup command is emitted only when the same gate that selects the Go
+// feature, extensions and settings also selected them, because a container
+// built without a Go toolchain cannot run "go run ./cmd/standardsctl".
 func synthesizePostCreateCommand(profiles []string) string {
+	if hasNativeGPUProfile(profiles) {
+		return "make verify-all"
+	}
 	for i := 0; i < len(profiles) && i < MaxLoopLimit; i++ {
 		p := strings.ToLower(strings.TrimSpace(profiles[i]))
 		if p == "framework" {
@@ -357,12 +364,9 @@ func LoadDevContainer(ctx context.Context, path string) (*DevContainer, error) {
 		return nil, fmt.Errorf("failed to read devcontainer file %s: %w", path, err)
 	}
 
-	var dc DevContainer
-	if err := json.Unmarshal(data, &dc); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal devcontainer json at %s: %w", path, err)
-	}
-
-	return &dc, nil
+	// The same decoder readBootstrapConfig uses. Two decoders for one schema
+	// drift apart the next time the schema changes (HISS-19).
+	return decodeManagedConfig(data, path)
 }
 
 // Verify validates that the devcontainer file at path matches expected configuration.
@@ -375,17 +379,11 @@ func Verify(ctx context.Context, path string, expected *DevContainer) error {
 		return verifyRecordedBootstrap(ctx, path, raw, actual, expected)
 	}
 
-	actualBytes, err := Render(actual)
+	identical, err := rendersExactly(raw, expected)
 	if err != nil {
 		return err
 	}
-
-	expectedBytes, err := Render(expected)
-	if err != nil {
-		return err
-	}
-
-	if string(actualBytes) != string(expectedBytes) {
+	if !identical {
 		return fmt.Errorf("devcontainer at %s does not match expected configuration", path)
 	}
 

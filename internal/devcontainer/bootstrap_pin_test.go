@@ -39,14 +39,17 @@ func dockerfileImageRef(line string) string {
 	return ""
 }
 
-// pinnedDigestDrift reports whether the FROM instruction that must carry pin
-// still carries exactly that digest.
+// pinnedDigestDrift reports whether EVERY FROM instruction naming the pinned
+// repository carries exactly that digest. Stopping at the first match would let
+// a later build stage of the same repository drift unseen, which is the
+// condition this check exists to stop.
 func pinnedDigestDrift(dockerfile []byte, pin string) error {
 	repository, digest := splitImagePin(pin)
 	if digest == "" {
 		return fmt.Errorf("pinned image %q carries no sha256 digest", pin)
 	}
 	lines := strings.Split(string(dockerfile), "\n")
+	matched := 0
 	for i := 0; i < len(lines) && i < MaxLoopLimit; i++ {
 		ref := dockerfileImageRef(lines[i])
 		if ref == "" {
@@ -56,15 +59,18 @@ func pinnedDigestDrift(dockerfile []byte, pin string) error {
 		if name != repository {
 			continue
 		}
+		matched++
 		if sum == "" {
 			return fmt.Errorf("FROM %s is not digest-pinned", ref)
 		}
 		if sum != digest {
 			return fmt.Errorf("FROM %s pins %s; the recorded constant pins %s", ref, sum, digest)
 		}
-		return nil
 	}
-	return fmt.Errorf("no FROM instruction references %s", repository)
+	if matched == 0 {
+		return fmt.Errorf("no FROM instruction references %s", repository)
+	}
+	return nil
 }
 
 // TestPinnedImagesMatchTheDockerfilesThatUseThem binds the image constants to
@@ -103,12 +109,20 @@ func TestPinnedDigestDriftNamesItsReason(t *testing.T) {
 	if err := pinnedDigestDrift([]byte(matching), pin); err != nil {
 		t.Fatalf("agreeing Dockerfile reported drift: %v", err)
 	}
+	// Two stages of the same repository agreeing on the digest stay clean, so
+	// the multi-stage case below fails on drift rather than on stage count.
+	agreeing := matching + "FROM golang:1.27-alpine@" + digest + " AS test\n"
+	if err := pinnedDigestDrift([]byte(agreeing), pin); err != nil {
+		t.Fatalf("second agreeing stage reported drift: %v", err)
+	}
 
 	// 2. Negative and 3. boundary: every failure names its reason.
 	for _, tc := range []struct {
 		name, dockerfile, pin, reason string
 	}{
 		{"differing digest", "FROM golang:1.27-alpine@" + other + "\n", pin, "the recorded constant pins"},
+		{"later stage drifts", "FROM golang:1.27-alpine@" + digest + " AS builder\nFROM golang:1.27-alpine@" + other + " AS test\n", pin, "the recorded constant pins"},
+		{"later stage unpinned", "FROM golang:1.27-alpine@" + digest + " AS builder\nFROM golang:1.27-alpine AS test\n", pin, "is not digest-pinned"},
 		{"no FROM instruction", "# only a comment\nRUN true\n", pin, "no FROM instruction references golang"},
 		{"unpinned FROM", "FROM golang:1.27-alpine\n", pin, "is not digest-pinned"},
 		{"unrelated repository only", "FROM alpine:3.20@" + digest + "\n", pin, "no FROM instruction references golang"},

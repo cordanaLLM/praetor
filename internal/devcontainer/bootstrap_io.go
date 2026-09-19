@@ -143,11 +143,11 @@ func verifyRecordedBootstrap(ctx context.Context, path string, raw []byte, actua
 	if err != nil {
 		return err
 	}
-	expectedBytes, err := Render(expectedCopy)
+	identical, err := rendersExactly(raw, expectedCopy)
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(raw, expectedBytes) {
+	if !identical {
 		return errors.New("recorded bootstrap configuration differs from declared profiles or contains unrecognized edits")
 	}
 	artifacts, err := readBootstrapCompanions(ctx, path, spec)
@@ -178,8 +178,9 @@ func readBootstrapConfig(ctx context.Context, path string) ([]byte, *DevContaine
 
 // decodeManagedConfig decodes the whole file rather than the fields the schema
 // happens to name. A tolerant decode drops keys such as initializeCommand or
-// runArgs, and verification then compares a re-render of what survived, so a
-// tampered configuration reports as in sync.
+// runArgs, so the rejection names the offending key instead of reporting a
+// nameless mismatch. It is a first filter, not the verification rule: only
+// rendersExactly settles whether a file is in sync.
 func decodeManagedConfig(data []byte, path string) (*DevContainer, error) {
 	var dc DevContainer
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -191,6 +192,21 @@ func decodeManagedConfig(data []byte, path string) (*DevContainer, error) {
 		return nil, fmt.Errorf("devcontainer at %s carries content after its configuration object", path)
 	}
 	return &dc, nil
+}
+
+// rendersExactly reports whether the bytes on disk are exactly the render of
+// want. The file is compared, never a re-render of what decoded: Go's JSON
+// decoder matches member names case-insensitively and keeps the last of a
+// duplicate pair, so "POSTCREATECOMMAND", a repeated "remoteUser" and a stray
+// trailing "}" all survive a typed decode and re-marshal to the managed
+// spelling. Comparing the re-render would certify every one of them as in sync.
+// Both verification paths, recorded bootstrap and legacy, apply this one rule.
+func rendersExactly(raw []byte, want *DevContainer) (bool, error) {
+	rendered, err := Render(want)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(raw, rendered), nil
 }
 
 func validateBootstrapProjection(dc *DevContainer, spec *BootstrapSpec) error {
