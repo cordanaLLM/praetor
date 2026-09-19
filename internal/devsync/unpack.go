@@ -19,6 +19,12 @@ var ErrUnsafeEntry = errors.New("devsync: archive entry escapes the target direc
 // maxLinkSegments bounds the path segments examined per symbolic link (HISS-02).
 const maxLinkSegments = 4096
 
+// maxArchiveTrailerBytes bounds the stream read after the last tar entry, so a crafted
+// archive cannot force unbounded decompression work here (HISS-02): the real entries are
+// already extracted and bounded by maxArchiveEntries; this only drains what gzip has left
+// so its own trailer is read and validated.
+const maxArchiveTrailerBytes = 64 << 10
+
 // pendingLink is a symbolic link created after every other entry, once the full set of
 // links in the archive is known.
 type pendingLink struct{ name, target string }
@@ -41,7 +47,7 @@ func extractArchive(ctx context.Context, r io.Reader, dir string) (err error) {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(io.Discard, decompressed); err != nil {
+	if _, err := io.CopyN(io.Discard, decompressed, maxArchiveTrailerBytes); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("verify archive trailer: %w", err)
 	}
 	return createLinks(root, links)
@@ -109,6 +115,8 @@ func extractEntry(root *os.Root, archive io.Reader, header *tar.Header, name str
 		if err := root.MkdirAll(filepath.Dir(name), 0o700); err != nil {
 			return err
 		}
+		// #nosec G115 -- header.Mode is masked to 0o777 before conversion, so the value
+		// bound for os.FileMode is always 0..0o777 regardless of header.Mode's range.
 		file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, os.FileMode(header.Mode&0o777|0o400))
 		if err != nil {
 			return err
@@ -122,6 +130,8 @@ func extractEntry(root *os.Root, archive io.Reader, header *tar.Header, name str
 }
 
 // dirMode keeps a directory's archived permissions but always lets the owner fill it.
+// #nosec G115 -- mode is masked to 0o777 before conversion, so the value bound for
+// os.FileMode is always 0..0o777 regardless of mode's range.
 func dirMode(mode int64) os.FileMode { return os.FileMode(mode&0o777 | 0o700) }
 
 func createLinks(root *os.Root, links []pendingLink) error {
