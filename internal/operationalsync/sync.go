@@ -162,12 +162,22 @@ func validateDestination(opts *Options) error {
 	if _, err := os.Lstat(abs); !os.IsNotExist(err) {
 		return errors.New("destination must not exist")
 	}
-	parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	// The directory is created with a single os.Mkdir (prepare.go), never MkdirAll, so the
+	// parent is the only ancestor this call actually writes beneath, and Lstat on that one
+	// entry is the confinement question: is it a real directory, or does prepare's Mkdir
+	// follow a symlink to somewhere else. Resolving the whole chain with EvalSymlinks and
+	// demanding literal equality (the previous check) asked a broader question than that and
+	// answered it wrong: macOS ships /var as a symlink to /private/var, so any destination
+	// under the platform's own TMPDIR -- including every t.TempDir() in this package's own
+	// tests -- had a resolved ancestry that could never equal its literal spelling. That
+	// failed the whole operationalsync suite on macOS (#135) for a symlink no attacker placed
+	// and this call never walks through. The parent itself is still refused when it is one.
+	parentInfo, err := os.Lstat(filepath.Dir(abs))
 	if err != nil {
-		return err
+		return fmt.Errorf("destination parent: %w", err)
 	}
-	if parent != filepath.Dir(abs) {
-		return errors.New("destination ancestors must not be symlinks")
+	if !parentInfo.IsDir() {
+		return errors.New("destination parent must be a directory, never a symlink")
 	}
 	for _, source := range []string{opts.OwnerPath, opts.SourcePath} {
 		resolved, err := filepath.EvalSymlinks(source)

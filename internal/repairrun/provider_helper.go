@@ -97,23 +97,36 @@ func providerHelperSnapshot(cfg ProviderConfig) (data []byte, err error) {
 	return data, nil
 }
 
+// providerHelperParents checks the helper executable itself and its immediate parent
+// directory: nothing else in the path is this call's threat surface.
+//
+// The previous version walked every ancestor up to the filesystem root and rejected the
+// first symlink it found. On macOS that ancestor is always present and always benign --
+// /var is a symlink to /private/var, so any TokenCommand under the platform's own TMPDIR,
+// including every t.TempDir() fixture in this package's own tests, failed here before the
+// helper was ever read. That took down the whole repairrun package on the macOS leg of the
+// portability matrix (#135), the same shape #109 already fixed once for directory creation:
+// the operator's filesystem above where praetor's own writes and reads happen is not
+// praetor's threat surface, and an attacker who controls /var does not need a symlink to
+// defeat this check.
+//
+// What the check still refuses, because both are this function's actual job: the helper
+// itself resolving through a symlink (an attacker substituting what gets executed), and its
+// immediate parent being a symlink (an attacker redirecting where "the helper's directory"
+// actually is). Both are exercised in TestProviderHelperRejectsChangedOrNonPrivateSource.
 func providerHelperParents(path string) error {
-	current := path
-	for depth := 0; depth < 64; depth++ {
-		info, err := os.Lstat(current)
-		if err != nil || info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("repair credential helper path contains an unavailable or symlink component")
-		}
-		if current != path && !info.IsDir() {
-			return errors.New("repair credential helper parent is not a directory")
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return nil
-		}
-		current = parent
+	leaf, err := os.Lstat(path)
+	if err != nil || leaf.Mode()&os.ModeSymlink != 0 {
+		return errors.New("repair credential helper path contains an unavailable or symlink component")
 	}
-	return errors.New("repair credential helper path exceeds component bound")
+	parent, err := os.Lstat(filepath.Dir(path))
+	if err != nil || parent.Mode()&os.ModeSymlink != 0 {
+		return errors.New("repair credential helper path contains an unavailable or symlink component")
+	}
+	if !parent.IsDir() {
+		return errors.New("repair credential helper parent is not a directory")
+	}
+	return nil
 }
 
 func providerValidToken(token string) bool {
