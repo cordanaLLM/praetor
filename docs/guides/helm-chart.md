@@ -33,8 +33,23 @@ tests in `internal/deploychart/chart_test.go` assert exactly that and fail if a 
 | `false` | empty | No account is created; the pod runs as the namespace's `default` account. |
 | `false` | set | No account is created; the pod runs as the named account, which you must create yourself. |
 
-The pod sets `automountServiceAccountToken: false`. The binary has no Kubernetes client — `go.mod`
-requires only `gopkg.in/yaml.v3` — so an API token would be a credential it cannot use.
+Both the pod and the created ServiceAccount set `automountServiceAccountToken: false`. The binary
+has no Kubernetes client — `go.mod` requires only `gopkg.in/yaml.v3` — so an API token would be a
+credential it cannot use.
+
+### Upgrading a release installed before the rename
+
+Earlier versions named the account `praetor-sa` outright, which is why two releases collided. The
+release-scoped default renames it, and a `ServiceAccount` rename means the old object is deleted
+and a new one created. To keep the existing account across the upgrade, name it:
+
+```bash
+helm upgrade praetor deploy/helm/praetor --set serviceAccount.name=praetor-sa
+```
+
+`TestServiceAccountCreateTrueHonoursExplicitName` in `internal/deploychart/chart_test.go` pins that
+path. The Deployment and Service names are unchanged by the upgrade either way: they were already
+`<release>-praetor`.
 
 ## Private registries
 
