@@ -118,6 +118,32 @@ func TestAuditFlavor_Boundary_EmptySettingFileConfiguresNothing(t *testing.T) {
 	}
 }
 
+// TestAuditFlavor_Boundary_EmptyMappingConfiguresNothing covers the file that parses and
+// still says nothing. A lefthook.yml holding `{}` installs no hook, so the report must not
+// count it, and the operator must be told which file to fix.
+func TestAuditFlavor_Boundary_EmptyMappingConfiguresNothing(t *testing.T) {
+	emptyPATH(t)
+	repo := conformingGoLibrary(t, map[string]string{"lefthook.yml": "{}\n"})
+
+	report, err := flavor.AuditFlavor(repo, "go-library")
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	if report.SettingsValid != 1 {
+		t.Fatalf("a lefthook.yml holding {} must not count as configuration, got %d/%d valid",
+			report.SettingsValid, report.SettingsTotal)
+	}
+	named := false
+	for _, s := range report.MissingSettings {
+		if s.Path == "lefthook.yml" {
+			named = true
+		}
+	}
+	if !named {
+		t.Fatalf("an empty mapping must be named in MissingSettings, got %+v", report.MissingSettings)
+	}
+}
+
 // TestAuditFlavor_Boundary_ToolchainsDoNotDecidePassOrFail runs the same repository against
 // two hosts. Only the PATH differs, so the two reports must agree on Score and Passed.
 func TestAuditFlavor_Boundary_ToolchainsDoNotDecidePassOrFail(t *testing.T) {
@@ -204,6 +230,22 @@ func TestSettingSatisfied_Boundary(t *testing.T) {
 	rewrite(t, repo, ".github/rulesets/main.json", "null")
 	if flavor.SettingSatisfied(repo, jsonSetting) {
 		t.Errorf("a JSON null is not a settings object")
+	}
+
+	// A container with no members parses and still configures nothing. The validators are
+	// documented as requiring a non-empty mapping or object, and docs/guides/onboarding.md
+	// ships that claim to operators; `{}` used to be reported valid by both of them.
+	for _, empty := range []string{"{}", "{ }", "  {}  \n", "---\n{}\n"} {
+		rewrite(t, repo, "lefthook.yml", empty)
+		if flavor.SettingSatisfied(repo, yamlSetting) {
+			t.Errorf("an empty YAML mapping (%q) installs no hook and must not be satisfied", empty)
+		}
+	}
+	for _, empty := range []string{"{}", "{ }", "  {}  \n"} {
+		rewrite(t, repo, ".github/rulesets/main.json", empty)
+		if flavor.SettingSatisfied(repo, jsonSetting) {
+			t.Errorf("an empty JSON object (%q) restricts nothing and must not be satisfied", empty)
+		}
 	}
 
 	// One byte past the cap: valid YAML that no configuration file would ever be.

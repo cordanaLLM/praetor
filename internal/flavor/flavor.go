@@ -45,26 +45,28 @@ type SettingItem struct {
 //
 // A configuration file is a mapping of keys to values, so a scalar, a sequence, an empty
 // document and a file that does not parse at all are all rejected: none of them configures
-// the tool that reads the path.
+// the tool that reads the path. An empty mapping is rejected with them: `{}` parses, and a
+// lefthook.yml holding it installs exactly as many hooks as a file that is not there.
 func validYAMLMapping(content []byte) bool {
 	var document map[string]any
 	if err := yaml.Unmarshal(content, &document); err != nil {
 		return false
 	}
-	return document != nil
+	return len(document) > 0
 }
 
 // validJSONObject reports whether content parses as a non-empty JSON object.
 //
 // Strict JSON, matching the line internal/clientsetup draws for the client configuration it
 // merges: comments and trailing commas are rejected rather than tolerated, so a file this
-// audit reports as valid is one every JSON consumer can also read.
+// audit reports as valid is one every JSON consumer can also read. An object with no members
+// is rejected for the same reason an empty YAML mapping is: `{}` configures nothing.
 func validJSONObject(content []byte) bool {
 	var document map[string]json.RawMessage
 	if err := json.Unmarshal(content, &document); err != nil {
 		return false
 	}
-	return document != nil
+	return len(document) > 0
 }
 
 // ToolchainItem defines an external CLI tool or compiler required by a flavor.
