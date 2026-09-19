@@ -224,7 +224,7 @@ func TestRunRejectsUnsupportedArguments(t *testing.T) {
 	root := repository(t, true)
 	for _, pair := range [][2]string{
 		{"", ""}, {"claude", ""}, {"Claude", "pre-tool"}, {"claude", "pre_tool"}, {"claude", "pre-tool "},
-		{"agy", "post-tool"}, {"claude", "stop"}, {"claude", "environment"}, {"lefthook", "post-tool"}, {"-h", "--help"},
+		{"agy", "post-tool"}, {"codex", "pre-edit"}, {"claude", "environment"}, {"lefthook", "post-tool"}, {"-h", "--help"},
 	} {
 		response := serve(t, pair[0], pair[1], root, []byte(`{"tool_input":{"command":"git status"}}`))
 		if response.ExitCode != 2 || !strings.Contains(string(response.Stderr), "usage: praetorctl hook <client> <event>") ||

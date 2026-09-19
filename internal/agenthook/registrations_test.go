@@ -13,8 +13,10 @@ import (
 
 func TestRegistrationsPerClient(t *testing.T) {
 	for client, events := range map[string][]Event{
-		"claude": {EventPreTool}, "codex": {EventPreTool}, "gemini": {EventPreTool},
-		"lefthook": {EventPreTool, EventEnvironment},
+		"claude":   {EventPreTool, EventPreEdit, EventPostTool, EventStop},
+		"codex":    {EventPreTool, EventPostTool, EventStop}, // no pre-edit row: measured fact, section 1
+		"gemini":   {EventPreTool, EventPreEdit, EventPostTool, EventStop},
+		"lefthook": {EventPreTool, EventEnvironment}, // checkpoint rows land in H4
 		"agy":      {EventPreTool, EventStop},
 	} {
 		rows := Registrations(client)
@@ -75,7 +77,7 @@ func TestParseArguments(t *testing.T) {
 		t.Fatalf("agy stop: %+v %v", row, err)
 	}
 	for _, pair := range [][2]string{
-		{"", ""}, {"claude", "stop"}, {"agy", "post-tool"}, {"claude", "pre-tool\n"}, {"cl4ude", "pre-tool"},
+		{"", ""}, {"codex", "pre-edit"}, {"agy", "post-tool"}, {"claude", "pre-tool\n"}, {"cl4ude", "pre-tool"},
 		{"claude", "PRE-TOOL"}, {"../claude", "pre-tool"}, {"claude", "environment"},
 	} {
 		if row, err := ParseArguments(pair[0], pair[1]); !errors.Is(err, ErrUnsupported) || row != (Registration{}) {
@@ -94,7 +96,10 @@ type nativeGroup struct {
 
 // TestRegistrationTableMatchesTheTrackedClientFiles replays the table against the files
 // the clients read. The command strings differ until the registrations move to the
-// entrypoint; event, matcher and budget must already agree.
+// entrypoint; event, matcher and budget must already agree. Scoped to EventPreTool: the
+// checkpoint rows (pre-edit, post-tool, stop) added in H2 have no tracked-file counterpart
+// yet, that flip is H4's (refactor(hooks): registrations call the entrypoint; adapters
+// deleted), so this test only replays what the tracked files carry today.
 func TestRegistrationTableMatchesTheTrackedClientFiles(t *testing.T) {
 	for client, file := range map[string]struct {
 		path string
@@ -114,6 +119,9 @@ func TestRegistrationTableMatchesTheTrackedClientFiles(t *testing.T) {
 			t.Fatalf("%s: %v", file.path, err)
 		}
 		for _, row := range Registrations(client) {
+			if row.Event != EventPreTool {
+				continue
+			}
 			if !groupsHold(document.Hooks[row.NativeEvent], row, file.unit) {
 				t.Errorf("%s: no %s group with matcher %q and %s", file.path, row.NativeEvent, row.Matcher, row.Timeout)
 			}

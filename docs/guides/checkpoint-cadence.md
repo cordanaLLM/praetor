@@ -96,6 +96,18 @@ the continued turn still cannot qualify, it ends with an explicit blocked reason
 instead of looping or claiming completion. Repair the reported cause and resume.
 Repeated periodic reminders can occur until the checkpoint is reconciled.
 
+`praetorctl hook <client> post-tool|stop|pre-edit` runs the same two evaluator
+scripts (`checkpoint.py`, `checkpoint_scope.py`) directly, with no Lefthook hop:
+[agent hooks](agent-hooks.md#checkpoint-evaluators) has the full contract. It
+resolves its own Python interpreter from the `hooks.python` operator setting
+(`python3`, `python`, then the two-token `py -3` a stock Windows install
+carries) instead of the fixed `python3` the Lefthook job names, so a host
+without any of the three gets a stated skip on the tool event and a fail-closed
+block on stop rather than a silent `[WinError 2]`. No client registration calls
+this path yet; it exists alongside `.config/agent/hooks/checkpoint.py` and the
+Lefthook jobs below until a later change re-points the tracked registrations at
+it and removes the Python adapters.
+
 Stop/AfterAgent first runs the separate `agent-state-stop` Lefthook job, even
 when cadence is disabled. Its unique execution marker must confirm a valid,
 fresh existing ledger through `state sync --verify`; the bridge does not silently
