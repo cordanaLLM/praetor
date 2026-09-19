@@ -55,7 +55,7 @@ func TestAGYMergeKeepsLiveShape(t *testing.T) {
 		}
 	}
 	added, err := jsonObject(servers["praetor-dev"])
-	if err != nil || len(added) != 2 || stringField(added, "command") != "/opt/praetor/bin/praetor-mcp" || !matchingArgs(added["args"], []string{"-transport=stdio"}) {
+	if err != nil || len(added) != 2 || stringField(added, "command") != praetorMCP || !matchingArgs(added["args"], []string{"-transport=stdio"}) {
 		t.Fatalf("added entry is not the native stdio shape: %s", servers["praetor-dev"])
 	}
 	again, err := BuildPlan(t.Context(), testRegistry(), AGY, p.Content)
@@ -65,9 +65,9 @@ func TestAGYMergeKeepsLiveShape(t *testing.T) {
 }
 
 func TestAGYMergeKeepsUnknownKeysAndServerOptions(t *testing.T) {
-	existing := []byte(`{"futureSetting":{"number":9007199254740993},"mcpServers":{"praetor-dev":{"command":"/opt/praetor/bin/praetor-mcp","args":["-transport=stdio"],"env":{"TOKEN":"sensitive-existing-value"},"disabled":true}}}`)
+	existing := []byte(`{"futureSetting":{"number":9007199254740993},"mcpServers":{"praetor-dev":{"command":` + quoted(praetorMCP) + `,"args":["-transport=stdio"],"env":{"TOKEN":"sensitive-existing-value"},"disabled":true}}}`)
 	registry := testRegistry()
-	registry.Servers = append(registry.Servers, Server{Name: "second", Command: "/opt/second", Args: []string{}})
+	registry.Servers = append(registry.Servers, Server{Name: "second", Command: hostAbsolute("opt", "second"), Args: []string{}})
 	p, err := BuildPlan(t.Context(), registry, AGY, existing)
 	if err != nil {
 		t.Fatal(err)
@@ -89,9 +89,14 @@ func TestAGYMergeRejectsConflictsAndAmbiguousInput(t *testing.T) {
 		want      error
 	}{
 		{"same-name remote", `{"mcpServers":{"praetor-dev":{"serverUrl":"https://other.example.test/sse"}}}`, ErrConflict},
-		{"remote beside matching command", `{"mcpServers":{"praetor-dev":{"command":"/opt/praetor/bin/praetor-mcp","args":["-transport=stdio"],"serverUrl":"https://other.example.test/sse"}}}`, ErrConflict},
-		{"other command", `{"mcpServers":{"praetor-dev":{"command":"/other","args":["-transport=stdio"]}}}`, ErrConflict},
-		{"other args", `{"mcpServers":{"praetor-dev":{"command":"/opt/praetor/bin/praetor-mcp","args":[]}}}`, ErrConflict},
+		// These three spell the registry's own command, so the case under test is the
+		// conflict named in the row. With a POSIX literal on Windows the command differed
+		// from the registry's, and "remote beside matching command" and "other args" both
+		// collapsed into the "other command" branch: the table still passed while testing
+		// something else (#135, HISS-20).
+		{"remote beside matching command", `{"mcpServers":{"praetor-dev":{"command":` + quoted(praetorMCP) + `,"args":["-transport=stdio"],"serverUrl":"https://other.example.test/sse"}}}`, ErrConflict},
+		{"other command", `{"mcpServers":{"praetor-dev":{"command":` + quoted(hostAbsolute("other")) + `,"args":["-transport=stdio"]}}}`, ErrConflict},
+		{"other args", `{"mcpServers":{"praetor-dev":{"command":` + quoted(praetorMCP) + `,"args":[]}}}`, ErrConflict},
 		{"JSONC line comment", "{ // operator note\n\"mcpServers\":{}}", nil},
 		{"JSONC block comment", `{/* note */"mcpServers":{}}`, nil},
 		{"trailing comma", `{"mcpServers":{},}`, nil},
@@ -128,7 +133,7 @@ func TestAGYMergeBoundaries(t *testing.T) {
 	}
 	full := Registry{Version: 1}
 	for i := range MaxServers {
-		full.Servers = append(full.Servers, Server{Name: fmt.Sprintf("server-%02d", i), Command: "/opt/server", Args: []string{}})
+		full.Servers = append(full.Servers, Server{Name: fmt.Sprintf("server-%02d", i), Command: optServer, Args: []string{}})
 	}
 	p, err := BuildPlan(t.Context(), full, AGY, agyLiveShape(t))
 	if err != nil || len(agyServers(t, p.Content)) != MaxServers+4 {
@@ -138,7 +143,7 @@ func TestAGYMergeBoundaries(t *testing.T) {
 	if err != nil || again.Changed {
 		t.Fatalf("full registry replay: %v", err)
 	}
-	full.Servers = append(full.Servers, Server{Name: "extra", Command: "/opt/server"})
+	full.Servers = append(full.Servers, Server{Name: "extra", Command: optServer})
 	if _, err := BuildPlan(t.Context(), full, AGY, nil); err == nil {
 		t.Fatal("registry above the server bound accepted")
 	}

@@ -111,7 +111,7 @@ func TestClientApplyMergesAGYConfiguration(t *testing.T) {
 	if err := os.Mkdir(filepath.Dir(target), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	writeClientFixture(t, registry, []byte(`{"version":1,"servers":[{"name":"shared","command":"/usr/bin/true","args":[]}]}`))
+	writeClientFixture(t, registry, []byte(`{"version":1,"servers":[{"name":"shared","command":`+quoted(trueCommand)+`,"args":[]}]}`))
 	writeClientFixture(t, target, before)
 	output := filepath.Join(root, "backup")
 	if err := runClients([]string{"apply", "--registry", registry, "--client", "agy", "--target", target, "--out", output}); err != nil {
@@ -145,7 +145,7 @@ func TestClientApplyMergesAGYConfiguration(t *testing.T) {
 func TestClientApplyAGYCreatesAbsentAndRefusesConflict(t *testing.T) {
 	root := t.TempDir()
 	registry := filepath.Join(root, "registry.json")
-	writeClientFixture(t, registry, []byte(`{"version":1,"servers":[{"name":"shared","command":"/usr/bin/true","args":[]}]}`))
+	writeClientFixture(t, registry, []byte(`{"version":1,"servers":[{"name":"shared","command":`+quoted(trueCommand)+`,"args":[]}]}`))
 	created := filepath.Join(root, ".agents", "mcp_config.json")
 	if err := runClients([]string{"apply", "--registry", registry, "--client", "agy", "--target", created, "--out", filepath.Join(root, "created")}); err != nil {
 		t.Fatal(err)

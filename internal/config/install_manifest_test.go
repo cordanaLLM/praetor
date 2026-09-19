@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const testCommit = "0123456789abcdef0123456789abcdef01234567"
@@ -174,7 +176,13 @@ func TestWriteInstallManifestRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// The mode assertion runs only where the mode is what protects the file. Windows
+	// synthesises os.FileInfo.Mode() from the read-only attribute alone, so a writable file
+	// always reports 0666 and this asserted something NTFS cannot express: the write is
+	// already the only thing the platform can honour, and the case failed for a reason
+	// unrelated to the code under test (#135). util.ModeIsProtection is the repository's
+	// existing predicate for exactly this, and prints the reason once per process.
+	if util.ModeIsProtection() && info.Mode().Perm() != 0o600 {
 		t.Fatalf("install manifest mode = %v, want 0600", info.Mode().Perm())
 	}
 	// Overwriting an existing manifest replaces it atomically rather than merging.

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func testOptions(t *testing.T, build BuildFunc) Options {
@@ -164,6 +165,14 @@ func TestInstallBuildFailureRollsBack(t *testing.T) {
 // Boundary: an installed binary chmod'd non-executable keeps that restriction rather than
 // silently widening it back on the next build.
 func TestInstallRespectsExistingNonExecutablePermission(t *testing.T) {
+	// The restriction this asserts is a POSIX mode bit. Windows synthesises Mode() from the
+	// read-only attribute alone, so the chmod below leaves the binary at 0666 and no execute
+	// bit is ever reported; installMode already returns early there for that reason, naming
+	// #135. Asserting the refusal anyway tested the platform, not the code. util.ModeIsProtection
+	// is the repository's existing predicate for this and prints the reason once per process.
+	if !util.ModeIsProtection() {
+		t.Skip("a non-executable permission cannot be expressed where the mode is not the protection")
+	}
 	opts := testOptions(t, fakeBuild("v1"))
 	ctx := context.Background()
 	if _, err := Install(ctx, opts); err != nil {

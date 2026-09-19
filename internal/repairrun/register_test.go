@@ -52,6 +52,11 @@ func TestProviderLimitsMatchTheRegisterBudgetRange(t *testing.T) {
 }
 
 func TestProviderRequestForwardsTheJobBudget(t *testing.T) {
+	// providerGenerate opens the repair credential helper, which needs Unix ownership and
+	// nofollow support. Without this the Windows leg failed with "repair credential helper
+	// open failed" instead of stating the platform limit (#135). macOS keeps running the
+	// case: the guard returns everywhere but Windows.
+	requireCredentialHelper(t)
 	cfg := providerFixtureConfig(t, "printf '%s\\n' '"+providerFixtureToken+"'")
 	cfg.MaxOutputTokens = 1024
 	for name, job := range map[string]*dogfood.RepairJob{"budget": {MaxOutputTokens: 512}, "fallback": {}} {
@@ -77,6 +82,14 @@ func TestProviderRequestForwardsTheJobBudget(t *testing.T) {
 }
 
 func TestRunRecordsRegisterAndTightensProviderBudget(t *testing.T) {
+	// This case calls run() and reads result.Status on the error path, which is a nil
+	// dereference wherever prepare() fails: run returns (nil, err) then, and Go evaluates
+	// the second operand of `err == nil || result.Status != ...` once the first is false.
+	// prepare fails on both non-Linux legs -- macOS rejects the symlinked /var component of
+	// its own TMPDIR, Windows has no file isolation at all -- so the panic aborted the test
+	// binary and masked every later case in the package (#135). This is the same guard the
+	// package's other run()-calling cases already take; it was the one omission.
+	requireRepairIsolation(t)
 	f := newRunFixture(t, 1)
 	f.config.RepairPolicy.Register, f.config.RepairPolicy.MaxOutputTokens = string(config.TextRegisterInternal), 512
 	f.save(t)
