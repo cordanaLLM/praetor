@@ -11,12 +11,21 @@ runtimes, status, and any reasons requiring review.
 | `unavailable` | A required build/test command is missing or ambiguous. Generated recipes fail explicitly. |
 | `preserved-unverified` | Existing custom Makefile ownership is preserved. Review and exercise its `verify-all` contract. |
 
-Ownership means a rule. A Makefile that only binds a variable of the same name -- `verify-all := x`,
-`verify-all ::= x`, `export verify-all := x` -- declares no target, so adoption appends its own
-`verify-all` rule rather than preserving one and reporting a command the project's `make` would
-reject. Double-colon rules (`verify-all:: dep`) and target lists (`all verify-all: dep`) are rules
-and are preserved, as are the ambiguous forms below: an `include`, `define` or `override`
-directive, `$(eval ...)`, and a target name containing `$` or `%`.
+Ownership means a rule, and Make decides that by whichever it reaches first on the line: an
+assignment operator or a colon. A Makefile that only binds a variable of the same name declares no
+target, whether the operator is `:=`, `::=`, `:::=`, `=`, `?=`, `+=` or `!=`, whether the line
+carries an `export` or `override` modifier, and whether or not the value itself contains a colon
+(`verify-all = docker run --rm ci:latest check`, `verify-all = $(SRCS:.c=.o)`). Neither does
+`verify-all: CFLAGS := -g`, which binds a target-specific variable without declaring a recipe. In
+all of these adoption appends its own `verify-all` rule rather than preserving one and reporting a
+command the project's `make` answers with `No rule to make target 'verify-all'`.
+
+Double-colon rules (`verify-all:: dep`), target lists (`all verify-all: dep`) and rules whose
+prerequisites hold a substitution reference (`verify-all: $(SRCS:.c=.o)`) are rules and are
+preserved, as are the forms only Make itself can resolve: an `include` or `define` directive,
+`$(eval ...)`, and a target name containing `$` or `%`. The table tests behind this contract are in
+`internal/adopt/verification_makefile_target_test.go`; each negative was measured against GNU Make
+4.4.1.
 
 Repositories declaring `docs:seo-portal` also receive a locked Markdown gate,
 its dedicated required CI workflow, and private scratch-link protection. The

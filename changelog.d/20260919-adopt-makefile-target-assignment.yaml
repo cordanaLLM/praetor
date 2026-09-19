@@ -1,4 +1,4 @@
 type: fixed
-title: Adoption no longer reads a Makefile variable assignment such as 'verify-all := x' as a rule, so it stops declaring a verify-all target the adopter's make cannot run
+title: Adoption reads a Makefile line the way make does, so a variable assignment such as 'verify-all := x', 'verify-all = a:b' or 'override verify-all := x' no longer counts as a rule and adoption stops declaring a verify-all target the adopter's make cannot run
 issue: "#288"
 breaking: false
