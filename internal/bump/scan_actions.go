@@ -28,7 +28,7 @@ var knownActionLatest = map[string]string{
 	"actions/configure-pages":           "v5",
 	"fsfe/reuse-action":                 "v5",
 	"goreleaser/goreleaser-action":      "v6",
-	"sigstore/cosign-installer":         "v3.8.1",
+	"sigstore/cosign-installer":         "v4.1.2",
 	"anchore/sbom-action/download-syft": "v0.18.0",
 }
 
