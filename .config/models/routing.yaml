@@ -10,102 +10,119 @@ tiers:
         models:
             - id: claude-3-7-sonnet-20250219
               family: anthropic
+              source: seed
               rpm_limit: 1000
               tpm_limit: 80000
               cost_per_m_in: 3
               cost_per_m_out: 15
             - id: claude-3-5-sonnet-20241022
               family: anthropic
+              source: seed
               rpm_limit: 1000
               tpm_limit: 80000
               cost_per_m_in: 3
               cost_per_m_out: 15
             - id: claude-3-opus-20240229
               family: anthropic
+              source: seed
               rpm_limit: 50
               tpm_limit: 40000
               cost_per_m_in: 15
               cost_per_m_out: 75
             - id: gemini-2.5-pro-preview-03-25
               family: google
+              source: seed
               rpm_limit: 300
               tpm_limit: 2000000
               cost_per_m_in: 1.25
               cost_per_m_out: 5
             - id: gemini-2.5-flash-preview-03-25
               family: google
+              source: seed
               rpm_limit: 2000
               tpm_limit: 4000000
               cost_per_m_in: 0.075
               cost_per_m_out: 0.3
             - id: gemini-2.0-flash
               family: google
+              source: seed
               rpm_limit: 2000
               tpm_limit: 4000000
               cost_per_m_in: 0.1
               cost_per_m_out: 0.4
             - id: gpt-4.5-preview-2025-02-27
               family: openai
+              source: seed
               rpm_limit: 200
               tpm_limit: 100000
               cost_per_m_in: 75
               cost_per_m_out: 150
             - id: o3-mini
               family: openai
+              source: seed
               rpm_limit: 500
               tpm_limit: 1000000
               cost_per_m_in: 1.1
               cost_per_m_out: 4.4
             - id: o1
               family: openai
+              source: seed
               rpm_limit: 500
               tpm_limit: 100000
               cost_per_m_in: 15
               cost_per_m_out: 60
             - id: gpt-4o-2024-11-20
               family: openai
+              source: seed
               rpm_limit: 2000
               tpm_limit: 450000
               cost_per_m_in: 2.5
               cost_per_m_out: 10
             - id: grok-3
               family: xai
+              source: seed
               rpm_limit: 100
               tpm_limit: 200000
               cost_per_m_in: 5
               cost_per_m_out: 15
             - id: grok-3-mini
               family: xai
+              source: seed
               rpm_limit: 500
               tpm_limit: 500000
               cost_per_m_in: 0.5
               cost_per_m_out: 2
             - id: deepseek-reasoner
               family: deepseek
+              source: seed
               rpm_limit: 5000
               tpm_limit: 5000000
               cost_per_m_in: 0.55
               cost_per_m_out: 2.19
             - id: deepseek-chat
               family: deepseek
+              source: seed
               rpm_limit: 10000
               tpm_limit: 10000000
               cost_per_m_in: 0.14
               cost_per_m_out: 0.28
             - id: mistral-large-2411
               family: mistral
+              source: seed
               rpm_limit: 500
               tpm_limit: 250000
               cost_per_m_in: 2
               cost_per_m_out: 6
             - id: qwen-2.5-max
               family: qwen
+              source: seed
               rpm_limit: 2000
               tpm_limit: 1000000
               cost_per_m_in: 1.6
               cost_per_m_out: 6.4
             - id: meta-llama/llama-3.3-70b-instruct
               family: open-weights
+              source: seed
               rpm_limit: 5000
               tpm_limit: 5000000
               cost_per_m_in: 0.35
@@ -121,42 +138,49 @@ tiers:
         models:
             - id: hf.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF:Q8_0
               family: anthropic
+              source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
             - id: gemma-2-9b
               family: open-weights
+              source: seed
               rpm_limit: 5000
               tpm_limit: 2000000
               cost_per_m_in: 0.2
               cost_per_m_out: 0.2
             - id: qwen-2.5-coder-7b-instruct
               family: qwen
+              source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
             - id: qwen-2.5-coder-14b-instruct
               family: qwen
+              source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
             - id: meta-llama/llama-3.1-8b-instruct
               family: open-weights
+              source: seed
               rpm_limit: 5000
               tpm_limit: 5000000
               cost_per_m_in: 0.15
               cost_per_m_out: 0.15
             - id: phi-4:14b
               family: open-weights
+              source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
             - id: claude-3-5-haiku-20241022
               family: anthropic
+              source: seed
               rpm_limit: 2000
               tpm_limit: 100000
               cost_per_m_in: 0.8
@@ -172,24 +196,28 @@ tiers:
         models:
             - id: hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M
               family: qwen
+              source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
             - id: qwen-2.5-coder-32b-instruct
               family: qwen
+              source: seed
               rpm_limit: 5000
               tpm_limit: 5000000
               cost_per_m_in: 0.2
               cost_per_m_out: 0.6
             - id: codestral-2501
               family: mistral
+              source: seed
               rpm_limit: 1000
               tpm_limit: 500000
               cost_per_m_in: 0.3
               cost_per_m_out: 0.9
             - id: gpt-oss-small
               family: openai
+              source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0
@@ -205,42 +233,49 @@ tiers:
         models:
             - id: smollm2:1.7b
               family: open-weights
+              source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
             - id: qwen2.5-coder:1.5b
               family: qwen
+              source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
             - id: qwen2.5:3b
               family: qwen
+              source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
             - id: phi-3.5-mini:3.8b
               family: open-weights
+              source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
             - id: llama-3.2:1b
               family: open-weights
+              source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
             - id: llama-3.2:3b
               family: open-weights
+              source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
             - id: gemma-2-2b
               family: open-weights
+              source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0

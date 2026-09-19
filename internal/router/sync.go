@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,17 +32,32 @@ type SyncOptions struct {
 	DiscoverLocal      bool
 	LocalEndpoints     []string
 	MinContextWindow   int
+	// Prune rebuilds the catalog from the seed list and this run's local discovery,
+	// removing every other entry. Without it a sync never removes an entry and
+	// refuses to write when one would be lost.
+	Prune bool
 }
 
-// SyncResult details models updated during catalog synchronization.
+// SyncResult details the catalog a synchronization wrote.
 type SyncResult struct {
 	TotalModels   int
 	HeavyFrontier int
 	MidWeight     int
 	LightWeight   int
 	Nano          int
-	LocalModels   int
+	// LocalModels counts written entries whose source is local discovery.
+	LocalModels int
+	// Preserved counts existing entries the seed list does not own that were kept.
+	Preserved int
+	// Removed lists, sorted, the model IDs a pruning sync dropped.
+	Removed []string
 }
+
+// ErrSyncWouldRemove means a sync without Prune would drop catalog entries.
+var ErrSyncWouldRemove = errors.New("model catalog sync would remove entries")
+
+// localDiscovery lists the models installed on local runtime endpoints.
+type localDiscovery func(ctx context.Context, endpoints []string) ([]ModelDescriptor, error)
 
 // matchParamTag safely matches model parameter tags with boundary assertions (e.g. 2b won't match 32b).
 func matchParamTag(s string, tags ...string) bool {
@@ -260,24 +276,6 @@ func defaultRoutingTiers() map[string]Tier {
 	}
 }
 
-func populateLocalModels(ctx context.Context, endpoints []string, tiers map[string]Tier, result *SyncResult) error {
-	localModels, err := DiscoverLocalModels(ctx, endpoints)
-	if err != nil {
-		return err
-	}
-	for _, lm := range localModels {
-		tierName := ClassifyTier(lm.ID, lm.Family, 0.0)
-		currentTier := tiers[tierName]
-		currentTier.Models = append(currentTier.Models, lm)
-		tiers[tierName] = currentTier
-
-		result.LocalModels++
-		result.TotalModels++
-		recordTierCount(result, tierName)
-	}
-	return nil
-}
-
 func recordTierCount(result *SyncResult, tierName string) {
 	switch tierName {
 	case "heavy-frontier":
@@ -291,61 +289,178 @@ func recordTierCount(result *SyncResult, tierName string) {
 	}
 }
 
-// SyncCatalog writes legacy seed metadata and optional local model inventory.
+// SyncCatalog merges legacy seed metadata and optional local model inventory into
+// the catalog at targetPath. Seed-owned entries are rewritten in place; every other
+// existing entry is kept unless opts.Prune is set, and a sync that would lose an
+// entry without it writes nothing and returns ErrSyncWouldRemove.
 // Seed prices, quota values and naming heuristics are not live provider observations.
 func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*SyncResult, error) {
-	tiers := defaultRoutingTiers()
-	result := &SyncResult{}
+	return syncCatalog(ctx, targetPath, opts, DiscoverLocalModels)
+}
 
-	for _, m := range legacySeedCatalog {
-		family := DetectFamily(m.id)
-		tierName := ClassifyTier(m.id, family, m.elo)
-
-		desc := ModelDescriptor{
-			ID:          m.id,
-			Family:      family,
-			RPMLimit:    m.rpm,
-			TPMLimit:    m.tpm,
-			CostPerMIn:  m.costIn,
-			CostPerMOut: m.costOut,
-		}
-
-		currentTier := tiers[tierName]
-		currentTier.Models = append(currentTier.Models, desc)
-		tiers[tierName] = currentTier
-
-		result.TotalModels++
-		recordTierCount(result, tierName)
+func syncCatalog(ctx context.Context, targetPath string, opts SyncOptions, discover localDiscovery) (*SyncResult, error) {
+	before, exists, err := contextopt.ObserveSnapshot(ctx, targetPath)
+	if err != nil {
+		return nil, err
 	}
-
+	existing, err := existingCatalog(before, exists, targetPath)
+	if err != nil {
+		return nil, err
+	}
+	var discovered []ModelDescriptor
 	if opts.DiscoverLocal && len(opts.LocalEndpoints) > 0 {
-		if err := populateLocalModels(ctx, opts.LocalEndpoints, tiers, result); err != nil {
+		if discovered, err = discover(ctx, opts.LocalEndpoints); err != nil {
 			return nil, err
 		}
 	}
+	cfg, result, err := planCatalog(existing, discovered, opts.Prune)
+	if err != nil {
+		return nil, err
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal updated routing config: %w", err)
+	}
+	// The write is bound to the observed bytes, so a catalog edited after it was
+	// merged is refused instead of overwritten.
+	if err := contextopt.ReplaceSnapshot(ctx, targetPath, data, contextopt.ReplaceOptions{Expected: before, Exists: exists, Mode: 0644}); err != nil {
+		return nil, fmt.Errorf("failed to write routing config to %s: %w", targetPath, err)
+	}
+	return result, nil
+}
 
-	cfg := RoutingConfig{
+// existingCatalog decodes the catalog observed before the sync. An absent file is
+// an empty catalog; an unreadable one is refused, because merging needs its entries.
+func existingCatalog(data []byte, exists bool, path string) (*RoutingConfig, error) {
+	if !exists {
+		return &RoutingConfig{}, nil
+	}
+	cfg, err := decodeRoutingConfig(data, path)
+	if err != nil {
+		return nil, fmt.Errorf("refusing to sync over a catalog that does not load: %w", err)
+	}
+	return cfg, nil
+}
+
+// planCatalog merges the seed list, the existing catalog and discovered local
+// models, then refuses any removal the caller did not ask to prune.
+func planCatalog(existing *RoutingConfig, discovered []ModelDescriptor, prune bool) (*RoutingConfig, *SyncResult, error) {
+	cfg := seedCatalog()
+	if !prune {
+		preserveUnowned(cfg, existing, modelIDs(cfg))
+	}
+	addDiscovered(cfg, discovered)
+	removed := missingIDs(existing, cfg)
+	if len(removed) > 0 && !prune {
+		return nil, nil, fmt.Errorf("%w: %s", ErrSyncWouldRemove, strings.Join(removed, ", "))
+	}
+	if err := ValidateRoutingConfig(cfg); err != nil {
+		return nil, nil, fmt.Errorf("merged catalog: %w", err)
+	}
+	result := summarizeCatalog(cfg, existing)
+	result.Removed = removed
+	return cfg, result, nil
+}
+
+// seedCatalog builds the default tiers holding only the seed-owned entries.
+func seedCatalog() *RoutingConfig {
+	cfg := &RoutingConfig{
 		Version: 1,
-		Tiers:   tiers,
+		Tiers:   defaultRoutingTiers(),
 		Governance: GovernancePolicy{
 			MaxConcurrentSameModel:     2,
 			ExhaustionThresholdPercent: 80.0,
 			OrthogonalAuditRequired:    true,
 		},
 	}
-
-	data, err := yaml.Marshal(&cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal updated routing config: %w", err)
+	for _, m := range legacySeedCatalog {
+		family := DetectFamily(m.id)
+		appendModel(cfg.Tiers, ClassifyTier(m.id, family, m.elo), ModelDescriptor{
+			ID: m.id, Family: family, Source: SourceSeed,
+			RPMLimit: m.rpm, TPMLimit: m.tpm,
+			CostPerMIn: m.costIn, CostPerMOut: m.costOut, CostRatesDeclared: true,
+		})
 	}
+	return cfg
+}
 
-	before, exists, err := contextopt.ObserveSnapshot(ctx, targetPath)
-	if err != nil {
-		return nil, err
+// preserveUnowned keeps every existing entry the seed list does not own, in its
+// tier and order, and keeps tiers the defaults do not define. An entry marked as
+// seed that the seed list no longer carries is retired, not kept, so the removal
+// check reports it and only a pruning sync drops it.
+func preserveUnowned(cfg, existing *RoutingConfig, owned map[string]bool) {
+	for name, tier := range existing.Tiers {
+		if _, ok := cfg.Tiers[name]; !ok {
+			cfg.Tiers[name] = Tier{Description: tier.Description, TargetTasks: tier.TargetTasks, FallbackTier: tier.FallbackTier}
+		}
+		for _, model := range tier.Models {
+			if !owned[model.ID] && model.Source != SourceSeed {
+				appendModel(cfg.Tiers, name, model)
+			}
+		}
 	}
-	if err := contextopt.ReplaceSnapshot(ctx, targetPath, data, contextopt.ReplaceOptions{Expected: before, Exists: exists, Mode: 0644}); err != nil {
-		return nil, fmt.Errorf("failed to write routing config to %s: %w", targetPath, err)
-	}
+}
 
-	return result, nil
+// addDiscovered appends discovered local models the catalog does not already carry.
+// An ID the seed list or an existing entry declares keeps that entry.
+func addDiscovered(cfg *RoutingConfig, discovered []ModelDescriptor) {
+	present := modelIDs(cfg)
+	for _, model := range discovered {
+		if present[model.ID] {
+			continue
+		}
+		present[model.ID] = true
+		model.Source = SourceLocal
+		model.CostRatesDeclared = true
+		appendModel(cfg.Tiers, ClassifyTier(model.ID, model.Family, 0.0), model)
+	}
+}
+
+func appendModel(tiers map[string]Tier, name string, model ModelDescriptor) {
+	tier := tiers[name]
+	tier.Models = append(tier.Models, model)
+	tiers[name] = tier
+}
+
+func modelIDs(cfg *RoutingConfig) map[string]bool {
+	ids := make(map[string]bool)
+	for _, tier := range cfg.Tiers {
+		for _, model := range tier.Models {
+			ids[model.ID] = true
+		}
+	}
+	return ids
+}
+
+// missingIDs lists, sorted, the existing model IDs the planned catalog lacks.
+func missingIDs(existing, planned *RoutingConfig) []string {
+	kept := modelIDs(planned)
+	var missing []string
+	for _, tier := range existing.Tiers {
+		for _, model := range tier.Models {
+			if !kept[model.ID] {
+				missing = append(missing, model.ID)
+			}
+		}
+	}
+	slices.Sort(missing)
+	return missing
+}
+
+func summarizeCatalog(cfg, existing *RoutingConfig) *SyncResult {
+	before := modelIDs(existing)
+	result := &SyncResult{}
+	for name, tier := range cfg.Tiers {
+		for _, model := range tier.Models {
+			result.TotalModels++
+			recordTierCount(result, name)
+			if model.Source == SourceLocal {
+				result.LocalModels++
+			}
+			if model.Source != SourceSeed && before[model.ID] {
+				result.Preserved++
+			}
+		}
+	}
+	return result
 }

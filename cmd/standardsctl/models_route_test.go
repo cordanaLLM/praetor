@@ -120,7 +120,7 @@ func TestModelsRouteCLIUsesSuppliedCapacityAndRejectsMissingObservations(t *test
 
 func TestModelsRouteCLIRejectsInvalidOrInertArguments(t *testing.T) {
 	path := writeRouteCLIInput(t, cliRouteFixture)
-	cases := [][]string{{"list", "--task=implement"}, {"route", "extra"}, {"route", "--discover-local=false"}, {"route", "--task=unknown", "--input-tokens=1"}, {"route", "--task=implement"}, {"route", "--task=implement", "--input-tokens=1000000001"}, {"route", "--task=implement", "--input-tokens=1", "--capabilities=tools,,json"}}
+	cases := [][]string{{"list", "--task=implement"}, {"route", "extra"}, {"route", "--discover-local=false"}, {"route", "--task=unknown", "--input-tokens=1"}, {"route", "--task=implement"}, {"route", "--task=implement", "--input-tokens=1000000001"}, {"route", "--task=implement", "--input-tokens=1", "--capabilities=tools,,json"}, {"list", "--prune"}, {"route", "--prune", "--task=implement", "--input-tokens=1"}}
 	for _, args := range cases {
 		args = append(args, "--config="+path)
 		if _, err := captureStdout(t, func() error { return runModels(args) }); err == nil {
