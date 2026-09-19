@@ -43,26 +43,53 @@ runs:
         check-latest: true
 
     # This step owns the question "which binary runs the command" and answers it once, as a step
-    # output. The fallback build lands in the runner's own temporary directory rather than in /tmp:
-    # on a self-hosted runner /tmp is shared between jobs, so a binary a previous job left behind
-    # would be picked up here in place of the one this job resolved.
+    # output holding an absolute path.
+    #
+    # The binary has to be the praetor the caller pinned. GITHUB_ACTION_PATH is this action's own
+    # checkout at the ref the caller wrote (GitHub, "Variables": supported in composite actions),
+    # so the module three directories above it is praetor at that same ref. Building from there is
+    # what makes `praetor-adopt@<ref>` mean something. The two alternatives do not: `go install
+    # ...@latest` runs whatever the proxy's highest version is, unrelated to the ref, and a bare
+    # `go build ./cmd/standardsctl` compiles the *adopter's* checkout, which is not praetor.
+    #
+    # The install fallback covers a vendored copy of this action whose directory is not a praetor
+    # checkout; it is pinned to the same ref rather than to @latest.
+    #
+    # The binary lands in the runner's own temporary directory rather than in /tmp: on a
+    # self-hosted runner /tmp is shared between jobs, so a binary a previous job left behind would
+    # be picked up here in place of the one this job resolved.
     - name: Build standardsctl
       id: build-standardsctl
       shell: bash
+      env:
+        PRAETOR_ACTION_REF: ${{ github.action_ref }}
       run: |
         set -euo pipefail
-        if go install github.com/cordanaLLM/praetor/cmd/standardsctl@latest; then
-          echo "binary=standardsctl" >> "$GITHUB_OUTPUT"
+
+        source_root="${GITHUB_ACTION_PATH:-.}/../../.."
+        ref="${PRAETOR_ACTION_REF:-}"
+        bin_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+        binary="$bin_dir/standardsctl"
+
+        if [ -f "$source_root/go.mod" ] && [ -d "$source_root/cmd/standardsctl" ]; then
+          go build -C "$source_root" -o "$binary" ./cmd/standardsctl
+        elif [ -n "$ref" ]; then
+          GOBIN="$bin_dir" go install "github.com/cordanaLLM/praetor/cmd/standardsctl@$ref"
         else
-          fallback="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/standardsctl"
-          go build -o "$fallback" ./cmd/standardsctl
-          echo "binary=$fallback" >> "$GITHUB_OUTPUT"
+          echo "praetor-adopt: no praetor source next to the action and no action ref to install" >&2
+          exit 1
         fi
+
+        echo "binary=$binary" >> "$GITHUB_OUTPUT"
 
     # Every value this step needs arrives through env. An expression written into a run body is
     # substituted into the script *text* before bash parses it, so an adopter's path or mode would
     # be executed rather than passed; through env it is data, and the array keeps it one argument
     # even when it carries ;, $(...) or a newline.
+    #
+    # Each boolean is passed as --flag=<value> rather than appended when the value is "true":
+    # dogfood's --dry-run and adopt's --record-baseline both default to true in standardsctl, so an
+    # omitted flag is an opt-in, not an opt-out, and `dry-run: "false"` used to dry-run anyway.
     - name: Execute Praetor Action
       id: run-praetor
       shell: bash
@@ -77,31 +104,67 @@ runs:
         set -euo pipefail
 
         bin="${PRAETOR_BIN:-standardsctl}"
-        if [ -z "$PRAETOR_PATH" ]; then
-          echo "praetor-adopt: the 'path' input names the repository to work on and must not be empty" >&2
-          exit 1
-        fi
-
-        if [ "$PRAETOR_MODE" = "dogfood" ]; then
-          args=(dogfood "--path=$PRAETOR_PATH")
-          if [ "$PRAETOR_DRY_RUN" = "true" ]; then
-            args+=(--dry-run)
-          fi
-        else
-          args=(adopt "--path=$PRAETOR_PATH")
-          if [ "$PRAETOR_DRY_RUN" = "true" ]; then
-            args+=(--dry-run)
-          fi
-          if [ "$PRAETOR_FORCE" = "true" ]; then
-            args+=(--force)
-          fi
-          if [ "$PRAETOR_RECORD_BASELINE" = "true" ]; then
-            args+=(--record-baseline)
-          fi
-        fi
-
         report="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/praetor-adopt-report.txt"
         : > "$report"
+
+        # publish hands the report to every consumer and leaves with the status it was given, so
+        # the report exists for a rejected input just as it does for a failed run.
+        publish() {
+          # A multiline output needs a delimiter that cannot appear on a line of its own inside
+          # the value (GitHub, "Workflow commands", multiline strings), so it is drawn at random.
+          random="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || true)"
+          if [ -z "$random" ]; then
+            random="${RANDOM}${RANDOM}${RANDOM}${RANDOM}"
+          fi
+          delimiter="praetor-report-$random"
+          body="$(cat "$report")"
+          {
+            printf 'report<<%s\n' "$delimiter"
+            printf '%s\n' "$body"
+            printf '%s\n' "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+          # Whether a composite action's declared output still reaches the caller once one of its
+          # steps has failed is not documented either way, so the report also goes to the job
+          # summary, which a failed run does not take with it.
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            printf '%s\n' "$body" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$1"
+        }
+
+        reject() {
+          printf 'praetor-adopt: %s\n' "$1" | tee -a "$report" >&2
+          publish 1
+        }
+
+        require_boolean() {
+          case "$2" in
+            true | false) ;;
+            *) reject "the '$1' input takes true or false, not '$2'" ;;
+          esac
+        }
+
+        if [ -z "$PRAETOR_PATH" ]; then
+          reject "the 'path' input names the repository to work on and must not be empty"
+        fi
+        require_boolean dry-run "$PRAETOR_DRY_RUN"
+        require_boolean force "$PRAETOR_FORCE"
+        require_boolean record-baseline "$PRAETOR_RECORD_BASELINE"
+
+        case "$PRAETOR_MODE" in
+          dogfood)
+            args=(dogfood "--path=$PRAETOR_PATH" "--dry-run=$PRAETOR_DRY_RUN")
+            ;;
+          adopt)
+            args=(
+              adopt "--path=$PRAETOR_PATH" "--dry-run=$PRAETOR_DRY_RUN"
+              "--force=$PRAETOR_FORCE" "--record-baseline=$PRAETOR_RECORD_BASELINE"
+            )
+            ;;
+          *)
+            reject "the 'mode' input takes adopt or dogfood, not '$PRAETOR_MODE'"
+            ;;
+        esac
 
         # The run is allowed to fail: its output is the report, and the step reports the failure
         # through its own exit status after the output has been written.
@@ -114,18 +177,4 @@ runs:
         fi
         set -e
 
-        # A multiline output needs a delimiter that cannot appear on a line of its own inside the
-        # value (GitHub, "Workflow commands", multiline strings), so it is drawn at random.
-        random="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || true)"
-        if [ -z "$random" ]; then
-          random="${RANDOM}${RANDOM}${RANDOM}${RANDOM}"
-        fi
-        delimiter="praetor-report-$random"
-        body="$(cat "$report")"
-        {
-          printf 'report<<%s\n' "$delimiter"
-          printf '%s\n' "$body"
-          printf '%s\n' "$delimiter"
-        } >> "$GITHUB_OUTPUT"
-
-        exit "$status"
+        publish "$status"
