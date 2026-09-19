@@ -76,6 +76,21 @@ def is_fixture(name):
     return slashed.startswith(FIXTURE_DIRECTORY + "/") or f"/{FIXTURE_DIRECTORY}/" in slashed
 
 
+# A Helm chart renders YAML; its templates are not YAML. "{{- if }}" is a syntax
+# error to every YAML parser, so a template can never pass yamllint, while the
+# chart's own Chart.yaml and values.yaml are ordinary documents and stay in scope.
+CHART_MANIFEST = "Chart.yaml"
+CHART_TEMPLATE_DIRECTORY = "templates"
+
+
+def is_chart_template(directory, name):
+    """Report whether a path is a Helm chart template rather than a YAML document."""
+    path = Path(name.replace("\\", "/"))
+    if path.parent.name != CHART_TEMPLATE_DIRECTORY:
+        return False
+    return (directory / path.parent.parent / CHART_MANIFEST).is_file()
+
+
 def file_checks(directory, names):
     files = present_files(directory, names)
     if any(name == ".workingdir" or name.startswith(".workingdir/") for name in files):
@@ -98,7 +113,8 @@ def file_checks(directory, names):
         matches = [name for name in files if predicate(name)]
         if matches:
             commands.append([*command, *matches])
-    yaml = [name for name in files if name.endswith((".yml", ".yaml"))]
+    yaml = [name for name in files
+            if name.endswith((".yml", ".yaml")) and not is_chart_template(directory, name)]
     if yaml:
         commands.append(["yamllint", "--strict", "-d", "{extends: relaxed, rules: {line-length: disable}}", *yaml])
     if any(name in {"lefthook.yml", ".codex/hooks.json", ".claude/settings.json",

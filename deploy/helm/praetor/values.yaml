@@ -5,14 +5,21 @@ image:
   pullPolicy: IfNotPresent
   tag: "v1.0.0"
 
+# Secrets used to pull the image, rendered on the pod spec:
+# imagePullSecrets:
+#   - name: ghcr-credentials
 imagePullSecrets: []
+# Replaces the chart name inside every generated resource name and label.
 nameOverride: ""
+# Replaces the generated "<release>-<chart>" resource name outright.
 fullnameOverride: ""
 
 serviceAccount:
   create: true
   annotations: {}
-  name: "praetor-sa"
+  # Empty means the release-scoped name, so two releases in one namespace do
+  # not collide. With create=false and no name, the pod uses "default".
+  name: ""
 
 podAnnotations: {}
 
@@ -54,10 +61,6 @@ readinessProbe:
     port: 8080
   initialDelaySeconds: 2
   periodSeconds: 5
-
-monitoring:
-  serviceMonitor:
-    enabled: false
 
 tmpfs:
   enabled: true

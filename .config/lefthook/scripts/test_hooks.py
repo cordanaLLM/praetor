@@ -21,8 +21,8 @@ from common import (HookError, MANAGED_PROCESS_ENV, MAX_PROCESS_ENV_ENTRIES,
                     clean_env, run, snapshot, stop_process_group)
 from checks import (go_packages, source_checks, governance_commands, context_changed,
                     audit_scope, local_package_patterns, checkpoint_checks,
-                    semgrep_commands, is_fixture, run_full_gate, gate_timeout,
-                    FIXTURE_DIRECTORY, GATE_LAUNCH_MARGIN, GATE_QUERY_TIMEOUT)
+                    semgrep_commands, is_fixture, is_chart_template, run_full_gate,
+                    gate_timeout, FIXTURE_DIRECTORY, GATE_LAUNCH_MARGIN, GATE_QUERY_TIMEOUT)
 import hooks
 from hooks import push_updates, new_branch_base, pre_push, push_check_mode, prepare_message
 from privacy import check_private_history, check_private_index
@@ -1239,6 +1239,25 @@ class ScopeAndGuard(unittest.TestCase):
         self.assertTrue(is_fixture("a\\testdata\\b.go"))
         self.assertFalse(is_fixture("internal/testdatafile.go"))
         self.assertFalse(is_fixture("mytestdata/a.go"))
+
+    def test_chart_templates_are_not_linted_as_yaml_documents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            chart = root / "deploy" / "helm" / "praetor"
+            (chart / "templates").mkdir(parents=True)
+            (chart / "Chart.yaml").write_text("name: praetor\n", encoding="utf-8")
+            (chart / "values.yaml").write_text("replicaCount: 1\n", encoding="utf-8")
+            (chart / "templates" / "service.yaml").write_text("{{- if true }}\n", encoding="utf-8")
+            (root / "templates").mkdir()
+            (root / "templates" / "plain.yaml").write_text("a: b\n", encoding="utf-8")
+            # A template beside Chart.yaml is a Go template: excluded.
+            self.assertTrue(is_chart_template(root, "deploy/helm/praetor/templates/service.yaml"))
+            self.assertTrue(is_chart_template(root, "deploy\\helm\\praetor\\templates\\service.yaml"))
+            # The chart's own documents and a templates/ directory with no chart stay in scope.
+            self.assertFalse(is_chart_template(root, "deploy/helm/praetor/values.yaml"))
+            self.assertFalse(is_chart_template(root, "deploy/helm/praetor/Chart.yaml"))
+            self.assertFalse(is_chart_template(root, "templates/plain.yaml"))
+            self.assertFalse(is_chart_template(root, "deploy/helm/praetor/templates/nested/deep.yaml"))
 
     def init_governance_repo(self, root):
         command(root, "git", "init", "-q")
