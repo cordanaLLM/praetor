@@ -1,3 +1,4 @@
 type: fixed
-title: Verify the whole devcontainer file and follow the declared profiles when selecting features
+title: Verify the whole devcontainer file, comparing it after normalising CRLF line endings, and emit the Go startup command only for a container whose selected features install a Go toolchain; an existing non-bootstrap .devcontainer/devcontainer.json that carried an unrecognized key, an aliased or duplicated key, or a startup command that disagrees with its feature set is now reported as drift by standardsctl audit
+issue: "#290"
 breaking: false
