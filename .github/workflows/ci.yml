@@ -75,7 +75,7 @@ jobs:
       - name: Install Pinned Git Hook Toolchain
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
         run: |
-          go install github.com/evilmartians/lefthook/v2@v2.1.12
+          go install github.com/evilmartians/lefthook/v2@v2.1.14
           lefthook version
 
       # Pinned, not inherited. Three steps below run `python3` -- the semgrep venv, the

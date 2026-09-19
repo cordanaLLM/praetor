@@ -134,7 +134,7 @@ jobs:
       # job exists to make visible, and it would be absurd to introduce it here.
       - name: Install Pinned Git Hook Toolchain
         if: ${{ !cancelled() }}
-        run: go install github.com/evilmartians/lefthook/v2@v2.1.12
+        run: go install github.com/evilmartians/lefthook/v2@v2.1.14
 
       # test_security_scope.py fails outright when gosec is absent rather than skipping, which
       # is the right call for a security regression -- so the tool is a real dependency of this

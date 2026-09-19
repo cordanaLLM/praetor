@@ -1,0 +1,3 @@
+type: changed
+title: Raise the Lefthook floor to 2.1.14 across the policy, CI installs and hook docs
+breaking: true
