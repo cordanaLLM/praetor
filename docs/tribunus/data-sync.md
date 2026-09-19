@@ -1,26 +1,33 @@
 # Tribunus data sync
 
-Tribunus is a model catalog: one record per model (or, for a subscription
-plan with no single model behind it, per usage window), each field tagged
-with where it came from and whether it was measured live or declared by a
-published catalog. `tribunus/cmd/tribunusctl sync` gathers those records
-from a handful of sources into one JSON snapshot file; `show` renders that
+Tribunus is the graph router. It decides which model a piece of work goes
+to, and a router can only decide from data it actually has: what each model
+costs, how much context it takes, which access path reaches it, and how
+much of a provider's limit is already spent. This document covers the first
+slice -- the data sync that produces that input -- not the router itself,
+which is not built yet.
+
+The sync produces one record per model (or, for a subscription plan with no
+single model behind it, per usage window), each field tagged with where it
+came from and whether it was measured live or declared by a published
+catalog. `tribunus/cmd/tribunusctl sync` gathers those records from a
+handful of sources into one JSON snapshot file; `show` renders that
 snapshot as a table. There is no database and no merge across sources in
 this slice: a snapshot is exactly what one sync run produced.
 
 ## Why this lives inside praetor for now
 
 Tribunus starts inside `cordanaLLM/praetor` (operator decision Q-063,
-`.workingdir/planning/tribunus-sync-design-20260918.md`) because a routing
-policy needs full data sync working first, and there is no interim
+`.workingdir/planning/tribunus-sync-design-20260918.md`) because the routing
+graph needs full data sync working first, and there is no interim
 praetor-side routing policy to build against yet. The layout is move-ready:
 `tribunus/` sits inside praetor's Go module with no nested `go.mod`, so
 `go build ./...` and `go test ./...` already cover it without a Makefile or
 CI change. Nothing under `tribunus/` imports praetor's `internal` packages,
 and praetor does not import `tribunus/catalog` yet -- that import is the
-only thing praetor may eventually take from this tree, once Tribunus grows
-routing logic and moves to its own repository (`git subtree split -P
-tribunus` plus one import-prefix rewrite).
+only thing praetor may eventually take from this tree, once the routing
+graph is built and Tribunus moves to its own repository (`git subtree split
+-P tribunus` plus one import-prefix rewrite).
 
 ## The record shape
 
