@@ -18,21 +18,14 @@ const (
 	scheduleLegPrefix   = "github.event_name != 'schedule' || "
 )
 
-// guardedWorkflow is the workflow subset the guard rule decides on. Permissions are nodes
-// because a workflow may grant a scalar ("write-all") or a mapping.
-type guardedWorkflow struct {
-	On          yaml.Node `yaml:"on"`
-	Permissions yaml.Node `yaml:"permissions"`
-	Jobs        map[string]struct {
-		If          string    `yaml:"if"`
-		Permissions yaml.Node `yaml:"permissions"`
-	} `yaml:"jobs"`
-}
+// The guard rule decides on the same workflow subset the audits parse, so it reads
+// workflowSpec (internal/forge/workflow_checks.go) rather than declaring a second copy of
+// the `on`, `permissions` and per-job shape for the two of them to drift apart on.
 
 // workflowGuardViolations reports every job of one workflow that may run outside the
 // repository named identity although the workflow is scheduled or can publish on its own.
 func workflowGuardViolations(name string, data []byte, identity string) ([]string, error) {
-	var spec guardedWorkflow
+	var spec workflowSpec
 	if err := yaml.Unmarshal(data, &spec); err != nil {
 		return nil, fmt.Errorf("workflow %s: parse: %w", name, err)
 	}
@@ -74,17 +67,13 @@ func confinesToRepository(condition, identity string, publishes bool) bool {
 	return !publishes && condition == scheduleLegPrefix+guard
 }
 
-// grantsWrite reports whether a permissions node grants any write scope.
+// grantsWrite reports whether a permissions node grants any write scope. The scope shapes
+// themselves are writeScopes' business (internal/forge/workflow_permissions.go); a second
+// reading of the same node here would stop matching it the first time GitHub adds a
+// permission spelling.
 func grantsWrite(permissions *yaml.Node) bool {
-	if permissions.Kind == yaml.ScalarNode {
-		return permissions.Value == "write-all"
-	}
-	for i := 1; i < len(permissions.Content) && i < 2*maxJobsPerFile; i += 2 {
-		if permissions.Content[i].Value == "write" {
-			return true
-		}
-	}
-	return false
+	scopes, _ := writeScopes(permissions)
+	return len(scopes) > 0
 }
 
 // startsUnattended reports whether any trigger fires without an operator asking for it.
@@ -101,14 +90,11 @@ func startsUnattended(on *yaml.Node) bool {
 	return false
 }
 
+// hasTrigger reports whether a workflow declares the named event, through the same lookup
+// the audits use.
 func hasTrigger(on *yaml.Node, event string) bool {
-	triggers := triggerNames(on)
-	for i := 0; i < len(triggers) && i < maxJobsPerFile; i++ {
-		if triggers[i] == event {
-			return true
-		}
-	}
-	return false
+	_, declared := eventTrigger(on, event)
+	return declared
 }
 
 // triggerNames lists the events of an "on" node in its scalar, sequence or mapping form.
@@ -239,7 +225,7 @@ func TestWorkflowGuardViolationsBounds(t *testing.T) {
 // and exactly one of the matrix and its stated-reason job runs for any repository.
 func TestPortabilityFollowsTheRepositoryVariable(t *testing.T) {
 	workflows, identity := engineWorkflows(t)
-	var spec guardedWorkflow
+	var spec workflowSpec
 	if err := yaml.Unmarshal(workflows["portability.yml"], &spec); err != nil {
 		t.Fatalf("parse portability.yml: %v", err)
 	}

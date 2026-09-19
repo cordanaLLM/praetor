@@ -109,6 +109,54 @@ func TestAuditPullRequestPermissions_Positive_ReportsAJobThatDeclaresItsOwnWrite
 	}
 }
 
+// theShapeATargetWorkflowWouldShip is the strictly worse form of #292: pull_request_target
+// runs a contributor's branch in the base repository's context, so a workflow-level write
+// hands that contributor the base repository's own token.
+const theShapeATargetWorkflowWouldShip = `
+name: Label Contributions
+on:
+  pull_request_target:
+    branches: [main]
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+`
+
+func TestAuditPullRequestPermissions_Positive_ReportsAPullRequestTargetWorkflow(t *testing.T) {
+	findings := auditPermissionsDocument(t, "label.yml", theShapeATargetWorkflowWouldShip)
+
+	if len(findings) != 2 {
+		t.Fatalf("expected one finding per write scope, got %d: %v", len(findings), findings)
+	}
+	for _, finding := range findings {
+		if finding.Trigger != pullRequestTargetEvent {
+			t.Errorf("a finding must name the event that reaches the job: %s", finding)
+		}
+	}
+}
+
+func TestAuditPullRequestPermissions_Positive_ReportsAJobFencedOffFromOnlyOneOfTheTwoEvents(t *testing.T) {
+	body := strings.Replace(theShapeATargetWorkflowWouldShip,
+		"  pull_request_target:\n    branches: [main]\n",
+		"  pull_request:\n    branches: [main]\n  pull_request_target:\n    branches: [main]\n", 1)
+	body = strings.Replace(body,
+		"  label:\n    runs-on:", "  label:\n    if: github.event_name != 'pull_request'\n    runs-on:", 1)
+
+	findings := auditPermissionsDocument(t, "label.yml", body)
+
+	if len(findings) != 2 {
+		t.Fatalf("the target event still reaches the job; got %v", findings)
+	}
+	if findings[0].Trigger != "pull_request and pull_request_target" {
+		t.Errorf("the finding does not name both events: %s", findings[0])
+	}
+}
+
 func TestAuditPullRequestPermissions_Positive_ReportsTheWriteAllShorthand(t *testing.T) {
 	body := strings.Replace(theShapePagesShipsNow,
 		"permissions:\n  contents: read", "permissions: write-all", 1)
@@ -151,26 +199,45 @@ func TestAuditPullRequestPermissions_Negative_IgnoresReadOnlyScopes(t *testing.T
 // job cap, an empty mapping, and a nil context.
 
 func TestAuditPullRequestPermissions_Boundary_JobConditionsDecideReachability(t *testing.T) {
+	onlyPullRequest := []string{pullRequestEvent}
+	onlyTarget := []string{pullRequestTargetEvent}
+	both := []string{pullRequestEvent, pullRequestTargetEvent}
 	cases := []struct {
 		name      string
 		condition string
+		events    []string
 		reachable bool
 	}{
-		{"unconditional", "", true},
-		{"negated event", "github.event_name != 'pull_request'", false},
-		{"other event only", "github.event_name == 'push'", false},
-		{"the pull request event itself", "github.event_name == 'pull_request'", true},
-		{"double quotes", `github.event_name != "pull_request"`, false},
-		{"exclusion behind a guard group", "github.repository == (vars.X || 'a/b') && github.event_name != 'pull_request'", false},
-		{"a top-level disjunction stays undecided", "github.event_name != 'pull_request' || github.actor == 'bot'", true},
-		{"an unrelated condition", "github.ref == 'refs/heads/main'", true},
-		{"an unbalanced parenthesis does not swallow the rest", "github.event_name != 'pull_request') && true", false},
+		{"unconditional", "", onlyPullRequest, true},
+		{"negated event", "github.event_name != 'pull_request'", onlyPullRequest, false},
+		{"other event only", "github.event_name == 'push'", onlyPullRequest, false},
+		{"the pull request event itself", "github.event_name == 'pull_request'", onlyPullRequest, true},
+		{"double quotes", `github.event_name != "pull_request"`, onlyPullRequest, false},
+		{"exclusion behind a guard group", "github.repository == (vars.X || 'a/b') && github.event_name != 'pull_request'", onlyPullRequest, false},
+		{"a top-level disjunction stays undecided", "github.event_name != 'pull_request' || github.actor == 'bot'", onlyPullRequest, true},
+		{"an unrelated condition", "github.ref == 'refs/heads/main'", onlyPullRequest, true},
+		{"an unbalanced parenthesis does not swallow the rest", "github.event_name != 'pull_request') && true", onlyPullRequest, false},
+		// The group used to be deleted along with the event test inside it, which reported
+		// a correctly fenced job and failed the repository-wide guard below.
+		{"a parenthesised event test still excludes", "(github.event_name != 'pull_request') && github.ref == 'refs/heads/main'", onlyPullRequest, false},
+		{"a doubly parenthesised event test still excludes", "((github.event_name != 'pull_request'))", onlyPullRequest, false},
+		{"a parenthesised comparison value still excludes", "github.event_name != ('pull_request')", onlyPullRequest, false},
+		{"a group that is not one group decides nothing", "(github.event_name != 'pull_request') || (github.actor == 'bot')", onlyPullRequest, true},
+		// pull_request_target reaches a job on a contributor's say-so exactly as
+		// pull_request does, and a workflow declaring both is fenced off from neither by a
+		// condition that names only one.
+		{"the target event itself", "github.event_name == 'pull_request_target'", onlyTarget, true},
+		{"the target event in a target workflow is not an exclusion", "github.event_name == 'pull_request_target'", both, true},
+		{"excluding only pull_request leaves the target reachable", "github.event_name != 'pull_request'", both, true},
+		{"excluding the target leaves pull_request reachable", "github.event_name != 'pull_request_target'", onlyPullRequest, true},
+		{"excluding the target in a target workflow", "github.event_name != 'pull_request_target'", onlyTarget, false},
+		{"another event in a target workflow", "github.event_name == 'push'", onlyTarget, false},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			if got := reachableFromPullRequest(testCase.condition); got != testCase.reachable {
-				t.Errorf("reachableFromPullRequest(%q) = %t, want %t",
-					testCase.condition, got, testCase.reachable)
+			if got := reachableFromPullRequest(testCase.condition, testCase.events); got != testCase.reachable {
+				t.Errorf("reachableFromPullRequest(%q, %v) = %t, want %t",
+					testCase.condition, testCase.events, got, testCase.reachable)
 			}
 		})
 	}
@@ -248,7 +315,7 @@ func pullRequestWorkflowsIn(t *testing.T, root string) int {
 		if err := yaml.Unmarshal(files[i].Data, &spec); err != nil {
 			t.Fatalf("parsing %s: %v", files[i].Name, err)
 		}
-		if triggersOnPullRequest(&spec.On) {
+		if len(pullRequestTriggers(&spec.On)) > 0 {
 			audited++
 		}
 	}

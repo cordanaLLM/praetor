@@ -16,12 +16,16 @@ import (
 )
 
 const (
-	maxWorkflowFiles  = 64
-	maxJobsPerFile    = 64
-	maxMatrixLegs     = 64
-	pullRequestEvent  = "pull_request"
-	workflowPathsKey  = "paths"
-	workflowIgnoreKey = "paths-ignore"
+	maxWorkflowFiles = 64
+	maxJobsPerFile   = 64
+	maxMatrixLegs    = 64
+	pullRequestEvent = "pull_request"
+	// pull_request_target runs a contributor's branch in the base repository's context
+	// with the base repository's token, so every audit that decides on pull_request has
+	// to decide on it too: it is the strictly more dangerous of the two.
+	pullRequestTargetEvent = "pull_request_target"
+	workflowPathsKey       = "paths"
+	workflowIgnoreKey      = "paths-ignore"
 )
 
 // RequiredStatusContexts selects unconditional job names from repository workflows
@@ -274,23 +278,23 @@ func substituteMatrixKeys(name string, leg map[string]string) string {
 	return name
 }
 
-// pullRequestTrigger reports whether an "on" node declares a pull_request trigger, and
-// returns that trigger's own value node when the declaration is a mapping entry that has
-// one. A trigger declared as a scalar or inside a sequence carries no value node.
-func pullRequestTrigger(on *yaml.Node) (*yaml.Node, bool) {
+// eventTrigger reports whether an "on" node declares the named trigger, and returns that
+// trigger's own value node when the declaration is a mapping entry that has one. A trigger
+// declared as a scalar or inside a sequence carries no value node.
+func eventTrigger(on *yaml.Node, event string) (*yaml.Node, bool) {
 	switch on.Kind {
 	case yaml.ScalarNode:
-		return nil, on.Value == pullRequestEvent
+		return nil, on.Value == event
 	case yaml.SequenceNode:
 		for i := 0; i < len(on.Content) && i < maxJobsPerFile; i++ {
-			if on.Content[i].Value == pullRequestEvent {
+			if on.Content[i].Value == event {
 				return nil, true
 			}
 		}
 		return nil, false
 	case yaml.MappingNode:
 		for i := 0; i+1 < len(on.Content) && i < 2*maxJobsPerFile; i += 2 {
-			if on.Content[i].Value == pullRequestEvent {
+			if on.Content[i].Value == event {
 				return on.Content[i+1], true
 			}
 		}
@@ -300,18 +304,26 @@ func pullRequestTrigger(on *yaml.Node) (*yaml.Node, bool) {
 	}
 }
 
-// triggersOnPullRequest reports whether any pull request starts this workflow, filtered or
-// not. A paths filter narrows which pull requests run it; it does not stop the run being a
-// pull request run, which is what a permission audit decides on.
-func triggersOnPullRequest(on *yaml.Node) bool {
-	_, declared := pullRequestTrigger(on)
-	return declared
+// pullRequestTriggers lists the contributor-triggered pull request events this workflow
+// declares, filtered or not: a paths filter narrows which pull requests run it, but it
+// does not stop the run being a pull request run, which is what a permission audit decides
+// on. Both events are reported because a permission a contributor can reach is the subject
+// of the audit, and pull_request_target hands that contributor the base repository's own
+// token. The order is fixed so a finding reads the same way every run.
+func pullRequestTriggers(on *yaml.Node) []string {
+	var events []string
+	for _, event := range [...]string{pullRequestEvent, pullRequestTargetEvent} {
+		if _, declared := eventTrigger(on, event); declared {
+			events = append(events, event)
+		}
+	}
+	return events
 }
 
 // triggersOnEveryPullRequest reports whether an "on" node declares a pull_request
 // trigger without paths filters (a filtered trigger does not report on every PR).
 func triggersOnEveryPullRequest(on *yaml.Node) bool {
-	value, declared := pullRequestTrigger(on)
+	value, declared := eventTrigger(on, pullRequestEvent)
 	return declared && !filtersPaths(value)
 }
 
