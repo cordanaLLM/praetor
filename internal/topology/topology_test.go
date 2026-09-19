@@ -262,3 +262,29 @@ func TestVerifyDeletionSafety_Protections(t *testing.T) {
 		t.Error("expected safety check to reject directory with valid git repo")
 	}
 }
+
+func TestHasValidGitRepo(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	initTestGit(t, repo)
+	if !HasValidGitRepo(repo) {
+		t.Fatal("directory with .git/HEAD not recognised")
+	}
+	worktree := filepath.Join(root, "worktree")
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, ".git"), []byte("gitdir: ../repo/.git\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !HasValidGitRepo(worktree) {
+		t.Fatal("gitlink file not recognised")
+	}
+	headless := filepath.Join(root, "headless")
+	if err := os.MkdirAll(filepath.Join(headless, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if HasValidGitRepo(headless) || HasValidGitRepo(filepath.Join(root, "absent")) || HasValidGitRepo("") {
+		t.Fatal("headless, absent or empty path accepted as a repository")
+	}
+}

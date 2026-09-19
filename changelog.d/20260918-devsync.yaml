@@ -1,0 +1,3 @@
+type: added
+title: Add praetorctl devsync to copy workstation project folders to Google Drive through an rclone crypt remote and restore them on another machine
+breaking: false
