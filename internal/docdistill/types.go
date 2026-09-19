@@ -55,6 +55,14 @@ type DistillOptions struct {
 	OfflineOnly         bool `json:"offline_only"`
 	ForceRefresh        bool `json:"force_refresh"`
 	IncludeTransitive   bool `json:"include_transitive"`
+	// MaxPackages bounds how many declared dependencies SyncRepositoryDocs harvests in
+	// one call (HISS-02). Zero or negative selects the package default (maxSyncPackages
+	// in cache.go).
+	MaxPackages int `json:"max_packages,omitempty"`
+	// Timeout bounds the whole sync SyncRepositoryDocs enforces on itself. Zero keeps
+	// the caller's own context deadline when it has one and applies defaultSyncTimeout
+	// otherwise (HISS-02).
+	Timeout time.Duration `json:"timeout,omitempty"`
 }
 
 // DefaultDistillOptions provides standard bounds.

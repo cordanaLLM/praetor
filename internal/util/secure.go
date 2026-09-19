@@ -190,6 +190,70 @@ func tightenFilePermissions(file *os.File, perm os.FileMode) error {
 	return nil
 }
 
+// WriteFileAtomic writes data so a reader can never observe a torn or truncated file at
+// path: it writes to a sibling temporary file in path's own directory (so the rename
+// below stays on one filesystem and is therefore atomic) and renames that file onto path
+// only once its write and its fsync have both succeeded. A failure anywhere before the
+// rename leaves path exactly as it was and removes the temp file; it never truncates the
+// target. WriteFileSecure truncates path in place before writing, so a process that dies
+// between the truncate and the write leaves a zero-length or partially written file
+// (BUG-447) -- use WriteFileAtomic instead wherever a reader may run concurrently with a
+// writer, or a partial write would otherwise destroy the previous, valid contents.
+//
+// perm is the same permission ceiling WriteFileSecure enforces: a zero perm selects
+// SecureFilePerm, and world-writable or non-permission bits are refused. Unlike
+// WriteFileSecure, perm is not intersected with any pre-existing file at path: the
+// rename replaces that file outright, so its historical permission bits do not carry
+// forward, matching every other atomic-rename writer.
+func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
+	if perm == 0 {
+		perm = SecureFilePerm
+	}
+	if permErr := checkPerm(perm); permErr != nil {
+		return permErr
+	}
+
+	dir := filepath.Dir(path)
+	// #nosec G304 -- dir is the caller-confined directory of path; the pattern below is a
+	// fixed prefix plus a directory-local base name, not attacker-controlled.
+	tmp, err := os.CreateTemp(dir, ".tmp-"+filepath.Base(path)+"-*")
+	if err != nil {
+		return fmt.Errorf("util: create temp file for %q: %w", path, err)
+	}
+	tmpPath := tmp.Name()
+
+	if writeErr := writeAndSyncTemp(tmp, data, perm); writeErr != nil {
+		_ = os.Remove(tmpPath)
+		return writeErr
+	}
+	if renameErr := os.Rename(tmpPath, path); renameErr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("util: rename %q to %q: %w", tmpPath, path, renameErr)
+	}
+	return nil
+}
+
+// writeAndSyncTemp chmods, writes and fsyncs an already-created temporary file, always
+// closing it exactly once. It is WriteFileAtomic's only path back to the caller before
+// the rename, so every failure it returns leaves the rename unattempted.
+func writeAndSyncTemp(tmp *os.File, data []byte, perm os.FileMode) (err error) {
+	defer func() {
+		if cerr := tmp.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("util: close temp file %q: %w", tmp.Name(), cerr)
+		}
+	}()
+	if chErr := tmp.Chmod(perm); chErr != nil {
+		return fmt.Errorf("util: chmod temp file %q to %#o: %w", tmp.Name(), perm, chErr)
+	}
+	if _, werr := tmp.Write(data); werr != nil {
+		return fmt.Errorf("util: write temp file %q: %w", tmp.Name(), werr)
+	}
+	if serr := tmp.Sync(); serr != nil {
+		return fmt.Errorf("util: sync temp file %q: %w", tmp.Name(), serr)
+	}
+	return nil
+}
+
 // MkdirSecure creates path and missing parents, respecting the process umask. perm
 // is a permission ceiling on the leaf: a pre-existing or newly created directory is
 // only tightened, never widened. Existing ancestors retain their permissions.
