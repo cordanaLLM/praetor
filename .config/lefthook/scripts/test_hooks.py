@@ -1271,6 +1271,48 @@ class ScopeAndGuard(unittest.TestCase):
             with self.assertRaises(HookError):
                 local_package_patterns(root, ["example.test/scopes/missing"])
 
+    def test_local_package_patterns_resolves_a_symlinked_root(self):
+        """A symlinked snapshot root must not read as outside the checked snapshot.
+
+        `local_package_patterns` already resolved both operands before comparing; this locks
+        that behavior in through the shared `common.resolved_relative_to` helper introduced for
+        `go_packages` below, so the two call sites cannot drift back to resolving one side and
+        not the other (HISS-19). See `test_go_packages_resolves_a_symlinked_directory` for the
+        call site that actually raised on a symlinked ancestor.
+        """
+        with tempfile.TemporaryDirectory(prefix="praetor-package-real-") as temp:
+            root = Path(temp)
+            (root / "go.mod").write_text("module example.test/symlinked\n\ngo 1.27\n")
+            (root / "a.go").write_text("package symlinked\n")
+            alias = root.parent / (root.name + "-alias")
+            alias.symlink_to(root)
+            try:
+                self.assertEqual(local_package_patterns(alias, ["example.test/symlinked"]), ["."])
+            finally:
+                alias.unlink()
+
+    def test_go_packages_resolves_a_symlinked_directory(self):
+        """go_packages must match a package's Dir even when `directory` is reached via a symlink.
+
+        `go list`, run the way `run()` invokes it (subprocess.Popen with no $PWD override), loses
+        its caller's spelling and reports each package's Dir through the syscall-resolved real
+        path once cwd is a symlink -- exactly what common.snapshot()'s
+        tempfile.TemporaryDirectory(prefix="praetor-hook-") sits under on macOS's own
+        /var -> /private/var. `Path(pkg["Dir"]).relative_to(directory)` then raised for every
+        touched package inside a pre-commit/pre-push snapshot (#135 second pass; #282 collapsed
+        the Go-side equivalents onto internal/util.ResolveExistingPath).
+        """
+        with tempfile.TemporaryDirectory(prefix="praetor-package-real-") as temp:
+            root = Path(temp)
+            (root / "go.mod").write_text("module example.test/hookscope\n\ngo 1.27\n")
+            (root / "a.go").write_text("package hookscope\n")
+            alias = root.parent / (root.name + "-alias")
+            alias.symlink_to(root)
+            try:
+                self.assertEqual(go_packages(alias, ["a.go"]), ["example.test/hookscope"])
+            finally:
+                alias.unlink()
+
     def test_process_failure_and_timeout_are_not_swallowed(self):
         with self.assertRaises(HookError):
             run(["python3", "-c", "raise SystemExit(7)"])

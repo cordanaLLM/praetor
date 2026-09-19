@@ -336,6 +336,33 @@ class NativeLefthook(unittest.TestCase):
         with self.assertRaises(ValueError):
             SCOPE.check({**relative_existing, "tool_input": {"file_path": "link/README.md"}})
 
+    def test_native_batch_scope_accepts_a_repository_root_reached_through_a_symlinked_ancestor(self):
+        """A ROOT reached through a symlinked ancestor must still match its own cwd.
+
+        macOS presents /var (any temp root, including this fixture's, sits under it) as a
+        symlink to /private/var, so a payload's `cwd` resolves one hop further than a
+        caller-supplied ROOT that kept the original spelling -- exactly what this fixture's own
+        `self.root = Path(self.temp.name)` plus `SCOPE.ROOT = self.root` in setUp reproduced on
+        a macOS runner (#135 second pass, mirrors #282's Go-side ResolveExistingPath collapse).
+        The alias sits one level above the fixture root, not on the root itself, so this only
+        exercises the ancestor-symlink class and leaves the root's own-symlink checks in
+        checkpoint.py's _policy_bytes walk (a deliberate, unrelated confinement control) alone.
+        """
+        alias = Path(tempfile.mkdtemp(prefix="praetor-ancestor-alias-"))
+        # Symlinking the shared temp root itself (self.root.parent) needs privileges this
+        # sandbox does not have; replacing a directory this call just created and owns with a
+        # symlink to the same target does not.
+        alias.rmdir()
+        alias.symlink_to(self.root.parent)
+        self.addCleanup(alias.unlink)
+        aliased_root = alias / self.root.name
+        SCOPE.ROOT = aliased_root
+        (self.root / "README.md").write_text("dirty\n")
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Edit",
+                  "tool_input": {"file_path": str(aliased_root / "README.md")},
+                  "cwd": str(aliased_root)}
+        self.assertEqual(SCOPE.check(payload), 0)
+
     def scope_payload(self, path="new.go", **changes):
         return {"hook_event_name": "PreToolUse", "tool_name": "Write",
                 "tool_input": {"file_path": path}, "cwd": str(self.root), **changes}
