@@ -1,0 +1,3 @@
+type: added
+title: Add Tribunus slice 1 (tribunus/cmd/tribunusctl sync|show), a model catalog data sync over Codex CLI usage, a LiteLLM gateway, local Ollama, and public OpenRouter/LiteLLM catalogs, self-contained inside praetor's Go module ahead of a future move
+breaking: false
