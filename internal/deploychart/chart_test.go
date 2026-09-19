@@ -169,12 +169,73 @@ func wantExactly(t *testing.T, where string, got document, want map[string]strin
 	}
 }
 
+// wantContains asserts a mapping carries every wanted key, which is what a
+// mutable label set owes its readers: extra keys are allowed, missing ones are
+// not.
+func wantContains(t *testing.T, where string, got document, want map[string]string) {
+	t.Helper()
+	for key, value := range want {
+		if got[key] != value {
+			t.Fatalf("%s[%q] = %v, want %q", where, key, got[key], value)
+		}
+	}
+}
+
 // selectorLabels is the label set praetor.selectorLabels renders for a release.
 func selectorLabels(chartName, release string) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/name":     chartName,
 		"app.kubernetes.io/instance": release,
 	}
+}
+
+// chartMetadata decodes the shipped Chart.yaml. The standard labels are derived
+// from it, so the expectation reads the same file the template does and a chart
+// version bump does not fail a test that is about the templates.
+func chartMetadata(t *testing.T) document {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(helmChart(t), "Chart.yaml"))
+	if err != nil {
+		t.Fatalf("read Chart.yaml: %v", err)
+	}
+	documents, err := decodeDocuments(raw)
+	if err != nil {
+		t.Fatalf("decode Chart.yaml: %v", err)
+	}
+	if len(documents) != 1 {
+		t.Fatalf("Chart.yaml holds %d documents, want 1", len(documents))
+	}
+	return documents[0]
+}
+
+// standardLabels is the release-independent half of praetor.labels, derived from
+// Chart.yaml exactly as the helper derives it.
+func standardLabels(t *testing.T) map[string]string {
+	t.Helper()
+	chart := chartMetadata(t)
+	// The helper substitutes "_" for the "+" a semver build tag may carry and
+	// truncates at 63 characters; "<name>-<version>" is well inside that bound here.
+	return map[string]string{
+		"helm.sh/chart": strings.ReplaceAll(
+			fmt.Sprintf("%v-%v", chart["name"], chart["version"]), "+", "_"),
+		"app.kubernetes.io/version":    fmt.Sprintf("%v", chart["appVersion"]),
+		"app.kubernetes.io/managed-by": "Helm",
+	}
+}
+
+// containerName reads the single container name of the rendered pod spec.
+func containerName(t *testing.T, docs []document) string {
+	t.Helper()
+	containers, ok := podSpec(t, docs)["containers"].([]any)
+	if !ok || len(containers) != 1 {
+		t.Fatalf("containers = %v, want exactly one", podSpec(t, docs)["containers"])
+	}
+	entry, ok := containers[0].(document)
+	if !ok {
+		t.Fatalf("containers[0] = %v, want a mapping", containers[0])
+	}
+	value, _ := entry["name"].(string)
+	return value
 }
 
 func names(docs []document) map[string]bool {
@@ -258,20 +319,40 @@ func TestSelectorLabelsPinTheImmutableFields(t *testing.T) {
 	deployment := only(t, docs, "Deployment")
 	wantExactly(t, "Deployment spec.selector.matchLabels",
 		child(t, deployment, "spec", "selector", "matchLabels"), want)
-	wantExactly(t, "pod template metadata.labels",
-		child(t, deployment, "spec", "template", "metadata", "labels"), want)
 	wantExactly(t, "Service spec.selector",
 		child(t, only(t, docs, "Service"), "spec", "selector"), want)
-	// The object labels are a superset: the selector subset plus release metadata.
-	labels := child(t, deployment, "metadata", "labels")
-	for key, value := range want {
-		if labels[key] != value {
-			t.Fatalf("Deployment metadata.labels[%q] = %v, want %q", key, labels[key], value)
-		}
+	// The pod template labels are mutable and only have to be a superset of the
+	// selector, so adding the standard chart labels there stays a safe change.
+	wantContains(t, "pod template metadata.labels",
+		child(t, deployment, "spec", "template", "metadata", "labels"), want)
+	// The object labels are a superset too: the selector subset plus release metadata.
+	wantContains(t, "Deployment metadata.labels", child(t, deployment, "metadata", "labels"), want)
+}
+
+// Positive: every rendered object carries the standard chart labels that
+// `helm list` and `kubectl get -l` read. Dropping one from praetor.labels used to
+// leave this suite green.
+func TestEveryObjectCarriesTheStandardChartLabels(t *testing.T) {
+	want := standardLabels(t)
+	docs := render(t, "alpha")
+	if len(docs) == 0 {
+		t.Fatal("the chart rendered no object")
 	}
-	if labels["app.kubernetes.io/managed-by"] != "Helm" {
-		t.Fatalf("metadata.labels app.kubernetes.io/managed-by = %v, want Helm",
-			labels["app.kubernetes.io/managed-by"])
+	for i := 0; i < len(docs); i++ {
+		where := fmt.Sprintf("%v %q metadata.labels", docs[i]["kind"], name(docs[i]))
+		wantContains(t, where, child(t, docs[i], "metadata", "labels"), want)
+	}
+}
+
+// Negative: the standard labels describe the chart, not the release, so
+// nameOverride moves neither of them while it does move the selector label.
+func TestStandardLabelsIgnoreTheNameOverride(t *testing.T) {
+	want := standardLabels(t)
+	labels := child(t, only(t, render(t, "alpha", "--set", "nameOverride=alt"), "Deployment"),
+		"metadata", "labels")
+	wantContains(t, "Deployment metadata.labels", labels, want)
+	if labels["app.kubernetes.io/name"] != "alt" {
+		t.Fatalf("app.kubernetes.io/name = %v, want alt", labels["app.kubernetes.io/name"])
 	}
 }
 
@@ -314,6 +395,14 @@ func TestNameOverrideKeepsReleaseScope(t *testing.T) {
 	wantExactly(t, "Deployment spec.selector.matchLabels",
 		child(t, only(t, docs, "Deployment"), "spec", "selector", "matchLabels"),
 		selectorLabels("alt", "alpha"))
+	// The container name follows the chart name too; a literal there would make
+	// `kubectl logs -c` name a container the values no longer describe.
+	if got := containerName(t, docs); got != "alt" {
+		t.Fatalf("container name = %q, want alt", got)
+	}
+	if got := containerName(t, render(t, "alpha")); got != "praetor" {
+		t.Fatalf("default container name = %q, want praetor", got)
+	}
 }
 
 // Positive: imagePullSecrets reach the pod spec; empty by default it renders no
@@ -334,8 +423,15 @@ func TestImagePullSecretsReachThePodSpec(t *testing.T) {
 }
 
 // manifestOf builds a stream of n minimal documents, itself bounded by the
-// constant the callers derive n from (HISS-02).
-func manifestOf(n int) []byte {
+// constant the callers derive n from (HISS-02). A caller that asks for more than
+// the bound fails here rather than silently receiving a shorter stream and
+// asserting on it.
+func manifestOf(t *testing.T, n int) []byte {
+	t.Helper()
+	if n > maxDocuments+1 {
+		t.Fatalf("manifestOf(%d) exceeds the %d-document bound this helper builds under",
+			n, maxDocuments+1)
+	}
 	var buf bytes.Buffer
 	for i := 0; i < n && i <= maxDocuments+1; i++ {
 		if i > 0 {
@@ -352,7 +448,7 @@ func manifestOf(n int) []byte {
 // the bound itself, so a 64-document manifest reported "more than 64 documents".
 func TestDecodeBoundsTheDocumentStream(t *testing.T) {
 	for _, count := range []int{1, maxDocuments} {
-		documents, err := decodeDocuments(manifestOf(count))
+		documents, err := decodeDocuments(manifestOf(t, count))
 		if err != nil {
 			t.Fatalf("%d documents: %v", count, err)
 		}
@@ -360,7 +456,7 @@ func TestDecodeBoundsTheDocumentStream(t *testing.T) {
 			t.Fatalf("decoded %d documents from a %d-document manifest", len(documents), count)
 		}
 	}
-	if _, err := decodeDocuments(manifestOf(maxDocuments + 1)); err == nil {
+	if _, err := decodeDocuments(manifestOf(t, maxDocuments+1)); err == nil {
 		t.Fatalf("a %d-document manifest decoded without an overflow error", maxDocuments+1)
 	}
 }
