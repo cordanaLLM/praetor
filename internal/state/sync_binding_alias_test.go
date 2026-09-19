@@ -42,15 +42,21 @@ func TestStateSyncBindsOneStateAcrossAliasedRootSpellings(t *testing.T) {
 	if err := VerifyStateSync(t.Context(), root); err != nil {
 		t.Fatalf("the real path rejected a state synced through an aliased spelling: %v", err)
 	}
-	// Negative: the binding still refuses a genuinely different repository. Canonicalising
-	// the spelling must not turn the path into an input the verification ignores.
-	other := syncFixture(t)
-	content, err := os.ReadFile(filepath.Join(root, WorkingDirName, "STATE.md"))
-	if err != nil {
+	// Negative: canonicalising the spelling must not turn the path into an input the
+	// verification ignores. Moving the whole checkout is the one mutation that changes the
+	// path and nothing else -- every ledger byte, the index, the working tree and the HEAD
+	// commit travel with it -- so a binding that dropped the path would accept the move.
+	//
+	// A second fixture repository does not pin this. Two fixtures commit identical trees
+	// with identical author data, so their HEAD SHAs differ only when the two commits land
+	// in different seconds; when they coincide, the binding is identical apart from the path
+	// and the case passes whether or not the path is an input. Measured as flaky both ways
+	// against a binding with the path removed. This form is deterministic.
+	moved := filepath.Join(real, "moved")
+	if err := os.Rename(root, moved); err != nil {
 		t.Fatal(err)
 	}
-	writeIntegrityFile(t, filepath.Join(other, WorkingDirName, "STATE.md"), string(content))
-	if err := VerifyStateSync(t.Context(), other); err == nil {
-		t.Fatal("another repository accepted a state bound to this one")
+	if err := VerifyStateSync(t.Context(), moved); err == nil {
+		t.Fatal("a checkout moved to another path accepted a state bound to the old one")
 	}
 }

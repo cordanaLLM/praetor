@@ -89,6 +89,13 @@ func TestRunRecordsRegisterAndTightensProviderBudget(t *testing.T) {
 	// its own TMPDIR, Windows has no file isolation at all -- so the panic aborted the test
 	// binary and masked every later case in the package (#135). This is the same guard the
 	// package's other run()-calling cases already take; it was the one omission.
+	//
+	// The platform guard is not the whole repair. It returns early on Linux, where prepare
+	// still fails whenever TMPDIR reaches its directory through a symlink, and the panic
+	// aborts the binary rather than failing one case: measured here, the package reported
+	// one outcome line instead of 37. So every read of a run() result in this package is
+	// gated on the result being there, which is what HISS-07 asks of the test's own error
+	// path, and a failure prints the error instead of a stack trace.
 	requireRepairIsolation(t)
 	f := newRunFixture(t, 1)
 	f.config.RepairPolicy.Register, f.config.RepairPolicy.MaxOutputTokens = string(config.TextRegisterInternal), 512
@@ -99,7 +106,7 @@ func TestRunRecordsRegisterAndTightensProviderBudget(t *testing.T) {
 		return nil, errors.New("provider failed")
 	}
 	result, err := run(t.Context(), f.configPath, f.reportPath, generate, fakeVerification(false))
-	if err == nil || result.Status != "agent_failed" {
+	if err == nil || result == nil || result.Status != "agent_failed" {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
 	if seen != 512 {
