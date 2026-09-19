@@ -36,15 +36,10 @@ func testWrite(t *testing.T, root, path, content string) {
 
 // stageIndexEntry stages object at path with mode through the index alone.
 //
-// Nothing is written to the worktree, so the staged tree does not depend on what the
-// operator's filesystem can hold. A case-insensitive checkout (APFS by default on macOS,
-// NTFS on Windows) cannot hold deploy/k8s/app.yaml and deploy/k8s/APP.yaml at once, and
-// writing the second spelling lands on the first dirent; git's own pathspec matching stays
-// case-sensitive regardless of core.ignorecase, so "add" then matched nothing while
-// file_exists() reported the path present through the case alias. It exited 0 having staged
-// nothing and the commit after it failed with an empty stderr (#135). It is also the shape
-// the irregular-entry fixtures need, since a symlink or a submodule cannot be produced
-// through an ordinary file write either.
+// Nothing is written to the worktree, which is what a fixture needs whenever the entry it
+// wants cannot be produced by an ordinary file write: a symlink or a submodule gitlink, and
+// any entry whose exact mode is the thing under test. Three call sites wrote this line by
+// hand; one form keeps them from drifting (HISS-19).
 func stageIndexEntry(t *testing.T, g *gitRunner, dir, mode, object, path string) {
 	t.Helper()
 	testGit(t, g, dir, "update-index", "--add", "--cacheinfo", mode+","+object+","+path)
