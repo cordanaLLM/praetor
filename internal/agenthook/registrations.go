@@ -26,11 +26,23 @@ func (r Registration) Command() string {
 }
 
 // registrationTable is the support matrix of the entrypoint. A pair without a row is
-// rejected before any input is read.
+// rejected before any input is read. The checkpoint rows (pre-edit, post-tool, stop) reach
+// the native clients only (H2); Lefthook keeps its H1 rows until its jobs are re-pointed at
+// this entrypoint (H4), so `lefthook post-tool` etc. still fall through as unsupported here.
+// Codex carries no pre-edit row: measured fact, section 1 of the rollout spec ("no pre-edit
+// event registered today").
 var registrationTable = []Registration{
 	{Client: "claude", Event: EventPreTool, NativeEvent: "PreToolUse", Matcher: "^Bash$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventPreEdit, NativeEvent: "PreToolUse", Matcher: "^(Edit|Write)$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventPostTool, NativeEvent: "PostToolUse", Timeout: 60 * time.Second},
+	{Client: "claude", Event: EventStop, NativeEvent: "Stop", Timeout: 60 * time.Second},
 	{Client: "codex", Event: EventPreTool, NativeEvent: "PreToolUse", Matcher: "^Bash$", Timeout: 15 * time.Second},
+	{Client: "codex", Event: EventPostTool, NativeEvent: "PostToolUse", Timeout: 60 * time.Second},
+	{Client: "codex", Event: EventStop, NativeEvent: "Stop", Timeout: 60 * time.Second},
 	{Client: "gemini", Event: EventPreTool, NativeEvent: "BeforeTool", Matcher: "run_shell_command", Timeout: 15 * time.Second},
+	{Client: "gemini", Event: EventPreEdit, NativeEvent: "BeforeTool", Matcher: "^(replace|write_file)$", Timeout: 15 * time.Second},
+	{Client: "gemini", Event: EventPostTool, NativeEvent: "AfterTool", Timeout: 60 * time.Second},
+	{Client: "gemini", Event: EventStop, NativeEvent: "AfterAgent", Timeout: 60 * time.Second},
 	{Client: "lefthook", Event: EventPreTool, NativeEvent: "agent-pre-tool"},
 	{Client: "lefthook", Event: EventEnvironment, NativeEvent: "pre-rebase"},
 	// agy: NativeEvent and Timeout are docs-confirmed (Hook Spec Fields; "Execution

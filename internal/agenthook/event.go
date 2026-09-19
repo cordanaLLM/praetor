@@ -16,16 +16,15 @@ import (
 // Event is a canonical hook event, independent of any client's native event name.
 type Event string
 
-// Canonical events served by the entrypoint. pre-edit and post-tool (section 3.1 of the
-// rollout spec) are not wired yet: their evaluator is H2's checkpoint.py hand-off, not
-// built here.
+// Canonical events served by the entrypoint. EventPreEdit and EventPostTool reach the
+// checkpoint evaluators (H2); EventStop reaches them too, alongside the agy dialect that
+// already decoded and encoded it (H3).
 const (
 	EventPreTool     Event = "pre-tool"
+	EventPreEdit     Event = "pre-edit"
+	EventPostTool    Event = "post-tool"
+	EventStop        Event = "stop"
 	EventEnvironment Event = "environment"
-	// EventStop is the client's execution-loop-termination event. Only the agy dialect
-	// decodes and encodes it today (H3); the other clients gain it with H2's checkpoint
-	// state-ledger verify.
-	EventStop Event = "stop"
 )
 
 // Input and output bounds (HISS-02). MaxInputBytes is the bound of the Python adapters.
@@ -40,11 +39,17 @@ var argumentShape = regexp.MustCompile(`^[a-z-]+$`)
 // ErrUnsupported reports a client and event pair without a registration row.
 var ErrUnsupported = errors.New("unsupported hook client or event")
 
-// Canonical is the client-neutral payload every dialect decodes into.
+// Canonical is the client-neutral payload every dialect decodes into. FilePath,
+// ConversationID, Step and StopActive are additive (H2): every dialect's Decode today
+// leaves them at their zero value; a dialect gains them only when it starts reading the
+// matching payload key, which keeps this an additive change for the existing dialects.
 type Canonical struct {
-	Event      Event
-	Tool       string
-	Command    string
+	Event    Event
+	Tool     string
+	Command  string
+	FilePath string
+	// FilePath is additive (H2): dialect.Decode does not populate it from a real payload
+	// yet (only pre-edit's normalised hand-off to checkpoint_scope.py sets it directly).
 	Workspaces []string
 	// ConversationID identifies the agent conversation a payload belongs to. Populated
 	// only by a dialect whose native payload carries one (agy's conversationId); empty
@@ -57,7 +62,8 @@ type Canonical struct {
 	// StopActive reports whether a Stop payload is a repeat for its ConversationID, so
 	// an encoder can bound how many times it answers "continue" for one conversation
 	// (3.4's "block once"). claude and codex read this from the client's own
-	// stop_hook_active field once H2 wires their Stop dialect; agy derives it from Step.
+	// stop_hook_active field once a follow-up wires their Stop dialect; agy derives it
+	// from Step.
 	StopActive bool
 }
 

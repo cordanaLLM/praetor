@@ -6,13 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
-)
 
-// Evaluation budgets, inside the registration timeouts of the table.
-const (
-	preToolBudget     = 10 * time.Second
-	environmentBudget = 5 * time.Second
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // usageExit is the exit code of a call no dialect can encode: the blocking code of the
@@ -20,13 +15,16 @@ const (
 const usageExit = 2
 
 // Invocation is everything one hook call depends on. Nothing is read from process state.
+// Settings is the operator's hooks section (S1); its zero value is the built-in governed
+// scope with the built-in interpreter search order (settings.go).
 type Invocation struct {
-	Client  string
-	Event   string
-	Stdin   io.Reader
-	Getenv  func(string) string
-	WorkDir string
-	Policy  *Policy
+	Client   string
+	Event    string
+	Stdin    io.Reader
+	Getenv   func(string) string
+	WorkDir  string
+	Policy   *Policy
+	Settings config.HookSettings
 }
 
 // Run serves one hook call: parse, read, decode, resolve, judge, encode. It never
@@ -40,16 +38,12 @@ func Run(ctx context.Context, in Invocation) Response {
 	if !known {
 		return usageResponse(fmt.Errorf("%w: no dialect for %s", ErrUnsupported, row.Client))
 	}
-	budget := preToolBudget
-	if row.Event == EventEnvironment {
-		budget = environmentBudget
-	}
-	ctx, cancel := context.WithTimeout(ctx, budget)
+	ctx, cancel := context.WithTimeout(ctx, budgetFor(row.Event))
 	defer cancel()
 	if dir := recordDirOf(in.Getenv); dir != "" {
 		return recordAndAllow(ctx, dir, row, dialect, in)
 	}
-	canonical, verdict := evaluate(ctx, dialect, row.Event, in)
+	canonical, verdict := evaluate(ctx, dialect, row, in)
 	return dialect.Encode(canonical, verdict)
 }
 
@@ -69,39 +63,6 @@ func usageResponse(err error) Response {
 		lines = append(lines, "  "+row.Command())
 	}
 	return Response{Stderr: []byte(strings.Join(lines, "\n") + "\n"), ExitCode: usageExit}
-}
-
-// evaluate returns the canonical payload alongside its verdict: the dialect's Encode
-// needs fields off canonical (agy's StopActive) that the verdict alone cannot carry, and
-// every return below still reports whatever of canonical it managed to build before the
-// failure that produced its verdict.
-func evaluate(ctx context.Context, dialect Dialect, event Event, in Invocation) (Canonical, Verdict) {
-	canonical := Canonical{Event: event}
-	if event != EventEnvironment {
-		payload, err := readBounded(ctx, in.Stdin)
-		if err == nil {
-			canonical, err = dialect.Decode(event, payload)
-		}
-		if err != nil {
-			return Canonical{Event: event}, Verdict{Deny, "[BLOCKED BY HISS-16] Invalid hook input: " + err.Error()}
-		}
-	}
-	root, err := ResolveRoot(ctx, canonical.Workspaces, in.WorkDir)
-	switch {
-	case err != nil:
-		return canonical, Verdict{Deny, "[BLOCKED BY HISS-16] " + err.Error()}
-	case root == "":
-		return canonical, Verdict{Skip, "no repository"}
-	case !Governed(root):
-		return canonical, Verdict{Skip, "workspace not governed"}
-	}
-	if verdict := Environment(in.Getenv); verdict.Outcome != Allow {
-		return canonical, verdict
-	}
-	if canonical.Command == "" {
-		return canonical, Verdict{Outcome: Allow}
-	}
-	return canonical, in.Policy.Command(canonical.Command)
 }
 
 // readBounded reads at most MaxInputBytes+1 bytes and honours the context, so a client
