@@ -5,6 +5,13 @@ package flavor_test
 // so every version, schema and image reference inside defaultTemplateContent could change,
 // or rot, without a test noticing. HISS-20 wants the claim replayable in both directions:
 // each case below fails if the value regresses AND fails if the value is merely absent.
+//
+// Three of the four cases are tied to this branch and fail on origin/main unchanged: the
+// Dockerfile runtime, the rustfmt edition, and the equality between the emitted
+// .golangci.yml and templates/go/.golangci.yml.tmpl, which carried the v1 schema until
+// this branch. The assertions on the emitted golangci *content* and on the workflow stubs
+// are characterisation, not new coverage: they hold on origin/main too, and they are here
+// to pin behaviour that nothing else pins, not to demonstrate a change.
 
 import (
 	"os"
@@ -20,17 +27,26 @@ import (
 var digestPinned = regexp.MustCompile(`^FROM \S+:[^@\s]+@sha256:[0-9a-f]{64}$`)
 
 // scaffoldInto applies a flavor to an empty repository and returns the file bodies.
+//
+// The report is read, not discarded: ApplyFlavor returns (report, nil) even when
+// applySingleTemplate recorded a mkdir or write failure in report.Errors, so a helper that
+// drops it reports a write failure as "this flavor scaffolds no such file" and hides the
+// recorded cause.
 func scaffoldInto(t *testing.T, flavorName string, want ...string) map[string]string {
 	t.Helper()
 	root := t.TempDir()
-	if _, err := flavor.ApplyFlavor(t.Context(), root, flavorName, false); err != nil {
+	report, err := flavor.ApplyFlavor(t.Context(), root, flavorName, false)
+	if err != nil {
 		t.Fatalf("apply %s: %v", flavorName, err)
+	}
+	if len(report.Errors) > 0 {
+		t.Fatalf("apply %s recorded scaffolding errors: %s", flavorName, strings.Join(report.Errors, "; "))
 	}
 	bodies := make(map[string]string, len(want))
 	for _, rel := range want {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
-			t.Fatalf("%s scaffolded no %s: %v", flavorName, rel, err)
+			t.Fatalf("%s scaffolded no %s (created: %v, skipped: %v): %v", flavorName, rel, report.CreatedTemplates, report.SkippedTemplates, err)
 		}
 		bodies[rel] = string(data)
 	}
@@ -73,6 +89,35 @@ func TestScaffoldedGolangciConfigCarriesTheV2Schema(t *testing.T) {
 			t.Errorf("enabled set lost %q", linter)
 		}
 	}
+}
+
+// The emitted .golangci.yml and templates/go/.golangci.yml.tmpl are two copies of one
+// file, and the template's own header concedes the equality was "held by reading only"
+// because praetorctl dedupe scan compares Go functions and cannot see a YAML/Go-string
+// pair. This is the gate that header asks for: HISS-19 covers config formats, and the two
+// copies had in fact already drifted -- the template carried the v1 schema until this
+// branch while the scaffolder emitted v2. It fails on origin/main unchanged.
+func TestScaffoldedGolangciConfigEqualsTheShippedTemplate(t *testing.T) {
+	body := scaffoldInto(t, "go-service", ".golangci.yml")[".golangci.yml"]
+	raw, err := os.ReadFile(filepath.Join("..", "..", "templates", "go", ".golangci.yml.tmpl"))
+	if err != nil {
+		t.Fatalf("read the shipped golangci template: %v", err)
+	}
+	if shipped := withoutLeadingComments(string(raw)); shipped != body {
+		t.Errorf("templates/go/.golangci.yml.tmpl and defaultTemplateContent have drifted.\ntemplate:\n%s\nemitted:\n%s", shipped, body)
+	}
+}
+
+// withoutLeadingComments drops the header comment block a shipped template carries for its
+// readers; everything after the first non-comment line is the body an adopter would get.
+func withoutLeadingComments(text string) string {
+	lines := strings.SplitAfter(text, "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "#") {
+			return strings.Join(lines[i:], "")
+		}
+	}
+	return ""
 }
 
 func TestScaffoldedRustfmtNamesThe2024Edition(t *testing.T) {
