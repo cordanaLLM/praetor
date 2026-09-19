@@ -1,0 +1,4 @@
+type: fixed
+title: Pin AGENTS.md, its compiled vendor targets, and devcontainer.json to LF in .gitattributes, fixing Windows Platform Neutrality failures in internal/compiler, internal/devcontainer and cmd/standardsctl caused by a CRLF checkout
+issue: "#135"
+breaking: false

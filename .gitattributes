@@ -19,6 +19,30 @@
 # checkout produces must not depend on which platform did the checking out.
 .config/archetypes/**/*.yaml text eol=lf
 
+# HISS-16's canonical AGENTS.md and every vendor target standardsctl compile-context
+# generates from it (checks.py's own CONTEXT set) are read and compared byte/line-exact:
+# internal/compiler's TestCanonicalAgentsFloorCatchesLoss regex-matches a line in AGENTS.md
+# with `(?m)^   standardsctl compile-context$`, which a CRLF checkout fails because the
+# trailing \r sits between the last matched character and the multi-line $; cmd/standardsctl's
+# TestDispatchCommand_RepositoryDogfood audits AGENTS.md against its compiled targets and
+# reports "target CLAUDE.md is out of sync with ../../AGENTS.md" once a Windows checkout
+# converts one side's line endings and not (consistently) the other's. Same fix, same reason
+# as *.go and the archetype yamls above (#135).
+AGENTS.md text eol=lf
+CLAUDE.md text eol=lf
+.windsurfrules text eol=lf
+.github/copilot-instructions.md text eol=lf
+.gemini/GEMINI.md text eol=lf
+.codex/rules.md text eol=lf
+.cursor/rules/**/*.mdc text eol=lf
+
+# internal/devcontainer and cmd/standardsctl both verify the committed devcontainer.json
+# against a recorded bootstrap fingerprint computed over its exact bytes
+# (TestDogfoodingSynthesis, TestDispatchCommand_ContextAndDevcontainer); a CRLF checkout
+# changes those bytes and the verification reports "recorded bootstrap configuration
+# differs from declared profiles" for a file nobody edited (#135).
+.devcontainer/devcontainer.json text eol=lf
+
 # The CRLF fixtures assert that the line-based matchers are not silenced by a Windows
 # checkout. Two attributes are needed and they defend different things.
 #
