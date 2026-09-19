@@ -126,6 +126,8 @@ func copyFileMode(source, destination string, mode os.FileMode) (err error) {
 			err = fmt.Errorf("workstation: close %s: %w", source, cerr)
 		}
 	}()
+	// #nosec G304 -- destination is always a path this package itself resolved: an
+	// installation target under an operator-configured bin directory.
 	out, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
 		return fmt.Errorf("workstation: create %s: %w", destination, err)
@@ -189,7 +191,7 @@ func renameAside(destination string) error {
 	if err := os.Rename(destination, aside); err != nil {
 		return fmt.Errorf("workstation: rename %s aside: %w", destination, err)
 	}
-	os.Remove(aside) //nolint:errcheck // best-effort; a leftover aside file self-heals on the next swap
+	os.Remove(aside) //nolint:errcheck // #nosec G104 -- best-effort; a leftover aside file self-heals on the next swap
 	return nil
 }
 

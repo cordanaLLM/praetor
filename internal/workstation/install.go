@@ -71,6 +71,9 @@ func Install(ctx context.Context, opts Options) (result Result, err error) {
 	if err != nil {
 		return Result{}, err
 	}
+	// #nosec G301 -- BinDir is the operator's PATH bin directory; 0755 keeps it listable
+	// and its binaries executable by other processes, matching standard bin-directory
+	// permissions (e.g. ~/.local/bin).
 	if mkErr := os.MkdirAll(opts.BinDir, 0o755); mkErr != nil {
 		return Result{}, fmt.Errorf("workstation: create bin directory %s: %w", opts.BinDir, mkErr)
 	}
