@@ -188,7 +188,22 @@ func placeOne(ctx context.Context, opts Options, name, buildDir string, states m
 // scripts/dev_install.py did. A host that had chmod'd an installed binary down to
 // non-executable keeps meaning that: the new build inherits the same restriction rather
 // than silently widening it back.
+//
+// On Windows this whole computation is skipped: os.FileInfo.Mode() there is synthesised
+// from the read-only attribute alone, so built.Perm() for an ordinary freshly built binary
+// already comes back 0o666 -- no execute bit for os.Stat to report, whether or not anything
+// pre-existing narrows it further. Every install refused itself as "existing permissions
+// prevent an executable installation" on the Windows leg of the portability matrix (#135),
+// not because any operator restricted anything, but because Windows never reports an
+// execute bit through Mode() to begin with; executability there comes from the .exe
+// extension. This reads runtime.GOOS rather than the caller-supplied Options.GOOS: the
+// latter is a simulated label the test suite also sets to "linux" while actually running on
+// the real Windows filesystem (it drives path-formatting choices like symlink vs. copy, not
+// what os.Stat can report), so it does not answer what this check needs to know.
 func installMode(built os.FileMode, name string, states map[string]targetState) (os.FileMode, error) {
+	if runtime.GOOS == goosWindows {
+		return built.Perm() & 0o755, nil
+	}
 	mode := built.Perm() & 0o755
 	for _, target := range []string{name, binaryAliases[name]} {
 		if state := states[target]; state.kind == targetFile {

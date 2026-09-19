@@ -1,7 +1,9 @@
 package agenthook
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +11,25 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/state"
 )
+
+// preEditStdin encodes the pre-edit hook payload properly instead of splicing root into a
+// hand-written JSON literal. root is a filesystem path, and on Windows it contains
+// backslashes (C:\Users\...); spliced directly into `"cwd":"` + root + `"` those backslashes
+// land in the JSON text unescaped, which is not valid JSON ('\U', '\R', ... are not legal
+// escapes). The hook's own JSON parser correctly refused it, so every pre-edit test built
+// this way failed with "[BLOCKED BY HISS-16] Invalid hook input: hook input must be one JSON
+// object" on the Windows leg of the portability matrix (#135) before the scope script it
+// meant to exercise ever ran -- including TestRunPreEditDeniesOnAMissingMarkerOrAFailedScopeScript,
+// which did not fail only because a refused-input denial and its own intended denial produce
+// the same exit code and prefix. json.Marshal escapes whatever the path contains.
+func preEditStdin(t *testing.T, root string) *bytes.Reader {
+	t.Helper()
+	payload, err := json.Marshal(map[string]string{"tool_name": "Edit", "cwd": root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bytes.NewReader(payload)
+}
 
 // checkpointInvocation builds an Invocation whose interpreter resolves to the stub built by
 // buildStub, running Run through the real EventPostTool/EventPreEdit/EventStop dispatch
@@ -89,7 +110,7 @@ func TestRunPreEditAllowsWhenTheScopeScriptPasses(t *testing.T) {
 	_, getenv := buildStub(t, "python3")
 	stubStdout(t, checkpointScopeMarker+"\n")
 	response := Run(context.Background(), Invocation{
-		Client: "claude", Event: "pre-edit", Stdin: strings.NewReader(`{"tool_name":"Edit","cwd":"` + root + `"}`),
+		Client: "claude", Event: "pre-edit", Stdin: preEditStdin(t, root),
 		Getenv: getenv, WorkDir: root, Policy: policy(t), Settings: config.HookSettings{Python: [][]string{{"python3"}}},
 	})
 	if response.ExitCode != 0 || len(response.Stderr) != 0 {
@@ -111,7 +132,7 @@ func TestRunPreEditDeniesOnAMissingMarkerOrAFailedScopeScript(t *testing.T) {
 		t.Setenv("PRAETOR_STUB_EXIT", tc.exit)
 		stubStdout(t, tc.stdout)
 		response := Run(context.Background(), Invocation{
-			Client: "claude", Event: "pre-edit", Stdin: strings.NewReader(`{"tool_name":"Edit","cwd":"` + root + `"}`),
+			Client: "claude", Event: "pre-edit", Stdin: preEditStdin(t, root),
 			Getenv: getenv, WorkDir: root, Policy: policy(t), Settings: config.HookSettings{Python: [][]string{{"python3"}}},
 		})
 		if response.ExitCode != 2 || !strings.HasPrefix(string(response.Stderr), "[BLOCKED BY HISS-16] ") {
@@ -124,7 +145,7 @@ func TestRunPreEditNoInterpreterDenies(t *testing.T) {
 	root := repository(t, true)
 	empty := pathOnly(t.TempDir())
 	response := Run(context.Background(), Invocation{
-		Client: "claude", Event: "pre-edit", Stdin: strings.NewReader(`{"tool_name":"Edit","cwd":"` + root + `"}`),
+		Client: "claude", Event: "pre-edit", Stdin: preEditStdin(t, root),
 		Getenv: empty, WorkDir: root, Policy: policy(t), Settings: config.HookSettings{Python: [][]string{{"python3"}}},
 	})
 	if response.ExitCode != 2 || !strings.Contains(string(response.Stderr), "no Python interpreter") {
