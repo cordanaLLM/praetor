@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/topology"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -332,8 +333,13 @@ func regenerateRepoEpic(ctx context.Context, repoDir string, opts FleetEpicOptio
 }
 
 // repoIsPrepared reports whether a discovered directory carries a repository marker.
+//
+// The git marker is decided by the shared checkout detection, so a linked worktree or an
+// initialized submodule - whose .git is a gitlink file rather than a directory - counts as
+// prepared, while a stray .git directory holding no HEAD does not. The .standards.yaml and
+// .needs.yaml manifests remain the non-git fallback for a directory that is not a checkout.
 func repoIsPrepared(repoDir string) bool {
-	return util.DirExists(filepath.Join(repoDir, ".git")) ||
+	return topology.HasValidGitRepo(repoDir) ||
 		util.FileExists(filepath.Join(repoDir, ".standards.yaml")) ||
 		util.FileExists(filepath.Join(repoDir, ".needs.yaml"))
 }
