@@ -21,10 +21,11 @@ concurrency:
   group: pages-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Only the deploy job may write. The workflow also runs on pull_request, and a workflow-level
+# write scope would hand every documentation pull request -- a fork branch included -- a token
+# that can create a Pages deployment and mint an OIDC identity token it never uses (#292).
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 jobs:
   build:
@@ -76,6 +77,12 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
     runs-on: ubuntu-26.04
     timeout-minutes: 10
+    # actions/deploy-pages requires both scopes on the deploying job: pages:write to create the
+    # deployment, id-token:write for the OIDC token that proves where it came from.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
