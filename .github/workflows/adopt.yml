@@ -38,7 +38,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.27'
           cache: false
           check-latest: true
 
@@ -46,7 +46,7 @@ jobs:
         uses: ./.github/actions/go-cache
         with:
           job: adopt
-          go-version: '1.24'
+          go-version: '1.27'
 
       - name: Build Praetor CLI
         run: |
