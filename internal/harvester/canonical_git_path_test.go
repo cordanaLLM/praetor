@@ -60,14 +60,26 @@ func TestCanonicalGitPath(t *testing.T) {
 			t.Errorf("%s was canonicalised to %q", tc.name, got)
 		}
 	}
-	// Boundary: an unusable context is an error rather than an unbounded resolution.
+	// Boundary: an unusable context is an error rather than an unbounded resolution. Both rows
+	// name the repository that exists, real/repo, so the existence check at harvester.go:479
+	// cannot answer for them: the context guard in util.ResolveExistingPath is the only thing
+	// left that can refuse. Pointed at real, as they were, real/.git does not exist and the
+	// rows passed with the guards removed -- measured by stripping both ctx.Err() checks from
+	// internal/util/resolved_path.go, which left this test green while internal/util's own
+	// TestResolveExistingPath failed.
+	repo := filepath.Join(real, "repo")
 	var absent context.Context
-	if got, err := canonicalGitPath(absent, real, ".git"); err == nil {
+	if got, err := canonicalGitPath(absent, repo, ".git"); err == nil {
 		t.Errorf("a missing context was canonicalised to %q", got)
 	}
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
-	if got, err := canonicalGitPath(cancelled, real, ".git"); err == nil {
+	if got, err := canonicalGitPath(cancelled, repo, ".git"); err == nil {
 		t.Errorf("a cancelled context was canonicalised to %q", got)
+	}
+	// The same call with a usable context is the control: without it the two rows above could
+	// be refused for any reason and still read as a context guard.
+	if got, err := canonicalGitPath(t.Context(), repo, ".git"); err != nil || got != want {
+		t.Errorf("the same input with a usable context: %q %v, want %q", got, err, want)
 	}
 }

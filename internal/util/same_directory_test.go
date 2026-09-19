@@ -37,11 +37,21 @@ func TestSameDirectoryAcceptsAliasedSpellings(t *testing.T) {
 	if real == alias {
 		t.Fatalf("fixture did not produce two spellings: %q", real)
 	}
+	// filepath.Join cleans, so an uncleaned spelling has to be assembled by hand: Join(real,
+	// "..", "repo") is byte-identical to real and the row was a second copy of the one above
+	// it. The concatenated form is the input a caller that never cleaned its own path hands
+	// in, and the row refuses an implementation that rejects a "..", or compares cleaned
+	// strings, rather than asking the filesystem.
+	uncleaned := real + string(filepath.Separator) + ".." + string(filepath.Separator) + filepath.Base(real)
+	if filepath.Clean(uncleaned) != real || uncleaned == real {
+		t.Fatalf("fixture did not produce an uncleaned spelling: %q", uncleaned)
+	}
 	for _, tc := range []struct{ name, left, right string }{
 		{"aliased ancestor against the real path", alias, real},
 		{"the same comparison the other way round", real, alias},
 		{"a path against itself", real, real},
-		{"an uncleaned spelling of the same directory", filepath.Join(real, "..", "repo"), alias},
+		{"an uncleaned spelling against the aliased one", uncleaned, alias},
+		{"an uncleaned spelling against the real one", uncleaned, real},
 	} {
 		if !SameDirectory(tc.left, tc.right) {
 			t.Errorf("%s: SameDirectory(%q, %q) = false, want true", tc.name, tc.left, tc.right)

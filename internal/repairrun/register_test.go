@@ -91,11 +91,17 @@ func TestRunRecordsRegisterAndTightensProviderBudget(t *testing.T) {
 	// package's other run()-calling cases already take; it was the one omission.
 	//
 	// The platform guard is not the whole repair. It returns early on Linux, where prepare
-	// still fails whenever TMPDIR reaches its directory through a symlink, and the panic
-	// aborts the binary rather than failing one case: measured here, the package reported
-	// one outcome line instead of 37. So every read of a run() result in this package is
-	// gated on the result being there, which is what HISS-07 asks of the test's own error
-	// path, and a failure prints the error instead of a stack trace.
+	// still refuses a TMPDIR that reaches its directory through a symlink -- openDirectory
+	// walks every component of an absolute path and rejects a link -- and there the panic
+	// aborted the whole test binary rather than failing one case.
+	//
+	// Measured on Linux against such a TMPDIR, one figure per column and not two: with -v the
+	// package printed 25 outcome lines before this guard and prints 37 after it, so 12 cases
+	// never ran; without -v the same pair is 1 line and 10. The earlier note here paired the
+	// non-verbose count with the verbose one and reproduced as neither. Every read of a run()
+	// result in this package is therefore gated on the result being there, which is what
+	// HISS-07 asks of the test's own error path, and a failure prints the error instead of a
+	// stack trace.
 	requireRepairIsolation(t)
 	f := newRunFixture(t, 1)
 	f.config.RepairPolicy.Register, f.config.RepairPolicy.MaxOutputTokens = string(config.TextRegisterInternal), 512
