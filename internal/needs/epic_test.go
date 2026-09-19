@@ -292,6 +292,9 @@ func setupFleetEpicRoot(t *testing.T) string {
 		}
 	}
 	writes := map[string]string{
+		// A checkout is recognised by its HEAD: an empty .git directory is stray
+		// metadata, not a repository.
+		filepath.Join(repo1, ".git", "HEAD"):    "ref: refs/heads/main\n",
 		filepath.Join(repo1, "go.mod"):          "module github.com/org1/repo1\ngo 1.27\n",
 		filepath.Join(repo2, "package.json"):    "{\"name\": \"repo2\", \"version\": \"1.0.0\"}\n",
 		filepath.Join(repo2, ".standards.yaml"): "repository:\n  name: repo2\n  owner: org2\n",
@@ -355,6 +358,9 @@ func TestRegenerateFleetEpics_ReportsWriteFailures(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o750); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module github.com/org/repo\ngo 1.27\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -390,6 +396,109 @@ func TestRegenerateFleetEpics_Boundary(t *testing.T) {
 	cancel()
 	if _, err := RegenerateFleetEpics(cancelled, setupFleetEpicRoot(t), FleetEpicOptions{}); err == nil {
 		t.Fatal("expected error for cancelled context")
+	}
+}
+
+// writeRepoFile creates path's parent directories and writes content.
+func writeRepoFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepoIsPrepared(t *testing.T) {
+	root := t.TempDir()
+
+	checkout := filepath.Join(root, "checkout")
+	writeRepoFile(t, filepath.Join(checkout, ".git", "HEAD"), "ref: refs/heads/main\n")
+	worktree := filepath.Join(root, "worktree")
+	writeRepoFile(t, filepath.Join(worktree, ".git"), "gitdir: "+filepath.Join(checkout, ".git", "worktrees", "wt")+"\n")
+	submodule := filepath.Join(root, "submodule")
+	writeRepoFile(t, filepath.Join(submodule, ".git"), "gitdir: ../.git/modules/sub\n")
+	manifest := filepath.Join(root, "manifest")
+	writeRepoFile(t, filepath.Join(manifest, ".needs.yaml"), "repository:\n  name: manifest\n")
+	standards := filepath.Join(root, "standards")
+	writeRepoFile(t, filepath.Join(standards, ".standards.yaml"), "repository:\n  name: standards\n")
+
+	empty := filepath.Join(root, "empty")
+	if err := os.MkdirAll(empty, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	stray := filepath.Join(root, "stray")
+	if err := os.MkdirAll(filepath.Join(stray, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	headless := filepath.Join(root, "headless")
+	if err := os.MkdirAll(filepath.Join(headless, ".git", "HEAD"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		dir  string
+		want bool
+	}{
+		{"normal checkout", checkout, true},
+		{"linked worktree gitlink", worktree, true},
+		{"submodule gitlink", submodule, true},
+		{"needs manifest only", manifest, true},
+		{"standards manifest only", standards, true},
+		{"empty directory", empty, false},
+		{"stray empty .git directory", stray, false},
+		{"HEAD is a directory", headless, false},
+		{"absent directory", filepath.Join(root, "absent"), false},
+		{"empty path", "", false},
+	}
+	for _, tc := range cases {
+		if got := repoIsPrepared(tc.dir); got != tc.want {
+			t.Errorf("%s: repoIsPrepared = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestRegenerateFleetEpics_LinkedWorktreeAndStrayGit(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	worktree := filepath.Join(root, "org", "worktree")
+	writeRepoFile(t, filepath.Join(worktree, ".git"), "gitdir: /elsewhere/.git/worktrees/wt\n")
+	writeRepoFile(t, filepath.Join(worktree, "go.mod"), "module github.com/org/worktree\ngo 1.27\n")
+
+	stray := filepath.Join(root, "org", "stray")
+	writeRepoFile(t, filepath.Join(stray, "go.mod"), "module github.com/org/stray\ngo 1.27\n")
+	if err := os.MkdirAll(filepath.Join(stray, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	epics, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("regeneration failed: %v", err)
+	}
+	if len(epics) != 1 {
+		t.Fatalf("expected only the linked worktree to be regenerated, got %d epics", len(epics))
+	}
+	if !strings.HasPrefix(epics[0].OutputPath, worktree) {
+		t.Errorf("regenerated the wrong repository: %s", epics[0].OutputPath)
+	}
+}
+
+func TestRegenerateFleetEpics_FleetRootIsRepository(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	writeRepoFile(t, filepath.Join(root, ".git", "HEAD"), "ref: refs/heads/main\n")
+	writeRepoFile(t, filepath.Join(root, "go.mod"), "module github.com/org/root\ngo 1.27\n")
+
+	epics, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("regeneration failed: %v", err)
+	}
+	if len(epics) != 1 {
+		t.Fatalf("expected the fleet root itself to be regenerated, got %d epics", len(epics))
 	}
 }
 
