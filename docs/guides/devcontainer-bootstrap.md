@@ -53,6 +53,12 @@ separate evidence. Verification uses the retained specification, so it does
 not require the original workstation source path or a hardcoded generator
 commit to remain available.
 
+Verification reads the whole file, not the fields Praetor writes. A key outside
+the managed schema, such as a hand-added `initializeCommand` or `runArgs`, is
+reported as drift rather than dropped before the comparison, so a tampered
+configuration cannot verify as in sync. Keep such additions in a custom
+DevContainer, which adoption preserves and reports as execution-unverified.
+
 Without `--source-root`, or with an explicitly selected config-only catalog,
 generation writes an `unavailable` configuration and returns an error. Its
 startup fails with an actionable message; it cannot report a missing CLI as
@@ -79,7 +85,9 @@ JSON writer cannot publish a recorded specification without its companions.
 
 Runtime/profile selection is sourced from the selected pinned catalog entries.
 Only the selected profile and facets contribute DevContainer features; duplicate
-references must agree on options. This does not establish IDE feature-installation
+references must agree on options. Without a pinned catalog the profile still
+decides: a `native-gpu-systems` repository receives the C/C++ toolchain
+extensions and no Go feature. This does not establish IDE feature-installation
 or application-tool execution proof.
 
 ## Infrastructure test environments
