@@ -43,21 +43,20 @@ jobs:
           job: compliance
           go-version: '1.27'
 
+      # The workflow runs on push to main and lts-* as well as on pull requests, so the step
+      # carries no event condition: a commit that reaches a protected branch directly is
+      # inspected too (#292). The script picks the range from the event and is exercised by
+      # scripts/test_dco_check.py. Event values travel through env rather than ${{ }} inside
+      # the command, so no payload field is ever expanded into shell source.
       - name: Verify DCO 1.1 Sign-Off on Commits
-        if: github.event_name == 'pull_request'
-        run: |
-          COMMITS_WITHOUT_DCO=0
-          for commit in $(git rev-list origin/${{ github.base_ref }}..HEAD); do
-            if ! git log -1 --format='%B' "$commit" | grep -q "Signed-off-by:"; then
-              echo "Error: Commit $commit is missing 'Signed-off-by:' signature required by DCO 1.1"
-              COMMITS_WITHOUT_DCO=$((COMMITS_WITHOUT_DCO + 1))
-            fi
-          done
-          if [ "$COMMITS_WITHOUT_DCO" -gt 0 ]; then
-            echo "DCO check failed: $COMMITS_WITHOUT_DCO commits without DCO signature."
-            exit 1
-          fi
-          echo "All PR commits have valid DCO 1.1 signatures."
+        env:
+          DCO_EVENT_NAME: ${{ github.event_name }}
+          DCO_BASE_REF: ${{ github.base_ref }}
+          DCO_BEFORE_SHA: ${{ github.event.before }}
+          DCO_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          scripts/dco_check.sh
+          "$DCO_EVENT_NAME" "$DCO_BASE_REF" "$DCO_BEFORE_SHA" "$DCO_HEAD_SHA"
 
       - name: REUSE Compliance Check
         uses: fsfe/reuse-action@v5
