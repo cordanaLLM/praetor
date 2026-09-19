@@ -30,11 +30,15 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.ref || github.ref }}
           fetch-depth: 0
 
+      # Held at v5 on purpose while this job's go-version is '1.24'. setup-go v6 sets
+      # GOTOOLCHAIN=local, so a runner whose go-version is below go.mod's `go 1.27`
+      # directive no longer downloads the newer toolchain -- it fails with
+      # "go.mod requires go >= 1.27". Raise this job to 1.27, then bump to v7.
       - name: Set up Go
         uses: actions/setup-go@v5
         with:

@@ -31,13 +31,13 @@ jobs:
 
     steps:
       - name: Checkout Source Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Setup Go Toolchain
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: '1.27'
           cache: false
@@ -61,7 +61,7 @@ jobs:
 
       - name: Setup Node Toolchain
         if: steps.filter.outputs.skip_heavy_gates != 'true' || steps.filter.outputs.run_docs == 'true' || github.event_name == 'push'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: npm
