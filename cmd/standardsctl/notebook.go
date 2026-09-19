@@ -22,6 +22,13 @@ func notebookCommand(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: notebook prepare|validate --bundle FILE [--result FILE] [--output-dir NEW-DIR]")
 	}
+	// Matched before flag parsing (BUG-811): args[0] here is the action token
+	// (prepare/validate), never a parsed Go flag, so "-h"/"--help"/"help" fell through
+	// to "explicit bundle and no extra arguments required" instead of exiting 0.
+	if args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+		fmt.Fprintln(out, "Usage: notebook prepare|validate --bundle FILE [--result FILE] [--output-dir NEW-DIR]")
+		return nil
+	}
 	f := flag.NewFlagSet("notebook "+args[0], flag.ContinueOnError)
 	bundlePath := f.String("bundle", "", "Explicit private NotebookLM snapshot")
 	resultPath := f.String("result", "", "Generation JSON to validate")

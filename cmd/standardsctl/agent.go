@@ -48,6 +48,13 @@ func listAgents() error {
 }
 
 func dispatchAgentTask(agentName string, extraArgs []string) error {
+	// extraArgs carried no meaning until now (BUG-726): the parameter was never read, so
+	// a typo'd or unsupported flag after the agent name was silently dropped instead of
+	// refused.
+	if len(extraArgs) != 0 {
+		return fmt.Errorf("agent run %s: unexpected extra argument(s) %v (agent helpers take no arguments)", agentName, extraArgs)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -61,6 +68,13 @@ func dispatchAgentTask(agentName string, extraArgs []string) error {
 		return runDogfooderAgent(ctx)
 	case "praetor-needs-miner", "praetor_needs_miner":
 		return runNeedsMinerAgent(ctx)
+	case "praetor-fuzzer", "praetor_fuzzer", "praetor-packager", "praetor_packager":
+		// listAgents() enumerates every *.md file under .agents/agents, which includes
+		// these two personas; dispatch has no Go implementation for either yet (BUG-726).
+		// Naming them here refuses by name instead of falling into the generic "unknown
+		// persona" branch below, which would wrongly conflate an advertised-but-
+		// unimplemented persona with a genuine typo.
+		return fmt.Errorf("agent persona %s is listed by 'agent list' but has no dispatchable implementation yet", agentName)
 	default:
 		return fmt.Errorf("unknown agent persona: %s (run 'praetorctl agent list' to view available agents)", agentName)
 	}

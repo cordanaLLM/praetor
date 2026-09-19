@@ -13,11 +13,18 @@ const maxReportedEditorFiles = 512
 
 func runEditors(args []string) error {
 	if len(args) < 1 {
-		fmt.Println("Usage: praetorctl editors <generate|verify> [--path=.] [--editors=a,b]")
+		printEditorsUsage()
 		return nil
 	}
 
 	sub := args[0]
+	// Matched before any flag parsing (BUG-811): sub is the raw first token, not a Go
+	// flag, so "-h"/"--help"/"help" never reaches flag.ErrHelp handling. Without this,
+	// `editors --help` fell through to "unknown editors command: --help".
+	if sub == "-h" || sub == "--help" || sub == "help" {
+		printEditorsUsage()
+		return nil
+	}
 	subArgs := args[1:]
 
 	fs := flag.NewFlagSet("editors "+sub, flag.ContinueOnError)
@@ -44,6 +51,12 @@ func runEditors(args []string) error {
 	default:
 		return fmt.Errorf("unknown editors command: %s", sub)
 	}
+}
+
+// printEditorsUsage is shared by the no-args and explicit-help paths so the two never
+// drift apart (HISS-19).
+func printEditorsUsage() {
+	fmt.Println("Usage: praetorctl editors <generate|verify> [--path=.] [--editors=a,b]")
 }
 
 func runEditorsGenerate(opts editor.Options, root string) error {

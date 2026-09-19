@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -183,6 +185,13 @@ func main() {
 	args := os.Args[2:]
 
 	if err := dispatchCommand(cmd, args); err != nil {
+		// flag.ErrHelp means a subcommand's own flag.Parse saw -h/--help and already
+		// printed its usage; that is a satisfied request, not a failure (BUG-811). Only
+		// two of the ~25 flag-parsed commands converted it to nil themselves, so every
+		// other one reported "Error: flag: help requested" and exited 1 on --help.
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
 		os.Exit(commandExitCode(os.Stderr, err))
 	}
 }

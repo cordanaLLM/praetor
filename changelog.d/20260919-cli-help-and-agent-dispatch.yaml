@@ -1,0 +1,3 @@
+type: fixed
+title: "`--help` exits 0 on every flag-parsed command, `editors`/`notebook --help` print usage instead of an unrelated error, and `agent run` refuses an unlisted or unimplemented persona and stray extra arguments by name"
+breaking: false
