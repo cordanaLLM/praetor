@@ -1,0 +1,4 @@
+type: fixed
+title: Report what state init --if-absent actually did, and publish each seeded ledger file atomically
+issue: "#286"
+breaking: false
