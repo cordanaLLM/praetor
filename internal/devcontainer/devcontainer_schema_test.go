@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -422,9 +423,19 @@ func TestPostCreateCommandFollowsTheSelectedFeatures(t *testing.T) {
 				t.Fatalf("postCreateCommand %q, want a Go startup command: %v", dc.PostCreateCommand, tc.wantGo)
 			}
 			// The invariant behind the table: a container is never told to
-			// start by running a toolchain its feature set does not install.
+			// start by running a toolchain its feature set does not install,
+			// and the IDE tooling never advertises one either. One predicate
+			// answers for all three, so they cannot disagree.
 			if runsGo && !containerCarriesGo(dc) {
 				t.Fatalf("postCreateCommand %q runs Go, features are %v", dc.PostCreateCommand, dc.Features)
+			}
+			goExtension := slices.Contains(dc.Customizations.VSCode.Extensions, "golang.go")
+			_, goSetting := dc.Customizations.VSCode.Settings["go.useLanguageServer"]
+			if goExtension != goSetting {
+				t.Fatalf("Go extension %v and Go settings %v disagree", goExtension, goSetting)
+			}
+			if goExtension && !containerCarriesGo(dc) {
+				t.Fatalf("golang.go installed for a container whose features are %v", dc.Features)
 			}
 		})
 	}

@@ -199,7 +199,7 @@ func synthesizeExtensions(profiles []string, facets []string, selected []config.
 			"ms-vscode.cmake-tools",
 			"ms-python.python",
 		)
-	} else if shouldAddGoTooling(selected) {
+	} else if containerHasGoToolchain(profiles, selected) {
 		extList = append(extList, "golang.go")
 	}
 
@@ -232,7 +232,7 @@ func synthesizeSettings(profiles []string, facets []string, selected []config.De
 			"--compile-commands-dir=core/build",
 			"--header-insertion=never",
 		}
-	} else if shouldAddGoTooling(selected) {
+	} else if containerHasGoToolchain(profiles, selected) {
 		settings["go.toolsManagement.autoUpdate"] = true
 		settings["go.useLanguageServer"] = true
 		settings["go.lintTool"] = "golangci-lint"
@@ -258,18 +258,14 @@ func hasGoFeature(selected []config.DevContainerFeature) bool {
 	return false
 }
 
-func shouldAddGoTooling(selected []config.DevContainerFeature) bool {
-	return selected == nil || hasGoFeature(selected)
-}
-
 // containerHasGoToolchain reports whether the container this synthesis produces
-// will carry a Go runtime. It is the same decision synthesizeFeatures makes, in
-// one place, because the startup command and the feature map must not disagree:
-// a pinned catalog owns the feature set whenever one was selected, and only the
-// legacy path with no selection falls back to the declared profiles. The
-// profile gate alone is not that answer on the production path, where
-// ResolveDevContainerFeatures always returns a non-nil slice
-// (internal/config/devcontainer_features.go:47) and the union decides.
+// will carry a Go runtime. It is one predicate for the feature map, the IDE
+// tooling and the startup command, which must not disagree: a pinned catalog
+// owns the feature set whenever one was selected, and only the legacy path with
+// no selection falls back to the declared profiles. The profile gate alone is
+// not that answer on the production path, where ResolveDevContainerFeatures
+// always returns a non-nil slice (internal/config/devcontainer_features.go:47)
+// and the union decides.
 func containerHasGoToolchain(profiles []string, selected []config.DevContainerFeature) bool {
 	if selected != nil {
 		return hasGoFeature(selected)
