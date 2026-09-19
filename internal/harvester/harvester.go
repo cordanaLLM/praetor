@@ -466,7 +466,13 @@ func inspectRepositoryPrivacy(ctx context.Context, repoPath string, observation 
 // deepest existing ancestor and re-attaches the segments that are not there yet, which is
 // what its callers that create a path need, so on its own it answers a git directory that
 // does not exist with a half-resolved spelling and no error. That is the fallback this
-// function refuses, so the stat closes the gap between the contract above and the helper.
+// function refuses, and the check closes the gap between the contract above and the helper.
+//
+// The question is "is this an existing directory", and util.DirExists is the repository's
+// one answer to it (HISS-19), not a fourth inline stat. Its bool loses the stat's cause,
+// which costs nothing here: inspectIdentity discards this error and records the fixed
+// "git identity probe failed". It is also the stricter predicate, because git answers
+// --git-dir and --git-common-dir with a directory, never with a gitfile.
 func canonicalGitPath(ctx context.Context, repoPath, value string) (string, error) {
 	candidate := value
 	if !filepath.IsAbs(candidate) {
@@ -476,8 +482,8 @@ func canonicalGitPath(ctx context.Context, repoPath, value string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	if _, err := os.Stat(resolved); err != nil {
-		return "", fmt.Errorf("git reported a path that does not exist: %w", err)
+	if !util.DirExists(resolved) {
+		return "", fmt.Errorf("git reported %q, which is not an existing directory", resolved)
 	}
 	return resolved, nil
 }

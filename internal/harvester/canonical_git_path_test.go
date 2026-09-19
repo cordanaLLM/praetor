@@ -46,8 +46,16 @@ func TestCanonicalGitPath(t *testing.T) {
 	if err := os.Symlink("cycle", filepath.Join(root, "cycle")); err != nil {
 		t.Skipf("symlinks unavailable on this host: %v", err)
 	}
+	gitfile := filepath.Join(real, "repo", "gitfile")
+	if err := os.WriteFile(gitfile, []byte("gitdir: elsewhere\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct{ name, repoPath, value string }{
 		{"a symlink cycle", root, "cycle"},
+		// git answers --git-dir and --git-common-dir with a directory, so a regular file at
+		// the answered path is a repository this probe must not classify from. The check is
+		// util.DirExists, which refuses it; a bare existence test would accept it.
+		{"an answer naming a regular file", filepath.Join(real, "repo"), "gitfile"},
 		// util.ResolveExistingPath answers a path that is not there with the deepest
 		// existing ancestor resolved and the missing tail re-attached, and no error --
 		// which is what callers creating a path need and exactly the half-resolved
