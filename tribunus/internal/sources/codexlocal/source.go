@@ -184,6 +184,8 @@ type window struct {
 // a session log can carry lines this parser does not model, and skipping
 // them is correct, not a data loss, because only rate_limits lines matter.
 func latestRateLimits(ctx context.Context, path string) (result *rateLimits, err error) {
+	// #nosec G304 -- path is always the output of newestSessionFile's own
+	// WalkDir scan under the caller-supplied sessions root, not untrusted input.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("codex-local: open %s: %w", path, err)

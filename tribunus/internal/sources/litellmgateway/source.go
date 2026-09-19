@@ -79,6 +79,8 @@ func Fetch(ctx context.Context, baseURL, tokenFile string) Result {
 
 // readToken reads and trims tokenFile. Errors name the path, never contents.
 func readToken(tokenFile string) (token string, err error) {
+	// #nosec G304 -- tokenFile is a CLI flag the operator supplies directly, the
+	// same trust level as the repository's own config.go manifest-path convention.
 	f, err := os.Open(tokenFile)
 	if err != nil {
 		return "", fmt.Errorf("litellm-gateway: open token file %s: %w", tokenFile, err)

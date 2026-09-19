@@ -200,11 +200,11 @@ func formatSourceLine(name string, o sourceOutcome) string {
 // not untrusted input, so a plain create-or-truncate write is sufficient.
 func writeSnapshotFile(path string, data []byte) error {
 	if dir := filepath.Dir(path); dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("create output directory %s: %w", dir, err)
 		}
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write snapshot %s: %w", path, err)
 	}
 	return nil
