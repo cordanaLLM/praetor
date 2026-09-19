@@ -34,9 +34,9 @@ theme:
 
 plugins:
   - search
-  - sitemap:
-      changefreq: daily
-      priority: 0.8
+  # No sitemap plugin: MkDocs core already writes site/sitemap.xml and sitemap.xml.gz from
+  # the nav, and the `mkdocs-sitemap-plugin` this block used to name does not exist on PyPI,
+  # so `pip install -r requirements.txt` failed and the preset aborted with a config error.
   - minify:
       minify_html: true
       minify_js: true

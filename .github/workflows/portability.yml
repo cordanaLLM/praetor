@@ -97,7 +97,7 @@ jobs:
         id: python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
       # Build before test: a compile error on one OS is the cheapest portability defect to
       # find and the one most likely to be a build-constraint or path-separator mistake.
@@ -144,11 +144,15 @@ jobs:
       # checks.py shells out to yamllint, which is pinned and installed nowhere: it happens to
       # be present on the ubuntu image and absent on macOS, so the hook failed closed there.
       # Installing it explicitly makes the dependency real on every leg rather than accidental
-      # on one.
+      # on one. The version is pinned as well: an unpinned linter turns an upstream release
+      # into a red gate on an untouched tree, and a new rule firing on one leg but not another
+      # is indistinguishable from a portability defect, which is the only thing this job can
+      # report. 1.38.0 is the current release; it requires Python >= 3.10 and pathspec >= 1.0.0,
+      # both satisfied by the 3.14 toolchain this job sets up.
       - name: Install YAML Linter
         if: ${{ !cancelled() }}
         shell: bash
-        run: '"$PYTHON" -m pip install --disable-pip-version-check yamllint'
+        run: '"$PYTHON" -m pip install --disable-pip-version-check yamllint==1.38.0'
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
 
