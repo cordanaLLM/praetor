@@ -43,6 +43,7 @@ jobs:
           cache: false
 
       - name: Restore Go Module And Build Caches
+        id: gocache
         uses: ./.github/actions/go-cache
         with:
           job: ci-verify
@@ -80,12 +81,12 @@ jobs:
           go install github.com/evilmartians/lefthook/v2@v2.1.12
           lefthook version
 
-      # Pinned, not inherited. Four steps below run `python3`, and without this the
-      # interpreter is whatever the runner image ships: ubuntu-24.04 shipped 3.12 and
-      # ubuntu-26.04 ships 3.14.4, so the OS bump alone changed the interpreter under
-      # the semgrep venv, the docs-drift check and the MkDocs install. It also takes
-      # the mkdocs `pip install` off a PEP-668 system interpreter. Unconditional
-      # because the steps that need it are gated on three different conditions.
+      # Pinned, not inherited. Three steps below run `python3` -- the semgrep venv, the
+      # docs-drift check and the MkDocs install -- and without this the interpreter is
+      # whatever the runner image ships: ubuntu-24.04 shipped 3.12 and ubuntu-26.04 ships
+      # 3.14.4, so the OS bump alone changed all three. It also takes the mkdocs
+      # `pip install` off a PEP-668 system interpreter. Unconditional because those three
+      # steps are gated on three different conditions.
       # pages.yml and portability.yml pin the same version.
       - name: Setup Python Toolchain
         id: python
@@ -99,16 +100,18 @@ jobs:
       #
       # The key carries the resolved interpreter version because runner.os is the literal
       # "Linux" on every Ubuntu image: without it an entry populated under 3.12 restores
-      # onto a 3.14 job and hands it wheels built for the wrong ABI tag. Same discipline
-      # as .github/actions/go-cache, which shards on the Go version for the same reason.
+      # onto a 3.14 job and hands it wheels built for the wrong ABI tag. It carries the
+      # runner image for the same reason the Go keys do, read off the go-cache action's
+      # own output rather than resolved a second time here: a wheel built against the
+      # 24.04 C library must not restore onto 26.04.
       - name: Restore Python Wheel Cache
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
         uses: actions/cache@v6
         with:
           path: ~/.cache/pip
-          key: praetor-pip-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-${{ hashFiles('.config/semgrep/requirements.txt') }}
+          key: praetor-pip-${{ runner.os }}-${{ steps.gocache.outputs.image }}-py${{ steps.python.outputs.python-version }}-${{ hashFiles('.config/semgrep/requirements.txt') }}
           restore-keys: |
-            praetor-pip-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-
+            praetor-pip-${{ runner.os }}-${{ steps.gocache.outputs.image }}-py${{ steps.python.outputs.python-version }}-
 
       - name: Install Pinned HISS Rule Test Engine
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
