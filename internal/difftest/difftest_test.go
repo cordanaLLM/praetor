@@ -1,8 +1,11 @@
 package difftest
 
 import (
+	"fmt"
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -268,5 +271,198 @@ func ExecuteComplex(ctx context.Context, tag string, count int, items []string) 
 	fset := token.NewFileSet()
 	if _, err := parser.ParseFile(fset, "complex_test.go", res.GeneratedCode, parser.AllErrors); err != nil {
 		t.Fatalf("complex test code failed parsing: %v\nCode:\n%s", err, res.GeneratedCode)
+	}
+}
+
+// =========================================================================
+// BUG-481: extractFunctions must cap the appended-function count, not the
+// declaration index.
+// =========================================================================
+
+func TestDiffTest_Boundary_ManyTypesThenFunctions(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("package manytypes\n\n")
+	for i := 0; i < 120; i++ {
+		fmt.Fprintf(&b, "type T%d struct{ X int }\n", i)
+	}
+	b.WriteString("func A() {}\nfunc B() {}\nfunc C() {}\n")
+
+	res, err := Synthesize(Options{Source: b.String()})
+	if err != nil {
+		t.Fatalf("Synthesize failed: %v", err)
+	}
+	if len(res.Suites) != 3 {
+		t.Fatalf("expected 3 suites past 120 leading type decls, got %d: %v", len(res.Suites), res.TargetFuncs)
+	}
+}
+
+func TestDiffTest_Boundary_ExactlyFunctionCap(t *testing.T) {
+	src := manyFuncsSource(maxFunctionsToSynthesize)
+
+	res, err := Synthesize(Options{Source: src})
+	if err != nil {
+		t.Fatalf("Synthesize failed: %v", err)
+	}
+	if len(res.Suites) != maxFunctionsToSynthesize {
+		t.Fatalf("expected exactly %d suites at the cap, got %d", maxFunctionsToSynthesize, len(res.Suites))
+	}
+}
+
+func TestDiffTest_Boundary_OneOverFunctionCap(t *testing.T) {
+	src := manyFuncsSource(maxFunctionsToSynthesize + 1)
+
+	res, err := Synthesize(Options{Source: src})
+	if err != nil {
+		t.Fatalf("Synthesize failed: %v", err)
+	}
+	if len(res.Suites) != maxFunctionsToSynthesize {
+		t.Fatalf("expected the cap of %d suites for %d functions, got %d", maxFunctionsToSynthesize, maxFunctionsToSynthesize+1, len(res.Suites))
+	}
+}
+
+func manyFuncsSource(count int) string {
+	var b strings.Builder
+	b.WriteString("package manyfuncs\n\n")
+	for i := 0; i < count; i++ {
+		fmt.Fprintf(&b, "func F%d() {}\n", i)
+	}
+	return b.String()
+}
+
+// =========================================================================
+// BUG-217: change detection and filtering must key on receiver plus name,
+// not the bare function name.
+// =========================================================================
+
+func TestDiffTest_Positive_ReceiverQualifiedChangeDetection(t *testing.T) {
+	base := `package svc
+
+type A struct{}
+
+func (a *A) Run() int { return 1 }
+
+type B struct{}
+
+func (b *B) Run() int { return 2 }
+`
+	newSrc := `package svc
+
+type A struct{}
+
+func (a *A) Run() int { return 1 }
+
+type B struct{}
+
+func (b *B) Run() int { return 999 }
+`
+	res, err := SynthesizeFromDiff(base, newSrc)
+	if err != nil {
+		t.Fatalf("SynthesizeFromDiff failed: %v", err)
+	}
+	if len(res.Suites) != 1 {
+		t.Fatalf("expected exactly 1 changed method (B.Run), got %d: %v", len(res.Suites), res.TargetFuncs)
+	}
+	if res.Suites[0].Receiver != "B" {
+		t.Errorf("expected the unchanged (*A).Run to be masked out and (*B).Run selected, got receiver %q", res.Suites[0].Receiver)
+	}
+}
+
+func TestDiffTest_Boundary_GenericReceiverChangeDetection(t *testing.T) {
+	base := `package generics
+
+type Set[T any] struct{}
+
+func (s *Set[T]) Close() error { return nil }
+`
+	newSrc := `package generics
+
+type Set[T any] struct{}
+
+func (s *Set[T]) Close() error { return errClosed }
+`
+	res, err := SynthesizeFromDiff(base, newSrc)
+	if err != nil {
+		t.Fatalf("SynthesizeFromDiff on a generic receiver failed: %v", err)
+	}
+	if len(res.Suites) != 1 {
+		t.Fatalf("expected the generic receiver's Close to be detected as changed, got %d suites", len(res.Suites))
+	}
+}
+
+// =========================================================================
+// BUG-485: Options.FilePath, Options.TargetPackage and SynthesizeFromDiff's
+// error paths had zero coverage.
+// =========================================================================
+
+func TestDiffTest_Positive_OptionsFilePath(t *testing.T) {
+	src := "package fromfile\n\nfunc Loaded() {}\n"
+	path := filepath.Join(t.TempDir(), "source.go")
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatalf("failed writing fixture file: %v", err)
+	}
+
+	res, err := Synthesize(Options{FilePath: path})
+	if err != nil {
+		t.Fatalf("Synthesize with FilePath failed: %v", err)
+	}
+	if len(res.Suites) != 1 || res.Suites[0].FuncName != "Loaded" {
+		t.Fatalf("expected the FilePath source to be read and synthesized, got: %v", res.TargetFuncs)
+	}
+}
+
+func TestDiffTest_Positive_OptionsTargetPackage(t *testing.T) {
+	src := "package original\n\nfunc F() {}\n"
+
+	res, err := Synthesize(Options{Source: src, TargetPackage: "overridden"})
+	if err != nil {
+		t.Fatalf("Synthesize failed: %v", err)
+	}
+	if res.TargetPackage != "overridden" {
+		t.Errorf("expected TargetPackage to override the source package, got %q", res.TargetPackage)
+	}
+	if !strings.Contains(res.GeneratedCode, "package overridden") {
+		t.Errorf("expected generated code to declare the overridden package, got:\n%s", res.GeneratedCode)
+	}
+}
+
+func TestDiffTest_Negative_OptionsFilePathMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.go")
+
+	_, err := Synthesize(Options{FilePath: path})
+	if err == nil {
+		t.Fatalf("expected an error reading a missing FilePath")
+	}
+	if !strings.Contains(err.Error(), "failed reading source file") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestDiffTest_Negative_SynthesizeFromDiffMalformedNewSource(t *testing.T) {
+	base := "package api\n\nfunc F() {}\n"
+	broken := "package api\nfunc Broken( {"
+
+	_, err := SynthesizeFromDiff(base, broken)
+	if err == nil {
+		t.Fatalf("expected an error when the new-source side of the diff fails to parse")
+	}
+	if !strings.Contains(err.Error(), "new source parse error") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestDiffTest_Boundary_SynthesizeFromDiffUnparseableBase locks in the current, tolerant
+// treatment of an unparseable base: SynthesizeFromDiff cannot know whether the change is
+// genuinely new or an artifact of a base it could not read, so it degrades to treating
+// every function in newSrc as changed rather than failing the whole diff.
+func TestDiffTest_Boundary_SynthesizeFromDiffUnparseableBase(t *testing.T) {
+	broken := "package api\nfunc Broken( {"
+	newSrc := "package api\n\nfunc F() {}\n"
+
+	res, err := SynthesizeFromDiff(broken, newSrc)
+	if err != nil {
+		t.Fatalf("expected SynthesizeFromDiff to tolerate an unparseable base, got: %v", err)
+	}
+	if len(res.Suites) != 1 || res.Suites[0].FuncName != "F" {
+		t.Fatalf("expected F to be treated as changed when the base could not be read, got: %v", res.TargetFuncs)
 	}
 }

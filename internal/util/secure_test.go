@@ -183,6 +183,125 @@ func TestWriteFileSecure_Boundary(t *testing.T) {
 	}
 }
 
+func TestWriteFileAtomic_Positive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.json")
+
+	if err := WriteFileAtomic(path, []byte("payload"), 0o644); err != nil {
+		t.Fatalf("WriteFileAtomic: %v", err)
+	}
+	data, err := os.ReadFile(path) // #nosec G304 -- test-local path from t.TempDir
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(data) != "payload" {
+		t.Errorf("content = %q, want %q", string(data), "payload")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if ModeIsProtection() && info.Mode().Perm() != 0o644 {
+		t.Errorf("mode = %#o, want 0644", info.Mode().Perm())
+	}
+
+	// No temp file survives a successful write.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "catalog.json" {
+		t.Fatalf("expected exactly catalog.json in %s, got %v", dir, entries)
+	}
+}
+
+func TestWriteFileAtomic_Negative(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := WriteFileAtomic(filepath.Join(dir, "ww.txt"), []byte("x"), 0o666); !errors.Is(err, ErrInsecurePerm) {
+		t.Errorf("expected ErrInsecurePerm for world-writable mode, got %v", err)
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX directory permission bits are not available on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the directory permission this case relies on")
+	}
+
+	// Negative: a failed write must never touch a pre-existing target. A directory that
+	// cannot be written to blocks the temp file WriteFileAtomic needs to create, before
+	// it ever reaches path -- unlike WriteFileSecure's truncate-in-place, which does not
+	// need directory-write permission to damage an existing file it can already open.
+	locked := filepath.Join(dir, "locked")
+	if err := os.Mkdir(locked, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	target := filepath.Join(locked, "catalog.json")
+	if err := os.WriteFile(target, []byte("previous, valid catalog"), 0o644); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	if err := os.Chmod(locked, 0o555); err != nil {
+		t.Fatalf("chmod locked dir: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) }) //nolint:errcheck // best-effort; only unblocks t.TempDir()'s own cleanup, a failure here would just leave this one test's temp dir behind
+
+	err := WriteFileAtomic(target, []byte("new content that must never land"), 0o644)
+	if err == nil {
+		t.Fatal("expected an error writing into a read-only directory")
+	}
+	data, readErr := os.ReadFile(target) // #nosec G304 -- test-local path from t.TempDir
+	if readErr != nil {
+		t.Fatalf("target must survive the failed write: %v", readErr)
+	}
+	if string(data) != "previous, valid catalog" {
+		t.Errorf("target content = %q, want the untouched previous content", string(data))
+	}
+	entries, readDirErr := os.ReadDir(locked)
+	if readDirErr != nil {
+		t.Fatalf("readdir: %v", readDirErr)
+	}
+	if len(entries) != 1 {
+		t.Errorf("expected only the pre-existing file in %s, got %v", locked, entries)
+	}
+}
+
+func TestWriteFileAtomic_Boundary(t *testing.T) {
+	dir := t.TempDir()
+
+	// Boundary: default perm (0) selects SecureFilePerm.
+	path := filepath.Join(dir, "defaulted.txt")
+	if err := WriteFileAtomic(path, []byte("new"), 0); err != nil {
+		t.Fatalf("WriteFileAtomic with default perm: %v", err)
+	}
+	if info, err := os.Stat(path); err != nil {
+		t.Fatalf("stat: %v", err)
+	} else if ModeIsProtection() && info.Mode().Perm() != SecureFilePerm {
+		t.Errorf("mode = %#o, want %#o", info.Mode().Perm(), SecureFilePerm)
+	}
+
+	// Boundary: replacing an existing file is atomic, and the new content -- not a
+	// merge of old and new -- is what a reader sees afterward.
+	if err := os.WriteFile(path, []byte("much longer previous content"), 0o600); err != nil {
+		t.Fatalf("reseed: %v", err)
+	}
+	if err := WriteFileAtomic(path, []byte("new"), 0o600); err != nil {
+		t.Fatalf("WriteFileAtomic replace: %v", err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Size() != int64(len("new")) {
+		t.Errorf("expected the file truncated to len(\"new\"), got size=%v err=%v", info, err)
+	}
+
+	// Boundary: zero-length payload.
+	empty := filepath.Join(dir, "empty.txt")
+	if err := WriteFileAtomic(empty, []byte{}, 0o600); err != nil {
+		t.Fatalf("WriteFileAtomic empty: %v", err)
+	}
+	if info, err := os.Stat(empty); err != nil || info.Size() != 0 {
+		t.Errorf("expected a zero-byte file, got size=%v err=%v", info, err)
+	}
+}
+
 func TestMkdirSecure_3D(t *testing.T) {
 	root := t.TempDir()
 

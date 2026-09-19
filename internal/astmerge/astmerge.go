@@ -8,6 +8,7 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -56,14 +57,25 @@ type DeclItem struct {
 // ParsedAST represents the extracted structural components of a Go file.
 type ParsedAST struct {
 	PackageName string
-	Imports     map[string]ImportItem
-	Decls       map[string]DeclItem
-	DeclOrder   []string
+	// PackageDoc is the doc comment directly attached to the package clause, and
+	// BuildConstraints is the leading //go:build (or legacy // +build) comment group.
+	// Both are carried through so a clean merge does not silently drop them (BUG-214).
+	PackageDoc       string
+	BuildConstraints string
+	Imports          map[string]ImportItem
+	Decls            map[string]DeclItem
+	DeclOrder        []string
 }
 
 // Merge executes a 3-way semantic AST merge between Base, Ours, and Theirs Go code.
 func Merge(baseSrc, oursSrc, theirsSrc string) (*MergeResult, error) {
 	if oursSrc == theirsSrc {
+		// The shortcut still has to confirm the identical text is valid Go; otherwise two
+		// branches that converge on invalid source report a clean merge over code that
+		// cannot compile (BUG-477).
+		if _, err := parseSourceSafe("identical.go", oursSrc); err != nil {
+			return nil, fmt.Errorf("ours and theirs are identical but invalid: %w", err)
+		}
 		return &MergeResult{
 			MergedCode:    oursSrc,
 			Clean:         true,
@@ -112,15 +124,39 @@ func MergeFiles(basePath, oursPath, theirsPath string) (*MergeResult, error) {
 	return Merge(string(baseBytes), string(oursBytes), string(theirsBytes))
 }
 
-func readFileWithContext(ctx context.Context, path string) ([]byte, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
+// contextReader wraps a reader so every Read call observes context cancellation. Checking
+// ctx.Done() once before a blocking os.ReadFile leaves the deadline decorative for the
+// read itself (BUG-478); this mirrors the pattern already used by internal/contextopt and
+// internal/harvester for the same reason.
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(buffer []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(buffer)
+}
+
+func readFileWithContext(ctx context.Context, path string) (data []byte, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	// #nosec G304 -- path is a caller-supplied source file to analyze; the content is only
 	// parsed as Go source, never executed, and the read is gated on the caller's context.
-	return os.ReadFile(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, file.Close()) }()
+
+	data, err = io.ReadAll(contextReader{ctx: ctx, reader: file})
+	if err != nil {
+		return nil, err
+	}
+	return data, ctx.Err()
 }
 
 func parseSourceSafe(filename, src string) (*ParsedAST, error) {
@@ -143,20 +179,23 @@ func parseSourceSafe(filename, src string) (*ParsedAST, error) {
 }
 
 func extractASTElements(fset *token.FileSet, file *ast.File, src string) (*ParsedAST, error) {
+	// A silent truncation at the bound let a large file's tail declarations vanish under
+	// a clean report (BUG-212); erroring instead makes the caller decide, rather than
+	// merging a partial view of one side.
+	if len(file.Decls) > maxASTDeclarations {
+		return nil, fmt.Errorf("source has %d top-level declarations, exceeding the %d bound", len(file.Decls), maxASTDeclarations)
+	}
+
 	p := &ParsedAST{
-		PackageName: file.Name.Name,
-		Imports:     make(map[string]ImportItem),
-		Decls:       make(map[string]DeclItem),
-		DeclOrder:   make([]string, 0, len(file.Decls)),
+		PackageName:      file.Name.Name,
+		PackageDoc:       extractDocSource(fset, file, src),
+		BuildConstraints: extractBuildConstraints(fset, file, src),
+		Imports:          make(map[string]ImportItem),
+		Decls:            make(map[string]DeclItem),
+		DeclOrder:        make([]string, 0, len(file.Decls)),
 	}
 
-	declsLimit := len(file.Decls)
-	if declsLimit > maxASTDeclarations {
-		declsLimit = maxASTDeclarations
-	}
-
-	for i := 0; i < declsLimit; i++ {
-		decl := file.Decls[i]
+	for i, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *ast.GenDecl:
 			processGenDecl(fset, d, src, p, i)
@@ -166,6 +205,42 @@ func extractASTElements(fset *token.FileSet, file *ast.File, src string) (*Parse
 	}
 
 	return p, nil
+}
+
+// extractDocSource renders the package doc comment (the comment group go/parser attaches
+// directly to the package clause) back to source text, or "" when the file has none.
+func extractDocSource(fset *token.FileSet, file *ast.File, src string) string {
+	if file.Doc == nil {
+		return ""
+	}
+	return extractNodeSource(fset, file.Doc, src)
+}
+
+// extractBuildConstraints returns the leading //go:build or // +build comment group, if
+// the file has one. go/parser only attaches a comment to File.Doc when it directly
+// precedes the package clause with no blank line, so a build-tagged file (which has a
+// blank line between the tag and any doc comment, per gofmt convention) needs its own
+// lookup; otherwise the tag is dropped by a merge with no diagnostic (BUG-214).
+func extractBuildConstraints(fset *token.FileSet, file *ast.File, src string) string {
+	for _, group := range file.Comments {
+		if group.Pos() >= file.Package {
+			break
+		}
+		if isBuildConstraintGroup(group) {
+			return extractNodeSource(fset, group, src)
+		}
+	}
+	return ""
+}
+
+func isBuildConstraintGroup(group *ast.CommentGroup) bool {
+	for _, c := range group.List {
+		line := strings.TrimSpace(c.Text)
+		if strings.HasPrefix(line, "//go:build") || strings.HasPrefix(line, "// +build") || strings.HasPrefix(line, "//+build") {
+			return true
+		}
+	}
+	return false
 }
 
 func processGenDecl(fset *token.FileSet, d *ast.GenDecl, src string, p *ParsedAST, order int) {
@@ -229,18 +304,46 @@ func processFuncDecl(fset *token.FileSet, d *ast.FuncDecl, src string, p *Parsed
 	p.DeclOrder = append(p.DeclOrder, key)
 }
 
+// receiverIndexDepth bounds how many generic-instantiation layers a receiver expression's
+// base is unwrapped through. Go receivers only ever nest one deep (Set[T]), but the bound
+// keeps the loop's upper limit explicit and scalar per HISS-02.
+const receiverIndexDepth = 8
+
+// receiverBaseName resolves the declared type name at the root of a receiver expression,
+// unwrapping a generic instantiation (Set[T], Map[K, V]) down to the bare type name. It is
+// an iterative bounded loop rather than recursion, matching the precedent already set by
+// internal/difftest's formatTypeExpr for the same HISS-01 reason.
+func receiverBaseName(expr ast.Expr) (string, bool) {
+	for i := 0; i < receiverIndexDepth; i++ {
+		switch t := expr.(type) {
+		case *ast.Ident:
+			return t.Name, true
+		case *ast.IndexExpr:
+			expr = t.X
+		case *ast.IndexListExpr:
+			expr = t.X
+		default:
+			return "", false
+		}
+	}
+	return "", false
+}
+
+// extractReceiverName returns the merge key's receiver component. Before this fix a
+// generic receiver (*Set[T]) fell through to the literal string "*unknown" because its
+// inner expression is an *ast.IndexExpr, not an *ast.Ident; every generic receiver then
+// collided on the same key and a clean merge could silently drop one of them (BUG-819).
 func extractReceiverName(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.StarExpr:
-		if ident, ok := t.X.(*ast.Ident); ok {
-			return "*" + ident.Name
+	if star, ok := expr.(*ast.StarExpr); ok {
+		if name, ok := receiverBaseName(star.X); ok {
+			return "*" + name
 		}
 		return "*unknown"
-	default:
-		return "unknown"
 	}
+	if name, ok := receiverBaseName(expr); ok {
+		return name
+	}
+	return "unknown"
 }
 
 func extractNodeSource(fset *token.FileSet, node ast.Node, src string) string {
@@ -301,7 +404,10 @@ func resolve3Way(base, ours, theirs *ParsedAST) (*MergeResult, error) {
 		}, nil
 	}
 
-	code, err := renderGoCode(pkgName, mergedImports, mergedDecls)
+	buildConstraints := mergeAuxText(base.BuildConstraints, ours.BuildConstraints, theirs.BuildConstraints)
+	packageDoc := mergeAuxText(base.PackageDoc, ours.PackageDoc, theirs.PackageDoc)
+
+	code, err := renderGoCode(pkgName, buildConstraints, packageDoc, mergedImports, mergedDecls)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format merged code: %w", err)
 	}
@@ -341,6 +447,24 @@ func resolvePackageName(base, ours, theirs string) (string, *Conflict) {
 		Theirs: theirs,
 		Base:   base,
 	}
+}
+
+// mergeAuxText resolves a 3-way merge for a single auxiliary text blob (package doc,
+// build constraints) that carries no conflict-reporting machinery of its own: unless one
+// side changed it while the other held it at base, ours wins. The prior behaviour dropped
+// this text unconditionally (BUG-214); biasing toward keeping content is the fix, not a
+// full conflict model, which the row's fix description does not ask for.
+func mergeAuxText(base, ours, theirs string) string {
+	if ours == theirs {
+		return ours
+	}
+	if ours == base {
+		return theirs
+	}
+	if theirs == base {
+		return ours
+	}
+	return ours
 }
 
 func mergeImports3Way(base, ours, theirs map[string]ImportItem) ([]ImportItem, []Conflict) {
@@ -421,9 +545,14 @@ func mergeDecls3Way(base, ours, theirs *ParsedAST) ([]string, int, []Conflict) {
 		resBody, resCount, conflict := resolveSingleSymbol(key, b, inB, o, inO, t, inT)
 		if conflict != nil {
 			conflicts = append(conflicts, *conflict)
-		} else if resBody != "" {
+			continue
+		}
+		// A clean deletion resolves with resBody == "" and resCount == 1; counting
+		// resolved only inside the resBody != "" branch undercounted every such
+		// deletion (BUG-479), so the accumulation applies to any non-conflicting result.
+		resolved += resCount
+		if resBody != "" {
 			mergedDecls = append(mergedDecls, resBody)
-			resolved += resCount
 		}
 	}
 
@@ -509,12 +638,24 @@ func collectOrderedKeys(base, ours, theirs *ParsedAST) []string {
 	return order
 }
 
-func renderGoCode(pkgName string, imports []ImportItem, decls []string) (string, error) {
+func renderGoCode(pkgName, buildConstraints, packageDoc string, imports []ImportItem, decls []string) (string, error) {
 	if pkgName == "" {
 		pkgName = "main"
 	}
 
 	var b strings.Builder
+	// The build-constraint comment must precede the package doc comment by a blank line
+	// (Go's own convention for //go:build), and the doc comment must directly precede the
+	// package clause with no blank line, or go/parser would stop treating it as the
+	// package's doc comment on a later merge (BUG-214).
+	if buildConstraints != "" {
+		b.WriteString(buildConstraints)
+		b.WriteString("\n\n")
+	}
+	if packageDoc != "" {
+		b.WriteString(packageDoc)
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "package %s\n\n", pkgName)
 
 	if len(imports) > 0 {

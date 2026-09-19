@@ -1,0 +1,3 @@
+type: fixed
+title: CycloneDX SBOM now reports the scanned repository's real module identity and honors go.mod replace directives; SLSA provenance rejects a malformed digest instead of only an empty one
+breaking: false

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -50,7 +51,13 @@ func GenerateCycloneDX(ctx context.Context, repoDir string) (*CycloneDXBOM, erro
 		return nil, fmt.Errorf("read go.mod: %w", err)
 	}
 
-	components, err := parseGoModComponents(string(data))
+	content := string(data)
+	modulePath, ok := resolveModulePath(content)
+	if !ok {
+		return nil, fmt.Errorf("go.mod at %s has no module directive", goModPath)
+	}
+
+	components, err := parseGoModComponents(content)
 	if err != nil {
 		return nil, fmt.Errorf("parse components: %w", err)
 	}
@@ -64,29 +71,86 @@ func GenerateCycloneDX(ctx context.Context, repoDir string) (*CycloneDXBOM, erro
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Component: Component{
 				Type:    "application",
-				Name:    "praetor",
-				Version: "v1.0.0",
+				Name:    modulePath,
+				Version: resolveModuleVersion(),
 			},
 		},
 		Components: components,
 	}, nil
 }
 
+// resolveModulePath reads the module directive out of a go.mod's content, instead of a
+// name fixed at compile time that is wrong for every repository but the one it was written
+// against.
+func resolveModulePath(content string) (string, bool) {
+	for _, line := range strings.Split(content, "\n") {
+		if path, ok := gomanifest.ModulePath(line); ok {
+			return path, true
+		}
+	}
+	return "", false
+}
+
+// resolveModuleVersion reports the running binary's module version, so the BOM's metadata
+// component matches what was actually built instead of a version string that drifts out of
+// sync with every release. "(devel)" is what debug.ReadBuildInfo reports for a build outside
+// a tagged module (go run, go test, a local go build) and is returned as-is: still accurate,
+// just uninformative, and a fabricated version would be worse.
+func resolveModuleVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" {
+		return "(devel)"
+	}
+	return info.Main.Version
+}
+
+// replacement is one go.mod replace directive's right-hand side.
+type replacement struct {
+	path    string
+	version string
+}
+
 func parseGoModComponents(content string) ([]Component, error) {
 	var components []Component
 	lines := strings.Split(content, "\n")
-	inRequire := false
+	inRequire, inReplace := false, false
+	replacements := make(map[string]replacement)
 
 	for _, line := range lines {
-		requirement, required := gomanifest.RequirementLine(line, &inRequire)
-		if !required {
+		if requirement, required := gomanifest.RequirementLine(line, &inRequire); required {
+			if comp, ok := parseRequireLine(requirement, true); ok {
+				components = append(components, comp)
+			}
 			continue
 		}
-		if comp, ok := parseRequireLine(requirement, true); ok {
-			components = append(components, comp)
+		if replaceLine, isReplace := gomanifest.ReplaceLine(line, &inReplace); isReplace {
+			if oldPath, newPath, newVersion, ok := gomanifest.ParseReplaceDirective(replaceLine); ok {
+				replacements[oldPath] = replacement{path: newPath, version: newVersion}
+			}
 		}
 	}
+
+	applyReplacements(components, replacements)
 	return components, nil
+}
+
+// applyReplacements rewrites every component whose module path a go.mod replace directive
+// names, so the SBOM records what actually builds rather than the pre-replacement require
+// line. A local filesystem replacement (no version) clears the PURL: a coordinate-based
+// package URL cannot name a path that only makes sense on the machine that built it.
+func applyReplacements(components []Component, replacements map[string]replacement) {
+	for i := range components {
+		rep, ok := replacements[components[i].Name]
+		if !ok {
+			continue
+		}
+		components[i].Name = rep.path
+		components[i].Version = rep.version
+		components[i].PURL = ""
+		if rep.version != "" {
+			components[i].PURL = fmt.Sprintf("pkg:golang/%s@%s", rep.path, rep.version)
+		}
+	}
 }
 
 func parseRequireLine(line string, inRequire bool) (Component, bool) {

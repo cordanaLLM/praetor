@@ -138,12 +138,9 @@ func readFileWithContext(ctx context.Context, path string) ([]byte, error) {
 
 func extractFunctions(file *ast.File) []funcMetadata {
 	var result []funcMetadata
-	limit := len(file.Decls)
-	if limit > maxFunctionsToSynthesize {
-		limit = maxFunctionsToSynthesize
-	}
+	total := len(file.Decls)
 
-	for i := 0; i < limit; i++ {
+	for i := 0; i < total && len(result) < maxFunctionsToSynthesize; i++ {
 		fn, ok := file.Decls[i].(*ast.FuncDecl)
 		if !ok || fn.Body == nil {
 			continue
@@ -247,6 +244,28 @@ func formatTypeExpr(expr ast.Expr) string {
 	return prefix.String() + "any"
 }
 
+// funcMetadataKey returns the identifier used to correlate a function across the base and
+// new sources and to match it against Options.ChangedFuncs. A bare function name collides
+// across receivers ((a *A) Run and (b *B) Run both key as "Run"), which let one receiver's
+// diff mask the other's, so a method key is qualified with its receiver type.
+func funcMetadataKey(name, receiver string) string {
+	if receiver != "" {
+		return receiver + "." + name
+	}
+	return name
+}
+
+// funcDeclKey is funcMetadataKey for a raw *ast.FuncDecl, reusing extractReceiverTypeName
+// so the AST-walking callers (base-body map, changed-function detection) and the
+// funcMetadata-walking callers (filterFunctions) key identically.
+func funcDeclKey(fn *ast.FuncDecl) string {
+	receiver := ""
+	if fn.Recv != nil && len(fn.Recv.List) > 0 {
+		receiver = extractReceiverTypeName(fn.Recv.List[0].Type)
+	}
+	return funcMetadataKey(fn.Name.Name, receiver)
+}
+
 func filterFunctions(all []funcMetadata, changed []string) []funcMetadata {
 	if len(changed) == 0 {
 		return all
@@ -260,7 +279,7 @@ func filterFunctions(all []funcMetadata, changed []string) []funcMetadata {
 	var filtered []funcMetadata
 	limit := len(all)
 	for i := 0; i < limit; i++ {
-		if changedMap[all[i].Name] {
+		if changedMap[funcMetadataKey(all[i].Name, all[i].Receiver)] {
 			filtered = append(filtered, all[i])
 		}
 	}
@@ -279,10 +298,11 @@ func detectChangedFunctions(baseSrc, newSrc string) ([]string, error) {
 	var changed []string
 	for _, d := range newFile.Decls {
 		if fn, ok := d.(*ast.FuncDecl); ok && fn.Body != nil {
+			key := funcDeclKey(fn)
 			newBody := renderNode(fset, fn.Body)
-			baseBody, exists := baseFuncBodies[fn.Name.Name]
+			baseBody, exists := baseFuncBodies[key]
 			if !exists || baseBody != newBody {
-				changed = append(changed, fn.Name.Name)
+				changed = append(changed, key)
 			}
 		}
 	}
@@ -297,7 +317,7 @@ func parseBaseFunctionBodies(fset *token.FileSet, baseSrc string) map[string]str
 		if parseErr == nil {
 			for _, d := range baseFile.Decls {
 				if fn, ok := d.(*ast.FuncDecl); ok && fn.Body != nil {
-					baseFuncBodies[fn.Name.Name] = renderNode(fset, fn.Body)
+					baseFuncBodies[funcDeclKey(fn)] = renderNode(fset, fn.Body)
 				}
 			}
 		}

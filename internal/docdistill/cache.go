@@ -6,6 +6,7 @@ package docdistill
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,7 +25,27 @@ const (
 	cacheDirPerm os.FileMode = 0o755
 	// cacheFilePerm is the mode of the catalog and distilled markdown files.
 	cacheFilePerm os.FileMode = 0o644
+
+	// maxSyncPackages bounds how many declared dependencies SyncRepositoryDocs harvests
+	// in one call (HISS-02): ScanDeclaredDependencies can return as many refs as a
+	// manifest declares, and each one performs a network harvest, so the loop needs its
+	// own scalar ceiling rather than trusting every future caller's manifest to stay
+	// small. DistillOptions.MaxPackages overrides it when a caller needs a different
+	// bound (BUG-174).
+	maxSyncPackages = 2000
+
+	// defaultSyncTimeout bounds SyncRepositoryDocs when neither DistillOptions.Timeout
+	// nor the caller's own context carries a deadline: the loop enforces its own ceiling
+	// rather than only hoping a caller supplied one (HISS-02, BUG-174).
+	defaultSyncTimeout = 10 * time.Minute
 )
+
+// ErrSyncTruncated reports that SyncRepositoryDocs stopped before covering every
+// declared dependency, either because the reference count exceeded the configured
+// package bound or because the sync deadline elapsed. Every package synced before the
+// bound was hit is already in the returned catalog and on disk; nothing after it is
+// missing silently.
+var ErrSyncTruncated = errors.New("docdistill: sync truncated before covering every declared dependency")
 
 // cachePath confines a cache-relative path to repoPath.
 func cachePath(repoPath, rel string) (string, error) {
@@ -88,7 +109,10 @@ func SaveCatalog(repoPath string, cat *DocCatalog) error {
 	if err != nil {
 		return err
 	}
-	if err := util.WriteFileSecure(catPath, data, cacheFilePerm); err != nil {
+	// Atomic (BUG-447): WriteFileSecure truncates catPath in place before writing, so a
+	// process interrupted mid-write leaves a zero-length or partial catalog. The rename
+	// below only ever replaces catPath with a fully written file.
+	if err := util.WriteFileAtomic(catPath, data, cacheFilePerm); err != nil {
 		return fmt.Errorf("failed to write doc catalog: %w", err)
 	}
 	return nil
@@ -109,7 +133,9 @@ func writeDistilledDoc(repoPath string, doc *DistilledDoc) error {
 	if err != nil {
 		return err
 	}
-	if err := util.WriteFileSecure(filePath, []byte(doc.RawMarkdown), cacheFilePerm); err != nil {
+	// Atomic (BUG-447): shared with SaveCatalog so a distilled doc can never be left
+	// truncated by an interrupted write either.
+	if err := util.WriteFileAtomic(filePath, []byte(doc.RawMarkdown), cacheFilePerm); err != nil {
 		return fmt.Errorf("failed writing distilled doc file: %w", err)
 	}
 	return nil
@@ -147,7 +173,30 @@ func SaveCachedDoc(repoPath string, doc *DistilledDoc) error {
 	return SaveCatalog(repoPath, cat)
 }
 
-// SyncRepositoryDocs scans declared dependencies, harvests missing documentation, and compresses it.
+// syncContext derives the deadline SyncRepositoryDocs enforces on itself (HISS-02): an
+// explicit timeout wins, a caller deadline is preserved, and a deadline-free context
+// receives defaultSyncTimeout. Mirrors internal/hiss's scanContext so a network/IO loop
+// never depends solely on a caller remembering to bound it.
+func syncContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		return context.WithTimeout(ctx, timeout)
+	}
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, defaultSyncTimeout)
+}
+
+// SyncRepositoryDocs scans declared dependencies, harvests missing documentation, and
+// compresses it.
+//
+// The harvest loop carries two self-enforced bounds (HISS-02, BUG-174): a scalar cap on
+// the number of refs it processes (opts.MaxPackages, or maxSyncPackages when unset) and
+// an overall deadline (opts.Timeout, or the caller's own deadline, or
+// defaultSyncTimeout) derived by syncContext independently of whatever the caller
+// happens to pass. Hitting either bound stops the loop, saves what was synced so far,
+// and returns it wrapped in ErrSyncTruncated rather than silently reporting a partial
+// catalog as complete.
 func SyncRepositoryDocs(ctx context.Context, repoPath string, opts DistillOptions) (*DocCatalog, error) {
 	refs, err := ScanDeclaredDependencies(ctx, repoPath, opts.IncludeTransitive)
 	if err != nil {
@@ -159,29 +208,62 @@ func SyncRepositoryDocs(ctx context.Context, repoPath string, opts DistillOption
 		return nil, err
 	}
 
-	for _, ref := range refs {
-		key := makeDocKey(ref.Name, ref.Version)
-		if _, exists := cat.Packages[key]; exists && !opts.ForceRefresh {
-			continue
+	syncCtx, cancel := syncContext(ctx, opts.Timeout)
+	defer cancel()
+
+	bound := opts.MaxPackages
+	if bound <= 0 {
+		bound = maxSyncPackages
+	}
+	limit := len(refs)
+	truncated := false
+	if limit > bound {
+		limit = bound
+		truncated = true
+	}
+
+	for i := 0; i < limit; i++ {
+		if syncCtx.Err() != nil {
+			truncated = true
+			break
 		}
-
-		raw, harvestErr := HarvestDocumentation(ctx, ref, opts.OfflineOnly)
-		if harvestErr != nil {
-			return nil, fmt.Errorf("harvest %s@%s: %w", ref.Name, ref.Version, harvestErr)
-		}
-
-		distilled := CompressDocumentation(ref, raw, opts)
-		cat.Packages[key] = *distilled
-
-		if writeErr := writeDistilledDoc(repoPath, distilled); writeErr != nil {
-			return nil, fmt.Errorf("failed to write distilled doc for %s: %w", ref.Name, writeErr)
+		if syncErr := syncOnePackage(syncCtx, repoPath, refs[i], cat, opts); syncErr != nil {
+			return nil, syncErr
 		}
 	}
 
 	if err := SaveCatalog(repoPath, cat); err != nil {
 		return nil, err
 	}
+	if truncated {
+		return cat, fmt.Errorf("%w: synced %d of %d declared dependencies", ErrSyncTruncated, limit, len(refs))
+	}
 	return cat, nil
+}
+
+// syncOnePackage harvests, compresses, and writes documentation for one declared
+// dependency into cat, skipping it when a cached entry already exists and the
+// caller has not asked to force a refresh. Extracted from SyncRepositoryDocs to
+// keep the loop body's branching out of the outer function's cyclomatic
+// complexity (HISS-04).
+func syncOnePackage(ctx context.Context, repoPath string, ref PackageRef, cat *DocCatalog, opts DistillOptions) error {
+	key := makeDocKey(ref.Name, ref.Version)
+	if _, exists := cat.Packages[key]; exists && !opts.ForceRefresh {
+		return nil
+	}
+
+	raw, harvestErr := HarvestDocumentation(ctx, ref, opts.OfflineOnly)
+	if harvestErr != nil {
+		return fmt.Errorf("harvest %s@%s: %w", ref.Name, ref.Version, harvestErr)
+	}
+
+	distilled := CompressDocumentation(ref, raw, opts)
+	cat.Packages[key] = *distilled
+
+	if writeErr := writeDistilledDoc(repoPath, distilled); writeErr != nil {
+		return fmt.Errorf("failed to write distilled doc for %s: %w", ref.Name, writeErr)
+	}
+	return nil
 }
 
 // AuditDocumentationCoverage evaluates the ratio of declared dependencies with active distilled docs.

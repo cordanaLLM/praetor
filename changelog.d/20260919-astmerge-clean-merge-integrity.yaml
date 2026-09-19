@@ -1,0 +1,3 @@
+type: fixed
+title: "astmerge: a clean merge no longer silently drops code — the identical-source shortcut, the declaration cap, generic receivers, resolved-count accounting, and build tags/package docs are all fixed so a dropped symbol either survives the merge or fails it"
+breaking: false
