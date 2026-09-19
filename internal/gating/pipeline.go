@@ -339,9 +339,25 @@ func runFlavorStage(ctx context.Context, cfg *stageConfig) (string, error) {
 		return "", fmt.Errorf("flavor audit cancelled: %w", err)
 	}
 	if !rep.Passed {
-		return "", fmt.Errorf("flavor audit failed (score: %.1f%%, %d missing templates)", rep.Score, len(rep.MissingTemplates))
+		return "", fmt.Errorf("flavor audit failed (score: %.1f%%, %d missing templates%s)",
+			rep.Score, len(rep.MissingTemplates), invalidSettingsClause(rep))
 	}
 	return "", nil
+}
+
+// invalidSettingsClause names the settings that cost the score, or nothing when none did.
+//
+// Settings are validated, not merely counted, so a repository can fail this stage with no
+// missing template at all -- two present but unparsable settings put a go-library
+// repository at 7/9 = 77.8%. Reporting only the score and the template count then tells an
+// operator that something is wrong and nothing about which file, in the one place where the
+// gate has already blocked the push.
+func invalidSettingsClause(rep *flavor.FlavorAuditReport) string {
+	paths := rep.InvalidSettingPaths()
+	if len(paths) == 0 {
+		return ""
+	}
+	return ", missing or invalid settings: " + strings.Join(paths, ", ")
 }
 
 // runTestStage runs the race detector against HEAD in an isolated worktree. A worktree

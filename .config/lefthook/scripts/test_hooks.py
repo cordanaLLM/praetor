@@ -306,10 +306,15 @@ class GitHooks(unittest.TestCase):
         # registered flavor. It previously matched nothing and was classified go-library only by
         # the silent fallback that detection no longer has; the .golangci.yml it already shipped
         # made sense for no other language.
+        #
+        # lefthook.yml and the ruleset file must parse as non-empty (validYAMLMapping /
+        # validJSONObject in internal/flavor/flavor.go reject `{}`: a lefthook.yml or ruleset
+        # holding nothing installs or enforces nothing, so it no longer counts as configuration).
         files = {".standards.yaml": "repository: {}\n", ".standards.lock": "{}\n",
                  "go.mod": "module fixture\n\ngo 1.25\n", "internal/doc.go": "package internal\n",
                  ".golangci.yml": "version: '2'\n", ".github/workflows/ci.yml": "name: fixture\n",
-                 "lefthook.yml": "{}\n", ".github/rulesets/main.json": "{}\n",
+                 "lefthook.yml": "pre-commit:\n  commands:\n    fixture: {}\n",
+                 ".github/rulesets/main.json": '{"name": "main"}\n',
                  ".gitignore": "/.workingdir/\n",
                  "Makefile": 'state-audit: state-init\n\t"' + str(self.binary) + '" state audit .\n'
                              'state-init:\n\t"' + str(self.binary) + '" state init --if-absent .\n'}

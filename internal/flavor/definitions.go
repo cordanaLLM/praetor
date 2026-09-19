@@ -79,9 +79,9 @@ func (f *GoServiceFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *GoServiceFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Pre-commit and pre-push gating"},
-		{Name: "VSCode Go Settings", Path: ".vscode/settings.json", Description: "Editor workspace settings"},
-		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Pre-commit and pre-push gating", Validator: validYAMLMapping},
+		{Name: "VSCode Go Settings", Path: ".vscode/settings.json", Description: "Editor workspace settings", Validator: validJSONObject},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
 
@@ -122,8 +122,8 @@ func (f *GoLibraryFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *GoLibraryFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Pre-commit and pre-push gating"},
-		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Pre-commit and pre-push gating", Validator: validYAMLMapping},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
 
@@ -165,8 +165,8 @@ func (f *NativeGPUSystemsFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *NativeGPUSystemsFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "VSCode C/C++ Settings", Path: ".vscode/settings.json", Description: "Editor workspace config"},
-		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+		{Name: "VSCode C/C++ Settings", Path: ".vscode/settings.json", Description: "Editor workspace config", Validator: validJSONObject},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
 
@@ -209,8 +209,8 @@ func (f *FrontendSvelteFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *FrontendSvelteFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "VSCode Svelte Settings", Path: ".vscode/settings.json", Description: "Editor workspace config"},
-		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+		{Name: "VSCode Svelte Settings", Path: ".vscode/settings.json", Description: "Editor workspace config", Validator: validJSONObject},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
 
@@ -296,7 +296,7 @@ func (f *PythonMLFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *PythonMLFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "VSCode Python Settings", Path: ".vscode/settings.json", Description: "Python interpreter and test runner"},
+		{Name: "VSCode Python Settings", Path: ".vscode/settings.json", Description: "Python interpreter and test runner", Validator: validJSONObject},
 	}
 }
 
@@ -341,8 +341,8 @@ func (f *OSImageFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *OSImageFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Pre-commit and pre-push gating"},
-		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Pre-commit and pre-push gating", Validator: validYAMLMapping},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
 
@@ -378,7 +378,7 @@ func (f *InfraK8sFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *InfraK8sFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
 
@@ -428,7 +428,7 @@ func (f *AgenticAutonomousFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *AgenticAutonomousFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Anti-evasion and verification hooks"},
+		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Anti-evasion and verification hooks", Validator: validYAMLMapping},
 	}
 }
 
@@ -464,9 +464,9 @@ func (f *RustSystemsFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *RustSystemsFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Pre-commit clippy and rustfmt enforcement"},
-		{Name: "VSCode Rust Settings", Path: ".vscode/settings.json", Description: "Rust-analyzer and clippy editor configuration"},
-		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Pre-commit clippy and rustfmt enforcement", Validator: validYAMLMapping},
+		{Name: "VSCode Rust Settings", Path: ".vscode/settings.json", Description: "Rust-analyzer and clippy editor configuration", Validator: validJSONObject},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
 
@@ -517,8 +517,8 @@ func (f *TypeScriptNodeFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *TypeScriptNodeFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "VSCode TypeScript Settings", Path: ".vscode/settings.json", Description: "TypeScript language server and formatter configuration"},
-		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+		{Name: "VSCode TypeScript Settings", Path: ".vscode/settings.json", Description: "TypeScript language server and formatter configuration", Validator: validJSONObject},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
 
@@ -568,8 +568,8 @@ func (f *JVMServiceFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *JVMServiceFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "VSCode Java Settings", Path: ".vscode/settings.json", Description: "Java language server and build tool config"},
-		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+		{Name: "VSCode Java Settings", Path: ".vscode/settings.json", Description: "Java language server and build tool config", Validator: validJSONObject},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
 
@@ -606,8 +606,8 @@ func (f *MobileFlutterFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *MobileFlutterFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "VSCode Dart Settings", Path: ".vscode/settings.json", Description: "Dart and Flutter editor workspace configuration"},
-		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions"},
+		{Name: "VSCode Dart Settings", Path: ".vscode/settings.json", Description: "Dart and Flutter editor workspace configuration", Validator: validJSONObject},
+		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
 

@@ -43,6 +43,25 @@ than failing the repository for it:
 A skipped stage prints its reason. That distinction matters: a skipped stage that reads as a pass is
 how a gate comes to certify what it never examined.
 
+### A failing flavor stage names the files that cost the score
+
+The flavor stage scores required templates and settings, and a setting counts only where the file
+is present **and** parses as the shape that setting declares
+([onboarding guide](onboarding.md#what-the-flavor-score-measures)). A repository can
+therefore fail this stage with every template present: two settings that exist but do not parse put
+a go-library repository at 7 of 9 required items, 77.8%, below the 80% bar.
+
+The failure names them, because at that point the push is already blocked:
+
+```text
+  4. [FAIL] Flavor Conformance        (3ms)
+     Reason: flavor audit failed (score: 77.8%, 0 missing templates, missing or invalid settings: lefthook.yml, .github/rulesets/main.json)
+```
+
+Without the file list the whole report was `score: 77.8%, 0 missing templates`, which tells an
+operator that something is wrong and nothing about which file to open. `praetorctl flavor audit .`
+prints the same files with their names and descriptions under **Missing or Invalid Settings**.
+
 ### The race stage's bound, and what firing it means
 
 The race-detector stage is bounded, because an unbounded stage is how a gate hangs instead of

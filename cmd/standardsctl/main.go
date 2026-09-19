@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -183,6 +185,13 @@ func main() {
 	args := os.Args[2:]
 
 	if err := dispatchCommand(cmd, args); err != nil {
+		// flag.ErrHelp means a subcommand's own flag.Parse saw -h/--help and already
+		// printed its usage; that is a satisfied request, not a failure (BUG-811). Only
+		// two of the ~25 flag-parsed commands converted it to nil themselves, so every
+		// other one reported "Error: flag: help requested" and exited 1 on --help.
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
 		os.Exit(commandExitCode(os.Stderr, err))
 	}
 }
@@ -291,6 +300,16 @@ func runVersion(_ []string) error {
 func runHelp(_ []string) error {
 	printUsage()
 	return nil
+}
+
+// isHelpToken reports whether tok is one of the help spellings a subcommand's raw first
+// argument may carry (BUG-811). A subcommand matches this before any flag.Parse call --
+// tok is never a parsed Go flag at that point -- so "-h"/"--help"/"help" can be answered
+// with the subcommand's own usage text and an exit-0 return instead of falling through to
+// "unknown <subcommand> command: <tok>". editors and notebook both need this same check;
+// sharing it keeps their help-token spellings from drifting apart (HISS-19).
+func isHelpToken(tok string) bool {
+	return tok == "-h" || tok == "--help" || tok == "help"
 }
 
 // splitCSV splits a comma-separated flag value into trimmed, non-empty fields.

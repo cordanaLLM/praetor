@@ -24,9 +24,9 @@ inputs:
     required: false
     default: "true"
   go-version:
-    description: "Go version to install"
+    description: "Go version to install; mirrors the go directive in praetor's go.mod"
     required: false
-    default: "1.24"
+    default: "1.27"
 
 outputs:
   report:

@@ -1,0 +1,3 @@
+type: fixed
+title: Flavor audit scores templates and validated settings only, never the host's installed toolchains
+breaking: false

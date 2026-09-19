@@ -13,20 +13,50 @@ import (
 )
 
 // FlavorAuditReport contains the diagnostic result of auditing a repo against a flavor.
+//
+// Score is the percentage of required templates and settings the repository carries, and
+// nothing else. Toolchain counts are advisory: they describe the machine running the audit,
+// so folding them into the score made the same commit pass on one host and fail on another.
 type FlavorAuditReport struct {
-	Flavor              string          `json:"flavor"`
-	RepoPath            string          `json:"repo_path"`
-	Score               float64         `json:"score"`
-	Passed              bool            `json:"passed"`
-	TemplatesTotal      int             `json:"templates_total"`
-	TemplatesPresent    int             `json:"templates_present"`
-	MissingTemplates    []TemplateItem  `json:"missing_templates"`
-	SettingsTotal       int             `json:"settings_total"`
-	SettingsValid       int             `json:"settings_valid"`
-	MissingSettings     []SettingItem   `json:"missing_settings"`
+	Flavor           string         `json:"flavor"`
+	RepoPath         string         `json:"repo_path"`
+	Score            float64        `json:"score"`
+	Passed           bool           `json:"passed"`
+	TemplatesTotal   int            `json:"templates_total"`
+	TemplatesPresent int            `json:"templates_present"`
+	MissingTemplates []TemplateItem `json:"missing_templates"`
+	SettingsTotal    int            `json:"settings_total"`
+	// SettingsValid counts settings that are present and, where the setting declares a
+	// validator, parse. MissingSettings names the rest: absent and malformed alike, since
+	// a file the reading tool rejects configures no more than a file that is not there.
+	SettingsValid   int           `json:"settings_valid"`
+	MissingSettings []SettingItem `json:"missing_settings"`
+	// The toolchain fields are advisory and never enter Score or Passed.
 	ToolchainsTotal     int             `json:"toolchains_total"`
 	ToolchainsAvailable int             `json:"toolchains_available"`
 	MissingToolchains   []ToolchainItem `json:"missing_toolchains"`
+}
+
+// maxReportedSettings bounds the setting paths a one-line verdict carries (HISS-02).
+const maxReportedSettings = 64
+
+// InvalidSettingPaths returns the repository-relative path of every setting the report
+// counted against the score -- absent and present-but-unparsable alike, which is what
+// MissingSettings holds.
+//
+// It exists for callers whose whole verdict is one line, such as the gate stage: a report
+// that says "77.8%, 0 missing templates" names nothing an operator can act on, because the
+// files that cost the score are settings. Callers with room for a block range over
+// MissingSettings directly and print the name and description with the path.
+func (r *FlavorAuditReport) InvalidSettingPaths() []string {
+	if r == nil || len(r.MissingSettings) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(r.MissingSettings))
+	for i := 0; i < len(r.MissingSettings) && i < maxReportedSettings; i++ {
+		paths = append(paths, r.MissingSettings[i].Path)
+	}
+	return paths
 }
 
 // ErrNoFlavorMatched reports that nothing in the catalog fits the repository.
@@ -123,16 +153,31 @@ func AuditFlavor(repoPath string, targetFlavor string) (*FlavorAuditReport, erro
 	auditSettings(repoPath, flv.RequiredSettings(), report)
 	auditToolchains(repoPath, flv.RequiredToolchains(), report)
 
-	total := report.TemplatesTotal + report.SettingsTotal + report.ToolchainsTotal
-	present := report.TemplatesPresent + report.SettingsValid + report.ToolchainsAvailable
-	if total > 0 {
-		report.Score = (float64(present) / float64(total)) * 100.0
-	} else {
-		report.Score = 100.0
-	}
-
-	report.Passed = report.Score >= 80.0 && len(report.MissingTemplates) == 0
+	report.Score = conformanceScore(report)
+	report.Passed = report.Score >= passingScore && len(report.MissingTemplates) == 0
 	return report, nil
+}
+
+// passingScore is the share of required templates and settings a repository must carry.
+const passingScore = 80.0
+
+// conformanceScore returns that share as a percentage.
+//
+// Toolchains are reported but never scored. They are resolved through exec.LookPath, so
+// scoring them measures the machine running the audit rather than the repository: a
+// conforming go-service repository (8 templates, 3 settings, 4 toolchains) scored
+// 11/15 = 73.3% and failed the 80% bar on a host with none of its four tools installed,
+// in an audit that runs in the generated pre-push hook. The repository had not changed.
+// MissingToolchains stays in the report and in the CLI output as advice.
+//
+// A flavor that requires no templates and no settings scores 100: nothing can be missing.
+func conformanceScore(report *FlavorAuditReport) float64 {
+	total := report.TemplatesTotal + report.SettingsTotal
+	if total == 0 {
+		return 100.0
+	}
+	present := report.TemplatesPresent + report.SettingsValid
+	return (float64(present) / float64(total)) * 100.0
 }
 
 func auditTemplates(repoPath string, templates []TemplateItem, report *FlavorAuditReport) {
@@ -163,13 +208,38 @@ func TemplateSatisfied(repoPath string, t TemplateItem) bool {
 func auditSettings(repoPath string, settings []SettingItem, report *FlavorAuditReport) {
 	report.SettingsTotal = len(settings)
 	for _, s := range settings {
-		fullPath := filepath.Join(repoPath, s.Path)
-		if util.PathExists(fullPath) {
+		if SettingSatisfied(repoPath, s) {
 			report.SettingsValid++
 		} else {
 			report.MissingSettings = append(report.MissingSettings, s)
 		}
 	}
+}
+
+// maxSettingBytes bounds a setting file read (HISS-02). A configuration file larger than
+// this is not one, and reading it to find out is how an audit becomes a memory fault.
+//
+// The bound is enforced by the read itself, through util.ReadConfinedLimited: the audit
+// runs in the generated pre-push hook (internal/adopt/hooks.go) and in the gate pipeline,
+// where a repository carrying a multi-GB generated artefact at a settings path would
+// otherwise be allocated in full before the length was judged.
+const maxSettingBytes = 1 << 20
+
+// SettingSatisfied reports whether the repository carries the setting and, where the setting
+// declares a validator, whether the content satisfies it.
+//
+// A file that is present but does not parse is not a satisfied setting: it is a file the tool
+// reading that path will reject. Absent, unreadable and implausibly large are equally
+// unsatisfied, because the audit can claim nothing about content it never read.
+func SettingSatisfied(repoPath string, s SettingItem) bool {
+	content, err := util.ReadConfinedLimited(repoPath, s.Path, maxSettingBytes)
+	if err != nil {
+		return false
+	}
+	if s.Validator == nil {
+		return true
+	}
+	return s.Validator(content)
 }
 
 func auditToolchains(repoPath string, toolchains []ToolchainItem, report *FlavorAuditReport) {

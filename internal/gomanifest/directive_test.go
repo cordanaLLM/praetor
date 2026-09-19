@@ -1,6 +1,59 @@
 package gomanifest
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+const praetorManifest = "module github.com/cordanaLLM/praetor\n\ngo 1.27\n\nrequire gopkg.in/yaml.v3 v3.0.1\n"
+
+// Positive: the directive is what every toolchain pin is compared against, so it must be
+// read exactly as written, patch level included.
+func TestGoDirective_Positive_ReadsTheDeclaredVersion(t *testing.T) {
+	version, declared := GoDirective([]byte(praetorManifest))
+	if !declared || version != "1.27" {
+		t.Fatalf("GoDirective = %q, %v; want 1.27, true", version, declared)
+	}
+	patched := strings.Replace(praetorManifest, "go 1.27", "go 1.27.1", 1)
+	if version, declared = GoDirective([]byte(patched)); !declared || version != "1.27.1" {
+		t.Fatalf("patch level: GoDirective = %q, %v; want 1.27.1, true", version, declared)
+	}
+}
+
+// Negative: a manifest that declares no directive reports so rather than an empty version
+// a caller could mistake for one.
+func TestGoDirective_Negative_ReportsAManifestWithoutADirective(t *testing.T) {
+	cases := []string{
+		"module github.com/cordanaLLM/praetor\n",
+		"module x\n\nrequire (\n\tgo.uber.org/zap v1.27.0\n\tgolang.org/x/mod v0.21.0\n)\n",
+		"",
+		"go\n",
+	}
+	for _, manifest := range cases {
+		if version, declared := GoDirective([]byte(manifest)); declared {
+			t.Errorf("%q: reported directive %q", manifest, version)
+		}
+	}
+}
+
+// Boundary: the forms a manifest may legally carry around the directive -- a trailing
+// comment, CRLF line endings, a commented-out directive above the real one, and a
+// toolchain line below it -- all resolve to the one version.
+func TestGoDirective_Boundary_TrailingCommentsCRLFAndToolchainLines(t *testing.T) {
+	cases := map[string]string{
+		"trailing comment": "module x\n\ngo 1.27 // pinned by ADR-0005\n",
+		"crlf":             "module x\r\n\r\ngo 1.27\r\n",
+		"commented out":    "module x\n\n// go 1.24\ngo 1.27\n",
+		"toolchain below":  "module x\n\ngo 1.27\n\ntoolchain go1.27.1\n",
+		"extra spacing":    "module x\n\n  go   1.27  \n",
+	}
+	for name, manifest := range cases {
+		version, declared := GoDirective([]byte(manifest))
+		if !declared || version != "1.27" {
+			t.Errorf("%s: GoDirective = %q, %v; want 1.27, true", name, version, declared)
+		}
+	}
+}
 
 func TestReplaceLine_Positive_SingleAndBlock(t *testing.T) {
 	inBlock := false

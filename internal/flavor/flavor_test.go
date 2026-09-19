@@ -59,8 +59,14 @@ func TestAuditFlavor_PositiveAndScoring(t *testing.T) {
 	if report.TemplatesTotal == 0 {
 		t.Fatal("expected non-zero required templates")
 	}
-	if report.Score < 0.0 || report.Score > 100.0 {
-		t.Fatalf("invalid score: %f", report.Score)
+	// The fixture carries none of the required templates or settings, so the score is
+	// exactly 0. The assertion used to be 0 <= Score <= 100, which present/total*100
+	// cannot violate: it passed for every possible formula.
+	if report.Score != 0.0 {
+		t.Fatalf("a repository carrying no required file scores 0.0, got %f", report.Score)
+	}
+	if report.Passed {
+		t.Fatalf("a repository missing every template must not pass: %+v", report)
 	}
 }
 
@@ -142,8 +148,11 @@ func TestAuditFlavor_Boundary_EmptyDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an explicit flavor must still audit: %v", err)
 	}
-	if explicit.Score < 0 || explicit.Score > 100 {
-		t.Fatalf("unexpected score: %f", explicit.Score)
+	if explicit.Score != 0.0 {
+		t.Fatalf("an empty directory carries none of the 9 required files, so the score is 0.0, got %f", explicit.Score)
+	}
+	if explicit.SettingsValid != 0 || explicit.SettingsTotal != 2 {
+		t.Fatalf("expected 0 of 2 go-library settings, got %d of %d", explicit.SettingsValid, explicit.SettingsTotal)
 	}
 }
 

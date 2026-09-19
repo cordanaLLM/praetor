@@ -1,0 +1,3 @@
+type: fixed
+title: Flavor gate failures name the settings that cost the score, a setting file that parses to an empty container no longer counts as configuration, and the setting read is bounded by the read itself
+breaking: false
