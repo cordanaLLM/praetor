@@ -106,6 +106,13 @@ func synthesize(name string, profiles []string, facets []string, selected []conf
 	if len(selected) > MaxLoopLimit {
 		return nil, errors.New("selected DevContainer features exceed bounds")
 	}
+	// Every profile and facet loop below stops at MaxLoopLimit, so an oversized
+	// input would be truncated into a container contradicting what was declared.
+	// PrepareBundle already refuses that input; the two entry points must not
+	// disagree about which manifests are synthesizable.
+	if err := validateSynthesisBounds(name, profiles, facets); err != nil {
+		return nil, err
+	}
 	containerName := strings.TrimSpace(name)
 	if containerName == "" {
 		containerName = "workspace"

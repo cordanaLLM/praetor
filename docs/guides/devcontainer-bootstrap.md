@@ -53,11 +53,17 @@ separate evidence. Verification uses the retained specification, so it does
 not require the original workstation source path or a hardcoded generator
 commit to remain available.
 
-Verification reads the whole file, not the fields Praetor writes. A key outside
-the managed schema, such as a hand-added `initializeCommand` or `runArgs`, is
-reported as drift rather than dropped before the comparison, so a tampered
-configuration cannot verify as in sync. Keep such additions in a custom
-DevContainer, which adoption preserves and reports as execution-unverified.
+Verification compares the file itself, byte for byte, against the render of the
+expected configuration. It does not compare a re-render of what decoded, because
+Go's JSON decoder matches member names case-insensitively and keeps the last of a
+duplicate pair: `POSTCREATECOMMAND`, `RemoteUser` and a repeated
+`postCreateCommand` all decode into the managed struct and re-marshal to the
+spec spelling, while the DevContainer runtime reads object keys case-sensitively
+and would run none of them. A key outside the managed schema, such as a
+hand-added `initializeCommand` or `runArgs`, is named in the rejection; every
+other edit, including whitespace and content after the configuration object, is
+reported as drift. Keep such additions in a custom DevContainer, which adoption
+preserves and reports as execution-unverified.
 
 Without `--source-root`, or with an explicitly selected config-only catalog,
 generation writes an `unavailable` configuration and returns an error. Its
@@ -87,8 +93,11 @@ Runtime/profile selection is sourced from the selected pinned catalog entries.
 Only the selected profile and facets contribute DevContainer features; duplicate
 references must agree on options. Without a pinned catalog the profile still
 decides: a `native-gpu-systems` repository receives the C/C++ toolchain
-extensions and no Go feature. This does not establish IDE feature-installation
-or application-tool execution proof.
+extensions, no Go feature and a `postCreateCommand` that does not invoke the Go
+toolchain, even when `framework` is declared alongside it. More than
+`MaxLoopLimit` declared profiles or facets is refused rather than truncated.
+This does not establish IDE feature-installation or application-tool execution
+proof.
 
 ## Infrastructure test environments
 
