@@ -23,6 +23,13 @@ looking:
 | `Existing .workingdir/ in <dir> already holds ledger files and was left untouched` | a complete or partial ledger; nothing was written, and a partial one needs explicit repair |
 | `.workingdir in <dir> is not a directory; nothing was written` | the path is a symlink or a regular file; remove it before initializing |
 
+Every ledger file is published atomically: its content is staged under a private
+`.praetor-*.pending` name, synced there, and linked into place. Seeding is no
+longer arbitrated by one directory creator, so several processes may initialize
+the same ledgerless directory at once; staged publication means each name is
+either absent or holds its whole template, never a zero-byte file an audit would
+read as a corrupt ledger.
+
 Bug mutations validate the entire `.workingdir/BUGS.md` before changing it. A
 malformed row, duplicate or noncanonical ID, invalid severity/status, unreadable
 file, symlink, or exceeded size limit returns an error. Audit, state sync and

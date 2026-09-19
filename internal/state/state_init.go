@@ -59,7 +59,7 @@ func initializeWorkingFiles(ctx context.Context, working *os.Root) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := initializeLedgerFile(working, file.name, file.content); err != nil {
+		if err := initializeLedgerFile(ctx, working, file.name, file.content); err != nil {
 			return fmt.Errorf("initialize %s: %w", file.name, err)
 		}
 	}
@@ -130,21 +130,22 @@ func regularLedgerFile(name string, info os.FileInfo, err error) (bool, error) {
 
 // initializeLedgerFile writes the default content for one ledger file, and only
 // when that file is absent. An existing regular file is left byte-for-byte
-// alone, and a concurrent initializer winning the exclusive create is not an
-// error: the file it wrote is the file this call would have written.
-func initializeLedgerFile(root *os.Root, name, content string) error {
+// alone, and a concurrent initializer winning the publish is not an error: the
+// file it wrote is the file this call would have written.
+//
+// The write goes through contextopt.CreateRootSnapshot, which stages the content
+// privately and publishes it with an exclusive hard link. Seeding is no longer
+// arbitrated by a single Mkdir winner - every process that observes a ledgerless
+// directory writes the five files - so an exclusive create alone would let a
+// loser see the winner's empty, not-yet-written file, report success, and leave
+// the audit that must run next reading a zero-byte ledger. Staged publication
+// makes each name either absent or complete, never partial.
+func initializeLedgerFile(ctx context.Context, root *os.Root, name, content string) error {
 	info, err := root.Lstat(name)
 	exists, err := regularLedgerFile(name, info, err)
 	if err != nil || exists {
 		return err
 	}
-	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if errors.Is(err, os.ErrExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	_, writeErr := file.WriteString(content)
-	return errors.Join(writeErr, file.Sync(), file.Close())
+	_, err = contextopt.CreateRootSnapshot(ctx, root, name, []byte(content), 0600)
+	return err
 }

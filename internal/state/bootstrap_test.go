@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -125,6 +126,83 @@ func TestConcurrentBootstrapHasOnlyOneCreator(t *testing.T) {
 	if report, err := AuditWorkingDir(dir); err != nil || !report.Valid {
 		t.Fatalf("concurrent bootstrap corrupted ledger: %+v, %v", report, err)
 	}
+}
+
+// TestConcurrentBootstrapNeverExposesAPartialLedgerFile pins the window the previous
+// commit opened. Seeding is no longer arbitrated by the single Mkdir winner: every
+// process that observes a ledgerless directory writes the five files. With a plain
+// exclusive create, a loser that stats a ledger name between the winner's OpenFile and
+// its first write sees a zero-byte regular file, reports the ledger present, and the
+// audit CLAUDE.md requires next fails on an empty BUGS.md. Ledger files are now staged
+// and linked into place, so a name that exists holds its whole template.
+// TestConcurrentBootstrapHasOnlyOneCreator cannot catch this: it audits after Wait.
+func TestConcurrentBootstrapNeverExposesAPartialLedgerFile(t *testing.T) {
+	// maxRaceRounds bounds the search (HISS-02). Against a plain exclusive create the
+	// window is narrow - one round in roughly twelve caught it when this was measured -
+	// so the test repeats until it is found or the bound is reached.
+	const maxRaceRounds = 256
+	for round := 0; round < maxRaceRounds; round++ {
+		if sighting := watchOneConcurrentBootstrap(t); sighting != "" {
+			t.Fatalf("round %d: a concurrent reader saw a partial ledger file: %s", round, sighting)
+		}
+	}
+}
+
+// watchOneConcurrentBootstrap bootstraps one fresh directory from several goroutines while
+// another goroutine watches the ledger names, and reports the first name it caught holding
+// anything other than its whole template.
+func watchOneConcurrentBootstrap(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	working := filepath.Join(dir, WorkingDirName)
+	sizes := make(map[string]int64, len(ledgerTemplates()))
+	for _, file := range ledgerTemplates() {
+		sizes[file.name] = int64(len(file.content))
+	}
+
+	// maxWatchRounds bounds the observer loop (HISS-02); it stops earlier on the signal.
+	const maxWatchRounds = 1 << 14
+	stop := make(chan struct{})
+	short := ""
+	var watcher sync.WaitGroup
+	watcher.Go(func() { short = watchLedgerSizes(working, sizes, stop, maxWatchRounds) })
+
+	var wg sync.WaitGroup
+	failures := make([]error, 8)
+	for i := range failures {
+		wg.Go(func() { _, failures[i] = InitWorkingDirIfAbsentContext(t.Context(), dir) })
+	}
+	wg.Wait()
+	close(stop)
+	watcher.Wait()
+
+	for _, err := range failures {
+		if err != nil {
+			t.Fatalf("concurrent bootstrap failed: %v", err)
+		}
+	}
+	if report, err := AuditWorkingDir(dir); err != nil || !report.Valid {
+		t.Fatalf("concurrent bootstrap left an invalid ledger: %+v, %v", report, err)
+	}
+	return short
+}
+
+// watchLedgerSizes polls the ledger names until stop closes or the round bound is spent.
+func watchLedgerSizes(working string, sizes map[string]int64, stop <-chan struct{}, rounds int) string {
+	for round := 0; round < rounds; round++ {
+		select {
+		case <-stop:
+			return ""
+		default:
+		}
+		for name, want := range sizes {
+			info, err := os.Stat(filepath.Join(working, name))
+			if err == nil && info.Size() != want {
+				return fmt.Sprintf("%s held %d of %d bytes", name, info.Size(), want)
+			}
+		}
+	}
+	return ""
 }
 
 func TestBootstrapSeedsADirectoryAnotherWriterCreated(t *testing.T) {

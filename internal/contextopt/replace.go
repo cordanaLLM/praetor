@@ -65,6 +65,51 @@ func ReplaceSnapshot(ctx context.Context, path string, data []byte, options Repl
 	return SyncDirectory(ctx, root)
 }
 
+// CreateRootSnapshot writes bounded UTF-8 text under name inside an already pinned
+// directory, and only when that name is still free. The content is staged under a private
+// random name, written and synced there, and published with an exclusive hard link, so no
+// reader and no concurrent creator ever observes name holding a half-written file: it is
+// either absent or complete. It reports whether this call published it; losing the race to
+// another creator is not an error, because the file that won is the file this call would
+// have written. An existing name is left byte-for-byte alone.
+func CreateRootSnapshot(ctx context.Context, root *os.Root, name string, data []byte, mode os.FileMode) (created bool, err error) {
+	if err := validateReplacement(ctx, data, ReplaceOptions{Mode: mode}); err != nil {
+		return false, err
+	}
+	if root == nil || !filepath.IsLocal(name) || filepath.Base(name) != name || name == "." {
+		return false, errors.New("snapshot creation requires a pinned directory and a flat filename")
+	}
+	if err := validatePath(name); err != nil {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, MaxDuration)
+	defer cancel()
+	stage := ".praetor-" + rand.Text() + ".pending"
+	file, err := stageSnapshot(ctx, root, stage, data)
+	if err != nil {
+		return false, fmt.Errorf("stage %s: %w", name, err)
+	}
+	defer func() { err = errors.Join(err, file.Close()) }()
+	return publishNewSnapshot(ctx, root, name, stage, file, mode)
+}
+
+// publishNewSnapshot links the staged file into place and drops the staging entry whether
+// or not the link won. os.ErrExist means another creator published first.
+func publishNewSnapshot(ctx context.Context, root *os.Root, name, stage string, file *os.File, mode os.FileMode) (bool, error) {
+	if err := errors.Join(ctx.Err(), file.Chmod(mode), file.Sync()); err != nil {
+		return false, errors.Join(err, root.Remove(stage))
+	}
+	linkErr := root.Link(stage, name)
+	removeErr := root.Remove(stage)
+	switch {
+	case errors.Is(linkErr, os.ErrExist):
+		return false, removeErr
+	case linkErr != nil:
+		return false, errors.Join(fmt.Errorf("publish snapshot %s: %w", name, linkErr), removeErr)
+	}
+	return true, errors.Join(removeErr, SyncDirectory(ctx, root))
+}
+
 // LockDirectory serializes cooperating operations on an already pinned
 // directory. The returned release function must be called; contention fails fast.
 func LockDirectory(ctx context.Context, root *os.Root) (func() error, error) {
