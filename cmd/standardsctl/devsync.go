@@ -15,6 +15,10 @@ import (
 // devsyncTimeout bounds a whole devsync run; every rclone call carries its own tighter bound.
 const devsyncTimeout = 24 * time.Hour
 
+// defaultMaxArchiveSize is push's --max-archive-size default: a unit whose measured source
+// exceeds this is skipped, not uploaded. "0" or "none" disables the cap.
+const defaultMaxArchiveSize = "2GiB"
+
 // rcloneBinaryEnv selects the rclone executable, so tests and unusual installs can point
 // devsync at a specific binary. Unset, rclone is found on PATH.
 const rcloneBinaryEnv = "PRAETOR_RCLONE"
@@ -48,7 +52,8 @@ func printDevsyncUsage() {
 	fmt.Println("\nCopies project folders to Google Drive through rclone and back (development stopgap).")
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  init [--remote-name=praetor-sync] [--base=gdrive:praetor-sync] [--rclone-config=path]")
-	fmt.Println("  push [--dev=<home>/dev] [--remote=praetor-sync:] [--host=<hostname>] [--dry-run] [--rclone-config=path]")
+	fmt.Println("  push [--dev=<home>/dev] [--remote=praetor-sync:] [--host=<hostname>] [--dry-run]")
+	fmt.Println("       [--max-archive-size=2GiB] [--rclone-config=path]")
 	fmt.Println("  pull --host=<host> [--remote=praetor-sync:] [--into=<user data dir>/praetor/devsync] [--rclone-config=path]")
 	fmt.Println("  ls [--remote=praetor-sync:] [--rclone-config=path]")
 }
@@ -94,15 +99,21 @@ func runDevsyncPush(ctx context.Context, args []string) error {
 	remote := fs.String("remote", devsync.DefaultRemote, "remote root")
 	host := fs.String("host", "", "folder name for this workstation (default: host name)")
 	dryRun := fs.Bool("dry-run", false, "report what would be uploaded without uploading")
+	maxArchiveSize := fs.String("max-archive-size", defaultMaxArchiveSize,
+		"skip a unit whose measured source exceeds this size, e.g. 2GiB, 500MiB (0 or \"none\" disables the cap)")
 	config := fs.String("rclone-config", "", "rclone config file (default: rclone's own)")
 	if err := parseDevsyncFlags(fs, args); err != nil {
 		return err
+	}
+	sizeCap, err := devsync.ParseSize(*maxArchiveSize)
+	if err != nil {
+		return fmt.Errorf("--max-archive-size: %w", err)
 	}
 	opts, err := devsyncPushOptions(*dev, *remote, *host, *config)
 	if err != nil {
 		return err
 	}
-	opts.DryRun = *dryRun
+	opts.DryRun, opts.MaxArchiveSize = *dryRun, sizeCap
 	_, err = devsync.Push(ctx, opts)
 	return err
 }
