@@ -187,19 +187,28 @@ class PortabilityDriver(unittest.TestCase):
     def test_every_failing_case_prints_its_own_traceback(self):
         """Every failure's own block reaches the log, not only the run's last 25 lines.
 
-        A macOS run failed four cases in one suite and published one traceback, because a
-        noisy later case pushed the first three out of the printed tail (#135). The other
-        three had to be attributed by reading the code instead of by reading the log.
+        A macOS run failed four cases in one suite and published one traceback (#135). The
+        mechanism is block count times block length, not noise: unittest's printErrors emits
+        every failure block after the last case has run, and run_suite composes
+        stdout + stderr, so a case's own prints land ahead of the blocks and can never push
+        one out of a tail. Four blocks of roughly eight lines each plus the summary cannot
+        fit in 25 lines, and the first one falls out.
+
+        Fail-before measured against origin/main's driver on this very fixture: 'marker
+        alpha' absent, bravo, charlie and delta present. With failure_blocks: all four
+        present. The earlier fixture here -- two failures and one noisy passing case --
+        passed against both drivers and proved only that the function exists.
         """
         with tempfile.TemporaryDirectory() as temp:
-            body = ("def test_a_fails_early(self): self.fail('first failure marker')\n"
-                    "def test_b_errors(self): raise RuntimeError('second failure marker')\n"
-                    "def test_c_noisy(self): print('\\n'.join(['noise'] * 60))\n")
+            body = ("def test_a(self): self.fail('marker alpha')\n"
+                    "def test_b(self): self.fail('marker bravo')\n"
+                    "def test_c(self): self.fail('marker charlie')\n"
+                    "def test_d(self): self.fail('marker delta')\n")
             suite = write_suite(temp, "blocks.py", body)
             code, output = run_driver(temp, [suite], ["--min-executed", "1"])
         self.assertEqual(code, 1, output)
-        self.assertIn("first failure marker", output)
-        self.assertIn("second failure marker", output)
+        for marker in ("marker alpha", "marker bravo", "marker charlie", "marker delta"):
+            self.assertIn(marker, output)
         # Boundary: the blocks are bounded, so a suite that prints nothing parseable still
         # publishes its tail rather than nothing at all.
         self.assertEqual(driver.failure_blocks("no unittest output here"), [])

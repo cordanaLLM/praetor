@@ -81,7 +81,7 @@ tail is still printed when nothing parses as a block. Its internal Makefile chec
 a recorded one is the separator defect this invariant forbids, reached from inside the gate
 itself.
 
-Every external tool the job's gates shell out to is installed by the job, pinned, on every leg:
+Every external tool the matrix's own runs reach is installed by the job, pinned, on every leg:
 `lefthook`, `gosec`, `yamllint` and `shellcheck`. None of them is assumed present. A tool that
 ships on one runner image and not another produced a gate that failed closed on the images
 without it — `.config/lefthook/scripts/checks.py` runs `shellcheck` over every shell file in a
@@ -89,6 +89,16 @@ push and `common.run` raises on a missing binary, so the macOS leg rejected ever
 self-tests drive. The version is pinned identically on Linux too, where the image already
 carries one: a rule set that differs per platform is not a reproducible gate (HISS-20), so the
 job's own copy goes first on `PATH`.
+
+Three more binaries are reachable from the same gate and are **not** installed by the job:
+`checks.py` shells out to `actionlint` for a pushed `.github/workflows/*.yml`, to `hadolint`
+for a pushed `Dockerfile`, and to `python3` by name for the hook self-tests — a name the
+Windows leg deliberately avoids elsewhere, invoking the interpreter through the path the setup
+action reports instead. The matrix does not reach them today, because the fixture repositories
+`test_hooks.py` builds copy only `.config/lefthook` and `.config/agent/hooks` and stage no
+workflow or `Dockerfile`. That is scope, not a guarantee: a fixture that stages either file,
+or a leg whose image spells Python differently, hits the same failure `shellcheck` produced.
+Install-and-pin them before widening what the fixtures stage.
 
 ## Required status checks for a matrix job
 
