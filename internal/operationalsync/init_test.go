@@ -109,6 +109,47 @@ func TestRunInitRefusesASecondRun(t *testing.T) {
 	}
 }
 
+// The positive half of the checkout-root contract whose negative half is the "subdirectory"
+// case above: one directory reached through a symlinked ancestor is still its own checkout
+// root. git answers rev-parse --show-toplevel through its own real_path(), so it prints the
+// resolved spelling while the caller still holds the aliased one. That shape is the portable
+// stand-in for the two spellings that failed the matrix -- macOS reaching its TMPDIR through
+// /var -> /private/var, and Windows handing out an 8.3 short name where git hands back the
+// long one (#135).
+//
+// What this case is, measured rather than claimed: a pin on the contract, not a reproducer
+// for the identity compare at sync.go:258. On Linux filepath.EvalSymlinks resolves an aliased
+// ancestor to exactly git's answer, so the EvalSymlinks-as-string compare that stood here
+// before accepts this fixture too, and reverting that line leaves this case green. It does
+// refuse the plainer spelling compare that has been reintroduced at this line twice already
+// (Clean(FromSlash(root)) != Clean(path)), which rejects the aliased spelling outright.
+// Inode identity and EvalSymlinks-as-string differ only where the two answers differ as
+// strings -- a Windows drive letter's case, and its short names -- which no Linux fixture can
+// produce, so the Windows leg of the matrix is what replays that half.
+func TestRunInitAcceptsACheckoutRootUnderAnAliasedAncestor(t *testing.T) {
+	f, opts := newInitFixture(t)
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(filepath.Dir(opts.OwnerPath), alias); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+	aliased := filepath.Join(alias, filepath.Base(opts.OwnerPath))
+	top := filepath.FromSlash(testGit(t, f.git, aliased, "rev-parse", "--show-toplevel"))
+	if top == aliased {
+		t.Skipf("this host resolves the caller's own spelling to git's: %q", top)
+	}
+	opts.OwnerPath = aliased
+	r, err := Run(context.Background(), "init", opts)
+	if err != nil || r.Status != "initialized" {
+		t.Fatalf("aliased checkout root refused: %+v %v", r, err)
+	}
+	// The overlay is written through the aliased spelling and lands in the one directory both
+	// spellings name, so the alias is a spelling of the checkout, never a second copy of it.
+	raw, err := os.ReadFile(filepath.Join(top, ownerPaths[0]))
+	if err != nil || !strings.Contains(string(raw), "owner: private") {
+		t.Fatalf("overlay under the resolved spelling: %s %v", raw, err)
+	}
+}
+
 func TestValidateInitOptionsBounds(t *testing.T) {
 	dir := t.TempDir()
 	longest := strings.Repeat("a", 100)
