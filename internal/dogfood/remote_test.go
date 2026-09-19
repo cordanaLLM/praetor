@@ -225,7 +225,9 @@ func assertIsolatedCloneEnvironment(t *testing.T, shim remoteCloneShim, scratch 
 		}
 	}
 	// The operator's own environment must not survive into a checkout of untrusted content,
-	// and ssh must not be advertised to a sandbox that has no credentials.
+	// and ssh must not be advertised to a sandbox that has no credentials. Both
+	// GIT_TEMPLATE_DIR and SSH_AUTH_SOCK are set by the caller before the clone, so neither
+	// row can hold merely because the runner never had the variable.
 	for _, unwanted := range []string{"GIT_TEMPLATE_DIR=", "SSH_AUTH_SOCK=", "GIT_ALLOW_PROTOCOL=https:ssh"} {
 		if strings.Contains(string(recorded), unwanted) {
 			t.Errorf("the clone inherited %q", unwanted)
@@ -244,13 +246,23 @@ func TestCloneEphemeralRepo_Positive_HTTPSCloneCompletesUnderIsolation(t *testin
 	if runtime.GOOS == "windows" {
 		t.Skip("the template hook fixture is a POSIX shell script and the shim rewrites the target to a file:// URL")
 	}
+	// The fixture and the shim get their own budget: installRemoteCloneShim compiles a Go
+	// program through testsupport.BuildExecutable, which on a cold toolchain can spend
+	// minutes. Sharing one deadline with the clone made a slow build surface as a context
+	// deadline in the clone instead of a result about isolation.
+	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancelSetup()
+
+	fixture := writeCommittedFixture(t, setupCtx)
+	shim := installRemoteCloneShim(t, fixture)
+	// The operator's own template directory must not reach git either, and SSH_AUTH_SOCK is
+	// set here so the "no agent socket survives" assertion below is not vacuous on a runner
+	// that happens to have no ssh agent.
+	t.Setenv("GIT_TEMPLATE_DIR", shim.templateDir)
+	t.Setenv("SSH_AUTH_SOCK", filepath.Join(t.TempDir(), "agent.sock"))
+
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-
-	fixture := writeCommittedFixture(t, ctx)
-	shim := installRemoteCloneShim(t, fixture)
-	// The operator's own template directory must not reach git either.
-	t.Setenv("GIT_TEMPLATE_DIR", shim.templateDir)
 
 	scratch := t.TempDir()
 	target := filepath.Join(t.TempDir(), "clone")
@@ -281,11 +293,16 @@ func TestCloneEphemeralRepo_Negative_RefusedTransportNeverReachesGit(t *testing.
 	if runtime.GOOS == "windows" {
 		t.Skip("the template hook fixture is a POSIX shell script")
 	}
+	// Same ordering as the positive test: the shim build has its own budget, so the clone
+	// deadline below is the clone's alone.
+	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancelSetup()
+
+	fixture := writeCommittedFixture(t, setupCtx)
+	shim := installRemoteCloneShim(t, fixture)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-
-	fixture := writeCommittedFixture(t, ctx)
-	shim := installRemoteCloneShim(t, fixture)
 
 	for _, refused := range []string{"file://" + fixture, fixture, "ssh://git@github.com/cordanaLLM/praetor.git"} {
 		target := filepath.Join(t.TempDir(), "clone")
@@ -340,12 +357,59 @@ func TestDogfood_Boundary_LocalTargetsAndSkipSkills(t *testing.T) {
 	if rep.TotalSkillsAudited != 0 {
 		t.Errorf("skills audited with SkipWorkstationSkills: %d", rep.TotalSkillsAudited)
 	}
+}
 
-	// Boundary: a valid-looking URL that stays local (no network) still validates, padding
-	// and an uppercase scheme included; the scheme check is the only new gate.
-	for _, good := range []string{" https://github.com/org/repo.git ", "HTTPS://github.com/org/repo.git"} {
-		if _, vErr := validateRepoURL(good); vErr != nil {
-			t.Errorf("validateRepoURL(%q) rejected an allowed transport: %v", good, vErr)
+// TestValidateRepoURL_Boundary_AcceptedSchemeIsNormalised pins what an accepted URL looks
+// like when it leaves the validator, not merely that it was accepted.
+//
+// git matches a URL's scheme against GIT_ALLOW_PROTOCOL case-sensitively. Measured, git
+// 2.55.0, env -i, GIT_ALLOW_PROTOCOL=https:
+//
+//	git clone --template= --depth 1 --single-branch -- HTTPS://127.0.0.1:1/x/y.git dst
+//	  -> fatal: transport 'HTTPS' not allowed
+//
+// while the same command with a lower-case scheme reaches the network. Accepting
+// "HTTPS://..." unchanged therefore advertises a transport cloneEphemeralRepo cannot use, so
+// the validator rewrites the scheme and this test fails if that rewrite is deleted. The last
+// row is the other direction: lower-casing the whole URL instead would break a
+// case-sensitive host path (HISS-20).
+func TestValidateRepoURL_Boundary_AcceptedSchemeIsNormalised(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{" https://github.com/org/repo.git ", "https://github.com/org/repo.git"},
+		{"HTTPS://github.com/org/repo.git", "https://github.com/org/repo.git"},
+		{"HttPs://github.com/org/repo.git", "https://github.com/org/repo.git"},
+		{"https://github.com/Org/CamelRepo.git", "https://github.com/Org/CamelRepo.git"},
+	} {
+		got, vErr := validateRepoURL(tc.in)
+		if vErr != nil {
+			t.Errorf("validateRepoURL(%q) rejected an allowed transport: %v", tc.in, vErr)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("validateRepoURL(%q) = %q, want %q: git matches the transport case-sensitively", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestValidateRepoURL_Negative_SSHIsRefusedWithItsOwnReason pins the ssh:// arm as an arm.
+//
+// The generic scheme test below it already refuses ssh://, so deleting the ssh branch left
+// the whole suite green while the operator lost the one message that says what to do
+// instead. This asserts the distinguishing text in both directions: the credential reason
+// must be there, and the generic "expected an https:// URL" must not (HISS-20).
+func TestValidateRepoURL_Negative_SSHIsRefusedWithItsOwnReason(t *testing.T) {
+	for _, sshURL := range []string{
+		"ssh://git@github.com/org/repo.git", "SSH://git@github.com/org/repo.git",
+	} {
+		_, vErr := validateRepoURL(sshURL)
+		if !errors.Is(vErr, ErrInvalidRepoURL) {
+			t.Fatalf("validateRepoURL(%q) = %v, want ErrInvalidRepoURL", sshURL, vErr)
+		}
+		if !strings.Contains(vErr.Error(), "the sandbox carries no credentials") {
+			t.Errorf("validateRepoURL(%q) = %q, want the ssh-specific reason", sshURL, vErr)
+		}
+		if strings.Contains(vErr.Error(), "expected an https:// URL") {
+			t.Errorf("validateRepoURL(%q) = %q, want the ssh reason rather than the generic scheme refusal", sshURL, vErr)
 		}
 	}
 }

@@ -77,15 +77,30 @@ func calculateReadinessGrade(debtCount, hissInfractions int) string {
 // refused up front instead, with a message that says why.
 const remoteCloneProtocols = "https"
 
+// remoteCloneScheme is the one accepted URL scheme, spelled exactly the way
+// remoteCloneProtocols spells the transport. git matches a URL's scheme against
+// GIT_ALLOW_PROTOCOL byte for byte, so the allow-list entry and the scheme a validated URL
+// carries are derived from one string rather than written twice.
+const remoteCloneScheme = remoteCloneProtocols + "://"
+
 // validateRepoURL rejects URLs that cannot safely be handed to git as a positional
 // argument: empty values, values git would parse as an option, values carrying shell
 // metacharacters or control bytes (util.ValidateExecArg), and values that are not an
-// https URL.
+// https URL. An accepted URL comes back with its scheme normalised to remoteCloneScheme.
 //
 // The transport check is what keeps a dogfood target remote. Without it "/srv/secrets",
 // "file:///etc" and "ext::sh -c …" were all strings git happily resolved, which turned a
 // simulation over public repositories into a local read -- and, for ext::, into command
 // execution. The clone environment refuses the same transports a second time.
+//
+// The scheme test is case-insensitive, but what comes back is not the spelling the operator
+// used. Because git compares the transport name case-sensitively,
+// "HTTPS://github.com/org/repo.git" passed this gate and then died inside the clone with
+// "fatal: transport 'HTTPS' not allowed" (measured, git 2.55.0, GIT_ALLOW_PROTOCOL=https) --
+// it never reached the network, so the target was graded as an error. That is the same
+// "the validator advertises a transport cloneEphemeralRepo cannot use" defect the ssh://
+// refusal above exists for, so the scheme is rewritten instead. Only the scheme: the rest of
+// the URL keeps its case, because host paths are case-sensitive.
 func validateRepoURL(repoURL string) (string, error) {
 	trimmed := strings.TrimSpace(repoURL)
 	if trimmed == "" {
@@ -94,13 +109,14 @@ func validateRepoURL(repoURL string) (string, error) {
 	if err := util.ValidateExecArg(trimmed); err != nil {
 		return "", fmt.Errorf("%w: %q: %w", ErrInvalidRepoURL, trimmed, err)
 	}
-	if strings.HasPrefix(strings.ToLower(trimmed), "ssh://") {
+	lowered := strings.ToLower(trimmed)
+	if strings.HasPrefix(lowered, "ssh://") {
 		return "", fmt.Errorf("%w: %q: the sandbox carries no credentials, so an ssh target cannot authenticate; use its https URL", ErrInvalidRepoURL, trimmed)
 	}
-	if !strings.HasPrefix(strings.ToLower(trimmed), "https://") {
+	if !strings.HasPrefix(lowered, remoteCloneScheme) {
 		return "", fmt.Errorf("%w: %q: expected an https:// URL", ErrInvalidRepoURL, trimmed)
 	}
-	return trimmed, nil
+	return remoteCloneScheme + trimmed[len(remoteCloneScheme):], nil
 }
 
 // cloneEphemeralRepo clones a remote repository into targetDir with depth 1, using
