@@ -140,20 +140,75 @@ func TestAuditPullRequestPermissions_Positive_ReportsAPullRequestTargetWorkflow(
 	}
 }
 
-func TestAuditPullRequestPermissions_Positive_ReportsAJobFencedOffFromOnlyOneOfTheTwoEvents(t *testing.T) {
+// declaringBothPullRequestEvents is the two-event form of the label workflow, so a job
+// condition can fence one event off while the other still reaches the job.
+func declaringBothPullRequestEvents(condition string) string {
 	body := strings.Replace(theShapeATargetWorkflowWouldShip,
 		"  pull_request_target:\n    branches: [main]\n",
 		"  pull_request:\n    branches: [main]\n  pull_request_target:\n    branches: [main]\n", 1)
-	body = strings.Replace(body,
-		"  label:\n    runs-on:", "  label:\n    if: github.event_name != 'pull_request'\n    runs-on:", 1)
+	if condition == "" {
+		return body
+	}
+	return strings.Replace(body,
+		"  label:\n    runs-on:", "  label:\n    if: "+condition+"\n    runs-on:", 1)
+}
+
+func TestAuditPullRequestPermissions_Positive_ReportsAJobFencedOffFromOnlyOneOfTheTwoEvents(t *testing.T) {
+	body := declaringBothPullRequestEvents("github.event_name != 'pull_request'")
 
 	findings := auditPermissionsDocument(t, "label.yml", body)
 
 	if len(findings) != 2 {
 		t.Fatalf("the target event still reaches the job; got %v", findings)
 	}
-	if findings[0].Trigger != "pull_request and pull_request_target" {
-		t.Errorf("the finding does not name both events: %s", findings[0])
+	// Naming pull_request here would tell an operator that a correctly fenced event is a
+	// hole. Only the event that survives the condition reaches the job.
+	for _, finding := range findings {
+		if finding.Trigger != pullRequestTargetEvent {
+			t.Errorf("the finding names an event the condition fences off: %s", finding)
+		}
+	}
+}
+
+func TestAuditPullRequestPermissions_Positive_NamesOnlyTheEventAnEqualityTestKeeps(t *testing.T) {
+	body := declaringBothPullRequestEvents("github.event_name == 'pull_request'")
+
+	findings := auditPermissionsDocument(t, "label.yml", body)
+
+	if len(findings) != 2 {
+		t.Fatalf("the pull request event still reaches the job; got %v", findings)
+	}
+	if findings[0].Trigger != pullRequestEvent {
+		t.Errorf("the finding names an event the condition fences off: %s", findings[0])
+	}
+}
+
+// A job fenced off from every pull request event the workflow declares is not a finding.
+// Judging each conjunct against the whole declaration list reported this correctly fenced
+// shape and turned the repository-wide guard below into a red build.
+func TestAuditPullRequestPermissions_Negative_AcceptsAJobFencedOffFromBothEvents(t *testing.T) {
+	body := declaringBothPullRequestEvents(
+		"github.event_name != 'pull_request' && github.event_name != 'pull_request_target'")
+
+	if findings := auditPermissionsDocument(t, "label.yml", body); len(findings) != 0 {
+		t.Fatalf("neither declared event reaches the job; got %v", findings)
+	}
+}
+
+// A job whose guard is one parenthesised disjunction naming a pull request event carries
+// exactly the credential the audit exists for. Unwrapping that group and reading the whole
+// disjunction as one comparison value matched no event at all and reported nothing.
+func TestAuditPullRequestPermissions_Positive_ReportsAJobGuardedByADisjunctionGroup(t *testing.T) {
+	body := declaringBothPullRequestEvents(
+		"(github.event_name == 'push' || github.event_name == 'pull_request')")
+
+	findings := auditPermissionsDocument(t, "label.yml", body)
+
+	if len(findings) != 2 {
+		t.Fatalf("the disjunction names pull_request; got %v", findings)
+	}
+	if findings[0].Trigger != pullRequestEvent {
+		t.Errorf("only the event the disjunction names reaches the job: %s", findings[0])
 	}
 }
 
@@ -198,46 +253,60 @@ func TestAuditPullRequestPermissions_Negative_IgnoresReadOnlyScopes(t *testing.T
 // Boundary: the job condition forms that decide reachability, an unparseable document, a
 // job cap, an empty mapping, and a nil context.
 
+// The table asserts the event list rather than a bare yes: the same answer decides whether
+// a job is reported and which events the finding names, so a row that pinned only
+// reachability would let the wording drift away from the condition it describes.
 func TestAuditPullRequestPermissions_Boundary_JobConditionsDecideReachability(t *testing.T) {
 	onlyPullRequest := []string{pullRequestEvent}
 	onlyTarget := []string{pullRequestTargetEvent}
 	both := []string{pullRequestEvent, pullRequestTargetEvent}
+	none := []string(nil)
 	cases := []struct {
 		name      string
 		condition string
 		events    []string
-		reachable bool
+		reaching  []string
 	}{
-		{"unconditional", "", onlyPullRequest, true},
-		{"negated event", "github.event_name != 'pull_request'", onlyPullRequest, false},
-		{"other event only", "github.event_name == 'push'", onlyPullRequest, false},
-		{"the pull request event itself", "github.event_name == 'pull_request'", onlyPullRequest, true},
-		{"double quotes", `github.event_name != "pull_request"`, onlyPullRequest, false},
-		{"exclusion behind a guard group", "github.repository == (vars.X || 'a/b') && github.event_name != 'pull_request'", onlyPullRequest, false},
-		{"a top-level disjunction stays undecided", "github.event_name != 'pull_request' || github.actor == 'bot'", onlyPullRequest, true},
-		{"an unrelated condition", "github.ref == 'refs/heads/main'", onlyPullRequest, true},
-		{"an unbalanced parenthesis does not swallow the rest", "github.event_name != 'pull_request') && true", onlyPullRequest, false},
+		{"unconditional", "", onlyPullRequest, onlyPullRequest},
+		{"negated event", "github.event_name != 'pull_request'", onlyPullRequest, none},
+		{"other event only", "github.event_name == 'push'", onlyPullRequest, none},
+		{"the pull request event itself", "github.event_name == 'pull_request'", onlyPullRequest, onlyPullRequest},
+		{"double quotes", `github.event_name != "pull_request"`, onlyPullRequest, none},
+		{"exclusion behind a guard group", "github.repository == (vars.X || 'a/b') && github.event_name != 'pull_request'", onlyPullRequest, none},
+		{"a top-level disjunction stays undecided", "github.event_name != 'pull_request' || github.actor == 'bot'", onlyPullRequest, onlyPullRequest},
+		{"an unrelated condition", "github.ref == 'refs/heads/main'", onlyPullRequest, onlyPullRequest},
+		{"an unbalanced parenthesis does not swallow the rest", "github.event_name != 'pull_request') && true", onlyPullRequest, none},
 		// The group used to be deleted along with the event test inside it, which reported
 		// a correctly fenced job and failed the repository-wide guard below.
-		{"a parenthesised event test still excludes", "(github.event_name != 'pull_request') && github.ref == 'refs/heads/main'", onlyPullRequest, false},
-		{"a doubly parenthesised event test still excludes", "((github.event_name != 'pull_request'))", onlyPullRequest, false},
-		{"a parenthesised comparison value still excludes", "github.event_name != ('pull_request')", onlyPullRequest, false},
-		{"a group that is not one group decides nothing", "(github.event_name != 'pull_request') || (github.actor == 'bot')", onlyPullRequest, true},
+		{"a parenthesised event test still excludes", "(github.event_name != 'pull_request') && github.ref == 'refs/heads/main'", onlyPullRequest, none},
+		{"a doubly parenthesised event test still excludes", "((github.event_name != 'pull_request'))", onlyPullRequest, none},
+		{"a parenthesised comparison value still excludes", "github.event_name != ('pull_request')", onlyPullRequest, none},
+		{"a group that is not one group decides nothing", "(github.event_name != 'pull_request') || (github.actor == 'bot')", onlyPullRequest, onlyPullRequest},
+		// A group holding a top-level disjunction is the shape unwrapping alone got wrong:
+		// the whole disjunction reached the comparison as one value, matched no event, and
+		// the job went unreported although a pull request starts it.
+		{"a disjunction group keeps the event it names", "(github.event_name == 'push' || github.event_name == 'pull_request')", onlyPullRequest, onlyPullRequest},
+		{"a disjunction group fences off the event it does not name", "(github.event_name == 'push' || github.event_name == 'pull_request')", onlyTarget, none},
+		{"a guarded disjunction group keeps the event it names", "(github.event_name == 'schedule' || github.event_name == 'pull_request') && github.ref == 'refs/heads/main'", both, onlyPullRequest},
 		// pull_request_target reaches a job on a contributor's say-so exactly as
 		// pull_request does, and a workflow declaring both is fenced off from neither by a
 		// condition that names only one.
-		{"the target event itself", "github.event_name == 'pull_request_target'", onlyTarget, true},
-		{"the target event in a target workflow is not an exclusion", "github.event_name == 'pull_request_target'", both, true},
-		{"excluding only pull_request leaves the target reachable", "github.event_name != 'pull_request'", both, true},
-		{"excluding the target leaves pull_request reachable", "github.event_name != 'pull_request_target'", onlyPullRequest, true},
-		{"excluding the target in a target workflow", "github.event_name != 'pull_request_target'", onlyTarget, false},
-		{"another event in a target workflow", "github.event_name == 'push'", onlyTarget, false},
+		{"the target event itself", "github.event_name == 'pull_request_target'", onlyTarget, onlyTarget},
+		{"the target event in a target workflow is not an exclusion", "github.event_name == 'pull_request_target'", both, onlyTarget},
+		{"excluding only pull_request leaves the target reachable", "github.event_name != 'pull_request'", both, onlyTarget},
+		{"excluding the target leaves pull_request reachable", "github.event_name != 'pull_request_target'", onlyPullRequest, onlyPullRequest},
+		{"excluding the target in a target workflow", "github.event_name != 'pull_request_target'", onlyTarget, none},
+		{"another event in a target workflow", "github.event_name == 'push'", onlyTarget, none},
+		// Each conjunct used to be judged against the whole declaration list, so neither
+		// one excluded on its own and a job fenced off from both events was reported.
+		{"both events fenced off leaves nothing reachable", "github.event_name != 'pull_request' && github.event_name != 'pull_request_target'", both, none},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			if got := reachableFromPullRequest(testCase.condition, testCase.events); got != testCase.reachable {
-				t.Errorf("reachableFromPullRequest(%q, %v) = %t, want %t",
-					testCase.condition, testCase.events, got, testCase.reachable)
+			got := reachingEvents(testCase.condition, testCase.events)
+			if strings.Join(got, ",") != strings.Join(testCase.reaching, ",") {
+				t.Errorf("reachingEvents(%q, %v) = %v, want %v",
+					testCase.condition, testCase.events, got, testCase.reaching)
 			}
 		})
 	}

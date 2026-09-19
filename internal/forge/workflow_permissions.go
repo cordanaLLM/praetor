@@ -89,12 +89,15 @@ func auditWorkflowPullRequestPermissions(name string, data []byte) ([]PullReques
 		return nil, fmt.Errorf("workflow %s exceeds %d jobs", name, maxJobsPerFile)
 	}
 	inherited, _ := writeScopes(&spec.Permissions)
-	trigger := strings.Join(events, " and ")
 	ids := sortedJobIDs(spec.Jobs)
 	var findings []PullRequestPermissionFinding
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
 		job := spec.Jobs[ids[i]]
-		if !reachableFromPullRequest(job.If, events) {
+		// The trigger is the job's own, not the workflow's declaration list: an event a
+		// job condition fences the job off from does not reach it, and naming it would
+		// tell an operator that a correctly fenced event is a hole.
+		reaching := reachingEvents(job.If, events)
+		if len(reaching) == 0 {
 			continue
 		}
 		scopes := inherited
@@ -103,6 +106,7 @@ func auditWorkflowPullRequestPermissions(name string, data []byte) ([]PullReques
 		if own, declared := writeScopes(&job.Permissions); declared {
 			scopes = own
 		}
+		trigger := strings.Join(reaching, " and ")
 		for j := 0; j < len(scopes) && j < maxPermissionScopes; j++ {
 			findings = append(findings, PullRequestPermissionFinding{
 				Workflow: name, Job: ids[i], Scope: scopes[j], Trigger: trigger})
@@ -134,12 +138,26 @@ func writeScopes(permissions *yaml.Node) ([]string, bool) {
 	}
 }
 
-// reachableFromPullRequest reports whether a run of one of the workflow's pull request
-// events can start a job carrying this condition. An unconditional job is reachable, and so
-// is any condition the file does not decide: an audit that guessed a job away would hide
-// exactly the credential it looks for.
-func reachableFromPullRequest(condition string, events []string) bool {
+// reachingEvents returns, in the workflow's declaration order, the pull request events that
+// can start a job carrying this condition. It is the audit's reachability answer and the
+// finding's trigger wording at once, so the two can never disagree: a job fenced off from
+// one of two declared events is reported against the other one alone, and a job fenced off
+// from both is not reported at all.
+func reachingEvents(condition string, events []string) []string {
 	condition = strings.TrimSpace(strings.ReplaceAll(condition, "\"", "'"))
+	var reaching []string
+	for i := 0; i < len(events) && i < maxPermissionScopes; i++ {
+		if startsJob(condition, events[i]) {
+			reaching = append(reaching, events[i])
+		}
+	}
+	return reaching
+}
+
+// startsJob reports whether a run of one named event can start a job carrying this
+// condition. An unconditional job is started, and so is any condition the file does not
+// decide: an audit that guessed a job away would hide exactly the credential it looks for.
+func startsJob(condition, event string) bool {
 	if condition == "" {
 		return true
 	}
@@ -152,7 +170,7 @@ func reachableFromPullRequest(condition string, events []string) bool {
 	}
 	conjuncts := topLevelParts(condition, "&&")
 	for i := 0; i < len(conjuncts) && i < maxPermissionScopes; i++ {
-		if excludesPullRequest(conjuncts[i], events) {
+		if excludesEvent(conjuncts[i], event) {
 			return false
 		}
 	}
@@ -194,6 +212,9 @@ func topLevelParts(condition, operator string) []string {
 // event test decides reachability exactly as the bare spelling does. A conjunct that merely
 // starts and ends with a parenthesis without being one group, such as `(a) || (b)`, is left
 // as it is: its inner text is unbalanced, and it decides nothing this function may act on.
+//
+// The unwrapped text may still hold an operator of its own; reading it as one comparison is
+// excludesEvent's business, and it splits before it compares.
 func unwrapGroup(conjunct string) string {
 	conjunct = strings.TrimSpace(conjunct)
 	for i := 0; i < maxGroupNesting; i++ {
@@ -227,32 +248,39 @@ func balancedGroups(text string) bool {
 	return depth == 0
 }
 
-// excludesPullRequest reports whether one conjunct of a job condition rules every pull
-// request event the workflow declares out on its own: a test that the event is not the only
-// such event the workflow has, or that it is some other named event.
-func excludesPullRequest(conjunct string, events []string) bool {
-	rest, named := strings.CutPrefix(unwrapGroup(conjunct), eventNameExpression)
+// excludesEvent reports whether one conjunct of a job condition rules this one event out on
+// its own. A conjunct that unwraps to a disjunction rules the event out only when every one
+// of its parts does, which is what keeps `(github.event_name == 'push' || github.event_name
+// == 'pull_request')` reachable from pull_request while fencing pull_request_target off.
+// Without that split the whole disjunction reached namedEvent as one comparison value and
+// matched no event at all, so every job carrying such a guard went unaudited.
+//
+// One level of grouping is resolved, which is what workflow conditions spell. A conjunct
+// nested deeper is left undecided, and an undecided condition is reported rather than
+// guessed away.
+func excludesEvent(conjunct, event string) bool {
+	parts := topLevelParts(unwrapGroup(conjunct), "||")
+	for i := 0; i < len(parts) && i < maxPermissionScopes; i++ {
+		if !comparisonExcludes(parts[i], event) {
+			return false
+		}
+	}
+	return true
+}
+
+// comparisonExcludes reports whether one `github.event_name` comparison rules this event
+// out: a test that it is not this event, or that it is some other named one.
+func comparisonExcludes(comparison, event string) bool {
+	rest, named := strings.CutPrefix(unwrapGroup(comparison), eventNameExpression)
 	if !named {
 		return false
 	}
 	rest = strings.TrimSpace(rest)
 	if value, negated := strings.CutPrefix(rest, "!="); negated {
-		// Excluding pull_request leaves a workflow that also triggers on
-		// pull_request_target reachable by that second event.
-		return len(events) == 1 && events[0] == namedEvent(value)
+		return event == namedEvent(value)
 	}
 	if value, equal := strings.CutPrefix(rest, "=="); equal {
-		return !declaresEvent(events, namedEvent(value))
-	}
-	return false
-}
-
-// declaresEvent reports whether a workflow's pull request events include the named one.
-func declaresEvent(events []string, event string) bool {
-	for i := 0; i < len(events) && i < maxPermissionScopes; i++ {
-		if events[i] == event {
-			return true
-		}
+		return event != namedEvent(value)
 	}
 	return false
 }

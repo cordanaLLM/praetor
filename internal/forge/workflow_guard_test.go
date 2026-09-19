@@ -32,14 +32,14 @@ func workflowGuardViolations(name string, data []byte, identity string) ([]strin
 	if len(spec.Jobs) > maxJobsPerFile {
 		return nil, fmt.Errorf("workflow %s exceeds %d jobs", name, maxJobsPerFile)
 	}
+	// sortedJobIDs (internal/forge/workflow_checks.go) is what both audits enumerate jobs
+	// with; a second collect-and-sort here would be one more copy to drift.
+	ids := sortedJobIDs(spec.Jobs)
 	publishes := grantsWrite(&spec.Permissions)
-	ids := make([]string, 0, len(spec.Jobs))
-	for id := range spec.Jobs {
-		ids = append(ids, id)
-		permissions := spec.Jobs[id].Permissions
+	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
+		permissions := spec.Jobs[ids[i]].Permissions
 		publishes = publishes || grantsWrite(&permissions)
 	}
-	sort.Strings(ids)
 	engineOnly := startsUnattended(&spec.On) && (publishes || hasTrigger(&spec.On, "schedule"))
 	var violations []string
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
