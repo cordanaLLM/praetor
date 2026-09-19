@@ -15,10 +15,13 @@
 # names self-hosted-runner.labels itself; actionlint offers no other way to teach it a
 # label, and the declaration suppresses nothing else.
 #
-# .config/lefthook/scripts/checks.py invokes whatever actionlint is on PATH, so the
-# version above is a measurement, not a pin. Re-run that same check rather than
-# trusting it: delete this file, run actionlint over .github/workflows, and if nothing
-# reports ubuntu-26.04 then upstream has shipped the label and this file can go.
+# .config/lefthook/scripts/checks.py:88 invokes whatever actionlint is on PATH, so the
+# version above is a measurement, not a pin, and nothing in this repository enforces
+# the premise this file rests on. That gap is issue #343, which covers all four
+# unpinned hook linters (actionlint, shellcheck, hadolint, yamllint); it is not fixed
+# here. Until it is, re-run the check rather than trusting it: delete this file, run
+# actionlint over .github/workflows, and if nothing reports ubuntu-26.04 then upstream
+# has shipped the label and this file can go.
 #
 # Only labels a workflow in this tree actually uses are declared. ubuntu-26.04-arm was
 # declared and used nowhere, which is a claim about the repository that was not true.
