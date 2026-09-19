@@ -10,56 +10,90 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
+// BootstrapOutcome names what a bootstrap call did to .workingdir. Three of the
+// four outcomes write nothing, so a caller that reports one fixed sentence for
+// every non-creating return tells the operator a ledger was repaired when none
+// was. The zero value is BootstrapUnknown: the call did not complete and nothing
+// may be claimed about the directory.
+type BootstrapOutcome string
+
+const (
+	// BootstrapUnknown is the zero value; it accompanies a non-nil error.
+	BootstrapUnknown BootstrapOutcome = ""
+	// BootstrapCreated: this call made .workingdir and wrote the ledger into it.
+	BootstrapCreated BootstrapOutcome = "created"
+	// BootstrapSeeded: .workingdir already existed and held no ledger file at
+	// all; this call wrote the ledger into it.
+	BootstrapSeeded BootstrapOutcome = "seeded"
+	// BootstrapKept: .workingdir already held at least one ledger file, complete
+	// or partial. Nothing was written; AuditWorkingDir judges what is there.
+	BootstrapKept BootstrapOutcome = "kept"
+	// BootstrapUnseedable: .workingdir exists as a symlink or a regular file.
+	// Nothing was written and nothing can be until the operator removes it.
+	BootstrapUnseedable BootstrapOutcome = "unseedable"
+)
+
 // InitWorkingDirIfAbsentContext initializes a private ledger that does not yet
 // exist. Initialization is keyed on the ledger files rather than on the
 // directory alone: another module (milestone, forge, docdistill, dedupe,
 // hindsight) routinely creates .workingdir first, and keying on the directory
 // left that ledger empty and every later state command failing. A directory
 // that already holds ledger files is left exactly as it stands, partial ones
-// included, as is an existing non-directory path; created reports whether this
-// call made the directory.
+// included, as is an existing non-directory path.
+//
+// outcome reports which of those four cases this call hit, so the caller can
+// state what happened rather than guess. Check err first: a returned outcome
+// describes the intent of a call that may still have failed part way.
 //
 // The caller must run AuditWorkingDir afterward; this function does not certify
 // state. Failed initialization leaves the partial directory for recovery.
-func InitWorkingDirIfAbsentContext(ctx context.Context, rootPath string) (created bool, err error) {
+func InitWorkingDirIfAbsentContext(ctx context.Context, rootPath string) (outcome BootstrapOutcome, err error) {
 	if ctx == nil {
-		return false, errors.New("state initialization requires a context")
+		return BootstrapUnknown, errors.New("state initialization requires a context")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	project, err := contextopt.OpenDirectory(ctx, rootPath)
 	if err != nil {
-		return false, fmt.Errorf("open project for state bootstrap: %w", err)
+		return BootstrapUnknown, fmt.Errorf("open project for state bootstrap: %w", err)
 	}
 	defer func() { err = errors.Join(err, project.Close()) }()
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return BootstrapUnknown, err
 	}
 	created, seedable, err := claimWorkingDirectory(project)
-	if err != nil || !seedable {
-		return created, err
+	switch {
+	case err != nil:
+		return BootstrapUnknown, err
+	case !seedable:
+		return BootstrapUnseedable, nil
 	}
-	return created, seedLedgerlessWorkingDir(ctx, project, created)
+	return seedLedgerlessWorkingDir(ctx, project, created)
 }
 
 // seedLedgerlessWorkingDir writes the default ledger files, but only into a
 // directory this call created or one that holds no ledger file at all. A
 // directory holding some of the five is a partial ledger: a file was removed or
 // corrupted, and repairing it here would hide that from AuditWorkingDir and
-// from SyncState, which must both fail closed on it.
-func seedLedgerlessWorkingDir(ctx context.Context, project *os.Root, created bool) (err error) {
+// from SyncState, which must both fail closed on it. The returned outcome
+// distinguishes the directory it seeded from the ledger it refused to touch.
+func seedLedgerlessWorkingDir(ctx context.Context, project *os.Root, created bool) (outcome BootstrapOutcome, err error) {
 	working, err := openWorkingDirectory(project)
 	if err != nil {
-		return err
+		return BootstrapUnknown, err
 	}
 	defer func() { err = errors.Join(err, working.Close()) }()
-	if !created {
-		ledgerless, checkErr := workingDirLedgerless(working)
-		if checkErr != nil || !ledgerless {
-			return checkErr
-		}
+	if created {
+		return BootstrapCreated, initializeWorkingFiles(ctx, working)
 	}
-	return initializeWorkingFiles(ctx, working)
+	ledgerless, checkErr := workingDirLedgerless(working)
+	if checkErr != nil {
+		return BootstrapUnknown, checkErr
+	}
+	if !ledgerless {
+		return BootstrapKept, nil
+	}
+	return BootstrapSeeded, initializeWorkingFiles(ctx, working)
 }
 
 // workingDirLedgerless reports whether the working directory holds none of the

@@ -40,7 +40,7 @@ func runState(args []string) error {
 func printStateUsage() {
 	fmt.Println("Usage: praetorctl state <subcommand> [args]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  init [dir|--dir=.] [--if-absent] Initialize private state; --if-absent preserves all existing ledgers")
+	fmt.Println("  init [dir|--dir=.] [--if-absent] Initialize private state; --if-absent creates or seeds, never repairs a ledger")
 	fmt.Println("  sync [dir|--dir=.] [--log=\"message\"] [--verify] Synchronize state, or verify its freshness without writes")
 	fmt.Println("  status [dir|--dir=.]           Inspect active session state (read-only; never writes)")
 	fmt.Println("  audit [dir|--dir=.]            Audit .workingdir/ for required files and P0 blockers")
@@ -79,10 +79,18 @@ func stateDir(dirFlag string, rest []string, index int) string {
 	return "."
 }
 
+// stateInitFlags registers the flags of `state init`. The usage string is the
+// only statement of the contract an operator reads before running the command,
+// so it is registered here, next to the behaviour, and asserted directly in
+// state_bootstrap_test.go rather than restated there.
+func stateInitFlags(fs *flag.FlagSet) *bool {
+	return fs.Bool("if-absent", false, "Initialize only what is missing: create .workingdir when absent, seed an existing one that holds no ledger file at all, never repair a partial ledger")
+}
+
 func runStateInit(args []string) error {
 	var ifAbsent *bool
 	dirFlag, rest, err := stateArgs("state init", args, func(fs *flag.FlagSet) {
-		ifAbsent = fs.Bool("if-absent", false, "Initialize only when .workingdir is entirely absent; never repair existing ledgers")
+		ifAbsent = stateInitFlags(fs)
 	})
 	if err != nil {
 		return err
@@ -99,16 +107,30 @@ func runStateInit(args []string) error {
 }
 
 func bootstrapState(dir string) error {
-	created, err := state.InitWorkingDirIfAbsentContext(context.Background(), dir)
+	outcome, err := state.InitWorkingDirIfAbsentContext(context.Background(), dir)
 	if err != nil {
 		return fmt.Errorf("state bootstrap failed: %w", err)
 	}
-	if created {
-		fmt.Printf("Initialized private %s/ in %s; audit still required\n", state.WorkingDirName, dir)
-	} else {
-		fmt.Printf("Existing %s/ kept in %s; a ledgerless one was seeded; audit still required\n", state.WorkingDirName, dir)
-	}
+	fmt.Printf("%s; audit still required\n", bootstrapReport(outcome, dir))
 	return nil
+}
+
+// bootstrapReport states what the bootstrap actually did. Three of the four
+// outcomes write nothing, so one fixed sentence for every non-creating return
+// told the operator a ledger had been seeded when none was - and in the partial
+// ledger case claimed the very repair the bootstrap deliberately refuses.
+func bootstrapReport(outcome state.BootstrapOutcome, dir string) string {
+	switch outcome {
+	case state.BootstrapCreated:
+		return fmt.Sprintf("Initialized private %s/ in %s", state.WorkingDirName, dir)
+	case state.BootstrapSeeded:
+		return fmt.Sprintf("Seeded a ledger into the existing %s/ in %s", state.WorkingDirName, dir)
+	case state.BootstrapKept:
+		return fmt.Sprintf("Existing %s/ in %s already holds ledger files and was left untouched; repair a partial ledger explicitly", state.WorkingDirName, dir)
+	case state.BootstrapUnseedable:
+		return fmt.Sprintf("%s in %s is not a directory; nothing was written", state.WorkingDirName, dir)
+	}
+	return fmt.Sprintf("Bootstrap of %s/ in %s reported no outcome", state.WorkingDirName, dir)
 }
 
 func runStateSync(args []string) error {

@@ -12,6 +12,17 @@ removed or corrupted — and is left exactly as it stands, so the audit and
 `state sync` still fail on it and it requires explicit repair. Initialization
 never imports another workstation's private state.
 
+`praetorctl state init --if-absent` reports which of four things it did, because
+three of them write nothing and an operator told a ledger was seeded stops
+looking:
+
+| Report | What happened |
+| :--- | :--- |
+| `Initialized private .workingdir/ in <dir>` | the directory was absent; this call made it and wrote the five ledger files |
+| `Seeded a ledger into the existing .workingdir/ in <dir>` | the directory existed and held no ledger file; this call wrote the five |
+| `Existing .workingdir/ in <dir> already holds ledger files and was left untouched` | a complete or partial ledger; nothing was written, and a partial one needs explicit repair |
+| `.workingdir in <dir> is not a directory; nothing was written` | the path is a symlink or a regular file; remove it before initializing |
+
 Bug mutations validate the entire `.workingdir/BUGS.md` before changing it. A
 malformed row, duplicate or noncanonical ID, invalid severity/status, unreadable
 file, symlink, or exceeded size limit returns an error. Audit, state sync and
