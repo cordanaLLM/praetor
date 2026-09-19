@@ -461,7 +461,9 @@ func printTaskUsage() error {
 	fmt.Println("Usage: praetorctl state task <action> [args]")
 	fmt.Println("\nActions:")
 	fmt.Println("  add <description> [--dir=.]     Add a pending task to OPEN.md")
-	fmt.Println("  complete <index|text> [--dir=.] Mark a task as completed in OPEN.md")
+	fmt.Println("  complete <number|text> [--dir=.] Mark one task completed in OPEN.md;")
+	fmt.Println("                                  the number is the one list prints, and")
+	fmt.Println("                                  ambiguous text is refused, not guessed")
 	fmt.Println("  list [--dir=.]                  List all tasks from OPEN.md")
 	fmt.Println("  archive [--dir=.]               Move completed tasks to BACKLOG.md")
 	return nil

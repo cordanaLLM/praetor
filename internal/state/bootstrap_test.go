@@ -126,3 +126,45 @@ func TestConcurrentBootstrapHasOnlyOneCreator(t *testing.T) {
 		t.Fatalf("concurrent bootstrap corrupted ledger: %+v, %v", report, err)
 	}
 }
+
+func TestBootstrapSeedsADirectoryAnotherWriterCreated(t *testing.T) {
+	dir := t.TempDir()
+	// milestone, forge, docdistill, dedupe and hindsight all create .workingdir
+	// before any state command runs; the ledger must still be initialized.
+	if err := os.Mkdir(filepath.Join(dir, WorkingDirName), 0700); err != nil {
+		t.Fatal(err)
+	}
+	created, err := InitWorkingDirIfAbsentContext(t.Context(), dir)
+	if err != nil || created {
+		t.Fatalf("bootstrap over an existing directory: created=%v, %v", created, err)
+	}
+	for _, name := range ledgerFileNames() {
+		if _, err := os.Stat(filepath.Join(dir, WorkingDirName, name)); err != nil {
+			t.Fatalf("ledger file %s was not seeded: %v", name, err)
+		}
+	}
+	report, err := AuditWorkingDir(dir)
+	if err != nil || !report.Valid {
+		t.Fatalf("seeded ledger is invalid: %+v, %v", report, err)
+	}
+	if _, err := SyncState(t.Context(), dir, "seeded"); err != nil {
+		t.Fatalf("state sync over a seeded ledger failed: %v", err)
+	}
+}
+
+func TestBootstrapLeavesAPartialLedgerForTheAudit(t *testing.T) {
+	dir := t.TempDir()
+	if err := InitWorkingDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, WorkingDirName, "BACKLOG.md")
+	if err := os.Remove(missing); err != nil {
+		t.Fatal(err)
+	}
+	if created, err := InitWorkingDirIfAbsentContext(t.Context(), dir); err != nil || created {
+		t.Fatalf("partial ledger reinitialized: %v, %v", created, err)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatalf("partial ledger was silently repaired: %v", err)
+	}
+}

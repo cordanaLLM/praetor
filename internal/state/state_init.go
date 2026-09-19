@@ -55,12 +55,7 @@ func initializeWorkingFiles(ctx context.Context, working *os.Root) error {
 	if !info.IsDir() {
 		return fmt.Errorf("evidence directory must not be a symlink or file")
 	}
-	files := [5]struct{ name, content string }{
-		{"STATE.md", defaultStateMD()}, {"OPEN.md", defaultOpenMD()},
-		{"BACKLOG.md", defaultBacklogMD()}, {"BUGS.md", defaultBugsMD()},
-		{"QUESTIONS.md", defaultQuestionsMD()},
-	}
-	for _, file := range files {
+	for _, file := range ledgerTemplates() {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -69,6 +64,26 @@ func initializeWorkingFiles(ctx context.Context, working *os.Root) error {
 		}
 	}
 	return nil
+}
+
+// ledgerTemplates is the one definition of which files an initialized ledger
+// holds and what an empty one contains. Initialization, the audit and the
+// ledgerless check all read this list rather than restating it (HISS-19).
+func ledgerTemplates() [5]struct{ name, content string } {
+	return [5]struct{ name, content string }{
+		{"STATE.md", defaultStateMD()}, {"OPEN.md", defaultOpenMD()},
+		{"BACKLOG.md", defaultBacklogMD()}, {"BUGS.md", defaultBugsMD()},
+		{"QUESTIONS.md", defaultQuestionsMD()},
+	}
+}
+
+// ledgerFileNames is ledgerTemplates for callers that need only the names.
+func ledgerFileNames() [5]string {
+	var names [5]string
+	for i, file := range ledgerTemplates() {
+		names[i] = file.name
+	}
+	return names
 }
 
 func openWorkingDirectory(project *os.Root) (*os.Root, error) {
@@ -113,6 +128,10 @@ func regularLedgerFile(name string, info os.FileInfo, err error) (bool, error) {
 	return true, nil
 }
 
+// initializeLedgerFile writes the default content for one ledger file, and only
+// when that file is absent. An existing regular file is left byte-for-byte
+// alone, and a concurrent initializer winning the exclusive create is not an
+// error: the file it wrote is the file this call would have written.
 func initializeLedgerFile(root *os.Root, name, content string) error {
 	info, err := root.Lstat(name)
 	exists, err := regularLedgerFile(name, info, err)
@@ -120,6 +139,9 @@ func initializeLedgerFile(root *os.Root, name, content string) error {
 		return err
 	}
 	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}

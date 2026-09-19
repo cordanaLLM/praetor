@@ -36,8 +36,7 @@ func AuditWorkingDir(rootPath string) (*StateAuditReport, error) {
 		return rep, nil
 	}
 
-	requiredFiles := []string{"STATE.md", "OPEN.md", "BACKLOG.md", "BUGS.md", "QUESTIONS.md"}
-	for _, f := range requiredFiles {
+	for _, f := range ledgerFileNames() {
 		target := filepath.Join(wDir, f)
 		exists, err := ledgerFileExists(target)
 		if err != nil {

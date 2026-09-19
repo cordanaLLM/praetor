@@ -3,9 +3,14 @@
 The entire `.workingdir/` directory is private, Git-ignored workstation state.
 Keep cluster connection guides, backend notes and raw evidence there; publish
 only reviewed, sanitized documents under `docs/`. Run `make state-audit` in a fresh
-checkout to initialize an absent ledger and audit it. Existing incomplete or
-invalid ledgers still fail and require explicit repair; initialization never
-imports another workstation's private state.
+checkout to initialize an absent ledger and audit it. Initialization is keyed on
+the ledger files, not on the directory: `.workingdir` is routinely created first
+by another command (milestone, forge, docdistill, dedupe, hindsight), and such a
+directory is seeded with the five ledger files rather than left empty. A
+directory that already holds some of them is a *partial* ledger — a file was
+removed or corrupted — and is left exactly as it stands, so the audit and
+`state sync` still fail on it and it requires explicit repair. Initialization
+never imports another workstation's private state.
 
 Bug mutations validate the entire `.workingdir/BUGS.md` before changing it. A
 malformed row, duplicate or noncanonical ID, invalid severity/status, unreadable
@@ -77,6 +82,31 @@ invalid UTF-8 or more than 16 KiB are errors, never skipped rows
 ([`internal/state/questions_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/questions_test.go)).
 `ListQuestionsContext` reads the table together with its sidecar;
 `ParseQuestionsMarkdownStrict` reads the table alone and returns no context or timestamps.
+
+## Task rows and selectors
+
+`OPEN.md` holds one Markdown checkbox per task. `praetorctl state task list`,
+`complete` and `archive` all resolve rows through `parseTaskLines` in
+`internal/state/tasks.go`, which is the single numbering authority: the number
+`list` prints for a row is the number `complete` acts on.
+
+| Rule | Behaviour |
+| :--- | :--- |
+| numbering | pending and completed rows are numbered together, from 1, in file order |
+| numeric selector | resolves only by that number; it never falls back to matching a digit inside a description, and a number naming an already completed row is refused |
+| text selector | must match exactly one pending description; more than one match is an error listing the candidates, as `selectMilestone` does for milestones |
+| code fences | a checkbox inside a ``` or `~~~` fence is an example, never a task: it is not listed, completed or archived |
+
+A refused selector writes nothing, so `OPEN.md` stays byte-identical. The
+fence tracker is `markdownFence` in `internal/state/markdown_fence.go`, shared
+with the bug-ledger parser rather than reimplemented (HISS-19). Lines are bounded
+at `maxTaskLineBytes`; a ledger line reaching that bound is reported rather than
+truncated.
+
+A freshly initialized ledger contains **no** task rows. `OPEN.md` and
+`BACKLOG.md` are seeded with headings only, so every count `state sync` reports
+is work somebody actually recorded. The behaviour is covered by
+`internal/state/task_select_test.go` and `internal/state/bootstrap_test.go`.
 
 ## STATE.md entries
 

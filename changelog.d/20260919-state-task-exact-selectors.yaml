@@ -1,0 +1,4 @@
+type: fixed
+title: Make state task numbering and selectors exact, and stop scaffolding a ledger with fabricated task rows
+issue: "#286"
+breaking: false

@@ -186,25 +186,28 @@ func defaultStateMD() string {
 `
 }
 
+// defaultOpenMD is the empty task ledger. It seeds headings only: a scaffolded
+// task row would be counted as real work by state sync and completable by
+// state task complete, so the ledger starts out honestly empty.
 func defaultOpenMD() string {
 	return `# Open Items & In-Flight Blockers
 
 > Track active, immediate operational blockers and current research spikes.
 
 ## In-Flight Tasks
-- [ ] Task 1: Ongoing execution
 `
 }
 
+// defaultBacklogMD is the empty backlog ledger. Like OPEN.md it seeds headings
+// only; the discharged and future sections start empty rather than claiming
+// milestones the repository never recorded.
 func defaultBacklogMD() string {
 	return `# Project Backlog & Longer-Horizon Workstreams
 
 > Long-horizon architectural goals, deferred feature requests, and discharged milestones.
 
 ## Discharged Milestones
-- [x] Initial Praetor Governance Adoption
 
 ## Future Workstreams
-- [ ] Deep AST Deduplication Sweeps
 `
 }

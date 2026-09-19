@@ -133,11 +133,7 @@ func TestTasks_Boundary_MultipleAndNumeric(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Clear OPEN.md to test numeric indexes from 1
-	openPath := filepath.Join(tempDir, WorkingDirName, "OPEN.md")
-	if err := os.WriteFile(openPath, []byte("# Open Items\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	// The scaffolded ledger holds no task rows, so numbering starts at 1 here.
 	for _, description := range []string{"Alpha", "Beta", "Gamma"} {
 		if err := AddTask(tempDir, description); err != nil {
 			t.Fatal(err)
