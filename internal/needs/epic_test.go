@@ -416,8 +416,11 @@ func TestRepoIsPrepared(t *testing.T) {
 	checkout := filepath.Join(root, "checkout")
 	writeRepoFile(t, filepath.Join(checkout, ".git", "HEAD"), "ref: refs/heads/main\n")
 	worktree := filepath.Join(root, "worktree")
-	writeRepoFile(t, filepath.Join(worktree, ".git"), "gitdir: "+filepath.Join(checkout, ".git", "worktrees", "wt")+"\n")
+	worktreeGitDir := filepath.Join(checkout, ".git", "worktrees", "wt")
+	writeRepoFile(t, filepath.Join(worktreeGitDir, "HEAD"), "ref: refs/heads/main\n")
+	writeRepoFile(t, filepath.Join(worktree, ".git"), "gitdir: "+worktreeGitDir+"\n")
 	submodule := filepath.Join(root, "submodule")
+	writeRepoFile(t, filepath.Join(root, ".git", "modules", "sub", "HEAD"), "ref: refs/heads/main\n")
 	writeRepoFile(t, filepath.Join(submodule, ".git"), "gitdir: ../.git/modules/sub\n")
 	manifest := filepath.Join(root, "manifest")
 	writeRepoFile(t, filepath.Join(manifest, ".needs.yaml"), "repository:\n  name: manifest\n")
@@ -436,6 +439,12 @@ func TestRepoIsPrepared(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(headless, ".git", "HEAD"), 0o750); err != nil {
 		t.Fatal(err)
 	}
+	emptyGitlink := filepath.Join(root, "empty-gitlink")
+	writeRepoFile(t, filepath.Join(emptyGitlink, ".git"), "")
+	garbageGitlink := filepath.Join(root, "garbage-gitlink")
+	writeRepoFile(t, filepath.Join(garbageGitlink, ".git"), "not a gitlink\n")
+	danglingGitlink := filepath.Join(root, "dangling-gitlink")
+	writeRepoFile(t, filepath.Join(danglingGitlink, ".git"), "gitdir: "+filepath.Join(root, "absent-gitdir")+"\n")
 
 	cases := []struct {
 		name string
@@ -450,6 +459,9 @@ func TestRepoIsPrepared(t *testing.T) {
 		{"empty directory", empty, false},
 		{"stray empty .git directory", stray, false},
 		{"HEAD is a directory", headless, false},
+		{"empty .git file", emptyGitlink, false},
+		{"non-gitlink .git file", garbageGitlink, false},
+		{"dangling gitlink", danglingGitlink, false},
 		{"absent directory", filepath.Join(root, "absent"), false},
 	}
 	for _, tc := range cases {
@@ -483,7 +495,9 @@ func TestRegenerateFleetEpics_LinkedWorktreeAndStrayGit(t *testing.T) {
 	root := t.TempDir()
 
 	worktree := filepath.Join(root, "org", "worktree")
-	writeRepoFile(t, filepath.Join(worktree, ".git"), "gitdir: /elsewhere/.git/worktrees/wt\n")
+	worktreeGitDir := filepath.Join(root, ".git", "worktrees", "wt")
+	writeRepoFile(t, filepath.Join(worktreeGitDir, "HEAD"), "ref: refs/heads/main\n")
+	writeRepoFile(t, filepath.Join(worktree, ".git"), "gitdir: "+worktreeGitDir+"\n")
 	writeRepoFile(t, filepath.Join(worktree, "go.mod"), "module github.com/org/worktree\ngo 1.27\n")
 
 	stray := filepath.Join(root, "org", "stray")

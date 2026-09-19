@@ -1,0 +1,4 @@
+type: fixed
+title: Reject malformed, dangling, and non-repository .git gitlink targets during repository detection
+issue: "#303"
+breaking: false

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -105,23 +106,21 @@ func TestAuditWorkstationTopology_Positive(t *testing.T) {
 		t.Errorf("expected at least 7 stray files/dirs, got %d", len(report.StrayFiles))
 	}
 
-	foundHeadlessGit := false
-	foundBaseline := false
-	for _, sf := range report.StrayFiles {
-		if filepath.Base(sf.Path) == ".git" {
-			foundHeadlessGit = true
-		}
-		if filepath.Base(sf.Path) == ".standards-baseline.json" {
-			foundBaseline = true
-		}
-	}
-
-	if !foundHeadlessGit {
+	if !containsStrayBase(report.StrayFiles, ".git") {
 		t.Error("expected stray headless .git in golusoris to be detected")
 	}
-	if !foundBaseline {
+	if !containsStrayBase(report.StrayFiles, ".standards-baseline.json") {
 		t.Error("expected stray .standards-baseline.json to be detected")
 	}
+}
+
+func containsStrayBase(files []StrayFile, name string) bool {
+	for _, file := range files {
+		if filepath.Base(file.Path) == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCleanWorkstationTopology_DryRun(t *testing.T) {
@@ -263,28 +262,134 @@ func TestVerifyDeletionSafety_Protections(t *testing.T) {
 	}
 }
 
-func TestHasValidGitRepo(t *testing.T) {
-	root := t.TempDir()
-	repo := filepath.Join(root, "repo")
-	initTestGit(t, repo)
-	if !HasValidGitRepo(repo) {
-		t.Fatal("directory with .git/HEAD not recognised")
-	}
-	worktree := filepath.Join(root, "worktree")
-	if err := os.MkdirAll(worktree, 0o755); err != nil {
+func writeGitlink(t *testing.T, dir, contents string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(worktree, ".git"), []byte("gitdir: ../repo/.git\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !HasValidGitRepo(worktree) {
-		t.Fatal("gitlink file not recognised")
+}
+
+func writeGitlinkTarget(t *testing.T, root, name string, headIsDirectory bool) string {
+	t.Helper()
+	target := filepath.Join(root, name)
+	head := filepath.Join(target, "HEAD")
+	if headIsDirectory {
+		if err := os.MkdirAll(head, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return target
 	}
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return target
+}
+
+type gitRepoCase struct {
+	name string
+	path string
+	want bool
+}
+
+func validGitRepoCases(t *testing.T, root, repo string) []gitRepoCase {
+	t.Helper()
+	relLink := filepath.Join(root, "worktree")
+	writeGitlink(t, relLink, "gitdir: ../repo/.git\n")
+	absLink := filepath.Join(root, "abs-worktree")
+	writeGitlink(t, absLink, "gitdir: "+filepath.Join(repo, ".git")+"\n")
+	exactLimit := filepath.Join(root, "exact-limit")
+	exactContents := "gitdir: " + filepath.Join(repo, ".git")
+	exactContents += strings.Repeat("\n", maxGitlinkBytes-len(exactContents))
+	writeGitlink(t, exactLimit, exactContents)
+	overLimit := filepath.Join(root, "over-limit")
+	writeGitlink(t, overLimit, exactContents+" ")
+	return []gitRepoCase{
+		{name: "directory with HEAD", path: repo, want: true},
+		{name: "relative gitlink", path: relLink, want: true},
+		{name: "absolute gitlink", path: absLink, want: true},
+		{name: "gitlink at byte limit", path: exactLimit, want: true},
+		{name: "gitlink over byte limit", path: overLimit, want: false},
+	}
+}
+
+func invalidGitRepoCases(t *testing.T, root, repo string) []gitRepoCase {
+	t.Helper()
+	emptyLink := filepath.Join(root, "empty-link")
+	writeGitlink(t, emptyLink, "")
+	oneByteLink := filepath.Join(root, "one-byte-link")
+	writeGitlink(t, oneByteLink, "x")
+	garbageLink := filepath.Join(root, "garbage-link")
+	writeGitlink(t, garbageLink, "not a gitlink at all\n")
+	danglingLink := filepath.Join(root, "dangling-link")
+	writeGitlink(t, danglingLink, "gitdir: "+filepath.Join(root, "absent-target")+"\n")
+	prefixOnly := filepath.Join(root, "prefix-only")
+	writeGitlink(t, prefixOnly, "gitdir:\n")
+	missingSpace := filepath.Join(root, "missing-space")
+	writeGitlink(t, missingSpace, "gitdir:"+filepath.Join(repo, ".git")+"\n")
+	leadingSpace := filepath.Join(root, "leading-space")
+	writeGitlink(t, leadingSpace, " gitdir: "+filepath.Join(repo, ".git")+"\n")
+	embeddedNewline := filepath.Join(root, "embedded-newline")
+	writeGitlink(t, embeddedNewline, "gitdir: "+filepath.Join(repo, ".git")+"\njunk\n")
+	notDirectoryTarget := filepath.Join(root, "not-directory-target")
+	if err := os.WriteFile(notDirectoryTarget, []byte("not a git directory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	notDirectoryLink := filepath.Join(root, "not-directory-link")
+	writeGitlink(t, notDirectoryLink, "gitdir: "+notDirectoryTarget+"\n")
+
+	headlessTarget := writeGitlinkTarget(t, root, "headless-target", false)
+	headlessLink := filepath.Join(root, "headless-link")
+	writeGitlink(t, headlessLink, "gitdir: "+headlessTarget+"\n")
+
+	directoryHeadTarget := writeGitlinkTarget(t, root, "directory-head-target", true)
+	directoryHeadLink := filepath.Join(root, "directory-head-link")
+	writeGitlink(t, directoryHeadLink, "gitdir: "+directoryHeadTarget+"\n")
+
 	headless := filepath.Join(root, "headless")
 	if err := os.MkdirAll(filepath.Join(headless, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if HasValidGitRepo(headless) || HasValidGitRepo(filepath.Join(root, "absent")) || HasValidGitRepo("") {
-		t.Fatal("headless, absent or empty path accepted as a repository")
+	return []gitRepoCase{
+		{name: "empty gitlink", path: emptyLink, want: false},
+		{name: "one-byte gitlink", path: oneByteLink, want: false},
+		{name: "non-gitlink file", path: garbageLink, want: false},
+		{name: "dangling gitlink", path: danglingLink, want: false},
+		{name: "gitdir prefix without target", path: prefixOnly, want: false},
+		{name: "gitdir prefix without required space", path: missingSpace, want: false},
+		{name: "leading whitespace before gitdir prefix", path: leadingSpace, want: false},
+		{name: "content after first newline belongs to target", path: embeddedNewline, want: false},
+		{name: "gitlink target is a file", path: notDirectoryLink, want: false},
+		{name: "gitlink target has no HEAD", path: headlessLink, want: false},
+		{name: "gitlink target HEAD is a directory", path: directoryHeadLink, want: false},
+		{name: "headless .git directory", path: headless, want: false},
+		{name: "absent path", path: filepath.Join(root, "absent"), want: false},
+		{name: "empty path", path: "", want: false},
+		{name: "whitespace path", path: "  ", want: false},
+	}
+}
+
+func TestHasValidGitRepo(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	initTestGit(t, repo)
+	cases := append(validGitRepoCases(t, root, repo), invalidGitRepoCases(t, root, repo)...)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HasValidGitRepo(tc.path); got != tc.want {
+				t.Fatalf("HasValidGitRepo(%q) = %v, want %v", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHasValidGitRepoEmptyPathIgnoresCwd(t *testing.T) {
+	dir := t.TempDir()
+	initTestGit(t, dir)
+	t.Chdir(dir)
+	if HasValidGitRepo("") {
+		t.Fatal("empty path accepted because the working directory is a checkout")
 	}
 }
