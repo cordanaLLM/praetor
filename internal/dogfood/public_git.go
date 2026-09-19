@@ -130,8 +130,20 @@ func publicCommandContext(ctx context.Context, dir string) (context.Context, err
 // untrustedCloneContext is the one isolation environment every clone of a repository
 // Praetor does not own runs in: the public loop and the ephemeral dogfood sandbox. dir
 // holds the scratch HOME and TMPDIR, and protocols is the colon-separated GIT_ALLOW_PROTOCOL
-// allow-list for that caller. protocol.file.allow=never additionally refuses a local
-// repository handed in as a path rather than a URL.
+// allow-list for that caller.
+//
+// The environment replaces the parent's rather than extending it, so a credential helper, an
+// agent socket, a GIT_TEMPLATE_DIR or an insteadOf rewrite cannot reach a checkout of
+// untrusted content. That also means an authenticated transport has nothing to authenticate
+// with, which is why the remote sandbox accepts https only.
+//
+// GIT_ALLOW_PROTOCOL is what refuses a transport, including a repository handed in as a bare
+// path rather than a URL: measured on git 2.55.0, "clone -- <local path>" under a list
+// without file fails with "transport 'file' not allowed". protocol.file.allow=never restates
+// that policy in configuration, for a git that stops honouring the variable its own
+// documentation calls legacy. It cannot tighten the allow-list and it does not win against
+// it: the public-loop fixture clones a local path with GIT_ALLOW_PROTOCOL=file while this
+// pair says never (installPublicGitFixture in public_test.go).
 func untrustedCloneContext(ctx context.Context, dir, protocols string) (context.Context, error) {
 	git, err := exec.LookPath("git")
 	if err != nil {

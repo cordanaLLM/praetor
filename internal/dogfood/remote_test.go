@@ -3,13 +3,17 @@ package dogfood
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -68,10 +72,13 @@ func TestDogfood_Negative_MissingTargetsDirAndBadURL(t *testing.T) {
 	}
 
 	// Option shapes, shell metacharacters and, since the transport allow-list, every
-	// non-network transport git would otherwise resolve: a local path, file:// and ext::.
+	// transport the sandbox cannot use: a local path, file://, ext::, git:// and ssh://,
+	// which has no key, agent or known_hosts once untrustedCloneContext replaces the
+	// environment.
 	for _, bad := range []string{
 		"", "   ", "--upload-pack=touch /tmp/pwned", "https://example.com/a;rm -rf /", "https://example.com/$(id)",
 		"/srv/private-repo", "file:///etc", "ext::sh", "git://example.com/repo", "HTTP://example.com/repo",
+		"ssh://git@github.com/org/repo.git", "SSH://git@github.com/org/repo.git",
 	} {
 		if _, vErr := validateRepoURL(bad); !errors.Is(vErr, ErrInvalidRepoURL) {
 			t.Errorf("validateRepoURL(%q) = %v, want ErrInvalidRepoURL", bad, vErr)
@@ -103,79 +110,197 @@ func writeCommittedFixture(t *testing.T, ctx context.Context) string {
 	return fixture
 }
 
-// TestCloneEphemeralRepo_Negative_LocalTransportAndTemplateHooks is the regression for the
-// ephemeral clone running under the operator's configuration.
+// remoteCloneShim is a recording git stand-in installed first on PATH.
 //
-// Measured before the fix: a file:// URL cloned, the GIT_TEMPLATE_DIR post-checkout hook
-// was installed into the sandbox, and it executed during the clone of untrusted content.
-func TestCloneEphemeralRepo_Negative_LocalTransportAndTemplateHooks(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the hook fixture is a POSIX shell script; the transport allow-list is covered platform-neutrally above")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+// envLog receives the argv and the environment of the first git invocation, so a test can
+// assert on what cloneEphemeralRepo actually handed git, and its absence proves git was
+// never started. templateDir is a template directory whose post-checkout hook writes marker,
+// and the shim offers it to git as GIT_TEMPLATE_DIR: it stands for any template source the
+// isolation did not already strip, so a clone that reached checkout without "--template="
+// installs and runs that hook.
+type remoteCloneShim struct{ envLog, templateDir, marker string }
 
-	fixture := writeCommittedFixture(t, ctx)
+// installRemoteCloneShim builds the shim and puts it first on PATH. Clone arguments keep
+// their shape; only the https target is rewritten to the local fixture, and file transport
+// is allowed so the clone can complete without a network.
+//
+// It is deliberately not installPublicGitFixture (public_test.go): that shim replaces the
+// caller's whole argv with a clone command of its own, which would erase the "--template="
+// and the depth flags under test here, and it rewrites the origin remote afterwards. The two
+// stand-ins answer different questions, so this is not a second implementation of one
+// behaviour (HISS-19).
+func installRemoteCloneShim(t *testing.T, fixture string) remoteCloneShim {
+	t.Helper()
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+	if git, err = filepath.Abs(git); err != nil {
+		t.Fatalf("resolve git: %v", err)
+	}
 	aux := t.TempDir()
-	marker := filepath.Join(aux, "template-hook-ran")
-	hooks := filepath.Join(aux, "template", "hooks")
+	shim := remoteCloneShim{
+		envLog:      filepath.Join(aux, "git-invocation.txt"),
+		templateDir: filepath.Join(aux, "template"),
+		marker:      filepath.Join(aux, "template-hook-ran"),
+	}
+	hooks := filepath.Join(shim.templateDir, "hooks")
 	if err := os.MkdirAll(hooks, 0o700); err != nil {
 		t.Fatalf("mkdir template hooks: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(hooks, "post-checkout"), []byte("#!/bin/sh\n: > "+marker+"\n"), 0o700); err != nil {
+	hook := "#!/bin/sh\n: > " + shim.marker + "\n"
+	if err := os.WriteFile(filepath.Join(hooks, "post-checkout"), []byte(hook), 0o700); err != nil {
 		t.Fatalf("write template hook: %v", err)
 	}
-	t.Setenv("GIT_TEMPLATE_DIR", filepath.Join(aux, "template"))
+	tools := t.TempDir()
+	source := fmt.Sprintf(remoteGitShimSource, strconv.Quote(git), strconv.Quote(fixture),
+		strconv.Quote(shim.envLog), strconv.Quote(shim.templateDir))
+	testsupport.BuildExecutable(t, tools, "git", source)
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+filepath.Dir(git))
+	return shim
+}
 
-	target := filepath.Join(t.TempDir(), "clone")
-	if err := cloneEphemeralRepo(ctx, "file://"+fixture, t.TempDir(), target); !errors.Is(err, ErrInvalidRepoURL) {
-		t.Errorf("file:// clone = %v, want ErrInvalidRepoURL", err)
+// remoteGitShimSource is built by testsupport.BuildExecutable so the shim runs on every
+// platform rather than depending on a shebang.
+const remoteGitShimSource = `package main
+
+import (
+	"errors"
+	"os"
+	"os/exec"
+	"strings"
+)
+
+const realGit = %s
+const fixture = %s
+const envLog = %s
+const templateDir = %s
+
+func main() {
+	args := os.Args[1:]
+	record := strings.Join(args, "\n") + "\n--env--\n" + strings.Join(os.Environ(), "\n") + "\n"
+	// O_EXCL: the clone is the first invocation, and a nested helper must not overwrite it.
+	if file, err := os.OpenFile(envLog, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err == nil {
+		if _, err := file.WriteString(record); err != nil {
+			os.Exit(1)
+		}
+		if err := file.Close(); err != nil {
+			os.Exit(1)
+		}
 	}
-	if _, err := os.Stat(marker); err == nil {
-		t.Error("the operator's template post-checkout hook ran during an ephemeral clone")
+	env := append(os.Environ(), "GIT_ALLOW_PROTOCOL=file", "GIT_TEMPLATE_DIR="+templateDir)
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "https://") {
+			args[i] = "file://" + fixture
+		}
 	}
-	if _, err := os.Stat(filepath.Join(target, ".git", "hooks", "post-checkout")); err == nil {
-		t.Error("the operator's template hook was installed into the ephemeral sandbox")
+	cmd := exec.Command(realGit, args...)
+	cmd.Env = env
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode())
+		}
+		os.Exit(1)
+	}
+}
+`
+
+// assertIsolatedCloneEnvironment checks the argv and environment the shim recorded: the
+// clone must carry an empty template and the scratch HOME, and nothing of the operator's.
+func assertIsolatedCloneEnvironment(t *testing.T, shim remoteCloneShim, scratch string) {
+	t.Helper()
+	recorded, err := os.ReadFile(shim.envLog)
+	if err != nil {
+		t.Fatalf("git was never invoked for an accepted transport: %v", err)
+	}
+	for _, want := range []string{
+		"--template=", "HOME=" + filepath.Join(scratch, "home"), "TMPDIR=" + filepath.Join(scratch, "tmp"),
+		"GIT_ALLOW_PROTOCOL=https", "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0",
+		"GIT_CONFIG_KEY_2=protocol.file.allow", "GIT_CONFIG_VALUE_2=never",
+	} {
+		if !strings.Contains(string(recorded), want) {
+			t.Errorf("the clone ran without %q", want)
+		}
+	}
+	// The operator's own environment must not survive into a checkout of untrusted content,
+	// and ssh must not be advertised to a sandbox that has no credentials.
+	for _, unwanted := range []string{"GIT_TEMPLATE_DIR=", "SSH_AUTH_SOCK=", "GIT_ALLOW_PROTOCOL=https:ssh"} {
+		if strings.Contains(string(recorded), unwanted) {
+			t.Errorf("the clone inherited %q", unwanted)
+		}
 	}
 }
 
-// TestCloneEphemeralRepo_Positive_HTTPSCloneIsIsolated exercises the accepted transport end
-// to end against a local HTTPS-shaped remote. The clone must fail because nothing answers,
-// not because validation refused it, and it must leave no template hook behind.
-func TestCloneEphemeralRepo_Positive_HTTPSCloneIsIsolated(t *testing.T) {
+// TestCloneEphemeralRepo_Positive_HTTPSCloneCompletesUnderIsolation is the proof that the
+// accepted transport still works under the new isolation, and the regression for the
+// operator's template hooks landing in the sandbox (praetor#295).
+//
+// The shim offers git a template directory with a post-checkout hook. "--template=" is what
+// refuses it: delete that flag from cloneEphemeralRepo and the hook is installed and runs
+// during the checkout of untrusted content, which is exactly the measured defect.
+func TestCloneEphemeralRepo_Positive_HTTPSCloneCompletesUnderIsolation(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("the hook fixture is a POSIX shell script")
+		t.Skip("the template hook fixture is a POSIX shell script and the shim rewrites the target to a file:// URL")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	aux := t.TempDir()
-	marker := filepath.Join(aux, "template-hook-ran")
-	hooks := filepath.Join(aux, "template", "hooks")
-	if err := os.MkdirAll(hooks, 0o700); err != nil {
-		t.Fatalf("mkdir template hooks: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(hooks, "post-checkout"), []byte("#!/bin/sh\n: > "+marker+"\n"), 0o700); err != nil {
-		t.Fatalf("write template hook: %v", err)
-	}
-	t.Setenv("GIT_TEMPLATE_DIR", filepath.Join(aux, "template"))
+	fixture := writeCommittedFixture(t, ctx)
+	shim := installRemoteCloneShim(t, fixture)
+	// The operator's own template directory must not reach git either.
+	t.Setenv("GIT_TEMPLATE_DIR", shim.templateDir)
 
 	scratch := t.TempDir()
 	target := filepath.Join(t.TempDir(), "clone")
-	err := cloneEphemeralRepo(ctx, "https://127.0.0.1:1/praetor/absent.git", scratch, target)
-	if err == nil {
-		t.Fatal("a clone from a closed port must fail")
+	if err := cloneEphemeralRepo(ctx, "https://github.com/cordanaLLM/absent.git", scratch, target); err != nil {
+		t.Fatalf("an accepted transport must still clone under the isolation: %v", err)
 	}
-	if errors.Is(err, ErrInvalidRepoURL) {
-		t.Errorf("an https URL must reach git, got %v", err)
+	if _, err := os.Stat(filepath.Join(target, "a.txt")); err != nil {
+		t.Fatalf("the clone never checked the fixture out: %v", err)
 	}
-	if _, statErr := os.Stat(marker); statErr == nil {
-		t.Error("the operator's template hook ran for an https clone")
+	if _, err := os.Stat(shim.marker); err == nil {
+		t.Error("a template post-checkout hook ran during an ephemeral clone")
 	}
-	for _, scratchChild := range []string{"home", "tmp"} {
-		if _, statErr := os.Stat(filepath.Join(scratch, scratchChild)); statErr != nil {
-			t.Errorf("the clone did not run with its own %s: %v", scratchChild, statErr)
+	if _, err := os.Stat(filepath.Join(target, ".git", "hooks", "post-checkout")); err == nil {
+		t.Error("a template hook was installed into the ephemeral sandbox")
+	}
+	assertIsolatedCloneEnvironment(t, shim, scratch)
+}
+
+// TestCloneEphemeralRepo_Negative_RefusedTransportNeverReachesGit is the regression for the
+// ephemeral clone resolving whatever string it was handed.
+//
+// Measured before the fix: a file:// URL cloned, the GIT_TEMPLATE_DIR post-checkout hook was
+// installed into the sandbox, and it executed during the clone of untrusted content. The
+// shim forwards a file:// target unchanged and allows the file transport, so a URL that
+// reached git would clone and run that hook -- the assertions below fail rather than hold
+// vacuously if the scheme gate is removed.
+func TestCloneEphemeralRepo_Negative_RefusedTransportNeverReachesGit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the template hook fixture is a POSIX shell script")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	fixture := writeCommittedFixture(t, ctx)
+	shim := installRemoteCloneShim(t, fixture)
+
+	for _, refused := range []string{"file://" + fixture, fixture, "ssh://git@github.com/cordanaLLM/praetor.git"} {
+		target := filepath.Join(t.TempDir(), "clone")
+		if err := cloneEphemeralRepo(ctx, refused, t.TempDir(), target); !errors.Is(err, ErrInvalidRepoURL) {
+			t.Errorf("cloneEphemeralRepo(%q) = %v, want ErrInvalidRepoURL", refused, err)
 		}
+		if _, err := os.Stat(target); err == nil {
+			t.Errorf("cloneEphemeralRepo(%q) produced a clone directory", refused)
+		}
+	}
+	if _, err := os.Stat(shim.envLog); err == nil {
+		t.Error("a refused target still reached git")
+	}
+	if _, err := os.Stat(shim.marker); err == nil {
+		t.Error("a template post-checkout hook ran for a refused target")
 	}
 }
 
@@ -216,9 +341,9 @@ func TestDogfood_Boundary_LocalTargetsAndSkipSkills(t *testing.T) {
 		t.Errorf("skills audited with SkipWorkstationSkills: %d", rep.TotalSkillsAudited)
 	}
 
-	// Boundary: a valid-looking URL that stays local (no network) still validates, and so
-	// does the second allowed transport; the scheme check is the only new gate.
-	for _, good := range []string{" https://github.com/org/repo.git ", "ssh://git@github.com/org/repo.git"} {
+	// Boundary: a valid-looking URL that stays local (no network) still validates, padding
+	// and an uppercase scheme included; the scheme check is the only new gate.
+	for _, good := range []string{" https://github.com/org/repo.git ", "HTTPS://github.com/org/repo.git"} {
 		if _, vErr := validateRepoURL(good); vErr != nil {
 			t.Errorf("validateRepoURL(%q) rejected an allowed transport: %v", good, vErr)
 		}

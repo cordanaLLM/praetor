@@ -68,12 +68,19 @@ func calculateReadinessGrade(debtCount, hissInfractions int) string {
 // remoteCloneProtocols is the transport allow-list handed to the clone as
 // GIT_ALLOW_PROTOCOL. Remote dogfooding targets are public repositories, so a network
 // transport is the only kind that makes sense; file, ext and the rest are refused.
-const remoteCloneProtocols = "https:ssh"
+//
+// ssh is deliberately absent. The clone runs under untrustedCloneContext, which replaces
+// the environment wholesale: HOME becomes the scratch directory and SSH_AUTH_SOCK,
+// GIT_SSH_COMMAND and the rest are dropped, so ssh has no key, no agent, no known_hosts and
+// no terminal to ask at. Every ssh:// target would fail host-key verification and be graded
+// as an error, so accepting one would advertise a transport this path cannot use; the URL is
+// refused up front instead, with a message that says why.
+const remoteCloneProtocols = "https"
 
 // validateRepoURL rejects URLs that cannot safely be handed to git as a positional
 // argument: empty values, values git would parse as an option, values carrying shell
 // metacharacters or control bytes (util.ValidateExecArg), and values that are not an
-// https or ssh URL.
+// https URL.
 //
 // The transport check is what keeps a dogfood target remote. Without it "/srv/secrets",
 // "file:///etc" and "ext::sh -c …" were all strings git happily resolved, which turned a
@@ -87,9 +94,11 @@ func validateRepoURL(repoURL string) (string, error) {
 	if err := util.ValidateExecArg(trimmed); err != nil {
 		return "", fmt.Errorf("%w: %q: %w", ErrInvalidRepoURL, trimmed, err)
 	}
-	lowered := strings.ToLower(trimmed)
-	if !strings.HasPrefix(lowered, "https://") && !strings.HasPrefix(lowered, "ssh://") {
-		return "", fmt.Errorf("%w: %q: expected an https:// or ssh:// URL", ErrInvalidRepoURL, trimmed)
+	if strings.HasPrefix(strings.ToLower(trimmed), "ssh://") {
+		return "", fmt.Errorf("%w: %q: the sandbox carries no credentials, so an ssh target cannot authenticate; use its https URL", ErrInvalidRepoURL, trimmed)
+	}
+	if !strings.HasPrefix(strings.ToLower(trimmed), "https://") {
+		return "", fmt.Errorf("%w: %q: expected an https:// URL", ErrInvalidRepoURL, trimmed)
 	}
 	return trimmed, nil
 }
@@ -107,6 +116,12 @@ func validateRepoURL(repoURL string) (string, error) {
 // operator's own hooks into a checkout of untrusted content and ran post-checkout during
 // the clone, and url.<base>.insteadOf could rewrite the target out from under the
 // validator. It is the same isolation the public loop clones under.
+//
+// Both halves replay in both directions in
+// TestCloneEphemeralRepo_Positive_HTTPSCloneCompletesUnderIsolation, which completes a real
+// clone through a git stand-in that offers a template directory and records the environment
+// it was given: dropping "--template=" installs and runs that hook, and dropping the
+// isolated context leaks the operator's environment into the checkout (HISS-20).
 func cloneEphemeralRepo(ctx context.Context, repoURL, scratchDir, targetDir string) error {
 	trimmed, err := validateRepoURL(repoURL)
 	if err != nil {
