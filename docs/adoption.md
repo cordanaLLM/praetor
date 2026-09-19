@@ -101,32 +101,45 @@ Comment `/adopt` on any PR to have `cordana-standards[bot]` automatically scaffo
 
 | Input | Reaches | Effect |
 | :-- | :-- | :-- |
-| `path` | `PRAETOR_PATH` | `--path=<value>`; an empty value is refused before anything runs |
+| `path` | `PRAETOR_PATH` | `--path=<value>`, and the `--source`/`--target-dir` of the `compile-context --verify` that follows an adopt run; an empty value is refused before anything runs |
 | `mode` | `PRAETOR_MODE` | selects the subcommand, `adopt` or `dogfood`; any other value is refused |
 | `dry-run` | `PRAETOR_DRY_RUN` | `--dry-run=<value>` |
 | `force` | `PRAETOR_FORCE` | `--force=<value>`, adopt only |
 | `record-baseline` | `PRAETOR_RECORD_BASELINE` | `--record-baseline=<value>`, adopt only |
-| `go-version` | `actions/setup-go` | the toolchain the step is built with; it never reaches `standardsctl` |
+| `go-version` | `actions/setup-go` | the toolchain the step compiles `standardsctl` with; it never reaches `standardsctl`, and it has to satisfy the `go` directive of praetor's `go.mod` |
 
-The five runtime inputs reach the run step as environment variables and are passed to
-`standardsctl` as single arguments, so a value carrying a shell metacharacter or a newline is data
-rather than script. `mode` and the three booleans are validated first: `mode: Dogfod` is a failure,
-not a silent `adopt` run. Each boolean is passed as `--flag=<value>` rather than added when it is
-`true`, because `dogfood --dry-run` and `adopt --record-baseline` default to true in
-`standardsctl` — an omitted flag would be an opt-in, so `record-baseline: "false"` would have had
-no effect.
+All five runtime inputs reach the run step as environment variables rather than as expressions
+spliced into its script, so a value carrying a shell metacharacter or a newline is data rather
+than script. `path` and the three booleans are then passed to `standardsctl` as single arguments;
+`mode` is not passed at all, it picks the subcommand. `mode` and the booleans are validated
+first: `mode: Dogfod` is a failure, not a silent `adopt` run. Each boolean is passed as
+`--flag=<value>` rather than added when it is `true`, because `dogfood --dry-run` and
+`adopt --record-baseline` default to true in `standardsctl` — an omitted flag would be an opt-in,
+so `record-baseline: "false"` would have had no effect.
 
 The `standardsctl` that runs is the one the action's own ref carries: the step builds
 `cmd/standardsctl` out of the praetor checkout that `GITHUB_ACTION_PATH` points into, so
-`praetor-adopt@<tag>` and `@main` differ. A copy of the action vendored outside a praetor checkout
-falls back to `go install github.com/cordanaLLM/praetor/cmd/standardsctl@<the same ref>`; with
-neither, the step fails rather than running an unrelated version.
+`praetor-adopt@<tag>` and `@main` differ. That directory has to declare
+`module github.com/cordanaLLM/praetor`; with `uses: ./.github/actions/praetor-adopt` it is the
+adopter's own workspace, which is not praetor and is not built. A copy of the action vendored
+outside a praetor checkout falls back to
+`go install github.com/cordanaLLM/praetor/cmd/standardsctl@<the same ref>`; with neither, the step
+fails rather than running an unrelated version.
+
+Three refs cannot be installed that way and are refused instead of guessed at: go reads `latest`,
+`upgrade` and `patch` as version queries rather than as refs
+([Go modules reference, version queries](https://go.dev/ref/mod#version-queries)), so
+`praetor-adopt@latest` vendored outside a checkout would install the proxy's highest release, not
+the commit this repository's moving `latest` tag points at
+([releasing](guides/releasing.md)). Against a praetor checkout — the usual remote `uses:` — every
+ref including `latest` builds that checkout and is unaffected.
 
 The `report` output carries the combined output of the run. The step writes it — and, when the
-runner provides one, appends it to the job summary — before re-raising the command's exit status,
-and it does so for a refused input as well as for a failed run. Read it from the job summary after
-a failure: whether a composite action's declared output still reaches the caller once one of its
-steps has exited nonzero is not something GitHub documents, and this repository does not assert it.
+runner provides `GITHUB_STEP_SUMMARY`, appends it to the job summary — before re-raising the
+command's exit status, and it does so for a refused input as well as for a failed run. Read it
+from the job summary after a failure: whether a composite action's declared output still reaches
+the caller once one of its steps has exited nonzero is not something GitHub documents. The append
+itself is executed by the tests below; the survival of the output is what stays unasserted.
 
 ```yaml
       - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@main
