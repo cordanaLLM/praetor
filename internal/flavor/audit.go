@@ -37,6 +37,28 @@ type FlavorAuditReport struct {
 	MissingToolchains   []ToolchainItem `json:"missing_toolchains"`
 }
 
+// maxReportedSettings bounds the setting paths a one-line verdict carries (HISS-02).
+const maxReportedSettings = 64
+
+// InvalidSettingPaths returns the repository-relative path of every setting the report
+// counted against the score -- absent and present-but-unparsable alike, which is what
+// MissingSettings holds.
+//
+// It exists for callers whose whole verdict is one line, such as the gate stage: a report
+// that says "77.8%, 0 missing templates" names nothing an operator can act on, because the
+// files that cost the score are settings. Callers with room for a block range over
+// MissingSettings directly and print the name and description with the path.
+func (r *FlavorAuditReport) InvalidSettingPaths() []string {
+	if r == nil || len(r.MissingSettings) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(r.MissingSettings))
+	for i := 0; i < len(r.MissingSettings) && i < maxReportedSettings; i++ {
+		paths = append(paths, r.MissingSettings[i].Path)
+	}
+	return paths
+}
+
 // ErrNoFlavorMatched reports that nothing in the catalog fits the repository.
 //
 // This is returned rather than auditing against a guess. The audit drives which templates,

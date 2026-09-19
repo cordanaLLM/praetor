@@ -318,6 +318,51 @@ func TestSettingSatisfied_Boundary_OversizedSettingIsNotAllocated(t *testing.T) 
 	}
 }
 
+// TestInvalidSettingPaths_3D covers the accessor the gate stage reports through: it names
+// every setting counted against the score, keeps declaration order, says nothing when
+// nothing was counted, and is bounded so a report cannot make a one-line verdict unbounded.
+func TestInvalidSettingPaths_3D(t *testing.T) {
+	emptyPATH(t)
+	repo := conformingGoLibrary(t, map[string]string{
+		"lefthook.yml":               "pre-commit: [unterminated\n",
+		".github/rulesets/main.json": "not json",
+	})
+	report, err := flavor.AuditFlavor(repo, "go-library")
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	got := report.InvalidSettingPaths()
+	want := []string{"lefthook.yml", ".github/rulesets/main.json"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("path %d = %q, want %q (declaration order)", i, got[i], want[i])
+		}
+	}
+
+	// Negative: a conforming report and a nil report both name nothing.
+	clean, err := flavor.AuditFlavor(conformingGoLibrary(t, nil), "go-library")
+	if err != nil {
+		t.Fatalf("audit a conforming repository: %v", err)
+	}
+	if paths := clean.InvalidSettingPaths(); len(paths) != 0 {
+		t.Errorf("a conforming report names no setting, got %v", paths)
+	}
+	var absent *flavor.FlavorAuditReport
+	if paths := absent.InvalidSettingPaths(); paths != nil {
+		t.Errorf("a nil report names nothing rather than panicking, got %v", paths)
+	}
+
+	// Boundary: the list is capped, so one line of verdict stays one line (HISS-02).
+	const reportedCap = 64
+	crowded := &flavor.FlavorAuditReport{MissingSettings: make([]flavor.SettingItem, reportedCap+10)}
+	if paths := crowded.InvalidSettingPaths(); len(paths) != reportedCap {
+		t.Errorf("expected the list capped at %d, got %d", reportedCap, len(paths))
+	}
+}
+
 // settingsFor returns the registered flavor's setting items for one path, so the tests
 // exercise the validators the catalog actually declares rather than a copy of them.
 func settingsFor(t *testing.T, flavorName, path string) []flavor.SettingItem {
