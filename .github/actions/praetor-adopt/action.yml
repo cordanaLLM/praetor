@@ -70,6 +70,11 @@ runs:
         ref="${PRAETOR_ACTION_REF:-}"
         bin_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
         binary="$bin_dir/standardsctl"
+        # go install writes standardsctl.exe on a Windows runner and go build writes exactly the
+        # name it is given, so the two branches agree on the suffix only if it is added here.
+        if [ "${RUNNER_OS:-}" = "Windows" ]; then
+          binary="$binary.exe"
+        fi
 
         if [ -f "$source_root/go.mod" ] && [ -d "$source_root/cmd/standardsctl" ]; then
           go build -C "$source_root" -o "$binary" ./cmd/standardsctl

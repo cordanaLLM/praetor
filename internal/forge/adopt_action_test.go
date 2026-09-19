@@ -246,14 +246,14 @@ func runAdoptStep(t *testing.T, values map[string]string) stepOutcome {
 }
 
 // runAdoptBuildStep executes the build step's own shell body with the action checked out at
-// actionPath and the caller's ref in hand.
-func runAdoptBuildStep(t *testing.T, actionPath, ref string) stepOutcome {
+// actionPath, the caller's ref in hand and whatever else the runner would export.
+func runAdoptBuildStep(t *testing.T, actionPath, ref string, runner ...string) stepOutcome {
 	t.Helper()
 	return executeAdoptBody(t, adoptBuildStepID, "go", func(_, _ string) []string {
-		return []string{
+		return append([]string{
 			"PRAETOR_STUB_ENV=GOBIN", "PRAETOR_STUB_EXIT=0",
 			"GITHUB_ACTION_PATH=" + actionPath, "PRAETOR_ACTION_REF=" + ref,
-		}
+		}, runner...)
 	})
 }
 
@@ -616,6 +616,24 @@ func TestPraetorAdoptBuild_Negative_NoSourceAndNoRefRunsNothing(t *testing.T) {
 	}
 	if !strings.Contains(got.combined, "no praetor source") {
 		t.Errorf("the failure does not say what is missing:\n%s", got.combined)
+	}
+}
+
+// TestPraetorAdoptBuild_Boundary_WindowsRunnerGetsAnExeSuffix keeps the two branches agreeing on
+// the file name: go install writes standardsctl.exe on a Windows runner, while go build writes
+// exactly the name it is handed, and the run step then executes whichever path this step published.
+func TestPraetorAdoptBuild_Boundary_WindowsRunnerGetsAnExeSuffix(t *testing.T) {
+	actionPath, _ := adoptCheckoutFixture(t, true)
+	got := runAdoptBuildStep(t, actionPath, "v1.2.3", "RUNNER_OS=Windows")
+	if got.exitCode != 0 {
+		t.Fatalf("build step exited %d:\n%s", got.exitCode, got.combined)
+	}
+	binary := filepath.Join(got.runnerTemp, "standardsctl.exe")
+	if got.outputs["binary"] != binary {
+		t.Errorf("binary output is %q, want %q", got.outputs["binary"], binary)
+	}
+	if len(got.invocations) != 1 || len(got.invocations[0]) < 5 || got.invocations[0][4] != binary {
+		t.Errorf("build step ran go %v, want it to build %q", got.invocations, binary)
 	}
 }
 
