@@ -81,40 +81,10 @@ tail is still printed when nothing parses as a block. Its internal Makefile chec
 a recorded one is the separator defect this invariant forbids, reached from inside the gate
 itself.
 
-Four external tools the matrix's own runs reach are installed by the job, pinned, on every leg:
-`lefthook`, `gosec`, `yamllint` and `shellcheck`. None of them is assumed present. A tool that
-ships on one runner image and not another produced a gate that failed closed on the images
-without it — `.config/lefthook/scripts/checks.py` runs `shellcheck` over every shell file in a
-push and `common.run` raises on a missing binary, so the macOS leg rejected every push the
-self-tests drive. The version is pinned identically on Linux too, where the image already
-carries one: a rule set that differs per platform is not a reproducible gate (HISS-20), so the
-job's own copy goes first on `PATH`.
-
-A fifth binary is reached on every leg and is **not** installed under the name that reaches it:
-`python3`. The hook policy spells the name, not the matrix. `.config/lefthook/praetor.yml`
-runs every hook as `python3 … hooks.py <hook>` (lines 12–73), and
-`.config/lefthook/scripts/checks.py:98` appends three more `python3 -B` commands whenever a
-staged path is `lefthook.yml`, a client settings file, or anything under `.config/lefthook/`
-or `.config/agent/`. Every fixture repository copies exactly those two directories
-(`test_hooks.py:167`) and replaces the recursive suite with a print-only stub (`:170`), and
-two cases assert that the stub's line reaches the hook log (`:617`, `:627`) — which it can do
-only if the nested `python3` command really ran. The job installs Python with
-`actions/setup-python` (`portability.yml:98`) and invokes the interpreter through the path
-that action reports (`:222`) precisely because `python3` is not guaranteed on a Windows
-runner, but nothing puts that name on `PATH` for the hooks the fixtures drive. The macOS and
-Windows legs therefore measure the name rather than satisfy it: until one of them reports
-green, `python3` is an unmeasured dependency of this gate on both, the same class of defect as
-the `shellcheck` one above (#135). That exposure is tracked as #339; this page states it
-rather than resolving it.
-
-Two binaries are reachable from the same gate and are genuinely not reached today: `checks.py`
-shells out to `actionlint` for a pushed `.github/workflows/*.yml` and to `hadolint` for a
-pushed `Dockerfile`. `actionlint` is unreached although a fixture does stage a workflow —
-`test_hooks.py:325` writes `.github/workflows/ci.yml` — because that case mocks
-`checks.parallel` (`:348`), so no linter command is executed; no fixture anywhere stages a
-`Dockerfile`. That is scope, not a guarantee: a fixture that drives the real `checks.parallel`
-over either file hits the same failure `shellcheck` produced. Install and pin them before
-widening what the fixtures stage.
+Which external binaries this gate reaches, and which of them the job installs, is not
+enumerated on this page: each known gap is tracked as its own issue instead. Open today are
+#339 (`python3` by name, never on `PATH`) and #341 (`make` invoked by the hook policy, absent
+on the Windows runner).
 
 ## Required status checks for a matrix job
 
