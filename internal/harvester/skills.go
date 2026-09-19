@@ -233,19 +233,29 @@ func canonicalGeminiSkill(ctx context.Context, name string, location SkillLocati
 	if err != nil {
 		return "", fmt.Errorf("skill parent %s is not under %s: %w", parent, gemini, err)
 	}
+	if err := confirmSkillFileIsRegular(ctx, gemini, rel, location.Path); err != nil {
+		return "", err
+	}
+	return gemini, nil
+}
+
+// confirmSkillFileIsRegular opens the skill's parent directory (confined to gemini via
+// contextopt.OpenDirectoryIn, see canonicalGeminiSkill's doc comment) and confirms its
+// SKILL.md is a real file, never a symlink, before the caller is told it is safe to delete.
+func confirmSkillFileIsRegular(ctx context.Context, gemini, rel, skillPath string) (err error) {
 	parentRoot, err := contextopt.OpenDirectoryIn(ctx, gemini, rel)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer func() { err = errors.Join(err, parentRoot.Close()) }()
 	info, statErr := parentRoot.Lstat("SKILL.md")
 	if statErr != nil {
-		return "", statErr
+		return statErr
 	}
 	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("unexpected deletion target type: %s", location.Path)
+		return fmt.Errorf("unexpected deletion target type: %s", skillPath)
 	}
-	return gemini, nil
+	return nil
 }
 
 func skillGroupRemovals(ctx context.Context, name string, locations []SkillLocation) ([]skillRemoval, error) {
