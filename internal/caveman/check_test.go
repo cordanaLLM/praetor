@@ -137,6 +137,36 @@ func TestCheckOptions(t *testing.T) {
 	}
 }
 
+// TestCheckWordCeiling covers C7 positive (over the ceiling fires), negative (a zero
+// ceiling never fires, an unset one behaves the same as a caller that never set it) and
+// boundary (exactly at the ceiling passes, one word over fails).
+func TestCheckWordCeiling(t *testing.T) {
+	report := Check(words(10), Options{MaxProseWords: 5})
+	if report.Passed() {
+		t.Fatal("10 words over a 5-word ceiling must fail")
+	}
+	if rules := rulesOf(report); len(rules) != 1 || rules[0] != RuleWordCeiling {
+		t.Fatalf("rules = %v, want [%s]", rules, RuleWordCeiling)
+	}
+	for name, opts := range map[string]Options{
+		"zero ceiling":     {MaxProseWords: 0},
+		"negative ceiling": {MaxProseWords: -1},
+		"unset ceiling":    {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if report := Check(sentences(5000), opts); !report.Passed() {
+				t.Errorf("no ceiling set must never fire C7: %v", report.Findings)
+			}
+		})
+	}
+	if report := Check(words(5), Options{MaxProseWords: 5}); !report.Passed() {
+		t.Errorf("exactly at the ceiling must pass: %v", report.Findings)
+	}
+	if report := Check(words(6), Options{MaxProseWords: 5}); report.Passed() {
+		t.Error("one word over the ceiling must fail")
+	}
+}
+
 func TestCheckIsDeterministic(t *testing.T) {
 	text := "Please note that it just works 🎉.\n\x1b[1mbold\x1b[m\nprobably fine, really."
 	first := Check(text, Options{})

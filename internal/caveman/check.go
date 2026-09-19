@@ -17,6 +17,11 @@ const (
 	RuleTerminalNoise  = "C4 terminal-noise"
 	RuleLongSentence   = "C5 long-sentence"
 	RuleUnclosedOff    = "C6 unclosed-off-region"
+	// RuleWordCeiling fires when Options.MaxProseWords is set and the text carries more
+	// prose words than the ceiling. It is opt-in (a zero or negative MaxProseWords disables
+	// it), unlike C1-C6, because the ceiling is per surface (600 words for a persona or a
+	// skill; text-register.md), not a property of caveman prose in general.
+	RuleWordCeiling = "C7 word-ceiling"
 )
 
 const (
@@ -40,11 +45,18 @@ var (
 	listItemRe      = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s`)
 )
 
-// Options tunes Check. A zero or negative field takes its default.
+// Options tunes Check. A zero or negative field takes its default, except MaxProseWords:
+// zero or negative there means no ceiling, since most callers (AGENTS.md, MCP text, hook
+// messages) have no per-file word budget and only a surface that defines one should turn
+// it on.
 type Options struct {
 	MaxArticleDensity float64
 	MinProseWords     int
 	MaxSentenceWords  int
+	// MaxProseWords bounds Report.ProseWords when positive. It is independent of
+	// MinProseWords/MaxArticleDensity: a text under the density judgment threshold can
+	// still break a word ceiling.
+	MaxProseWords int
 }
 
 func (o Options) withDefaults() Options {
@@ -146,6 +158,9 @@ func Check(text string, opts Options) Report {
 	if report.ProseWords >= opts.MinProseWords && report.Density() > opts.MaxArticleDensity {
 		found.add(0, RuleArticleDensity, fmt.Sprintf("%.1f articles per 100 prose words (%d/%d), limit %.1f",
 			report.Density(), report.Articles, report.ProseWords, opts.MaxArticleDensity))
+	}
+	if opts.MaxProseWords > 0 && report.ProseWords > opts.MaxProseWords {
+		found.add(0, RuleWordCeiling, fmt.Sprintf("%d prose words, limit %d", report.ProseWords, opts.MaxProseWords))
 	}
 	if s.off {
 		found.add(s.offOpen, RuleUnclosedOff, OffMarker+" without "+OnMarker)

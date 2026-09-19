@@ -14,27 +14,27 @@ Enforce HISS-14 append-only contract evolution across Go interfaces, CLI surface
    - Backward-compatible extensions (new optional fields, additive methods) do not require breaking markers.
 
 2. **Breaking Change Criteria**:
-   A change is classified as **Breaking** if it:
-   - Removes or renames any exported Go symbol (`type`, `func`, `var`, `const`, `interface`).
-   - Changes the parameter list, return types, or error behavior of an existing exported function.
+   Change classified as **Breaking** when it:
+   - Removes or renames exported Go symbol (`type`, `func`, `var`, `const`, `interface`).
+   - Changes parameter list, return types, or error behavior of existing exported function.
    - Modifies or removes fields in `.standards.yaml` or `.config/` schemas.
    - Alters CLI subcommands, flags, or default behaviors in `cmd/standardsctl`.
    - Modifies input argument schemas or return structures of registered MCP tools.
 
 ## Verification Workflow
 
-When running a breaking change check on a branch or PR:
+Running breaking change check on branch or PR:
 
 1. **Diff against Base**:
    ```bash
    git diff origin/main...HEAD
    ```
 2. **Inspect Exported Symbols**:
-   - Verify if any public declaration was modified or deleted.
-   - If a breaking modification is discovered:
-     - Check the commit title for the conventional commit breaking indicator (`!`):
+   - Verify whether public declaration modified or deleted.
+   - Breaking modification discovered ->
+     - Check commit title for conventional-commit breaking indicator (`!`):
        `feat(!): replace Manifest.Profiles with ProfileObjects`
-     - Check the commit body for the mandatory `Migration:` footer:
+     - Check commit body for mandatory `Migration:` footer:
        ```text
        Migration:
        Existing configurations using `profiles: ["framework"]` must migrate
@@ -42,5 +42,5 @@ When running a breaking change check on a branch or PR:
        ```
 
 3. **Rejection Criteria**:
-   - If an exported contract was broken WITHOUT the `!` indicator or WITHOUT the `Migration:` footer, reject the change immediately.
-   - If an append-only alternative exists (e.g. adding a new method with a `V2` suffix or optional struct field), require the developer to adopt the additive pattern instead.
+   - Exported contract broken WITHOUT `!` indicator or WITHOUT `Migration:` footer -> reject change immediately.
+   - Append-only alternative exists (example: add new method with `V2` suffix or optional struct field) -> require developer to adopt additive pattern instead.

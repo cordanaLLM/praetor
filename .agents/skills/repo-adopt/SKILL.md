@@ -1,11 +1,11 @@
 ---
 name: repo-adopt
-description: Adopt, conform, and bootstrap any repository into 100% Praetor governance compliance in a single command, automatically ratcheting technical debt for brownfield codebases.
+description: Adopt, conform, and bootstrap any repository into 100% Praetor governance compliance in one command, automatically ratcheting technical debt for brownfield codebases.
 ---
 
 # Repository Adoption & Template Conformance (`repo-adopt`)
 
-Adopt any codebase—greenfield, partially setup, or legacy brownfield—into the `cordanaLLM/praetor` governance lattice in a single deterministic command or AI chat turn.
+Adopt any codebase—greenfield, partially setup, or legacy brownfield—into `cordanaLLM/praetor` governance lattice in one deterministic command or AI chat turn.
 
 ## 4-Step Adoption Workflow
 
@@ -45,7 +45,7 @@ Adopt any codebase—greenfield, partially setup, or legacy brownfield—into th
      ```bash
      praetorctl dogfood --remote=https://github.com/org/repo --dry-run
      ```
-   - Ensure the newly adopted repository builds and passes audit:
+   - Ensure newly adopted repository builds and passes audit:
      ```bash
      cd /path/to/repo && make verify-all
      ```

@@ -1,6 +1,6 @@
 ---
 name: understand-codebase
-description: Systematically inspect, analyze, and build an authoritative mental model of a codebase using declarative manifests, lattice configurations, entry points, and HISS invariants.
+description: Systematically inspect, analyze, and build authoritative mental model of codebase using declarative manifests, lattice configurations, entry points, and HISS invariants.
 ---
 
 # Codebase Comprehension (`understand-codebase`)
@@ -11,7 +11,7 @@ Quickly and authoritatively map any repository's architecture, operational contr
 
 1. **Declarative Ground Truth Discovery**:
    - Inspect `.standards.yaml` to identify assigned **Profiles** (`native-gpu-systems`, `framework`, etc.) and **Facets** (`security:high`, `api:public-contract`, etc.).
-   - Read `AGENTS.md` to internalize the active operational rules and required verification commands.
+   - Read `AGENTS.md` to internalize active operational rules and required verification commands.
    - Inspect `.standards-baseline.json` to understand existing legacy technical debt baselines.
 
 2. **Entry Point & Command Mapping**:
@@ -20,7 +20,7 @@ Quickly and authoritatively map any repository's architecture, operational contr
 
 3. **Subsystem & Dependency Graph Analysis**:
    - Trace internal domain packages (`internal/` or `src/lib/`).
-   - Confirm control flow adheres to **HISS-01**: call graphs must form a Directed Acyclic Graph (DAG) with zero recursion.
+   - Confirm control flow adheres to **HISS-01**: call graphs must form Directed Acyclic Graph (DAG) with zero recursion.
    - Identify shared interfaces, data models, and storage boundaries.
 
 4. **Live Verification & Sanity Check**:
@@ -32,7 +32,7 @@ Quickly and authoritatively map any repository's architecture, operational contr
 
 ## Output Deliverable: The Repository Infocard
 
-When concluding a comprehension sweep, synthesize the architecture into this structured schema:
+When concluding comprehension sweep, synthesize architecture into this structured schema:
 
 | Attribute | Declared Value |
 | :--- | :--- |

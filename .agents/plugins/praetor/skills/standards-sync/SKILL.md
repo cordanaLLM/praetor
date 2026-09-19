@@ -1,11 +1,11 @@
 ---
 name: standards-sync
-description: Synchronize and reconcile local repository configurations, DevContainers, and universal agent harnesses with the upstream cordanaLLM fleet governance lattice.
+description: Synchronize and reconcile local repository configurations, DevContainers, and universal agent harnesses with upstream cordanaLLM fleet governance lattice.
 ---
 
 # Standards Synchronization & Fleet Reconciliation (`standards-sync`)
 
-Reconcile local repository configurations, DevContainers, and universal AI agent harnesses with the declared `cordanaLLM/praetor` lattice.
+Reconcile local repository configurations, DevContainers, and universal AI agent harnesses with declared `cordanaLLM/praetor` lattice.
 
 ## 5-Step Synchronization Workflow
 
@@ -14,7 +14,7 @@ Reconcile local repository configurations, DevContainers, and universal AI agent
      ```bash
      go run ./cmd/standardsctl plan
      ```
-   - Confirm active profiles and facets resolve to the highest-standard supremum.
+   - Confirm active profiles and facets resolve to highest-standard supremum.
 
 2. **Transpile Universal Agent Context (HISS-16)**:
    - Compile canonical `AGENTS.md` into vendor-specific agent harnesses:
@@ -45,7 +45,7 @@ Reconcile local repository configurations, DevContainers, and universal AI agent
    - Invariant: Technical debt must monotonically decrease ($V_{\text{total}}(t_1) \le V_{\text{total}}(t_0)$).
 
 5. **Execute Fleet Verification Gate**:
-   - Run the final local status gate:
+   - Run final local status gate:
      ```bash
      make verify-all
      ```

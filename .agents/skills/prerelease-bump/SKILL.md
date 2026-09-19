@@ -16,12 +16,12 @@ Speculatively test dependency upgrades against upstream `alpha`, `beta`, `rc`, a
      ```
 
 2. **Run Ephemeral Worktree Canary Test**:
-   - Test a candidate version in complete isolation without dirtying the working tree:
+   - Test candidate version in complete isolation without dirtying working tree:
      ```bash
      praetorctl bump canary <package-name> --target=<prerelease-version>
      ```
-   - A passing result means the configured command exited zero; no certification is issued. The CLI currently uses `go test -v ./...`.
-   - On failure, inspect private SARIF diagnostics under `.workingdir/evidence/canary/`. These contain command output and are not adaptation patches.
+   - Passing result = configured command exited zero; no certification issued. CLI currently uses `go test -v ./...`.
+   - On failure, inspect private SARIF diagnostics under `.workingdir/evidence/canary/`: command output, not adaptation patches.
 
 3. **Execute Automated Bump Train**:
    - Run speculative testing across all eligible dependencies:
@@ -29,14 +29,14 @@ Speculatively test dependency upgrades against upstream `alpha`, `beta`, `rc`, a
      praetorctl bump train --dry-run
      praetorctl bump train
      ```
-   - A dry run only plans work. Execution failures produce a nonzero result.
+   - Dry run only plans work. Execution failures produce nonzero result.
 
-4. **Apply and Verify a Reviewed Update**:
-   - Verify the intended stable version and any supplied patch, then apply and run the repository gates:
+4. **Apply and Verify Reviewed Update**:
+   - Verify intended stable version and any supplied patch, then apply and run repository gates:
      ```bash
      praetorctl bump apply <package-name> --version=<stable-version> --patch=<reviewed-patch-file>
      make verify-all
      ```
-   - The patch is optional. Its syntax is checked before updating; applicability is checked afterward. A failed application may leave the dependency updated and does not roll back.
+   - Patch optional. Syntax checked before updating; applicability checked afterward. Failed application may leave dependency updated, does not roll back.
 
-For status fields, diagnostic privacy, patch bounds, and migration from older false certification flags, read [the canary evidence guide](../../../docs/guides/canary-evidence.md).
+For status fields, diagnostic privacy, patch bounds, and migration from older false certification flags, read [canary evidence guide](../../../docs/guides/canary-evidence.md).

@@ -9,14 +9,14 @@ Transform dense engineering outputs, audit findings, and architecture documentat
 
 ## Core Formatting Principles
 
-Forge-facing prose (issues, PR bodies, review comments, commit bodies) uses the social-text skill, which inherits this one.
+Forge-facing prose (issues, PR bodies, review comments, commit bodies) uses social-text skill, which inherits this one.
 
-1. **Lead with the Bottom Line (BLUF)**:
-   - State the decision, status, or actionable conclusion in the very first sentence.
-   - Eliminate filler preambles ("Here is the report", "Based on my analysis").
+1. **Lead with Bottom Line (BLUF)**:
+   - State decision, status, or actionable conclusion in very first sentence.
+   - Eliminate filler preambles (`Here is the report`, `Based on my analysis`).
 
 2. **Visual Scannability & Anchor Bolding**:
-   - Bold the **first 2-4 words** or the operative action of every bullet point.
+   - Bold **first 2-4 words** or operative action of every bullet point.
    - Restrict paragraphs to **at most 2-3 sentences**.
    - Use high-contrast Markdown tables for multi-attribute comparisons.
 
@@ -27,13 +27,14 @@ Forge-facing prose (issues, PR bodies, review comments, commit bodies) uses the 
      - `> [!TIP]` for operational shortcuts and command patterns.
 
 4. **Diagrammatic Synthesis**:
-   - Whenever explaining a state transition, sequence, or lattice relationship, include a compact Mermaid diagram ($\le 6$ nodes).
+   - When explaining state transition, sequence, or lattice relationship, include compact Mermaid diagram ($\le 6$ nodes).
 
 5. **Progressive Disclosure**:
    - Provide summary matrices first, actionable CLI commands second, and deep implementation details collapsed or linked below.
 
 ## Transformation Pattern
 
+<!-- caveman:off -->
 ### ❌ Anti-Pattern (Cognitive Fatigue)
 > "In evaluating the repository against HISS-04, we noticed that several functions in the compiler package have cyclomatic complexity values exceeding the threshold of 10. Specifically, `compileAstNode` has a complexity of 14, and its length is 92 lines which also violates the 75 line limit. We should refactor this into sub-functions."
 
@@ -53,3 +54,4 @@ Forge-facing prose (issues, PR bodies, review comments, commit bodies) uses the 
 >     NODE["compileAstNode (LOC 92)"] --> EXPR["visitExpression (LOC 35)"]
 >     NODE --> STMT["visitStatement (LOC 40)"]
 > ```
+<!-- caveman:on -->

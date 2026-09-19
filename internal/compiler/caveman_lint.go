@@ -20,6 +20,33 @@ const maxQuotedLintFindings = 5
 // lint. AGENTS.md is agent-only text, so it is held to config.ContextRegister (ADR-0010).
 var ErrContextProse = errors.New("AGENTS.md fails the caveman lint")
 
+// ErrAgentTextProse is returned by LintAgentText when a persona or a skill breaks the
+// caveman lint or the AgentTextCeiling word budget. Personas and skills sit under
+// config.SurfaceContext by its own doc comment ("AGENTS.md, the compiled vendor files,
+// personas and skills"; internal/config/register.go), so they carry the same fixed,
+// no-opt-out rule as AGENTS.md itself (ADR-0010 decision 11).
+var ErrAgentTextProse = errors.New("agent text fails the caveman lint")
+
+// AgentTextCeiling is the prose-word ceiling a persona or a skill is linted against, on top
+// of the caveman rules AGENTS.md itself must pass. Measured in
+// .workingdir/planning/register-gaps-20260919.md: it sits between the two skills that
+// failed the lint at 532-561 prose words (social-text, caveman) and the shortest passing
+// skill in the directory (185 words), low enough to force a caveman rewrite rather than a
+// trim, high enough not to force splitting a skill with real rule tables.
+const AgentTextCeiling = 600
+
+// LintAgentText runs the caveman lint plus AgentTextCeiling over one persona or skill and
+// wraps a failure the same way LintContext does, so the same 'praetorctl caveman check'
+// command reproduces the gate's verdict. label names the file in the error and in the
+// findings; it carries no meaning to the lint itself.
+func LintAgentText(label, text string) (caveman.Report, error) {
+	report := caveman.Check(text, caveman.Options{MaxProseWords: AgentTextCeiling})
+	if !report.Passed() {
+		return report, fmt.Errorf("%w: %s", ErrAgentTextProse, describeLintFindings(label, report.Findings))
+	}
+	return report, nil
+}
+
 // ContextLint is the caveman verdict on one canonical AGENTS.md.
 type ContextLint struct {
 	Report caveman.Report
