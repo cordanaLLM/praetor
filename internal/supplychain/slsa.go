@@ -3,8 +3,15 @@ package supplychain
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"time"
 )
+
+// sha256HexPattern matches a SHA-256 digest as exactly 64 lowercase hex characters, the
+// only form an in-toto subject digest may take. Anything else -- wrong length, uppercase,
+// a non-hex character -- names an artifact that cannot be verified against, so it is
+// refused rather than attested with a value that only looks like a digest.
+var sha256HexPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // SLSAStatement represents an in-toto v1 statement embedding SLSA v1.0 provenance.
 type SLSAStatement struct {
@@ -50,7 +57,9 @@ type BuildMetadata struct {
 	FinishedOn   string `json:"finishedOn"`
 }
 
-// GenerateSLSAProvenance constructs an in-toto SLSA v1.0 provenance statement.
+// GenerateSLSAProvenance constructs an in-toto SLSA v1.0 provenance statement. It does not
+// sign the statement; that is a separate, not-yet-implemented step, and callers must not
+// treat this statement's presence as an attestation on its own.
 func GenerateSLSAProvenance(ctx context.Context, artifactName, builderID, sha256Hex string) (*SLSAStatement, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("slsa: context cannot be nil")
@@ -58,8 +67,8 @@ func GenerateSLSAProvenance(ctx context.Context, artifactName, builderID, sha256
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("slsa: context cancelled: %w", err)
 	}
-	if sha256Hex == "" {
-		return nil, fmt.Errorf("slsa: sha256 hex digest cannot be empty")
+	if !sha256HexPattern.MatchString(sha256Hex) {
+		return nil, fmt.Errorf("slsa: sha256 hex digest must be exactly 64 lowercase hex characters, got %q", sha256Hex)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
