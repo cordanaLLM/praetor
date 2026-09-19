@@ -135,7 +135,7 @@ func TestRunPreEditDeniesOnAMissingMarkerOrAFailedScopeScript(t *testing.T) {
 			Client: "claude", Event: "pre-edit", Stdin: preEditStdin(t, root),
 			Getenv: getenv, WorkDir: root, Policy: policy(t), Settings: config.HookSettings{Python: [][]string{{"python3"}}},
 		})
-		if response.ExitCode != 2 || !strings.HasPrefix(string(response.Stderr), "[BLOCKED BY HISS-16] ") {
+		if response.ExitCode != 2 || !strings.HasPrefix(string(response.Stderr), "[BLOCKED BY HISS] ") {
 			t.Errorf("%s: pre-edit must fail closed: %+v", name, response)
 		}
 	}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 PreToolUse & Local Git Hook Evasion Blocker
-Enforces HISS-16 by intercepting attempts to bypass Git hooks, linters, or verification gates.
+Enforces HISS by intercepting attempts to bypass Git hooks, linters, or verification gates.
 """
 import sys
 import os
@@ -27,7 +27,7 @@ def audit_command(command_str: str) -> bool:
     for pattern in BLOCKED_PATTERNS:
         if re.search(pattern, command_str):
             sys.stderr.write(
-                f"\n[BLOCKED BY HISS-16] Attempted verification evasion detected!\n"
+                f"\n[BLOCKED BY HISS] Attempted verification evasion detected!\n"
                 f"Pattern '{pattern}' is strictly prohibited in cordanaLLM repositories.\n"
                 f"All commits, pushes, and tool invocations must pass verification gates cleanly.\n\n"
             )
@@ -47,10 +47,10 @@ def audit_command(command_str: str) -> bool:
 
 def audit_environment() -> bool:
     if os.environ.get("LEFTHOOK") == "0":
-        sys.stderr.write("[BLOCKED BY HISS-16] LEFTHOOK=0 detected in environment. Evasion prohibited.\n")
+        sys.stderr.write("[BLOCKED BY HISS] LEFTHOOK=0 detected in environment. Evasion prohibited.\n")
         return False
     if os.environ.get("LEFTHOOK_EXCLUDE") or os.environ.get("LEFTHOOK_SKIP"):
-        sys.stderr.write("[BLOCKED BY HISS-16] Hook exclusions are prohibited.\n")
+        sys.stderr.write("[BLOCKED BY HISS] Hook exclusions are prohibited.\n")
         return False
     return True
 
@@ -85,7 +85,7 @@ def main():
             cmd = read_json_command(sys.stdin.buffer)
             json_input = True
         except (ValueError, OSError, RecursionError) as error:
-            sys.stderr.write(f"[BLOCKED BY HISS-16] Invalid hook input: {error}\n")
+            sys.stderr.write(f"[BLOCKED BY HISS] Invalid hook input: {error}\n")
             sys.exit(1)
     else:
         sys.stderr.write("Expected a command, PreToolUse JSON, or --environment.\n")

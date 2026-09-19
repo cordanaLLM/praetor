@@ -1,11 +1,11 @@
 ---
 name: hiss-audit
-description: Audit repository source code, AST, and configurations against High-Integrity Systems Standards (HISS-01 through HISS-16) to ensure deterministic execution, bounded complexity, and error integrity.
+description: Audit repository source code, AST, and configurations against the High-Integrity Systems Standard (HISS) to ensure deterministic execution, bounded complexity, and error integrity.
 ---
 
 # HISS Invariant Audit (`hiss-audit`)
 
-Audit any repository or pull request against the High-Integrity Systems Standards (HISS-16) formal specification.
+Audit any repository or pull request against the High-Integrity Systems Standard (HISS) formal specification.
 
 ## Core Directives & Verification Ladder
 

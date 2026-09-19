@@ -537,7 +537,7 @@ class GitHooks(unittest.TestCase):
             {"tool_input": {"command": "git commit --no-" + "verify"}}).encode())
         output = denied.stdout + denied.stderr
         self.assertNotEqual(denied.returncode, 0, output)
-        self.assertIn(b"[BLOCKED BY HISS-16]", output)
+        self.assertIn(b"[BLOCKED BY HISS]", output)
         self.assertIn(b"command-policy", output)
         self.assertNotIn(b"\x1b[", output)
         # The environment override still restores Lefthook's own reporting for a human.

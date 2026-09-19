@@ -86,7 +86,7 @@ func buildDefaultLabelsYAML() string {
 labels:
   - name: "hiss-violation"
     color: "d73a4a"
-    description: "Code introduces a regression against HISS-16 invariants"
+    description: "Code introduces a regression against HISS invariants"
   - name: "hiss-waiver"
     color: "fbca04"
     description: "Requires cryptographically signed waiver approval"

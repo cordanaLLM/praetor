@@ -12,12 +12,12 @@ func TestPolicyCommandBuiltinRules(t *testing.T) {
 	for _, tc := range []struct {
 		command, invariant string
 	}{
-		{"git push --no-verify origin x", "HISS-16"},
-		{"git commit -m x -n", "HISS-16"},
-		{"env LEFTHOOK=0 git push", "HISS-16"},
-		{"SKIP=all git commit", "HISS-16"},
-		{"git config core.hooksPath=/dev/null", "HISS-16"},
-		{"rm -r .git/hooks", "HISS-16"},
+		{"git push --no-verify origin x", "HISS"},
+		{"git commit -m x -n", "HISS"},
+		{"env LEFTHOOK=0 git push", "HISS"},
+		{"SKIP=all git commit", "HISS"},
+		{"git config core.hooksPath=/dev/null", "HISS"},
+		{"rm -r .git/hooks", "HISS"},
 		{"standardsctl conform /srv/dev", "DEV-01"},
 		{"praetorctl needs  epic dev/", "DEV-01"},
 	} {

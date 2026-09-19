@@ -63,7 +63,7 @@ func NewPolicy(operatorDeny []string) (*Policy, error) {
 	}
 	rules := make([]denyRule, 0, len(builtinEvasion)+1+len(operatorDeny))
 	for _, source := range builtinEvasion {
-		rules = append(rules, builtinRule(source, "HISS-16", evasionMessage))
+		rules = append(rules, builtinRule(source, "HISS", evasionMessage))
 	}
 	rules = append(rules, builtinRule(builtinDevRoot, "DEV-01", topologyMessage))
 	for index, source := range operatorDeny {
@@ -79,7 +79,7 @@ func NewPolicy(operatorDeny []string) (*Policy, error) {
 // Command judges one proposed command line. The first matching rule denies.
 func (p *Policy) Command(command string) Verdict {
 	if p == nil {
-		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS-16] no command policy is loaded"}
+		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no command policy is loaded"}
 	}
 	for _, rule := range p.rules {
 		if rule.pattern.MatchString(command) {
@@ -94,13 +94,13 @@ func (p *Policy) Command(command string) Verdict {
 // changes process state in tests.
 func Environment(getenv func(string) string) Verdict {
 	if getenv == nil {
-		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS-16] no environment to inspect"}
+		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no environment to inspect"}
 	}
 	if getenv("LEFTHOOK") == "0" {
-		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS-16] LEFTHOOK=0 detected in environment. Evasion prohibited."}
+		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] LEFTHOOK=0 detected in environment. Evasion prohibited."}
 	}
 	if getenv("LEFTHOOK_EXCLUDE") != "" || getenv("LEFTHOOK_SKIP") != "" {
-		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS-16] Hook exclusions are prohibited."}
+		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] Hook exclusions are prohibited."}
 	}
 	return Verdict{Outcome: Allow}
 }

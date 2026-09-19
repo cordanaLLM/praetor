@@ -102,7 +102,7 @@ func TestHookProcessAllowsAndDeniesInTheClientDialect(t *testing.T) {
 		{"lefthook environment", nil, 0, ""},
 	} {
 		result, exit := hookProcess(t, nested, tc.arguments, tc.stdin)
-		if exit != tc.exit || string(result.Stdout) != tc.stdout || (exit != 0) != bytes.Contains(result.Stderr, []byte("[BLOCKED BY HISS-16]")) {
+		if exit != tc.exit || string(result.Stdout) != tc.stdout || (exit != 0) != bytes.Contains(result.Stderr, []byte("[BLOCKED BY HISS]")) {
 			t.Errorf("%s: exit %d stdout %q stderr %q", tc.arguments, exit, result.Stdout, result.Stderr)
 		}
 		if bytes.Contains(result.Stderr, []byte("Error:")) {

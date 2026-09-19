@@ -104,7 +104,7 @@ go test -v -race ./...
 # recompile + verify cross-agent context outputs
 go run ./cmd/standardsctl compile-context --verify
 
-# audit repo vs declared HISS-16 standards
+# audit repo vs declared HISS standards
 go run ./cmd/standardsctl audit
 
 # audit workstation dir topology (DEV-01..DEV-05)

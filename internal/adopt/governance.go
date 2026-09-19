@@ -20,7 +20,9 @@ const (
 	adrTemplateFile   = "docs/adr/0000-template.md"
 	readmeFile        = "README.md"
 	governanceHeading = "Standards & Governance"
-	badgeMarker       = "HISS-16"
+	// badgeMarker matches the badge URL slug of every generation, old ("HISS--16") and
+	// current ("HISS"), so re-adoption never double-injects.
+	badgeMarker = "Standards-HISS"
 )
 
 // buildMakefile renders the greenfield Makefile. verify-all runs the same gates the
@@ -80,7 +82,7 @@ func reconcileContributing(_ context.Context, s *adoptSession) error {
 		rel:      contributingFile,
 		perm:     filePerm,
 		content:  []byte(buildContributingGuide(s.repoName)),
-		created:  "Scaffolded contributor governance guide with HISS-16 & NASA rules",
+		created:  "Scaffolded contributor governance guide with HISS & NASA rules",
 		verified: "Existing contributor guide verified present",
 	})
 	return err
@@ -143,9 +145,9 @@ func reconcileADR(_ context.Context, s *adoptSession) error {
 // unconditional compliance claim.
 func buildReadmeBadge(legacyDebt int) string {
 	if legacyDebt == 0 {
-		return "[![HISS-16 Compliant](https://img.shields.io/badge/Standards-HISS--16%20Compliant-brightgreen)](AGENTS.md)\n"
+		return "[![HISS Compliant](https://img.shields.io/badge/Standards-HISS%20Compliant-brightgreen)](AGENTS.md)\n"
 	}
-	return fmt.Sprintf("[![HISS-16 Adopted](https://img.shields.io/badge/Standards-HISS--16%%20Adopted%%20(%d%%20baselined)-yellow)](AGENTS.md)\n", legacyDebt)
+	return fmt.Sprintf("[![HISS Adopted](https://img.shields.io/badge/Standards-HISS%%20Adopted%%20(%d%%20baselined)-yellow)](AGENTS.md)\n", legacyDebt)
 }
 
 // injectReadmeBadge places the badge under the first-level heading or at the top.
@@ -161,7 +163,7 @@ func injectReadmeBadge(content, badge string) string {
 }
 
 func buildGovernanceTable() string {
-	return "\n\n## " + governanceHeading + "\n\nThis repository conforms to High-Integrity Systems Standards (HISS-16)\nand modernized NASA JPL Power-of-10 rules.\n\n| Gate | Command | Description |\n| :--- | :--- | :--- |\n| **Verification** | `make verify-all` | Runs full audit, test suite, and context integrity check |\n| **HISS Audit** | `praetorctl audit` | Enforces zero technical debt regression against baseline |\n| **Context Sync** | `praetorctl compile-context` | Transpiles canonical `AGENTS.md` to all AI targets |\n"
+	return "\n\n## " + governanceHeading + "\n\nThis repository conforms to the High-Integrity Systems Standard (HISS)\nand modernized NASA JPL Power-of-10 rules.\n\n| Gate | Command | Description |\n| :--- | :--- | :--- |\n| **Verification** | `make verify-all` | Runs full audit, test suite, and context integrity check |\n| **HISS Audit** | `praetorctl audit` | Enforces zero technical debt regression against baseline |\n| **Context Sync** | `praetorctl compile-context` | Transpiles canonical `AGENTS.md` to all AI targets |\n"
 }
 
 // reconcileReadme injects the compliance badge and governance table into an existing
@@ -194,7 +196,7 @@ func reconcileReadme(_ context.Context, s *adoptSession) error {
 	if err := s.write(full, []byte(content), filePerm); err != nil {
 		return err
 	}
-	s.report.recordReconciled(readmeFile, "Non-destructively injected HISS-16 badge and verification gate table")
+	s.report.recordReconciled(readmeFile, "Non-destructively injected HISS badge and verification gate table")
 	return nil
 }
 
@@ -202,7 +204,7 @@ func buildContributingGuide(repoName string) string {
 	return fmt.Sprintf(`<!-- markdownlint-disable MD013 -->
 # Contributing to %s
 
-Thank you for contributing! This repository adheres strictly to the **High-Integrity Systems Standards (HISS-16)** and modernized **NASA JPL Power-of-10** rules.
+Thank you for contributing! This repository adheres strictly to the **High-Integrity Systems Standard (HISS)** and modernized **NASA JPL Power-of-10** rules.
 
 ## Core Directives & Verification
 
@@ -249,7 +251,7 @@ func buildPullRequestTemplate() string {
 ## Pre-Merge Verification Checklist
 
 - [ ] Local verification passed: ` + "`make verify-all`" + `
-- [ ] No new HISS-16 / NASA Power-of-10 infractions (all new/modified functions $\le 60$ LOC)
+- [ ] No new HISS / NASA Power-of-10 infractions (all new/modified functions $\le 60$ LOC)
 - [ ] 3D Tests included (Positive, Negative, Boundary) for public APIs
 - [ ] Agent contexts in sync: ` + "`standardsctl compile-context --verify`" + `
 - [ ] Commit messages adhere to Conventional Commits format
