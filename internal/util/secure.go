@@ -223,10 +223,12 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	tmpPath := tmp.Name()
 
 	if writeErr := writeAndSyncTemp(tmp, data, perm); writeErr != nil {
+		// #nosec G104 -- best-effort; a leftover temp file self-heals on the next write attempt.
 		os.Remove(tmpPath) //nolint:errcheck // best-effort; a leftover temp file self-heals on the next write attempt and must not mask writeErr
 		return writeErr
 	}
 	if renameErr := os.Rename(tmpPath, path); renameErr != nil {
+		// #nosec G104 -- best-effort; a leftover temp file self-heals on the next write attempt.
 		os.Remove(tmpPath) //nolint:errcheck // best-effort; a leftover temp file self-heals on the next write attempt and must not mask renameErr
 		return fmt.Errorf("util: rename %q to %q: %w", tmpPath, path, renameErr)
 	}
