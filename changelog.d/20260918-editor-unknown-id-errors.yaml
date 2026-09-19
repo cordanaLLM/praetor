@@ -1,0 +1,4 @@
+type: changed
+title: "An unrecognized editors id/alias now fails editor synthesis with 'unknown editor id(s): ...; supported: ...' and writes nothing, instead of silently dropping it and generating only the recognized subset"
+issue: "#169"
+breaking: true

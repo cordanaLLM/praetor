@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -250,7 +251,10 @@ func TestEditor_Boundary_CustomBinaryDirAndFlags(t *testing.T) {
 	if !strings.Contains(settingsContent, customBin+"/standards-lsp") {
 		t.Errorf("settings missing custom binary path: %s", settingsContent)
 	}
-	for _, forbidden := range []string{"standards.mcp.", "standards.modelTier", "gemini-2.5-pro"} {
+	for _, forbidden := range []string{
+		"standards.mcp.", "standards.modelTier", "gemini-2.5-pro",
+		"antigravity.searchMaxWorkspaceFileCount", "files.watcherExclude",
+	} {
 		if strings.Contains(settingsContent, forbidden) {
 			t.Errorf("workspace settings must not assert %s: %s", forbidden, settingsContent)
 		}
@@ -286,5 +290,112 @@ func TestEditor_Positive_ArchetypeNativeGPUSystems(t *testing.T) {
 	nvimLua := fileMap["lua/standards.lua"]
 	if !strings.Contains(nvimLua, "cuda") || !strings.Contains(nvimLua, "cpp") {
 		t.Errorf("expected cpp and cuda in Neovim filetypes for native-gpu-systems")
+	}
+}
+
+// =========================================================================
+// Antigravity editor target (#169)
+// =========================================================================
+
+func TestEditor_Positive_AntigravityAliasesAndKeys(t *testing.T) {
+	golden, err := os.ReadFile(filepath.Join("testdata", "antigravity", "settings.golden.json"))
+	if err != nil {
+		t.Fatalf("read golden fixture: %v", err)
+	}
+	var wantSettings map[string]any
+	if err := json.Unmarshal(golden, &wantSettings); err != nil {
+		t.Fatalf("golden fixture is not valid JSON: %v", err)
+	}
+
+	for _, alias := range []string{"antigravity", "agy", "antigravity-ide"} {
+		t.Run(alias, func(t *testing.T) {
+			// WorkspaceRoot points at an empty temp directory so language detection observes
+			// no Go sources, matching the golden fixture; the real repository (WorkspaceRoot
+			// defaulting to ".") would otherwise add unrelated Go-derived keys.
+			opts := Options{
+				Editors:       []string{alias},
+				WorkspaceRoot: t.TempDir(),
+				BinaryDir:     "bin",
+				Archetype:     "framework",
+				IncludeLSP:    true,
+			}
+			set, err := Synthesize(opts)
+			if err != nil {
+				t.Fatalf("Synthesize(%q) failed: %v", alias, err)
+			}
+			if len(set.Editors) != 1 || set.Editors[0] != EditorAntigravity {
+				t.Fatalf("alias %q resolved to %v, want [%s]", alias, set.Editors, EditorAntigravity)
+			}
+
+			var settingsContent string
+			var found bool
+			for _, f := range set.Files {
+				if f.Path == ".vscode/settings.json" {
+					settingsContent, found = f.Content, true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("alias %q produced no .vscode/settings.json", alias)
+			}
+			var gotSettings map[string]any
+			if err := json.Unmarshal([]byte(settingsContent), &gotSettings); err != nil {
+				t.Fatalf("generated settings.json is not valid JSON: %v", err)
+			}
+			if !reflect.DeepEqual(gotSettings, wantSettings) {
+				t.Errorf("alias %q settings.json = %s, want %s", alias, settingsContent, golden)
+			}
+
+			tmpDir := t.TempDir()
+			if err := Write(set, tmpDir); err != nil {
+				t.Fatalf("Write failed: %v", err)
+			}
+			if err := Verify(set, tmpDir); err != nil {
+				t.Errorf("Verify failed for antigravity-only set: %v", err)
+			}
+		})
+	}
+}
+
+func TestEditor_Negative_UnknownEditorIDErrorsAndWritesNothing(t *testing.T) {
+	set, err := Synthesize(Options{Editors: []string{"notarealeditor"}})
+	if err == nil {
+		t.Fatalf("expected error for unknown editor id, got set: %+v", set)
+	}
+	if set != nil {
+		t.Errorf("expected nil set on unknown editor id, got %+v", set)
+	}
+	for _, want := range []string{"unknown editor id(s)", "notarealeditor", "supported:", EditorAntigravity} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestEditor_Boundary_MixedKnownAndUnknownEditorIDs(t *testing.T) {
+	// A known id alongside an unknown one must fail the whole run rather than silently
+	// synthesizing only the known subset (the bug this PR closes).
+	set, err := Synthesize(Options{Editors: []string{"vscode", "notarealeditor"}})
+	if err == nil {
+		t.Fatalf("expected error for mixed known/unknown editors, got set: %+v", set)
+	}
+	if set != nil {
+		t.Errorf("expected nil set on mixed known/unknown editors, got %+v", set)
+	}
+	if !strings.Contains(err.Error(), "notarealeditor") {
+		t.Errorf("error %q does not name the unknown id", err.Error())
+	}
+}
+
+func TestEditor_Boundary_DuplicateAntigravityAlias(t *testing.T) {
+	set, err := Synthesize(Options{Editors: []string{"antigravity", "agy", "antigravity-ide"}})
+	if err != nil {
+		t.Fatalf("Synthesize with duplicate aliases failed: %v", err)
+	}
+	if len(set.Editors) != 1 || set.Editors[0] != EditorAntigravity {
+		t.Errorf("duplicate aliases did not dedupe: %v", set.Editors)
+	}
+	if len(set.Files) != 3 {
+		t.Errorf("expected 3 VS Code family files for deduped antigravity, got %d", len(set.Files))
 	}
 }

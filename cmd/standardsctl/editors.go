@@ -13,7 +13,7 @@ const maxReportedEditorFiles = 512
 
 func runEditors(args []string) error {
 	if len(args) < 1 {
-		fmt.Println("Usage: praetorctl editors <generate|verify> [--path=.]")
+		fmt.Println("Usage: praetorctl editors <generate|verify> [--path=.] [--editors=a,b]")
 		return nil
 	}
 
@@ -22,6 +22,8 @@ func runEditors(args []string) error {
 
 	fs := flag.NewFlagSet("editors "+sub, flag.ContinueOnError)
 	path := fs.String("path", ".", "Workspace root directory")
+	editorsFlag := fs.String("editors", "",
+		"Comma-separated editor ids/aliases to target (default: every supported editor)")
 	positional, err := parseInterspersed(fs, subArgs)
 	if err != nil {
 		return err
@@ -30,6 +32,9 @@ func runEditors(args []string) error {
 
 	opts := editor.DefaultOptions()
 	opts.WorkspaceRoot = root
+	if ids := splitCommaList(*editorsFlag); len(ids) > 0 {
+		opts.Editors = ids
+	}
 
 	switch sub {
 	case "generate":

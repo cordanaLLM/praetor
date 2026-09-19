@@ -35,7 +35,17 @@ const (
 	EditorFleet        = "fleet"
 	EditorSublime      = "sublime"
 	EditorVisualStudio = "visualstudio"
+	EditorAntigravity  = "antigravity"
 )
+
+// supportedEditorIDs lists canonical editor identifiers in a stable, reader-facing order for
+// the "unknown editor id" error. It intentionally excludes aliases: an operator sees the id to
+// pass, not every spelling that resolves to it.
+var supportedEditorIDs = []string{
+	EditorUniversal, EditorVSCode, EditorCursor, EditorWindsurf, EditorJetBrains,
+	EditorNeovim, EditorZed, EditorHelix, EditorEmacs, EditorFleet, EditorSublime,
+	EditorVisualStudio, EditorAntigravity,
+}
 
 // Options configures editor generation.
 type Options struct {
@@ -128,6 +138,7 @@ func DefaultOptions() Options {
 			EditorFleet,
 			EditorSublime,
 			EditorVisualStudio,
+			EditorAntigravity,
 		},
 		IncludeMCP: true,
 		IncludeLSP: true,
@@ -153,13 +164,17 @@ func SynthesizeContext(ctx context.Context, opts Options) (_ *EditorConfigSet, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, defaultIOTimeout)
 	defer cancel()
-	plan, err := resolvePlan(ctx, opts)
-	if err != nil {
-		return nil, err
+	editors, unknown := normalizeEditors(opts.Editors)
+	if len(unknown) > 0 {
+		return nil, fmt.Errorf("unknown editor id(s): %s; supported: %s",
+			strings.Join(unknown, ", "), strings.Join(supportedEditorIDs, ", "))
 	}
-	editors := normalizeEditors(opts.Editors)
 	if len(editors) == 0 {
 		return nil, errors.New("no valid editors declared for synthesis")
+	}
+	plan, err := resolvePlan(ctx, opts, editors)
+	if err != nil {
+		return nil, err
 	}
 
 	binDir := opts.BinaryDir
@@ -196,8 +211,8 @@ func dispatchEditorFiles(editorMap map[string]bool, opts Options, binDir, arch s
 	if editorMap[EditorUniversal] {
 		files = append(files, generateUniversalEditorConfig()...)
 	}
-	if editorMap[EditorVSCode] || editorMap[EditorCursor] || editorMap[EditorWindsurf] {
-		files = append(files, generateVSCodeFamily(binDir, opts.IncludeLSP, arch, plan)...)
+	if editorMap[EditorVSCode] || editorMap[EditorCursor] || editorMap[EditorWindsurf] || editorMap[EditorAntigravity] {
+		files = append(files, generateVSCodeFamily(binDir, opts.IncludeLSP, arch, plan, editorMap[EditorAntigravity])...)
 	}
 	for _, generator := range []struct {
 		editor   string
@@ -229,15 +244,19 @@ var editorAliases = map[string]string{
 	"emacs": EditorEmacs, "fleet": EditorFleet,
 	"sublime": EditorSublime, "sublimetext": EditorSublime,
 	"visualstudio": EditorVisualStudio, "vs": EditorVisualStudio,
+	"antigravity": EditorAntigravity, "agy": EditorAntigravity, "antigravity-ide": EditorAntigravity,
 }
 
-func normalizeEditors(input []string) []string {
+// normalizeEditors resolves input editor ids/aliases to canonical ids, deduplicated and
+// sorted. It also reports every input token that resolved to no known editor: a caller must
+// treat a non-empty unknown as fatal rather than silently synthesizing only the known subset
+// (BUG: an unrecognized --editors value previously vanished instead of failing the run).
+func normalizeEditors(input []string) (normalized, unknown []string) {
 	if len(input) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	seen := make(map[string]bool)
-	var normalized []string
 	limit := len(input)
 	if limit > maxLoopBound {
 		limit = maxLoopBound
@@ -246,6 +265,7 @@ func normalizeEditors(input []string) []string {
 	for i := 0; i < limit; i++ {
 		e, supported := editorAliases[strings.ToLower(strings.TrimSpace(input[i]))]
 		if !supported {
+			unknown = append(unknown, input[i])
 			continue
 		}
 
@@ -255,11 +275,11 @@ func normalizeEditors(input []string) []string {
 		}
 	}
 	sort.Strings(normalized)
-	return normalized
+	return normalized, unknown
 }
 
-func generateVSCodeFamily(binDir string, includeLSP bool, arch string, plan Plan) []GeneratedFile {
-	settings := buildVSCodeSettings(binDir, includeLSP, arch, plan)
+func generateVSCodeFamily(binDir string, includeLSP bool, arch string, plan Plan, includeAntigravity bool) []GeneratedFile {
+	settings := buildVSCodeSettings(binDir, includeLSP, arch, plan, includeAntigravity)
 	extensions := buildVSCodeExtensions(arch)
 	tasks := buildVSCodeTasks(plan)
 
@@ -282,12 +302,38 @@ func generateVSCodeFamily(binDir string, includeLSP bool, arch string, plan Plan
 	}
 }
 
-func buildVSCodeSettings(binDir string, includeLSP bool, arch string, plan Plan) string {
+// antigravitySearchMaxWorkspaceFileCount raises Jetski's per-workspace embedding scan bound
+// above its shipped default of 5,000 files. Confirmed against the installed IDE:
+// resources/app/extensions/antigravity/package.json, contributes.configuration
+// (antigravity.searchMaxWorkspaceFileCount, type integer, default 5000); 50000 matches issue
+// #167's measured need on repositories with large dependency trees and multi-worktree
+// checkouts, and is the value already carried in the operator's own workspace settings.
+const antigravitySearchMaxWorkspaceFileCount = 50000
+
+// antigravityWatcherExclude extends the confirmed core VS Code setting files.watcherExclude
+// (schema: patternProperties ".*" -> boolean, resources/app/out/vs/workbench in the installed
+// IDE; Antigravity is a VS Code fork and reads the same workspace setting). Entries keep the
+// inotify-heavy .workingdir tree, build output and the isolated gate/dogfood run worktrees
+// under .standards/worktrees (see .gitignore) out of Antigravity's file watcher, addressing
+// issue #167 item 2. Run retention (#167 item 1) is a separate, still-open fix.
+var antigravityWatcherExclude = map[string]any{
+	"**/.workingdir*/**":         true,
+	"**/bin/**":                  true,
+	"**/dist/**":                 true,
+	"**/.standards/worktrees/**": true,
+}
+
+func buildVSCodeSettings(binDir string, includeLSP bool, arch string, plan Plan, includeAntigravity bool) string {
 	data := map[string]any{
 		"standards.lsp.enabled":         includeLSP,
 		"standards.lsp.path":            fmt.Sprintf("${workspaceFolder}/%s/standards-lsp", binDir),
 		"standards.lsp.trace.server":    "messages",
 		"standards.sentinel.headroomMB": 1024,
+	}
+
+	if includeAntigravity {
+		data["antigravity.searchMaxWorkspaceFileCount"] = antigravitySearchMaxWorkspaceFileCount
+		data["files.watcherExclude"] = antigravityWatcherExclude
 	}
 
 	if arch == "native-gpu-systems" {

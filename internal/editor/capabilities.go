@@ -50,11 +50,11 @@ type Plan struct {
 	PrivateDirs []string
 }
 
-func resolvePlan(ctx context.Context, opts Options) (Plan, error) {
-	editors := normalizeEditors(opts.Editors)
-	if len(editors) == 0 {
-		return Plan{}, errors.New("no valid editors declared for synthesis")
-	}
+// resolvePlan builds the capability plan for an already-normalized, non-empty editors list.
+// Normalizing and validating editor ids is SynthesizeContext's job (one behaviour, one
+// implementation, HISS-19): resolvePlan trusts editors rather than re-deriving and
+// re-validating it from opts.Editors a second time.
+func resolvePlan(ctx context.Context, opts Options, editors []string) (Plan, error) {
 	root := opts.WorkspaceRoot
 	if root == "" {
 		root = "."
