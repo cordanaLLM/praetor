@@ -6,10 +6,14 @@ import (
 	"testing"
 )
 
-// A Makefile line is a rule only when a colon reaches the parser before any assignment operator.
-// Make itself draws that line, and every negative below was measured against GNU Make 4.4.1: a
-// Makefile holding only that line answers "make verify-all" with "No rule to make target
-// 'verify-all'" and exits 2, so adoption must not declare "make verify-all" against it.
+// A Makefile line is a rule only when a colon reaches the parser before any assignment operator,
+// within the text Make still reads: it cuts the line at the first unescaped "#" or ";" first, so
+// an "=" a comment or an inline recipe carries decides nothing. Make itself draws that line, and
+// every row below was measured against GNU Make 4.4.1 with a Makefile holding only that line.
+// A negative answers "make verify-all" with "No rule to make target 'verify-all'" and exits 2 --
+// except comment-before-colon and semicolon-before-colon, which Make rejects outright with
+// "missing separator"; neither declares a target, so adoption must not declare "make verify-all"
+// against any of them.
 func TestMakefileTargetDetectionSeparatesRulesFromAssignments(t *testing.T) {
 	for name, tc := range map[string]struct {
 		line string
@@ -22,6 +26,11 @@ func TestMakefileTargetDetectionSeparatesRulesFromAssignments(t *testing.T) {
 		"windows-path-dep":          {"verify-all: C:\\deps\\stamp\n\t@echo custom\n", true},
 		"substitution-prerequisite": {"verify-all: $(SRCS:.c=.o)\n\t@echo custom\n", true},
 		"target-variable-then-rule": {"verify-all: CFLAGS := -g\nverify-all:\n\t@echo custom\n", true},
+		"help-comment-assignment":   {"verify-all: lint ## run gates (FAST=1)\n\t@echo custom\n", true},
+		"trailing-comment-equals":   {"verify-all: dep # set X=1\n\t@echo custom\n", true},
+		"inline-recipe-assignment":  {"verify-all: ; FOO=1 echo c\n", true},
+		"double-colon-help-comment": {"verify-all:: dep ## run gates (X=1)\n\t@echo custom\n", true},
+		"escaped-hash-prerequisite": {"verify-all: dep\\#1\n\t@echo custom\n", true},
 		"simple-assignment":         {"verify-all := x\n", false},
 		"posix-assignment":          {"verify-all ::= x\n", false},
 		"escaped-assignment":        {"verify-all :::= x\n", false},
@@ -35,6 +44,11 @@ func TestMakefileTargetDetectionSeparatesRulesFromAssignments(t *testing.T) {
 		"substitution-value":        {"verify-all = $(SRCS:.c=.o)\n", false},
 		"value-names-target":        {"HELP = verify-all: run every gate\n", false},
 		"target-specific-variable":  {"verify-all: CFLAGS := -g\n", false},
+		"target-variable-commented": {"verify-all: CFLAGS := -g # note\n", false},
+		"target-variable-recipe":    {"verify-all: CFLAGS := -g ; echo hi\n", false},
+		"comment-before-colon":      {"verify-all # : dep\n", false},
+		"semicolon-before-colon":    {"verify-all ; x: dep\n", false},
+		"assignment-then-comment":   {"verify-all = x # a:b\n", false},
 		"recipe-line":               {"other:\n\tverify-all: not a rule\n", false},
 		"comment":                   {"# verify-all: old proposal\n", false},
 		"windows-path-target":       {"C:\\out\\verify-all: dep\n\t@echo custom\n", false},
@@ -62,6 +76,7 @@ func TestVerificationAssignmentIsNotAPreservedTarget(t *testing.T) {
 		"value-colon-assignment":  {"verify-all = docker run --rm ci:latest check\nall:\n\t@echo original\n", false},
 		"target-specific-varible": {"verify-all: CFLAGS := -g\nall:\n\t@echo original\n", false},
 		"rule":                    {"verify-all:\n\t@echo claimed\n", true},
+		"rule-with-help-comment":  {"verify-all: ## run gates (FAST=1)\n\t@echo claimed\n", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := newTestRepo(t, name)
@@ -107,6 +122,8 @@ func TestMakefileOwnershipSeparatesAssignmentsFromAmbiguousForms(t *testing.T) {
 	}{
 		"rule":                     {"verify-all:\n\t@echo custom\n", true},
 		"double-colon-rule":        {"verify-all:: dep\n\t@echo custom\n", true},
+		"help-comment-rule":        {"verify-all: lint ## run gates (FAST=1)\n\t@echo custom\n", true},
+		"inline-recipe-rule":       {"verify-all: ; FOO=1 echo c\n", true},
 		"include":                  {"include shared.mk\n", true},
 		"define":                   {"define recipe\n@echo custom\nendef\n", true},
 		"override-define":          {"override define recipe\n@echo custom\nendef\n", true},
@@ -121,6 +138,7 @@ func TestMakefileOwnershipSeparatesAssignmentsFromAmbiguousForms(t *testing.T) {
 		"recursive-value-colon":    {"verify-all = docker run --rm ci:latest check\nall:\n\t@echo original\n", false},
 		"value-names-target":       {"HELP = verify-all: run every gate\nall:\n\t@echo original\n", false},
 		"target-specific-variable": {"verify-all: CFLAGS := -g\nall:\n\t@echo original\n", false},
+		"target-variable-comment":  {"verify-all: CFLAGS := -g # note\nall:\n\t@echo original\n", false},
 		"generated-variable":       {"$(NAME) := x\n", false},
 		"plain-rule":               {"all:\n\t@echo original\n", false},
 		"empty":                    {"", false},
@@ -135,7 +153,10 @@ func TestMakefileOwnershipSeparatesAssignmentsFromAmbiguousForms(t *testing.T) {
 
 // The appended block skips a helper target the project already declares. A variable of the same
 // name declares nothing, so compile-context and audit must still be appended; without them the
-// appended verify-all recipe references prerequisites make cannot build.
+// appended verify-all recipe references prerequisites make cannot build. The rows that discriminate
+// are value-colon and target-variable, which the "first colon wins" reader took for rules, and
+// help-comment, which the target-specific-variable guard took for an assignment; the plain ":="
+// rows are regression cover, correct in every generation of the reader.
 func TestAppendedHelperTargetsIgnoreVariableAssignments(t *testing.T) {
 	plan := &VerificationPlan{Status: verificationDeclared}
 	for name, tc := range map[string]struct {
@@ -145,7 +166,10 @@ func TestAppendedHelperTargetsIgnoreVariableAssignments(t *testing.T) {
 		"assignment":        {"compile-context := x\naudit := y\nall:\n\t@echo original\n", true},
 		"override-variable": {"override compile-context := x\noverride audit := y\n", true},
 		"value-colon":       {"compile-context = go run ./x:latest\naudit = ci:audit\n", true},
+		"target-variable":   {"compile-context: CFLAGS := -g\naudit: CFLAGS := -g\n", true},
 		"rule":              {"compile-context:\n\t@echo c\naudit:\n\t@echo a\n", false},
+		"help-comment": {"compile-context: dep ## compile (X=1)\n\t@echo c\n" +
+			"audit: dep ## audit (Y=2)\n\t@echo a\n", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := appendVerificationTargets(tc.existing, plan)
@@ -158,5 +182,25 @@ func TestAppendedHelperTargetsIgnoreVariableAssignments(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Boundary: the line scan stops at maxMakefileLineBytes (HISS-02), so a longer line is read in
+// part and its ownership is unresolved rather than decided. The reader reports no target for it,
+// and mayDefineVerificationTarget reports it as ambiguous so adoption preserves the Makefile
+// instead of appending a rule that would override one Make does see. A line exactly at the bound
+// is still read whole.
+func TestMakefileScanBoundLeavesOwnershipAmbiguous(t *testing.T) {
+	const declaration = " verify-all: dep"
+	past := strings.Repeat("x", maxMakefileLineBytes) + declaration + "\n"
+	if hasVerificationTarget(past, "verify-all") {
+		t.Fatalf("target read past the %d byte scan bound", maxMakefileLineBytes)
+	}
+	if !mayDefineVerificationTarget(past) {
+		t.Fatal("a line past the scan bound must stay ambiguous so adoption preserves it")
+	}
+	at := strings.Repeat("x", maxMakefileLineBytes-len(declaration)) + declaration + "\n"
+	if !hasVerificationTarget(at, "verify-all") {
+		t.Fatalf("a line of exactly %d bytes must still be read whole", maxMakefileLineBytes)
 	}
 }
