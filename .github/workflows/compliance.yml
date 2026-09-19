@@ -71,7 +71,7 @@ jobs:
           "$DCO_DEFAULT_BRANCH"
 
       - name: REUSE Compliance Check
-        uses: fsfe/reuse-action@v5
+        uses: fsfe/reuse-action@v6
 
       - name: Verify Cross-Agent Context Synchronization (HISS-16)
         run: go run ./cmd/standardsctl compile-context --verify

@@ -40,6 +40,7 @@ jobs:
 	}
 
 	foundCheckout := false
+	foundReuse := false
 	for _, act := range actions {
 		if act.Action == "actions/checkout" {
 			foundCheckout = true
@@ -47,9 +48,18 @@ jobs:
 				t.Errorf("checkout@v3 metadata mismatch: %+v", act)
 			}
 		}
+		if act.Action == "fsfe/reuse-action" {
+			foundReuse = true
+			if act.CurrentVersion != "v5" || act.LatestVersion != "v6" || act.Deprecated {
+				t.Errorf("reuse-action@v5 metadata mismatch: %+v", act)
+			}
+		}
 	}
 	if !foundCheckout || len(deps) == 0 {
 		t.Errorf("actions/checkout was not detected or deprecations missing")
+	}
+	if !foundReuse {
+		t.Errorf("fsfe/reuse-action was not detected")
 	}
 }
 
