@@ -22,6 +22,13 @@ const (
 	// it), unlike C1-C6, because the ceiling is per surface (600 words for a persona or a
 	// skill; text-register.md), not a property of caveman prose in general.
 	RuleWordCeiling = "C7 word-ceiling"
+	// RuleTokenCeiling fires when Options.MaxTokens is set and EstimateTokens of the whole
+	// input (prose, code and structured lines together, since a dispatch pays for all of
+	// it) exceeds the ceiling. Opt-in like RuleWordCeiling: it makes the evidence-pointer
+	// bound (register.evidence, default 1500 tokens) and any other per-surface token budget
+	// enforceable wherever the text is a file 'praetorctl caveman check' can read, per
+	// text-register.md's "What is not enforced" list.
+	RuleTokenCeiling = "C8 token-ceiling"
 )
 
 const (
@@ -57,6 +64,9 @@ type Options struct {
 	// MinProseWords/MaxArticleDensity: a text under the density judgment threshold can
 	// still break a word ceiling.
 	MaxProseWords int
+	// MaxTokens bounds Report.EstimatedTokens when positive: the whole input, not prose
+	// alone, since a dispatch or an evidence bound pays for code and structure too.
+	MaxTokens int
 }
 
 func (o Options) withDefaults() Options {
@@ -90,6 +100,9 @@ type Report struct {
 	ProseWords int
 	Articles   int
 	OffRegions int
+	// EstimatedTokens is EstimateTokens of the whole input text, always computed (it is one
+	// Fields() pass) so a caller can read the cost even when Options.MaxTokens is unset.
+	EstimatedTokens int
 }
 
 // Passed reports whether the text broke no rule.
@@ -143,7 +156,7 @@ func (f *findings) sorted() []Finding {
 func Check(text string, opts Options) Report {
 	opts = opts.withDefaults()
 	lines, s := scan(text)
-	report := Report{OffRegions: s.offRegions}
+	report := Report{OffRegions: s.offRegions, EstimatedTokens: EstimateTokens(text)}
 	var found findings
 	for _, ln := range lines {
 		checkNoise(&found, ln)
@@ -161,6 +174,9 @@ func Check(text string, opts Options) Report {
 	}
 	if opts.MaxProseWords > 0 && report.ProseWords > opts.MaxProseWords {
 		found.add(0, RuleWordCeiling, fmt.Sprintf("%d prose words, limit %d", report.ProseWords, opts.MaxProseWords))
+	}
+	if opts.MaxTokens > 0 && report.EstimatedTokens > opts.MaxTokens {
+		found.add(0, RuleTokenCeiling, fmt.Sprintf("%d estimated tokens, limit %d", report.EstimatedTokens, opts.MaxTokens))
 	}
 	if s.off {
 		found.add(s.offOpen, RuleUnclosedOff, OffMarker+" without "+OnMarker)

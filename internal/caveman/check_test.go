@@ -167,6 +167,41 @@ func TestCheckWordCeiling(t *testing.T) {
 	}
 }
 
+// TestCheckTokenCeiling covers C8 positive (over the ceiling fires), negative (a zero,
+// negative or unset ceiling never fires) and boundary (exactly at the ceiling passes, one
+// token over fails). EstimateTokens is words * 1.3, so token counts are derived from it
+// rather than hand-picked, keeping the test honest against the one estimator in the
+// package.
+func TestCheckTokenCeiling(t *testing.T) {
+	text := sentences(100)
+	tokens := EstimateTokens(text)
+	report := Check(text, Options{MaxTokens: tokens - 1})
+	if report.Passed() {
+		t.Fatalf("%d estimated tokens over a %d ceiling must fail", tokens, tokens-1)
+	}
+	if rules := rulesOf(report); len(rules) != 1 || rules[0] != RuleTokenCeiling {
+		t.Fatalf("rules = %v, want [%s]", rules, RuleTokenCeiling)
+	}
+	for name, opts := range map[string]Options{
+		"zero ceiling":     {MaxTokens: 0},
+		"negative ceiling": {MaxTokens: -1},
+		"unset ceiling":    {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if report := Check(text, opts); !report.Passed() {
+				t.Errorf("no ceiling set must never fire C8: %v", report.Findings)
+			}
+		})
+	}
+	if report := Check(text, Options{MaxTokens: tokens}); !report.Passed() {
+		t.Errorf("exactly at the ceiling must pass: %v", report.Findings)
+	}
+	// EstimatedTokens is always reported, ceiling or not.
+	if got := Check(text, Options{}).EstimatedTokens; got != tokens {
+		t.Errorf("EstimatedTokens = %d, want %d", got, tokens)
+	}
+}
+
 func TestCheckIsDeterministic(t *testing.T) {
 	text := "Please note that it just works 🎉.\n\x1b[1mbold\x1b[m\nprobably fine, really."
 	first := Check(text, Options{})
