@@ -25,15 +25,29 @@ var ownerOnlyPrefixes = []string{".config/fleet.yaml", ".config/fleet-topology.y
 type identity struct{ Owner, Name, Visibility string }
 
 func mappingValue(node *yaml.Node, key string) (*yaml.Node, error) {
+	value, ok, err := optionalMappingValue(node, key)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("required manifest field missing: %s", key)
+	}
+	return value, nil
+}
+
+// optionalMappingValue is mappingValue's shared scan, reused for a key whose absence is a normal
+// outcome rather than a decode error (repository.source before the first overlay, #268). It fails
+// only when node itself is not a mapping; a present-but-absent key comes back as (nil, false, nil).
+func optionalMappingValue(node *yaml.Node, key string) (*yaml.Node, bool, error) {
 	if node.Kind != yaml.MappingNode {
-		return nil, errors.New("expected YAML mapping")
+		return nil, false, errors.New("expected YAML mapping")
 	}
 	for i := 0; i < len(node.Content) && i < 10000; i += 2 {
 		if node.Content[i].Value == key {
-			return node.Content[i+1], nil
+			return node.Content[i+1], true, nil
 		}
 	}
-	return nil, fmt.Errorf("required manifest field missing: %s", key)
+	return nil, false, nil
 }
 
 // setMappingScalar sets an existing top-level string scalar of node to value, or appends a new
@@ -129,15 +143,8 @@ func ownerManifest(raw []byte, owner identity) ([]byte, error) {
 	if source.Name != owner.Name {
 		return nil, errors.New("repository name differs from source")
 	}
-	for key, value := range map[string]string{"owner": owner.Owner, "visibility": owner.Visibility} {
-		node, err := mappingValue(repo, key)
-		if err != nil {
-			return nil, err
-		}
-		if node.Anchor != "" {
-			return nil, fmt.Errorf("repository.%s anchor could change unrelated aliases", key)
-		}
-		node.Value = value
+	if err := setOwnerFields(repo, owner); err != nil {
+		return nil, err
 	}
 	// repository.source records the public identity the overlay is rewriting owner/name away
 	// from, so internal/forge can resolve the fork's guarded workflows and required-context
@@ -157,6 +164,24 @@ func ownerManifest(raw []byte, owner identity) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// setOwnerFields overwrites repository.owner and repository.visibility on an already-validated
+// repository mapping node, refusing either key if it carries an anchor (an anchor could change
+// unrelated manifest aliases elsewhere in the document). Split out of ownerManifest to keep its
+// cyclomatic complexity within HISS-04's bound.
+func setOwnerFields(repo *yaml.Node, owner identity) error {
+	for key, value := range map[string]string{"owner": owner.Owner, "visibility": owner.Visibility} {
+		node, err := mappingValue(repo, key)
+		if err != nil {
+			return err
+		}
+		if node.Anchor != "" {
+			return fmt.Errorf("repository.%s anchor could change unrelated aliases", key)
+		}
+		node.Value = value
+	}
+	return nil
+}
+
 // sourceIdentity reports the public identity ownerManifest should record as repository.source.
 // A manifest with no source field yet derives it from the manifest's own current owner/name --
 // the first overlay applied to the canonical manifest (#255). A manifest that already carries a
@@ -167,8 +192,11 @@ func ownerManifest(raw []byte, owner identity) ([]byte, error) {
 // manifest's own name is refused by ownerManifest's existing name check below, the same as a
 // first-overlay manifest whose name never matched owner in the first place.
 func sourceIdentity(repo *yaml.Node, current identity) (identity, error) {
-	node, err := mappingValue(repo, "source")
+	node, ok, err := optionalMappingValue(repo, "source")
 	if err != nil {
+		return identity{}, err
+	}
+	if !ok {
 		return current, nil
 	}
 	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" || node.Anchor != "" || node.Value == "" {
