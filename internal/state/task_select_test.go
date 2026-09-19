@@ -162,13 +162,32 @@ func TestTasksRefuseAnUnterminatedCodeFence(t *testing.T) {
 	if _, err := ArchiveCompletedTasks(root, "fixture"); err == nil {
 		t.Fatal("archive accepted a ledger with an unterminated fence")
 	}
+	// Addition is the command that writes into the fence rather than reading
+	// through it: it appended the row inside the open block, reported success,
+	// and left a ledger every other command and `state sync` then refused.
+	if err := AddTask(root, "raise the alarm"); err == nil {
+		t.Fatal("addition accepted a ledger with an unterminated fence")
+	} else if !strings.Contains(err.Error(), "unterminated code fence opened at line 2") {
+		t.Fatalf("addition error does not locate the fence: %v", err)
+	}
 	assertOpenUnchanged(t, openPath, ledger)
 
-	// Boundary: the same ledger with the fence closed lists both rows again.
-	closed, _ := writeOpenLedger(t, ledger[:len("# Open\n```sh\npraetorctl state task add x\n")]+"```\n- [ ] ship the release\n- [ ] file the receipt\n")
+	// Boundary: the same ledger with the fence closed lists both rows again, and
+	// takes the row the refused addition would have written.
+	closed, closedPath := writeOpenLedger(t, ledger[:len("# Open\n```sh\npraetorctl state task add x\n")]+"```\n- [ ] ship the release\n- [ ] file the receipt\n")
 	reopened, err := ListTasks(closed)
 	if err != nil || len(reopened) != 2 {
 		t.Fatalf("closed fence hid rows: %d, %v", len(reopened), err)
+	}
+	if err := AddTask(closed, "raise the alarm"); err != nil {
+		t.Fatalf("addition refused a closed fence: %v", err)
+	}
+	appended, err := ListTasks(closed)
+	if err != nil || len(appended) != 3 || appended[2].Description != "raise the alarm" {
+		t.Fatalf("addition after a closed fence: %d rows, %v", len(appended), err)
+	}
+	if body, err := os.ReadFile(closedPath); err != nil || !strings.HasSuffix(string(body), "- [ ] raise the alarm\n") {
+		t.Fatalf("appended row is not the last line: %q, %v", body, err)
 	}
 }
 

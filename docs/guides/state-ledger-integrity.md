@@ -114,7 +114,7 @@ invalid UTF-8 or more than 16 KiB are errors, never skipped rows
 | numeric selector | resolves only by that number; it never falls back to matching a digit inside a description, and a number naming an already completed row is refused |
 | text selector | must match exactly one pending description; more than one match is an error listing the candidates, as `selectMilestone` does for milestones |
 | code fences | a checkbox inside a ``` or `~~~` fence is an example, never a task: it is not listed, completed or archived |
-| unterminated fence | a fence opened and never closed is a ledger error naming the line it was opened on; every command refuses the file rather than silently dropping the rows after it |
+| unterminated fence | a fence opened and never closed is a ledger error naming the line it was opened on; `list`, `complete`, `archive`, `add` and `state sync` all refuse the file rather than silently dropping the rows after it, and `add` refuses rather than appending a row inside the open fence |
 
 A refused selector writes nothing, so `OPEN.md` stays byte-identical. The
 fence tracker is `util.MarkdownFence` in `internal/util/marked_block.go`, the one

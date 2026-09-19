@@ -58,7 +58,11 @@ func ListTasksContext(ctx context.Context, rootPath string) ([]TaskItem, error) 
 	return items, nil
 }
 
-// AddTask appends a new pending task item to OPEN.md.
+// AddTask appends a new pending task item to OPEN.md. The file is parsed through
+// parseTaskLines first, exactly as listing and completion parse it, so a ledger
+// the other commands refuse is not appended to: a row written under an
+// unterminated code fence lands inside the fence, reads as an example to every
+// later scan, and reports success while doing it.
 func AddTask(rootPath, description string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -75,6 +79,10 @@ func AddTask(rootPath, description string) error {
 	content, err := contextopt.ReadSnapshot(ctx, openFile)
 	if err != nil {
 		return fmt.Errorf("read OPEN.md: %w", err)
+	}
+
+	if _, err := parseTaskLines(strings.Split(string(content), "\n")); err != nil {
+		return err
 	}
 
 	newEntry := fmt.Sprintf("- [ ] %s\n", trimmed)
