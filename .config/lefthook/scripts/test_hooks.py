@@ -30,6 +30,19 @@ GUARD = ROOT / ".config/agent/hooks/block_evasion.py"
 # Make and Git localize their diagnostics; pin the message catalogue so
 # assertions on tool output hold on workstations with non-English locales.
 LOCALE_ENV = {"LC_ALL": "C", "LANGUAGE": "C"}
+# windows-latest's git defaults core.autocrlf=true (the same runner default #282 pinned
+# .gitattributes eol=lf against for the real tree's *.go and archetype yaml files). Every
+# fixture repo this file builds is its own throwaway git repository with no .gitattributes
+# of its own, so `git checkout-index` inside common.snapshot() -- the pre-commit hook's own
+# export step -- reintroduced CRLF into a fixture-committed .go file before gofmt ever saw
+# it, and gofmt reports any CRLF file as unformatted. That masked
+# test_vet_checks_staged_go_package's intended "go vet: wrong type" assertion behind
+# "Run gofmt and stage the intended changes: main.go" on Windows. Forcing autocrlf off for
+# every git invocation this suite makes (env, not a per-repo `git config`, so it also covers
+# the hook's own subprocess tree once lefthook and the Python hooks inherit it) is the one
+# shared fix, matching how internal/bump pins -c core.autocrlf=false for the same reason (#282).
+NO_AUTOCRLF_ENV = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.autocrlf",
+                   "GIT_CONFIG_VALUE_0": "false"}
 # The CLI a fixture carries, named as hooks.praetorctl_path() looks for it: with the host's
 # executable suffix. The fixture used to link an extensionless bin/praetorctl, which the hooks
 # never found on Windows.
@@ -65,7 +78,7 @@ def command(repo, *args, data=None, ok=True, maintain_state=True):
     if (maintain_state and args[:2] in (("git", "commit"), ("git", "push"))
             and (repo / PRAETORCTL).is_file()):
         command(repo, cli_path(repo), "state", "sync", ".", ok=ok)
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", **LOCALE_ENV)
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", **LOCALE_ENV, **NO_AUTOCRLF_ENV)
     for key in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
         env.pop(key, None)
     result = subprocess.run(args, cwd=repo, env=env, input=data, capture_output=True,
