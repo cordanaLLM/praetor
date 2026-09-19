@@ -8,10 +8,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,25 +71,36 @@ func render(t *testing.T, release string, args ...string) []document {
 	return decode(t, out)
 }
 
-func decode(t *testing.T, manifest []byte) []document {
-	t.Helper()
+// decodeDocuments decodes a manifest stream under a scalar bound (HISS-02). The
+// loop runs one iteration past the bound so that a stream of exactly
+// maxDocuments documents reaches io.EOF and is accepted; stopping at the bound
+// itself would report an overflow for a stream that is within it.
+func decodeDocuments(manifest []byte) ([]document, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(manifest))
 	documents := make([]document, 0, maxDocuments)
-	for i := 0; i < maxDocuments; i++ {
+	for i := 0; i < maxDocuments+1; i++ {
 		var doc document
 		err := decoder.Decode(&doc)
 		if errors.Is(err, io.EOF) {
-			return documents
+			return documents, nil
 		}
 		if err != nil {
-			t.Fatalf("decode rendered manifest: %v", err)
+			return nil, fmt.Errorf("decode rendered manifest: %w", err)
 		}
 		if len(doc) > 0 {
 			documents = append(documents, doc)
 		}
 	}
-	t.Fatalf("rendered manifest holds more than %d documents", maxDocuments)
-	return nil
+	return nil, fmt.Errorf("rendered manifest holds more than %d documents", maxDocuments)
+}
+
+func decode(t *testing.T, manifest []byte) []document {
+	t.Helper()
+	documents, err := decodeDocuments(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return documents
 }
 
 func ofKind(docs []document, kind string) []document {
@@ -110,26 +123,58 @@ func name(doc document) string {
 	return value
 }
 
-// podSpec reads spec.template.spec of a Deployment.
+// only returns the single rendered object of a kind, failing the test when the
+// chart renders any other number of them.
+func only(t *testing.T, docs []document, kind string) document {
+	t.Helper()
+	matched := ofKind(docs, kind)
+	if len(matched) != 1 {
+		t.Fatalf("expected exactly one %s, got %d", kind, len(matched))
+	}
+	return matched[0]
+}
+
+// child walks a chain of nested mappings, failing the test at the first key that
+// is absent or is not itself a mapping.
+func child(t *testing.T, doc document, path ...string) document {
+	t.Helper()
+	current := doc
+	for i := 0; i < len(path); i++ {
+		next, ok := current[path[i]].(document)
+		if !ok {
+			t.Fatalf("no mapping at %s", strings.Join(path[:i+1], "."))
+		}
+		current = next
+	}
+	return current
+}
+
+// podSpec reads spec.template.spec of the rendered Deployment.
 func podSpec(t *testing.T, docs []document) document {
 	t.Helper()
-	deployments := ofKind(docs, "Deployment")
-	if len(deployments) != 1 {
-		t.Fatalf("expected exactly one Deployment, got %d", len(deployments))
+	return child(t, only(t, docs, "Deployment"), "spec", "template", "spec")
+}
+
+// wantExactly asserts a label mapping holds those keys and no others, which is
+// what a selector needs: an extra key changes what the selector matches.
+func wantExactly(t *testing.T, where string, got document, want map[string]string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s = %v, want exactly %v", where, got, want)
 	}
-	spec, ok := deployments[0]["spec"].(document)
-	if !ok {
-		t.Fatal("Deployment has no spec mapping")
+	for key, value := range want {
+		if got[key] != value {
+			t.Fatalf("%s[%q] = %v, want %q", where, key, got[key], value)
+		}
 	}
-	template, ok := spec["template"].(document)
-	if !ok {
-		t.Fatal("Deployment has no spec.template mapping")
+}
+
+// selectorLabels is the label set praetor.selectorLabels renders for a release.
+func selectorLabels(chartName, release string) map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":     chartName,
+		"app.kubernetes.io/instance": release,
 	}
-	pod, ok := template["spec"].(document)
-	if !ok {
-		t.Fatal("Deployment has no spec.template.spec mapping")
-	}
-	return pod
 }
 
 func names(docs []document) map[string]bool {
@@ -144,12 +189,14 @@ func names(docs []document) map[string]bool {
 // Deployment runs as it, and the pod mounts no token it cannot use.
 func TestDefaultValuesRenderServiceAccountTheDeploymentUses(t *testing.T) {
 	docs := render(t, "alpha")
-	accounts := ofKind(docs, "ServiceAccount")
-	if len(accounts) != 1 {
-		t.Fatalf("expected one ServiceAccount, got %d", len(accounts))
-	}
-	if got := name(accounts[0]); got != "alpha-praetor" {
+	account := only(t, docs, "ServiceAccount")
+	if got := name(account); got != "alpha-praetor" {
 		t.Fatalf("ServiceAccount name = %q, want alpha-praetor", got)
+	}
+	// BUG-661 is fixed on both objects: the pod declines the mount and the
+	// account declines to hand one out, so neither half can be dropped alone.
+	if got := account["automountServiceAccountToken"]; got != false {
+		t.Fatalf("ServiceAccount automountServiceAccountToken = %v, want false", got)
 	}
 	pod := podSpec(t, docs)
 	if got := pod["serviceAccountName"]; got != "alpha-praetor" {
@@ -184,6 +231,50 @@ func TestExplicitServiceAccountNameWinsWithoutCreation(t *testing.T) {
 	}
 }
 
+// Positive: with create=true an explicit serviceAccount.name wins over the
+// release-scoped default, on the created object and on the pod alike. This is
+// the migration path out of the breaking rename in this change: an existing
+// release keeps its praetor-sa account by setting the name.
+func TestServiceAccountCreateTrueHonoursExplicitName(t *testing.T) {
+	docs := render(t, "alpha", "--set", "serviceAccount.name=praetor-sa")
+	if got := name(only(t, docs, "ServiceAccount")); got != "praetor-sa" {
+		t.Fatalf("ServiceAccount name = %q, want praetor-sa", got)
+	}
+	if got := podSpec(t, docs)["serviceAccountName"]; got != "praetor-sa" {
+		t.Fatalf("serviceAccountName = %v, want praetor-sa", got)
+	}
+	// The other names stay release-scoped, so the opt-out is scoped to the account.
+	if got := name(only(t, docs, "Deployment")); got != "alpha-praetor" {
+		t.Fatalf("Deployment name = %q, want alpha-praetor", got)
+	}
+}
+
+// Boundary: spec.selector cannot be edited after a Deployment exists, so the
+// label set it matches on is pinned exactly here; renaming a selector label
+// turns `helm upgrade` on a live release into a hard failure.
+func TestSelectorLabelsPinTheImmutableFields(t *testing.T) {
+	docs := render(t, "alpha")
+	want := selectorLabels("praetor", "alpha")
+	deployment := only(t, docs, "Deployment")
+	wantExactly(t, "Deployment spec.selector.matchLabels",
+		child(t, deployment, "spec", "selector", "matchLabels"), want)
+	wantExactly(t, "pod template metadata.labels",
+		child(t, deployment, "spec", "template", "metadata", "labels"), want)
+	wantExactly(t, "Service spec.selector",
+		child(t, only(t, docs, "Service"), "spec", "selector"), want)
+	// The object labels are a superset: the selector subset plus release metadata.
+	labels := child(t, deployment, "metadata", "labels")
+	for key, value := range want {
+		if labels[key] != value {
+			t.Fatalf("Deployment metadata.labels[%q] = %v, want %q", key, labels[key], value)
+		}
+	}
+	if labels["app.kubernetes.io/managed-by"] != "Helm" {
+		t.Fatalf("metadata.labels app.kubernetes.io/managed-by = %v, want Helm",
+			labels["app.kubernetes.io/managed-by"])
+	}
+}
+
 // Boundary: two releases share a namespace, so no rendered name may repeat.
 func TestTwoReleasesShareNoResourceName(t *testing.T) {
 	first := names(render(t, "alpha"))
@@ -212,16 +303,17 @@ func TestFullnameOverrideWinsOverNameOverride(t *testing.T) {
 	}
 }
 
-// Boundary: nameOverride alone renames within the release scope.
+// Boundary: nameOverride alone renames within the release scope, and it also
+// moves app.kubernetes.io/name, which docs/guides/helm-chart.md documents and
+// which the immutable Deployment selector matches on.
 func TestNameOverrideKeepsReleaseScope(t *testing.T) {
 	docs := render(t, "alpha", "--set", "nameOverride=alt")
-	accounts := ofKind(docs, "ServiceAccount")
-	if len(accounts) != 1 {
-		t.Fatalf("expected one ServiceAccount, got %d", len(accounts))
-	}
-	if got := name(accounts[0]); got != "alpha-alt" {
+	if got := name(only(t, docs, "ServiceAccount")); got != "alpha-alt" {
 		t.Fatalf("ServiceAccount name = %q, want alpha-alt", got)
 	}
+	wantExactly(t, "Deployment spec.selector.matchLabels",
+		child(t, only(t, docs, "Deployment"), "spec", "selector", "matchLabels"),
+		selectorLabels("alt", "alpha"))
 }
 
 // Positive: imagePullSecrets reach the pod spec; empty by default it renders no
@@ -238,5 +330,37 @@ func TestImagePullSecretsReachThePodSpec(t *testing.T) {
 	entry, ok := secrets[0].(document)
 	if !ok || entry["name"] != "ghcr-credentials" {
 		t.Fatalf("imagePullSecrets[0] = %v, want name ghcr-credentials", secrets[0])
+	}
+}
+
+// manifestOf builds a stream of n minimal documents, itself bounded by the
+// constant the callers derive n from (HISS-02).
+func manifestOf(n int) []byte {
+	var buf bytes.Buffer
+	for i := 0; i < n && i <= maxDocuments+1; i++ {
+		if i > 0 {
+			buf.WriteString("---\n")
+		}
+		buf.WriteString("kind: Probe\n")
+	}
+	return buf.Bytes()
+}
+
+// Positive, boundary and negative for the decode bound: a short stream and a
+// stream of exactly maxDocuments documents are both within the bound and decode
+// whole; the first document past the bound is refused. The loop used to stop at
+// the bound itself, so a 64-document manifest reported "more than 64 documents".
+func TestDecodeBoundsTheDocumentStream(t *testing.T) {
+	for _, count := range []int{1, maxDocuments} {
+		documents, err := decodeDocuments(manifestOf(count))
+		if err != nil {
+			t.Fatalf("%d documents: %v", count, err)
+		}
+		if len(documents) != count {
+			t.Fatalf("decoded %d documents from a %d-document manifest", len(documents), count)
+		}
+	}
+	if _, err := decodeDocuments(manifestOf(maxDocuments + 1)); err == nil {
+		t.Fatalf("a %d-document manifest decoded without an overflow error", maxDocuments+1)
 	}
 }
