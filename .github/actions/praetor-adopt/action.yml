@@ -24,7 +24,7 @@ inputs:
     required: false
     default: "true"
   go-version:
-    description: "Go version to install; mirrors the go directive in praetor's go.mod"
+    description: "Go toolchain the step builds standardsctl with; the default mirrors the go directive in praetor's go.mod"
     required: false
     default: "1.27"
 
@@ -66,7 +66,15 @@ runs:
       run: |
         set -euo pipefail
 
-        source_root="${GITHUB_ACTION_PATH:-.}/../../.."
+        # Every branch below is about identifying praetor, so an unset GITHUB_ACTION_PATH has no
+        # safe default: three directories above the runner's working directory is somebody else's
+        # tree, and the guard would accept it as praetor whenever it happens to hold a go.mod.
+        if [ -z "${GITHUB_ACTION_PATH:-}" ]; then
+          echo "praetor-adopt: GITHUB_ACTION_PATH is unset; a composite action cannot locate its own checkout" >&2
+          exit 1
+        fi
+
+        source_root="$GITHUB_ACTION_PATH/../../.."
         ref="${PRAETOR_ACTION_REF:-}"
         bin_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
         binary="$bin_dir/standardsctl"
@@ -76,13 +84,31 @@ runs:
           binary="$binary.exe"
         fi
 
-        if [ -f "$source_root/go.mod" ] && [ -d "$source_root/cmd/standardsctl" ]; then
+        # The directory has to *be* praetor, not merely look like a Go module that has a
+        # cmd/standardsctl: with `uses: ./.github/actions/praetor-adopt` the three levels up are
+        # the adopter's own workspace, and building that runs a binary that is not praetor.
+        module=""
+        if [ -f "$source_root/go.mod" ]; then
+          module="$(sed -n 's/^module[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' "$source_root/go.mod" | head -n 1 | tr -d '\r')"
+        fi
+
+        if [ "$module" = "github.com/cordanaLLM/praetor" ] && [ -d "$source_root/cmd/standardsctl" ]; then
           go build -C "$source_root" -o "$binary" ./cmd/standardsctl
-        elif [ -n "$ref" ]; then
-          GOBIN="$bin_dir" go install "github.com/cordanaLLM/praetor/cmd/standardsctl@$ref"
-        else
+        elif [ -z "$ref" ]; then
           echo "praetor-adopt: no praetor source next to the action and no action ref to install" >&2
           exit 1
+        else
+          # go reserves latest, upgrade and patch as version queries (go/ref/mod, "Version
+          # queries"), so `@latest` asks the proxy for its highest release instead of resolving
+          # the moving tag of that name this repository publishes (docs/guides/releasing.md).
+          # Installing it would run a commit the caller never pinned.
+          case "$ref" in
+            latest | upgrade | patch)
+              echo "praetor-adopt: '$ref' is a go version query rather than a ref; pin a tag, a branch or a commit" >&2
+              exit 1
+              ;;
+          esac
+          GOBIN="$bin_dir" go install "github.com/cordanaLLM/praetor/cmd/standardsctl@$ref"
         fi
 
         echo "binary=$binary" >> "$GITHUB_OUTPUT"
@@ -108,7 +134,7 @@ runs:
       run: |
         set -euo pipefail
 
-        bin="${PRAETOR_BIN:-standardsctl}"
+        bin="${PRAETOR_BIN:-}"
         report="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/praetor-adopt-report.txt"
         : > "$report"
 
@@ -149,6 +175,12 @@ runs:
           esac
         }
 
+        # An empty PRAETOR_BIN means the build step published no binary. Falling back to whatever
+        # `standardsctl` PATH resolves to would run a praetor unrelated to the caller's ref, which
+        # is the defect the build step exists to close, so the step refuses instead.
+        if [ -z "$bin" ]; then
+          reject "the build step published no standardsctl path; refusing to resolve one from PATH"
+        fi
         if [ -z "$PRAETOR_PATH" ]; then
           reject "the 'path' input names the repository to work on and must not be empty"
         fi
@@ -176,8 +208,12 @@ runs:
         set +e
         "$bin" "${args[@]}" 2>&1 | tee -a "$report"
         status=${PIPESTATUS[0]}
+        # compile-context resolves --source and --target-dir against the runner's working
+        # directory, not against what adopt just wrote, so both have to name the same repository
+        # the adopt run was given or the verify decides the step's exit status on another tree.
         if [ "$status" -eq 0 ] && [ "$PRAETOR_MODE" != "dogfood" ]; then
-          "$bin" compile-context --verify 2>&1 | tee -a "$report"
+          "$bin" compile-context --verify "--source=$PRAETOR_PATH/AGENTS.md" \
+            "--target-dir=$PRAETOR_PATH" 2>&1 | tee -a "$report"
           status=${PIPESTATUS[0]}
         fi
         set -e
