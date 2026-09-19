@@ -72,11 +72,23 @@ never lower it to turn a red run green.
 
 A failing suite must also be readable from the log alone. The driver used to print a failed
 suite's last 25 lines, which on a `unittest` run is the trailing summary: the Windows leg said a
-suite had failed without naming a single test. It now parses unittest's own block headers and
-names every failed and errored case, so the log states which assertions broke on which platform
-rather than that something did. Its internal Makefile check compares `Path.as_posix()` against
-the slash paths it reads, because a host-shaped string compared against a recorded one is the
-separator defect this invariant forbids, reached from inside the gate itself.
+suite had failed without naming a single test. It now parses unittest's own block headers, names
+every failed and errored case, and prints each case's own block rather than the tail of the run —
+a macOS run that failed four cases published one traceback and left the other three to be
+attributed by reading the code. Both are bounded, so a noisy suite cannot bury the log, and the
+tail is still printed when nothing parses as a block. Its internal Makefile check compares
+`Path.as_posix()` against the slash paths it reads, because a host-shaped string compared against
+a recorded one is the separator defect this invariant forbids, reached from inside the gate
+itself.
+
+Every external tool the job's gates shell out to is installed by the job, pinned, on every leg:
+`lefthook`, `gosec`, `yamllint` and `shellcheck`. None of them is assumed present. A tool that
+ships on one runner image and not another produced a gate that failed closed on the images
+without it — `.config/lefthook/scripts/checks.py` runs `shellcheck` over every shell file in a
+push and `common.run` raises on a missing binary, so the macOS leg rejected every push the
+self-tests drive. The version is pinned identically on Linux too, where the image already
+carries one: a rule set that differs per platform is not a reproducible gate (HISS-20), so the
+job's own copy goes first on `PATH`.
 
 ## Required status checks for a matrix job
 
@@ -235,3 +247,24 @@ labelled a real, host-produced temporary path with a hardcoded `GOOS: "linux"`. 
 where found and confirmed only on Linux, since this work has no Windows host to verify against;
 the Windows leg carried substantially more failing packages than macOS did, and this pass does
 not claim to have closed all of them — see the PR for what remains open under #132.
+
+**Third pass.** What remained after the two passes above was, on both legs, one question asked
+in several places: *is this the same directory?* A directory has many spellings — an ancestor
+symlink on macOS, an 8.3 short name and a drive-letter case on Windows — and each site compared
+spellings as strings. `internal/harvester` published `GitCommonDir` unresolved, so a checkout and
+its linked worktree stopped matching; `internal/state` hashed the repository path unresolved, so
+a hook and the tool it invokes derived different state bindings and every commit and push was
+refused as stale. Both now go through `internal/util.ResolveExistingPath`, and the two
+"same directory?" predicates that had grown in `internal/harvester` and `internal/adopt` collapse
+onto one `internal/util.SameDirectory` that answers by inode rather than by string (HISS-19).
+The condition is forced portably in tests by an aliased ancestor, so Linux runs the same case.
+
+The remaining failures were fixtures asserting what a platform cannot express, and each is now
+guarded by the predicate that already existed for it rather than by a new one: a rooted path
+without a volume is not absolute on Windows (the volume-aware fixture helpers from the second
+pass, applied to the call sites its sweep missed); `os.FileInfo.Mode()` carries no POSIX
+permission on NTFS (`util.ModeIsProtection`); repair execution needs Linux file isolation
+(`requireRepairIsolation`, which one case in `internal/repairrun` never asked for, so a nil
+result panicked and aborted the package's whole test binary). One fixture could not exist at all
+on a case-insensitive filesystem and was rebuilt so that it need not. `common.py` also learned to
+reap a bounded command's descendants on the platform with no process group.
