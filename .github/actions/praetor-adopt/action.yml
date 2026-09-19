@@ -30,7 +30,7 @@ inputs:
 
 outputs:
   report:
-    description: "JSON or text summary of adoption / dogfooding run"
+    description: "Combined output of the adoption / dogfooding run, written by the run step"
     value: ${{ steps.run-praetor.outputs.report }}
 
 runs:
@@ -42,37 +42,90 @@ runs:
         go-version: ${{ inputs.go-version }}
         check-latest: true
 
+    # This step owns the question "which binary runs the command" and answers it once, as a step
+    # output. The fallback build lands in the runner's own temporary directory rather than in /tmp:
+    # on a self-hosted runner /tmp is shared between jobs, so a binary a previous job left behind
+    # would be picked up here in place of the one this job resolved.
     - name: Build standardsctl
+      id: build-standardsctl
       shell: bash
       run: |
-        go install github.com/cordanaLLM/praetor/cmd/standardsctl@latest || go build -o /tmp/standardsctl ./cmd/standardsctl
+        set -euo pipefail
+        if go install github.com/cordanaLLM/praetor/cmd/standardsctl@latest; then
+          echo "binary=standardsctl" >> "$GITHUB_OUTPUT"
+        else
+          fallback="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/standardsctl"
+          go build -o "$fallback" ./cmd/standardsctl
+          echo "binary=$fallback" >> "$GITHUB_OUTPUT"
+        fi
 
+    # Every value this step needs arrives through env. An expression written into a run body is
+    # substituted into the script *text* before bash parses it, so an adopter's path or mode would
+    # be executed rather than passed; through env it is data, and the array keeps it one argument
+    # even when it carries ;, $(...) or a newline.
     - name: Execute Praetor Action
       id: run-praetor
       shell: bash
+      env:
+        PRAETOR_BIN: ${{ steps.build-standardsctl.outputs.binary }}
+        PRAETOR_PATH: ${{ inputs.path }}
+        PRAETOR_MODE: ${{ inputs.mode }}
+        PRAETOR_DRY_RUN: ${{ inputs.dry-run }}
+        PRAETOR_FORCE: ${{ inputs.force }}
+        PRAETOR_RECORD_BASELINE: ${{ inputs.record-baseline }}
       run: |
-        CMD="standardsctl"
-        if [ -f /tmp/standardsctl ]; then
-          CMD="/tmp/standardsctl"
+        set -euo pipefail
+
+        bin="${PRAETOR_BIN:-standardsctl}"
+        if [ -z "$PRAETOR_PATH" ]; then
+          echo "praetor-adopt: the 'path' input names the repository to work on and must not be empty" >&2
+          exit 1
         fi
 
-        if [ "${{ inputs.mode }}" = "dogfood" ]; then
-          DRY_FLAG=""
-          if [ "${{ inputs.dry-run }}" = "true" ]; then
-            DRY_FLAG="--dry-run"
+        if [ "$PRAETOR_MODE" = "dogfood" ]; then
+          args=(dogfood "--path=$PRAETOR_PATH")
+          if [ "$PRAETOR_DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
           fi
-          $CMD dogfood --path="${{ inputs.path }}" $DRY_FLAG
         else
-          FLAGS="--path=${{ inputs.path }}"
-          if [ "${{ inputs.dry-run }}" = "true" ]; then
-            FLAGS="$FLAGS --dry-run"
+          args=(adopt "--path=$PRAETOR_PATH")
+          if [ "$PRAETOR_DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
           fi
-          if [ "${{ inputs.force }}" = "true" ]; then
-            FLAGS="$FLAGS --force"
+          if [ "$PRAETOR_FORCE" = "true" ]; then
+            args+=(--force)
           fi
-          if [ "${{ inputs.record-baseline }}" = "true" ]; then
-            FLAGS="$FLAGS --record-baseline"
+          if [ "$PRAETOR_RECORD_BASELINE" = "true" ]; then
+            args+=(--record-baseline)
           fi
-          $CMD adopt $FLAGS
-          $CMD compile-context --verify
         fi
+
+        report="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/praetor-adopt-report.txt"
+        : > "$report"
+
+        # The run is allowed to fail: its output is the report, and the step reports the failure
+        # through its own exit status after the output has been written.
+        set +e
+        "$bin" "${args[@]}" 2>&1 | tee -a "$report"
+        status=${PIPESTATUS[0]}
+        if [ "$status" -eq 0 ] && [ "$PRAETOR_MODE" != "dogfood" ]; then
+          "$bin" compile-context --verify 2>&1 | tee -a "$report"
+          status=${PIPESTATUS[0]}
+        fi
+        set -e
+
+        # A multiline output needs a delimiter that cannot appear on a line of its own inside the
+        # value (GitHub, "Workflow commands", multiline strings), so it is drawn at random.
+        random="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || true)"
+        if [ -z "$random" ]; then
+          random="${RANDOM}${RANDOM}${RANDOM}${RANDOM}"
+        fi
+        delimiter="praetor-report-$random"
+        body="$(cat "$report")"
+        {
+          printf 'report<<%s\n' "$delimiter"
+          printf '%s\n' "$body"
+          printf '%s\n' "$delimiter"
+        } >> "$GITHUB_OUTPUT"
+
+        exit "$status"
