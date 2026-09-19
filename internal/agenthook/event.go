@@ -16,10 +16,16 @@ import (
 // Event is a canonical hook event, independent of any client's native event name.
 type Event string
 
-// Canonical events served by the entrypoint.
+// Canonical events served by the entrypoint. pre-edit and post-tool (section 3.1 of the
+// rollout spec) are not wired yet: their evaluator is H2's checkpoint.py hand-off, not
+// built here.
 const (
 	EventPreTool     Event = "pre-tool"
 	EventEnvironment Event = "environment"
+	// EventStop is the client's execution-loop-termination event. Only the agy dialect
+	// decodes and encodes it today (H3); the other clients gain it with H2's checkpoint
+	// state-ledger verify.
+	EventStop Event = "stop"
 )
 
 // Input and output bounds (HISS-02). MaxInputBytes is the bound of the Python adapters.
@@ -40,6 +46,19 @@ type Canonical struct {
 	Tool       string
 	Command    string
 	Workspaces []string
+	// ConversationID identifies the agent conversation a payload belongs to. Populated
+	// only by a dialect whose native payload carries one (agy's conversationId); empty
+	// for a dialect that has none.
+	ConversationID string
+	// Step is the payload's own step counter, reused across event kinds because the
+	// rollout spec declares one generic field (3.2): agy's stepIdx for a tool event,
+	// agy's executionNum for a Stop event. Zero means the payload carried none.
+	Step int
+	// StopActive reports whether a Stop payload is a repeat for its ConversationID, so
+	// an encoder can bound how many times it answers "continue" for one conversation
+	// (3.4's "block once"). claude and codex read this from the client's own
+	// stop_hook_active field once H2 wires their Stop dialect; agy derives it from Step.
+	StopActive bool
 }
 
 // Outcome is the decision class of a verdict.

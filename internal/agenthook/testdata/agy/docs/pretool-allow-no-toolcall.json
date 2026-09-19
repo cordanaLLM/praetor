@@ -1,0 +1,9 @@
+{
+  "name": "pretool-allow-no-toolcall",
+  "event": "pre-tool",
+  "allow": true,
+  "payload": {
+    "conversationId": "ec33ebf9-0cba-4100-8142-c61503f6c587",
+    "stepIdx": 0
+  }
+}

@@ -46,7 +46,21 @@ func Run(ctx context.Context, in Invocation) Response {
 	}
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
-	return dialect.Encode(row.Event, evaluate(ctx, dialect, row.Event, in))
+	if dir := recordDirOf(in.Getenv); dir != "" {
+		return recordAndAllow(ctx, dir, row, dialect, in)
+	}
+	canonical, verdict := evaluate(ctx, dialect, row.Event, in)
+	return dialect.Encode(canonical, verdict)
+}
+
+// recordDirOf reads RecordDirEnv without panicking on a nil Getenv (Invocation.Getenv
+// is not required to be set; missing-collaborator tests deny closed through evaluate,
+// which record mode must not shortcut).
+func recordDirOf(getenv func(string) string) string {
+	if getenv == nil {
+		return ""
+	}
+	return getenv(RecordDirEnv)
 }
 
 func usageResponse(err error) Response {
@@ -57,7 +71,11 @@ func usageResponse(err error) Response {
 	return Response{Stderr: []byte(strings.Join(lines, "\n") + "\n"), ExitCode: usageExit}
 }
 
-func evaluate(ctx context.Context, dialect Dialect, event Event, in Invocation) Verdict {
+// evaluate returns the canonical payload alongside its verdict: the dialect's Encode
+// needs fields off canonical (agy's StopActive) that the verdict alone cannot carry, and
+// every return below still reports whatever of canonical it managed to build before the
+// failure that produced its verdict.
+func evaluate(ctx context.Context, dialect Dialect, event Event, in Invocation) (Canonical, Verdict) {
 	canonical := Canonical{Event: event}
 	if event != EventEnvironment {
 		payload, err := readBounded(ctx, in.Stdin)
@@ -65,25 +83,25 @@ func evaluate(ctx context.Context, dialect Dialect, event Event, in Invocation) 
 			canonical, err = dialect.Decode(event, payload)
 		}
 		if err != nil {
-			return Verdict{Deny, "[BLOCKED BY HISS-16] Invalid hook input: " + err.Error()}
+			return Canonical{Event: event}, Verdict{Deny, "[BLOCKED BY HISS-16] Invalid hook input: " + err.Error()}
 		}
 	}
 	root, err := ResolveRoot(ctx, canonical.Workspaces, in.WorkDir)
 	switch {
 	case err != nil:
-		return Verdict{Deny, "[BLOCKED BY HISS-16] " + err.Error()}
+		return canonical, Verdict{Deny, "[BLOCKED BY HISS-16] " + err.Error()}
 	case root == "":
-		return Verdict{Skip, "no repository"}
+		return canonical, Verdict{Skip, "no repository"}
 	case !Governed(root):
-		return Verdict{Skip, "workspace not governed"}
+		return canonical, Verdict{Skip, "workspace not governed"}
 	}
 	if verdict := Environment(in.Getenv); verdict.Outcome != Allow {
-		return verdict
+		return canonical, verdict
 	}
 	if canonical.Command == "" {
-		return Verdict{Outcome: Allow}
+		return canonical, Verdict{Outcome: Allow}
 	}
-	return in.Policy.Command(canonical.Command)
+	return canonical, in.Policy.Command(canonical.Command)
 }
 
 // readBounded reads at most MaxInputBytes+1 bytes and honours the context, so a client

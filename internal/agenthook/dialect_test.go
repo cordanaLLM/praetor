@@ -13,7 +13,7 @@ func TestDialectFor(t *testing.T) {
 			t.Errorf("%s has no dialect", client)
 		}
 	}
-	for _, client := range []string{"", "agy", "Claude", "claude "} {
+	for _, client := range []string{"", "Claude", "claude "} {
 		if dialect, ok := DialectFor(client); ok || !reflect.DeepEqual(dialect, Dialect{}) {
 			t.Errorf("%q resolved to %+v", client, dialect)
 		}
@@ -72,7 +72,7 @@ func TestDialectEncode(t *testing.T) {
 		{"lefthook deny", lefthook, EventPreTool, Verdict{Deny, "why"}, Response{Stderr: []byte("why\n"), ExitCode: 1}},
 		{"unknown outcome denies", claude, EventPreTool, Verdict{Outcome: Outcome(9), Reason: "?"}, Response{Stderr: []byte("?\n"), ExitCode: 2}},
 	} {
-		if got := tc.dialect.Encode(tc.event, tc.verdict); !reflect.DeepEqual(got, tc.want) {
+		if got := tc.dialect.Encode(Canonical{Event: tc.event}, tc.verdict); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: %+v", tc.name, got)
 		}
 	}
@@ -81,12 +81,12 @@ func TestDialectEncode(t *testing.T) {
 func TestDialectEncodeBoundsTheReason(t *testing.T) {
 	claude, _ := DialectFor("claude")
 	atBound := strings.Repeat("a", MaxReasonBytes)
-	if got := claude.Encode(EventPreTool, Verdict{Deny, atBound}); len(got.Stderr) != MaxReasonBytes+1 {
+	if got := claude.Encode(Canonical{Event: EventPreTool}, Verdict{Deny, atBound}); len(got.Stderr) != MaxReasonBytes+1 {
 		t.Errorf("reason at the bound changed: %d", len(got.Stderr))
 	}
 	// A three-byte rune straddles the bound: the cut must not leave half of it behind.
 	straddling := strings.Repeat("a", MaxReasonBytes-1) + "€" + strings.Repeat("b", 100)
-	got := claude.Encode(EventPreTool, Verdict{Deny, straddling})
+	got := claude.Encode(Canonical{Event: EventPreTool}, Verdict{Deny, straddling})
 	if len(got.Stderr) != MaxReasonBytes || !utf8.Valid(got.Stderr) || got.ExitCode != 2 {
 		t.Errorf("reason over the bound: %d bytes, valid=%v", len(got.Stderr), utf8.Valid(got.Stderr))
 	}
