@@ -97,6 +97,32 @@ jobs:
 
 Comment `/adopt` on any PR to have `cordana-standards[bot]` automatically scaffold Praetor governance and commit the baseline.
 
+### Inputs and the `report` output
+
+The action takes `path`, `mode` (`adopt` or `dogfood`), `dry-run`, `force`, `record-baseline` and
+`go-version`. Every one of them reaches the run step as an environment variable and is passed to
+`standardsctl` as a single argument, so a value carrying a shell metacharacter or a newline is data
+rather than script. The step fails before running anything if `path` is empty.
+
+The `report` output carries the combined output of the run, and it is written whether the run
+succeeded or failed — the step re-raises the command's exit status afterwards. A later step reads
+it as a normal step output:
+
+```yaml
+      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@main
+        id: praetor
+        with:
+          mode: dogfood
+          dry-run: "true"
+      - if: always()
+        run: echo "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          REPORT: ${{ steps.praetor.outputs.report }}
+```
+
+The behaviour above is pinned by `internal/forge/adopt_action_test.go`, which executes the action's
+own shell body against a stub binary.
+
 ## Migration: explicit sources for missing lockfiles
 
 Live adoption no longer creates the old placeholder lock. Pass
