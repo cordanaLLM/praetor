@@ -96,12 +96,13 @@ invalid UTF-8 or more than 16 KiB are errors, never skipped rows
 | numeric selector | resolves only by that number; it never falls back to matching a digit inside a description, and a number naming an already completed row is refused |
 | text selector | must match exactly one pending description; more than one match is an error listing the candidates, as `selectMilestone` does for milestones |
 | code fences | a checkbox inside a ``` or `~~~` fence is an example, never a task: it is not listed, completed or archived |
+| unterminated fence | a fence opened and never closed is a ledger error naming the line it was opened on; every command refuses the file rather than silently dropping the rows after it |
 
 A refused selector writes nothing, so `OPEN.md` stays byte-identical. The
-fence tracker is `markdownFence` in `internal/state/markdown_fence.go`, shared
-with the bug-ledger parser rather than reimplemented (HISS-19). Lines are bounded
-at `maxTaskLineBytes`; a ledger line reaching that bound is reported rather than
-truncated.
+fence tracker is `util.MarkdownFence` in `internal/util/marked_block.go`, the one
+implementation the task parser, the bug-ledger parser and the marked-block finder
+all drive (HISS-19). Lines are bounded at `maxTaskLineBytes`; a ledger line
+reaching that bound is reported rather than truncated.
 
 A freshly initialized ledger contains **no** task rows. `OPEN.md` and
 `BACKLOG.md` are seeded with headings only, so every count `state sync` reports

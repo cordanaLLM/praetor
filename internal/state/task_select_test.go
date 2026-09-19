@@ -113,8 +113,62 @@ func TestCompleteTaskBoundarySelectors(t *testing.T) {
 	if err := CompleteTask(empty, "1"); err == nil {
 		t.Fatal("empty ledger accepted task number 1")
 	}
-	if err := CompleteTask(empty, ""); err == nil {
-		t.Fatal("empty selector accepted")
+}
+
+// TestCompleteTaskRefusesAnEmptySelectorOnAPopulatedLedger pins the guard at the top of
+// CompleteTask. It must run against a ledger that holds pending rows: on an empty ledger
+// every selector is refused anyway, so the assertion would hold with the guard deleted -
+// without it "" reaches the text path, and strings.Contains reports a match for every
+// pending row, which silently completes the first one on a single-task ledger.
+func TestCompleteTaskRefusesAnEmptySelectorOnAPopulatedLedger(t *testing.T) {
+	const one = "# Open\n- [ ] Only pending\n"
+	single, singlePath := writeOpenLedger(t, one)
+	for _, selector := range []string{"", "   ", "\t"} {
+		err := CompleteTask(single, selector)
+		if err == nil {
+			t.Fatalf("empty selector %q completed the only pending task", selector)
+		}
+		if !strings.Contains(err.Error(), "task selector cannot be empty") {
+			t.Fatalf("empty selector %q took the matching path: %v", selector, err)
+		}
+	}
+	assertOpenUnchanged(t, singlePath, one)
+
+	const many = "# Open\n- [ ] Alpha\n- [ ] Beta\n"
+	multi, multiPath := writeOpenLedger(t, many)
+	if err := CompleteTask(multi, ""); err == nil {
+		t.Fatal("empty selector completed a task on a multi-row ledger")
+	}
+	assertOpenUnchanged(t, multiPath, many)
+}
+
+// TestTasksRefuseAnUnterminatedCodeFence pins the boundary case of the fence tracker:
+// OPEN.md is hand-edited, a pasted block without its closing fence used to swallow every
+// row after it, and `state task list` then reported zero tasks while two were pending.
+func TestTasksRefuseAnUnterminatedCodeFence(t *testing.T) {
+	const ledger = "# Open\n```sh\npraetorctl state task add x\n\n- [ ] ship the release\n- [ ] file the receipt\n"
+	root, openPath := writeOpenLedger(t, ledger)
+
+	tasks, err := ListTasks(root)
+	if err == nil {
+		t.Fatalf("unterminated fence silently hid %d rows: %+v", len(tasks), tasks)
+	}
+	if !strings.Contains(err.Error(), "unterminated code fence opened at line 2") {
+		t.Fatalf("error does not locate the fence: %v", err)
+	}
+	if err := CompleteTask(root, "1"); err == nil {
+		t.Fatal("completion accepted a ledger with an unterminated fence")
+	}
+	if _, err := ArchiveCompletedTasks(root, "fixture"); err == nil {
+		t.Fatal("archive accepted a ledger with an unterminated fence")
+	}
+	assertOpenUnchanged(t, openPath, ledger)
+
+	// Boundary: the same ledger with the fence closed lists both rows again.
+	closed, _ := writeOpenLedger(t, ledger[:len("# Open\n```sh\npraetorctl state task add x\n")]+"```\n- [ ] ship the release\n- [ ] file the receipt\n")
+	reopened, err := ListTasks(closed)
+	if err != nil || len(reopened) != 2 {
+		t.Fatalf("closed fence hid rows: %d, %v", len(reopened), err)
 	}
 }
 

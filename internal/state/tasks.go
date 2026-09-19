@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // maxScannedLines is the scalar upper bound (HISS-02) on the number of lines a single
@@ -236,13 +237,17 @@ func parseTaskLines(lines []string) ([]taskLine, error) {
 		return nil, fmt.Errorf("OPEN.md exceeds the %d line scan bound", maxScannedLines)
 	}
 	tasks := make([]taskLine, 0, len(lines))
-	var fence markdownFence
+	var fence util.MarkdownFence
+	opened := 0
 	for i := 0; i < len(lines); i++ {
 		if len(lines[i]) >= maxTaskLineBytes {
 			return nil, fmt.Errorf("OPEN.md line %d reaches the %d byte line bound", i+1, maxTaskLineBytes)
 		}
 		trimmed := strings.TrimSpace(lines[i])
-		if fence.inside(trimmed) {
+		if !fence.Open() {
+			opened = i + 1
+		}
+		if fence.Inside(trimmed) {
 			continue
 		}
 		description, completed, ok := taskCheckbox(trimmed)
@@ -250,6 +255,9 @@ func parseTaskLines(lines []string) ([]taskLine, error) {
 			continue
 		}
 		tasks = append(tasks, taskLine{index: len(tasks) + 1, line: i, description: description, completed: completed})
+	}
+	if fence.Open() {
+		return nil, fmt.Errorf("OPEN.md has an unterminated code fence opened at line %d; every row after it would be read as an example", opened)
 	}
 	return tasks, nil
 }

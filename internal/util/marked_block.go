@@ -22,15 +22,30 @@ var (
 	ErrMarkedBlockBudget = errors.New("util: marked block document exceeds its line budget")
 )
 
-// fenceTracker follows Markdown fenced code so that a marker quoted inside an example is
-// never mistaken for the live one.
-type fenceTracker struct{ open string }
+// MarkdownFence follows Markdown fenced code across a single ordered line scan so that a
+// marker, a checkbox or a table row quoted inside an example is never mistaken for a live
+// record. Every Markdown ledger scanner in the repository drives this one tracker rather
+// than restating the two-branch algorithm (HISS-19): the marked-block finder here, the
+// OPEN.md task parser and the BUGS.md table parser.
+//
+// The zero value is a scan positioned outside any fence.
+type MarkdownFence struct {
+	// marker is the opening delimiter of the fence being skipped, empty outside a fence.
+	marker string
+}
 
-// inside reports whether trimmed belongs to fenced code, the fence lines included.
-func (f *fenceTracker) inside(trimmed string) bool {
-	if f.open != "" {
-		if strings.HasPrefix(trimmed, f.open) && strings.Trim(trimmed, f.open[:1]) == "" {
-			f.open = ""
+// Open reports whether the scan is currently inside a fenced block. A scan that ends with
+// Open still true read an unterminated fence and swallowed the rest of the document;
+// callers that must not silently drop records check it after the last line.
+func (f *MarkdownFence) Open() bool { return f.marker != "" }
+
+// Inside advances the tracker by one line and reports whether that line is fenced content
+// or a fence delimiter. Callers pass an already whitespace-trimmed line, exactly once per
+// line, in document order, and skip every line for which it returns true.
+func (f *MarkdownFence) Inside(trimmed string) bool {
+	if f.marker != "" {
+		if strings.HasPrefix(trimmed, f.marker) && strings.Trim(trimmed, f.marker[:1]+" \t") == "" {
+			f.marker = ""
 		}
 		return true
 	}
@@ -38,7 +53,7 @@ func (f *fenceTracker) inside(trimmed string) bool {
 		return false
 	}
 	run := len(trimmed) - len(strings.TrimLeft(trimmed, trimmed[:1]))
-	f.open = trimmed[:run]
+	f.marker = trimmed[:run]
 	return true
 }
 
@@ -84,10 +99,10 @@ func distinctMarkers(start, end string) bool {
 
 // markerLines returns the line indexes of each marker outside fenced code.
 func markerLines(lines []string, start, end string, maxLines int) (starts, ends []int) {
-	fence := fenceTracker{}
+	fence := MarkdownFence{}
 	for i := 0; i < len(lines) && i < maxLines; i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		if fence.inside(trimmed) {
+		if fence.Inside(trimmed) {
 			continue
 		}
 		if trimmed == start {
@@ -112,11 +127,11 @@ func RemoveMarkdownSection(content, heading string, maxLines int) (string, error
 		return "", fmt.Errorf("%w: more than %d lines", ErrMarkedBlockBudget, maxLines)
 	}
 	kept := make([]string, 0, len(lines))
-	fence := fenceTracker{}
+	fence := MarkdownFence{}
 	inside := false
 	for i := 0; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		fenced := fence.inside(trimmed)
+		fenced := fence.Inside(trimmed)
 		if startsMarkdownSection(trimmed, heading, fenced) {
 			inside = true
 			continue

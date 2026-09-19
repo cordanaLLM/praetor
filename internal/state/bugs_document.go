@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 type bugRow struct {
@@ -18,7 +20,7 @@ type bugDocument struct {
 	insert                   int
 	newline                  string
 	header, table, separator bool
-	fence                    markdownFence
+	fence                    util.MarkdownFence
 	seen                     map[string]bool
 	// meta is the sidecar index v2 rows read from. Writers update it in place;
 	// it is persisted with the document.
@@ -55,8 +57,8 @@ func parseBugDocument(text string, index ledgerMetaIndex) (*bugDocument, error) 
 // skipFence advances the shared fence tracker and additionally closes any open
 // table, because a fence always terminates the bug table that preceded it.
 func (doc *bugDocument) skipFence(line string) bool {
-	opening := !doc.fence.open()
-	if !doc.fence.inside(line) {
+	opening := !doc.fence.Open()
+	if !doc.fence.Inside(line) {
 		return false
 	}
 	if opening {
