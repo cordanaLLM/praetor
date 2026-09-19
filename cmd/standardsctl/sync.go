@@ -59,7 +59,7 @@ func reconcileLabels(ctx context.Context, rootDir string) error {
 		return fmt.Errorf(".config/labels.yaml validation failed: %w", err)
 	}
 	if exists {
-		if data, err = reconcileLabelDescriptions(ctx, labelsPath, data); err != nil {
+		if _, err = reconcileLabelDescriptions(ctx, labelsPath, data); err != nil {
 			return fmt.Errorf("failed updating managed label descriptions: %w", err)
 		}
 	}
