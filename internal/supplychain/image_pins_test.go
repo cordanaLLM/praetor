@@ -14,15 +14,18 @@ package supplychain
 // file nobody thought of is covered too.
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // taggedDigest matches "<repository>:<tag>@sha256:<64 hex>", the tag-plus-digest form
@@ -30,16 +33,16 @@ import (
 // is deliberately not matched.
 var taggedDigest = regexp.MustCompile(`([A-Za-z0-9][A-Za-z0-9._/-]*):([A-Za-z0-9][A-Za-z0-9._-]*)@sha256:([0-9a-f]{64})`)
 
-// maxScannedFiles bounds the walk so a pathological tree cannot make this test unbounded
-// (HISS-02). The repository holds roughly a thousand tracked files.
+// maxScannedFiles bounds how many repository paths one scan reads (HISS-02). Git reports
+// roughly 1,800 paths for this tree.
 const maxScannedFiles = 8192
 
-// pinnedFileExtensions are the formats that carry image references. Markdown is left out
-// on purpose: prose quotes digests as examples, and an example is not a pin.
-var pinnedFileNames = map[string]bool{".go": true, ".json": true, ".yml": true, ".yaml": true, ".tmpl": true}
+// maxScopeBytes bounds the NUL-separated listing git returns (HISS-02).
+const maxScopeBytes = 8 << 20
 
-// skippedDirectories are trees whose contents are not this repository's own pins.
-var skippedDirectories = map[string]bool{".git": true, ".workingdir": true, "node_modules": true, "testdata": true, "vendor": true}
+// pinnedFileNames are the formats that carry image references. Markdown is left out on
+// purpose: prose quotes digests as examples, and an example is not a pin.
+var pinnedFileNames = map[string]bool{".go": true, ".json": true, ".yml": true, ".yaml": true, ".tmpl": true}
 
 // imagePin is one "<image>:<tag>@sha256:<digest>" occurrence and where it was read.
 type imagePin struct {
@@ -91,57 +94,99 @@ func conflictingPins(pins []imagePin) map[string][]imagePin {
 	return conflicts
 }
 
-// scanRepositoryPins walks the repository and collects every tagged-digest reference.
-func scanRepositoryPins(root string) ([]imagePin, error) {
+// repositoryFiles asks git which paths belong to this repository: tracked files plus
+// untracked files git is not ignoring.
+//
+// A raw filesystem walk was wrong twice over. .claude/worktrees/ is gitignored
+// (.gitignore:66) and holds one full checkout per agent -- 281,981 files on the maintainer's
+// tree -- so the walk blew through maxScannedFiles and made `go test ./...` red in the
+// primary checkout while staying green when run from inside one of those worktrees. Raising
+// the bound is the worse fix: the sibling checkouts sit at older commits, so
+// golang:1.27-alpine is pinned to two different digests across them and the scan then reports
+// a CONFLICT for files this repository does not own.
+//
+// The listing is the seam this repository already uses for exactly that scoping question --
+// same argv and the same bounded, configuration-isolated probe as internal/hiss/hiss.go's
+// gitVisiblePaths and internal/dedupe/scope.go's gitSourceFiles -- rather than a third
+// mechanism that would have to be kept in step with them (HISS-19).
+func repositoryFiles(ctx context.Context, root string) ([]string, error) {
+	out, err := util.RunGitProbe(ctx, root, maxScopeBytes,
+		"ls-files", "--cached", "--others", "--exclude-standard", "--deduplicate", "-z", "--", ".")
+	if err != nil {
+		return nil, fmt.Errorf("enumerate image pin scope in %s: %w", root, err)
+	}
+	var files []string
+	for _, rel := range strings.Split(string(out.Stdout), "\x00") {
+		if rel == "" {
+			continue
+		}
+		if len(files) >= maxScannedFiles {
+			return nil, fmt.Errorf("image pin scope passed %d files; narrow the listing", maxScannedFiles)
+		}
+		files = append(files, rel)
+	}
+	return files, nil
+}
+
+// scannedFile reports whether a repository path is a format that carries image pins.
+//
+// testdata is dropped for the reason internal/dedupe/scope.go drops it: a fixture corpus is
+// deliberately repetitive and the digests in it are inputs to some other rule, not this
+// repository's own pins. Everything else the old walk skipped by name -- .git, .workingdir,
+// vendor, node_modules -- is already outside the git listing, ignored or never tracked, so no
+// second skip list has to be held in step with .gitignore.
+func scannedFile(rel string) bool {
+	slashed := filepath.ToSlash(rel)
+	if strings.HasPrefix(slashed, "testdata/") || strings.Contains(slashed, "/testdata/") {
+		return false
+	}
+	base := filepath.Base(slashed)
+	return pinnedFileNames[filepath.Ext(base)] || strings.HasPrefix(base, "Dockerfile")
+}
+
+// scanRepositoryPins collects every tagged-digest reference the repository owns.
+func scanRepositoryPins(ctx context.Context, root string) ([]imagePin, error) {
+	files, err := repositoryFiles(ctx, root)
+	if err != nil {
+		return nil, err
+	}
 	var pins []imagePin
-	seen := 0
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	for _, rel := range files {
+		if !scannedFile(rel) {
+			continue
 		}
-		if entry.IsDir() {
-			if skippedDirectories[entry.Name()] {
-				return fs.SkipDir
-			}
-			return nil
+		content, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if errors.Is(readErr, os.ErrNotExist) {
+			continue // A tracked deletion is listed but absent from the working tree.
 		}
-		if seen++; seen > maxScannedFiles {
-			return fmt.Errorf("image pin scan passed %d files; raise maxScannedFiles or narrow the walk", maxScannedFiles)
-		}
-		if !pinnedFileNames[filepath.Ext(path)] && !strings.HasPrefix(entry.Name(), "Dockerfile") {
-			return nil
-		}
-		content, readErr := os.ReadFile(path)
 		if readErr != nil {
-			return readErr
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
+			return nil, readErr
 		}
 		pins = append(pins, collectImagePins(filepath.ToSlash(rel), string(content))...)
-		return nil
-	})
-	return pins, err
+	}
+	return pins, nil
+}
+
+// requireGit skips with a stated reason where git is absent (HISS-21): this scan's scope is a
+// git listing, and a gate that cannot run is not a gate that passed.
+func requireGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git unavailable, and the image pin scope is a git listing: %v", err)
+	}
 }
 
 func TestRepositoryPinsOneDigestPerImageTag(t *testing.T) {
-	pins, err := scanRepositoryPins(filepath.Join("..", ".."))
+	requireGit(t)
+	pins, err := scanRepositoryPins(t.Context(), filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatalf("scan repository image pins: %v", err)
 	}
 	// A gate that found nothing to compare is not a gate that passed (HISS-21). The
 	// repository pins at least the distroless runtime and the Go builder, each from
 	// several files, so a scan that stops matching must fail rather than go quiet.
-	copies := make(map[string]map[string]bool)
-	for _, pin := range pins {
-		if copies[pin.image] == nil {
-			copies[pin.image] = make(map[string]bool)
-		}
-		copies[pin.image][pin.file] = true
-	}
 	shared := 0
-	for _, files := range copies {
+	for _, files := range pinCopies(pins) {
 		if len(files) > 1 {
 			shared++
 		}
@@ -152,6 +197,18 @@ func TestRepositoryPinsOneDigestPerImageTag(t *testing.T) {
 	for image, group := range conflictingPins(pins) {
 		t.Errorf("%s is pinned to more than one digest:\n%s", image, describePins(group))
 	}
+}
+
+// pinCopies maps each image:tag to the set of files that pin it.
+func pinCopies(pins []imagePin) map[string]map[string]bool {
+	copies := make(map[string]map[string]bool)
+	for _, pin := range pins {
+		if copies[pin.image] == nil {
+			copies[pin.image] = make(map[string]bool)
+		}
+		copies[pin.image][pin.file] = true
+	}
+	return copies
 }
 
 // describePins renders a conflict in file order so the failure names the copy to fix.
@@ -225,9 +282,91 @@ func TestConflictingPinsReportsOnlyDisagreement(t *testing.T) {
 	}
 }
 
-// Boundary for the walk: an absent root is an error rather than an empty, passing scan.
-func TestScanRepositoryPinsRejectsAnAbsentRoot(t *testing.T) {
-	if _, err := scanRepositoryPins(filepath.Join(t.TempDir(), "absent")); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("scanning an absent root returned %v, want a not-exist error", err)
+// fixtureRepo writes files into a fresh git work tree and returns its root. Nothing is
+// committed: "--others --exclude-standard" lists untracked files that are not ignored, which
+// is the half of the scope the gitignored-checkout case turns on.
+func fixtureRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	requireGit(t)
+	root := t.TempDir()
+	for rel, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatalf("create %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	if _, err := util.RunGitProbe(t.Context(), root, maxScopeBytes, "init", "-q"); err != nil {
+		t.Fatalf("git init the fixture repository: %v", err)
+	}
+	return root
+}
+
+// Both directions of the scope rule this gate turns on (HISS-20): a gitignored checkout
+// nested in the tree contributes no pins, and the identical tree without the ignore rule does
+// contribute them and is reported as the conflict it is. Without the second half the first
+// would pass just as well against a scan that had quietly stopped reading files.
+func TestScanRepositoryPinsSkipsGitignoredCheckouts(t *testing.T) {
+	const own = "1111111111111111111111111111111111111111111111111111111111111111"
+	const stale = "2222222222222222222222222222222222222222222222222222222222222222"
+	tree := map[string]string{
+		"Dockerfile":                      "FROM golang:1.27-alpine@sha256:" + own + "\n",
+		"nested/checkout/Dockerfile":      "FROM golang:1.27-alpine@sha256:" + stale + "\n",
+		"nested/checkout/internal/x.yaml": "image: golang:1.27-alpine@sha256:" + stale + "\n",
+	}
+	ignoring := map[string]string{".gitignore": "/nested/\n"}
+	for rel, content := range tree {
+		ignoring[rel] = content
+	}
+
+	pins, err := scanRepositoryPins(t.Context(), fixtureRepo(t, ignoring))
+	if err != nil {
+		t.Fatalf("scan the fixture with the nested checkout ignored: %v", err)
+	}
+	if len(pins) != 1 {
+		t.Fatalf("an ignored checkout contributed pins: %v", pins)
+	}
+	if conflicts := conflictingPins(pins); len(conflicts) != 0 {
+		t.Errorf("an ignored checkout at an older digest was reported as a conflict: %v", conflicts)
+	}
+
+	tracked, err := scanRepositoryPins(t.Context(), fixtureRepo(t, tree))
+	if err != nil {
+		t.Fatalf("scan the fixture without the ignore rule: %v", err)
+	}
+	if len(tracked) != 3 {
+		t.Fatalf("collected %d pins from the unignored tree, want 3: %v", len(tracked), tracked)
+	}
+	if _, reported := conflictingPins(tracked)["golang:1.27-alpine"]; !reported {
+		t.Error("the scan no longer reports a real two-digest conflict, so the ignored case above proves nothing")
+	}
+}
+
+// Boundary for the scope listing: an absent root is an error rather than an empty, passing
+// scan, and a directory that is no git work tree is likewise refused rather than walked.
+func TestScanRepositoryPinsRejectsARootGitCannotList(t *testing.T) {
+	requireGit(t)
+	if _, err := scanRepositoryPins(t.Context(), filepath.Join(t.TempDir(), "absent")); err == nil {
+		t.Error("scanning an absent root returned no error")
+	}
+	if _, err := scanRepositoryPins(t.Context(), t.TempDir()); err == nil {
+		t.Error("scanning a directory that is no git work tree returned no error")
+	}
+}
+
+// Boundary for the file filter: the formats that carry pins are read, testdata fixtures and
+// prose are not.
+func TestScannedFileSelectsPinFormatsOutsideTestdata(t *testing.T) {
+	for _, rel := range []string{"Dockerfile", "build/package/Dockerfile", ".devcontainer/Dockerfile.praetor", "a.go", "b.yml", "c.yaml", "d.json", "e.tmpl"} {
+		if !scannedFile(rel) {
+			t.Errorf("%s carries pins and was skipped", rel)
+		}
+	}
+	for _, rel := range []string{"README.md", "docs/adoption.md", "testdata/Dockerfile", "internal/hiss/testdata/a.go", "LICENSE"} {
+		if scannedFile(rel) {
+			t.Errorf("%s is not one of this repository's pins and was scanned", rel)
+		}
 	}
 }
