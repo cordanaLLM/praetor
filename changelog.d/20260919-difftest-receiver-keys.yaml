@@ -1,0 +1,3 @@
+type: fixed
+title: "difftest: cap synthesis by function count not declaration index, and key changed-function detection on receiver plus name so same-named methods on different receivers no longer mask each other"
+breaking: false
