@@ -104,7 +104,8 @@ that action reports (`:222`) precisely because `python3` is not guaranteed on a 
 runner, but nothing puts that name on `PATH` for the hooks the fixtures drive. The macOS and
 Windows legs therefore measure the name rather than satisfy it: until one of them reports
 green, `python3` is an unmeasured dependency of this gate on both, the same class of defect as
-the `shellcheck` one above (#135).
+the `shellcheck` one above (#135). That exposure is tracked as #339; this page states it
+rather than resolving it.
 
 Two binaries are reachable from the same gate and are genuinely not reached today: `checks.py`
 shells out to `actionlint` for a pushed `.github/workflows/*.yml` and to `hadolint` for a
