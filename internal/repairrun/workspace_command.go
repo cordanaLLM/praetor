@@ -58,6 +58,21 @@ func gitBinary() (string, error) {
 	return resolved, nil
 }
 
+// goBinary resolves the go executable once, from the caller's PATH, for the same reason
+// gitBinary does: a fixed "/usr/bin/go" is a distro assumption, not a fact. CI toolchains
+// installed by actions/setup-go live under a hosted tool cache (e.g.
+// /opt/hostedtoolcache/go/<version>/x64/bin/go), not at /usr/bin/go, and a workstation's go
+// can live anywhere the operator put it. Resolving through PATH is the one place that has to
+// know where go actually is; callers that also need to sandbox it derive GOROOT from this
+// same binary rather than guessing a second path.
+func goBinary() (string, error) {
+	resolved, err := exec.LookPath("go")
+	if err != nil {
+		return "", fmt.Errorf("repairrun requires go on PATH: %w", err)
+	}
+	return resolved, nil
+}
+
 // gitEnvironment returns the scrubbed environment for one git invocation.
 //
 // The PATH is built from the resolved binary's own directory rather than a fixed pair, so it is
