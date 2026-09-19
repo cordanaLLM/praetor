@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -92,14 +93,19 @@ func runGateRun(args []string) error {
 	return nil
 }
 
-// runGateVerify verifies an Exit-0 receipt against the public key pinned in
-// .standards.yaml and against the current HEAD commit. The public key embedded in the
-// receipt is never a trust anchor on its own.
+// runGateVerify verifies an Exit-0 receipt against a public key: either the key pinned in
+// .standards.yaml, or, with --public-key, a supplied Ed25519 key that always wins over any
+// pinned key. It requires the receipt's commit_sha to equal --path's HEAD, and, when a key is
+// supplied explicitly, additionally requires the receipt's repository to equal --path's
+// resolved identity, since a supplied key has no manifest binding it to one repository. The
+// public key embedded in the receipt is never a trust anchor on its own.
 func runGateVerify(args []string) error {
 	fs := flag.NewFlagSet("gate verify", flag.ContinueOnError)
 	path := fs.String("path", ".", "Path to the repository the receipt belongs to")
 	receiptPath := fs.String("receipt", "", "Path to the receipt (default <path>/"+gating.ReceiptFileName+")")
 	manifestPath := fs.String("config", "", "Path to .standards.yaml carrying receipt.public_key")
+	publicKeyHex := fs.String("public-key", "",
+		"Hex-encoded Ed25519 public key to verify against, overriding the manifest-pinned key")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -112,16 +118,14 @@ func runGateVerify(args []string) error {
 	if resolvedReceipt == "" {
 		resolvedReceipt = filepath.Join(*path, gating.ReceiptFileName)
 	}
-	resolvedManifest := *manifestPath
-	if resolvedManifest == "" {
-		resolvedManifest = filepath.Join(*path, ".standards.yaml")
-	}
 
 	rf, err := lockdown.LoadReceiptFile(resolvedReceipt)
 	if err != nil {
 		return fmt.Errorf("[FAIL] %w", err)
 	}
-	pinned, err := lockdown.PinnedPublicKey(resolvedManifest)
+
+	supplied := strings.TrimSpace(*publicKeyHex)
+	pinned, err := resolveVerifyKey(supplied, *path, *manifestPath)
 	if err != nil {
 		return fmt.Errorf("[FAIL] %w", err)
 	}
@@ -131,13 +135,37 @@ func runGateVerify(args []string) error {
 	if err := verifyReceiptCommit(*path, rf.CommitSHA); err != nil {
 		return err
 	}
+	if supplied != "" {
+		if err := verifyReceiptRepository(*path, rf.Repository); err != nil {
+			return err
+		}
+	}
 
 	fmt.Printf("[PASS] Exit-0 receipt %s verified.\n", resolvedReceipt)
 	fmt.Printf("       Command:    %s\n", rf.Command)
 	fmt.Printf("       Repository: %s\n", rf.Repository)
 	fmt.Printf("       Commit:     %s\n", rf.CommitSHA)
+	if supplied != "" {
+		fmt.Printf("       Signed by supplied key %s\n", hex.EncodeToString(pinned))
+		return nil
+	}
 	fmt.Printf("       Signed by pinned key %s\n", hex.EncodeToString(pinned))
 	return nil
+}
+
+// resolveVerifyKey returns the supplied hex-decoded Ed25519 public key when one is given. An
+// explicit --public-key always wins over a manifest-pinned key: the operator asked to trust
+// this specific key, not to cross-check it against .standards.yaml. With no supplied key it
+// falls back to the existing manifest-pinned lookup, unchanged from before --public-key existed.
+func resolveVerifyKey(supplied, path, manifestPath string) (ed25519.PublicKey, error) {
+	if supplied != "" {
+		return lockdown.ParsePinnedPublicKey(supplied)
+	}
+	resolvedManifest := manifestPath
+	if resolvedManifest == "" {
+		resolvedManifest = filepath.Join(path, ".standards.yaml")
+	}
+	return lockdown.PinnedPublicKey(resolvedManifest)
 }
 
 // verifyReceiptCommit binds a receipt to the commit currently checked out.
@@ -152,6 +180,26 @@ func verifyReceiptCommit(repoPath, receiptSHA string) error {
 	head = strings.TrimSpace(head)
 	if head != receiptSHA {
 		return fmt.Errorf("[FAIL] receipt attests commit %s but HEAD is %s", receiptSHA, head)
+	}
+	return nil
+}
+
+// verifyReceiptRepository binds a --public-key verified receipt to the repository identity
+// resolved from repoPath, so a receipt minted for one repository cannot be replayed against
+// another. It fails closed rather than guessing from a directory name: a receipt trusted
+// through a supplied key has no manifest to cross-check the repository against.
+func verifyReceiptRepository(repoPath, receiptRepository string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), gateQueryTimeout)
+	defer cancel()
+
+	owner, repo, err := util.ResolveRepoIdentity(ctx, repoPath)
+	if err != nil {
+		return fmt.Errorf("[FAIL] cannot resolve repository identity for %s: %w", repoPath, err)
+	}
+	expected := owner + "/" + repo
+	if receiptRepository != expected {
+		return fmt.Errorf("[FAIL] receipt attests repository %s but %s resolves to %s",
+			receiptRepository, repoPath, expected)
 	}
 	return nil
 }

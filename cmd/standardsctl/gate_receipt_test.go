@@ -22,6 +22,7 @@ import (
 type gateFixture struct {
 	dir    string
 	head   string
+	env    []string
 	pub    ed25519.PublicKey
 	priv   ed25519.PrivateKey
 	output []byte
@@ -65,6 +66,7 @@ func newGateFixture(t *testing.T) *gateFixture {
 	return &gateFixture{
 		dir:    dir,
 		head:   strings.TrimSpace(head),
+		env:    env,
 		pub:    pub,
 		priv:   priv,
 		output: []byte("praetor-gate-output/v1\nstage\tPrefetch & Lockfiles\ttrue\t\n"),
@@ -91,10 +93,17 @@ func (f *gateFixture) pin(t *testing.T, pub ed25519.PublicKey) {
 	}
 }
 
-// mintReceipt writes a receipt signed by priv for the given commit.
+// mintReceipt writes a receipt signed by priv for the given commit, attesting repository
+// "acme/widget".
 func (f *gateFixture) mintReceipt(t *testing.T, priv ed25519.PrivateKey, commit string) {
 	t.Helper()
-	receipt, err := lockdown.CreateReceipt(gating.ReceiptCommand, 0, f.output, commit, "acme/widget", priv)
+	f.mintReceiptRepo(t, priv, commit, "acme/widget")
+}
+
+// mintReceiptRepo writes a receipt signed by priv for the given commit and repository.
+func (f *gateFixture) mintReceiptRepo(t *testing.T, priv ed25519.PrivateKey, commit, repo string) {
+	t.Helper()
+	receipt, err := lockdown.CreateReceipt(gating.ReceiptCommand, 0, f.output, commit, repo, priv)
 	if err != nil {
 		t.Fatalf("CreateReceipt: %v", err)
 	}
@@ -102,6 +111,16 @@ func (f *gateFixture) mintReceipt(t *testing.T, priv ed25519.PrivateKey, commit 
 	rf := &lockdown.ReceiptFile{ExecutionReceipt: *receipt, GateOutput: string(f.output)}
 	if err := lockdown.SaveReceiptFile(path, rf, 0o644); err != nil {
 		t.Fatalf("SaveReceiptFile: %v", err)
+	}
+}
+
+// setOrigin configures f's origin remote so util.ResolveRepoIdentity resolves to owner/repo,
+// matching how a real fork checkout carries its identity.
+func (f *gateFixture) setOrigin(t *testing.T, owner, repo string) {
+	t.Helper()
+	url := "https://github.com/" + owner + "/" + repo + ".git"
+	if out, err := runFixtureGit(t, f.dir, f.env, "remote", "add", "origin", url); err != nil {
+		t.Fatalf("git remote add origin: %v (%s)", err, out)
 	}
 }
 
@@ -192,6 +211,96 @@ func TestRunGateVerify_Boundary(t *testing.T) {
 	}
 	if err := runGate([]string{"verify", "--path", elsewhere.dir, "--receipt", moved}); err != nil {
 		t.Errorf("expected an out-of-tree receipt to verify, got %v", err)
+	}
+}
+
+// TestRunGateVerify_PublicKeyFlag_Positive covers refs #99's F2: a note-shaped receipt
+// (no manifest at all, exactly what `git notes show refs/notes/praetor/receipts` yields)
+// verifies against a supplied --public-key, once the repository it attests matches the
+// origin the checkout resolves to.
+func TestRunGateVerify_PublicKeyFlag_Positive(t *testing.T) {
+	f := newGateFixture(t)
+	f.setOrigin(t, "acme", "widget")
+	f.mintReceipt(t, f.priv, f.head)
+
+	if err := runGate([]string{"verify", "--path", f.dir, "--public-key", hex.EncodeToString(f.pub)}); err != nil {
+		t.Fatalf("gate verify --public-key failed: %v", err)
+	}
+}
+
+func TestRunGateVerify_PublicKeyFlag_Negative(t *testing.T) {
+	// A receipt verified against the wrong supplied key must be rejected, even though it
+	// verifies against the key embedded in the receipt itself.
+	wrongKey := newGateFixture(t)
+	_, otherPriv, err := lockdown.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+	wrongKey.mintReceipt(t, otherPriv, wrongKey.head)
+	err = runGate([]string{"verify", "--path", wrongKey.dir, "--public-key", hex.EncodeToString(wrongKey.pub)})
+	if !errors.Is(err, lockdown.ErrKeyNotPinned) {
+		t.Errorf("expected ErrKeyNotPinned, got %v", err)
+	}
+
+	// A receipt for a different commit must be rejected.
+	wrongCommit := newGateFixture(t)
+	wrongCommit.mintReceipt(t, wrongCommit.priv, "0000000000000000000000000000000000000000")
+	err = runGate([]string{"verify", "--path", wrongCommit.dir, "--public-key", hex.EncodeToString(wrongCommit.pub)})
+	if err == nil || !strings.Contains(err.Error(), "HEAD is") {
+		t.Errorf("expected a commit mismatch error, got %v", err)
+	}
+
+	// A receipt attesting a repository other than the one --path resolves to must be
+	// rejected: a supplied key has no manifest binding it to one repository.
+	wrongRepo := newGateFixture(t)
+	wrongRepo.setOrigin(t, "acme", "widget")
+	wrongRepo.mintReceiptRepo(t, wrongRepo.priv, wrongRepo.head, "acme/other-widget")
+	err = runGate([]string{"verify", "--path", wrongRepo.dir, "--public-key", hex.EncodeToString(wrongRepo.pub)})
+	if err == nil || !strings.Contains(err.Error(), "attests repository acme/other-widget") {
+		t.Errorf("expected a repository mismatch error, got %v", err)
+	}
+
+	// A tampered gate output must be rejected: the receipt signs its SHA-256.
+	tampered := newGateFixture(t)
+	tampered.setOrigin(t, "acme", "widget")
+	tampered.mintReceipt(t, tampered.priv, tampered.head)
+	receiptPath := filepath.Join(tampered.dir, gating.ReceiptFileName)
+	rf, err := lockdown.LoadReceiptFile(receiptPath)
+	if err != nil {
+		t.Fatalf("LoadReceiptFile: %v", err)
+	}
+	rf.GateOutput += "stage\tRace-Detector Tests\ttrue\t\n"
+	if err := lockdown.SaveReceiptFile(receiptPath, rf, 0o644); err != nil {
+		t.Fatalf("SaveReceiptFile: %v", err)
+	}
+	err = runGate([]string{"verify", "--path", tampered.dir, "--public-key", hex.EncodeToString(tampered.pub)})
+	if !errors.Is(err, lockdown.ErrOutputMismatch) {
+		t.Errorf("expected ErrOutputMismatch for a tampered gate output, got %v", err)
+	}
+}
+
+// TestRunGateVerify_PublicKeyFlag_Boundary proves the supplied key wins over a present,
+// mismatching manifest-pinned key only when --public-key is given explicitly: the same
+// fixture state fails without the flag and passes with it.
+func TestRunGateVerify_PublicKeyFlag_Boundary(t *testing.T) {
+	f := newGateFixture(t)
+	f.setOrigin(t, "acme", "widget")
+	manifestPub, _, err := lockdown.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+	f.pin(t, manifestPub)
+	f.mintReceipt(t, f.priv, f.head)
+
+	// Without --public-key: the manifest-pinned key is used, and it does not match the
+	// key that actually signed the receipt.
+	if err := runGate([]string{"verify", "--path", f.dir}); !errors.Is(err, lockdown.ErrKeyNotPinned) {
+		t.Errorf("expected ErrKeyNotPinned without --public-key, got %v", err)
+	}
+
+	// With --public-key: the supplied key wins over the manifest, ignoring the mismatch.
+	if err := runGate([]string{"verify", "--path", f.dir, "--public-key", hex.EncodeToString(f.pub)}); err != nil {
+		t.Errorf("expected --public-key to override the manifest-pinned key, got %v", err)
 	}
 }
 

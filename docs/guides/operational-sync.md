@@ -248,3 +248,34 @@ promotion stage, or workstation rollout consumer behind this interface. Those
 require separately reviewed implementations and activation. Current repository
 gate failures remain failures; a successful structural preparation does not
 waive them. The operation is currently CLI-only and has no MCP mutation tool.
+
+## Verify a receipt against a supplied key
+
+Added: `praetorctl gate verify` accepts `--public-key <hex>`, a hex-encoded
+Ed25519 public key that overrides the key pinned in `.standards.yaml`. This
+is how a fork workstation checks an Exit-0 receipt it reads from a Git note
+(`refs/notes/praetor/receipts`, section 8.3) rather than a file committed
+next to a manifest: the note has no `.standards.yaml` of its own to pin a
+key in, so the caller supplies the fork's own `receipt.public_key` directly.
+
+```bash
+git notes --ref praetor/receipts show "$target_sha" > /tmp/receipt.json
+praetorctl gate verify \
+  --path /path/to/checkout \
+  --receipt /tmp/receipt.json \
+  --public-key "$fork_receipt_public_key"
+```
+
+An explicit `--public-key` always wins over a pinned key: when
+`.standards.yaml` also carries `receipt.public_key`, the supplied key is
+still the one checked against, never a cross-check between the two. Without
+`--public-key`, `gate verify` is unchanged: it reads the pinned key from the
+manifest as before.
+
+Verification still requires the receipt's `commit_sha` to equal `--path`'s
+current `HEAD`. Supplying `--public-key` additionally requires the receipt's
+`repository` field to equal the identity `--path` resolves to (its `origin`
+remote, or an unambiguous `<owner>/<repo>` path shape) — a receipt minted
+for one repository cannot be replayed against a different checkout that
+merely happens to trust the same key. This check fails closed: it never
+falls back to guessing an identity from a bare directory name.

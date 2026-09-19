@@ -1,0 +1,4 @@
+type: added
+title: gate verify accepts --public-key to check a receipt against a supplied Ed25519 key, for receipts read from a git note rather than a manifest-adjacent file
+issue: "99"
+breaking: false
