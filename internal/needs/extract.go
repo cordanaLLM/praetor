@@ -4,19 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/golusoris/golusoris/core/astx"
 	"gopkg.in/yaml.v3"
 )
 
 // maxPathSegments bounds the per-path segment loop in shouldSkipDir (HISS-02).
 const maxPathSegments = 128
+
+// praetorSkipDirs are the directory names excluded on top of the astx defaults
+// (vendor, testdata, node_modules, and dot- or underscore-prefixed names).
+var praetorSkipDirs = []string{"scratch", "cache"}
 
 // ErrGoModMissing is returned when a Go analysis is requested for a directory that has
 // no go.mod. Callers must not substitute a fabricated Go manifest for the missing file.
@@ -51,79 +54,36 @@ func ScanRepoWithFramework(ctx context.Context, repoPath string, framework *Fram
 	return report, nil
 }
 
-// parseGoMod extracts the module path, go version, and direct dependencies from go.mod.
+// parseGoMod extracts the module path, go version, and direct dependencies from go.mod
+// through astx.ParseGoMod, which wraps golang.org/x/mod/modfile - the parser the go
+// command itself uses - instead of scanning the manifest line by line.
 func parseGoMod(goModPath string) (modulePath string, goVersion string, directDeps map[string]string, err error) {
 	if !util.FileExists(goModPath) {
 		return "", "", nil, fmt.Errorf("%w: %s", ErrGoModMissing, goModPath)
 	}
 
-	state := goModScanState{directDeps: make(map[string]string)}
-	if scanErr := scanManifestLines(goModPath, state.consume); scanErr != nil {
-		return "", "", nil, scanErr
+	mod, err := astx.ParseGoMod(goModPath)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("failed to parse %q: %w", goModPath, err)
 	}
 
-	return state.modulePath, state.goVersion, state.directDeps, nil
-}
-
-// goModScanState accumulates the go.mod directives seen so far. Keeping the per-line
-// classification here holds parseGoMod itself under the HISS-04 complexity cap.
-type goModScanState struct {
-	modulePath     string
-	goVersion      string
-	directDeps     map[string]string
-	inRequireBlock bool
-}
-
-// consume classifies a single trimmed go.mod line.
-func (s *goModScanState) consume(line string) {
-	switch {
-	case strings.HasPrefix(line, "module "):
-		s.modulePath = strings.TrimSpace(strings.TrimPrefix(line, "module"))
-	case strings.HasPrefix(line, "go "):
-		s.goVersion = strings.TrimSpace(strings.TrimPrefix(line, "go"))
-	case strings.HasPrefix(line, "require ("):
-		s.inRequireBlock = true
-	case s.inRequireBlock && line == ")":
-		s.inRequireBlock = false
-	case s.inRequireBlock || strings.HasPrefix(line, "require "):
-		parseRequireLine(line, s.directDeps)
+	direct := mod.Direct()
+	directDeps = make(map[string]string, len(direct))
+	for _, req := range direct {
+		directDeps[req.Path] = req.Version
 	}
+	return mod.Module, mod.Go, directDeps, nil
 }
 
-// parseRequireLine extracts a dependency if it is not marked as indirect.
-func parseRequireLine(line string, directDeps map[string]string) {
-	clean := strings.TrimPrefix(line, "require ")
-	clean = strings.TrimSpace(clean)
-	if strings.HasPrefix(clean, "//") || strings.HasPrefix(clean, "#") ||
-		strings.Contains(clean, "// indirect") || clean == "" || clean == "(" || clean == ")" {
-		return
-	}
-	parts := strings.Fields(clean)
-	if len(parts) >= 2 {
-		directDeps[parts[0]] = parts[1]
-	}
-}
-
-// scanASTImports extracts third-party imports and selected catalog stdlib imports.
+// scanASTImports extracts third-party imports and selected catalog stdlib imports through
+// the shared astx walker, which bounds the traversal and applies the go tool's own
+// directory exclusions.
 func scanASTImports(ctx context.Context, rootDir, modulePath string) (map[string]struct{}, error) {
 	thirdParty := make(map[string]struct{})
-	fset := token.NewFileSet()
 	root := filepath.Clean(rootDir)
 
-	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
-		}
-		if shouldSkipDir(info, path, root) {
-			return filepath.SkipDir
-		}
-		if !isScannableGoFile(info) {
-			return nil
-		}
-		collectFileImports(fset, path, modulePath, thirdParty)
+	err := astx.Walk(ctx, root, astx.WalkOptions{SkipDirs: praetorSkipDirs}, func(path string) error {
+		collectFileImports(path, modulePath, thirdParty)
 		return nil
 	})
 	if err != nil {
@@ -143,16 +103,20 @@ func isScannableGoFile(info os.FileInfo) bool {
 	return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
 }
 
-// collectFileImports parses one file and records its third-party imports. A file that
-// does not parse (generated or partially written code) contributes no imports.
-func collectFileImports(fset *token.FileSet, path, modulePath string, thirdParty map[string]struct{}) {
-	node, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
-	if parseErr != nil {
+// collectFileImports records one file's third-party imports. A symlinked source is skipped
+// because its target may live outside the scanned repository, and a file that does not
+// parse (generated or partially written code) contributes no imports.
+func collectFileImports(path, modulePath string, thirdParty map[string]struct{}) {
+	info, err := os.Lstat(path)
+	if err != nil || !isScannableGoFile(info) {
 		return
 	}
-	for _, imp := range node.Imports {
-		rawPath := strings.Trim(imp.Path.Value, `"`)
-		if isThirdPartyImport(rawPath, modulePath) || isSelectedStandardImport(rawPath) {
+	imports, err := astx.Imports(path)
+	if err != nil {
+		return
+	}
+	for _, rawPath := range imports {
+		if astx.IsThirdParty(rawPath, modulePath) || isSelectedStandardImport(rawPath) {
 			thirdParty[rawPath] = struct{}{}
 		}
 	}
@@ -200,12 +164,7 @@ func isExcludedDirSegment(name string) bool {
 // module. The module comparison is boundary-aware: a sibling module that merely shares a
 // textual prefix (github.com/acme/foo-plugins vs github.com/acme/foo) is third-party.
 func isThirdPartyImport(importPath, modulePath string) bool {
-	if modulePath != "" &&
-		(importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/")) {
-		return false
-	}
-	firstSeg := strings.Split(importPath, "/")[0]
-	return strings.Contains(firstSeg, ".")
+	return astx.IsThirdParty(importPath, modulePath)
 }
 
 // loadExistingDeclarations merges capabilities declared in an existing .needs.yaml or

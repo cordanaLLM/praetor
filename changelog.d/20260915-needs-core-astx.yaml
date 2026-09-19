@@ -1,0 +1,3 @@
+type: changed
+title: go.mod and Go import scanning in the needs engine use golusoris core/astx (golang.org/x/mod) instead of hand-rolled line and string parsing
+breaking: false
