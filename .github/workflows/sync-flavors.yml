@@ -21,7 +21,7 @@ jobs:
     # .standards.yaml identity; internal/forge/workflow_guard_test.go holds the two equal.
     name: Reconcile Moving Flavor Tags (canonical repository only)
     if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
 
     steps:

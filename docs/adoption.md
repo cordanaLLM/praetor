@@ -87,7 +87,7 @@ on:
 jobs:
   adopt:
     if: github.event.issue.pull_request && contains(github.event.comment.body, '/adopt')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@main

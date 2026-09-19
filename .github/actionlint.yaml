@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: EUPL-1.2
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
+#
+# actionlint carries a hard-coded table of GitHub-hosted runner labels
+# (rule_runner_label.go) and rejects anything absent from it. As of actionlint
+# v1.7.12 that table stops at ubuntu-24.04, while actions/runner-images already
+# publishes the Ubuntu 26.04 images. Declaring the labels here is the mechanism
+# actionlint documents for labels it does not know; it suppresses nothing else.
+#
+# Delete the two entries once actionlint ships them upstream, and confirm the
+# workflows still lint clean rather than assuming they do.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
+    - ubuntu-26.04-arm

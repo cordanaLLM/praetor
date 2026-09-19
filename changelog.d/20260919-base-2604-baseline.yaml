@@ -1,0 +1,3 @@
+type: changed
+title: Move CI runners, devcontainer and container bases to the Ubuntu 26.04 era baseline
+breaking: false

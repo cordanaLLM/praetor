@@ -59,7 +59,7 @@ reason and states where the coverage is recovered.
 
 ## Enforcement in this repository
 
-`.github/workflows/portability.yml` runs the matrix on `ubuntu-latest`, `macos-latest` and
+`.github/workflows/portability.yml` runs the matrix on `ubuntu-26.04`, `macos-latest` and
 `windows-latest` with `fail-fast: false`, compiling, vetting and testing every package and then
 running the harness self-tests through `scripts/portability_selftest.py`.
 
