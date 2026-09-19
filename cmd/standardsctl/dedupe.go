@@ -80,7 +80,11 @@ func runDedupeScan(args []string) error {
 	}
 
 	if !report.Passed {
-		return fmt.Errorf("dedupe audit failed with score %.1f%%", report.CleanlinessScore)
+		// The score is not the verdict: any finding fails the scan, so a single sprawl item
+		// used to be reported as "failed with score 95.0%", which reads like a threshold the
+		// repository missed rather than the one call site it has to fix.
+		return fmt.Errorf("dedupe audit failed: %d duplicate function group(s), %d utility sprawl finding(s); cleanliness %.1f%%",
+			len(report.Duplicates), len(report.SprawlItems), report.CleanlinessScore)
 	}
 	return nil
 }

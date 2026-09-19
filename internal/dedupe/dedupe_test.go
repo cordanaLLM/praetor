@@ -66,14 +66,63 @@ func CallGit() {
 	if len(report.SprawlItems) != 1 {
 		t.Fatalf("expected 1 sprawl item, got %d", len(report.SprawlItems))
 	}
-	// The advice must name the isolated probe: util.RunGit inherits the ambient
-	// environment and the inspected repository's configuration, so recommending it
-	// reproduced the defect the rule exists to prevent.
-	if replacement := report.SprawlItems[0].Replacement; !strings.Contains(replacement, "util.RunGitProbe(") {
-		t.Errorf("sprawl replacement = %q, want the isolated probe", replacement)
+	// The advice must name both audited entry points. util.RunGit alone inherits the
+	// ambient environment and the inspected repository's configuration, which reproduced
+	// the defect the rule exists to prevent; util.RunGitProbe alone is read-only by
+	// construction, so a clone or a commit that follows it loses its hooks at a five-second
+	// cap. .golangci.yml forbidigo names the same pair for the same call.
+	replacement := report.SprawlItems[0].Replacement
+	for _, want := range []string{"util.RunGit(", "util.RunGitProbe("} {
+		if !strings.Contains(replacement, want) {
+			t.Errorf("sprawl replacement = %q, want it to name %s", replacement, want)
+		}
 	}
 	if report.Passed {
 		t.Fatal("expected report to fail due to duplicates and sprawl")
+	}
+}
+
+// TestScanRepo_Positive_CommandContextGitIsReported is the regression for the
+// exec.CommandContext arm of the sprawl rule.
+//
+// Measured before the fix: the rule admitted CommandContext by name and then asserted the
+// literal "git" at Args[0], which for CommandContext is the context expression and never a
+// BasicLit, so the arm was dead by construction and the call was never reported.
+func TestScanRepo_Positive_CommandContextGitIsReported(t *testing.T) {
+	tmp := t.TempDir()
+	source := `package test
+
+import (
+	"context"
+	"os/exec"
+)
+
+func CallGit(ctx context.Context, tool string) {
+	_ = exec.CommandContext(ctx, "git", "status")
+	// Negative: a name that is not a literal "git", a non-git binary, and a call with no
+	// name argument at all must stay unreported.
+	_ = exec.CommandContext(ctx, tool, "status")
+	_ = exec.CommandContext(ctx, "go", "build")
+	_ = exec.Command(tool, "status")
+	_ = exec.CommandContext(ctx)
+}
+`
+	if err := os.WriteFile(filepath.Join(tmp, "ctx.go"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := dedupe.ScanRepo(tmp)
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if len(report.SprawlItems) != 1 {
+		t.Fatalf("SprawlItems = %+v, want exactly the CommandContext git call", report.SprawlItems)
+	}
+	if pattern := report.SprawlItems[0].Pattern; !strings.Contains(pattern, "CommandContext") {
+		t.Errorf("pattern = %q, want it to name the CommandContext form", pattern)
+	}
+	if report.Passed {
+		t.Error("a repository with an unresolved sprawl finding must not pass")
 	}
 }
 
