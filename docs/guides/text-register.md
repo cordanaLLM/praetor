@@ -295,17 +295,24 @@ link disappears. The lint and gate code live in `internal/compiler/caveman_lint.
 ### The persona and skill gate
 
 `SurfaceContext` covers more than AGENTS.md by its own doc comment: "AGENTS.md, the
-compiled vendor files, personas and skills" (`internal/config/register.go`). The same
-`compile-context --verify` and `audit` gate (and their MCP mirrors) therefore also run the
-caveman lint, plus a 600-prose-word ceiling (`compiler.AgentTextCeiling`), over every file
-under `.agents/agents/*.md` and every `.agents/skills/*/SKILL.md`
-(`compiler.LintAgentText`, `cmd/standardsctl/caveman_gate.go`). No opt-out, same as AGENTS.md
-itself: personas and skills are agent-only text under `SurfaceContext`, not an emission
-surface a manifest can turn off. A pass prints:
+compiled vendor files, personas and skills" (`internal/config/register.go`). The CLI's
+`compile-context --verify` and `audit` (`cmd/standardsctl`) therefore also run the caveman
+lint, plus a 600-prose-word ceiling (`compiler.AgentTextCeiling`), over every file under
+`.agents/agents/*.md` and every `.agents/skills/*/SKILL.md` (`compiler.LintAgentText`,
+`cmd/standardsctl/caveman_gate.go`). No opt-out, same as AGENTS.md itself: personas and
+skills are agent-only text under `SurfaceContext`, not an emission surface a manifest can
+turn off. A pass prints:
 
 ```text
 6 personas and 13 skills passed the caveman lint (<= 600 prose words each).
 ```
+
+The MCP mirrors (`standards_compile_context`, `standards_audit`, `cmd/standards-mcp`) are a
+separate, smaller implementation that already did not verify persona/skill projection sync
+before this change (`standards_audit`'s own comment: "Run 'praetorctl audit' for the full
+CLI gate set"); they still only run `compiler.LintContext` over AGENTS.md and do not yet
+call `LintAgentText`. Bringing them to parity is unclaimed follow-up work, not part of this
+change.
 
 600 words was chosen because it sits between the two skills that failed the lint at
 532-561 prose words (`caveman`, `social-text`) and the shortest passing skill in the
