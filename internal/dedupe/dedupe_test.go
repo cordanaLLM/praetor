@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/dedupe"
@@ -64,8 +66,48 @@ func CallGit() {
 	if len(report.SprawlItems) != 1 {
 		t.Fatalf("expected 1 sprawl item, got %d", len(report.SprawlItems))
 	}
+	// The advice must name the isolated probe: util.RunGit inherits the ambient
+	// environment and the inspected repository's configuration, so recommending it
+	// reproduced the defect the rule exists to prevent.
+	if replacement := report.SprawlItems[0].Replacement; !strings.Contains(replacement, "util.RunGitProbe(") {
+		t.Errorf("sprawl replacement = %q, want the isolated probe", replacement)
+	}
 	if report.Passed {
 		t.Fatal("expected report to fail due to duplicates and sprawl")
+	}
+}
+
+// TestScanRepoGitScope_Negative_HostileFsmonitorNeverRuns is the regression for the scan
+// running under the scanned repository's control.
+//
+// Measured before the fix: a fixture repository whose local config sets core.fsmonitor to a
+// shell script executed that script during ScanRepoContext and still reported Passed.
+func TestScanRepoGitScope_Negative_HostileFsmonitorNeverRuns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fsmonitor fixture is a POSIX shell script")
+	}
+	dir, aux := t.TempDir(), t.TempDir()
+	marker := filepath.Join(aux, "fsmonitor-ran")
+	hook := filepath.Join(aux, "hostile.sh")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\n: > "+marker+"\nexit 1\n"), 0o700); err != nil {
+		t.Fatalf("write fsmonitor fixture: %v", err)
+	}
+	runGit(t, dir, "init")
+	writeFile(t, dir, "tracked.go", duplicateBody)
+	runGit(t, dir, "add", "tracked.go")
+	runGit(t, dir, "config", "core.fsmonitor", hook)
+	runGit(t, dir, "config", "core.hooksPath", filepath.Join(aux, "hooks"))
+
+	report, err := dedupe.ScanRepoContext(t.Context(), dir)
+	if err != nil {
+		t.Fatalf("scan under a hostile configuration failed: %v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Error("the scanned repository's fsmonitor command executed during the scan")
+	}
+	// Boundary: isolation must not cost the inventory. The tracked source is still there.
+	if report.TotalFilesScanned != 1 {
+		t.Errorf("TotalFilesScanned = %d, want the one tracked source", report.TotalFilesScanned)
 	}
 }
 

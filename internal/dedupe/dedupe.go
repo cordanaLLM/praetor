@@ -162,6 +162,12 @@ func checkUtilitySprawl(fset *token.FileSet, node *ast.File, relPath string, rep
 	})
 }
 
+// checkAdHocGit reports a direct exec of git and names the helper to use instead.
+//
+// The replacement is the isolated probe, not util.RunGit: RunGit inherits the ambient
+// environment and the inspected repository's own configuration, so a caller that followed
+// the old advice reproduced the defect this rule exists to prevent -- a scanned tree's
+// core.fsmonitor command executing during the scan.
 func checkAdHocGit(call *ast.CallExpr, relPath string, line int, report *DedupeReport) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
@@ -179,7 +185,7 @@ func checkAdHocGit(call *ast.CallExpr, relPath string, line int, report *DedupeR
 					File:        relPath,
 					Line:        line,
 					Pattern:     "exec.Command(\"git\", ...)",
-					Replacement: "util.RunGit(ctx, repoPath, ...)",
+					Replacement: "util.RunGitProbe(ctx, repoPath, maxBytes, ...)",
 				})
 			}
 		}
@@ -221,5 +227,9 @@ func calculateScore(report *DedupeReport) {
 		score = 0.0
 	}
 	report.CleanlinessScore = score
-	report.Passed = score >= 80.0 && len(report.Duplicates) == 0
+	// A finding the verdict never mentions is a finding nobody acts on. Five points per
+	// sprawl item against an 80 threshold meant four ad-hoc utility call sites scored 80
+	// and passed, so the gate reported success while listing the infractions underneath
+	// it. Every sprawl item now has to be resolved or waived, exactly like a clone.
+	report.Passed = score >= 80.0 && len(report.Duplicates) == 0 && len(report.SprawlItems) == 0
 }

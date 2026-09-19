@@ -149,7 +149,7 @@ CI pipelines evaluate the git diff before choosing which gates to run:
 One behavior has exactly one implementation:
 - Before writing a function, config loader, parser or command, the repository is searched for the capability first; an existing implementation is extended or called rather than reimplemented.
 - Configuration formats are held to the same rule: a second config system beside an existing loader is the same defect, because the two silently drift apart.
-- `praetorctl dedupe scan .` enforces this with function-level clone and utility-sprawl detection, run by `make dedupe` inside `verify-all`.
+- `praetorctl dedupe scan .` enforces this with function-level clone and utility-sprawl detection, run by `make dedupe` inside `verify-all`. Any clone *or* sprawl finding fails the scan: a finding the verdict does not carry is a finding nobody resolves.
 - Duplication that is genuinely unavoidable is justified in the commit body, not left silent.
 
 ### HISS-20: Replayable Enforcement Evidence

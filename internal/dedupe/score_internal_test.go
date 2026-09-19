@@ -39,6 +39,36 @@ func TestCalculateScore_Positive_ScannedCleanRepositoryStillPasses(t *testing.T)
 	}
 }
 
+// =========================================================================
+// A sprawl finding the verdict never mentions is a finding nobody acts on (praetor#295)
+// =========================================================================
+
+// TestCalculateScore_Negative_SingleSprawlItemFails is the regression: five points per
+// sprawl item against an 80 threshold let four ad-hoc utility call sites score 80 and pass.
+func TestCalculateScore_Negative_SingleSprawlItemFails(t *testing.T) {
+	report := &DedupeReport{TotalFilesScanned: 4, SprawlItems: []SprawlItem{{File: "a.go", Line: 3}}}
+	calculateScore(report)
+	if report.CleanlinessScore != 95 {
+		t.Errorf("one sprawl item deducts 5, got %.1f", report.CleanlinessScore)
+	}
+	if report.Passed {
+		t.Error("a repository with an unresolved sprawl finding must not pass")
+	}
+}
+
+// TestCalculateScore_Boundary_FourSprawlItemsLandOnTheThreshold pins the exact score that
+// used to pass: four findings, 80.0, no duplicates.
+func TestCalculateScore_Boundary_FourSprawlItemsLandOnTheThreshold(t *testing.T) {
+	report := &DedupeReport{TotalFilesScanned: 9, SprawlItems: make([]SprawlItem, 4)}
+	calculateScore(report)
+	if report.CleanlinessScore != 80 {
+		t.Errorf("four sprawl items deduct 20, got %.1f", report.CleanlinessScore)
+	}
+	if report.Passed {
+		t.Error("four sprawl findings on the pass line must not pass")
+	}
+}
+
 // TestCalculateScore_Boundary_DuplicatesStillDeduct checks that applicability did not displace the
 // actual detection: a scanned repository with clones must still fail.
 func TestCalculateScore_Boundary_DuplicatesStillDeduct(t *testing.T) {
