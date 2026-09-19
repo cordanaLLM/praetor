@@ -251,19 +251,111 @@ func withoutDocumentationMakefileBlock(data string) string {
 	return data
 }
 
+// A Makefile line is read token by token; these name what a token turned out to be.
+const (
+	makefileAssignToken = "assign"
+	makefileRuleToken   = "rule"
+)
+
+// makefileReferenceWidth returns the byte length of the variable reference text opens with, so the
+// colon and the "=" inside "$(SRCS:.c=.o)" are not read as operators. "$x" and "$$" span two
+// bytes; nesting is not tracked, so the first closing bracket ends the reference.
+func makefileReferenceWidth(text string) int {
+	if len(text) < 2 {
+		return 1
+	}
+	var closer byte
+	switch text[1] {
+	case '(':
+		closer = ')'
+	case '{':
+		closer = '}'
+	default:
+		return 2
+	}
+	if end := strings.IndexByte(text, closer); end > 0 {
+		return end + 1
+	}
+	return len(text)
+}
+
+// makefileColonOperator classifies the run of colons starting at line[i]. A run followed by "=" is
+// an assignment operator (":=", "::=", ":::="); any other run separates targets from prerequisites.
+func makefileColonOperator(line string, i int) (string, int) {
+	run := i
+	for run < len(line) && line[run] == ':' {
+		run++
+	}
+	if run < len(line) && line[run] == '=' {
+		return makefileAssignToken, run - i + 1
+	}
+	return makefileRuleToken, run - i
+}
+
+// makefileOperatorAt classifies the token starting at line[i] and reports the bytes it spans. Make
+// ends a variable name at "=", "+=", "?=", "!=" or a run of colons followed by "=".
+func makefileOperatorAt(line string, i int) (string, int) {
+	switch line[i] {
+	case '=':
+		return makefileAssignToken, 1
+	case '+', '?', '!':
+		if i+1 < len(line) && line[i+1] == '=' {
+			return makefileAssignToken, 2
+		}
+	case ':':
+		return makefileColonOperator(line, i)
+	case '$':
+		return "", makefileReferenceWidth(line[i:])
+	}
+	return "", 1
+}
+
+// makefileSplit returns the byte offsets of the first variable-assignment operator and of the first
+// rule colon on line, each -1 when the line holds none. Make reads whichever comes first: an
+// assignment first binds a variable whose value may itself contain colons ("V = a:b"), a colon
+// first opens a rule ("t: dep").
+func makefileSplit(line string) (assign, colon int) {
+	assign, colon = -1, -1
+	for i := 0; i < len(line); {
+		kind, width := makefileOperatorAt(line, i)
+		if kind == makefileAssignToken && assign < 0 {
+			assign = i
+		}
+		if kind == makefileRuleToken && colon < 0 {
+			colon = i
+		}
+		i += width
+	}
+	return assign, colon
+}
+
+// makefileBindsVariable reports whether text binds a variable rather than opening a rule, decided
+// by whichever operator Make reaches first.
+func makefileBindsVariable(text string) bool {
+	assign, colon := makefileSplit(text)
+	return assign >= 0 && (colon < 0 || assign < colon)
+}
+
 // makefileTargetNames returns the target names a Makefile line declares, and none when the line
-// declares no rule. Make reads a run of colons followed by "=" as a variable assignment -- ":=",
-// "::=" and ":::=" -- so "verify-all := x" binds a variable and leaves make with no verify-all
-// rule, while "verify-all:: dep" is a double-colon rule and does declare one.
+// declares no rule. Measured against GNU Make 4.4.1: "verify-all := x", "verify-all = a:b",
+// "verify-all ?= a:b", "verify-all += x:y", "verify-all != date" and "override verify-all := x"
+// all bind a variable, and "verify-all: CFLAGS := -g" binds a target-specific variable without a
+// recipe; each answers "make verify-all" with "No rule to make target". "verify-all:: dep" is a
+// double-colon rule and "verify-all: $(SRCS:.c=.o)" a rule whose prerequisite holds a substitution
+// reference; both do declare the target.
 func makefileTargetNames(line string) []string {
 	if strings.HasPrefix(line, "\t") || strings.HasPrefix(strings.TrimSpace(line), "#") {
 		return nil
 	}
-	left, rest, ok := strings.Cut(line, ":")
-	if !ok || strings.HasPrefix(strings.TrimLeft(rest, ":"), "=") {
+	_, colon := makefileSplit(line)
+	if colon < 0 || makefileBindsVariable(line) {
 		return nil
 	}
-	return strings.Fields(left)
+	_, width := makefileOperatorAt(line, colon)
+	if makefileBindsVariable(line[colon+width:]) {
+		return nil
+	}
+	return strings.Fields(line[:colon])
 }
 
 func hasVerificationTarget(data, target string) bool {
@@ -297,16 +389,32 @@ func appendVerificationTargets(existing string, plan *VerificationPlan) (string,
 	return util.RestoreLineEndings(result.String(), crlf), nil
 }
 
+// makefileDirective returns the first word of a Makefile line that carries meaning, skipping the
+// modifiers Make allows in front of a variable assignment or a define. "override", "export",
+// "unexport" and "private" take an assignment or a "define" and nothing else, so none of them can
+// introduce a rule; "override define recipe" is still a define.
+func makefileDirective(fields []string) string {
+	for _, field := range fields {
+		switch field {
+		case "override", "export", "unexport", "private":
+			continue
+		}
+		return field
+	}
+	return ""
+}
+
 // makefileLineIsAmbiguous reports whether a line may define targets only Make can resolve: an
-// include, a directive, an $(eval ...) call, or a computed or pattern target name. The line is
-// already trimmed and is not a recipe line.
+// include, a define, an $(eval ...) call, or a computed or pattern target name. The line is
+// already trimmed and is not a recipe line. A bare modifier is not ambiguous: measured against
+// GNU Make 4.4.1, a Makefile holding "override verify-all := x" or "override CFLAGS += -Wall"
+// beside an "all:" rule answers "make verify-all" with "No rule to make target".
 func makefileLineIsAmbiguous(line string) bool {
-	fields := strings.Fields(line)
-	if len(fields) == 0 || strings.HasPrefix(line, "#") {
+	if strings.HasPrefix(line, "#") {
 		return false
 	}
-	switch fields[0] {
-	case "include", "-include", "sinclude", "define", "override":
+	switch makefileDirective(strings.Fields(line)) {
+	case "include", "-include", "sinclude", "define":
 		return true
 	}
 	if strings.Contains(line, "$(eval") || strings.Contains(line, "${eval") {
