@@ -342,9 +342,7 @@ func inspectIdentity(ctx context.Context, repoPath string, observation *Reposito
 		return
 	}
 	if strings.TrimSpace(bare) != "true" {
-		top, topErr := inventoryRunGit(ctx, repoPath, "rev-parse", "--show-toplevel")
-		canonicalTop, canonicalErr := filepath.Abs(top)
-		if topErr != nil || canonicalErr != nil || filepath.Clean(canonicalTop) != observation.Path {
+		if !sameDirectory(observation.Path, gitToplevel(ctx, repoPath)) {
 			observation.ProbeErrors = append(observation.ProbeErrors, "git top-level identity mismatch")
 			return
 		}
@@ -358,6 +356,48 @@ func inspectIdentity(ctx context.Context, repoPath string, observation *Reposito
 	} else {
 		observation.Classification = "main"
 	}
+}
+
+// gitToplevel returns the absolute form of "git rev-parse --show-toplevel", or "" on any
+// failure. The caller decides what a failure means; this only resolves the path.
+func gitToplevel(ctx context.Context, repoPath string) string {
+	top, err := inventoryRunGit(ctx, repoPath, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return ""
+	}
+	abs, err := filepath.Abs(top)
+	if err != nil {
+		return ""
+	}
+	return abs
+}
+
+// sameDirectory reports whether want and got name the same directory, comparing by device
+// and inode (os.SameFile) rather than by string.
+//
+// A string comparison is what inspectIdentity used to do: filepath.Clean(canonicalTop) !=
+// observation.Path, where observation.Path is filepath.Abs(repoPath) -- never symlink
+// resolved -- and canonicalTop comes from git, whose "rev-parse --show-toplevel" is computed
+// from the child process's getcwd(2), which POSIX defines as free of symbolic links. On
+// macOS, where a repository under the platform's own TMPDIR is reached through /var ->
+// /private/var, that made the two spellings of the identical directory compare unequal on
+// every run, including every t.TempDir() fixture in this package's own tests (#135). Two
+// paths naming the same directory are the same repository regardless of which symlink in
+// their ancestry either one was spelled through; os.SameFile answers that question directly,
+// by identity, instead of demanding the operator's filesystem produce one specific spelling.
+func sameDirectory(want, got string) bool {
+	if want == "" || got == "" {
+		return false
+	}
+	wantInfo, err := os.Stat(want)
+	if err != nil {
+		return false
+	}
+	gotInfo, err := os.Stat(got)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(wantInfo, gotInfo)
 }
 
 func inspectRepositoryState(ctx context.Context, repoPath string, observation *RepositoryObservation) {
