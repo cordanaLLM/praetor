@@ -1,13 +1,27 @@
 package astmerge
 
 import (
+	"context"
+	"fmt"
+	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// canceledContext returns a context that is already canceled, for testing that an I/O
+// path actually observes cancellation rather than only checking it once up front.
+func canceledContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
+}
 
 // =========================================================================
 // Positive 3D Tests
@@ -395,5 +409,244 @@ func TestMerge_Boundary_MergeFilesWithContext(t *testing.T) {
 	}
 	if !strings.Contains(res.MergedCode, "func B") || !strings.Contains(res.MergedCode, "func C") {
 		t.Errorf("MergeFiles missing symbols in: %s", res.MergedCode)
+	}
+}
+
+// =========================================================================
+// BUG-477: the ours==theirs shortcut must not report a clean merge over
+// source that cannot parse.
+// =========================================================================
+
+func TestMerge_Negative_IdenticalButInvalidSource(t *testing.T) {
+	broken := "package f\nfunc Broken( {"
+
+	_, err := Merge(broken, broken, broken)
+	if err == nil {
+		t.Fatalf("expected an error merging identical-but-invalid ours/theirs source")
+	}
+}
+
+// =========================================================================
+// BUG-212: the declaration bound must fail the merge, not truncate it.
+// =========================================================================
+
+func TestMerge_Boundary_ExactlyMaxDeclarations(t *testing.T) {
+	src := manyFuncsSource("atbound", maxASTDeclarations)
+
+	res, err := Merge(src, src, src)
+	if err != nil {
+		t.Fatalf("expected exactly %d declarations to merge, got: %v", maxASTDeclarations, err)
+	}
+	if !res.Clean {
+		t.Fatalf("expected a clean merge at the declaration bound")
+	}
+}
+
+func TestMerge_Negative_TooManyDeclarations(t *testing.T) {
+	src := manyFuncsSource("overbound", maxASTDeclarations+1)
+
+	_, err := Merge(src, src, src)
+	if err == nil {
+		t.Fatalf("expected an error past the %d declaration bound", maxASTDeclarations)
+	}
+	if !strings.Contains(err.Error(), "exceeding") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func manyFuncsSource(pkg string, count int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "package %s\n\n", pkg)
+	for i := 0; i < count; i++ {
+		fmt.Fprintf(&b, "func F%d() {}\n", i)
+	}
+	return b.String()
+}
+
+// =========================================================================
+// BUG-819: methods on distinct generic receivers must not collide on the
+// same "*unknown" merge key.
+// =========================================================================
+
+func TestMerge_Positive_GenericReceiverMethodSurvives(t *testing.T) {
+	base := `package generics
+
+type Set[T any] struct{}
+
+type Queue[T any] struct{}
+
+func (q *Queue[T]) Close() error { return nil }
+`
+	ours := `package generics
+
+type Set[T any] struct{}
+
+type Queue[T any] struct{}
+
+func (q *Queue[T]) Close() error { return nil }
+
+func (s *Set[T]) Close() error { return nil }
+`
+	theirs := base
+
+	res, err := Merge(base, ours, theirs)
+	if err != nil {
+		t.Fatalf("Merge failed: %v", err)
+	}
+	if !res.Clean {
+		t.Fatalf("expected a clean merge, got conflicts: %v", res.Conflicts)
+	}
+	if !strings.Contains(res.MergedCode, "func (q *Queue[T]) Close()") {
+		t.Errorf("expected (*Queue[T]).Close to survive the merge, got:\n%s", res.MergedCode)
+	}
+	if !strings.Contains(res.MergedCode, "func (s *Set[T]) Close()") {
+		t.Errorf("expected the new (*Set[T]).Close to be added, got:\n%s", res.MergedCode)
+	}
+}
+
+// =========================================================================
+// BUG-478: readFileWithContext must observe a context that is already
+// expired, not just check it once before an unbounded read.
+// =========================================================================
+
+func TestMerge_Negative_MergeFilesCanceledContext(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "ours.go")
+	if err := os.WriteFile(path, []byte("package f\n"), 0644); err != nil {
+		t.Fatalf("failed to write fixture: %v", err)
+	}
+
+	_, err := readFileWithContext(canceledContext(t), path)
+	if err == nil {
+		t.Fatalf("expected an error reading with an already-canceled context")
+	}
+}
+
+// =========================================================================
+// BUG-479: ResolvedCount must include cleanly-deleted symbols, not just
+// carried-through additions.
+// =========================================================================
+
+func TestMerge_Boundary_ResolvedCountIncludesCleanDeletions(t *testing.T) {
+	base := "package api\n\nfunc A() {}\n\nfunc B() {}\n"
+	ours := "package api\n\nfunc A() {}\n" // B deleted cleanly
+	theirs := base                         // unchanged
+
+	res, err := Merge(base, ours, theirs)
+	if err != nil {
+		t.Fatalf("Merge failed: %v", err)
+	}
+	if !res.Clean {
+		t.Fatalf("expected a clean merge, got conflicts: %v", res.Conflicts)
+	}
+	if res.ResolvedCount != 2 {
+		t.Errorf("expected ResolvedCount 2 (A kept + B cleanly deleted), got %d", res.ResolvedCount)
+	}
+	if strings.Contains(res.MergedCode, "func B") {
+		t.Errorf("expected B to be absent from the merged output, got:\n%s", res.MergedCode)
+	}
+}
+
+// =========================================================================
+// BUG-214: a clean merge must carry the build-constraint comment and the
+// package doc comment through, not drop them.
+// =========================================================================
+
+func TestMerge_Positive_BuildTagsAndPackageDocSurviveMerge(t *testing.T) {
+	const template = `//go:build linux
+
+// Package doccheck documents intent for the merge.
+package doccheck
+
+func Base() {}
+%s`
+
+	base := fmt.Sprintf(template, "")
+	ours := fmt.Sprintf(template, "\nfunc Ours() {}\n")
+	theirs := fmt.Sprintf(template, "\nfunc Theirs() {}\n")
+
+	res, err := Merge(base, ours, theirs)
+	if err != nil {
+		t.Fatalf("Merge failed: %v", err)
+	}
+	if !res.Clean {
+		t.Fatalf("expected a clean merge, got conflicts: %v", res.Conflicts)
+	}
+	if !strings.Contains(res.MergedCode, "//go:build linux") {
+		t.Errorf("expected the build constraint to survive the merge, got:\n%s", res.MergedCode)
+	}
+	if !strings.Contains(res.MergedCode, "Package doccheck documents intent for the merge.") {
+		t.Errorf("expected the package doc comment to survive the merge, got:\n%s", res.MergedCode)
+	}
+	if !strings.Contains(res.MergedCode, "func Ours") || !strings.Contains(res.MergedCode, "func Theirs") {
+		t.Errorf("expected both orthogonal additions in the merged output, got:\n%s", res.MergedCode)
+	}
+}
+
+// =========================================================================
+// BUG-480: MergeFiles needs negative/boundary coverage, and merged code
+// needs to be verified compilable, not just gofmt-shaped.
+// =========================================================================
+
+func TestMerge_Negative_MergeFilesOursMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	basePath := filepath.Join(tmpDir, "base.go")
+	oursPath := filepath.Join(tmpDir, "missing-ours.go")
+	theirsPath := filepath.Join(tmpDir, "theirs.go")
+	writeMergeFixtureFile(t, basePath, "package f\n")
+	writeMergeFixtureFile(t, theirsPath, "package f\n")
+
+	_, err := MergeFiles(basePath, oursPath, theirsPath)
+	if err == nil {
+		t.Fatalf("expected an error for a missing ours file")
+	}
+}
+
+func TestMerge_Negative_MergeFilesTheirsIsDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	basePath := filepath.Join(tmpDir, "base.go")
+	oursPath := filepath.Join(tmpDir, "ours.go")
+	theirsDir := filepath.Join(tmpDir, "theirs-is-a-dir")
+	writeMergeFixtureFile(t, basePath, "package f\n")
+	writeMergeFixtureFile(t, oursPath, "package f\n")
+	if err := os.Mkdir(theirsDir, 0755); err != nil {
+		t.Fatalf("failed creating directory fixture: %v", err)
+	}
+
+	_, err := MergeFiles(basePath, oursPath, theirsDir)
+	if err == nil {
+		t.Fatalf("expected an error when theirs path is a directory, not a file")
+	}
+}
+
+func writeMergeFixtureFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed writing fixture %s: %v", path, err)
+	}
+}
+
+func TestMerge_Boundary_MergedCodeTypeChecks(t *testing.T) {
+	base := "package typecheck\n\nfunc Base() int { return 1 }\n"
+	ours := "package typecheck\n\nfunc Base() int { return 1 }\n\nfunc Ours() string { return \"ours\" }\n"
+	theirs := "package typecheck\n\nfunc Base() int { return 1 }\n\nfunc Theirs() bool { return true }\n"
+
+	res, err := Merge(base, ours, theirs)
+	if err != nil {
+		t.Fatalf("Merge failed: %v", err)
+	}
+	if !res.Clean {
+		t.Fatalf("expected a clean merge, got conflicts: %v", res.Conflicts)
+	}
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "merged.go", res.MergedCode, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("merged code failed to parse: %v\n%s", err, res.MergedCode)
+	}
+
+	conf := types.Config{Importer: importer.Default()}
+	if _, err := conf.Check("typecheck", fset, []*ast.File{file}, nil); err != nil {
+		t.Fatalf("merged code failed type-checking: %v\n%s", err, res.MergedCode)
 	}
 }
