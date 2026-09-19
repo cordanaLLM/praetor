@@ -11,20 +11,28 @@ runtimes, status, and any reasons requiring review.
 | `unavailable` | A required build/test command is missing or ambiguous. Generated recipes fail explicitly. |
 | `preserved-unverified` | Existing custom Makefile ownership is preserved. Review and exercise its `verify-all` contract. |
 
-Ownership means a rule, and Make decides that by whichever it reaches first on the line: an
-assignment operator or a colon. A Makefile that only binds a variable of the same name declares no
-target, whether the operator is `:=`, `::=`, `:::=`, `=`, `?=`, `+=` or `!=`, whether the line
-carries an `export` or `override` modifier, and whether or not the value itself contains a colon
-(`verify-all = docker run --rm ci:latest check`, `verify-all = $(SRCS:.c=.o)`). Neither does
-`verify-all: CFLAGS := -g`, which binds a target-specific variable without declaring a recipe. In
-all of these adoption appends its own `verify-all` rule rather than preserving one and reporting a
-command the project's `make` answers with `No rule to make target 'verify-all'`.
+Ownership means a rule. Make reads a line in two steps, and adoption follows both. First it cuts
+the line at the first unescaped `#`, which opens a comment, or `;`, which opens the inline recipe.
+Then it decides rule versus assignment on what is left, by whichever operator it reaches first: an
+assignment operator or a colon.
 
-Double-colon rules (`verify-all:: dep`), target lists (`all verify-all: dep`) and rules whose
-prerequisites hold a substitution reference (`verify-all: $(SRCS:.c=.o)`) are rules and are
-preserved, as are the forms only Make itself can resolve: an `include` or `define` directive,
-`$(eval ...)`, and a target name containing `$` or `%`. The table tests behind this contract are in
-`internal/adopt/verification_makefile_target_test.go`; each negative was measured against GNU Make
+A Makefile that only binds a variable of the same name declares no target, whether the operator is
+`:=`, `::=`, `:::=`, `=`, `?=`, `+=` or `!=`, whether the line carries an `export` or `override`
+modifier, and whether or not the value itself contains a colon (`verify-all = docker run --rm
+ci:latest check`, `verify-all = $(SRCS:.c=.o)`). The same test then runs over the prerequisites,
+which is why `verify-all: CFLAGS := -g` binds a target-specific variable without declaring a
+recipe -- with or without a trailing comment. In all of these adoption appends its own `verify-all`
+rule rather than preserving one and reporting a command the project's `make` answers with `No rule
+to make target 'verify-all'`.
+
+Because the cut comes first, an `=` that a comment or a recipe carries decides nothing:
+`verify-all: lint ## run gates (FAST=1)` and `verify-all: ; FOO=1 echo c` are rules and are
+preserved. So are double-colon rules (`verify-all:: dep`), target lists (`all verify-all: dep`) and
+rules whose prerequisites hold a substitution reference (`verify-all: $(SRCS:.c=.o)`), along with
+the forms only Make itself can resolve: an `include` or `define` directive, `$(eval ...)`, a target
+name containing `$` or `%`, and a line longer than the 8192-byte scan bound, which is read in part
+and therefore left to Make. The table tests behind this contract are in
+`internal/adopt/verification_makefile_target_test.go`; each row was measured against GNU Make
 4.4.1.
 
 Repositories declaring `docs:seo-portal` also receive a locked Markdown gate,
