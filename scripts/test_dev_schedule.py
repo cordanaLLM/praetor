@@ -1,6 +1,7 @@
 """User timer installation against disposable files and an observable service manager."""
 
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -22,8 +23,14 @@ class ScheduleTests(unittest.TestCase):
         self.enabled, self.active, self.busy = False, False, False
         self.failure = None
         self.foreign = False
-        self.runner = "/usr/bin/true"
-        self.runner_hash = schedule.runner_digest(Path(self.runner))
+        # A private copy, not /usr/bin/true directly: runner_digest's O_NOFOLLOW open
+        # refuses a symlink, and some platform images ship /usr/bin/true as one. shutil.copy
+        # follows the source and always writes a fresh regular file at the destination.
+        self.runner_binary = self.root / "true"
+        shutil.copy("/usr/bin/true", self.runner_binary)
+        self.runner_binary.chmod(0o755)
+        self.runner = str(self.runner_binary)
+        self.runner_hash = schedule.runner_digest(self.runner_binary)
         self.mock = patch.object(schedule, "command", side_effect=self.command)
         self.mock.start()
         self.addCleanup(self.mock.stop)
@@ -35,7 +42,7 @@ class ScheduleTests(unittest.TestCase):
             self.failure = None
             raise RuntimeError("fixture command failure")
         output = ""
-        if args[0] == "/usr/bin/true":
+        if args[0] == str(self.runner_binary):
             import json
             output = json.dumps({"config": {"runner_binary": self.runner}, "runner_sha256": self.runner_hash})
         elif verb == "is-enabled":
@@ -58,7 +65,7 @@ class ScheduleTests(unittest.TestCase):
         return subprocess.CompletedProcess(args, 0, output, "")
 
     def install(self, activate=True):
-        return schedule.install(self.name, Path("/usr/bin/true"), self.config,
+        return schedule.install(self.name, self.runner_binary, self.config,
                                 self.directory, self.backups, activate)
 
     def test_activate_and_repeat_retains_previous_units_and_timer(self):
