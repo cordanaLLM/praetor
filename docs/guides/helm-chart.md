@@ -39,17 +39,40 @@ credential it cannot use.
 
 ### Upgrading a release installed before the rename
 
-Earlier versions named the account `praetor-sa` outright, which is why two releases collided. The
-release-scoped default renames it, and a `ServiceAccount` rename means the old object is deleted
-and a new one created. To keep the existing account across the upgrade, name it:
+Two renames can reach an existing release. Check both before you run `helm upgrade`.
+
+**The ServiceAccount moves on every release.** Earlier versions named the account `praetor-sa`
+outright, which is why two releases collided. The release-scoped default renames it, and a
+`ServiceAccount` rename means the old object is deleted and a new one created. To keep the
+existing account across the upgrade, name it:
 
 ```bash
 helm upgrade praetor deploy/helm/praetor --set serviceAccount.name=praetor-sa
 ```
 
 `TestServiceAccountCreateTrueHonoursExplicitName` in `internal/deploychart/chart_test.go` pins that
-path. The Deployment and Service names are unchanged by the upgrade either way: they were already
-`<release>-praetor`.
+path.
+
+**The Deployment and Service move where an override is set.** `nameOverride` and
+`fullnameOverride` shipped in `values.yaml` but no template read them, so a release that set one
+rendered as though it had not: every object stayed `<release>-praetor`. They now steer every
+generated name, including the two objects that carry traffic. Render the values you install with
+and compare the result against the live release before upgrading:
+
+```bash
+helm template alpha deploy/helm/praetor --set nameOverride=alt   # alpha-alt, not alpha-praetor
+```
+
+Helm sees a differently named object, so it deletes the old Deployment and Service and creates new
+ones: the pods restart, and the in-cluster DNS name of the Service moves with it. `nameOverride`
+also changes `app.kubernetes.io/name`, which the Deployment selector matches on, so the new
+Deployment selects a different label set than the old one did.
+
+Clearing both values reproduces the previous names exactly, so a release that never set them is
+untouched by this half; `TestDefaultValuesRenderServiceAccountTheDeploymentUses` and
+`TestTwoReleasesShareNoResourceName` pin the default render, and
+`TestNameOverrideKeepsReleaseScope` pins the overridden one. A release that did set an override
+either accepts the rename or clears the value before upgrading.
 
 ## Private registries
 

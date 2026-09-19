@@ -1,3 +1,3 @@
 type: fixed
-title: Render release-scoped Helm names so a second install no longer collides, honour the image pull and name override values, and mount no unusable service account token
+title: Render release-scoped Helm names so a second install no longer collides, honour the image pull and name override values, and mount no unusable service account token; upgrading an existing release deletes and recreates its ServiceAccount under a new name, so keep the old one with helm upgrade --set serviceAccount.name=praetor-sa, and a release that had set nameOverride or fullnameOverride now renames its Deployment and Service too because no template read those values before, so clear them to keep the current names
 breaking: true
