@@ -21,8 +21,9 @@ from common import (HookError, MANAGED_PROCESS_ENV, MAX_PROCESS_ENV_ENTRIES,
                     clean_env, run, snapshot, stop_process_group)
 from checks import (go_packages, source_checks, governance_commands, context_changed,
                     audit_scope, local_package_patterns, checkpoint_checks,
-                    semgrep_commands, is_fixture, is_chart_template, run_full_gate,
-                    gate_timeout, FIXTURE_DIRECTORY, GATE_LAUNCH_MARGIN, GATE_QUERY_TIMEOUT)
+                    semgrep_commands, is_fixture, is_chart_template, file_checks,
+                    run_full_gate, gate_timeout, FIXTURE_DIRECTORY, GATE_LAUNCH_MARGIN,
+                    GATE_QUERY_TIMEOUT)
 import hooks
 from hooks import push_updates, new_branch_base, pre_push, push_check_mode, prepare_message
 from privacy import check_private_history, check_private_index
@@ -1240,18 +1241,60 @@ class ScopeAndGuard(unittest.TestCase):
         self.assertFalse(is_fixture("internal/testdatafile.go"))
         self.assertFalse(is_fixture("mytestdata/a.go"))
 
+    def chart_tree(self, root):
+        """A chart, an ordinary templates/ directory and a lookalike file, as one tree.
+
+        Both the predicate test and the wiring test read this, so the two never
+        disagree about what a chart looks like.
+        """
+        chart = root / "deploy" / "helm" / "praetor"
+        (chart / "templates" / "rbac").mkdir(parents=True)
+        (chart / "Chart.yaml").write_text("name: praetor\n", encoding="utf-8")
+        (chart / "values.yaml").write_text("replicaCount: 1\n", encoding="utf-8")
+        (chart / "templates" / "service.yaml").write_text("{{- if true }}\n", encoding="utf-8")
+        (chart / "templates" / "rbac" / "role.yaml").write_text("{{- if true }}\n", encoding="utf-8")
+        (root / "deploy" / "helm" / "templates.yaml").write_text("a: b\n", encoding="utf-8")
+        (root / "templates").mkdir()
+        (root / "templates" / "plain.yaml").write_text("a: b\n", encoding="utf-8")
+
+    def linted_yaml(self, root, names):
+        """The YAML files file_checks actually hands yamllint for a staged set.
+
+        The gate is the wiring, not the predicate: this calls file_checks itself and
+        reads the scheduled argv, so dropping the exclusion from the comprehension
+        fails here rather than passing unnoticed.
+        """
+        with mock.patch("checks.parallel") as scheduled:
+            file_checks(root, names)
+        self.assertEqual(scheduled.call_count, 1)
+        commands, directory = scheduled.call_args.args
+        self.assertEqual(directory, root)
+        argv = [command for command in commands if command[0] == "yamllint"]
+        if not argv:
+            return []
+        self.assertEqual(len(argv), 1)
+        return [item for item in argv[0] if item.endswith((".yml", ".yaml"))]
+
+    def test_staged_yaml_gate_lints_the_chart_documents_and_no_chart_template(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.chart_tree(root)
+            templates = ["deploy/helm/praetor/templates/service.yaml",
+                         "deploy/helm/praetor/templates/rbac/role.yaml"]
+            documents = ["deploy/helm/praetor/Chart.yaml",
+                         "deploy/helm/praetor/values.yaml",
+                         "deploy/helm/templates.yaml",
+                         "templates/plain.yaml"]
+            # Positive and negative in one staged set: the documents reach yamllint
+            # and the templates, at either depth, do not.
+            self.assertEqual(self.linted_yaml(root, documents + templates), documents)
+            # Boundary: nothing lintable staged means no yamllint command at all.
+            self.assertEqual(self.linted_yaml(root, templates), [])
+
     def test_chart_templates_are_not_linted_as_yaml_documents(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            chart = root / "deploy" / "helm" / "praetor"
-            (chart / "templates").mkdir(parents=True)
-            (chart / "Chart.yaml").write_text("name: praetor\n", encoding="utf-8")
-            (chart / "values.yaml").write_text("replicaCount: 1\n", encoding="utf-8")
-            (chart / "templates" / "service.yaml").write_text("{{- if true }}\n", encoding="utf-8")
-            (chart / "templates" / "rbac").mkdir()
-            (chart / "templates" / "rbac" / "role.yaml").write_text("{{- if true }}\n", encoding="utf-8")
-            (root / "templates").mkdir()
-            (root / "templates" / "plain.yaml").write_text("a: b\n", encoding="utf-8")
+            self.chart_tree(root)
             # A template beside Chart.yaml is a Go template: excluded.
             self.assertTrue(is_chart_template(root, "deploy/helm/praetor/templates/service.yaml"))
             self.assertTrue(is_chart_template(root, "deploy\\helm\\praetor\\templates\\service.yaml"))
