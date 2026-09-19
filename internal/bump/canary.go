@@ -176,7 +176,15 @@ func ApplyBump(ctx context.Context, repoPath string, c UpgradeCandidate, patchPa
 	}
 
 	if patchPath != "" {
-		if _, applyErr := util.RunGit(ctx, repoPath, "apply", "--ignore-whitespace", "--", patchPath); applyErr != nil {
+		// -c core.autocrlf=false pins what "git apply" writes to the patch's own bytes,
+		// regardless of the operator's ambient git config. Without it, a machine with the
+		// common Windows default core.autocrlf=true converts the LF line endings this
+		// snapshot's patch carries into CRLF on write -- not a byte-for-byte application of
+		// the adaptation patch, and a surprise for whatever reads the result afterward
+		// (gofmt, a lockfile digest, the next diff). Caught by this package's own
+		// TestApplyBumpAllowsPostUpdateManifestPatch and TestApplyBumpUsesRetainedPatchBytes
+		// on the Windows leg of the portability matrix (#135).
+		if _, applyErr := util.RunGit(ctx, repoPath, "-c", "core.autocrlf=false", "apply", "--ignore-whitespace", "--", patchPath); applyErr != nil {
 			return fmt.Errorf("dependency update applied but adaptation patch failed; no rollback performed: %w", applyErr)
 		}
 	}

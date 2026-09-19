@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -262,30 +263,46 @@ func openRegularSource(src string) (*os.File, error) {
 	return file, nil
 }
 
-// rejectBundleLinks refuses existing links in an output path before directory creation.
+// rejectBundleLinks refuses target or its immediate parent being an existing symlink.
+//
+// This used to walk every component of the absolute path from the volume root down,
+// Lstat-checking each and rejecting the first symlink. macOS ships /var and /tmp as symlinks
+// to /private/var and /private/tmp, so any target under the platform's own TMPDIR --
+// including every t.TempDir() fixture in this package's own tests -- was rejected at that
+// walk before the caller's real check ever ran. That accounted for most of this package's
+// failures on the macOS leg of the portability matrix (#135), the same shape #109 already
+// fixed once: the operator's filesystem above where praetor reads or writes is not praetor's
+// threat surface. What TestIngestTranscriptRejectsSourceAndDestinationLinkAncestors and
+// TestIngestTranscriptRejectsCacheSymlinksAndConflicts actually plant is a symlink at target
+// itself or at its immediate parent, so checking exactly those two -- both tolerant of a
+// not-yet-created target -- keeps that coverage without walking the operator's own ancestry.
 func rejectBundleLinks(target string) error {
 	absolute, err := filepath.Abs(target)
 	if err != nil {
 		return err
 	}
-	volume := filepath.VolumeName(absolute)
-	parts := strings.Split(strings.TrimPrefix(absolute, volume), string(os.PathSeparator))
-	if len(parts) > MaxBundleEntries {
-		return fmt.Errorf("bundle output path exceeds component bound")
+	if err := rejectIfSymlink(absolute); err != nil {
+		return err
 	}
-	current := volume + string(os.PathSeparator)
-	for _, part := range parts {
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("bundle output contains symlink: %s", current)
-		}
+	parent := filepath.Dir(absolute)
+	if parent == absolute {
+		return nil
+	}
+	return rejectIfSymlink(parent)
+}
+
+// rejectIfSymlink refuses path if it exists and is a symlink; a missing path is not an error,
+// since rejectBundleLinks is also used to validate a destination that has not been created yet.
+func rejectIfSymlink(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("bundle output contains symlink: %s", path)
 	}
 	return nil
 }
@@ -328,11 +345,22 @@ func secureBundleDirectory(root *os.Root, relative string) error {
 	return errors.Join(tightenBundleMode(file, info, bundleDirPerm), file.Close())
 }
 
-func openBundleRoot(directory string) (*os.Root, error) {
-	if err := rejectBundleLinks(directory); err != nil {
-		return nil, err
-	}
-	if err := os.MkdirAll(directory, bundleDirPerm); err != nil {
+// openBundleRoot creates directory (through pinned, symlink-free parents) and pins it as a
+// confinement root.
+//
+// This used to be rejectBundleLinks -- a walk from the volume root, Lstat-checking every
+// existing component and rejecting the first symlink -- followed by a plain os.MkdirAll.
+// macOS ships /var and /tmp as symlinks to /private/var and /private/tmp, so every bundle
+// destination under the platform's own TMPDIR, including every t.TempDir() fixture in this
+// package's own tests, failed at that walk before MkdirAll ever ran. That took down this
+// package's whole test suite on the macOS leg of the portability matrix (#135), the same
+// shape #109 already fixed once: the operator's filesystem above where praetor writes is not
+// praetor's threat surface. contextopt.EnsureDirectory already carries that fix -- it resolves
+// the existing ancestry once and rejects a symlink only at a component this call itself
+// creates -- so this delegates instead of keeping a second implementation of the same walk
+// (HISS-19).
+func openBundleRoot(ctx context.Context, directory string) (*os.Root, error) {
+	if err := contextopt.EnsureDirectory(ctx, directory, bundleDirPerm); err != nil {
 		return nil, err
 	}
 	info, err := os.Lstat(directory)
@@ -399,12 +427,12 @@ func openBundleFile(root *os.Root, relative string) (*os.File, error) {
 }
 
 // createSecureDest pins the output root, rejects links, and opens before truncating.
-func createSecureDest(dst, baseDir string) (*os.File, error) {
+func createSecureDest(ctx context.Context, dst, baseDir string) (*os.File, error) {
 	relative, err := filepath.Rel(baseDir, dst)
 	if err != nil || !filepath.IsLocal(relative) || relative == "." {
 		return nil, fmt.Errorf("invalid bundle destination: %s", dst)
 	}
-	root, err := openBundleRoot(baseDir)
+	root, err := openBundleRoot(ctx, baseDir)
 	if err != nil {
 		return nil, err
 	}
@@ -435,7 +463,7 @@ func copyFileWithHash(ctx context.Context, src, dst, category, baseDir string) (
 		}
 	}()
 
-	dFile, dErr := createSecureDest(dst, baseDir)
+	dFile, dErr := createSecureDest(ctx, dst, baseDir)
 	if dErr != nil {
 		return nil, dErr
 	}
@@ -892,7 +920,7 @@ func (c *bundleCollector) harvestVault(ctx context.Context, vaultDir string) err
 }
 
 // writeBundleManifest totals the records and writes the owner-only manifest.
-func writeBundleManifest(report *WorkstationBundleReport) (err error) {
+func writeBundleManifest(ctx context.Context, report *WorkstationBundleReport) (err error) {
 	if len(report.Records) > MaxManifestRecords {
 		return fmt.Errorf("bundle manifest exceeds %d records", MaxManifestRecords)
 	}
@@ -907,7 +935,7 @@ func writeBundleManifest(report *WorkstationBundleReport) (err error) {
 	if err != nil {
 		return fmt.Errorf("marshal bundle manifest: %w", err)
 	}
-	file, err := createSecureDest(report.ManifestPath, filepath.Dir(report.ManifestPath))
+	file, err := createSecureDest(ctx, report.ManifestPath, filepath.Dir(report.ManifestPath))
 	if err != nil {
 		return fmt.Errorf("create bundle manifest: %w", err)
 	}
@@ -929,7 +957,7 @@ func BundleWorkstation(ctx context.Context, opts BundleOptions) (*WorkstationBun
 	}
 
 	baseDir := opts.OutputDir
-	output, err := openBundleRoot(baseDir)
+	output, err := openBundleRoot(ctx, baseDir)
 	if err != nil {
 		return nil, fmt.Errorf("create bundle output directory %s: %w", baseDir, err)
 	}
@@ -960,7 +988,7 @@ func BundleWorkstation(ctx context.Context, opts BundleOptions) (*WorkstationBun
 		Records:         collector.records,
 		Skipped:         collector.skipped,
 	}
-	if err := writeBundleManifest(report); err != nil {
+	if err := writeBundleManifest(ctx, report); err != nil {
 		return nil, err
 	}
 	return report, nil
@@ -1095,7 +1123,7 @@ func copyFileSimple(ctx context.Context, src, dst, baseDir string) (err error) {
 		}
 	}()
 
-	dFile, dErr := createSecureDest(dst, baseDir)
+	dFile, dErr := createSecureDest(ctx, dst, baseDir)
 	if dErr != nil {
 		return dErr
 	}

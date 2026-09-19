@@ -196,3 +196,42 @@ BUG-932 before any of the defects above surfaced.
 
 Per rule 12 of `AGENTS.md`, a new invariant earns its row in the directives table when it has a
 gate, not when it has a rationale. HISS-21's gate is the workflow above.
+
+## What the macOS and Windows legs cover after #135
+
+The gate itself was red on `main` for nine consecutive runs and was not a required check
+(#135), which is the same failure the rest of this document describes, seen from the outside:
+a signal nobody could trust was present but carried no information.
+
+**macOS.** Every failure traced to one root cause repeated across five packages
+(`operationalsync`, `repairrun`, `dogfood`, `harvester`, `util`): code that walked a path's
+full ancestry from the filesystem root — or compared it against `filepath.EvalSymlinks` of
+the whole string — and rejected the first symlink found. macOS ships `/var` and `/tmp` as
+symlinks to `/private/var` and `/private/tmp`, so anything under the platform's own `TMPDIR`,
+including every `t.TempDir()` fixture these packages' own tests use, failed before the code
+under test ever ran. This is `contextopt.openDirectory`'s exact shape from #109/#151, present
+independently in four other packages; the fix in each case either narrows the check to the
+confinement boundary the caller actually names (leaf and immediate parent, or every component
+below an explicit root) or delegates to `contextopt.OpenDirectoryIn` / `EnsureDirectory`
+directly. A separate defect compared `git rev-parse --show-toplevel`'s output against an
+unresolved path by string; it now compares by `os.SameFile` (device and inode), which does not
+care which symlink either spelling was reached through. All packages that failed on the macOS
+leg pass locally as of this fix; the leg itself still needs a green CI run to confirm it on the
+real runner.
+
+**Windows.** One cause accounted for the largest single block of failures: `.standards.lock`
+pins a `sha256` of each archetype YAML computed from the LF blobs committed here, and
+`windows-latest`'s default `core.autocrlf=true` checked those files out as CRLF, changing the
+hash before `internal/config/lockdigest.go` ever compared it. `.gitattributes` now pins those
+files to `eol=lf`, the same fix already applied to `*.go` for the identical reason. The
+remaining fixes address independent, narrower causes: a Windows-only executable resolution that
+returned the PATHEXT extension's configured case rather than the on-disk name (functionally
+correct, string-unequal); a test payload that spliced a Windows path into hand-written JSON
+without escaping its backslashes; `os.FileInfo.Mode()` reporting no POSIX permission bits on
+Windows, which two independent checks (a test assertion and a production install-permission
+guard) treated as "permission denied" rather than "not applicable here"; `git apply` following
+the runner's ambient `core.autocrlf` when replaying an adaptation patch; and a test that
+labelled a real, host-produced temporary path with a hardcoded `GOOS: "linux"`. Each is fixed
+where found and confirmed only on Linux, since this work has no Windows host to verify against;
+the Windows leg carried substantially more failing packages than macOS did, and this pass does
+not claim to have closed all of them — see the PR for what remains open under #132.

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 func validateSuitePath(path string) error {
@@ -24,31 +26,25 @@ func validateSuitePath(path string) error {
 	return nil
 }
 
+// openSuiteDirectory pins path as a confinement root.
+//
+// This used to walk every component from the volume root itself, Lstat-checking each one and
+// rejecting the first symlink found. macOS ships /var and /tmp as symlinks to /private/var and
+// /private/tmp, so any suite path under the platform's own TMPDIR -- which is where every
+// t.TempDir() fixture in this package's own tests lives -- was rejected before the suite ever
+// ran. That was #109's exact shape, just re-implemented here instead of reused, and it took
+// down the dogfood, cmd/standards-mcp and cmd/standardsctl packages on the macOS leg of the
+// portability matrix (#135).
+//
+// contextopt.OpenDirectoryIn already carries the fix: it resolves the ancestry once (the
+// operator's own filesystem, not praetor's threat surface) and enforces strictness only on
+// the confinement root and whatever is walked below it. Delegating here removes a second
+// implementation of the identical walk (HISS-19) instead of patching this copy in place.
 func openSuiteDirectory(ctx context.Context, path string) (*os.Root, error) {
 	if err := validateSuitePath(path); err != nil {
 		return nil, err
 	}
-	volume := filepath.VolumeName(path) + string(filepath.Separator)
-	root, err := os.OpenRoot(volume)
-	if err != nil {
-		return nil, err
-	}
-	parts := strings.Split(strings.TrimPrefix(path, volume), string(filepath.Separator))
-	for i := 0; i < len(parts) && i < 128; i++ {
-		if parts[i] == "" {
-			continue
-		}
-		next, nextErr := openSuiteChild(ctx, root, parts[i])
-		err = errors.Join(nextErr, root.Close())
-		if err != nil {
-			if next != nil {
-				err = errors.Join(err, next.Close())
-			}
-			return nil, err
-		}
-		root = next
-	}
-	return root, nil
+	return contextopt.OpenDirectoryIn(ctx, path, ".")
 }
 
 func openSuiteChild(ctx context.Context, parent *os.Root, name string) (*os.Root, error) {

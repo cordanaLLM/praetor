@@ -191,34 +191,27 @@ type skillRemoval struct {
 	name   string
 }
 
-// canonicalDeletionInfo rejects links in every component of an existing target.
-func canonicalDeletionInfo(target string, directory bool) (os.FileInfo, error) {
-	absolute, err := filepath.Abs(target)
-	if err != nil {
-		return nil, err
-	}
-	resolved, err := filepath.EvalSymlinks(absolute)
-	if err != nil {
-		return nil, err
-	}
-	if resolved != absolute {
-		return nil, fmt.Errorf("deletion path contains symlink: %s", target)
-	}
-	info, err := os.Lstat(absolute)
-	if err != nil {
-		return nil, err
-	}
-	if (directory && !info.IsDir()) || (!directory && !info.Mode().IsRegular()) {
-		return nil, fmt.Errorf("unexpected deletion target type: %s", target)
-	}
-	return info, nil
-}
-
 func validSkillName(name string) bool {
 	return name != "" && !strings.HasPrefix(name, ".") && filepath.Base(name) == name && !strings.ContainsAny(name, "/\\")
 }
 
-func canonicalGeminiSkill(name string, location SkillLocation) (string, error) {
+// canonicalGeminiSkill validates that location.Path is exactly the SKILL.md a well-formed
+// name would produce under gemini, then confirms every path component between gemini and
+// that file is a real directory -- never a symlink -- before the caller is told it is safe
+// to delete.
+//
+// The previous check (canonicalDeletionInfo) compared filepath.EvalSymlinks(location.Path)
+// against the literal path for the whole absolute string, ancestry above gemini included.
+// That rejected every location under macOS's /var (a symlink to /private/var), which is
+// where every t.TempDir() fixture in this package's own tests lives, and took down this
+// package's whole test suite on the macOS leg of the portability matrix (#135) -- #109's
+// shape again: the operator's filesystem above gemini is not praetor's threat surface.
+// What must stay strict is everything from gemini down, because
+// TestDeletionRejectsSymlinkAncestors plants the symlink two components below gemini (at
+// .gemini/skills, not at location.Path's immediate parent), so a check narrowed to only the
+// leaf and its immediate parent would have missed it. contextopt.OpenDirectoryIn walks every
+// relative component strictly and already carries both properties.
+func canonicalGeminiSkill(ctx context.Context, name string, location SkillLocation) (string, error) {
 	if !filepath.IsAbs(location.Path) || filepath.Clean(location.Path) != location.Path {
 		return "", fmt.Errorf("skill path must be absolute and normalized: %s", location.Path)
 	}
@@ -236,13 +229,36 @@ func canonicalGeminiSkill(name string, location SkillLocation) (string, error) {
 	if filepath.Base(gemini) != ".gemini" || location.Path != filepath.Join(parent, "SKILL.md") {
 		return "", fmt.Errorf("skill origin does not match canonical Gemini path: %s", location.Path)
 	}
-	if _, err := canonicalDeletionInfo(location.Path, false); err != nil {
+	rel, err := filepath.Rel(gemini, parent)
+	if err != nil {
+		return "", fmt.Errorf("skill parent %s is not under %s: %w", parent, gemini, err)
+	}
+	if err := confirmSkillFileIsRegular(ctx, gemini, rel, location.Path); err != nil {
 		return "", err
 	}
 	return gemini, nil
 }
 
-func skillGroupRemovals(name string, locations []SkillLocation) ([]skillRemoval, error) {
+// confirmSkillFileIsRegular opens the skill's parent directory (confined to gemini via
+// contextopt.OpenDirectoryIn, see canonicalGeminiSkill's doc comment) and confirms its
+// SKILL.md is a real file, never a symlink, before the caller is told it is safe to delete.
+func confirmSkillFileIsRegular(ctx context.Context, gemini, rel, skillPath string) (err error) {
+	parentRoot, err := contextopt.OpenDirectoryIn(ctx, gemini, rel)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, parentRoot.Close()) }()
+	info, statErr := parentRoot.Lstat("SKILL.md")
+	if statErr != nil {
+		return statErr
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("unexpected deletion target type: %s", skillPath)
+	}
+	return nil
+}
+
+func skillGroupRemovals(ctx context.Context, name string, locations []SkillLocation) ([]skillRemoval, error) {
 	if len(locations) > MaxSkillsScan {
 		return nil, fmt.Errorf("skill location count exceeds %d", MaxSkillsScan)
 	}
@@ -251,7 +267,7 @@ func skillGroupRemovals(name string, locations []SkillLocation) ([]skillRemoval,
 		if location.Origin != OriginGeminiRoot && location.Origin != OriginGeminiConfig {
 			continue
 		}
-		gemini, err := canonicalGeminiSkill(name, location)
+		gemini, err := canonicalGeminiSkill(ctx, name, location)
 		if err != nil {
 			return nil, err
 		}
@@ -296,7 +312,7 @@ func preflightSkillRemovals(ctx context.Context, report *SkillAuditReport) ([]sk
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		group, err := skillGroupRemovals(name, report.Duplicates[name])
+		group, err := skillGroupRemovals(ctx, name, report.Duplicates[name])
 		if err != nil {
 			return nil, err
 		}
@@ -309,23 +325,15 @@ func preflightSkillRemovals(ctx context.Context, report *SkillAuditReport) ([]sk
 }
 
 // openDeletionRoot pins a validated directory without changing its permissions.
-func openDeletionRoot(directory string) (*os.Root, error) {
-	info, err := canonicalDeletionInfo(directory, true)
-	if err != nil {
-		return nil, err
-	}
-	root, err := os.OpenRoot(directory)
-	if err != nil {
-		return nil, err
-	}
-	opened, err := root.Stat(".")
-	if err == nil && !os.SameFile(info, opened) {
-		err = fmt.Errorf("deletion root changed while opening: %s", directory)
-	}
-	if err != nil {
-		return nil, errors.Join(err, root.Close())
-	}
-	return root, nil
+//
+// This delegates to contextopt.OpenDirectoryIn rather than the removed canonicalDeletionInfo,
+// which walked every path component from the filesystem root and rejected macOS's own
+// /var -> /private/var symlink along with any attacker-placed one (#135; see the
+// canonicalGeminiSkill doc comment for the full story). directory is the named confinement
+// root, so it still stays strict: OpenDirectoryIn refuses it outright when it is itself a
+// symlink, which is what TestPurgeBackupsRejectsSymlink's "symlink backup root" case exercises.
+func openDeletionRoot(ctx context.Context, directory string) (*os.Root, error) {
+	return contextopt.OpenDirectoryIn(ctx, directory, ".")
 }
 
 func removeSkill(ctx context.Context, candidate skillRemoval) (bool, error) {
@@ -333,10 +341,10 @@ func removeSkill(ctx context.Context, candidate skillRemoval) (bool, error) {
 		{Path: filepath.Join(candidate.gemini, "skills", candidate.name, "SKILL.md"), Origin: OriginGeminiRoot},
 		{Path: filepath.Join(candidate.gemini, "config", "skills", candidate.name, "SKILL.md"), Origin: OriginGeminiConfig},
 	}
-	if _, err := skillGroupRemovals(candidate.name, locations); err != nil {
+	if _, err := skillGroupRemovals(ctx, candidate.name, locations); err != nil {
 		return false, err
 	}
-	root, err := openDeletionRoot(filepath.Join(candidate.gemini, "skills"))
+	root, err := openDeletionRoot(ctx, filepath.Join(candidate.gemini, "skills"))
 	if err != nil {
 		return false, err
 	}
@@ -432,7 +440,7 @@ func PurgeBackups(ctx context.Context, geminiDir string, backups []string, dryRu
 	if len(backups) > MaxSkillsScan {
 		return nil, fmt.Errorf("backup count exceeds %d", MaxSkillsScan)
 	}
-	root, err := openDeletionRoot(geminiDir)
+	root, err := openDeletionRoot(ctx, geminiDir)
 	if err != nil {
 		return nil, err
 	}

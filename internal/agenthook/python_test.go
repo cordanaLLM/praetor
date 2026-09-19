@@ -2,10 +2,30 @@ package agenthook
 
 import (
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
+
+// samePath compares two resolved executable paths, case-insensitively on Windows.
+//
+// windowsExecutable (python.go) finds a candidate by appending each PATHEXT entry and
+// os.Stat-ing the result; a hit means the file exists, not that the returned string repeats
+// the casing on disk. The default PATHEXT is ".COM;.EXE;.BAT;.CMD" (uppercase), so a
+// candidate built as "python3.exe" (testsupport.ExecutableName's lowercase, matching real
+// Python installers) resolves to "...python3.EXE" -- a different file only by a byte-exact
+// string comparison, not on the NTFS volume that has to actually run it. This test file's own
+// case-sensitive equality checks failed the first real Windows CI run for exactly that reason
+// (#135), while the resolution itself worked: the process still launches, since Windows path
+// lookup does not distinguish the two spellings.
+func samePath(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
 
 // stubInterpreterSource is a Go stand-in for a Python interpreter (testsupport.BuildExecutable,
 // used the same way as every other host-controlled test double in this repository): it ignores
@@ -54,7 +74,7 @@ func pathOnly(dir string) func(string) string {
 func TestResolveInterpreterFindsTheFirstCandidateOnPath(t *testing.T) {
 	path, getenv := buildStub(t, "python3")
 	argv, err := ResolveInterpreter(getenv, [][]string{{"python3"}, {"python"}})
-	if err != nil || len(argv) != 1 || argv[0] != path {
+	if err != nil || len(argv) != 1 || !samePath(argv[0], path) {
 		t.Fatalf("argv=%v err=%v want=%s", argv, err, path)
 	}
 }
@@ -75,7 +95,7 @@ func TestResolveInterpreterNoCandidateResolves(t *testing.T) {
 func TestResolveInterpreterTwoTokenCandidate(t *testing.T) {
 	path, getenv := buildStub(t, "py")
 	argv, err := ResolveInterpreter(getenv, [][]string{{"missing-interpreter"}, {"py", "-3"}})
-	if err != nil || len(argv) != 2 || argv[0] != path || argv[1] != "-3" {
+	if err != nil || len(argv) != 2 || !samePath(argv[0], path) || argv[1] != "-3" {
 		t.Fatalf("argv=%v err=%v want=[%s -3]", argv, err, path)
 	}
 }
@@ -83,7 +103,7 @@ func TestResolveInterpreterTwoTokenCandidate(t *testing.T) {
 func TestResolveInterpreterSkipsAnEmptyCandidate(t *testing.T) {
 	path, getenv := buildStub(t, "python3")
 	argv, err := ResolveInterpreter(getenv, [][]string{{}, {"python3"}})
-	if err != nil || len(argv) != 1 || argv[0] != path {
+	if err != nil || len(argv) != 1 || !samePath(argv[0], path) {
 		t.Fatalf("argv=%v err=%v", argv, err)
 	}
 }
@@ -91,7 +111,7 @@ func TestResolveInterpreterSkipsAnEmptyCandidate(t *testing.T) {
 func TestLookPathUsesAnAbsoluteNameAsIs(t *testing.T) {
 	path, _ := buildStub(t, "python3")
 	argv, err := ResolveInterpreter(pathOnly(t.TempDir()), [][]string{{path}})
-	if err != nil || len(argv) != 1 || argv[0] != path {
+	if err != nil || len(argv) != 1 || !samePath(argv[0], path) {
 		t.Fatalf("argv=%v err=%v want=%s", argv, err, path)
 	}
 }

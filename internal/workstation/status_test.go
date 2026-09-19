@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/clientid"
@@ -70,7 +71,13 @@ func TestStatusClientPresenceViaC1Roots(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".gemini", "config"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	env := clientsetup.Env{GOOS: "linux", Home: home, DirExists: func(p string) bool {
+	// GOOS must match the real host, not a simulated one: home is t.TempDir(), a real
+	// filesystem path (C:\Users\...\AppData\Local\Temp\... on Windows), and
+	// clientsetup.checkCleanAbs judges it against the platform GOOS names, not the actual
+	// runtime. A hardcoded "linux" here made isAbsFor reject every Windows temp path as
+	// not absolute, so the AGY root check that follows could never succeed on the Windows
+	// leg of the portability matrix (#135).
+	env := clientsetup.Env{GOOS: runtime.GOOS, Home: home, DirExists: func(p string) bool {
 		info, err := os.Stat(p)
 		return err == nil && info.IsDir()
 	}}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -38,7 +39,16 @@ func TestRecordModeWritesABoundedZeroSixHundredFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// util.WriteFileSecure (record.go) requests recordFilePerm (0o600) through the portable
+	// os.OpenFile API; that part is proven by internal/util's own WriteFileSecure tests.
+	// What this assertion can actually check differs by platform: os.FileInfo.Mode() on
+	// Windows is synthesised from the read-only attribute alone, so an ordinary (non-read-only)
+	// file always reports 0o666 there regardless of what permission was requested at creation
+	// -- there is no POSIX permission bit to read back. Asserting Perm() == 0o600
+	// unconditionally therefore fails on every Windows run (#135; the class is enumerated in
+	// #132), not because the file is any less private, but because Windows has no mode to
+	// disagree with. Confinement on Windows is the file's ACL, not its Mode() report.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Errorf("recorded file mode: %v", info.Mode().Perm())
 	}
 	if !strings.HasPrefix(entries[0].Name(), "claude-pre-tool-") || !strings.HasSuffix(entries[0].Name(), ".json") {

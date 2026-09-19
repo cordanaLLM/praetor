@@ -1,0 +1,4 @@
+type: fixed
+title: Stop rejecting macOS's own /var symlink across five packages, fix a CRLF-induced archetype lockfile mismatch on Windows, and correct several narrower Windows-only test and permission defects the Platform Neutrality gate surfaced
+issue: "#135"
+breaking: false
