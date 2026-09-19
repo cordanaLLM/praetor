@@ -20,7 +20,7 @@ const sampleLiteLLMPrices = `{
 
 func TestFetchLiteLLMPrices_Positive(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(sampleLiteLLMPrices))
+		_, _ = w.Write([]byte(sampleLiteLLMPrices)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 	}))
 	defer server.Close()
 
@@ -55,7 +55,7 @@ func TestFetchLiteLLMPrices_Negative(t *testing.T) {
 
 	t.Run("malformed body", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte("[]")) // an array, not the expected object
+			_, _ = w.Write([]byte("[]")) //nolint:errcheck // an array, not the expected object; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 		}))
 		defer server.Close()
 		if _, err := fetchLiteLLMPrices(context.Background(), server.URL); err == nil {
@@ -70,7 +70,7 @@ func TestFetchLiteLLMPrices_Negative(t *testing.T) {
 // case behind the sample_spec fixture above.
 func TestFetchLiteLLMPrices_OneMalformedEntrySkipped(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"broken-model": {"max_input_tokens": "not a number"}, "gpt-4": {"input_cost_per_token": 0.00003, "litellm_provider": "openai"}}`))
+		_, _ = w.Write([]byte(`{"broken-model": {"max_input_tokens": "not a number"}, "gpt-4": {"input_cost_per_token": 0.00003, "litellm_provider": "openai"}}`)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 	}))
 	defer server.Close()
 
@@ -88,7 +88,7 @@ func TestFetchLiteLLMPrices_OneMalformedEntrySkipped(t *testing.T) {
 // used instead, matching the price map's own documented fallback order.
 func TestFetchLiteLLMPrices_Boundary(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"legacy-model": {"max_tokens": 4096, "litellm_provider": "openai"}}`))
+		_, _ = w.Write([]byte(`{"legacy-model": {"max_tokens": 4096, "litellm_provider": "openai"}}`)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 	}))
 	defer server.Close()
 

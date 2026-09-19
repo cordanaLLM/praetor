@@ -11,7 +11,7 @@ const sampleOpenRouter = `{"data":[{"id":"openai/gpt-4","name":"GPT-4","context_
 
 func TestFetchOpenRouter_Positive(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(sampleOpenRouter))
+		_, _ = w.Write([]byte(sampleOpenRouter)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 	}))
 	defer server.Close()
 
@@ -46,7 +46,7 @@ func TestFetchOpenRouter_Negative(t *testing.T) {
 
 	t.Run("malformed body", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte("{not json"))
+			_, _ = w.Write([]byte("{not json")) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 		}))
 		defer server.Close()
 		if _, err := fetchOpenRouter(context.Background(), server.URL); err == nil {
@@ -59,7 +59,7 @@ func TestFetchOpenRouter_Negative(t *testing.T) {
 // read: it must be dropped as absent, not crash or fabricate a price.
 func TestFetchOpenRouter_Boundary(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"data":[{"id":"weird/model","pricing":{"prompt":"not-a-number","completion":""}}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"weird/model","pricing":{"prompt":"not-a-number","completion":""}}]}`)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 	}))
 	defer server.Close()
 

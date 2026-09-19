@@ -17,10 +17,10 @@ func newServer(t *testing.T, tags, ps string, psStatus int) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
-			_, _ = w.Write([]byte(tags))
+			_, _ = w.Write([]byte(tags)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 		case "/api/ps":
 			w.WriteHeader(psStatus)
-			_, _ = w.Write([]byte(ps))
+			_, _ = w.Write([]byte(ps)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

@@ -12,11 +12,11 @@ import (
 
 func TestFetch_Positive(t *testing.T) {
 	or := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(sampleOpenRouter))
+		_, _ = w.Write([]byte(sampleOpenRouter)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 	}))
 	defer or.Close()
 	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(sampleLiteLLMPrices))
+		_, _ = w.Write([]byte(sampleLiteLLMPrices)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 	}))
 	defer llm.Close()
 
@@ -33,7 +33,7 @@ func TestFetch_Positive(t *testing.T) {
 // the other sub-source's records, and both are named in Detail.
 func TestFetch_Negative(t *testing.T) {
 	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(sampleLiteLLMPrices))
+		_, _ = w.Write([]byte(sampleLiteLLMPrices)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 	}))
 	defer llm.Close()
 

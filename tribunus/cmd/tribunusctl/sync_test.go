@@ -67,25 +67,25 @@ func TestRunSync_Positive(t *testing.T) {
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
-			_, _ = w.Write([]byte(`{"models":[{"name":"local-model","details":{"context_length":4096}}]}`))
+			_, _ = w.Write([]byte(`{"models":[{"name":"local-model","details":{"context_length":4096}}]}`)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 		case "/api/ps":
-			_, _ = w.Write([]byte(`{"models":[]}`))
+			_, _ = w.Write([]byte(`{"models":[]}`)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 		}
 	}))
 	defer ollama.Close()
 
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"data":[{"id":"cordana/auto","owned_by":"openai"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"cordana/auto","owned_by":"openai"}]}`)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 	}))
 	defer gateway.Close()
 
 	openrouter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"data":[{"id":"openai/gpt-4","pricing":{"prompt":"0.00003","completion":"0.00006"}}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"openai/gpt-4","pricing":{"prompt":"0.00003","completion":"0.00006"}}]}`)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 	}))
 	defer openrouter.Close()
 
 	litellmPrices := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"gpt-4":{"input_cost_per_token":0.00003,"litellm_provider":"openai"}}`))
+		_, _ = w.Write([]byte(`{"gpt-4":{"input_cost_per_token":0.00003,"litellm_provider":"openai"}}`)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 	}))
 	defer litellmPrices.Close()
 

@@ -30,7 +30,7 @@ func TestFetch_Positive(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":"cordana/auto","object":"model","created":1,"owned_by":"openai"},{"id":"cordana/chat","object":"model","created":1,"owned_by":"openai"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"cordana/auto","object":"model","created":1,"owned_by":"openai"},{"id":"cordana/chat","object":"model","created":1,"owned_by":"openai"}]}`)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 	}))
 	defer server.Close()
 
@@ -103,7 +103,7 @@ func TestFetch_Negative(t *testing.T) {
 
 	t.Run("malformed json body", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte("{not json"))
+			_, _ = w.Write([]byte("{not json")) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 		}))
 		defer server.Close()
 		tokenPath := writeTokenFile(t, "tok")
@@ -131,7 +131,7 @@ func TestFetch_Boundary(t *testing.T) {
 
 	t.Run("zero models is a skip not a fail", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(`{"data":[]}`))
+			_, _ = w.Write([]byte(`{"data":[]}`)) //nolint:errcheck // test httptest server response; a write failure here would fail the test's own HTTP round trip, not silently corrupt anything
 		}))
 		defer server.Close()
 		tokenPath := writeTokenFile(t, "tok")

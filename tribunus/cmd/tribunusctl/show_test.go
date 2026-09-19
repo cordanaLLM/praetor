@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,12 @@ import (
 
 	"github.com/cordanaLLM/praetor/tribunus/catalog"
 )
+
+// failingWriter always refuses a Write, so a test can force renderTable's
+// write-failure path without a real broken pipe.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("write refused") }
 
 func sampleSnapshot() catalog.Snapshot {
 	price := 30.0
@@ -92,7 +99,9 @@ func TestReadSnapshotFile_Boundary(t *testing.T) {
 
 func TestRenderTable_Positive(t *testing.T) {
 	var buf bytes.Buffer
-	renderTable(&buf, sampleSnapshot())
+	if err := renderTable(&buf, sampleSnapshot()); err != nil {
+		t.Fatalf("renderTable() error = %v, want nil", err)
+	}
 	out := buf.String()
 	if !strings.Contains(out, "openai/gpt-4") {
 		t.Fatalf("renderTable() output missing model id: %s", out)
@@ -102,11 +111,21 @@ func TestRenderTable_Positive(t *testing.T) {
 	}
 }
 
+// TestRenderTable_Negative confirms a write failure surfaces as an error
+// instead of being silently discarded.
+func TestRenderTable_Negative(t *testing.T) {
+	if err := renderTable(failingWriter{}, sampleSnapshot()); err == nil {
+		t.Fatal("renderTable() = nil error, want failure when the writer refuses every write")
+	}
+}
+
 // TestRenderTable_Boundary confirms an empty snapshot renders a header and
 // a zero-record summary line instead of panicking or printing nothing.
 func TestRenderTable_Boundary(t *testing.T) {
 	var buf bytes.Buffer
-	renderTable(&buf, catalog.Snapshot{GeneratedAt: time.Now()})
+	if err := renderTable(&buf, catalog.Snapshot{GeneratedAt: time.Now()}); err != nil {
+		t.Fatalf("renderTable() error = %v, want nil", err)
+	}
 	if !strings.Contains(buf.String(), "0 records") {
 		t.Fatalf("renderTable() = %q, want a 0 records summary line", buf.String())
 	}

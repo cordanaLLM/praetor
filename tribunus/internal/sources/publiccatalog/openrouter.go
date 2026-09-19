@@ -34,6 +34,7 @@ package publiccatalog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -147,7 +148,7 @@ func perTokenToPerM(raw string) (float64, bool) {
 	return perToken * 1_000_000, true
 }
 
-func boundedGet(ctx context.Context, url string) ([]byte, error) {
+func boundedGet(ctx context.Context, url string) (body []byte, err error) {
 	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
@@ -160,12 +161,12 @@ func boundedGet(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("request %s: %w", url, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s returned HTTP %d", url, resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	body, err = io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read response body from %s: %w", url, err)
 	}

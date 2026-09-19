@@ -101,41 +101,55 @@ func Fetch(ctx context.Context, sessionsDir string) Result {
 // newestSessionFile walks sessionsDir and returns the *.jsonl path with the
 // latest modification time. A missing directory is reported as found=false,
 // err=nil: that is a skip, not a failure.
-func newestSessionFile(ctx context.Context, root string) (path string, found bool, err error) {
-	var (
-		best     string
-		bestTime time.Time
-		scanned  int
-	)
-	walkErr := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			if errors.Is(walkErr, fs.ErrNotExist) {
-				return nil
-			}
-			return walkErr
-		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
-		}
-		if d.IsDir() {
+// sessionScan accumulates the newest matching session file seen across a
+// filepath.WalkDir, keeping newestSessionFile's own complexity to setting
+// this up and interpreting the final result.
+type sessionScan struct {
+	root     string
+	best     string
+	bestTime time.Time
+	scanned  int
+}
+
+// consider evaluates one WalkDir entry, updating s.best when p is a newer
+// .jsonl session file. It returns the error WalkDir should propagate, if
+// any: a real filesystem error, context cancellation, or the scanned-files
+// bound (HISS-02).
+func (s *sessionScan) consider(ctx context.Context, p string, d fs.DirEntry, walkErr error) error {
+	if walkErr != nil {
+		if errors.Is(walkErr, fs.ErrNotExist) {
 			return nil
 		}
-		scanned++
-		if scanned > maxSessionFilesScanned {
-			return fmt.Errorf("codex-local: %s exceeds %d files scanned", root, maxSessionFilesScanned)
-		}
-		if filepath.Ext(p) != ".jsonl" {
-			return nil
-		}
-		info, infoErr := d.Info()
-		if infoErr != nil {
-			return infoErr
-		}
-		if info.ModTime().After(bestTime) {
-			bestTime = info.ModTime()
-			best = p
-		}
+		return walkErr
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if d.IsDir() {
 		return nil
+	}
+	s.scanned++
+	if s.scanned > maxSessionFilesScanned {
+		return fmt.Errorf("codex-local: %s exceeds %d files scanned", s.root, maxSessionFilesScanned)
+	}
+	if filepath.Ext(p) != ".jsonl" {
+		return nil
+	}
+	info, infoErr := d.Info()
+	if infoErr != nil {
+		return infoErr
+	}
+	if info.ModTime().After(s.bestTime) {
+		s.bestTime = info.ModTime()
+		s.best = p
+	}
+	return nil
+}
+
+func newestSessionFile(ctx context.Context, root string) (path string, found bool, err error) {
+	scan := &sessionScan{root: root}
+	walkErr := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
+		return scan.consider(ctx, p, d, walkErr)
 	})
 	if walkErr != nil {
 		if errors.Is(walkErr, fs.ErrNotExist) {
@@ -143,7 +157,7 @@ func newestSessionFile(ctx context.Context, root string) (path string, found boo
 		}
 		return "", false, fmt.Errorf("codex-local: walk %s: %w", root, walkErr)
 	}
-	return best, best != "", nil
+	return scan.best, scan.best != "", nil
 }
 
 // sessionLine is the JSONL envelope; only the fields Fetch needs are typed.
@@ -169,12 +183,12 @@ type window struct {
 // object logged, or nil if the file has none. Malformed lines are skipped:
 // a session log can carry lines this parser does not model, and skipping
 // them is correct, not a data loss, because only rate_limits lines matter.
-func latestRateLimits(ctx context.Context, path string) (*rateLimits, error) {
+func latestRateLimits(ctx context.Context, path string) (result *rateLimits, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("codex-local: open %s: %w", path, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { err = errors.Join(err, f.Close()) }()
 
 	info, err := f.Stat()
 	if err != nil {
@@ -200,27 +214,35 @@ func latestRateLimits(ctx context.Context, path string) (*rateLimits, error) {
 		if lines > maxScanLines {
 			return nil, fmt.Errorf("codex-local: %s exceeds %d lines scanned", path, maxScanLines)
 		}
-		raw := scanner.Bytes()
-		if len(raw) == 0 {
-			continue
-		}
-		var line sessionLine
-		if jsonErr := json.Unmarshal(raw, &line); jsonErr != nil {
-			continue // not every line is a rate_limits-bearing event_msg
-		}
-		// A session's last rate_limits line can itself carry a null primary
-		// window (verified live: this workstation's newest session ends on
-		// exactly that). Tracking only entries with a usable primary avoids
-		// reporting "no data" when an earlier line in the same file has
-		// one, without ever inventing a value the file does not contain.
-		if line.Payload.RateLimits != nil && line.Payload.RateLimits.Primary != nil {
-			latest = line.Payload.RateLimits
+		if rl := parseRateLimitsLine(scanner.Bytes()); rl != nil {
+			latest = rl
 		}
 	}
 	if scanErr := scanner.Err(); scanErr != nil {
 		return nil, fmt.Errorf("codex-local: scan %s: %w", path, scanErr)
 	}
 	return latest, nil
+}
+
+// parseRateLimitsLine parses one JSONL line and returns its rate_limits
+// payload, or nil when the line is empty, not JSON this parser models
+// (not every line is a rate_limits-bearing event_msg), or carries no usable
+// primary window. A session's last rate_limits line can itself carry a null
+// primary window (verified live: this workstation's newest session ends on
+// exactly that); returning nil for it, not a zero value, lets the caller
+// keep an earlier line's usable value instead of reporting "no data".
+func parseRateLimitsLine(raw []byte) *rateLimits {
+	if len(raw) == 0 {
+		return nil
+	}
+	var line sessionLine
+	if err := json.Unmarshal(raw, &line); err != nil {
+		return nil
+	}
+	if line.Payload.RateLimits == nil || line.Payload.RateLimits.Primary == nil {
+		return nil
+	}
+	return line.Payload.RateLimits
 }
 
 // toRecord turns a parsed rate_limits payload into one catalog.Record

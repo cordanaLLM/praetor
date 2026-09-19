@@ -15,6 +15,7 @@ package litellmgateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -77,12 +78,12 @@ func Fetch(ctx context.Context, baseURL, tokenFile string) Result {
 }
 
 // readToken reads and trims tokenFile. Errors name the path, never contents.
-func readToken(tokenFile string) (string, error) {
+func readToken(tokenFile string) (token string, err error) {
 	f, err := os.Open(tokenFile)
 	if err != nil {
 		return "", fmt.Errorf("litellm-gateway: open token file %s: %w", tokenFile, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { err = errors.Join(err, f.Close()) }()
 
 	info, err := f.Stat()
 	if err != nil {
@@ -115,7 +116,7 @@ type modelsResponse struct {
 }
 
 // listModels performs the bounded GET and decodes the response body.
-func listModels(ctx context.Context, baseURL, token string) ([]modelEntry, error) {
+func listModels(ctx context.Context, baseURL, token string) (entries []modelEntry, err error) {
 	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
@@ -130,7 +131,7 @@ func listModels(ctx context.Context, baseURL, token string) ([]modelEntry, error
 	if err != nil {
 		return nil, fmt.Errorf("litellm-gateway: request %s/v1/models: %w", baseURL, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("litellm-gateway: %s/v1/models returned HTTP %d", baseURL, resp.StatusCode)
