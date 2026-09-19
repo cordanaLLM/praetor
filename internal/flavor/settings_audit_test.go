@@ -25,20 +25,32 @@ func conformingGoLibrary(t *testing.T, settings map[string]string) string {
 		"lefthook.yml":               "pre-commit:\n  commands:\n    gofmt:\n      run: gofmt -l .\n",
 		".github/rulesets/main.json": "{\"name\": \"main\", \"enforcement\": \"active\"}\n",
 	}
-	for name, body := range settings {
+	return repoWithFiles(t, withOverrides(files, settings))
+}
+
+// conformingPythonML is the same idea for the flavor with the fewest required items: 4
+// templates and 1 setting, so a single invalid setting lands the repository on exactly the
+// 80% bar rather than somewhere near it.
+func conformingPythonML(t *testing.T, settings map[string]string) string {
+	t.Helper()
+	files := map[string]string{
+		"ruff.toml":                "line-length = 100\n",
+		".workingdir/STATE.md":     "# state\n",
+		".workingdir/BUGS.md":      "# bugs\n",
+		".workingdir/QUESTIONS.md": "# questions\n",
+		".vscode/settings.json":    "{\"python.defaultInterpreterPath\": \".venv/bin/python\"}\n",
+	}
+	return repoWithFiles(t, withOverrides(files, settings))
+}
+
+// withOverrides applies a case's replacements over a flavor's own files, so a case changes
+// exactly one of them and reads the effect off the report. The repository itself is written
+// by repoWithFiles, which the detection cases already use.
+func withOverrides(files, overrides map[string]string) map[string]string {
+	for name, body := range overrides {
 		files[name] = body
 	}
-	dir := t.TempDir()
-	for name, body := range files {
-		full := filepath.Join(dir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
-			t.Fatalf("mkdir for %s: %v", name, err)
-		}
-		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	return dir
+	return files
 }
 
 // emptyPATH points tool resolution at a directory holding no binaries, so the toolchain
@@ -142,6 +154,77 @@ func TestAuditFlavor_Boundary_EmptyMappingConfiguresNothing(t *testing.T) {
 	}
 	if !named {
 		t.Fatalf("an empty mapping must be named in MissingSettings, got %+v", report.MissingSettings)
+	}
+}
+
+// TestAuditFlavor_Boundary_ExactlyTheBarClearsIt pins the comparison that decides the push.
+//
+// The bar is inclusive (`Score >= passingScore`) and nothing asserted it: every other Passed
+// assertion sits at 100.0 or 0.0, so turning `>=` into `>` left the suite green. The case is
+// reachable because of this batch -- python-ml declares 4 templates and 1 setting, so a
+// repository with all 4 templates and a present-but-unparsable .vscode/settings.json scores
+// exactly 80.0 with nothing missing, and the comparison alone decides whether its push is
+// blocked by the generated pre-push hook.
+func TestAuditFlavor_Boundary_ExactlyTheBarClearsIt(t *testing.T) {
+	emptyPATH(t)
+	repo := conformingPythonML(t, map[string]string{".vscode/settings.json": "not json at all"})
+
+	report, err := flavor.AuditFlavor(repo, "python-ml")
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	if report.Score != 80.0 {
+		t.Fatalf("4 of 5 required items is exactly the bar, got %v", report.Score)
+	}
+	if len(report.MissingTemplates) != 0 {
+		t.Fatalf("no template is missing in this fixture, got %+v", report.MissingTemplates)
+	}
+	if !report.Passed {
+		t.Fatalf("a repository exactly on the bar must clear it, got %+v", report)
+	}
+}
+
+// TestAuditFlavor_Boundary_JustBelowTheBarFails is the other side of the same comparison.
+func TestAuditFlavor_Boundary_JustBelowTheBarFails(t *testing.T) {
+	emptyPATH(t)
+	repo := conformingGoLibrary(t, map[string]string{
+		"lefthook.yml":               "pre-commit: [unterminated\n",
+		".github/rulesets/main.json": "not json at all",
+	})
+
+	report, err := flavor.AuditFlavor(repo, "go-library")
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	// Computed the way the audit computes it: a constant expression would be folded at
+	// arbitrary precision and miss the float64 result by one bit.
+	present, total := float64(7), float64(9)
+	if want := present / total * 100.0; report.Score != want {
+		t.Fatalf("7 of 9 required items must score exactly %v, got %v", present/total*100.0, report.Score)
+	}
+	if report.Passed {
+		t.Fatalf("77.8%% is below the bar and must not pass, got %+v", report)
+	}
+}
+
+// TestAuditFlavor_Boundary_AMissingTemplateFailsAtTheBar pins the second half of the verdict:
+// the score clears the bar and a missing template still fails the repository.
+func TestAuditFlavor_Boundary_AMissingTemplateFailsAtTheBar(t *testing.T) {
+	emptyPATH(t)
+	repo := conformingPythonML(t, nil)
+	if err := os.Remove(filepath.Join(repo, "ruff.toml")); err != nil {
+		t.Fatalf("remove a required template: %v", err)
+	}
+
+	report, err := flavor.AuditFlavor(repo, "python-ml")
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	if report.Score != 80.0 {
+		t.Fatalf("4 of 5 required items is exactly the bar, got %v", report.Score)
+	}
+	if report.Passed {
+		t.Fatalf("a missing template fails the repository whatever the score, got %+v", report)
 	}
 }
 

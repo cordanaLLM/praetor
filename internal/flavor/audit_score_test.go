@@ -56,13 +56,14 @@ func TestConformanceScore_Boundary_ToolchainOnlyFlavorScores100(t *testing.T) {
 	}
 }
 
+// TestConformanceScore_Boundary_TheBarItself pins the arithmetic only. Whether a repository
+// on the bar clears it is the comparison in AuditFlavor, asserted against a real fixture by
+// TestAuditFlavor_Boundary_ExactlyTheBarClearsIt: this case used to make a second claim
+// (`got < passingScore`) that the equality check above it had already ruled out, so it could
+// not fail, and nothing exercised the comparison the gate actually makes.
 func TestConformanceScore_Boundary_TheBarItself(t *testing.T) {
 	report := &FlavorAuditReport{TemplatesTotal: 5, TemplatesPresent: 4}
-	got := conformanceScore(report)
-	if got != passingScore {
+	if got := conformanceScore(report); got != passingScore {
 		t.Fatalf("4 of 5 required items must score exactly the bar %v, got %v", passingScore, got)
-	}
-	if got < passingScore {
-		t.Fatalf("a repository exactly on the bar must clear it, got %v", got)
 	}
 }
