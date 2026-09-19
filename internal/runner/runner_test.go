@@ -16,7 +16,7 @@ func TestResolveRunner_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected darwin/arm64 resolution to succeed: %v", err)
 	}
-	if spec.Type != "github-hosted" || len(spec.RunsOn) == 0 || spec.RunsOn[0] != "macos-14" {
+	if spec.Type != "github-hosted" || len(spec.RunsOn) == 0 || spec.RunsOn[0] != "macos-26" {
 		t.Errorf("unexpected darwin/arm64 spec: %+v", spec)
 	}
 

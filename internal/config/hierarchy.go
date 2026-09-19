@@ -35,12 +35,20 @@ type OrgConfig struct {
 }
 
 // DefaultRunnerPolicy returns safe defaults for GitHub and ARC runners.
+//
+// The Darwin labels name macOS 26 explicitly rather than macos-latest, because
+// a floating label silently retargets a repository's whole Darwin tier the day
+// GitHub promotes the next image. actions/runner-images lists macos-26 for
+// arm64 and macos-26-intel for x64; macos-13 is no longer published at all and
+// macos-14 is marked deprecated, so neither is a resolvable default.
+// ADR-0006 still records the previous pair and is Accepted, so it is not edited
+// here; a superseding ADR is the vehicle for restating the tier.
 func DefaultRunnerPolicy() RunnerPolicy {
 	return RunnerPolicy{
 		Default: "arc-runner-set-linux-amd64",
 		Routing: map[string]RunnerSpec{
-			"darwin/arm64": {Type: "github-hosted", RunsOn: []string{"macos-14"}, Ephemeral: true},
-			"darwin/amd64": {Type: "github-hosted", RunsOn: []string{"macos-13"}, Ephemeral: true},
+			"darwin/arm64": {Type: "github-hosted", RunsOn: []string{"macos-26"}, Ephemeral: true},
+			"darwin/amd64": {Type: "github-hosted", RunsOn: []string{"macos-26-intel"}, Ephemeral: true},
 			"linux/amd64":  {Type: "self-hosted-arc", RunsOn: []string{"arc-runner-set-linux-amd64"}, Ephemeral: true},
 			"linux/arm64":  {Type: "self-hosted-arc", RunsOn: []string{"arc-runner-set-linux-arm64"}, Ephemeral: true},
 			"linux/gpu":    {Type: "self-hosted-arc", RunsOn: []string{"arc-runner-set-gpu-xpu"}, Ephemeral: true},

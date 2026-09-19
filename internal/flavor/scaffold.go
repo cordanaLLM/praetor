@@ -150,7 +150,7 @@ func defaultTemplateContent(path, repoName, owner string) string {
 	case "Dockerfile":
 		return "FROM gcr.io/distroless/static:nonroot\nWORKDIR /\nCOPY " + repoName + " /\nUSER 65532:65532\nENTRYPOINT [\"/" + repoName + "\"]\n"
 	case "rustfmt.toml":
-		return "edition = \"2021\"\nmax_width = 100\nnewline_style = \"Unix\"\nuse_small_heuristics = \"Default\"\n"
+		return "edition = \"2024\"\nmax_width = 100\nnewline_style = \"Unix\"\nuse_small_heuristics = \"Default\"\n"
 	case "clippy.toml":
 		return "# Clippy linting configuration\navoid-breaking-exported-api = true\n"
 	case "tsconfig.json":

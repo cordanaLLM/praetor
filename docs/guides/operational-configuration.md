@@ -82,7 +82,7 @@ runners:
     darwin/arm64:
       type: "github-hosted"
       runs_on:
-        - "macos-14"
+        - "macos-26"
       ephemeral: true
 ```
 

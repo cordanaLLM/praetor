@@ -1,16 +1,28 @@
+# The enabled set and settings below must stay equal to the ".golangci.yml"
+# case of defaultTemplateContent in internal/flavor/scaffold.go. Both scaffold
+# the same file into an adopter, so a difference between the two is drift, not
+# a variant (HISS-19).
+#
+# The "version" key is mandatory from golangci-lint v2 on. A configuration
+# without it is rejected with "unsupported version of the configuration"
+# before any linter runs, so the v1 form this file used to carry left the
+# adopter with a lint gate that could not start.
+version: "2"
 run:
-  timeout: 5m
-  tests: true
-
+  timeout: 10m
 linters:
+  default: none
   enable:
     - govet
     - staticcheck
     - errcheck
-    - ineffassign
+    - errorlint
+    - nilerr
     - unused
-
-issues:
-  exclude-use-default: false
-  max-issues-per-linter: 0
-  max-same-issues: 0
+    - ineffassign
+    - bodyclose
+    - noctx
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
