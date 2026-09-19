@@ -119,7 +119,7 @@ func runFlavorAudit(args []string) error {
 	fmt.Printf("  Passed:      %v\n", report.Passed)
 	fmt.Printf("  Templates:   %d/%d present\n", report.TemplatesPresent, report.TemplatesTotal)
 	fmt.Printf("  Settings:    %d/%d valid\n", report.SettingsValid, report.SettingsTotal)
-	fmt.Printf("  Toolchains:  %d/%d available\n", report.ToolchainsAvailable, report.ToolchainsTotal)
+	fmt.Printf("  Toolchains:  %d/%d available (advisory, not scored)\n", report.ToolchainsAvailable, report.ToolchainsTotal)
 
 	if len(report.MissingTemplates) > 0 {
 		fmt.Println("\nMissing Templates:")
@@ -127,8 +127,16 @@ func runFlavorAudit(args []string) error {
 			fmt.Printf("  - %s (%s)\n", t.Path, t.Description)
 		}
 	}
+	// Invalid settings used to be counted and never named, so an operator saw the score drop
+	// with nothing to act on.
+	if len(report.MissingSettings) > 0 {
+		fmt.Println("\nMissing or Invalid Settings:")
+		for _, s := range report.MissingSettings {
+			fmt.Printf("  - %s : %s (%s)\n", s.Name, s.Path, s.Description)
+		}
+	}
 	if len(report.MissingToolchains) > 0 {
-		fmt.Println("\nMissing Toolchains:")
+		fmt.Println("\nMissing Toolchains (advisory):")
 		for _, tc := range report.MissingToolchains {
 			fmt.Printf("  - %s : %s (Install: %s)\n", tc.Binary, tc.Purpose, tc.InstallGuide)
 		}
