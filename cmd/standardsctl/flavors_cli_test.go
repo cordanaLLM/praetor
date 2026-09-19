@@ -97,6 +97,78 @@ func TestResolveFlavorRef_Negative_RejectsShellMetacharacters(t *testing.T) {
 	}
 }
 
+// tagFixture is a repository where each call to commitAndTag adds a new commit and tags it,
+// so distinct tags resolve to distinct, individually identifiable commits.
+type tagFixture struct {
+	dir string
+	env []string
+}
+
+func newTagFixture(t *testing.T) tagFixture {
+	t.Helper()
+	dir := t.TempDir()
+	writeFixtureFile(t, dir, "README.md", "zero\n")
+	env := initGitFixture(t, dir)
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(dir, "no-such-gitconfig"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
+	return tagFixture{dir: dir, env: env}
+}
+
+// commitAndTag adds a commit and tags it, returning the commit it tagged.
+func (f tagFixture) commitAndTag(t *testing.T, tag string) string {
+	t.Helper()
+	writeFixtureFile(t, f.dir, "VERSION", tag+"\n")
+	gitCommitAll(t, f.dir, f.env, "tag "+tag)
+	commit := fixtureGit(t, f.dir, f.env, "rev-parse", "HEAD")
+	fixtureGit(t, f.dir, f.env, "tag", tag)
+	return commit
+}
+
+func TestResolveFlavorRef_Positive_HighestStableTagWins(t *testing.T) {
+	f := newTagFixture(t)
+	f.commitAndTag(t, "v0.1.0")
+	wantCommit := f.commitAndTag(t, "v0.2.0")
+
+	got, ok := resolveFlavorRef(context.Background(), f.dir, "refs/tags/v*")
+	if !ok {
+		t.Fatal("expected refs/tags/v* to resolve with two stable tags present")
+	}
+	if got != wantCommit {
+		t.Errorf("resolved %q, want v0.2.0's commit %q", got, wantCommit)
+	}
+}
+
+func TestResolveFlavorRef_Negative_OnlyPrereleasesLeaveLatestUnresolved(t *testing.T) {
+	f := newTagFixture(t)
+	f.commitAndTag(t, "v0.2.0-rc.1")
+
+	if got, ok := resolveFlavorRef(context.Background(), f.dir, "refs/tags/v*"); ok {
+		t.Errorf("expected an rc-only repository to leave latest unresolved (pending), got %q", got)
+	}
+}
+
+func TestResolveFlavorRef_Boundary_PrereleaseBuildMetadataAndNonSemverTagsIgnored(t *testing.T) {
+	f := newTagFixture(t)
+	f.commitAndTag(t, "v0.1.0")
+	// A release candidate above v0.1.0 by major.minor.patch must still lose to it: a
+	// prerelease never outranks a stable release for "latest" (#245).
+	f.commitAndTag(t, "v0.2.0-rc.1")
+	// A tag that matches the "v*" glob syntactically but is not SemVer must be ignored
+	// rather than aborting resolution.
+	f.commitAndTag(t, "v-nightly")
+	// The true winner: highest stable version, carrying build metadata that must not
+	// affect precedence or prevent selection.
+	wantCommit := f.commitAndTag(t, "v0.3.0+build.7")
+
+	got, ok := resolveFlavorRef(context.Background(), f.dir, "refs/tags/v*")
+	if !ok {
+		t.Fatal("expected refs/tags/v* to resolve")
+	}
+	if got != wantCommit {
+		t.Errorf("resolved %q, want v0.3.0+build.7's commit %q", got, wantCommit)
+	}
+}
+
 // flavorFixture is a repository shaped like this one before its first release: main has
 // moved past an old `latest` tag, no v* tag and no lts-* branch exist, and a bare
 // repository stands in for the forge.

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/flavors"
+	"github.com/cordanaLLM/praetor/internal/semver"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -15,15 +16,20 @@ import (
 // below inherits it.
 const flavorsCommandTimeout = 2 * time.Minute
 
-// resolveFlavorRef resolves a declared source ref to the commit it points at. Patterns
-// such as "refs/tags/v*" resolve to the highest-sorting matching ref. ok is false when
-// nothing matches, which the planner turns into ActionUnresolved.
+// maxSemverTagCandidates is the scalar upper bound (HISS-02) on the tag refs a single
+// "refs/tags/v*"-style resolution walks.
+const maxSemverTagCandidates = 4096
+
+// resolveFlavorRef resolves a declared source ref to the commit it points at. A version
+// tag pattern ("refs/tags/v*") resolves through newestSemverTag; every other glob keeps
+// git's version-sort behavior. ok is false when nothing matches, which the planner turns
+// into ActionUnresolved.
 func resolveFlavorRef(ctx context.Context, dir, ref string) (string, bool) {
 	if err := util.ValidateExecArg(ref); err != nil {
 		return "", false
 	}
 	if strings.ContainsAny(ref, "*?[") {
-		matched, ok := newestMatchingRef(ctx, dir, ref)
+		matched, ok := matchFlavorRefPattern(ctx, dir, ref)
 		if !ok {
 			return "", false
 		}
@@ -42,6 +48,17 @@ func resolveFlavorRef(ctx context.Context, dir, ref string) (string, bool) {
 	return commit, commit != ""
 }
 
+// matchFlavorRefPattern picks the ref a glob source_ref resolves to. A "refs/tags/v*"
+// pattern goes through newestSemverTag so a prerelease (v0.2.0-rc.1) never outranks a
+// stable release (v0.1.0) for a flavor like "latest" (#245); every other glob (branch
+// patterns such as "refs/heads/lts-*") keeps the prior highest-sorting-ref behavior.
+func matchFlavorRefPattern(ctx context.Context, dir, pattern string) (string, bool) {
+	if strings.HasPrefix(pattern, "refs/tags/v") {
+		return newestSemverTag(ctx, dir, pattern)
+	}
+	return newestMatchingRef(ctx, dir, pattern)
+}
+
 func newestMatchingRef(ctx context.Context, dir, pattern string) (string, bool) {
 	out, err := util.RunGit(ctx, dir, "for-each-ref",
 		"--sort=-v:refname", "--count=1", "--format=%(refname)", pattern)
@@ -50,6 +67,37 @@ func newestMatchingRef(ctx context.Context, dir, pattern string) (string, bool) 
 	}
 	matched := firstOutputLine(out)
 	return matched, matched != ""
+}
+
+// newestSemverTag resolves a "refs/tags/v*" pattern to the highest SemVer tag that carries
+// no prerelease component. Tags that do not parse as SemVer (non-version tags matching the
+// glob) are ignored rather than aborting the resolution; a pattern matching only
+// prereleases (or nothing) resolves to ok=false, which the planner reports as pending, not
+// as a prerelease standing in for "latest".
+func newestSemverTag(ctx context.Context, dir, pattern string) (string, bool) {
+	out, err := util.RunGit(ctx, dir, "for-each-ref", "--format=%(refname)", pattern)
+	if err != nil {
+		return "", false
+	}
+
+	lines := strings.Split(out, "\n")
+	var bestRef string
+	var best semver.Version
+	found := false
+	for i := 0; i < len(lines) && i < maxSemverTagCandidates; i++ {
+		ref := strings.TrimSpace(lines[i])
+		if ref == "" {
+			continue
+		}
+		v, ok := semver.Parse(strings.TrimPrefix(ref, "refs/tags/"))
+		if !ok || v.IsPrerelease() {
+			continue
+		}
+		if !found || semver.Compare(v, best) > 0 {
+			best, bestRef, found = v, ref, true
+		}
+	}
+	return bestRef, found
 }
 
 func firstOutputLine(out string) string {
