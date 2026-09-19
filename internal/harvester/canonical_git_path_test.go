@@ -69,10 +69,11 @@ func TestCanonicalGitPath(t *testing.T) {
 		}
 	}
 	// Boundary: an unusable context is an error rather than an unbounded resolution. Both rows
-	// name the repository that exists, real/repo, so the existence check at harvester.go:479
-	// cannot answer for them: the context guard in util.ResolveExistingPath is the only thing
-	// left that can refuse. Pointed at real, as they were, real/.git does not exist and the
-	// rows passed with the guards removed -- measured by stripping both ctx.Err() checks from
+	// name the repository that exists, real/repo, so the existence check at harvester.go:485
+	// -- util.DirExists, internal/util/util.go:120 -- cannot answer for them: the context
+	// guard in util.ResolveExistingPath is the only thing left that can refuse. Pointed at
+	// real, as they were, real/.git does not exist and the rows passed with the guards
+	// removed -- measured by stripping both ctx.Err() checks from
 	// internal/util/resolved_path.go, which left this test green while internal/util's own
 	// TestResolveExistingPath failed.
 	repo := filepath.Join(real, "repo")
