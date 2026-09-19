@@ -19,6 +19,33 @@
 # checkout produces must not depend on which platform did the checking out.
 .config/archetypes/**/*.yaml text eol=lf
 
+# HISS-16's canonical AGENTS.md and every vendor target standardsctl compile-context
+# generates from it (checks.py's own CONTEXT set) are read and compared byte/line-exact:
+# internal/compiler's TestCanonicalAgentsFloorCatchesLoss regex-matches a line in AGENTS.md
+# with `(?m)^   standardsctl compile-context$`, which a CRLF checkout fails because the
+# trailing \r sits between the last matched character and the multi-line $; cmd/standardsctl's
+# TestDispatchCommand_RepositoryDogfood audits AGENTS.md against its compiled targets and
+# reports "target CLAUDE.md is out of sync with ../../AGENTS.md" once a Windows checkout
+# converts one side's line endings and not (consistently) the other's. Same fix, same reason
+# as *.go and the archetype yamls above (#135).
+AGENTS.md text eol=lf
+CLAUDE.md text eol=lf
+.windsurfrules text eol=lf
+.github/copilot-instructions.md text eol=lf
+.gemini/GEMINI.md text eol=lf
+.codex/rules.md text eol=lf
+.cursor/rules/**/*.mdc text eol=lf
+
+# internal/devcontainer and cmd/standardsctl both verify every committed .devcontainer/
+# file (devcontainer.json, Dockerfile.praetor, the base64 source parts) against a recorded
+# bootstrap fingerprint computed over its exact bytes (TestDogfoodingSynthesis,
+# TestDispatchCommand_ContextAndDevcontainer); a CRLF checkout changes those bytes and the
+# verification reports the bootstrap Dockerfile or configuration differing from its recorded
+# inputs for a directory nobody edited. Confirmed against Dockerfile.praetor specifically --
+# devcontainer.json alone left it still failing; the base64 parts carry no line terminators
+# so this is a no-op for them, but the whole directory is one bootstrap unit (#135).
+.devcontainer/* text eol=lf
+
 # The CRLF fixtures assert that the line-based matchers are not silenced by a Windows
 # checkout. Two attributes are needed and they defend different things.
 #

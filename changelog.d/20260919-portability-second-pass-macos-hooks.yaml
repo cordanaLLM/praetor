@@ -1,0 +1,4 @@
+type: fixed
+title: Collapse the Python hook scripts' repeated walk-to-root subpath check onto one resolved-path helper, fixing the macOS /var vs /private/var Platform Neutrality failures #282 left open
+issue: "#135"
+breaking: false

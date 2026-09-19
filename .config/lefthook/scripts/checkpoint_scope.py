@@ -9,6 +9,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / ".config/lefthook/scripts"))
 from checkpoint import CheckpointError, _git, inspect_checkpoint
+from common import resolved_relative_to
 
 LIMIT = 1024 * 1024
 PASSED = "PRAETOR_CHECKPOINT_SCOPE_OK"
@@ -79,10 +80,11 @@ def check(payload):
         raise ValueError("native pre-tool cwd must be absolute")
     root = Path(root_value).resolve()
     try:
-        root.relative_to(ROOT)
+        resolved_relative_to(root, ROOT)
     except ValueError as error:
         raise ValueError("native pre-tool cwd is outside the configured repository") from error
-    if not root.is_dir() or Path(_git(root, "rev-parse", "--show-toplevel").decode().strip()) != ROOT:
+    toplevel = Path(_git(root, "rev-parse", "--show-toplevel").decode().strip())
+    if not root.is_dir() or toplevel.resolve() != ROOT.resolve():
         raise ValueError("native pre-tool cwd belongs to a different repository")
     report = checkpoint()
     relative = rooted_path(root, tool_input["file_path"])

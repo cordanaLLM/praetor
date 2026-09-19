@@ -1,0 +1,4 @@
+type: fixed
+title: Force core.autocrlf=false for every git invocation the hook test harness makes, fixing the Windows gofmt/main.go Platform Neutrality failure the fixture repos' missing .gitattributes let through
+issue: "#135"
+breaking: false

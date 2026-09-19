@@ -190,6 +190,22 @@ def git(*args, cwd=None):
     return run(["git", *args], cwd=cwd)
 
 
+def resolved_relative_to(path, root):
+    """Return ``path`` relative to ``root``, resolving both to their real filesystem form first.
+
+    macOS presents ``/var`` and ``/tmp`` as symlinks to ``/private/var`` and ``/private/tmp``;
+    Python's own ``tempfile`` module, ``go list``'s reported package directories, and a test
+    fixture's own temp root each pick a side of that symlink independently. Comparing one
+    resolved operand against one unresolved operand with ``Path.relative_to`` then raises
+    ``ValueError`` for two paths that name the same directory. Every subpath/containment check
+    in this package shares this one resolution instead of each call site deciding for itself
+    whether to call ``Path.resolve()`` -- mirrors the Go-side collapse onto
+    ``internal/util.ResolveExistingPath`` (#282, #135); a caller that needs a custom error
+    message catches the ``ValueError`` this raises (identical to ``Path.relative_to``).
+    """
+    return Path(path).resolve().relative_to(Path(root).resolve())
+
+
 def paths(raw):
     return [os.fsdecode(item) for item in raw.split(b"\0") if item]
 

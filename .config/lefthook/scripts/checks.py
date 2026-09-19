@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import re
 
-from common import HookError, clean_env, paths, present_files, run
+from common import HookError, clean_env, paths, present_files, resolved_relative_to, run
 from privacy import PRIVATE_STATE_ERROR
 
 GO_CONFIG = {"go.mod", "go.sum", "go.work", "go.work.sum", "Makefile",
@@ -138,7 +138,7 @@ def go_packages(directory, names, reverse=False):
                                    env=clean_env()))
     selected = set()
     for pkg in packages:
-        relative = Path(pkg["Dir"]).relative_to(directory).as_posix()
+        relative = resolved_relative_to(pkg["Dir"], directory).as_posix()
         prefix = "" if relative == "." else relative + "/"
         embedded = [prefix + item for field in ("EmbedFiles", "TestEmbedFiles", "XTestEmbedFiles")
                     for item in pkg.get(field, [])]
@@ -164,14 +164,13 @@ def go_packages(directory, names, reverse=False):
 
 def local_package_patterns(directory, packages):
     """Resolve selected import paths to confined directories for filesystem-based tools."""
-    root = directory.resolve()
     listed = decode_packages(run(["go", "list", "-json", *packages], cwd=directory,
                                  env=clean_env()))
     patterns = {}
     for package in listed:
-        path = Path(package["Dir"]).resolve()
+        path = Path(package["Dir"])
         try:
-            relative = path.relative_to(root).as_posix()
+            relative = resolved_relative_to(path, directory).as_posix()
         except ValueError as error:
             raise HookError(f"Go package directory is outside the checked snapshot: {path}") from error
         if not path.is_dir():
