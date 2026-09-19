@@ -174,12 +174,18 @@ func TestAuditGoToolchain_Boundary_RefusesWhatItCannotCompare(t *testing.T) {
 		t.Error("a manifest without a go directive was accepted")
 	}
 	malformed := toolchainRepository(t, "1.27", map[string]string{
-		".github/workflows/ci.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'1.x'", 1),
+		".github/workflows/ci.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'1.27.zz'", 1),
 	})
 	if _, err = AuditGoToolchain(context.Background(), malformed); err == nil {
 		t.Error("a pin that is not a dotted number was accepted")
 	} else if !strings.Contains(err.Error(), "ci.yml:10") {
 		t.Errorf("the error does not point at the pin: %v", err)
+	}
+	overlong := toolchainRepository(t, "1.27", map[string]string{
+		".github/workflows/ci.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'1.2.3.4.5'", 1),
+	})
+	if _, err = AuditGoToolchain(context.Background(), overlong); err == nil {
+		t.Error("a version with more components than the comparison holds was accepted")
 	}
 	if _, err = AuditGoToolchain(context.Background(), filepath.Join(t.TempDir(), "absent")); err == nil {
 		t.Error("a repository without a go.mod was accepted")
@@ -190,8 +196,9 @@ func TestAuditGoToolchain_Boundary_RefusesWhatItCannotCompare(t *testing.T) {
 	}
 }
 
-// Guard: this repository's own workflows and the templates it ships must mirror its
-// directive. This is what stops the copies drifting again the next time go.mod moves.
+// Guard: this repository's own workflows, the composite actions and the templates it
+// ships must mirror its directive. This is what stops the copies drifting again the next
+// time go.mod moves.
 func TestAuditGoToolchain_Guard_ThisRepositoryMirrorsItsDirective(t *testing.T) {
 	findings, err := AuditGoToolchain(context.Background(), filepath.Join("..", ".."))
 	if err != nil {

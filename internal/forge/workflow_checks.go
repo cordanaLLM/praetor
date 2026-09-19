@@ -77,7 +77,7 @@ func readWorkflowFiles(ctx context.Context, repoPath string) (_ []workflowFile, 
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	names, err := workflowNames(root)
+	names, err := boundedNames(root, maxWorkflowFiles, "workflow", isWorkflowDocument)
 	if err != nil {
 		return nil, err
 	}
@@ -92,28 +92,45 @@ func readWorkflowFiles(ctx context.Context, repoPath string) (_ []workflowFile, 
 	return files, nil
 }
 
-func workflowNames(root *os.Root) (_ []string, err error) {
+// boundedNames lists a pinned directory's entries in name order, keeping the ones keep
+// selects. A listing larger than bound is refused rather than truncated, so the tree being
+// read cannot make a scan unbounded or make it miss an entry in silence. inventory names
+// what is being listed, so a refusal says which directory grew.
+//
+// Every bounded listing in this package goes through here. The workflow reader, the
+// container-template reader and the composite-action reader differ only in their bound and
+// their predicate, and a second copy of the listing would drift from this one (HISS-19).
+func boundedNames(root *os.Root, bound int, inventory string, keep func(os.DirEntry) bool) (_ []string, err error) {
 	directory, err := root.Open(".")
 	if err != nil {
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, directory.Close()) }()
-	entries, err := directory.ReadDir(maxWorkflowFiles + 1)
+	entries, err := directory.ReadDir(bound + 1)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
-	if len(entries) > maxWorkflowFiles {
-		return nil, fmt.Errorf("workflow inventory exceeds %d entries", maxWorkflowFiles)
+	if len(entries) > bound {
+		return nil, fmt.Errorf("%s inventory exceeds %d entries", inventory, bound)
 	}
 	var names []string
-	for i := 0; i < len(entries) && i < maxWorkflowFiles; i++ {
-		name := entries[i].Name()
-		if !entries[i].IsDir() && (strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml")) {
-			names = append(names, name)
+	for i := 0; i < len(entries) && i < bound; i++ {
+		if keep(entries[i]) {
+			names = append(names, entries[i].Name())
 		}
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// isWorkflowDocument selects the YAML files GitHub reads out of .github/workflows.
+func isWorkflowDocument(entry os.DirEntry) bool {
+	return !entry.IsDir() && isYAMLDocument(entry.Name())
+}
+
+// isYAMLDocument reports whether a name is read by the YAML parser rather than as text.
+func isYAMLDocument(name string) bool {
+	return strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml")
 }
 
 // workflowSpec is the workflow subset used to select required check contexts.
