@@ -96,6 +96,11 @@ as non-idempotent even though it checks adoption stability inside each clone.
 
 `dogfood --remote=...` and `--benchmark-popular` still perform shallow-clone
 adoption simulations and HISS readiness grading, then remove their clones.
+Each URL must be `https://` or `ssh://`: a local path, a `file://` URL or an
+`ext::` transport is refused before git runs, and the clone itself runs with an
+empty template, its own `HOME` and `TMPDIR`, and no workstation or system Git
+configuration, so nothing the operator has configured reaches a checkout of
+untrusted code.
 Their `passed` result describes simulation execution; it does not establish an
 applied and verified repository. Use `--public-loop` for retained apply/recheck
 results. Remote modes and MCP dogfooding do not audit workstation skill roots.

@@ -1,0 +1,4 @@
+type: fixed
+title: Run the dedupe scan's file inventory and the dogfood ephemeral clone under an isolated Git configuration, restrict remote dogfood targets to https and ssh, and fail the dedupe verdict on any utility-sprawl finding
+issue: "#295"
+breaking: false

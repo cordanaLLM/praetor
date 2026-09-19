@@ -65,9 +65,20 @@ func calculateReadinessGrade(debtCount, hissInfractions int) string {
 	return "F"
 }
 
+// remoteCloneProtocols is the transport allow-list handed to the clone as
+// GIT_ALLOW_PROTOCOL. Remote dogfooding targets are public repositories, so a network
+// transport is the only kind that makes sense; file, ext and the rest are refused.
+const remoteCloneProtocols = "https:ssh"
+
 // validateRepoURL rejects URLs that cannot safely be handed to git as a positional
-// argument: empty values, values git would parse as an option, and values carrying shell
-// metacharacters or control bytes (util.ValidateExecArg).
+// argument: empty values, values git would parse as an option, values carrying shell
+// metacharacters or control bytes (util.ValidateExecArg), and values that are not an
+// https or ssh URL.
+//
+// The transport check is what keeps a dogfood target remote. Without it "/srv/secrets",
+// "file:///etc" and "ext::sh -c …" were all strings git happily resolved, which turned a
+// simulation over public repositories into a local read -- and, for ext::, into command
+// execution. The clone environment refuses the same transports a second time.
 func validateRepoURL(repoURL string) (string, error) {
 	trimmed := strings.TrimSpace(repoURL)
 	if trimmed == "" {
@@ -76,16 +87,27 @@ func validateRepoURL(repoURL string) (string, error) {
 	if err := util.ValidateExecArg(trimmed); err != nil {
 		return "", fmt.Errorf("%w: %q: %w", ErrInvalidRepoURL, trimmed, err)
 	}
+	lowered := strings.ToLower(trimmed)
+	if !strings.HasPrefix(lowered, "https://") && !strings.HasPrefix(lowered, "ssh://") {
+		return "", fmt.Errorf("%w: %q: expected an https:// or ssh:// URL", ErrInvalidRepoURL, trimmed)
+	}
 	return trimmed, nil
 }
 
-// cloneEphemeralRepo clones a remote repository into a temporary directory with depth 1.
+// cloneEphemeralRepo clones a remote repository into targetDir with depth 1, using
+// scratchDir for the clone's throwaway HOME and TMPDIR.
 //
 // The URL is validated before it reaches git and is passed after an explicit "--", so a
 // value such as "--upload-pack=..." or "-c" can never be parsed as a git option. The clone
 // runs through util.RunGit, which enforces a deadline and a WaitDelay so that an orphaned
-// git-remote-https helper holding the inherited pipes cannot outlive the timeout.
-func cloneEphemeralRepo(ctx context.Context, repoURL, targetDir string) error {
+// remote helper holding the inherited pipes cannot outlive the timeout.
+//
+// "--template=" and untrustedCloneContext are what keep the sandbox a sandbox. Without
+// them the clone inherited the operator's configuration, so init.templateDir installed the
+// operator's own hooks into a checkout of untrusted content and ran post-checkout during
+// the clone, and url.<base>.insteadOf could rewrite the target out from under the
+// validator. It is the same isolation the public loop clones under.
+func cloneEphemeralRepo(ctx context.Context, repoURL, scratchDir, targetDir string) error {
 	trimmed, err := validateRepoURL(repoURL)
 	if err != nil {
 		return fmt.Errorf("refusing to clone %q: %w", repoURL, err)
@@ -93,10 +115,14 @@ func cloneEphemeralRepo(ctx context.Context, repoURL, targetDir string) error {
 
 	cloneCtx, cancel := context.WithTimeout(ctx, DefaultRemoteTimeout)
 	defer cancel()
-
-	output, err := util.RunGit(cloneCtx, "", "clone", "--depth", "1", "--single-branch", "--", trimmed, targetDir)
+	cloneCtx, err = untrustedCloneContext(cloneCtx, scratchDir, remoteCloneProtocols)
 	if err != nil {
-		return fmt.Errorf("git clone failed (%s): %w", strings.TrimSpace(output), err)
+		return fmt.Errorf("isolate the ephemeral clone of %q: %w", trimmed, err)
+	}
+
+	output, err := util.RunGit(cloneCtx, "", "clone", "--template=", "--depth", "1", "--single-branch", "--", trimmed, targetDir)
+	if err != nil {
+		return fmt.Errorf("clone failed (%s): %w", strings.TrimSpace(output), err)
 	}
 	return nil
 }
@@ -144,7 +170,7 @@ func testSingleRemoteAdoption(ctx context.Context, repoURL string) (*RemoteAdopt
 	// child of the sandbox rather than the sandbox root itself.
 	cloneDir := filepath.Join(tempDir, "repo")
 
-	if cloneErr := cloneEphemeralRepo(ctx, repoURL, cloneDir); cloneErr != nil {
+	if cloneErr := cloneEphemeralRepo(ctx, repoURL, tempDir, cloneDir); cloneErr != nil {
 		res.Error = cloneErr.Error()
 		res.DurationMs = time.Since(startTime).Milliseconds()
 		return res, nil
