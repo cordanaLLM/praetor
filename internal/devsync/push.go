@@ -38,7 +38,12 @@ type PushOptions struct {
 	StatePath string
 	// DryRun reports what would be uploaded without uploading or recording anything.
 	DryRun bool
-	Rclone Rclone
+	// MaxArchiveSize caps a unit's measured source size in bytes: push skips a unit whose
+	// fingerprint exceeds it rather than streaming it. Zero means no cap. It is measured
+	// before compression, from the same fingerprint recorded in StatePath, not from the
+	// archive itself.
+	MaxArchiveSize int64
+	Rclone         Rclone
 	// Out receives one line per archive as it completes; nil discards them.
 	Out io.Writer
 }
@@ -68,6 +73,7 @@ func Push(ctx context.Context, opts PushOptions) ([]Outcome, error) {
 	outcome := pushAgentState(ctx, opts)
 	printErr = errors.Join(printErr, report(out, outcome))
 	outcomes = append(outcomes, outcome)
+	printErr = errors.Join(printErr, reportSizeSummary(out, outcomes))
 	return outcomes, errors.Join(failures(outcomes), printErr)
 }
 
@@ -112,6 +118,10 @@ func pushUnit(ctx context.Context, opts PushOptions, state *pushState, u unit) O
 		return failed(outcome, err)
 	case u.folder && current.Files == 0:
 		outcome.Status, outcome.Note = StatusSkipped, "empty"
+		return outcome
+	case opts.MaxArchiveSize > 0 && current.Bytes > opts.MaxArchiveSize:
+		outcome.Status, outcome.Bytes = StatusTooLarge, current.Bytes
+		outcome.Note = fmt.Sprintf("%s exceeds cap %s", FormatBytes(current.Bytes), FormatBytes(opts.MaxArchiveSize))
 		return outcome
 	case state.Archives[key] == current:
 		outcome.Status, outcome.Bytes, outcome.Note = StatusSkipped, current.Bytes, "unchanged"

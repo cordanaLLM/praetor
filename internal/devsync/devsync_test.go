@@ -2,6 +2,7 @@ package devsync
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -198,6 +199,110 @@ func TestPushValidation(t *testing.T) {
 	}
 }
 
+// bigArchiveBytes discovers the measured source size Push reports for archive, through an
+// uncapped dry run that neither uploads nor records anything.
+func bigArchiveBytes(t *testing.T, ctx context.Context, rclone Rclone, dev, archive string) int64 {
+	t.Helper()
+	opts := pushOptions(t, rclone, dev, nil)
+	opts.DryRun = true
+	outcomes, err := Push(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range outcomes {
+		if o.Archive == archive {
+			return o.Bytes
+		}
+	}
+	t.Fatalf("archive %s not found in %v", archive, outcomes)
+	return 0
+}
+
+func TestPushCapAllowsArchiveUnderIt(t *testing.T) {
+	// positive: a cap well above both fixtures uploads them both and reports zero skipped.
+	ctx, rclone, _ := newFakeRclone(t, "")
+	dev := makeSizeCapTree(t)
+	var out bytes.Buffer
+	opts := pushOptions(t, rclone, dev, &out)
+	opts.MaxArchiveSize = 1 << 20
+	outcomes, err := Push(ctx, opts)
+	if err != nil {
+		t.Fatal(err, out.String())
+	}
+	got := statuses(outcomes)
+	if got["ws1/dev/small.tar.gz"] != StatusUploaded || got["ws1/dev/big.tar.gz"] != StatusUploaded {
+		t.Fatalf("under-cap push = %v\n%s", got, out.String())
+	}
+	if strings.Contains(out.String(), StatusTooLarge) {
+		t.Fatalf("unexpected %s line:\n%s", StatusTooLarge, out.String())
+	}
+	if !strings.Contains(out.String(), "skipped for size: 0 archive(s)") {
+		t.Fatalf("size summary missing or nonzero:\n%s", out.String())
+	}
+}
+
+func TestPushCapSkipsArchiveOverIt(t *testing.T) {
+	// negative: a cap below big's measured size skips only big, prints a too-large line for it,
+	// and the summary counts it; skipping for size is not a failure.
+	ctx, rclone, _ := newFakeRclone(t, "")
+	dev := makeSizeCapTree(t)
+	bigBytes := bigArchiveBytes(t, ctx, rclone, dev, "ws1/dev/big.tar.gz")
+	var out bytes.Buffer
+	opts := pushOptions(t, rclone, dev, &out)
+	opts.MaxArchiveSize = bigBytes - 1
+	outcomes, err := Push(ctx, opts)
+	if err != nil {
+		t.Fatal(err, out.String())
+	}
+	got := statuses(outcomes)
+	if got["ws1/dev/big.tar.gz"] != StatusTooLarge || got["ws1/dev/small.tar.gz"] != StatusUploaded {
+		t.Fatalf("over-cap push = %v\n%s", got, out.String())
+	}
+	if !strings.Contains(out.String(), StatusTooLarge) || !strings.Contains(out.String(), "ws1/dev/big.tar.gz") ||
+		!strings.Contains(out.String(), FormatBytes(bigBytes)) || !strings.Contains(out.String(), FormatBytes(bigBytes-1)) {
+		t.Fatalf("too-large line lacks archive, measured size or cap:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "skipped for size: 1 archive(s)") || !strings.Contains(out.String(), FormatBytes(bigBytes)) {
+		t.Fatalf("size summary missing or wrong count:\n%s", out.String())
+	}
+	// --dry-run reports the same skip without uploading anything.
+	dryOut := &bytes.Buffer{}
+	dryOpts := opts
+	dryOpts.Out, dryOpts.DryRun = dryOut, true
+	dryOutcomes, err := Push(ctx, dryOpts)
+	if err != nil {
+		t.Fatal(err, dryOut.String())
+	}
+	if statuses(dryOutcomes)["ws1/dev/big.tar.gz"] != StatusTooLarge {
+		t.Fatalf("dry run over-cap = %v", statuses(dryOutcomes))
+	}
+}
+
+func TestPushCapBoundaryAndDisabled(t *testing.T) {
+	// boundary: exactly at the cap uploads rather than skipping; 0 and "none" both disable it.
+	ctx, rclone, _ := newFakeRclone(t, "")
+	dev := makeSizeCapTree(t)
+	bigBytes := bigArchiveBytes(t, ctx, rclone, dev, "ws1/dev/big.tar.gz")
+	exact := pushOptions(t, rclone, dev, nil)
+	exact.MaxArchiveSize = bigBytes
+	outcomes, err := Push(ctx, exact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statuses(outcomes)["ws1/dev/big.tar.gz"] == StatusTooLarge {
+		t.Fatalf("archive exactly at the cap was skipped: %v", statuses(outcomes))
+	}
+	disabledOpts := pushOptions(t, rclone, makeSizeCapTree(t), nil)
+	disabledOpts.MaxArchiveSize = 0
+	outcomes, err = Push(ctx, disabledOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statuses(outcomes)["ws1/dev/big.tar.gz"] == StatusTooLarge {
+		t.Fatalf("MaxArchiveSize=0 did not disable the cap: %v", statuses(outcomes))
+	}
+}
+
 func TestPullRestoresPushedTree(t *testing.T) {
 	ctx, rclone, _ := newFakeRclone(t, "")
 	dev := makeDevTree(t)
@@ -289,6 +394,47 @@ func TestFormatBytes(t *testing.T) {
 	for n, want := range cases {
 		if got := FormatBytes(n); got != want {
 			t.Errorf("FormatBytes(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+func TestParseSizeAccepts(t *testing.T) {
+	// positive: plain bytes and every unit ParseSize documents, case-insensitively.
+	cases := map[string]int64{
+		"1024": 1024, "0": 0, "2GiB": 2 << 30, "2GIB": 2 << 30, "2gib": 2 << 30,
+		"500MiB": 500 * (1 << 20), "1KiB": 1 << 10, "1TiB": 1 << 40, "1 GiB": 1 << 30,
+		"1.5GiB": int64(1.5 * float64(int64(1)<<30)), "10B": 10,
+		"none": 0, "None": 0, "NONE": 0, "  2GiB  ": 2 << 30,
+	}
+	for in, want := range cases {
+		got, err := ParseSize(in)
+		if err != nil {
+			t.Errorf("ParseSize(%q) = %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("ParseSize(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+func TestParseSizeRejects(t *testing.T) {
+	// negative: not a number, an unknown suffix, and a negative number.
+	for _, in := range []string{"", "abc", "2GB", "2XiB", "-1", "-1GiB", "GiB", "2 2GiB"} {
+		if _, err := ParseSize(in); err == nil {
+			t.Errorf("ParseSize(%q) accepted", in)
+		}
+	}
+}
+
+func TestParseSizeBoundary(t *testing.T) {
+	// boundary: the unit multipliers themselves, and the zero/"none" spellings that disable a cap.
+	if got, err := ParseSize("1KiB"); err != nil || got != 1024 {
+		t.Fatalf("ParseSize(1KiB) = %d, %v", got, err)
+	}
+	for _, in := range []string{"0", "0B", "0GiB", "none"} {
+		if got, err := ParseSize(in); err != nil || got != 0 {
+			t.Errorf("ParseSize(%q) = %d, %v, want 0, nil", in, got, err)
 		}
 	}
 }

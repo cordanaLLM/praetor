@@ -12,7 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -157,6 +159,9 @@ const (
 	StatusWouldUpload = "would-upload"
 	StatusRestored    = "restored"
 	StatusFailed      = "failed"
+	// StatusTooLarge reports a unit whose measured source exceeds PushOptions.MaxArchiveSize;
+	// push never streamed it. Skipping for size is not a failure.
+	StatusTooLarge = "too-large"
 )
 
 func failed(outcome Outcome, err error) Outcome {
@@ -192,6 +197,23 @@ func failures(outcomes []Outcome) error {
 	return fmt.Errorf("%d of %d archives failed", count, len(outcomes))
 }
 
+// reportSizeSummary prints how many archives Push skipped because their measured source
+// exceeded MaxArchiveSize, and their combined size, so an oversized archive is never left off
+// the remote without the operator being told. It always prints, including a zero count, so the
+// line's absence is never mistaken for the check not having run.
+func reportSizeSummary(w io.Writer, outcomes []Outcome) error {
+	var count int
+	var total int64
+	for _, o := range outcomes {
+		if o.Status == StatusTooLarge {
+			count++
+			total += o.Bytes
+		}
+	}
+	_, err := fmt.Fprintf(w, "skipped for size: %d archive(s), %s\n", count, FormatBytes(total))
+	return err
+}
+
 // FormatBytes renders a byte count with a binary unit, for example "12.3 MiB".
 func FormatBytes(n int64) string {
 	const unit = 1024
@@ -206,6 +228,56 @@ func FormatBytes(n int64) string {
 		value, suffix = value/unit, next
 	}
 	return fmt.Sprintf("%.1f %s", value, suffix)
+}
+
+// sizeUnits maps a byte-size suffix, uppercased, to its multiplier. The empty suffix and "B"
+// both mean plain bytes; the rest are the binary units FormatBytes itself prints.
+var sizeUnits = map[string]int64{
+	"":    1,
+	"B":   1,
+	"KIB": 1 << 10,
+	"MIB": 1 << 20,
+	"GIB": 1 << 30,
+	"TIB": 1 << 40,
+}
+
+// ParseSize parses a byte count such as devsync's --max-archive-size flag: a plain integer
+// number of bytes, or a non-negative decimal number followed by a binary unit (B, KiB, MiB,
+// GiB, TiB), the unit matched case-insensitively and optionally separated by a space. "0" and
+// "none", in any case, both parse as 0, which callers treat as no cap at all.
+func ParseSize(s string) (int64, error) {
+	trimmed := strings.TrimSpace(s)
+	if strings.EqualFold(trimmed, "none") {
+		return 0, nil
+	}
+	number, unit := splitSizeUnit(trimmed)
+	multiplier, ok := sizeUnits[strings.ToUpper(unit)]
+	if !ok {
+		return 0, fmt.Errorf("size %q: unknown unit %q", s, unit)
+	}
+	value, err := strconv.ParseFloat(number, 64)
+	if err != nil || value < 0 {
+		return 0, fmt.Errorf("size %q: not a non-negative number", s)
+	}
+	bytes := value * float64(multiplier)
+	if bytes > math.MaxInt64 {
+		return 0, fmt.Errorf("size %q: too large", s)
+	}
+	return int64(bytes), nil
+}
+
+// splitSizeUnit splits s into its leading number and trailing letter unit, for example
+// "500 MiB" into "500" and "MiB".
+func splitSizeUnit(s string) (number, unit string) {
+	i := len(s)
+	for i > 0 && isASCIILetter(s[i-1]) {
+		i--
+	}
+	return strings.TrimSpace(s[:i]), s[i:]
+}
+
+func isASCIILetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
 func writerOrDiscard(w io.Writer) io.Writer {

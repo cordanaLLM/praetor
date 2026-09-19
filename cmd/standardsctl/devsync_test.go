@@ -53,6 +53,7 @@ func TestDevsyncCLIRejectsBadArguments(t *testing.T) {
 		{"push", "--host=a/b"},
 		{"push", "--dev=" + filepath.Join(dev, "absent"), "--host=ws1"},
 		{"push", "--unknown"},
+		{"push", "--max-archive-size=bogus"},
 		{"pull"},
 		{"pull", "--host=ws1", "--into=" + dev},
 		{"ls", "positional"},
@@ -72,6 +73,21 @@ func TestDevsyncCLIPushDryRun(t *testing.T) {
 	for _, want := range []string{"would-upload", "ws1/dev/org/repo.tar.gz", "ws1/agent-state.tar.gz"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("dry run output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestDevsyncCLIPushSizeCap(t *testing.T) {
+	isolateDevsyncEnv(t)
+	out, err := captureStdout(t, func() error {
+		return runDevsync([]string{"push", "--host=ws1", "--dry-run", "--max-archive-size=1B"})
+	})
+	if err != nil {
+		t.Fatal(err, out)
+	}
+	for _, want := range []string{"too-large", "ws1/dev/org/repo.tar.gz", "skipped for size: 1 archive(s)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("size-capped dry run lacks %q:\n%s", want, out)
 		}
 	}
 }

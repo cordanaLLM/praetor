@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -51,6 +52,21 @@ func makeDevTree(t *testing.T) string {
 	writeTestFile(t, filepath.Join(dev, "scratch", "build", "out.bin"), "cache\n")
 	makeRepo(t, filepath.Join(dev, "empty-org", "x"))
 	writeTestFile(t, filepath.Join(dev, "loose.txt"), "not archived\n")
+	return dev
+}
+
+// makeSizeCapTree builds a dev folder for the --max-archive-size tests: two repositories with
+// a large, deterministic gap between their measured sizes, so a cap between them skips exactly
+// one without depending on the exact byte counts of unrelated fixtures.
+//
+//	small  repository holding a few bytes
+//	big    repository holding a 4096-byte payload file
+func makeSizeCapTree(t *testing.T) string {
+	t.Helper()
+	dev := filepath.Join(t.TempDir(), "dev")
+	makeRepo(t, filepath.Join(dev, "small"))
+	writeTestFile(t, filepath.Join(dev, "big", ".git", "HEAD"), "ref: refs/heads/main\n")
+	writeTestFile(t, filepath.Join(dev, "big", "payload.bin"), strings.Repeat("x", 4096))
 	return dev
 }
 

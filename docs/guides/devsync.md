@@ -75,6 +75,32 @@ one line, `uploaded`, `skipped` or `failed`, with its size; the command exits no
 when any archive failed. A folder name containing a shell metacharacter such as a quote,
 `$` or a parenthesis is reported as failed rather than passed to rclone.
 
+### Size cap
+
+`--max-archive-size` (default `2GiB`) skips an archive whose source measures larger than
+the cap, so one oversized project folder cannot balloon a push into hundreds of gigabytes.
+Because the archive is streamed straight to the remote, push decides before writing a
+single byte of it: it reuses the same measurement already described above (file count,
+newest modification time, total size), the one recorded in the state file, rather than
+buffering an archive just to weigh it.
+
+A skipped archive prints one line, `too-large`, with its measured size and the cap, exactly
+like the `uploaded`, `skipped` and `failed` lines; `--dry-run` reports the same skip. Push
+always ends with a summary line stating how many archives it skipped for size and their
+combined size, so nothing is left off the remote without saying so. Skipping for size is
+not a failure and does not change the command's exit code.
+
+Accepted sizes are a plain number of bytes, or a number followed by a binary unit —
+`B`, `KiB`, `MiB`, `GiB` or `TiB`, matched case-insensitively, for example `2GiB` or
+`500MiB`. `0` or `none` (any case) disables the cap.
+
+To raise or remove the cap for one push:
+
+```sh
+praetorctl devsync push --max-archive-size=20GiB   # raise it
+praetorctl devsync push --max-archive-size=none    # disable it
+```
+
 `--host` overrides the host name; `--remote` another remote.
 
 ## Pull
