@@ -46,17 +46,23 @@ jobs:
       # The workflow runs on push to main and lts-* as well as on pull requests, so the step
       # carries no event condition: a commit that reaches a protected branch directly is
       # inspected too (#292). The script picks the range from the event and is exercised by
-      # scripts/test_dco_check.py. Event values travel through env rather than ${{ }} inside
-      # the command, so no payload field is ever expanded into shell source.
+      # scripts/test_dco_check.py, whose ComplianceWiringTests pin this step's shape so a
+      # re-added condition or a swapped pair of arguments fails a test rather than skipping
+      # every push run in silence. The default branch is what a branch-creation push, which
+      # reports an all-zero 'before', measures its new commits against. Event values travel
+      # through env rather than ${{ }} inside the command, so no payload field is ever
+      # expanded into shell source.
       - name: Verify DCO 1.1 Sign-Off on Commits
         env:
           DCO_EVENT_NAME: ${{ github.event_name }}
           DCO_BASE_REF: ${{ github.base_ref }}
           DCO_BEFORE_SHA: ${{ github.event.before }}
           DCO_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          DCO_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: >-
           scripts/dco_check.sh
           "$DCO_EVENT_NAME" "$DCO_BASE_REF" "$DCO_BEFORE_SHA" "$DCO_HEAD_SHA"
+          "$DCO_DEFAULT_BRANCH"
 
       - name: REUSE Compliance Check
         uses: fsfe/reuse-action@v5
