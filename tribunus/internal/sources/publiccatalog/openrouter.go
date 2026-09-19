@@ -34,13 +34,11 @@ package publiccatalog
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"time"
 
 	"github.com/cordanaLLM/praetor/tribunus/catalog"
+	"github.com/cordanaLLM/praetor/tribunus/internal/sources/httpfetch"
 )
 
 // DefaultOpenRouterURL is the OpenRouter public models endpoint verified
@@ -80,7 +78,7 @@ type openRouterResponse struct {
 
 // fetchOpenRouter fetches and parses the OpenRouter public models list.
 func fetchOpenRouter(ctx context.Context, url string) ([]catalog.Record, error) {
-	body, err := boundedGet(ctx, url)
+	body, err := httpfetch.Get(ctx, url, requestTimeout, maxResponseBytes)
 	if err != nil {
 		return nil, fmt.Errorf("openrouter: %w", err)
 	}
@@ -146,32 +144,4 @@ func perTokenToPerM(raw string) (float64, bool) {
 		return 0, false
 	}
 	return perToken * 1_000_000, true
-}
-
-func boundedGet(ctx context.Context, url string) (body []byte, err error) {
-	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request for %s: %w", url, err)
-	}
-	client := &http.Client{Timeout: requestTimeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", url, err)
-	}
-	defer func() { err = errors.Join(err, resp.Body.Close()) }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s returned HTTP %d", url, resp.StatusCode)
-	}
-	body, err = io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read response body from %s: %w", url, err)
-	}
-	if len(body) > maxResponseBytes {
-		return nil, fmt.Errorf("%s response exceeds %d bytes", url, maxResponseBytes)
-	}
-	return body, nil
 }

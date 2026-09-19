@@ -19,14 +19,12 @@ package ollamalocal
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/tribunus/catalog"
+	"github.com/cordanaLLM/praetor/tribunus/internal/sources/httpfetch"
 )
 
 // SourceName identifies this source in Snapshot.SourceRuns and CLI flags.
@@ -104,7 +102,7 @@ func Fetch(ctx context.Context, endpoint string) Result {
 
 func getTags(ctx context.Context, endpoint string) (tagsResponse, error) {
 	var parsed tagsResponse
-	body, err := boundedGet(ctx, endpoint+"/api/tags")
+	body, err := httpfetch.Get(ctx, endpoint+"/api/tags", requestTimeout, maxResponseBytes)
 	if err != nil {
 		return parsed, fmt.Errorf("ollama-local: %w", err)
 	}
@@ -121,7 +119,7 @@ func getTags(ctx context.Context, endpoint string) (tagsResponse, error) {
 // currently loaded. A failure here is returned to the caller rather than
 // wrapped into a Result, so Fetch can decide it is non-fatal.
 func loadedModelNames(ctx context.Context, endpoint string) (map[string]bool, error) {
-	body, err := boundedGet(ctx, endpoint+"/api/ps")
+	body, err := httpfetch.Get(ctx, endpoint+"/api/ps", requestTimeout, maxResponseBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -137,34 +135,6 @@ func loadedModelNames(ctx context.Context, endpoint string) (map[string]bool, er
 		loaded[m.Name] = true
 	}
 	return loaded, nil
-}
-
-func boundedGet(ctx context.Context, url string) (body []byte, err error) {
-	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request for %s: %w", url, err)
-	}
-	client := &http.Client{Timeout: requestTimeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", url, err)
-	}
-	defer func() { err = errors.Join(err, resp.Body.Close()) }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s returned HTTP %d", url, resp.StatusCode)
-	}
-	body, err = io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read response body from %s: %w", url, err)
-	}
-	if len(body) > maxResponseBytes {
-		return nil, fmt.Errorf("%s response exceeds %d bytes", url, maxResponseBytes)
-	}
-	return body, nil
 }
 
 func toRecord(m tagEntry, loaded bool, fetchedAt time.Time) catalog.Record {

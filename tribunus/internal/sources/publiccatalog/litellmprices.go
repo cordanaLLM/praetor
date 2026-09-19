@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/tribunus/catalog"
+	"github.com/cordanaLLM/praetor/tribunus/internal/sources/httpfetch"
 )
 
 // DefaultLiteLLMPriceMapURL is LiteLLM's published, unauthenticated model
@@ -37,7 +38,7 @@ type litellmPriceEntry struct {
 // documentation key (and any one malformed model entry) from taking down
 // every other model in the same response.
 func fetchLiteLLMPrices(ctx context.Context, url string) ([]catalog.Record, error) {
-	body, err := boundedGet(ctx, url)
+	body, err := httpfetch.Get(ctx, url, requestTimeout, maxResponseBytes)
 	if err != nil {
 		return nil, fmt.Errorf("litellm-prices: %w", err)
 	}
