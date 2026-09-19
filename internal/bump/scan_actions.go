@@ -24,8 +24,8 @@ var knownActionLatest = map[string]string{
 	"actions/setup-python":              "v5",
 	"actions/upload-artifact":           "v4",
 	"actions/download-artifact":         "v4",
-	"actions/upload-pages-artifact":     "v3",
-	"actions/deploy-pages":              "v4",
+	"actions/upload-pages-artifact":     "v5",
+	"actions/deploy-pages":              "v5",
 	"actions/configure-pages":           "v5",
 	"fsfe/reuse-action":                 "v6",
 	"goreleaser/goreleaser-action":      "v7",
@@ -61,6 +61,12 @@ var deprecatedActionVersions = map[string]map[string]string{
 		"v1": "Artifact v1 deprecated",
 		"v2": "Node.js 16 runtime deprecated",
 		"v3": "Artifact v3 sunset; upgrade to v4",
+	},
+	"actions/deploy-pages": {
+		"v1": "Node.js 16 runtime deprecated",
+		"v2": "Node.js 16 runtime deprecated",
+		"v3": "Node.js 20 runtime deprecated; upgrade to v5",
+		"v4": "Node.js 20 runtime deprecated; upgrade to v5",
 	},
 }
 

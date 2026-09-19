@@ -89,9 +89,13 @@ jobs:
 
       - name: Upload Pages Artifact
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site
+          # v4.0.0 dropped dotfiles from the tar; v5 restores them behind
+          # this input. True keeps v3 semantics (.git/.github stay excluded)
+          # so a future dotfile in site/ cannot vanish without a CI failure.
+          include-hidden-files: true
 
   deploy:
     # Engine-only: skipped outside the canonical repository (#189). The literal is the
@@ -113,4 +117,4 @@ jobs:
     steps:
       - name: Deploy Site to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
