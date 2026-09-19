@@ -637,7 +637,7 @@ func TestBundleManifestRecordLimit(t *testing.T) {
 			for i := range report.Records {
 				report.Records[i] = BundleFileRecord{Category: "fixture", SizeBytes: 1}
 			}
-			err := writeBundleManifest(report)
+			err := writeBundleManifest(context.Background(), report)
 			if count == MaxManifestRecords {
 				if err != nil || report.TotalFiles != count || report.TotalBytes != int64(count) || report.Categories["fixture"] != count {
 					t.Fatalf("exact manifest bound has inconsistent totals: %v", err)

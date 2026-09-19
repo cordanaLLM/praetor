@@ -55,7 +55,7 @@ func IngestTranscript(ctx context.Context, opts TranscriptIngestOptions) (*Trans
 		report.NextCursor = ""
 		return report, nil
 	}
-	root, err := openBundleRoot(opts.CacheDir)
+	root, err := openBundleRoot(ctx, opts.CacheDir)
 	if err != nil {
 		return report, fmt.Errorf("open transcript cache: %w", err)
 	}
