@@ -12,15 +12,15 @@ func TestInventoryRelativePathAndSymlinkMetadata(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	initTestRepository(t, repo)
 	abs := inspectRepository(t.Context(), repo)
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	relative, err := filepath.Rel(cwd, repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rel := inspectRepository(t.Context(), relative)
+	// The relative spelling is produced by moving the process next to the repository rather
+	// than by relating the repository to the package directory. Windows paths carry a drive
+	// letter and no ".." sequence crosses volumes, so filepath.Rel refuses outright when the
+	// runner's TEMP is on C: and the checkout on D: -- "can't make C:\...\repo relative to
+	// D:\a\praetor\praetor\internal\harvester" ended this test before the symlink half ever
+	// ran (#135). A base on the target's own volume is relatable on every platform. The test
+	// is not parallel, so t.Chdir is safe here, and this package already uses it.
+	t.Chdir(filepath.Dir(repo))
+	rel := inspectRepository(t.Context(), "repo")
 	if rel.GitCommonDir != abs.GitCommonDir || rel.Classification != abs.Classification {
 		t.Fatalf("relative path changed local identity: %+v %+v", abs, rel)
 	}

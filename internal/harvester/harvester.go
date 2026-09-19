@@ -342,16 +342,26 @@ func inspectIdentity(ctx context.Context, repoPath string, observation *Reposito
 		return
 	}
 	if strings.TrimSpace(bare) != "true" {
-		if !sameDirectory(observation.Path, gitToplevel(ctx, repoPath)) {
+		if !util.SameDirectory(observation.Path, gitToplevel(ctx, repoPath)) {
 			observation.ProbeErrors = append(observation.ProbeErrors, "git top-level identity mismatch")
 			return
 		}
 	}
-	observation.GitCommonDir = canonicalGitPath(repoPath, common)
-	canonicalGitDir := canonicalGitPath(repoPath, gitDir)
+	commonDir, commonPathErr := canonicalGitPath(ctx, repoPath, common)
+	canonicalGitDir, gitDirPathErr := canonicalGitPath(ctx, repoPath, gitDir)
+	if commonPathErr != nil || gitDirPathErr != nil {
+		observation.ProbeErrors = append(observation.ProbeErrors, "git identity probe failed")
+		return
+	}
+	observation.GitCommonDir = commonDir
+	// The classification compares by identity rather than by string. canonicalGitDir is
+	// resolved while observation.Path keeps the operator's own spelling, so a main checkout
+	// under an aliased ancestor would read as a linked worktree under a string comparison.
+	// The two shapes still separate: a linked worktree's git dir is .git/worktrees/<name>,
+	// a directory whose inode differs from the checkout's own .git.
 	if strings.TrimSpace(bare) == "true" {
 		observation.Classification = "bare"
-	} else if canonicalGitDir != filepath.Join(observation.Path, ".git") {
+	} else if !util.SameDirectory(canonicalGitDir, filepath.Join(observation.Path, ".git")) {
 		observation.Classification = "linked-worktree"
 	} else {
 		observation.Classification = "main"
@@ -370,34 +380,6 @@ func gitToplevel(ctx context.Context, repoPath string) string {
 		return ""
 	}
 	return abs
-}
-
-// sameDirectory reports whether want and got name the same directory, comparing by device
-// and inode (os.SameFile) rather than by string.
-//
-// A string comparison is what inspectIdentity used to do: filepath.Clean(canonicalTop) !=
-// observation.Path, where observation.Path is filepath.Abs(repoPath) -- never symlink
-// resolved -- and canonicalTop comes from git, whose "rev-parse --show-toplevel" is computed
-// from the child process's getcwd(2), which POSIX defines as free of symbolic links. On
-// macOS, where a repository under the platform's own TMPDIR is reached through /var ->
-// /private/var, that made the two spellings of the identical directory compare unequal on
-// every run, including every t.TempDir() fixture in this package's own tests (#135). Two
-// paths naming the same directory are the same repository regardless of which symlink in
-// their ancestry either one was spelled through; os.SameFile answers that question directly,
-// by identity, instead of demanding the operator's filesystem produce one specific spelling.
-func sameDirectory(want, got string) bool {
-	if want == "" || got == "" {
-		return false
-	}
-	wantInfo, err := os.Stat(want)
-	if err != nil {
-		return false
-	}
-	gotInfo, err := os.Stat(got)
-	if err != nil {
-		return false
-	}
-	return os.SameFile(wantInfo, gotInfo)
 }
 
 func inspectRepositoryState(ctx context.Context, repoPath string, observation *RepositoryObservation) {
@@ -463,11 +445,28 @@ func inspectRepositoryPrivacy(ctx context.Context, repoPath string, observation 
 	}
 }
 
-func canonicalGitPath(repoPath, common string) string {
-	if filepath.IsAbs(common) {
-		return filepath.Clean(common)
+// canonicalGitPath turns a path git reported for repoPath into one canonical spelling.
+//
+// The two callers hand it answers produced by different code. For a main checkout
+// "rev-parse --git-common-dir" is the relative ".git", joined here onto the operator's own
+// spelling of repoPath; for a linked worktree git answers with the absolute path recorded in
+// .git/worktrees/<name>/commondir, which git wrote through its own real_path(). The two name
+// one directory in two spellings whenever an ancestor is aliased: /var against /private/var
+// on macOS, a short name against its long form on Windows. GitCommonDir is published and
+// compared as a string, so a checkout and its linked worktree lost their shared identity on
+// both legs of the Platform Neutrality matrix (#135).
+//
+// Resolution goes through util.ResolveExistingPath, the one helper for this (HISS-19), whose
+// filepath.EvalSymlinks collapses the macOS symlink and on Windows re-reads every component
+// through FindFirstFile, so a short name comes back as the long one. A path that cannot be
+// resolved is an error rather than a fallback to the unresolved spelling: publishing a
+// spelling that may or may not be canonical is the defect, not the repair.
+func canonicalGitPath(ctx context.Context, repoPath, value string) (string, error) {
+	candidate := value
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(repoPath, candidate)
 	}
-	return filepath.Clean(filepath.Join(repoPath, common))
+	return util.ResolveExistingPath(ctx, candidate)
 }
 
 // scanWorktreeDir records the worktrees under a *-worktrees container that have not been
