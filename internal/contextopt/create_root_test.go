@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -85,6 +86,39 @@ func TestCreateRootSnapshotRejectsInvalidArguments(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(root.Name()); err != nil || len(entries) != 0 {
 		t.Fatalf("a refused creation wrote something: %v, %v", entries, err)
+	}
+}
+
+// TestCreateRootSnapshotNegativeFailedStageNamesTheStagedPath pins the one thing an
+// operator can act on when staging fails. The staging name is random and the state audit
+// knows only the five ledger names, so an error naming the target ledger leaves a partial
+// .pending write nothing in the repository can identify. Both publishers report the staged
+// path instead, as ReplaceSnapshot always did.
+func TestCreateRootSnapshotNegativeFailedStageNamesTheStagedPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory write permission does not gate file creation for the owner on Windows (HISS-21)")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory write permission, so staging cannot be made to fail this way")
+	}
+	root := openTestRoot(t)
+	if err := os.Chmod(root.Name(), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(root.Name(), 0o700); err != nil {
+			t.Errorf("restore directory mode: %v", err)
+		}
+	})
+	created, err := CreateRootSnapshot(t.Context(), root, "LEDGER.md", []byte("# Ledger\n"), 0o600)
+	if created || err == nil {
+		t.Fatalf("staging into an unwritable directory succeeded: created=%v, %v", created, err)
+	}
+	if !strings.Contains(err.Error(), root.Name()) || !strings.Contains(err.Error(), ".pending") {
+		t.Fatalf("a failed stage does not name the staged path: %v", err)
+	}
+	if !strings.Contains(err.Error(), "LEDGER.md") {
+		t.Fatalf("a failed stage does not name the ledger it was staging: %v", err)
 	}
 }
 
