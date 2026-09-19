@@ -5,9 +5,10 @@ Every case builds a throwaway repository under a temporary directory and runs th
 against it. Nothing outside that directory is read or written, and no remote is contacted.
 
 ComplianceWiringTests is the exception: it reads .github/workflows/compliance.yml and pins
-the step that invokes the script. The script's own cases drive it with hand-written
-arguments, so without that pin a re-added event condition or a swapped pair of adjacent
-arguments would leave the whole suite green while every push run skipped the gate (#292).
+both the trigger list that brings a push to the gate and the step that invokes the script.
+The script's own cases drive it with hand-written arguments, so without those pins a deleted
+push trigger, a re-added event condition or a swapped pair of adjacent arguments would leave
+the whole suite green while every push run skipped the gate (#292).
 """
 
 from __future__ import annotations
@@ -184,6 +185,11 @@ class DcoCheckTests(unittest.TestCase):
         self.assertNotIn("skipped", result.stdout)
 
     def test_a_missing_base_commit_is_reported_rather_than_passed(self) -> None:
+        """A discarded previous tip is named as such; no fetch depth would restore it.
+
+        The runner already checks out at fetch-depth 0, so "fetch more history" on its own
+        is advice that cannot resolve a force push to main or to an `lts-*` branch.
+        """
         head = commit(self.repository, "signed.txt", signed=True)
         absent = "1" * 40
 
@@ -191,6 +197,18 @@ class DcoCheckTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("is not present in this checkout", result.stderr)
+        self.assertIn("force push", result.stderr)
+
+    def test_a_missing_base_branch_is_reported_without_the_force_push_advice(self) -> None:
+        """A branch name the checkout lacks is a fetch-depth failure and nothing else."""
+        self.branch("lts-2.0")
+        head = commit(self.repository, "lts.txt", signed=True)
+
+        result = run_check(self.repository, "push", "", ZERO_SHA, head, "absent-branch")
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("fetch-depth", result.stderr)
+        self.assertNotIn("force push", result.stderr)
 
     def test_a_missing_head_commit_is_reported_rather_than_passed(self) -> None:
         """The head side of the range is verified like the base side.
@@ -370,11 +388,12 @@ class DcoCheckTests(unittest.TestCase):
 
 
 class ComplianceWiringTests(unittest.TestCase):
-    """The workflow step that invokes the gate, pinned so a silent skip fails a test.
+    """The workflow wiring that invokes the gate, pinned so a silent skip fails a test.
 
     The cases above drive the script directly, so they hold whatever the workflow passes.
-    Both ways of re-opening #292 live here instead: gating the step on the pull request
-    event again, and reordering the positional payload values.
+    The three ways of re-opening #292 live here instead: dropping the push trigger that
+    brings a direct push to the gate at all, gating the step on the pull request event
+    again, and reordering the positional payload values.
     """
 
     #: Declaration order is the argument order the script's usage line documents.
@@ -385,6 +404,12 @@ class ComplianceWiringTests(unittest.TestCase):
         ("DCO_HEAD_SHA", "${{ github.event.pull_request.head.sha || github.sha }}"),
         ("DCO_DEFAULT_BRANCH", "${{ github.event.repository.default_branch }}"),
     )
+    #: The branches a commit may reach without a pull request, so a push to one of them is
+    #: the only remaining chance to inspect its sign-off.
+    PROTECTED_BRANCHES = ("- main", "- 'lts-*'")
+    #: An `if:` is never the step's first key, so an unanchored search would only ever find
+    #: one written above `env:`. Every line of the step is a candidate.
+    STEP_CONDITION = re.compile(r"^\s+if:", re.MULTILINE)
 
     def setUp(self) -> None:
         self.step = self.dco_step()
@@ -398,9 +423,36 @@ class ComplianceWiringTests(unittest.TestCase):
         end = re.search(r"^      - name: ", rest, flags=re.MULTILINE)
         return rest[: end.start()] if end else rest
 
+    def trigger_leg(self, event: str) -> str:
+        """Return the branch list one `on:` event declares, without its sibling events."""
+        document = WORKFLOW.read_text(encoding="utf-8")
+        block = re.search(r"^on:\n", document, flags=re.MULTILINE)
+        self.assertIsNotNone(block, "the workflow no longer declares an `on:` block")
+        rest = document[block.end():]
+        end = re.search(r"^\S", rest, flags=re.MULTILINE)
+        leg = re.search(rf"^  {event}:\n((?:    .*\n|\n)*)",
+                        rest[: end.start()] if end else rest, flags=re.MULTILINE)
+        self.assertIsNotNone(leg, f"the gate no longer runs on {event}")
+        return leg.group(1)
+
+    def test_the_gate_runs_on_pushes_to_the_protected_branches(self) -> None:
+        """Deleting the push trigger re-opens #292 without touching the step below it."""
+        leg = self.trigger_leg("push")
+        for branch in self.PROTECTED_BRANCHES:
+            with self.subTest(branch=branch):
+                self.assertIn(f"{branch}\n", leg)
+
+    def test_the_gate_still_runs_on_pull_requests_to_those_branches(self) -> None:
+        """The push leg is an addition; a pull request must remain inspected."""
+        leg = self.trigger_leg("pull_request")
+        for branch in self.PROTECTED_BRANCHES:
+            with self.subTest(branch=branch):
+                self.assertIn(f"{branch}\n", leg)
+
     def test_the_step_carries_no_event_condition(self) -> None:
         """An `if:` here is how #292 skipped every push run while reporting green."""
-        self.assertNotRegex(self.step, r"^\s+if:", "the DCO step must run on every event")
+        self.assertNotRegex(self.step, self.STEP_CONDITION,
+                            "the DCO step must run on every event")
 
     def test_every_payload_value_is_passed_under_its_own_name(self) -> None:
         for name, expression in self.EXPECTED_ENV:

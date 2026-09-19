@@ -20,9 +20,10 @@
 # status is checked. A gate that cannot read its range must say so: an unread range looks
 # exactly like a clean empty one, which is the silent green this gate was filed against.
 #
-# Linux only, by design: it is invoked from an ubuntu-latest runner step and from a Makefile
-# target. Windows and macOS hosts never execute it, so no portability shim is warranted and
-# its test skips itself where bash is absent (HISS-21).
+# Linux only, by design: the only callers are the ubuntu-latest runner step in
+# .github/workflows/compliance.yml and scripts/test_dco_check.py, which drives it under bash
+# (`make dco-check-test`). Windows and macOS hosts never execute it, so no portability shim
+# is warranted and its test skips itself where bash is absent (HISS-21).
 set -euo pipefail
 
 # Bounded so a pathological push cannot make the check unbounded (HISS-02).
@@ -30,6 +31,10 @@ readonly MAX_COMMITS=1000
 readonly ZERO_SHA_PATTERN='^0+$'
 readonly SIGN_OFF_TRAILER='Signed-off-by:'
 readonly FETCH_ADVICE='Fetch enough history (actions/checkout with fetch-depth: 0) and rerun.'
+# A ref name that is absent is a depth problem. A previous tip reported by a push is not
+# always one: a force push leaves the tip it replaced reachable from no ref, so the runner
+# never fetches it at any depth and the advice above cannot resolve the failure.
+readonly DISCARDED_TIP_ADVICE='If a force push replaced that tip, no fetch depth restores it: it is reachable from no ref. Inspect the commits it carried through a pull request, or rerun the gate on a range this checkout has.'
 
 if [[ $# -ne 5 ]]; then
   echo "usage: $0 EVENT_NAME BASE_REF BEFORE_SHA HEAD_SHA DEFAULT_BRANCH" >&2
@@ -85,20 +90,26 @@ resolve_base() {
   printf '%s\n' "$BEFORE_SHA"
 }
 
-# require_commit fails the check when one end of the range is absent from the checkout.
+# require_commit fails the check when one end of the range is absent from the checkout. The
+# caller supplies the advice, because why an endpoint can be absent depends on which
+# endpoint it is.
 require_commit() {
-  local role=$1 revision=$2
+  local role=$1 revision=$2 advice=$3
   if git rev-parse --verify --quiet "$revision^{commit}" >/dev/null; then
     return 0
   fi
   echo "DCO 1.1 check failed: $role commit '$revision' is not present in this checkout." >&2
-  echo "$FETCH_ADVICE" >&2
+  echo "$advice" >&2
   exit 1
 }
 
 base=$(resolve_base)
-require_commit base "$base"
-require_commit head "$HEAD_SHA"
+if [[ "$base" == "$BEFORE_SHA" ]]; then
+  require_commit base "$base" "$FETCH_ADVICE $DISCARDED_TIP_ADVICE"
+else
+  require_commit base "$base" "$FETCH_ADVICE"
+fi
+require_commit head "$HEAD_SHA" "$FETCH_ADVICE"
 
 readonly RANGE="$base..$HEAD_SHA"
 echo "Verifying DCO 1.1 sign-off over $RANGE (event: $EVENT_NAME)."
