@@ -168,6 +168,7 @@ func printFleetCommands() {
 	fmt.Println("  build              Request a polyglot build (execution backends currently unavailable)")
 	fmt.Println("  ci                 Analyze git diff and filter CI verification gates")
 	fmt.Println("  topology           Audit and clean workstation directory topology (DEV-01 to DEV-05)")
+	fmt.Println("  workstation        Install this engine's binaries from a checkout, or report install status")
 	fmt.Println("  version            Print CLI version information")
 }
 
@@ -189,8 +190,22 @@ func main() {
 type commandFunc func(args []string) error
 
 // commandTable maps every command name (and alias) to its handler. A table keeps
-// dispatch at constant complexity regardless of how many commands exist (HISS-04).
+// dispatch at constant complexity regardless of how many commands exist (HISS-04). It is
+// split into two literals, merged here, purely to stay inside the HISS-04 LOC bound; the
+// split carries no meaning dispatchCommand relies on.
 func commandTable() map[string]commandFunc {
+	table := make(map[string]commandFunc, len(coreCommandTable())+len(fleetCommandTable()))
+	for name, handler := range coreCommandTable() {
+		table[name] = handler
+	}
+	for name, handler := range fleetCommandTable() {
+		table[name] = handler
+	}
+	return table
+}
+
+// coreCommandTable holds the repository-scoped commands (see printCoreCommands).
+func coreCommandTable() map[string]commandFunc {
 	return map[string]commandFunc{
 		"init":             runInit,
 		"compile-context":  runCompileContext,
@@ -218,36 +233,43 @@ func commandTable() map[string]commandFunc {
 		"sync":             runSync,
 		"sentinel":         runSentinel,
 		"worktree":         runWorktree,
-		"gc":               runGC,
-		"editors":          runEditors,
-		"clients":          runClients,
-		"forge":            runForge,
-		"harvest":          runHarvest,
-		"adopt":            runAdopt,
-		"conform":          runAdopt,
-		"bootstrap":        runAdopt,
-		"dogfood":          runDogfood,
-		"bump":             runBump,
-		"paperclip":        runPaperclip,
-		"changelog":        runChangelog,
-		"release":          runRelease,
-		"gate":             runGate,
-		"agent":            runAgent,
-		"serve":            runServe,
-		"sbom":             runSBOM,
-		"provenance":       runProvenance,
-		"needs":            runNeeds,
-		"issue":            runIssue,
-		"wishes":           runWishes,
-		"milestone":        runMilestone,
-		"project":          runProject,
-		"build":            runBuild,
-		"ci":               runCI,
-		"topology":         runTopology,
-		"version":          runVersion,
-		"help":             runHelp,
-		"-h":               runHelp,
-		"--help":           runHelp,
+	}
+}
+
+// fleetCommandTable holds the fleet, forge and delivery commands (see printFleetCommands).
+func fleetCommandTable() map[string]commandFunc {
+	return map[string]commandFunc{
+		"gc":          runGC,
+		"editors":     runEditors,
+		"clients":     runClients,
+		"forge":       runForge,
+		"harvest":     runHarvest,
+		"adopt":       runAdopt,
+		"conform":     runAdopt,
+		"bootstrap":   runAdopt,
+		"dogfood":     runDogfood,
+		"bump":        runBump,
+		"paperclip":   runPaperclip,
+		"changelog":   runChangelog,
+		"release":     runRelease,
+		"gate":        runGate,
+		"agent":       runAgent,
+		"serve":       runServe,
+		"sbom":        runSBOM,
+		"provenance":  runProvenance,
+		"needs":       runNeeds,
+		"issue":       runIssue,
+		"wishes":      runWishes,
+		"milestone":   runMilestone,
+		"project":     runProject,
+		"build":       runBuild,
+		"ci":          runCI,
+		"topology":    runTopology,
+		"workstation": runWorkstation,
+		"version":     runVersion,
+		"help":        runHelp,
+		"-h":          runHelp,
+		"--help":      runHelp,
 	}
 }
 

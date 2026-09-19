@@ -32,20 +32,21 @@ installed client loaded, trusted, reconnected, or used the server.
 
 Refresh the regular commands on this workstation with `make dev-install`.
 `make build` writes only to the checkout's `bin/` directory; it does not update
-standalone executables already on `PATH`. The installer builds all three Praetor
-binaries from current source, runs the MCP behavior probe, and installs them into
-`~/.local/bin` with the three legacy aliases. `python3 scripts/dev_install.py --help`
-lists destination overrides for isolated installations.
+standalone executables already on `PATH`. `scripts/dev_install.py` runs the MCP
+behavior probe against a fresh build, then delegates the atomic install itself to
+`praetorctl workstation install` (HISS-19: one installer, not two): it builds all
+three Praetor binaries from current source and installs them into `~/.local/bin`
+with the three legacy aliases. `python3 scripts/dev_install.py --help` lists
+destination overrides for isolated installations.
 
-Each installation retains previous files in a private directory under
-`~/.local/state/praetor/dev-installs`, and records source and binary hashes plus the
-backup path in `~/.local/bin/.praetor-dev-install.json`. It rejects unexpected
-symlinks and special files, reads back installed hashes, and restores replaced
-files on caught installation errors. A forced process termination can interrupt a
-multi-file install; use the retained backup and `previous.json` for recovery.
-Installers serialize through `.praetor-dev-install.lock` in the destination. If a
-process was killed, check that no installer is running before removing its stale
-lock directory and rerunning the command.
+`workstation install` rejects an unexpected symlink or special file at an
+installation target before touching anything, backs up whatever is already
+there, reads installed hashes back, and restores on a caught installation
+error. It serializes concurrent installers through a lock directory in the
+destination and records the install (including the prior commit and backup
+location, once there is one) in a per-user install manifest. See
+[workstation install and status](workstation-update.md) for the manifest
+location, the lock and rollback behavior, and `workstation status`.
 Already running CLI/MCP processes continue using their original executable until
 restarted. The development connection below still builds directly from source.
 
