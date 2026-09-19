@@ -134,15 +134,20 @@ func isYAMLDocument(name string) bool {
 }
 
 // workflowSpec is the workflow subset used to select required check contexts.
+//
+// Permissions is a raw node because the key has three shapes -- a shorthand scalar, a
+// scope mapping, and absence, which is not the same as an empty mapping.
 type workflowSpec struct {
-	On   yaml.Node              `yaml:"on"`
-	Jobs map[string]workflowJob `yaml:"jobs"`
+	On          yaml.Node              `yaml:"on"`
+	Permissions yaml.Node              `yaml:"permissions"`
+	Jobs        map[string]workflowJob `yaml:"jobs"`
 }
 
 type workflowJob struct {
 	Name            string           `yaml:"name"`
 	If              string           `yaml:"if"`
 	ContinueOnError string           `yaml:"continue-on-error"`
+	Permissions     yaml.Node        `yaml:"permissions"`
 	Strategy        workflowStrategy `yaml:"strategy"`
 	Steps           []workflowStep   `yaml:"steps"`
 }
@@ -187,11 +192,7 @@ func workflowContextsIn(data []byte, identity string) ([]string, error) {
 	if len(spec.Jobs) > maxJobsPerFile {
 		return nil, fmt.Errorf("workflow exceeds %d jobs", maxJobsPerFile)
 	}
-	ids := make([]string, 0, len(spec.Jobs))
-	for id := range spec.Jobs {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
+	ids := sortedJobIDs(spec.Jobs)
 	var contexts []string
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
 		job := spec.Jobs[ids[i]]
@@ -273,44 +274,68 @@ func substituteMatrixKeys(name string, leg map[string]string) string {
 	return name
 }
 
-// triggersOnEveryPullRequest reports whether an "on" node declares a pull_request
-// trigger without paths filters (a filtered trigger does not report on every PR).
-func triggersOnEveryPullRequest(on *yaml.Node) bool {
+// pullRequestTrigger reports whether an "on" node declares a pull_request trigger, and
+// returns that trigger's own value node when the declaration is a mapping entry that has
+// one. A trigger declared as a scalar or inside a sequence carries no value node.
+func pullRequestTrigger(on *yaml.Node) (*yaml.Node, bool) {
 	switch on.Kind {
 	case yaml.ScalarNode:
-		return on.Value == pullRequestEvent
+		return nil, on.Value == pullRequestEvent
 	case yaml.SequenceNode:
 		for i := 0; i < len(on.Content) && i < maxJobsPerFile; i++ {
 			if on.Content[i].Value == pullRequestEvent {
-				return true
+				return nil, true
 			}
 		}
-		return false
+		return nil, false
 	case yaml.MappingNode:
-		return mappingHasUnfilteredPullRequest(on)
+		for i := 0; i+1 < len(on.Content) && i < 2*maxJobsPerFile; i += 2 {
+			if on.Content[i].Value == pullRequestEvent {
+				return on.Content[i+1], true
+			}
+		}
+		return nil, false
 	default:
-		return false
+		return nil, false
 	}
 }
 
-// mappingHasUnfilteredPullRequest inspects an "on:" mapping for a pull_request entry
-// whose own mapping carries neither paths nor paths-ignore.
-func mappingHasUnfilteredPullRequest(on *yaml.Node) bool {
-	for i := 0; i+1 < len(on.Content) && i < 2*maxJobsPerFile; i += 2 {
-		if on.Content[i].Value != pullRequestEvent {
-			continue
-		}
-		value := on.Content[i+1]
-		if value.Kind != yaml.MappingNode {
+// triggersOnPullRequest reports whether any pull request starts this workflow, filtered or
+// not. A paths filter narrows which pull requests run it; it does not stop the run being a
+// pull request run, which is what a permission audit decides on.
+func triggersOnPullRequest(on *yaml.Node) bool {
+	_, declared := pullRequestTrigger(on)
+	return declared
+}
+
+// triggersOnEveryPullRequest reports whether an "on" node declares a pull_request
+// trigger without paths filters (a filtered trigger does not report on every PR).
+func triggersOnEveryPullRequest(on *yaml.Node) bool {
+	value, declared := pullRequestTrigger(on)
+	return declared && !filtersPaths(value)
+}
+
+// filtersPaths reports whether a trigger's value node carries paths or paths-ignore.
+func filtersPaths(value *yaml.Node) bool {
+	if value == nil || value.Kind != yaml.MappingNode {
+		return false
+	}
+	for j := 0; j+1 < len(value.Content) && j < 2*maxJobsPerFile; j += 2 {
+		key := value.Content[j].Value
+		if key == workflowPathsKey || key == workflowIgnoreKey {
 			return true
 		}
-		for j := 0; j+1 < len(value.Content) && j < 2*maxJobsPerFile; j += 2 {
-			key := value.Content[j].Value
-			if key == workflowPathsKey || key == workflowIgnoreKey {
-				return false
-			}
-		}
-		return true
 	}
 	return false
+}
+
+// sortedJobIDs returns a workflow's job identifiers in a stable order, so every audit
+// reports the same jobs in the same sequence from the same file.
+func sortedJobIDs(jobs map[string]workflowJob) []string {
+	ids := make([]string, 0, len(jobs))
+	for id := range jobs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
