@@ -251,19 +251,27 @@ func withoutDocumentationMakefileBlock(data string) string {
 	return data
 }
 
+// makefileTargetNames returns the target names a Makefile line declares, and none when the line
+// declares no rule. Make reads a run of colons followed by "=" as a variable assignment -- ":=",
+// "::=" and ":::=" -- so "verify-all := x" binds a variable and leaves make with no verify-all
+// rule, while "verify-all:: dep" is a double-colon rule and does declare one.
+func makefileTargetNames(line string) []string {
+	if strings.HasPrefix(line, "\t") || strings.HasPrefix(strings.TrimSpace(line), "#") {
+		return nil
+	}
+	left, rest, ok := strings.Cut(line, ":")
+	if !ok || strings.HasPrefix(strings.TrimLeft(rest, ":"), "=") {
+		return nil
+	}
+	return strings.Fields(left)
+}
+
 func hasVerificationTarget(data, target string) bool {
 	lines := strings.Split(data, "\n")
 	for index := 0; index < len(lines) && index < maxMakefileLines; index++ {
-		line := lines[index]
-		if strings.HasPrefix(line, "\t") || strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue
-		}
-		left, _, ok := strings.Cut(line, ":")
-		if ok {
-			for _, name := range strings.Fields(left) {
-				if name == target {
-					return true
-				}
+		for _, name := range makefileTargetNames(lines[index]) {
+			if name == target {
+				return true
 			}
 		}
 	}
@@ -289,6 +297,29 @@ func appendVerificationTargets(existing string, plan *VerificationPlan) (string,
 	return util.RestoreLineEndings(result.String(), crlf), nil
 }
 
+// makefileLineIsAmbiguous reports whether a line may define targets only Make can resolve: an
+// include, a directive, an $(eval ...) call, or a computed or pattern target name. The line is
+// already trimmed and is not a recipe line.
+func makefileLineIsAmbiguous(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 || strings.HasPrefix(line, "#") {
+		return false
+	}
+	switch fields[0] {
+	case "include", "-include", "sinclude", "define", "override":
+		return true
+	}
+	if strings.Contains(line, "$(eval") || strings.Contains(line, "${eval") {
+		return true
+	}
+	for _, name := range makefileTargetNames(line) {
+		if strings.ContainsAny(name, "$%") {
+			return true
+		}
+	}
+	return false
+}
+
 // Includes, generated target names and pattern rules require Make evaluation.
 // Never append a potentially overriding recipe when ownership is ambiguous.
 func mayDefineVerificationTarget(data string) bool {
@@ -304,29 +335,12 @@ func mayDefineTarget(data, target string) bool {
 		return true
 	}
 	for index := 0; index < len(lines) && index < maxMakefileLines; index++ {
-		if makefileLineHasAmbiguousOwnership(lines[index]) {
+		if strings.HasPrefix(lines[index], "\t") {
+			continue
+		}
+		if makefileLineIsAmbiguous(strings.TrimSpace(lines[index])) {
 			return true
 		}
 	}
 	return false
-}
-
-func makefileLineHasAmbiguousOwnership(line string) bool {
-	if strings.HasPrefix(line, "\t") {
-		return false
-	}
-	line = strings.TrimSpace(line)
-	fields := strings.Fields(line)
-	if len(fields) == 0 || strings.HasPrefix(line, "#") {
-		return false
-	}
-	switch fields[0] {
-	case "include", "-include", "sinclude", "define", "override":
-		return true
-	}
-	if strings.Contains(line, "$(eval") || strings.Contains(line, "${eval") {
-		return true
-	}
-	left, _, ok := strings.Cut(line, ":")
-	return ok && strings.ContainsAny(left, "$%")
 }

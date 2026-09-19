@@ -1,0 +1,116 @@
+package adopt
+
+import (
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// A Makefile line is a rule only when the run of colons after the target list is not followed by
+// '='. Make itself draws that line: "verify-all := x" binds a variable and leaves the adopter's
+// make with no verify-all rule, so adoption must not declare "make verify-all" against it.
+func TestMakefileTargetDetectionSeparatesRulesFromAssignments(t *testing.T) {
+	for name, tc := range map[string]struct {
+		line string
+		want bool
+	}{
+		"rule":                 {"verify-all:\n\t@echo custom\n", true},
+		"rule-with-deps":       {"verify-all: build test\n\t@echo custom\n", true},
+		"double-colon-rule":    {"verify-all:: dep\n\t@echo custom\n", true},
+		"target-list":          {"all verify-all: dep\n\t@echo custom\n", true},
+		"windows-path-dep":     {"verify-all: C:\\deps\\stamp\n\t@echo custom\n", true},
+		"simple-assignment":    {"verify-all := x\n", false},
+		"posix-assignment":     {"verify-all ::= x\n", false},
+		"escaped-assignment":   {"verify-all :::= x\n", false},
+		"unspaced-assignment":  {"verify-all:=x\n", false},
+		"exported-assignment":  {"export verify-all := x\n", false},
+		"conditional-no-colon": {"verify-all ?= x\n", false},
+		"recipe-line":          {"other:\n\tverify-all: not a rule\n", false},
+		"comment":              {"# verify-all: old proposal\n", false},
+		"windows-path-target":  {"C:\\out\\verify-all: dep\n\t@echo custom\n", false},
+		"empty":                {"", false},
+		"other-rule":           {"build:\n\t@echo custom\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := hasVerificationTarget(tc.line, "verify-all"); got != tc.want {
+				t.Fatalf("hasVerificationTarget(%q) = %v, want %v", tc.line, got, tc.want)
+			}
+		})
+	}
+}
+
+// End to end: a Makefile whose only mention of verify-all is a variable assignment owns no
+// verify-all rule, so adoption appends its own targets instead of preserving and certifying a
+// rule that make cannot run.
+func TestVerificationAssignmentIsNotAPreservedTarget(t *testing.T) {
+	for name, tc := range map[string]struct {
+		makefile  string
+		preserved bool
+	}{
+		"assignment": {"verify-all := $(MAKE) -C build check\nall:\n\t@echo original\n", false},
+		"rule":       {"verify-all:\n\t@echo claimed\n", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := newTestRepo(t, name)
+			mustWrite(t, filepath.Join(root, "go.mod"), "module fixture\n")
+			mustWrite(t, filepath.Join(root, "Makefile"), tc.makefile)
+			report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := mustRead(t, filepath.Join(root, "Makefile"))
+			if tc.preserved {
+				want, mergeErr := mergeDocumentationMakefile(tc.makefile, false)
+				if mergeErr != nil {
+					t.Fatal(mergeErr)
+				}
+				if report.Verification.Status != verificationPreserved || got != want {
+					t.Fatalf("custom rule not preserved: %+v %q", report.Verification, got)
+				}
+				return
+			}
+			if report.Verification.Status != verificationDeclared {
+				t.Fatalf("assignment certified as a custom gate: %+v", report.Verification)
+			}
+			if !strings.Contains(got, "\nverify-all:\n") || !strings.Contains(got, "@echo original") {
+				t.Fatalf("declared verify-all not appended beside the existing recipes: %q", got)
+			}
+			for _, command := range report.Verification.Test {
+				if strings.Join(command, " ") == "make verify-all" {
+					t.Fatalf("plan tests a preserved rule that does not exist: %+v", report.Verification)
+				}
+			}
+		})
+	}
+}
+
+// mayDefineVerificationTarget decides whether adoption may append its own rule. An assignment
+// binds no target and is appendable; the ambiguous forms documented in
+// docs/guides/adoption-verification.md still require Make evaluation and stay preserved.
+func TestMakefileOwnershipSeparatesAssignmentsFromAmbiguousForms(t *testing.T) {
+	for name, tc := range map[string]struct {
+		makefile string
+		want     bool
+	}{
+		"rule":               {"verify-all:\n\t@echo custom\n", true},
+		"double-colon-rule":  {"verify-all:: dep\n\t@echo custom\n", true},
+		"include":            {"include shared.mk\n", true},
+		"define":             {"define recipe\n@echo custom\nendef\n", true},
+		"override":           {"override verify-all = x\n", true},
+		"eval":               {"$(eval verify-all: dep)\n", true},
+		"generated-target":   {"$(TARGET):\n\t@echo custom\n", true},
+		"pattern-target":     {"verify-%:\n\t@echo custom\n", true},
+		"assignment":         {"verify-all := x\nall:\n\t@echo original\n", false},
+		"posix-assignment":   {"verify-all ::= x\n", false},
+		"export-assignment":  {"export verify-all := x\n", false},
+		"generated-variable": {"$(NAME) := x\n", false},
+		"plain-rule":         {"all:\n\t@echo original\n", false},
+		"empty":              {"", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := mayDefineVerificationTarget(tc.makefile); got != tc.want {
+				t.Fatalf("mayDefineVerificationTarget(%q) = %v, want %v", tc.makefile, got, tc.want)
+			}
+		})
+	}
+}

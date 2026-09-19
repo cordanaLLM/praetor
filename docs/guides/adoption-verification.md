@@ -11,6 +11,13 @@ runtimes, status, and any reasons requiring review.
 | `unavailable` | A required build/test command is missing or ambiguous. Generated recipes fail explicitly. |
 | `preserved-unverified` | Existing custom Makefile ownership is preserved. Review and exercise its `verify-all` contract. |
 
+Ownership means a rule. A Makefile that only binds a variable of the same name -- `verify-all := x`,
+`verify-all ::= x`, `export verify-all := x` -- declares no target, so adoption appends its own
+`verify-all` rule rather than preserving one and reporting a command the project's `make` would
+reject. Double-colon rules (`verify-all:: dep`) and target lists (`all verify-all: dep`) are rules
+and are preserved, as are the ambiguous forms below: an `include`, `define` or `override`
+directive, `$(eval ...)`, and a target name containing `$` or `%`.
+
 Repositories declaring `docs:seo-portal` also receive a locked Markdown gate,
 its dedicated required CI workflow, and private scratch-link protection. The
 [documentation governance guide](documentation-governance.md) describes its
