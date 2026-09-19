@@ -46,8 +46,19 @@ func TestCanonicalGitPath(t *testing.T) {
 	if err := os.Symlink("cycle", filepath.Join(root, "cycle")); err != nil {
 		t.Skipf("symlinks unavailable on this host: %v", err)
 	}
-	if got, err := canonicalGitPath(t.Context(), root, "cycle"); err == nil {
-		t.Errorf("a symlink cycle was canonicalised to %q", got)
+	for _, tc := range []struct{ name, repoPath, value string }{
+		{"a symlink cycle", root, "cycle"},
+		// util.ResolveExistingPath answers a path that is not there with the deepest
+		// existing ancestor resolved and the missing tail re-attached, and no error --
+		// which is what callers creating a path need and exactly the half-resolved
+		// spelling this function must not publish as a git directory.
+		{"a relative answer naming a directory that is not there", real, "absent"},
+		{"an absolute answer naming a directory that is not there", real, filepath.Join(real, "absent", ".git")},
+		{"a nested path whose parent is not there", real, filepath.Join("absent", "worktrees", "one")},
+	} {
+		if got, err := canonicalGitPath(t.Context(), tc.repoPath, tc.value); err == nil {
+			t.Errorf("%s was canonicalised to %q", tc.name, got)
+		}
 	}
 	// Boundary: an unusable context is an error rather than an unbounded resolution.
 	var absent context.Context

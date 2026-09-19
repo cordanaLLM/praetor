@@ -461,12 +461,25 @@ func inspectRepositoryPrivacy(ctx context.Context, repoPath string, observation 
 // through FindFirstFile, so a short name comes back as the long one. A path that cannot be
 // resolved is an error rather than a fallback to the unresolved spelling: publishing a
 // spelling that may or may not be canonical is the defect, not the repair.
+//
+// Existence is checked here rather than assumed. ResolveExistingPath canonicalises the
+// deepest existing ancestor and re-attaches the segments that are not there yet, which is
+// what its callers that create a path need, so on its own it answers a git directory that
+// does not exist with a half-resolved spelling and no error. That is the fallback this
+// function refuses, so the stat closes the gap between the contract above and the helper.
 func canonicalGitPath(ctx context.Context, repoPath, value string) (string, error) {
 	candidate := value
 	if !filepath.IsAbs(candidate) {
 		candidate = filepath.Join(repoPath, candidate)
 	}
-	return util.ResolveExistingPath(ctx, candidate)
+	resolved, err := util.ResolveExistingPath(ctx, candidate)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(resolved); err != nil {
+		return "", fmt.Errorf("git reported a path that does not exist: %w", err)
+	}
+	return resolved, nil
 }
 
 // scanWorktreeDir records the worktrees under a *-worktrees container that have not been
