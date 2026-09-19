@@ -1,4 +1,4 @@
 type: fixed
-title: Mirror go.mod's Go directive in the adoption workflow and the shipped distroless template, restate ADR-0005 clause 1 to read the version from go.mod, and add the audit that reports any pin left behind
+title: Mirror go.mod's Go directive in the adoption workflow, the shipped composite action and the distroless template, restate ADR-0005 clause 1 to read the version from go.mod, and add the audit that reports any workflow, action or template pin left behind
 issue: "#294"
 breaking: false
