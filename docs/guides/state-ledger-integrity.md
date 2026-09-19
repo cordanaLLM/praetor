@@ -118,10 +118,12 @@ invalid UTF-8 or more than 16 KiB are errors, never skipped rows
 
 A refused selector writes nothing, so `OPEN.md` stays byte-identical. The
 fence tracker is `util.MarkdownFence` in `internal/util/marked_block.go`, the one
-implementation every Markdown scanner drives (HISS-19): the task parser, the
-bug-ledger parser, the marked-block finder, the caveman line scanner
-(`internal/caveman/scan.go`) and the `AGENTS.md` vendor splitter
-(`internal/agentcontext/render.go`). A line closes a fence when it repeats the
+implementation every scanner that follows fences across a whole document drives
+(HISS-19): the task parser, the bug-ledger parser, the marked-block finder, the
+caveman line scanner (`internal/caveman/scan.go`) and the `AGENTS.md` vendor
+splitter (`internal/agentcontext/render.go`). Readers that extract a single
+labelled block, such as the PR receipt fence, match their own label and keep no
+fence state. A line closes a fence when it repeats the
 delimiter run that opened it and carries nothing further but that delimiter
 character, spaces and tabs; a shorter run never closes a longer one. A backtick
 line whose info string holds another backtick, such as `` ```make``` must pass ``,

@@ -53,9 +53,9 @@ type line struct {
 }
 
 // scanner carries region state from one line to the next. Fenced code is tracked by
-// util.MarkdownFence, the one fence implementation in the repository (HISS-19); lang holds
-// the info string of the open fence and fenceOpen the line that opened it, for rule C13,
-// neither of which the tracker carries.
+// util.MarkdownFence, the repository's one fence-tracking implementation (HISS-19); lang
+// holds the info string of the open fence and fenceOpen the line that opened it, for rule
+// C13, neither of which the tracker carries.
 type scanner struct {
 	fence      util.MarkdownFence
 	fenceOpen  int

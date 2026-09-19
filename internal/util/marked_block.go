@@ -24,11 +24,14 @@ var (
 
 // MarkdownFence follows Markdown fenced code across a single ordered line scan so that a
 // marker, a checkbox or a table row quoted inside an example is never mistaken for a live
-// record. Every Markdown scanner in the repository drives this one tracker rather than
-// restating the two-branch algorithm (HISS-19): the marked-block finder here, the OPEN.md
-// task parser, the BUGS.md table parser, the caveman line scanner
-// (internal/caveman/scan.go) and the AGENTS.md vendor splitter
-// (internal/agentcontext/render.go).
+// record. It is the repository's one fence-tracking implementation: the five scanners that
+// have to follow fences across a whole document drive it rather than restate the
+// two-branch algorithm (HISS-19) - the marked-block finder here, the OPEN.md task parser
+// (internal/state/tasks.go), the BUGS.md table parser (internal/state/bugs_document.go),
+// the caveman line scanner (internal/caveman/scan.go) and the AGENTS.md vendor splitter
+// (internal/agentcontext/render.go). Readers that extract one labelled block and stop
+// match their own label instead and carry no fence state: the PR receipt fence in
+// internal/forge/pr.go and the ADR constraint block in internal/adr/constraint.go.
 //
 // The zero value is a scan positioned outside any fence.
 type MarkdownFence struct {
