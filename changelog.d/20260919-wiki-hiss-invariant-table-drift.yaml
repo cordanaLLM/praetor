@@ -1,0 +1,3 @@
+type: fixed
+title: Generated governance wiki's HISS invariant table now matches AGENTS.md's canonical set instead of inventing HISS-03/HISS-14 and omitting HISS-17 through HISS-21
+breaking: false
