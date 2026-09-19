@@ -24,9 +24,11 @@ var (
 
 // MarkdownFence follows Markdown fenced code across a single ordered line scan so that a
 // marker, a checkbox or a table row quoted inside an example is never mistaken for a live
-// record. Every Markdown ledger scanner in the repository drives this one tracker rather
-// than restating the two-branch algorithm (HISS-19): the marked-block finder here, the
-// OPEN.md task parser and the BUGS.md table parser.
+// record. Every Markdown scanner in the repository drives this one tracker rather than
+// restating the two-branch algorithm (HISS-19): the marked-block finder here, the OPEN.md
+// task parser, the BUGS.md table parser, the caveman line scanner
+// (internal/caveman/scan.go) and the AGENTS.md vendor splitter
+// (internal/agentcontext/render.go).
 //
 // The zero value is a scan positioned outside any fence.
 type MarkdownFence struct {
@@ -39,9 +41,26 @@ type MarkdownFence struct {
 // callers that must not silently drop records check it after the last line.
 func (f *MarkdownFence) Open() bool { return f.marker != "" }
 
+// Marker returns the opening delimiter run of the fence being skipped, empty outside a
+// fence. A scanner that needs the info string of a fence takes it from the rest of the
+// opening line rather than recomputing the run.
+func (f *MarkdownFence) Marker() string { return f.marker }
+
 // Inside advances the tracker by one line and reports whether that line is fenced content
 // or a fence delimiter. Callers pass an already whitespace-trimmed line, exactly once per
 // line, in document order, and skip every line for which it returns true.
+//
+// A line closes the fence when it opens with the delimiter run that opened it and carries
+// nothing further but that same delimiter character, spaces and tabs. That admits one line
+// CommonMark does not, the interleaved close "``` ```", and it is deliberate: the ledger
+// parsers were merged onto the tolerant rule the OPEN.md and BUGS.md scanners already used,
+// so that a hand-edited ledger keeps closing its fences exactly as it did before. The rule
+// is pinned by TestMarkdownFenceBoundaryRunsAndUnterminatedFences.
+//
+// A line opens a fence when it starts with three or more backticks or tildes. CommonMark
+// forbids a backtick inside the info string of a backtick fence, so "```make``` passes"
+// is an inline code span and opens nothing; a tilde fence's info string may carry
+// backticks. Pinned by TestMarkdownFenceBacktickInfoStringIsAnInlineSpan.
 func (f *MarkdownFence) Inside(trimmed string) bool {
 	if f.marker != "" {
 		if strings.HasPrefix(trimmed, f.marker) && strings.Trim(trimmed, f.marker[:1]+" \t") == "" {
@@ -53,6 +72,9 @@ func (f *MarkdownFence) Inside(trimmed string) bool {
 		return false
 	}
 	run := len(trimmed) - len(strings.TrimLeft(trimmed, trimmed[:1]))
+	if trimmed[0] == '`' && strings.Contains(trimmed[run:], "`") {
+		return false
+	}
 	f.marker = trimmed[:run]
 	return true
 }

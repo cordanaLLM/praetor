@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // lineKind classifies one line of Markdown-ish text. kindProse is linted directly; table
@@ -50,9 +52,12 @@ type line struct {
 	edge bool
 }
 
-// scanner carries region state from one line to the next.
+// scanner carries region state from one line to the next. Fenced code is tracked by
+// util.MarkdownFence, the one fence implementation in the repository (HISS-19); lang holds
+// the info string of the open fence and fenceOpen the line that opened it, for rule C13,
+// neither of which the tracker carries.
 type scanner struct {
-	fence      string
+	fence      util.MarkdownFence
 	fenceOpen  int
 	lang       string
 	off        bool
@@ -80,11 +85,9 @@ func (s *scanner) next(num int, raw string) line {
 	case s.off:
 		s.off = trimmed != OnMarker
 		ln.kind = kindOff
-	case s.fence != "":
-		ln.kind, ln.lang = kindCode, s.lang
-		if strings.HasPrefix(trimmed, s.fence) && strings.Trim(trimmed, s.fence[:1]) == "" {
-			s.fence, ln.edge = "", true
-		}
+	case s.fence.Open():
+		fenced := s.fence.Inside(trimmed)
+		ln.kind, ln.lang, ln.edge = kindCode, s.lang, fenced && !s.fence.Open()
 	case s.comment:
 		s.comment = !strings.Contains(trimmed, "-->")
 		ln.kind = kindStructured
@@ -99,10 +102,6 @@ func (s *scanner) next(num int, raw string) line {
 
 // open classifies a line outside every region and opens a region when the line starts one.
 func (s *scanner) open(num int, trimmed string) lineKind {
-	if delim, info := fenceOpener(trimmed); delim != "" {
-		s.fence, s.lang, s.fenceOpen = delim, info, num
-		return kindCode
-	}
 	switch {
 	case trimmed == "":
 		return kindBlank
@@ -110,6 +109,10 @@ func (s *scanner) open(num int, trimmed string) lineKind {
 		s.off, s.offOpen = true, num
 		s.offRegions++
 		return kindOff
+	case s.fence.Inside(trimmed):
+		s.lang = strings.TrimSpace(strings.TrimPrefix(trimmed, s.fence.Marker()))
+		s.fenceOpen = num
+		return kindCode
 	case strings.HasPrefix(trimmed, "<!--"):
 		s.comment = !strings.Contains(trimmed, "-->")
 		return kindStructured
@@ -117,22 +120,6 @@ func (s *scanner) open(num int, trimmed string) lineKind {
 		return kindStructured
 	}
 	return kindProse
-}
-
-// fenceOpener returns the delimiter run and info string of a line that opens fenced code,
-// or an empty delimiter when the line opens none. CommonMark forbids a backtick inside the
-// info string of a backtick fence, so "```foo``` flag" is an inline code span, not a
-// fence; a tilde fence's info string may carry backticks.
-func fenceOpener(trimmed string) (delim, info string) {
-	if !strings.HasPrefix(trimmed, "```") && !strings.HasPrefix(trimmed, "~~~") {
-		return "", ""
-	}
-	run := len(trimmed) - len(strings.TrimLeft(trimmed, trimmed[:1]))
-	info = strings.TrimSpace(trimmed[run:])
-	if trimmed[0] == '`' && strings.Contains(info, "`") {
-		return "", ""
-	}
-	return trimmed[:run], info
 }
 
 // isStructured reports lines whose shape a parser or a reader depends on: headings, table

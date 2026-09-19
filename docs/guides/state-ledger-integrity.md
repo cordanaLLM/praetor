@@ -118,9 +118,17 @@ invalid UTF-8 or more than 16 KiB are errors, never skipped rows
 
 A refused selector writes nothing, so `OPEN.md` stays byte-identical. The
 fence tracker is `util.MarkdownFence` in `internal/util/marked_block.go`, the one
-implementation the task parser, the bug-ledger parser and the marked-block finder
-all drive (HISS-19). Lines are bounded at `maxTaskLineBytes`; a ledger line
-reaching that bound is reported rather than truncated.
+implementation every Markdown scanner drives (HISS-19): the task parser, the
+bug-ledger parser, the marked-block finder, the caveman line scanner
+(`internal/caveman/scan.go`) and the `AGENTS.md` vendor splitter
+(`internal/agentcontext/render.go`). A line closes a fence when it repeats the
+delimiter run that opened it and carries nothing further but that delimiter
+character, spaces and tabs; a shorter run never closes a longer one. A backtick
+line whose info string holds another backtick, such as `` ```make``` must pass ``,
+is an inline code span as CommonMark defines it and opens nothing; a `~~~` fence's
+info string may carry backticks. Lines are
+bounded at `maxTaskLineBytes`; a ledger line reaching that bound is reported
+rather than truncated.
 
 A freshly initialized ledger contains **no** task rows. `OPEN.md` and
 `BACKLOG.md` are seeded with headings only, so every count `state sync` reports

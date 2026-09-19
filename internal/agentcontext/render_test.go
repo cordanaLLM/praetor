@@ -108,3 +108,46 @@ func TestCompileContentVendorScanBoundary(t *testing.T) {
 		t.Fatalf("over-limit canonical: %v", err)
 	}
 }
+
+// TestCompileContentNestedFenceOpensNoVendorSection pins the ownership scan on
+// util.MarkdownFence (HISS-19). The toggle it replaced treated the inner ``` of a ````
+// block as a close, so the quoted `## Gemini` heading below opened a real Gemini section
+// and the shared appendix after the block was swallowed into it - guidance written for one
+// agent reaching exactly the file it must not.
+func TestCompileContentNestedFenceOpensNoVendorSection(t *testing.T) {
+	canonical := strings.Join([]string{
+		"# Harness",
+		"Shared policy for every agent.",
+		"",
+		"## Claude Code",
+		"Run the skills directory.",
+		"",
+		"````md",
+		"```",
+		"## Gemini",
+		"Quoted, not a section.",
+		"````",
+		"",
+		"## Shared Appendix",
+		"Everyone reads this.",
+		"",
+	}, "\n")
+	result, err := NewTranspiler().CompileContent(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range result.Files {
+		for _, shared := range []string{"# Harness", "## Shared Appendix", "Everyone reads this."} {
+			if !strings.Contains(file.Content, shared) {
+				t.Fatalf("%s lost the shared line %q to a fenced heading", file.RelativePath, shared)
+			}
+		}
+		// The whole quoted block stays inside the section it was written in.
+		for _, owned := range []string{"Run the skills directory.", "## Gemini", "Quoted, not a section."} {
+			got, want := strings.Contains(file.Content, owned), file.RelativePath == "CLAUDE.md"
+			if got != want {
+				t.Fatalf("%s contains(%q) = %v, want %v", file.RelativePath, owned, got, want)
+			}
+		}
+	}
+}
