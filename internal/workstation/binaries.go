@@ -191,7 +191,8 @@ func renameAside(destination string) error {
 	if err := os.Rename(destination, aside); err != nil {
 		return fmt.Errorf("workstation: rename %s aside: %w", destination, err)
 	}
-	os.Remove(aside) //nolint:errcheck // #nosec G104 -- best-effort; a leftover aside file self-heals on the next swap
+	// #nosec G104 -- best-effort; a leftover aside file self-heals on the next swap.
+	os.Remove(aside) //nolint:errcheck // best-effort; a leftover aside file self-heals on the next swap
 	return nil
 }
 
