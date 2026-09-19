@@ -21,7 +21,7 @@ func runEditors(args []string) error {
 	// Matched before any flag parsing (BUG-811): sub is the raw first token, not a Go
 	// flag, so "-h"/"--help"/"help" never reaches flag.ErrHelp handling. Without this,
 	// `editors --help` fell through to "unknown editors command: --help".
-	if sub == "-h" || sub == "--help" || sub == "help" {
+	if isHelpToken(sub) {
 		printEditorsUsage()
 		return nil
 	}

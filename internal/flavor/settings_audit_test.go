@@ -349,7 +349,7 @@ func TestSettingSatisfied_Boundary(t *testing.T) {
 	if err := os.WriteFile(outside, []byte("{\"name\": \"outside\"}"), 0o600); err != nil {
 		t.Fatalf("write the escape target: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Remove(outside) })
+	t.Cleanup(func() { os.Remove(outside) }) //nolint:errcheck // best-effort; only leaves this one test's own escape-target file behind on failure
 	data, err := os.ReadFile(outside)
 	if err != nil || !jsonSetting.Validator(data) {
 		t.Fatalf("the escape target must itself be readable and valid, err %v", err)

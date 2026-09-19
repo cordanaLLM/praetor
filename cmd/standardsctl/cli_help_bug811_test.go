@@ -11,7 +11,6 @@ import "testing"
 
 func TestRunEditors_Positive_HelpTokensPrintUsageAndSucceed(t *testing.T) {
 	for _, tok := range []string{"-h", "--help", "help"} {
-		tok := tok
 		out, err := captureStdout(t, func() error { return dispatchCommand("editors", []string{tok}) })
 		if err != nil {
 			t.Fatalf("editors %s must exit success, got %v", tok, err)
@@ -35,7 +34,6 @@ func TestRunEditors_Negative_UnknownSubcommandIsRejected(t *testing.T) {
 
 func TestNotebookCommand_Positive_HelpTokensPrintUsageAndSucceed(t *testing.T) {
 	for _, tok := range []string{"-h", "--help", "help"} {
-		tok := tok
 		out, err := captureStdout(t, func() error { return dispatchCommand("notebook", []string{tok}) })
 		if err != nil {
 			t.Fatalf("notebook %s must exit success, got %v", tok, err)
