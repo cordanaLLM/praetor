@@ -34,6 +34,33 @@ func testWrite(t *testing.T, root, path, content string) {
 	}
 }
 
+// stageIndexEntry stages object at path with mode through the index alone.
+//
+// Nothing is written to the worktree, so the staged tree does not depend on what the
+// operator's filesystem can hold. A case-insensitive checkout (APFS by default on macOS,
+// NTFS on Windows) cannot hold deploy/k8s/app.yaml and deploy/k8s/APP.yaml at once, and
+// writing the second spelling lands on the first dirent; git's own pathspec matching stays
+// case-sensitive regardless of core.ignorecase, so "add" then matched nothing while
+// file_exists() reported the path present through the case alias. It exited 0 having staged
+// nothing and the commit after it failed with an empty stderr (#135). It is also the shape
+// the irregular-entry fixtures need, since a symlink or a submodule cannot be produced
+// through an ordinary file write either.
+func stageIndexEntry(t *testing.T, g *gitRunner, dir, mode, object, path string) {
+	t.Helper()
+	testGit(t, g, dir, "update-index", "--add", "--cacheinfo", mode+","+object+","+path)
+}
+
+// blobObject records content in the object database and returns its object name, without
+// placing it in the worktree or the index. Callers pass the result to stageIndexEntry.
+func blobObject(t *testing.T, g *gitRunner, dir, content string) string {
+	t.Helper()
+	source := filepath.Join(t.TempDir(), "blob")
+	if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return testGit(t, g, dir, "hash-object", "-w", "--", source)
+}
+
 func fixtureCommit(t *testing.T, g *gitRunner, dir string) string {
 	t.Helper()
 	testGit(t, g, dir, "add", "--all")

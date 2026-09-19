@@ -106,10 +106,21 @@ func TestOwnerOnlyPathsRefuseSourceCollisions(t *testing.T) {
 		}
 	})
 	t.Run("differs from a public path only by letter case", func(t *testing.T) {
-		// On a case-insensitive filesystem Git stages this as a change to the public file itself; either way it is refused.
+		// The owner tree carries the case-differing spelling in place of the public one
+		// rather than beside it. A case-insensitive checkout (APFS by default on macOS,
+		// NTFS on Windows) folds deploy/k8s/APP.yaml onto deploy/k8s/app.yaml, so no
+		// fixture can hold both names there at once: the write lands on the existing
+		// dirent, git's case-sensitive pathspec matching then finds nothing to stage, and
+		// the commit failed with an exit status and an empty stderr (#135). The refusal
+		// under test is the engine's, which folds case before comparing against the public
+		// source, and it does not need the two spellings to coexist in one checkout.
 		f := newSyncFixtureWith(t, map[string]string{"deploy/k8s/app.yaml": "upstream\n"})
+		testGit(t, f.git, f.opts.OwnerPath, "rm", "-q", "--", "deploy/k8s/app.yaml")
 		f.opts.OwnerSHA = forceCommit(t, f.git, f.opts.OwnerPath, map[string]string{"deploy/k8s/APP.yaml": "operator\n"})
-		if _, err := Run(context.Background(), "plan", planOptions(f)); err == nil || !strings.Contains(err.Error(), "exists in the public source at "+f.opts.BaseSHA) {
+		// The named path is the case-differing one, which is what proves the fold ran: a
+		// byte-exact comparison would have reported the deleted public spelling instead.
+		_, err := Run(context.Background(), "plan", planOptions(f))
+		if err == nil || !strings.Contains(err.Error(), "exists in the public source at "+f.opts.BaseSHA+`: "deploy/k8s/APP.yaml"`) {
 			t.Fatalf("case collision: %v", err)
 		}
 	})
@@ -155,11 +166,9 @@ func TestOwnerOnlyPathsRefuseIrregularEntries(t *testing.T) {
 			f := newSyncFixture(t)
 			object := f.opts.OwnerSHA
 			if mode == "120000" {
-				target := filepath.Join(t.TempDir(), "target")
-				testWrite(t, filepath.Dir(target), "target", "engine.txt")
-				object = testGit(t, f.git, f.opts.OwnerPath, "hash-object", "-w", "--", target)
+				object = blobObject(t, f.git, f.opts.OwnerPath, "engine.txt")
 			}
-			testGit(t, f.git, f.opts.OwnerPath, "update-index", "--add", "--cacheinfo", mode+","+object+",deploy/k8s/entry")
+			stageIndexEntry(t, f.git, f.opts.OwnerPath, mode, object, "deploy/k8s/entry")
 			f.opts.OwnerSHA = commitStaged(t, f.git, f.opts.OwnerPath)
 			testGit(t, f.git, f.opts.OwnerPath, "checkout", "--", ".")
 			if _, err := Run(context.Background(), "plan", planOptions(f)); err == nil || !strings.Contains(err.Error(), reason) {
