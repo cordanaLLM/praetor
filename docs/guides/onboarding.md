@@ -38,6 +38,35 @@ a Go library.
   of scoring the repository against a flavor that describes nothing about it. Pass `--flavor=<name>`
   to audit against one deliberately.
 
+## What the flavor score measures
+
+`flavor audit` scores one thing: the share of the flavor's required **templates and settings** that
+the repository carries. The bar is 80%, and a missing template fails the audit at any score. The
+same commit therefore scores the same on every machine.
+
+| Term | Scored | Checked by |
+| :--- | :--- | :--- |
+| Templates | yes | the file, or one of its accepted alternatives, exists |
+| Settings | yes | the file exists **and**, where the setting declares a shape, parses |
+| Toolchains | no — advisory | `exec.LookPath` on the machine running the audit |
+
+- **Settings are parsed, not counted.** `lefthook.yml` must parse as a non-empty YAML mapping;
+  `.github/rulesets/main.json` and `.vscode/settings.json` must parse as non-empty JSON objects
+  (strict JSON — comments and trailing commas are rejected, the same line
+  [`internal/clientsetup`](../../internal/clientsetup/plan.go) draws for client configuration). A
+  file that is present but does not parse is reported under **Missing or Invalid Settings** and
+  costs its share of the score: it configures no more than a file that is not there. Settings with
+  no checkable shape are satisfied by presence, which is all that can be claimed about them.
+- **Toolchains never decide pass or fail.** They are resolved from `PATH`, so scoring them measured
+  the auditing machine: a conforming `go-service` repository scored 11/15 = 73.3% and failed the
+  bar on a host with none of its four tools installed, inside the pre-push hook adoption generates.
+  `flavor audit` still lists what is missing, with an install command for each, under **Missing
+  Toolchains (advisory)**.
+
+Fixtures pinning the exact scores live in
+[`internal/flavor/audit_score_test.go`](../../internal/flavor/audit_score_test.go) and
+[`internal/flavor/settings_audit_test.go`](../../internal/flavor/settings_audit_test.go).
+
 
 ## 1. Quickstart Onboarding Command
 Execute the single-shot onboarding pipeline in your repository root:
