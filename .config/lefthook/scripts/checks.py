@@ -79,16 +79,24 @@ def is_fixture(name):
 # A Helm chart renders YAML; its templates are not YAML. "{{- if }}" is a syntax
 # error to every YAML parser, so a template can never pass yamllint, while the
 # chart's own Chart.yaml and values.yaml are ordinary documents and stay in scope.
+# Helm renders templates/ recursively, so a template sits at any depth below it;
+# matching only a direct child would block every commit staging the first
+# template someone files under templates/rbac/ or templates/tests/.
 CHART_MANIFEST = "Chart.yaml"
 CHART_TEMPLATE_DIRECTORY = "templates"
 
 
 def is_chart_template(directory, name):
     """Report whether a path is a Helm chart template rather than a YAML document."""
-    path = Path(name.replace("\\", "/"))
-    if path.parent.name != CHART_TEMPLATE_DIRECTORY:
-        return False
-    return (directory / path.parent.parent / CHART_MANIFEST).is_file()
+    parts = Path(name.replace("\\", "/")).parts
+    # The last part is the file name; a chart root is whatever directory holds
+    # Chart.yaml next to the templates/ directory the file sits under.
+    for index in range(len(parts) - 1):
+        if parts[index] != CHART_TEMPLATE_DIRECTORY:
+            continue
+        if (directory / Path(*parts[:index]) / CHART_MANIFEST).is_file():
+            return True
+    return False
 
 
 def file_checks(directory, names):

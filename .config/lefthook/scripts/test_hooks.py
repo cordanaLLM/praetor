@@ -1248,16 +1248,23 @@ class ScopeAndGuard(unittest.TestCase):
             (chart / "Chart.yaml").write_text("name: praetor\n", encoding="utf-8")
             (chart / "values.yaml").write_text("replicaCount: 1\n", encoding="utf-8")
             (chart / "templates" / "service.yaml").write_text("{{- if true }}\n", encoding="utf-8")
+            (chart / "templates" / "rbac").mkdir()
+            (chart / "templates" / "rbac" / "role.yaml").write_text("{{- if true }}\n", encoding="utf-8")
             (root / "templates").mkdir()
             (root / "templates" / "plain.yaml").write_text("a: b\n", encoding="utf-8")
             # A template beside Chart.yaml is a Go template: excluded.
             self.assertTrue(is_chart_template(root, "deploy/helm/praetor/templates/service.yaml"))
             self.assertTrue(is_chart_template(root, "deploy\\helm\\praetor\\templates\\service.yaml"))
+            # Helm renders templates/ recursively, so a nested template is one too.
+            self.assertTrue(is_chart_template(root, "deploy/helm/praetor/templates/rbac/role.yaml"))
+            self.assertTrue(is_chart_template(root, "deploy\\helm\\praetor\\templates\\rbac\\role.yaml"))
+            self.assertTrue(is_chart_template(root, "deploy/helm/praetor/templates/a/b/c/deep.yaml"))
             # The chart's own documents and a templates/ directory with no chart stay in scope.
             self.assertFalse(is_chart_template(root, "deploy/helm/praetor/values.yaml"))
             self.assertFalse(is_chart_template(root, "deploy/helm/praetor/Chart.yaml"))
             self.assertFalse(is_chart_template(root, "templates/plain.yaml"))
-            self.assertFalse(is_chart_template(root, "deploy/helm/praetor/templates/nested/deep.yaml"))
+            self.assertFalse(is_chart_template(root, "templates/nested/plain.yaml"))
+            self.assertFalse(is_chart_template(root, "deploy/helm/templates.yaml"))
 
     def init_governance_repo(self, root):
         command(root, "git", "init", "-q")
