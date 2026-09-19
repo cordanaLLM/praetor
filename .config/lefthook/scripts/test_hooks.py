@@ -43,6 +43,20 @@ LOCALE_ENV = {"LC_ALL": "C", "LANGUAGE": "C"}
 # shared fix, matching how internal/bump pins -c core.autocrlf=false for the same reason (#282).
 NO_AUTOCRLF_ENV = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.autocrlf",
                    "GIT_CONFIG_VALUE_0": "false"}
+
+
+class _WithoutProcessGroup:
+    """``os`` as Windows presents it: everything except ``killpg``.
+
+    common._kill_bounded selects its branch on ``hasattr(os, "killpg")``, so this makes the
+    non-POSIX branch reachable from a POSIX host instead of leaving it to the one platform
+    that cannot run the rest of this suite yet.
+    """
+
+    def __getattr__(self, name):
+        if name == "killpg":
+            raise AttributeError(name)
+        return getattr(os, name)
 # The CLI a fixture carries, named as hooks.praetorctl_path() looks for it: with the host's
 # executable suffix. The fixture used to link an extensionless bin/praetorctl, which the hooks
 # never found on Windows.
@@ -1346,6 +1360,20 @@ class ScopeAndGuard(unittest.TestCase):
                 run(["python3", "-c", parent], timeout=0.05)
             time.sleep(0.3)
             self.assertFalse(marker.exists())
+
+    def test_timeout_reaps_the_tree_where_no_process_group_exists(self):
+        """Windows has no process group, and killing the child alone left its children running.
+
+        The case above proves the POSIX path; this one proves the other branch is reached and
+        asks the platform for the whole tree, without needing a Windows host to observe it.
+        ``taskkill`` is replaced so the assertion is about what was requested; the direct kill
+        underneath it still reaps the real child this test started.
+        """
+        with mock.patch("common.os", _WithoutProcessGroup()), \
+                mock.patch("common.subprocess.run") as tree:
+            with self.assertRaises(HookError):
+                run(["python3", "-c", "import time; time.sleep(10)"], timeout=0.05)
+        self.assertEqual(tree.call_args.args[0][:3], ["taskkill", "/F", "/T"])
 
     def test_sandbox_failure_removes_only_owned_container(self):
         calls = []

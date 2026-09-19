@@ -51,6 +51,26 @@ SKIP_REASON = re.compile(r"^(\S+) \([^)]*\) \.\.\. skipped ['\"](.*)['\"]$", re.
 FAILED_CASE = re.compile(r"^={70}\n(FAIL|ERROR): (\S+) \(", re.M)
 # A per-suite timeout well above the slowest observed run; a hung suite must fail, not hang CI.
 SUITE_TIMEOUT_SECONDS = 1800
+# The same rule, used to cut the output into one block per failing case. Printing only the
+# run's last 25 lines meant a suite that failed four cases published one traceback and left
+# the other three to be attributed by reading the code (#135). Both bounds keep a noisy suite
+# from burying the log; the tail is still printed when nothing parses as a block.
+CASE_RULE = "=" * 70
+SUMMARY_RULE = re.compile(r"^-{70}\nRan \d+ tests? in ", re.M)
+MAX_FAILURE_BLOCKS = 12
+MAX_FAILURE_BLOCK_LINES = 40
+
+
+def failure_blocks(output):
+    """Return one printable block per failing case, bounded in count and in length."""
+    blocks = []
+    for part in output.split("\n" + CASE_RULE + "\n")[1:]:
+        if len(blocks) >= MAX_FAILURE_BLOCKS:
+            break
+        end = SUMMARY_RULE.search(part)
+        body = part[:end.start()] if end else part
+        blocks.append("\n".join(body.rstrip().splitlines()[:MAX_FAILURE_BLOCK_LINES]))
+    return blocks
 
 
 def run_suite(path):
@@ -74,7 +94,7 @@ def run_suite(path):
     skipped = int(skipped_match.group(1)) if skipped_match else 0
     reasons = SKIP_REASON.findall(output)
     failed = list(dict.fromkeys(FAILED_CASE.findall(output)))
-    tail = "\n".join(output.splitlines()[-25:])
+    tail = "\n\n".join(failure_blocks(output)) or "\n".join(output.splitlines()[-25:])
     # No summary line means the suite died before unittest reported: treat as failure even
     # if the exit code says otherwise, because zero tests is not a pass.
     return (result.returncode == 0 and ran_match is not None), ran, skipped, reasons, failed, tail

@@ -51,8 +51,27 @@ func verifyStateContent(ctx context.Context, rootPath string, content []byte) er
 	return nil
 }
 
+// stateBinding derives the value the ledger entry is bound to. The repository path is one of
+// its inputs, canonicalised rather than merely made absolute.
+//
+// Two callers reaching one repository must derive one binding, and the path they hold is not
+// spelled the same way. On Windows the harness runs praetorctl from a Python temporary
+// directory, whose name is the 8.3 short form C:\Users\RUNNER~1\AppData\Local\Temp that Go
+// reports verbatim, while the hook first moves to the top level git reports, and git resolves
+// its working directory through GetFinalPathNameByHandleW, which always answers with the long
+// C:\Users\runneradmin\... Under filepath.Abs alone those are two bindings for one repository,
+// so the verification that follows every commit and push refused them all as stale (#135).
+//
+// util.ResolveExistingPath is the one helper for this (HISS-19), and the Go counterpart of
+// common.resolved_relative_to on the hook side. filepath.EvalSymlinks re-reads every component
+// through FindFirstFile on Windows, which is what turns the short name into the long one; on
+// POSIX it collapses an aliased ancestor such as macOS's /var to /private/var.
+//
+// The praetor-state:v1 marker is deliberately unchanged: existing ledgers report stale once
+// and are reconciled by one sync. Bumping it would make them report missing instead, which is
+// a worse message for the same situation.
 func stateBinding(ctx context.Context, rootPath string, snap *StateSnapshot) (string, error) {
-	root, err := filepath.Abs(rootPath)
+	root, err := util.ResolveExistingPath(ctx, rootPath)
 	if err != nil {
 		return "", err
 	}

@@ -12,7 +12,14 @@ import (
 
 func syncFixture(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	return syncFixtureAt(t, t.TempDir())
+}
+
+// syncFixtureAt builds the fixture repository at a caller-chosen root, so a case can put it
+// under a directory it controls -- an aliased ancestor, for instance -- instead of directly
+// under the test's own temporary directory.
+func syncFixtureAt(t *testing.T, root string) string {
+	t.Helper()
 	stateFixtureGit(t, root, "init", "-b", "main")
 	writeIntegrityFile(t, filepath.Join(root, ".gitignore"), "/.workingdir/\n")
 	writeIntegrityFile(t, filepath.Join(root, "tracked.txt"), "initial\n")

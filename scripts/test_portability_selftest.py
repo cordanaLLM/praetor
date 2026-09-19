@@ -184,6 +184,26 @@ class PortabilityDriver(unittest.TestCase):
         self.assertIn("failed ERROR test_b_errors", output)
         self.assertNotIn("failed FAIL test_c_noisy", output)
 
+    def test_every_failing_case_prints_its_own_traceback(self):
+        """Every failure's own block reaches the log, not only the run's last 25 lines.
+
+        A macOS run failed four cases in one suite and published one traceback, because a
+        noisy later case pushed the first three out of the printed tail (#135). The other
+        three had to be attributed by reading the code instead of by reading the log.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            body = ("def test_a_fails_early(self): self.fail('first failure marker')\n"
+                    "def test_b_errors(self): raise RuntimeError('second failure marker')\n"
+                    "def test_c_noisy(self): print('\\n'.join(['noise'] * 60))\n")
+            suite = write_suite(temp, "blocks.py", body)
+            code, output = run_driver(temp, [suite], ["--min-executed", "1"])
+        self.assertEqual(code, 1, output)
+        self.assertIn("first failure marker", output)
+        self.assertIn("second failure marker", output)
+        # Boundary: the blocks are bounded, so a suite that prints nothing parseable still
+        # publishes its tail rather than nothing at all.
+        self.assertEqual(driver.failure_blocks("no unittest output here"), [])
+
     def test_passing_suite_names_no_failures(self):
         """Negative: a green suite prints no failure lines, even if its output mentions FAIL."""
         with tempfile.TemporaryDirectory() as temp:
