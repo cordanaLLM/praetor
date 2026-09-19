@@ -19,7 +19,11 @@ const (
 	maxBootstrapParts    = 4
 	bootstrapPartBytes   = 512 * 1024
 	DefaultBuilderImage  = "docker.io/library/golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125"
-	DefaultBaseImage     = "mcr.microsoft.com/devcontainers/base:ubuntu-24.04@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae"
+	// The 26.04 tag drops the hyphen the 24.04 and earlier tags carried:
+	// mcr.microsoft.com/devcontainers/base publishes "ubuntu26.04", and
+	// "ubuntu-26.04" is not a tag on that repository. The digest is what the
+	// bundle actually pulls; the tag is read by humans.
+	DefaultBaseImage = "mcr.microsoft.com/devcontainers/base:ubuntu26.04@sha256:edfb983aab9c579a385dc23c57d7d3703f5ec920124d99c16204a2cac465aab4"
 )
 
 // BootstrapOptions selects a local Praetor source snapshot and immutable images.

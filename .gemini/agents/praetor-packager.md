@@ -13,7 +13,7 @@ You are the Praetor Cloud-Native Packager. Your mission is to ensure that all Pr
 ## Cloud-Native Conformance Checklist
 
 1. **Hermetic Distroless Packaging**:
-   - Multi-stage builds (`golang:1.27-alpine` builder $\rightarrow$ `gcr.io/distroless/static-debian12:nonroot` or `scratch` runtime).
+   - Multi-stage builds (`golang:1.27-alpine` builder $\rightarrow$ `gcr.io/distroless/static-debian13:nonroot` or `scratch` runtime).
    - Pure static compilation with `CGO_ENABLED=0` for multi-arch targets (`linux/amd64`, `linux/arm64`).
    - Run as non-root user (`USER 65532:65532`), `allowPrivilegeEscalation: false`, drop all Linux capabilities (`cap_drop: [ALL]`).
    - Read-only root filesystem compliance (`readOnlyRootFilesystem: true`) with ephemeral `/tmp` scratch storage.

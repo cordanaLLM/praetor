@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     -o /out/praetorctl ./cmd/standardsctl
 
 # Stage 2: Distroless minimal runtime (< 30MB, zero shell, non-root)
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot
 
 LABEL org.opencontainers.image.title="praetor" \
       org.opencontainers.image.description="Autonomous Fleet Governance & Workstation Sentinel Engine" \
