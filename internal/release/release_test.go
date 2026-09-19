@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/changelog"
+	"github.com/cordanaLLM/praetor/internal/semver"
 )
 
 func TestPrepareRelease_Positive(t *testing.T) {
@@ -97,14 +98,14 @@ func TestPrepareRelease_Negative_VerifyFailed(t *testing.T) {
 func TestPrepareRelease_Boundary_SemverPatterns(t *testing.T) {
 	valid := []string{"1.0.0", "v1.2.3", "0.0.1-rc.1", "2.1.0+build.42", "v3.0.0-beta.2+exp.sha.5114f85"}
 	for _, v := range valid {
-		if !semverRegex.MatchString(v) {
+		if _, ok := semver.Parse(v); !ok {
 			t.Errorf("expected %q to be valid SemVer", v)
 		}
 	}
 
 	invalid := []string{"1.0", "v1", "1.2.3.4", "", "latest", "v1.2.3-"}
 	for _, v := range invalid {
-		if semverRegex.MatchString(v) {
+		if _, ok := semver.Parse(v); ok {
 			t.Errorf("expected %q to be invalid SemVer", v)
 		}
 	}
