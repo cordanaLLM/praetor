@@ -5,7 +5,7 @@ description: Generate concise, self-contained architecture and component infocar
 
 # Architecture Infocard Generator (`infocard-generate`)
 
-Produce compact, standardized, single-page architecture infocards summarizing any package, service, or archetype in the cordanaLLM ecosystem.
+Produce compact, standardized, single-page architecture infocards summarizing any package, service, or archetype in cordanaLLM ecosystem.
 
 ## Standard Infocard Template
 

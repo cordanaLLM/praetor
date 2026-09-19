@@ -35,6 +35,13 @@ const (
 	// SurfaceAgent covers briefs, fan-out prompts, workflow returns and provider
 	// instructions, and is the fallback when a caller names neither surface nor task.
 	SurfaceAgent RegisterSurface = "agent"
+	// SurfaceOperator covers a reply to the person operating the agent: chat, not a
+	// document. It has no opt-out, matching the guide's stated rule that a reply to a
+	// person is full prose, never caveman (text-register.md). It is named explicitly here,
+	// rather than left to fall through to EmissionDefaultRegister the way an unset
+	// mcp/hooks/prompts/ledger surface does, so the exemption is a decision the schema
+	// states, not an accident of an unwritten manifest row (register-gaps-20260919.md).
+	SurfaceOperator RegisterSurface = "operator"
 )
 
 // Emission surfaces name text the engine itself writes for agents. Each one resolves to its
@@ -64,6 +71,12 @@ const (
 // 2026-09-18).
 const ContextRegister = TextRegisterInternal
 
+// OperatorRegister is the only register of the operator surface: the nearest existing
+// full-prose register value, reused rather than adding a fourth TextRegister value for one
+// surface (register-gaps-20260919.md, "cheaper: no new enum member, no RegisterPolicy
+// schema growth").
+const OperatorRegister = TextRegisterDocs
+
 // EmissionDefaultRegister is the register of an emission surface other than context that the
 // manifest leaves unset. The caveman lint is on by default for engine text agents read, and
 // only the surface's own key turns it off; surfaces.agent does not reach it (operator
@@ -75,7 +88,8 @@ var emissionSurfaces = []RegisterSurface{SurfaceContext, SurfaceMCP, SurfaceHook
 
 // KnownRegisterSurface reports whether surface is one the manifest may configure.
 func KnownRegisterSurface(surface RegisterSurface) bool {
-	return surface == SurfaceForge || surface == SurfaceDocs || surface == SurfaceAgent || isEmissionSurface(surface)
+	return surface == SurfaceForge || surface == SurfaceDocs || surface == SurfaceAgent ||
+		surface == SurfaceOperator || isEmissionSurface(surface)
 }
 
 func isEmissionSurface(surface RegisterSurface) bool {
@@ -276,6 +290,9 @@ func (p RegisterPolicy) Resolve(surface RegisterSurface, task string) Resolution
 	if surface == SurfaceContext {
 		return Resolution{Register: ContextRegister, Source: "surfaces." + string(SurfaceContext)}
 	}
+	if surface == SurfaceOperator {
+		return Resolution{Register: OperatorRegister, Source: "surfaces." + string(SurfaceOperator)}
+	}
 	if surface == SurfaceForge || surface == SurfaceDocs {
 		return Resolution{Register: p.surfaceRegister(surface), Source: "surfaces." + string(surface)}
 	}
@@ -355,6 +372,9 @@ func (p RegisterPolicy) validate() error {
 		}
 		if surface == SurfaceContext && register != ContextRegister {
 			return fmt.Errorf("register surface %q is fixed to %s: AGENTS.md is agent-only text and its caveman gate has no opt-out", surface, ContextRegister)
+		}
+		if surface == SurfaceOperator && register != OperatorRegister {
+			return fmt.Errorf("register surface %q is fixed to %s: a reply to the operator is never caveman", surface, OperatorRegister)
 		}
 	}
 	if len(p.Tasks) > MaxRegisterTaskRows {

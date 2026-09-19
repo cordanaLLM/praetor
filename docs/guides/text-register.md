@@ -183,11 +183,42 @@ docs register, and a reply to a person is full prose.
 
 ## What is not enforced
 
-Register compliance on human-typed surfaces is advisory: nothing measures whether a
-pull-request body reads as social prose, and nothing measures whether an agent return
-follows `caveman`. Three things are mechanical: the block in AGENTS.md must match the
-manifest, AGENTS.md must pass the caveman lint (see "The context gate" below), and a
-configured `max_tokens` bounds the provider request of a repair run.
+Register compliance on human-typed surfaces (issues, PR bodies, review comments, commit
+bodies, ADRs, docs pages, changelog titles) is advisory, by the operator's own decision
+(ADR-0010, "Alternatives considered"): nothing measures whether a pull-request body reads
+as social prose.
+
+Mechanical: the block in AGENTS.md must match the manifest; AGENTS.md, every canonical
+persona under `.agents/agents/` and every canonical skill under `.agents/skills/` must pass
+the caveman lint (see "The context gate" below); a configured `max_tokens` bounds the
+provider request of a repair run; `praetorctl caveman check --max-words`/`--max-tokens`
+makes a per-surface ceiling enforceable on any text a check can read as a file (see
+"Ceilings" below).
+
+Not mechanically checkable, because the text is composed at conversation time rather than
+read from a repository file: an agent-to-agent return or brief, MCP tool and property
+descriptions and results, hook and gate messages, provider/repair/notebook/harness prompt
+bodies, `.workingdir` ledger free text (gitignored, so a tracked-file gate cannot see it
+either), and popup question text. `internal/caveman` and the `--max-words`/`--max-tokens`
+flags exist so a producer of any of these can check a value before it is sent (for example
+a dispatch path that writes its return to a file first); nothing in the engine calls them
+there yet (ADR-0010: "rewriting the MCP descriptions, prompts, hook messages, ledger
+templates... are separate changes that build on this module").
+
+## Surfaces without a register row
+
+Two audiences the schema does not (yet) name a `RegisterSurface` for:
+
+- **Chat replies to the operator.** Always full prose, never `caveman`, per this guide and
+  per operator direction recorded outside this repository. Not a `RegisterPolicy` surface:
+  adding one is `internal/config/register.go` schema growth, and Q-059's decision covered
+  the four emission surfaces only. There is nothing to configure and nothing to opt out of.
+- **Popup question text (`AskUserQuestion` and equivalent).** AGENTS.md rule 4 mandates the
+  mechanism (a structured popup, never options embedded in prose); the text inside that
+  popup follows caveman's own clarity-floor discipline (drop filler and hedges, never
+  compress past the point where an option or its consequence needs a follow-up to
+  understand), a scoped carve-out rather than full prose or full caveman. Neither is
+  mechanically checked: both are composed at conversation time.
 
 ## Caveman lint and token estimate
 
@@ -208,7 +239,7 @@ summary line counts its lines. The prose AGENTS.md that the caveman rewrite repl
 frozen as `internal/compiler/testdata/agents-floor.txt`, fails:
 
 ```text
-agents-floor.txt: FAIL prose_words=1035 articles=90 density=8.7/100 limit=2.0 off_regions=0 register_block_lines=13 findings=2
+agents-floor.txt: FAIL prose_words=1035 articles=90 density=8.7/100 limit=2.0 off_regions=0 register_block_lines=13 tokens_est=2061 findings=2
 agents-floor.txt:0 C1 article-density: 8.7 articles per 100 prose words (90/1035), limit 2.0
 agents-floor.txt:76 C5 long-sentence: 39 words: your pull requests go stale when ...
 ```
@@ -216,7 +247,7 @@ agents-floor.txt:76 C5 long-sentence: 39 words: your pull requests go stale when
 The current AGENTS.md passes:
 
 ```text
-AGENTS.md: PASS prose_words=721 articles=2 density=0.3/100 limit=2.0 off_regions=0 register_block_lines=13 findings=0
+AGENTS.md: PASS prose_words=721 articles=2 density=0.3/100 limit=2.0 off_regions=0 register_block_lines=13 tokens_est=1657 findings=0
 ```
 
 `praetorctl caveman estimate` puts the rewrite at 10,333 bytes and about 1,911 tokens,
@@ -261,6 +292,37 @@ A rewrite of praetor's own AGENTS.md must keep every fact of the prose version:
 fixture and fails when a rule id, a `MUST`, a prohibition, a numbered rule, a command or a
 link disappears. The lint and gate code live in `internal/compiler/caveman_lint.go`.
 
+### The persona and skill gate
+
+`SurfaceContext` covers more than AGENTS.md by its own doc comment: "AGENTS.md, the
+compiled vendor files, personas and skills" (`internal/config/register.go`). The CLI's
+`compile-context --verify` and `audit` (`cmd/standardsctl`) therefore also run the caveman
+lint, plus a 600-prose-word ceiling (`compiler.AgentTextCeiling`), over every file under
+`.agents/agents/*.md` and every `.agents/skills/*/SKILL.md` (`compiler.LintAgentText`,
+`cmd/standardsctl/caveman_gate.go`). No opt-out, same as AGENTS.md itself: personas and
+skills are agent-only text under `SurfaceContext`, not an emission surface a manifest can
+turn off. A pass prints:
+
+```text
+6 personas and 13 skills passed the caveman lint (<= 600 prose words each).
+```
+
+The MCP mirrors (`standards_compile_context`, `standards_audit`, `cmd/standards-mcp`) are a
+separate, smaller implementation that already did not verify persona/skill projection sync
+before this change (`standards_audit`'s own comment: "Run 'praetorctl audit' for the full
+CLI gate set"); they still only run `compiler.LintContext` over AGENTS.md and do not yet
+call `LintAgentText`. Bringing them to parity is unclaimed follow-up work, not part of this
+change.
+
+600 words was chosen because it sits between the two skills that failed the lint at
+532-561 prose words (`caveman`, `social-text`) and the shortest passing skill in the
+directory at 185 words (`.workingdir/planning/register-gaps-20260919.md`): low enough to
+force a caveman rewrite, high enough not to force splitting a skill with real rule tables.
+An illustrative "bad" prose sample inside a skill (`adhd-format/SKILL.md`'s anti-pattern
+block, `caveman/SKILL.md`'s before/after section) is not this file's own prose and is
+wrapped in `<!-- caveman:off -->`/`<!-- caveman:on -->`, the same mechanism the package doc
+comment names for exactly this case.
+
 ### Check rules
 
 | Rule | Fires when |
@@ -271,10 +333,16 @@ link disappears. The lint and gate code live in `internal/compiler/caveman_lint.
 | `C4 terminal-noise` | an ANSI escape anywhere; box drawing (U+2500-257F) or emoji outside code |
 | `C5 long-sentence` | a sentence over 30 prose words without a `;`, `->` or `:` break |
 | `C6 unclosed-off-region` | `<!-- caveman:off -->` without a later `<!-- caveman:on -->` |
+| `C7 word-ceiling` | `Options.MaxProseWords` is set (opt-in, 0 means no ceiling) and `Report.ProseWords` exceeds it |
+| `C8 token-ceiling` | `Options.MaxTokens` is set (opt-in, 0 means no ceiling) and `Report.EstimatedTokens` (the whole input, not prose alone) exceeds it |
 
 The 2.0 threshold is measured, not chosen: the prose AGENTS.md read 8.7 articles per 100
 prose words, its hand-written caveman rewrite reads 0.3. C2 and C3 ignore quoted text, so a rule that names a
-banned phrase in quotes does not trip itself.
+banned phrase in quotes does not trip itself. C7 and C8 are opt-in, unlike C1-C6: a ceiling
+is a property of one surface (600 prose words for a persona or a skill; the evidence bound,
+1500 tokens, for anything checked against it), not of caveman prose everywhere, so
+`AgentTextCeiling` is passed explicitly by the persona/skill gate rather than living in
+`Check`'s defaults.
 
 Not prose, and never linted as prose: fenced code (C4 still reports ANSI there), inline
 code, link targets, URLs, headings, table rows, HTML comments, ledger field rows such as
@@ -325,3 +393,22 @@ surface's own key opts it out, and `context` accepts no value but `internal`. An
 The decision is recorded in [ADR-0010](../adr/0010-text-register-per-task.md) (decisions
 9 and 10); tests and fixtures are in `internal/caveman` and
 `cmd/standardsctl/caveman_test.go`.
+
+### Ceilings
+
+`--max-words=N` (C7) and `--max-tokens=N` (C8) add an opt-in ceiling to `check`, on top of
+whatever C1-C6 already judge; 0 (the default) means no ceiling:
+
+```bash
+praetorctl caveman check --max-words=600 .agents/skills/example/SKILL.md
+praetorctl caveman check --max-tokens=1500 .workingdir/evidence/candidate-return.md
+```
+
+The persona/skill gate calls the same `caveman.Options.MaxProseWords` field programmatically
+(`compiler.AgentTextCeiling`, 600); the flags exist so any other surface can be capped the
+moment its text is a file, including a return or a brief a dispatch path writes out before
+sending it, and the evidence-pointer bound (`register.evidence`, default 1500 tokens) the
+same way. Nothing in the engine writes agent-to-agent returns, MCP text, hook messages or
+prompt bodies to a file today, so wiring one of those producers to this flag is future work,
+not something this guide can point at yet; see "What is not enforced" above for the current
+list.

@@ -136,6 +136,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditBaselineAndInvariants(ctx, opts) },
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
 		func() error { return auditAgentProjections(rootDir) },
+		func() error { return auditCavemanAgentSurfaces(rootDir) },
 		func() error { return auditBranchProtectionAndSupplyChain(manifest, rootDir) },
 		func() error { return auditPaperclipHarness(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
@@ -285,6 +286,27 @@ func auditAgentProjections(rootDir string) error {
 	}
 	if verified > 0 {
 		fmt.Printf("[PASS] Agent persona projections verified (%d copies identical to .agents/agents).\n", verified)
+	}
+	return nil
+}
+
+// auditCavemanAgentSurfaces fails when a canonical persona or skill breaks the caveman
+// lint or the AgentTextCeiling word budget. Personas and skills sit under
+// config.SurfaceContext by its own doc comment, so this gate has no opt-out, the same as
+// the AGENTS.md caveman gate in auditAgentContextAndDevcontainer (ADR-0010 decision 11,
+// amended for personas and skills; Q-059).
+func auditCavemanAgentSurfaces(rootDir string) error {
+	personas, err := lintCanonicalPersonas(rootDir)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Persona caveman lint: %w", err)
+	}
+	skills, err := lintCanonicalSkillFiles(rootDir)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Skill caveman lint: %w", err)
+	}
+	if personas > 0 || skills > 0 {
+		fmt.Printf("[PASS] Caveman lint verified (%d personas, %d skills, <= %d prose words each).\n",
+			personas, skills, compiler.AgentTextCeiling)
 	}
 	return nil
 }

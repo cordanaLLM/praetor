@@ -51,6 +51,16 @@ func verifyCompiledContext(ctx context.Context, tr *compiler.Transpiler, source,
 		return fmt.Errorf("context verification failed: %w", err)
 	}
 	fmt.Printf("  %s: %s.\n", source, lint.Summary())
+	personasLinted, err := lintCanonicalPersonas(targetDir)
+	if err != nil {
+		return fmt.Errorf("context verification failed: %w", err)
+	}
+	skillsLinted, err := lintCanonicalSkillFiles(targetDir)
+	if err != nil {
+		return fmt.Errorf("context verification failed: %w", err)
+	}
+	fmt.Printf("  %d personas and %d skills passed the caveman lint (<= %d prose words each).\n",
+		personasLinted, skillsLinted, compiler.AgentTextCeiling)
 	verified, err := verifyAgentProjections(targetDir)
 	if err != nil {
 		return fmt.Errorf("agent persona verification failed: %w", err)

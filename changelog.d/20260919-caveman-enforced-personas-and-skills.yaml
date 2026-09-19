@@ -1,0 +1,3 @@
+type: added
+title: "Gate personas and skills through the caveman lint in `compile-context --verify`/`audit`, add a per-surface word/token ceiling to `caveman check`, and name the operator surface"
+breaking: false

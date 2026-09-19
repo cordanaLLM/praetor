@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	cavemanUsage = "usage: praetorctl caveman check [--surface=<name>] [--root=.] <file|dir|-> [...]\n" +
+	cavemanUsage = "usage: praetorctl caveman check [--surface=<name>] [--root=.] [--max-words=N] [--max-tokens=N] <file|dir|-> [...]\n" +
 		"       praetorctl caveman floor <before> <after>\n" +
 		"       praetorctl caveman estimate <file|dir|-> [...]"
 	// maxCavemanFiles bounds the files one invocation reads, directories expanded (HISS-02).
@@ -59,11 +59,16 @@ func cavemanCommand(ctx context.Context, args []string, stdin io.Reader, out io.
 
 // cavemanCheck prints one summary line per input and its findings, and fails when any
 // input breaks a rule. With --surface it first resolves the register of that surface from
-// the repository at --root and skips the lint when the surface is not internal.
+// the repository at --root and skips the lint when the surface is not internal. --max-words
+// and --max-tokens are opt-in ceilings (0 means none): they make a per-surface budget
+// enforceable on any text a check can read as a file, the way the persona/skill gate and
+// text-register.md's evidence bound (default 1500 tokens) already define one.
 func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Writer) error {
 	fset := flag.NewFlagSet("caveman check", flag.ContinueOnError)
 	surface := fset.String("surface", "", "Register surface whose manifest setting decides whether the lint applies")
 	root := fset.String("root", ".", "Repository root whose .standards.yaml resolves --surface")
+	maxWords := fset.Int("max-words", 0, "Prose-word ceiling per input (caveman.Options.MaxProseWords, C7); 0 means no ceiling")
+	maxTokens := fset.Int("max-tokens", 0, "Estimated-token ceiling per input (caveman.EstimateTokens, C8); 0 means no ceiling")
 	if err := fset.Parse(args); err != nil {
 		return err
 	}
@@ -77,12 +82,13 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	if err != nil {
 		return err
 	}
+	opts := caveman.Options{MaxProseWords: *maxWords, MaxTokens: *maxTokens}
 	var text strings.Builder
 	failed := 0
 	for _, input := range inputs {
 		// The same mask the context gate applies, so this command reproduces its verdict.
 		lintable, masked := compiler.MaskRegisterBlock(input.text)
-		if !formatCavemanReport(&text, input.name, caveman.Check(lintable, caveman.Options{}), masked) {
+		if !formatCavemanReport(&text, input.name, caveman.Check(lintable, opts), masked) {
 			failed++
 		}
 	}
@@ -121,9 +127,9 @@ func formatCavemanReport(out *strings.Builder, name string, report caveman.Repor
 	if !report.Passed() {
 		verdict = "FAIL"
 	}
-	fmt.Fprintf(out, "%s: %s prose_words=%d articles=%d density=%.1f/100 limit=%.1f off_regions=%d register_block_lines=%d findings=%d\n",
+	fmt.Fprintf(out, "%s: %s prose_words=%d articles=%d density=%.1f/100 limit=%.1f off_regions=%d register_block_lines=%d tokens_est=%d findings=%d\n",
 		name, verdict, report.ProseWords, report.Articles, report.Density(), caveman.DefaultMaxArticleDensity,
-		report.OffRegions, masked, len(report.Findings))
+		report.OffRegions, masked, report.EstimatedTokens, len(report.Findings))
 	appendCavemanFindings(out, name, report.Findings)
 	return report.Passed()
 }

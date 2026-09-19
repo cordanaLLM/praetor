@@ -106,6 +106,35 @@ func TestCavemanCheckBoundary(t *testing.T) {
 	}
 }
 
+// TestCavemanCheckCeilingFlags covers --max-words/--max-tokens: positive (terse text still
+// passing prose rules fails once it crosses either ceiling), negative (the default, no
+// flags, never fires C7/C8) and boundary (0 means no ceiling; exactly at a ceiling passes).
+func TestCavemanCheckCeilingFlags(t *testing.T) {
+	dir := t.TempDir()
+	terse := writeFixtureFile(t, dir, "terse.md", cavemanTerse)
+
+	out, err := runCavemanCLI(t, "", "check", "--max-words=1", terse)
+	if err == nil || !strings.Contains(out, "C7 word-ceiling") {
+		t.Fatalf("--max-words=1 must fail terse text on the word ceiling alone: err=%v\n%s", err, out)
+	}
+	out, err = runCavemanCLI(t, "", "check", "--max-tokens=1", terse)
+	if err == nil || !strings.Contains(out, "C8 token-ceiling") {
+		t.Fatalf("--max-tokens=1 must fail terse text on the token ceiling alone: err=%v\n%s", err, out)
+	}
+
+	if out, err = runCavemanCLI(t, "", "check", terse); err != nil || strings.Contains(out, "ceiling") {
+		t.Fatalf("no flags set (the default) must never fire a ceiling rule: err=%v\n%s", err, out)
+	}
+	if out, err = runCavemanCLI(t, "", "check", "--max-words=0", "--max-tokens=0", terse); err != nil || strings.Contains(out, "ceiling") {
+		t.Fatalf("--max-words=0 --max-tokens=0 must behave like unset: err=%v\n%s", err, out)
+	}
+
+	words := strings.Fields(cavemanTerse)
+	if out, err = runCavemanCLI(t, "", "check", fmt.Sprintf("--max-words=%d", len(words)), terse); err != nil || strings.Contains(out, "ceiling") {
+		t.Fatalf("exactly at the word ceiling must pass: err=%v\n%s", err, out)
+	}
+}
+
 func TestCavemanEstimate(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFixtureFile(t, dir, "ten.md", "one two three four five six seven eight nine ten\n")

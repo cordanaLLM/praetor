@@ -122,6 +122,63 @@ func TestMaskRegisterBlock(t *testing.T) {
 	}
 }
 
+func TestLintAgentTextPositive(t *testing.T) {
+	report, err := LintAgentText(".agents/skills/example/SKILL.md", lintTerseAgents)
+	if err != nil || !report.Passed() {
+		t.Fatalf("terse persona/skill text must pass: err=%v report=%+v", err, report)
+	}
+}
+
+func TestLintAgentTextNegative(t *testing.T) {
+	report, err := LintAgentText(".agents/skills/example/SKILL.md", lintProseAgents)
+	if !errors.Is(err, ErrAgentTextProse) || report.Passed() {
+		t.Fatalf("prose persona/skill text must fail: err=%v report=%+v", err, report)
+	}
+	if !strings.Contains(err.Error(), ".agents/skills/example/SKILL.md") {
+		t.Errorf("error must name the label: %v", err)
+	}
+}
+
+// wordsWithBreaks returns n prose words without articles, with a period every 8 words, so
+// the text carries no C1 article-density or C5 long-sentence finding of its own.
+func wordsWithBreaks(n int) string {
+	var sb strings.Builder
+	for i := 1; i <= n; i++ {
+		sb.WriteString("gate")
+		if i%8 == 0 {
+			sb.WriteString(".")
+		}
+		sb.WriteString(" ")
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func TestLintAgentTextBoundary(t *testing.T) {
+	// A word ceiling breach fails even when the article density and every other C1-C6 rule
+	// pass: the ceiling is independent of the prose rules.
+	report, err := LintAgentText("over.md", wordsWithBreaks(AgentTextCeiling+50))
+	if !errors.Is(err, ErrAgentTextProse) || report.Passed() {
+		t.Fatalf("text over the ceiling must fail even with clean prose: err=%v report=%+v", err, report)
+	}
+	if report.ProseWords <= AgentTextCeiling {
+		t.Fatalf("fixture must exceed the ceiling: %d words", report.ProseWords)
+	}
+	foundCeiling := false
+	for _, f := range report.Findings {
+		if f.Rule == "C7 word-ceiling" {
+			foundCeiling = true
+		}
+	}
+	if !foundCeiling {
+		t.Errorf("findings must include the word-ceiling rule: %v", report.Findings)
+	}
+	// Exactly at the ceiling passes.
+	at := strings.TrimSuffix(strings.Repeat("gate.\n", AgentTextCeiling), "\n")
+	if _, err := LintAgentText("at.md", at); err != nil {
+		t.Fatalf("exactly at the ceiling must pass: %v", err)
+	}
+}
+
 func TestLintContextLeavesRegisterBlockToRenderer(t *testing.T) {
 	lint, err := LintContext(context.Background(), lintFixture(t, lintTerseAgents+"\n"+config.RegisterSectionPrefix+registerProse+"\n"))
 	if err != nil || lint.MaskedLines != 3 || !strings.HasSuffix(lint.Summary(), "3 register block lines left to the renderer") {

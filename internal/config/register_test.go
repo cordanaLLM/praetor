@@ -374,6 +374,48 @@ func TestContextSurfaceIsFixed(t *testing.T) {
 	}
 }
 
+// TestOperatorSurfaceIsFixed: a reply to the operator is named explicitly (register-gaps-
+// 20260919.md) rather than left to fall through to EmissionDefaultRegister, and it has no
+// opt-out, the same shape as SurfaceContext.
+func TestOperatorSurfaceIsFixed(t *testing.T) {
+	// Positive: operator resolves to OperatorRegister (docs) regardless of surfaces.agent or
+	// the task row, is known, and is never caveman-enforced.
+	m, err := loadRegisterManifest(t, "register:\n  surfaces:\n    agent: internal\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := m.EffectiveRegister()
+	want := Resolution{Register: OperatorRegister, Source: "surfaces.operator"}
+	if got := policy.Resolve(SurfaceOperator, "waiver_signoff"); got != want {
+		t.Errorf("Resolve(operator) = %+v, want %+v whatever surfaces.agent says", got, want)
+	}
+	if enforced, err := policy.LintEnforced(SurfaceOperator); err != nil || enforced {
+		t.Errorf("LintEnforced(operator) = %v, %v; want false, the operator surface is never caveman", enforced, err)
+	}
+	if !KnownRegisterSurface(SurfaceOperator) {
+		t.Error("KnownRegisterSurface(operator) = false, want true")
+	}
+	if got := DefaultRegisterPolicy().Resolve(SurfaceOperator, ""); got != want {
+		t.Errorf("default Resolve(operator) = %+v, want %+v", got, want)
+	}
+	if _, err := loadRegisterManifest(t, "register:\n  surfaces:\n    operator: docs\n"); err != nil {
+		t.Errorf("operator: docs must load: %v", err)
+	}
+	// Negative: writing internal or social for operator is rejected, the same no-opt-out
+	// shape as writing docs or social for context.
+	for _, register := range []string{"internal", "social"} {
+		_, err := loadRegisterManifest(t, "register:\n  surfaces:\n    operator: "+register+"\n")
+		if err == nil || !strings.Contains(err.Error(), `register surface "operator" is fixed to docs`) {
+			t.Errorf("operator: %s: error = %v, want the no-opt-out rejection", register, err)
+		}
+	}
+	// Boundary: a misspelled surface name is an unknown-surface error, not a silent
+	// fallback, the same as every other surface.
+	if enforced, err := DefaultRegisterPolicy().LintEnforced("operators"); err == nil || enforced {
+		t.Errorf(`LintEnforced("operators") = %v, %v; want an unknown-surface error`, enforced, err)
+	}
+}
+
 func TestEmissionSurfacesNegative(t *testing.T) {
 	for name, tc := range map[string]struct{ section, want string }{
 		"unknown register on an emission surface": {"register: {surfaces: {mcp: loud}}\n", `unsupported text register "loud"`},
