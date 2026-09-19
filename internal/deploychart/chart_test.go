@@ -155,20 +155,6 @@ func podSpec(t *testing.T, docs []document) document {
 	return child(t, only(t, docs, "Deployment"), "spec", "template", "spec")
 }
 
-// wantExactly asserts a label mapping holds those keys and no others, which is
-// what a selector needs: an extra key changes what the selector matches.
-func wantExactly(t *testing.T, where string, got document, want map[string]string) {
-	t.Helper()
-	if len(got) != len(want) {
-		t.Fatalf("%s = %v, want exactly %v", where, got, want)
-	}
-	for key, value := range want {
-		if got[key] != value {
-			t.Fatalf("%s[%q] = %v, want %q", where, key, got[key], value)
-		}
-	}
-}
-
 // wantContains asserts a mapping carries every wanted key, which is what a
 // mutable label set owes its readers: extra keys are allowed, missing ones are
 // not.
@@ -179,6 +165,17 @@ func wantContains(t *testing.T, where string, got document, want map[string]stri
 			t.Fatalf("%s[%q] = %v, want %q", where, key, got[key], value)
 		}
 	}
+}
+
+// wantExactly adds to wantContains the rule a selector needs and a mutable label
+// set does not: no other key may be present, because an extra key changes what
+// the selector matches.
+func wantExactly(t *testing.T, where string, got document, want map[string]string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s = %v, want exactly %v", where, got, want)
+	}
+	wantContains(t, where, got, want)
 }
 
 // selectorLabels is the label set praetor.selectorLabels renders for a release.
