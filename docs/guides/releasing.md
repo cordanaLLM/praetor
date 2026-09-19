@@ -9,7 +9,8 @@ page covers what that tag sets off, how to cut one, and how the moving flavor ta
 | Consumer | Trigger | Result |
 | :--- | :--- | :--- |
 | `.github/workflows/release-binaries.yml` | `push` of a tag matching `v*` | GoReleaser (`.goreleaser.yaml`) builds `praetorctl`, `standardsctl`, `standards-mcp` and `standards-lsp` for Linux, macOS and Windows on amd64 and arm64, attaches Syft SBOMs, signs `checksums.txt` keyless with cosign into `checksums.txt.sigstore.json`, and publishes a GitHub release |
-| `go install github.com/cordanaLLM/praetor/cmd/standardsctl@latest` | any release version on the module proxy | `@latest` selects the highest release version; with no tag at all it falls back to a pseudo-version of `main` ([Go modules reference, version queries](https://go.dev/ref/mod#version-queries)). `.github/actions/praetor-adopt/action.yml` installs this way |
+| `go install github.com/cordanaLLM/praetor/cmd/standardsctl@latest` | any release version on the module proxy | `@latest` selects the highest release version; with no tag at all it falls back to a pseudo-version of `main` ([Go modules reference, version queries](https://go.dev/ref/mod#version-queries)) |
+| `.github/actions/praetor-adopt/action.yml` | any `uses:` of the action | the action builds `cmd/standardsctl` from its own checkout, and falls back to `go install ...@<the ref the caller pinned>`; it never installs `@latest` ([docs/adoption.md](../adoption.md)) |
 | `.github/workflows/sync-flavors.yml` | next run after the tag exists | moves `latest` to the highest `v*` tag |
 
 Once the first release exists, `@latest` stops following `main`. An adopter that wants

@@ -97,16 +97,36 @@ jobs:
 
 Comment `/adopt` on any PR to have `cordana-standards[bot]` automatically scaffold Praetor governance and commit the baseline.
 
-### Inputs and the `report` output
+### Inputs, the binary, and the `report` output
 
-The action takes `path`, `mode` (`adopt` or `dogfood`), `dry-run`, `force`, `record-baseline` and
-`go-version`. Every one of them reaches the run step as an environment variable and is passed to
-`standardsctl` as a single argument, so a value carrying a shell metacharacter or a newline is data
-rather than script. The step fails before running anything if `path` is empty.
+| Input | Reaches | Effect |
+| :-- | :-- | :-- |
+| `path` | `PRAETOR_PATH` | `--path=<value>`; an empty value is refused before anything runs |
+| `mode` | `PRAETOR_MODE` | selects the subcommand, `adopt` or `dogfood`; any other value is refused |
+| `dry-run` | `PRAETOR_DRY_RUN` | `--dry-run=<value>` |
+| `force` | `PRAETOR_FORCE` | `--force=<value>`, adopt only |
+| `record-baseline` | `PRAETOR_RECORD_BASELINE` | `--record-baseline=<value>`, adopt only |
+| `go-version` | `actions/setup-go` | the toolchain the step is built with; it never reaches `standardsctl` |
 
-The `report` output carries the combined output of the run, and it is written whether the run
-succeeded or failed — the step re-raises the command's exit status afterwards. A later step reads
-it as a normal step output:
+The five runtime inputs reach the run step as environment variables and are passed to
+`standardsctl` as single arguments, so a value carrying a shell metacharacter or a newline is data
+rather than script. `mode` and the three booleans are validated first: `mode: Dogfod` is a failure,
+not a silent `adopt` run. Each boolean is passed as `--flag=<value>` rather than added when it is
+`true`, because `dogfood --dry-run` and `adopt --record-baseline` default to true in
+`standardsctl` — an omitted flag would be an opt-in, so `record-baseline: "false"` would have had
+no effect.
+
+The `standardsctl` that runs is the one the action's own ref carries: the step builds
+`cmd/standardsctl` out of the praetor checkout that `GITHUB_ACTION_PATH` points into, so
+`praetor-adopt@<tag>` and `@main` differ. A copy of the action vendored outside a praetor checkout
+falls back to `go install github.com/cordanaLLM/praetor/cmd/standardsctl@<the same ref>`; with
+neither, the step fails rather than running an unrelated version.
+
+The `report` output carries the combined output of the run. The step writes it — and, when the
+runner provides one, appends it to the job summary — before re-raising the command's exit status,
+and it does so for a refused input as well as for a failed run. Read it from the job summary after
+a failure: whether a composite action's declared output still reaches the caller once one of its
+steps has exited nonzero is not something GitHub documents, and this repository does not assert it.
 
 ```yaml
       - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@main
@@ -114,14 +134,13 @@ it as a normal step output:
         with:
           mode: dogfood
           dry-run: "true"
-      - if: always()
-        run: echo "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+      - run: echo "$REPORT" >> "$GITHUB_STEP_SUMMARY"
         env:
           REPORT: ${{ steps.praetor.outputs.report }}
 ```
 
-The behaviour above is pinned by `internal/forge/adopt_action_test.go`, which executes the action's
-own shell body against a stub binary.
+Everything above is pinned by `internal/forge/adopt_action_test.go`, which executes the action's own
+shell bodies against a stub binary and reads the input defaults out of `action.yml`.
 
 ## Migration: explicit sources for missing lockfiles
 
