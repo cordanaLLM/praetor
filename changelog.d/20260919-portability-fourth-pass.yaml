@@ -1,0 +1,4 @@
+type: fixed
+title: Pin every shell script and YAML file to LF so a Windows checkout no longer fails shellcheck SC1017 and yamllint new-lines, match make's missing-target message without depending on which quoting the platform's make chose, compare a symlink target with native separators, and report a sync deadline that lands inside a harvest as ErrSyncTruncated rather than a bare context error
+issue: "#135"
+breaking: false

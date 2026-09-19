@@ -194,6 +194,16 @@ class GitHooks(unittest.TestCase):
         if stage:
             command(self.repo, "git", "add", "--", name)
 
+    def assertMissingMakeTarget(self, result, target):
+        # GNU make quotes the missing target differently per build: 4.x prints
+        # 'state-audit', while the make 3.81 macOS still ships prints `state-audit'.
+        # The property under test is that the hook surfaced make's refusal, not which
+        # quoting the platform's make chose, so match the message and the target
+        # separately.
+        output = result.stdout + result.stderr
+        self.assertIn(b"No rule to make target", output, output)
+        self.assertIn(target.encode(), output, output)
+
     def hook(self, name="pre-commit", *args, data=None, maintain_state=True):
         # Path arguments are given as git gives them to hooks, with forward slashes. Lefthook on
         # Windows substitutes arguments into `sh -c "..."`, and a backslashed native path there
@@ -799,14 +809,14 @@ class GitHooks(unittest.TestCase):
         for destination in ("refs/heads/review/wip", "refs/tags/checkpoint/wip"):
             rejected = command(self.repo, "git", "push", "origin", "HEAD:" + destination, ok=False)
             self.assertNotEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
-            self.assertIn(b"No rule to make target 'state-audit'", rejected.stdout + rejected.stderr)
+            self.assertMissingMakeTarget(rejected, "state-audit")
             self.assertNotIn(b"WIP checkpoint:", rejected.stdout + rejected.stderr)
             self.assertEqual(command(self.repo, "git", "ls-remote", "origin", destination).stdout, b"")
         mixed_refs = ("refs/heads/checkpoint/mixed", "refs/heads/review/mixed")
         rejected = command(self.repo, "git", "push", "origin",
                            *("HEAD:" + ref for ref in mixed_refs), ok=False)
         self.assertNotEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
-        self.assertIn(b"No rule to make target 'state-audit'", rejected.stdout + rejected.stderr)
+        self.assertMissingMakeTarget(rejected, "state-audit")
         self.assertEqual(command(self.repo, "git", "ls-remote", "origin", *mixed_refs).stdout, b"")
         self.assertFalse((self.repo / ".git/praetor-receipts").exists())
         self.assertFalse((self.repo / ".standards-receipt.json").exists())

@@ -224,12 +224,18 @@ func SyncRepositoryDocs(ctx context.Context, repoPath string, opts DistillOption
 
 	for i := 0; i < limit; i++ {
 		if syncCtx.Err() != nil {
-			truncated = true
+			truncated, limit = true, i
 			break
 		}
-		if syncErr := syncOnePackage(syncCtx, repoPath, refs[i], cat, opts); syncErr != nil {
+		syncErr := syncOnePackage(syncCtx, repoPath, refs[i], cat, opts)
+		if syncErr == nil {
+			continue
+		}
+		if !stoppedByBound(syncErr) {
 			return nil, syncErr
 		}
+		truncated, limit = true, i
+		break
 	}
 
 	if err := SaveCatalog(repoPath, cat); err != nil {
@@ -239,6 +245,19 @@ func SyncRepositoryDocs(ctx context.Context, repoPath string, opts DistillOption
 		return cat, fmt.Errorf("%w: synced %d of %d declared dependencies", ErrSyncTruncated, limit, len(refs))
 	}
 	return cat, nil
+}
+
+// stoppedByBound reports whether a harvest failed because the sync deadline elapsed or
+// the caller cancelled, rather than because the harvest itself failed.
+//
+// The deadline can elapse inside a harvest as easily as between two of them: whether the
+// loop notices at its own boundary depends on the platform's timer granularity, which on
+// windows-latest is coarse enough to land mid-package. Both are the same event -- the
+// bound stopped the sync -- so both save what was harvested and report ErrSyncTruncated,
+// which is what SyncRepositoryDocs documents. Any other failure is a real error and is
+// returned as one.
+func stoppedByBound(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
 // syncOnePackage harvests, compresses, and writes documentation for one declared
