@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/cordanaLLM/praetor/internal/dedupe"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -70,7 +72,8 @@ func CallGit() {
 	// ambient environment and the inspected repository's configuration, which reproduced
 	// the defect the rule exists to prevent; util.RunGitProbe alone is read-only by
 	// construction, so a clone or a commit that follows it loses its hooks at a five-second
-	// cap. .golangci.yml forbidigo names the same pair for the same call.
+	// cap. .golangci.yml forbidigo names the same pair for the same call, and
+	// TestScanRepo_Boundary_SprawlAdviceMatchesTheLinterRule binds the two files.
 	replacement := report.SprawlItems[0].Replacement
 	for _, want := range []string{"util.RunGit(", "util.RunGitProbe("} {
 		if !strings.Contains(replacement, want) {
@@ -344,5 +347,108 @@ func TestCadenceRejectsLinkedStateDirectory(t *testing.T) {
 	entries, err := os.ReadDir(outside)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("cadence write modified external directory: %v, %v", entries, err)
+	}
+}
+
+// golangciConfig is the slice of .golangci.yml this package's advice has to agree with:
+// linters.settings.forbidigo.forbid, where each entry carries the pattern it forbids, the
+// package the symbol comes from, and the message golangci-lint prints instead.
+type golangciConfig struct {
+	Linters struct {
+		Settings struct {
+			Forbidigo struct {
+				Forbid []struct {
+					Pattern string `yaml:"pattern"`
+					Pkg     string `yaml:"pkg"`
+					Msg     string `yaml:"msg"`
+				} `yaml:"forbid"`
+			} `yaml:"forbidigo"`
+		} `yaml:"settings"`
+	} `yaml:"linters"`
+}
+
+// auditedHelpers returns the util helper names a piece of advice recommends, read out of its
+// "util.Name(" call forms. The names are derived from the advice rather than written down a
+// third time, so an assertion built on them follows whatever the advice says.
+func auditedHelpers(advice string) []string {
+	parts := strings.Split(advice, "util.")
+	names := make([]string, 0, len(parts))
+	for _, part := range parts[1:] {
+		if end := strings.Index(part, "("); end > 0 {
+			names = append(names, part[:end])
+		}
+	}
+	return names
+}
+
+// forbiddenExecMessage returns the forbidigo message .golangci.yml prints for a direct
+// os/exec constructor, and reports whether the rule is still there at all.
+func forbiddenExecMessage(t *testing.T) (string, bool) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", ".golangci.yml"))
+	if err != nil {
+		t.Fatalf("read .golangci.yml: %v", err)
+	}
+	var cfg golangciConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("parse .golangci.yml: %v", err)
+	}
+	for _, rule := range cfg.Linters.Settings.Forbidigo.Forbid {
+		if strings.Contains(rule.Pkg, "os/exec") && strings.Contains(rule.Pattern, "Command") {
+			return rule.Msg, true
+		}
+	}
+	return "", false
+}
+
+// TestScanRepo_Boundary_SprawlAdviceMatchesTheLinterRule binds the two copies of one piece
+// of advice so they cannot drift apart silently.
+//
+// The same bare git call is answered twice: internal/dedupe prints SprawlItem.Replacement
+// when the sweep runs, and .golangci.yml forbidigo prints its own message when the linter
+// runs. gitSprawlReplacement's comment asserted the two carry the same helper pair and
+// nothing checked it, which is how the earlier contradiction (the linter naming one helper,
+// the sweep naming another) got in. This reads the pair out of the scan's own advice and
+// requires the linter message to name every helper in it: drop one from either file and this
+// fails (HISS-20).
+func TestScanRepo_Boundary_SprawlAdviceMatchesTheLinterRule(t *testing.T) {
+	tmp := t.TempDir()
+	source := `package test
+
+import "os/exec"
+
+func CallGit() {
+	_ = exec.Command("git", "status")
+}
+`
+	if err := os.WriteFile(filepath.Join(tmp, "sprawl.go"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := dedupe.ScanRepo(tmp)
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if len(report.SprawlItems) != 1 {
+		t.Fatalf("SprawlItems = %+v, want exactly the bare git call", report.SprawlItems)
+	}
+
+	helpers := auditedHelpers(report.SprawlItems[0].Replacement)
+	// Boundary: fewer than two helpers means the advice stopped naming both audited entry
+	// points, which is the defect this pair of assertions exists for -- not a reason to pass.
+	if len(helpers) < 2 {
+		t.Fatalf("sprawl advice %q names %v, want both audited entry points",
+			report.SprawlItems[0].Replacement, helpers)
+	}
+
+	msg, ok := forbiddenExecMessage(t)
+	if !ok {
+		t.Fatal("no .golangci.yml forbidigo rule forbids the os/exec constructors any more")
+	}
+	for _, helper := range helpers {
+		if !strings.Contains(msg, helper) {
+			t.Errorf("the forbidigo message for exec.Command does not name util.%s: %q vs the sweep's %q",
+				helper, msg, report.SprawlItems[0].Replacement)
+		}
 	}
 }

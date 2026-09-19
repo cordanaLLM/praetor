@@ -169,7 +169,10 @@ func checkUtilitySprawl(fset *token.FileSet, node *ast.File, relPath string, rep
 // scrubs that environment but is read-only by construction (internal/util/git_probe.go
 // forces a five-second deadline and core.hooksPath=devnull), so recommending it alone tells
 // a clone, fetch or commit to silently drop its hooks and die at five seconds. The
-// .golangci.yml forbidigo rule for the same call carries the same pair.
+// .golangci.yml forbidigo rule for the same call names the same pair (plus util.RunCommand,
+// which answers for a non-git binary), and
+// TestScanRepo_Boundary_SprawlAdviceMatchesTheLinterRule reads this constant's helper names
+// and requires that message to carry each of them, so the two cannot drift apart unnoticed.
 const gitSprawlReplacement = "util.RunGit(ctx, repoPath, ...), or util.RunGitProbe(ctx, repoPath, maxBytes, ...) " +
 	"for a read-only inspection of a repository Praetor does not own"
 

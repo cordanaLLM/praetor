@@ -1,8 +1,6 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -24,13 +22,13 @@ func Add(a, b int) int {
 }
 `
 
-// writeDedupeFixture puts one Go source into a fresh directory and returns it.
-func writeDedupeFixture(t *testing.T, name, source string) string {
+// dedupeFixtureDir puts one source file into a fresh directory and returns the directory.
+// The write itself is writeFixtureFile (g02_helpers_test.go), the package's one fixture
+// writer; this adds only the t.TempDir() every caller here wants (HISS-19).
+func dedupeFixtureDir(t *testing.T, name, source string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o600); err != nil {
-		t.Fatalf("write %s: %v", name, err)
-	}
+	writeFixtureFile(t, dir, name, source)
 	return dir
 }
 
@@ -40,7 +38,7 @@ func writeDedupeFixture(t *testing.T, name, source string) string {
 // threshold the repository missed; the verdict is the finding lists, so a single sprawl item
 // fails the scan at a score of 95 and the reader needs the count, not the percentage.
 func TestRunDedupeScan_Negative_FailureNamesTheFindings(t *testing.T) {
-	dir := writeDedupeFixture(t, "sprawl.go", dedupeSprawlSource)
+	dir := dedupeFixtureDir(t, "sprawl.go", dedupeSprawlSource)
 
 	err := runDedupeScan([]string{dir})
 	if err == nil {
@@ -59,7 +57,7 @@ func TestRunDedupeScan_Negative_FailureNamesTheFindings(t *testing.T) {
 // TestRunDedupeScan_Positive_CleanRepositoryPasses checks that the stricter verdict did not
 // turn every scan into a failure.
 func TestRunDedupeScan_Positive_CleanRepositoryPasses(t *testing.T) {
-	dir := writeDedupeFixture(t, "clean.go", dedupeCleanSource)
+	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
 
 	if err := runDedupeScan([]string{dir}); err != nil {
 		t.Fatalf("a clean repository must pass: %v", err)
@@ -70,7 +68,7 @@ func TestRunDedupeScan_Positive_CleanRepositoryPasses(t *testing.T) {
 // the detector never opened is neither a pass nor a failure, so the command returns nil
 // without claiming the repository is clean.
 func TestRunDedupeScan_Boundary_NoGoSourcesIsNotAVerdict(t *testing.T) {
-	dir := writeDedupeFixture(t, "README.md", "# not go\n")
+	dir := dedupeFixtureDir(t, "README.md", "# not go\n")
 
 	if err := runDedupeScan([]string{dir}); err != nil {
 		t.Fatalf("a repository with no Go sources must not be reported as failing: %v", err)
