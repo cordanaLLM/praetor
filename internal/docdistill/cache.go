@@ -227,22 +227,8 @@ func SyncRepositoryDocs(ctx context.Context, repoPath string, opts DistillOption
 			truncated = true
 			break
 		}
-		ref := refs[i]
-		key := makeDocKey(ref.Name, ref.Version)
-		if _, exists := cat.Packages[key]; exists && !opts.ForceRefresh {
-			continue
-		}
-
-		raw, harvestErr := HarvestDocumentation(syncCtx, ref, opts.OfflineOnly)
-		if harvestErr != nil {
-			return nil, fmt.Errorf("harvest %s@%s: %w", ref.Name, ref.Version, harvestErr)
-		}
-
-		distilled := CompressDocumentation(ref, raw, opts)
-		cat.Packages[key] = *distilled
-
-		if writeErr := writeDistilledDoc(repoPath, distilled); writeErr != nil {
-			return nil, fmt.Errorf("failed to write distilled doc for %s: %w", ref.Name, writeErr)
+		if syncErr := syncOnePackage(syncCtx, repoPath, refs[i], cat, opts); syncErr != nil {
+			return nil, syncErr
 		}
 	}
 
@@ -253,6 +239,31 @@ func SyncRepositoryDocs(ctx context.Context, repoPath string, opts DistillOption
 		return cat, fmt.Errorf("%w: synced %d of %d declared dependencies", ErrSyncTruncated, limit, len(refs))
 	}
 	return cat, nil
+}
+
+// syncOnePackage harvests, compresses, and writes documentation for one declared
+// dependency into cat, skipping it when a cached entry already exists and the
+// caller has not asked to force a refresh. Extracted from SyncRepositoryDocs to
+// keep the loop body's branching out of the outer function's cyclomatic
+// complexity (HISS-04).
+func syncOnePackage(ctx context.Context, repoPath string, ref PackageRef, cat *DocCatalog, opts DistillOptions) error {
+	key := makeDocKey(ref.Name, ref.Version)
+	if _, exists := cat.Packages[key]; exists && !opts.ForceRefresh {
+		return nil
+	}
+
+	raw, harvestErr := HarvestDocumentation(ctx, ref, opts.OfflineOnly)
+	if harvestErr != nil {
+		return fmt.Errorf("harvest %s@%s: %w", ref.Name, ref.Version, harvestErr)
+	}
+
+	distilled := CompressDocumentation(ref, raw, opts)
+	cat.Packages[key] = *distilled
+
+	if writeErr := writeDistilledDoc(repoPath, distilled); writeErr != nil {
+		return fmt.Errorf("failed to write distilled doc for %s: %w", ref.Name, writeErr)
+	}
+	return nil
 }
 
 // AuditDocumentationCoverage evaluates the ratio of declared dependencies with active distilled docs.

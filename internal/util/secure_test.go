@@ -244,7 +244,7 @@ func TestWriteFileAtomic_Negative(t *testing.T) {
 	if err := os.Chmod(locked, 0o555); err != nil {
 		t.Fatalf("chmod locked dir: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) }) // let t.TempDir() clean up afterward
+	t.Cleanup(func() { os.Chmod(locked, 0o755) }) //nolint:errcheck // best-effort; only unblocks t.TempDir()'s own cleanup, a failure here would just leave this one test's temp dir behind
 
 	err := WriteFileAtomic(target, []byte("new content that must never land"), 0o644)
 	if err == nil {
