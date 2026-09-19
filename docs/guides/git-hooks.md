@@ -44,6 +44,11 @@ scope and skipped by per-file linters. Paths are read with NUL delimiters and
 passed as process arguments, including filenames containing spaces or shell text.
 A missing required tool or a failed subprocess blocks the operation.
 
+`yamllint` covers every staged `.yml` and `.yaml` file except a Helm chart template: a file
+under a `templates/` directory whose chart root holds `Chart.yaml`. Those files are Go
+templates that render YAML, so a YAML parser rejects `{{- if }}` before a single rule can
+run. The chart's own `Chart.yaml` and `values.yaml` are ordinary documents and stay linted.
+
 The entire `/.workingdir/` directory is private, Git-ignored workstation state.
 Git metadata checks reject staged additions and changes beneath it, including
 forced staging and submodule entries, before exporting the index. Push checks
