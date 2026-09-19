@@ -14,7 +14,9 @@ no `restore-keys`, and `cachePaths` is both `GOMODCACHE` and `GOCACHE`. Three co
 follow, and this repository had all three:
 
 1. **Every job shares one entry.** Nine workflows resolved to the identical key
-   `setup-go-Linux-x64-ubuntu24-go-1.27.1-73c9e98d…`. On a cold key the job that finishes
+   `setup-go-Linux-x64-ubuntu24-go-1.27.1-73c9e98d…` (measured on `ubuntu-24.04`, which is
+   why the key names `ubuntu24`; the jobs now run on `ubuntu-26.04`, so that exact string is a
+   record of the run, not a key any run produces today). On a cold key the job that finishes
    first writes it. Compliance finishes in 0.8 min and Security in 1.25 min; the verification
    gate takes 13 min. The gate therefore restored a build cache produced by jobs that never
    compile with `-race` and never build a linter.
@@ -36,8 +38,14 @@ different key disciplines, because the two caches want different things:
 
 | Cache | Key | Shared between jobs? |
 | :--- | :--- | :--- |
-| `GOMODCACHE` | `go.sum` hash | Yes — the module set is a pure function of `go.sum` |
-| `GOCACHE` | job name, `go.sum` hash, **commit SHA** | No — jobs compile with different flags |
+| `GOMODCACHE` | runner image, arch, Go version, `go.sum` hash | Yes — the module set is a pure function of `go.sum` |
+| `GOCACHE` | runner image, arch, Go version, job name, `go.sum` hash, **commit SHA** | No — jobs compile with different flags |
+
+Both keys name the runner image, taken from the `ImageOS` variable the runner exports
+(`ubuntu24`, `ubuntu26`, `macos26`, `win25`), and not `runner.os`, which is the literal `Linux`
+on every Ubuntu image. Upstream `setup-go` puts the same field in its key as `linuxVersion`.
+Without it the `ubuntu-24.04` to `ubuntu-26.04` move would have gone on restoring objects built
+against the previous image's toolchain and C library.
 
 The commit SHA in the build-cache key is what makes it roll. Every run misses its primary key,
 so every run *saves*; the `restore-keys` prefixes then hand it the newest cache built by the

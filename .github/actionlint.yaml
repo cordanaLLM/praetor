@@ -2,14 +2,26 @@
 # SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
 #
 # actionlint carries a hard-coded table of GitHub-hosted runner labels
-# (rule_runner_label.go) and rejects anything absent from it. As of actionlint
-# v1.7.12 that table stops at ubuntu-24.04, while actions/runner-images already
-# publishes the Ubuntu 26.04 images. Declaring the labels here is the mechanism
-# actionlint documents for labels it does not know; it suppresses nothing else.
+# (rule_runner_label.go) and rejects anything absent from it. Measured against the
+# actionlint on PATH (v1.7.12) by deleting this file and re-running it:
 #
-# Delete the two entries once actionlint ships them upstream, and confirm the
-# workflows still lint clean rather than assuming they do.
+#   .../ci.yml:26:14: label "ubuntu-26.04" is unknown. available labels are
+#   ... "ubuntu-24.04", ... "macos-26-intel", ... "macos-26", ...
+#   if it is a custom label for self-hosted runner, set list of labels in
+#   actionlint.yaml config file [runner-label]
+#
+# So the table stops at ubuntu-24.04 for Ubuntu while already carrying macos-26 and
+# macos-26-intel, which is why only the Ubuntu label needs declaring. The error text
+# names self-hosted-runner.labels itself; actionlint offers no other way to teach it a
+# label, and the declaration suppresses nothing else.
+#
+# .config/lefthook/scripts/checks.py invokes whatever actionlint is on PATH, so the
+# version above is a measurement, not a pin. Re-run that same check rather than
+# trusting it: delete this file, run actionlint over .github/workflows, and if nothing
+# reports ubuntu-26.04 then upstream has shipped the label and this file can go.
+#
+# Only labels a workflow in this tree actually uses are declared. ubuntu-26.04-arm was
+# declared and used nowhere, which is a claim about the repository that was not true.
 self-hosted-runner:
   labels:
     - ubuntu-26.04
-    - ubuntu-26.04-arm

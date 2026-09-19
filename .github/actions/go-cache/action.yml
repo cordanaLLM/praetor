@@ -25,6 +25,12 @@ runs:
         set -euo pipefail
         echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
         echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+        # runner.os is the literal "Linux" on every Ubuntu image, so it cannot separate
+        # 24.04 from 26.04. ImageOS ("ubuntu24", "ubuntu26", "macos26", "win25") is what
+        # the runner exports for exactly this, and it is the field upstream setup-go puts
+        # in its own key as linuxVersion. Without it an image bump keeps restoring objects
+        # built against the previous toolchain and C library.
+        echo "image=${ImageOS:-unknown}" >> "$GITHUB_OUTPUT"
 
     # Keyed on go.sum alone: the module set is a pure function of it, so every job wants the
     # same entry and sharing is correct. The restore-key lets a changed go.sum start from the
@@ -33,9 +39,9 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ steps.directories.outputs.modules }}
-        key: praetor-gomod-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ hashFiles('**/go.sum') }}
+        key: praetor-gomod-${{ steps.directories.outputs.image }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ hashFiles('**/go.sum') }}
         restore-keys: |
-          praetor-gomod-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-
+          praetor-gomod-${{ steps.directories.outputs.image }}-${{ runner.arch }}-go${{ inputs.go-version }}-
 
     # The commit SHA is in the key on purpose. Without it the key is stable, the restore is an
     # exact hit, and actions/cache then skips the save -- so the entry freezes at whatever the
@@ -45,7 +51,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ steps.directories.outputs.build }}
-        key: praetor-gobuild-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+        key: praetor-gobuild-${{ steps.directories.outputs.image }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
         restore-keys: |
-          praetor-gobuild-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-${{ hashFiles('**/go.sum') }}-
-          praetor-gobuild-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-
+          praetor-gobuild-${{ steps.directories.outputs.image }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-${{ hashFiles('**/go.sum') }}-
+          praetor-gobuild-${{ steps.directories.outputs.image }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-

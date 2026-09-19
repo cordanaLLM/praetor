@@ -1,0 +1,3 @@
+type: changed
+title: "Adopted repositories move with the baseline: praetor-adopt installs Go 1.27 by default, scaffolded rustfmt.toml declares edition 2024, the scaffolded Dockerfile runtime is a digest-pinned distroless static-debian13, and the Darwin runner defaults become macos-26 and macos-26-intel"
+breaking: true
