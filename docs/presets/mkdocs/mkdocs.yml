@@ -60,7 +60,7 @@ markdown_extensions:
 nav:
   - Overview: index.md
   - Standards:
-      - HISS-16 Specification: standards/hiss-16-spec.md
+      - HISS Specification: standards/hiss-spec.md
   - Guides:
       - Onboarding: guides/onboarding.md
       - Archetype Authoring: guides/archetype-authoring.md

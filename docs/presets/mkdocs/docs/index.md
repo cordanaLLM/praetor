@@ -14,10 +14,10 @@ flowchart TD
     CONFIG[".standards.yaml"] --> COMPILER["standardsctl compile-context"]
     COMPILER --> AGENTS["AGENTS.md (Canonical)"]
     AGENTS --> VENDORS["CLAUDE.md / Cursor / Copilot"]
-    CONFIG --> CI["CI Status Checks (HISS-16)"]
+    CONFIG --> CI["CI Status Checks (HISS)"]
 ```
 
 ## Highlights
-- **High-Integrity Systems Standard (HISS-16)**: Aerospace-derived software invariants.
+- **High-Integrity Systems Standard (HISS)**: Aerospace-derived software invariants.
 - **Composable Lattice Architecture**: Highest standard wins deterministic join-semilattice.
 - **SEO & Search Optimized**: Automated sitemaps, JSON-LD Schema.org metadata, and zero CLS styling.

@@ -9,7 +9,7 @@
   *Part of the [CordanaLLM](https://github.com/CordanaLLM) Deterministic Infrastructure Ecosystem*
 
   [![Go Version](https://img.shields.io/badge/Go-1.27%2B-00ADD8?style=for-the-badge&logo=go)](https://golang.org)
-  [![HISS-16 Compliance](https://img.shields.io/badge/Standard-HISS--16_Lattice-06B6D4?style=for-the-badge&logo=nasa)](https://cordanallm.github.io/praetor/standards/hiss-16-spec/)
+  [![HISS Compliance](https://img.shields.io/badge/Standard-HISS_Lattice-06B6D4?style=for-the-badge&logo=nasa)](https://cordanallm.github.io/praetor/standards/hiss-spec/)
   [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub_Sponsors-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/CordanaLLM)
   [![Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white)](https://ko-fi.com/cordana)
   [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP_Server-10B981?style=for-the-badge)](https://modelcontextprotocol.io)
@@ -53,7 +53,7 @@ Praetor and the CordanaLLM ecosystem are open-source, high-integrity infrastruct
 
 </div>
 
-*Every contribution directly fuels independent AI safety research, Go toolchain development, and HISS-16 verification engines.*
+*Every contribution directly fuels independent AI safety research, Go toolchain development, and HISS verification engines.*
 
 ---
 
@@ -85,7 +85,7 @@ flowchart LR
 | :--- | :--- | :--- |
 | **Universal Context Transpiler** | Single canonical `AGENTS.md` compiled into vendor targets ($\le 300$ lines for `CLAUDE.md`). | `praetorctl compile-context` |
 | **Multi-Transport MCP Bridge** | `stdio`, Streamable HTTP, and SSE Model Context Protocol server with tool schema translation. | `standards-mcp` |
-| **HISS-16 Lattice Engine** | Composable archetypes resolved via Join-Semilattice supremum ("Highest Standard Wins"). | `internal/config` |
+| **HISS Lattice Engine** | Composable archetypes resolved via Join-Semilattice supremum ("Highest Standard Wins"). | `internal/config` |
 | **Hermetic Devcontainers** | Reproducible multi-architecture dev environments pre-wiring toolchains and Editor setups. | `praetorctl devcontainer` |
 | **Monotonic Debt Ratcheting** | Baselined legacy debt with non-increasing debt invariants and touched-file clean rules. | `praetorctl baseline` |
 | **Supply Chain Provenance** | SLSA Level 3 attestations, Syft SBOMs, and Sigstore Cosign keyless signatures. | GoReleaser + Actions OIDC |
@@ -93,9 +93,9 @@ flowchart LR
 
 ---
 
-## 🛡️ HISS-16 Architectural Invariants
+## 🛡️ HISS Architectural Invariants
 
-Praetor enforces the **High-Integrity Systems Standard (HISS-16)**—adapting NASA-JPL flight-software rigor to modern Go engineering:
+Praetor enforces the **High-Integrity Systems Standard (HISS)**—adapting NASA-JPL flight-software rigor to modern Go engineering:
 
 * **HISS-01 (Acyclic Control Flow)**: Recursion is strictly prohibited; call graph must be a DAG.
 * **HISS-02 (Bounded Loops & Timeouts)**: Bounded iterations and explicit context deadlines on all network and disk I/O.
@@ -159,7 +159,7 @@ go run ./cmd/standardsctl compile-context --verify
 ```
 
 ### 3. Repository Governance Audit
-Inspect repository compliance against declared profiles and the HISS-16 baseline:
+Inspect repository compliance against declared profiles and the HISS baseline:
 ```bash
 go run ./cmd/standardsctl audit
 ```

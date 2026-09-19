@@ -6,7 +6,7 @@
 
 ---
 
-## 1. High-Integrity Systems Standard (HISS-16) Checklist
+## 1. High-Integrity Systems Standard (HISS) Checklist
 
 All PRs must strictly adhere to the declared HISS invariants before merging:
 

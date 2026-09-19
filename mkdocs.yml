@@ -68,7 +68,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Governance & Standards:
-      - HISS-16 Formal Specification: standards/hiss-16-spec.md
+      - HISS Formal Specification: standards/hiss-spec.md
       - HISS Refinement Audit: research/hiss-rule-refinement.md
       - Model Routing & Capacity Arbiter: standards/model-routing-and-fanout.md
       - Context Optimizer: context-optimizer.md
