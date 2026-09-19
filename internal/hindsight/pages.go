@@ -24,7 +24,7 @@ func buildComponentMapPage() string {
 	lines = append(lines, "# Component Map", "", "## Subsystems & Architecture", "")
 	lines = append(lines, "| Subsystem | Domain | Responsibility |", "| :--- | :--- | :--- |")
 	lines = append(lines, "| `internal/compiler` | Context Transpilation | Transpiles `AGENTS.md` into IDE instructions. |")
-	lines = append(lines, "| `internal/hiss` | AST Invariant Analysis | Sweeps AST against HISS-01 to HISS-16 standards. |")
+	lines = append(lines, "| `internal/hiss` | AST Invariant Analysis | Sweeps AST against HISS-01 to HISS-21 standards. |")
 	lines = append(lines, "| `internal/flavor` | Archetype Governance | Enforces archetype toolchains and configurations. |")
 	lines = append(lines, "| `internal/dedupe` | Clone Detection | Normalized AST clone sweeping and cadence engine. |")
 	lines = append(lines, "| `internal/state` | Session Integrity | Developer working state, Bug Ledger, and Questions. |")

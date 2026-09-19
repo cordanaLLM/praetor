@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -14,6 +15,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/util"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -56,8 +58,52 @@ func reconcileLabels(ctx context.Context, rootDir string) error {
 	if err != nil {
 		return fmt.Errorf(".config/labels.yaml validation failed: %w", err)
 	}
+	if exists {
+		if _, err = reconcileLabelDescriptions(ctx, labelsPath, data); err != nil {
+			return fmt.Errorf("failed updating managed label descriptions: %w", err)
+		}
+	}
 	fmt.Printf("  [OK] Labels verified (.config/labels.yaml: schema and %d unique labels; remote labels not checked)\n", count)
 	return nil
+}
+
+// managedLabelDescriptions holds the canonical description sync.go itself authors for a
+// label, keyed by name. A repository's own labels, colors and comments are never touched;
+// only a drifted managed description is rewritten, and only that description's bytes.
+var managedLabelDescriptions = map[string]string{
+	"hiss-violation": "Code introduces a regression against HISS invariants",
+}
+
+// reconcileLabelDescriptions rewrites a managed label's description in place when the text
+// on disk has drifted from canonical (e.g. wording from before the HISS standard rename),
+// leaving every other byte of the file untouched. It returns the bytes now on disk so the
+// caller reports against what it actually wrote rather than re-reading. Idempotent: nothing
+// to replace once the canonical text is already present.
+func reconcileLabelDescriptions(ctx context.Context, labelsPath string, data []byte) ([]byte, error) {
+	var taxonomy struct {
+		Labels []forge.Label `yaml:"labels"`
+	}
+	if err := yaml.Unmarshal(data, &taxonomy); err != nil {
+		return data, fmt.Errorf("labels parse for description reconciliation: %w", err)
+	}
+	updated := data
+	changed := false
+	for _, label := range taxonomy.Labels {
+		canonical, managed := managedLabelDescriptions[label.Name]
+		if !managed || label.Description == canonical || !bytes.Contains(updated, []byte(label.Description)) {
+			continue
+		}
+		updated = bytes.Replace(updated, []byte(label.Description), []byte(canonical), 1)
+		changed = true
+	}
+	if !changed {
+		return data, nil
+	}
+	if err := contextopt.ReplaceSnapshot(ctx, labelsPath, updated, contextopt.ReplaceOptions{Expected: data, Exists: true, Mode: syncFilePerm}); err != nil {
+		return data, err
+	}
+	fmt.Println("  [FIX] Updated managed label description(s) in .config/labels.yaml")
+	return updated, nil
 }
 
 func reconcileRuleset(ctx context.Context, rootDir string, bp config.BranchProtectionPolicy, contexts []string) error {
@@ -221,7 +267,7 @@ version: 1
 labels:
   - name: "hiss-violation"
     color: "d73a4a"
-    description: "Code introduces a regression against HISS-16 invariants"
+    description: "Code introduces a regression against HISS invariants"
 
   - name: "hiss-waiver"
     color: "fbca04"

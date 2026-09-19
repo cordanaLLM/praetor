@@ -34,7 +34,7 @@ func TestRunGoldensPerDialect(t *testing.T) {
 		}
 		deny := serve(t, client, "pre-tool", root, denied)
 		if deny.ExitCode != denyExit(client) || len(deny.Stdout) != 0 ||
-			!strings.HasPrefix(string(deny.Stderr), "[BLOCKED BY HISS-16] ") || !bytes.HasSuffix(deny.Stderr, []byte("\n")) {
+			!strings.HasPrefix(string(deny.Stderr), "[BLOCKED BY HISS] ") || !bytes.HasSuffix(deny.Stderr, []byte("\n")) {
 			t.Errorf("%s deny golden: %+v", client, deny)
 		}
 		invalid := serve(t, client, "pre-tool", root, []byte("{}"))

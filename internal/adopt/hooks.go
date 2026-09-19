@@ -71,7 +71,7 @@ func samePath(a, b string) bool {
 func lefthookGovernedCommand(args string) string {
 	return "if command -v praetorctl >/dev/null 2>&1; then praetorctl " + args +
 		"; elif [ -d ./cmd/standardsctl ]; then go run ./cmd/standardsctl " + args +
-		"; else echo HISS-16 governance hook cannot run because praetorctl is not installed >&2; exit 1; fi"
+		"; else echo HISS governance hook cannot run because praetorctl is not installed >&2; exit 1; fi"
 }
 
 // optionalToolCommand renders a lefthook run line for a third-party tool that is skipped
@@ -92,7 +92,7 @@ func buildLefthookYAMLFor(checkpoint bool) string {
 	if checkpoint {
 		checkpointJobs = "agent-checkpoint-tool:\n  commands:\n    checkpoint:\n      run: python3 -B .config/lefthook/scripts/checkpoint.py --event tool --json --marker\nagent-checkpoint-stop:\n  commands:\n    checkpoint:\n      run: python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json --marker\n"
 	}
-	return "# Lefthook Configuration (Go 1.27+ & HISS-16 Governance)\n" +
+	return "# Lefthook Configuration (Go 1.27+ & HISS Governance)\n" +
 		"# Governance commands fail closed: a failing or missing praetorctl blocks the commit or push.\n" +
 		checkpointJobs + "pre-commit:\n" +
 		"  parallel: true\n" +
@@ -119,7 +119,7 @@ func buildLefthookYAMLFor(checkpoint bool) string {
 // blockEvasionPY is the agent PreToolUse interceptor. It is not a git hook: git skips
 // hooks entirely on --no-verify, so only the agent harness can observe the command.
 const blockEvasionPY = `#!/usr/bin/env python3
-"""Agent PreToolUse evasion interceptor (HISS-16).
+"""Agent PreToolUse evasion interceptor (HISS).
 
 Wire this script as a PreToolUse hook of the agent harness. The harness passes the
 pending tool call as JSON on stdin (the shell command lives at tool_input.command) or
@@ -164,12 +164,12 @@ def pending_command():
 
 def main():
     if os.environ.get("LEFTHOOK") == "0":
-        sys.stderr.write("[BLOCKED BY HISS-16] LEFTHOOK=0 detected in environment.\n")
+        sys.stderr.write("[BLOCKED BY HISS] LEFTHOOK=0 detected in environment.\n")
         sys.exit(BLOCK_EXIT)
     cmd = pending_command()
     for pattern in BLOCKED_PATTERNS:
         if re.search(pattern, cmd):
-            sys.stderr.write(f"[BLOCKED BY HISS-16] Verification evasion prohibited: {pattern}\n")
+            sys.stderr.write(f"[BLOCKED BY HISS] Verification evasion prohibited: {pattern}\n")
             sys.exit(BLOCK_EXIT)
     sys.exit(0)
 
@@ -191,7 +191,7 @@ func buildFallbackPreCommitScript() string {
 		"    standardsctl compile-context --verify\n" +
 		"    standardsctl audit\n" +
 		"else\n" +
-		"    echo '[HISS-16] praetorctl is not installed; refusing to commit unverified changes' >&2\n" +
+		"    echo '[HISS] praetorctl is not installed; refusing to commit unverified changes' >&2\n" +
 		"    exit 1\n" +
 		"fi\n"
 }

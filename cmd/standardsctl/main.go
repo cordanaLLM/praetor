@@ -122,7 +122,7 @@ func printCoreCommands() {
 	fmt.Print("  notebook           Prepare source-grounded planning templates or validate generated drafts\n" +
 		"  planning           Compile a structural planning draft and optionally write private artifacts\n")
 	fmt.Println("  prompt-optimize    Select prompts from comparable held-out model/provider evaluations")
-	fmt.Println("  audit              Audit repository against declared HISS-16 invariants and lockfile")
+	fmt.Println("  audit              Audit repository against declared HISS invariants and lockfile")
 	fmt.Println("  bugs audit         Report bug ledger rows whose recorded location no longer resolves")
 	fmt.Println("  baseline           Inspect or record technical debt infractions")
 	fmt.Println("  devcontainer       Synthesize or verify .devcontainer/devcontainer.json")

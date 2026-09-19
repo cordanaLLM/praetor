@@ -6,7 +6,7 @@
     "active": true
   },
   "redirect_url": "https://standards.cordana.ai/auth/callback",
-  "description": "Autonomous governance bot enforcing HISS-16 invariants, semantic merge conflict resolution, and fleet configuration reconciliation across cordanaLLM repositories.",
+  "description": "Autonomous governance bot enforcing HISS invariants, semantic merge conflict resolution, and fleet configuration reconciliation across cordanaLLM repositories.",
   "public": false,
   "default_permissions": {
     "checks": "write",

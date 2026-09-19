@@ -46,7 +46,7 @@ func budgetFor(event Event) time.Duration {
 func evaluate(ctx context.Context, dialect Dialect, row Registration, in Invocation) (Canonical, Verdict) {
 	canonical, err := decodeCanonical(ctx, dialect, row.Event, in)
 	if err != nil {
-		return Canonical{Event: row.Event}, Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS-16] Invalid hook input: " + err.Error()}
+		return Canonical{Event: row.Event}, Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] Invalid hook input: " + err.Error()}
 	}
 	root, verdict, ok := resolveGovernedRoot(ctx, canonical, in)
 	if !ok {
@@ -76,7 +76,7 @@ func resolveGovernedRoot(ctx context.Context, canonical Canonical, in Invocation
 	root, err := ResolveRoot(ctx, canonical.Workspaces, in.WorkDir)
 	switch {
 	case err != nil:
-		return "", Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS-16] " + err.Error()}, false
+		return "", Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] " + err.Error()}, false
 	case root == "":
 		return "", Verdict{Outcome: Skip, Reason: "no repository"}, false
 	case !Governed(root) && !AppliesEverywhere(in.Settings):
@@ -125,7 +125,7 @@ func noInterpreterVerdict(event Event) Verdict {
 	if event == EventPostTool {
 		return Verdict{Outcome: Skip, Reason: reason}
 	}
-	return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS-16] " + reason}
+	return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] " + reason}
 }
 
 // evaluatePreEdit runs checkpoint_scope.py with the normalised payload it expects: the
@@ -143,12 +143,12 @@ func evaluatePreEdit(ctx context.Context, row Registration, canonical Canonical,
 		"cwd":             root,
 	})
 	if err != nil {
-		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS-16] normalise pre-edit payload: " + err.Error()}
+		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] normalise pre-edit payload: " + err.Error()}
 	}
 	result, runErr := runInterpreter(ctx, argv, root, checkpointScript(root, "checkpoint_scope.py"), nil, payload)
 	_, markerErr := extractMarker(result.Stdout, checkpointScopeMarker)
 	if runErr != nil || markerErr != nil {
-		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS-16] checkpoint scope evaluator failed: " + checkpointFailureReason(runErr, markerErr, result)}
+		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] checkpoint scope evaluator failed: " + checkpointFailureReason(runErr, markerErr, result)}
 	}
 	return Verdict{Outcome: Allow}
 }

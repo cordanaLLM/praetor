@@ -748,7 +748,7 @@ func TestAdopt_GovernanceTextsScaffolded(t *testing.T) {
 		}
 	}
 	content := mustRead(t, filepath.Join(repoPath, "README.md"))
-	if !strings.Contains(content, "HISS--16%20Compliant") {
+	if !strings.Contains(content, "HISS%20Compliant") {
 		t.Errorf("a debt-free repository gets the compliant badge, got:\n%s", content)
 	}
 	if !strings.Contains(content, "## Standards & Governance") || !strings.Contains(content, "# My Awesome Project") {

@@ -12,7 +12,7 @@ repository:
     - "repository-as-code"
     - "ai-agent-governance"
     - "mcp-server"
-    - "hiss-16"
+    - "hiss"
     - "devcontainers"
     - "slsa-level-3"
     - "renovate-presets"

@@ -1,0 +1,3 @@
+type: changed
+title: Name the standard HISS everywhere it means the whole invariant set; HISS-16 now names only the context-integrity invariant
+breaking: false

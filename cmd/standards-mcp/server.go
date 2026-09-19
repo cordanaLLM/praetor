@@ -305,7 +305,7 @@ func (s *Server) createAuditTool() (mcp.Tool, error) {
 		return s.runAuditGates(ctx, p), nil
 	}
 
-	return mcp.NewReadOnlyTool("standards_audit", "Audit repository against declared HISS-16 standards", schema, handler)
+	return mcp.NewReadOnlyTool("standards_audit", "Audit repository against declared HISS standards", schema, handler)
 }
 
 // resolveAuditPaths preserves confinement for both existing and optional audit inputs.
@@ -764,6 +764,14 @@ Failure Action: PR status gate rejection.`,
 	"HISS-19": `Rule: HISS-19 (Reuse Before Writing)
 Formal Specification: One behavior has exactly one implementation. An existing function, loader, parser or command is extended or called rather than reimplemented, and configuration formats are held to the same rule: a second config system beside an existing loader is the same defect. Duplication that is genuinely unavoidable is justified in the commit body.
 Enforcement: 'praetorctl dedupe scan .' function-level clone and utility-sprawl detection, run by 'make dedupe' inside verify-all.
+Failure Action: Verification gate rejection.`,
+	"HISS-20": `Rule: HISS-20 (Replayable Enforcement Evidence)
+Formal Specification: Every rule carries fixtures replayed in both directions: a claim of enforcement must report each of its positive fixtures, and a claim of absence must leave its gap fixtures undetected. A coverage claim is reproducible, never asserted.
+Enforcement: 'praetorctl hiss coverage --verify', run inside verify-all against '.config/hiss/coverage.yaml'.
+Failure Action: Verification gate rejection.`,
+	"HISS-21": `Rule: HISS-21 (Platform Neutrality)
+Formal Specification: Gates, hooks and emitted templates run on Linux, macOS and Windows, or declare the platform they require and skip with a stated reason where it is absent. A gate that cannot run is not a passing gate.
+Enforcement: Platform Neutrality matrix in CI.
 Failure Action: Verification gate rejection.`,
 }
 

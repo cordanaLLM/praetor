@@ -43,7 +43,7 @@ const agentHarnessFooterTemplate = harnessFooterHeading + `
 # Recompile and verify cross-agent context outputs
 praetorctl compile-context --verify
 
-# Audit repository against declared HISS-16 standards
+# Audit repository against declared HISS standards
 praetorctl audit
 
 # Run all formatting, linting, and security gates
@@ -217,7 +217,7 @@ func resolveAgentsContent(s *adoptSession) (string, error) {
 		if err := s.write(full, []byte(harness), filePerm); err != nil {
 			return "", err
 		}
-		s.report.recordCreated(agentsFile, "Synthesized canonical Praetor Agent Operating Harness and HISS-16 invariants")
+		s.report.recordCreated(agentsFile, "Synthesized canonical Praetor Agent Operating Harness and HISS invariants")
 		return harness, nil
 	}
 	existingBytes, err := readRepoFile(full)
@@ -248,7 +248,7 @@ func mergeExistingAgentsContent(s *adoptSession, full, existing, harness string)
 		if err := s.write(full, []byte(merged), filePerm); err != nil {
 			return "", err
 		}
-		s.report.recordReconciledAs(agentsFile, actionMerge, "Merged Praetor Agent Operating Harness & HISS-16 directives above existing instructions")
+		s.report.recordReconciledAs(agentsFile, actionMerge, "Merged Praetor Agent Operating Harness & HISS directives above existing instructions")
 		return merged, nil
 	}
 	if !s.opts.Force {

@@ -2,7 +2,7 @@
 > Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine.
 
 ## Core Governance & Invariants
-- [HISS-16 Formal Specification](standards/hiss-16-spec.md): Complete specification of HISS-01 through HISS-16 invariants.
+- [HISS Formal Specification](standards/hiss-spec.md): Complete specification of HISS-01 through HISS-21 invariants.
 - [Model Routing & Capacity Arbiter](standards/model-routing-and-fanout.md): Orchestration and fallback cascade for frontier and open models.
 - [Agent Operating Harness](https://github.com/CordanaLLM/praetor/blob/main/AGENTS.md): Canonical single-source-of-truth instructions transpiled into vendor harnesses.
 - [Archetype Authoring](guides/archetype-authoring.md): Archetype authoring, lattice joins, and profile manifests.

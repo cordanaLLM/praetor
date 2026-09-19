@@ -9,7 +9,7 @@ title: Praetor - Fleet Governance Engine
 <div align="center" markdown>
 
 [![Go Version](https://img.shields.io/badge/Go-1.27+-00ADD8?style=flat-square&logo=go)](https://go.dev/)
-[![HISS-16 Verified](https://img.shields.io/badge/HISS--16-Verified-0e8a16?style=flat-square&logo=shield)](standards/hiss-16-spec.md)
+[![HISS Verified](https://img.shields.io/badge/HISS-Verified-0e8a16?style=flat-square&logo=shield)](standards/hiss-spec.md)
 [![License: EUPL 1.2](https://img.shields.io/badge/License-EUPL_1.2-blue?style=flat-square)](https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12)
 [![Polar.sh](https://img.shields.io/badge/Polar.sh-Feature_Bounties-000000?style=flat-square&logo=polar)](sponsoring.md)
 [![llms.txt Enabled](https://img.shields.io/badge/llms.txt-Enabled-0075ca?style=flat-square)](llms.txt)
@@ -31,7 +31,7 @@ title: Praetor - Fleet Governance Engine
 | Pillar | Subsystem | Responsibility |
 | :--- | :--- | :--- |
 | **Pillar I** | `standardsctl compile-context` | Canonical single-source-of-truth context transpiler compiling `AGENTS.md` into Claude, Cursor, Copilot, Windsurf, Codex, and Gemini formats (< 300 LOC budget). |
-| **Pillar II** | `standardsctl audit` | Comprehensive static analyzer sweeping source code, AST, rulesets, and baselines against High-Integrity Systems Standards (**HISS-01** through **HISS-16**). |
+| **Pillar II** | `standardsctl audit` | Comprehensive static analyzer sweeping source code, AST, rulesets, and baselines against the High-Integrity Systems Standard (**HISS-01** through **HISS-21**). |
 | **Pillar III** | `standards-mcp` | Model Context Protocol server exposing multi-transport tooling (`stdio`, `http`, `sse`) for autonomous agents. |
 | **Pillar IV** | `standardsctl sync` & `plan` | Declarative repository-as-code reconciler for GitHub branch rulesets, merge policies, and label taxonomies. |
 | **Pillar V** | `internal/sentinel` | Workstation resource guardian monitoring RAM, VRAM, and disk pressure before triggering local frontier model inference. |

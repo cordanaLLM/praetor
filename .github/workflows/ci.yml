@@ -108,7 +108,7 @@ jobs:
           fi
           echo "Go formatting clean."
 
-      - name: Enforce Linear History (HISS-16 & Branch Protection)
+      - name: Enforce Linear History (HISS & Branch Protection)
         if: github.event_name == 'pull_request'
         run: |
           MERGE_COMMITS=$(git rev-list --min-parents=2 HEAD ^origin/${{ github.base_ref }} || true)

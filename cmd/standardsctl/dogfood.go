@@ -113,7 +113,7 @@ func printDogfoodSummary(rep *dogfood.DogfoodReport) {
 	}
 
 	if rep.SelfAuditPassed {
-		fmt.Println("  [PASS] Host repository satisfies all HISS-16 invariants (0 infractions)")
+		fmt.Println("  [PASS] Host repository satisfies all HISS invariants (0 infractions)")
 	} else {
 		fmt.Println("  [WARN] Host repository has active unbaselined HISS infractions")
 	}

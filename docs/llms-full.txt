@@ -3,7 +3,7 @@
 
 ---
 
-## 1. High-Integrity Systems Standards (HISS-16) Formal Specification
+## 1. High-Integrity Systems Standard (HISS) Formal Specification
 
 | Invariant | Scope | Rule Description | Enforcement | Failure Action |
 | :--- | :--- | :--- | :--- | :--- |
@@ -21,6 +21,11 @@
 | **HISS-14** | Append-Only ABI | Public API surface changes must be append-only. Any breaking change must include `!` in conventional commit and a mandatory `Migration:` footer. | ABI diff scanner | PR check failure |
 | **HISS-15** | 3D Testing Discipline | Every public interface must implement automated tests across 3 dimensions: Positive, Negative, and Boundary ($\ge 2$ checks/dim). | Coverage gate | PR merge blocker |
 | **HISS-16** | Context Integrity | Single canonical `AGENTS.md` operating harness transpiled to vendor formats (< 300 LOC budget). Manual edits to vendor files prohibited. | `standardsctl compile-context --verify` | Pre-commit blocker |
+| **HISS-17** | State Ledger Discipline | Turn start reads `praetorctl state status` and `.workingdir/OPEN.md`, never the whole `STATE.md`; tasks tracked via `standardsctl state task`; turn end runs `standardsctl state sync .`. | Pre-commit / CI state audit | Gate rejection |
+| **HISS-18** | CI Efficiency | Diff-aware gating: `standardsctl ci filter` skips heavy race and security gates on docs-only or state-only changes. | CI filter step | Optimization gate |
+| **HISS-19** | Reuse Before Writing | One behavior has exactly one implementation; an existing function, loader, parser or command is extended or called rather than reimplemented. | `praetorctl dedupe scan .` | Gate rejection |
+| **HISS-20** | Replayable Enforcement Evidence | Every rule carries fixtures replayed in both directions; a coverage claim is reproducible, never asserted. | `praetorctl hiss coverage --verify` | Gate rejection |
+| **HISS-21** | Platform Neutrality | Gates, hooks and emitted templates run on Linux, macOS and Windows, or skip with a stated reason; a gate that cannot run is not a passing gate. | Platform Neutrality matrix in CI | Gate rejection |
 
 ---
 
@@ -40,7 +45,7 @@ repository:
     - "repository-as-code"
     - "ai-agent-governance"
     - "mcp-server"
-    - "hiss-16"
+    - "hiss"
     - "devcontainers"
     - "slsa-level-3"
     - "renovate-presets"

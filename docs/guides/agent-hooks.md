@@ -252,7 +252,7 @@ model this section shares with `complexity`.
 **No interpreter resolves.** `pre-edit` and `stop` fail closed (deny); `post-tool` can only
 annotate, so it is a stated skip. A `stop` deny after a Python failure reads `checkpoint
 evaluator unavailable: no Python interpreter` the same way a due checkpoint reads `Praetor
-checkpoint due: …`; both are `[BLOCKED BY HISS-16]` on `claude`/`codex`/`gemini`.
+checkpoint due: …`; both are `[BLOCKED BY HISS]` on `claude`/`codex`/`gemini`.
 
 **`stop` state verification.** Before the checkpoint itself, `stop` calls the Go state-sync
 verifier (`internal/state.VerifyStateSync`, the function behind `praetorctl state sync

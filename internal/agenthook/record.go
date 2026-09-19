@@ -34,10 +34,10 @@ func recordAndAllow(ctx context.Context, dir string, row Registration, dialect D
 	}
 	payload, err := readBounded(ctx, in.Stdin)
 	if err != nil {
-		return dialect.Encode(canonical, Verdict{Deny, "[BLOCKED BY HISS-16] record mode: " + err.Error()})
+		return dialect.Encode(canonical, Verdict{Deny, "[BLOCKED BY HISS] record mode: " + err.Error()})
 	}
 	if err := writeRecording(dir, row.Client, row.Event, payload); err != nil {
-		return dialect.Encode(canonical, Verdict{Deny, "[BLOCKED BY HISS-16] record mode: " + err.Error()})
+		return dialect.Encode(canonical, Verdict{Deny, "[BLOCKED BY HISS] record mode: " + err.Error()})
 	}
 	return dialect.Encode(canonical, Verdict{Outcome: Allow})
 }
