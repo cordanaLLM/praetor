@@ -6,10 +6,11 @@
 # anybody. That is issue #336, which owns the decision to embed templates/ or
 # delete it; do not treat this header as a claim that the decision was made.
 #
-# Until it is made, the body below is held equal to the ".golangci.yml" case of
-# defaultTemplateContent by reading only. praetorctl dedupe scan compares Go
-# functions and cannot see a YAML/Go-string pair, so no gate enforces the
-# equality this comment asks for.
+# Until it is made, the body below must stay equal to the ".golangci.yml" case of
+# defaultTemplateContent. praetorctl dedupe scan compares Go functions and cannot
+# see a YAML/Go-string pair, so the equality is enforced instead by
+# internal/flavor's TestScaffoldedGolangciConfigEqualsTheShippedTemplate, which
+# byte-compares everything below this header block against the scaffolded file.
 #
 # The "version" key is mandatory from golangci-lint v2 on. A configuration
 # without it is rejected with "unsupported version of the configuration"

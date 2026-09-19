@@ -6,12 +6,19 @@ package flavor_test
 // or rot, without a test noticing. HISS-20 wants the claim replayable in both directions:
 // each case below fails if the value regresses AND fails if the value is merely absent.
 //
-// Three of the four cases are tied to this branch and fail on origin/main unchanged: the
-// Dockerfile runtime, the rustfmt edition, and the equality between the emitted
-// .golangci.yml and templates/go/.golangci.yml.tmpl, which carried the v1 schema until
-// this branch. The assertions on the emitted golangci *content* and on the workflow stubs
-// are characterisation, not new coverage: they hold on origin/main too, and they are here
-// to pin behaviour that nothing else pins, not to demonstrate a change.
+// Three cases are tied to this branch and fail on origin/main unchanged, because
+// defaultTemplateContent there emits an undigested "gcr.io/distroless/static:nonroot", the
+// 2021 rustfmt edition and a template still on the golangci v1 schema:
+//
+//	TestScaffoldedDockerfileNamesADigestPinnedDebian13Runtime
+//	TestScaffoldedRustfmtNamesThe2024Edition
+//	TestScaffoldedGolangciConfigEqualsTheShippedTemplate
+//
+// The remaining two, TestScaffoldedGolangciConfigCarriesTheV2Schema and
+// TestRequiredTemplatesWithoutABodyStillEmitOnlyAStub, are characterisation rather than new
+// coverage: they hold on origin/main too, and they are here to pin behaviour that nothing
+// else pins, not to demonstrate a change. Naming them rather than counting them keeps this
+// header from going stale the next time a case is added.
 
 import (
 	"os"
