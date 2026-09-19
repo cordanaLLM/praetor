@@ -1,0 +1,3 @@
+type: fixed
+title: Verify the whole devcontainer file and follow the declared profiles when selecting features
+breaking: false

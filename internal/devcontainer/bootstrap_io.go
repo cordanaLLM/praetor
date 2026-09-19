@@ -169,11 +169,28 @@ func readBootstrapConfig(ctx context.Context, path string) ([]byte, *DevContaine
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read devcontainer file %s: %w", path, err)
 	}
-	var dc DevContainer
-	if err := json.Unmarshal(data, &dc); err != nil {
+	dc, err := decodeManagedConfig(data, path)
+	if err != nil {
 		return nil, nil, err
 	}
-	return data, &dc, nil
+	return data, dc, nil
+}
+
+// decodeManagedConfig decodes the whole file rather than the fields the schema
+// happens to name. A tolerant decode drops keys such as initializeCommand or
+// runArgs, and verification then compares a re-render of what survived, so a
+// tampered configuration reports as in sync.
+func decodeManagedConfig(data []byte, path string) (*DevContainer, error) {
+	var dc DevContainer
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&dc); err != nil {
+		return nil, fmt.Errorf("devcontainer at %s does not match the managed schema: %w", path, err)
+	}
+	if decoder.More() {
+		return nil, fmt.Errorf("devcontainer at %s carries content after its configuration object", path)
+	}
+	return &dc, nil
 }
 
 func validateBootstrapProjection(dc *DevContainer, spec *BootstrapSpec) error {

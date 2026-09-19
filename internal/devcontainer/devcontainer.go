@@ -23,6 +23,7 @@ const (
 	DefaultDockerfilePath = "../docker/dev/Dockerfile"
 	GoFeatureRef          = "ghcr.io/devcontainers/features/go:1"
 	CommonUtilsFeature    = "ghcr.io/devcontainers/features/common-utils:2"
+	NativeGPUProfile      = "native-gpu-systems"
 )
 
 // BuildConfig defines the container build context and dockerfile location.
@@ -145,9 +146,12 @@ func synthesizeFeatures(selected []config.DevContainerFeature, profiles []string
 		return features
 	}
 
-	// Always wire Go feature for Go-based repositories
-	features[GoFeatureRef] = map[string]interface{}{
-		"version": DefaultGoVersion,
+	// The Go feature follows the declared profiles: the native toolchain rejects
+	// Go tooling in its extensions and settings, so it receives no Go runtime.
+	if !hasNativeGPUProfile(profiles) {
+		features[GoFeatureRef] = map[string]interface{}{
+			"version": DefaultGoVersion,
+		}
 	}
 
 	for i := 0; i < len(facets) && i < MaxLoopLimit; i++ {
@@ -163,6 +167,17 @@ func synthesizeFeatures(selected []config.DevContainerFeature, profiles []string
 	return features
 }
 
+// hasNativeGPUProfile reports whether the declared profiles select the native
+// toolchain, whose container carries C/C++ tooling instead of Go.
+func hasNativeGPUProfile(profiles []string) bool {
+	for i := 0; i < len(profiles) && i < MaxLoopLimit; i++ {
+		if strings.ToLower(strings.TrimSpace(profiles[i])) == NativeGPUProfile {
+			return true
+		}
+	}
+	return false
+}
+
 // synthesizeExtensions constructs deduplicated IDE extensions based on profiles and facets.
 func synthesizeExtensions(profiles []string, facets []string, selected []config.DevContainerFeature) []string {
 	extList := []string{
@@ -170,15 +185,7 @@ func synthesizeExtensions(profiles []string, facets []string, selected []config.
 		"eamodio.gitlens",
 	}
 
-	hasNativeGPU := false
-	for _, p := range profiles {
-		if strings.ToLower(strings.TrimSpace(p)) == "native-gpu-systems" {
-			hasNativeGPU = true
-			break
-		}
-	}
-
-	if hasNativeGPU {
+	if hasNativeGPUProfile(profiles) {
 		extList = append(extList,
 			"llvm-vs-code-extensions.vscode-clangd",
 			"mesonbuild.mesonbuild",
@@ -212,15 +219,7 @@ func synthesizeSettings(profiles []string, facets []string, selected []config.De
 		"editor.formatOnSave": true,
 	}
 
-	hasNativeGPU := false
-	for _, p := range profiles {
-		if strings.ToLower(strings.TrimSpace(p)) == "native-gpu-systems" {
-			hasNativeGPU = true
-			break
-		}
-	}
-
-	if hasNativeGPU {
+	if hasNativeGPUProfile(profiles) {
 		settings["clangd.path"] = "clangd"
 		settings["clangd.arguments"] = []string{
 			"--compile-commands-dir=core/build",
@@ -244,8 +243,8 @@ func synthesizeSettings(profiles []string, facets []string, selected []config.De
 }
 
 func hasGoFeature(selected []config.DevContainerFeature) bool {
-	for _, feature := range selected {
-		if strings.HasSuffix(feature.Identity(), "/go") {
+	for i := 0; i < len(selected) && i < MaxLoopLimit; i++ {
+		if strings.HasSuffix(selected[i].Identity(), "/go") {
 			return true
 		}
 	}
