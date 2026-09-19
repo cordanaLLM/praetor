@@ -451,12 +451,30 @@ func TestRepoIsPrepared(t *testing.T) {
 		{"stray empty .git directory", stray, false},
 		{"HEAD is a directory", headless, false},
 		{"absent directory", filepath.Join(root, "absent"), false},
-		{"empty path", "", false},
 	}
 	for _, tc := range cases {
 		if got := repoIsPrepared(tc.dir); got != tc.want {
 			t.Errorf("%s: repoIsPrepared = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestRepoIsPrepared_EmptyPathIgnoresWorkingDirectory pins the empty-path answer against the
+// working directory instead of against the checkout layout. The process is moved into a
+// directory carrying every marker the predicate looks for, so an implementation that lets
+// filepath.Join resolve "" relatively answers true here and fails.
+func TestRepoIsPrepared_EmptyPathIgnoresWorkingDirectory(t *testing.T) {
+	prepared := t.TempDir()
+	writeRepoFile(t, filepath.Join(prepared, ".git", "HEAD"), "ref: refs/heads/main\n")
+	writeRepoFile(t, filepath.Join(prepared, ".standards.yaml"), "repository:\n  name: cwd\n")
+	writeRepoFile(t, filepath.Join(prepared, ".needs.yaml"), "repository:\n  name: cwd\n")
+	t.Chdir(prepared)
+
+	if !repoIsPrepared(".") {
+		t.Fatal("fixture is not a prepared repository, so the guard assertion would prove nothing")
+	}
+	if repoIsPrepared("") {
+		t.Error("an empty path was resolved against the working directory")
 	}
 }
 
