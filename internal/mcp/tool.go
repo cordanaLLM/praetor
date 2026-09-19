@@ -64,7 +64,7 @@ type Tool struct {
 	Handler     ToolHandler     `json:"-"`
 }
 
-// Validate checks that the Tool definition conforms to HISS-16 invariants: a non-empty
+// Validate checks that the Tool definition conforms to HISS invariants: a non-empty
 // name and a typed input schema with at most MaxToolProperties entries. A nil
 // Properties map is normalised to an empty one for JSON object serialization.
 //

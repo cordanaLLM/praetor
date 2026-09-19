@@ -59,6 +59,6 @@ Polar.sh acts as the core Merchant of Record (MoR) and feature-crowding engine f
 ## 4. Enterprise Fleet Governance Tier
 
 For enterprise engineering organizations managing hundreds of repositories:
-- **Managed Fleet Control Plane**: Unified dashboard for cross-repository HISS-16 drift detection and telemetry.
+- **Managed Fleet Control Plane**: Unified dashboard for cross-repository HISS drift detection and telemetry.
 - **Custom Policy Presets**: Tailored compliance profiles and regulated-industry audit attestations.
 - **Dedicated Enterprise SLA**: Direct maintainer escalation and guaranteed response times.

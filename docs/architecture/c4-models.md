@@ -79,7 +79,7 @@ The Component diagram details the internal workflow of the Anti-Direct-Merge Gat
 ```mermaid
 flowchart LR
     INPUT["Merge / Commit Candidate"] --> PREFETCH["1. Prefetch & Lockfiles\n(go mod verify / download)"]
-    PREFETCH -->|"Valid"| AST_SCAN["2. HISS-16 Invariant Scan\n(AST, NASA Rule 4 <= 60 LOC)"]
+    PREFETCH -->|"Valid"| AST_SCAN["2. HISS Invariant Scan\n(AST, NASA Rule 4 <= 60 LOC)"]
     AST_SCAN -->|"0 Infractions"| RACE_TEST["3. Race-Detector Tests\n(go test -race in worktree)"]
     RACE_TEST -->|"Pass"| RECEIPT["4. Exit-0 Receipt & Gate Admit\n(Eligible for Fast-Forward Merge)"]
     

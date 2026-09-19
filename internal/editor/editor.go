@@ -858,7 +858,7 @@ func generateSublime(arch string) []GeneratedFile {
 }
 
 func generateVisualStudio(arch string) []GeneratedFile {
-	tidy := `# cordanaLLM/praetor High-Integrity Systems Standards (HISS-16) Clang-Tidy Configuration
+	tidy := `# cordanaLLM/praetor High-Integrity Systems Standard (HISS) Clang-Tidy Configuration
 ---
 Checks: >
   -*,

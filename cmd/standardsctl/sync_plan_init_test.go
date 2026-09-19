@@ -227,6 +227,57 @@ func TestSync_Positive_LocalReconciliation(t *testing.T) {
 	}
 }
 
+// TestSync_Positive_LabelDescriptionReconciledInPlace covers the #266 follow-up: a
+// labels.yaml an adopter already has, carrying the pre-rename "HISS-16 invariants"
+// wording, is rewritten to the canonical "HISS invariants" text in place. Every other
+// byte -- an adopter's own label, its comment, its color -- survives untouched.
+func TestSync_Positive_LabelDescriptionReconciledInPlace(t *testing.T) {
+	f := newSyncValidationFixture(t)
+	dir, manifest := f.dir, f.manifestPath
+	stale := `# Canonical Repository Label Taxonomy
+version: 1
+labels:
+  - name: "hiss-violation"
+    color: "d73a4a"
+    description: "Code introduces a regression against HISS-16 invariants"
+
+  - name: "team:widgets"
+    color: "00ff00"
+    description: "Owned by the widgets team"
+`
+	writeFixtureFile(t, dir, ".config/labels.yaml", stale)
+
+	out, err := runSyncCmd(t, "--config="+manifest)
+	if err != nil {
+		t.Fatalf("sync: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[FIX] Updated managed label description(s) in .config/labels.yaml", "[OK] Labels verified")
+
+	got := readFixtureFile(t, dir, ".config/labels.yaml")
+	if strings.Contains(got, "HISS-16 invariants") {
+		t.Errorf("stale description survived reconciliation:\n%s", got)
+	}
+	if !strings.Contains(got, `description: "Code introduces a regression against HISS invariants"`) {
+		t.Errorf("canonical description not written:\n%s", got)
+	}
+	if !strings.Contains(got, `name: "team:widgets"`) || !strings.Contains(got, "Owned by the widgets team") {
+		t.Errorf("adopter's own label was not preserved:\n%s", got)
+	}
+	if !strings.Contains(got, "# Canonical Repository Label Taxonomy") {
+		t.Errorf("file comment was not preserved:\n%s", got)
+	}
+
+	// A second run is a no-op: the canonical text is already present.
+	out, err = runSyncCmd(t, "--config="+manifest)
+	if err != nil {
+		t.Fatalf("second sync: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "[FIX] Updated managed label description") {
+		t.Errorf("reconciliation is not idempotent:\n%s", out)
+	}
+	mustContain(t, out, "[OK] Labels verified")
+}
+
 // forgeStub records write requests and answers GET with an empty ruleset list.
 type forgeStub struct {
 	mu          sync.Mutex

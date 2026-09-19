@@ -8,12 +8,12 @@
 # failure message prints the expected digest.
 version: 1
 pinned_version: "v1.0.0"
-digest: "sha256:0e26106edee5bea901edc80805bbb0ac4ac1165b0175a6c18b47d209f700859a"
+digest: "sha256:970e6ce02f99e623b8c5d4aa81db15f5473ca34d7b8fac418b50d25884e2bb4b"
 generated_at: "2026-09-12T00:00:00Z"
 profiles:
   - id: "framework"
     version: "v1.0.0"
-    digest: "sha256:6056f2fb33dc1c88a7a700a0229ab410559ec1cf1522da97fcfae57aa27635e5"
+    digest: "sha256:91d601b8481143fa9621ab0f61d2d6e261af7a97d71ecc911868067e30ff0406"
 facets:
   - id: "security:high"
     version: "v1.0.0"
