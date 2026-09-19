@@ -3,6 +3,7 @@ package util
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +44,11 @@ var (
 	ErrExecArgMeta = errors.New("util: exec argument contains a forbidden character")
 	// ErrExecArgTooLong is returned when an exec argument exceeds MaxExecArgLen.
 	ErrExecArgTooLong = errors.New("util: exec argument exceeds the maximum length")
+	// ErrFileTooLarge is returned by ReadConfinedLimited when the file carries more
+	// than the caller's limit.
+	ErrFileTooLarge = errors.New("util: file exceeds the read limit")
+	// ErrInvalidReadLimit is returned by ReadConfinedLimited for a non-positive limit.
+	ErrInvalidReadLimit = errors.New("util: read limit must be positive")
 )
 
 // ConfinePath joins rel onto root and returns the cleaned, absolute result, guaranteeing
@@ -66,6 +72,40 @@ func ReadConfined(root, rel string) ([]byte, error) {
 	}
 	// #nosec G304 -- path is confined to root by ConfinePath above.
 	return os.ReadFile(path)
+}
+
+// ReadConfinedLimited reads rel below root like ReadConfined, but never allocates more
+// than limit+1 bytes: a file that carries more is refused with ErrFileTooLarge instead of
+// being read to find out how big it is (HISS-02).
+//
+// This is the read to reach for whenever the size of the file is not the caller's to
+// choose -- a configuration path inside an audited repository, a manifest inside an
+// adopted checkout. ReadConfined confines the path but hands the whole file to os.ReadFile,
+// so a multi-GB blob sitting at a configuration path is allocated in full before any
+// caller-side length check can reject it, which on a memory-capped runner is an OOM rather
+// than a finding.
+func ReadConfinedLimited(root, rel string, limit int64) (data []byte, resultErr error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("%w: %d", ErrInvalidReadLimit, limit)
+	}
+	path, err := ConfinePath(root, rel)
+	if err != nil {
+		return nil, err
+	}
+	// #nosec G304 -- path is confined to root by ConfinePath above.
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, file.Close()) }()
+	data, err = io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("util: read %q: %w", path, err)
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%w: %q carries more than %d bytes", ErrFileTooLarge, path, limit)
+	}
+	return data, nil
 }
 
 func ConfinePath(root, rel string) (string, error) {

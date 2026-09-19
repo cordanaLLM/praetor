@@ -196,6 +196,11 @@ func auditSettings(repoPath string, settings []SettingItem, report *FlavorAuditR
 
 // maxSettingBytes bounds a setting file read (HISS-02). A configuration file larger than
 // this is not one, and reading it to find out is how an audit becomes a memory fault.
+//
+// The bound is enforced by the read itself, through util.ReadConfinedLimited: the audit
+// runs in the generated pre-push hook (internal/adopt/hooks.go) and in the gate pipeline,
+// where a repository carrying a multi-GB generated artefact at a settings path would
+// otherwise be allocated in full before the length was judged.
 const maxSettingBytes = 1 << 20
 
 // SettingSatisfied reports whether the repository carries the setting and, where the setting
@@ -205,8 +210,8 @@ const maxSettingBytes = 1 << 20
 // reading that path will reject. Absent, unreadable and implausibly large are equally
 // unsatisfied, because the audit can claim nothing about content it never read.
 func SettingSatisfied(repoPath string, s SettingItem) bool {
-	content, err := util.ReadConfined(repoPath, s.Path)
-	if err != nil || len(content) > maxSettingBytes {
+	content, err := util.ReadConfinedLimited(repoPath, s.Path, maxSettingBytes)
+	if err != nil {
 		return false
 	}
 	if s.Validator == nil {

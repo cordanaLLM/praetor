@@ -3,6 +3,7 @@ package flavor_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -255,10 +256,21 @@ func TestSettingSatisfied_Boundary(t *testing.T) {
 		t.Fatalf("fixture must exceed the 1 MiB cap, got %d bytes", len(oversized))
 	}
 	if flavor.SettingSatisfied(repo, yamlSetting) {
-		t.Errorf("a file past the size cap must not be reported valid; it was never read")
+		t.Errorf("a file past the size cap must not be reported valid")
 	}
 
-	// A path that leaves the repository is refused rather than resolved.
+	// A path that leaves the repository is refused rather than resolved. The escape target
+	// exists and holds a valid object, so the refusal can only come from confinement: with
+	// nothing at that path the case passed on the read error alone and proved nothing.
+	outside := filepath.Join(repo, "..", "outside.json")
+	if err := os.WriteFile(outside, []byte("{\"name\": \"outside\"}"), 0o600); err != nil {
+		t.Fatalf("write the escape target: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(outside) })
+	data, err := os.ReadFile(outside)
+	if err != nil || !jsonSetting.Validator(data) {
+		t.Fatalf("the escape target must itself be readable and valid, err %v", err)
+	}
 	escaping := flavor.SettingItem{Name: "escape", Path: filepath.Join("..", "outside.json"), Validator: jsonSetting.Validator}
 	if flavor.SettingSatisfied(repo, escaping) {
 		t.Errorf("a setting path must not resolve outside the repository")
@@ -273,6 +285,36 @@ func TestSettingSatisfied_Boundary(t *testing.T) {
 	}
 	if flavor.SettingSatisfied(repo, yamlSetting) {
 		t.Errorf("a directory is not a settings file")
+	}
+}
+
+// TestSettingSatisfied_Boundary_OversizedSettingIsNotAllocated pins what the verdict alone
+// cannot say. A cap tested after the file is in memory returns the same false as a cap
+// enforced by the read, so only the allocation separates them, and the difference is the
+// whole claim: this audit runs inside the generated pre-push hook and the gate pipeline,
+// where a repository carrying a multi-GB generated artefact at a settings path would take
+// the runner's memory down with it. The fixture is sized with os.Truncate, so it costs no
+// disk where the filesystem has sparse files and is skipped where it cannot be made at all.
+func TestSettingSatisfied_Boundary_OversizedSettingIsNotAllocated(t *testing.T) {
+	const oversize = int64(64 << 20)
+	repo := conformingGoLibrary(t, nil)
+	yamlSetting := settingsFor(t, "go-library", "lefthook.yml")[0]
+	if err := os.Truncate(filepath.Join(repo, "lefthook.yml"), oversize); err != nil {
+		t.Skipf("this filesystem cannot size a file to %d bytes: %v", oversize, err)
+	}
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	satisfied := flavor.SettingSatisfied(repo, yamlSetting)
+	runtime.ReadMemStats(&after)
+
+	if satisfied {
+		t.Fatalf("a %d byte lefthook.yml is not a configuration file", oversize)
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > uint64(oversize/4) {
+		t.Fatalf("auditing a %d byte setting allocated %d bytes: the cap bounds the verdict, not the read",
+			oversize, allocated)
 	}
 }
 
