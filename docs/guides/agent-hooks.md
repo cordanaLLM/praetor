@@ -23,12 +23,27 @@ without a row is rejected before any input is read.
 | Client | Event | Native event | Matcher | Budget | Registration string |
 | :-- | :-- | :-- | :-- | :-- | :-- |
 | `claude` | `pre-tool` | `PreToolUse` | `^Bash$` | 15 s | `praetorctl hook claude pre-tool` |
+| `claude` | `pre-edit` | `PreToolUse` | `^(Edit\|Write)$` | 15 s | `praetorctl hook claude pre-edit` |
+| `claude` | `post-tool` | `PostToolUse` | none | 60 s | `praetorctl hook claude post-tool` |
+| `claude` | `stop` | `Stop` | none | 60 s | `praetorctl hook claude stop` |
 | `codex` | `pre-tool` | `PreToolUse` | `^Bash$` | 15 s | `praetorctl hook codex pre-tool` |
+| `codex` | `post-tool` | `PostToolUse` | none | 60 s | `praetorctl hook codex post-tool` |
+| `codex` | `stop` | `Stop` | none | 60 s | `praetorctl hook codex stop` |
 | `gemini` | `pre-tool` | `BeforeTool` | `run_shell_command` | 15 s (written as ms) | `praetorctl hook gemini pre-tool` |
+| `gemini` | `pre-edit` | `BeforeTool` | `^(replace\|write_file)$` | 15 s (written as ms) | `praetorctl hook gemini pre-edit` |
+| `gemini` | `post-tool` | `AfterTool` | none | 60 s (written as ms) | `praetorctl hook gemini post-tool` |
+| `gemini` | `stop` | `AfterAgent` | none | 60 s (written as ms) | `praetorctl hook gemini stop` |
 | `lefthook` | `pre-tool` | job `agent-pre-tool` | none | none | `praetorctl hook lefthook pre-tool` |
 | `lefthook` | `environment` | job `pre-rebase` | none | none | `praetorctl hook lefthook environment` |
 | `agy` | `pre-tool` | `PreToolUse` | `*` | 30 s | `praetorctl hook agy pre-tool` |
 | `agy` | `stop` | `Stop` | none | 30 s | `praetorctl hook agy stop` |
+
+Codex carries no `pre-edit` row: it registers no native pre-edit event today. The checkpoint
+rows above exist in the table and answer real calls, but none of the tracked registration
+files (`.claude/settings.json`, `.codex/hooks.json`, `.gemini/settings.json`) name them yet,
+and Lefthook's own checkpoint jobs (`agent-checkpoint-tool`, `agent-checkpoint-pre-edit`,
+`agent-checkpoint-stop`) still call the Python adapters directly; both flips are a later
+change (see [Not in this change](#not-in-this-change)).
 
 The registration string is one executable call. It resolves through `PATH` (and `PATHEXT`
 on Windows) and is valid under `sh -c` and under `cmd /c`. The `agy` rows are dialect data
@@ -186,10 +201,12 @@ nothing here produces them, since the command policy only ever allows or denies.
 ```
 
 Response `{"decision": "continue", "reason": "..."}` blocks the stop and re-enters the
-loop; any other value (this entrypoint always answers `{}`) lets the agent stop. No Stop
-evaluator is wired yet (H2's checkpoint state-ledger verify), so the only way `agy stop`
-ever denies today is a payload the entrypoint could not read or a workspace it could not
-resolve — and per the rollout spec's verdict-rules table (3.4), that only blocks **once**
+loop; any other value (this entrypoint always answers `{}`) lets the agent stop. The
+checkpoint evaluators below (state-ledger verify, then the due check) are wired for
+claude, codex and gemini's `stop`, not for agy's: `checkpointWired` in
+`internal/agenthook/evaluate.go` names the three clients it covers, so the only way
+`agy stop` denies today is still a payload the entrypoint could not read or a workspace
+it could not resolve — and per the rollout spec's verdict-rules table (3.4), that only blocks **once**
 per conversation: `Canonical.StopActive` is `executionNum > 1`, and a Stop verdict answers
 `{"decision":"continue",...}` only while `StopActive` is false. A skip (ungoverned
 workspace) is neutral and always answers `{}`, never blocks.
@@ -202,6 +219,53 @@ behaviour, any argument key besides `CommandLine`, and any edit-tool name. A hea
 change and not attempted: every real invocation needs an authenticated model call against
 the operator's own Antigravity account, which is out of scope without the operator's own
 explicit go-ahead. Record mode (above) is ready for whoever does that recording next.
+
+## Checkpoint evaluators
+
+`pre-edit`, `post-tool` and `stop` call the two existing checkpoint evaluators directly, in
+the governed repository root, with no Lefthook hop:
+
+| Event | Script | Arguments / stdin | Marker |
+| :-- | :-- | :-- | :-- |
+| `pre-edit` | `.config/lefthook/scripts/checkpoint_scope.py` | stdin: `{"hook_event_name", "tool_name", "tool_input":{"file_path"}, "cwd"}` normalised from the decoded payload | `PRAETOR_CHECKPOINT_SCOPE_OK` |
+| `post-tool` | `.config/lefthook/scripts/checkpoint.py` | `--event tool --json --marker` | `PRAETOR_CHECKPOINT_RESULT=<json>` |
+| `stop` | same script | `--event stop --json --marker`, after `state.VerifyStateSync` passes | same |
+
+Neither script changes; the marker contract is the one the Lefthook job already relied on
+(exactly one marker line, JSON that satisfies `schema_version: 1`, and a `due` result that
+never comes back without `actions`). Reading the wrong number of marker lines, invalid JSON,
+or a timeout is treated as the evaluator failing, with the outcome below.
+
+**Interpreter resolution.** `hooks.python` (a layered operator setting) names the candidates,
+tried in order through `PATH`: the built-in default is `python3`, then `python`, then the
+two-token `py -3` for a stock Windows install. Each candidate is a bare command or, in the
+workstation layer only, a clean absolute path, with up to eight of its own literal arguments
+(`-X utf8`, for example); `-B` (no `.pyc` writes) is always appended. `hooks.scope` (the
+`pre-tool` gate) and `hooks.command_policy.deny` (the command policy) come from the same
+`hooks` settings section (`internal/config/operator_sections.go`); a fleet or workstation
+document named by `PRAETOR_FLEET_CONFIG` / `PRAETOR_WORKSTATION_CONFIG` or the install
+manifest is merged through `config.LoadOperatorSettings` before every hook call, with the
+built-in defaults (`python3`, `python`, `py -3`, governed scope, no operator deny patterns)
+when neither is configured. See [effective policy](effective-policy.md) for the layering
+model this section shares with `complexity`.
+
+**No interpreter resolves.** `pre-edit` and `stop` fail closed (deny); `post-tool` can only
+annotate, so it is a stated skip. A `stop` deny after a Python failure reads `checkpoint
+evaluator unavailable: no Python interpreter` the same way a due checkpoint reads `Praetor
+checkpoint due: …`; both are `[BLOCKED BY HISS-16]` on `claude`/`codex`/`gemini`.
+
+**`stop` state verification.** Before the checkpoint itself, `stop` calls the Go state-sync
+verifier (`internal/state.VerifyStateSync`, the function behind `praetorctl state sync
+--verify .`) against the governed root. A missing, stale or unverifiable `.workingdir` ledger
+blocks on its own, independent of whether a checkpoint is due; the reason names the repair
+(`praetorctl state sync .`).
+
+**`stop_hook_active`.** The client's own `Stop`/`AfterAgent` payload can mark a second,
+repeated pass. The Go evaluator already carries that flag on the canonical payload
+(`Canonical.StopActive`) and changes its wording on a repeat block accordingly, but no
+tracked dialect populates it from a real payload yet (`dialect.Decode` reads
+`hook_event_name`, `tool_name` and `cwd` only); a follow-up that extends `Decode` is needed
+before a live client sees the distinct repeated-pass wording.
 
 ## Platform notes
 
@@ -237,12 +301,25 @@ registrations match the shell tool only, and the `lefthook` dialect keeps its be
 
 ## Not in this change
 
-- Events `pre-edit` and `post-tool` for every client, `stop` for claude/codex/gemini, and
-  the Python interpreter resolution and checkpoint-evaluator hand-off they all need (H2).
 - `agy`'s `PostToolUse`, `PreInvocation` and `PostInvocation`, and its edit-tool
   classification (unverified, see
-  [The agy (Antigravity) dialect](#the-agy-antigravity-dialect)).
+  [The agy (Antigravity) dialect](#the-agy-antigravity-dialect)); its `stop` also keeps
+  the plain command-policy flow rather than the checkpoint evaluators below
+  (`checkpointWired`, `internal/agenthook/evaluate.go`).
 - Rendering the `agy` registration rows into an actual `.agents/hooks.json` (C3/C4).
-- Operator settings (`hooks.command_policy.deny`, `hooks.scope`) and the session receipt log.
+- The per-dialect encoding that comes with the `agy` dialect:
+  `post-tool`'s due-checkpoint note and `stop`'s block/continue decision still reach the
+  client through the same generic `Deny`/`Skip` encoding `pre-tool` uses (stderr text and
+  an exit code), not the native JSON shape (`hookSpecificOutput.additionalContext`,
+  `decision: block` vs `continue: false`) those two events are specified to use; that
+  needs `Dialect.Encode`'s per-dialect override the way agy's own already has one.
+- `dialect.Decode` populating `Canonical.FilePath`, `ConversationID`, `Step` and
+  `StopActive` from a real payload; `pre-edit`'s normalised stdin and `stop`'s repeated-pass
+  wording are ready for it but a real payload does not carry it yet, so a real `pre-edit`
+  call denies fail-closed and `stop_hook_active` never changes the wording a live client
+  sees.
+- The session receipt log.
 - Moving the client registrations and the Lefthook jobs to this entrypoint, and deleting
-  the Python adapters.
+  the Python adapters (`.config/agent/hooks/checkpoint.py` and `checkpoint_scope.py` keep
+  running today; `praetorctl hook <client> post-tool|stop|pre-edit` is a second, parallel
+  path to the same two scripts until that flip lands).
