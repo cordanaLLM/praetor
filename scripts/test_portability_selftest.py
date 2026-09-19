@@ -213,6 +213,44 @@ class PortabilityDriver(unittest.TestCase):
         # publishes its tail rather than nothing at all.
         self.assertEqual(driver.failure_blocks("no unittest output here"), [])
 
+    def test_failure_blocks_bounds(self):
+        """Boundary: both bounds hold at the limit and one past it, in count and in length.
+
+        The two constants are what keeps a noisy suite from burying the log, and neither was
+        exercised anywhere in the repository: the case above proves the mechanism at four
+        blocks of roughly eight lines, well inside both. A driver that dropped either bound,
+        or that kept N-1 or N+1, passes every other case in this file.
+
+        Replayed both directions here: at the limit nothing is dropped, one past it the
+        surplus is, and the block that survives is cut to the length bound rather than to the
+        whole block.
+        """
+        rule = "\n" + driver.CASE_RULE + "\n"
+
+        def compose(count):
+            return "preamble" + "".join(f"{rule}FAIL: case_{n} (m.T.case_{n})\nbody\n" for n in range(count))
+
+        at_limit = driver.failure_blocks(compose(driver.MAX_FAILURE_BLOCKS))
+        self.assertEqual(len(at_limit), driver.MAX_FAILURE_BLOCKS)
+        self.assertIn(f"case_{driver.MAX_FAILURE_BLOCKS - 1}", at_limit[-1])
+        over_limit = driver.failure_blocks(compose(driver.MAX_FAILURE_BLOCKS + 1))
+        self.assertEqual(len(over_limit), driver.MAX_FAILURE_BLOCKS)
+        self.assertNotIn(f"case_{driver.MAX_FAILURE_BLOCKS}", "\n".join(over_limit))
+
+        def one_block(lines):
+            return "preamble" + rule + "\n".join(f"line {n}" for n in range(lines))
+
+        exact = driver.failure_blocks(one_block(driver.MAX_FAILURE_BLOCK_LINES))
+        self.assertEqual(len(exact[0].splitlines()), driver.MAX_FAILURE_BLOCK_LINES)
+        self.assertIn(f"line {driver.MAX_FAILURE_BLOCK_LINES - 1}", exact[0])
+        cut = driver.failure_blocks(one_block(driver.MAX_FAILURE_BLOCK_LINES + 1))
+        self.assertEqual(len(cut[0].splitlines()), driver.MAX_FAILURE_BLOCK_LINES)
+        self.assertNotIn(f"line {driver.MAX_FAILURE_BLOCK_LINES}", cut[0])
+        # Negative: a block is cut at the summary rule, so the run's trailing summary is never
+        # counted against either bound.
+        summary = "preamble" + rule + "FAIL: case_z (m.T.case_z)\nbody\n" + "-" * 70 + "\nRan 1 test in 0.1s\n\nFAILED"
+        self.assertEqual(driver.failure_blocks(summary), ["FAIL: case_z (m.T.case_z)\nbody"])
+
     def test_passing_suite_names_no_failures(self):
         """Negative: a green suite prints no failure lines, even if its output mentions FAIL."""
         with tempfile.TemporaryDirectory() as temp:
