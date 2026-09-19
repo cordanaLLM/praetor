@@ -36,12 +36,15 @@ CLAUDE.md text eol=lf
 .codex/rules.md text eol=lf
 .cursor/rules/**/*.mdc text eol=lf
 
-# internal/devcontainer and cmd/standardsctl both verify the committed devcontainer.json
-# against a recorded bootstrap fingerprint computed over its exact bytes
-# (TestDogfoodingSynthesis, TestDispatchCommand_ContextAndDevcontainer); a CRLF checkout
-# changes those bytes and the verification reports "recorded bootstrap configuration
-# differs from declared profiles" for a file nobody edited (#135).
-.devcontainer/devcontainer.json text eol=lf
+# internal/devcontainer and cmd/standardsctl both verify every committed .devcontainer/
+# file (devcontainer.json, Dockerfile.praetor, the base64 source parts) against a recorded
+# bootstrap fingerprint computed over its exact bytes (TestDogfoodingSynthesis,
+# TestDispatchCommand_ContextAndDevcontainer); a CRLF checkout changes those bytes and the
+# verification reports the bootstrap Dockerfile or configuration differing from its recorded
+# inputs for a directory nobody edited. Confirmed against Dockerfile.praetor specifically --
+# devcontainer.json alone left it still failing; the base64 parts carry no line terminators
+# so this is a no-op for them, but the whole directory is one bootstrap unit (#135).
+.devcontainer/* text eol=lf
 
 # The CRLF fixtures assert that the line-based matchers are not silenced by a Windows
 # checkout. Two attributes are needed and they defend different things.
