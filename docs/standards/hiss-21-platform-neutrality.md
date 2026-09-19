@@ -83,8 +83,8 @@ itself.
 
 Which external binaries this gate reaches, and which of them the job installs, is not
 enumerated on this page: each known gap is tracked as its own issue instead. Open today are
-#339 (`python3` by name, never on `PATH`) and #341 (`make` invoked by the hook policy, absent
-on the Windows runner).
+#339 (`python3` by name, a spelling the Windows leg is never given) and #341 (`make` invoked
+by the hook policy, absent on the Windows runner).
 
 ## Required status checks for a matrix job
 

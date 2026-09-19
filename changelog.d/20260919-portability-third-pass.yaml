@@ -1,4 +1,4 @@
 type: fixed
-title: Bind repository identity and the state ledger to one canonical path spelling, compare checkout roots by filesystem identity rather than by string, refuse a git path that does not exist instead of publishing it half-resolved, refuse a git answer naming an existing regular file rather than classifying a repository from it, reap bounded process trees where no process group exists, install a pinned shellcheck on every Platform Neutrality leg, and repair the fixtures that asserted POSIX-only facts
+title: Bind repository identity and the state ledger to one canonical path spelling, compare checkout roots by filesystem identity rather than by string, refuse a git path that does not exist instead of publishing it half-resolved, refuse a git answer naming an existing regular file rather than classifying a repository from it, reap bounded process trees where no process group exists, print each failed self-test suite's own per-case block instead of its last 25 lines, install a pinned shellcheck on every Platform Neutrality leg, and repair the fixtures that asserted POSIX-only facts
 issue: "#135"
 breaking: false
