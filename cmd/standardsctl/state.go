@@ -106,7 +106,7 @@ func bootstrapState(dir string) error {
 	if created {
 		fmt.Printf("Initialized private %s/ in %s; audit still required\n", state.WorkingDirName, dir)
 	} else {
-		fmt.Printf("Existing %s/ left unchanged in %s; audit still required\n", state.WorkingDirName, dir)
+		fmt.Printf("Existing %s/ kept in %s; a ledgerless one was seeded; audit still required\n", state.WorkingDirName, dir)
 	}
 	return nil
 }
