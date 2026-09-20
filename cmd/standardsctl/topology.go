@@ -139,30 +139,57 @@ func runTopologyClean(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("=== Workstation Topology Clean: %s (DryRun: %v) ===\n", devRoot, *dryRun)
-	cleaned, err := topology.CleanWorkstationTopology(ctx, devRoot, *dryRun)
-	if err != nil {
-		return fmt.Errorf("topology clean failed: %w", err)
+	result, cleanErr := topology.CleanWorkstationTopologyDetailed(ctx, devRoot, *dryRun)
+	resultErr := printTopologyCleanResult(result, *dryRun, cleanErr == nil)
+	if cleanErr != nil {
+		return fmt.Errorf("topology clean failed: %w", cleanErr)
 	}
+	return resultErr
+}
 
-	if len(cleaned) == 0 {
-		fmt.Println("[INFO] No stray governance files found to clean.")
+func printTopologyCleanResult(result *topology.CleanResult, dryRun, complete bool) error {
+	if result == nil {
 		return nil
 	}
-
-	action := "Removed"
-	if *dryRun {
-		action = "Would remove"
+	if len(result.Cleaned) == 0 && len(result.Blocked) == 0 {
+		if complete {
+			fmt.Println("[INFO] No stray governance files found to clean.")
+		}
+		return nil
 	}
-
-	fmt.Printf("\n%s %d stray files/directories:\n", action, len(cleaned))
-	for _, p := range cleaned {
-		fmt.Printf("  - %s\n", p)
+	printCleanedTopologyEntries(result.Cleaned, dryRun)
+	if len(result.Blocked) != 0 {
+		printBlockedTopologyEntries(result.Blocked)
+		return fmt.Errorf("topology clean incomplete: %d entries require manual review", len(result.Blocked))
 	}
-
-	if *dryRun {
+	if !complete {
+		return nil
+	}
+	if dryRun {
 		fmt.Println("\n[INFO] Dry-run complete. Pass --dry-run=false to execute cleanup.")
 	} else {
-		fmt.Printf("\n[PASS] Successfully cleaned %d stray files. Topology restored.\n", len(cleaned))
+		fmt.Printf("\n[PASS] Successfully cleaned %d safe stray files.\n", len(result.Cleaned))
 	}
 	return nil
+}
+
+func printCleanedTopologyEntries(cleaned []string, dryRun bool) {
+	if len(cleaned) == 0 {
+		return
+	}
+	action := "Removed"
+	if dryRun {
+		action = "Would remove"
+	}
+	fmt.Printf("\n%s %d safe stray files/directories:\n", action, len(cleaned))
+	for _, path := range cleaned {
+		fmt.Printf("  - %s\n", path)
+	}
+}
+
+func printBlockedTopologyEntries(blocked []topology.StrayFile) {
+	fmt.Printf("\nSkipped %d entries [MANUAL REVIEW REQUIRED]:\n", len(blocked))
+	for _, finding := range blocked {
+		fmt.Printf("  - %s (%s)\n", finding.RelPath, finding.Reason)
+	}
 }

@@ -1,0 +1,4 @@
+type: fixed
+title: Preserve live organization repositories and report topology entries blocked from cleanup
+issue: "#403"
+breaking: true
