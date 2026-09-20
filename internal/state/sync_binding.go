@@ -16,6 +16,7 @@ import (
 )
 
 const maxSyncPaths = 10000
+const stateGitAutocrlf = "core.autocrlf=input"
 
 var syncMarker = regexp.MustCompile(`\n<!-- praetor-state:v1 sha256:([a-f0-9]{64}) -->\n$`)
 
@@ -51,8 +52,27 @@ func verifyStateContent(ctx context.Context, rootPath string, content []byte) er
 	return nil
 }
 
+// stateBinding derives the value the ledger entry is bound to. The repository path is one of
+// its inputs, canonicalised rather than merely made absolute.
+//
+// Two callers reaching one repository must derive one binding, and the path they hold is not
+// spelled the same way. On Windows the harness runs praetorctl from a Python temporary
+// directory, whose name is the 8.3 short form C:\Users\RUNNER~1\AppData\Local\Temp that Go
+// reports verbatim, while the hook first moves to the top level git reports, and git resolves
+// its working directory through GetFinalPathNameByHandleW, which always answers with the long
+// C:\Users\runneradmin\... Under filepath.Abs alone those are two bindings for one repository,
+// so the verification that follows every commit and push refused them all as stale (#135).
+//
+// util.ResolveExistingPath is the one helper for this (HISS-19), and the Go counterpart of
+// common.resolved_relative_to on the hook side. filepath.EvalSymlinks re-reads every component
+// through FindFirstFile on Windows, which is what turns the short name into the long one; on
+// POSIX it collapses an aliased ancestor such as macOS's /var to /private/var.
+//
+// The praetor-state:v1 marker is deliberately unchanged: existing ledgers report stale once
+// and are reconciled by one sync. Bumping it would make them report missing instead, which is
+// a worse message for the same situation.
 func stateBinding(ctx context.Context, rootPath string, snap *StateSnapshot) (string, error) {
-	root, err := filepath.Abs(rootPath)
+	root, err := util.ResolveExistingPath(ctx, rootPath)
 	if err != nil {
 		return "", err
 	}
@@ -110,7 +130,7 @@ func stateGitBinding(ctx context.Context, root, gitState string) ([]string, erro
 	}
 	parts := make([]string, 0, len(commands))
 	for _, args := range commands {
-		result, err := util.RunGitProbe(ctx, root, contextopt.MaxTotalBytes, args...)
+		result, err := stateGitProbe(ctx, root, contextopt.MaxTotalBytes, args...)
 		if err != nil {
 			return nil, fmt.Errorf("bind state Git %s: %w", args[0], err)
 		}
@@ -179,12 +199,12 @@ func stateLogHash(binding string, content []byte) string {
 }
 
 func stateGitString(ctx context.Context, root string, args ...string) (string, error) {
-	result, err := util.RunGitProbe(ctx, root, contextopt.MaxTotalBytes, args...)
+	result, err := stateGitProbe(ctx, root, contextopt.MaxTotalBytes, args...)
 	return strings.TrimSpace(string(result.Stdout)), err
 }
 
 func rejectStateGitFilters(ctx context.Context, root string) error {
-	result, err := util.RunGitProbe(ctx, root, contextopt.MaxSourceBytes, "config", "--get-regexp", `^filter\..*\.(clean|process)$`)
+	result, err := stateGitProbe(ctx, root, contextopt.MaxSourceBytes, "config", "--get-regexp", `^filter\..*\.(clean|process)$`)
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && exit.ExitCode() == 1 && len(result.Stdout) == 0 {
 		return nil
@@ -193,6 +213,19 @@ func rejectStateGitFilters(ctx context.Context, root string) error {
 		return fmt.Errorf("inspect state Git filters: %w", err)
 	}
 	return fmt.Errorf("state inspection refuses configured Git clean/process filters")
+}
+
+// stateGitProbe gives every state observation one line-ending model. RunGitProbe excludes
+// system and global configuration, but Git's live index can still carry stat entries refreshed
+// by an ordinary command that honored core.autocrlf=true. Reading that cache later with the
+// implicit false default made unchanged CRLF files alternate between dirty and clean on Windows.
+// The input mode normalizes CRLF for comparison without rewriting the worktree; attributes such
+// as -text still override it for paths whose bytes must remain opaque.
+func stateGitProbe(ctx context.Context, root string, maxBytes int, args ...string) (util.CommandBytes, error) {
+	argv := make([]string, 0, len(args)+2)
+	argv = append(argv, "-c", stateGitAutocrlf)
+	argv = append(argv, args...)
+	return util.RunGitProbe(ctx, root, maxBytes, argv...)
 }
 
 func stateGitHead(ctx context.Context, root string) (string, error) {

@@ -51,7 +51,7 @@ func TestRunRejectsInitExitZeroAsVerification(t *testing.T) {
 		return &Proposal{Edits: []Edit{{Path: "internal/fixture/value.go", OriginalSHA256: bytesSHA([]byte(originalFixture)), Content: "package fixture\nimport \"os\"\nfunc init(){ os.Exit(0) }\nfunc Value() int { return 2 }\n"}}}, nil
 	}
 	result, err := run(t.Context(), f.configPath, f.reportPath, generate, verifyWorkspace)
-	if err == nil || result.CandidateVerified || result.Status != "change_rejected" {
+	if err == nil || result == nil || result.CandidateVerified || result.Status != "change_rejected" {
 		t.Fatalf("exit0 stub accepted: %+v %v", result, err)
 	}
 }
@@ -153,7 +153,7 @@ func TestRunRejectsWrongEditsWithoutVerification(t *testing.T) {
 				return fakeVerification(false)(ctx, cfg, path)
 			}
 			result, err := run(t.Context(), f.configPath, f.reportPath, generate, verify)
-			if err == nil || result.Status != "change_rejected" || calls != 1 {
+			if err == nil || result == nil || result.Status != "change_rejected" || calls != 1 {
 				t.Fatalf("result=%+v %v verifies=%d", result, err, calls)
 			}
 		})
@@ -167,7 +167,7 @@ func TestRunReproductionPrerequisiteSkipsProvider(t *testing.T) {
 		return nil, []byte("module unavailable"), errors.New("setup failed")
 	}
 	result, err := run(t.Context(), f.configPath, f.reportPath, noProvider(t), verify)
-	if err == nil || result.Status != "failed" || !result.Consumed {
+	if err == nil || result == nil || result.Status != "failed" || !result.Consumed {
 		t.Fatalf("%+v %v", result, err)
 	}
 }

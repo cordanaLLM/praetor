@@ -62,7 +62,7 @@ func TestRunRejectsReplacementAndGraftAncestry(t *testing.T) {
 
 func TestRunRejectsSubmoduleWorktreeBeforeStatus(t *testing.T) {
 	f := newSyncFixture(t)
-	testGit(t, f.git, f.opts.OwnerPath, "update-index", "--add", "--cacheinfo", "160000,"+f.opts.BaseSHA+",module")
+	stageIndexEntry(t, f.git, f.opts.OwnerPath, "160000", f.opts.BaseSHA, "module")
 	if _, err := Run(context.Background(), "prepare", f.opts); err == nil {
 		t.Fatal("submodule index accepted")
 	}

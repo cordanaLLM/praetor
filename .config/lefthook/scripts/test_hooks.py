@@ -43,6 +43,21 @@ LOCALE_ENV = {"LC_ALL": "C", "LANGUAGE": "C"}
 # shared fix, matching how internal/bump pins -c core.autocrlf=false for the same reason (#282).
 NO_AUTOCRLF_ENV = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.autocrlf",
                    "GIT_CONFIG_VALUE_0": "false"}
+AUTOCRLF_ENV = {**NO_AUTOCRLF_ENV, "GIT_CONFIG_VALUE_0": "true"}
+
+
+class _WithoutProcessGroup:
+    """``os`` as Windows presents it: everything except ``killpg``.
+
+    common._kill_bounded selects its branch on ``hasattr(os, "killpg")``, so this makes the
+    non-POSIX branch reachable from a POSIX host instead of leaving it to the one platform
+    that cannot run the rest of this suite yet.
+    """
+
+    def __getattr__(self, name):
+        if name == "killpg":
+            raise AttributeError(name)
+        return getattr(os, name)
 # The CLI a fixture carries, named as hooks.praetorctl_path() looks for it: with the host's
 # executable suffix. The fixture used to link an extensionless bin/praetorctl, which the hooks
 # never found on Windows.
@@ -179,6 +194,16 @@ class GitHooks(unittest.TestCase):
         path.write_text(data, newline="\n")
         if stage:
             command(self.repo, "git", "add", "--", name)
+
+    def assertMissingMakeTarget(self, result, target):
+        # GNU make quotes the missing target differently per build: 4.x prints
+        # 'state-audit', while the make 3.81 macOS still ships prints `state-audit'.
+        # The property under test is that the hook surfaced make's refusal, not which
+        # quoting the platform's make chose, so match the message and the target
+        # separately.
+        output = result.stdout + result.stderr
+        self.assertIn(b"No rule to make target", output, output)
+        self.assertIn(target.encode(), output, output)
 
     def hook(self, name="pre-commit", *args, data=None, maintain_state=True):
         # Path arguments are given as git gives them to hooks, with forward slashes. Lefthook on
@@ -744,12 +769,16 @@ class GitHooks(unittest.TestCase):
         original = Path.cwd()
         try:
             os.chdir(self.repo)
-            with mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
+            # Drive the Windows checkout default on every host. The hook must inspect the
+            # committed bytes, not let core.autocrlf rewrite its isolated snapshot.
+            with mock.patch.dict(os.environ, AUTOCRLF_ENV), \
+                    mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
                     mock.patch("hooks.source_checks", return_value=False) as check:
                 pre_push("origin")
                 self.assertEqual(check.call_args.kwargs, {"base": base})
                 self.assertEqual(check.call_args.args[1], ["README.md"])
-            with mock.patch("hooks.sys.stdin", io.StringIO(protocol.replace(base, "f" * 40))), \
+            with mock.patch.dict(os.environ, AUTOCRLF_ENV), \
+                    mock.patch("hooks.sys.stdin", io.StringIO(protocol.replace(base, "f" * 40))), \
                     mock.patch("hooks.source_checks", return_value=False) as check:
                 pre_push("origin")
                 self.assertIsNone(check.call_args.kwargs["base"])
@@ -785,14 +814,14 @@ class GitHooks(unittest.TestCase):
         for destination in ("refs/heads/review/wip", "refs/tags/checkpoint/wip"):
             rejected = command(self.repo, "git", "push", "origin", "HEAD:" + destination, ok=False)
             self.assertNotEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
-            self.assertIn(b"No rule to make target 'state-audit'", rejected.stdout + rejected.stderr)
+            self.assertMissingMakeTarget(rejected, "state-audit")
             self.assertNotIn(b"WIP checkpoint:", rejected.stdout + rejected.stderr)
             self.assertEqual(command(self.repo, "git", "ls-remote", "origin", destination).stdout, b"")
         mixed_refs = ("refs/heads/checkpoint/mixed", "refs/heads/review/mixed")
         rejected = command(self.repo, "git", "push", "origin",
                            *("HEAD:" + ref for ref in mixed_refs), ok=False)
         self.assertNotEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
-        self.assertIn(b"No rule to make target 'state-audit'", rejected.stdout + rejected.stderr)
+        self.assertMissingMakeTarget(rejected, "state-audit")
         self.assertEqual(command(self.repo, "git", "ls-remote", "origin", *mixed_refs).stdout, b"")
         self.assertFalse((self.repo / ".git/praetor-receipts").exists())
         self.assertFalse((self.repo / ".standards-receipt.json").exists())
@@ -1346,6 +1375,20 @@ class ScopeAndGuard(unittest.TestCase):
                 run(["python3", "-c", parent], timeout=0.05)
             time.sleep(0.3)
             self.assertFalse(marker.exists())
+
+    def test_timeout_reaps_the_tree_where_no_process_group_exists(self):
+        """Windows has no process group, and killing the child alone left its children running.
+
+        The case above proves the POSIX path; this one proves the other branch is reached and
+        asks the platform for the whole tree, without needing a Windows host to observe it.
+        ``taskkill`` is replaced so the assertion is about what was requested; the direct kill
+        underneath it still reaps the real child this test started.
+        """
+        with mock.patch("common.os", _WithoutProcessGroup()), \
+                mock.patch("common.subprocess.run") as tree:
+            with self.assertRaises(HookError):
+                run(["python3", "-c", "import time; time.sleep(10)"], timeout=0.05)
+        self.assertEqual(tree.call_args.args[0][:3], ["taskkill", "/F", "/T"])
 
     def test_sandbox_failure_removes_only_owned_container(self):
         calls = []

@@ -180,3 +180,32 @@ func assertCatalogParseable(t *testing.T, repo string, want int) {
 		t.Fatalf("catalog has %d packages, want %d", len(cat.Packages), want)
 	}
 }
+
+// stoppedByBound decides whether a failed harvest saves a partial catalog and reports
+// ErrSyncTruncated or surfaces the error as-is, so it carries the whole contract for a
+// deadline that lands inside a package rather than between two of them. The harvest that
+// trips it cannot be timed deterministically across platforms; the classifier can.
+func TestStoppedByBound_PositiveNegativeBoundary(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		// Positive: the two ways the sync context ends, bare and wrapped the way
+		// syncOnePackage wraps them.
+		{"deadline", context.DeadlineExceeded, true},
+		{"canceled", context.Canceled, true},
+		{"wrapped deadline", fmt.Errorf("harvest example.com/dep@v1.0.0: %w", context.DeadlineExceeded), true},
+		{"wrapped cancel", fmt.Errorf("harvest example.com/dep@v1.0.0: %w", context.Canceled), true},
+		// Negative: a real harvest failure must never be reported as truncation.
+		{"harvest failure", errors.New("harvest example.com/dep@v1.0.0: connection refused"), false},
+		{"deadline text only", errors.New("context deadline exceeded"), false},
+		// Boundary: no error at all.
+		{"nil", nil, false},
+	}
+	for _, tc := range cases {
+		if got := stoppedByBound(tc.err); got != tc.want {
+			t.Fatalf("%s: stoppedByBound(%v) = %v, want %v", tc.name, tc.err, got, tc.want)
+		}
+	}
+}

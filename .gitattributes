@@ -46,6 +46,20 @@ CLAUDE.md text eol=lf
 # so this is a no-op for them, but the whole directory is one bootstrap unit (#135).
 .devcontainer/* text eol=lf
 
+# Every staged .sh is shellchecked and every staged .yml/.yaml is yamllint --strict-ed
+# by .config/lefthook/scripts/checks.py, and both reject carriage returns outright:
+# shellcheck raises SC1017 ("Literal carriage return") on the shebang line and yamllint's
+# new-lines rule reports "wrong new line character: expected \n" at 1:1. Under the default
+# `* text=auto` a windows-latest checkout writes CRLF, so the pre-push gate failed on
+# .config/lefthook/pre-push/pushed-checks.sh, lefthook.yml and .config/lefthook/praetor.yml
+# -- files nobody edited -- and took the harness self-tests down with it, because
+# test_hooks.py copies those same checkout bytes into its fixture repositories. A CRLF
+# shell script is also not executable by any POSIX shell, git-bash included, so LF here is
+# the correct working-tree form on every platform, not just the one the gate runs on.
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
 # The CRLF fixtures assert that the line-based matchers are not silenced by a Windows
 # checkout. Two attributes are needed and they defend different things.
 #

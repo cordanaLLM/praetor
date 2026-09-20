@@ -35,7 +35,7 @@ func ResolveGitHooksDir(ctx context.Context, repoPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse --show-toplevel in %s: %w", repoPath, err)
 	}
-	if !samePath(top, repoPath) {
+	if !util.SameDirectory(top, repoPath) {
 		return "", fmt.Errorf("%w: %s resolves to top-level %s", ErrHooksDirEscapesRepo, repoPath, top)
 	}
 	out, err := util.RunGit(ctx, repoPath, "rev-parse", "--git-path", "hooks")
@@ -47,23 +47,6 @@ func ResolveGitHooksDir(ctx context.Context, repoPath string) (string, error) {
 		hooksDir = filepath.Join(repoPath, hooksDir)
 	}
 	return filepath.Clean(hooksDir), nil
-}
-
-// samePath reports whether two paths name the same directory once they are made
-// absolute and symlinks are resolved.
-func samePath(a, b string) bool {
-	absA, errA := filepath.Abs(a)
-	absB, errB := filepath.Abs(b)
-	if errA != nil || errB != nil {
-		return false
-	}
-	if resolved, err := filepath.EvalSymlinks(absA); err == nil {
-		absA = resolved
-	}
-	if resolved, err := filepath.EvalSymlinks(absB); err == nil {
-		absB = resolved
-	}
-	return absA == absB
 }
 
 // lefthookGovernedCommand renders a lefthook run line that executes a praetor

@@ -37,7 +37,9 @@ replace an existing executable. See the [Semgrep package installation guidance](
 
 Pre-commit exports the index into a temporary directory. Unstaged edits, untracked
 files and the index remain unchanged. Formatting is a read-only gate: run `gofmt`
-and stage your chosen hunks explicitly. Deleted files are included when computing
+and stage your chosen hunks explicitly. The export pins `core.autocrlf=false`, so
+the isolated checks inspect the bytes in the index instead of rewriting them to the
+operator checkout's line endings. Deleted files are included when computing
 scope and skipped by per-file linters. Paths are read with NUL delimiters and
 passed as process arguments, including filenames containing spaces or shell text.
 A missing required tool or a failed subprocess blocks the operation.
@@ -397,6 +399,12 @@ CLI had already started:
 - **Bounded subprocess output.** `common.py` waited on pipes with `selectors`; `select()` on
   Windows accepts only sockets, so every bounded `git` call raised `OSError`. Windows drains each
   pipe on its own thread under the same shared byte limit and deadline.
+- **Stopping a bounded command that forked.** `common.py` kills the child's whole process group
+  when a bound is exceeded, and Windows has no process group to signal. Killing the direct child
+  alone left its children running past the bound, which is what `test_hooks.py` observed when a
+  grandchild wrote its marker after the parent had been terminated. Windows asks
+  `taskkill /F /T` to walk the descendants instead, and the direct kill remains the floor where
+  that cannot run. Both bounded runners share the one function, so the two do not diverge.
 - **The sandbox's user mapping.** `sandbox.py` passed `--user $(id -u):$(id -g)` so a bind mount
   keeps host ownership. `os.getuid` does not exist on Windows, where Docker Desktop maps that
   ownership itself, so the flag is omitted there.

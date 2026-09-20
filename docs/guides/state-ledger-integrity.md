@@ -71,9 +71,27 @@ The activity is the `--log` text collapsed to one line, so it cannot forge a hea
 or a marker. The engine's own texts shorten: no `--log` becomes `sync`, and the
 post-commit hook's text becomes `post-commit sync`.
 
-The marker binds the Git state and the other ledgers (`OPEN.md`, `BACKLOG.md`,
-`BUGS.md`, `QUESTIONS.md`, and `bugs.meta.json` once it exists), so editing any of
-them stales it. Sync removes the previous marker before it appends its own.
+The marker binds the Git state, the repository's own path, and the other ledgers
+(`OPEN.md`, `BACKLOG.md`, `BUGS.md`, `QUESTIONS.md`, and `bugs.meta.json` once it
+exists), so editing any of them stales it. Sync removes the previous marker before it
+appends its own.
+
+Git state is observed with `core.autocrlf=input`. The fixed input normalization keeps
+one logical text state across platforms without rewriting the worktree, while a path
+marked `-text` remains byte-sensitive. This also prevents an ordinary Windows Git
+command using `core.autocrlf=true` from changing the marker merely by refreshing index
+stat metadata; staged changes, untracked bytes, and changed text content still stale it.
+
+The path is canonicalised before it is bound, so one repository reached under two
+spellings of its directory binds to one state. Two callers rarely hold the same
+spelling: on Windows a tool started from a short-name temporary directory reports that
+name verbatim while git resolves the same directory to its long form, and on macOS a
+path through `/var` names the directory `/private/var` holds. Binding the spelling
+rather than the directory made a hook refuse its own repository's ledger as stale, and
+that refusal blocked every commit and push (#135). A ledger written before this change
+reports stale once; one `praetorctl state sync .` reconciles it. The `praetor-state:v1`
+marker is unchanged on purpose, so such a ledger reports *stale* — which names the
+action — rather than *missing*.
 `state sync --verify` and every hook check only the last marker, whose hash covers
 the whole file before it, so older markers were never read. Earlier versions wrote four labelled bullets
 per entry and kept every marker; those entries still verify and are rewritten only

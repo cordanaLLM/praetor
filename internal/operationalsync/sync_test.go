@@ -34,6 +34,28 @@ func testWrite(t *testing.T, root, path, content string) {
 	}
 }
 
+// stageIndexEntry stages object at path with mode through the index alone.
+//
+// Nothing is written to the worktree, which is what a fixture needs whenever the entry it
+// wants cannot be produced by an ordinary file write: a symlink or a submodule gitlink, and
+// any entry whose exact mode is the thing under test. Three call sites wrote this line by
+// hand; one form keeps them from drifting (HISS-19).
+func stageIndexEntry(t *testing.T, g *gitRunner, dir, mode, object, path string) {
+	t.Helper()
+	testGit(t, g, dir, "update-index", "--add", "--cacheinfo", mode+","+object+","+path)
+}
+
+// blobObject records content in the object database and returns its object name, without
+// placing it in the worktree or the index. Callers pass the result to stageIndexEntry.
+func blobObject(t *testing.T, g *gitRunner, dir, content string) string {
+	t.Helper()
+	source := filepath.Join(t.TempDir(), "blob")
+	if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return testGit(t, g, dir, "hash-object", "-w", "--", source)
+}
+
 func fixtureCommit(t *testing.T, g *gitRunner, dir string) string {
 	t.Helper()
 	testGit(t, g, dir, "add", "--all")

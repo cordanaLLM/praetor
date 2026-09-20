@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestResolveRoot(t *testing.T) {
@@ -28,18 +30,12 @@ func TestResolveRoot(t *testing.T) {
 		{"empty payload entry falls back", []string{""}, other, other},
 	} {
 		got, err := ResolveRoot(context.Background(), tc.workspaces, tc.workDir)
-		if err != nil || !filepath.IsAbs(got) || !sameDirectory(got, tc.want) {
+		// util.SameDirectory compares by identity, so a short Windows name or a
+		// drive-letter case cannot fail a correct answer (HISS-19: one implementation).
+		if err != nil || !filepath.IsAbs(got) || !util.SameDirectory(got, tc.want) {
 			t.Errorf("%s: %q %v, want %q", tc.name, got, err, tc.want)
 		}
 	}
-}
-
-// sameDirectory compares by identity, so a short Windows name or a drive-letter case
-// cannot fail a correct answer.
-func sameDirectory(left, right string) bool {
-	leftInfo, leftErr := os.Stat(left)
-	rightInfo, rightErr := os.Stat(right)
-	return leftErr == nil && rightErr == nil && os.SameFile(leftInfo, rightInfo)
 }
 
 func TestResolveRootFailures(t *testing.T) {

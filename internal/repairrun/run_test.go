@@ -133,7 +133,7 @@ func TestRunFailClosedAndProviderExactlyOnce(t *testing.T) {
 		return nil, errors.New("provider failed")
 	}
 	result, err := run(t.Context(), f.configPath, f.reportPath, generate, fakeVerification(false))
-	if err == nil || result.Status != "agent_failed" || calls != 1 {
+	if err == nil || result == nil || result.Status != "agent_failed" || calls != 1 {
 		t.Fatalf("%+v %v calls=%d", result, err, calls)
 	}
 	result, err = run(t.Context(), f.configPath, f.reportPath, generate, fakeVerification(false))

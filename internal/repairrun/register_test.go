@@ -52,6 +52,11 @@ func TestProviderLimitsMatchTheRegisterBudgetRange(t *testing.T) {
 }
 
 func TestProviderRequestForwardsTheJobBudget(t *testing.T) {
+	// providerGenerate opens the repair credential helper, which needs Unix ownership and
+	// nofollow support. Without this the Windows leg failed with "repair credential helper
+	// open failed" instead of stating the platform limit (#135). macOS keeps running the
+	// case: the guard returns everywhere but Windows.
+	requireCredentialHelper(t)
 	cfg := providerFixtureConfig(t, "printf '%s\\n' '"+providerFixtureToken+"'")
 	cfg.MaxOutputTokens = 1024
 	for name, job := range map[string]*dogfood.RepairJob{"budget": {MaxOutputTokens: 512}, "fallback": {}} {
@@ -77,6 +82,27 @@ func TestProviderRequestForwardsTheJobBudget(t *testing.T) {
 }
 
 func TestRunRecordsRegisterAndTightensProviderBudget(t *testing.T) {
+	// This case calls run() and reads result.Status on the error path, which is a nil
+	// dereference wherever prepare() fails: run returns (nil, err) then, and Go evaluates
+	// the second operand of `err == nil || result.Status != ...` once the first is false.
+	// prepare fails on both non-Linux legs -- macOS rejects the symlinked /var component of
+	// its own TMPDIR, Windows has no file isolation at all -- so the panic aborted the test
+	// binary and masked every later case in the package (#135). This is the same guard the
+	// package's other run()-calling cases already take; it was the one omission.
+	//
+	// The platform guard is not the whole repair. It returns early on Linux, where prepare
+	// still refuses a TMPDIR that reaches its directory through a symlink -- openDirectory
+	// walks every component of an absolute path and rejects a link -- and there the panic
+	// aborted the whole test binary rather than failing one case.
+	//
+	// Measured on Linux against such a TMPDIR, one figure per column and not two: with -v the
+	// package printed 25 outcome lines before this guard and prints 37 after it, so 12 cases
+	// never ran; without -v the same pair is 1 line and 10. The earlier note here paired the
+	// non-verbose count with the verbose one and reproduced as neither. Every read of a run()
+	// result in this package is therefore gated on the result being there, which is what
+	// HISS-07 asks of the test's own error path, and a failure prints the error instead of a
+	// stack trace.
+	requireRepairIsolation(t)
 	f := newRunFixture(t, 1)
 	f.config.RepairPolicy.Register, f.config.RepairPolicy.MaxOutputTokens = string(config.TextRegisterInternal), 512
 	f.save(t)
@@ -86,7 +112,7 @@ func TestRunRecordsRegisterAndTightensProviderBudget(t *testing.T) {
 		return nil, errors.New("provider failed")
 	}
 	result, err := run(t.Context(), f.configPath, f.reportPath, generate, fakeVerification(false))
-	if err == nil || result.Status != "agent_failed" {
+	if err == nil || result == nil || result.Status != "agent_failed" {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
 	if seen != 512 {

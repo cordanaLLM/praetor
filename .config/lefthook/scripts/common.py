@@ -15,28 +15,46 @@ class HookError(Exception):
     """An actionable local gate failure."""
 
 
+KILL_TREE_TIMEOUT = 10
+SNAPSHOT_GIT_CONFIG = ("-c", "core.autocrlf=false")
+
+
 def _kill_bounded(process):
     """Kill a bounded child and everything it started.
 
-    ``run_bounded`` starts children with ``start_new_session=True``, so on POSIX the whole
-    process group is killed -- a bounded command that forks must not leave orphans behind. That
-    call is POSIX-only: on Windows ``os.killpg`` does not exist, and the timeout path raised
-    ``AttributeError`` instead of reporting that a process had exceeded its bound. The failure
-    therefore appeared only when a gate was already failing, which is the worst time to lose the
-    reason.
+    ``run`` and ``run_bounded`` start children with ``start_new_session=True``, so on POSIX the
+    whole process group is killed -- a bounded command that forks must not leave orphans behind.
+    That call is POSIX-only: on Windows ``os.killpg`` does not exist, and the timeout path
+    raised ``AttributeError`` instead of reporting that a process had exceeded its bound. The
+    failure therefore appeared only when a gate was already failing, which is the worst time to
+    lose the reason.
 
-    Windows gets ``Popen.kill``, which terminates the child itself. Grandchildren are not reaped,
-    and that is a real difference rather than a hidden one: a full equivalent needs
-    ``CREATE_NEW_PROCESS_GROUP`` at spawn plus ``CTRL_BREAK_EVENT`` here, which is worth doing
-    when a bounded command on Windows is observed to fork.
+    Windows has no process group to signal, and ``Popen.kill`` terminates the direct child
+    alone, so a grandchild outlived its bound and the timeout test observed it writing its
+    marker after the parent had been killed (#135). ``taskkill /F /T`` walks descendants by
+    parent process id, which is the platform's own answer to the same question, and the direct
+    kill stays as the floor for the case where it cannot run.
+
+    Both callers share this one function, so neither grows its own copy.
     """
     try:
         if hasattr(os, "killpg"):
             os.killpg(process.pid, signal.SIGKILL)
         else:
-            process.kill()
+            _kill_process_tree(process)
     except (ProcessLookupError, PermissionError):
         pass  # The process or group already exited.
+
+
+def _kill_process_tree(process):
+    """Kill a child and its descendants where no process group exists to signal."""
+    try:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=KILL_TREE_TIMEOUT, check=False)
+    except (OSError, subprocess.SubprocessError):
+        pass  # No tree killer on this host; the direct kill below is what remains.
+    process.kill()
 
 
 def _stop_bounded(process):
@@ -229,7 +247,12 @@ def snapshot(ref=None):
     with tempfile.TemporaryDirectory(prefix="praetor-hook-") as directory:
         dest = Path(directory)
         if ref is None:
-            git("checkout-index", "--all", "--force", f"--prefix={dest}/")
+            # Snapshot checks consume repository bytes, not the operator's checkout
+            # preference. Without this pin, Windows' core.autocrlf=true rewrites LF
+            # shell/YAML blobs to CRLF and the isolated gate rejects bytes absent from
+            # the index it claims to inspect.
+            git(*SNAPSHOT_GIT_CONFIG, "checkout-index", "--all", "--force",
+                f"--prefix={dest}/")
             # Lefthook's validator requires a repository even though it only
             # validates configuration. This metadata belongs solely to the export.
             run(["git", "init", "--quiet", str(dest)], env=clean_env())
@@ -245,7 +268,8 @@ def snapshot(ref=None):
             for line in refs.decode().splitlines():
                 oid, name = line.split()
                 run(["git", "update-ref", name, oid], cwd=dest, env=env)
-            run(["git", "checkout", "--quiet", "--detach", ref], cwd=dest, env=env)
+            run(["git", *SNAPSHOT_GIT_CONFIG, "checkout", "--quiet", "--detach", ref],
+                cwd=dest, env=env)
         yield dest
 
 

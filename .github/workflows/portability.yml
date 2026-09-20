@@ -152,6 +152,60 @@ jobs:
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
 
+      # Same rationale as the YAML linter, one step later. checks.py builds an unconditional
+      # `shellcheck` command for every staged or pushed *.sh, and common.run() fails closed on
+      # a missing binary, so an absent linter is a hook failure rather than a skip. Every
+      # fixture repository the suite builds copies .config/lefthook, which carries
+      # pre-push/pushed-checks.sh -- so on the images without shellcheck every push the suite
+      # drives was rejected (#135). It ships preinstalled on ubuntu-24.04 and on neither the
+      # macOS nor the windows image.
+      #
+      # One step with a per-OS branch rather than one step per leg, and the same pinned
+      # version everywhere including Linux: a rule set that differs per platform is not a
+      # reproducible gate (HISS-19, HISS-20). The install directory goes first on PATH so the
+      # pin wins over the preinstalled copy.
+      - name: Install Shell Linter
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          SHELLCHECK_VERSION: v0.11.0
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/shellcheck"
+          base="https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}"
+          case "${RUNNER_OS}" in
+            Windows)
+              # The zip is flat, so no component is stripped. 7-Zip is what the windows image
+              # lists; unzip is not on it, and is kept only for a host that has it instead.
+              curl -fsSL -o "${RUNNER_TEMP}/shellcheck.zip" "${base}/shellcheck-${SHELLCHECK_VERSION}.zip"
+              if command -v 7z >/dev/null 2>&1; then
+                7z x -y -bso0 -bsp0 -o"${RUNNER_TEMP}/shellcheck" "${RUNNER_TEMP}/shellcheck.zip"
+              else
+                unzip -q -o "${RUNNER_TEMP}/shellcheck.zip" -d "${RUNNER_TEMP}/shellcheck"
+              fi
+              ;;
+            *)
+              # The release names the 64-bit ARM asset aarch64 on both platforms, while macOS
+              # reports that machine as arm64. Taking uname -m verbatim requests an asset that
+              # does not exist and the whole step fails on the one leg it was added for.
+              if [ "${RUNNER_OS}" = macOS ]; then platform=darwin; else platform=linux; fi
+              machine="$(uname -m)"
+              if [ "${machine}" = arm64 ]; then machine=aarch64; fi
+              # The tarball carries a shellcheck-<version>/ prefix, unlike the zip.
+              curl -fsSL "${base}/shellcheck-${SHELLCHECK_VERSION}.${platform}.${machine}.tar.xz" \
+                | tar -xJ -C "${RUNNER_TEMP}/shellcheck" --strip-components=1
+              ;;
+          esac
+          echo "${RUNNER_TEMP}/shellcheck" >> "${GITHUB_PATH}"
+          # GITHUB_PATH takes effect in the next step, so the pin is smoke-tested by path here.
+          # A download that produced no runnable binary must fail on this step, not later as a
+          # hook error that reads like a rule violation.
+          if [ "${RUNNER_OS}" = Windows ]; then
+            "${RUNNER_TEMP}/shellcheck/shellcheck.exe" --version
+          else
+            "${RUNNER_TEMP}/shellcheck/shellcheck" --version
+          fi
+
       - name: Build praetorctl
         if: ${{ !cancelled() }}
         shell: bash

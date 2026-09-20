@@ -74,9 +74,13 @@ func TestInspectTargetRefusesForeignSymlink(t *testing.T) {
 	if _, err := inspectTarget(path, ""); !errors.Is(err, ErrForeignTarget) {
 		t.Fatalf("foreign symlink accepted: %v", err)
 	}
+	// Windows stores the link target with native separators, so Readlink returns
+	// `\somewhere\else` for the same link. The property under test is that the link
+	// still points where it did, not which separator the platform writes.
+	want := filepath.FromSlash("/somewhere/else")
 	target, err := os.Readlink(path)
-	if err != nil || target != "/somewhere/else" {
-		t.Fatalf("foreign symlink must be left untouched, got %q, %v", target, err)
+	if err != nil || target != want {
+		t.Fatalf("foreign symlink must be left untouched, got %q, want %q, %v", target, want, err)
 	}
 }
 

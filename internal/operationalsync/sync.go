@@ -245,16 +245,17 @@ func (op *operation) checkCheckoutRoots(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		resolved, err := filepath.EvalSymlinks(path)
-		if err != nil {
-			return err
-		}
-		// git reports the top level with forward slashes on every platform, so on Windows it
-		// prints "C:/Users/..." while EvalSymlinks returns "C:\Users\...". Compared as strings
-		// the two never matched and every checkout root was refused as a subdirectory.
-		// FromSlash is a no-op where the separator is already '/', and normalising the
-		// separator cannot let a subdirectory pass: it still differs from its root.
-		if filepath.Clean(filepath.FromSlash(root)) != resolved {
+		// "is this the same directory?" has one implementation (HISS-19): util.SameDirectory,
+		// deciding by inode identity. String equality answered it wrong on both non-Linux legs
+		// and could only ever be patched per symptom. git reports the top level with forward
+		// slashes on every platform, resolved through its own real_path(), so on Windows it
+		// prints "C:/Users/..." where the caller holds "C:\Users\..." and the drive letter's
+		// case is not fixed either; on macOS the caller's TMPDIR reaches /var while git answers
+		// /private/var. Compared as strings the two never matched and every checkout root was
+		// refused as a subdirectory. FromSlash normalises git's separator before the stat and
+		// cannot let a subdirectory pass: a subdirectory is a different inode from its root.
+		// SameDirectory fails closed, so a path neither side can stat is refused here too.
+		if !util.SameDirectory(filepath.FromSlash(root), path) {
 			return errors.New("owner and source paths must name checkout roots, not subdirectories")
 		}
 	}
