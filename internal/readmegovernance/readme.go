@@ -72,6 +72,8 @@ func Reconcile(content string, state State) (string, bool, error) {
 	if state.LegacyDebtCount < 0 {
 		return "", false, fmt.Errorf("%w: negative legacy debt count", ErrInvalidState)
 	}
+	original := content
+	content, crlf := util.NormalizeLineEndings(content)
 	first, last, err := util.FindMarkedBlock(content, Start, End)
 	if err != nil {
 		return "", false, fmt.Errorf("README governance markers: %w", err)
@@ -88,10 +90,12 @@ func Reconcile(content string, state State) (string, bool, error) {
 		if replaceErr != nil {
 			return "", false, fmt.Errorf("replace README governance block: %w", replaceErr)
 		}
-		return out, out != content, nil
+		out = util.RestoreLineEndings(out, crlf)
+		return out, out != original, nil
 	}
 	out := insertManagedBlock(cleaned, block)
-	return out, out != content, nil
+	out = util.RestoreLineEndings(out, crlf)
+	return out, out != original, nil
 }
 
 // Verify accepts only the exact output Reconcile would produce for state.

@@ -90,3 +90,62 @@ func TestVerifyBoundaryDistinguishesMissingAndStale(t *testing.T) {
 		t.Fatalf("stale block: %v", err)
 	}
 }
+
+func TestReconcilePositiveAcceptsSynchronizedCRLF(t *testing.T) {
+	state := State{BaselineKnown: true, LegacyDebtCount: 2}
+	lf, _, err := Reconcile("# Demo\n\nHuman text.\n", state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crlf := strings.ReplaceAll(lf, "\n", "\r\n")
+	if err := Verify(crlf, state); err != nil {
+		t.Fatalf("verify synchronized CRLF README: %v", err)
+	}
+	again, changed, err := Reconcile(crlf, state)
+	if err != nil || changed || again != crlf {
+		t.Fatalf("reconcile synchronized CRLF README: changed=%v err=%v\n%q", changed, err, again)
+	}
+}
+
+func TestReconcileNegativeRepairsStaleCRLFWithoutMixingEndings(t *testing.T) {
+	state := State{BaselineKnown: true}
+	lf, _, err := Reconcile("# Demo\n\nHuman text.\n", state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crlf := strings.ReplaceAll(lf, "\n", "\r\n")
+	stale := strings.Replace(crlf, "0 recorded infractions", "9 recorded infractions", 1)
+	if err := Verify(stale, state); !errors.Is(err, ErrStale) {
+		t.Fatalf("verify stale CRLF README: error=%v, want %v", err, ErrStale)
+	}
+	repaired, changed, err := Reconcile(stale, state)
+	if err != nil || !changed {
+		t.Fatalf("repair stale CRLF README: changed=%v err=%v", changed, err)
+	}
+	assertOnlyCRLF(t, repaired)
+	if !strings.Contains(repaired, "Human text.\r\n") {
+		t.Fatalf("repair did not preserve human content: %q", repaired)
+	}
+}
+
+func TestReconcileBoundaryInsertsBlockIntoCRLFWithoutTerminalNewline(t *testing.T) {
+	input := "# Demo\r\n\r\nHuman text."
+	out, changed, err := Reconcile(input, State{})
+	if err != nil || !changed {
+		t.Fatalf("insert into CRLF README: changed=%v err=%v", changed, err)
+	}
+	assertOnlyCRLF(t, out)
+	if !strings.Contains(out, "Human text.\r\n") {
+		t.Fatalf("insert did not preserve human content: %q", out)
+	}
+	if err := Verify(out, State{}); err != nil {
+		t.Fatalf("verify reconciled CRLF README: %v", err)
+	}
+}
+
+func assertOnlyCRLF(t *testing.T, content string) {
+	t.Helper()
+	if strings.Count(content, "\n") != strings.Count(content, "\r\n") {
+		t.Fatalf("README contains mixed line endings: %q", content)
+	}
+}
