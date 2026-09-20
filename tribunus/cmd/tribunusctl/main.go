@@ -37,7 +37,7 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println("tribunusctl - Tribunus model catalog data sync")
+	fmt.Println("tribunusctl - model data sync for the Tribunus graph router")
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  tribunusctl sync [--sources=a,b] [--out=file] [--litellm-base=url] [--litellm-token-file=path] [--ollama=url]")

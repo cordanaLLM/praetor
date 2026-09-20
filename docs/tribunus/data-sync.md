@@ -17,9 +17,8 @@ this slice: a snapshot is exactly what one sync run produced.
 
 ## Why this lives inside praetor for now
 
-Tribunus starts inside `cordanaLLM/praetor` (operator decision Q-063,
-`.workingdir/planning/tribunus-sync-design-20260918.md`) because the routing
-graph needs full data sync working first, and there is no interim
+Tribunus starts inside `cordanaLLM/praetor` as a move-ready first slice. The
+routing graph needs full data sync working first, and there is no interim
 praetor-side routing policy to build against yet. The layout is move-ready:
 `tribunus/` sits inside praetor's Go module with no nested `go.mod`, so
 `go build ./...` and `go test ./...` already cover it without a Makefile or
@@ -51,13 +50,13 @@ record every source produced into the same snapshot.
 
 | source | how | kind | verified |
 | --- | --- | --- | --- |
-| `codex-local` | Parses `rate_limits.primary` from the newest `~/.codex/sessions/**/*.jsonl` line, read-only. | measured | Live against a real session log on 2026-09-18: `primary.used_percent=100`, `window_minutes=10080`, matching the design doc's field shape. |
+| `codex-local` | Parses `rate_limits.primary` from the newest `~/.codex/sessions/**/*.jsonl` line, read-only. | measured | Live against a real session log on 2026-09-18: `primary.used_percent=100`, `window_minutes=10080`, matching the field shape consumed by the parser. |
 | `litellm-gateway` | `GET <base>/v1/models` with a bearer token read from a file (never logged). | measured | Live against `https://litellm.ai.cauda.dev` on 2026-09-18: HTTP 200, 28 models including `cordana/auto`. `/model/info` returned 403 for the agent token, so gateway records carry no price/context data -- `Record.Absent` says so per record. |
 | `ollama-local` | `GET <endpoint>/api/tags` for installed models, `GET <endpoint>/api/ps` to mark which are loaded. | measured | Live against `http://localhost:11434` on 2026-09-18: both endpoints HTTP 200. Duplicates `internal/router`'s Ollama calls on purpose -- `tribunus` cannot import praetor `internal` packages yet, and `internal/router` is expected to build on `tribunus/catalog` once Tribunus moves out. |
-| `public-catalog` | `GET` OpenRouter's public models API and LiteLLM's public price map. | declared | Both URLs and schemas verified live on 2026-09-18 (HTTP 200, real bodies) before writing the parser, per the design doc's requirement. The two catalogs use incompatible model-id schemes (e.g. `openai/gpt-4` vs `gpt-4`); slice 1 does not reconcile them, so each sub-fetch tags its own records with `public-catalog:openrouter` or `public-catalog:litellm-prices` even though `sync` reports both under one `public-catalog` line. |
+| `public-catalog` | `GET` OpenRouter's public models API and LiteLLM's public price map. | declared | Both URLs and schemas were verified live on 2026-09-18 (HTTP 200, real bodies) before the parser was written. The two catalogs use incompatible model-id schemes (e.g. `openai/gpt-4` vs `gpt-4`); slice 1 does not reconcile them, so each sub-fetch tags its own records with `public-catalog:openrouter` or `public-catalog:litellm-prices` even though `sync` reports both under one `public-catalog` line. |
 
-Two sources from the design doc's table have **no implementation** in slice
-1, by design, not oversight:
+Two planned sources have **no implementation** in slice 1, by design, not
+oversight:
 
 | source | why not |
 | --- | --- |
@@ -97,6 +96,6 @@ prints a bearer token.
 
 Routing, subscription scraping via undocumented endpoints, a UI, the
 planned Rust kernel, and persistence beyond the snapshot file are explicitly
-out of scope for slice 1 (design doc, "Not in slice 1"). A snapshot is a
+out of scope for slice 1. A snapshot is a
 point-in-time file an operator or a later routing layer reads; nothing here
 schedules or repeats a sync.

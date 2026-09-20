@@ -1,4 +1,6 @@
 type: changed
-title: Describe Tribunus as the graph router whose first slice is the model data sync, rather than as a model catalog, in docs/tribunus/data-sync.md and the tribunus package comments
+title: >-
+  Describe Tribunus as the graph router whose first slice is model data sync,
+  rather than a model catalog, in public docs, package comments, and CLI help
 issue: "#301"
 breaking: false
