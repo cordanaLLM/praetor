@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -187,6 +188,275 @@ func TestCleanWorkstationTopology_Apply(t *testing.T) {
 	}
 }
 
+func TestCleanWorkstationTopology_PreservesLiveOrganizationRepository(t *testing.T) {
+	devRoot := t.TempDir()
+	orgDir := filepath.Join(devRoot, "golusoris")
+	initTestGit(t, orgDir)
+	governancePaths := writeGovernancePayload(t, orgDir)
+	childRepo := filepath.Join(orgDir, "goenvoy")
+	initTestGit(t, childRepo)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := CleanWorkstationTopologyDetailed(ctx, devRoot, false)
+	if err != nil {
+		t.Fatalf("CleanWorkstationTopology: %v", err)
+	}
+	if len(result.Cleaned) != 0 || len(result.Blocked) != 1 {
+		t.Fatalf("live metadata result = %+v, want one blocked finding", result)
+	}
+
+	orgHead := filepath.Join(orgDir, ".git", "HEAD")
+	if _, err := os.Stat(orgHead); err != nil {
+		t.Fatalf("live organization repository metadata was deleted: %v", err)
+	}
+	childHead := filepath.Join(childRepo, ".git", "HEAD")
+	if _, err := os.Stat(childHead); err != nil {
+		t.Fatalf("child repository metadata was deleted: %v", err)
+	}
+	assertPathsExist(t, governancePaths)
+}
+
+func TestCleanWorkstationTopology_PreservesLiveOrganizationRepositoryContents(t *testing.T) {
+	devRoot := t.TempDir()
+	orgDir := filepath.Join(devRoot, "golusoris")
+	initTestGit(t, orgDir)
+	governancePaths := writeGovernancePayload(t, orgDir)
+
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, false)
+	if err != nil {
+		t.Fatalf("CleanWorkstationTopology: %v", err)
+	}
+	if len(result.Cleaned) != 0 {
+		t.Fatalf("cleaned tracked organization content: %v", result.Cleaned)
+	}
+	assertPathsExist(t, governancePaths)
+}
+
+func TestCleanWorkstationTopology_PreservesIndeterminateOrganizationContents(t *testing.T) {
+	devRoot := t.TempDir()
+	orgDir := filepath.Join(devRoot, "golusoris")
+	if err := os.MkdirAll(orgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orgDir, ".git"), []byte("not a gitlink\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	governancePaths := writeGovernancePayload(t, orgDir)
+
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, false)
+	if err != nil {
+		t.Fatalf("CleanWorkstationTopology: %v", err)
+	}
+	if len(result.Cleaned) != 0 || len(result.Blocked) == 0 {
+		t.Fatalf("indeterminate organization result = %+v, want blocked-only", result)
+	}
+	assertPathsExist(t, governancePaths)
+}
+
+func TestCleanWorkstationTopology_PreservesLiveOrganizationGitlink(t *testing.T) {
+	devRoot := t.TempDir()
+	orgDir := filepath.Join(devRoot, "golusoris")
+	linkedRepo := filepath.Join(t.TempDir(), "linked")
+	initTestGit(t, linkedRepo)
+	writeGitlink(t, orgDir, "gitdir: "+filepath.Join(linkedRepo, ".git")+"\n")
+	initTestGit(t, filepath.Join(orgDir, "goenvoy"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := CleanWorkstationTopology(ctx, devRoot, false); err != nil {
+		t.Fatalf("CleanWorkstationTopology: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(orgDir, ".git")); err != nil {
+		t.Fatalf("live organization gitlink was deleted: %v", err)
+	}
+}
+
+func TestCleanWorkstationTopology_PreservesLegacyHeadSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("legacy Git HEAD symlinks are a POSIX repository layout")
+	}
+	devRoot := t.TempDir()
+	orgDir := filepath.Join(devRoot, "golusoris")
+	initTestGit(t, orgDir)
+	headPath := filepath.Join(orgDir, ".git", "HEAD")
+	if err := os.Remove(headPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("refs/heads/master", headPath); err != nil {
+		t.Fatal(err)
+	}
+	initTestGit(t, filepath.Join(orgDir, "goenvoy"))
+
+	if _, err := CleanWorkstationTopology(context.Background(), devRoot, false); err != nil {
+		t.Fatalf("CleanWorkstationTopology: %v", err)
+	}
+	info, err := os.Lstat(headPath)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("legacy HEAD symlink was not preserved: info=%v err=%v", info, err)
+	}
+}
+
+func TestCleanWorkstationTopology_PreservesIndeterminateGitSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating repository symlinks requires optional Windows privileges")
+	}
+	devRoot := t.TempDir()
+	orgDir := filepath.Join(devRoot, "golusoris")
+	if err := os.MkdirAll(orgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitPath := filepath.Join(orgDir, ".git")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "unavailable"), gitPath); err != nil {
+		t.Fatal(err)
+	}
+	initTestGit(t, filepath.Join(orgDir, "goenvoy"))
+
+	if _, err := CleanWorkstationTopology(context.Background(), devRoot, false); err != nil {
+		t.Fatalf("CleanWorkstationTopology: %v", err)
+	}
+	info, err := os.Lstat(gitPath)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("indeterminate .git symlink was not preserved: info=%v err=%v", info, err)
+	}
+}
+
+func TestCleanWorkstationTopology_PreservesGovernanceNamedLegacyRepository(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("legacy Git HEAD symlinks are a POSIX repository layout")
+	}
+	devRoot := t.TempDir()
+	repo := filepath.Join(devRoot, "golusoris", "docs")
+	initTestGit(t, repo)
+	headPath := filepath.Join(repo, ".git", "HEAD")
+	if err := os.Remove(headPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("refs/heads/master", headPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := CleanWorkstationTopology(context.Background(), devRoot, false); err != nil {
+		t.Fatalf("CleanWorkstationTopology: %v", err)
+	}
+	info, err := os.Lstat(headPath)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("governance-named repository was not preserved: info=%v err=%v", info, err)
+	}
+}
+
+func TestCleanWorkstationTopology_PreservesGovernanceNamedIndeterminateMetadata(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating repository symlinks requires optional Windows privileges")
+	}
+	devRoot := t.TempDir()
+	repo := filepath.Join(devRoot, "golusoris", "docs")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitPath := filepath.Join(repo, ".git")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "unavailable"), gitPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := CleanWorkstationTopology(context.Background(), devRoot, false); err != nil {
+		t.Fatalf("CleanWorkstationTopology: %v", err)
+	}
+	info, err := os.Lstat(gitPath)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("indeterminate governance metadata was not preserved: info=%v err=%v", info, err)
+	}
+}
+
+func TestCleanWorkstationTopology_PreservesGovernanceNamedUnreadableMetadata(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows ACLs do not implement POSIX chmod permission denial")
+	}
+	devRoot := t.TempDir()
+	repo := filepath.Join(devRoot, "golusoris", "docs")
+	initTestGit(t, repo)
+	gitPath := filepath.Join(repo, ".git")
+	if err := os.Chmod(gitPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(gitPath, 0o755); err != nil && !os.IsNotExist(err) {
+			t.Errorf("restore git metadata permissions: %v", err)
+		}
+	})
+	if _, err := os.Lstat(filepath.Join(gitPath, "HEAD")); err == nil {
+		t.Skip("current user can inspect chmod-000 directories")
+	}
+
+	if _, err := CleanWorkstationTopology(context.Background(), devRoot, false); err != nil {
+		t.Fatalf("CleanWorkstationTopology: %v", err)
+	}
+	if _, err := os.Lstat(gitPath); err != nil {
+		t.Fatalf("unreadable governance metadata was not preserved: %v", err)
+	}
+	if err := verifyDeletionSafety(devRoot, repo); err == nil {
+		t.Fatal("unreadable governance metadata passed the final deletion boundary")
+	}
+}
+
+func TestAuditWorkstationTopology_UnreadableGitMetadataIsNotSafeToDelete(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows ACLs do not implement POSIX chmod permission denial")
+	}
+	devRoot := t.TempDir()
+	orgDir := filepath.Join(devRoot, "golusoris")
+	initTestGit(t, orgDir)
+	initTestGit(t, filepath.Join(orgDir, "goenvoy"))
+	gitPath := filepath.Join(orgDir, ".git")
+	if err := os.Chmod(gitPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(gitPath, 0o755); err != nil {
+			t.Errorf("restore git metadata permissions: %v", err)
+		}
+	})
+	if _, err := os.Lstat(filepath.Join(gitPath, "HEAD")); err == nil {
+		t.Skip("current user can inspect chmod-000 directories")
+	}
+
+	report, err := AuditWorkstationTopology(context.Background(), devRoot)
+	if err != nil {
+		t.Fatalf("AuditWorkstationTopology: %v", err)
+	}
+	requireUnsafeStray(t, report, gitPath)
+	if err := verifyDeletionSafety(devRoot, gitPath); err == nil {
+		t.Fatal("expected unreadable git metadata to fail closed")
+	}
+}
+
+func TestAuditWorkstationTopology_LiveOrganizationRepositoryIsNotSafeToDelete(t *testing.T) {
+	devRoot := t.TempDir()
+	orgDir := filepath.Join(devRoot, "golusoris")
+	initTestGit(t, orgDir)
+	initTestGit(t, filepath.Join(orgDir, "goenvoy"))
+
+	report, err := AuditWorkstationTopology(context.Background(), devRoot)
+	if err != nil {
+		t.Fatalf("AuditWorkstationTopology: %v", err)
+	}
+	gitPath := filepath.Join(orgDir, ".git")
+	requireUnsafeStray(t, report, gitPath)
+}
+
+func requireUnsafeStray(t *testing.T, report *TopologyReport, path string) {
+	t.Helper()
+	for _, stray := range report.StrayFiles {
+		if stray.Path == path {
+			if stray.IsSafeToDelete {
+				t.Fatalf("topology finding marked safe to delete: %+v", stray)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected %s to remain an explicit topology finding", path)
+}
+
 func TestAuditWorkstationTopology_Negative_NonExistent(t *testing.T) {
 	ctx := context.Background()
 	_, err := AuditWorkstationTopology(ctx, "/nonexistent/path/for/test")
@@ -228,6 +498,34 @@ func TestCleanWorkstationTopology_Boundary_EmptyDevRoot(t *testing.T) {
 	}
 }
 
+func TestCleanWorkstationTopology_Negative_CancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err := CleanWorkstationTopology(ctx, t.TempDir(), false)
+	if err == nil || result != nil {
+		t.Fatalf("cancelled clean result = %+v, err = %v; want nil result and error", result, err)
+	}
+}
+
+func TestCleanWorkstationTopologyDetailed_Boundary_EmptyDevRoot(t *testing.T) {
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), t.TempDir(), false)
+	if err != nil {
+		t.Fatalf("detailed clean on empty root: %v", err)
+	}
+	if len(result.Cleaned) != 0 || len(result.Blocked) != 0 {
+		t.Fatalf("detailed empty-root result = %+v, want empty", result)
+	}
+}
+
+func TestCleanWorkstationTopologyDetailed_Negative_CancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err := CleanWorkstationTopologyDetailed(ctx, t.TempDir(), false)
+	if err == nil || result != nil {
+		t.Fatalf("cancelled detailed result = %+v, err = %v; want nil result and error", result, err)
+	}
+}
+
 func TestVerifyDeletionSafety_Protections(t *testing.T) {
 	devRoot := t.TempDir()
 	orgDir := filepath.Join(devRoot, "vmafx")
@@ -259,6 +557,86 @@ func TestVerifyDeletionSafety_Protections(t *testing.T) {
 	initTestGit(t, childRepo)
 	if err := verifyDeletionSafety(devRoot, childRepo); err == nil {
 		t.Error("expected safety check to reject directory with valid git repo")
+	}
+
+	// 5. Cannot delete the metadata directory of a valid git repository.
+	if err := verifyDeletionSafety(devRoot, filepath.Join(childRepo, ".git")); err == nil {
+		t.Error("expected safety check to reject valid git metadata directory")
+	}
+}
+
+func TestVerifyDeletionSafety_GitMetadataTransitions(t *testing.T) {
+	devRoot := t.TempDir()
+	orgDir := filepath.Join(devRoot, "vmafx")
+	if err := os.MkdirAll(orgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Cannot delete malformed or indeterminate git metadata.
+	malformedRepo := filepath.Join(orgDir, "malformed")
+	writeGitlink(t, malformedRepo, "not a gitlink\n")
+	if err := verifyDeletionSafety(devRoot, filepath.Join(malformedRepo, ".git")); err == nil {
+		t.Error("expected safety check to reject indeterminate git metadata")
+	}
+
+	// A directory whose HEAD is proven absent remains cleanable.
+	headlessGit := filepath.Join(orgDir, "headless", ".git")
+	if err := os.MkdirAll(headlessGit, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyDeletionSafety(devRoot, headlessGit); err != nil {
+		t.Errorf("expected proven-headless git metadata to remain cleanable: %v", err)
+	}
+}
+
+func TestVerifyDeletionSafety_ProtectsOrganizationRepositoryContents(t *testing.T) {
+	devRoot := t.TempDir()
+	liveOrg := filepath.Join(devRoot, "golusoris")
+	initTestGit(t, liveOrg)
+	liveDocs := filepath.Join(liveOrg, "docs")
+	if err := os.MkdirAll(liveDocs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyDeletionSafety(devRoot, liveDocs); err == nil {
+		t.Fatal("tracked directory passed the organization repository boundary")
+	}
+
+	unknownOrg := filepath.Join(devRoot, "lusoris")
+	if err := os.MkdirAll(filepath.Join(unknownOrg, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unknownOrg, ".git"), []byte("invalid\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyDeletionSafety(devRoot, filepath.Join(unknownOrg, "docs")); err == nil {
+		t.Fatal("indeterminate organization metadata passed the deletion boundary")
+	}
+}
+
+func writeGovernancePayload(t *testing.T, orgDir string) []string {
+	t.Helper()
+	paths := []string{
+		filepath.Join(orgDir, "AGENTS.md"),
+		filepath.Join(orgDir, "docs", "guide.md"),
+		filepath.Join(orgDir, ".github", "workflow.yml"),
+	}
+	for _, path := range paths {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("tracked\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return paths
+}
+
+func assertPathsExist(t *testing.T, paths []string) {
+	t.Helper()
+	for _, path := range paths {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("organization repository content was not preserved: %s: %v", path, err)
+		}
 	}
 }
 
