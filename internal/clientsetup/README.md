@@ -16,6 +16,23 @@ Idempotent merges return the original bytes. JSON inputs must be strict JSON;
 JSONC comments, YAML aliases, duplicate keys and multiple documents are rejected
 explicitly. Do not silently convert an existing JSONC configuration to JSON.
 
+`PlanAGYPermissions` is the separate native-settings projection for AGY 1.2.7.
+It appends exact operator-declared `permissions.allow` rules, preserves unknown
+root and permission keys plus existing allow/ask/deny entries, and returns a
+secret-free count/delta alongside candidate bytes excluded from JSON metadata.
+It refuses a declared grant that intersects a higher-precedence deny/ask rule by
+exact or action-wide match, literal command prefix, recursive file scope, URL
+domain/subdomain, or MCP server wildcard. A deny `read_file` scope also conflicts
+with an intersecting `write_file` allow. Same-action regex rules fail closed when
+non-overlap cannot be proved; the adapter does not claim regex equivalence. Mixed
+absolute and workspace-relative file rules also fail closed because static planning
+does not know the future runtime workspace root. Native
+permission readback remains required. An absent target plus an empty declaration
+produces metadata only, never a zero-byte JSON candidate.
+It performs no filesystem I/O; the command layer binds its plan to one resolved
+target and publishes through the same snapshot, backup, CAS replacement and
+readback path as other client settings.
+
 Adapter schemas were verified on 2026-09-12:
 
 | Adapter | Artifact or native operation | Source |
@@ -27,7 +44,7 @@ Adapter schemas were verified on 2026-09-12:
 | `continue` | `.continue/mcpServers/praetor.yaml`, schema v1 block metadata and server sequence | [Continue MCP](https://docs.continue.dev/customize/deep-dives/mcp) |
 | `cline` | Explicit JSON export, `mcpServers`; caller selects the actual profile path | [Cline MCP](https://docs.cline.bot/mcp/mcp-overview) |
 | `kilo` | Explicit JSON export, direct `mcp` server map and local command array; caller selects the actual profile path | [Kilo MCP](https://kilo.ai/docs/automate/mcp/using-in-kilo-code) |
-| `agy` | `.agents/mcp_config.json` (workspace) or `<config root>/mcp_config.json` (host), `mcpServers`, stdio entries as `command`/`args` without a `type` key; remote entries are spelled `serverUrl` | [Antigravity plugins](https://antigravity.google/docs/plugins); shape measured on 2026-09-17 against a live `mcp_config.json` written by AGY 1.2.5 |
+| `agy` | `.agents/mcp_config.json` (workspace) or `<config root>/mcp_config.json` (host), `mcpServers`, stdio entries as `command`/`args` without a `type` key; native CLI grants are separately appended to `$HOME/.gemini/antigravity-cli/settings.json` | [Antigravity plugins](https://antigravity.google/docs/plugins), [CLI permissions](https://antigravity.google/docs/permissions?tab=cli); MCP shape measured on 2026-09-17 with AGY 1.2.5 and permission shape rechecked on 2026-09-20 with AGY 1.2.7 |
 
 OpenCode v2 uses a different `mcp.servers` schema. The `opencode-v1` identifier is
 intentional and does not imply support for that newer schema. Cline and Kilo are

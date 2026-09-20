@@ -86,11 +86,12 @@ file: a fleet, organization, deployment or workstation document may hold these
 sections beside `complexity`, or on their own. They go through the same loader and
 bounds, and into the same effective digest.
 
-`audit` resolves and seals these sections but does not act on them. The commands
-that act on them read `EffectivePolicy.OperatorSettings()` in
-`internal/config/operator_sections.go`: `praetorctl hook` for `hooks`, the client
-commands for `clients`, and the workstation commands for `update`. Each of those
-commands ships in its own change.
+`audit` resolves and seals these sections but does not act on them. Host commands
+select the fleet and workstation documents through `config.SelectOperatorSettings`
+and load the same schema through `config.LoadOperatorSettings`. `praetorctl hook`
+consumes `hooks`; `praetorctl clients permissions` consumes the AGY permission
+selection under `clients`. Repository policy and host activation therefore share
+one schema without making `audit` inspect a user's home directory.
 
 A workstation document, the layer that holds host paths:
 
@@ -101,7 +102,7 @@ clients:
       binary: /home/operator/.local/bin/agy
       permissions:
         manage: true
-        allow: ["mcp(praetor)"]
+        allow: ["mcp(hindsight/hindsight_list_knowledge_pages)"]
 hooks:
   command_policy:
     deny: ['\bexample-org/']
@@ -150,6 +151,21 @@ for a client in its own layer, as the example above does for `agy`. Adopters who
 set neither get neither.
 `config.ValidateCommandPolicyDeny` is the one check for those bounds; the hook
 policy validates through it.
+
+AGY 1.2.7 grants use exact `action(target)` rules. The managed adapter accepts
+`read_file`, `write_file`, `read_url`, `execute_url`, `command` and `mcp`; an MCP
+target names exact `server/tool`, `server/*`, or global `*`. File and URL rules
+accept only the documented global `*`, not partial globs. The operator loader keeps the grant strings generic so
+future clients can carry their own syntax, while `clients permissions` validates
+the selected AGY rules before producing or changing a settings file.
+
+An allow rule controls which matching call can proceed without approval. Do not
+infer an active-workspace exception: an AGY 1.2.7 headless replay denied a native
+read inside its active workspace when no matching `read_file(...)` grant was
+loaded. A governed read-only review therefore starts AGY in a separate disposable
+workspace and explicitly grants the reviewed repository through
+`read_file(...)`. Starting AGY inside the reviewed repository does not make that
+repository readable or read-only by policy.
 
 ### How layers merge
 

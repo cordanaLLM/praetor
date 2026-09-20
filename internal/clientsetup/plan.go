@@ -32,16 +32,22 @@ var ErrUnsupportedMerge = errors.New("client requires native configuration updat
 // and require the caller to inspect existing settings before executing them.
 // A plan is not evidence of discovery, connection, trust, or tool use.
 type Plan struct {
-	Client         Client     `json:"client"`
-	Mode           string     `json:"mode"`
-	RelativePath   string     `json:"relative_path,omitempty"`
-	ExportName     string     `json:"export_name,omitempty"`
-	SourceSHA256   string     `json:"source_sha256"`
-	RegistrySHA256 string     `json:"registry_sha256"`
-	Content        []byte     `json:"-"`
-	Commands       [][]string `json:"commands,omitempty"`
-	Documentation  string     `json:"documentation"`
-	Changed        bool       `json:"changed"`
+	Client          Client     `json:"client"`
+	Mode            string     `json:"mode"`
+	RelativePath    string     `json:"relative_path,omitempty"`
+	Target          string     `json:"target,omitempty"`
+	ExportName      string     `json:"export_name,omitempty"`
+	SourceSHA256    string     `json:"source_sha256"`
+	RegistrySHA256  string     `json:"registry_sha256,omitempty"`
+	Content         []byte     `json:"-"`
+	Commands        [][]string `json:"commands,omitempty"`
+	Documentation   string     `json:"documentation"`
+	Changed         bool       `json:"changed"`
+	Managed         *bool      `json:"managed,omitempty"`
+	BeforeCount     *int       `json:"before_count,omitempty"`
+	Added           []string   `json:"added,omitempty"`
+	AfterCount      *int       `json:"after_count,omitempty"`
+	RuntimeVerified *bool      `json:"runtime_verified,omitempty"`
 }
 
 type adapter struct{ mode, path, export, documentation string }

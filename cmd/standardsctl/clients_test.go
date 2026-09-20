@@ -60,13 +60,21 @@ func TestClientApplyRejectsChangedSnapshotAndSymlink(t *testing.T) {
 }
 
 func TestClientApplyRejectsArtifactOverlapBeforeWriting(t *testing.T) {
-	for _, suffix := range []string{".", "plan.json", "nested/settings.json"} {
-		t.Run(suffix, func(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		target func(string) string
+		output func(string) string
+	}{
+		{name: "equal", target: func(root string) string { return filepath.Join(root, "same") }, output: func(root string) string { return filepath.Join(root, "same") }},
+		{name: "target under output", target: func(root string) string { return filepath.Join(root, "backup", "settings.json") }, output: func(root string) string { return filepath.Join(root, "backup") }},
+		{name: "output under target", target: func(root string) string { return filepath.Join(root, "settings.json") }, output: func(root string) string { return filepath.Join(root, "settings.json", "backup") }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			registry := filepath.Join(root, "registry.json")
 			writeClientFixture(t, registry, []byte(`{"version":1,"servers":[{"name":"shared","command":`+quoted(trueCommand)+`}]}`))
-			output := filepath.Join(root, "backup")
-			target := filepath.Join(output, filepath.FromSlash(suffix))
+			output := test.output(root)
+			target := test.target(root)
 			if err := runClients([]string{"apply", "--registry", registry, "--client", "gemini", "--target", target, "--out", output}); err == nil {
 				t.Fatal("target overlapping backup was accepted")
 			}

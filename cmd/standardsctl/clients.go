@@ -15,6 +15,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/clientsetup"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // runClients prepares exact client-specific artifacts from one shared registry.
@@ -23,14 +24,14 @@ func runClients(args []string) error {
 	commands := map[string]func([]string) error{
 		"connect": prepareConnections, "bind-memory": bindClientMemory,
 		"apply": applyClientConfig, "prepare": prepareClientConfig,
-		"capabilities": reportClientCapabilities,
+		"capabilities": reportClientCapabilities, "permissions": runClientPermissions,
 	}
 	if len(args) > 0 {
 		if command, ok := commands[args[0]]; ok {
 			return command(args[1:])
 		}
 	}
-	return errors.New("usage: praetorctl clients <connect|prepare|apply|bind-memory|capabilities> [options]")
+	return errors.New("usage: praetorctl clients <connect|prepare|apply|bind-memory|capabilities|permissions> [options]")
 }
 
 func prepareClientConfig(args []string) error {
@@ -82,10 +83,21 @@ func applyClientConfig(args []string) error {
 }
 
 func publishClientPlan(ctx context.Context, plan *clientsetup.Plan, target, output string, before []byte, exists bool) error {
-	if err := validateClientPublication(plan, target, output, before); err != nil {
+	if err := validateClientPublication(ctx, plan, target, output, before); err != nil {
 		return err
 	}
 	if err := retainClientPlan(ctx, plan, output, before, exists); err != nil {
+		return err
+	}
+	if !plan.Changed {
+		actual, actualExists, err := contextopt.ObserveSnapshot(ctx, target)
+		if err != nil {
+			return err
+		}
+		if actualExists != exists || !bytes.Equal(actual, before) {
+			return errors.New("client configuration changed after planning; inspect retained plan and current file")
+		}
+		_, err = fmt.Fprintf(os.Stdout, "Configuration for %s at %s already matches the plan; backup and plan: %s. Native trust and tool execution remain unverified.\n", plan.Client, target, output)
 		return err
 	}
 	if err := contextopt.EnsureDirectory(ctx, filepath.Dir(target), 0o700); err != nil {
@@ -106,30 +118,103 @@ func publishClientPlan(ctx context.Context, plan *clientsetup.Plan, target, outp
 	return err
 }
 
-func validateClientPublication(plan *clientsetup.Plan, target, output string, before []byte) error {
+func validateClientPublication(ctx context.Context, plan *clientsetup.Plan, target, output string, before []byte) error {
+	if err := validateClientPlanSnapshot(plan, before); err != nil {
+		return err
+	}
+	targetPath, _, err := separatedClientPublicationPaths(ctx, target, output)
+	if err != nil {
+		return err
+	}
+	return validateClientPlanTarget(plan.Target, targetPath)
+}
+
+func validateClientPlanSnapshot(plan *clientsetup.Plan, before []byte) error {
 	if plan == nil {
 		return errors.New("client plan is required")
 	}
-	if plan.Mode == "native" || len(plan.Content) == 0 {
+	if plan.Mode == "native" || len(plan.Content) == 0 && plan.Changed {
 		return errors.New("this adapter requires its native client configuration workflow; use clients prepare")
 	}
 	if plan.SourceSHA256 != fmt.Sprintf("%x", sha256.Sum256(before)) {
 		return errors.New("client plan source differs from expected backup snapshot")
 	}
+	return nil
+}
+
+func absoluteClientPublicationPaths(target, output string) (string, string, error) {
 	targetPath, err := filepath.Abs(target)
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	outputPath, err := filepath.Abs(output)
 	if err != nil {
-		return err
+		return "", "", err
 	}
-	rel, err := filepath.Rel(outputPath, targetPath)
+	return targetPath, outputPath, nil
+}
+
+func separatedClientPublicationPaths(ctx context.Context, target, output string) (string, string, error) {
+	return separatedClientPublicationPathsWithResolver(ctx, target, output, util.ResolveExistingPath)
+}
+
+type clientPathResolver func(context.Context, string) (string, error)
+
+func separatedClientPublicationPathsWithResolver(ctx context.Context, target, output string, resolve clientPathResolver) (string, string, error) {
+	if resolve == nil {
+		return "", "", errors.New("client path resolver is required")
+	}
+	targetPath, outputPath, err := absoluteClientPublicationPaths(target, output)
+	if err != nil {
+		return "", "", err
+	}
+	resolvedTarget, err := resolve(ctx, targetPath)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve client target path: %w", err)
+	}
+	resolvedOutput, err := resolve(ctx, outputPath)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve client artifact path: %w", err)
+	}
+	if err := validateClientPublicationSeparation(resolvedTarget, resolvedOutput); err != nil {
+		return "", "", err
+	}
+	return targetPath, outputPath, nil
+}
+
+func validateClientPublicationSeparation(targetPath, outputPath string) error {
+	targetInOutput, err := clientPathContains(outputPath, targetPath)
 	if err != nil {
 		return err
 	}
-	if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
-		return errors.New("client target must be outside the backup artifact directory")
+	outputInTarget, err := clientPathContains(targetPath, outputPath)
+	if err != nil {
+		return err
+	}
+	if targetInOutput || outputInTarget {
+		return errors.New("client target and artifact directory must not contain each other")
+	}
+	return nil
+}
+
+func clientPathContains(parent, candidate string) (bool, error) {
+	rel, err := filepath.Rel(parent, candidate)
+	if err != nil {
+		return false, err
+	}
+	return rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)), nil
+}
+
+func validateClientPlanTarget(target, actual string) error {
+	if target == "" {
+		return nil
+	}
+	plannedTarget, err := filepath.Abs(target)
+	if err != nil {
+		return err
+	}
+	if plannedTarget != actual {
+		return errors.New("client plan target differs from publication target")
 	}
 	return nil
 }
@@ -139,7 +224,10 @@ func retainClientPlan(ctx context.Context, plan *clientsetup.Plan, output string
 	if err != nil {
 		return err
 	}
-	files := map[string][]byte{"plan.json": metadata, plan.ExportName: plan.Content}
+	files := map[string][]byte{"plan.json": metadata}
+	if len(plan.Content) != 0 {
+		files[plan.ExportName] = plan.Content
+	}
 	if exists {
 		files["config.before"] = before
 	}
