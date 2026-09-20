@@ -7,11 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
 	// MaxScanEntries limits directory scan iterations to prevent unbounded execution (HISS-02).
 	MaxScanEntries = 1000
+	// maxGitlinkBytes caps a .git gitlink file. Real gitlinks are one short line.
+	maxGitlinkBytes = 4096
 )
 
 var (
@@ -283,23 +287,55 @@ func auditStrayGitDir(entryPath, relPath string, hasChildRepos bool, report *Top
 	}
 }
 
-// HasValidGitRepo reports whether path is a git working tree: a .git gitlink file (worktree or
-// submodule) or a .git directory holding a HEAD file.
+// HasValidGitRepo reports whether path is a git working tree: a .git gitlink file whose
+// gitdir target is a directory with a regular HEAD, or a .git directory with the same
+// property. An empty path is never a repository, including when the process working
+// directory itself is a checkout.
 func HasValidGitRepo(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
 	gitPath := filepath.Join(path, ".git")
 	info, err := os.Stat(gitPath)
 	if err != nil {
 		return false
 	}
 	if info.Mode().IsRegular() {
-		return true // gitlink file for worktree or submodule
+		return hasValidGitlinkTarget(path)
 	}
 	if !info.IsDir() {
 		return false
 	}
-	headPath := filepath.Join(gitPath, "HEAD")
-	headInfo, err := os.Stat(headPath)
-	return err == nil && !headInfo.IsDir()
+	return hasRegularHead(gitPath)
+}
+
+// hasValidGitlinkTarget reports whether a .git file resolves to a git directory with a
+// regular HEAD. Relative targets resolve against the worktree, matching Git's layout.
+func hasValidGitlinkTarget(worktree string) bool {
+	data, err := util.ReadConfinedLimited(worktree, ".git", maxGitlinkBytes)
+	if err != nil {
+		return false
+	}
+	line := strings.TrimRight(string(data), "\r\n")
+	const prefix = "gitdir: "
+	if !strings.HasPrefix(line, prefix) {
+		return false
+	}
+	target := line[len(prefix):]
+	if target == "" {
+		return false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(worktree, target)
+	}
+	target = filepath.Clean(target)
+	info, err := os.Stat(target)
+	return err == nil && info.IsDir() && hasRegularHead(target)
+}
+
+func hasRegularHead(gitDir string) bool {
+	info, err := os.Stat(filepath.Join(gitDir, "HEAD"))
+	return err == nil && info.Mode().IsRegular()
 }
 
 // CleanWorkstationTopology removes identified stray files and directories adhering to strict safety rules.
