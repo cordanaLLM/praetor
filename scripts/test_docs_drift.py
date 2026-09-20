@@ -70,6 +70,21 @@ class DocsDrift(unittest.TestCase):
         # A test file of the same package is not a user-discoverable surface.
         self.assertEqual(docs_drift.violations(["internal/config/register_test.go"]), [])
 
+    def test_readme_renderer_and_audit_share_one_documented_contract(self):
+        """Every producer or verifier of the managed README block maps to its guide."""
+        surfaces = [
+            "internal/readmegovernance/readme.go",
+            "internal/adopt/governance.go",
+            "cmd/standardsctl/audit_readme.go",
+        ]
+        for surface in surfaces:
+            found = docs_drift.violations([surface])
+            self.assertEqual(len(found), 1, surface)
+            self.assertIn("managed README governance contract", found[0])
+            self.assertEqual(docs_drift.violations([
+                surface, "docs/guides/adoption-verification.md",
+            ]), [])
+
     def test_boundary_several_surfaces_report_separately(self):
         """Two unrelated surfaces in one change produce two messages, not one."""
         self.assertEqual(len(docs_drift.violations([

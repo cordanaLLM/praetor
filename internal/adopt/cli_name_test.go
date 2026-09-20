@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/readmegovernance"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -13,12 +14,16 @@ import (
 // named broke the hook and installing what the hook named broke make verify-all (#118).
 func TestGeneratedArtefacts_Positive_AgreeOnOneBinary(t *testing.T) {
 	plan := &VerificationPlan{}
+	readme, _, err := readmegovernance.Reconcile("", readmegovernance.State{})
+	if err != nil {
+		t.Fatalf("rendering README governance: %v", err)
+	}
 	harness, err := buildAgentHarness("praetor-test", "go", plan)
 	if err != nil {
 		t.Fatalf("rendering the agent harness: %v", err)
 	}
 	artefacts := map[string]string{
-		"README governance table": buildGovernanceTable(),
+		"README governance table": readme,
 		"Makefile":                buildMakefile(plan),
 		"agent harness":           harness,
 	}

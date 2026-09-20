@@ -11,6 +11,28 @@ runtimes, status, and any reasons requiring review.
 | `unavailable` | A required build/test command is missing or ambiguous. Generated recipes fail explicitly. |
 | `preserved-unverified` | Existing custom Makefile ownership is preserved. Review and exercise its `verify-all` contract. |
 
+## README governance is adoption evidence, not certification
+
+When `README.md` exists, adoption owns only the region between
+`<!-- praetor:readme-governance:start -->` and
+`<!-- praetor:readme-governance:end -->`. It refreshes that region from the
+recorded debt baseline and preserves content outside it. The badge says
+**HISS Adopted**, never **HISS Compliant**: a baseline records existing scanner
+debt, while only a commit-bound signed Exit-0 receipt proves that a particular
+verification run passed.
+
+`praetorctl audit` renders the same expected block in memory and fails when the
+README block is missing, malformed, duplicated, or stale. Re-run
+`praetorctl adopt` to migrate the historical unmarked HISS-16 badge and
+governance table. A repository that deliberately keeps README ownership can set
+`adoption.decline: [readme]` in `.standards.yaml`; audit reports that explicit
+decision instead of silently treating an unchecked README as current.
+
+Adoption refuses unbalanced or duplicate live markers before writing
+`README.md`. Marker examples inside fenced code are inert. Human-authored and
+custom badges outside the block remain untouched, and a custom HISS badge
+prevents the renderer from adding a second badge.
+
 ### Stages that do not apply are skipped, not failed
 
 `praetorctl gate run` reports a stage it cannot meaningfully run as skipped, with the reason, rather

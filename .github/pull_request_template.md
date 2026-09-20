@@ -14,7 +14,7 @@ All PRs must strictly adhere to the declared HISS invariants before merging:
 - [ ] **HISS-01 (Control Flow)**: Call graph is strictly a Directed Acyclic Graph (DAG); zero recursion.
 - [ ] **HISS-02 (Bounded Loops & I/O)**: All loops declare a static compile-time scalar upper bound; all network/disk I/O operations enforce explicit `context.Context` timeouts.
 - [ ] **HISS-03 (Zero Frame Malloc)**: Hot-path loops maintain zero dynamic heap allocations ($\Delta \text{HeapAlloc}_{\text{tick}} = 0$).
-- [ ] **HISS-04 (Complexity Bounds)**: McCabe Cyclomatic $\le 10$, Cognitive $\le 15$, Func LOC $\le 75$, Statements $\le 50$.
+- [ ] **HISS-04 (Complexity Bounds)**: McCabe Cyclomatic $\le 10$, Cognitive $\le 15$, Func LOC $\le 60$, Statements $\le 50$.
 
 ### Memory & Error Integrity
 - [ ] **HISS-07 (Checked Errors)**: Zero `.unwrap()` / `.expect()`; zero unchecked error returns (`_ = err`); all errors handled or wrapped with domain context.

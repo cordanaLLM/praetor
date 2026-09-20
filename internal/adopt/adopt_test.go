@@ -748,11 +748,11 @@ func TestAdopt_GovernanceTextsScaffolded(t *testing.T) {
 		}
 	}
 	content := mustRead(t, filepath.Join(repoPath, "README.md"))
-	if !strings.Contains(content, "HISS%20Compliant") {
-		t.Errorf("a debt-free repository gets the compliant badge, got:\n%s", content)
+	if !strings.Contains(content, "HISS%20Adopted%20(baseline%20pending)") || strings.Contains(content, "Compliant") {
+		t.Errorf("an unrecorded baseline must render a pending adoption badge, got:\n%s", content)
 	}
-	if !strings.Contains(content, "## Standards & Governance") || !strings.Contains(content, "# My Awesome Project") {
-		t.Errorf("expected governance table and preserved heading, got:\n%s", content)
+	if !strings.Contains(content, testReadmeGovernanceStart) || !strings.Contains(content, "# My Awesome Project") {
+		t.Errorf("expected managed governance block and preserved heading, got:\n%s", content)
 	}
 }
 
@@ -772,21 +772,6 @@ func TestAdopt_ReadmeBadgeReflectsBaselinedDebt(t *testing.T) {
 	}
 	if !strings.Contains(content, "1%20baselined") {
 		t.Errorf("badge must carry the baselined count, got:\n%s", content)
-	}
-}
-
-func TestBuildReadmeBadge_Boundary(t *testing.T) {
-	if !strings.Contains(buildReadmeBadge(0), "brightgreen") {
-		t.Error("zero debt must be green")
-	}
-	if b := buildReadmeBadge(1); !strings.Contains(b, "yellow") || !strings.Contains(b, "(1%20baselined)") {
-		t.Errorf("one infraction must be yellow with a count, got %s", b)
-	}
-	if got := injectReadmeBadge("# T", "B\n"); got != "# T\n\nB\n" {
-		t.Errorf("heading without newline: %q", got)
-	}
-	if got := injectReadmeBadge("plain", "B\n"); got != "B\n\nplain" {
-		t.Errorf("no heading: %q", got)
 	}
 }
 

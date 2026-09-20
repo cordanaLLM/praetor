@@ -45,6 +45,8 @@ SURFACE_MAP: list[tuple[str, str, str]] = [
     (r"^cmd/standards-mcp/", r"^docs/guides/development-mcp\.md$", "development MCP server"),
     (r"^internal/gating/pipeline\.go$", r"^docs/guides/adoption-verification\.md$",
      "gating pipeline"),
+    (r"^(internal/readmegovernance/|internal/adopt/governance\.go$|cmd/standardsctl/audit_readme\.go$)",
+     r"^docs/guides/adoption-verification\.md$", "managed README governance contract"),
     (r"^internal/wishes/", r"^docs/guides/wishes-and-polls\.md$", "wish ledger"),
     (r"^internal/state/", r"^docs/guides/state-ledger-integrity\.md$", "state ledger"),
     (r"^(internal/agenthook/[^/]+(?<!_test)\.go|cmd/standardsctl/hook\.go)$",

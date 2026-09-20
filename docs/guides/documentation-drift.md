@@ -29,6 +29,7 @@ Only what an adopter reads about before using it. The map in `SURFACE_MAP` is de
 | `.config/lefthook/scripts/*.py`, `lefthook.yml` | `docs/guides/git-hooks.md` |
 | `cmd/standards-mcp/` | `docs/guides/development-mcp.md` |
 | `internal/gating/pipeline.go` | `docs/guides/adoption-verification.md` |
+| `internal/readmegovernance/`, the adoption README renderer, and its audit gate | `docs/guides/adoption-verification.md` |
 | `internal/wishes/`, `internal/state/` | their respective guides |
 | `internal/agenthook/*.go` (tests excluded), `cmd/standardsctl/hook.go` | `docs/guides/agent-hooks.md` |
 | `.github/workflows/portability.yml`, `scripts/portability_selftest.py` | `docs/standards/hiss-21-platform-neutrality.md` |

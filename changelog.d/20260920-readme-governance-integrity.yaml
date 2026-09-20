@@ -1,0 +1,4 @@
+type: fixed
+title: Reconcile truthful marker-owned README governance blocks and reject stale generated claims during audit
+issue: "#370"
+breaking: true

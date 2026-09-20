@@ -50,6 +50,8 @@ type auditOptions struct {
 	debtDeltaReason string
 	policy          config.EffectiveOptions
 	effective       *config.EffectivePolicy
+	baseline        *baseline.Baseline
+	baselineKnown   bool
 }
 
 func runAudit(args []string) error {
@@ -134,6 +136,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditRepoIdentity(manifest, rootDir) },
 		func() error { return auditLockDigestsContext(ctx, manifest, rootDir) },
 		func() error { return auditBaselineAndInvariants(ctx, opts) },
+		func() error { return auditReadmeGovernance(ctx, manifest, opts) },
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
 		func() error { return auditAgentProjections(rootDir) },
 		func() error { return auditCavemanAgentSurfaces(rootDir) },
@@ -179,10 +182,12 @@ func auditManifestAndLockfile(ctx context.Context, opts *auditOptions) (*config.
 // the real change set (touched-file clean rule) and, when a base ref is given, refuses a
 // baseline that grew versus the one committed on that ref.
 func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
+	opts.baselineKnown = util.FileExists(opts.baselinePath)
 	base, err := baseline.LoadBaseline(opts.baselinePath)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
+	opts.baseline = base
 
 	scanOpts := hiss.ScanOptions{MaxFuncLOC: config.AuditMaxFuncLOC}
 	if opts.effective != nil {

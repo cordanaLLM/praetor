@@ -61,6 +61,23 @@ func declinedArtifacts(declared []string, known []string) (map[string]bool, erro
 	return declined, nil
 }
 
+// ArtifactDeclined resolves one named adoption step through the same bounded policy used by
+// Adopt. Auditors call this instead of maintaining a second decline parser that can drift.
+func ArtifactDeclined(declared []string, artifact string) (bool, error) {
+	known := adoptStepNames()
+	declined, err := declinedArtifacts(declared, known)
+	if err != nil {
+		return false, err
+	}
+	name := strings.ToLower(strings.TrimSpace(artifact))
+	for i := 0; i < len(known) && i < maxAdoptSteps; i++ {
+		if known[i] == name {
+			return declined[name], nil
+		}
+	}
+	return false, fmt.Errorf("unknown adoption artefact %q", name)
+}
+
 func sortedNames(names []string) []string {
 	out := append([]string(nil), names...)
 	sort.Strings(out)

@@ -3,26 +3,22 @@ package adopt
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/readmegovernance"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
-	makefileName      = "Makefile"
-	gitIgnoreFile     = ".gitignore"
-	contributingFile  = "CONTRIBUTING.md"
-	prTemplateFile    = ".github/pull_request_template.md"
-	prTemplateUpper   = ".github/PULL_REQUEST_TEMPLATE.md"
-	securityFile      = "SECURITY.md"
-	adrIndexFile      = "docs/adr/README.md"
-	adrTemplateFile   = "docs/adr/0000-template.md"
-	readmeFile        = "README.md"
-	governanceHeading = "Standards & Governance"
-	// badgeMarker matches the badge URL slug of every generation, old ("HISS--16") and
-	// current ("HISS"), so re-adoption never double-injects.
-	badgeMarker = "Standards-HISS"
+	makefileName     = "Makefile"
+	gitIgnoreFile    = ".gitignore"
+	contributingFile = "CONTRIBUTING.md"
+	prTemplateFile   = ".github/pull_request_template.md"
+	prTemplateUpper  = ".github/PULL_REQUEST_TEMPLATE.md"
+	securityFile     = "SECURITY.md"
+	adrIndexFile     = "docs/adr/README.md"
+	adrTemplateFile  = "docs/adr/0000-template.md"
+	readmeFile       = "README.md"
 )
 
 // buildMakefile renders the greenfield Makefile. verify-all runs the same gates the
@@ -141,62 +137,35 @@ func reconcileADR(_ context.Context, s *adoptSession) error {
 	return nil
 }
 
-// buildReadmeBadge renders a badge that reflects the recorded baseline instead of an
-// unconditional compliance claim.
-func buildReadmeBadge(legacyDebt int) string {
-	if legacyDebt == 0 {
-		return "[![HISS Compliant](https://img.shields.io/badge/Standards-HISS%20Compliant-brightgreen)](AGENTS.md)\n"
-	}
-	return fmt.Sprintf("[![HISS Adopted](https://img.shields.io/badge/Standards-HISS%%20Adopted%%20(%d%%20baselined)-yellow)](AGENTS.md)\n", legacyDebt)
-}
-
-// injectReadmeBadge places the badge under the first-level heading or at the top.
-func injectReadmeBadge(content, badge string) string {
-	if !strings.HasPrefix(strings.TrimSpace(content), "# ") {
-		return badge + "\n" + content
-	}
-	nlIdx := strings.Index(content, "\n")
-	if nlIdx == -1 {
-		return content + "\n\n" + badge
-	}
-	return content[:nlIdx+1] + "\n" + badge + content[nlIdx+1:]
-}
-
-func buildGovernanceTable() string {
-	return "\n\n## " + governanceHeading + "\n\nThis repository conforms to the High-Integrity Systems Standard (HISS)\nand modernized NASA JPL Power-of-10 rules.\n\n| Gate | Command | Description |\n| :--- | :--- | :--- |\n| **Verification** | `make verify-all` | Runs full audit, test suite, and context integrity check |\n| **HISS Audit** | `praetorctl audit` | Enforces zero technical debt regression against baseline |\n| **Context Sync** | `praetorctl compile-context` | Transpiles canonical `AGENTS.md` to all AI targets |\n"
-}
-
-// reconcileReadme injects the compliance badge and governance table into an existing
-// README.md. A README that exists but cannot be read is an error, not a silent skip.
-func reconcileReadme(_ context.Context, s *adoptSession) error {
+// reconcileReadme refreshes the only README region Praetor owns. A baseline records debt;
+// it never certifies that the repository's full verification cascade passed.
+func reconcileReadme(ctx context.Context, s *adoptSession) error {
 	full, err := repoFile(s.repoPath, readmeFile)
 	if err != nil {
 		return err
 	}
-	if !fileExists(full) {
-		return nil
-	}
-	data, err := readRepoFile(full)
+	data, exists, err := contextopt.ObserveSnapshot(ctx, full)
 	if err != nil {
 		return err
 	}
-	content := string(data)
-	modified := false
-	if !strings.Contains(content, badgeMarker) {
-		content = injectReadmeBadge(content, buildReadmeBadge(s.report.LegacyDebtCount))
-		modified = true
+	if !exists {
+		return nil
 	}
-	if !strings.Contains(content, governanceHeading) && !strings.Contains(content, verifyCommand) {
-		content = strings.TrimRight(content, "\r\n") + buildGovernanceTable()
-		modified = true
+	state := readmegovernance.State{
+		BaselineKnown:   s.report.BaselineStatus == "scanned" || s.report.BaselineStatus == "existing",
+		LegacyDebtCount: s.report.LegacyDebtCount,
 	}
-	if !modified {
+	content, changed, err := readmegovernance.Reconcile(string(data), state)
+	if err != nil {
+		return err
+	}
+	if !changed {
 		return nil
 	}
 	if err := s.write(full, []byte(content), filePerm); err != nil {
 		return err
 	}
-	s.report.recordReconciled(readmeFile, "Non-destructively injected HISS badge and verification gate table")
+	s.report.recordReconciled(readmeFile, "Reconciled the marker-owned HISS adoption and verification contract")
 	return nil
 }
 
