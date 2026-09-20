@@ -118,26 +118,35 @@ func reconcilePaperclip(ctx context.Context, s *adoptSession) error {
 	return nil
 }
 
-func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
-	if _, err := s.scaffoldFile(scaffold{
+// generatedPersonas are the canonical personas adoption writes into an adopted repository.
+// The context gate lints every canonical persona (#369), so text praetor generates here has
+// to pass praetor's own lint. Both were prose until #380 and #381 reported the gate failing
+// on personas nobody had edited. Keeping the set in one place is what lets
+// TestGeneratedPersonasPassCavemanLint catch the next one before an adopter's push does.
+func generatedPersonas() []scaffold {
+	return []scaffold{{
 		rel:      auditorAgentFile,
 		perm:     filePerm,
 		content:  []byte(defaultAuditorAgentMD),
 		force:    true,
 		created:  "Scaffolded repository auditor agent definition",
 		verified: "Existing repository auditor agent definition verified present",
-	}); err != nil {
-		return err
-	}
-	if _, err := s.scaffoldFile(scaffold{
+	}, {
 		rel:      gatekeeperFile,
 		perm:     filePerm,
 		content:  []byte(defaultGatekeeperAgentMD),
 		force:    true,
 		created:  "Scaffolded repository gatekeeper agent definition",
 		verified: "Existing repository gatekeeper agent definition verified present",
-	}); err != nil {
-		return err
+	}}
+}
+
+func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
+	personas := generatedPersonas()
+	for i := 0; i < len(personas) && i < maxTranspileTargets; i++ {
+		if _, err := s.scaffoldFile(personas[i]); err != nil {
+			return err
+		}
 	}
 	if s.opts.DryRun {
 		return nil
@@ -162,7 +171,7 @@ commandExecutionPolicy: auto
 
 # Repository Governance Auditor Persona
 
-You are the authoritative repository governance auditor. Your purpose is to run autonomous sweeps across codebases and git commits to guarantee 100% adherence to declared standards.
+Authoritative repository governance auditor. Purpose: run autonomous sweeps across codebases and git commits; guarantee 100% adherence to declared standards.
 
 ## Execution Command
 ` + "```bash\npraetorctl audit\n```\n"
@@ -177,7 +186,7 @@ commandExecutionPolicy: auto
 
 # Repository Gatekeeper Persona
 
-You are the repository gatekeeper. Your mission is to strictly enforce the anti-direct-merge policy and verify all verification gates before shipping.
+Repository gatekeeper. Mission: enforce anti-direct-merge policy strictly; verify every verification gate before shipping.
 
 ## Execution Command
 ` + "```bash\npraetorctl gate run --target=. --dry-run\n```\n"

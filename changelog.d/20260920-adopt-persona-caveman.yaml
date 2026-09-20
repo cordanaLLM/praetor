@@ -1,0 +1,4 @@
+type: fixed
+title: Write the generated repo-auditor and repo-gatekeeper personas in the internal register so a fresh adoption no longer hands the adopter personas that fail praetor's own caveman gate, and cover every generated persona with the lint in tests
+issue: "#380"
+breaking: false

@@ -1,0 +1,4 @@
+type: fixed
+title: Close inherited stdin in hook self-tests so Lefthook post hooks cannot wait on an operator terminal until timeout
+issue: "#394"
+breaking: false
