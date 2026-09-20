@@ -37,7 +37,9 @@ replace an existing executable. See the [Semgrep package installation guidance](
 
 Pre-commit exports the index into a temporary directory. Unstaged edits, untracked
 files and the index remain unchanged. Formatting is a read-only gate: run `gofmt`
-and stage your chosen hunks explicitly. Deleted files are included when computing
+and stage your chosen hunks explicitly. The export pins `core.autocrlf=false`, so
+the isolated checks inspect the bytes in the index instead of rewriting them to the
+operator checkout's line endings. Deleted files are included when computing
 scope and skipped by per-file linters. Paths are read with NUL delimiters and
 passed as process arguments, including filenames containing spaces or shell text.
 A missing required tool or a failed subprocess blocks the operation.

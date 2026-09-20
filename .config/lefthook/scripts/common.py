@@ -16,6 +16,7 @@ class HookError(Exception):
 
 
 KILL_TREE_TIMEOUT = 10
+SNAPSHOT_GIT_CONFIG = ("-c", "core.autocrlf=false")
 
 
 def _kill_bounded(process):
@@ -246,7 +247,12 @@ def snapshot(ref=None):
     with tempfile.TemporaryDirectory(prefix="praetor-hook-") as directory:
         dest = Path(directory)
         if ref is None:
-            git("checkout-index", "--all", "--force", f"--prefix={dest}/")
+            # Snapshot checks consume repository bytes, not the operator's checkout
+            # preference. Without this pin, Windows' core.autocrlf=true rewrites LF
+            # shell/YAML blobs to CRLF and the isolated gate rejects bytes absent from
+            # the index it claims to inspect.
+            git(*SNAPSHOT_GIT_CONFIG, "checkout-index", "--all", "--force",
+                f"--prefix={dest}/")
             # Lefthook's validator requires a repository even though it only
             # validates configuration. This metadata belongs solely to the export.
             run(["git", "init", "--quiet", str(dest)], env=clean_env())
@@ -262,7 +268,8 @@ def snapshot(ref=None):
             for line in refs.decode().splitlines():
                 oid, name = line.split()
                 run(["git", "update-ref", name, oid], cwd=dest, env=env)
-            run(["git", "checkout", "--quiet", "--detach", ref], cwd=dest, env=env)
+            run(["git", *SNAPSHOT_GIT_CONFIG, "checkout", "--quiet", "--detach", ref],
+                cwd=dest, env=env)
         yield dest
 
 

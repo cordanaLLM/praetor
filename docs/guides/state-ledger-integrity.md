@@ -76,6 +76,12 @@ The marker binds the Git state, the repository's own path, and the other ledgers
 exists), so editing any of them stales it. Sync removes the previous marker before it
 appends its own.
 
+Git state is observed with `core.autocrlf=input`. The fixed input normalization keeps
+one logical text state across platforms without rewriting the worktree, while a path
+marked `-text` remains byte-sensitive. This also prevents an ordinary Windows Git
+command using `core.autocrlf=true` from changing the marker merely by refreshing index
+stat metadata; staged changes, untracked bytes, and changed text content still stale it.
+
 The path is canonicalised before it is bound, so one repository reached under two
 spellings of its directory binds to one state. Two callers rarely hold the same
 spelling: on Windows a tool started from a short-name temporary directory reports that

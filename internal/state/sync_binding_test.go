@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
@@ -66,6 +67,41 @@ func TestVerifyStateSyncRejectsChangedInputs(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestStateSyncIgnoresAutocrlfIndexRefreshNoise(t *testing.T) {
+	root := t.TempDir()
+	stateFixtureGit(t, root, "init", "-b", "main")
+	writeIntegrityFile(t, filepath.Join(root, ".gitignore"), "/.workingdir/\r\n")
+	tracked := filepath.Join(root, "tracked.txt")
+	writeIntegrityFile(t, tracked, "initial\r\n")
+	stateFixtureGit(t, root, "-c", "core.autocrlf=true", "add", ".")
+	stateFixtureGit(t, root, "-c", "core.autocrlf=true", "-c", "user.name=Test",
+		"-c", "user.email=test@example.invalid", "commit", "-m", "CRLF fixture")
+
+	// Make the worktree observation non-racy after Git cached the checkout produced under
+	// autocrlf=true. The bytes stay unchanged; only the stat metadata is invalidated.
+	stableTime := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(tracked, stableTime, stableTime); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SyncState(t.Context(), root, "CRLF checkout"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Git may refresh the live index through the operator's core.autocrlf setting between
+	// sync and Stop. That stat-cache write must not change the state binding when neither
+	// the index nor the worktree bytes changed.
+	stateFixtureGit(t, root, "-c", "core.autocrlf=true", "update-index", "--really-refresh")
+	if err := VerifyStateSync(t.Context(), root); err != nil {
+		t.Fatalf("an autocrlf index refresh made unchanged state stale: %v", err)
+	}
+
+	// Content still binds after line-ending normalization; only CRLF-vs-LF noise is ignored.
+	writeIntegrityFile(t, tracked, "changed\r\n")
+	if err := VerifyStateSync(t.Context(), root); err == nil {
+		t.Fatal("changed tracked content survived the normalized state binding")
 	}
 }
 

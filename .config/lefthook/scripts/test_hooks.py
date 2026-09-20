@@ -43,6 +43,7 @@ LOCALE_ENV = {"LC_ALL": "C", "LANGUAGE": "C"}
 # shared fix, matching how internal/bump pins -c core.autocrlf=false for the same reason (#282).
 NO_AUTOCRLF_ENV = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.autocrlf",
                    "GIT_CONFIG_VALUE_0": "false"}
+AUTOCRLF_ENV = {**NO_AUTOCRLF_ENV, "GIT_CONFIG_VALUE_0": "true"}
 
 
 class _WithoutProcessGroup:
@@ -768,12 +769,16 @@ class GitHooks(unittest.TestCase):
         original = Path.cwd()
         try:
             os.chdir(self.repo)
-            with mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
+            # Drive the Windows checkout default on every host. The hook must inspect the
+            # committed bytes, not let core.autocrlf rewrite its isolated snapshot.
+            with mock.patch.dict(os.environ, AUTOCRLF_ENV), \
+                    mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
                     mock.patch("hooks.source_checks", return_value=False) as check:
                 pre_push("origin")
                 self.assertEqual(check.call_args.kwargs, {"base": base})
                 self.assertEqual(check.call_args.args[1], ["README.md"])
-            with mock.patch("hooks.sys.stdin", io.StringIO(protocol.replace(base, "f" * 40))), \
+            with mock.patch.dict(os.environ, AUTOCRLF_ENV), \
+                    mock.patch("hooks.sys.stdin", io.StringIO(protocol.replace(base, "f" * 40))), \
                     mock.patch("hooks.source_checks", return_value=False) as check:
                 pre_push("origin")
                 self.assertIsNone(check.call_args.kwargs["base"])

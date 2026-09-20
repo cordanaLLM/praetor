@@ -1,0 +1,4 @@
+type: fixed
+title: Keep state hashes stable across Windows autocrlf index refreshes and export hook snapshots with autocrlf disabled so checks inspect committed bytes
+issue: "#398"
+breaking: false
