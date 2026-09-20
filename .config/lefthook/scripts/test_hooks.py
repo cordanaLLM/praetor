@@ -96,7 +96,11 @@ def command(repo, *args, data=None, ok=True, maintain_state=True):
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", **LOCALE_ENV, **NO_AUTOCRLF_ENV)
     for key in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
         env.pop(key, None)
-    result = subprocess.run(args, cwd=repo, env=env, input=data, capture_output=True,
+    # A test command without explicit input must see EOF, not inherit the operator's
+    # terminal. Lefthook post hooks otherwise wait on a live TTY until this helper's
+    # 120-second timeout; commands that exercise stdin still receive their payload.
+    stdin = b"" if data is None else data
+    result = subprocess.run(args, cwd=repo, env=env, input=stdin, capture_output=True,
                             timeout=120, check=False)
     if ok and result.returncode:
         raise AssertionError(result.stdout.decode() + result.stderr.decode())
@@ -879,6 +883,14 @@ class GitHooks(unittest.TestCase):
 
 
 class ScopeAndGuard(unittest.TestCase):
+    def test_command_closes_inherited_stdin_and_preserves_payload(self):
+        completed = subprocess.CompletedProcess([], 0, b"", b"")
+        with mock.patch("subprocess.run", return_value=completed) as spawned:
+            command(ROOT, "probe")
+            self.assertEqual(spawned.call_args.kwargs["input"], b"")
+            command(ROOT, "probe", data=b"payload")
+            self.assertEqual(spawned.call_args.kwargs["input"], b"payload")
+
     def semgrep_tree(self, root, *files):
         rules = root / ".config" / "semgrep" / "hiss-invariants.yml"
         rules.parent.mkdir(parents=True)
