@@ -56,7 +56,7 @@ func TestLintContextNegative(t *testing.T) {
 	if !errors.Is(err, ErrContextProse) || lint.Report.Passed() {
 		t.Fatalf("prose AGENTS.md must fail: err=%v", err)
 	}
-	for _, want := range []string{"C1 article-density", "praetorctl caveman check " + path, "rewrite the flagged lines in caveman"} {
+	for _, want := range []string{"C1 article-density", "praetorctl caveman check --kind=context " + path, "rewrite the flagged lines in caveman"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error lacks %q: %v", want, err)
 		}

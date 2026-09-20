@@ -140,7 +140,7 @@ func buildAgentHarnessDirectives() string {
 
 3. **Context transpiler first.** Never edit ` + "`CLAUDE.md`" + `, ` + "`.cursor/rules/*.mdc`" + `, ` + "`.windsurfrules`" + `, ` + "`.github/copilot-instructions.md`" + ` manually. All agent instruction updates -> ` + "`AGENTS.md`" + `, then:
 
-   ` + "```bash\n   praetorctl compile-context\n   ```\n\n" + `   - ` + "`AGENTS.md`" + ` = agent-only text -> caveman (internal register). ` + "`praetorctl compile-context --verify`" + ` + ` + "`praetorctl audit`" + ` run caveman lint; findings fail gate; no opt-out. Check first:` + "`praetorctl caveman check AGENTS.md`" + `.
+   ` + "```bash\n   praetorctl compile-context\n   ```\n\n" + `   - ` + "`AGENTS.md`" + ` = agent-only text -> caveman (internal register). ` + "`praetorctl compile-context --verify`" + ` + ` + "`praetorctl audit`" + ` run caveman lint; findings fail gate; no opt-out. Check first: ` + "`praetorctl caveman check --kind=context AGENTS.md`" + `.
 
 4. **SARIF diagnostic distillation.** Compiler/linter errors -> distill to $\le 1,500$ tokens ($< 60$ lines): top 3 root-cause failures with file/line pointers; full SARIF logs -> ephemeral storage.
 

@@ -19,7 +19,7 @@ and its alternatives are recorded in [ADR-0010](../adr/0010-text-register-per-ta
 | :--- | :--- | :--- |
 | `social` | a person on the forge | "`compile-context --verify` now fails on a stale register block. Run `praetorctl compile-context` once per repository. Verified by `go test ./internal/compiler/`." |
 | `docs` | a newcomer, then an expert | This page: what it is and the one command first, the reference tables after, every claim pointing at a file, command or test. |
-| `internal` | another agent | `verdict: pass. changed: internal/compiler/register.go. ran: go test ./internal/compiler/. evidence: .workingdir/evidence/run.log sha256:0123456789ab lines:412. open: none.` |
+| `internal` | another agent | `<code>verdict: pass</code><br><code>changed: internal/compiler/register.go</code><br><code>ran: go test ./internal/compiler/ = pass</code><br><code>evidence: none</code><br><code>open: none</code>` |
 
 The social register is the `social-text` skill (`.agents/skills/social-text/SKILL.md`),
 derived from `adhd-format`. The internal register is the `caveman` skill
@@ -159,6 +159,16 @@ paths, commands run, evidence pointers and open questions, and nothing else. A r
 fan-out saves each fetched page under `.workingdir/evidence/` and returns pointers with a
 one-line finding per page; the orchestrator opens a page only when a decision needs it.
 
+The shared checker makes both shapes explicit. Brief fields are `goal`, `inputs`, `return`,
+`evidence`, `task`, with `goal` first. Return fields are `verdict`, `changed`, `ran`,
+`evidence`, `open`, with `verdict` first. Put one field on each line, using `none` when a
+field has no value:
+
+```bash
+praetorctl caveman check --kind=brief candidate-brief.md
+praetorctl caveman check --kind=return candidate-return.md
+```
+
 ## Caveman: the internal form
 
 Operators call the internal register "caveman", and the `caveman` skill
@@ -193,17 +203,19 @@ persona under `.agents/agents/` and every canonical skill under `.agents/skills/
 the caveman lint (see "The context gate" below); a configured `max_tokens` bounds the
 provider request of a repair run; `praetorctl caveman check --max-words`/`--max-tokens`
 makes a per-surface ceiling enforceable on any text a check can read as a file (see
-"Ceilings" below).
+"Ceilings" below). `check` defaults to the strict runtime-message grammar; `--kind=brief`
+and `--kind=return` add their documented schema, while `--kind=context` selects the context
+gate's compatibility profile. Every result identifies which numbered skill rules remained
+advisory.
 
 Not mechanically checkable, because the text is composed at conversation time rather than
 read from a repository file: an agent-to-agent return or brief, MCP tool and property
 descriptions and results, hook and gate messages, provider/repair/notebook/harness prompt
 bodies, `.workingdir` ledger free text (gitignored, so a tracked-file gate cannot see it
-either), and popup question text. `internal/caveman` and the `--max-words`/`--max-tokens`
-flags exist so a producer of any of these can check a value before it is sent (for example
-a dispatch path that writes its return to a file first); nothing in the engine calls them
-there yet (ADR-0010: "rewriting the MCP descriptions, prompts, hook messages, ledger
-templates... are separate changes that build on this module").
+either), and popup question text. `internal/caveman` exists so each producer can validate a
+value before sending it; producer wiring remains separate work (#414). Static extraction
+from non-Markdown source remains #364. A green repository gate therefore proves tracked
+context text, not runtime chat or prompt compliance.
 
 ## Surfaces without a register row
 
@@ -226,7 +238,8 @@ The internal register is measurable. `internal/caveman` lints agent-facing text,
 rewrite lost nothing, and estimates tokens; `praetorctl caveman` runs it on files:
 
 ```bash
-praetorctl caveman check AGENTS.md .agents/agents/
+praetorctl caveman check --kind=context AGENTS.md .agents/agents/
+praetorctl caveman check --kind=message candidate-note.md
 praetorctl caveman floor AGENTS.md AGENTS.caveman.md
 praetorctl caveman estimate AGENTS.md
 ```
@@ -235,11 +248,13 @@ praetorctl caveman estimate AGENTS.md
 <excerpt>`, and exits non-zero when any input fails. Line 0 means the whole text. A
 directory expands to the Markdown files below it; `-` reads standard input. The text
 register block is blanked before the lint, exactly as the context gate does it, and the
-summary line counts its lines. The prose AGENTS.md that the caveman rewrite replaced,
+summary line counts its lines. It also prints the selected contract plus mechanically
+checked and advisory Caveman skill-rule numbers; `PASS` covers only the mechanical rows.
+The prose AGENTS.md that the caveman rewrite replaced,
 frozen as `internal/compiler/testdata/agents-floor.txt`, fails:
 
 ```text
-agents-floor.txt: FAIL prose_words=1035 articles=90 density=8.7/100 limit=2.0 off_regions=0 register_block_lines=13 tokens_est=2061 findings=2
+agents-floor.txt: FAIL prose_words=1035 articles=90 density=8.7/100 limit=2.0 off_regions=0 register_block_lines=13 tokens_est=2061 findings=2 contract=context mechanical_rules=none advisory_rules=1,2,3,4,5,6,7,8
 agents-floor.txt:0 C1 article-density: 8.7 articles per 100 prose words (90/1035), limit 2.0
 agents-floor.txt:76 C5 long-sentence: 39 words: your pull requests go stale when ...
 ```
@@ -247,7 +262,7 @@ agents-floor.txt:76 C5 long-sentence: 39 words: your pull requests go stale when
 The current AGENTS.md passes:
 
 ```text
-AGENTS.md: PASS prose_words=721 articles=2 density=0.3/100 limit=2.0 off_regions=0 register_block_lines=13 tokens_est=1657 findings=0
+AGENTS.md: PASS prose_words=917 articles=2 density=0.2/100 limit=2.0 off_regions=0 register_block_lines=13 tokens_est=1658 findings=0 contract=context mechanical_rules=none advisory_rules=1,2,3,4,5,6,7,8
 ```
 
 `praetorctl caveman estimate` puts the rewrite at 10,333 bytes and about 1,911 tokens,
@@ -258,7 +273,8 @@ down from 12,308 bytes and about 2,315 tokens; CLAUDE.md went from 168 to 115 li
 `<before>`, or carries fewer MUST-type directives, prohibitions or numbered rules. Findings
 name their line in `<before>` (line 0 for a count). Either input can be `-`, not both. A
 rewrite into the internal register is acceptable when `check` passes on it and `floor`
-passes from the original to it. The lint runs on demand only: no gate calls it yet.
+passes from the original to it. Runtime message, brief and return profiles run on demand;
+the repository gates call the context profile.
 
 ### The context gate
 
@@ -268,7 +284,7 @@ canonical AGENTS.md, and so do their MCP mirrors (`standards_compile_context` wi
 five findings and names the fix. A pass prints the counts behind it:
 
 ```text
-AGENTS.md: caveman lint passed: 721 prose words, 0.3 articles per 100 (limit 2.0), 13 register block lines left to the renderer.
+AGENTS.md: caveman lint passed: 917 prose words, 0.2 articles per 100 (limit 2.0), 13 register block lines left to the renderer.
 ```
 
 The whole file is linted, including what a repository wrote below the praetor harness. Only
@@ -284,7 +300,7 @@ switch it off. `register.surfaces.context` is fixed to `internal`: writing `docs
 
 A repository adopted before this gate carries the old prose harness and fails after the
 upgrade. `praetorctl adopt --force` rewrites the harness in caveman and keeps everything
-below its end marker; `praetorctl caveman check AGENTS.md` then lists what is left to
+below its end marker; `praetorctl caveman check --kind=context AGENTS.md` then lists what is left to
 rewrite in the repository's own part.
 
 A rewrite of praetor's own AGENTS.md must keep every fact of the prose version:
@@ -328,27 +344,48 @@ comment names for exactly this case.
 | Rule | Fires when |
 | :--- | :--- |
 | `C1 article-density` | more than 2.0 `a`/`an`/`the` per 100 prose words, judged once the text holds 40 prose words |
-| `C2 filler` | "based on", "I think", "note that", "it is important", "in order to", "as requested", "let me", "please" |
+| `C2 filler` | "based on", "I think", "note that", "it is important", "it looks like", "in order to", "as requested", "let me", "please" |
 | `C3 hedge` | "probably", "seems", "might", "basically", "simply", "just", "really", "actually" |
 | `C4 terminal-noise` | an ANSI escape anywhere; box drawing (U+2500-257F) or emoji outside code |
 | `C5 long-sentence` | a sentence over 30 prose words without a `;`, `->` or `:` break |
 | `C6 unclosed-off-region` | `<!-- caveman:off -->` without a later `<!-- caveman:on -->` |
 | `C7 word-ceiling` | `Options.MaxProseWords` is set (opt-in, 0 means no ceiling) and `Report.ProseWords` exceeds it |
 | `C8 token-ceiling` | `Options.MaxTokens` is set (opt-in, 0 means no ceiling) and `Report.EstimatedTokens` (the whole input, not prose alone) exceeds it |
+| `C9 grammar` | `message`, `brief` or `return` text contains a listed article, personal pronoun, copula, auxiliary, modal or politeness token, including straight/curly contractions; `as is` stays permitted by the clarity floor |
+| `C10 message-shape` | a brief lacks `goal`/`inputs`/`return`/`evidence`/`task`, a return lacks `verdict`/`changed`/`ran`/`evidence`/`open`, the answer field is not first, or known fields share a line |
 
 The 2.0 threshold is measured, not chosen: the prose AGENTS.md read 8.7 articles per 100
-prose words, its hand-written caveman rewrite reads 0.3. C2 and C3 ignore quoted text, so a rule that names a
-banned phrase in quotes does not trip itself. C7 and C8 are opt-in, unlike C1-C6: a ceiling
-is a property of one surface (600 prose words for a persona or a skill; the evidence bound,
+prose words, its hand-written caveman rewrite reads 0.3. C2, C3 and C9 ignore quoted text,
+so a rule that names a banned phrase in quotes does not trip itself. C7 and C8 are opt-in,
+unlike C1-C6: a ceiling is a property of one surface (600 prose words for a persona or a skill; the evidence bound,
 1500 tokens, for anything checked against it), not of caveman prose everywhere, so
 `AgentTextCeiling` is passed explicitly by the persona/skill gate rather than living in
-`Check`'s defaults.
+`Check`'s defaults. `Options.Kind` has a zero-value `context` profile for source
+compatibility; the CLI explicitly defaults to `message`.
+
+The summary's rule numbers refer to the eight numbered rules in the Caveman skill, not the
+`C1`-`C10` finding identifiers. Classification is intentionally conservative:
+
+| Skill rule | Summary classification | Implemented boundary |
+| :--- | :--- | :--- |
+| 1. Cut grammar | mechanical for `message`, `brief`, `return`; advisory for `context` | runtime kinds use C2, C3, C9; context uses C1-C3 heuristics so policy text can name grammar tokens |
+| 2. Fragments | advisory | C10 separates known fields; semantic “one fact” judgment remains |
+| 3. Symbols | advisory | whether `->`, `=`, `xN`, `!`, `?` preserve meaning requires judgment |
+| 4. Verbatim tokens | advisory in `check` | `floor <before> <after>` performs the mechanical comparison |
+| 5. Start with answer | mechanical for `brief` and `return`; advisory for `message` and `context` | C10 requires goal/verdict first |
+| 6. Tables only when useful | advisory | cell prose receives C1-C5 and C9; usefulness still requires comparison intent |
+| 7. Return shape | mechanical for `return`; advisory for other kinds | C10 requires all return fields |
+| 8. Evidence bound | advisory | C8 enforces a supplied token ceiling; line count, artifact placement and producer metadata remain external |
 
 Not prose, and never linted as prose: fenced code (C4 still reports ANSI there), inline
-code, link targets, URLs, headings, table rows, HTML comments, ledger field rows such as
+code, link targets, URLs, headings, HTML comments, ledger field rows such as
 `- **Tasks**: 3 open | **Open Bugs**: 0`, hook protocol lines (`PRAETOR_*`), evidence
 pointers, and anything between `<!-- caveman:off -->` and `<!-- caveman:on -->`. The
-summary line counts the off regions, so an escape stays visible.
+summary line counts the off regions, so an escape stays visible. Markdown table delimiters
+stay structured, but each cell is prose and receives the same phrase, density, sentence and
+strict-grammar checks. Bare paths and URLs stay protected from C9. Straight-single,
+curly-single, straight-double and curly-double quoted error text stays protected from C2,
+C3 and C9; apostrophes inside contractions remain lintable.
 
 ### Clarity floor
 
@@ -400,8 +437,8 @@ The decision is recorded in [ADR-0010](../adr/0010-text-register-per-task.md) (d
 whatever C1-C6 already judge; 0 (the default) means no ceiling:
 
 ```bash
-praetorctl caveman check --max-words=600 .agents/skills/example/SKILL.md
-praetorctl caveman check --max-tokens=1500 .workingdir/evidence/candidate-return.md
+praetorctl caveman check --kind=context --max-words=600 .agents/skills/example/SKILL.md
+praetorctl caveman check --kind=return --max-tokens=1500 .workingdir/evidence/candidate-return.md
 ```
 
 The persona/skill gate calls the same `caveman.Options.MaxProseWords` field programmatically

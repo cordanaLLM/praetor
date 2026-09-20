@@ -1,0 +1,1 @@
+First two pushes were rejected by the pre-push gate with "state synchronization stale" because gate run wrote .standards-receipt.json after the last state sync; fixed by re-running state sync and pushing again. Not bypassed.

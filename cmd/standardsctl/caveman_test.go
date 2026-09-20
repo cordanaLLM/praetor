@@ -69,6 +69,38 @@ func TestCavemanCheckNegative(t *testing.T) {
 	}
 }
 
+func TestCavemanCheckMessageKinds(t *testing.T) {
+	fullProse := "I think we have reviewed every file and it looks like the gate is ready. We are probably finished, and it seems we will only need to update the report. You can see that it is clear, but I might have missed something. Please note that we did the checks as requested, and thanks for waiting.\n"
+	out, err := runCavemanCLI(t, fullProse, "check", "-")
+	if err == nil || !strings.Contains(out, "C9 grammar") || !strings.Contains(out, "contract=message") {
+		t.Fatalf("default message contract must reject demonstrated prose: err=%v\n%s", err, out)
+	}
+	for _, want := range []string{"mechanical_rules=1", "advisory_rules=2,3,4,5,6,7,8"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("summary missing %q:\n%s", want, out)
+		}
+	}
+
+	returnText := "verdict: pass\nchanged: none\nran: go test ./...\nevidence: none\nopen: none\n"
+	if out, err = runCavemanCLI(t, returnText, "check", "--kind=return", "-"); err != nil || !strings.Contains(out, "contract=return") {
+		t.Fatalf("return kind: err=%v\n%s", err, out)
+	}
+	if _, err = runCavemanCLI(t, "changed: none\n", "check", "--kind=return", "-"); err == nil {
+		t.Fatal("malformed return must fail")
+	}
+
+	grammarOnly := "We are ready; it is complete.\n"
+	if _, err = runCavemanCLI(t, grammarOnly, "check", "-"); err == nil {
+		t.Fatal("message grammar must reject pronouns and copulas")
+	}
+	if out, err = runCavemanCLI(t, grammarOnly, "check", "--kind=context", "-"); err != nil || !strings.Contains(out, "contract=context") {
+		t.Fatalf("context profile must report its advisory boundary: err=%v\n%s", err, out)
+	}
+	if _, err = runCavemanCLI(t, returnText, "check", "--kind=unknown", "-"); err == nil {
+		t.Fatal("unknown kind must fail flag validation")
+	}
+}
+
 func TestCavemanCheckBoundary(t *testing.T) {
 	dir := t.TempDir()
 	prose := writeFixtureFile(t, dir, "prose.md", cavemanProse)
