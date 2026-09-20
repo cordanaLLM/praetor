@@ -47,14 +47,26 @@ func (f *fenceTracker) inside(trimmed string) bool {
 // ignored inside fenced code. It returns the zero-based line indexes of both markers, or
 // (-1, -1) when neither marker is present.
 func FindMarkedBlock(content, start, end string) (first, last int, err error) {
-	if !distinctMarkers(start, end) {
+	return findMarkedBlock(content, start, end, MaxMarkedBlockLines)
+}
+
+// FindMarkedBlockWithinBudget locates a marked block using the caller's positive line
+// budget while retaining FindMarkedBlock's marker, duplication and fenced-code rules.
+func FindMarkedBlockWithinBudget(content, start, end string, maxLines int) (first, last int, err error) {
+	return findMarkedBlock(content, start, end, maxLines)
+}
+
+// findMarkedBlock applies the canonical marker and fenced-code rules within an explicit
+// line budget.
+func findMarkedBlock(content, start, end string, maxLines int) (first, last int, err error) {
+	if !distinctMarkers(start, end) || maxLines < 1 {
 		return -1, -1, ErrMarkedBlockArguments
 	}
 	lines := strings.Split(content, "\n")
-	if len(lines) > MaxMarkedBlockLines {
-		return -1, -1, fmt.Errorf("%w: more than %d lines", ErrMarkedBlockBudget, MaxMarkedBlockLines)
+	if len(lines) > maxLines {
+		return -1, -1, fmt.Errorf("%w: more than %d lines", ErrMarkedBlockBudget, maxLines)
 	}
-	starts, ends := markerLines(lines, start, end)
+	starts, ends := markerLines(lines, start, end, maxLines)
 	switch {
 	case len(starts) > 1 || len(ends) > 1:
 		return -1, -1, fmt.Errorf("%w: %s .. %s", ErrMarkedBlockDuplicated, start, end)
@@ -71,9 +83,9 @@ func distinctMarkers(start, end string) bool {
 }
 
 // markerLines returns the line indexes of each marker outside fenced code.
-func markerLines(lines []string, start, end string) (starts, ends []int) {
+func markerLines(lines []string, start, end string, maxLines int) (starts, ends []int) {
 	fence := fenceTracker{}
-	for i := 0; i < len(lines) && i < MaxMarkedBlockLines; i++ {
+	for i := 0; i < len(lines) && i < maxLines; i++ {
 		trimmed := strings.TrimSpace(lines[i])
 		if fence.inside(trimmed) {
 			continue
@@ -88,18 +100,75 @@ func markerLines(lines []string, start, end string) (starts, ends []int) {
 	return starts, ends
 }
 
+// RemoveMarkdownSection removes an exact ATX heading and its body through the next ATX
+// heading. Headings inside fenced code remain literal examples rather than structure.
+func RemoveMarkdownSection(content, heading string, maxLines int) (string, error) {
+	heading = strings.TrimSpace(heading)
+	if heading == "" || maxLines < 1 {
+		return "", ErrMarkedBlockArguments
+	}
+	lines := strings.Split(content, "\n")
+	if len(lines) > maxLines {
+		return "", fmt.Errorf("%w: more than %d lines", ErrMarkedBlockBudget, maxLines)
+	}
+	kept := make([]string, 0, len(lines))
+	fence := fenceTracker{}
+	inside := false
+	for i := 0; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		fenced := fence.inside(trimmed)
+		if startsMarkdownSection(trimmed, heading, fenced) {
+			inside = true
+			continue
+		}
+		if endsMarkdownSection(trimmed, inside, fenced) {
+			inside = false
+		}
+		if !inside {
+			kept = append(kept, lines[i])
+		}
+	}
+	return strings.Join(kept, "\n"), nil
+}
+
+func startsMarkdownSection(trimmed, heading string, fenced bool) bool {
+	if fenced {
+		return false
+	}
+	return trimmed == heading
+}
+
+func endsMarkdownSection(trimmed string, inside, fenced bool) bool {
+	if !inside || fenced {
+		return false
+	}
+	return isMarkdownHeading(trimmed)
+}
+
+func isMarkdownHeading(trimmed string) bool {
+	hashes := len(trimmed) - len(strings.TrimLeft(trimmed, "#"))
+	return hashes > 0 && hashes <= 6 &&
+		(len(trimmed) == hashes || trimmed[hashes] == ' ' || trimmed[hashes] == '\t')
+}
+
 // ReplaceMarkedBlock replaces the start..end span of content, markers included, with
 // body, or appends a blank line and body when the document carries no markers yet. It
 // reports whether the document changed and refuses a result longer than maxLines.
-//
-// It differs from the milestone ledger's block handling on purpose: that code drops a span
-// and tolerates a missing end marker, while a canonical agent context must fail loudly on
-// an unterminated or duplicated marker instead of swallowing the rest of the file.
 func ReplaceMarkedBlock(content, start, end, body string, maxLines int) (out string, changed bool, err error) {
-	if maxLines < 1 {
+	return replaceMarkedBlock(content, start, end, body, maxLines, MaxMarkedBlockLines)
+}
+
+// ReplaceMarkedBlockWithinBudget replaces or appends a marked block while using maxLines
+// for both the canonical marker scan and the resulting document.
+func ReplaceMarkedBlockWithinBudget(content, start, end, body string, maxLines int) (out string, changed bool, err error) {
+	return replaceMarkedBlock(content, start, end, body, maxLines, maxLines)
+}
+
+func replaceMarkedBlock(content, start, end, body string, maxLines, scanLines int) (out string, changed bool, err error) {
+	if maxLines < 1 || scanLines < 1 {
 		return "", false, ErrMarkedBlockArguments
 	}
-	first, last, err := FindMarkedBlock(content, start, end)
+	first, last, err := findMarkedBlock(content, start, end, scanLines)
 	if err != nil {
 		return "", false, err
 	}

@@ -68,6 +68,45 @@ func TestFindMarkedBlockBoundary(t *testing.T) {
 	}
 }
 
+func TestFindMarkedBlockWithinBudgetPositive(t *testing.T) {
+	content := strings.Repeat("keep\n", MaxMarkedBlockLines) + testBlock("old")
+	budget := MaxMarkedBlockLines + 3
+	first, last, err := FindMarkedBlockWithinBudget(content, testBlockStart, testBlockEnd, budget)
+	if err != nil || first != MaxMarkedBlockLines || last != budget-1 {
+		t.Fatalf("span=%d..%d err=%v, want %d..%d", first, last, err, MaxMarkedBlockLines, budget-1)
+	}
+}
+
+func TestFindMarkedBlockWithinBudgetNegative(t *testing.T) {
+	for name, tc := range map[string]struct {
+		content string
+		budget  int
+		want    error
+	}{
+		"unbalanced":  {testBlockStart + "\n", 2, ErrMarkedBlockUnbalanced},
+		"duplicated":  {testBlock("a") + "\n" + testBlock("b"), 7, ErrMarkedBlockDuplicated},
+		"zero budget": {"", 0, ErrMarkedBlockArguments},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := FindMarkedBlockWithinBudget(tc.content, testBlockStart, testBlockEnd, tc.budget); !errors.Is(err, tc.want) {
+				t.Fatalf("error = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestFindMarkedBlockWithinBudgetBoundary(t *testing.T) {
+	content := "```md\n" + testBlock("example") + "\n```\n" + testBlock("live")
+	lineCount := strings.Count(content, "\n") + 1
+	first, last, err := FindMarkedBlockWithinBudget(content, testBlockStart, testBlockEnd, lineCount)
+	if err != nil || first != 5 || last != 7 {
+		t.Fatalf("exact-budget fenced scan = %d..%d, %v; want 5..7, nil", first, last, err)
+	}
+	if _, _, err := FindMarkedBlockWithinBudget(content, testBlockStart, testBlockEnd, lineCount-1); !errors.Is(err, ErrMarkedBlockBudget) {
+		t.Fatalf("budget minus one: error = %v, want %v", err, ErrMarkedBlockBudget)
+	}
+}
+
 func TestReplaceMarkedBlockPositive(t *testing.T) {
 	content := "# Title\n\n## Section\n" + testBlock("old") + "\n\n## After\ntext\n"
 	out, changed, err := ReplaceMarkedBlock(content, testBlockStart, testBlockEnd, testBlock("new"), 100)
@@ -135,5 +174,80 @@ func TestReplaceMarkedBlockBoundary(t *testing.T) {
 	}
 	if _, _, err := ReplaceMarkedBlock(content, testBlockStart, testBlockEnd, testBlock("new"), 4); !errors.Is(err, ErrMarkedBlockBudget) {
 		t.Fatalf("budget minus one: error = %v, want %v", err, ErrMarkedBlockBudget)
+	}
+}
+
+func TestReplaceMarkedBlockWithinBudgetPositive(t *testing.T) {
+	content := strings.Repeat("keep\n", MaxMarkedBlockLines) + testBlock("old")
+	budget := MaxMarkedBlockLines + 3
+	out, changed, err := ReplaceMarkedBlockWithinBudget(content, testBlockStart, testBlockEnd, testBlock("new"), budget)
+	if err != nil || !changed {
+		t.Fatalf("replace above default scan budget: changed=%v err=%v", changed, err)
+	}
+	if !strings.HasSuffix(out, testBlock("new")) || strings.Contains(out, "old") {
+		t.Fatal("caller-bounded replacement did not replace the marked block")
+	}
+	if _, _, err := ReplaceMarkedBlock(content, testBlockStart, testBlockEnd, testBlock("new"), budget); !errors.Is(err, ErrMarkedBlockBudget) {
+		t.Fatalf("legacy entrypoint scan changed: error = %v, want %v", err, ErrMarkedBlockBudget)
+	}
+}
+
+func TestReplaceMarkedBlockWithinBudgetNegative(t *testing.T) {
+	duplicated := testBlock("a") + "\n" + testBlock("b")
+	for name, tc := range map[string]struct {
+		content string
+		budget  int
+		want    error
+	}{
+		"unbalanced":  {testBlockStart + "\nrest", 2, ErrMarkedBlockUnbalanced},
+		"duplicated":  {duplicated, 7, ErrMarkedBlockDuplicated},
+		"zero budget": {"", 0, ErrMarkedBlockArguments},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := ReplaceMarkedBlockWithinBudget(tc.content, testBlockStart, testBlockEnd, testBlock("new"), tc.budget); !errors.Is(err, tc.want) {
+				t.Fatalf("error = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestReplaceMarkedBlockWithinBudgetBoundary(t *testing.T) {
+	content := "a\n" + testBlock("old") + "\nb"
+	if _, _, err := ReplaceMarkedBlockWithinBudget(content, testBlockStart, testBlockEnd, testBlock("new"), 5); err != nil {
+		t.Fatalf("exact budget: %v", err)
+	}
+	if _, _, err := ReplaceMarkedBlockWithinBudget(content, testBlockStart, testBlockEnd, testBlock("new"), 4); !errors.Is(err, ErrMarkedBlockBudget) {
+		t.Fatalf("budget minus one: error = %v, want %v", err, ErrMarkedBlockBudget)
+	}
+}
+
+func TestRemoveMarkdownSectionPositive(t *testing.T) {
+	content := "# Top\n\n## Legacy\nold\n\n### Keep\ntail\n"
+	out, err := RemoveMarkdownSection(content, "## Legacy", 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "# Top\n\n### Keep\ntail\n"; out != want {
+		t.Fatalf("removed section = %q, want %q", out, want)
+	}
+}
+
+func TestRemoveMarkdownSectionNegative(t *testing.T) {
+	if _, err := RemoveMarkdownSection("a\nb", "", 2); !errors.Is(err, ErrMarkedBlockArguments) {
+		t.Fatalf("empty heading: error = %v, want %v", err, ErrMarkedBlockArguments)
+	}
+	if _, err := RemoveMarkdownSection("a\nb", "## Legacy", 1); !errors.Is(err, ErrMarkedBlockBudget) {
+		t.Fatalf("over budget: error = %v, want %v", err, ErrMarkedBlockBudget)
+	}
+}
+
+func TestRemoveMarkdownSectionBoundaryPreservesFencedExample(t *testing.T) {
+	content := "```md\n## Legacy\nexample\n```\n\n## Legacy\nold\n###\tKeep\ntail"
+	out, err := RemoveMarkdownSection(content, "## Legacy", 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "```md\n## Legacy\nexample\n```\n\n###\tKeep\ntail"; out != want {
+		t.Fatalf("fenced heading was not preserved: got %q want %q", out, want)
 	}
 }

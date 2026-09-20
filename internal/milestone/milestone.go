@@ -123,12 +123,8 @@ func CreateMilestone(ctx context.Context, rootPath, title, description string, d
 	}
 
 	store.Milestones = append(store.Milestones, m)
-	if err := saveStore(ctx, rootPath, store); err != nil {
+	if err := commitStoreAndBacklog(ctx, rootPath, store); err != nil {
 		return nil, err
-	}
-
-	if err := SyncToBacklog(ctx, rootPath); err != nil {
-		return nil, fmt.Errorf("sync to backlog: %w", err)
 	}
 	return &m, nil
 }
@@ -159,12 +155,8 @@ func CloseMilestone(ctx context.Context, rootPath, selector string) (*Milestone,
 	store.Milestones[foundIdx].Progress = 100.0
 	store.Milestones[foundIdx].UpdatedAt = time.Now().UTC()
 
-	if err := saveStore(ctx, rootPath, store); err != nil {
+	if err := commitStoreAndBacklog(ctx, rootPath, store); err != nil {
 		return nil, err
-	}
-
-	if err := SyncToBacklog(ctx, rootPath); err != nil {
-		return nil, fmt.Errorf("sync to backlog: %w", err)
 	}
 	return &store.Milestones[foundIdx], nil
 }
@@ -204,38 +196,84 @@ func SyncToBacklog(ctx context.Context, rootPath string) error {
 	if err != nil {
 		return err
 	}
-
-	backlogPath, err := workingDirFile(rootPath, BacklogFile)
+	update, err := prepareBacklog(rootPath, store)
 	if err != nil {
 		return err
+	}
+	return writeBacklog(ctx, update)
+}
+
+type backlogUpdate struct {
+	path string
+	data []byte
+}
+
+func prepareBacklog(rootPath string, store *MilestoneStore) (*backlogUpdate, error) {
+	backlogPath, err := workingDirFile(rootPath, BacklogFile)
+	if err != nil {
+		return nil, err
 	}
 	content := "# Project Backlog\n\n"
 	if util.PathExists(backlogPath) {
 		data, readErr := util.ReadFileNoFollow(backlogPath)
 		if readErr != nil {
-			return fmt.Errorf("read %s: %w", BacklogFile, readErr)
+			return nil, fmt.Errorf("read %s: %w", BacklogFile, readErr)
 		}
 		content = string(data)
 	}
+	rendered, err := renderBacklog(content, store.Milestones)
+	if err != nil {
+		return nil, err
+	}
+	return &backlogUpdate{path: backlogPath, data: []byte(rendered)}, nil
+}
 
-	lines := strings.Split(content, "\n")
-	if len(lines) > MaxBacklogLines {
-		return fmt.Errorf("%s exceeds maximum of %d lines", BacklogFile, MaxBacklogLines)
+func renderBacklog(content string, milestones []Milestone) (string, error) {
+	first, _, err := util.FindMarkedBlockWithinBudget(content, milestoneSectionStart, milestoneSectionEnd, MaxBacklogLines)
+	if err != nil {
+		return "", fmt.Errorf("validate milestone block in %s: %w", BacklogFile, err)
 	}
-	kept := dropLegacySection(dropMarkedBlock(lines))
-	rendered := strings.TrimRight(strings.Join(kept, "\n"), "\n")
-	rendered += "\n\n" + milestoneBlock(store.Milestones)
-	if strings.Count(rendered, "\n")+1 > MaxBacklogLines {
-		return fmt.Errorf("rendered %s exceeds maximum of %d lines", BacklogFile, MaxBacklogLines)
+	base := content
+	if first >= 0 {
+		base, _, err = util.ReplaceMarkedBlockWithinBudget(content, milestoneSectionStart, milestoneSectionEnd,
+			milestoneSectionStart+"\n"+milestoneSectionEnd, MaxBacklogLines)
+		if err != nil {
+			return "", fmt.Errorf("clear milestone block in %s: %w", BacklogFile, err)
+		}
 	}
+	base, err = util.RemoveMarkdownSection(base, milestoneHeading, MaxBacklogLines)
+	if err != nil {
+		return "", fmt.Errorf("remove legacy milestone section in %s: %w", BacklogFile, err)
+	}
+	rendered, _, err := util.ReplaceMarkedBlockWithinBudget(base, milestoneSectionStart, milestoneSectionEnd, milestoneBlock(milestones), MaxBacklogLines)
+	if err != nil {
+		return "", fmt.Errorf("render milestone block in %s: %w", BacklogFile, err)
+	}
+	return rendered, nil
+}
+
+func commitStoreAndBacklog(ctx context.Context, rootPath string, store *MilestoneStore) error {
+	update, err := prepareBacklog(rootPath, store)
+	if err != nil {
+		return fmt.Errorf("sync to backlog: %w", err)
+	}
+	if err := saveStore(ctx, rootPath, store); err != nil {
+		return err
+	}
+	if err := writeBacklog(ctx, update); err != nil {
+		return fmt.Errorf("sync to backlog: %w", err)
+	}
+	return nil
+}
+
+func writeBacklog(ctx context.Context, update *backlogUpdate) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context cancelled before writing backlog: %w", err)
 	}
-	if err := util.MkdirSecure(filepath.Dir(backlogPath), workingDirPerm); err != nil {
+	if err := util.MkdirSecure(filepath.Dir(update.path), workingDirPerm); err != nil {
 		return fmt.Errorf("mkdir workingdir: %w", err)
 	}
-
-	if err := util.WriteFileNoFollow(backlogPath, []byte(rendered), ledgerFilePerm); err != nil {
+	if err := util.WriteFileNoFollow(update.path, update.data, ledgerFilePerm); err != nil {
 		return fmt.Errorf("write %s: %w", BacklogFile, err)
 	}
 	return nil
@@ -244,49 +282,6 @@ func SyncToBacklog(ctx context.Context, rootPath string) error {
 // milestoneBlock renders the marker-delimited milestone block.
 func milestoneBlock(milestones []Milestone) string {
 	return milestoneSectionStart + "\n" + RenderMilestonesMarkdown(milestones) + milestoneSectionEnd + "\n"
-}
-
-// dropMarkedBlock removes a previously rendered, marker-delimited milestone block.
-func dropMarkedBlock(lines []string) []string {
-	kept := make([]string, 0, len(lines))
-	inside := false
-	for i := 0; i < len(lines) && i < MaxBacklogLines; i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == milestoneSectionStart {
-			inside = true
-			continue
-		}
-		if inside {
-			if trimmed == milestoneSectionEnd {
-				inside = false
-			}
-			continue
-		}
-		kept = append(kept, lines[i])
-	}
-	return kept
-}
-
-// dropLegacySection removes a marker-less "## Active Milestones" section written by an
-// earlier version. It terminates on the next Markdown heading of any level, so "###"
-// blocks that follow the section - the task-discharge ledger among them - are preserved.
-func dropLegacySection(lines []string) []string {
-	kept := make([]string, 0, len(lines))
-	inside := false
-	for i := 0; i < len(lines) && i < MaxBacklogLines; i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(trimmed, milestoneHeading) {
-			inside = true
-			continue
-		}
-		if inside && strings.HasPrefix(trimmed, "#") {
-			inside = false
-		}
-		if !inside {
-			kept = append(kept, lines[i])
-		}
-	}
-	return kept
 }
 
 // RenderMilestonesMarkdown converts milestones into a GitHub-flavored Markdown table.

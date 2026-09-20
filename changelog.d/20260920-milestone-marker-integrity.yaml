@@ -1,0 +1,4 @@
+type: fixed
+title: Reject malformed milestone marker blocks before mutating the backlog or milestone store
+issue: "#405"
+breaking: true
