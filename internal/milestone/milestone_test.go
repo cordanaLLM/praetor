@@ -3,6 +3,7 @@ package milestone
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/state"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func setupTestDir(t *testing.T) string {
@@ -314,6 +316,74 @@ func TestMilestone_Negative_CancelledContext(t *testing.T) {
 	}
 }
 
+type malformedBacklog struct {
+	content string
+	want    error
+}
+
+type milestoneOperation func(context.Context, string) error
+
+func malformedMilestoneBacklogs() map[string]malformedBacklog {
+	return map[string]malformedBacklog{
+		"missing end":     {"# Backlog\n" + milestoneSectionStart + "\noperator tail\n", util.ErrMarkedBlockUnbalanced},
+		"missing start":   {"# Backlog\n" + milestoneSectionEnd + "\noperator tail\n", util.ErrMarkedBlockUnbalanced},
+		"reversed":        {"# Backlog\n" + milestoneSectionEnd + "\n" + milestoneSectionStart, util.ErrMarkedBlockUnbalanced},
+		"duplicate start": {milestoneSectionStart + "\n" + milestoneSectionStart + "\n" + milestoneSectionEnd, util.ErrMarkedBlockDuplicated},
+		"duplicate end":   {milestoneSectionStart + "\n" + milestoneSectionEnd + "\n" + milestoneSectionEnd, util.ErrMarkedBlockDuplicated},
+	}
+}
+
+func assertMalformedMarkerPreservesLedgers(t *testing.T, marker malformedBacklog, operation milestoneOperation) {
+	t.Helper()
+	dir := setupTestDir(t)
+	beforeStore := writeStoreFixture(t, dir, &MilestoneStore{Milestones: []Milestone{{Number: 1, Title: "existing", State: StateOpen}}})
+	backlogPath := filepath.Join(dir, state.WorkingDirName, BacklogFile)
+	beforeBacklog := []byte(marker.content)
+	if err := os.WriteFile(backlogPath, beforeBacklog, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := operation(context.Background(), dir); !errors.Is(err, marker.want) {
+		t.Fatalf("error = %v, want %v", err, marker.want)
+	}
+	assertStoreBytes(t, dir, beforeStore)
+	if got, err := os.ReadFile(backlogPath); err != nil || string(got) != string(beforeBacklog) {
+		t.Fatalf("failed operation changed BACKLOG.md bytes: err=%v", err)
+	}
+}
+
+func TestMilestone_Negative_MalformedMarkersPreserveBothLedgers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if err := json.NewEncoder(w).Encode([]RemoteMilestone{{Number: 7, Title: "existing", State: StateClosed}}); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer srv.Close()
+	operations := map[string]milestoneOperation{
+		"backlog sync": func(ctx context.Context, dir string) error {
+			return SyncToBacklog(ctx, dir)
+		},
+		"create": func(ctx context.Context, dir string) error {
+			_, err := CreateMilestone(ctx, dir, "new", "", nil)
+			return err
+		},
+		"close": func(ctx context.Context, dir string) error {
+			_, err := CloseMilestone(ctx, dir, "1")
+			return err
+		},
+		"remote sync": func(ctx context.Context, dir string) error {
+			_, err := SyncWithGitHub(ctx, dir, "owner", "repo", "test-token", srv.URL)
+			return err
+		},
+	}
+	for markerName, marker := range malformedMilestoneBacklogs() {
+		for operationName, operation := range operations {
+			t.Run(markerName+"/"+operationName, func(t *testing.T) {
+				assertMalformedMarkerPreservesLedgers(t, marker, operation)
+			})
+		}
+	}
+}
+
 // ============================================================================
 // 3. BOUNDARY
 // ============================================================================
@@ -386,6 +456,53 @@ func TestMilestone_Boundary_SyncPreservesTrailingLedgerBlocks(t *testing.T) {
 	}
 }
 
+func TestMilestone_Boundary_FencedMarkerExampleSurvivesLegacyMigration(t *testing.T) {
+	dir := setupTestDir(t)
+	fenced := "```md\n" + milestoneSectionStart + "\n" + milestoneHeading + "\n" + milestoneSectionEnd + "\n```"
+	original := "# Project Backlog\n\n" + fenced + "\n\n" + milestoneHeading + "\n\nold row\n\n### Discharged\n\n- [x] keep\n"
+	path := filepath.Join(dir, state.WorkingDirName, BacklogFile)
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncToBacklog(context.Background(), dir); err != nil {
+		t.Fatalf("SyncToBacklog: %v", err)
+	}
+	backlog := readBacklog(t, dir)
+	if !strings.Contains(backlog, fenced) || !strings.Contains(backlog, "### Discharged\n\n- [x] keep") {
+		t.Fatalf("sync removed a fenced example or trailing section:\n%s", backlog)
+	}
+	if strings.Contains(backlog, "old row") || strings.Count(backlog, milestoneHeading) != 2 {
+		t.Fatalf("legacy section was not replaced exactly once:\n%s", backlog)
+	}
+	if strings.Count(backlog, milestoneSectionStart) != 2 || strings.Count(backlog, milestoneSectionEnd) != 2 {
+		t.Fatalf("fenced and live marker pairs were not both retained:\n%s", backlog)
+	}
+}
+
+func TestMilestone_Boundary_SyncRemovesLegacyBesideLiveBlock(t *testing.T) {
+	dir := setupTestDir(t)
+	original := "# Project Backlog\n\n" + milestoneHeading + "\n\nstale legacy row\n\n" +
+		milestoneSectionStart + "\n" + milestoneHeading + "\n\nstale managed row\n" + milestoneSectionEnd +
+		"\n\n### Discharged\n\n- [x] keep\n"
+	path := filepath.Join(dir, state.WorkingDirName, BacklogFile)
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncToBacklog(context.Background(), dir); err != nil {
+		t.Fatalf("SyncToBacklog: %v", err)
+	}
+	backlog := readBacklog(t, dir)
+	if strings.Contains(backlog, "stale legacy row") || strings.Contains(backlog, "stale managed row") {
+		t.Fatalf("sync retained a stale milestone section:\n%s", backlog)
+	}
+	if strings.Count(backlog, milestoneHeading) != 1 || strings.Count(backlog, milestoneSectionStart) != 1 {
+		t.Fatalf("sync did not converge on one managed milestone section:\n%s", backlog)
+	}
+	if !strings.Contains(backlog, "### Discharged\n\n- [x] keep") {
+		t.Fatalf("sync removed trailing operator content:\n%s", backlog)
+	}
+}
+
 func TestMilestone_Boundary_TitleSanitization(t *testing.T) {
 	ctx := context.Background()
 	dir := setupTestDir(t)
@@ -447,25 +564,6 @@ func TestMilestone_Boundary_MergeRemoteMilestones(t *testing.T) {
 	}
 	if len(store.Milestones) != before {
 		t.Errorf("merging an empty remote list changed the store")
-	}
-}
-
-func TestMilestone_Boundary_BacklogSectionHelpers(t *testing.T) {
-	kept := dropMarkedBlock([]string{"a", milestoneSectionStart, "x", milestoneSectionEnd, "b"})
-	if strings.Join(kept, "|") != "a|b" {
-		t.Errorf("unexpected marker strip result: %v", kept)
-	}
-
-	kept = dropLegacySection([]string{"# Top", milestoneHeading, "| t |", "### Later", "- [x] keep"})
-	if strings.Join(kept, "|") != "# Top|### Later|- [x] keep" {
-		t.Errorf("unexpected legacy strip result: %v", kept)
-	}
-
-	if got := dropMarkedBlock(nil); len(got) != 0 {
-		t.Errorf("expected empty result for empty input, got %v", got)
-	}
-	if got := dropLegacySection([]string{""}); len(got) != 1 {
-		t.Errorf("expected a single blank line to survive, got %v", got)
 	}
 }
 

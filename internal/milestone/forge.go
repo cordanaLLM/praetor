@@ -63,12 +63,8 @@ func SyncWithGitHub(ctx context.Context, rootPath, owner, repo, token, endpoint 
 		return nil, err
 	}
 
-	if err := saveStore(ctx, rootPath, store); err != nil {
+	if err := commitStoreAndBacklog(ctx, rootPath, store); err != nil {
 		return nil, err
-	}
-
-	if err := SyncToBacklog(ctx, rootPath); err != nil {
-		return nil, fmt.Errorf("sync to backlog: %w", err)
 	}
 	return store.Milestones, nil
 }
