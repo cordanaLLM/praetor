@@ -1,0 +1,4 @@
+type: fixed
+title: Keep onboarding source references valid in strict MkDocs builds
+issue: "#399"
+breaking: false

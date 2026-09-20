@@ -53,7 +53,7 @@ same commit therefore scores the same on every machine.
 - **Settings are parsed, not counted.** `lefthook.yml` must parse as a non-empty YAML mapping;
   `.github/rulesets/main.json` and `.vscode/settings.json` must parse as non-empty JSON objects
   (strict JSON — comments and trailing commas are rejected, the same line
-  [`internal/clientsetup`](../../internal/clientsetup/plan.go) draws for client configuration). A
+  [`internal/clientsetup`](https://github.com/cordanaLLM/praetor/blob/main/internal/clientsetup/plan.go) draws for client configuration). A
   file that is present but does not parse is reported under **Missing or Invalid Settings** and
   costs its share of the score: it configures no more than a file that is not there. Settings with
   no checkable shape are satisfied by presence, which is all that can be claimed about them.
@@ -64,8 +64,8 @@ same commit therefore scores the same on every machine.
   Toolchains (advisory)**.
 
 Fixtures pinning the exact scores live in
-[`internal/flavor/audit_score_test.go`](../../internal/flavor/audit_score_test.go) and
-[`internal/flavor/settings_audit_test.go`](../../internal/flavor/settings_audit_test.go).
+[`internal/flavor/audit_score_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavor/audit_score_test.go) and
+[`internal/flavor/settings_audit_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavor/settings_audit_test.go).
 
 
 ## 1. Quickstart Onboarding Command
