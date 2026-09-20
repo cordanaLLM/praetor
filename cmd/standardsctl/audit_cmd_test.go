@@ -98,6 +98,58 @@ func TestAudit_Negative_GateFailures(t *testing.T) {
 	}
 }
 
+func TestAuditReadmeGovernanceGate(t *testing.T) {
+	t.Run("stale managed content fails", func(t *testing.T) {
+		f := newAuditFixture(t)
+		writeFixtureFile(t, f.dir, "README.md", "# Widgets\n\n<!-- praetor:readme-governance:start -->\nstale claim\n<!-- praetor:readme-governance:end -->\n")
+		_, err := f.audit(t)
+		mustErrContain(t, err, "README governance block is stale")
+	})
+
+	t.Run("current managed content passes", func(t *testing.T) {
+		f := newAuditFixture(t)
+		writeFixtureFile(t, f.dir, "README.md", `# Widgets
+
+<!-- praetor:readme-governance:start -->
+[![HISS Adopted](https://img.shields.io/badge/Standards-HISS%20Adopted-blue)](AGENTS.md)
+
+Praetor manages this repository's declared governance policy. This managed block records adoption state; it is not a verification certificate.
+
+| Gate | Command | Contract |
+| :--- | :--- | :--- |
+| **Verification** | `+"`make verify-all`"+` | Runs the repository's configured verification cascade |
+| **HISS Audit** | `+"`praetorctl audit`"+` | Enforces policy, generated-surface integrity, and the debt ratchet |
+| **Context Sync** | `+"`praetorctl compile-context --verify`"+` | Verifies every generated agent context against `+"`AGENTS.md`"+` |
+| **Debt Baseline** | `+"`.standards-baseline.json`"+` | 0 recorded infractions; audit forbids growth |
+<!-- praetor:readme-governance:end -->
+`)
+		out, err := f.audit(t)
+		if err != nil {
+			t.Fatalf("current README governance: %v\n%s", err, out)
+		}
+		mustContain(t, out, "[PASS] README governance block verified")
+	})
+
+	t.Run("explicit decline skips the managed surface", func(t *testing.T) {
+		f := newAuditFixture(t)
+		writeFixtureFile(t, f.dir, "README.md", "# Operator-owned README\n")
+		writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+"adoption:\n  decline: [readme]\n")
+		out, err := f.audit(t)
+		if err != nil {
+			t.Fatalf("declined README: %v\n%s", err, out)
+		}
+		mustContain(t, out, "[INFO] README governance block declined")
+	})
+
+	t.Run("invalid decline cannot bypass the managed surface", func(t *testing.T) {
+		f := newAuditFixture(t)
+		writeFixtureFile(t, f.dir, "README.md", "# Operator-owned README\n")
+		writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+"adoption:\n  decline: [read-me]\n")
+		_, err := f.audit(t)
+		mustErrContain(t, err, "unknown artefact")
+	})
+}
+
 func TestAudit_Negative_ReadErrorsAndArguments(t *testing.T) {
 	t.Run("unreadable go.mod fails instead of passing", func(t *testing.T) {
 		testsupport.SkipIfFileModeUnenforced(t)

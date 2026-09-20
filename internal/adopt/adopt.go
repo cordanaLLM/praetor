@@ -406,7 +406,7 @@ func (s *adoptSession) verifyExistingBaseline(full string) error {
 		s.report.BaselineStatus = "failed"
 		return fmt.Errorf("load existing baseline: %w", err)
 	} else {
-		s.report.LegacyDebtCount = base.TotalInfractions
+		s.report.LegacyDebtCount = base.Count()
 	}
 	s.report.recordReconciled(baselineFile, "Technical debt baseline verified present")
 	return nil

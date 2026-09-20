@@ -9,7 +9,7 @@
   *Part of the [CordanaLLM](https://github.com/CordanaLLM) Deterministic Infrastructure Ecosystem*
 
   [![Go Version](https://img.shields.io/badge/Go-1.27%2B-00ADD8?style=for-the-badge&logo=go)](https://golang.org)
-  [![HISS Compliance](https://img.shields.io/badge/Standard-HISS_Lattice-06B6D4?style=for-the-badge&logo=nasa)](https://cordanallm.github.io/praetor/standards/hiss-spec/)
+  [![HISS Governance](https://img.shields.io/badge/Standard-HISS_Governance-06B6D4?style=for-the-badge&logo=nasa)](https://cordanallm.github.io/praetor/standards/hiss-spec/)
   [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub_Sponsors-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/CordanaLLM)
   [![Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white)](https://ko-fi.com/cordana)
   [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP_Server-10B981?style=for-the-badge)](https://modelcontextprotocol.io)
@@ -22,6 +22,16 @@
 
 </div>
 
+<!-- praetor:readme-governance:start -->
+Praetor manages this repository's declared governance policy. This managed block records adoption state; it is not a verification certificate.
+
+| Gate | Command | Contract |
+| :--- | :--- | :--- |
+| **Verification** | `make verify-all` | Runs the repository's configured verification cascade |
+| **HISS Audit** | `praetorctl audit` | Enforces policy, generated-surface integrity, and the debt ratchet |
+| **Context Sync** | `praetorctl compile-context --verify` | Verifies every generated agent context against `AGENTS.md` |
+| **Debt Baseline** | `.standards-baseline.json` | 0 recorded infractions; audit forbids growth |
+<!-- praetor:readme-governance:end -->
 
 ---
 
@@ -99,7 +109,7 @@ Praetor enforces the **High-Integrity Systems Standard (HISS)**—adapting NASA-
 
 * **HISS-01 (Acyclic Control Flow)**: Recursion is strictly prohibited; call graph must be a DAG.
 * **HISS-02 (Bounded Loops & Timeouts)**: Bounded iterations and explicit context deadlines on all network and disk I/O.
-* **HISS-04 (Complexity & Function Length Caps)**: Maximum McCabe cyclomatic complexity $M \le 10$, function length $\le 75$ LOC.
+* **HISS-04 (Complexity & Function Length Caps)**: Maximum McCabe cyclomatic complexity $M \le 10$, function length $\le 60$ LOC.
 * **HISS-07 (Zero Unchecked Errors)**: Zero unchecked error values and zero `.unwrap()` or unhandled panic calls in production.
 * **HISS-10 (Zero-Warning Cascade)**: 5-layer zero-warning cascade from editor to deployment admission controller.
 * **HISS-15 (3D Testing Discipline)**: Positive, negative, and boundary tests mandatory for all public APIs.

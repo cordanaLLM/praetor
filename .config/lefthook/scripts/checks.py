@@ -261,7 +261,7 @@ def governance_commands(directory, names, source, base=None):
     config = context_changed(names) or any(
         name.startswith((".standards", ".config/", ".agents/", ".claude/", ".codex/",
                          ".gemini/", ".cursor/", ".devcontainer/", ".github/", "templates/"))
-        or name == "lefthook.yml" for name in names)
+        or name in {"lefthook.yml", "README.md"} for name in names)
     if (directory / ".standards.yaml").exists() and (source or config):
         scope = audit_scope(directory, names, base)
         commands.extend([[*cli, "audit", *scope], [*cli, "flavor", "audit", "."]])

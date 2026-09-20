@@ -9,7 +9,7 @@ title: Praetor - Fleet Governance Engine
 <div align="center" markdown>
 
 [![Go Version](https://img.shields.io/badge/Go-1.27+-00ADD8?style=flat-square&logo=go)](https://go.dev/)
-[![HISS Verified](https://img.shields.io/badge/HISS-Verified-0e8a16?style=flat-square&logo=shield)](standards/hiss-spec.md)
+[![HISS Governance](https://img.shields.io/badge/HISS-Governance-0075ca?style=flat-square&logo=shield)](standards/hiss-spec.md)
 [![License: EUPL 1.2](https://img.shields.io/badge/License-EUPL_1.2-blue?style=flat-square)](https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12)
 [![Polar.sh](https://img.shields.io/badge/Polar.sh-Feature_Bounties-000000?style=flat-square&logo=polar)](sponsoring.md)
 [![llms.txt Enabled](https://img.shields.io/badge/llms.txt-Enabled-0075ca?style=flat-square)](llms.txt)

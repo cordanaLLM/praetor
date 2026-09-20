@@ -21,6 +21,23 @@ func TestDeclinedArtifacts_Positive_AcceptsADeclaredArtefact(t *testing.T) {
 	}
 }
 
+func TestArtifactDeclined_3D_UsesCanonicalAdoptionPolicy(t *testing.T) {
+	declined, err := ArtifactDeclined([]string{"  README  "}, "readme")
+	if err != nil || !declined {
+		t.Fatalf("canonical README decline: declined=%v err=%v", declined, err)
+	}
+	if _, err := ArtifactDeclined([]string{"read-me"}, "readme"); err == nil || !strings.Contains(err.Error(), "unknown artefact") {
+		t.Fatalf("unknown decline must not be silently ignored: %v", err)
+	}
+	if declined, err := ArtifactDeclined(nil, "readme"); err != nil || declined {
+		t.Fatalf("empty boundary: declined=%v err=%v", declined, err)
+	}
+	oversized := make([]string, maxDeclinedArtifacts+1)
+	if _, err := ArtifactDeclined(oversized, "readme"); err == nil {
+		t.Fatal("oversized decline boundary was accepted")
+	}
+}
+
 func TestDeclinedArtifacts_Positive_IsCaseAndSpaceInsensitive(t *testing.T) {
 	declined, err := declinedArtifacts([]string{"  README  ", "Dev-Container"}, knownArtifacts)
 	if err != nil {

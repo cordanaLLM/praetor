@@ -83,7 +83,7 @@ praetorctl baseline --record
 # 4. Prepare a portable devcontainer from reviewed Praetor sources
 praetorctl devcontainer generate --source-root /path/to/reviewed/praetor
 
-# 5. Verify 100% compliance
+# 5. Verify the configured governance contract
 praetorctl audit
 ```
 
@@ -118,7 +118,7 @@ activation. Those stages need their own selected checks and execution evidence.
 | **2. Context Transpilation** | Generate vendor agent files | `praetorctl compile-context` | `CLAUDE.md`, `.cursor/rules/*.mdc`, etc. created ($< 300$ LOC). |
 | **3. Brownfield Baselining** | Snapshot legacy debt | `praetorctl baseline --record` | `.standards-baseline.json` populated with existing debt. |
 | **4. Devcontainer Setup** | Prepare a portable bootstrap | `praetorctl devcontainer generate --source-root /path/to/reviewed/praetor` | JSON and exact source companions prepared; build and startup remain separate checks. |
-| **5. Audit Verification** | Final compliance sweep | `praetorctl audit` | Score: 100% Compliance. |
+| **5. Audit Verification** | Verify configured governance and debt-ratchet gates | `praetorctl audit` | Every executed gate reports pass; skipped or unsupported coverage remains explicit. |
 
 ---
 

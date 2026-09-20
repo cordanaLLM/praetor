@@ -1159,7 +1159,7 @@ class ScopeAndGuard(unittest.TestCase):
                 commands = governance_commands(root, [name], False)
                 self.assertEqual(commands[0][3:], ["audit", "--touched=.standards.yaml"])
                 self.assertEqual(commands[1][3:], ["flavor", "audit", "."])
-            self.assertEqual(governance_commands(root, ["README.md"], False), [])
+            self.assertEqual(len(governance_commands(root, ["README.md"], False)), 2)
             self.assertEqual(len(governance_commands(root, ["a.go"], True)), 2)
             self.assertEqual(governance_commands(root, [".workingdir/OPEN.md"], False)[0][3:], ["state", "audit", "."])
             for name in (".gemini/GEMINI.md", ".codex/rules.md", ".cursor/rules/hiss-invariants.mdc"):
