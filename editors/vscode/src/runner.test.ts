@@ -30,14 +30,16 @@ test("runner reports nonzero and preserves unicode bytes", async () => {
   assert.equal(result.stdout, "🙂");
 });
 test("runner rejects bounded output overflow", async () => {
-  const result = await runCLI(execPath, ["-e", "process.stdout.write('🙂'.repeat(20))"], process.cwd(), { maxOutput: 16, timeoutMs: 1000 });
+  const result = await runCLI(execPath, ["-e", "process.stdout.write('🙂'.repeat(20))"], process.cwd(), { maxOutput: 16 });
   assert.equal(result.outputExceeded, true);
+  assert.equal(result.timedOut, false);
   assert.notEqual(result.exitCode, 0);
   assert.equal(Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr) <= 16, true);
 });
 test("runner does not expand an incomplete UTF-8 prefix", async () => {
-  const result = await runCLI(execPath, ["-e", "process.stdout.write('🙂')"], process.cwd(), { maxOutput: 1, timeoutMs: 1000 });
+  const result = await runCLI(execPath, ["-e", "process.stdout.write('🙂')"], process.cwd(), { maxOutput: 1 });
   assert.equal(result.outputExceeded, true);
+  assert.equal(result.timedOut, false);
   assert.equal(Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr) <= 1, true);
   assert.equal(result.stdout, "");
 });

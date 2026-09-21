@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RULES = ROOT / ".config" / "semgrep" / "hiss-invariants.yml"
+VERSION_PROBE_TIMEOUT_SECONDS = 20
 
 
 def pinned_version():
@@ -22,6 +23,39 @@ def pinned_version():
     if not match:
         raise AssertionError(f"missing exact semgrep pin in {requirements}")
     return match.group(1)
+
+
+def require_semgrep_version(run_command=subprocess.run):
+    expected = pinned_version()
+    command = ["semgrep", "--version"]
+    requirement = f"semgrep {expected} is required by requirements.txt"
+    try:
+        result = run_command(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=VERSION_PROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise AssertionError(
+            f"{requirement}; installed version is unavailable: version probe exceeded "
+            f"the {VERSION_PROBE_TIMEOUT_SECONDS}-second bound before this host completed it"
+        ) from error
+
+    output = result.stdout.strip()
+    installed = output.split()[-1] if result.returncode == 0 and output else ""
+    if installed == expected:
+        return installed
+    if result.returncode != 0:
+        detail = f"version probe exited with status {result.returncode}"
+    elif not output:
+        detail = "version probe returned empty stdout"
+    else:
+        detail = f"installed version is {installed}"
+    if installed:
+        raise AssertionError(f"{requirement}; {detail}")
+    raise AssertionError(f"{requirement}; installed version is unavailable: {detail}")
 
 
 def scan(source: str, language: str):
@@ -63,19 +97,54 @@ def rules_at(findings, rule):
     return [item["line"] for item in findings if item["rule"] == rule]
 
 
+class SemgrepVersionProbeTest(unittest.TestCase):
+    def test_matching_version_passes_with_scan_sized_timeout(self):
+        calls = []
+
+        def run_command(command, **kwargs):
+            calls.append((command, kwargs))
+            return subprocess.CompletedProcess(command, 0, f"semgrep {pinned_version()}\n", "")
+
+        self.assertEqual(require_semgrep_version(run_command), pinned_version())
+        self.assertEqual(calls[0][0], ["semgrep", "--version"])
+        self.assertEqual(calls[0][1]["timeout"], 20)
+
+    def test_mismatched_version_names_expected_and_installed_versions(self):
+        def run_command(command, **_kwargs):
+            return subprocess.CompletedProcess(command, 0, "semgrep 0.0.0\n", "")
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            rf"semgrep {re.escape(pinned_version())} is required.*installed version is 0\.0\.0",
+        ):
+            require_semgrep_version(run_command)
+
+    def test_timeout_names_bound_and_host_instead_of_toolchain_traceback(self):
+        def run_command(command, **kwargs):
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            r"installed version is unavailable: version probe exceeded the 20-second "
+            r"bound before this host completed it",
+        ):
+            require_semgrep_version(run_command)
+
+    def test_empty_stdout_reports_unavailable_version(self):
+        def run_command(command, **_kwargs):
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            r"installed version is unavailable: version probe returned empty stdout",
+        ):
+            require_semgrep_version(run_command)
+
+
 class HissSemgrepRegression(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        result = subprocess.run(
-            ["semgrep", "--version"], capture_output=True, text=True, timeout=5, check=False
-        )
-        installed = result.stdout.strip().split()[-1] if result.returncode == 0 else ""
-        expected = pinned_version()
-        if installed != expected:
-            raise AssertionError(
-                f"semgrep {expected} is required by requirements.txt; "
-                f"installed version is {installed or 'unavailable'}"
-            )
+        require_semgrep_version()
 
     def test_http_get_and_post_each_match_but_context_request_does_not(self):
         for call in ('http.Get("x")', 'http.Post("x", "text/plain", nil)'):
