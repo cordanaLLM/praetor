@@ -15,10 +15,11 @@ import time
 import unittest
 from unittest import mock
 
-from common import HookError, run, snapshot
+from common import (HookError, MANAGED_PROCESS_ENV, MAX_PROCESS_ENV_ENTRIES,
+                    clean_env, run, snapshot)
 from checks import (go_packages, source_checks, governance_commands, context_changed,
                     audit_scope, local_package_patterns, checkpoint_checks,
-                    semgrep_commands, is_fixture, FIXTURE_DIRECTORY)
+                    semgrep_commands, is_fixture, run_full_gate, FIXTURE_DIRECTORY)
 import hooks
 from hooks import push_updates, new_branch_base, pre_push, push_check_mode, prepare_message
 from privacy import check_private_history, check_private_index
@@ -436,6 +437,37 @@ class GitHooks(unittest.TestCase):
         self.assertEqual(command(remote, "git", "ls-tree", "-r", "--name-only", head, "--", ".workingdir").stdout, b"")
         self.assertEqual((Path(self.temp.name) / "external/.workingdir/private.txt").read_text(),
                          "PRIVATE_HISTORY_SENTINEL\n")
+
+    def test_command_line_git_config_stops_at_the_registered_pre_push_boundary(self):
+        persisted = Path(self.temp.name) / "persisted.git"
+        transient = Path(self.temp.name) / "transient.git"
+        command(self.repo, "git", "init", "--bare", "-q", str(persisted))
+        command(self.repo, "git", "init", "--bare", "-q", str(transient))
+        command(self.repo, "git", "remote", "add", "origin", str(persisted))
+        probe = '''import os
+import subprocess
+
+expected = os.environ.get("PRAETOR_TEST_SNAPSHOT_ORIGIN")
+if expected:
+    transient = [key for key in os.environ if key in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}
+                 or key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))]
+    if transient:
+        raise SystemExit("transient Git config reached gate child: " + ",".join(sorted(transient)))
+    actual = subprocess.run(["git", "config", "--get", "remote.origin.url"],
+                            capture_output=True, text=True, timeout=10, check=True).stdout.strip()
+    if actual != expected:
+        raise SystemExit(f"snapshot origin {actual!r} != persisted origin {expected!r}")
+print("fixture hook self-tests passed")
+'''
+        self.write(".config/lefthook/scripts/test_hooks.py", probe)
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "test: add isolation probe")
+        marker = {"PRAETOR_TEST_SNAPSHOT_ORIGIN": str(persisted)}
+        with mock.patch.dict(os.environ, marker, clear=False):
+            pushed = command(self.repo, "git", "-c", f"remote.origin.url={transient}",
+                             "push", "-q", "origin", "HEAD:refs/heads/config-isolation")
+        self.assertIn(b"fixture hook self-tests passed", pushed.stdout + pushed.stderr)
+        self.assertTrue(command(transient, "git", "show-ref", "--verify",
+                                "refs/heads/config-isolation").stdout)
 
     def test_merge_retaining_remote_private_baseline_is_not_new_private_content(self):
         external = Path(self.temp.name) / "merge-source"
@@ -890,6 +922,84 @@ class ScopeAndGuard(unittest.TestCase):
             self.assertEqual(spawned.call_args.kwargs["input"], b"")
             command(ROOT, "probe", data=b"payload")
             self.assertEqual(spawned.call_args.kwargs["input"], b"payload")
+
+    def test_clean_env_preserves_ordinary_values_and_strips_git_command_config(self):
+        inherited = {"PATH": os.environ.get("PATH", ""), "KEEP": "yes",
+                     "GIT_CONFIG_COUNT": "2",
+                     "GIT_CONFIG_KEY_0": "remote.origin.pushurl",
+                     "GIT_CONFIG_VALUE_0": "ssh://example.invalid/wrong",
+                     "GIT_CONFIG_KEY_1": "user.password",
+                     "GIT_CONFIG_VALUE_1": "must-not-reach-children",
+                     "GIT_CONFIG_KEY_2048": "remote.other.pushurl",
+                     "GIT_CONFIG_VALUE_2048": "ssh://example.invalid/also-wrong",
+                     "GIT_CONFIG_PARAMETERS": "'remote.origin.pushurl'='wrong'"}
+        with mock.patch.dict(os.environ, inherited, clear=True):
+            cleaned = clean_env()
+        self.assertEqual(cleaned["KEEP"], "yes")
+        self.assertEqual(cleaned["CI"], "true")
+        self.assertEqual(cleaned["GOWORK"], "off")
+        self.assertEqual(cleaned["GOFLAGS"], "-mod=readonly")
+        self.assertFalse(any(key == "GIT_CONFIG_COUNT" or key == "GIT_CONFIG_PARAMETERS"
+                             or key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+                             for key in cleaned), cleaned)
+
+    def test_clean_env_keeps_fixture_pushes_inside_their_own_remote(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            intended = root / "intended.git"
+            sentinel = root / "sentinel.git"
+            repo.mkdir()
+            command(repo, "git", "init", "-q", "-b", "main")
+            command(repo, "git", "config", "user.name", "Hook Test")
+            command(repo, "git", "config", "user.email", "hook@example.test")
+            (repo / "README.md").write_text("# Isolated\n", encoding="utf-8")
+            command(repo, "git", "add", "README.md")
+            command(repo, "git", "commit", "-q", "-m", "test: seed isolated remote")
+            command(root, "git", "init", "--bare", "-q", str(intended))
+            command(root, "git", "init", "--bare", "-q", str(sentinel))
+            command(repo, "git", "remote", "add", "origin", str(intended))
+            injected = dict(os.environ, GIT_CONFIG_COUNT="1",
+                            GIT_CONFIG_KEY_0="remote.origin.pushurl",
+                            GIT_CONFIG_VALUE_0=str(sentinel))
+            with mock.patch.dict(os.environ, injected, clear=True):
+                cleaned = clean_env()
+            pushed = subprocess.run(["git", "push", "-q", "origin", "main"], cwd=repo,
+                                    env=cleaned, capture_output=True, timeout=30, check=False)
+            self.assertEqual(pushed.returncode, 0, pushed.stdout + pushed.stderr)
+            self.assertTrue(command(intended, "git", "show-ref", "--verify",
+                                    "refs/heads/main").stdout)
+            self.assertEqual(command(sentinel, "git", "for-each-ref").stdout, b"")
+
+    def test_full_gate_uses_the_clean_git_environment(self):
+        injected = dict(os.environ, GIT_CONFIG_COUNT="1",
+                        GIT_CONFIG_KEY_0="remote.origin.pushurl",
+                        GIT_CONFIG_VALUE_0="ssh://example.invalid/wrong")
+        with mock.patch.dict(os.environ, injected, clear=True), \
+                mock.patch("checks.run") as process:
+            self.assertTrue(run_full_gate(Path(".")))
+        self.assertEqual(process.call_count, 2)
+        for call in process.call_args_list:
+            child_env = call.kwargs["env"]
+            self.assertFalse(any(key == "GIT_CONFIG_COUNT"
+                                 or key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+                                 for key in child_env), child_env)
+
+    def test_clean_env_final_bound_is_composable_for_nested_children(self):
+        unmanaged = MAX_PROCESS_ENV_ENTRIES - len(MANAGED_PROCESS_ENV)
+        exact = {f"SAFE_{index}": "x" for index in range(unmanaged)}
+        with mock.patch.dict(os.environ, exact, clear=True):
+            parent = clean_env()
+        self.assertEqual(len(parent), MAX_PROCESS_ENV_ENTRIES)
+        self.assertEqual(parent["SAFE_0"], "x")
+        with mock.patch.dict(os.environ, parent, clear=True):
+            child = clean_env()
+        self.assertEqual(child, parent)
+
+        excessive = dict(exact, ONE_TOO_MANY="x")
+        with mock.patch.dict(os.environ, excessive, clear=True):
+            with self.assertRaisesRegex(HookError, "environment exceeds"):
+                clean_env()
 
     def semgrep_tree(self, root, *files):
         rules = root / ".config" / "semgrep" / "hiss-invariants.yml"

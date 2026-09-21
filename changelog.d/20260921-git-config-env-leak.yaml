@@ -1,0 +1,3 @@
+type: fixed
+title: Keep inherited Git command-line configuration out of isolated pre-push gate processes
+breaking: false
