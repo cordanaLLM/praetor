@@ -482,6 +482,79 @@ func TestScan_NativeAndRustBracesInLiteralsDoNotDesync(t *testing.T) {
 	assertViolations(t, rep, []expectedViolation{{"HISS-04", "a.c", 5}, {"HISS-04", "a.rs", 5}})
 }
 
+func TestScan_NativeNonFunctionBlocksAreNotFunctions(t *testing.T) {
+	cases := []struct {
+		name   string
+		file   string
+		prefix string
+		line   string
+		suffix string
+	}{
+		{"anonymous namespace", "namespace.cpp", "namespace {\n", "int value;\n", "}\n"},
+		{"C linkage block", "linkage.cpp", "extern \"C\" {\n", "void exported(void);\n", "}\n"},
+		{"file-scope array initializer", "options.c", "static const int options[] = {\n", "    0,\n", "};\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFixture(t, root, tc.file, tc.prefix+strings.Repeat(tc.line, 76)+tc.suffix)
+			rep := scanFixture(t, root, ScanOptions{MaxFuncLOC: 60})
+			if rep.Breakdown["HISS-04"] != 0 {
+				t.Fatalf("non-function block must not be measured as a function: %+v", rep.Violations)
+			}
+		})
+	}
+}
+
+func TestScan_NativeNonFunctionBlocksRetainFunctionChecks(t *testing.T) {
+	root := t.TempDir()
+	longFunction := "void long_function(void) {\n" + strings.Repeat("    value = 1;\n", 59) + "}\n"
+	writeFixture(t, root, "nested.cpp", "namespace {\n"+longFunction+"}\n")
+
+	rep := scanFixture(t, root, ScanOptions{MaxFuncLOC: 60})
+	assertViolations(t, rep, []expectedViolation{{"HISS-04", "nested.cpp", 2}})
+	if rep.Violations[0].Symbol != "long_function" {
+		t.Fatalf("long nested function attributed to %q", rep.Violations[0].Symbol)
+	}
+}
+
+func TestScan_NativeAllmanFunctionOwnsNestedControlBlocks(t *testing.T) {
+	root := t.TempDir()
+	body := "void allman(void)\n{\n    int value = 0;\n    while (value < 100) {\n" +
+		strings.Repeat("        value += 1;\n", 59) + "    }\n}\n"
+	writeFixture(t, root, "allman.cpp", body)
+
+	rep := scanFixture(t, root, ScanOptions{MaxFuncLOC: 60})
+	assertViolations(t, rep, []expectedViolation{{"HISS-04", "allman.cpp", 1}})
+	if rep.Violations[0].Symbol != "allman" {
+		t.Fatalf("Allman-style function attributed to %q", rep.Violations[0].Symbol)
+	}
+}
+
+func TestScan_NativeMacroCallDoesNotBecomePendingFunction(t *testing.T) {
+	root := t.TempDir()
+	prefix := "#define fail(err) \\\n    throw std::runtime_error(err); \\\n\nclass Parser {\n"
+	longFunction := "void parse(void) {\n" + strings.Repeat("    value = 1;\n", 59) + "}\n"
+	writeFixture(t, root, "macro.cpp", prefix+longFunction+"};\n")
+
+	rep := scanFixture(t, root, ScanOptions{MaxFuncLOC: 60})
+	assertViolations(t, rep, []expectedViolation{{"HISS-04", "macro.cpp", strings.Count(prefix, "\n") + 1}})
+	if rep.Violations[0].Symbol != "parse" {
+		t.Fatalf("function after continued macro attributed to %q", rep.Violations[0].Symbol)
+	}
+}
+
+func TestScan_NativeFunctionAtLOCBoundaryInsideLinkageBlock(t *testing.T) {
+	root := t.TempDir()
+	exactFunction := "void exact_limit(void) {\n" + strings.Repeat("    value = 1;\n", 58) + "}\n"
+	writeFixture(t, root, "boundary.cpp", "extern \"C\" {\n"+exactFunction+"}\n")
+
+	rep := scanFixture(t, root, ScanOptions{MaxFuncLOC: 60})
+	if rep.Breakdown["HISS-04"] != 0 {
+		t.Fatalf("function at exact LOC limit must pass: %+v", rep.Violations)
+	}
+}
+
 func TestScan_WrappedSignaturesAreTracked(t *testing.T) {
 	root := t.TempDir()
 	body := func(n int) string {

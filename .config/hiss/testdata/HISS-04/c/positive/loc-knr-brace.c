@@ -1,6 +1,5 @@
-/* A 61-line function in K&R style. isNativeFuncHeader requires a brace on the header
- * line, so the tracked function starts at the brace line instead and is measured as 60
- * LOC. The identical function with the brace on the header line is reported. */
+/* A 61-line function in K&R style. The signature starts function tracking before the
+ * brace arrives on the next line, so the whole definition counts toward HISS-04. */
 int knr_sixty_one(int count)
 {
     count++;
