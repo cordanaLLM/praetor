@@ -5,11 +5,11 @@ contains that call and nothing else: no shell substitution, no interpreter name,
 The command reads the client's payload from stdin, takes the workspace from the payload,
 judges the call in process and answers in that client's dialect.
 
-This page describes what ships today. The Python adapters under `.config/agent/hooks/` and
-the registrations in `.claude/settings.json`, `.codex/hooks.json`, `.gemini/settings.json`
-and `.config/lefthook/praetor.yml` are unchanged and still guard live sessions; they move
-to this entrypoint in a later change, after both implementations have been replayed
-against the same payloads (see [Parity](#parity-with-the-python-guard)).
+This page describes what ships today. The legacy command and checkpoint rows still call
+the Python adapters under `.config/agent/hooks/`; moving those rows and Lefthook jobs to
+this entrypoint remains later work. The subagent text rows are tracked now and call this
+entrypoint directly from `.claude/settings.json`, `.codex/hooks.json`,
+`.gemini/settings.json`, and `.agents/plugins/praetor/hooks.json`.
 
 ## Command line and support matrix
 
@@ -26,16 +26,29 @@ without a row is rejected before any input is read.
 | `claude` | `pre-edit` | `PreToolUse` | `^(Edit\|Write)$` | 15 s | `praetorctl hook claude pre-edit` |
 | `claude` | `post-tool` | `PostToolUse` | none | 60 s | `praetorctl hook claude post-tool` |
 | `claude` | `stop` | `Stop` | none | 60 s | `praetorctl hook claude stop` |
+| `claude` | `pre-dispatch` | `PreToolUse` | `^Agent$` | 15 s | `praetorctl hook claude pre-dispatch` |
+| `claude` | `dispatch-receipt` | `PostToolUse` | `^Agent$` | 15 s | `praetorctl hook claude dispatch-receipt` |
+| `claude` | `dispatch-abort` | `PostToolUseFailure` | `^Agent$` | 15 s | `praetorctl hook claude dispatch-abort` |
+| `claude` | `dispatch-abort` | `PermissionDenied` | `^Agent$` | 15 s | `praetorctl hook claude dispatch-abort` |
+| `claude` | `pre-handback` | `PreToolUse` | `^SubagentHandback$` | 15 s | `praetorctl hook claude pre-handback` |
+| `claude` | `handback-receipt` | `PostToolUse` | `^SubagentHandback$` | 15 s | `praetorctl hook claude handback-receipt` |
+| `claude` | `handback-abort` | `PostToolUseFailure` | `^SubagentHandback$` | 15 s | `praetorctl hook claude handback-abort` |
+| `claude` | `handback-abort` | `PermissionDenied` | `^SubagentHandback$` | 15 s | `praetorctl hook claude handback-abort` |
+| `claude` | `post-return` | `SubagentStop` | none | 60 s | `praetorctl hook claude post-return` |
 | `codex` | `pre-tool` | `PreToolUse` | `^Bash$` | 15 s | `praetorctl hook codex pre-tool` |
 | `codex` | `post-tool` | `PostToolUse` | none | 60 s | `praetorctl hook codex post-tool` |
 | `codex` | `stop` | `Stop` | none | 60 s | `praetorctl hook codex stop` |
+| `codex` | `pre-dispatch` | `PreToolUse` | `^spawn_agent$` | 15 s | `praetorctl hook codex pre-dispatch` |
+| `codex` | `post-return` | `SubagentStop` | none | 60 s | `praetorctl hook codex post-return` |
 | `gemini` | `pre-tool` | `BeforeTool` | `run_shell_command` | 15 s (written as ms) | `praetorctl hook gemini pre-tool` |
 | `gemini` | `pre-edit` | `BeforeTool` | `^(replace\|write_file)$` | 15 s (written as ms) | `praetorctl hook gemini pre-edit` |
 | `gemini` | `post-tool` | `AfterTool` | none | 60 s (written as ms) | `praetorctl hook gemini post-tool` |
 | `gemini` | `stop` | `AfterAgent` | none | 60 s (written as ms) | `praetorctl hook gemini stop` |
+| `gemini` | `pre-dispatch` | `BeforeTool` | `^invoke_agent$` | 15 s (written as ms) | `praetorctl hook gemini pre-dispatch` |
 | `lefthook` | `pre-tool` | job `agent-pre-tool` | none | none | `praetorctl hook lefthook pre-tool` |
 | `lefthook` | `environment` | job `pre-rebase` | none | none | `praetorctl hook lefthook environment` |
 | `agy` | `pre-tool` | `PreToolUse` | `*` | 30 s | `praetorctl hook agy pre-tool` |
+| `agy` | `pre-dispatch` | `PreToolUse` | `invoke_subagent` | 30 s | `praetorctl hook agy pre-dispatch` |
 | `agy` | `stop` | `Stop` | none | 30 s | `praetorctl hook agy stop` |
 
 Codex carries no `pre-edit` row: it registers no native pre-edit event today. The checkpoint
@@ -46,15 +59,16 @@ and Lefthook's own checkpoint jobs (`agent-checkpoint-tool`, `agent-checkpoint-p
 change (see [Not in this change](#not-in-this-change)).
 
 The registration string is one executable call. It resolves through `PATH` (and `PATHEXT`
-on Windows) and is valid under `sh -c` and under `cmd /c`. The `agy` rows are dialect data
-only in this change: nothing yet writes them into a `hooks.json` file (that is C3/C4).
+on Windows) and is valid under `sh -c` and under `cmd /c`. The text-gate rows are tracked
+in each native client file; AGY reads its row from `.agents/plugins/praetor/hooks.json`.
 
 ## One invocation
 
 1. **Arguments.** Grammar, then the table. A failure prints the usage with every supported
    pair and exits 2, the blocking code of the native clients.
-2. **Input.** `pre-tool` reads stdin up to 1 MiB within the evaluation budget, so a client
-   that never closes stdin cannot hold the hook. `environment` reads nothing.
+2. **Input.** Every payload-carrying event reads stdin up to 1 MiB within the evaluation
+   budget, so a client that never closes stdin cannot hold the hook. `environment` reads
+   nothing.
 3. **Decode.** Exactly one JSON object of valid UTF-8. The dialect reads
    `hook_event_name`, `tool_name`, `cwd` and `tool_input.command`. The command-line event is
    authoritative: a payload that names another event is an error. A member of the wrong
@@ -72,6 +86,63 @@ only in this change: nothing yet writes them into a `hooks.json` file (that is C
 6. **Governed.** The root holds `.standards.yaml`. Anything else is skipped with a reason.
 7. **Judge.** The process environment first, then the command policy.
 8. **Encode.** The verdict in the client's dialect.
+
+## Subagent text register gate
+
+The agent-traffic events reuse the same bounded stdin, workspace resolution, record mode and
+dialect encoder as command hooks. `pre-dispatch` extracts the brief's `task:` field through
+the Caveman scanner, verifies that routing declares the label, resolves
+`register.tasks.<label>`, and calls the shared runtime validator with kind `brief`. An
+internal result must pass Caveman; docs and social results remain full prose by policy.
+
+Claude's pre-tool hook stores only the resolved register row, never the prompt. Its
+post-tool receipt atomically binds that row to the native agent id. The private bounded
+store lives below Git's shared directory at
+`$GIT_COMMON_DIR/praetor/agenthook-correlations`, so an isolated agent worktree reaches the
+same correlation as its parent without adding working-tree state. Failed and auto-mode
+denied launches remove their pending row. A pending row otherwise expires after five
+minutes; an active agent row expires after 24 hours.
+
+Claude Code 2.1.271 and later can deliver an auto-mode report through the documented
+`SubagentHandback.tool_input.message` field. The `pre-handback` hook checks that message
+before delivery, using the `session_id`, `agent_id`, and `tool_use_id` supplied to subagent
+tool hooks. It stores only a digest binding that tool use to the validated report.
+`handback-receipt` marks delivery after the tool succeeds and only when the delivered input
+matches that digest. Failure or permission denial clears only the matching provisional
+digest, so a stale event cannot alter a newer attempt. `SubagentStop.last_assistant_message`
+remains the checked fallback when delivery did not complete. After a confirmed handback,
+`SubagentStop` removes the binding without treating its optional closing text as the report. See the
+[Claude Code hook reference](https://code.claude.com/docs/en/hooks#subagentstop).
+
+Claude rejects an explicitly foreground `Agent` call because its return can precede the
+dispatch receipt needed for correlation. An omitted background flag keeps the client's
+documented background default.
+
+Codex exposes both the dispatch brief and `SubagentStop.last_assistant_message`, so its
+brief and return capture adapters are tracked and replayed. The current spawn
+`PostToolUse` payload does not expose a documented key that links the tool call to the
+later subagent id. Praetor therefore does not infer that ownership: the return hook checks
+the bounded body shape and reports an explicit skip, while `register_enforcement` remains
+`unenforceable`. No unusable pending correlation row is stored.
+
+Gemini's documented `invoke_agent` input exposes the prompt, so Praetor gates its brief.
+The generic hook schema does not document the nested field containing that tool's returned
+report, and no redacted native recording is tracked. Gemini return capture and register
+enforcement therefore remain `unenforceable`; Praetor does not install an `AfterTool`
+return gate based on an inferred shape. AGY's documented `invoke_subagent` input exposes
+one to 64 `Subagents[].Prompt` values and therefore gates briefs. Its documented post-tool
+and stop payloads expose no subagent return body, so AGY return capture and full register
+enforcement are also `unenforceable`. OpenCode v1, Continue, Cline, and Kilo have no
+audited native text boundary and report all three states as `unenforceable`.
+
+`clients capabilities` reports `brief_capture`, `return_capture`, and
+`register_enforcement` independently. A tracked, replay-tested adapter is
+`adapter-defined` with activation `unverified`; only a redacted payload recorded from the
+installed native client may promote that activation to observed. Static configuration is
+never that proof. `return_capture` proves that the body can be decoded, not that the task
+register can be recovered; the separate `register_enforcement` state carries that claim.
+Main-agent `Stop` and Gemini `AfterAgent` keep their checkpoint purpose: no Caveman hook is
+registered on a human-operator reply surface.
 
 ## Verdicts
 
@@ -153,7 +224,7 @@ and encoder above are untouched and still serve claude, codex, gemini and leftho
 Everything below is **docs-confirmed**: read from the "Lifecycle Hooks (`hooks.json`)"
 contract that ships embedded in the installed Antigravity CLI binary itself (`agy --help`
 prints the subcommand list; the contract text is a string literal inside the binary,
-verified on the installed 1.2.6 build, not taken from training memory or from
+verified on the installed 1.2.7 build, not taken from training memory or from
 `.workingdir/research/antigravity-docs-20260917.json`, which this text supersedes for
 everything it covers). It is not a live-recorded fixture; see the note at the end of this
 section for what remains unverified.
@@ -164,9 +235,10 @@ keyed by hook name, each hook naming one or more of `PreToolUse`, `PostToolUse`,
 `matcher` regex against the tool name; the other three are a flat handler list with no
 matcher. A handler's default (and today, only supported) `type` is `"command"`, run via
 `sh -c` on Unix and `cmd /c` on Windows, in the directory containing `hooks.json`, with a
-default 30 second timeout. Only `PreToolUse` and `Stop` have a Go evaluator wired in this
-change (the registration table above); `PostToolUse`, `PreInvocation` and `PostInvocation`
-are H2/H4 territory and `agyEncode` fails closed if ever asked for one.
+default 30 second timeout. `PreToolUse` serves both command policy and the
+`invoke_subagent` brief gate; `Stop` keeps its existing evaluator. `PostToolUse`,
+`PreInvocation` and `PostInvocation` have no AGY return-body enforcement because the
+public payload contract does not expose that body.
 
 Every payload carries `conversationId` and `workspacePaths` (an array; the entrypoint
 uses element 0 and falls back to the process working directory when the array is empty
@@ -214,11 +286,9 @@ workspace) is neutral and always answers `{}`, never blocks.
 **Unverified** (decision row 7 again): whether `executionNum` is 1-based (assumed here
 from the docs' own un-labelled example, matching how `stepIdx` and `invocationNum` are
 shown above zero too, never stated as zero-based), the real process shell/cwd/exit-code
-behaviour, any argument key besides `CommandLine`, and any edit-tool name. A headless
-`agy --print` recording in a throwaway sandbox with a temp config was considered for this
-change and not attempted: every real invocation needs an authenticated model call against
-the operator's own Antigravity account, which is out of scope without the operator's own
-explicit go-ahead. Record mode (above) is ready for whoever does that recording next.
+behaviour, any argument key besides `CommandLine`, and any edit-tool name. A redacted
+native AGY record is still absent, so none of these docs-derived fields counts as observed
+activation. Record mode above remains the qualification path.
 
 ## Checkpoint evaluators
 
@@ -306,7 +376,14 @@ registrations match the shell tool only, and the `lefthook` dialect keeps its be
   [The agy (Antigravity) dialect](#the-agy-antigravity-dialect)); its `stop` also keeps
   the plain command-policy flow rather than the checkpoint evaluators below
   (`checkpointWired`, `internal/agenthook/evaluate.go`).
-- Rendering the `agy` registration rows into an actual `.agents/hooks.json` (C3/C4).
+- AGY return capture: its public `PostToolUse` and `Stop` payloads expose no subagent
+  return body, so capability reporting keeps the boundary `unenforceable`.
+- Gemini return capture: its public hook schema does not establish the exact nested report
+  field for `invoke_agent`, and no redacted native recording is tracked. Capability
+  reporting keeps return capture and register enforcement `unenforceable`.
+- Codex return register enforcement: `SubagentStop` exposes the returned text, but the
+  spawn receipt exposes no documented dispatch-to-agent correlation key. Capability
+  reporting keeps enforcement `unenforceable` instead of guessing ownership.
 - The per-dialect encoding that comes with the `agy` dialect:
   `post-tool`'s due-checkpoint note and `stop`'s block/continue decision still reach the
   client through the same generic `Deny`/`Skip` encoding `pre-tool` uses (stderr text and

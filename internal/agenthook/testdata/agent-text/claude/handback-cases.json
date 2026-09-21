@@ -1,0 +1,50 @@
+[
+  {
+    "name": "valid-return",
+    "allow": true,
+    "payload": {
+      "session_id": "fixture-session",
+      "hook_event_name": "PreToolUse",
+      "agent_id": "fixture-agent",
+      "agent_type": "general-purpose",
+      "tool_name": "SubagentHandback",
+      "tool_use_id": "handback-tool",
+      "tool_input": {
+        "message": "verdict: pass\nchanged: internal/agenthook\nran: go test ./internal/agenthook\nevidence: exit 0\nopen: none\n"
+      }
+    }
+  },
+  {
+    "name": "prose-return",
+    "allow": false,
+    "payload": {
+      "session_id": "fixture-session",
+      "hook_event_name": "PreToolUse",
+      "agent_id": "fixture-agent",
+      "agent_type": "general-purpose",
+      "tool_name": "SubagentHandback",
+      "tool_use_id": "handback-tool",
+      "tool_input": {
+        "message": "verdict: I think this is complete\nchanged: the hook\nran: the tests\nevidence: the output\nopen: none\n"
+      }
+    }
+  },
+  {
+    "name": "missing-body",
+    "allow": false,
+    "payload": {
+      "session_id": "fixture-session",
+      "hook_event_name": "PreToolUse",
+      "agent_id": "fixture-agent",
+      "agent_type": "general-purpose",
+      "tool_name": "SubagentHandback",
+      "tool_use_id": "handback-tool",
+      "tool_input": {}
+    }
+  },
+  {
+    "name": "oversized-body",
+    "allow": false,
+    "oversized": true
+  }
+]

@@ -1,0 +1,66 @@
+[
+  {
+    "name": "valid-brief",
+    "allow": true,
+    "payload": {
+      "conversationId": "session-agy",
+      "workspacePaths": [],
+      "toolCall": {
+        "name": "invoke_subagent",
+        "args": {
+          "Subagents": [
+            {
+              "Prompt": "goal: patch hook\ninputs: internal/agenthook\nreturn: diff plus tests\nevidence: focused tests\ntask: feature_implementation\n",
+              "Role": "worker",
+              "TypeName": "general"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "prose-brief",
+    "allow": false,
+    "payload": {
+      "conversationId": "session-agy",
+      "workspacePaths": [],
+      "toolCall": {
+        "name": "invoke_subagent",
+        "args": {
+          "Subagents": [
+            {
+              "Prompt": "goal: I will patch the hook\ninputs: internal/agenthook\nreturn: diff plus tests\nevidence: focused tests\ntask: feature_implementation\n",
+              "Role": "worker",
+              "TypeName": "general"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "missing-body",
+    "allow": false,
+    "payload": {
+      "conversationId": "session-agy",
+      "workspacePaths": [],
+      "toolCall": {
+        "name": "invoke_subagent",
+        "args": {
+          "Subagents": [
+            {
+              "Role": "worker",
+              "TypeName": "general"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "oversized-body",
+    "allow": false,
+    "oversized": true
+  }
+]

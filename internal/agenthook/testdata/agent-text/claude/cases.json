@@ -1,0 +1,48 @@
+[
+  {
+    "name": "valid-brief",
+    "allow": true,
+    "payload": {
+      "session_id": "session-claude",
+      "hook_event_name": "PreToolUse",
+      "tool_name": "Agent",
+      "tool_use_id": "tool-claude",
+      "tool_input": {
+        "prompt": "goal: patch hook\ninputs: internal/agenthook\nreturn: diff plus tests\nevidence: focused tests\ntask: feature_implementation\n",
+        "run_in_background": true
+      }
+    }
+  },
+  {
+    "name": "prose-brief",
+    "allow": false,
+    "payload": {
+      "session_id": "session-claude",
+      "hook_event_name": "PreToolUse",
+      "tool_name": "Agent",
+      "tool_use_id": "tool-claude",
+      "tool_input": {
+        "prompt": "goal: I will patch the hook\ninputs: internal/agenthook\nreturn: diff plus tests\nevidence: focused tests\ntask: feature_implementation\n",
+        "run_in_background": true
+      }
+    }
+  },
+  {
+    "name": "missing-body",
+    "allow": false,
+    "payload": {
+      "session_id": "session-claude",
+      "hook_event_name": "PreToolUse",
+      "tool_name": "Agent",
+      "tool_use_id": "tool-claude",
+      "tool_input": {
+        "run_in_background": true
+      }
+    }
+  },
+  {
+    "name": "oversized-body",
+    "allow": false,
+    "oversized": true
+  }
+]

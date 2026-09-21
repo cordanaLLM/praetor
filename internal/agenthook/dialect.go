@@ -75,6 +75,9 @@ func (d Dialect) Decode(event Event, payload []byte) (Canonical, error) {
 	if err := d.checkEventName(event, object); err != nil {
 		return Canonical{}, err
 	}
+	if agentTrafficEvent(event) {
+		return decodeNativeAgentTraffic(d.Client, event, object)
+	}
 	canonical := Canonical{Event: event}
 	if canonical.Tool, err = optionalString(object, "tool_name"); err != nil {
 		return Canonical{}, err

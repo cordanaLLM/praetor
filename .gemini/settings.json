@@ -20,6 +20,16 @@
             "timeout": 15000
           }
         ]
+      },
+      {
+        "matcher": "^invoke_agent$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "praetorctl hook gemini pre-dispatch",
+            "timeout": 15000
+          }
+        ]
       }
     ],
     "AfterTool": [

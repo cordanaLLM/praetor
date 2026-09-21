@@ -119,3 +119,20 @@ func TestRecordModeIsOffByDefault(t *testing.T) {
 		t.Errorf("plain allow regressed: %+v", response)
 	}
 }
+
+func TestRecordModeDoesNotMutateAgentCorrelation(t *testing.T) {
+	root, records, correlations := repository(t, true), t.TempDir(), t.TempDir()
+	payload := nativePayload(t, "PreToolUse", "session", "Agent", "tool",
+		map[string]any{"prompt": validBrief, "run_in_background": true}, nil)
+	response := Run(context.Background(), Invocation{
+		Client: "claude", Event: string(EventPreDispatch), Stdin: bytes.NewReader(payload),
+		Getenv: recordingGetenv(records), WorkDir: root, Policy: policy(t), CorrelationDir: correlations,
+	})
+	if response.ExitCode != 0 {
+		t.Fatalf("record mode: %+v", response)
+	}
+	entries, err := os.ReadDir(correlations)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("record mode mutated correlation state: %v, %v", entries, err)
+	}
+}
