@@ -12,15 +12,16 @@ import (
 	"sort"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/router"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
 )
 
 type scheduleSnapshot struct {
-	config      *ScheduleConfig
-	files       map[string][]byte
-	fingerprint string
-	runnerSHA   string
+	config            *ScheduleConfig
+	files             map[string][]byte
+	fingerprint       string
+	runnerSHA         string
+	registerAuthority config.RegisterAuthority
 }
 
 func loadScheduleSnapshot(ctx context.Context, path string) (*scheduleSnapshot, error) {
@@ -49,6 +50,11 @@ func loadScheduleSnapshotWithinRoot(ctx context.Context, path, inputRoot string)
 	if err := snapshot.captureRepairPolicy(ctx); err != nil {
 		return nil, err
 	}
+	canonicalConfig, err := json.Marshal(snapshot.config)
+	if err != nil {
+		return nil, err
+	}
+	snapshot.files["schedule.json"] = canonicalConfig
 	executable, err := scheduleConfiguredBinarySHA(ctx, configuration.RunnerBinary)
 	if err != nil {
 		return nil, err
@@ -81,11 +87,19 @@ func (s *scheduleSnapshot) captureBundle(ctx context.Context) (err error) {
 		}
 		s.files["source/"+name] = data
 	}
-	var manifest config.Manifest
-	if err := yaml.Unmarshal(s.files["source/.standards.yaml"], &manifest); err != nil {
+	authority, err := config.ParseRegisterAuthority(s.files["source/.standards.yaml"], filepath.Join(s.config.SourceRoot, ".standards.yaml"))
+	if err != nil {
 		return err
 	}
-	if _, err := config.ValidateLockfile(ctx, s.config.SourceRoot, &manifest); err != nil {
+	manifest, err := authority.Manifest()
+	if err != nil {
+		return err
+	}
+	if manifest == nil {
+		return errors.New("schedule source requires a manifest")
+	}
+	s.registerAuthority = authority
+	if _, err := config.ValidateLockfile(ctx, s.config.SourceRoot, manifest); err != nil {
 		return err
 	}
 	return s.captureArchetypes(ctx)
@@ -180,9 +194,22 @@ func (s *scheduleSnapshot) captureRepairPolicy(ctx context.Context) error {
 	if p == nil {
 		return nil
 	}
+	canonical, err := CanonicalRepairPolicy(*p, s.registerAuthority)
+	if err != nil {
+		return err
+	}
+	s.config.RepairPolicy = &canonical
+	p = s.config.RepairPolicy
 	if err := ValidateRepairPolicy(ctx, *p); err != nil {
 		return err
 	}
+	if err := s.captureRepairFiles(ctx, p); err != nil {
+		return err
+	}
+	return s.validateCapturedRepairTasks(p)
+}
+
+func (s *scheduleSnapshot) captureRepairFiles(ctx context.Context, p *RepairPolicy) error {
 	paths := map[string]string{"routing.json": p.RoutingConfig}
 	if p.UsagePath != "" {
 		paths["usage.json"] = p.UsagePath
@@ -200,6 +227,17 @@ func (s *scheduleSnapshot) captureRepairPolicy(ctx context.Context) error {
 			return err
 		}
 		s.files[name] = data
+	}
+	return nil
+}
+
+func (s *scheduleSnapshot) validateCapturedRepairTasks(p *RepairPolicy) error {
+	routing, err := router.ParseRoutingConfig(s.files["routing.json"], p.RoutingConfig)
+	if err != nil {
+		return err
+	}
+	if err := s.registerAuthority.ValidateTaskLabels(router.DeclaredTaskLabels(routing)); err != nil {
+		return fmt.Errorf("repair register tasks: %w", err)
 	}
 	return nil
 }

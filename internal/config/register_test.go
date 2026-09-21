@@ -157,13 +157,13 @@ func TestRegisterResolve(t *testing.T) {
 		task    string
 		want    Resolution
 	}{
-		{"forge ignores the task", SurfaceForge, "ci_debugging", Resolution{TextRegisterSocial, 0, "surfaces.forge"}},
-		{"docs ignores the task", SurfaceDocs, "waiver_signoff", Resolution{TextRegisterDocs, 0, "surfaces.docs"}},
-		{"agent without a row", SurfaceAgent, "ci_debugging", Resolution{TextRegisterInternal, 0, "surfaces.agent"}},
-		{"agent with a row", SurfaceAgent, "waiver_signoff", Resolution{TextRegisterSocial, 1024, "tasks.waiver_signoff"}},
-		{"empty surface is the agent surface", "", "architecture_synthesis", Resolution{TextRegisterDocs, 0, "tasks.architecture_synthesis"}},
-		{"neither surface nor task", "", "", Resolution{TextRegisterInternal, 0, "surfaces.agent"}},
-		{"unknown surface falls back", "slack", "", Resolution{TextRegisterInternal, 0, "surfaces.agent"}},
+		{"forge ignores the task", SurfaceForge, "ci_debugging", Resolution{TextRegisterSocial, 0, "surfaces.forge", ""}},
+		{"docs ignores the task", SurfaceDocs, "waiver_signoff", Resolution{TextRegisterDocs, 0, "surfaces.docs", ""}},
+		{"agent without a row", SurfaceAgent, "ci_debugging", Resolution{TextRegisterInternal, 0, "surfaces.agent", ""}},
+		{"agent with a row", SurfaceAgent, "waiver_signoff", Resolution{TextRegisterSocial, 1024, "tasks.waiver_signoff", ""}},
+		{"empty surface is the agent surface", "", "architecture_synthesis", Resolution{TextRegisterDocs, 0, "tasks.architecture_synthesis", ""}},
+		{"neither surface nor task", "", "", Resolution{TextRegisterInternal, 0, "surfaces.agent", ""}},
+		{"unknown surface falls back", "slack", "", Resolution{TextRegisterInternal, 0, "surfaces.agent", ""}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -328,11 +328,11 @@ func TestEmissionSurfacesPositive(t *testing.T) {
 		want     Resolution
 		enforced bool
 	}{
-		{SurfaceContext, Resolution{TextRegisterInternal, 0, "surfaces.context"}, true},
-		{SurfaceMCP, Resolution{TextRegisterDocs, 0, "surfaces.mcp"}, false},
-		{SurfaceHooks, Resolution{TextRegisterInternal, 0, "surfaces.hooks"}, true},
-		{SurfacePrompts, Resolution{TextRegisterSocial, 0, "surfaces.prompts"}, false},
-		{SurfaceLedger, Resolution{TextRegisterInternal, 0, "surfaces.ledger"}, true},
+		{SurfaceContext, Resolution{TextRegisterInternal, 0, "surfaces.context", ""}, true},
+		{SurfaceMCP, Resolution{TextRegisterDocs, 0, "surfaces.mcp", ""}, false},
+		{SurfaceHooks, Resolution{TextRegisterInternal, 0, "surfaces.hooks", ""}, true},
+		{SurfacePrompts, Resolution{TextRegisterSocial, 0, "surfaces.prompts", ""}, false},
+		{SurfaceLedger, Resolution{TextRegisterInternal, 0, "surfaces.ledger", ""}, true},
 	}
 	for _, tc := range cases {
 		if got := policy.Resolve(tc.surface, "waiver_signoff"); got != tc.want {
@@ -444,7 +444,7 @@ func TestEmissionSurfacesBoundary(t *testing.T) {
 	// internal as well (TestContextSurfaceIsFixed).
 	defaults := DefaultRegisterPolicy()
 	for _, surface := range emissionSurfaces {
-		want := Resolution{TextRegisterInternal, 0, "surfaces." + string(surface)}
+		want := Resolution{TextRegisterInternal, 0, "surfaces." + string(surface), ""}
 		if got := defaults.Resolve(surface, ""); got != want {
 			t.Errorf("default Resolve(%s) = %+v, want the internal default", surface, got)
 		}
@@ -456,7 +456,7 @@ func TestEmissionSurfacesBoundary(t *testing.T) {
 	// must not switch the lint off for engine text. Only the surface's own key does.
 	m := &Manifest{Register: &RegisterPolicy{Surfaces: map[RegisterSurface]TextRegister{SurfaceAgent: TextRegisterDocs}}}
 	for _, surface := range []RegisterSurface{SurfaceMCP, SurfaceHooks, SurfacePrompts, SurfaceLedger} {
-		if got := m.EffectiveRegister().Resolve(surface, ""); got != (Resolution{TextRegisterInternal, 0, "surfaces." + string(surface)}) {
+		if got := m.EffectiveRegister().Resolve(surface, ""); got != (Resolution{TextRegisterInternal, 0, "surfaces." + string(surface), ""}) {
 			t.Errorf("%s with agent = docs resolves to %+v, want the internal default", surface, got)
 		}
 		if enforced, err := m.EffectiveRegister().LintEnforced(surface); err != nil || !enforced {

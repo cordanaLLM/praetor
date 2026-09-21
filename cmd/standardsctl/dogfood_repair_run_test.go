@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 	"github.com/cordanaLLM/praetor/internal/repairrun"
 )
@@ -18,10 +19,25 @@ func repairExecutionCLIFixture(t *testing.T) (string, string, string) {
 	plannerArgs := repairCLIFixture(t)
 	reportPath, routing := plannerArgs[1], plannerArgs[3]
 	root := filepath.Dir(routing)
-	cfg := repairrun.Config{Version: 1, SourceRoot: root, SourceSHA: strings.Repeat("a", 40), StateDir: filepath.Join(root, "execution-state"),
+	env := initGitFixture(t, root)
+	sha, err := runFixtureGit(t, root, env, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := repairrun.Config{Version: 1, SourceRoot: root, SourceSHA: strings.TrimSpace(sha), StateDir: filepath.Join(root, "execution-state"),
 		AllowedFiles: []string{"internal/util/fixture.go"}, TestPackages: []string{"./internal/util"}, TimeoutSeconds: 30, MaxPatchBytes: 1024,
-		RepairPolicy: dogfood.RepairPolicy{RoutingConfig: routing, Task: "ci_debugging", InputTokens: 1000, OutputTokens: 500, MaxCost: 0.1},
-		Provider:     repairrun.ProviderConfig{BaseURL: "https://provider.example/v1", TokenCommand: filepath.Join(root, "nonexistent-helper"), TokenCommandSHA256: strings.Repeat("b", 64), Model: "cheap", MaxInputBytes: 65536, MaxOutputTokens: 256}}
+		RepairPolicy: dogfood.RepairPolicy{RoutingConfig: routing, Task: "ci_debugging", InputTokens: 1000,
+			OutputTokens: 500, MaxCost: 0.1, Register: "internal", RegisterSource: "surfaces.agent",
+			PromptRegister: "internal", PromptRegisterSource: "surfaces.prompts"},
+		Provider: repairrun.ProviderConfig{BaseURL: "https://provider.example/v1", TokenCommand: filepath.Join(root, "nonexistent-helper"), TokenCommandSHA256: strings.Repeat("b", 64), Model: "cheap", MaxInputBytes: 65536, MaxOutputTokens: 256}}
+	authority, err := config.LoadRegisterAuthority(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.RepairPolicy, err = dogfood.CanonicalRepairPolicy(cfg.RepairPolicy, authority)
+	if err != nil {
+		t.Fatal(err)
+	}
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)

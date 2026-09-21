@@ -26,13 +26,44 @@ The private execution JSON has these required fields:
 | `repair_policy` | Existing routing policy with declared token estimates and cost ceiling |
 | `provider` | Exact endpoint, model, pinned credential helper, input and output bounds |
 
-`repair_policy` accepts two optional fields beside its routing inputs: `register`
-(`social`, `docs` or `internal`) and `max_output_tokens` (256..8192). `dogfood repairs`
-fills them from the [text register](text-register.md) row of `--task`. Each planned job
-carries both, its instructions end with one register sentence, and the run report records
-`register` beside `usage`. A job budget lowers the provider's `max_output_tokens` for that
-request and never raises it above the configured value. A policy without the fields plans
-and runs exactly as before.
+`dogfood repairs` resolves two independent rows from the [text register](text-register.md).
+The task row becomes `register`, `register_source` and optional `max_output_tokens`; the
+prompt surface becomes `prompt_register` and `prompt_register_source`. Each planned job and
+execution report preserve those exact values and `register_manifest_sha256`, which binds
+them to the exact manifest bytes. The prompt row always names
+`surfaces.prompts`; the task source names either `tasks.<label>` or `surfaces.agent`. A job
+budget lowers the provider's `max_output_tokens` for that request and never raises it above
+the configured value. Both resolutions are mandatory at every runtime policy boundary.
+An empty, partial or contradictory tuple is rejected before planning, scheduling or
+provider dispatch. The planning CLI resolves the tuple from the repository manifest. The
+scheduler replaces any caller tuple from its captured manifest snapshot; the executor
+compares every retained tuple field and digest with the manifest blob in `source_sha`, not
+the mutable checkout, before admission. Both boundaries reject manifest task rows outside
+the captured routing vocabulary. Ignored caller tuple fields are removed before a schedule
+fingerprint is computed, so they cannot reset its failure circuit.
+
+The planner validates its generated job instructions before it
+marks a job reviewable; a failed generated brief remains in a blocked plan with its failure
+record. The executor validates that task brief again, then validates the static prompt
+scaffold with the independent `prompts` surface row before reading source evidence.
+It validates the separate Responses API instructions with the same prompt row before
+provider dispatch and validates `proposal.summary` with the task row before any candidate
+source mutation. Internal text must pass the Caveman brief, message or return contract as
+appropriate. Runtime checks reject source-document escape constructs and expose prose
+hidden in quotes or inline code; `social` and `docs` produce an explicit `not_applicable`
+record. The execution
+report preserves the four records as `job_instructions_validation`, `prompt_validation`,
+`request_instructions_validation` and `summary_validation`. Untrusted source and test
+payloads are appended only after both owned prompt segments pass and are never linted as
+instructions.
+
+Each validation record carries the checker contract version and SHA-256 of the exact bytes
+it checked. Terminal-state readback reconstructs the deterministic job, prompt and request
+text, rereads `proposal.json` for the summary, reruns the current checker, and requires the
+complete retained record to match. A changed input, stale checker version, forged digest or
+missing stage record is invalid and is not treated as consumed success. Early failures may
+retain only the contiguous validation prefix reached before they stopped; verified outcomes
+require all four records.
 
 `provider` fields are `base_url`, `token_command`, `token_command_sha256`, `model`,
 `max_output_tokens`, and `max_input_bytes`. The routed model must equal the

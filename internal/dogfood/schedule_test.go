@@ -79,6 +79,43 @@ func TestScheduleActualSuiteAndReadOnlyStatus(t *testing.T) {
 	assertSuitePrivate(t, cfg.StateDir)
 }
 
+func TestScheduleCanonicalizesCallerRepairRegisterPolicy(t *testing.T) {
+	requireScheduling(t)
+	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
+	policy := repairTestPolicy(t)
+	policy.Register = "docs"
+	policy.RegisterSource = "tasks.ci_debugging"
+	policy.MaxOutputTokens = 256
+	policy.PromptRegister = "docs"
+	policy.PromptRegisterSource = "surfaces.prompts"
+	policy.RegisterManifestSHA256 = strings.Repeat("0", 64)
+	cfg.RepairPolicy = &policy
+	writeScheduleFixture(t, path, cfg)
+
+	report, err := ScheduleStatus(context.Background(), path)
+	if err != nil || report == nil || report.Config.RepairPolicy == nil {
+		t.Fatalf("canonical repair policy unavailable: %+v %v", report, err)
+	}
+	canonical := report.Config.RepairPolicy
+	if canonical.Register != "internal" || canonical.RegisterSource != "surfaces.agent" ||
+		canonical.MaxOutputTokens != 0 || canonical.PromptRegister != "internal" ||
+		canonical.PromptRegisterSource != "surfaces.prompts" || canonical.RegisterManifestSHA256 == policy.RegisterManifestSHA256 {
+		t.Fatalf("caller tuple was not replaced from source manifest: %+v", canonical)
+	}
+	policy.Register = "social"
+	policy.RegisterSource = "tasks.other"
+	policy.MaxOutputTokens = 8192
+	policy.PromptRegister = "social"
+	policy.PromptRegisterSource = "surfaces.agent"
+	policy.RegisterManifestSHA256 = strings.Repeat("f", 64)
+	cfg.RepairPolicy = &policy
+	writeScheduleFixture(t, path, cfg)
+	second, err := ScheduleStatus(context.Background(), path)
+	if err != nil || second.Fingerprint != report.Fingerprint {
+		t.Fatalf("ignored caller tuple changed canonical fingerprint: first=%s second=%+v err=%v", report.Fingerprint, second, err)
+	}
+}
+
 func TestScheduleTimingCircuitAndChangedInput(t *testing.T) {
 	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
@@ -427,7 +464,7 @@ func TestScheduleFailureCreatesBoundedPlanAndKeepsBlocked(t *testing.T) {
 		cfg.RepairPolicy = &policy
 		writeScheduleFixture(t, path, cfg)
 		report, err := RunSchedule(context.Background(), path)
-		if err == nil || report.Verified || report.Status != "failed" || report.Suite == nil {
+		if err == nil || report == nil || report.Verified || report.Status != "failed" || report.Suite == nil {
 			t.Fatalf("failure %+v %v", report, err)
 		}
 		data, readErr := os.ReadFile(filepath.Join(cfg.StateDir, "run-000001", "repairs", "plan.json"))

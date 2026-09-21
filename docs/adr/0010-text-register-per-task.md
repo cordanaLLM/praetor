@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — 2026-09-17; amended 2026-09-18 (decisions 9 and 10, the caveman module; decision 11, the context gate); amended 2026-09-21 (decision 12, checker contract parity).
+Proposed — 2026-09-17; amended 2026-09-18 (decisions 9 and 10, the caveman module; decision 11, the context gate); amended 2026-09-21 (decision 12, checker contract parity; decision 13, runtime repair enforcement).
 
 ## Context
 
@@ -163,14 +163,61 @@ hand at the source and kept terse by a lint, never rewritten at run time.
     explicitly. Runtime kinds add C9 lexical grammar drops, including modals and
     straight/curly contractions. Brief and return kinds add C10:
     goal/verdict first, one documented field per line, and every required field present.
+    Unsafe Unicode control characters on a line, format controls, other default-ignorable
+    code points and variation selectors fail C4. Tabs and normalized LF/CRLF line boundaries
+    remain valid, as do ordinary visible combining marks.
     Every report classifies all eight numbered Caveman skill rules as mechanical or
     advisory, so `PASS` cannot imply semantic checks that never ran. Table cells feed the
     same prose checks while delimiters remain byte-stable; code, paths, URLs, quoted errors
-    and explicit off regions remain protected. This amendment adds the shared checker only:
-    runtime producer calls remain #414, and non-Markdown extraction remains #364.
+    and explicit off regions remain protected. Non-Markdown static extraction remains #364.
+13. **Runtime repair text is checked, not inferred.** `config.ValidateEmission` accepts the
+    resolved register, emission surface, explicit runtime message kind and engine-owned
+    text. Internal text delegates to the adversarial `caveman.CheckRuntime` profile;
+    `social` and `docs` record
+    `not_applicable`. Every validation record contains the register, token ceiling, surface,
+    kind, typed source, manifest SHA-256, status, checker contract version and SHA-256 of the
+    exact validated text. Source-only Markdown/HTML escapes, unsafe controls and Unicode
+    default-ignorables are rejected; quoted and inline prose remains visible. Literal
+    recognition accepts complete HTTP(S) URLs with ASCII case-insensitive schemes and
+    preserves parentheses within those URL tokens; rooted or extension-bearing slash paths,
+    forward- or backslash-drive paths, UNC paths, `:line[:column]` diagnostics, domain-qualified mail
+    tokens and valid non-grammar flags. Every other Unicode punctuation or symbol separator
+    is joined and split for grammar matching, so punctuation cannot suppress checks. A
+    positive resolved ceiling is enforced by the same Caveman token estimator. Failure
+    diagnostics expose at most three findings and 768 bytes.
 
-Rewriting the MCP descriptions, prompts, hook messages, ledger templates and the register
-block wording are separate changes that build on this module.
+    The repair planner preserves the exact task-row and prompt-surface resolutions and
+    validates its generated job brief. The executor revalidates that brief, independently
+    validates its static prompt scaffold and the Responses API instructions against
+    `surfaces.prompts`, then appends untrusted source and test data. It validates
+    `Proposal.Summary` against the task row as a return before `applyProposal`; invalid
+    provider prose therefore cannot mutate the candidate tree. Reports retain all four
+    validation records with the original `Resolution.Source` values.
+
+    Runtime repair policies require complete task and prompt resolutions bound to one
+    manifest digest. Planning resolves from the canonical manifest, scheduling overwrites
+    caller tuples from its captured snapshot, and execution compares every field with the
+    manifest blob at its immutable source commit. Both runtime boundaries validate register
+    task rows against their captured routing vocabulary. Empty, partial or contradictory
+    tuples cannot opt out.
+    Terminal-state readback
+    reconstructs the deterministic job, prompt and request text, rereads the proposal
+    summary, reruns the current checker and requires the complete record to match.
+    Verified and verification-failed outcomes require all four records; earlier outcomes
+    require the contiguous prefix their stage reached. Missing or mismatched proof makes a
+    terminal outcome invalid, as do changed bytes, a stale checker contract or a forged
+    digest. A pre-enforcement result cannot silently satisfy a new run. A generated planner
+    brief that fails validation remains in a blocked plan with its failure record instead
+    of disappearing with the returned error.
+
+    The validator lives in the existing `internal/config` package, preserving
+    `internal/caveman` as a standard-library-only leaf and avoiding a second register
+    loader. Dynamic MCP and hook text remains unverified; native client capture remains
+    #415, and Paperclip synthesis remains #321.
+
+Rewriting the remaining MCP descriptions, hook messages, ledger templates and register
+block wording are separate changes that build on this module. Notebook and Paperclip
+prompts remain outside this amendment.
 
 ## Alternatives considered
 
@@ -241,8 +288,10 @@ caveman; there is no setting that keeps it in prose.
 Amendment (2026-09-21): the checker now distinguishes runtime messages, briefs, returns and
 context policy text. Strict runtime text rejects the grammar classes named by the skill;
 briefs and returns enforce their field contracts; table-cell prose is no longer hidden by
-Markdown structure. Reports expose mechanical and advisory skill-rule sets. This is static
-validation only and does not claim runtime producer coverage.
+Markdown structure. Reports expose mechanical and advisory skill-rule sets. Repair planning
+and execution now validate their owned briefs, provider instructions and summary returns
+and retain the verdicts. Dynamic MCP and hook text, Paperclip synthesis and native-client
+chat remain explicitly unverified rather than inheriting that claim.
 
 Neutral: `models route` and `dogfood repairs` JSON gain additive fields (HISS-14,
 append-only); plans written before this change decode with an empty register and keep their

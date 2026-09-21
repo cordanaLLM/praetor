@@ -135,13 +135,15 @@ func validateScheduleBounds(config *ScheduleConfig) error {
 }
 
 func validateScheduleRepairJSON(data []byte) error {
-	names := []string{"routing_config", "usage_path", "task", "input_tokens", "output_tokens", "max_cost"}
+	names := []string{"routing_config", "usage_path", "task", "input_tokens", "output_tokens", "max_cost",
+		"register", "register_source", "max_output_tokens", "prompt_register", "prompt_register_source", "register_manifest_sha256"}
 	fields, err := scheduleObject(data, names)
 	if err != nil {
 		return err
 	}
-	for i := 0; i < len(names); i++ {
-		if names[i] != "usage_path" && fields[names[i]] == nil {
+	required := []string{"routing_config", "task", "input_tokens", "output_tokens", "max_cost"}
+	for i := 0; i < len(required); i++ {
+		if fields[required[i]] == nil {
 			return errors.New("repair policy is missing required fields")
 		}
 	}

@@ -30,9 +30,10 @@ type modelRouteReport struct {
 	Limitations    string     `json:"limitations"`
 	// Register is the text register the task's brief and return are written in, decided by
 	// the same target_tasks label that selected the tier. It never changes the tier.
-	Register       string `json:"register"`
-	RegisterSource string `json:"register_source"`
-	MaxTokens      int    `json:"max_tokens,omitempty"`
+	Register               string `json:"register"`
+	RegisterSource         string `json:"register_source"`
+	MaxTokens              int    `json:"max_tokens,omitempty"`
+	RegisterManifestSHA256 string `json:"register_manifest_sha256"`
 }
 
 func addModelRouteFlags(fs *flag.FlagSet) modelRouteFlags {
@@ -89,7 +90,8 @@ func handleModelsRoute(ctx context.Context, configPath string, flags modelRouteF
 		return err
 	}
 	report := modelRouteReport{TaskRoute: route, ConfigSHA256: cfg.SourceSHA256, CapacitySource: "unobserved", Limitations: limitations,
-		Register: string(resolution.Register), RegisterSource: resolution.Source, MaxTokens: resolution.MaxTokens}
+		Register: string(resolution.Register), RegisterSource: resolution.Source, MaxTokens: resolution.MaxTokens,
+		RegisterManifestSHA256: resolution.ManifestSHA256}
 	if captured != nil {
 		report.CapacitySource = "supplied snapshot; counters are not refreshed or expired"
 		report.CapturedAt = captured
@@ -101,11 +103,19 @@ func handleModelsRoute(ctx context.Context, configPath string, flags modelRouteF
 // directory; without a manifest the defaults govern. models route and dogfood repairs share
 // it, so both report the same row for the same label.
 func resolveTaskRegister(ctx context.Context, task string) (config.Resolution, error) {
-	policy, _, err := compiler.LoadRegisterBlock(ctx, ".")
+	authority, err := loadRegisterAuthority(ctx)
 	if err != nil {
-		return config.Resolution{}, fmt.Errorf("text register: %w", err)
+		return config.Resolution{}, err
 	}
-	return policy.Resolve(config.SurfaceAgent, task), nil
+	return authority.Resolve(config.SurfaceAgent, task)
+}
+
+func loadRegisterAuthority(ctx context.Context) (config.RegisterAuthority, error) {
+	authority, err := compiler.LoadRegisterAuthority(ctx, ".")
+	if err != nil {
+		return config.RegisterAuthority{}, fmt.Errorf("text register: %w", err)
+	}
+	return authority, nil
 }
 
 // seedOutputEstimate uses the task's configured output budget as the output estimate when

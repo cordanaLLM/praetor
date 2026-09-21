@@ -203,6 +203,10 @@ func LoadManifest(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to read manifest at %s: %w", path, err)
 	}
 
+	return parseManifest(path, data)
+}
+
+func parseManifest(path string, data []byte) (*Manifest, error) {
 	m, err := decodeManifest(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse manifest at %s: %w", path, err)

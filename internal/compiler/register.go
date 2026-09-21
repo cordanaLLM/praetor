@@ -27,26 +27,11 @@ var ErrRegisterBlockOutOfSync = errors.New("AGENTS.md text register block is out
 // the vocabulary. Only the rows the manifest wrote are checked against that vocabulary; a
 // default row is never an error in a repository that declared its own labels.
 func LoadRegisterBlock(ctx context.Context, root string) (config.RegisterPolicy, string, error) {
-	if ctx == nil {
-		return config.RegisterPolicy{}, "", errors.New("text register requires a context")
-	}
-	if err := ctx.Err(); err != nil {
-		return config.RegisterPolicy{}, "", err
-	}
-	manifest, err := loadRegisterManifest(root)
+	authority, err := LoadRegisterAuthority(ctx, root)
 	if err != nil {
 		return config.RegisterPolicy{}, "", err
 	}
-	if manifest != nil && manifest.Register != nil {
-		labels, err := registerTaskLabels(ctx, root)
-		if err != nil {
-			return config.RegisterPolicy{}, "", err
-		}
-		if err := manifest.Register.ValidateTaskLabels(labels); err != nil {
-			return config.RegisterPolicy{}, "", fmt.Errorf("%s: %w", registerManifestRel, err)
-		}
-	}
-	policy := manifest.EffectiveRegister()
+	policy := authority.Policy()
 	block, err := config.RenderRegisterBlock(policy)
 	if err != nil {
 		return config.RegisterPolicy{}, "", err
@@ -54,13 +39,28 @@ func LoadRegisterBlock(ctx context.Context, root string) (config.RegisterPolicy,
 	return policy, block, nil
 }
 
-// loadRegisterManifest returns nil when root carries no manifest; the defaults then govern.
-func loadRegisterManifest(root string) (*config.Manifest, error) {
-	path := filepath.Join(root, registerManifestRel)
-	if !util.FileExists(path) {
-		return nil, nil
+// LoadRegisterAuthority resolves and validates the canonical manifest snapshot at root.
+func LoadRegisterAuthority(ctx context.Context, root string) (config.RegisterAuthority, error) {
+	if ctx == nil {
+		return config.RegisterAuthority{}, errors.New("text register requires a context")
 	}
-	return config.LoadManifest(path)
+	if err := ctx.Err(); err != nil {
+		return config.RegisterAuthority{}, err
+	}
+	authority, err := config.LoadRegisterAuthority(ctx, root)
+	if err != nil {
+		return config.RegisterAuthority{}, err
+	}
+	if authority.HasDeclaredTasks() {
+		labels, err := registerTaskLabels(ctx, root)
+		if err != nil {
+			return config.RegisterAuthority{}, err
+		}
+		if err := authority.ValidateTaskLabels(labels); err != nil {
+			return config.RegisterAuthority{}, fmt.Errorf("%s: %w", registerManifestRel, err)
+		}
+	}
+	return authority, nil
 }
 
 // registerTaskLabels returns the target_tasks vocabulary that governs root.

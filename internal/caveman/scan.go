@@ -30,14 +30,14 @@ const (
 var (
 	inlineCodeRe = regexp.MustCompile("``[^`]*``|`[^`\n]*`")
 	linkTargetRe = regexp.MustCompile(`\]\([^)\s]*\)`)
-	urlRe        = regexp.MustCompile(`<?https?://[^\s>)]+>?`)
+	urlRe        = regexp.MustCompile(`(?i)<?https?://[^\s>]+>?`)
 	headingRe    = regexp.MustCompile(`^#{1,6}(\s|$)`)
 	// ledgerFieldRe matches engine-written ledger lines such as the STATE.md
 	// "- **Tasks**: 3 open | **Open Bugs**: 0" row: bold fields split by pipes.
 	ledgerFieldRe = regexp.MustCompile(`^[-*] \*\*[^*]+\*\*:.*\|\s*\*\*`)
 	// protocolRe matches the hook protocol lines the agent hooks parse.
 	protocolRe = regexp.MustCompile(`^PRAETOR_[A-Z0-9_]+(=.*)?$`)
-	evidenceRe = regexp.MustCompile(`^(?:[-*] )?evidence: \S+ sha256:[0-9a-f]{12} lines:\d+`)
+	evidenceRe = regexp.MustCompile(`^(?:[-*+] )?evidence: \S+ sha256:[0-9a-f]{12} lines:\d+$`)
 )
 
 // line is one classified input line; num is 1-based. lang and edge describe fenced code:
@@ -164,6 +164,7 @@ func proseWords(prose string) []string {
 	fields := strings.Fields(prose)
 	words := make([]string, 0, len(fields))
 	for _, field := range fields {
+		field = compatibilityFold(field)
 		if word := strings.ToLower(strings.TrimFunc(field, notLetter)); word != "" {
 			words = append(words, word)
 		}

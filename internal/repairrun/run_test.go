@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 )
 
@@ -61,7 +62,12 @@ func newRunFixture(t *testing.T, cases int) *runFixture {
 	}
 	routing := filepath.Join(root, "routing.yaml")
 	writeFixture(t, routing, []byte("version: 1\ntiers:\n  local:\n    target_tasks: [ci_debugging]\n    models:\n      - id: fixture-model\n        family: openai\n        cost_per_m_in: 0\n        cost_per_m_out: 0\ngovernance:\n  exhaustion_threshold_percent: 80\n"))
-	f.config = Config{Version: 1, SourceRoot: source, SourceSHA: strings.TrimSpace(string(sha)), StateDir: filepath.Join(root, "state"), AllowedFiles: []string{"internal/fixture/value.go"}, TestPackages: []string{"./internal/fixture"}, TimeoutSeconds: 300, MaxPatchBytes: 4096, RepairPolicy: dogfood.RepairPolicy{RoutingConfig: routing, Task: "ci_debugging", InputTokens: 1000, OutputTokens: 1000, MaxCost: 1}, Provider: ProviderConfig{BaseURL: "https://provider.example/v1", TokenCommand: filepath.Join(root, "token"), TokenCommandSHA256: strings.Repeat("a", 64), Model: "fixture-model", MaxOutputTokens: 1024, MaxInputBytes: 8192}}
+	f.config = Config{Version: 1, SourceRoot: source, SourceSHA: strings.TrimSpace(string(sha)), StateDir: filepath.Join(root, "state"), AllowedFiles: []string{"internal/fixture/value.go"}, TestPackages: []string{"./internal/fixture"}, TimeoutSeconds: 300, MaxPatchBytes: 4096, RepairPolicy: dogfood.RepairPolicy{RoutingConfig: routing, Task: "ci_debugging", InputTokens: 1000, OutputTokens: 1000, MaxCost: 1, Register: "internal", RegisterSource: "surfaces.agent", PromptRegister: "internal", PromptRegisterSource: "surfaces.prompts"}, Provider: ProviderConfig{BaseURL: "https://provider.example/v1", TokenCommand: filepath.Join(root, "token"), TokenCommandSHA256: strings.Repeat("a", 64), Model: "fixture-model", MaxOutputTokens: 1024, MaxInputBytes: 8192}}
+	bound, bindErr := dogfood.CanonicalRepairPolicy(f.config.RepairPolicy, config.AbsentRegisterAuthority())
+	if bindErr != nil {
+		t.Fatal(bindErr)
+	}
+	f.config.RepairPolicy = bound
 	now := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
 	f.report = dogfood.SuiteReport{Version: 1, Status: "failed", ConfigSHA256: strings.Repeat("b", 64), StartedAt: now, FinishedAt: now.Add(time.Second), Options: dogfood.SuiteOptions{Stage: "verify"}}
 	for n := 0; n < cases; n++ {

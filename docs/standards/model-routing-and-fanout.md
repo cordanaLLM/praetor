@@ -67,6 +67,8 @@ independently of map or list iteration order.
 
 The JSON result includes the exact loaded configuration SHA256, selected model,
 task/capabilities, token estimates, configured cost and capacity observation status.
+It also includes `register_manifest_sha256`, binding the reported register row to the exact
+repository manifest bytes used for resolution.
 This work does not update the repository's existing model IDs, task presets or
 rates. An existing zero rate is a declaration, not proof that the endpoint exists
 or that running it has no resource cost.

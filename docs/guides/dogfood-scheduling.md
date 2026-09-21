@@ -79,12 +79,19 @@ An optional `repair_policy` enables local failure triage plans:
   "task": "ci_debugging",
   "input_tokens": 8000,
   "output_tokens": 2000,
-  "max_cost": 0.10
+  "max_cost": 0.10,
+  "register": "internal",
+  "register_source": "surfaces.agent",
+  "prompt_register": "internal",
+  "prompt_register_source": "surfaces.prompts"
 }
 ```
 
 The object is the value of `repair_policy`, with optional `usage_path` for an
-explicit capacity observation. All other fields are required. Its files are
+explicit capacity observation and optional `max_output_tokens` for a resolved task
+budget. All illustrated fields are required. Copy the four register values from the
+task and prompt resolutions reported by `praetorctl dogfood repairs`; an empty or
+partial resolution is rejected. Its files are
 snapshotted with the suite. Actual failed suite reports produce plans under
 `run-000001/repairs`; nil reports and prevalidation errors cannot invent repair
 jobs. Planning uses at most one extra minute of bookkeeping even after suite

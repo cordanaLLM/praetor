@@ -146,9 +146,10 @@ type RegisterPolicy struct {
 
 // Resolution is the register a caller must write in, with the row that decided it.
 type Resolution struct {
-	Register  TextRegister
-	MaxTokens int
-	Source    string
+	Register       TextRegister
+	MaxTokens      int
+	Source         string
+	ManifestSHA256 string
 }
 
 func knownTextRegister(r TextRegister) bool {

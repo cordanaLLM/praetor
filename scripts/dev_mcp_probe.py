@@ -3,6 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 
 from dev_mcp_rpc import RPCClient
@@ -322,20 +323,40 @@ def schedule_checks(client, root):
 
 
 
-def repair_status_checks(client, root):
-    """Exercise actual retained failure admission without provider or state writes."""
+def pin_repair_probe_source(root):
+    """Commit the exact manifest consumed by the repair status boundary."""
+    for command in (["git", "init", "-q"], ["git", "add", ".standards.yaml"],
+                    ["git", "-c", "user.name=Fixture", "-c",
+                     "user.email=fixture@example.invalid", "commit", "-q", "-m", "fixture"]):
+        subprocess.run(command, cwd=root, check=True, capture_output=True, timeout=10)
+    source_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True,
+                                capture_output=True, text=True, timeout=10).stdout.strip()
+    return source_sha, hashlib.sha256((root / ".standards.yaml").read_bytes()).hexdigest()
+
+
+def write_repair_probe_routing(root):
     routing = root / "repair-routing.yaml"
     routing.write_text("version: 1\ntiers:\n  debug:\n    target_tasks: [ci_debugging]\n"
                        "    models:\n      - id: cheap\n        family: openai\n"
                        "        cost_per_m_in: 1\n        cost_per_m_out: 1\n"
                        "governance:\n  exhaustion_threshold_percent: 80\n")
     routing.chmod(0o600)
-    config = {"version": 1, "source_root": str(root), "source_sha": "a" * 40,
+    return routing
+
+
+def repair_status_checks(client, root):
+    """Exercise actual retained failure admission without provider or state writes."""
+    routing = write_repair_probe_routing(root)
+    source_sha, manifest_sha = pin_repair_probe_source(root)
+    config = {"version": 1, "source_root": str(root), "source_sha": source_sha,
               "state_dir": str(root / "repair-state"),
               "allowed_files": ["internal/util/fixture.go"], "test_packages": ["./internal/util"],
               "timeout_seconds": 30, "max_patch_bytes": 1024,
               "repair_policy": {"routing_config": str(routing), "task": "ci_debugging",
-                                "input_tokens": 1000, "output_tokens": 500, "max_cost": 0.1},
+                                "input_tokens": 1000, "output_tokens": 500, "max_cost": 0.1,
+                                "register": "internal", "register_source": "surfaces.agent",
+                                "prompt_register": "internal", "prompt_register_source": "surfaces.prompts",
+                                "register_manifest_sha256": manifest_sha},
               "provider": {"base_url": "https://litellm.ai.cauda.dev/v1",
                            "token_command": str(root / "nonexistent-helper"),
                            "token_command_sha256": "b" * 64, "model": "cheap",
@@ -360,7 +381,7 @@ def repair_status_checks(client, root):
     begin = {"version": 1, "execution_key": report["execution_key"],
              "source_sha": report["source_sha"], "config_sha256": report["config_sha256"],
              "started_at": "2026-09-12T12:00:00Z"}
-    terminal = dict(report, status="agent_failed", consumed=True,
+    terminal = dict(report, status="not_reproduced", consumed=True,
                     usage={"input_tokens": 1000, "output_tokens": 100})
     for name, value in (("started.json", begin), ("result.json", terminal)):
         target = attempt / name
@@ -369,7 +390,7 @@ def repair_status_checks(client, root):
     retained = (attempt / "result.json").read_bytes()
     consumed = json.loads(tool_text(client.call("standards_dogfood_repair_status", args)))
     require(consumed["status"] == "consumed" and consumed["consumed"]
-            and consumed["jobs"][0]["status"] == "agent_failed",
+            and consumed["jobs"][0]["status"] == "not_reproduced",
             "repair status lost the terminal outcome or re-admitted its key")
     require((attempt / "result.json").read_bytes() == retained,
             "repair status rewrote terminal evidence")

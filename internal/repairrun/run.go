@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 )
 
@@ -40,9 +41,19 @@ type Report struct {
 	ActualModel       string      `json:"actual_model"`
 	ErrorCategory     string      `json:"error_category"`
 	Jobs              []JobStatus `json:"jobs"`
-	// Register is the text register the job was planned with, recorded beside Usage so that
-	// output spend can be compared per register once reports accumulate.
-	Register string `json:"register,omitempty"`
+	// Register fields preserve both manifest resolutions used by this execution.
+	Register               string `json:"register,omitempty"`
+	RegisterSource         string `json:"register_source,omitempty"`
+	MaxOutputTokens        int    `json:"max_output_tokens,omitempty"`
+	PromptRegister         string `json:"prompt_register,omitempty"`
+	PromptRegisterSource   string `json:"prompt_register_source,omitempty"`
+	RegisterManifestSHA256 string `json:"register_manifest_sha256"`
+	// Runtime validation records prove every engine-owned segment was checked. Resolution
+	// metadata alone never implies that emitted text followed it.
+	JobInstructionsValidation     *config.EmissionValidation `json:"job_instructions_validation,omitempty"`
+	PromptValidation              *config.EmissionValidation `json:"prompt_validation,omitempty"`
+	RequestInstructionsValidation *config.EmissionValidation `json:"request_instructions_validation,omitempty"`
+	SummaryValidation             *config.EmissionValidation `json:"summary_validation,omitempty"`
 }
 
 type generator func(context.Context, ProviderConfig, string) (*Proposal, error)

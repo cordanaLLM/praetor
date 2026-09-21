@@ -3,7 +3,11 @@ package router
 import "sort"
 
 // MaxTaskLabels bounds the label union of one routing configuration.
-const MaxTaskLabels = MaxRoutingTiers * MaxRoutingTags
+const (
+	MaxTaskLabels = MaxRoutingTiers * MaxRoutingTags
+	// MaxTaskLabelBytes is the byte ceiling shared by routing and register task keys.
+	MaxTaskLabelBytes = maxRoutingNameBytes
+)
 
 // ValidTaskLabel reports whether name has the shape every routing name must have. Other
 // packages that key configuration by target_tasks labels validate through it, so the

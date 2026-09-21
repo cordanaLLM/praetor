@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -47,6 +48,11 @@ func LoadRoutingConfigContext(ctx context.Context, path string) (*RoutingConfig,
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// ParseRoutingConfig validates routing bytes already captured by a trusted snapshot.
+func ParseRoutingConfig(data []byte, source string) (*RoutingConfig, error) {
+	return decodeRoutingConfig(data, source)
 }
 
 // decodeRoutingConfig parses and validates one strict YAML document already read
@@ -189,7 +195,8 @@ func validateRoutingTags(tags []string) error {
 }
 
 func routingName(name string) bool {
-	return name != "" && len(name) <= maxRoutingNameBytes && name == strings.TrimSpace(name) && !strings.ContainsAny(name, "\x00\r\n\t")
+	return name != "" && len(name) <= maxRoutingNameBytes && name == strings.TrimSpace(name) &&
+		strings.IndexFunc(name, unicode.IsControl) < 0
 }
 
 func finiteNonnegative(value float64) bool {

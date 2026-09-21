@@ -179,6 +179,11 @@ report, then verify that status leaves both the report and absent execution stat
 unchanged. It never invokes credential helpers or providers. Only the explicit
 `praetorctl dogfood repairs run` command starts an execution attempt.
 
+The private execution configuration must pin `source_sha` to a commit that exists
+in the configured source repository and carry the canonical register tuple and
+manifest digest for that snapshot. Repair status rejects stale or caller-selected
+provenance before it reports retained execution state.
+
 ## Rule explanations state when a rule is not enforced
 
 `explain_rule` answers for every HISS identifier, including the ones with no executable check. Those

@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // Check rule identifiers. The thresholds come from measurements on real inputs
@@ -36,6 +37,12 @@ const (
 	// RuleMessageShape enforces the documented brief and return fields and answer-first
 	// ordering when Options.Kind selects either structured message kind.
 	RuleMessageShape = "C10 message-shape"
+	// RuleRuntimeEscape rejects source-document constructs that can suppress prose. Runtime
+	// emissions are adversarial text, not Markdown sources with trusted escape regions.
+	RuleRuntimeEscape = "C11 runtime-source-escape"
+	// RuleRuntimeEvidence rejects pointer-shaped evidence fields unless the complete field
+	// is the canonical path, digest and line-count form.
+	RuleRuntimeEvidence = "C12 runtime-evidence-pointer"
 )
 
 const (
@@ -51,8 +58,6 @@ const (
 )
 
 var (
-	fillerRe       = regexp.MustCompile(`(?i)\b(based on|i think|note that|it is important|it looks like|in order to|as requested|let me|please)\b`)
-	hedgeRe        = regexp.MustCompile(`(?i)\b(probably|seems|might|basically|simply|just|really|actually)\b`)
 	doubleQuotedRe = regexp.MustCompile(`"[^"\n]*"|“[^”\n]*”`)
 	// A single quote opens a protected diagnostic only at a text boundary. Apostrophes
 	// inside contractions remain visible to C9, including straight and curly forms.
@@ -60,7 +65,33 @@ var (
 	// sentenceBreakRe ends a sentence, or a clause the reader can parse on its own.
 	sentenceBreakRe = regexp.MustCompile(`[.!?]+(?:\s|$)|;|->|→|:(?:\s|$)`)
 	listItemRe      = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s`)
+	phraseTerms     = map[string]phraseRule{
+		"basedon":       {RuleFiller, "based on"},
+		"ithink":        {RuleFiller, "i think"},
+		"notethat":      {RuleFiller, "note that"},
+		"itisimportant": {RuleFiller, "it is important"},
+		"itlookslike":   {RuleFiller, "it looks like"},
+		"inorderto":     {RuleFiller, "in order to"},
+		"asrequested":   {RuleFiller, "as requested"},
+		"letme":         {RuleFiller, "let me"},
+		"please":        {RuleFiller, "please"},
+		"probably":      {RuleHedge, "probably"},
+		"seems":         {RuleHedge, "seems"},
+		"might":         {RuleHedge, "might"},
+		"basically":     {RuleHedge, "basically"},
+		"simply":        {RuleHedge, "simply"},
+		"just":          {RuleHedge, "just"},
+		"really":        {RuleHedge, "really"},
+		"actually":      {RuleHedge, "actually"},
+	}
 )
+
+const maxPhraseFields = 3
+
+type phraseRule struct {
+	rule    string
+	excerpt string
+}
 
 // Options tunes Check. A zero or negative field takes its default, except MaxProseWords:
 // zero or negative there means no ceiling, since most callers (AGENTS.md, MCP text, hook
@@ -173,23 +204,25 @@ func (f *findings) sorted() []Finding {
 // structured while their cells are prose. Findings are sorted by line, rule and excerpt,
 // so equal input yields an equal report.
 func Check(text string, opts Options) Report {
+	return checkProfile(text, opts, false)
+}
+
+// CheckRuntime applies the adversarial runtime profile. Unlike Check, it exposes quoted
+// and inline-code text to grammar checks and rejects source-only suppression constructs.
+func CheckRuntime(text string, opts Options) Report {
+	return checkProfile(text, opts, true)
+}
+
+func checkProfile(text string, opts Options, runtime bool) Report {
 	opts = opts.withDefaults()
 	lines, s := scan(text)
 	kind := opts.Kind.normalized()
 	report := Report{OffRegions: s.offRegions, EstimatedTokens: EstimateTokens(text), Kind: kind, Coverage: contractCoverage(kind)}
 	var found findings
-	for _, ln := range lines {
-		checkNoise(&found, ln)
-		for _, prose := range proseSegments(ln) {
-			report.count(prose)
-			lintable := maskQuoted(prose)
-			checkPhrases(&found, ln.num, lintable)
-			if kind.strictGrammar() {
-				checkGrammar(&found, ln.num, lintable)
-			}
-		}
-	}
-	checkSentences(&found, paragraphs(lines), opts.MaxSentenceWords)
+	checkProfileLines(&report, &found, lines, kind, runtime)
+	paras := profileParagraphs(lines, runtime)
+	checkPhrases(&found, paras, runtime)
+	checkSentences(&found, paras, opts.MaxSentenceWords)
 	checkMessageShape(&found, lines, kind)
 	if report.ProseWords >= opts.MinProseWords && report.Density() > opts.MaxArticleDensity {
 		found.add(0, RuleArticleDensity, fmt.Sprintf("%.1f articles per 100 prose words (%d/%d), limit %.1f",
@@ -208,6 +241,30 @@ func Check(text string, opts Options) Report {
 	return report
 }
 
+func checkProfileLines(report *Report, found *findings, lines []line, kind MessageKind, runtime bool) {
+	for _, ln := range lines {
+		checkNoise(found, ln, runtime)
+		if runtime {
+			checkRuntimeStructure(found, ln)
+			checkRuntimeEvidence(found, ln)
+		}
+		segments := proseSegments(ln)
+		if runtime {
+			segments = runtimeProseSegments(ln)
+		}
+		for _, prose := range segments {
+			report.count(prose)
+			lintable := prose
+			if !runtime {
+				lintable = maskQuoted(prose)
+			}
+			if kind.strictGrammar() {
+				checkGrammar(found, ln.num, lintable)
+			}
+		}
+	}
+}
+
 // maskQuoted protects verbatim diagnostics without hiding contraction apostrophes.
 func maskQuoted(prose string) string {
 	masked := doubleQuotedRe.ReplaceAllString(prose, " ")
@@ -224,33 +281,94 @@ func (r *Report) count(prose string) {
 	}
 }
 
-// checkPhrases reports filler and hedge words. Quoted spans are masked by the caller, so
-// a rule that names a banned phrase in quotes does not trip itself.
-func checkPhrases(found *findings, num int, prose string) {
-	for _, match := range fillerRe.FindAllString(prose, -1) {
-		found.add(num, RuleFiller, strings.ToLower(match))
-	}
-	for _, match := range hedgeRe.FindAllString(prose, -1) {
-		found.add(num, RuleHedge, strings.ToLower(match))
+// checkPhrases reports filler and hedge phrases across punctuation and wrapped lines.
+// Each target has at most maxPhraseFields lexical fields; protected technical literals
+// terminate a candidate so paths, URLs, email addresses and flags remain verbatim.
+func checkPhrases(found *findings, paras []*paragraph, runtime bool) {
+	for _, para := range paras {
+		checkPhraseFields(found, phraseFields(para.segments, runtime))
 	}
 }
 
-// checkNoise reports terminal decoration. An ANSI escape is noise anywhere, fenced logs
-// included; box drawing and emoji are noise outside code.
-func checkNoise(found *findings, ln line) {
-	if ln.kind == kindOff {
+func checkPhraseFields(found *findings, fields []phraseField) {
+	for start := 0; start < len(fields); start++ {
+		var joined strings.Builder
+		for width := 0; width < maxPhraseFields && start+width < len(fields); width++ {
+			field := fields[start+width]
+			if field.value == "" {
+				break
+			}
+			joined.WriteString(field.value)
+			if match, ok := phraseTerms[joined.String()]; ok {
+				found.add(fields[start].line, match.rule, match.excerpt)
+			}
+		}
+	}
+}
+
+func phraseFields(segments []paragraphSegment, runtime bool) []phraseField {
+	var out []phraseField
+	for _, segment := range segments {
+		prose := segment.text
+		if !runtime {
+			prose = maskQuoted(prose)
+		}
+		for _, field := range strings.Fields(prose) {
+			if protectedGrammarToken(field) {
+				out = append(out, phraseField{line: segment.line})
+				continue
+			}
+			if value := collapsedGrammarWord(field); value != "" {
+				out = append(out, phraseField{line: segment.line, value: value})
+			}
+		}
+	}
+	return out
+}
+
+// checkNoise reports terminal decoration. ANSI escapes, unsafe control characters and
+// Unicode default-ignorables are noise anywhere, fenced logs included; box drawing and
+// emoji are noise outside code. Tabs remain valid spacing; scan normalizes CRLF and splits
+// LF before this boundary, so every control rune still present on a line is unsafe.
+func checkNoise(found *findings, ln line, runtime bool) {
+	checkLineControls(found, ln)
+	if ln.kind == kindOff && !runtime {
 		return
 	}
-	if strings.Contains(ln.text, "\x1b") {
-		found.add(ln.num, RuleTerminalNoise, "ANSI escape")
-	}
-	if ln.kind == kindCode {
+	if ln.kind == kindCode && !runtime {
 		return
 	}
-	for _, r := range inlineCodeRe.ReplaceAllString(ln.text, " ") {
+	text := ln.text
+	if !runtime {
+		text = inlineCodeRe.ReplaceAllString(text, " ")
+	}
+	for _, r := range text {
 		if isNoiseRune(r) {
 			found.add(ln.num, RuleTerminalNoise, fmt.Sprintf("U+%04X", r))
 			return
+		}
+	}
+}
+
+// checkLineControls rejects invisible content before source-profile masking.
+func checkLineControls(found *findings, ln line) {
+	if strings.Contains(ln.text, "\x1b") {
+		found.add(ln.num, RuleTerminalNoise, "ANSI escape")
+	}
+	for _, r := range ln.text {
+		if r == '\u2028' || r == '\u2029' {
+			found.add(ln.num, RuleTerminalNoise, fmt.Sprintf("U+%04X line separator", r))
+			break
+		}
+		if isDefaultIgnorableRune(r) {
+			found.add(ln.num, RuleTerminalNoise, fmt.Sprintf("U+%04X default-ignorable", r))
+			break
+		}
+		if isUnsafeControlRune(r) {
+			if r != '\x1b' {
+				found.add(ln.num, RuleTerminalNoise, fmt.Sprintf("U+%04X control", r))
+			}
+			break
 		}
 	}
 }
@@ -262,10 +380,39 @@ func isNoiseRune(r rune) bool {
 		r >= 0x1F000 && r <= 0x1FAFF || r == 0xFE0F
 }
 
+// isDefaultIgnorableRune matches Unicode format controls, the otherwise-combining
+// Other_Default_Ignorable_Code_Point set and variation selectors. Visible combining
+// marks such as U+0301 stay valid prose.
+func isDefaultIgnorableRune(r rune) bool {
+	return unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) ||
+		unicode.Is(unicode.Variation_Selector, r)
+}
+
+func isUnsafeControlRune(r rune) bool {
+	return r != '\t' && unicode.IsControl(r)
+}
+
 // paragraph is a run of prose lines read as one text; start is its first line.
 type paragraph struct {
-	start int
-	text  strings.Builder
+	start    int
+	text     strings.Builder
+	segments []paragraphSegment
+}
+
+type paragraphSegment struct {
+	line int
+	text string
+}
+
+type phraseField struct {
+	line  int
+	value string
+}
+
+func (p *paragraph) append(line int, text string) {
+	p.text.WriteString(text)
+	p.text.WriteByte(' ')
+	p.segments = append(p.segments, paragraphSegment{line: line, text: text})
 }
 
 // paragraphs joins wrapped prose lines. A blank or non-prose line ends a paragraph and a
@@ -278,7 +425,7 @@ func paragraphs(lines []line) []*paragraph {
 			current = nil
 			for _, cell := range proseSegments(ln) {
 				para := &paragraph{start: ln.num}
-				para.text.WriteString(cell)
+				para.append(ln.num, cell)
 				out = append(out, para)
 			}
 			continue
@@ -287,8 +434,33 @@ func paragraphs(lines []line) []*paragraph {
 			current = &paragraph{start: ln.num}
 			out = append(out, current)
 		}
-		current.text.WriteString(proseOf(ln.text))
-		current.text.WriteByte(' ')
+		current.append(ln.num, proseOf(ln.text))
+	}
+	return out
+}
+
+func profileParagraphs(lines []line, runtime bool) []*paragraph {
+	if !runtime {
+		return paragraphs(lines)
+	}
+	var out []*paragraph
+	var current *paragraph
+	for _, ln := range lines {
+		if ln.kind != kindProse {
+			current = nil
+			for _, segment := range runtimeProseSegments(ln) {
+				para := &paragraph{start: ln.num}
+				para.append(ln.num, segment)
+				out = append(out, para)
+			}
+			continue
+		}
+		if current == nil || listItemRe.MatchString(strings.TrimSpace(ln.text)) {
+			para := &paragraph{start: ln.num}
+			out = append(out, para)
+			current = para
+		}
+		current.append(ln.num, runtimeProseOf(ln.text))
 	}
 	return out
 }
