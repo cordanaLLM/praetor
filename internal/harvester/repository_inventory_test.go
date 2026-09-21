@@ -87,16 +87,43 @@ func TestScanLocalWorkstationRepositoryObservations(t *testing.T) {
 	}
 }
 
-func TestScanLocalWorkstationRepositoryInventoryBoundAndFailure(t *testing.T) {
-	root := t.TempDir()
-	for i := 0; i < MaxDevScanEntries+1; i++ {
-		// A zero-padded index stays a legal file name on every platform. The previous scheme
-		// appended rune('0'+i/26), which walks past '9' into ':', '<', '>' and '?' -- names
-		// POSIX accepts and Windows refuses, so the fixture could not be built there.
-		if err := os.Mkdir(filepath.Join(root, fmt.Sprintf("entry-%03d", i)), 0o755); err != nil {
-			t.Fatal(err)
-		}
+func TestScanLocalWorkstationRepositoryInventoryBound(t *testing.T) {
+	cases := []struct {
+		name      string
+		count     int
+		complete  bool
+		truncated bool
+	}{
+		{name: "at limit", count: MaxDevScanEntries, complete: true},
+		{name: "over limit", count: MaxDevScanEntries + 1, truncated: true},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			for i := 0; i < tc.count; i++ {
+				// A zero-padded index stays a legal file name on every platform. The previous scheme
+				// appended rune('0'+i/26), which walks past '9' into ':', '<', '>' and '?' -- names
+				// POSIX accepts and Windows refuses, so the fixture could not be built there.
+				if err := os.Mkdir(filepath.Join(root, fmt.Sprintf("entry-%03d", i)), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			report, err := ScanLocalWorkstation(context.Background(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.RepositoryInventoryComplete != tc.complete || report.RepositoryInventoryTruncated != tc.truncated {
+				t.Fatalf("entry bound state was not explicit: %+v", report)
+			}
+			if len(report.RepositoryObservations) != 0 {
+				t.Fatalf("plain boundary directories became repositories: %+v", report.RepositoryObservations)
+			}
+		})
+	}
+}
+
+func TestScanLocalWorkstationRepositoryInventoryFailure(t *testing.T) {
+	root := t.TempDir()
 	failure := filepath.Join(root, "broken")
 	if err := os.Mkdir(failure, 0o755); err != nil {
 		t.Fatal(err)
@@ -108,8 +135,8 @@ func TestScanLocalWorkstationRepositoryInventoryBoundAndFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.RepositoryInventoryComplete || !report.RepositoryInventoryTruncated {
-		t.Fatalf("overflow was not explicit: %+v", report)
+	if report.RepositoryInventoryComplete || report.RepositoryInventoryTruncated {
+		t.Fatalf("probe failure state was not explicit: %+v", report)
 	}
 	if len(report.RepositoryObservations) != 1 || report.RepositoryObservations[0].RemoteState != "unknown" || report.RepositoryObservations[0].Classification == "local-only" {
 		t.Fatalf("failed git probe was misclassified: %+v", report.RepositoryObservations)
