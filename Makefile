@@ -1,4 +1,4 @@
-.PHONY: all build test stress fuzz audit compile-context compile-context-verify editors-reference editors-reference-verify lint vuln sec secrets nosec-justified hiss-coverage flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test dco-check-test docs-lint docs-lint-test docs-surface verify-all clean hooks setup
+.PHONY: all build test stress fuzz audit caveman-sources compile-context compile-context-verify editors-reference editors-reference-verify lint vuln sec secrets nosec-justified hiss-coverage flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test dco-check-test docs-lint docs-lint-test docs-surface verify-all clean hooks setup
 
 BIN_DIR := bin
 # Windows cannot execute an extension-less PE, so the binary is named for the host rather than
@@ -68,6 +68,9 @@ needs-check:
 
 audit:
 	go run ./cmd/standardsctl audit
+
+caveman-sources:
+	go run ./cmd/standardsctl caveman check --configured-sources --root=.
 
 lint:
 	go vet ./...
@@ -143,7 +146,7 @@ hiss-coverage:
 topology-audit:
 	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
 
-verify-all: adr-verify semgrep-test docs-drift-test docs-assets-test github-app-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify needs-check editors-reference-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: adr-verify semgrep-test docs-drift-test docs-assets-test github-app-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify caveman-sources needs-check editors-reference-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
 
 .PHONY: docs-drift-test

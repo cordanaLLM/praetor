@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/caveman"
+	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -143,6 +146,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
 		func() error { return auditAgentProjections(ctx, rootDir) },
 		func() error { return auditCavemanAgentSurfaces(ctx, rootDir) },
+		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },
 		func() error {
 			return auditBranchProtectionAndSupplyChain(ctx, manifest, rootDir, &opts.effective.Policy)
 		},
@@ -334,6 +338,46 @@ func auditCavemanAgentSurfaces(ctx context.Context, rootDir string) error {
 		fmt.Printf("[PASS] Caveman lint verified (%d personas, %d skills, <= %d prose words each).\n",
 			personas, skills, compiler.AgentTextCeiling)
 	}
+	return nil
+}
+
+// auditCavemanConfiguredSources enforces the omission-resistant register.sources inventory.
+// Legacy manifests without any register section stay explicitly unverified. A declared
+// text policy must carry this contract; --configured-sources fails either omission.
+func auditCavemanConfiguredSources(ctx context.Context, manifest *config.Manifest, rootDir string) error {
+	if manifest == nil || manifest.Register == nil {
+		fmt.Println("[WARN] Caveman non-Markdown source coverage unconfigured; verdict unverified.")
+		return nil
+	}
+	if manifest.Register.Sources == nil {
+		return errors.New("[FAIL] Caveman non-Markdown source coverage: declared register requires register.sources")
+	}
+	result, err := cavemansource.ExtractDeclared(ctx, rootDir, manifest.Register.Sources)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Caveman non-Markdown source coverage: %w", err)
+	}
+	policy := manifest.EffectiveRegister()
+	for index := range result.Sources {
+		source := result.Sources[index]
+		enforced, err := policy.LintEnforced(source.Surface)
+		if err != nil {
+			return fmt.Errorf("[FAIL] Caveman non-Markdown source coverage: %w", err)
+		}
+		if !enforced {
+			resolution := policy.Resolve(source.Surface, "")
+			return fmt.Errorf("[FAIL] Caveman non-Markdown source coverage: %s = %s has no Caveman verdict",
+				resolution.Source, resolution.Register)
+		}
+		report := caveman.Check(source.Text, caveman.Options{Kind: source.Kind})
+		if !report.Passed() {
+			var detail strings.Builder
+			formatCavemanReport(&detail, cavemanInput{name: source.Path, text: source.Text,
+				kind: source.Kind, lineOffset: source.Line - 1, provenance: source.Provenance()}, report, 0)
+			return fmt.Errorf("[FAIL] Caveman non-Markdown source lint:\n%s", strings.TrimSpace(detail.String()))
+		}
+	}
+	fmt.Printf("[PASS] Caveman non-Markdown source coverage verified (%d values, %s).\n",
+		len(result.Sources), result.SHA256)
 	return nil
 }
 

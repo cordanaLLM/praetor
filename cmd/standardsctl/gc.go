@@ -18,7 +18,7 @@ func (f *repeatedStringFlag) String() string { return strings.Join(*f, ",") }
 
 func (f *repeatedStringFlag) Set(value string) error {
 	if strings.TrimSpace(value) == "" {
-		return fmt.Errorf("released path cannot be empty")
+		return fmt.Errorf("repeated flag value cannot be empty")
 	}
 	*f = append(*f, value)
 	return nil

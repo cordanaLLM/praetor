@@ -78,6 +78,22 @@ register:
   evidence:
     inline_max_lines: 58
     inline_max_tokens: 1500
+  # Non-Markdown agent text coverage. Expected count + aggregate digest bind the
+  # complete selected inventory; deleting one value or selector fails the gate.
+  sources:
+    expected: 13
+    sha256: "sha256:379ed75c80c3964903e035547305942986288277feec676ff1796832464dbbdb"
+    inputs:
+      - path: ".paperclip/harness.json"
+        surface: prompts
+        kind: message
+        format: json
+        selector: "operating_contract.*"
+      - path: ".paperclip/harness.json"
+        surface: prompts
+        kind: message
+        format: json
+        selector: "invariants.*"
 
 # Framework capability demand declarations towards upstream Golusoris
 needs:

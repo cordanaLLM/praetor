@@ -2,23 +2,51 @@ package adopt
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/paperclip"
 	"gopkg.in/yaml.v3"
 )
 
 // newAdoptionManifest builds the manifest adoption writes. Identity comes from the origin
 // remote and stays empty otherwise. Visibility is a forge setting adoption cannot observe
 // offline, so it is left unset rather than declared public.
-func newAdoptionManifest(s *adoptSession) *config.Manifest {
+func newAdoptionManifest(ctx context.Context, s *adoptSession) (*config.Manifest, error) {
+	sources, err := adoptionRegisterSources(ctx, s)
+	if err != nil {
+		return nil, err
+	}
 	return &config.Manifest{
 		Version:    1,
 		Repository: config.RepositoryMetadata{Owner: s.identity.owner, Name: s.identity.name},
 		Profiles:   []string{s.arch}, Facets: s.facets,
+		Register: &config.RegisterPolicy{Sources: sources},
+	}, nil
+}
+
+func adoptionRegisterSources(ctx context.Context, s *adoptSession) (*config.RegisterSources, error) {
+	harness, err := paperclip.SynthesizeHarness(ctx, s.repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("synthesize source coverage harness: %w", err)
 	}
+	data, err := json.Marshal(harness)
+	if err != nil {
+		return nil, fmt.Errorf("marshal source coverage harness: %w", err)
+	}
+	inputs := []config.RegisterSourceInput{
+		{Path: paperclipFile, Surface: config.SurfacePrompts, Kind: "message", Format: config.SourceFormatJSON, Selector: "operating_contract.*"},
+		{Path: paperclipFile, Surface: config.SurfacePrompts, Kind: "message", Format: config.SourceFormatJSON, Selector: "invariants.*"},
+	}
+	coverage, err := cavemansource.CoverageFromDocuments(inputs, map[string][]byte{paperclipFile: data})
+	if err != nil {
+		return nil, fmt.Errorf("compute source coverage harness: %w", err)
+	}
+	return &config.RegisterSources{Expected: len(coverage.Sources), SHA256: coverage.SHA256, Inputs: inputs}, nil
 }
 
 func planPolicyCatalog(ctx context.Context, s *adoptSession) error {
@@ -77,7 +105,11 @@ func plannedManifestBytes(ctx context.Context, s *adoptSession) ([]byte, error) 
 	if exists && !s.opts.Force {
 		return data, nil
 	}
-	return yaml.Marshal(newAdoptionManifest(s))
+	manifest, err := newAdoptionManifest(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+	return yaml.Marshal(manifest)
 }
 
 func observeAdoptionInput(ctx context.Context, s *adoptSession, name string) ([]byte, bool, error) {

@@ -1,0 +1,4 @@
+type: added
+title: Enforce tracked hook, MCP, and prompt runtime text through canonical register sources
+breaking: false
+issue: "#364"

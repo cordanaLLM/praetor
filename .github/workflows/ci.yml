@@ -222,7 +222,7 @@ jobs:
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
         env:
           TEST_COVERPROFILE: ${{ runner.temp }}/praetor-coverage.out
-        run: make verify-all
+        run: make caveman-sources verify-all
 
       - name: Enforce Statement Coverage Floor (HISS-15 coverage gate)
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'

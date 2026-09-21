@@ -437,7 +437,10 @@ func reconcileManifest(ctx context.Context, s *adoptSession) error {
 		s.report.recordReconciled(manifestFile, forcedManifestNote(s.opts.Force))
 		return nil
 	}
-	manifest := newAdoptionManifest(s)
+	manifest, err := newAdoptionManifest(ctx, s)
+	if err != nil {
+		return err
+	}
 	data, err := yaml.Marshal(manifest)
 	if err != nil {
 		return fmt.Errorf("marshal manifest: %w", err)

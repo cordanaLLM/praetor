@@ -2,11 +2,11 @@
   "version": 1,
   "platform": "cordanaLLM/praetor",
   "operating_contract": [
-    "Pushing a branch is NOT shipping: an open PR is required, but still not shipped work until merged.",
+    "Branch push != shipping. Open PR required. Work ships after merge.",
     "Rebase onto main immediately: run git fetch origin \u0026\u0026 git rebase origin/main before proposing.",
-    "Rule 0 Terminal Disposition: every run must end with a structured disposition (in_review or blocked).",
+    "Rule 0 Terminal Disposition: every run ends with structured disposition: in_review or blocked.",
     "Ed25519 Exit-0 Receipts: attach cryptographic execution receipts to all PR proposals.",
-    "Timeout Resilience: timeout is not failure; re-check open PRs before retrying to prevent duplicate PRs.",
+    "Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.",
     "Text register internal: `caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict."
   ],
   "agit_push_format": "git push origin HEAD:refs/for/main -o topic=\u003cissue-id\u003e \u0026\u0026 git push origin HEAD:refs/heads/paperclip/\u003cissue-id\u003e",

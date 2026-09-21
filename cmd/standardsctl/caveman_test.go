@@ -322,11 +322,11 @@ func TestCavemanCheckBoundary(t *testing.T) {
 	if _, err := runCavemanCLI(t, "", "check", "--surface=mcp", "--root="+dir, prose); err == nil {
 		t.Fatal("agent = docs must not switch the mcp lint off; prose must fail")
 	}
-	// A manifest that opts the surface out skips the lint and says which row decided it.
+	// A manifest that opts the surface out returns no-verdict failure, never a green skip.
 	writeFixtureFile(t, dir, ".standards.yaml", "version: 1\nregister:\n  surfaces:\n    mcp: docs\n")
 	out, err := runCavemanCLI(t, "", "check", "--surface=mcp", "--root="+dir, prose)
-	if err != nil || !strings.Contains(out, "skip, surfaces.mcp = docs") {
-		t.Fatalf("opted-out surface: err=%v\n%s", err, out)
+	if err == nil || !strings.Contains(err.Error(), "surfaces.mcp = docs has no Caveman verdict") || out != "" {
+		t.Fatalf("opted-out surface must not look green: err=%v\n%s", err, out)
 	}
 	// Printed findings are bounded; the rest are counted.
 	many := strings.Repeat("please.\n", maxPrintedFindings+5)

@@ -231,7 +231,8 @@ func TestAdopt_Positive_Greenfield(t *testing.T) {
 		t.Error("greenfield AGENTS.md must end with the harness end marker")
 	}
 	makefile := mustRead(t, filepath.Join(repoPath, "Makefile"))
-	if !strings.Contains(makefile, "verify-all: compile-context-verify audit test") {
+	if !strings.Contains(makefile, "verify-all: compile-context-verify caveman-sources audit test") ||
+		!strings.Contains(makefile, "caveman check --configured-sources") {
 		t.Errorf("greenfield verify-all must run the real gates, got:\n%s", makefile)
 	}
 	if strings.Contains(makefile, "Running verification...") {
@@ -667,6 +668,16 @@ func writeOriginRemote(t *testing.T, repo, url string) {
 }
 
 // identitySession resolves identity for repo the way Adopt does.
+// adoptionManifest builds the adoption manifest for s or fails the test.
+func adoptionManifest(t *testing.T, s *adoptSession) *config.Manifest {
+	t.Helper()
+	manifest, err := newAdoptionManifest(t.Context(), s)
+	if err != nil {
+		t.Fatalf("build adoption manifest: %v", err)
+	}
+	return manifest
+}
+
 func identitySession(t *testing.T, repo string) *adoptSession {
 	t.Helper()
 	s := &adoptSession{repoPath: repo, arch: "framework", facets: resolveFacets(nil), report: &AdoptReport{}}
@@ -683,7 +694,7 @@ func TestAdoptionManifest_IdentityFromRemote(t *testing.T) {
 	repo := newTestRepo(t, "checkout-dir")
 	writeOriginRemote(t, repo, "https://github.com/acme/widget.git")
 	s := identitySession(t, repo)
-	manifest := newAdoptionManifest(s)
+	manifest := adoptionManifest(t, s)
 	got := manifest.Repository
 	if got.Owner != "acme" || got.Name != "widget" || got.Visibility != "" {
 		t.Fatalf("manifest identity = %+v, want acme/widget with visibility unset", got)
@@ -703,7 +714,7 @@ func TestAdoptionManifest_UnresolvedIdentityStaysEmpty(t *testing.T) {
 	}
 	initTestGit(t, repo)
 	s := identitySession(t, repo)
-	manifest := newAdoptionManifest(s)
+	manifest := adoptionManifest(t, s)
 	if got := manifest.Repository; got.Owner != "" || got.Name != "" || got.Visibility != "" {
 		t.Fatalf("unresolved identity was invented: %+v", manifest.Repository)
 	}
@@ -766,7 +777,7 @@ func TestAdoptionManifest_CheckoutLayoutIsNotIdentity(t *testing.T) {
 	}
 	initTestGit(t, repo)
 	s := identitySession(t, repo)
-	manifest := newAdoptionManifest(s)
+	manifest := adoptionManifest(t, s)
 	if got := manifest.Repository; got.Owner != "" || got.Name != "" || s.identity.resolved() {
 		t.Fatalf("checkout layout became identity: manifest %+v, session %+v", got, s.identity)
 	}

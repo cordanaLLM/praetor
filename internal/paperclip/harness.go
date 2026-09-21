@@ -62,11 +62,11 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 		return nil, err
 	}
 	contract := []string{
-		"Pushing a branch is NOT shipping: an open PR is required, but still not shipped work until merged.",
+		"Branch push != shipping. Open PR required. Work ships after merge.",
 		"Rebase onto main immediately: run git fetch origin && git rebase origin/main before proposing.",
-		"Rule 0 Terminal Disposition: every run must end with a structured disposition (in_review or blocked).",
+		"Rule 0 Terminal Disposition: every run ends with structured disposition: in_review or blocked.",
 		"Ed25519 Exit-0 Receipts: attach cryptographic execution receipts to all PR proposals.",
-		"Timeout Resilience: timeout is not failure; re-check open PRs before retrying to prevent duplicate PRs.",
+		"Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.",
 		// A Paperclip run reports to an orchestrating agent, so its product is internal text.
 		config.RegisterDirective(config.TextRegisterInternal),
 	}
