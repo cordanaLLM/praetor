@@ -88,28 +88,37 @@ func TestScanLocalWorkstationRepositoryObservations(t *testing.T) {
 }
 
 func TestScanLocalWorkstationRepositoryInventoryBoundAndFailure(t *testing.T) {
-	root := t.TempDir()
+	overflowRoot := t.TempDir()
 	for i := 0; i < MaxDevScanEntries+1; i++ {
 		// A zero-padded index stays a legal file name on every platform. The previous scheme
 		// appended rune('0'+i/26), which walks past '9' into ':', '<', '>' and '?' -- names
 		// POSIX accepts and Windows refuses, so the fixture could not be built there.
-		if err := os.Mkdir(filepath.Join(root, fmt.Sprintf("entry-%03d", i)), 0o755); err != nil {
+		if err := os.Mkdir(filepath.Join(overflowRoot, fmt.Sprintf("entry-%03d", i)), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	failure := filepath.Join(root, "broken")
+	overflowReport, err := ScanLocalWorkstation(context.Background(), overflowRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overflowReport.RepositoryInventoryComplete || !overflowReport.RepositoryInventoryTruncated {
+		t.Fatalf("overflow was not explicit: %+v", overflowReport)
+	}
+
+	// A bounded File.ReadDir intentionally returns an arbitrary filesystem-order prefix.
+	// Keep the failed-probe assertion in a non-overflowing fixture so it does not depend on
+	// whether ext4, tmpfs, or another filesystem places this entry inside that prefix.
+	failureRoot := t.TempDir()
+	failure := filepath.Join(failureRoot, "broken")
 	if err := os.Mkdir(failure, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(failure, ".git"), []byte("gitdir: /private/token=secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	report, err := ScanLocalWorkstation(context.Background(), root)
+	report, err := ScanLocalWorkstation(context.Background(), failureRoot)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if report.RepositoryInventoryComplete || !report.RepositoryInventoryTruncated {
-		t.Fatalf("overflow was not explicit: %+v", report)
 	}
 	if len(report.RepositoryObservations) != 1 || report.RepositoryObservations[0].RemoteState != "unknown" || report.RepositoryObservations[0].Classification == "local-only" {
 		t.Fatalf("failed git probe was misclassified: %+v", report.RepositoryObservations)

@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	recordDirectory = "docs/adr"
-	maxRecords      = 512
-	maxScanFiles    = 20000
+	recordDirectory        = "docs/adr"
+	maxRecords             = 4096
+	maxDecisionConstraints = 16384
+	maxScanFiles           = 20000
 )
 
 // Finding is one way the repository contradicts a decision it records.
@@ -59,7 +60,7 @@ func Verify(ctx context.Context, repoPath string) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
-	for i := 0; i < len(constraints) && i < maxRecords; i++ {
+	for i := 0; i < len(constraints) && i < maxDecisionConstraints; i++ {
 		report.Findings = append(report.Findings, checkConstraint(constraints[i], tracked)...)
 	}
 	return report, nil
@@ -89,6 +90,9 @@ func loadConstraints(ctx context.Context, repoPath string) (_ []Constraint, reco
 		if parseErr != nil {
 			return nil, 0, parseErr
 		}
+		if len(parsed) > maxDecisionConstraints-len(constraints) {
+			return nil, 0, fmt.Errorf("decision constraints exceed %d entries", maxDecisionConstraints)
+		}
 		constraints = append(constraints, parsed...)
 	}
 	return constraints, len(names), nil
@@ -100,16 +104,19 @@ func recordNames(root *os.Root) (_ []string, err error) {
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, directory.Close()) }()
-	entries, err := directory.ReadDir(maxRecords + 1)
+	entries, err := directory.ReadDir(maxScanFiles + 1)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
-	if len(entries) > maxRecords {
-		return nil, fmt.Errorf("decision record inventory exceeds %d entries", maxRecords)
+	if len(entries) > maxScanFiles {
+		return nil, fmt.Errorf("decision record directory exceeds %d entries", maxScanFiles)
 	}
 	var names []string
-	for i := 0; i < len(entries) && i < maxRecords; i++ {
+	for i := 0; i < len(entries) && i < maxScanFiles; i++ {
 		if !entries[i].IsDir() && strings.HasSuffix(entries[i].Name(), ".md") {
+			if len(names) >= maxRecords {
+				return nil, fmt.Errorf("decision record inventory exceeds %d entries", maxRecords)
+			}
 			names = append(names, entries[i].Name())
 		}
 	}
