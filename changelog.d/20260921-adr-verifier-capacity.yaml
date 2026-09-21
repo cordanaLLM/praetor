@@ -1,0 +1,3 @@
+type: fixed
+title: Verify up to 4096 architectural decision records and replay every bounded constraint instead of rejecting or truncating repositories above the legacy 512-record limit
+breaking: false
