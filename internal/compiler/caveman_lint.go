@@ -40,7 +40,7 @@ const AgentTextCeiling = 600
 // command reproduces the gate's verdict. label names the file in the error and in the
 // findings; it carries no meaning to the lint itself.
 func LintAgentText(label, text string) (caveman.Report, error) {
-	report := caveman.Check(text, caveman.Options{MaxProseWords: AgentTextCeiling})
+	report := caveman.Check(text, caveman.Options{Kind: caveman.KindContext, MaxProseWords: AgentTextCeiling})
 	if !report.Passed() {
 		return report, fmt.Errorf("%w: %s", ErrAgentTextProse, describeLintFindings(label, report.Findings))
 	}
@@ -74,7 +74,7 @@ func LintContext(ctx context.Context, agentsMdPath string) (ContextLint, error) 
 		return ContextLint{}, fmt.Errorf("caveman lint: read %s: %w", agentsMdPath, err)
 	}
 	text, masked := MaskRegisterBlock(string(data))
-	lint := ContextLint{Report: caveman.Check(text, caveman.Options{}), MaskedLines: masked}
+	lint := ContextLint{Report: caveman.Check(text, caveman.Options{Kind: caveman.KindContext}), MaskedLines: masked}
 	if !lint.Report.Passed() {
 		return lint, fmt.Errorf("%w: %s", ErrContextProse, describeLintFindings(agentsMdPath, lint.Report.Findings))
 	}
@@ -110,6 +110,6 @@ func describeLintFindings(path string, findings []caveman.Finding) string {
 	if extra := len(findings) - len(quoted); extra > 0 {
 		more = fmt.Sprintf("; +%d more", extra)
 	}
-	return fmt.Sprintf("%d finding(s): %s%s. Run 'praetorctl caveman check %s' and rewrite the flagged lines in caveman",
+	return fmt.Sprintf("%d finding(s): %s%s. Run 'praetorctl caveman check --kind=context %s' and rewrite the flagged lines in caveman",
 		len(findings), strings.Join(quoted, "; "), more, path)
 }

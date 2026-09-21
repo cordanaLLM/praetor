@@ -5,7 +5,7 @@ evidence: .workingdir/evidence/run.log sha256:0123456789ab lines:412
 
 | Register | Where | Form |
 | :--- | :--- | :--- |
-| social | the forge, where a maintainer reads the issues and the pull requests | a full sentence that is just fine in a table |
+| social | forge maintainer | full sentence permitted by context profile |
 
 ### [2026-09-18 05:59:36 UTC] Commit `a7c646a` on `main`
 - **Activity**: resync after rebase

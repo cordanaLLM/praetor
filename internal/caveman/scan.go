@@ -6,8 +6,9 @@ import (
 	"unicode"
 )
 
-// lineKind classifies one line of Markdown-ish text. Only kindProse is linted as prose;
-// every other kind is protected from the prose rules of Check and from Compress.
+// lineKind classifies one line of Markdown-ish text. kindProse is linted directly; table
+// cells are extracted from kindStructured lines. Other kinds stay protected from prose
+// rules. Compress preserves every structured line.
 type lineKind int
 
 const (
@@ -130,6 +131,31 @@ func proseOf(text string) string {
 	masked := inlineCodeRe.ReplaceAllString(text, " ")
 	masked = linkTargetRe.ReplaceAllString(masked, "]")
 	return urlRe.ReplaceAllString(masked, " ")
+}
+
+// proseSegments returns prose carried by a line. Table syntax stays structured for
+// Compress, but each Markdown cell is linted independently by Check.
+func proseSegments(ln line) []string {
+	if ln.kind == kindProse {
+		return []string{proseOf(ln.text)}
+	}
+	if ln.kind != kindStructured || !strings.HasPrefix(strings.TrimSpace(ln.text), "|") {
+		return nil
+	}
+	masked := proseOf(ln.text)
+	parts := strings.Split(strings.Trim(masked, "|"), "|")
+	segments := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if cell := strings.TrimSpace(part); cell != "" && !tableDelimiter(cell) {
+			segments = append(segments, cell)
+		}
+	}
+	return segments
+}
+
+func tableDelimiter(cell string) bool {
+	trimmed := strings.Trim(cell, ":- ")
+	return trimmed == "" && strings.Contains(cell, "-")
 }
 
 // proseWords returns the tokens of prose that carry at least one letter, lower-cased and

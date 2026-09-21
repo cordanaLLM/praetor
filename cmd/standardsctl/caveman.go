@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	cavemanUsage = "usage: praetorctl caveman check [--surface=<name>] [--root=.] [--max-words=N] [--max-tokens=N] <file|dir|-> [...]\n" +
+	cavemanUsage = "usage: praetorctl caveman check [--kind=message|brief|return|context] [--surface=<name>] [--root=.] [--max-words=N] [--max-tokens=N] <file|dir|-> [...]\n" +
 		"       praetorctl caveman floor <before> <after>\n" +
 		"       praetorctl caveman estimate <file|dir|-> [...]"
 	// maxCavemanFiles bounds the files one invocation reads, directories expanded (HISS-02).
@@ -58,19 +58,23 @@ func cavemanCommand(ctx context.Context, args []string, stdin io.Reader, out io.
 }
 
 // cavemanCheck prints one summary line per input and its findings, and fails when any
-// input breaks a rule. With --surface it first resolves the register of that surface from
-// the repository at --root and skips the lint when the surface is not internal. --max-words
-// and --max-tokens are opt-in ceilings (0 means none): they make a per-surface budget
-// enforceable on any text a check can read as a file, the way the persona/skill gate and
-// text-register.md's evidence bound (default 1500 tokens) already define one.
+// input breaks a rule. --kind defaults to runtime message grammar; brief and return add
+// schemas, while context selects the policy-document profile. With --surface it first
+// resolves the register from --root and skips when the surface is not internal. --max-words
+// and --max-tokens are opt-in ceilings (0 means none).
 func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Writer) error {
 	fset := flag.NewFlagSet("caveman check", flag.ContinueOnError)
+	kindName := fset.String("kind", string(caveman.KindMessage), "Caveman contract: message, brief, return, or context")
 	surface := fset.String("surface", "", "Register surface whose manifest setting decides whether the lint applies")
 	root := fset.String("root", ".", "Repository root whose .standards.yaml resolves --surface")
 	maxWords := fset.Int("max-words", 0, "Prose-word ceiling per input (caveman.Options.MaxProseWords, C7); 0 means no ceiling")
 	maxTokens := fset.Int("max-tokens", 0, "Estimated-token ceiling per input (caveman.EstimateTokens, C8); 0 means no ceiling")
 	if err := fset.Parse(args); err != nil {
 		return err
+	}
+	kind := caveman.MessageKind(*kindName)
+	if !kind.Valid() {
+		return fmt.Errorf("caveman check: unsupported kind %q (want message, brief, return, or context)", *kindName)
 	}
 	if *surface != "" {
 		enforced, err := cavemanSurfaceEnforced(ctx, out, *root, config.RegisterSurface(*surface))
@@ -82,7 +86,7 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	if err != nil {
 		return err
 	}
-	opts := caveman.Options{MaxProseWords: *maxWords, MaxTokens: *maxTokens}
+	opts := caveman.Options{Kind: kind, MaxProseWords: *maxWords, MaxTokens: *maxTokens}
 	var text strings.Builder
 	failed := 0
 	for _, input := range inputs {
@@ -127,11 +131,25 @@ func formatCavemanReport(out *strings.Builder, name string, report caveman.Repor
 	if !report.Passed() {
 		verdict = "FAIL"
 	}
-	fmt.Fprintf(out, "%s: %s prose_words=%d articles=%d density=%.1f/100 limit=%.1f off_regions=%d register_block_lines=%d tokens_est=%d findings=%d\n",
+	fmt.Fprintf(out, "%s: %s prose_words=%d articles=%d density=%.1f/100 limit=%.1f off_regions=%d register_block_lines=%d tokens_est=%d findings=%d contract=%s mechanical_rules=%s advisory_rules=%s\n",
 		name, verdict, report.ProseWords, report.Articles, report.Density(), caveman.DefaultMaxArticleDensity,
-		report.OffRegions, masked, report.EstimatedTokens, len(report.Findings))
+		report.OffRegions, masked, report.EstimatedTokens, len(report.Findings), report.Kind,
+		coverageRules(report, caveman.EnforcementMechanical), coverageRules(report, caveman.EnforcementAdvisory))
 	appendCavemanFindings(out, name, report.Findings)
 	return report.Passed()
+}
+
+func coverageRules(report caveman.Report, enforcement caveman.Enforcement) string {
+	var ids []string
+	for _, row := range report.Coverage {
+		if row.Enforcement == enforcement {
+			ids = append(ids, fmt.Sprint(row.SkillRule))
+		}
+	}
+	if len(ids) == 0 {
+		return "none"
+	}
+	return strings.Join(ids, ",")
 }
 
 // appendCavemanFindings prints at most maxPrintedFindings findings as <name>:<line> <rule>:

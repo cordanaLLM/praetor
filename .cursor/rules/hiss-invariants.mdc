@@ -64,7 +64,7 @@ make verify-all
    ```bash
    standardsctl compile-context
    ```
-   - `AGENTS.md` = agent-only text -> caveman (internal register). `compile-context --verify` + `audit` run caveman lint; findings fail gate; no opt-out. Check first: `praetorctl caveman check AGENTS.md`.
+   - `AGENTS.md` = agent-only text -> caveman (internal register). `compile-context --verify` + `audit` run caveman lint; findings fail gate; no opt-out. Check first: `praetorctl caveman check --kind=context AGENTS.md`.
 
 7. **SARIF diagnostic distillation.** Compiler/linter errors -> distill to $\le 1,500$ tokens ($< 60$ lines): top 3 root-cause failures with file/line pointers; full SARIF logs -> ephemeral storage.
 

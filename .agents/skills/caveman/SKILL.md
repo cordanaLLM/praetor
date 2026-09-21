@@ -61,6 +61,18 @@ register; reply to human operator -> full prose.
    `evidence: <path> sha256:<12 hex> lines:<n>`, fetch only when decision needs it.
    Manifest may tighten both numbers; block in AGENTS.md prints values in force.
 
+## Static checker
+
+`praetorctl caveman check` defaults to runtime message form. Structured traffic selects
+kind explicitly:
+
+- brief: `--kind=brief`; fields = `goal`, `inputs`, `return`, `evidence`, `task`; goal first;
+- return: `--kind=return`; fields = `verdict`, `changed`, `ran`, `evidence`, `open`; verdict first;
+- policy text: `--kind=context`; C1-C8 heuristics only, uncovered skill rules reported advisory.
+
+PASS summary lists mechanically checked and advisory skill-rule numbers. Runtime producer
+wiring separate; checker validates supplied text only.
+
 ## Clarity floor
 
 Caveman = shorter text, same information, never shorter text that makes reader guess.
@@ -93,6 +105,8 @@ Test return:
   verdict: pass
   changed: internal/compiler/register.go (missing end marker -> error)
   ran: go test -race -count=1 ./internal/compiler/ = pass; go vet = clean
+  evidence: none
+  open: none
   ```
 
 Clarity floor in action:

@@ -1,0 +1,3 @@
+type: changed
+title: Enforce Caveman grammar and brief or return schemas in the shared checker, scan Markdown table cells, and report advisory skill rules; use --kind=context when checking policy documents
+breaking: true

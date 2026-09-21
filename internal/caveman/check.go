@@ -29,6 +29,13 @@ const (
 	// enforceable wherever the text is a file 'praetorctl caveman check' can read, per
 	// text-register.md's "What is not enforced" list.
 	RuleTokenCeiling = "C8 token-ceiling"
+	// RuleGrammar rejects the grammar classes explicitly listed by the Caveman skill for
+	// runtime message, brief and return kinds. Context policy text uses the measured C1-C8
+	// profile because it must be able to name those tokens.
+	RuleGrammar = "C9 grammar"
+	// RuleMessageShape enforces the documented brief and return fields and answer-first
+	// ordering when Options.Kind selects either structured message kind.
+	RuleMessageShape = "C10 message-shape"
 )
 
 const (
@@ -44,9 +51,12 @@ const (
 )
 
 var (
-	fillerRe = regexp.MustCompile(`(?i)\b(based on|i think|note that|it is important|in order to|as requested|let me|please)\b`)
-	hedgeRe  = regexp.MustCompile(`(?i)\b(probably|seems|might|basically|simply|just|really|actually)\b`)
-	quotedRe = regexp.MustCompile(`"[^"\n]*"|“[^”\n]*”`)
+	fillerRe       = regexp.MustCompile(`(?i)\b(based on|i think|note that|it is important|it looks like|in order to|as requested|let me|please)\b`)
+	hedgeRe        = regexp.MustCompile(`(?i)\b(probably|seems|might|basically|simply|just|really|actually)\b`)
+	doubleQuotedRe = regexp.MustCompile(`"[^"\n]*"|“[^”\n]*”`)
+	// A single quote opens a protected diagnostic only at a text boundary. Apostrophes
+	// inside contractions remain visible to C9, including straight and curly forms.
+	singleQuotedRe = regexp.MustCompile(`(^|[[:space:][:punct:]])(?:'[^'\n]*'|‘[^’\n]*’)`)
 	// sentenceBreakRe ends a sentence, or a clause the reader can parse on its own.
 	sentenceBreakRe = regexp.MustCompile(`[.!?]+(?:\s|$)|;|->|→|:(?:\s|$)`)
 	listItemRe      = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s`)
@@ -57,6 +67,9 @@ var (
 // messages) have no per-file word budget and only a surface that defines one should turn
 // it on.
 type Options struct {
+	// Kind selects message, brief, return or context checking. Empty means context for
+	// source compatibility; runtime callers must select their kind explicitly.
+	Kind              MessageKind
 	MaxArticleDensity float64
 	MinProseWords     int
 	MaxSentenceWords  int
@@ -100,6 +113,11 @@ type Report struct {
 	ProseWords int
 	Articles   int
 	OffRegions int
+	Kind       MessageKind
+	// Coverage classifies every numbered Caveman skill rule as mechanical or advisory for
+	// this message kind. A passing report means all mechanical rows passed, not that
+	// advisory rows were judged.
+	Coverage []RuleCoverage
 	// EstimatedTokens is EstimateTokens of the whole input text, always computed (it is one
 	// Fields() pass) so a caller can read the cost even when Options.MaxTokens is unset.
 	EstimatedTokens int
@@ -149,25 +167,30 @@ func (f *findings) sorted() []Finding {
 	return f.list
 }
 
-// Check lints agent-facing text. Fenced code, inline code, link targets, URLs, headings,
-// tables, HTML comments, ledger field rows, hook protocol lines, evidence pointers and
-// caveman:off regions are not prose and never trip a prose rule. Findings are sorted by
-// line, rule and excerpt, so equal input yields an equal report.
+// Check lints agent-facing text under Options.Kind. Fenced code, inline code, link targets,
+// URLs, headings, HTML comments, ledger field rows, hook protocol lines, evidence pointers
+// and caveman:off regions never trip a prose rule. Markdown table delimiters stay
+// structured while their cells are prose. Findings are sorted by line, rule and excerpt,
+// so equal input yields an equal report.
 func Check(text string, opts Options) Report {
 	opts = opts.withDefaults()
 	lines, s := scan(text)
-	report := Report{OffRegions: s.offRegions, EstimatedTokens: EstimateTokens(text)}
+	kind := opts.Kind.normalized()
+	report := Report{OffRegions: s.offRegions, EstimatedTokens: EstimateTokens(text), Kind: kind, Coverage: contractCoverage(kind)}
 	var found findings
 	for _, ln := range lines {
 		checkNoise(&found, ln)
-		if ln.kind != kindProse {
-			continue
+		for _, prose := range proseSegments(ln) {
+			report.count(prose)
+			lintable := maskQuoted(prose)
+			checkPhrases(&found, ln.num, lintable)
+			if kind.strictGrammar() {
+				checkGrammar(&found, ln.num, lintable)
+			}
 		}
-		prose := proseOf(ln.text)
-		report.count(prose)
-		checkPhrases(&found, ln.num, quotedRe.ReplaceAllString(prose, " "))
 	}
 	checkSentences(&found, paragraphs(lines), opts.MaxSentenceWords)
+	checkMessageShape(&found, lines, kind)
 	if report.ProseWords >= opts.MinProseWords && report.Density() > opts.MaxArticleDensity {
 		found.add(0, RuleArticleDensity, fmt.Sprintf("%.1f articles per 100 prose words (%d/%d), limit %.1f",
 			report.Density(), report.Articles, report.ProseWords, opts.MaxArticleDensity))
@@ -183,6 +206,12 @@ func Check(text string, opts Options) Report {
 	}
 	report.Findings = found.sorted()
 	return report
+}
+
+// maskQuoted protects verbatim diagnostics without hiding contraction apostrophes.
+func maskQuoted(prose string) string {
+	masked := doubleQuotedRe.ReplaceAllString(prose, " ")
+	return singleQuotedRe.ReplaceAllString(masked, "$1 ")
 }
 
 // count adds the prose words and articles of one masked prose line.
@@ -240,13 +269,18 @@ type paragraph struct {
 }
 
 // paragraphs joins wrapped prose lines. A blank or non-prose line ends a paragraph and a
-// list marker starts a new one, so each list item is judged on its own.
+// list marker starts a new one. Each table cell becomes its own paragraph.
 func paragraphs(lines []line) []*paragraph {
 	var out []*paragraph
 	var current *paragraph
 	for _, ln := range lines {
 		if ln.kind != kindProse {
 			current = nil
+			for _, cell := range proseSegments(ln) {
+				para := &paragraph{start: ln.num}
+				para.text.WriteString(cell)
+				out = append(out, para)
+			}
 			continue
 		}
 		if current == nil || listItemRe.MatchString(strings.TrimSpace(ln.text)) {

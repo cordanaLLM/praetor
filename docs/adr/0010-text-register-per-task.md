@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — 2026-09-17; amended 2026-09-18 (decisions 9 and 10, the caveman module; decision 11, the context gate).
+Proposed — 2026-09-17; amended 2026-09-18 (decisions 9 and 10, the caveman module; decision 11, the context gate); amended 2026-09-21 (decision 12, checker contract parity).
 
 ## Context
 
@@ -119,8 +119,9 @@ hand at the source and kept terse by a lint, never rewritten at run time.
      present (AGENTS.md measures 8.8, its caveman rewrite 0.3), filler phrases, hedges,
      terminal noise (ANSI, box drawing, emoji), sentences over 30 words without a `;`, `->`
      or `:` break, and an unclosed `<!-- caveman:off -->` region. Code, inline code, link
-     targets, URLs, headings, tables, HTML comments, ledger field rows, hook protocol lines
-     and evidence pointers are never read as prose.
+     targets, URLs, headings, HTML comments, ledger field rows, hook protocol lines and
+     evidence pointers are never read as prose. Table delimiters stay structured; cell text
+     is prose.
    - `Floor` is the clarity floor of a rewrite: it fails when a code span, a fenced command,
      an id such as `HISS-17`, a link target or an HTML marker disappears, or when the count
      of `MUST`-type directives, prohibitions or numbered rules falls.
@@ -156,6 +157,17 @@ hand at the source and kept terse by a lint, never rewritten at run time.
     the same change, and a floor test pins the rewrite against the frozen prose version
     (`internal/compiler/canonical_floor_test.go`). The HISS-17 turn start becomes
     `praetorctl state status` plus the open tasks, never the whole `STATE.md`.
+12. **One checker reports its enforcement boundary.** `Check` accepts an explicit message
+    kind: `message`, `brief`, `return` or `context`. The CLI defaults to `message`; the Go
+    zero value remains `context` for source compatibility, and compiler gates select it
+    explicitly. Runtime kinds add C9 lexical grammar drops, including modals and
+    straight/curly contractions. Brief and return kinds add C10:
+    goal/verdict first, one documented field per line, and every required field present.
+    Every report classifies all eight numbered Caveman skill rules as mechanical or
+    advisory, so `PASS` cannot imply semantic checks that never ran. Table cells feed the
+    same prose checks while delimiters remain byte-stable; code, paths, URLs, quoted errors
+    and explicit off regions remain protected. This amendment adds the shared checker only:
+    runtime producer calls remain #414, and non-Markdown extraction remains #364.
 
 Rewriting the MCP descriptions, prompts, hook messages, ledger templates and the register
 block wording are separate changes that build on this module.
@@ -225,6 +237,12 @@ keep both sides passing. The context gate (decision 11) breaks adopted repositor
 upgrade: the harness praetor wrote before it is prose. `praetorctl adopt --force` rewrites
 the harness and keeps the repository's own part, which the repository then rewrites in
 caveman; there is no setting that keeps it in prose.
+
+Amendment (2026-09-21): the checker now distinguishes runtime messages, briefs, returns and
+context policy text. Strict runtime text rejects the grammar classes named by the skill;
+briefs and returns enforce their field contracts; table-cell prose is no longer hidden by
+Markdown structure. Reports expose mechanical and advisory skill-rule sets. This is static
+validation only and does not claim runtime producer coverage.
 
 Neutral: `models route` and `dogfood repairs` JSON gain additive fields (HISS-14,
 append-only); plans written before this change decode with an empty register and keep their

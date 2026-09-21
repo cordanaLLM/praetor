@@ -70,7 +70,7 @@ func TestCheckNegative(t *testing.T) {
 		"quoted filler":        `No filler preamble, no "Based on", no "just", no chatter.`,
 		"inline code hedge":    "run `just test` then `make please`",
 		"heading with article": "## The State of the Ledger and the Gate",
-		"table prose":          "| a | the thing that is probably fine |\n| :--- | :--- |",
+		"table terse":          "| key | status |\n| :--- | :--- |\n| gate | ready |",
 		"link target article":  "see [ledger](docs/the/a/an/state.md)",
 		"off region":           OffMarker + "\nI think the gate probably failed.\n" + OnMarker,
 		"multi-line comment":   "<!--\nNote that the comment is probably prose.\n-->",
