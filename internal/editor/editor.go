@@ -917,22 +917,11 @@ func WriteWithReport(set *EditorConfigSet, rootDir string) (WriteReport, error) 
 		rootDir = "."
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultIOTimeout)
-	defer cancel()
-
-	pending, err := prepareEditorWrites(ctx, set, rootDir)
+	pending, err := prepareEditorWrites(set, rootDir)
 	if err != nil {
 		return report, err
 	}
-	for _, write := range pending {
-		if write.write {
-			if err := writeSingleFileWithContext(ctx, write.path, write.content); err != nil {
-				return WriteReport{Files: []WriteResult{}}, fmt.Errorf("failed writing %s: %w", write.path, err)
-			}
-		}
-		report.Files = append(report.Files, write.result)
-	}
-	return report, nil
+	return publishPreparedEditorFiles(pending, newEditorIOContext, writeSingleFileWithContext)
 }
 
 type pendingEditorWrite struct {
@@ -942,16 +931,46 @@ type pendingEditorWrite struct {
 	result  WriteResult
 }
 
-func prepareEditorWrites(ctx context.Context, set *EditorConfigSet, rootDir string) ([]pendingEditorWrite, error) {
+type editorIOContextFactory func() (context.Context, context.CancelFunc)
+
+type editorFileWriter func(context.Context, string, string) error
+
+// newEditorIOContext gives each bounded file operation its own progress budget. A single
+// deadline shared by the whole generated set made the last file depend on cumulative host
+// latency: a hosted Windows run exhausted five seconds after several successful durable
+// writes. maxFilesToGenerate still bounds the total number of independent operations.
+func newEditorIOContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), defaultIOTimeout)
+}
+
+func prepareEditorWrites(set *EditorConfigSet, rootDir string) ([]pendingEditorWrite, error) {
 	pending := make([]pendingEditorWrite, 0, len(set.Files))
 	for _, file := range set.Files {
+		ctx, cancel := newEditorIOContext()
 		write, err := prepareEditorWrite(ctx, file, filepath.Join(rootDir, file.Path))
+		cancel()
 		if err != nil {
 			return nil, err
 		}
 		pending = append(pending, write)
 	}
 	return pending, nil
+}
+
+func publishPreparedEditorFiles(pending []pendingEditorWrite, newContext editorIOContextFactory, writer editorFileWriter) (WriteReport, error) {
+	report := WriteReport{Files: make([]WriteResult, 0, len(pending))}
+	for _, write := range pending {
+		if write.write {
+			ctx, cancel := newContext()
+			err := writer(ctx, write.path, write.content)
+			cancel()
+			if err != nil {
+				return WriteReport{Files: []WriteResult{}}, fmt.Errorf("failed writing %s: %w", write.path, err)
+			}
+		}
+		report.Files = append(report.Files, write.result)
+	}
+	return report, nil
 }
 
 func prepareEditorWrite(ctx context.Context, file GeneratedFile, fullPath string) (pendingEditorWrite, error) {
@@ -1040,13 +1059,12 @@ func VerifyWithReport(set *EditorConfigSet, rootDir string) (VerificationReport,
 		rootDir = "."
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultIOTimeout)
-	defer cancel()
-
 	limit := len(set.Files)
 	for i := 0; i < limit && i < maxFilesToGenerate; i++ {
 		f := set.Files[i]
+		ctx, cancel := newEditorIOContext()
 		verified, err := verifyEditorFile(ctx, rootDir, f)
+		cancel()
 		if err != nil {
 			return report, err
 		}

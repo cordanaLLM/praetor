@@ -1,0 +1,4 @@
+type: fixed
+title: Make VS Code and editor I/O fixtures event-oriented and give the Semgrep version probe scan-sized diagnostic bounds
+issue: "#210"
+breaking: false
