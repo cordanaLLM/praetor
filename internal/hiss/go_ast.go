@@ -371,9 +371,36 @@ func (g *goScanner) hasSafety(stmtLine, useLine int) bool {
 func safetyCommentLines(fset *token.FileSet, file *ast.File) map[int]struct{} {
 	lines := make(map[int]struct{})
 	for _, group := range file.Comments {
-		if strings.Contains(group.Text(), "SAFETY:") {
+		text, valid := validatedCommentGroupText(group)
+		if valid && strings.Contains(text, "SAFETY:") {
 			lines[fset.Position(group.End()).Line] = struct{}{}
 		}
 	}
 	return lines
+}
+
+// validatedCommentGroupText checks the delimiter invariant required by
+// ast.CommentGroup.Text. go/parser can return an unterminated block comment in a
+// partial AST with a valid End position but without the closing */ delimiter.
+func validatedCommentGroupText(group *ast.CommentGroup) (string, bool) {
+	if group == nil || len(group.List) == 0 {
+		return "", false
+	}
+	for _, comment := range group.List {
+		if !validCommentText(comment) {
+			return "", false
+		}
+	}
+	return group.Text(), true
+}
+
+func validCommentText(comment *ast.Comment) bool {
+	if comment == nil {
+		return false
+	}
+	text := comment.Text
+	if strings.HasPrefix(text, "//") {
+		return true
+	}
+	return len(text) >= 4 && strings.HasPrefix(text, "/*") && strings.HasSuffix(text, "*/")
 }
