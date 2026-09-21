@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — 2026-09-17; amended 2026-09-18 (decisions 9 and 10, the caveman module; decision 11, the context gate); amended 2026-09-21 (decision 12, checker contract parity).
+Proposed — 2026-09-17; amended 2026-09-18 (decisions 9 and 10, the caveman module; decision 11, the context gate); amended 2026-09-21 (decision 12, checker contract parity; decision 13, runtime repair enforcement).
 
 ## Context
 
@@ -166,11 +166,29 @@ hand at the source and kept terse by a lint, never rewritten at run time.
     Every report classifies all eight numbered Caveman skill rules as mechanical or
     advisory, so `PASS` cannot imply semantic checks that never ran. Table cells feed the
     same prose checks while delimiters remain byte-stable; code, paths, URLs, quoted errors
-    and explicit off regions remain protected. This amendment adds the shared checker only:
-    runtime producer calls remain #414, and non-Markdown extraction remains #364.
+    and explicit off regions remain protected. Non-Markdown static extraction remains #364.
+13. **Runtime repair text is checked, not inferred.** `config.ValidateEmission` accepts the
+    resolved register, emission surface, explicit runtime message kind and engine-owned
+    text. Internal text delegates to `caveman.Check`; `social` and `docs` record
+    `not_applicable`. Every validation record contains the register, token ceiling, surface,
+    kind, source and status. A positive resolved ceiling is enforced by the same Caveman
+    token estimator. Failure diagnostics expose at most three findings and 768 bytes.
 
-Rewriting the MCP descriptions, prompts, hook messages, ledger templates and the register
-block wording are separate changes that build on this module.
+    The repair planner validates its generated job brief. The executor validates the
+    trusted prompt prefix as a brief and the separate Responses API instructions as a
+    message before it appends any untrusted source or test data. It validates
+    `Proposal.Summary` as a return before `applyProposal`; invalid provider prose therefore
+    cannot mutate the candidate tree. Reports retain all three validation records.
+
+    The validator lives in the existing `internal/config` package, preserving
+    `internal/caveman` as a standard-library-only leaf and avoiding a second register
+    loader. Plans with the legacy empty register preserve their old bytes and have no
+    validation record. Dynamic MCP and hook text remains unverified; native client capture
+    remains #415, and Paperclip synthesis remains #321.
+
+Rewriting the remaining MCP descriptions, hook messages, ledger templates and register
+block wording are separate changes that build on this module. Notebook and Paperclip
+prompts remain outside this amendment.
 
 ## Alternatives considered
 
@@ -241,8 +259,10 @@ caveman; there is no setting that keeps it in prose.
 Amendment (2026-09-21): the checker now distinguishes runtime messages, briefs, returns and
 context policy text. Strict runtime text rejects the grammar classes named by the skill;
 briefs and returns enforce their field contracts; table-cell prose is no longer hidden by
-Markdown structure. Reports expose mechanical and advisory skill-rule sets. This is static
-validation only and does not claim runtime producer coverage.
+Markdown structure. Reports expose mechanical and advisory skill-rule sets. Repair planning
+and execution now validate their owned briefs, provider instructions and summary returns
+and retain the verdicts. Dynamic MCP and hook text, Paperclip synthesis and native-client
+chat remain explicitly unverified rather than inheriting that claim.
 
 Neutral: `models route` and `dogfood repairs` JSON gain additive fields (HISS-14,
 append-only); plans written before this change decode with an empty register and keep their

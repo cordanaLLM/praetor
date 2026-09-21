@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
@@ -16,13 +17,18 @@ func TestRepairJobsCarryTheRegisterRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clause := " " + config.RegisterDirective(config.TextRegisterInternal)
+	directive := config.RegisterDirective(config.TextRegisterInternal)
 	for _, job := range plan.Jobs {
-		if job.Instructions != repairInstructions+clause {
-			t.Errorf("job %s instructions must end with the register clause:\n%s", job.ID, job.Instructions)
+		if !strings.HasSuffix(job.Instructions, directive) || !strings.HasPrefix(job.Instructions, "goal:") {
+			t.Errorf("job %s instructions must be a brief ending with the register directive:\n%s", job.ID, job.Instructions)
 		}
 		if job.Register != "internal" || job.MaxOutputTokens != 512 {
 			t.Errorf("job %s carries register %q and budget %d", job.ID, job.Register, job.MaxOutputTokens)
+		}
+		if job.InstructionsValidation == nil || job.InstructionsValidation.Status != config.EmissionPass ||
+			job.InstructionsValidation.Kind != caveman.KindBrief || job.InstructionsValidation.MaxTokens != 512 ||
+			job.InstructionsValidation.Source != "repair_policy.register" {
+			t.Errorf("job %s instructions validation = %+v", job.ID, job.InstructionsValidation)
 		}
 	}
 	if plan.Policy.Register != "internal" || plan.Policy.MaxOutputTokens != 512 {
@@ -81,8 +87,17 @@ func TestRepairRegisterBoundary(t *testing.T) {
 	for _, budget := range []int{config.RegisterMaxTokensFloor, config.RegisterMaxTokensCeiling} {
 		policy := repairTestPolicy(t)
 		policy.Register, policy.MaxOutputTokens = string(config.TextRegisterSocial), budget
-		if err := ValidateRepairPolicy(context.Background(), policy); err != nil {
+		plan, err := PlanRepairs(context.Background(), repairTestReport(t, 1), policy)
+		if err != nil {
 			t.Fatalf("budget %d: %v", budget, err)
+		}
+		validation := plan.Jobs[0].InstructionsValidation
+		if validation == nil || validation.Status != config.EmissionNotApplicable {
+			t.Fatalf("social budget %d validation = %+v", budget, validation)
+		}
+		want := repairInstructions + " " + config.RegisterDirective(config.TextRegisterSocial)
+		if plan.Jobs[0].Instructions != want {
+			t.Fatalf("social budget %d instructions changed:\n%s", budget, plan.Jobs[0].Instructions)
 		}
 	}
 }

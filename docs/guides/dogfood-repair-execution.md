@@ -34,6 +34,16 @@ carries both, its instructions end with one register sentence, and the run repor
 request and never raises it above the configured value. A policy without the fields plans
 and runs exactly as before.
 
+When `register` is present, the planner validates its generated job instructions before it
+retains the plan. The executor validates the engine-owned prompt prefix and the separate
+Responses API instructions before provider dispatch, then validates the returned
+`proposal.summary` before any candidate source mutation. Internal text must pass the
+Caveman brief, message or return contract as appropriate; `social` and `docs` produce an
+explicit `not_applicable` record. The execution report preserves these records as
+`prompt_validation`, `request_instructions_validation` and `summary_validation`. Untrusted
+source and test payloads are appended only after the prompt prefix passes and are never
+linted as instructions.
+
 `provider` fields are `base_url`, `token_command`, `token_command_sha256`, `model`,
 `max_output_tokens`, and `max_input_bytes`. The routed model must equal the
 configured provider model; there is no fallback. Configured cost is an estimate,

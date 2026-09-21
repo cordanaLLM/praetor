@@ -27,6 +27,9 @@ type ProviderConfig struct {
 	Model              string `json:"model"`
 	MaxOutputTokens    int    `json:"max_output_tokens"`
 	MaxInputBytes      int    `json:"max_input_bytes"`
+	// runtimeRegister is set from the selected job after configuration validation. It is
+	// never decoded, persisted, or accepted as provider configuration.
+	runtimeRegister config.TextRegister
 }
 
 // Edit is untrusted replacement content; the executor verifies its path and digest.

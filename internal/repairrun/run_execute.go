@@ -3,10 +3,13 @@ package repairrun
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/caveman"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 )
 
@@ -99,7 +102,21 @@ func (e *execution) check(ctx context.Context, name string) (*TestResult, error)
 }
 
 func (e *execution) generateCandidate(ctx context.Context) error {
-	a, cfg := e.admission, e.admission.settings.config
+	if err := e.requireUnchangedBaseline(ctx); err != nil {
+		return err
+	}
+	prompt, err := e.prepareProviderPrompt(ctx)
+	if err != nil {
+		return err
+	}
+	proposal, err := e.requestProposal(ctx, prompt)
+	if err != nil {
+		return err
+	}
+	return e.applyAndVerifyProposal(ctx, proposal)
+}
+
+func (e *execution) requireUnchangedBaseline(ctx context.Context) error {
 	before, err := snapshotCandidate(ctx, e.candidate)
 	if err != nil {
 		return err
@@ -108,27 +125,58 @@ func (e *execution) generateCandidate(ctx context.Context) error {
 	if err != nil || len(changes) != 0 {
 		return errors.New("baseline verification changed source")
 	}
-	prompt, err := buildPrompt(ctx, cfg, e.candidate, *a.selected, a.report.Baseline.Tests)
+	return nil
+}
+
+func (e *execution) prepareProviderPrompt(ctx context.Context) (string, error) {
+	a, cfg := e.admission, e.admission.settings.config
+	a.report.Register = a.selected.Register
+	prompt, promptValidation, err := buildPrompt(ctx, cfg, e.candidate, *a.selected, a.report.Baseline.Tests)
+	a.report.PromptValidation = promptValidation
 	if err != nil {
-		return err
+		if promptValidation != nil && promptValidation.Status == config.EmissionFail {
+			a.report.Status, a.report.ErrorCategory = "failed", "prompt_register_contract"
+		}
+		return "", err
+	}
+	requestValidation, err := validateProviderRequestInstructions(*a.selected)
+	a.report.RequestInstructionsValidation = requestValidation
+	if err != nil {
+		a.report.Status, a.report.ErrorCategory = "failed", "prompt_register_contract"
+		return "", err
 	}
 	if err := writeNew(e.root, "prompt.json.txt", []byte(prompt)); err != nil {
-		return err
+		return "", err
 	}
-	a.report.Register = a.selected.Register
+	return prompt, nil
+}
+
+func (e *execution) requestProposal(ctx context.Context, prompt string) (*Proposal, error) {
+	a, cfg := e.admission, e.admission.settings.config
 	proposal, err := e.generate(ctx, jobProvider(cfg.Provider, a.selected), prompt)
 	if err != nil {
 		a.report.Status, a.report.ErrorCategory = "agent_failed", "provider_request"
-		return errors.New("provider did not produce a candidate")
+		return nil, errors.New("provider did not produce a candidate")
 	}
 	if proposal == nil {
 		a.report.Status = "agent_failed"
-		return errors.New("provider returned no candidate")
+		return nil, errors.New("provider returned no candidate")
 	}
 	a.report.Usage, a.report.ActualModel = &proposal.Usage, proposal.ActualModel
+	summaryValidation, summaryErr := validateProposalSummary(*a.selected, proposal.Summary)
+	a.report.SummaryValidation = summaryValidation
 	if err := writeJSON(e.root, "proposal.json", proposal); err != nil {
-		return err
+		return nil, err
 	}
+	if summaryErr != nil {
+		a.report.Status, a.report.ErrorCategory = "change_rejected", "summary_register_contract"
+		return nil, summaryErr
+	}
+	return proposal, nil
+}
+
+func (e *execution) applyAndVerifyProposal(ctx context.Context, proposal *Proposal) error {
+	a, cfg := e.admission, e.admission.settings.config
 	patch, err := applyProposal(ctx, cfg, e.candidate, e.baseline, proposal)
 	if err != nil {
 		a.report.Status, a.report.ErrorCategory = "change_rejected", "candidate_contract"
@@ -145,10 +193,39 @@ func (e *execution) generateCandidate(ctx context.Context) error {
 // operator's spend cap, and a manifest row must not raise it. The response check reads the
 // same field, so a provider that ignores the budget is rejected like any other overrun.
 func jobProvider(provider ProviderConfig, job *dogfood.RepairJob) ProviderConfig {
+	if job != nil {
+		provider.runtimeRegister = config.TextRegister(job.Register)
+	}
 	if job != nil && job.MaxOutputTokens > 0 && job.MaxOutputTokens < provider.MaxOutputTokens {
 		provider.MaxOutputTokens = job.MaxOutputTokens
 	}
 	return provider
+}
+
+func validateProposalSummary(job dogfood.RepairJob, summary string) (*config.EmissionValidation, error) {
+	if job.Register == "" {
+		return nil, nil
+	}
+	resolution := config.Resolution{Register: config.TextRegister(job.Register), MaxTokens: job.MaxOutputTokens,
+		Source: "repair_job.register"}
+	validation, err := config.ValidateEmission(resolution, config.SurfaceAgent, caveman.KindReturn, summary)
+	if err != nil {
+		return &validation, fmt.Errorf("repair proposal summary: %w", err)
+	}
+	return &validation, nil
+}
+
+func validateProviderRequestInstructions(job dogfood.RepairJob) (*config.EmissionValidation, error) {
+	if job.Register == "" {
+		return nil, nil
+	}
+	resolution := config.Resolution{Register: config.TextRegister(job.Register), MaxTokens: job.MaxOutputTokens,
+		Source: "repair_job.register"}
+	validation, err := config.ValidateEmission(resolution, config.SurfacePrompts, caveman.KindMessage, providerInstructions(resolution.Register))
+	if err != nil {
+		return &validation, fmt.Errorf("repair provider instructions: %w", err)
+	}
+	return &validation, nil
 }
 
 func (e *execution) verifyCandidate(ctx context.Context) error {

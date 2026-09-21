@@ -1,0 +1,4 @@
+type: fixed
+title: Validate resolved internal repair briefs, provider instructions, and proposal returns at runtime before dispatch or source mutation, with bounded diagnostics and explicit compliance records
+issue: "#414"
+breaking: true

@@ -5,11 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 )
+
+const validInternalRepairSummary = "verdict: candidate\nchanged: internal/fixture/value.go\nran: none\nevidence: proposal.edits\nopen: verification pending"
 
 func TestJobProviderAppliesTheRegisterBudget(t *testing.T) {
 	provider := ProviderConfig{MaxOutputTokens: 1024}
@@ -121,6 +127,9 @@ func TestRunRecordsRegisterAndTightensProviderBudget(t *testing.T) {
 	if result.Register != "internal" {
 		t.Fatalf("report register = %q, want internal", result.Register)
 	}
+	if result.PromptValidation == nil || result.PromptValidation.Status != config.EmissionPass || result.PromptValidation.MaxTokens != 512 || result.PromptValidation.Source != "repair_job.register" || result.RequestInstructionsValidation == nil || result.RequestInstructionsValidation.Status != config.EmissionPass || result.RequestInstructionsValidation.Kind != caveman.KindMessage || result.RequestInstructionsValidation.MaxTokens != 512 {
+		t.Fatalf("prompt validation = %+v; request instructions = %+v", result.PromptValidation, result.RequestInstructionsValidation)
+	}
 
 	// An invalid register row in the run configuration is rejected before any provider call.
 	g := newRunFixture(t, 1)
@@ -128,5 +137,99 @@ func TestRunRecordsRegisterAndTightensProviderBudget(t *testing.T) {
 	g.save(t)
 	if _, err := run(t.Context(), g.configPath, g.reportPath, noProvider(t), fakeVerification(false)); err == nil {
 		t.Fatal("an unsupported register must fail the run")
+	}
+}
+
+func TestBuildPromptRejectsInvalidInternalInstructionsBeforeEvidence(t *testing.T) {
+	job := dogfood.RepairJob{Register: string(config.TextRegisterInternal), MaxOutputTokens: 512,
+		Instructions: "I think the repair prompt is ready. " + config.RegisterDirective(config.TextRegisterInternal)}
+	_, validation, err := buildPrompt(t.Context(), Config{}, nil, job, nil)
+	if err == nil || validation == nil || validation.Status != config.EmissionFail || validation.MaxTokens != 512 || validation.Source != "repair_job.register" {
+		t.Fatalf("invalid instructions = %+v, %v", validation, err)
+	}
+	if strings.Contains(err.Error(), "read") {
+		t.Fatalf("untrusted inputs were read before instruction validation: %v", err)
+	}
+}
+
+func TestRunRejectsInvalidInternalSummaryBeforeApplyingEdits(t *testing.T) {
+	requireRepairIsolation(t)
+	f := newRunFixture(t, 1)
+	f.config.RepairPolicy.Register = string(config.TextRegisterInternal)
+	f.save(t)
+	verifyCalls := 0
+	verify := func(_ context.Context, c Config, _ string) (*TestResult, []byte, error) {
+		verifyCalls++
+		return &TestResult{Passed: false, Packages: c.TestPackages, Tests: []TestOutcome{{Package: "fixture", Name: "TestValue", Status: "fail"}}}, nil, nil
+	}
+	generate := func(_ context.Context, _ ProviderConfig, prompt string) (*Proposal, error) {
+		directive := config.RegisterDirective(config.TextRegisterInternal)
+		if strings.Count(prompt, directive) != 1 || strings.Index(prompt, directive) > strings.Index(prompt, "UNTRUSTED_DATA_JSON:") {
+			t.Fatalf("resolved directive not forwarded before evidence:\n%s", prompt)
+		}
+		return &Proposal{Summary: "I think the repair is probably ready.", Edits: []Edit{{Path: "internal/fixture/value.go", OriginalSHA256: bytesSHA([]byte(originalFixture)), Content: repairedFixture}}}, nil
+	}
+	result, err := run(t.Context(), f.configPath, f.reportPath, generate, verify)
+	if err == nil || result == nil || result.Status != "change_rejected" || verifyCalls != 1 {
+		t.Fatalf("result=%+v err=%v verify_calls=%d", result, err, verifyCalls)
+	}
+	if result.PromptValidation == nil || result.PromptValidation.Status != config.EmissionPass || result.RequestInstructionsValidation == nil || result.RequestInstructionsValidation.Status != config.EmissionPass || result.SummaryValidation == nil || result.SummaryValidation.Status != config.EmissionFail {
+		t.Fatalf("validation records: prompt=%+v request=%+v summary=%+v", result.PromptValidation, result.RequestInstructionsValidation, result.SummaryValidation)
+	}
+	data, readErr := os.ReadFile(filepath.Join(result.AttemptDir, "candidate", "internal/fixture/value.go"))
+	if readErr != nil || string(data) != originalFixture {
+		t.Fatalf("invalid summary reached applyProposal: %q, %v", data, readErr)
+	}
+}
+
+func TestRunAcceptsInternalReturnAtTheSummaryBoundary(t *testing.T) {
+	requireRepairIsolation(t)
+	f := newRunFixture(t, 1)
+	f.config.RepairPolicy.Register = string(config.TextRegisterInternal)
+	f.save(t)
+	verifyCalls := 0
+	verify := func(_ context.Context, c Config, _ string) (*TestResult, []byte, error) {
+		verifyCalls++
+		status, passed := "fail", false
+		if verifyCalls == 2 {
+			status, passed = "pass", true
+		}
+		return &TestResult{Passed: passed, Packages: c.TestPackages, Tests: []TestOutcome{{Package: "fixture", Name: "TestValue", Status: status}}}, nil, nil
+	}
+	generate := func(_ context.Context, _ ProviderConfig, _ string) (*Proposal, error) {
+		return &Proposal{Summary: validInternalRepairSummary, Edits: []Edit{{Path: "internal/fixture/value.go", OriginalSHA256: bytesSHA([]byte(originalFixture)), Content: repairedFixture}}}, nil
+	}
+	result, err := run(t.Context(), f.configPath, f.reportPath, generate, verify)
+	if err != nil || result == nil || result.Status != "scoped_test_verified" || verifyCalls != 2 {
+		t.Fatalf("result=%+v err=%v verify_calls=%d", result, err, verifyCalls)
+	}
+	if result.PromptValidation == nil || result.PromptValidation.Status != config.EmissionPass || result.RequestInstructionsValidation == nil || result.RequestInstructionsValidation.Status != config.EmissionPass || result.SummaryValidation == nil || result.SummaryValidation.Status != config.EmissionPass {
+		t.Fatalf("validation records: prompt=%+v request=%+v summary=%+v", result.PromptValidation, result.RequestInstructionsValidation, result.SummaryValidation)
+	}
+}
+
+func TestProviderInstructionsRecordHumanRegisterAsNotApplicable(t *testing.T) {
+	job := dogfood.RepairJob{Register: string(config.TextRegisterSocial)}
+	validation, err := validateProviderRequestInstructions(job)
+	if err != nil || validation == nil || validation.Status != config.EmissionNotApplicable || validation.Kind != caveman.KindMessage {
+		t.Fatalf("social provider instructions = %+v, %v", validation, err)
+	}
+	body := providerRequestBody(jobProvider(ProviderConfig{Model: "fixture", MaxOutputTokens: 256}, &job), "prompt")
+	if body["instructions"] != legacyProviderInstructions {
+		t.Fatalf("social provider instructions changed: %q", body["instructions"])
+	}
+	job.Instructions = "human-facing repair brief"
+	prompt, promptValidation, err := repairPromptInstructions(job)
+	if err == nil || promptValidation == nil || promptValidation.Status != config.EmissionFail {
+		t.Fatalf("missing social directive must fail: prompt=%q validation=%+v err=%v", prompt, promptValidation, err)
+	}
+	job.Instructions = "human-facing repair brief " + config.RegisterDirective(config.TextRegisterSocial)
+	prompt, promptValidation, err = repairPromptInstructions(job)
+	if err != nil || promptValidation == nil || promptValidation.Status != config.EmissionNotApplicable {
+		t.Fatalf("social prompt instructions = %q, %+v, %v", prompt, promptValidation, err)
+	}
+	want := legacyRepairPromptInstructions() + " " + config.RegisterDirective(config.TextRegisterSocial)
+	if prompt != want {
+		t.Fatalf("social prompt prose changed:\n%s", prompt)
 	}
 }

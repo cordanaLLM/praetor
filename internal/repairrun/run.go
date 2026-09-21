@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 )
 
@@ -43,6 +44,11 @@ type Report struct {
 	// Register is the text register the job was planned with, recorded beside Usage so that
 	// output spend can be compared per register once reports accumulate.
 	Register string `json:"register,omitempty"`
+	// Runtime validation records prove the prompt, request instructions and summary were
+	// checked. Register alone never implies that emitted text followed it.
+	PromptValidation              *config.EmissionValidation `json:"prompt_validation,omitempty"`
+	RequestInstructionsValidation *config.EmissionValidation `json:"request_instructions_validation,omitempty"`
+	SummaryValidation             *config.EmissionValidation `json:"summary_validation,omitempty"`
 }
 
 type generator func(context.Context, ProviderConfig, string) (*Proposal, error)

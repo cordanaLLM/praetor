@@ -208,14 +208,19 @@ and `--kind=return` add their documented schema, while `--kind=context` selects 
 gate's compatibility profile. Every result identifies which numbered skill rules remained
 advisory.
 
-Not mechanically checkable, because the text is composed at conversation time rather than
-read from a repository file: an agent-to-agent return or brief, MCP tool and property
-descriptions and results, hook and gate messages, provider/repair/notebook/harness prompt
-bodies, `.workingdir` ledger free text (gitignored, so a tracked-file gate cannot see it
-either), and popup question text. `internal/caveman` exists so each producer can validate a
-value before sending it; producer wiring remains separate work (#414). Static extraction
-from non-Markdown source remains #364. A green repository gate therefore proves tracked
-context text, not runtime chat or prompt compliance.
+Repair planning and execution call `config.ValidateEmission` before dispatch or source
+mutation. The planner records its brief verdict. The executor records the trusted prompt
+prefix as a brief, the separate Responses API instructions as a message, and the proposal
+summary as a return. Internal failures stop before the next boundary; `social` and `docs`
+record `not_applicable`. Each record names the resolved register, token ceiling, surface,
+kind and source; a positive ceiling is enforced for internal text.
+
+Still not mechanically checked: dynamic MCP tool descriptions and results; hook and gate
+diagnostics; notebook prompts; Paperclip synthesis (#321); `.workingdir` ledger free text;
+popup question text; and native-client chats or hooks (#415). No `internal` label may imply
+coverage of those surfaces. Static extraction from non-Markdown source remains #364. A
+green repository gate proves tracked context text; repair reports additionally prove only
+the runtime repair fields whose validation records are present.
 
 ## Surfaces without a register row
 
@@ -445,7 +450,7 @@ The persona/skill gate calls the same `caveman.Options.MaxProseWords` field prog
 (`compiler.AgentTextCeiling`, 600); the flags exist so any other surface can be capped the
 moment its text is a file, including a return or a brief a dispatch path writes out before
 sending it, and the evidence-pointer bound (`register.evidence`, default 1500 tokens) the
-same way. Nothing in the engine writes agent-to-agent returns, MCP text, hook messages or
-prompt bodies to a file today, so wiring one of those producers to this flag is future work,
-not something this guide can point at yet; see "What is not enforced" above for the current
-list.
+same way. Repair planning and execution call the shared checker directly on their owned
+runtime fields, without first writing them to a file. Dynamic MCP and hook text, notebook
+and Paperclip prompts, ledger text, popup questions and native-client traffic still need
+their own producer or capture wiring and remain unverified; see "What is not enforced".
