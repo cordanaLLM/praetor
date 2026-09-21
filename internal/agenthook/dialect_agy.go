@@ -2,12 +2,13 @@ package agenthook
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
 
 // Antigravity ("agy") hook payload and response shapes, verified against the
-// "Lifecycle Hooks (hooks.json)" contract embedded in the installed Antigravity 1.2.6
+// "Lifecycle Hooks (hooks.json)" contract embedded in the installed Antigravity 1.2.7
 // binary (agy --help at /home/kilian/.local/bin/agy; the contract text is a string
 // literal in the binary itself, printed by the CLI's own in-app documentation, not
 // model memory). docs/guides/agent-hooks.md quotes the relevant sections verbatim.
@@ -53,6 +54,14 @@ type agyPreToolPayload struct {
 	StepIdx  *int         `json:"stepIdx"`
 }
 
+type agySubagent struct {
+	Prompt string `json:"Prompt"`
+}
+
+type agyDispatchArgs struct {
+	Subagents []agySubagent `json:"Subagents"`
+}
+
 // agyStopPayload is Stop's documented stdin shape.
 type agyStopPayload struct {
 	agyCommon
@@ -68,11 +77,45 @@ func agyDecode(d Dialect, event Event, payload []byte) (Canonical, error) {
 	switch event {
 	case EventPreTool:
 		return agyDecodePreTool(d, payload)
+	case EventPreDispatch:
+		return agyDecodePreDispatch(payload)
 	case EventStop:
 		return agyDecodeStop(payload)
 	default:
 		return Canonical{}, fmt.Errorf("%w: agy has no payload shape for %s", ErrUnsupported, event)
 	}
+}
+
+func agyDecodePreDispatch(payload []byte) (Canonical, error) {
+	if _, err := decodeObject(payload); err != nil {
+		return Canonical{}, err
+	}
+	var doc agyPreToolPayload
+	if err := json.Unmarshal(payload, &doc); err != nil {
+		return Canonical{}, fmt.Errorf("agy pre-dispatch payload: %w", err)
+	}
+	canonical := Canonical{Event: EventPreDispatch}
+	agyFillCommon(&canonical, doc.agyCommon)
+	if doc.ToolCall == nil || doc.ToolCall.Name != "invoke_subagent" {
+		return Canonical{}, errors.New("toolCall.name must be invoke_subagent")
+	}
+	var args agyDispatchArgs
+	if err := json.Unmarshal(doc.ToolCall.Args, &args); err != nil {
+		return Canonical{}, errors.New("toolCall.args.Subagents must be an array")
+	}
+	if len(args.Subagents) == 0 || len(args.Subagents) > MaxDispatchBriefs {
+		return Canonical{}, fmt.Errorf("toolCall.args.Subagents must contain 1..%d entries", MaxDispatchBriefs)
+	}
+	canonical.Tool = doc.ToolCall.Name
+	canonical.Briefs = make([]string, 0, len(args.Subagents))
+	for index := 0; index < len(args.Subagents) && index < MaxDispatchBriefs; index++ {
+		prompt := args.Subagents[index].Prompt
+		if strings.TrimFunc(prompt, isPythonSpace) == "" {
+			return Canonical{}, fmt.Errorf("toolCall.args.Subagents[%d].Prompt must be nonempty text", index)
+		}
+		canonical.Briefs = append(canonical.Briefs, prompt)
+	}
+	return canonical, nil
 }
 
 func agyDecodePreTool(d Dialect, payload []byte) (Canonical, error) {
@@ -175,7 +218,7 @@ func agyCommandOf(args json.RawMessage) (string, error) {
 // object on stdout (the docs' contract has no exit-code channel at all).
 func agyEncode(d Dialect, canonical Canonical, verdict Verdict) Response {
 	switch canonical.Event {
-	case EventPreTool:
+	case EventPreTool, EventPreDispatch:
 		return agyEncodePreTool(verdict)
 	case EventStop:
 		return agyEncodeStop(canonical, verdict)

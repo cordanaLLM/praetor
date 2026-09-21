@@ -63,6 +63,23 @@ def gemini_argv(command):
             command + "; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"]
 
 
+def engine_row(action):
+    """Whether a registered action calls the agent-hook engine instead of a Python adapter.
+
+    Those rows run `praetorctl hook <client> <event>`, directly or through the skew-guard
+    launcher praetor_hook.py; internal/agenthook/registrations_test.go and
+    scripts/test_praetor_hook.py check them, so the adapter checks here leave them out.
+    """
+    text = " ".join([action["command"], *action.get("args", [])])
+    return text.startswith("praetorctl hook ") or "praetor_hook.py" in text
+
+
+def adapter_actions(hooks):
+    """Every registered action of one client's `hooks` table that runs a Python adapter."""
+    return [action for groups in hooks.values() for group in groups for action in group["hooks"]
+            if not engine_row(action)]
+
+
 class LifecycleOutput(unittest.TestCase):
     def setUp(self):
         self.state = mock.patch.object(ADAPTER, "verify_state")
@@ -342,8 +359,7 @@ class NativeLefthook(unittest.TestCase):
         checked = set()
         for settings, unit in TIMEOUT_UNITS.items():
             hooks = json.loads((ROOT / settings).read_text())["hooks"]
-            actions = [action for groups in hooks.values() for group in groups for action in group["hooks"]]
-            for action in actions:
+            for action in adapter_actions(hooks):
                 script = re.search(r"([a-z_]+\.py)", " ".join([action["command"], *action.get("args", [])]))[1]
                 budget, stop, limit = BUDGETS[script]
                 with self.subTest(settings=settings, script=script):
@@ -355,8 +371,8 @@ class NativeLefthook(unittest.TestCase):
     def test_claude_and_gemini_registrations_need_no_shell_substitution(self):
         claude = json.loads((ROOT / ".claude/settings.json").read_text())["hooks"]
         gemini = json.loads((ROOT / ".gemini/settings.json").read_text())["hooks"]
-        claude_actions = [action for groups in claude.values() for group in groups for action in group["hooks"]]
-        gemini_actions = [action for groups in gemini.values() for group in groups for action in group["hooks"]]
+        claude_actions = adapter_actions(claude)
+        gemini_actions = adapter_actions(gemini)
         self.assertEqual(len(claude_actions), 4)
         self.assertEqual(len(gemini_actions), 4)
         for action in claude_actions:

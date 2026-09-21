@@ -25,6 +25,10 @@ type Invocation struct {
 	WorkDir  string
 	Policy   *Policy
 	Settings config.HookSettings
+	// CorrelationDir overrides the private repository cache in tests. Production callers
+	// leave it empty so one deterministic path under Git's shared directory bridges hook
+	// processes and isolated worktrees without entering the tracked working tree.
+	CorrelationDir string
 }
 
 // Run serves one hook call: parse, read, decode, resolve, judge, encode. It never

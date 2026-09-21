@@ -28,6 +28,26 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "matcher": "^Agent$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "praetorctl hook claude pre-dispatch",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "^SubagentHandback$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "praetorctl hook claude pre-handback",
+            "timeout": 15
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -41,6 +61,81 @@
               "-B",
               "${CLAUDE_PROJECT_DIR}/.config/agent/hooks/checkpoint.py"
             ],
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "matcher": "^Agent$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "praetorctl hook claude dispatch-receipt",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "^SubagentHandback$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "praetorctl hook claude handback-receipt",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "^Agent$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "praetorctl hook claude dispatch-abort",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "^SubagentHandback$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "praetorctl hook claude handback-abort",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "matcher": "^Agent$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "praetorctl hook claude dispatch-abort",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "^SubagentHandback$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "praetorctl hook claude handback-abort",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "praetorctl hook claude post-return",
             "timeout": 60
           }
         ]

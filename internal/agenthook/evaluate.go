@@ -19,11 +19,17 @@ const (
 	stateVerifyBudget    = 20 * time.Second
 	stopCheckpointBudget = 30 * time.Second
 	environmentBudget    = 5 * time.Second
+	dispatchBudget       = 10 * time.Second
+	returnBudget         = 30 * time.Second
 )
 
 // budgetFor is the outer context deadline Run applies before evaluate reads anything.
 func budgetFor(event Event) time.Duration {
 	switch event {
+	case EventPreDispatch, EventDispatchReceipt, EventDispatchAbort, EventPreHandback:
+		return dispatchBudget
+	case EventPostReturn:
+		return returnBudget
 	case EventPreEdit:
 		return preEditBudget
 	case EventPostTool:
@@ -96,6 +102,9 @@ func checkpointWired(client string) bool {
 }
 
 func dispatch(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
+	if agentTrafficEvent(row.Event) {
+		return evaluateAgentTraffic(ctx, row, canonical, root, in)
+	}
 	if !checkpointWired(row.Client) {
 		return evaluateCommand(canonical, in)
 	}

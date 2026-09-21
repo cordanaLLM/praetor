@@ -36,13 +36,25 @@ var registrationTable = []Registration{
 	{Client: "claude", Event: EventPreEdit, NativeEvent: "PreToolUse", Matcher: "^(Edit|Write)$", Timeout: 15 * time.Second},
 	{Client: "claude", Event: EventPostTool, NativeEvent: "PostToolUse", Timeout: 60 * time.Second},
 	{Client: "claude", Event: EventStop, NativeEvent: "Stop", Timeout: 60 * time.Second},
+	{Client: "claude", Event: EventPreDispatch, NativeEvent: "PreToolUse", Matcher: "^Agent$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventDispatchReceipt, NativeEvent: "PostToolUse", Matcher: "^Agent$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventDispatchAbort, NativeEvent: "PostToolUseFailure", Matcher: "^Agent$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventDispatchAbort, NativeEvent: "PermissionDenied", Matcher: "^Agent$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventPreHandback, NativeEvent: "PreToolUse", Matcher: "^SubagentHandback$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventHandbackReceipt, NativeEvent: "PostToolUse", Matcher: "^SubagentHandback$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventHandbackAbort, NativeEvent: "PostToolUseFailure", Matcher: "^SubagentHandback$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventHandbackAbort, NativeEvent: "PermissionDenied", Matcher: "^SubagentHandback$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventPostReturn, NativeEvent: "SubagentStop", Timeout: 60 * time.Second},
 	{Client: "codex", Event: EventPreTool, NativeEvent: "PreToolUse", Matcher: "^Bash$", Timeout: 15 * time.Second},
 	{Client: "codex", Event: EventPostTool, NativeEvent: "PostToolUse", Timeout: 60 * time.Second},
 	{Client: "codex", Event: EventStop, NativeEvent: "Stop", Timeout: 60 * time.Second},
+	{Client: "codex", Event: EventPreDispatch, NativeEvent: "PreToolUse", Matcher: "^spawn_agent$", Timeout: 15 * time.Second},
+	{Client: "codex", Event: EventPostReturn, NativeEvent: "SubagentStop", Timeout: 60 * time.Second},
 	{Client: "gemini", Event: EventPreTool, NativeEvent: "BeforeTool", Matcher: "run_shell_command", Timeout: 15 * time.Second},
 	{Client: "gemini", Event: EventPreEdit, NativeEvent: "BeforeTool", Matcher: "^(replace|write_file)$", Timeout: 15 * time.Second},
 	{Client: "gemini", Event: EventPostTool, NativeEvent: "AfterTool", Timeout: 60 * time.Second},
 	{Client: "gemini", Event: EventStop, NativeEvent: "AfterAgent", Timeout: 60 * time.Second},
+	{Client: "gemini", Event: EventPreDispatch, NativeEvent: "BeforeTool", Matcher: "^invoke_agent$", Timeout: 15 * time.Second},
 	{Client: "lefthook", Event: EventPreTool, NativeEvent: "agent-pre-tool"},
 	{Client: "lefthook", Event: EventEnvironment, NativeEvent: "pre-rebase"},
 	// agy: NativeEvent and Timeout are docs-confirmed (Hook Spec Fields; "Execution
@@ -50,6 +62,7 @@ var registrationTable = []Registration{
 	// tools" spelling: agy classifies by payload, not by registration (3.5). Stop has no
 	// matcher at all (its hooks.json group is a flat handler list, not a matcher group).
 	{Client: "agy", Event: EventPreTool, NativeEvent: "PreToolUse", Matcher: "*", Timeout: 30 * time.Second},
+	{Client: "agy", Event: EventPreDispatch, NativeEvent: "PreToolUse", Matcher: "invoke_subagent", Timeout: 30 * time.Second},
 	{Client: "agy", Event: EventStop, NativeEvent: "Stop", Timeout: 30 * time.Second},
 }
 

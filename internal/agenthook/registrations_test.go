@@ -13,11 +13,13 @@ import (
 
 func TestRegistrationsPerClient(t *testing.T) {
 	for client, events := range map[string][]Event{
-		"claude":   {EventPreTool, EventPreEdit, EventPostTool, EventStop},
-		"codex":    {EventPreTool, EventPostTool, EventStop}, // no pre-edit row: measured fact, section 1
-		"gemini":   {EventPreTool, EventPreEdit, EventPostTool, EventStop},
+		"claude": {EventPreTool, EventPreEdit, EventPostTool, EventStop, EventPreDispatch, EventDispatchReceipt,
+			EventDispatchAbort, EventDispatchAbort, EventPreHandback, EventHandbackReceipt, EventHandbackAbort,
+			EventHandbackAbort, EventPostReturn},
+		"codex":    {EventPreTool, EventPostTool, EventStop, EventPreDispatch, EventPostReturn}, // no pre-edit row: measured fact, section 1
+		"gemini":   {EventPreTool, EventPreEdit, EventPostTool, EventStop, EventPreDispatch},
 		"lefthook": {EventPreTool, EventEnvironment}, // checkpoint rows land in H4
-		"agy":      {EventPreTool, EventStop},
+		"agy":      {EventPreTool, EventPreDispatch, EventStop},
 	} {
 		rows := Registrations(client)
 		if len(rows) != len(events) {
@@ -77,8 +79,8 @@ func TestParseArguments(t *testing.T) {
 		t.Fatalf("agy stop: %+v %v", row, err)
 	}
 	for _, pair := range [][2]string{
-		{"", ""}, {"codex", "pre-edit"}, {"agy", "post-tool"}, {"claude", "pre-tool\n"}, {"cl4ude", "pre-tool"},
-		{"claude", "PRE-TOOL"}, {"../claude", "pre-tool"}, {"claude", "environment"},
+		{"", ""}, {"codex", "pre-edit"}, {"codex", "dispatch-receipt"}, {"agy", "post-tool"}, {"claude", "pre-tool\n"}, {"cl4ude", "pre-tool"},
+		{"claude", "PRE-TOOL"}, {"../claude", "pre-tool"}, {"claude", "environment"}, {"gemini", "post-return"},
 	} {
 		if row, err := ParseArguments(pair[0], pair[1]); !errors.Is(err, ErrUnsupported) || row != (Registration{}) {
 			t.Errorf("%q: %+v %v", pair, row, err)
@@ -90,16 +92,14 @@ func TestParseArguments(t *testing.T) {
 type nativeGroup struct {
 	Matcher string `json:"matcher"`
 	Hooks   []struct {
-		Timeout int64 `json:"timeout"`
+		Timeout int64  `json:"timeout"`
+		Command string `json:"command"`
 	} `json:"hooks"`
 }
 
-// TestRegistrationTableMatchesTheTrackedClientFiles replays the table against the files
-// the clients read. The command strings differ until the registrations move to the
-// entrypoint; event, matcher and budget must already agree. Scoped to EventPreTool: the
-// checkpoint rows (pre-edit, post-tool, stop) added in H2 have no tracked-file counterpart
-// yet, that flip is H4's (refactor(hooks): registrations call the entrypoint; adapters
-// deleted), so this test only replays what the tracked files carry today.
+// TestRegistrationTableMatchesTheTrackedClientFiles replays each agent-text row against
+// the tracked files clients read. Legacy command/checkpoint rows remain on their existing
+// adapters; #415 owns only subagent brief, receipt and return registrations.
 func TestRegistrationTableMatchesTheTrackedClientFiles(t *testing.T) {
 	for client, file := range map[string]struct {
 		path string
@@ -119,7 +119,7 @@ func TestRegistrationTableMatchesTheTrackedClientFiles(t *testing.T) {
 			t.Fatalf("%s: %v", file.path, err)
 		}
 		for _, row := range Registrations(client) {
-			if row.Event != EventPreTool {
+			if !agentTrafficEvent(row.Event) {
 				continue
 			}
 			if !groupsHold(document.Hooks[row.NativeEvent], row, file.unit) {
@@ -129,9 +129,37 @@ func TestRegistrationTableMatchesTheTrackedClientFiles(t *testing.T) {
 	}
 }
 
+func TestAgyDispatchRegistrationMatchesTrackedPlugin(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", ".agents", "plugins", "praetor", "hooks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]struct {
+		PreToolUse []nativeGroup `json:"PreToolUse"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	row, err := ParseArguments("agy", string(EventPreDispatch))
+	if err != nil || !groupsHold(document["praetor-subagent-register"].PreToolUse, row, time.Second) {
+		t.Fatalf("agy tracked pre-dispatch registration: row=%+v err=%v", row, err)
+	}
+}
+
+func TestHumanReplySurfacesHaveNoCavemanRegistration(t *testing.T) {
+	for _, client := range []string{"claude", "codex", "gemini"} {
+		for _, row := range Registrations(client) {
+			if (row.NativeEvent == "Stop" || row.NativeEvent == "AfterAgent") && agentTrafficEvent(row.Event) {
+				t.Fatalf("%s human completion surface carries agent text gate: %+v", client, row)
+			}
+		}
+	}
+}
+
 func groupsHold(groups []nativeGroup, row Registration, unit time.Duration) bool {
 	for _, group := range groups {
-		if group.Matcher == row.Matcher && len(group.Hooks) == 1 && time.Duration(group.Hooks[0].Timeout)*unit == row.Timeout {
+		if group.Matcher == row.Matcher && len(group.Hooks) == 1 && group.Hooks[0].Command == row.Command() &&
+			time.Duration(group.Hooks[0].Timeout)*unit == row.Timeout {
 			return true
 		}
 	}

@@ -25,12 +25,29 @@ const (
 	EventPostTool    Event = "post-tool"
 	EventStop        Event = "stop"
 	EventEnvironment Event = "environment"
+	// EventPreDispatch validates a subagent brief before the native client launches it.
+	EventPreDispatch Event = "pre-dispatch"
+	// EventDispatchReceipt binds a validated brief to the native agent identifier emitted
+	// after an asynchronous launch. It carries no agent-authored text of its own.
+	EventDispatchReceipt Event = "dispatch-receipt"
+	// EventDispatchAbort releases a brief reservation after native launch failure or denial.
+	EventDispatchAbort Event = "dispatch-abort"
+	// EventPreHandback validates the report a native subagent is about to deliver.
+	EventPreHandback Event = "pre-handback"
+	// EventHandbackReceipt records that a validated native handback tool succeeded.
+	EventHandbackReceipt Event = "handback-receipt"
+	// EventHandbackAbort releases a validated handback after native failure or denial.
+	EventHandbackAbort Event = "handback-abort"
+	// EventPostReturn validates a subagent return before the parent receives it.
+	EventPostReturn Event = "post-return"
 )
 
 // Input and output bounds (HISS-02). MaxInputBytes is the bound of the Python adapters.
 const (
 	MaxInputBytes  = 1 << 20
 	MaxReasonBytes = 4096
+	// MaxDispatchBriefs bounds native clients that can launch a batch in one tool call.
+	MaxDispatchBriefs = 64
 )
 
 // argumentShape is the whole grammar of both command-line arguments.
@@ -65,6 +82,15 @@ type Canonical struct {
 	// stop_hook_active field once a follow-up wires their Stop dialect; agy derives it
 	// from Step.
 	StopActive bool
+	// Briefs contains one or more dispatch bodies. Native clients other than agy carry one;
+	// agy's invoke_subagent tool can launch a bounded batch.
+	Briefs []string
+	// Return is the agent-authored body exposed at the native handoff boundary.
+	Return string
+	// ToolUseID identifies one dispatch call across its pre- and post-tool events.
+	ToolUseID string
+	// AgentID identifies the launched subagent across a dispatch receipt and its return.
+	AgentID string
 }
 
 // Outcome is the decision class of a verdict.

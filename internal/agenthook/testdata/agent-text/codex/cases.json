@@ -1,0 +1,44 @@
+[
+  {
+    "name": "valid-brief",
+    "allow": true,
+    "payload": {
+      "session_id": "session-codex",
+      "hook_event_name": "PreToolUse",
+      "tool_name": "spawn_agent",
+      "tool_use_id": "tool-codex",
+      "tool_input": {
+        "message": "goal: patch hook\ninputs: internal/agenthook\nreturn: diff plus tests\nevidence: focused tests\ntask: feature_implementation\n"
+      }
+    }
+  },
+  {
+    "name": "prose-brief",
+    "allow": false,
+    "payload": {
+      "session_id": "session-codex",
+      "hook_event_name": "PreToolUse",
+      "tool_name": "spawn_agent",
+      "tool_use_id": "tool-codex",
+      "tool_input": {
+        "message": "goal: I will patch the hook\ninputs: internal/agenthook\nreturn: diff plus tests\nevidence: focused tests\ntask: feature_implementation\n"
+      }
+    }
+  },
+  {
+    "name": "missing-body",
+    "allow": false,
+    "payload": {
+      "session_id": "session-codex",
+      "hook_event_name": "PreToolUse",
+      "tool_name": "spawn_agent",
+      "tool_use_id": "tool-codex",
+      "tool_input": {}
+    }
+  },
+  {
+    "name": "oversized-body",
+    "allow": false,
+    "oversized": true
+  }
+]

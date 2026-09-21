@@ -1,0 +1,4 @@
+type: fixed
+title: Gate documented native subagent briefs and Claude handbacks without overstating unsupported return boundaries
+issue: "#415"
+breaking: false

@@ -137,6 +137,59 @@ func TestHookProcessFailsClosed(t *testing.T) {
 	}
 }
 
+func TestHookProcessAgentTextGate(t *testing.T) {
+	root := hookRepository(t, true)
+	brief := "goal: patch hook\ninputs: internal/agenthook\nreturn: diff plus tests\nevidence: focused tests\ntask: feature_implementation\n"
+	valid := []byte(`{"session_id":"session","hook_event_name":"BeforeTool","tool_name":"invoke_agent","tool_input":{"prompt":` + quoteJSON(t, brief) + `}}`)
+	invalid := []byte(`{"session_id":"session","hook_event_name":"BeforeTool","tool_name":"invoke_agent","tool_input":{}}`)
+	for _, tc := range []struct {
+		name    string
+		payload []byte
+		exit    int
+	}{
+		{"valid", valid, 0}, {"missing body", invalid, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, exit := hookProcess(t, root, "gemini pre-dispatch", tc.payload)
+			if exit != tc.exit || (exit != 0) != bytes.Contains(result.Stderr, []byte("[BLOCKED BY HISS]")) {
+				t.Fatalf("exit %d stdout %q stderr %q", exit, result.Stdout, result.Stderr)
+			}
+		})
+	}
+}
+
+func TestHookProcessClaudeHandbackGateAcrossProcesses(t *testing.T) {
+	root := hookRepository(t, true)
+	brief := "goal: patch hook\ninputs: internal/agenthook\nreturn: diff plus tests\nevidence: focused tests\ntask: feature_implementation\n"
+	validReturn := "verdict: pass\nchanged: internal/agenthook\nran: go test ./internal/agenthook\nevidence: exit 0\nopen: none\n"
+	proseReturn := "verdict: I think this is complete\nchanged: the hook\nran: tests\nevidence: output\nopen: none\n"
+	pre := []byte(`{"session_id":"session","cwd":` + quoteJSON(t, root) + `,"hook_event_name":"PreToolUse","tool_name":"Agent","tool_use_id":"tool","tool_input":{"prompt":` + quoteJSON(t, brief) + `,"run_in_background":true}}`)
+	dispatchReceipt := []byte(`{"session_id":"session","cwd":` + quoteJSON(t, root) + `,"hook_event_name":"PostToolUse","tool_name":"Agent","tool_use_id":"tool","tool_input":{"prompt":` + quoteJSON(t, brief) + `},"tool_response":{"status":"async_launched","agentId":"agent"}}`)
+	handback := func(body string) []byte {
+		return []byte(`{"session_id":"session","cwd":` + quoteJSON(t, root) + `,"hook_event_name":"PreToolUse","agent_id":"agent","agent_type":"general-purpose","tool_name":"SubagentHandback","tool_use_id":"handback","tool_input":{"message":` + quoteJSON(t, body) + `}}`)
+	}
+	handbackReceipt := func(body string) []byte {
+		return []byte(`{"session_id":"session","cwd":` + quoteJSON(t, root) + `,"hook_event_name":"PostToolUse","agent_id":"agent","agent_type":"general-purpose","tool_name":"SubagentHandback","tool_use_id":"handback","tool_input":{"message":` + quoteJSON(t, body) + `},"tool_response":{}}`)
+	}
+	closing := []byte(`{"session_id":"session","cwd":` + quoteJSON(t, root) + `,"hook_event_name":"SubagentStop","agent_id":"agent","agent_type":"general-purpose"}`)
+	for _, step := range []struct {
+		arguments string
+		payload   []byte
+		exit      int
+	}{
+		{"claude pre-dispatch", pre, 0},
+		{"claude dispatch-receipt", dispatchReceipt, 0},
+		{"claude pre-handback", handback(proseReturn), 2},
+		{"claude pre-handback", handback(validReturn), 0},
+		{"claude handback-receipt", handbackReceipt(validReturn), 0},
+		{"claude post-return", closing, 0},
+	} {
+		if result, exit := hookProcess(t, root, step.arguments, step.payload); exit != step.exit {
+			t.Fatalf("%s: exit %d, want %d; stdout %q stderr %q", step.arguments, exit, step.exit, result.Stdout, result.Stderr)
+		}
+	}
+}
+
 func TestHookProcessSkipsAnUngovernedWorkspace(t *testing.T) {
 	plain := hookRepository(t, false)
 	governed := hookRepository(t, true)
@@ -154,7 +207,7 @@ func TestHookProcessSkipsAnUngovernedWorkspace(t *testing.T) {
 
 func quoteJSON(t *testing.T, value string) string {
 	t.Helper()
-	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value) + `"`
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(value) + `"`
 }
 
 func TestWriteHookResponse(t *testing.T) {
