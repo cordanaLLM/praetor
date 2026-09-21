@@ -11,6 +11,7 @@ const (
 	actionReconcile = "reconcile"
 	actionMerge     = "merge"
 	actionAppend    = "append"
+	actionRemove    = "remove"
 	actionSkip      = "skip"
 )
 

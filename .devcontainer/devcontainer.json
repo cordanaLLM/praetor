@@ -18,10 +18,10 @@
         "state": "source-bundle",
         "builderImage": "docker.io/library/golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125",
         "baseImage": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae",
-        "sourceSHA256": "sha256:619f5af207db32f08414ebe3ac7fa9530b88e2d0610e6c29bdee16ab755eca67",
-        "archiveSHA256": "sha256:362e388aa5d8022a9fe49cf5e48639deca39c342bd7629b7409cf08fd23e9017",
+        "sourceSHA256": "sha256:d660e5d90bb49fbd78bbfe0fca518f33e875f7d619d2a1fab74a7dcdcba36c47",
+        "archiveSHA256": "sha256:51ecfcf971566d1924a70e1c200aa021a3a69d63d0da93608898761d89032437",
         "archiveParts": 3,
-        "dockerfileSHA256": "sha256:b4662d410ca83c958a67a0673b965282d85adab18f0b8ebe18afeb5d92950451"
+        "dockerfileSHA256": "sha256:64dcad415e3456ae550fd54f178e7a9917415d260fbf8a81c5d89d0c3a640130"
       }
     },
     "vscode": {

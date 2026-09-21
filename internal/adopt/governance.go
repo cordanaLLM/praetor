@@ -42,6 +42,10 @@ func buildMakefileWith(plan *VerificationPlan, prefix string) string {
 }
 
 func reconcileMakefile(ctx context.Context, s *adoptSession) error {
+	documentationEnabled, err := documentationEnabledForSession(s)
+	if err != nil {
+		return fmt.Errorf("resolve documentation facet for Makefile: %w", err)
+	}
 	full, err := repoFile(s.repoPath, makefileName)
 	if err != nil {
 		return err
@@ -50,20 +54,53 @@ func reconcileMakefile(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	generated := isReplaceableVerificationMakefile(string(data), s.verification)
-	if exists && mayDefineVerificationTarget(string(data)) && !generated {
-		s.report.recordReconciled(makefileName, "Existing verify-all preserved; execution has not been verified by adoption")
-		return nil
-	}
-	replacement := buildMakefile(s.verification)
-	if exists && !generated {
-		replacement = appendVerificationTargets(string(data), s.verification)
-	}
-	if !s.opts.DryRun {
-		err = contextopt.ReplaceSnapshot(ctx, full, []byte(replacement), contextopt.ReplaceOptions{Expected: data, Exists: exists, Mode: filePerm})
-	}
+	data, err = reconcileDisabledDocumentationMakefile(ctx, s, full, data, exists, documentationEnabled)
 	if err != nil {
 		return err
+	}
+	generated := isReplaceableVerificationMakefile(string(data), s.verification)
+	handled, err := reconcileExistingVerificationMakefile(ctx, s, string(data), exists, generated, documentationEnabled)
+	if err != nil || handled {
+		return err
+	}
+	replacement, err := verificationMakefileReplacement(s, string(data), exists, generated, documentationEnabled)
+	if err != nil {
+		return err
+	}
+	return publishVerificationMakefile(ctx, s, full, data, replacement, exists)
+}
+
+func reconcileDisabledDocumentationMakefile(
+	ctx context.Context, s *adoptSession, full string, data []byte, exists, documentationEnabled bool,
+) ([]byte, error) {
+	if documentationEnabled || !exists {
+		return data, nil
+	}
+	cleaned, removed, err := removeDocumentationMakefileBlock(string(data))
+	if err != nil || !removed {
+		return data, err
+	}
+	if !s.opts.DryRun {
+		if err := contextopt.ReplaceSnapshot(ctx, full, []byte(cleaned), contextopt.ReplaceOptions{
+			Expected: data, Exists: true, Mode: filePerm,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	s.report.recordReconciledAs(makefileName, actionRemove,
+		"Removed canonical documentation gate because docs:seo-portal is disabled")
+	return []byte(cleaned), nil
+}
+
+func publishVerificationMakefile(
+	ctx context.Context, s *adoptSession, full string, data []byte, replacement string, exists bool,
+) error {
+	if !s.opts.DryRun {
+		if err := contextopt.ReplaceSnapshot(ctx, full, []byte(replacement), contextopt.ReplaceOptions{
+			Expected: data, Exists: exists, Mode: filePerm,
+		}); err != nil {
+			return err
+		}
 	}
 	if exists {
 		s.report.recordReconciledAs(makefileName, actionAppend, "Reconciled declared verification commands; preserved custom recipes")
@@ -71,6 +108,36 @@ func reconcileMakefile(ctx context.Context, s *adoptSession) error {
 		s.report.recordCreated(makefileName, "Created Makefile from declared project verification commands")
 	}
 	return nil
+}
+
+func verificationMakefileReplacement(
+	s *adoptSession, data string, exists, generated, documentationEnabled bool,
+) (string, error) {
+	replacement := buildMakefile(s.verification)
+	if exists && !generated {
+		var err error
+		replacement, err = appendVerificationTargets(data, s.verification)
+		if err != nil {
+			return "", err
+		}
+	}
+	if documentationEnabled {
+		return mergeDocumentationMakefile(replacement, false)
+	}
+	return replacement, nil
+}
+
+func reconcileExistingVerificationMakefile(
+	ctx context.Context, s *adoptSession, data string, exists, generated, documentationEnabled bool,
+) (bool, error) {
+	if !exists || !mayDefineVerificationTarget(data) || generated {
+		return false, nil
+	}
+	if documentationEnabled {
+		return true, reconcileDocumentationMakefile(ctx, s)
+	}
+	s.report.recordReconciled(makefileName, "Existing verify-all preserved; execution has not been verified by adoption")
+	return true, nil
 }
 
 func reconcileContributing(_ context.Context, s *adoptSession) error {
@@ -140,6 +207,10 @@ func reconcileADR(_ context.Context, s *adoptSession) error {
 // reconcileReadme refreshes the only README region Praetor owns. A baseline records debt;
 // it never certifies that the repository's full verification cascade passed.
 func reconcileReadme(ctx context.Context, s *adoptSession) error {
+	documentationEnabled, err := documentationEnabledForSession(s)
+	if err != nil {
+		return fmt.Errorf("resolve documentation facet for README: %w", err)
+	}
 	full, err := repoFile(s.repoPath, readmeFile)
 	if err != nil {
 		return err
@@ -151,22 +222,35 @@ func reconcileReadme(ctx context.Context, s *adoptSession) error {
 	if !exists {
 		return nil
 	}
-	state := readmegovernance.State{
-		BaselineKnown:   s.report.BaselineStatus == "scanned" || s.report.BaselineStatus == "existing",
-		LegacyDebtCount: s.report.LegacyDebtCount,
-	}
-	content, changed, err := readmegovernance.Reconcile(string(data), state)
+	state, err := readmeGovernanceState(s, documentationEnabled)
 	if err != nil {
 		return err
 	}
-	if !changed {
-		return nil
+	content, changed, err := readmegovernance.Reconcile(string(data), state)
+	if err != nil || !changed {
+		return err
 	}
 	if err := s.write(full, []byte(content), filePerm); err != nil {
 		return err
 	}
 	s.report.recordReconciled(readmeFile, "Reconciled the marker-owned HISS adoption and verification contract")
 	return nil
+}
+
+func readmeGovernanceState(s *adoptSession, documentationEnabled bool) (readmegovernance.State, error) {
+	state := readmegovernance.State{
+		BaselineKnown:        s.report.BaselineStatus == "scanned" || s.report.BaselineStatus == "existing",
+		LegacyDebtCount:      s.report.LegacyDebtCount,
+		DocumentationEnabled: documentationEnabled,
+	}
+	if state.DocumentationEnabled {
+		if s.policy == nil || s.policy.Manifest == nil {
+			return state, fmt.Errorf("reconcile README documentation contract: effective manifest is unavailable")
+		}
+		state.RepositoryOwner = s.policy.Manifest.Repository.Owner
+		state.RepositoryName = s.policy.Manifest.Repository.Name
+	}
+	return state, nil
 }
 
 func buildContributingGuide(repoName string) string {

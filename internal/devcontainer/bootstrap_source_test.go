@@ -2,6 +2,7 @@ package devcontainer
 
 import (
 	"encoding/base64"
+	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -99,6 +100,39 @@ func TestBootstrapSourceSetRefusesInjectedTests(t *testing.T) {
 				t.Fatalf("decode accepted a test-only entry: %v", err)
 			}
 		})
+	}
+}
+
+// TestBootstrapMarkdownAssetsNeverAdmitTestSurface covers the asset allowance against the
+// test-only rule: every declared asset is admitted and none lies on Go's test surface, while
+// a test-surface variant of each asset path is refused by the name rule and the set rule,
+// because the test-surface refusal runs before the allowance.
+func TestBootstrapMarkdownAssetsNeverAdmitTestSurface(t *testing.T) {
+	files, err := captureBootstrapSource(t.Context(), bootstrapSourceFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assets := markdownBootstrapAssetPaths()
+	if len(assets) == 0 {
+		t.Fatal("no declared Markdown assets")
+	}
+	for _, asset := range assets {
+		if util.IsGoTestSurface(asset) {
+			t.Errorf("declared asset %s lies on Go's test surface", asset)
+		}
+		if err := validateBootstrapSourceName(asset); err != nil {
+			t.Errorf("declared asset %s refused: %v", asset, err)
+		}
+		directory, base := path.Split(asset)
+		for _, variant := range []string{directory + "testdata/" + base, "testdata/" + asset, strings.TrimSuffix(asset, path.Ext(asset)) + "_test.go"} {
+			if err := validateBootstrapSourceName(variant); err == nil || !strings.Contains(err.Error(), "test-only") {
+				t.Errorf("validateBootstrapSourceName(%q) = %v, want a test-only refusal", variant, err)
+			}
+			injected := append(append([]bootstrapSourceFile(nil), files...), bootstrapSourceFile{Name: variant, Data: []byte("{}\n")})
+			if err := validateBootstrapSourceSet(injected); err == nil || !strings.Contains(err.Error(), "test-only") {
+				t.Errorf("set rule with %q = %v, want a test-only refusal", variant, err)
+			}
+		}
 	}
 }
 

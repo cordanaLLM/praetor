@@ -3,6 +3,7 @@ package adopt
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,10 +33,24 @@ func TestAdoptionKeepsWorkingDirectoryPrivate(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := mustRead(t, path)
-			if !strings.HasPrefix(got, existing) {
-				t.Fatalf("existing ignore content changed: %q", got)
+			for _, line := range strings.Split(existing, "\n") {
+				if line == "" || slices.Contains(managedIgnoreRules, line) {
+					continue
+				}
+				if !strings.Contains(got, line) {
+					t.Fatalf("operator ignore entry %q changed: %q", line, got)
+				}
 			}
-			for _, private := range []string{".workingdir/STATE.md", ".workingdir/cluster-guide.md", ".workingdir/nested/private.yaml"} {
+			if !strings.HasSuffix(got, ManagedGitIgnoreBlock()) {
+				t.Fatalf("canonical private-artifact tail block is absent: %q", got)
+			}
+			for _, private := range []string{
+				".workingdir/STATE.md",
+				".workingdir/cluster-guide.md",
+				".workingdir/nested/private.yaml",
+				".workingdir2/evidence/report.md",
+				".workingdir2/cache/source/README.md",
+			} {
 				if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", private); err != nil {
 					t.Fatalf("private path %s remains publishable: %v", private, err)
 				}

@@ -9,7 +9,71 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
-const maxRulesetContexts = 64 * 64
+const (
+	maxRulesetContexts = 64 * 64
+	maxRulesetRules    = 64
+)
+
+type statusRuleset struct {
+	Rules []struct {
+		Type       string `json:"type"`
+		Parameters struct {
+			RequiredStatusChecks []struct {
+				Context string `json:"context"`
+			} `json:"required_status_checks"`
+		} `json:"parameters"`
+	} `json:"rules"`
+}
+
+// RulesetRequiresStatusContext inspects only semantic required-status-check
+// entries. Unrelated metadata or prose containing the same text is ignored.
+func RulesetRequiresStatusContext(data []byte, target string) (bool, error) {
+	if target == "" || strings.TrimSpace(target) != target {
+		return false, fmt.Errorf("required status context selector must be nonempty and trimmed")
+	}
+	ruleset, err := parseStatusRuleset(data)
+	if err != nil {
+		return false, err
+	}
+	for ruleIndex := 0; ruleIndex < len(ruleset.Rules) && ruleIndex < maxRulesetRules; ruleIndex++ {
+		rule := ruleset.Rules[ruleIndex]
+		if rule.Type == "required_status_checks" {
+			found, findErr := statusChecksContain(rule.Parameters.RequiredStatusChecks, target)
+			if findErr != nil || found {
+				return found, findErr
+			}
+		}
+	}
+	return false, nil
+}
+
+func parseStatusRuleset(data []byte) (*statusRuleset, error) {
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("ruleset must be a single valid JSON document")
+	}
+	var ruleset statusRuleset
+	if err := json.Unmarshal(data, &ruleset); err != nil {
+		return nil, fmt.Errorf("parse ruleset status contexts: %w", err)
+	}
+	if len(ruleset.Rules) > maxRulesetRules {
+		return nil, fmt.Errorf("ruleset exceeds %d rules", maxRulesetRules)
+	}
+	return &ruleset, nil
+}
+
+func statusChecksContain(checks []struct {
+	Context string `json:"context"`
+}, target string) (bool, error) {
+	if len(checks) > maxRulesetContexts {
+		return false, fmt.Errorf("required status checks exceed %d contexts", maxRulesetContexts)
+	}
+	for checkIndex := 0; checkIndex < len(checks) && checkIndex < maxRulesetContexts; checkIndex++ {
+		if checks[checkIndex].Context == target {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 // RenderRepositoryRuleset renders local branch protection from the selected policy
 // and actual required check contexts. An empty selection omits the status rule.

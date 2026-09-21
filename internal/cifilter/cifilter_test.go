@@ -83,6 +83,7 @@ func TestClassifyChanges_StateOnly(t *testing.T) {
 		".workingdir/STATE.md",
 		".workingdir/OPEN.md",
 		".workingdir/BUGS.md",
+		".workingdir2/evidence/result.md",
 	}
 
 	cs := cifilter.ClassifyChanges(files)
@@ -127,8 +128,15 @@ func TestMakeDecision_DocsOnly(t *testing.T) {
 	if !dec.RunDocsOnly {
 		t.Errorf("expected RunDocsOnly=true for docs-only, got false")
 	}
+	if !dec.RunDocs {
+		t.Errorf("expected RunDocs=true for docs-only, got false")
+	}
 	if !dec.SkipHeavyGates {
 		t.Errorf("expected SkipHeavyGates=true for docs-only, got false")
+	}
+	const wantReason = "pure documentation change; running audit and documentation governance; skipping heavy race and security gates"
+	if dec.Reason != wantReason {
+		t.Errorf("docs-only evidence reason = %q, want %q", dec.Reason, wantReason)
 	}
 }
 
@@ -176,7 +184,7 @@ func TestMakeDecision_StateOnly(t *testing.T) {
 	}
 
 	dec := cifilter.MakeDecision(cs, false)
-	if dec.RunTests || dec.RunLinters || dec.RunSecurity || dec.RunAudit {
+	if dec.RunTests || dec.RunLinters || dec.RunSecurity || dec.RunAudit || dec.RunDocs {
 		t.Errorf("expected all gates skipped when StateOnly=true")
 	}
 	if !dec.SkipHeavyGates {
@@ -201,6 +209,9 @@ func TestFilterDecision_Formatting(t *testing.T) {
 	}
 	if !strings.Contains(out, "run_linters=false") {
 		t.Errorf("expected run_linters=false in GitHub output, got: %s", out)
+	}
+	if !strings.Contains(out, "run_docs=false") {
+		t.Errorf("expected run_docs=false in GitHub output, got: %s", out)
 	}
 
 	jsonBytes, err := dec.ToJSON()
@@ -230,7 +241,7 @@ func TestAnalyzeChanges_FallbackOnInvalidDir(t *testing.T) {
 func TestConfigClassificationCoversEditorLockAndTypeScriptConfigs(t *testing.T) {
 	for _, path := range []string{"package-lock.json", "tsconfig.json", "tsconfig.editor.json", "TSConfig.custom.JSON"} {
 		decision := cifilter.MakeDecision(cifilter.ClassifyChanges([]string{path}), false)
-		if !decision.RunTests || !decision.RunLinters || !decision.RunSecurity {
+		if !decision.RunTests || !decision.RunLinters || !decision.RunSecurity || !decision.RunDocs {
 			t.Fatalf("%s did not select editor/config validation: %+v", path, decision)
 		}
 	}
@@ -238,8 +249,27 @@ func TestConfigClassificationCoversEditorLockAndTypeScriptConfigs(t *testing.T) 
 
 func TestDocsOnlyStillSkipsHeavyGates(t *testing.T) {
 	decision := cifilter.MakeDecision(cifilter.ClassifyChanges([]string{"docs/editor.md"}), false)
-	if decision.RunTests || !decision.RunAudit || !decision.SkipHeavyGates || !decision.RunDocsOnly {
+	if decision.RunTests || !decision.RunAudit || !decision.RunDocs || !decision.SkipHeavyGates || !decision.RunDocsOnly {
 		t.Fatalf("documentation change changed policy: %+v", decision)
+	}
+}
+
+func TestMarkdownAndGateRunnerExtensionsSelectDocumentation(t *testing.T) {
+	for _, path := range []string{
+		"GUIDE.MD", "docs/reference.markdown", "docs/reference.MARKDOWN",
+		"docs/page.mdx", "content/PAGE.MDX", "templates/README.md.tmpl",
+		"templates/reference.MARKDOWN.TMPL", "templates/Card.MDX.TMPL",
+	} {
+		decision := cifilter.MakeDecision(cifilter.ClassifyChanges([]string{path}), false)
+		if !decision.RunDocs || !decision.RunDocsOnly || !decision.SkipHeavyGates {
+			t.Fatalf("%s did not select the lightweight documentation gate: %+v", path, decision)
+		}
+	}
+	for _, path := range []string{"tools/markdownlint/verify.mjs", "tools/markdownlint/rule.cjs"} {
+		decision := cifilter.MakeDecision(cifilter.ClassifyChanges([]string{path}), false)
+		if !decision.RunDocs || !decision.RunTests || decision.SkipHeavyGates {
+			t.Fatalf("%s did not select full verification: %+v", path, decision)
+		}
 	}
 }
 

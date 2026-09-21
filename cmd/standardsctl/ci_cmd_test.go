@@ -48,7 +48,7 @@ func TestCIFilter_Positive_TargetedDecision(t *testing.T) {
 		t.Fatalf("ci filter --json: %v\n%s", err, out)
 	}
 	dec := decodeDecision(t, out)
-	if !dec.RunDocsOnly || dec.RunTests || !dec.SkipHeavyGates || dec.ChangeSet == nil || dec.ChangeSet.TotalFiles != 1 {
+	if !dec.RunDocs || !dec.RunDocsOnly || dec.RunTests || !dec.SkipHeavyGates || dec.ChangeSet == nil || dec.ChangeSet.TotalFiles != 1 {
 		t.Fatalf("expected a docs-only decision for one changed file, got %+v", dec)
 	}
 
@@ -58,7 +58,7 @@ func TestCIFilter_Positive_TargetedDecision(t *testing.T) {
 		t.Fatalf("ci filter --force: %v", err)
 	}
 	forced := decodeDecision(t, out)
-	if !forced.RunTests || forced.RunDocsOnly || !strings.Contains(forced.Reason, "force") {
+	if !forced.RunTests || !forced.RunDocs || forced.RunDocsOnly || !strings.Contains(forced.Reason, "force") {
 		t.Fatalf("expected the full matrix under --force, got %+v", forced)
 	}
 
@@ -67,7 +67,7 @@ func TestCIFilter_Positive_TargetedDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ci filter summary: %v", err)
 	}
-	mustContain(t, out, "Docs Only:         true", "Run Tests:         false")
+	mustContain(t, out, "Run Docs:          true", "Docs Only:         true", "Run Tests:         false")
 }
 
 func TestCIFilter_Env_WritesOnlyToTheProvidedOutputFile(t *testing.T) {
@@ -121,7 +121,7 @@ func TestCIFilter_Boundary(t *testing.T) {
 		t.Fatalf("ci filter outside git: %v", err)
 	}
 	dec := decodeDecision(t, out)
-	if !dec.RunTests || !dec.RunLinters || !dec.RunSecurity {
+	if !dec.RunTests || !dec.RunLinters || !dec.RunSecurity || !dec.RunDocs {
 		t.Fatalf("expected the full matrix outside a repository, got %+v", dec)
 	}
 

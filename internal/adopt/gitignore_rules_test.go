@@ -10,52 +10,6 @@ import (
 
 const worktreesIgnoreRule = "/.standards/worktrees/"
 
-// TestMissingIgnoreRules covers the membership scan directly: rules that are present
-// anywhere in the file including across CRLF line endings (positive), rules that only
-// look like the managed ones, such as the AGY rule's own backup-suffix lookalike
-// (negative), and the degenerate texts a repository can actually carry (boundary).
-func TestMissingIgnoreRules(t *testing.T) {
-	for name, tc := range map[string]struct {
-		text string
-		want []string
-	}{
-		"empty":                            {"", []string{"/.workingdir/", worktreesIgnoreRule, agyWorkspaceIgnore}},
-		"workingdir-and-worktrees-present": {"/.workingdir/\n" + worktreesIgnoreRule + "\n", []string{agyWorkspaceIgnore}},
-		"all-three-present":                {"/.workingdir/\n" + worktreesIgnoreRule + "\n" + agyWorkspaceIgnore + "\n", nil},
-		"followed-by-two-lines":            {"/.workingdir/\nbin/\ncoverage.txt\n", []string{worktreesIgnoreRule, agyWorkspaceIgnore}},
-		"worktrees-only":                   {worktreesIgnoreRule + "\nbin/\n", []string{"/.workingdir/", agyWorkspaceIgnore}},
-		"no-trailing-newline":              {"bin/\n/.workingdir/", []string{worktreesIgnoreRule, agyWorkspaceIgnore}},
-		"padded-lines":                     {"  /.workingdir/  \n\t" + worktreesIgnoreRule + "\t\n", []string{agyWorkspaceIgnore}},
-		"missing-leading-slash":            {".workingdir/\n.standards/worktrees/\n", []string{"/.workingdir/", worktreesIgnoreRule, agyWorkspaceIgnore}},
-		"missing-trailing-slash": {
-			"/.workingdir\n/.standards/worktrees\n",
-			[]string{"/.workingdir/", worktreesIgnoreRule, agyWorkspaceIgnore},
-		},
-		"commented-out": {
-			"# /.workingdir/\n#" + worktreesIgnoreRule + "\n",
-			[]string{"/.workingdir/", worktreesIgnoreRule, agyWorkspaceIgnore},
-		},
-		"CRLF-all-present": {"/.workingdir/\r\n" + worktreesIgnoreRule + "\r\n" + agyWorkspaceIgnore + "\r\n", nil},
-		"CRLF-agy-missing": {"bin/\r\n/.workingdir/\r\n" + worktreesIgnoreRule + "\r\n", []string{agyWorkspaceIgnore}},
-		"similar-rule-is-not-it": {
-			agyWorkspaceIgnore + ".bak\n/.workingdir/\n" + worktreesIgnoreRule + "\n",
-			[]string{agyWorkspaceIgnore},
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			got := missingIgnoreRules(tc.text)
-			if len(got) != len(tc.want) {
-				t.Fatalf("missing rules for %q: got %v, want %v", tc.text, got, tc.want)
-			}
-			for i, rule := range tc.want {
-				if got[i] != rule {
-					t.Fatalf("missing rule %d: got %q, want %q", i, got[i], rule)
-				}
-			}
-		})
-	}
-}
-
 // TestAdoptionReconcilesManagedIgnoreRulesOnce adopts a repository whose ignore file
 // already carries the private rule with further lines after it, which is exactly the
 // shape the old suffix test mistook for absent, and asserts both managed rules appear
@@ -65,6 +19,9 @@ func TestAdoptionReconcilesManagedIgnoreRulesOnce(t *testing.T) {
 		"rule-then-later-lines": "/.workingdir/\nbin/\ncoverage.txt\n",
 		"no-trailing-newline":   "bin/\n/.workingdir/",
 		"worktrees-already-set": worktreesIgnoreRule + "\n",
+		"later-negations":       "/.workingdir/\n/.workingdir2/\n!/.workingdir/\n!/.workingdir/**\n!/.workingdir2/\n!/.workingdir2/**\n",
+		"leading-spaces":        " /.workingdir/\n /.workingdir2/\n",
+		"crlf-with-negation":    "/.workingdir/\r\n!/.workingdir/\r\n!/.workingdir/**\r\n",
 		"empty-file":            "",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -88,6 +45,39 @@ func TestAdoptionReconcilesManagedIgnoreRulesOnce(t *testing.T) {
 				t.Fatalf("second adoption rewrote the ignore file:\n%s\n---\n%s", first, second)
 			}
 			assertGateWorktreeIgnored(t, root)
+			assertPrivateRootsIgnored(t, root)
+			if name == "crlf-with-negation" && strings.Count(first, "\n") != strings.Count(first, "\r\n") {
+				t.Fatalf("CRLF ignore file gained mixed endings: %q", first)
+			}
+		})
+	}
+}
+
+func TestMergeGitIgnoreNegativeRejectsAmbiguousManagedMarkers(t *testing.T) {
+	for _, input := range []string{
+		gitIgnoreManagedBegin + "\nmissing end\n",
+		gitIgnoreManagedEnd + "\n",
+		" " + gitIgnoreManagedBegin + "\n" + gitIgnoreManagedEnd + "\n",
+		gitIgnoreManagedBegin + "\n " + gitIgnoreManagedEnd + "\n",
+		gitIgnoreManagedBegin + "\n" + gitIgnoreManagedBegin + "\n" + gitIgnoreManagedEnd + "\n",
+		gitIgnoreManagedBegin + "\n" + gitIgnoreManagedEnd + "\n" +
+			gitIgnoreManagedBegin + "\n" + gitIgnoreManagedEnd + "\n",
+	} {
+		if _, err := mergeGitIgnore(input); err == nil {
+			t.Fatalf("ambiguous managed ignore markers accepted: %q", input)
+		}
+	}
+}
+
+func TestMergeGitIgnoreRejectsInconsistentLineEndings(t *testing.T) {
+	for name, input := range map[string]string{
+		"mixed":   "operator/\r\ncache/\n",
+		"lone CR": "operator/\rcache/",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := mergeGitIgnore(input); err == nil {
+				t.Fatal("inconsistent .gitignore line endings accepted")
+			}
 		})
 	}
 }
@@ -102,11 +92,20 @@ func assertGateWorktreeIgnored(t *testing.T, root string) {
 	}
 }
 
-// countIgnoreRule counts whole lines equal to rule, ignoring surrounding whitespace.
+func assertPrivateRootsIgnored(t *testing.T, root string) {
+	t.Helper()
+	for _, private := range []string{".workingdir/OPEN.md", ".workingdir2/evidence/private.md"} {
+		if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", private); err != nil {
+			t.Fatalf("private path %s is not effectively ignored: %v", private, err)
+		}
+	}
+}
+
+// countIgnoreRule counts canonical Git patterns; leading spaces are pattern bytes.
 func countIgnoreRule(text, rule string) int {
 	count := 0
 	for _, line := range strings.Split(text, "\n") {
-		if strings.TrimSpace(line) == rule {
+		if strings.TrimSuffix(line, "\r") == rule {
 			count++
 		}
 	}

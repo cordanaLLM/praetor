@@ -85,6 +85,22 @@ class DocsDrift(unittest.TestCase):
                 surface, "docs/guides/adoption-verification.md",
             ]), [])
 
+    def test_markdown_gate_surfaces_share_one_documented_contract(self):
+        """The locked runner, emitter, selector, and workflow map to their operator guide."""
+        surfaces = [
+            "tools/markdownlint/verify.mjs",
+            "internal/adopt/documentation.go",
+            "internal/cifilter/filter.go",
+            ".github/workflows/praetor-docs.yml",
+        ]
+        for surface in surfaces:
+            found = docs_drift.violations([surface])
+            self.assertEqual(len(found), 1, surface)
+            self.assertIn("Markdown documentation governance", found[0])
+            self.assertEqual(docs_drift.violations([
+                surface, "docs/guides/documentation-governance.md",
+            ]), [])
+
     def test_boundary_several_surfaces_report_separately(self):
         """Two unrelated surfaces in one change produce two messages, not one."""
         self.assertEqual(len(docs_drift.violations([

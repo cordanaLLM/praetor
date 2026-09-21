@@ -26,7 +26,7 @@ checkout>` (HISS-19 — the atomic install exists in one place, not two). See
 
 ## `workstation install`
 
-```
+```text
 praetorctl workstation install --source PATH [--bin-dir PATH] [--manifest PATH]
                                 [--fleet-config PATH] [--workstation-config PATH]
 ```
@@ -67,7 +67,7 @@ rather than guessing that was accidental.
 
 ## `workstation status`
 
-```
+```text
 praetorctl workstation status [--source PATH] [--bin-dir PATH] [--manifest PATH] [--home PATH]
 ```
 

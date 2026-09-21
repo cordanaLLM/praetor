@@ -59,12 +59,14 @@ jobs:
           go run ./cmd/standardsctl ci filter --base="$BASE_REF" --head=HEAD --env
 
       - name: Setup Node Toolchain
-        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || steps.filter.outputs.run_docs == 'true' || github.event_name == 'push'
         uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: editors/vscode/package-lock.json
+          cache-dependency-path: |
+            editors/vscode/package-lock.json
+            tools/markdownlint/package-lock.json
 
       - name: Install Security Toolchains (govulncheck & gosec)
         if: steps.filter.outputs.run_security != 'false' || github.event_name == 'push'
@@ -167,6 +169,10 @@ jobs:
           echo "Pure documentation change detected. Running MkDocs verification."
           python3 -m pip install -r docs/presets/mkdocs/requirements.txt
           mkdocs build --strict
+
+      - name: Markdown Documentation Governance
+        if: steps.filter.outputs.run_docs == 'true' && steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name != 'push'
+        run: make docs-lint
 
       # Heavy changes use the complete local authority once, including race tests,
       # context, audit, all configured linters, vulnerability and AST security scans.

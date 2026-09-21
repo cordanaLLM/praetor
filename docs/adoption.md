@@ -36,7 +36,8 @@ Each value is validated against its ceiling (200000 entries, 512 files, 64 level
 unset flag keeps the default. The flags apply to single-repository adoption; batch
 `--all-missing` keeps the defaults.
 
-### What Adoption Scaffolds Automatically:
+### What Adoption Scaffolds Automatically
+
 1. **`.standards.yaml`**: Declarative repository manifest containing profile, facets, tool versions, and policy locks.
 2. **`.standards.lock`**: Cryptographic SemVer lockfile binding your repo to exact governance standard releases.
 3. **`.standards-baseline.json`**: Technical debt ratcheting baseline. Existing infractions (e.g. legacy loop bounds, unwrapped errors) are recorded so legacy code compiles while new code is strictly gated.

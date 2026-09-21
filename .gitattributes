@@ -46,6 +46,11 @@ CLAUDE.md text eol=lf
 # so this is a no-op for them, but the whole directory is one bootstrap unit (#135).
 .devcontainer/* text eol=lf
 
+# tools/markdownlint assets are embedded into the adopter binary. Keep Praetor's source
+# checkout bytes stable so Go embedding and bootstrap fingerprints cannot vary by platform;
+# adopted copies may still use one consistent CRLF style, which audit normalizes.
+tools/markdownlint/* text eol=lf
+
 # Every staged .sh is shellchecked and every staged .yml/.yaml is yamllint --strict-ed
 # by .config/lefthook/scripts/checks.py, and both reject carriage returns outright:
 # shellcheck raises SC1017 ("Literal carriage return") on the shebang line and yamllint's

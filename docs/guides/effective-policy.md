@@ -50,7 +50,7 @@ repository's archetype declared `max_func_loc: 75`, `plan` printed `100` and `au
 Resolving the policy needs a lockfile. In a repository that has not been adopted there are no pinned
 profiles, so defaults plus the repository's overrides is the whole policy, and `plan` says so:
 
-```
+```text
 [INFO] no .standards.lock: built-in defaults and repository overrides only
 ```
 

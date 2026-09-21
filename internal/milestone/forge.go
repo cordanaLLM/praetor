@@ -78,25 +78,11 @@ func resolveAPIBase(endpoint string) string {
 	return apiBase
 }
 
-// validateRepoIdentity rejects an owner or repository name that cannot be placed into an
-// API path unescaped.
-func validateRepoIdentity(owner, repo string) error {
-	for _, part := range []string{owner, repo} {
-		if strings.TrimSpace(part) == "" {
-			return fmt.Errorf("repository identity requires a non-empty owner and name, got %q/%q", owner, repo)
-		}
-		if strings.ContainsAny(part, "/?#& \t\n") {
-			return fmt.Errorf("invalid repository identity segment %q", part)
-		}
-	}
-	return nil
-}
-
 // fetchRemoteMilestones lists every milestone of the repository, following pagination up
 // to maxMilestonePages so that a repository with more than one page of milestones is
 // never silently truncated.
 func fetchRemoteMilestones(ctx context.Context, owner, repo, tok, endpoint string) ([]RemoteMilestone, error) {
-	if err := validateRepoIdentity(owner, repo); err != nil {
+	if err := util.ValidateGitHubRepositoryIdentity(owner, repo); err != nil {
 		return nil, err
 	}
 
@@ -244,7 +230,7 @@ func PublishMilestone(ctx context.Context, rootPath, owner, repo, token, endpoin
 	if tok == "" {
 		return fmt.Errorf("publishing milestone requires GITHUB_TOKEN or authenticated gh CLI session")
 	}
-	if err := validateRepoIdentity(owner, repo); err != nil {
+	if err := util.ValidateGitHubRepositoryIdentity(owner, repo); err != nil {
 		return err
 	}
 

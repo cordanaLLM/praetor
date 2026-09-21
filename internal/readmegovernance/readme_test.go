@@ -25,9 +25,46 @@ func TestReconcilePositiveRendersTruthfulRecordedDebt(t *testing.T) {
 	}
 }
 
+func TestReconcilePositiveRendersDocumentationGateContract(t *testing.T) {
+	state := State{
+		BaselineKnown:        true,
+		DocumentationEnabled: true,
+		RepositoryOwner:      "acme",
+		RepositoryName:       "widgets",
+	}
+	out, changed, err := Reconcile("# Demo\n\nHuman text.\n", state)
+	if err != nil || !changed {
+		t.Fatalf("reconcile documentation contract: changed=%v err=%v", changed, err)
+	}
+	for _, want := range []string{
+		"[![Documentation Governance](https://github.com/acme/widgets/actions/workflows/praetor-docs.yml/badge.svg)](https://github.com/acme/widgets/actions/workflows/praetor-docs.yml)",
+		"| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered README missing %q:\n%s", want, out)
+		}
+	}
+	again, changed, err := Reconcile(out, state)
+	if err != nil || changed || again != out {
+		t.Fatalf("documentation reconciliation is not idempotent: changed=%v err=%v\n%s", changed, err, again)
+	}
+}
+
 func TestReconcileNegativeRejectsInvalidAndMalformedInputs(t *testing.T) {
 	if _, _, err := Reconcile("# Demo\n", State{LegacyDebtCount: -1}); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("negative count: %v", err)
+	}
+	for _, identity := range [][2]string{
+		{"", "widgets"}, {"acme", ""}, {"acme/evil", "widgets"}, {"acme", `widgets\evil`},
+		{"acme", "widgets\rmalformed"}, {"acme", "widgets\nmalformed"}, {"acme", "widgets]evil"},
+		{"acme", "widgets(evil"},
+	} {
+		state := State{
+			DocumentationEnabled: true, RepositoryOwner: identity[0], RepositoryName: identity[1],
+		}
+		if _, _, err := Reconcile("# Demo\n", state); !errors.Is(err, ErrInvalidState) {
+			t.Fatalf("invalid documentation identity %q/%q: %v", identity[0], identity[1], err)
+		}
 	}
 	malformed := "# Demo\n\n" + Start + "\nunterminated\n"
 	if _, _, err := Reconcile(malformed, State{}); err == nil || !strings.Contains(err.Error(), "README governance markers") {
@@ -39,7 +76,13 @@ func TestReconcileBoundaryPreservesCustomBadgeAndMigratesLegacyOutput(t *testing
 	custom := "[![HISS policy](https://img.shields.io/badge/Custom-HISS-blue)](policy.md)"
 	legacy := "[![HISS-16 Compliant](https://img.shields.io/badge/Standards-HISS--16%20Compliant-brightgreen)](AGENTS.md)"
 	input := custom + "\n" + legacy + legacyGovernanceHISS16 + "\nHuman tail.\n"
-	out, _, err := Reconcile(input, State{BaselineKnown: true})
+	state := State{
+		BaselineKnown:        true,
+		DocumentationEnabled: true,
+		RepositoryOwner:      "acme",
+		RepositoryName:       "widgets",
+	}
+	out, _, err := Reconcile(input, state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +92,10 @@ func TestReconcileBoundaryPreservesCustomBadgeAndMigratesLegacyOutput(t *testing
 	if strings.Contains(out, "Standards-HISS%20Adopted") {
 		t.Fatalf("custom HISS badge was duplicated by a managed badge:\n%s", out)
 	}
-	if err := Verify(out, State{BaselineKnown: true}); err != nil {
+	if strings.Count(out, "[![Documentation Governance]") != 1 {
+		t.Fatalf("documentation badge was absent or duplicated with a custom HISS badge:\n%s", out)
+	}
+	if err := Verify(out, state); err != nil {
 		t.Fatalf("verified reconciled output: %v", err)
 	}
 }
@@ -91,8 +137,40 @@ func TestVerifyBoundaryDistinguishesMissingAndStale(t *testing.T) {
 	}
 }
 
+func TestVerifyNegativeRejectsMissingOrStaleDocumentationContract(t *testing.T) {
+	state := State{
+		BaselineKnown:        true,
+		DocumentationEnabled: true,
+		RepositoryOwner:      "acme",
+		RepositoryName:       "widgets",
+	}
+	out, _, err := Reconcile("# Demo\n", state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, stale := range map[string]string{
+		"missing badge": strings.Replace(out,
+			"[![Documentation Governance](https://github.com/acme/widgets/actions/workflows/praetor-docs.yml/badge.svg)](https://github.com/acme/widgets/actions/workflows/praetor-docs.yml)\n", "", 1),
+		"stale badge": strings.Replace(out, "github.com/acme/widgets/", "github.com/acme/old-widgets/", 1),
+		"missing row": strings.Replace(out,
+			"| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |\n", "", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := Verify(stale, state); !errors.Is(err, ErrStale) {
+				t.Fatalf("verify stale documentation contract: error=%v, want %v", err, ErrStale)
+			}
+		})
+	}
+}
+
 func TestReconcilePositiveAcceptsSynchronizedCRLF(t *testing.T) {
-	state := State{BaselineKnown: true, LegacyDebtCount: 2}
+	state := State{
+		BaselineKnown:        true,
+		LegacyDebtCount:      2,
+		DocumentationEnabled: true,
+		RepositoryOwner:      "acme",
+		RepositoryName:       "widgets",
+	}
 	lf, _, err := Reconcile("# Demo\n\nHuman text.\n", state)
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +186,12 @@ func TestReconcilePositiveAcceptsSynchronizedCRLF(t *testing.T) {
 }
 
 func TestReconcileNegativeRepairsStaleCRLFWithoutMixingEndings(t *testing.T) {
-	state := State{BaselineKnown: true}
+	state := State{
+		BaselineKnown:        true,
+		DocumentationEnabled: true,
+		RepositoryOwner:      "acme",
+		RepositoryName:       "widgets",
+	}
 	lf, _, err := Reconcile("# Demo\n\nHuman text.\n", state)
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +213,8 @@ func TestReconcileNegativeRepairsStaleCRLFWithoutMixingEndings(t *testing.T) {
 
 func TestReconcileBoundaryInsertsBlockIntoCRLFWithoutTerminalNewline(t *testing.T) {
 	input := "# Demo\r\n\r\nHuman text."
-	out, changed, err := Reconcile(input, State{})
+	state := State{DocumentationEnabled: true, RepositoryOwner: "acme", RepositoryName: "widgets"}
+	out, changed, err := Reconcile(input, state)
 	if err != nil || !changed {
 		t.Fatalf("insert into CRLF README: changed=%v err=%v", changed, err)
 	}
@@ -138,8 +222,22 @@ func TestReconcileBoundaryInsertsBlockIntoCRLFWithoutTerminalNewline(t *testing.
 	if !strings.Contains(out, "Human text.\r\n") {
 		t.Fatalf("insert did not preserve human content: %q", out)
 	}
-	if err := Verify(out, State{}); err != nil {
+	if err := Verify(out, state); err != nil {
 		t.Fatalf("verify reconciled CRLF README: %v", err)
+	}
+}
+
+func TestReconcileRejectsInconsistentLineEndings(t *testing.T) {
+	state := State{DocumentationEnabled: true, RepositoryOwner: "acme", RepositoryName: "widgets"}
+	for name, input := range map[string]string{
+		"mixed":   "# Demo\r\n\nHuman text.\n",
+		"lone CR": "# Demo\rHuman text.",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := Reconcile(input, state); err == nil {
+				t.Fatal("inconsistent README line endings accepted")
+			}
+		})
 	}
 }
 

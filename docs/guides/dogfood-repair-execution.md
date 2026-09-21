@@ -15,7 +15,7 @@ instructions or follow transcript paths in the report.
 The private execution JSON has these required fields:
 
 | Field | Contract |
-|---|---|
+| --- | --- |
 | `version` | `1` |
 | `source_root`, `source_sha` | Clean absolute source checkout and full 40-character commit SHA |
 | `state_dir` | Private absolute state directory; parent exists |

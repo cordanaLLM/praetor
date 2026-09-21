@@ -97,6 +97,7 @@ mistake:
   repository nobody watches is how it goes stale.
 
 ## 1. Profile Definition Anatomy
+
 Profiles represent the primary technology stack or architecture. Create `.config/archetypes/{profile-id}.yaml`:
 
 ```yaml
@@ -128,6 +129,7 @@ devcontainer_features:
 ---
 
 ## 2. Facet Definition Anatomy
+
 Facets are cross-cutting policy modifiers. Create `.config/archetypes/facets/{facet-id}.yaml`:
 
 ```yaml
@@ -150,9 +152,10 @@ branch_protection:
 ---
 
 ## 3. The Strictness Lattice ("Highest Standard Wins")
+
 When two profiles or facets define conflicting parameters, the monotonic supremum is calculated:
 $$\mathcal{P}_{\text{resolved}} = \mathcal{P}_1 \sqcup \mathcal{P}_2 \sqcup \dots \sqcup \mathcal{F}_n$$
+
 - Lower complexity limits win ($\min$).
 - Greater security reviews and higher SLSA levels win ($\max$).
 - Linters and container features form a deduplicated set union ($\cup$).
-

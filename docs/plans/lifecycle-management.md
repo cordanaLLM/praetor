@@ -5,6 +5,7 @@ and the later work required to make agent sessions, workspaces, state and
 evidence reclaimable as one system.
 
 ## Scope and current boundary
+
 Before this safety change, `internal/gc` was a filesystem age sweep. Worktrees are
 created by `internal/worktree`, while canary and gate stages remove them through
 deferred cleanup. Scheduled dogfood and repair execution already persist locks,
@@ -24,6 +25,7 @@ This slice does not claim session ownership, lease fencing, artifact retention,
 or safe automatic deletion from age or an expired heartbeat.
 
 ## Shared lifecycle record
+
 Later stages introduce one private, versioned record and catalog. A record has:
 
 - stable `RecordID`, repository identity and owner kind (`agent`, `ide`, `bot`,
@@ -56,6 +58,7 @@ No path name, mtime, process ID, owner string, or heartbeat by itself establishe
 ownership or collectability.
 
 ## Policy precedence
+
 Lifecycle settings extend the existing effective-policy object and retain the
 same source provenance and digest. Proposed lifecycle precedence is:
 
@@ -73,7 +76,9 @@ precedence and must remain explicit. A missing or changed policy snapshot
 blocks execution. A policy setting never authorizes deletion by itself.
 
 ## Stages
+
 ### Stage 0: explicit release and protected collection
+
 Extend `gc.Options` with released paths and a confined scan root. Build a
 read-only candidate plan before any mutation. Require complete bounded scans;
 truncation, missing metadata and read errors produce `unknown`/protected
@@ -100,6 +105,7 @@ truncated/incomplete scan, dry-run truthfulness, cache opt-in, preserved branch,
 and cleanup/readback failure. No real workstation directory is a fixture.
 
 ### Stage 1: producer registration and leases
+
 Make `worktree.Manager` registration-aware and return a lifecycle handle bound
 to a catalog record. Register before execution, heartbeat while active, fence
 stale writers, and persist cleanup failures. Adapt canary and gate producers;
@@ -113,6 +119,7 @@ parity. An expired heartbeat remains protected until reconciliation proves the
 session is fenced and terminal.
 
 ### Stage 2: state and evidence reconciliation
+
 Add one read-only reconciler joining catalog records, Git porcelain, locks,
 `started.json`/`result.json`, schedule state, artifact manifests and filesystem
 observations. Reconcile running to interrupted only through the owning state
@@ -123,6 +130,7 @@ Acceptance covers interruption, duplicate IDs, changed digests, missing terminal
 state, orphaned directories, stale catalog entries and bounded partial scans.
 
 ### Stage 3: manifests, quarantine and explicit purge
+
 Every producer writes a private artifact manifest with parent record, content
 digests, class, retention deadline, references and terminal evidence. Purge is a
 separate admitted operation: reconcile, quarantine the exact unchanged target,
@@ -131,12 +139,14 @@ plan checks pass. Failed or ambiguous operations retain the quarantine and
 evidence.
 
 ### Stage 4: scheduled operation
+
 Add a bounded GC tick using the existing schedule lock/state pattern. It records
 its own attempt and plan digest, respects byte/item/cadence limits, and reuses
 the same reconciler. It does not become a parallel scheduler or infer deletion
 from age, heartbeat expiry, or a missing process alone.
 
 ## Integration order and non-goals
+
 Implement Stage 0 first, then registration and reconciliation, then manifests
 and scheduled operation. Effective-policy integration follows a concrete
 consumer and acceptance tests; inert knobs are not exposed. Generic cache and

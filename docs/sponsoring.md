@@ -8,7 +8,7 @@ Praetor and the CordanaLLM Ecosystem use **Polar.sh** as Merchant of Record (MoR
 
 With Polar.sh, sponsors, enterprises, and community members can pledge funds directly to concrete GitHub issues or feature requests.
 
-```
+```text
 ┌─────────────────────────┐      ┌─────────────────────────┐      ┌─────────────────────────┐
 │  1. Issue Backing       │      │  2. Development & PR    │      │  3. Automatic Reward    │
 │  Sponsors pledge        ├─────►│  Developer resolves     ├─────►│  Polar automatically    │

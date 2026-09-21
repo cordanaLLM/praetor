@@ -112,6 +112,8 @@ link. A deterministic prose compressor saves 3.2% on the same file, 1.2% across 
 planning notes, and turned "as strictly as" into "as as". Prose is therefore made terse by
 hand at the source and kept terse by a lint, never rewritten at run time.
 
+<!-- markdownlint-disable MD029 -- continued decision numbering is semantic -->
+
 9. **One module measures agent-facing text.** `internal/caveman` is a standard-library-only
    leaf package, so every package that emits agent text can import it. It holds four
    functions and reads no configuration:
@@ -216,6 +218,8 @@ hand at the source and kept terse by a lint, never rewritten at run time.
     `internal/caveman` as a standard-library-only leaf and avoiding a second register
     loader. Dynamic MCP and hook text remains unverified; native client capture remains
     #415, and Paperclip synthesis remains #321.
+
+<!-- markdownlint-enable MD029 -->
 
 Rewriting the remaining MCP descriptions, hook messages, ledger templates and register
 block wording are separate changes that build on this module. Notebook and Paperclip

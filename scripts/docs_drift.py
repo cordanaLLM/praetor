@@ -55,6 +55,9 @@ SURFACE_MAP: list[tuple[str, str, str]] = [
      r"^docs/standards/hiss-21-platform-neutrality\.md$", "platform neutrality gate"),
     (r"^(internal/workstation/|cmd/standardsctl/workstation\.go$|scripts/dev_install\.py$)",
      r"^docs/guides/workstation-update\.md$", "workstation install/status"),
+    (r"^(tools/markdownlint/|internal/adopt/documentation\.go$|internal/cifilter/filter\.go$|"
+     r"\.github/workflows/praetor-docs\.yml$)",
+     r"^docs/guides/documentation-governance\.md$", "Markdown documentation governance"),
     # The check guards its own documentation. Changing which surfaces are mapped changes what
     # contributors are required to document, which is itself user-discoverable.
     (r"^scripts/docs_drift\.py$", r"^docs/guides/documentation-drift\.md$", "docs-drift surface map"),

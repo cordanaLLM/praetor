@@ -2,9 +2,9 @@
 
   <img src="docs/assets/praetor-readme-banner.svg" alt="Praetor Header Banner" width="100%" />
 
-  # ⚖️ Praetor
+# ⚖️ Praetor
 
-  **Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine**
+  <strong>Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine</strong>
 
   *Part of the [CordanaLLM](https://github.com/CordanaLLM) Deterministic Infrastructure Ecosystem*
 
@@ -23,6 +23,8 @@
 </div>
 
 <!-- praetor:readme-governance:start -->
+[![Documentation Governance](https://github.com/cordanaLLM/praetor/actions/workflows/praetor-docs.yml/badge.svg)](https://github.com/cordanaLLM/praetor/actions/workflows/praetor-docs.yml)
+
 Praetor manages this repository's declared governance policy. This managed block records adoption state; it is not a verification certificate.
 
 | Gate | Command | Contract |
@@ -30,6 +32,7 @@ Praetor manages this repository's declared governance policy. This managed block
 | **Verification** | `make verify-all` | Runs the repository's configured verification cascade |
 | **HISS Audit** | `praetorctl audit` | Enforces policy, generated-surface integrity, and the debt ratchet |
 | **Context Sync** | `praetorctl compile-context --verify` | Verifies every generated agent context against `AGENTS.md` |
+| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |
 | **Debt Baseline** | `.standards-baseline.json` | 0 recorded infractions; audit forbids growth |
 <!-- praetor:readme-governance:end -->
 
@@ -153,13 +156,24 @@ Praetor enforces the **High-Integrity Systems Standard (HISS)**—adapting NASA-
 ## ⚡ Quickstart & Developer Workflow
 
 ### 1. Universal Verification Gate
+
 Run the universal verification pipeline across the entire Go codebase and governance rules:
+
 ```bash
 make verify-all
+
+# Run the locked public Markdown and private scratch-link gate alone
+make docs-lint
 ```
 
+The [documentation governance guide](docs/guides/documentation-governance.md)
+defines the checked inventory, locked rules, CI/adoption contract, and remediation
+for private `.workingdir/` or `.workingdir2/` destinations.
+
 ### 2. Context Transpilation
+
 Update agent instructions in `AGENTS.md` and transpile to all vendor targets (`.claude`, `.cursor`, `.windsurf`, `.gemini`, `.codex`, `.github`):
+
 ```bash
 # Transpile context files
 go run ./cmd/standardsctl compile-context
@@ -169,13 +183,17 @@ go run ./cmd/standardsctl compile-context --verify
 ```
 
 ### 3. Repository Governance Audit
+
 Inspect repository compliance against declared profiles and the HISS baseline:
+
 ```bash
 go run ./cmd/standardsctl audit
 ```
 
 ### 4. Technical Debt Ratcheting
+
 Freeze current debt baselines to enforce monotonic debt reduction on touched files:
+
 ```bash
 go run ./cmd/standardsctl baseline
 ```

@@ -1,0 +1,16 @@
+{
+  "name": "@cordanallm/praetor-markdown-governance",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Locked Markdown governance gate emitted by Praetor",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "markdownlint-cli2": "0.23.2",
+    "micromark": "4.0.2",
+    "micromark-extension-mdxjs": "3.0.0",
+    "parse5": "8.0.1"
+  }
+}

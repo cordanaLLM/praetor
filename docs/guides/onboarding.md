@@ -80,9 +80,10 @@ Fixtures pinning the exact scores live in
 [`internal/flavor/audit_score_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavor/audit_score_test.go) and
 [`internal/flavor/settings_audit_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavor/settings_audit_test.go).
 
-
 ## 1. Quickstart Onboarding Command
+
 Execute the single-shot onboarding pipeline in your repository root:
+
 ```bash
 # 1. Initialize configuration with declared profiles
 praetorctl init --profile framework --facets security:high,api:public-contract
@@ -136,7 +137,9 @@ activation. Those stages need their own selected checks and execution evidence.
 ---
 
 ## 3. Brownfield Technical Debt Ratcheting
+
 Legacy infractions recorded in `.standards-baseline.json` will not fail CI status checks:
+
 - **Monotonic Ratchet**: Technical debt must decrease over time ($V_{\text{total}}(t_1) \le V_{\text{total}}(t_0)$).
 - **Touched-File Clean Rule**: Any legacy file modified during a pull request revokes previous exemptions and must be refactored clean.
 - **Waivers**: For unavoidable architectural exceptions, mint an Ed25519-signed waiver in `.standards-waivers.yaml`.

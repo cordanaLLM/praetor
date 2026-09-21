@@ -269,6 +269,7 @@ func adoptSteps() []namedStep {
 		{"agent-harness", reconcileAgentHarness},
 		{"dev-container", reconcileDevContainer},
 		{"editors", reconcileEditors},
+		{"documentation-gate", reconcileDocumentationGate},
 		{"makefile", reconcileMakefile},
 		{"git-ignore", reconcileGitIgnore},
 		{"formatter-ignore", reconcileFormatterIgnore},

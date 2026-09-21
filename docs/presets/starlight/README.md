@@ -1,6 +1,7 @@
 # Astro Starlight Preset (`docs/presets/starlight`)
 
 Production-ready documentation preset powered by [Astro Starlight](https://starlight.astro.build/) pre-configured with:
+
 - **Schema.org JSON-LD Structured Data**: `TechArticle` and `SoftwareSourceCode` embedded in `<head>`.
 - **Core Web Vitals Optimization**:
   - `font-display: swap` and preconnect hints for minimal FOIT and fast LCP.
