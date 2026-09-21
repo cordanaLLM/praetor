@@ -17,6 +17,20 @@ class HookError(Exception):
 
 KILL_TREE_TIMEOUT = 10
 SNAPSHOT_GIT_CONFIG = ("-c", "core.autocrlf=false")
+# The operating system already bounds a process environment, but the hook applies a lower
+# deterministic ceiling before scanning it. Git propagates command-line `-c` values to hooks
+# through GIT_CONFIG_COUNT plus indexed key/value variables or through GIT_CONFIG_PARAMETERS.
+# Those settings select the outer push transport; they are not policy for nested fixture
+# repositories and must not cross the isolated gate boundary.
+MAX_PROCESS_ENV_ENTRIES = 4096
+TRANSIENT_GIT_CONFIG_KEYS = ("GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
+TRANSIENT_GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+MANAGED_PROCESS_ENV = {
+    "CI": "true",
+    "GOFLAGS": "-mod=readonly",
+    "GOWORK": "off",
+    "PYTHONDONTWRITEBYTECODE": "1",
+}
 
 
 def _kill_bounded(process):
@@ -183,7 +197,7 @@ def run_bounded(args, cwd=None, *, timeout=10, max_output=1024 * 1024,
 def run(args, cwd=None, *, data=None, timeout=180, capture=True, env=None, allowed=(0,)):
     """Execute argv without a shell; preserve failures and bound every process."""
     settings = dict(os.environ if env is None else env)
-    settings["PYTHONDONTWRITEBYTECODE"] = "1"
+    settings["PYTHONDONTWRITEBYTECODE"] = MANAGED_PROCESS_ENV["PYTHONDONTWRITEBYTECODE"]
     try:
         with subprocess.Popen(args, cwd=cwd, env=settings, start_new_session=True,
                               stdin=subprocess.PIPE if data is not None else None,
@@ -204,8 +218,8 @@ def run(args, cwd=None, *, data=None, timeout=180, capture=True, env=None, allow
     return stdout or b""
 
 
-def git(*args, cwd=None):
-    return run(["git", *args], cwd=cwd)
+def git(*args, cwd=None, env=None):
+    return run(["git", *args], cwd=cwd, env=env)
 
 
 def resolved_relative_to(path, root):
@@ -234,10 +248,20 @@ def changed(base, head="HEAD"):
 
 def clean_env():
     env = dict(os.environ)
+    if len(env) > MAX_PROCESS_ENV_ENTRIES:
+        raise HookError(f"process environment exceeds {MAX_PROCESS_ENV_ENTRIES} entries")
     for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
                 "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
         env.pop(key, None)
-    env.update(CI="true", GOWORK="off", GOFLAGS="-mod=readonly")
+    # Scan a statically bounded snapshot. Removing the count and legacy aggregate disables the
+    # Git config injection; removing every indexed value also keeps transport URLs and other
+    # caller data out of descendant process environments.
+    for key in tuple(env)[:MAX_PROCESS_ENV_ENTRIES]:
+        if key in TRANSIENT_GIT_CONFIG_KEYS or key.startswith(TRANSIENT_GIT_CONFIG_PREFIXES):
+            env.pop(key, None)
+    env.update(MANAGED_PROCESS_ENV)
+    if len(env) > MAX_PROCESS_ENV_ENTRIES:
+        raise HookError(f"process environment exceeds {MAX_PROCESS_ENV_ENTRIES} entries")
     return env
 
 
@@ -246,21 +270,23 @@ def snapshot(ref=None):
     """Export the exact index or commit; never stash, stage, or edit the source."""
     with tempfile.TemporaryDirectory(prefix="praetor-hook-") as directory:
         dest = Path(directory)
+        env = clean_env()
         if ref is None:
             # Snapshot checks consume repository bytes, not the operator's checkout
             # preference. Without this pin, Windows' core.autocrlf=true rewrites LF
             # shell/YAML blobs to CRLF and the isolated gate rejects bytes absent from
             # the index it claims to inspect.
             git(*SNAPSHOT_GIT_CONFIG, "checkout-index", "--all", "--force",
-                f"--prefix={dest}/")
+                f"--prefix={dest}/", env=env)
             # Lefthook's validator requires a repository even though it only
             # validates configuration. This metadata belongs solely to the export.
-            run(["git", "init", "--quiet", str(dest)], env=clean_env())
+            run(["git", "init", "--quiet", str(dest)], env=env)
         else:
-            source = git("rev-parse", "--show-toplevel").decode().strip()
-            env = clean_env()
-            origin = run(["git", "config", "--get", "remote.origin.url"], allowed=(0, 1)).decode().strip()
-            refs = git("for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes/origin/")
+            source = git("rev-parse", "--show-toplevel", env=env).decode().strip()
+            origin = run(["git", "config", "--get", "remote.origin.url"], env=env,
+                         allowed=(0, 1)).decode().strip()
+            refs = git("for-each-ref", "--format=%(objectname) %(refname)",
+                       "refs/remotes/origin/", env=env)
             run(["git", "clone", "--quiet", "--no-hardlinks", "--no-checkout",
                  "--origin", "praetor-snapshot", source, str(dest)], env=env)
             if origin:
