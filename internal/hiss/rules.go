@@ -44,9 +44,12 @@ type braceTracker struct {
 	inFunc     bool
 	pending    bool
 	pendingAge int
-	start      int
-	name       string
-	level      int
+	// start is the line the body opens on -- the line carrying the opening brace, never the
+	// line the signature starts on. HISS-04 measures the brace-delimited body, so a
+	// signature parked on its own line above the brace lends the function no extra LOC.
+	start int
+	name  string
+	level int
 }
 
 // observe feeds one line, already stripped of literals and comments by the caller so the
@@ -74,7 +77,6 @@ func (t *braceTracker) observe(code, trimmed string, idx int, isHeader bool, nam
 		if endsStatement(trimmed) {
 			return // a declaration without a body (trait method, prototype)
 		}
-		t.start = idx + 1
 		t.name = name
 		if opens > 0 {
 			t.enter(idx, opens-closes)
@@ -91,9 +93,15 @@ func endsStatement(trimmed string) bool {
 	return strings.HasSuffix(line, ";")
 }
 
+// enter opens the body at idx, the line the first unbalanced brace is on. Detection may
+// have happened earlier, on the signature line, so that a definition whose signature and
+// brace sit on separate lines is still found and still named; the measurement window
+// nonetheless starts here, at the brace. Keeping the two apart is what lets the scanner
+// recognise more functions without silently inflating any of them.
 func (t *braceTracker) enter(idx, level int) {
 	t.inFunc = true
 	t.pending = false
+	t.start = idx + 1
 	t.level = level
 	if t.level <= 0 {
 		t.finish(idx + 1)

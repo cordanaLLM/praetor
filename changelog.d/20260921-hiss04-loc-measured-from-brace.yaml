@@ -1,0 +1,3 @@
+type: fixed
+title: HISS-04 measures function length over the brace-delimited body, so a signature on its own line or wrapped across parameters no longer inflates the count
+breaking: false

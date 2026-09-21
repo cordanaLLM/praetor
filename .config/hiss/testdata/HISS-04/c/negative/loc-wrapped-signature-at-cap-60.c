@@ -1,9 +1,13 @@
-/* Brace on the line after the signature. The body runs 61 lines brace-to-brace, one
- * over the cap, so the definition is reported: recognising a signature that does not
- * carry its own brace must not cost the scanner the finding. */
-int knr_sixty_one(int count)
+/* A signature wrapped over several lines, as GPU kernels and long parameter lists are
+ * written. Five signature lines run before the brace; the body is 60 lines brace-to-
+ * brace, at the cap. Measuring from the signature would inflate this by the whole
+ * prologue and report a function that is inside the limit. */
+int wrapped_exactly_sixty(
+    int count,
+    int unused_a,
+    int unused_b,
+    int unused_c)
 {
-    count++;
     count++;
     count++;
     count++;

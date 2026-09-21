@@ -69,6 +69,8 @@ Functions must remain strictly bounded in complexity and scope:
 | **Function Length** | $\le 75$ LOC | AST Scanner |
 | **Executable Statements** | $\le 50$ Statements | Compiler AST |
 
+**Function Length** is measured over the body: from the line carrying the opening brace to the line carrying the closing brace, both counted. The signature is not part of the measurement, so a definition written `int f(void)` / `{` on two lines is exactly as long as the same definition written `int f(void) {` on one, and a signature wrapped across a long parameter list -- the ordinary shape of a GPU kernel -- adds nothing to the count. A brace-delimited scanner may still recognise a function from its signature line, which is how it names one whose brace is elsewhere; recognition and measurement are separate. Reformatting must never move a function across the cap.
+
 ---
 
 ## 2. Memory Safety, Error Handling & Static Verification
