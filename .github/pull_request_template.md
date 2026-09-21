@@ -34,7 +34,7 @@ Every public method and modified component must include three dimensions of auto
 - [ ] **HISS-15 Dimension 1: Positive Tests**: Validated expected outputs against normal and golden operational inputs.
 - [ ] **HISS-15 Dimension 2: Negative Tests**: Validated deterministic error propagation on corrupted, unauthorized, or invalid inputs.
 - [ ] **HISS-15 Dimension 3: Boundary Tests**: Validated limits ($0$, $1$, $N_{\max}$, empty buffers, max field limits).
-- [ ] **HISS-15 Touched-File Clean Rule**: All historical technical debt recorded in `.standards-baseline.json` for files touched in this PR has been eliminated.
+- [ ] **HISS-13 Whole-Tree Debt Ratchet**: The full supported source tree was scanned; no finding is exempt because of file origin, language, or ownership, and debt may only decrease.
 
 ---
 

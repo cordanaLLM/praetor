@@ -67,11 +67,11 @@ func (t *braceTracker) observe(code, trimmed string, idx int, isHeader bool, nam
 			t.enter(idx, opens-closes)
 			return
 		}
-		if strings.HasSuffix(trimmed, ";") || t.pendingAge >= maxPendingHeaderLines {
+		if endsStatement(trimmed) || t.pendingAge >= maxPendingHeaderLines {
 			t.pending = false
 		}
 	case isHeader:
-		if strings.HasSuffix(trimmed, ";") {
+		if endsStatement(trimmed) {
 			return // a declaration without a body (trait method, prototype)
 		}
 		t.start = idx + 1
@@ -83,6 +83,12 @@ func (t *braceTracker) observe(code, trimmed string, idx int, isHeader bool, nam
 		t.pending = true
 		t.pendingAge = 0
 	}
+}
+
+func endsStatement(trimmed string) bool {
+	line := strings.TrimSpace(trimmed)
+	line = strings.TrimSpace(strings.TrimSuffix(line, `\`))
+	return strings.HasSuffix(line, ";")
 }
 
 func (t *braceTracker) enter(idx, level int) {
@@ -302,11 +308,8 @@ func scanNativeLines(lines []string, rel string, rep *ScanReport, opts ScanOptio
 		trimmed := strings.TrimSpace(line)
 		code := stripper.strip(line)
 		scanNativeLineInvariants(code, rel, idx+1, rep)
-		isHeader := !t.inFunc && isNativeFuncHeader(code, trimmed)
-		name := ""
-		if isHeader {
-			name = extractNativeFuncName(trimmed, lines, idx)
-		}
+		name, isHeader := nativeFuncHeader(code)
+		isHeader = !t.inFunc && isHeader
 		t.observe(code, trimmed, idx, isHeader, name)
 	}
 }
@@ -330,24 +333,30 @@ func scanNativeLineInvariants(code, rel string, lineNum int, rep *ScanReport) {
 	}
 }
 
-func isNativeFuncHeader(code, trimmed string) bool {
-	return strings.Contains(code, "{") && !strings.HasPrefix(trimmed, "//") &&
-		!strings.HasPrefix(trimmed, "/*") && !strings.HasPrefix(trimmed, "struct ") &&
-		!strings.HasPrefix(trimmed, "enum ") && !strings.HasPrefix(trimmed, "union ") &&
-		!strings.HasPrefix(trimmed, "typedef ") && !strings.HasPrefix(trimmed, "class ") &&
-		!strings.HasPrefix(trimmed, "#")
+func nativeFuncHeader(code string) (string, bool) {
+	header := strings.TrimSpace(code)
+	if brace := strings.Index(header, "{"); brace >= 0 {
+		header = strings.TrimSpace(header[:brace])
+	}
+	if strings.HasPrefix(header, "struct ") || strings.HasPrefix(header, "enum ") ||
+		strings.HasPrefix(header, "union ") || strings.HasPrefix(header, "typedef ") ||
+		strings.HasPrefix(header, "class ") || strings.HasPrefix(header, "#") {
+		return "", false
+	}
+	name, ok := nativeNameBeforeParen(header)
+	if !ok || isNativeControlName(name) {
+		return "", false
+	}
+	return name, true
 }
 
-func extractNativeFuncName(trimmed string, lines []string, lineIdx int) string {
-	if name, ok := nativeNameBeforeParen(trimmed); ok {
-		return name
+func isNativeControlName(name string) bool {
+	switch name {
+	case "if", "for", "while", "switch", "catch":
+		return true
+	default:
+		return false
 	}
-	if lineIdx > 0 {
-		if name, ok := nativeNameBeforeParen(strings.TrimSpace(lines[lineIdx-1])); ok {
-			return name
-		}
-	}
-	return trimmed
 }
 
 func nativeNameBeforeParen(text string) (string, bool) {
@@ -359,7 +368,22 @@ func nativeNameBeforeParen(text string) (string, bool) {
 	if len(parts) == 0 {
 		return "", false
 	}
-	return strings.TrimPrefix(parts[len(parts)-1], "*"), true
+	name := strings.TrimLeft(parts[len(parts)-1], "*&")
+	if name == "" || !isNativeDeclaratorName(name) {
+		return "", false
+	}
+	return name, true
+}
+
+func isNativeDeclaratorName(name string) bool {
+	for idx := 0; idx < len(name); idx++ {
+		c := name[idx]
+		if isIdentByte(c) || c == ':' || c == '~' {
+			continue
+		}
+		return strings.HasPrefix(name, "operator")
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
