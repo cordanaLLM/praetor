@@ -1,9 +1,8 @@
-/* Brace on the line after the signature. The body runs 61 lines brace-to-brace, one
- * over the cap, so the definition is reported: recognising a signature that does not
- * carry its own brace must not cost the scanner the finding. */
-int knr_sixty_one(int count)
+/* The same next-line-brace shape one line shorter: 60 lines brace-to-brace is at the
+ * cap, not over it, so nothing is reported. The signature line above the brace is not
+ * part of the body and must not be counted as though it were. */
+int knr_exactly_sixty(int count)
 {
-    count++;
     count++;
     count++;
     count++;

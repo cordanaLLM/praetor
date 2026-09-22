@@ -524,8 +524,11 @@ func TestScan_NativeAllmanFunctionOwnsNestedControlBlocks(t *testing.T) {
 		strings.Repeat("        value += 1;\n", 59) + "    }\n}\n"
 	writeFixture(t, root, "allman.cpp", body)
 
+	// The signature is on line 1 and the brace on line 2. Detection happens at the
+	// signature -- that is what names the function -- but the measured window opens at
+	// the brace, so the finding is anchored on line 2 and counts 63 lines, not 64.
 	rep := scanFixture(t, root, ScanOptions{MaxFuncLOC: 60})
-	assertViolations(t, rep, []expectedViolation{{"HISS-04", "allman.cpp", 1}})
+	assertViolations(t, rep, []expectedViolation{{"HISS-04", "allman.cpp", 2}})
 	if rep.Violations[0].Symbol != "allman" {
 		t.Fatalf("Allman-style function attributed to %q", rep.Violations[0].Symbol)
 	}
@@ -541,6 +544,72 @@ func TestScan_NativeMacroCallDoesNotBecomePendingFunction(t *testing.T) {
 	assertViolations(t, rep, []expectedViolation{{"HISS-04", "macro.cpp", strings.Count(prefix, "\n") + 1}})
 	if rep.Violations[0].Symbol != "parse" {
 		t.Fatalf("function after continued macro attributed to %q", rep.Violations[0].Symbol)
+	}
+}
+
+// TestScan_LOCIsMeasuredFromTheBraceNotTheSignature pins the boundary that decides whether
+// a definition is legal: HISS-04 measures the brace-delimited body, so the same body is the
+// same length whichever line its opening brace is parked on. Without that, a reformat from
+// "int f(void) {" to "int f(void)\n{" lengthens a function by one line and can push it over
+// the cap on its own, and a signature wrapped over a long parameter list -- the ordinary
+// shape of a GPU kernel -- lengthens it by the whole prologue. #422 taught the scanner to
+// recognise a signature before its brace, which is how such a function gets found and named;
+// this test keeps that recognition from leaking into the measurement.
+func TestScan_LOCIsMeasuredFromTheBraceNotTheSignature(t *testing.T) {
+	// Each builder returns a definition whose body is exactly bodyLOC lines brace-to-brace,
+	// plus the line its opening brace sits on. Every shape carries the same body; only where
+	// the brace is parked differs, which is exactly what must not change the verdict.
+	filler := func(bodyLOC int, line string) string { return strings.Repeat(line, bodyLOC-3) }
+	sameLine := func(bodyLOC int) (string, int) {
+		return "int f(int c) {\n" + filler(bodyLOC, "    c++;\n") + "    return c;\n}\n", 1
+	}
+	nextLine := func(bodyLOC int) (string, int) {
+		return "int f(int c)\n{\n" + filler(bodyLOC, "    c++;\n") + "    return c;\n}\n", 2
+	}
+	wrapped := func(bodyLOC int) (string, int) {
+		sig := "int f(\n    int c,\n    int unused_a,\n    int unused_b)\n{\n"
+		return sig + filler(bodyLOC, "    c++;\n") + "    return c;\n}\n", 5
+	}
+	rustSameLine := func(bodyLOC int) (string, int) {
+		return "pub fn f(c: i32) -> i32 {\n" + filler(bodyLOC, "    let _x = c;\n") + "    c\n}\n", 1
+	}
+	rustWrapped := func(bodyLOC int) (string, int) {
+		sig := "pub fn f(\n    c: i32,\n    _unused: i32,\n) -> i32 {\n"
+		return sig + filler(bodyLOC, "    let _x = c;\n") + "    c\n}\n", 4
+	}
+
+	cases := []struct {
+		name  string
+		file  string
+		build func(int) (string, int)
+	}{
+		{"brace on the signature line", "same.c", sameLine},
+		{"brace on the next line", "next.c", nextLine},
+		{"signature wrapped over four lines", "wrapped.c", wrapped},
+		{"rust brace on the signature line", "same.rs", rustSameLine},
+		{"rust signature wrapped over four lines", "wrapped.rs", rustWrapped},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			atCap, _ := tc.build(60)
+			root := t.TempDir()
+			writeFixture(t, root, tc.file, atCap)
+			if rep := scanFixture(t, root, ScanOptions{MaxFuncLOC: 60}); rep.Breakdown["HISS-04"] != 0 {
+				t.Fatalf("a 60-line body is at the cap, not over it: %+v", rep.Violations)
+			}
+
+			overCap, brace := tc.build(61)
+			root = t.TempDir()
+			writeFixture(t, root, tc.file, overCap)
+			rep := scanFixture(t, root, ScanOptions{MaxFuncLOC: 60})
+			assertViolations(t, rep, []expectedViolation{{"HISS-04", tc.file, brace}})
+			if !strings.Contains(rep.Violations[0].Message, "(61 LOC)") {
+				t.Fatalf("a 61-line body must be measured as 61 LOC, got %q", rep.Violations[0].Message)
+			}
+			if rep.Violations[0].Symbol != "f" {
+				t.Fatalf("function attributed to %q, so recognition was lost", rep.Violations[0].Symbol)
+			}
+		})
 	}
 }
 
@@ -567,7 +636,11 @@ func TestScan_WrappedSignaturesAreTracked(t *testing.T) {
 	writeFixture(t, root, "w.go", "package p\n\nfunc Process(\n\tctx int,\n\tcfg int,\n) error {\n"+body(70)+"\treturn nil\n}\n")
 	writeFixture(t, root, "w.rs", "trait T {\n    fn declared(&self) -> i32;\n}\n\npub fn process(\n    ctx: i32,\n    cfg: i32,\n) -> i32 {\n"+strings.ReplaceAll(body(70), "x = 1", "let x = 1;")+"    0\n}\n")
 	rep := scanFixture(t, root, ScanOptions{MaxFuncLOC: 60})
-	assertViolations(t, rep, []expectedViolation{{"HISS-04", "w.go", 3}, {"HISS-04", "w.rs", 5}})
+	// Go is measured by the AST from the FuncDecl, so w.go is anchored on its "func" line.
+	// The Rust scanner shares the brace tracker with C, which opens its window on the
+	// brace: w.rs is anchored on line 8, where ") -> i32 {" sits, not on the "pub fn" line
+	// five lines above it. A wrapped signature is recognised, never measured.
+	assertViolations(t, rep, []expectedViolation{{"HISS-04", "w.go", 3}, {"HISS-04", "w.rs", 8}})
 	for _, v := range rep.Violations {
 		if v.Symbol != "Process" && v.Symbol != "process" {
 			t.Errorf("wrapped signature attributed to %q", v.Symbol)
