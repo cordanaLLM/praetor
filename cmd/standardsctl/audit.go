@@ -317,17 +317,11 @@ func auditCavemanAgentSurfaces(rootDir string) error {
 }
 
 func auditBranchProtectionAndSupplyChain(manifest *config.Manifest, rootDir string) error {
-	policy := config.DefaultPolicy()
-	policy.ApplyOverrides(manifest.Overrides)
-
-	// Verify .github/rulesets/main.json if linear history or signed commits required
-	rulesetPath := filepath.Join(rootDir, ".github", "rulesets", "main.json")
-	if policy.BranchProtection.EnforceLinearHistory || policy.BranchProtection.RequireSignedCommits {
-		if !util.FileExists(rulesetPath) {
-			return fmt.Errorf("[FAIL] Branch protection ruleset .github/rulesets/main.json is missing while policy requires linear history or signed commits; run 'praetorctl sync' to reconcile")
-		}
-		fmt.Println("[PASS] Branch protection & merge ruleset .github/rulesets/main.json verified.")
+	summary, err := adopt.AuditBranchProtection(manifest, rootDir)
+	if err != nil {
+		return err
 	}
+	fmt.Println(summary)
 
 	// Verify .config/labels.yaml
 	labelsPath := filepath.Join(rootDir, ".config", "labels.yaml")

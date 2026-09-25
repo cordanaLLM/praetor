@@ -454,8 +454,22 @@ def audit_checks(client, root):
     require("scan truncated" in result, "incomplete AST analysis was not rejected")
     require(baseline.read_bytes() == recorded, "audit changed the recorded baseline")
     violation.unlink()
+    ruleset = root / ".github/rulesets/main.json"
+    ruleset.unlink()
+    missing_res = tool_text(client.call("standards_audit", {}), error=True)
+    require("branch protection ruleset" in missing_res.lower() and "missing" in missing_res.lower(),
+            "audit did not reject missing branch ruleset")
+    manifest_path = root / ".standards.yaml"
+    orig_manifest = manifest_path.read_text()
+    manifest_path.write_text(orig_manifest + "adoption:\n  decline:\n    - branch-ruleset\n")
+    declined_res = tool_text(client.call("standards_audit", {}))
+    require("declined by adoption.decline" in declined_res.lower(),
+            "audit did not honor accepted branch-ruleset decline")
+    manifest_path.write_text(orig_manifest)
+    ruleset.write_text("{}\n")
     return ["valid fixture audit", "changed pinned content rejected",
-            "invariant violation rejected", "incomplete scan rejected without baseline writes"]
+            "invariant violation rejected", "incomplete scan rejected without baseline writes",
+            "branch ruleset decline accepted and verified"]
 
 
 def probe(binary, root, metadata):
