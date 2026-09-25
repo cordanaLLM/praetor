@@ -168,6 +168,20 @@ what is present. More than `MaxLoopLimit` declared profiles or facets is refused
 rather than truncated. This does not establish IDE feature-installation or
 application-tool execution proof.
 
+A `native-gpu-systems` DevContainer no longer passes clangd
+`--compile-commands-dir=core/build`. Without that flag clangd searches each
+edited file's ancestor directories and their `build/` subdirectories for
+`compile_commands.json` ([clangd project setup](https://clangd.llvm.org/installation)),
+which finds a root, `build/` or `core/build/` database alike; the fixed directory
+pointed every other layout at a missing path. The DevContainer settings and the
+`.vscode/settings.json` adoption writes share one definition,
+`util.ClangdArguments` in `internal/util/clangd.go`; the regression tests are in
+`internal/devcontainer/adopter_paths_test.go`. An unedited native bundle generated
+before this change reports drift in `praetorctl devcontainer verify` and
+`standardsctl audit`; regenerate it with the `--source-root ... --force` command
+above. Adoption keeps an existing `.vscode/settings.json` unless it runs with
+`--force`.
+
 ### Test sources leave the bootstrap archive
 
 A ready bootstrap recorded before this change carries `_test.go` and `testdata`

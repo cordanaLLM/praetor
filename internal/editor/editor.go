@@ -338,10 +338,7 @@ func buildVSCodeSettings(binDir string, includeLSP bool, arch string, plan Plan,
 
 	if arch == "native-gpu-systems" {
 		data["clangd.path"] = "clangd"
-		data["clangd.arguments"] = []string{
-			"--compile-commands-dir=core/build",
-			"--header-insertion=never",
-		}
+		data["clangd.arguments"] = util.ClangdArguments()
 		data["[c]"] = map[string]any{
 			"editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
 			"editor.formatOnSave":     true,
