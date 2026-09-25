@@ -1,0 +1,3 @@
+type: fixed
+title: Keep HISS scans from panicking on an unterminated block comment in a partially parsed Go file
+breaking: false
