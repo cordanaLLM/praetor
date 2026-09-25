@@ -195,9 +195,10 @@ const maxCommandDiagnosticBytes = MaxErrorBodyBytes
 // or one without a deadline, is given DefaultCommandTimeout. Each stream is capped at
 // MaxCommandOutputBytes and an overflow cancels the command. On Unix the child runs in its
 // own process group, which is killed on cancellation and on return, so a grandchild cannot
-// outlive the call (BUG-889). The child's environment follows commandEnvironment: without
-// WithCommandEnvironment it inherits the ambient one minus the variables that bind git to a
-// repository (BUG-886).
+// outlive the call (BUG-889). That group no longer receives a terminal's Ctrl-C, so a
+// program's main calls TerminateCommandsOnSignal to kill it when a signal ends the program.
+// The child's environment follows commandEnvironment: without WithCommandEnvironment it
+// inherits the ambient one minus the variables that bind git to a repository (BUG-886).
 func RunCommand(ctx context.Context, dir string, name string, args ...string) (string, error) {
 	// ensureDeadline also turns a nil context, which runBoundedCommand refuses, into one.
 	ctx, cancel := ensureDeadline(ctx, DefaultCommandTimeout)

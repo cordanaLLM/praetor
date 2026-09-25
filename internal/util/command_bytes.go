@@ -103,7 +103,7 @@ func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, stre
 			cmd.Stdin = bytes.NewReader(input)
 		}
 	}
-	cleanup := commandBytesCleanup(cmd)
+	start, cleanup := commandBytesCleanup(cmd)
 	defer func() { resultErr = errors.Join(resultErr, cleanup()) }()
 	out := commandBuffer{limit: maxBytes, cancel: cancel}
 	diagnostic := commandBuffer{limit: maxBytes, cancel: cancel}
@@ -111,7 +111,10 @@ func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, stre
 	if streams.stdout != nil {
 		cmd.Stdout = streams.stdout
 	}
-	err := cmd.Run()
+	err := start()
+	if err == nil {
+		err = cmd.Wait()
+	}
 	if out.overflow || diagnostic.overflow {
 		err = errors.Join(err, fmt.Errorf("command output exceeds %d bytes per stream", maxBytes))
 	}

@@ -7,6 +7,8 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // version is written at release time with -X main.version. It must stay a var: the Go linker
@@ -183,6 +185,12 @@ func main() {
 
 	cmd := os.Args[1]
 	args := os.Args[2:]
+	if !ownsTerminationSignals(cmd) {
+		// Every command praetorctl runs sits in a process group of its own, out of reach of
+		// a terminal's Ctrl-C, and no subcommand observes the signal: this kills those
+		// groups before the signal ends praetorctl, instead of leaving them running.
+		util.TerminateCommandsOnSignal()
+	}
 
 	if err := dispatchCommand(cmd, args); err != nil {
 		// flag.ErrHelp means a subcommand's own flag.Parse saw -h/--help and already
@@ -194,6 +202,13 @@ func main() {
 		}
 		os.Exit(commandExitCode(os.Stderr, err))
 	}
+}
+
+// ownsTerminationSignals reports whether command handles SIGINT and SIGTERM itself. serve
+// drains its health server on them (container.WaitForGracefulDrain), which a handler that
+// ends the process on the signal would cut short.
+func ownsTerminationSignals(command string) bool {
+	return command == "serve"
 }
 
 // commandFunc is the signature every top-level command implements.
