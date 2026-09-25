@@ -85,6 +85,8 @@ func TestPlanAGYPermissionsRejectsHigherPrecedenceRulesThatOverlapAllow(t *testi
 		{name: "deny URL ignores blocking scheme and port", list: "deny", blocking: "read_url(https://Example.test:8443/admin)", declared: "read_url(api.example.test)"},
 		{name: "ask URL ignores blocking userinfo", list: "ask", blocking: "execute_url(user@example.test)", declared: "execute_url(example.test)"},
 		{name: "deny URL ignores bracketed IPv6 port", list: "deny", blocking: "read_url([::1]:8080)", declared: "read_url(::1)"},
+		{name: "deny URL strips IPv6 brackets without port", list: "deny", blocking: "read_url([::1])", declared: "read_url(::1)"},
+		{name: "ask URL strips IPv6 brackets inside URL", list: "ask", blocking: "read_url(https://[::1]/x)", declared: "read_url(::1)"},
 		{name: "deny url subdomain overlaps parent allow", list: "deny", blocking: "execute_url(admin.example.test)", declared: "execute_url(example.test)"},
 		{name: "deny read implicitly denies write", list: "deny", blocking: "read_file(/srv/private)", declared: "write_file(/srv/private/report.txt)"},
 	}
@@ -135,6 +137,44 @@ func TestPlanAGYPermissionsRejectsUnprovableRegexOverlap(t *testing.T) {
 	}
 }
 
+// An existing ask/deny URL rule that does not reduce to a canonical host could still
+// match at runtime, so planning fails closed rather than treating it as disjoint.
+func TestPlanAGYPermissionsRejectsUnprovableURLOverlap(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		list     string
+		blocking string
+		declared string
+	}{
+		{name: "scheme-relative URL", list: "deny", blocking: "read_url(//example.test/x)", declared: "read_url(api.example.test)"},
+		{name: "empty host after scheme", list: "deny", blocking: "read_url(https://)", declared: "read_url(example.test)"},
+		{name: "backslash after host", list: "ask", blocking: `read_url(https://example.test\admin)`, declared: "read_url(api.example.test)"},
+		{name: "backslash before userinfo", list: "deny", blocking: `execute_url(https://evil.test\@example.test)`, declared: "execute_url(evil.test)"},
+		{name: "wildcard label", list: "deny", blocking: "read_url(*.example.test)", declared: "read_url(api.example.test)"},
+		{name: "non-canonical IPv6 spelling", list: "ask", blocking: "read_url(0:0:0:0:0:0:0:1)", declared: "read_url(::1)"},
+		{name: "unbalanced IPv6 bracket", list: "deny", blocking: "read_url([::1)", declared: "read_url(::1)"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			existing, err := json.Marshal(map[string]any{"permissions": map[string][]string{test.list: {test.blocking}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := PlanAGYPermissions(t.Context(), existing, config.ClientPermissions{
+				Manage: true,
+				Allow:  []string{test.declared},
+			})
+			if err == nil || plan != nil {
+				t.Fatalf("unprovable URL overlap accepted: plan=%+v err=%v", plan, err)
+			}
+			for _, want := range []string{"cannot prove non-overlap", "permissions." + test.list + " URL rule", strconv.Quote(test.blocking), strconv.Quote(test.declared)} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q does not surface %q", err, want)
+				}
+			}
+		})
+	}
+}
+
 func TestPlanAGYPermissionsRejectsUnprovableMixedRootFileOverlap(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -174,6 +214,9 @@ func TestPlanAGYPermissionsKeepsDisjointHigherPrecedenceRules(t *testing.T) {
 		{name: "file sibling", blocking: "read_file(/srv/log)", declared: "read_file(/srv/logger)"},
 		{name: "domain label boundary", blocking: "read_url(example.test)", declared: "read_url(notexample.test)"},
 		{name: "blocking URL spelling keeps label boundary", blocking: "read_url(https://example.test:443/x)", declared: "read_url(notexample.test)"},
+		{name: "bracketed IPv6 host stays distinct", blocking: "read_url([::2])", declared: "read_url(::1)"},
+		{name: "bracketed IPv6 URL with port stays distinct", blocking: "read_url(https://[::2]:8080/x)", declared: "read_url(::1)"},
+		{name: "unprovable URL rule on another action", blocking: "read_url(*.example.test)", declared: "execute_url(api.example.test)"},
 		{name: "mcp server boundary", blocking: "mcp(hindsight/*)", declared: "mcp(hindsight2/list)"},
 		{name: "ask read does not imply ask write", blocking: "read_file(/srv/private)", declared: "write_file(/srv/private/report.txt)"},
 	} {

@@ -133,6 +133,7 @@ const (
 	agyDefiniteOverlap
 	agyUnprovableRegexOverlap
 	agyUnprovableWorkspacePathOverlap
+	agyUnprovableURLOverlap
 )
 
 func firstAGYOverlap(rules []string, declared string, deny bool) (string, agyOverlap) {
@@ -164,16 +165,35 @@ func agyRuleTargetsOverlap(relation, action, blocking, declared string) agyOverl
 	if blocking == "*" || declared == "*" {
 		return agyDefiniteOverlap
 	}
-	if relation == "same" && (agyRegexTarget(blocking) || agyRegexTarget(declared)) {
-		return agyUnprovableRegexOverlap
-	}
-	if agyFileAction(action) && agyPathRootingDiffers(blocking, declared) {
-		return agyUnprovableWorkspacePathOverlap
+	if overlap := agyUnprovableOverlap(relation, action, blocking, declared); overlap != agyNoOverlap {
+		return overlap
 	}
 	if agyTargetsOverlap(action, blocking, declared) {
 		return agyDefiniteOverlap
 	}
 	return agyNoOverlap
+}
+
+// agyUnprovableOverlap names the pairs whose overlap depends on runtime behavior this
+// adapter cannot model, so the caller fails closed instead of assuming disjointness.
+func agyUnprovableOverlap(relation, action, blocking, declared string) agyOverlap {
+	switch {
+	case relation == "same" && (agyRegexTarget(blocking) || agyRegexTarget(declared)):
+		return agyUnprovableRegexOverlap
+	case agyFileAction(action) && agyPathRootingDiffers(blocking, declared):
+		return agyUnprovableWorkspacePathOverlap
+	case agyURLAction(action) && !httpendpoint.CanonicalHost(normalizeAGYDomain(blocking)):
+		// Declared URL targets are validated canonical hosts; an operator rule whose
+		// host cannot be reduced to one (empty, wildcard, backslash, non-canonical IP)
+		// could still match at runtime.
+		return agyUnprovableURLOverlap
+	default:
+		return agyNoOverlap
+	}
+}
+
+func agyURLAction(action string) bool {
+	return action == "read_url" || action == "execute_url"
 }
 
 func agyFileAction(action string) bool {
@@ -271,10 +291,15 @@ func agyDomainTargetsOverlap(left, right string) bool {
 
 // normalizeAGYDomain reduces an existing operator URL rule to its host. Declared rules
 // are already bare canonical hosts; operator-owned deny/ask rules may carry a scheme,
-// userinfo, port or path, and each must still be compared by host so that an
-// overlapping higher-precedence rule cannot hide behind a different spelling.
+// userinfo, port, brackets or path, and each must still be compared by host so that
+// an overlapping higher-precedence rule cannot hide behind a different spelling. A
+// backslash yields "": WHATWG URL parsing treats it as a path separator for special
+// schemes while RFC 3986 rejects it, so the host AGY would match is ambiguous.
 func normalizeAGYDomain(target string) string {
 	target = strings.ToLower(strings.TrimSpace(target))
+	if strings.ContainsRune(target, '\\') {
+		return ""
+	}
 	if _, rest, ok := strings.Cut(target, "://"); ok {
 		target = rest
 	}
@@ -286,6 +311,8 @@ func normalizeAGYDomain(target string) string {
 	}
 	if host, _, err := net.SplitHostPort(target); err == nil {
 		target = host
+	} else if len(target) > 1 && target[0] == '[' && target[len(target)-1] == ']' {
+		target = target[1 : len(target)-1]
 	}
 	return strings.TrimSuffix(target, ".")
 }
@@ -306,6 +333,10 @@ func agyOverlapError(list, blocking, declared string, overlap agyOverlap) error 
 	}
 	if overlap == agyUnprovableWorkspacePathOverlap {
 		return fmt.Errorf("cannot prove non-overlap between declared AGY allow rule %q and permissions.%s file rule %q; absolute and workspace-relative paths require runtime workspace resolution",
+			declared, list, blocking)
+	}
+	if overlap == agyUnprovableURLOverlap {
+		return fmt.Errorf("cannot prove non-overlap between declared AGY allow rule %q and permissions.%s URL rule %q; its target does not reduce to a canonical host",
 			declared, list, blocking)
 	}
 	return agyShadowError(list, blocking, declared)

@@ -223,10 +223,12 @@ AGY evaluates conflicts as Deny > Ask > Allow. Plan, apply and verify reject a
 declared allow grant intersecting an existing deny/ask rule by exact or
 action-wide match, literal command prefix, recursive file scope, URL
 domain/subdomain (an existing rule is compared by host even when it is spelled
-with a scheme, userinfo, port or path), or MCP server wildcard without removing that operator-owned
+with a scheme, userinfo, port, IPv6 brackets or path), or MCP server wildcard without removing that operator-owned
 rule. A deny `read_file` scope also conflicts with an intersecting `write_file`
 allow. The adapter does not interpret regex equivalence: a same-action regex on
-either side fails closed with a `cannot prove non-overlap` diagnostic. Native
+either side fails closed with a `cannot prove non-overlap` diagnostic. An existing
+URL rule whose target does not reduce to a canonical host (empty host, wildcard
+label, backslash, non-canonical IP spelling) fails closed the same way. Native
 workspace-relative and absolute file rules also fail closed when compared with
 each other because their intersection depends on the runtime workspace root. Native
 permission readback remains required for AGY's runtime scopes and any future

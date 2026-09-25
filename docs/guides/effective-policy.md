@@ -159,7 +159,9 @@ accept only the documented global `*`, not partial globs. A `read_url` or
 `execute_url` target is a bare lowercase host or IP literal, such as
 `read_url(example.test)`: AGY matches URL rules by hostname and subdomain, so a
 scheme, port, path or userinfo is rejected (`httpendpoint.CanonicalHost`, tested in
-`internal/clientsetup/agy_permissions_test.go`). The operator loader keeps the grant strings generic so
+`internal/clientsetup/agy_permissions_test.go`). Existing ask/deny URL rules are
+compared by their host; one that does not reduce to a canonical host fails closed
+with a `cannot prove non-overlap` diagnostic. The operator loader keeps the grant strings generic so
 future clients can carry their own syntax, while `clients permissions` validates
 the selected AGY rules before producing or changing a settings file.
 
