@@ -33,6 +33,26 @@ Adoption refuses unbalanced or duplicate live markers before writing
 custom badges outside the block remain untouched, and a custom HISS badge
 prevents the renderer from adding a second badge.
 
+### Branch protection rulesets and adoption decline
+
+Repositories adopting Praetor that manage branch protection externally or decline
+generated GitHub rulesets can record `adoption.decline: [branch-ruleset]` in
+`.standards.yaml` (accepted by `standardsctl adopt`). When this decline is recorded,
+`standardsctl adopt` omits `.github/rulesets/main.json`.
+
+Both `standardsctl audit` and the MCP server's `standards_audit` tool share one
+authority path (`adopt.AuditBranchProtection`) to verify branch protection:
+
+- If `branch-ruleset` is explicitly and validly declined in `adoption.decline`,
+  audit reports `[PASS] Branch protection ruleset declined by adoption.decline.`
+  and passes cleanly without requiring `.github/rulesets/main.json`.
+- If `branch-ruleset` is not declined and active policy requires branch protection
+  (such as linear history or signed commits), audit fails closed if
+  `.github/rulesets/main.json` is missing or invalid.
+- An unknown decline item, malformed decline entry, or unreadable `.standards.yaml`
+  fails closed, ensuring invalid configuration cannot produce a false pass.
+
+
 ### Stages that do not apply are skipped, not failed
 
 `praetorctl gate run` reports a stage it cannot meaningfully run as skipped, with the reason, rather

@@ -144,6 +144,18 @@ affected tool. Report placeholder results, missing operations, and blocked
 connections explicitly; the smoke probe does not establish correctness of every
 tool. Run the relevant code tests and `make verify-all` after implementing the fix.
 
+### Shared audit authority and parity
+
+The `standards_audit` tool executes the same gates as CLI `standardsctl audit`.
+Both tools share the same authority implementations for artifact checks. When
+verifying branch protection rulesets, `standards_audit` consults
+`adopt.AuditBranchProtection`. If `.standards.yaml` records an accepted
+`adoption.decline: [branch-ruleset]`, `standards_audit` reports a verified pass
+(`[PASS] Branch protection ruleset declined by adoption.decline.`) rather than
+failing on the absent `.github/rulesets/main.json`. When not declined and required
+by policy, `standards_audit` fails closed if the ruleset file is missing or invalid,
+matching CLI behavior with byte-for-byte verdict parity.
+
 ## Retained public dogfood loops
 
 Use the [public dogfooding guide](../dogfooding.md) for the shared CLI/MCP

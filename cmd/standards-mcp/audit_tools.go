@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -156,18 +157,10 @@ func auditContextSync(ctx context.Context, agentsPath, root string) (string, err
 	return "[PASS] Cross-agent context targets verified in sync.\n[PASS] Agent context " + lint.Summary() + ".", nil
 }
 
-// auditBranchProtection requires the ruleset file whenever the resolved policy demands
-// linear history or signed commits.
+// auditBranchProtection delegates branch protection ruleset audit to the shared authority
+// in internal/adopt.
 func auditBranchProtection(manifest *config.Manifest, root string) (string, error) {
-	policy := config.DefaultPolicy()
-	policy.ApplyOverrides(manifest.Overrides)
-	if !policy.BranchProtection.EnforceLinearHistory && !policy.BranchProtection.RequireSignedCommits {
-		return "[PASS] Branch protection ruleset not required by policy.", nil
-	}
-	if !util.FileExists(filepath.Join(root, ".github", "rulesets", "main.json")) {
-		return "", fmt.Errorf("[FAIL] Branch protection ruleset .github/rulesets/main.json is missing while policy requires linear history or signed commits")
-	}
-	return "[PASS] Branch protection & merge ruleset .github/rulesets/main.json verified.", nil
+	return adopt.AuditBranchProtection(manifest, root)
 }
 
 // auditLabelTaxonomy requires the repository label taxonomy.
