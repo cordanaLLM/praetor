@@ -181,6 +181,17 @@ silently treating them as active. Operator-owned files at the same paths, prose
 that mentions a marker, and unrelated ruleset metadata are not claimed by the
 disabled facet.
 
+`adoption.decline: [branch-ruleset]` leaves `.github/rulesets/main.json`
+operator-owned, as described in the
+[adoption verification guide](adoption-verification.md). Adoption then never
+writes the documentation context into it, disabling the facet does not ask
+`--force` to rewrite it, and audit still requires the workflow to report
+**Documentation Governance** but neither requires nor rejects that context in
+the ruleset. The documentation gate itself cannot be declined:
+`adoption.decline: [documentation-gate]` fails adoption and audit, because
+removing the `docs:seo-portal` facet is the one switch that converges every
+documentation surface.
+
 Praetor's DevContainer bootstrap snapshot explicitly carries these five embedded
 assets. The adopted CLI therefore emits the same locked gate when it is built
 inside a generated development container; undeclared `go:embed` inputs remain a

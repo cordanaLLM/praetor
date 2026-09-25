@@ -235,6 +235,12 @@ func preflightDocumentationDeprovision(ctx context.Context, s *adoptSession) err
 }
 
 func preflightDocumentationRuleset(ctx context.Context, s *adoptSession) error {
+	// A declined branch ruleset is operator-owned: adoption never rewrites it, so the
+	// documentation transition neither inspects it nor asks --force to rewrite it.
+	rulesetDeclined, err := ArtifactDeclined(s.declined, "branch-ruleset")
+	if err != nil || rulesetDeclined {
+		return err
+	}
 	ruleset, err := repoFile(s.repoPath, rulesetFile)
 	if err != nil {
 		return err

@@ -12,7 +12,7 @@ import (
 )
 
 func auditReadmeGovernance(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
-	declined, err := readmeGovernanceDeclined(manifest)
+	declined, err := adopt.ManifestArtifactDeclined(manifest, "readme")
 	if err != nil {
 		return fmt.Errorf("[FAIL] README governance audit failed: %w", err)
 	}
@@ -37,14 +37,6 @@ func auditReadmeGovernance(ctx context.Context, manifest *config.Manifest, opts 
 	}
 	fmt.Println("[PASS] README governance block verified against the recorded baseline.")
 	return nil
-}
-
-func readmeGovernanceDeclined(manifest *config.Manifest) (bool, error) {
-	var declines []string
-	if manifest != nil && manifest.Adoption != nil {
-		declines = manifest.Adoption.Decline
-	}
-	return adopt.ArtifactDeclined(declines, "readme")
 }
 
 func auditedReadmeState(manifest *config.Manifest, opts *auditOptions) (readmegovernance.State, error) {

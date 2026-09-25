@@ -23,11 +23,14 @@ type namedStep struct {
 
 // mandatoryArtifacts cannot be declined. Declining the manifest or the lockfile would leave
 // a repository that claims adoption while carrying nothing that records what it adopted, and
-// the baseline is what every later audit compares against.
+// the baseline is what every later audit compares against. The documentation gate already
+// has one off switch, the docs:seo-portal facet, whose removal converges every surface it
+// owns; a decline would skip only the assets and leave verify-all calling a missing runner.
 var mandatoryArtifacts = map[string]string{
-	"manifest": "the manifest is what records the declaration itself",
-	"lockfile": "the lockfile is what pins the policies the manifest names",
-	"baseline": "every later audit compares against the baseline",
+	"manifest":           "the manifest is what records the declaration itself",
+	"lockfile":           "the lockfile is what pins the policies the manifest names",
+	"baseline":           "every later audit compares against the baseline",
+	"documentation-gate": "remove the docs:seo-portal facet instead; it converges every documentation surface",
 }
 
 // declinedArtifacts resolves the manifest's decline list into a lookup, rejecting names that
@@ -76,6 +79,17 @@ func ArtifactDeclined(declared []string, artifact string) (bool, error) {
 		}
 	}
 	return false, fmt.Errorf("unknown adoption artefact %q", name)
+}
+
+// ManifestArtifactDeclined resolves one adoption step against the adoption.decline list the
+// manifest records. A manifest without an adoption policy declines nothing; an invalid list
+// fails closed through ArtifactDeclined, so every auditor reads declines one way.
+func ManifestArtifactDeclined(manifest *config.Manifest, artifact string) (bool, error) {
+	var declines []string
+	if manifest != nil && manifest.Adoption != nil {
+		declines = manifest.Adoption.Decline
+	}
+	return ArtifactDeclined(declines, artifact)
 }
 
 func sortedNames(names []string) []string {

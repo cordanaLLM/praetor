@@ -33,11 +33,7 @@ func AuditBranchProtectionWithPolicy(manifest *config.Manifest, rootDir string, 
 		return "", errors.New("[FAIL] Branch protection ruleset audit failed: policy is required")
 	}
 
-	var declines []string
-	if manifest.Adoption != nil {
-		declines = manifest.Adoption.Decline
-	}
-	declined, err := ArtifactDeclined(declines, "branch-ruleset")
+	declined, err := ManifestArtifactDeclined(manifest, "branch-ruleset")
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] Branch protection ruleset audit failed: %w", err)
 	}

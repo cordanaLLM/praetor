@@ -321,6 +321,83 @@ func TestAdoptionDocumentationDisableRejectsAmbiguousFormatterBeforeDeletingAsse
 	}
 }
 
+func TestAdoptionDocumentationGateHonorsBranchRulesetDecline(t *testing.T) {
+	root := newTestRepo(t, "documentation-ruleset-declined")
+	opts := AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)}
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatal(err)
+	}
+	setAdoptionDeclines(t, root, "branch-ruleset")
+	operatorRuleset := `{"rules":[{"type":"required_status_checks","parameters":` +
+		`{"required_status_checks":[{"context":"` + DocumentationStatusContext + `"}]}}]}` + "\n"
+	mustWrite(t, filepath.Join(root, rulesetFile), operatorRuleset)
+	setDocumentationFacet(t, root, false)
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatalf("documentation disable demanded --force for an operator-owned declined ruleset: %v", err)
+	}
+	for _, rel := range DocumentationAssetPaths() {
+		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Fatalf("disabled documentation artifact remains at %s: %v", rel, err)
+		}
+	}
+	if got := mustRead(t, filepath.Join(root, rulesetFile)); got != operatorRuleset {
+		t.Fatalf("adoption rewrote a declined branch ruleset:\n%s", got)
+	}
+}
+
+func TestAdoptionDocumentationGateCannotBeDeclined(t *testing.T) {
+	root := newTestRepo(t, "documentation-gate-declined")
+	opts := AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)}
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatal(err)
+	}
+	setAdoptionDeclines(t, root, "documentation-gate")
+	before := snapshotTree(t, root)
+	_, err := Adopt(t.Context(), opts)
+	if err == nil || !strings.Contains(err.Error(), "docs:seo-portal") {
+		t.Fatalf("documentation-gate decline was accepted or did not name the facet switch: %v", err)
+	}
+	assertTreeUnchanged(t, before, snapshotTree(t, root))
+}
+
+func TestManifestArtifactDeclinedBoundary(t *testing.T) {
+	for name, manifest := range map[string]*config.Manifest{
+		"nil manifest":     nil,
+		"no policy":        {},
+		"empty decline":    {Adoption: &config.AdoptionPolicy{}},
+		"blank entry only": {Adoption: &config.AdoptionPolicy{Decline: []string{"  "}}},
+	} {
+		if declined, err := ManifestArtifactDeclined(manifest, "branch-ruleset"); err != nil || declined {
+			t.Fatalf("%s: declined=%v err=%v", name, declined, err)
+		}
+	}
+	declined, err := ManifestArtifactDeclined(
+		&config.Manifest{Adoption: &config.AdoptionPolicy{Decline: []string{" Branch-Ruleset "}}}, "branch-ruleset")
+	if err != nil || !declined {
+		t.Fatalf("normalized branch-ruleset decline: declined=%v err=%v", declined, err)
+	}
+	if _, err := ManifestArtifactDeclined(
+		&config.Manifest{Adoption: &config.AdoptionPolicy{Decline: []string{"documentation-gate"}}},
+		"branch-ruleset"); err == nil {
+		t.Fatal("documentation-gate decline did not fail closed")
+	}
+}
+
+func setAdoptionDeclines(t *testing.T, root string, declines ...string) {
+	t.Helper()
+	path := filepath.Join(root, manifestFile)
+	manifest, err := config.LoadManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Adoption = &config.AdoptionPolicy{Decline: declines}
+	data, err := yaml.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, path, string(data))
+}
+
 func setDocumentationFacet(t *testing.T, root string, enabled bool) {
 	t.Helper()
 	path := filepath.Join(root, manifestFile)

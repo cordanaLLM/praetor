@@ -161,6 +161,52 @@ func TestAuditDocumentationGateDisabledAllowsOperatorLookalikes(t *testing.T) {
 	}
 }
 
+func declinedBranchRulesetManifest(facets ...string) *config.Manifest {
+	return &config.Manifest{
+		Facets:   facets,
+		Adoption: &config.AdoptionPolicy{Decline: []string{"branch-ruleset"}},
+	}
+}
+
+func TestAuditDocumentationGateHonorsBranchRulesetDecline(t *testing.T) {
+	root := documentationAuditFixture(t)
+	if err := os.Remove(filepath.Join(root, ".github", "rulesets", "main.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := auditDocumentationGate(t.Context(), declinedBranchRulesetManifest("docs:seo-portal"), root); err != nil {
+		t.Fatalf("declined branch ruleset still required the documentation context: %v", err)
+	}
+	err := auditDocumentationGate(t.Context(), &config.Manifest{Facets: []string{"docs:seo-portal"}}, root)
+	if err == nil || !strings.Contains(err.Error(), "branch ruleset") {
+		t.Fatalf("missing ruleset without a decline passed or failed for another reason: %v", err)
+	}
+}
+
+func TestAuditDocumentationGateBranchRulesetDeclineKeepsWorkflowContext(t *testing.T) {
+	root := documentationAuditFixture(t)
+	writeFixtureFile(t, root, adopt.DocumentationWorkflowFile,
+		strings.Replace(adopt.DocumentationWorkflow(), "name: "+adopt.DocumentationStatusContext, "name: Other", 1))
+	if err := auditDocumentationGate(t.Context(), declinedBranchRulesetManifest("docs:seo-portal"), root); err == nil {
+		t.Fatal("branch-ruleset decline excused a workflow that no longer reports the documentation context")
+	}
+}
+
+func TestAuditDocumentationGateBranchRulesetDeclineBoundary(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureFile(t, root, ".github/rulesets/main.json",
+		`{"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"`+
+			adopt.DocumentationStatusContext+`"}]}}]}`)
+	if err := auditDocumentationGate(t.Context(), declinedBranchRulesetManifest(), root); err != nil {
+		t.Fatalf("disabled facet claimed an operator-owned declined ruleset: %v", err)
+	}
+	for _, decline := range []string{"not-an-artifact", "documentation-gate"} {
+		invalid := &config.Manifest{Adoption: &config.AdoptionPolicy{Decline: []string{decline}}}
+		if err := auditDocumentationGate(t.Context(), invalid, root); err == nil {
+			t.Fatalf("invalid decline %q did not fail closed", decline)
+		}
+	}
+}
+
 func TestAuditReadmeDocumentationContract(t *testing.T) {
 	manifest := &config.Manifest{
 		Repository: config.RepositoryMetadata{Owner: "acme", Name: "widgets"},

@@ -39,8 +39,14 @@ func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, root
 	if err != nil {
 		return fmt.Errorf("[FAIL] Resolve documentation facet: %w", err)
 	}
+	// A declined branch ruleset is operator-owned (#408): adoption never writes it, so the
+	// documentation gate neither requires its context there nor claims a context found there.
+	rulesetDeclined, err := adopt.ManifestArtifactDeclined(manifest, "branch-ruleset")
+	if err != nil {
+		return fmt.Errorf("[FAIL] Resolve branch-ruleset adoption decline: %w", err)
+	}
 	if !documentationEnabled {
-		return auditDocumentationGateDisabled(ctx, rootDir)
+		return auditDocumentationGateDisabled(ctx, rootDir, rulesetDeclined)
 	}
 	count, err := auditDocumentationAssets(ctx, rootDir)
 	if err != nil {
@@ -49,22 +55,29 @@ func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, root
 	if err := auditDocumentationLocalWiring(ctx, rootDir); err != nil {
 		return err
 	}
-	if err := auditDocumentationHostedWiring(ctx, manifest, rootDir); err != nil {
+	if err := auditDocumentationHostedWiring(ctx, manifest, rootDir, rulesetDeclined); err != nil {
 		return err
 	}
-	fmt.Printf("[PASS] Locked documentation gate verified (%d assets, local verify-all, hosted required context, private scratch ignores).\n", count)
+	hosted := "hosted required context"
+	if rulesetDeclined {
+		hosted = "hosted context; branch ruleset declined by adoption.decline"
+	}
+	fmt.Printf("[PASS] Locked documentation gate verified (%d assets, local verify-all, %s, private scratch ignores).\n",
+		count, hosted)
 	return nil
 }
 
-func auditDocumentationGateDisabled(ctx context.Context, rootDir string) error {
+func auditDocumentationGateDisabled(ctx context.Context, rootDir string, rulesetDeclined bool) error {
 	if err := auditDisabledDocumentationAssets(ctx, rootDir); err != nil {
 		return err
 	}
 	if err := auditDisabledDocumentationMakefile(ctx, rootDir); err != nil {
 		return err
 	}
-	if err := auditDisabledDocumentationRuleset(ctx, rootDir); err != nil {
-		return err
+	if !rulesetDeclined {
+		if err := auditDisabledDocumentationRuleset(ctx, rootDir); err != nil {
+			return err
+		}
 	}
 	if err := adopt.VerifyFormatterIgnore(ctx, rootDir, false); err != nil {
 		return fmt.Errorf("[FAIL] Disabled documentation formatter inventory is stale: %w", err)
@@ -187,7 +200,9 @@ func auditDocumentationLocalWiring(ctx context.Context, rootDir string) error {
 	return nil
 }
 
-func auditDocumentationHostedWiring(ctx context.Context, manifest *config.Manifest, rootDir string) error {
+func auditDocumentationHostedWiring(
+	ctx context.Context, manifest *config.Manifest, rootDir string, rulesetDeclined bool,
+) error {
 	contexts, err := forge.RequiredStatusContexts(ctx, rootDir)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Discover hosted documentation context: %w", err)
@@ -195,6 +210,9 @@ func auditDocumentationHostedWiring(ctx context.Context, manifest *config.Manife
 	if !slices.Contains(contexts, adopt.DocumentationStatusContext) {
 		return fmt.Errorf("[FAIL] Hosted documentation workflow does not report required context %q",
 			adopt.DocumentationStatusContext)
+	}
+	if rulesetDeclined {
+		return nil
 	}
 	ruleset, err := contextopt.ReadSnapshot(ctx, filepath.Join(rootDir, ".github", "rulesets", "main.json"))
 	if err != nil {
