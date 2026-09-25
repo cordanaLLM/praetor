@@ -192,6 +192,24 @@ praetorctl needs epic --path /path/to/consumer --framework /path/to/framework
 praetorctl needs migrate --path /path/to/consumer --framework=""
 ```
 
+`needs epic --publish` resolves the parent epic and each task by title against
+the target repository's full issue inventory before it writes anything
+(`PublishPreMigrationEpic` in `internal/needs/epic.go`, on the batch from
+`forge.PrepareIssueBatch` in `internal/forge/issues.go`). Publishing again reuses
+every issue that already exists, leaves it as it is, and creates only the
+missing ones, so an interrupted publish resumes and each new task chains onto the
+real number of the task before it. A duplicate planned title, two existing
+issues sharing a planned title, or an incomplete inventory stops the publish
+before the first issue is created. The command prints `created` or
+`already published` for each issue.
+
+`needs epic --dev-dir` lists every discovered directory it generated no epic
+for under `[SKIP]`, with the reason: a directory needs a Git checkout with HEAD
+metadata, a `.standards.yaml`, or a `.needs.yaml` to count as a prepared
+repository. `TestPublishPreMigrationEpic_ResumesPartialPublish` and
+`TestRegenerateFleetEpics_ReportsSkippedDirectories` in
+`internal/needs/epic_test.go` pin both behaviors.
+
 ### Breaking migration: application requires evidence
 
 `ApplyMigration`, `ApplyMigrationWithOptions`, and `needs migrate --apply` now

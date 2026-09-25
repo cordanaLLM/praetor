@@ -18,13 +18,17 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// fakeForge is a Forge stub that hands out increasing issue numbers, so a test can
-// observe the dependency chain PublishPreMigrationEpic builds and inject failures.
-// The separate HTTP test below exercises the real GitHub driver.
+// fakeForge is a Forge stub that hands out increasing issue numbers and lists every
+// issue it holds, so a test can observe the dependency chain PublishPreMigrationEpic
+// builds, publish twice against the same inventory, and inject failures. The separate
+// HTTP test below exercises the real GitHub driver.
 type fakeForge struct {
-	created []forge.IssueSpec
-	next    int
-	failOn  int // 1-based index of the CreateIssue call that fails; 0 never fails
+	existing []forge.IssueSpec // inventory ListIssues returns; created issues join it
+	created  []forge.IssueSpec // every CreateIssue request, the refused one included
+	updates  int
+	next     int
+	failOn   int // 1-based index of the CreateIssue call that fails; 0 never fails
+	listErr  error
 }
 
 func (f *fakeForge) Name() string                       { return "fake" }
@@ -39,8 +43,18 @@ func (f *fakeForge) PostStatusCheck(context.Context, string, forge.CheckRun) err
 func (f *fakeForge) CreatePullRequest(context.Context, forge.PRRequest) (*forge.PRResponse, error) {
 	return nil, errors.New("fake forge: pull requests are not implemented")
 }
-func (f *fakeForge) ListIssues(context.Context, string) ([]forge.IssueSpec, error) { return nil, nil }
-func (f *fakeForge) UpdateIssue(context.Context, int, []string, string) error      { return nil }
+
+func (f *fakeForge) ListIssues(context.Context, string) ([]forge.IssueSpec, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return append([]forge.IssueSpec(nil), f.existing...), nil
+}
+
+func (f *fakeForge) UpdateIssue(context.Context, int, []string, string) error {
+	f.updates++
+	return nil
+}
 
 func (f *fakeForge) CreateIssue(_ context.Context, spec forge.IssueSpec) (*forge.IssueResponse, error) {
 	f.created = append(f.created, spec)
@@ -48,6 +62,7 @@ func (f *fakeForge) CreateIssue(_ context.Context, spec forge.IssueSpec) (*forge
 		return nil, errors.New("fake forge: create refused")
 	}
 	f.next += 100
+	f.existing = append(f.existing, forge.IssueSpec{ID: f.next, Title: spec.Title, State: "open"})
 	return &forge.IssueResponse{
 		Number: f.next,
 		URL:    fmt.Sprintf("https://forge.test/issues/%d", f.next),
@@ -277,6 +292,127 @@ func TestPublishPreMigrationEpic_Negative(t *testing.T) {
 	}
 }
 
+// testEpic is a three-task epic whose titles are unique.
+func testEpic() *PreMigrationEpic {
+	return &PreMigrationEpic{
+		RepoName:   "test/repo",
+		ParentEpic: forge.IssueSpec{Title: "[EPIC] Pre-Migration", Body: "Checklist", State: "open", Labels: []string{"epic"}},
+		ChildIssues: []forge.IssueSpec{
+			{Title: "[TASK 1/5] Invariants", Body: "Task body", State: "open", Labels: []string{"task"}},
+			{Title: "[TASK 2/5] Decoupling", Body: "Task body", State: "open", DependsOn: []string{taskAnchor(1)}},
+			{Title: "[TASK 3/5] Substitution", Body: "Task body", State: "open", DependsOn: []string{taskAnchor(2)}},
+		},
+	}
+}
+
+func issueNumbers(parent *forge.IssueUpsertResult, children []*forge.IssueUpsertResult) []int {
+	numbers := []int{parent.Number}
+	for _, c := range children {
+		numbers = append(numbers, c.Number)
+	}
+	return numbers
+}
+
+// TestPublishPreMigrationEpic_RepublishCreatesNothing pins the upsert: publishing the
+// same epic again resolves every issue already on the forge by title, creates nothing
+// and modifies nothing.
+func TestPublishPreMigrationEpic_RepublishCreatesNothing(t *testing.T) {
+	ctx := context.Background()
+	f := &fakeForge{}
+	epic := testEpic()
+
+	parent, children, err := PublishPreMigrationEpic(ctx, f, epic)
+	if err != nil {
+		t.Fatalf("first publish failed: %v", err)
+	}
+	first := issueNumbers(parent, children)
+
+	again, againChildren, err := PublishPreMigrationEpic(ctx, f, epic)
+	if err != nil {
+		t.Fatalf("republish failed: %v", err)
+	}
+	if len(f.created) != 4 || f.updates != 0 {
+		t.Fatalf("republish created or modified issues: %d create requests, %d updates", len(f.created), f.updates)
+	}
+	second := issueNumbers(again, againChildren)
+	if fmt.Sprint(second) != fmt.Sprint(first) {
+		t.Fatalf("republish resolved other issues: first %v, second %v", first, second)
+	}
+	for _, res := range append([]*forge.IssueUpsertResult{again}, againChildren...) {
+		if res.Outcome != forge.IssueUnchanged {
+			t.Errorf("issue #%d: expected outcome %q, got %q", res.Number, forge.IssueUnchanged, res.Outcome)
+		}
+	}
+}
+
+// TestPublishPreMigrationEpic_TitleConflictFailsBeforeMutation rejects every batch
+// whose identity is ambiguous before the first write.
+func TestPublishPreMigrationEpic_TitleConflictFailsBeforeMutation(t *testing.T) {
+	ctx := context.Background()
+	epic := testEpic()
+
+	ambiguous := &fakeForge{existing: []forge.IssueSpec{
+		{ID: 1, Title: epic.ParentEpic.Title}, {ID: 2, Title: " " + epic.ParentEpic.Title},
+	}}
+	_, _, err := PublishPreMigrationEpic(ctx, ambiguous, epic)
+	var conflict *forge.IssueTitleConflictError
+	if !errors.As(err, &conflict) || conflict.Source != "existing" || len(ambiguous.created) != 0 {
+		t.Fatalf("ambiguous existing epic: err=%v, %d create requests", err, len(ambiguous.created))
+	}
+
+	duplicate := testEpic()
+	duplicate.ChildIssues[2].Title = duplicate.ChildIssues[0].Title
+	planned := &fakeForge{}
+	if _, _, err := PublishPreMigrationEpic(ctx, planned, duplicate); !errors.As(err, &conflict) || len(planned.created) != 0 {
+		t.Fatalf("duplicate planned title: err=%v, %d create requests", err, len(planned.created))
+	}
+
+	sentinel := errors.New("inventory unavailable")
+	unlisted := &fakeForge{listErr: sentinel}
+	if _, _, err := PublishPreMigrationEpic(ctx, unlisted, epic); !errors.Is(err, sentinel) || len(unlisted.created) != 0 {
+		t.Fatalf("listing failure must stop the publish before writes: err=%v, %d create requests", err, len(unlisted.created))
+	}
+}
+
+// TestPublishPreMigrationEpic_ResumesPartialPublish publishes an epic whose third issue
+// failed last time: the parent and first task are reused, only the rest is created, and
+// the chain continues from the real number of the reused task.
+func TestPublishPreMigrationEpic_ResumesPartialPublish(t *testing.T) {
+	ctx := context.Background()
+	f := &fakeForge{failOn: 3}
+	epic := testEpic()
+
+	parent, children, err := PublishPreMigrationEpic(ctx, f, epic)
+	if err == nil || parent == nil || len(children) != 1 {
+		t.Fatalf("expected the second task to fail after the parent and first task: err=%v children=%d", err, len(children))
+	}
+
+	f.failOn = 0
+	resumed, resumedChildren, err := PublishPreMigrationEpic(ctx, f, epic)
+	if err != nil {
+		t.Fatalf("resume failed: %v", err)
+	}
+	if resumed.Number != parent.Number || resumed.Outcome != forge.IssueUnchanged {
+		t.Fatalf("resume did not reuse parent #%d: %+v", parent.Number, resumed)
+	}
+	if len(resumedChildren) != 3 || resumedChildren[0].Number != children[0].Number || resumedChildren[0].Outcome != forge.IssueUnchanged {
+		t.Fatalf("resume did not reuse task #%d: %+v", children[0].Number, resumedChildren)
+	}
+	if len(f.existing) != 4 {
+		t.Fatalf("expected 4 issues on the forge after resuming, got %d", len(f.existing))
+	}
+
+	next := f.created[len(f.created)-2] // the resumed second task
+	wantDep := fmt.Sprintf("test/repo#%d", children[0].Number)
+	if len(next.DependsOn) != 1 || next.DependsOn[0] != wantDep {
+		t.Errorf("resumed task chains onto %v, want %q", next.DependsOn, wantDep)
+	}
+	// The reused parent comes from the inventory, which carries no URL.
+	if want := fmt.Sprintf("*Part of Epic #%d*\n", parent.Number); !strings.HasSuffix(next.Body, want) {
+		t.Errorf("resumed task body lacks backlink %q: %s", want, next.Body)
+	}
+}
+
 // setupFleetEpicRoot builds a fleet root holding two prepared repositories and one
 // directory that carries no repository marker.
 func setupFleetEpicRoot(t *testing.T) string {
@@ -312,7 +448,7 @@ func TestRegenerateFleetEpics_DryRunWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	root := setupFleetEpicRoot(t)
 
-	epics, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{DryRun: true})
+	epics, _, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{DryRun: true})
 	if err != nil {
 		t.Fatalf("dry-run regeneration failed: %v", err)
 	}
@@ -333,7 +469,7 @@ func TestRegenerateFleetEpics_Positive(t *testing.T) {
 	ctx := context.Background()
 	root := setupFleetEpicRoot(t)
 
-	epics, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{FrameworkPath: "github.com/acme/otherkit"})
+	epics, _, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{FrameworkPath: "github.com/acme/otherkit"})
 	if err != nil {
 		t.Fatalf("regenerate fleet epics failed: %v", err)
 	}
@@ -347,6 +483,32 @@ func TestRegenerateFleetEpics_Positive(t *testing.T) {
 		if !strings.HasPrefix(ep.TargetFramework, "github.com/acme/otherkit") {
 			t.Errorf("fleet epic ignored the requested framework: %s", ep.TargetFramework)
 		}
+	}
+}
+
+// TestRegenerateFleetEpics_ReportsSkippedDirectories pins that a discovered directory
+// without a repository marker is reported with its reason instead of vanishing.
+func TestRegenerateFleetEpics_ReportsSkippedDirectories(t *testing.T) {
+	ctx := context.Background()
+	root := setupFleetEpicRoot(t)
+
+	epics, skips, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("regeneration failed: %v", err)
+	}
+	if len(epics) != 2 || len(skips) != 1 {
+		t.Fatalf("expected 2 epics and 1 skip, got %d epics and skips %+v", len(epics), skips)
+	}
+	if want := filepath.Join(root, "org3", "not-a-repo"); skips[0].RepoDir != want {
+		t.Errorf("skipped %q, want %q", skips[0].RepoDir, want)
+	}
+	if !strings.Contains(skips[0].Reason, "no repository marker") {
+		t.Errorf("skip carries no reason: %q", skips[0].Reason)
+	}
+
+	_, emptySkips, err := RegenerateFleetEpics(ctx, t.TempDir(), FleetEpicOptions{DryRun: true})
+	if err != nil || len(emptySkips) != 0 {
+		t.Fatalf("an empty fleet root must report no skips: err=%v skips=%+v", err, emptySkips)
 	}
 }
 
@@ -369,7 +531,7 @@ func TestRegenerateFleetEpics_ReportsWriteFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	epics, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{})
+	epics, _, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{})
 	if err == nil {
 		t.Fatal("expected the per-repository write failure to be reported")
 	}
@@ -384,7 +546,7 @@ func TestRegenerateFleetEpics_ReportsWriteFailures(t *testing.T) {
 func TestRegenerateFleetEpics_Boundary(t *testing.T) {
 	ctx := context.Background()
 
-	epics, err := RegenerateFleetEpics(ctx, t.TempDir(), FleetEpicOptions{})
+	epics, _, err := RegenerateFleetEpics(ctx, t.TempDir(), FleetEpicOptions{})
 	if err != nil {
 		t.Fatalf("regenerate on empty dir failed: %v", err)
 	}
@@ -394,7 +556,7 @@ func TestRegenerateFleetEpics_Boundary(t *testing.T) {
 
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := RegenerateFleetEpics(cancelled, setupFleetEpicRoot(t), FleetEpicOptions{}); err == nil {
+	if _, _, err := RegenerateFleetEpics(cancelled, setupFleetEpicRoot(t), FleetEpicOptions{}); err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
 }
@@ -506,12 +668,15 @@ func TestRegenerateFleetEpics_LinkedWorktreeAndStrayGit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	epics, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{DryRun: true})
+	epics, skips, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{DryRun: true})
 	if err != nil {
 		t.Fatalf("regeneration failed: %v", err)
 	}
 	if len(epics) != 1 {
 		t.Fatalf("expected only the linked worktree to be regenerated, got %d epics", len(epics))
+	}
+	if len(skips) != 1 || skips[0].RepoDir != stray {
+		t.Errorf("expected the stray .git directory to be reported as a skip, got %+v", skips)
 	}
 	if !strings.HasPrefix(epics[0].OutputPath, worktree) {
 		t.Errorf("regenerated the wrong repository: %s", epics[0].OutputPath)
@@ -525,7 +690,7 @@ func TestRegenerateFleetEpics_FleetRootIsRepository(t *testing.T) {
 	writeRepoFile(t, filepath.Join(root, ".git", "HEAD"), "ref: refs/heads/main\n")
 	writeRepoFile(t, filepath.Join(root, "go.mod"), "module github.com/org/root\ngo 1.27\n")
 
-	epics, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{DryRun: true})
+	epics, _, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{DryRun: true})
 	if err != nil {
 		t.Fatalf("regeneration failed: %v", err)
 	}
@@ -534,16 +699,30 @@ func TestRegenerateFleetEpics_FleetRootIsRepository(t *testing.T) {
 	}
 }
 
-// newFakeIssueForge serves the GitHub issue-creation endpoint locally so the test stays
-// hermetic and exercises the driver's real HTTP path.
+// newFakeIssueForge serves the GitHub issue listing and creation endpoints locally, so
+// the test stays hermetic and exercises the driver's real HTTP path. The listing
+// returns every issue created so far.
 func newFakeIssueForge(t *testing.T) *forge.GitHubDriver {
 	t.Helper()
-	created := 0
+	var issues []map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		created++
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			listed := append([]map[string]any{}, issues...)
+			if err := json.NewEncoder(w).Encode(listed); err != nil {
+				t.Errorf("failed encoding fake listing: %v", err)
+			}
+			return
+		}
+		var req struct {
+			Title string `json:"title"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("failed decoding create request: %v", err)
+		}
+		payload := map[string]any{"number": len(issues) + 1, "title": req.Title, "url": "https://forge.invalid/issues", "state": "open"}
+		issues = append(issues, payload)
 		w.WriteHeader(http.StatusCreated)
-		payload := map[string]any{"number": created, "url": "https://forge.invalid/issues", "state": "open"}
 		if err := json.NewEncoder(w).Encode(payload); err != nil {
 			t.Errorf("failed encoding fake response: %v", err)
 		}
@@ -579,5 +758,14 @@ func TestPublishPreMigrationEpic_HTTP(t *testing.T) {
 	}
 	if len(childResults) != 2 {
 		t.Fatalf("expected 2 child results, got %d", len(childResults))
+	}
+
+	// Publishing again through the real driver resolves the listed issues.
+	again, againChildren, err := PublishPreMigrationEpic(ctx, gh, epic)
+	if err != nil {
+		t.Fatalf("republishing the epic failed: %v", err)
+	}
+	if again.Number != 1 || again.Outcome != forge.IssueUnchanged || len(againChildren) != 2 || againChildren[1].Number != 3 {
+		t.Fatalf("republish did not resolve the existing issues: %+v %+v", again, againChildren)
 	}
 }

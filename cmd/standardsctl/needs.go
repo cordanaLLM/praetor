@@ -358,8 +358,9 @@ func runSingleRepoEpic(ctx context.Context, f epicFlags) error {
 
 func runFleetNeedsEpic(ctx context.Context, devDir string, opts needs.FleetEpicOptions) error {
 	fmt.Printf("=== Rerunning Fleet Pre-Migration Epics across %s ===\n\n", devDir)
-	epics, err := needs.RegenerateFleetEpics(ctx, devDir, opts)
+	epics, skips, err := needs.RegenerateFleetEpics(ctx, devDir, opts)
 	if err != nil {
+		printFleetEpicSkips(skips)
 		return fmt.Errorf("fleet epic regeneration failed: %w", err)
 	}
 
@@ -373,10 +374,35 @@ func runFleetNeedsEpic(ctx context.Context, devDir string, opts needs.FleetEpicO
 		fmt.Printf("  [%2d/%2d] %-35s (Readiness: %5.1f%%, %d tasks) -> %s\n",
 			i+1, len(epics), ep.RepoName, ep.ReadinessScore, len(ep.ChildIssues), ep.OutputPath)
 	}
+	printFleetEpicSkips(skips)
 	if opts.DryRun {
 		fmt.Println("\n[INFO] Dry-run complete. Pass --dry-run=false to write these files.")
 	}
 	return nil
+}
+
+// printFleetEpicSkips lists the discovered directories that got no epic, with the reason,
+// so a checkout the operator expected to be covered does not vanish from the run.
+func printFleetEpicSkips(skips []needs.FleetEpicSkip) {
+	if len(skips) == 0 {
+		return
+	}
+	fmt.Printf("\n[SKIP] %d discovered directories are not prepared repositories:\n", len(skips))
+	for _, skip := range skips {
+		fmt.Printf("  - %s: %s\n", skip.RepoDir, skip.Reason)
+	}
+}
+
+// describeEpicIssue renders where one epic issue landed and whether publishing created it.
+func describeEpicIssue(target string, res *forge.IssueUpsertResult) string {
+	line := fmt.Sprintf("%s#%d %s", target, res.Number, res.Outcome)
+	if res.Outcome != forge.IssueCreated {
+		line = fmt.Sprintf("%s#%d already published (%s)", target, res.Number, res.Outcome)
+	}
+	if res.URL != "" {
+		line += " " + res.URL
+	}
+	return line
 }
 
 func publishEpicToForge(ctx context.Context, f epicFlags, epic *needs.PreMigrationEpic) error {
@@ -403,9 +429,10 @@ func publishEpicToForge(ctx context.Context, f epicFlags, epic *needs.PreMigrati
 		return fmt.Errorf("failed to publish epic to %s/%s: %w", owner, repo, err)
 	}
 
-	fmt.Printf("[PASS] Parent Epic created: %s#%d (%s)\n", owner+"/"+repo, parentRes.Number, parentRes.URL)
+	target := owner + "/" + repo
+	fmt.Printf("[PASS] Parent Epic: %s\n", describeEpicIssue(target, parentRes))
 	for i, c := range childResults {
-		fmt.Printf("       Task %d/%d: %s#%d (%s)\n", i+1, len(childResults), owner+"/"+repo, c.Number, c.URL)
+		fmt.Printf("       Task %d/%d: %s\n", i+1, len(childResults), describeEpicIssue(target, c))
 	}
 	return nil
 }

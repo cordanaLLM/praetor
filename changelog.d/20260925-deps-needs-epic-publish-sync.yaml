@@ -1,0 +1,3 @@
+type: fixed
+title: Resolve pre-migration epic issues by title when publishing, so a repeated or resumed `needs epic --publish` reuses the existing epic and tasks instead of creating duplicates, and list the fleet directories `needs epic --dev-dir` skipped with their reason
+breaking: false
