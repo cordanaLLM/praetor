@@ -83,7 +83,9 @@ func TestPlanAGYPermissionsRejectsHigherPrecedenceRulesThatOverlapAllow(t *testi
 		{name: "ask url parent domain", list: "ask", blocking: "read_url(example.test)", declared: "read_url(api.example.test)"},
 		{name: "ask URL ignores blocking path and case", list: "ask", blocking: "read_url(EXAMPLE.TEST/admin)", declared: "read_url(api.example.test)"},
 		{name: "deny URL ignores blocking scheme and port", list: "deny", blocking: "read_url(https://Example.test:8443/admin)", declared: "read_url(api.example.test)"},
-		{name: "ask URL ignores blocking userinfo", list: "ask", blocking: "execute_url(user@example.test)", declared: "execute_url(example.test)"},
+		{name: "deny URL folds uppercase scheme and host", list: "deny", blocking: "read_url(HTTPS://API.EXAMPLE.TEST/X)", declared: "read_url(example.test)"},
+		{name: "ask URL drops a single trailing root dot", list: "ask", blocking: "read_url(https://example.test./x)", declared: "read_url(api.example.test)"},
+		{name: "deny URL reduces IPv6 literal with port and path", list: "deny", blocking: "read_url(https://[2001:DB8::1]:443/x)", declared: "read_url(2001:db8::1)"},
 		{name: "deny URL ignores bracketed IPv6 port", list: "deny", blocking: "read_url([::1]:8080)", declared: "read_url(::1)"},
 		{name: "deny URL strips IPv6 brackets without port", list: "deny", blocking: "read_url([::1])", declared: "read_url(::1)"},
 		{name: "ask URL strips IPv6 brackets inside URL", list: "ask", blocking: "read_url(https://[::1]/x)", declared: "read_url(::1)"},
@@ -153,6 +155,24 @@ func TestPlanAGYPermissionsRejectsUnprovableURLOverlap(t *testing.T) {
 		{name: "wildcard label", list: "deny", blocking: "read_url(*.example.test)", declared: "read_url(api.example.test)"},
 		{name: "non-canonical IPv6 spelling", list: "ask", blocking: "read_url(0:0:0:0:0:0:0:1)", declared: "read_url(::1)"},
 		{name: "unbalanced IPv6 bracket", list: "deny", blocking: "read_url([::1)", declared: "read_url(::1)"},
+		// WHATWG URL parsing reads each of these as host example.test (or fails), while a
+		// hand cut of scheme, port or userinfo reduced them to another host and let the
+		// declared grant through.
+		{name: "special scheme without slashes", list: "deny", blocking: "read_url(https:example.test)", declared: "read_url(example.test)"},
+		{name: "special scheme with one slash", list: "deny", blocking: "read_url(https:/example.test)", declared: "read_url(example.test)"},
+		{name: "special scheme without slashes and path", list: "ask", blocking: "read_url(https:example.test/x)", declared: "read_url(example.test)"},
+		{name: "special scheme with three slashes", list: "deny", blocking: "read_url(https:///example.test)", declared: "read_url(example.test)"},
+		{name: "slash inside userinfo password", list: "deny", blocking: "execute_url(https://user:pa/ss@example.test)", declared: "execute_url(example.test)"},
+		{name: "userinfo without scheme", list: "ask", blocking: "execute_url(user@example.test)", declared: "execute_url(example.test)"},
+		{name: "userinfo naming another host", list: "deny", blocking: "read_url(https://example.test@other.test)", declared: "read_url(example.test)"},
+		{name: "non-numeric port", list: "deny", blocking: "read_url(other.test:example.test)", declared: "read_url(example.test)"},
+		{name: "DNS host with bare port reads as a scheme", list: "ask", blocking: "read_url(other.test:443)", declared: "read_url(example.test)"},
+		{name: "empty port", list: "deny", blocking: "read_url(https://other.test:/x)", declared: "read_url(example.test)"},
+		{name: "port above range", list: "deny", blocking: "read_url(https://other.test:65536/x)", declared: "read_url(example.test)"},
+		{name: "percent-encoded host", list: "ask", blocking: "read_url(https://%65xample.test)", declared: "read_url(example.test)"},
+		{name: "non-ASCII host", list: "deny", blocking: "read_url(https://\u212Aexample.test)", declared: "read_url(kexample.test)"},
+		{name: "hexadecimal IPv4 host", list: "deny", blocking: "read_url(0x7f.0.0.1)", declared: "read_url(127.0.0.1)"},
+		{name: "whitespace-only target", list: "deny", blocking: "read_url( )", declared: "read_url(example.test)"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			existing, err := json.Marshal(map[string]any{"permissions": map[string][]string{test.list: {test.blocking}}})
@@ -216,6 +236,8 @@ func TestPlanAGYPermissionsKeepsDisjointHigherPrecedenceRules(t *testing.T) {
 		{name: "blocking URL spelling keeps label boundary", blocking: "read_url(https://example.test:443/x)", declared: "read_url(notexample.test)"},
 		{name: "bracketed IPv6 host stays distinct", blocking: "read_url([::2])", declared: "read_url(::1)"},
 		{name: "bracketed IPv6 URL with port stays distinct", blocking: "read_url(https://[::2]:8080/x)", declared: "read_url(::1)"},
+		{name: "canonical URL with port query and fragment stays distinct", blocking: "read_url(https://other.test:8443/x?y#z)", declared: "read_url(example.test)"},
+		{name: "at sign in URL path is not userinfo", blocking: "read_url(https://other.test/@example.test)", declared: "read_url(example.test)"},
 		{name: "unprovable URL rule on another action", blocking: "read_url(*.example.test)", declared: "execute_url(api.example.test)"},
 		{name: "mcp server boundary", blocking: "mcp(hindsight/*)", declared: "mcp(hindsight2/list)"},
 		{name: "ask read does not imply ask write", blocking: "read_file(/srv/private)", declared: "write_file(/srv/private/report.txt)"},
@@ -233,6 +255,67 @@ func TestPlanAGYPermissionsKeepsDisjointHigherPrecedenceRules(t *testing.T) {
 				t.Fatalf("disjoint rule rejected: %+v", plan)
 			}
 		})
+	}
+}
+
+func TestCanonicalAGYURLHost(t *testing.T) {
+	for target, want := range map[string]string{
+		"example.test":                 "example.test",
+		" EXAMPLE.TEST/admin ":         "example.test",
+		"example.test.":                "example.test",
+		"https://Example.test:8443/x":  "example.test",
+		"foo://api.example.test?q#f":   "api.example.test",
+		"https://other.test/@x":        "other.test",
+		"127.0.0.1:80":                 "127.0.0.1",
+		"::1":                          "::1",
+		"2001:DB8::1":                  "2001:db8::1",
+		"[::1]":                        "::1",
+		"[2001:db8::1]:443/x":          "2001:db8::1",
+		"https://[::ffff:1.2.3.4]:1/x": "::ffff:1.2.3.4",
+	} {
+		if got := canonicalAGYURLHost(target); got != want {
+			t.Fatalf("canonicalAGYURLHost(%q) = %q, want %q", target, got, want)
+		}
+	}
+	for _, target := range []string{
+		"", " ", "*", "*.example.test", "//example.test", "https://", "https:example.test", "https:/example.test",
+		"https:///example.test", "https:443", "example.test:443", "localhost:8080", "other.test:example.test",
+		"user@example.test", "https://user:pa/ss@example.test", "https://a@b@example.test", "https://example.test:",
+		"https://example.test:0", "https://example.test:65536", "https://example.test:80:90", "https://example.test\\x",
+		"https://%65xample.test", "https://ex\u212Aample.test", "exa\tmple.test", "example.test..", "0x7f.0.0.1",
+		"0:0:0:0:0:0:0:1", "::1/x", "[::1", "[127.0.0.1]", "[fe80::1%25eth0]", "http:https://example.test", "a/b://example.test",
+	} {
+		if got := canonicalAGYURLHost(target); got != "" {
+			t.Fatalf("ambiguous URL target %q reduced to host %q", target, got)
+		}
+	}
+}
+
+// A URL rule at the canonical-host bound still reduces to its host; one byte more,
+// or a port past 65535, can no longer be reduced and planning fails closed.
+func TestPlanAGYPermissionsURLHostBoundaries(t *testing.T) {
+	label := strings.Repeat("a", 61)
+	host := strings.Join([]string{label, label, label, label}, ".") + ".abcde"
+	if len(host) != 253 {
+		t.Fatalf("test host length = %d", len(host))
+	}
+	for _, test := range []struct {
+		blocking string
+		declared string
+		want     string
+	}{
+		{blocking: "read_url(https://" + host + ":65535/x)", declared: "read_url(" + host + ")", want: "overlaps permissions.deny"},
+		{blocking: "read_url(https://" + host + ":65536/x)", declared: "read_url(" + host + ")", want: "cannot prove non-overlap"},
+		{blocking: "read_url(https://f" + host + "/x)", declared: "read_url(" + host + ")", want: "cannot prove non-overlap"},
+	} {
+		existing, err := json.Marshal(map[string]any{"permissions": map[string][]string{"deny": {test.blocking}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan, err := PlanAGYPermissions(t.Context(), existing, config.ClientPermissions{Manage: true, Allow: []string{test.declared}})
+		if err == nil || plan != nil || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("%s: plan=%+v err=%v, want %q", test.blocking, plan, err, test.want)
+		}
 	}
 }
 
@@ -283,6 +366,8 @@ func TestPlanAGYPermissionsValidatesDeclaredRuleGrammar(t *testing.T) {
 		"read_url(example.test.)",
 		"execute_url(user@example.test)",
 		"execute_url(bad_name.example)",
+		"execute_url(0x7f.0.0.1)",
+		"execute_url(example.1)",
 		"execute_url()",
 		"mcp(server)",
 		"mcp(/tool)",

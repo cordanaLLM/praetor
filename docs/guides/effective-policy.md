@@ -158,10 +158,15 @@ target names exact `server/tool`, `server/*`, or global `*`. File and URL rules
 accept only the documented global `*`, not partial globs. A `read_url` or
 `execute_url` target is a bare lowercase host or IP literal, such as
 `read_url(example.test)`: AGY matches URL rules by hostname and subdomain, so a
-scheme, port, path or userinfo is rejected (`httpendpoint.CanonicalHost`, tested in
+scheme, port, path or userinfo is rejected, as is a DNS name whose last label is
+decimal or `0x`-hexadecimal, which WHATWG URL parsing reads as IPv4
+(`httpendpoint.CanonicalHost`, tested in `internal/httpendpoint/https_test.go` and
 `internal/clientsetup/agy_permissions_test.go`). Existing ask/deny URL rules are
-compared by their host; one that does not reduce to a canonical host fails closed
-with a `cannot prove non-overlap` diagnostic. The operator loader keeps the grant strings generic so
+compared by their host through `net/url`, but only when that host is unambiguous:
+userinfo, a scheme without `//` (`https:example.test`), a DNS name with a bare
+port (`example.test:443` is lexically `scheme:opaque`), an empty or out-of-range
+port, a percent sign, a backslash, or a host that is not canonical makes planning
+fail closed with a `cannot prove non-overlap` diagnostic. The operator loader keeps the grant strings generic so
 future clients can carry their own syntax, while `clients permissions` validates
 the selected AGY rules before producing or changing a settings file.
 

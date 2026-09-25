@@ -7,7 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"net"
+	"net/url"
 	"path"
 	"regexp"
 	"strings"
@@ -182,10 +182,11 @@ func agyUnprovableOverlap(relation, action, blocking, declared string) agyOverla
 		return agyUnprovableRegexOverlap
 	case agyFileAction(action) && agyPathRootingDiffers(blocking, declared):
 		return agyUnprovableWorkspacePathOverlap
-	case agyURLAction(action) && !httpendpoint.CanonicalHost(normalizeAGYDomain(blocking)):
+	case agyURLAction(action) && canonicalAGYURLHost(blocking) == "":
 		// Declared URL targets are validated canonical hosts; an operator rule whose
-		// host cannot be reduced to one (empty, wildcard, backslash, non-canonical IP)
-		// could still match at runtime.
+		// host cannot be reduced to exactly one (empty, wildcard, userinfo, scheme
+		// without "//", malformed port, backslash, non-canonical IP) could still match
+		// at runtime.
 		return agyUnprovableURLOverlap
 	default:
 		return agyNoOverlap
@@ -282,39 +283,63 @@ func agyPathContains(parent, candidate string) bool {
 }
 
 func agyDomainTargetsOverlap(left, right string) bool {
-	left, right = normalizeAGYDomain(left), normalizeAGYDomain(right)
+	left, right = canonicalAGYURLHost(left), canonicalAGYURLHost(right)
 	if left == "" || right == "" {
 		return false
 	}
 	return left == right || strings.HasSuffix(left, "."+right) || strings.HasSuffix(right, "."+left)
 }
 
-// normalizeAGYDomain reduces an existing operator URL rule to its host. Declared rules
-// are already bare canonical hosts; operator-owned deny/ask rules may carry a scheme,
-// userinfo, port, brackets or path, and each must still be compared by host so that
-// an overlapping higher-precedence rule cannot hide behind a different spelling. A
-// backslash yields "": WHATWG URL parsing treats it as a path separator for special
-// schemes while RFC 3986 rejects it, so the host AGY would match is ambiguous.
-func normalizeAGYDomain(target string) string {
-	target = strings.ToLower(strings.TrimSpace(target))
-	if strings.ContainsRune(target, '\\') {
+// canonicalAGYURLHost reduces a URL rule target to the one canonical host it names,
+// or "" when that host is not unambiguous. Declared rules are already bare canonical
+// hosts; operator-owned deny/ask rules may carry a scheme, port, brackets, path,
+// query or fragment and must still be compared by host so that an overlapping
+// higher-precedence rule cannot hide behind a different spelling.
+//
+// Every form on which RFC 3986 and WHATWG URL parsing can disagree yields "", so the
+// caller refuses the plan instead of trusting a host AGY might not match: userinfo,
+// a scheme not followed by "//" (WHATWG reads https:example.test as host
+// example.test), "://" after a scheme-less prefix, an empty or non-canonical port,
+// a numeric final label (read as IPv4) and any non-literal byte. A DNS name with a
+// bare port such as example.test:443 is lexically scheme:opaque and is refused for
+// the same reason; bracketed IPv6 and dotted IPv4 cannot be schemes.
+func canonicalAGYURLHost(target string) string {
+	target = strings.TrimSpace(target)
+	if !httpendpoint.LiteralURLText(target) {
 		return ""
 	}
-	if _, rest, ok := strings.Cut(target, "://"); ok {
-		target = rest
+	target = strings.ToLower(target)
+	if httpendpoint.CanonicalHost(target) {
+		// Bare hosts, including unbracketed IPv6 literals net/url would split on a colon.
+		return target
 	}
-	if end := strings.IndexAny(target, "/?#"); end >= 0 {
-		target = target[:end]
+	target, ok := agyURLAuthorityForm(target)
+	if !ok {
+		return ""
 	}
-	if at := strings.LastIndexByte(target, '@'); at >= 0 {
-		target = target[at+1:]
+	u, err := url.Parse(target)
+	if err != nil || u.User != nil || u.Opaque != "" {
+		return ""
 	}
-	if host, _, err := net.SplitHostPort(target); err == nil {
-		target = host
-	} else if len(target) > 1 && target[0] == '[' && target[len(target)-1] == ']' {
-		target = target[1 : len(target)-1]
+	host, ok := httpendpoint.AuthorityHost(u)
+	host = strings.TrimSuffix(host, ".")
+	if !ok || !httpendpoint.CanonicalHost(host) {
+		return ""
 	}
-	return strings.TrimSuffix(target, ".")
+	return host
+}
+
+// agyURLAuthorityForm returns target unchanged when it begins with an RFC 3986
+// scheme and colon (net/url's own scheme grammar decides), and otherwise prefixed
+// with "//" so net/url parses it as an authority. A scheme-less target that still
+// contains "://" is refused: a reader that cuts at that marker sees another host.
+func agyURLAuthorityForm(target string) (string, bool) {
+	if scheme, _, found := strings.Cut(target, ":"); found {
+		if u, err := url.Parse(scheme + ":"); err == nil && u.Scheme != "" {
+			return target, true
+		}
+	}
+	return "//" + target, !strings.Contains(target, "://")
 }
 
 func agyMCPTargetsOverlap(left, right string) bool {
