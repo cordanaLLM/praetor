@@ -167,12 +167,13 @@ func harvestGitHubAction(ctx context.Context, ref PackageRef, offline bool) (str
 // harvestNodePackage reads the package README from the repository's
 // node_modules: first beside the manifest that declared it, where pnpm links a
 // workspace member's dependencies, then at the repository root, where npm and
-// yarn hoist them. Reads are confined to repoPath, which pnpm's links into
-// node_modules/.pnpm stay inside.
+// yarn hoist them. pnpm's isolated linker makes each node_modules/<pkg> a
+// symlink into node_modules/.pnpm, so the README is read through
+// readLinkedDocumentationFile, which follows links that stay inside repoPath.
 func harvestNodePackage(ctx context.Context, repoPath string, ref PackageRef) (string, error) {
 	var failures []error
 	for _, dir := range nodeModuleDirs(ref.Manifest) {
-		data, err := readDocumentationFile(ctx, repoPath, filepath.Join(dir, "node_modules", ref.Name, "README.md"))
+		data, err := readLinkedDocumentationFile(ctx, repoPath, filepath.Join(dir, "node_modules", ref.Name, "README.md"))
 		if err == nil && len(data) > 0 {
 			return string(data), nil
 		}
@@ -182,6 +183,37 @@ func harvestNodePackage(ctx context.Context, repoPath string, ref PackageRef) (s
 		failures = append(failures, err)
 	}
 	return "", fmt.Errorf("npm documentation unavailable for %s: %w", ref.Name, errors.Join(failures...))
+}
+
+// readLinkedDocumentationFile reads root/name after resolving the symlinks on
+// the way to it. readDocumentationFile's snapshot refuses a symlinked directory
+// or file, which is right for repository content but refuses every package a
+// linker placed with a symlink. util.ConfinePath first rejects a name whose
+// resolved target leaves root; the resolved path is then read, relative to the
+// resolved root, through readDocumentationFile, so it is confined again and no
+// further link is followed.
+func readLinkedDocumentationFile(ctx context.Context, root, name string) ([]byte, error) {
+	linked, err := util.ConfinePath(root, name)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := filepath.EvalSymlinks(linked)
+	if err != nil {
+		return nil, err
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(resolvedRoot, resolved)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s under %s: %w", name, root, err)
+	}
+	return readDocumentationFile(ctx, resolvedRoot, rel)
 }
 
 // nodeModuleDirs returns the repo-relative directories whose node_modules may

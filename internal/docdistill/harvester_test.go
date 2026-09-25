@@ -4,10 +4,13 @@
 package docdistill
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // writeHarvestFixture writes body to root/rel, creating parent directories.
@@ -124,5 +127,73 @@ func TestHarvestReadsTheRepositoryNodeModules(t *testing.T) {
 		if err != nil || !strings.Contains(got, tc.want) {
 			t.Errorf("%s from %s: %q, %v", tc.ref.Name, tc.ref.Manifest, got, err)
 		}
+	}
+}
+
+// linkNodePackage links root/linkRel to target, a path relative to the link's
+// directory the way pnpm writes it, and skips where the host cannot create
+// symlinks (HISS-21).
+func linkNodePackage(t *testing.T, root, linkRel, target string) {
+	t.Helper()
+	link := filepath.Join(root, filepath.FromSlash(linkRel))
+	if err := os.MkdirAll(filepath.Dir(link), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.FromSlash(target), link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+}
+
+// Positive: pnpm's isolated linker makes node_modules/<pkg> a symlink into
+// node_modules/.pnpm, both beside a workspace member and at the root. The
+// README is read through the link; the strict snapshot refused a symlinked
+// package directory, so no pnpm-installed README was ever harvested.
+func TestHarvestFollowsPnpmPackageLinksInsideTheRepository(t *testing.T) {
+	repo := t.TempDir()
+	writeHarvestFixture(t, repo, "node_modules/.pnpm/zod@3.23.8/node_modules/zod/README.md", "# zod from the pnpm store")
+	writeHarvestFixture(t, repo, "node_modules/.pnpm/left-pad@1.3.0/node_modules/left-pad/README.md", "# left-pad from the pnpm store")
+	linkNodePackage(t, repo, "packages/alpha/node_modules/zod", "../../../node_modules/.pnpm/zod@3.23.8/node_modules/zod")
+	linkNodePackage(t, repo, "node_modules/left-pad", ".pnpm/left-pad@1.3.0/node_modules/left-pad")
+	t.Chdir(t.TempDir())
+
+	for _, tc := range []struct {
+		ref  PackageRef
+		want string
+	}{
+		{PackageRef{Name: "zod", Kind: KindNodePackage, Manifest: "packages/alpha/package.json"}, "zod from the pnpm store"},
+		{PackageRef{Name: "left-pad", Kind: KindNodePackage, Manifest: "package.json"}, "left-pad from the pnpm store"},
+	} {
+		got, err := HarvestDocumentation(t.Context(), repo, tc.ref, true)
+		if err != nil || !strings.Contains(got, tc.want) {
+			t.Errorf("%s from %s: %q, %v", tc.ref.Name, tc.ref.Manifest, got, err)
+		}
+	}
+}
+
+// Negative: following a package link stays confined. A node_modules entry
+// linking outside the repository is refused, not read.
+func TestHarvestRefusesPackageLinksLeavingTheRepository(t *testing.T) {
+	repo, outside := t.TempDir(), t.TempDir()
+	writeHarvestFixture(t, outside, "private/README.md", "# private README outside the repository")
+	linkNodePackage(t, repo, "node_modules/private", filepath.Join(outside, "private"))
+
+	ref := PackageRef{Name: "private", Kind: KindNodePackage, Manifest: "package.json"}
+	got, err := HarvestDocumentation(t.Context(), repo, ref, true)
+	if !errors.Is(err, util.ErrPathEscapesRoot) || got != "" {
+		t.Fatalf("read a README outside the repository through a package link: %q, %v", got, err)
+	}
+}
+
+// Boundary: a dangling member link does not end the lookup; the root copy is
+// still read.
+func TestHarvestFallsBackToTheRootPastADanglingMemberLink(t *testing.T) {
+	repo := t.TempDir()
+	writeHarvestFixture(t, repo, "node_modules/zod/README.md", "# zod hoisted to the root")
+	linkNodePackage(t, repo, "packages/alpha/node_modules/zod", "../../../node_modules/.pnpm/zod@0.0.0/node_modules/zod")
+
+	ref := PackageRef{Name: "zod", Kind: KindNodePackage, Manifest: "packages/alpha/package.json"}
+	got, err := HarvestDocumentation(t.Context(), repo, ref, true)
+	if err != nil || !strings.Contains(got, "hoisted to the root") {
+		t.Fatalf("dangling member link: %q, %v", got, err)
 	}
 }
