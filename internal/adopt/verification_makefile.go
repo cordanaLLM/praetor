@@ -259,7 +259,7 @@ const (
 )
 
 // maxMakefileLineBytes bounds the token scan of a single Makefile line (HISS-02). Real declarations
-// are far shorter; a line past the bound is left unresolved rather than read in part, and
+// are far shorter; a line past the bound is read only in part, so its ownership is unresolved, and
 // makefileLineIsAmbiguous reports it as ambiguous so adoption preserves instead of appending.
 const maxMakefileLineBytes = 8192
 
@@ -352,6 +352,22 @@ func makefileBindsVariable(text string) bool {
 	return assign >= 0 && (colon < 0 || assign < colon)
 }
 
+// makefileExportDirective reports whether line is an export or unexport directive: its first word,
+// followed by whitespace, is "export" or "unexport". Make reads such a line as a list of variables
+// to export and never as a rule, colon or not. Measured against GNU Make 4.4.1: "export
+// verify-all: dep", "unexport verify-all: dep" and "export : dep" declare no target, while
+// "export: dep" declares the target "export" and "override verify-all: dep", "private verify-all:
+// dep" and "override export verify-all: dep" declare verify-all -- only the first word decides.
+func makefileExportDirective(line string) bool {
+	trimmed := strings.TrimLeft(line, " \t")
+	end := strings.IndexAny(trimmed, " \t")
+	if end < 0 {
+		return false
+	}
+	word := trimmed[:end]
+	return word == "export" || word == "unexport"
+}
+
 // makefileTargetNames returns the target names a Makefile line declares, and none when the line
 // declares no rule. Make cuts the line at the first comment or inline-recipe ";" and decides on
 // what is left, so the test runs twice over text Make still reads: once over the whole line and
@@ -363,7 +379,7 @@ func makefileBindsVariable(text string) bool {
 // "verify-all: lint ## run gates (FAST=1)" and "verify-all: ; FOO=1 echo c" all declare the target:
 // an "=" a comment or a recipe carries is not an assignment operator.
 func makefileTargetNames(line string) []string {
-	if strings.HasPrefix(line, "\t") {
+	if strings.HasPrefix(line, "\t") || makefileExportDirective(line) {
 		return nil
 	}
 	_, colon := makefileSplit(line)

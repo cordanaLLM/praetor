@@ -31,12 +31,19 @@ func TestMakefileTargetDetectionSeparatesRulesFromAssignments(t *testing.T) {
 		"inline-recipe-assignment":  {"verify-all: ; FOO=1 echo c\n", true},
 		"double-colon-help-comment": {"verify-all:: dep ## run gates (X=1)\n\t@echo custom\n", true},
 		"escaped-hash-prerequisite": {"verify-all: dep\\#1\n\t@echo custom\n", true},
+		"override-prefixed-rule":    {"override verify-all: dep\n\t@echo custom\n", true},
+		"private-prefixed-rule":     {"private verify-all: dep\n\t@echo custom\n", true},
+		"export-second-word-rule":   {"override export verify-all: dep\n\t@echo custom\n", true},
+		"export-prefix-word-rule":   {"exportx verify-all: dep\n\t@echo custom\n", true},
 		"simple-assignment":         {"verify-all := x\n", false},
 		"posix-assignment":          {"verify-all ::= x\n", false},
 		"escaped-assignment":        {"verify-all :::= x\n", false},
 		"unspaced-assignment":       {"verify-all:=x\n", false},
 		"exported-assignment":       {"export verify-all := x\n", false},
 		"override-assignment":       {"override verify-all := x\n", false},
+		"export-directive":          {"export verify-all: dep\n", false},
+		"unexport-directive":        {"unexport verify-all: dep\n", false},
+		"indented-export-directive": {"  export\tverify-all:: dep\n", false},
 		"recursive-value-colon":     {"verify-all = docker run --rm ci:latest check\n", false},
 		"conditional-value-colon":   {"verify-all ?= a:b\n", false},
 		"appending-value-colon":     {"verify-all += x:y\n", false},
@@ -71,12 +78,12 @@ func TestVerificationAssignmentIsNotAPreservedTarget(t *testing.T) {
 		makefile  string
 		preserved bool
 	}{
-		"assignment":              {"verify-all := $(MAKE) -C build check\nall:\n\t@echo original\n", false},
-		"override-assignment":     {"override verify-all := $(MAKE) -C build check\nall:\n\t@echo original\n", false},
-		"value-colon-assignment":  {"verify-all = docker run --rm ci:latest check\nall:\n\t@echo original\n", false},
-		"target-specific-varible": {"verify-all: CFLAGS := -g\nall:\n\t@echo original\n", false},
-		"rule":                    {"verify-all:\n\t@echo claimed\n", true},
-		"rule-with-help-comment":  {"verify-all: ## run gates (FAST=1)\n\t@echo claimed\n", true},
+		"assignment":               {"verify-all := $(MAKE) -C build check\nall:\n\t@echo original\n", false},
+		"override-assignment":      {"override verify-all := $(MAKE) -C build check\nall:\n\t@echo original\n", false},
+		"value-colon-assignment":   {"verify-all = docker run --rm ci:latest check\nall:\n\t@echo original\n", false},
+		"target-specific-variable": {"verify-all: CFLAGS := -g\nall:\n\t@echo original\n", false},
+		"rule":                     {"verify-all:\n\t@echo claimed\n", true},
+		"rule-with-help-comment":   {"verify-all: ## run gates (FAST=1)\n\t@echo claimed\n", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := newTestRepo(t, name)
@@ -167,6 +174,7 @@ func TestAppendedHelperTargetsIgnoreVariableAssignments(t *testing.T) {
 		"assignment":        {"compile-context := x\naudit := y\nall:\n\t@echo original\n", true},
 		"override-variable": {"override compile-context := x\noverride audit := y\n", true},
 		"value-colon":       {"compile-context = go run ./x:latest\naudit = ci:audit\n", true},
+		"export-directive":  {"export compile-context: x\nunexport audit: y\n", true},
 		"target-variable":   {"compile-context: CFLAGS := -g\naudit: CFLAGS := -g\n", true},
 		"rule":              {"compile-context:\n\t@echo c\naudit:\n\t@echo a\n", false},
 		"help-comment": {"compile-context: dep ## compile (X=1)\n\t@echo c\n" +

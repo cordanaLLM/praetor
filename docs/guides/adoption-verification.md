@@ -21,9 +21,11 @@ A Makefile that only binds a variable of the same name declares no target, wheth
 modifier, and whether or not the value itself contains a colon (`verify-all = docker run --rm
 ci:latest check`, `verify-all = $(SRCS:.c=.o)`). The same test then runs over the prerequisites,
 which is why `verify-all: CFLAGS := -g` binds a target-specific variable without declaring a
-recipe -- with or without a trailing comment. In all of these adoption appends its own `verify-all`
-rule rather than preserving one and reporting a command the project's `make` answers with `No rule
-to make target 'verify-all'`.
+recipe -- with or without a trailing comment. A line whose first word is `export` or `unexport`
+is that directive and never a rule, so `export verify-all: dep` declares no target either; only
+the first word decides, which keeps `override verify-all: dep` and `private verify-all: dep`
+rules. In all of these adoption appends its own `verify-all` rule rather than preserving one and
+reporting a command the project's `make` answers with `No rule to make target 'verify-all'`.
 
 Because the cut comes first, an `=` that a comment or a recipe carries decides nothing:
 `verify-all: lint ## run gates (FAST=1)` and `verify-all: ; FOO=1 echo c` are rules and are

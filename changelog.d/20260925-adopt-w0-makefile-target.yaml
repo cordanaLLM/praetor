@@ -1,4 +1,4 @@
 type: fixed
-title: Adoption reads a Makefile line the way make does, in both directions. A variable assignment such as 'verify-all := x', 'verify-all = a:b' or 'override verify-all := x' no longer counts as a rule, so adoption stops declaring a verify-all target the adopter's make cannot run, and a rule carrying a trailing '## help' comment or an inline ';' recipe is still read as a rule, so adoption no longer appends a second verify-all recipe over one the project already owns
+title: Adoption reads a Makefile line the way make does, in both directions. A variable assignment such as 'verify-all := x', 'verify-all = a:b' or 'override verify-all := x', and an 'export' or 'unexport' directive naming verify-all, no longer count as a rule, so adoption stops declaring a verify-all target the adopter's make cannot run, and a rule carrying a trailing '## help' comment or an inline ';' recipe is still read as a rule, so adoption no longer appends a second verify-all recipe over one the project already owns
 issue: "#288"
 breaking: false
