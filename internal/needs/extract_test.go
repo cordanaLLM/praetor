@@ -236,7 +236,7 @@ func TestParseGoMod3D(t *testing.T) {
 	// Positive: module, go version and a require block.
 	path := writeFixture(t, dir, "go.mod",
 		"module example.com/svc\n\ngo 1.24\n\nrequire (\n\tgithub.com/a/b v1.0.0\n"+
-			"\tgithub.com/c/d v2.0.0 // indirect\n)\n")
+			"\tgithub.com/c/d/v2 v2.0.0 // indirect\n)\n")
 	modulePath, goVer, deps, err := parseGoMod(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

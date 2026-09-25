@@ -9,7 +9,7 @@ import (
 func TestAggregateFleetSkipsUnanalyzableRepositories(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, filepath.Join("svc", "go.mod"),
-		"module example.com/svc\ngo 1.24\nrequire github.com/jackc/pgx v5.0.0\n")
+		"module example.com/svc\ngo 1.24\nrequire github.com/jackc/pgx/v5 v5.0.0\n")
 	// A docs repository carrying only a praetor manifest: discovered, but no language
 	// analyzer recognises it, so it must never be ranked as a 100% ready Go repository.
 	writeFixture(t, root, filepath.Join("docs", ".standards.yaml"),
