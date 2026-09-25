@@ -8,12 +8,71 @@ page covers what that tag sets off, how to cut one, and how the moving flavor ta
 
 | Consumer | Trigger | Result |
 | :--- | :--- | :--- |
-| `.github/workflows/release-binaries.yml` | `push` of a tag matching `v*` | GoReleaser (`.goreleaser.yaml`) builds `praetorctl`, `standardsctl`, `standards-mcp` and `standards-lsp` for Linux, macOS and Windows on amd64 and arm64, attaches Syft SBOMs, signs `checksums.txt` keyless with cosign, and publishes a GitHub release |
+| `.github/workflows/release-binaries.yml` | `push` of a tag matching `v*` | GoReleaser (`.goreleaser.yaml`) builds `praetorctl`, `standardsctl`, `standards-mcp` and `standards-lsp` for Linux, macOS and Windows on amd64 and arm64, attaches Syft SBOMs, signs `checksums.txt` keyless with cosign into `checksums.txt.sigstore.json`, and publishes a GitHub release |
 | `go install github.com/cordanaLLM/praetor/cmd/standardsctl@latest` | any release version on the module proxy | `@latest` selects the highest release version; with no tag at all it falls back to a pseudo-version of `main` ([Go modules reference, version queries](https://go.dev/ref/mod#version-queries)). `.github/actions/praetor-adopt/action.yml` installs this way |
 | `.github/workflows/sync-flavors.yml` | next run after the tag exists | moves `latest` to the highest `v*` tag |
 
 Once the first release exists, `@latest` stops following `main`. An adopter that wants
 unreleased commits has to ask for them, for example `@main`.
+
+### Signing and SBOM toolchain
+
+`release-binaries.yml` and `sbom.yml` install the tools the release assets depend on.
+`internal/bump/scan_actions.go` records the same action pins as the baseline
+`praetorctl bump` compares workflows against, and `internal/bump/release_pins_test.go`
+fails when the workflows and that baseline disagree.
+
+| Tool | Action pin | Installs | Why the pin reads the way it does |
+| :--- | :--- | :--- | :--- |
+| GoReleaser | `goreleaser/goreleaser-action@v7` | GoReleaser `~> v2`, from the step's `version` input | v7 moves the action runtime to node24 and adds only the optional `version-file` input, so the step's inputs are unchanged |
+| Syft | `anchore/sbom-action/download-syft@v0.24.2` | Syft `v1.51.1` | The invocations `syft dir:. -o cyclonedx-json=…` and the `.goreleaser.yaml` `sboms` args are unchanged, but a newer Syft catalogues more packages, so SBOM content differs from that of builds made with an older pin |
+| cosign | `sigstore/cosign-installer@v4.1.2` | cosign `v3.0.6`, the installer's default | No `cosign-release` input: a version hold there is invisible to the `praetorctl bump` scanner, and `internal/forge/cosign_bundle_test.go` rejects one. The installer publishes no moving `v4` tag, so the pin is exact |
+
+## Verifying a published release
+
+Every signature this repository publishes is a **Sigstore bundle**: one `.sigstore.json`
+file that carries the signature, the short-lived Fulcio certificate and the Rekor
+transparency-log entry together. The signing steps used to be written for cosign v2: each
+SBOM would have carried a detached `.sig` plus `.cert`, and `checksums.txt` only a
+`checksums.txt.sig`, because the `.goreleaser.yaml` signs block set no `certificate` name.
+No `v*` release was published in that shape, so every release carries bundles only, and
+`cosign verify-blob --signature ... --certificate ...` does not apply to any of them.
+`cosign sign-blob` in cosign v3 has no `--output-signature` or `--output-certificate` flag
+at all ([`cosign_sign-blob.md`](https://github.com/sigstore/cosign/blob/v3.1.3/doc/cosign_sign-blob.md)).
+
+Verification needs cosign v3 or newer (CI installs cosign `v3.0.6`, the default of
+`sigstore/cosign-installer@v4.1.2`) and the tag you are checking:
+
+```bash
+TAG=v0.1.0
+gh release download "$TAG" --repo cordanaLLM/praetor
+
+cosign verify-blob \
+  --certificate-identity "https://github.com/cordanaLLM/praetor/.github/workflows/release-binaries.yml@refs/tags/$TAG" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --bundle checksums.txt.sigstore.json \
+  checksums.txt
+
+sha256sum --check --ignore-missing checksums.txt
+```
+
+`checksums.txt` covers every archive, so one bundle verification plus the checksum check
+covers the whole binary set.
+
+| Signed file | Bundle | Signed by |
+| :--- | :--- | :--- |
+| `checksums.txt` | `checksums.txt.sigstore.json` | `.github/workflows/release-binaries.yml` (via `.goreleaser.yaml` `signs.cosign-keyless`) |
+| `cordana-standards-cyclonedx.json` | `cordana-standards-cyclonedx.json.sigstore.json` | `.github/workflows/release-binaries.yml` |
+| `cordana-standards-spdx.json` | `cordana-standards-spdx.json.sigstore.json` | `.github/workflows/release-binaries.yml` |
+| `praetor-cyclonedx.json` | `praetor-cyclonedx.json.sigstore.json` | `.github/workflows/sbom.yml` |
+| `praetor-spdx.json` | `praetor-spdx.json.sigstore.json` | `.github/workflows/sbom.yml` |
+
+`--certificate-identity` names the workflow file that signed the artifact, so an SBOM from
+`sbom.yml` is verified with `.../sbom.yml@refs/tags/$TAG` rather than the
+`release-binaries.yml` identity above.
+
+`internal/forge/cosign_bundle_test.go` replays the flag shape against the real workflow and
+GoReleaser files, so a return to the removed v2 flags fails `go test` rather than a tag push.
 
 ## Cutting a release
 

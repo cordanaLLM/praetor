@@ -103,11 +103,14 @@ sboms:
 signs:
   - id: cosign-keyless
     cmd: cosign
+    # cosign v3 dropped --output-signature/--output-certificate from sign-blob; a Sigstore
+    # bundle now carries the signature, the Fulcio certificate and the transparency-log
+    # entry in one file. ${signature} names that bundle so GoReleaser publishes it.
+    signature: "${artifact}.sigstore.json"
     args:
       - "sign-blob"
       - "--yes"
-      - "--output-signature=${signature}"
-      - "--output-certificate=${certificate}"
+      - "--bundle=${signature}"
       - "${artifact}"
     artifacts: checksum
 

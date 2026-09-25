@@ -39,10 +39,10 @@ jobs:
           go-version: '1.27'
 
       - name: Install Cosign (Sigstore)
-        uses: sigstore/cosign-installer@v3.8.1
+        uses: sigstore/cosign-installer@v4.1.2
 
       - name: Install Syft
-        uses: anchore/sbom-action/download-syft@v0.18.0
+        uses: anchore/sbom-action/download-syft@v0.24.2
 
       - name: Generate CycloneDX SBOM
         run: syft dir:. -o cyclonedx-json=praetor-cyclonedx.json
@@ -53,12 +53,10 @@ jobs:
       - name: Cosign Keyless Sign SBOMs via OIDC (SLSA Level 3)
         run: |
           cosign sign-blob --yes \
-            --output-certificate praetor-cyclonedx.json.cert \
-            --output-signature praetor-cyclonedx.json.sig \
+            --bundle praetor-cyclonedx.json.sigstore.json \
             praetor-cyclonedx.json
           cosign sign-blob --yes \
-            --output-certificate praetor-spdx.json.cert \
-            --output-signature praetor-spdx.json.sig \
+            --bundle praetor-spdx.json.sigstore.json \
             praetor-spdx.json
 
       - name: Upload Signed SBOM Artifacts to GitHub Release
@@ -68,9 +66,7 @@ jobs:
         run: |
           gh release upload "${{ github.ref_name }}" \
             praetor-cyclonedx.json \
-            praetor-cyclonedx.json.cert \
-            praetor-cyclonedx.json.sig \
+            praetor-cyclonedx.json.sigstore.json \
             praetor-spdx.json \
-            praetor-spdx.json.cert \
-            praetor-spdx.json.sig \
+            praetor-spdx.json.sigstore.json \
             --clobber

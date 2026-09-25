@@ -1,0 +1,3 @@
+type: changed
+title: Sign release artifacts as Sigstore bundles with cosign v3
+breaking: true
