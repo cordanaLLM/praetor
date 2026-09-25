@@ -15,16 +15,13 @@ import (
 // write path refuses, so an oversized or linked manifest was scanned, planned and edited
 // and only then failed to be written.
 //
-// The scan entry points on this path carry no context of their own, so the read is bounded
-// by contextopt.MaxDuration here, as internal/config/hierarchy.go does at the same kind of
-// boundary.
-func readManifest(root, name string) ([]byte, error) {
+// The read runs under the caller's context; contextopt.ReadSnapshot adds its own
+// contextopt.MaxDuration bound on top, so a caller without a deadline is still bounded.
+func readManifest(ctx context.Context, root, name string) ([]byte, error) {
 	path, err := util.ConfinePath(root, name)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDuration)
-	defer cancel()
 	data, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("read manifest %s: %w", name, err)

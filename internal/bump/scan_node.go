@@ -56,7 +56,7 @@ func ScanNodeDependencies(ctx context.Context, repoPath string, opts ScanOptions
 		candidates, err := scanNodePackageDir(ctx, dir, dirRel, opts)
 		if err != nil {
 			var fbErr error
-			candidates, fbErr = scanPackageJSONStatic(repoPath, dirRel, opts)
+			candidates, fbErr = scanPackageJSONStatic(ctx, repoPath, dirRel, opts)
 			if fbErr != nil {
 				return nil, fmt.Errorf("scan Node package %s: %w", dirRel, errors.Join(err, fbErr))
 			}
@@ -132,8 +132,8 @@ func nodeUpgradeCandidate(pkg string, item pnpmOutdatedItem, dirRel string, opts
 	}, true
 }
 
-func scanPackageJSONStatic(repoPath, dirRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
-	data, err := readManifest(repoPath, filepath.Join(dirRel, "package.json"))
+func scanPackageJSONStatic(ctx context.Context, repoPath, dirRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
+	data, err := readManifest(ctx, repoPath, filepath.Join(dirRel, "package.json"))
 	if err != nil {
 		return nil, err
 	}

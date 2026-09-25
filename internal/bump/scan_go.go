@@ -25,8 +25,8 @@ type goModuleJSON struct {
 
 // DiscoverGoModules finds directories containing go.mod, returning no partial result.
 // Deprecated: use DiscoverGoModulesChecked to distinguish an empty tree from a read failure.
-func DiscoverGoModules(repoPath string) []string {
-	modules, err := DiscoverGoModulesChecked(repoPath)
+func DiscoverGoModules(ctx context.Context, repoPath string) []string {
+	modules, err := DiscoverGoModulesChecked(ctx, repoPath)
 	if err != nil {
 		return nil
 	}
@@ -34,8 +34,8 @@ func DiscoverGoModules(repoPath string) []string {
 }
 
 // DiscoverGoModulesChecked finds bounded modules and reports incomplete discovery.
-func DiscoverGoModulesChecked(repoPath string) ([]string, error) {
-	dirs, err := parseGoWork(filepath.Join(repoPath, "go.work"))
+func DiscoverGoModulesChecked(ctx context.Context, repoPath string) ([]string, error) {
+	dirs, err := parseGoWork(ctx, filepath.Join(repoPath, "go.work"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -125,9 +125,9 @@ func skipModuleDirectory(rel, name string) bool {
 	return strings.Count(rel, string(filepath.Separator)) > 2 || strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules"
 }
 
-func parseGoWork(path string) ([]string, error) {
+func parseGoWork(ctx context.Context, path string) ([]string, error) {
 	var dirs []string
-	data, err := readManifest(filepath.Dir(path), filepath.Base(path))
+	data, err := readManifest(ctx, filepath.Dir(path), filepath.Base(path))
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +163,7 @@ func ScanGoDependencies(ctx context.Context, repoPath string, opts ScanOptions) 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	modules, err := DiscoverGoModulesChecked(repoPath)
+	modules, err := DiscoverGoModulesChecked(ctx, repoPath)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +176,7 @@ func ScanGoDependencies(ctx context.Context, repoPath string, opts ScanOptions) 
 		}
 		if scanErr != nil || len(candidates) == 0 {
 			var fallbackErr error
-			candidates, fallbackErr = scanGoModFallback(modDir, modRel, opts)
+			candidates, fallbackErr = scanGoModFallback(ctx, modDir, modRel, opts)
 			if fallbackErr != nil {
 				return nil, fmt.Errorf("scan module %s: %w", modRel, errors.Join(scanErr, fallbackErr))
 			}
@@ -259,8 +259,8 @@ var ErrPackageNotRequired = errors.New("package not required by any go.mod")
 // Callers building an UpgradeCandidate must use it instead of a placeholder: the go.mod
 // fallback edit in applyGoUpdate matches on the literal "<package> <current version>", so
 // a placeholder current version can never match and the fallback always fails.
-func CurrentGoModVersion(repoPath, pkg string) (version, moduleDir string, err error) {
-	modules := DiscoverGoModules(repoPath)
+func CurrentGoModVersion(ctx context.Context, repoPath, pkg string) (version, moduleDir string, err error) {
+	modules := DiscoverGoModules(ctx, repoPath)
 	if len(modules) == 0 {
 		modules = []string{"."}
 	}
@@ -306,8 +306,8 @@ func requiredVersionIn(goModPath, pkg string) (string, error) {
 	return "", nil
 }
 
-func scanGoModFallback(modDir, modRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
-	data, err := readManifest(modDir, "go.mod")
+func scanGoModFallback(ctx context.Context, modDir, modRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
+	data, err := readManifest(ctx, modDir, "go.mod")
 	if err != nil {
 		return nil, err
 	}

@@ -30,7 +30,7 @@ func AuditCodebaseVersions(ctx context.Context, repoPath string, includePrerelea
 	if err != nil {
 		return nil, err
 	}
-	actions, actionDeps, err := ScanWorkflowActions(repoPath)
+	actions, actionDeps, err := ScanWorkflowActions(ctx, repoPath)
 	if err != nil {
 		return nil, fmt.Errorf("audit workflow actions: %w", err)
 	}

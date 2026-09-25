@@ -1,6 +1,8 @@
 package bump
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +30,7 @@ func TestReadManifestAppliesTheWriterRule(t *testing.T) {
 		repo := t.TempDir()
 		body := "module example.com/app\n\nrequire example.com/pkg v1.0.0\n"
 		writeGoMod(t, repo, body)
-		data, err := readManifest(repo, "go.mod")
+		data, err := readManifest(t.Context(), repo, "go.mod")
 		if err != nil {
 			t.Fatalf("ordinary manifest refused: %v", err)
 		}
@@ -41,7 +43,7 @@ func TestReadManifestAppliesTheWriterRule(t *testing.T) {
 		repo := t.TempDir()
 		body := goModOfSize(t, contextopt.MaxSourceBytes)
 		writeGoMod(t, repo, body)
-		data, err := readManifest(repo, "go.mod")
+		data, err := readManifest(t.Context(), repo, "go.mod")
 		if err != nil {
 			t.Fatalf("manifest of exactly %d bytes refused: %v", contextopt.MaxSourceBytes, err)
 		}
@@ -53,7 +55,7 @@ func TestReadManifestAppliesTheWriterRule(t *testing.T) {
 	t.Run("one-byte-over-the-cap", func(t *testing.T) {
 		repo := t.TempDir()
 		writeGoMod(t, repo, goModOfSize(t, contextopt.MaxSourceBytes+1))
-		if _, err := readManifest(repo, "go.mod"); err == nil {
+		if _, err := readManifest(t.Context(), repo, "go.mod"); err == nil {
 			t.Fatalf("manifest of %d bytes accepted", contextopt.MaxSourceBytes+1)
 		}
 	})
@@ -69,15 +71,27 @@ func TestReadManifestAppliesTheWriterRule(t *testing.T) {
 		if err := os.Symlink("real.mod", filepath.Join(repo, "go.mod")); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
-		if _, err := readManifest(repo, "go.mod"); err == nil {
+		if _, err := readManifest(t.Context(), repo, "go.mod"); err == nil {
 			t.Fatal("in-root symlinked manifest accepted at read")
 		}
 	})
 
 	t.Run("escaping-name", func(t *testing.T) {
 		repo := t.TempDir()
-		if _, err := readManifest(repo, filepath.Join("..", "go.mod")); err == nil {
+		if _, err := readManifest(t.Context(), repo, filepath.Join("..", "go.mod")); err == nil {
 			t.Fatal("manifest outside the root accepted")
+		}
+	})
+
+	// The read runs under the caller's context rather than a detached one, so a caller
+	// that has already given up gets its cancellation back instead of a completed read.
+	t.Run("cancelled-caller", func(t *testing.T) {
+		repo := t.TempDir()
+		writeGoMod(t, repo, "module example.com/app\n")
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if _, err := readManifest(ctx, repo, "go.mod"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("read under a cancelled caller context: err = %v, want context.Canceled", err)
 		}
 	})
 }
@@ -117,7 +131,7 @@ func TestStaticNodeScanUsesTheManifestReader(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(manifest), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		got, err := scanPackageJSONStatic(repo, ".", ScanOptions{})
+		got, err := scanPackageJSONStatic(t.Context(), repo, ".", ScanOptions{})
 		if err != nil {
 			t.Fatalf("ordinary package.json refused: %v", err)
 		}
@@ -133,7 +147,7 @@ func TestStaticNodeScanUsesTheManifestReader(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(manifest), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := scanPackageJSONStatic(repo, ".", ScanOptions{}); err == nil {
+		if got, err := scanPackageJSONStatic(t.Context(), repo, ".", ScanOptions{}); err == nil {
 			t.Fatalf("oversized package.json accepted: %v", got)
 		}
 	})
@@ -147,7 +161,7 @@ func TestStaticNodeScanUsesTheManifestReader(t *testing.T) {
 		if err := os.Symlink(target, filepath.Join(repo, "package.json")); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
-		if got, err := scanPackageJSONStatic(repo, ".", ScanOptions{}); err == nil {
+		if got, err := scanPackageJSONStatic(t.Context(), repo, ".", ScanOptions{}); err == nil {
 			t.Fatalf("symlinked package.json accepted: %v", got)
 		}
 	})

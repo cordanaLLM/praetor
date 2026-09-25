@@ -12,7 +12,7 @@ import (
 // empty scan there while POSIX refused it.
 func TestScanWorkflowActionsDistinguishesAbsentFromMisplaced(t *testing.T) {
 	absent := t.TempDir()
-	if got, warnings, err := ScanWorkflowActions(absent); err != nil || len(got) != 0 || len(warnings) != 0 {
+	if got, warnings, err := ScanWorkflowActions(t.Context(), absent); err != nil || len(got) != 0 || len(warnings) != 0 {
 		t.Fatalf("absent workflow directory was not an empty scan: %v %v %v", got, warnings, err)
 	}
 	for _, file := range []string{".github", filepath.Join(".github", "workflows")} {
@@ -23,7 +23,7 @@ func TestScanWorkflowActionsDistinguishesAbsentFromMisplaced(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(repo, file), []byte("not a directory"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := ScanWorkflowActions(repo); err == nil {
+		if _, _, err := ScanWorkflowActions(t.Context(), repo); err == nil {
 			t.Fatalf("a regular file at %s was read as an empty workflow directory", file)
 		}
 	}

@@ -27,7 +27,7 @@ require (
 )
 `)
 
-	version, moduleDir, err := CurrentGoModVersion(dir, "github.com/spf13/cobra")
+	version, moduleDir, err := CurrentGoModVersion(t.Context(), dir, "github.com/spf13/cobra")
 	if err != nil {
 		t.Fatalf("CurrentGoModVersion: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestCurrentGoModVersion_Positive_SingleLineRequire(t *testing.T) {
 	dir := t.TempDir()
 	writeGoMod(t, dir, "module example.com/app\n\nrequire gopkg.in/yaml.v3 v3.0.1\n")
 
-	version, _, err := CurrentGoModVersion(dir, "gopkg.in/yaml.v3")
+	version, _, err := CurrentGoModVersion(t.Context(), dir, "gopkg.in/yaml.v3")
 	if err != nil {
 		t.Fatalf("CurrentGoModVersion: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestCurrentGoModVersion_Negative_PackageAbsent(t *testing.T) {
 	dir := t.TempDir()
 	writeGoMod(t, dir, "module example.com/app\n\nrequire gopkg.in/yaml.v3 v3.0.1\n")
 
-	_, _, err := CurrentGoModVersion(dir, "github.com/does/not-exist")
+	_, _, err := CurrentGoModVersion(t.Context(), dir, "github.com/does/not-exist")
 	if !errors.Is(err, ErrPackageNotRequired) {
 		t.Fatalf("expected ErrPackageNotRequired, got %v", err)
 	}
@@ -67,7 +67,7 @@ func TestCurrentGoModVersion_Negative_PackageAbsent(t *testing.T) {
 
 func TestCurrentGoModVersion_Boundary_NoManifestAndHugeManifest(t *testing.T) {
 	empty := t.TempDir()
-	if _, _, err := CurrentGoModVersion(empty, "any/pkg"); !errors.Is(err, ErrPackageNotRequired) {
+	if _, _, err := CurrentGoModVersion(t.Context(), empty, "any/pkg"); !errors.Is(err, ErrPackageNotRequired) {
 		t.Errorf("a directory with no go.mod must report ErrPackageNotRequired, got %v", err)
 	}
 
@@ -82,7 +82,7 @@ func TestCurrentGoModVersion_Boundary_NoManifestAndHugeManifest(t *testing.T) {
 
 	// The scan stops at the bound rather than reading an unbounded manifest, so the
 	// package past the cap is reported as absent instead of hanging the scan.
-	if _, _, err := CurrentGoModVersion(dir, "tail/pkg"); !errors.Is(err, ErrPackageNotRequired) {
+	if _, _, err := CurrentGoModVersion(t.Context(), dir, "tail/pkg"); !errors.Is(err, ErrPackageNotRequired) {
 		t.Errorf("expected the line bound to cut the scan short, got %v", err)
 	}
 }
