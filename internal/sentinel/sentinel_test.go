@@ -520,3 +520,60 @@ func TestReadHostCPULoad_Boundary_AbsentSourceIsUnmeasuredNotIdle(t *testing.T) 
 		t.Fatalf("an absent source was not reported as unmeasured: %v %v %v measured=%v err=%v", l1, l5, l15, measured, err)
 	}
 }
+
+const gib = uint64(1024 * 1024 * 1024)
+
+// TestCanAllocateModel_Boundary_ExactReservation: a load that leaves exactly the reservation
+// free is admitted, one byte less is refused, on both sides of the 4 GB floor.
+func TestCanAllocateModel_Boundary_ExactReservation(t *testing.T) {
+	for _, total := range []uint64{16 * gib, 20 * gib, 64 * gib} {
+		reserve := CalculateRAMReservation(total)
+		exact := HostStats{RAMTotalBytes: total, RAMFreeBytes: reserve + 2*gib}
+		if !CanAllocateModel(&exact, 2) {
+			t.Fatalf("total %d: a load leaving exactly the reservation was refused", total)
+		}
+		short := HostStats{RAMTotalBytes: total, RAMFreeBytes: reserve + 2*gib - 1}
+		if CanAllocateModel(&short, 2) {
+			t.Fatalf("total %d: a load leaving one byte under the reservation was admitted", total)
+		}
+	}
+}
+
+// TestCanAllocateModel_Negative_InconsistentReading: more free than total RAM is refused
+// explicitly; before, only an unsigned underflow in the utilization arithmetic refused it.
+func TestCanAllocateModel_Negative_InconsistentReading(t *testing.T) {
+	stats := HostStats{RAMTotalBytes: 8 * gib, RAMFreeBytes: 64 * gib}
+	if CanAllocateModel(&stats, 1) {
+		t.Fatal("a reading with more free than total RAM was admitted")
+	}
+}
+
+// TestCanAllocateModel_Positive_ReservationBoundsUtilization pins why no separate utilization
+// guard exists: every load the reservation admits leaves utilization at or under
+// 1-RAMReserveRatio, below RAMPressureThreshold, across the ratio and the 4 GB floor regimes.
+func TestCanAllocateModel_Positive_ReservationBoundsUtilization(t *testing.T) {
+	ceiling := 1 - RAMReserveRatio
+	if ceiling >= RAMPressureThreshold {
+		t.Fatalf("reservation ceiling %.2f no longer sits below the pressure threshold %.2f", ceiling, RAMPressureThreshold)
+	}
+	admitted := 0
+	for _, totalGiB := range []uint64{6, 8, 16, 20, 21, 64, 256} {
+		total := totalGiB * gib
+		for freeGiB := uint64(0); freeGiB <= totalGiB; freeGiB++ {
+			stats := HostStats{RAMTotalBytes: total, RAMFreeBytes: freeGiB * gib}
+			for reqGiB := uint64(1); reqGiB <= freeGiB && reqGiB <= 64; reqGiB++ {
+				if !CanAllocateModel(&stats, float64(reqGiB)) {
+					continue
+				}
+				admitted++
+				util := float64(total-(freeGiB-reqGiB)*gib) / float64(total)
+				if util > ceiling+1e-9 {
+					t.Fatalf("total %d GiB, free %d, load %d: admitted at utilization %.4f", totalGiB, freeGiB, reqGiB, util)
+				}
+			}
+		}
+	}
+	if admitted == 0 {
+		t.Fatal("the grid admitted no load, so it proves nothing")
+	}
+}
