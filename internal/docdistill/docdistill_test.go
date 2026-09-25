@@ -114,7 +114,7 @@ Note: Caller must close decoder after use.
 			t.Errorf("expected error with nil context")
 		}
 
-		_, err = HarvestDocumentation(absentContext, PackageRef{}, false)
+		_, err = HarvestDocumentation(absentContext, t.TempDir(), PackageRef{}, false)
 		if err == nil {
 			t.Errorf("expected error harvesting with nil context")
 		}

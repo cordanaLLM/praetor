@@ -271,7 +271,7 @@ func syncOnePackage(ctx context.Context, repoPath string, ref PackageRef, cat *D
 		return nil
 	}
 
-	raw, harvestErr := HarvestDocumentation(ctx, ref, opts.OfflineOnly)
+	raw, harvestErr := HarvestDocumentation(ctx, repoPath, ref, opts.OfflineOnly)
 	if harvestErr != nil {
 		return fmt.Errorf("harvest %s@%s: %w", ref.Name, ref.Version, harvestErr)
 	}

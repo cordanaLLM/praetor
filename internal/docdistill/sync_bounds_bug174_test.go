@@ -26,6 +26,7 @@ func syncFixture(t *testing.T, n int) (repo string) {
 	repo = t.TempDir()
 	goPath := t.TempDir()
 	t.Setenv("GOPATH", goPath)
+	t.Setenv("GOMODCACHE", "")
 
 	requires := ""
 	for i := 0; i < n; i++ {

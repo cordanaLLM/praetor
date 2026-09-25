@@ -9,16 +9,22 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// HarvestDocumentation retrieves raw documentation content for a package reference.
-func HarvestDocumentation(ctx context.Context, ref PackageRef, offline bool) (string, error) {
+// HarvestDocumentation retrieves raw documentation content for a package
+// reference declared by the repository at repoPath.
+//
+// Every local lookup is anchored to repoPath, never to the process's working
+// directory: `go doc` runs in the repository, so the repository's own module
+// graph selects the version, and Node READMEs are read from the repository's
+// node_modules.
+func HarvestDocumentation(ctx context.Context, repoPath string, ref PackageRef, offline bool) (string, error) {
 	if ctx == nil {
 		return "", fmt.Errorf("harvester: context cannot be nil")
 	}
@@ -26,23 +32,44 @@ func HarvestDocumentation(ctx context.Context, ref PackageRef, offline bool) (st
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	if strings.TrimSpace(repoPath) == "" {
+		return "", fmt.Errorf("harvester: repository path cannot be empty")
+	}
 	if err := util.ValidateExecArg(ref.Name); err != nil {
 		return "", fmt.Errorf("invalid package name: %w", err)
 	}
 	switch ref.Kind {
 	case KindGoModule:
-		return harvestGoModule(ctx, ref, offline)
+		return harvestGoModule(ctx, repoPath, ref, offline)
 	case KindGitHubAction:
 		return harvestGitHubAction(ctx, ref, offline)
 	case KindNodePackage:
-		return harvestNodePackage(ctx, ref, offline)
+		return harvestNodePackage(ctx, repoPath, ref)
 	default:
 		return "", fmt.Errorf("unsupported documentation kind: %s", ref.Kind)
 	}
 }
 
-func harvestGoModule(ctx context.Context, ref PackageRef, offline bool) (string, error) {
-	out, commandErr := util.RunCommandBytes(ctx, "", "go", 1<<20, "doc", ref.Name)
+// goDocTarget names what `go doc` documents. Online, the declared version is
+// pinned as package@version, which the go command resolves through the module
+// proxy. Offline that lookup is not available — `go doc pkg@version` fails
+// under GOPROXY=off while it loads deprecation data — so the bare path is used
+// and the repository's module graph, from which ref.Version was read, selects
+// the version.
+func goDocTarget(ref PackageRef, offline bool) string {
+	if offline || ref.Version == "" {
+		return ref.Name
+	}
+	return ref.Name + "@" + ref.Version
+}
+
+func harvestGoModule(ctx context.Context, repoPath string, ref PackageRef, offline bool) (string, error) {
+	if ref.Version != "" {
+		if err := util.ValidateExecArg(ref.Version); err != nil {
+			return "", fmt.Errorf("invalid module version: %w", err)
+		}
+	}
+	out, commandErr := util.RunCommandBytes(ctx, repoPath, "go", 1<<20, "doc", goDocTarget(ref, offline))
 	if commandErr == nil && len(out.Stdout) > 50 {
 		return string(out.Stdout), nil
 	}
@@ -63,22 +90,25 @@ func harvestGoModule(ctx context.Context, ref PackageRef, offline bool) (string,
 	return "", fmt.Errorf("go documentation unavailable for %s@%s: %w", ref.Name, ref.Version, errors.Join(commandErr, cacheErr))
 }
 
+// cachedGoDocumentation reads the module's README or doc.go from the module
+// cache, under the case-escaped directory the go command extracts it to.
 func cachedGoDocumentation(ctx context.Context, ref PackageRef) (string, error) {
-	goPath := os.Getenv("GOPATH")
-	if goPath == "" {
-		goPath = filepath.Join(os.Getenv("HOME"), "go")
+	cacheRoot, ok := gomanifest.ModuleCacheRoot()
+	if !ok {
+		return "", errors.New("module cache location unresolved: GOMODCACHE, GOPATH and the home directory are all unset")
+	}
+	moduleDir, err := gomanifest.ModuleCacheDir(ref.Name, ref.Version)
+	if err != nil {
+		return "", err
 	}
 	var failures []error
-	for _, cacheRoot := range filepath.SplitList(goPath) {
-		moduleDir := fmt.Sprintf("%s@%s", ref.Name, ref.Version)
-		for _, candidate := range []string{"README.md", "readme.md", "README", "doc.go"} {
-			data, err := readDocumentationFile(ctx, filepath.Join(cacheRoot, "pkg", "mod"), filepath.Join(moduleDir, candidate))
-			if err == nil && len(data) > 0 {
-				return string(data), nil
-			}
-			if err != nil {
-				failures = append(failures, err)
-			}
+	for _, candidate := range []string{"README.md", "readme.md", "README", "doc.go"} {
+		data, err := readDocumentationFile(ctx, cacheRoot, filepath.Join(moduleDir, candidate))
+		if err == nil && len(data) > 0 {
+			return string(data), nil
+		}
+		if err != nil {
+			failures = append(failures, err)
 		}
 	}
 	return "", errors.Join(failures...)
@@ -134,15 +164,35 @@ func harvestGitHubAction(ctx context.Context, ref PackageRef, offline bool) (str
 	return "", fmt.Errorf("action documentation unavailable for %s@%s", ref.Name, ref.Version)
 }
 
-func harvestNodePackage(ctx context.Context, ref PackageRef, _ bool) (string, error) {
-	data, err := readDocumentationFile(ctx, "node_modules", filepath.Join(ref.Name, "README.md"))
-	if err != nil {
-		return "", fmt.Errorf("npm documentation unavailable for %s: %w", ref.Name, err)
+// harvestNodePackage reads the package README from the repository's
+// node_modules: first beside the manifest that declared it, where pnpm links a
+// workspace member's dependencies, then at the repository root, where npm and
+// yarn hoist them. Reads are confined to repoPath, which pnpm's links into
+// node_modules/.pnpm stay inside.
+func harvestNodePackage(ctx context.Context, repoPath string, ref PackageRef) (string, error) {
+	var failures []error
+	for _, dir := range nodeModuleDirs(ref.Manifest) {
+		data, err := readDocumentationFile(ctx, repoPath, filepath.Join(dir, "node_modules", ref.Name, "README.md"))
+		if err == nil && len(data) > 0 {
+			return string(data), nil
+		}
+		if err == nil {
+			err = fmt.Errorf("npm documentation is empty for %s", ref.Name)
+		}
+		failures = append(failures, err)
 	}
-	if len(data) == 0 {
-		return "", fmt.Errorf("npm documentation is empty for %s", ref.Name)
+	return "", fmt.Errorf("npm documentation unavailable for %s: %w", ref.Name, errors.Join(failures...))
+}
+
+// nodeModuleDirs returns the repo-relative directories whose node_modules may
+// hold a package declared in manifest: the manifest's own directory, then the
+// repository root.
+func nodeModuleDirs(manifest string) []string {
+	dir := filepath.Dir(filepath.FromSlash(manifest))
+	if manifest == "" || dir == "." {
+		return []string{"."}
 	}
-	return string(data), nil
+	return []string{dir, "."}
 }
 
 func fetchURLWithTimeout(ctx context.Context, url string) (content string, resultErr error) {

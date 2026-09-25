@@ -79,6 +79,7 @@ func TestSyncRepositoryDocs_UsesSharedWriter(t *testing.T) {
 	repo := t.TempDir()
 	goPath := t.TempDir()
 	t.Setenv("GOPATH", goPath)
+	t.Setenv("GOMODCACHE", "")
 	readmeDir := filepath.Join(goPath, "pkg", "mod", "github.com", "example", "dep@v1.2.3")
 	if err := os.MkdirAll(readmeDir, 0700); err != nil {
 		t.Fatal(err)
