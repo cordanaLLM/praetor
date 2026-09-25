@@ -172,26 +172,40 @@ availability checking, or scheduler integration. `models route` remains advisory
 ## Maintain the catalog with models sync
 
 `praetorctl models sync` merges the built-in seed list into `routing.yaml`. With
-discovery on, which is the default, it also adds the models installed on a local
-Ollama endpoint, so a model you pull becomes routable.
+discovery on, which is the default, it also adds the models installed on local
+Ollama and vLLM endpoints, so a model you pull or serve becomes routable.
 
 ```bash
-praetorctl models sync                         # seed list plus this machine's Ollama models
+praetorctl models sync                         # seed list plus this machine's local models
 praetorctl models sync --discover-local=false  # seed list only; no daemon needed
 praetorctl models sync --prune                 # rebuild from the seed list and this run's discovery
 ```
 
-Discovery queries only endpoints on port 11434 (Ollama); the default
-`http://localhost:8000` vLLM endpoint is accepted but not queried. An Ollama endpoint
-that does not answer fails the command, so pass `--discover-local=false` on a machine
-without a daemon.
+Discovery queries every endpoint in `--local-endpoints` (default
+`http://localhost:11434,http://localhost:8000`), whatever its port. Each endpoint is
+asked for Ollama's `/api/tags` first and, when that path answers 404, for the
+OpenAI-compatible `/v1/models` that vLLM serves (`internal/router/discovery.go`). An
+endpoint that does not answer is listed as `Endpoint skipped` and the sync goes on
+with the others, keeping that endpoint's catalogued entries. A `--prune` run refuses
+instead, since it would remove them. `TestDiscoverLocalModelsIsolatesFailingEndpoints`
+and `TestSyncCatalogIsolatesFailedDiscovery` pin this.
+
+A new entry's tier comes from the parameter-count tag in its ID (`7b`, `1.5b`, `235b`,
+`8x7b`): below 5 billion is `nano`, below 20 `lightweight`, up to 35 `midweight`, and
+larger `heavy-frontier`. Only an ID without a size tag falls back to name tags such as
+`qwen3` or `haiku` (`ClassifyTier`, pinned by `TestClassifyTierSizeBoundaries`). Its
+`family` is the training lineage the name starts with, read after the last `/` of a
+hosted path, so `hf.co/<org>/Qwythos-9B-Claude-...` is not `anthropic`; open weights
+of a vendor with a hosted API in the catalog (`gemma`, `gpt-oss`, `qwen`) share that
+vendor's family, because the orthogonal auditor guards against correlated errors,
+which hosting does not change (`DetectFamily`, `TestDetectFamilyMatchesVendorPrefixOnly`).
 
 Each model entry records who owns it in `source`:
 
 | `source` | Written by | What a sync does with it |
 | :--- | :--- | :--- |
 | `seed` | the seed list in `internal/router/sync.go` | rewrites it in place from the seed list |
-| `local` | discovery against a local Ollama endpoint | keeps it; a rediscovered ID is never added twice |
+| `local` | discovery against a local Ollama or vLLM endpoint | keeps it; a rediscovered ID is never added twice |
 | absent | an operator editing the file | keeps it |
 
 Without `--prune`, a sync never removes an entry. Entries the seed list does not own
@@ -210,10 +224,16 @@ A catalog that does not load, for example with a duplicate ID or an unknown `sou
 value, is refused rather than overwritten; repair or delete it first. The write is
 bound to the bytes the sync read: `contextopt.ReplaceSnapshot` checks them again
 before replacing the file, so an edit made while the sync runs fails it instead of
-being lost, apart from a writer that races that final check. The default tiers'
-descriptions and task labels and the
-`governance` block are still rewritten from the built-in defaults on every sync.
-The behavior is pinned by `internal/router/sync_test.go` and
+being lost, apart from a writer that races that final check.
+
+Governance and the default tiers' metadata follow the same ownership rule as model
+entries, with or without `--prune`: each `governance` key and each default tier's
+`description`, `target_tasks` and `fallback_tier` that the file declares is kept, an
+explicit `false`, zero or empty list included, and only an undeclared key takes the
+built-in default (`internal/router/sync_settings.go`). To return a setting to its
+default, delete the key and sync. A `--prune` run keeps a declared `fallback_tier`
+even when it names a tier the rebuild drops, and then refuses with the unknown tier
+named. The behavior is pinned by `internal/router/sync_test.go` and
 `cmd/standardsctl/models_sync_test.go`.
 
 ### Nightly catalog check

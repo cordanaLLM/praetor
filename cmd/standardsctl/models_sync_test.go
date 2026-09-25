@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -56,5 +58,28 @@ func TestModelsSyncCLIKeepsLocalEntriesWithoutDiscovery(t *testing.T) {
 	}
 	if models := cfg.Tiers["nano"].Models; models[len(models)-2].ID != "qwen2.5:0.5b" || models[len(models)-2].Source != router.SourceLocal {
 		t.Fatalf("local entry not kept after the seed entries: %+v", models)
+	}
+}
+
+// A local endpoint that fails is named in the output and does not fail the sync; the
+// governance threshold the fixture declares survives it.
+func TestModelsSyncCLIReportsSkippedEndpoint(t *testing.T) {
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(down.Close)
+	path := writeRouteCLIInput(t, strings.Replace(cliSyncFixture, "id: retired-seed-model, family: open-weights, source: seed,", "id: hand-added, family: open-weights,", 1))
+	out, err := captureStdout(t, func() error {
+		return runModels([]string{"sync", "--config=" + path, "--local-endpoints=" + down.URL})
+	})
+	if err != nil {
+		t.Fatalf("a failed endpoint failed the sync: %v", err)
+	}
+	if !strings.Contains(out, "Endpoint skipped:    local model endpoint "+down.URL+": local catalog returned HTTP 503") {
+		t.Fatalf("output lacks the skipped endpoint:\n%s", out)
+	}
+	cfg, err := router.LoadRoutingConfig(path)
+	if err != nil || cfg.Governance.ExhaustionThresholdPercent != 80 || !cfg.Governance.OrthogonalAuditRequired {
+		t.Fatalf("governance %+v, %v", cfg, err)
 	}
 }

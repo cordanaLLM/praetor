@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -187,9 +188,124 @@ func TestSyncCatalogRefusesUnreadableCatalogsAndFailedDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireRefused(t, empty, SyncOptions{}, nil, nil)
-	valid := writeSyncCatalog(t, syncFixture(map[string]Tier{"nano": {}}))
+}
+
+// Negative + positive: an endpoint that does not answer is reported and the rest of the
+// sync proceeds, keeping catalogued local entries; a pruning sync or a canceled context
+// refuses instead, because either would act on a partial inventory.
+func TestSyncCatalogIsolatesFailedDiscovery(t *testing.T) {
+	fixture := syncFixture(map[string]Tier{"nano": {Models: []ModelDescriptor{syncModel("qwen2.5:0.5b", SourceLocal)}}})
+	partial := func(context.Context, []string) ([]ModelDescriptor, error) {
+		return []ModelDescriptor{syncModel("qwen3:30b", SourceOperator)},
+			errors.Join(&EndpointError{Endpoint: "http://localhost:8000", Err: errors.New("connection refused")})
+	}
+	path := writeSyncCatalog(t, fixture)
+	result, err := syncCatalog(context.Background(), path, discoverOpts, partial)
+	if err != nil {
+		t.Fatalf("a failed endpoint aborted the sync: %v", err)
+	}
+	if len(result.DiscoveryFailures) != 1 || result.DiscoveryFailures[0] != "local model endpoint http://localhost:8000: connection refused" {
+		t.Fatalf("failures %q", result.DiscoveryFailures)
+	}
+	cfg := loadSynced(t, path)
+	for _, id := range []string{"qwen2.5:0.5b", "qwen3:30b"} {
+		if _, _, ok := findSynced(cfg, id); !ok {
+			t.Fatalf("%s lost after a partial discovery", id)
+		}
+	}
 	failing := func(context.Context, []string) ([]ModelDescriptor, error) { return nil, errors.New("daemon down") }
-	requireRefused(t, valid, discoverOpts, failing, nil)
+	result, err = syncCatalog(context.Background(), writeSyncCatalog(t, fixture), discoverOpts, failing)
+	if err != nil || !reflect.DeepEqual(result.DiscoveryFailures, []string{"daemon down"}) {
+		t.Fatalf("total discovery failure: result=%+v err=%v", result, err)
+	}
+	pruning := discoverOpts
+	pruning.Prune = true
+	requireRefused(t, writeSyncCatalog(t, fixture), pruning, partial, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	canceled := func(context.Context, []string) ([]ModelDescriptor, error) { return nil, context.Canceled }
+	if _, err := syncCatalog(ctx, writeSyncCatalog(t, fixture), discoverOpts, canceled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled discovery: %v", err)
+	}
+}
+
+// Positive (#249): operator edits to governance and to default-tier metadata survive a
+// sync, in both merge and prune mode.
+func TestSyncCatalogKeepsDeclaredGovernanceAndTierMetadata(t *testing.T) {
+	for _, prune := range []bool{false, true} {
+		fixture := syncFixture(map[string]Tier{
+			"heavy-frontier": {Description: "operator text", TargetTasks: []string{"custom_task"}, FallbackTier: "nano"},
+			"nano":           {Description: "", TargetTasks: []string{}, FallbackTier: ""},
+		})
+		fixture.Governance = GovernancePolicy{MaxConcurrentSameModel: 5, ExhaustionThresholdPercent: 60, OrthogonalAuditRequired: false}
+		path := writeSyncCatalog(t, fixture)
+		if _, err := syncCatalog(context.Background(), path, SyncOptions{Prune: prune}, nil); err != nil {
+			t.Fatalf("prune=%v: %v", prune, err)
+		}
+		cfg := loadSynced(t, path)
+		if cfg.Governance != fixture.Governance {
+			t.Fatalf("prune=%v: governance %+v, want %+v", prune, cfg.Governance, fixture.Governance)
+		}
+		heavy, nano := cfg.Tiers["heavy-frontier"], cfg.Tiers["nano"]
+		if heavy.Description != "operator text" || !reflect.DeepEqual(heavy.TargetTasks, []string{"custom_task"}) || heavy.FallbackTier != "nano" {
+			t.Fatalf("prune=%v: heavy-frontier metadata %+v", prune, heavy)
+		}
+		if nano.Description != "" || len(nano.TargetTasks) != 0 {
+			t.Fatalf("prune=%v: explicit empty nano metadata overwritten: %+v", prune, nano)
+		}
+		if len(heavy.Models) == 0 {
+			t.Fatalf("prune=%v: seed entries missing from heavy-frontier", prune)
+		}
+	}
+}
+
+// Negative: a pruning sync keeps a declared fallback that names an operator tier the
+// rebuild drops, and refuses with that tier named rather than rewriting the fallback.
+func TestSyncCatalogPruneRefusesDanglingDeclaredFallback(t *testing.T) {
+	path := writeSyncCatalog(t, syncFixture(map[string]Tier{
+		"heavy-frontier": {FallbackTier: "gpu-local"},
+		"gpu-local":      {Models: []ModelDescriptor{syncModel("cordana/qwen3-8-27b", SourceOperator)}},
+	}))
+	if _, err := syncCatalog(context.Background(), path, SyncOptions{}, nil); err != nil {
+		t.Fatalf("merge with an operator fallback: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = syncCatalog(context.Background(), path, SyncOptions{Prune: true}, nil)
+	if err == nil || !strings.Contains(err.Error(), "unknown fallback tier gpu-local") {
+		t.Fatalf("want a refusal naming gpu-local, got %v", err)
+	}
+	if after, readErr := os.ReadFile(path); readErr != nil || !bytes.Equal(before, after) {
+		t.Fatalf("refused prune changed the catalog: %v", readErr)
+	}
+}
+
+// Boundary (#249): a catalog that declares neither governance nor tier metadata, or only
+// part of them, receives the built-in default for each undeclared key only.
+func TestSyncCatalogFillsOnlyUndeclaredSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routing.yaml")
+	partial := "version: 1\ntiers:\n  midweight:\n    target_tasks: [only_this]\n    models: []\ngovernance:\n  exhaustion_threshold_percent: 55\n"
+	if err := os.WriteFile(path, []byte(partial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := syncCatalog(context.Background(), path, SyncOptions{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	cfg := loadSynced(t, path)
+	defaults := seedCatalog()
+	want := GovernancePolicy{MaxConcurrentSameModel: defaults.Governance.MaxConcurrentSameModel, ExhaustionThresholdPercent: 55, OrthogonalAuditRequired: defaults.Governance.OrthogonalAuditRequired}
+	if cfg.Governance != want {
+		t.Fatalf("governance %+v, want %+v", cfg.Governance, want)
+	}
+	mid, defaultMid := cfg.Tiers["midweight"], defaults.Tiers["midweight"]
+	if !reflect.DeepEqual(mid.TargetTasks, []string{"only_this"}) || mid.Description != defaultMid.Description || mid.FallbackTier != defaultMid.FallbackTier {
+		t.Fatalf("midweight %+v", mid)
+	}
+	if heavy := cfg.Tiers["heavy-frontier"]; !reflect.DeepEqual(heavy.TargetTasks, defaults.Tiers["heavy-frontier"].TargetTasks) {
+		t.Fatalf("undeclared tier did not take the defaults: %+v", heavy)
+	}
 }
 
 func TestSyncCatalogEmptyCatalogsReceiveTheSeedOnly(t *testing.T) {

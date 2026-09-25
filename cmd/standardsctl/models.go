@@ -85,6 +85,9 @@ func handleModelsSync(ctx context.Context, configPath string, opts router.SyncOp
 	for _, id := range res.Removed {
 		fmt.Printf("  - Pruned:              %s\n", id)
 	}
+	for _, failure := range res.DiscoveryFailures {
+		fmt.Printf("  - Endpoint skipped:    %s\n", failure)
+	}
 	return nil
 }
 

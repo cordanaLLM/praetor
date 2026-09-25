@@ -137,14 +137,14 @@ tiers:
             - fast_cli_tools
         models:
             - id: hf.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF:Q8_0
-              family: anthropic
+              family: qwen
               source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
             - id: gemma-2-9b
-              family: open-weights
+              family: google
               source: seed
               rpm_limit: 5000
               tpm_limit: 2000000
@@ -274,7 +274,7 @@ tiers:
               cost_per_m_in: 0
               cost_per_m_out: 0
             - id: gemma-2-2b
-              family: open-weights
+              family: google
               source: seed
               rpm_limit: 50000
               tpm_limit: 20000000
