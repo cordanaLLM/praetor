@@ -4,9 +4,10 @@ import json
 import math
 import os
 import selectors
-import signal
 import subprocess
 import time
+
+from dev_process import stop_process_group
 
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -243,17 +244,18 @@ class RPCClient:
         raise RPCError(str(error) + diagnostic) from error
 
     def close(self):
-        """Kill the isolated process group, reap the server, and close every pipe."""
+        """Stop the isolated process group, reap the server, and close every pipe.
+
+        The server gets SIGTERM and time to stop the commands it runs in process groups of
+        their own before the group is killed (dev_process.stop_process_group).
+        """
         if self._closed:
             return
         self._closed = True
         process = self._process
         try:
             if process is not None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                stop_process_group(process)
                 process.wait(timeout=CLEANUP_TIMEOUT)
                 self._drain_stderr()
         finally:

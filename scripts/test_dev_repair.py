@@ -5,10 +5,14 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
+import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
+import dev_process
 import dev_repair as repair
 
 
@@ -148,6 +152,44 @@ class RepairQueueTests(unittest.TestCase):
         self.assertIn("CPUQuota=200%", service)
         self.assertIn("TimeoutStartSec=12min", service)
         self.assertIn("KillMode=control-group", service)
+
+    def runner(self, handler):
+        """A runner that reports ready, then sleeps past any deadline; ``handler`` runs on SIGTERM."""
+        ready = self.root / "runner-ready"
+        script = self.root / "runner"
+        script.write_text(f"""#!{sys.executable}
+import signal, sys, time
+from pathlib import Path
+signal.signal(signal.SIGTERM, {handler})
+Path({str(ready)!r}).touch()
+time.sleep(30)
+""")
+        script.chmod(0o700)
+        return dict(self.values, runner_binary=str(script)), ready
+
+    def test_runner_deadline_lets_the_runner_stop_its_commands(self):
+        # The runner is praetorctl: it forwards SIGTERM to the commands it runs in process
+        # groups of their own. SIGKILL on its group ended it and left them running.
+        marker = self.root / "terminated"
+        handler = f"lambda number, _frame: (Path({str(marker)!r}).touch(), sys.exit(128 + number))"
+        config, ready = self.runner(handler)
+        with self.assertRaisesRegex(RuntimeError, "deadline exceeded"):
+            repair.call_runner(config, "status", self.report(1), 2)
+        self.assertTrue(ready.exists(), "the runner never started")
+        self.assertTrue(marker.exists(), "the runner never got SIGTERM")
+
+    def test_runner_deadline_kills_a_runner_that_ignores_sigterm(self):
+        config, ready = self.runner("signal.SIG_IGN")
+        with patch.object(dev_process, "STOP_GRACE", 0.3), \
+                patch.object(repair.subprocess.Popen, "wait", autospec=True,
+                             side_effect=repair.subprocess.Popen.wait) as wait:
+            started = time.monotonic()
+            with self.assertRaisesRegex(RuntimeError, "deadline exceeded"):
+                repair.call_runner(config, "status", self.report(1), 2)
+        self.assertTrue(ready.exists(), "the runner never started")
+        self.assertGreaterEqual(time.monotonic() - started, 2.3)
+        process = wait.call_args.args[0]
+        self.assertEqual(process.returncode, -signal.SIGKILL)
 
     def test_snapshot_is_private_repeatable_and_detects_tampering(self):
         backups = self.root / "backups"

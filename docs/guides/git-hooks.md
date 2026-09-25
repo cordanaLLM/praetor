@@ -154,6 +154,19 @@ bound could never take effect on a push (#314). A deadline report the hook canno
 push rather than running the gate under a guessed bound. The deadline itself is described in
 [adoption verification](adoption-verification.md#the-whole-runs-deadline).
 
+When that bound expires, or Ctrl-C interrupts the push, the hook stops the gate before it kills
+it. `stop_process_group` in [`common.py`](../../.config/lefthook/scripts/common.py) sends the
+child's process group SIGTERM (SIGINT for Ctrl-C), waits up to `STOP_GRACE` (10 seconds) for every
+member to exit, and only then sends SIGKILL; a second Ctrl-C during the wait kills at once. The
+CLI runs each git and go command in a process group of its own and forwards a catchable signal to
+those groups, waiting up to 5 seconds for them (`internal/util/command_interrupt_unix.go`), so git
+removes its index lock and nothing is left running. SIGKILL on the CLI's group cannot be forwarded
+and misses those groups. On Linux the kernel still kills each command when the CLI dies
+(`internal/util/command_parent_death_linux.go`); the processes a command started, and every
+command on macOS, would run on. The `test_stop_*` cases in
+[`test_hooks.py`](../../.config/lefthook/scripts/test_hooks.py) replay the forwarded stop, the kill
+after the grace, and the second Ctrl-C.
+
 Before snapshot governance checks, the disposable clone initializes its own
 missing private ledger and audits it. Incomplete or invalid existing state still
 fails. The live ledger is never copied into the clone.
@@ -423,7 +436,7 @@ CLI had already started:
 - **Bounded subprocess output.** `common.py` waited on pipes with `selectors`; `select()` on
   Windows accepts only sockets, so every bounded `git` call raised `OSError`. Windows drains each
   pipe on its own thread under the same shared byte limit and deadline.
-- **Stopping a bounded command that forked.** `common.py` kills the child's whole process group
+- **Stopping a bounded command that forked.** `common.py` stops the child's whole process group
   when a bound is exceeded, and Windows has no process group to signal. Killing the direct child
   alone left its children running past the bound, which is what `test_hooks.py` observed when a
   grandchild wrote its marker after the parent had been terminated. Windows asks
