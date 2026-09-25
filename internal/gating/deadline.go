@@ -75,8 +75,8 @@ func (e *RunDeadlineError) Error() string {
 }
 
 // WithRunDeadline bounds a whole gate run by budget.Timeout() (HISS-02). Once the deadline has
-// fired, context.Cause on the returned context, and on every context derived from it, is a
-// *RunDeadlineError.
+// fired, context.Cause is a *RunDeadlineError on the returned context and on every derived
+// context the firing ended; a derived context whose own deadline fired first keeps its own cause.
 func WithRunDeadline(parent context.Context, budget RunBudget) (context.Context, context.CancelFunc) {
 	return context.WithTimeoutCause(parent, budget.Timeout(), &RunDeadlineError{Budget: budget})
 }
