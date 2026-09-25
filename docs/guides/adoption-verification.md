@@ -138,6 +138,45 @@ worktree could not be created — the same misattribution, pointing at the check
 the suite. Creation now reports the bound when the deadline is what stopped it, and keeps the
 "could not be created" text for every other cause.
 
+### The whole run's deadline
+
+`gate run` has a deadline of its own, and it is derived from the race stage's bound rather than
+fixed: the resolved bound plus a five-minute allowance for every other stage
+(`OtherStagesAllowance` in [`internal/gating/deadline.go`](../../internal/gating/deadline.go)).
+The default is therefore 3 + 5 = 8 minutes, and the 30-minute ceiling gives 35. The run prints
+the value it applies on its `Run Deadline:` line, and `praetorctl gate deadline [--json]` prints
+it without running anything:
+
+```text
+$ PRAETOR_TEST_STAGE_TIMEOUT=30m praetorctl gate deadline
+Run Deadline: 35m0s (30m0s race stage bound + 5m0s for the other stages)
+Note: race stage bound raised to 30m0s by PRAETOR_TEST_STAGE_TIMEOUT
+```
+
+The run deadline used to be a fixed five minutes, so no value of `PRAETOR_TEST_STAGE_TIMEOUT` could
+give the race stage more than what was left of those five minutes (#314). The `praetor-gatekeeper`
+agent helper runs the same pipeline and takes the same derived deadline.
+
+Two deadlines can now stop the race stage, and the stage names the one that actually fired. Only
+when the stage's own bound fired does it report `hit the … stage bound`. When the run deadline
+fired first — which means the stages before it used more than their allowance — it reports the
+run deadline and its value instead:
+
+```text
+race-detector tests in .standards/worktrees/gate-… did not finish: the gate run's deadline of
+8m0s (3m0s race stage bound + 5m0s for the other stages) fired first, not the 3m0s stage bound,
+and this is not a test failure.
+```
+
+Before this, a run cut at 4 minutes 57 seconds reported `hit the 30m0s stage bound`, which sent the
+reader to raise a bound the stage had never reached. A deadline or cancellation from a library
+caller that does not use the gate's run deadline is reported as `its caller stopped it`. Any other
+stage the run deadline cuts off is labelled the same way (`stage "…" did not finish: the gate run's
+deadline … fired first, so this is not a finding`), so a scanner killed mid-run does not read as a
+scanner finding. The cases are replayed in
+[`internal/gating/deadline_test.go`](../../internal/gating/deadline_test.go) and
+[`cmd/standardsctl/gate_deadline_test.go`](../../cmd/standardsctl/gate_deadline_test.go).
+
 Governance profile names no longer select Go or Meson commands. A shared plan
 renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
 

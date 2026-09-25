@@ -55,7 +55,7 @@ func dispatchAgentTask(agentName string, extraArgs []string) error {
 		return fmt.Errorf("agent run %s: unexpected extra argument(s) %v (agent helpers take no arguments)", agentName, extraArgs)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := agentContext(agentName)
 	defer cancel()
 
 	fmt.Printf("[Agent Dispatch] Activating autonomous agent helper: %s\n", agentName)
@@ -80,6 +80,18 @@ func dispatchAgentTask(agentName string, extraArgs []string) error {
 	}
 }
 
+// agentTimeout bounds every agent helper except the gatekeeper.
+const agentTimeout = 5 * time.Minute
+
+// agentContext bounds one agent helper. The gatekeeper runs the full gating pipeline, so it takes
+// the gate run's own deadline: a fixed five minutes cut its race stage short (#314).
+func agentContext(agentName string) (context.Context, context.CancelFunc) {
+	if agentName == "praetor-gatekeeper" || agentName == "praetor_gatekeeper" {
+		return gating.WithRunDeadline(context.Background(), gating.EnvRunBudget())
+	}
+	return context.WithTimeout(context.Background(), agentTimeout)
+}
+
 func runAuditorAgent(ctx context.Context) error {
 	// Bounds come from the package defaults so this agent reports the same scope that audit
 	// and the gate do; divergent literals made the three disagree (BUG-829).
@@ -97,7 +109,7 @@ func runAuditorAgent(ctx context.Context) error {
 }
 
 func runGatekeeperAgent(ctx context.Context) error {
-	rep, err := gating.RunGatedPipeline(ctx, ".", false)
+	rep, err := gatedPipeline(ctx, ".", false)
 	if err != nil {
 		return fmt.Errorf("gatekeeper execution error: %w", err)
 	}

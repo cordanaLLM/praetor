@@ -214,6 +214,7 @@ func executeStages(ctx context.Context, cfg *stageConfig) error {
 func executeStage(ctx context.Context, s stage, cfg *stageConfig) error {
 	sStart := time.Now()
 	msg, err := s.fn(ctx, cfg)
+	err = attributeRunCut(ctx, s.name, err)
 	res := StageResult{
 		Name:     s.name,
 		Passed:   err == nil,
@@ -388,8 +389,9 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 				"CI runs this leg on Linux with cgo", absent), nil
 	}
 
-	bound, boundNote := testStageTimeout(os.Getenv(TestStageTimeoutEnv))
-	tCtx, cancel := context.WithTimeout(ctx, bound)
+	budget := EnvRunBudget()
+	bound := budget.StageBound
+	tCtx, cancel := withStageBound(ctx, bound)
 	defer cancel()
 
 	wtMgr := worktree.NewManager(cfg.repoDir)
@@ -408,15 +410,16 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 	}()
 
 	if out, testErr := cfg.run(tCtx, wt.Path, "go", "test", "-race", "./..."); testErr != nil {
-		// A stage killed by its own deadline is not a failing suite, and printing it as one
-		// sends every reader to diagnose a change that was never the cause. The context is
-		// the authoritative witness: the child dies of a signal and reports nothing useful.
-		if deadlineErr := tCtx.Err(); errors.Is(deadlineErr, context.DeadlineExceeded) {
-			return "", stageBoundError("race-detector tests", bound, wt.Path, out)
+		// A stage killed by a deadline is not a failing suite, and printing it as one sends
+		// every reader to diagnose a change that was never the cause. The context is the
+		// authoritative witness: the child dies of a signal and reports nothing useful. Its
+		// cause also says which deadline fired, the stage's own bound or the whole run's.
+		if cutErr := cutError(tCtx, "race-detector tests", bound, wt.Path, out); cutErr != nil {
+			return "", cutErr
 		}
 		return "", fmt.Errorf("tests failed in %s: %s (%w)", wt.Path, out, testErr)
 	}
-	return boundNote, nil
+	return budget.Note, nil
 }
 
 // createStageWorktree creates the isolated test worktree under the stage context.
@@ -424,19 +427,21 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 // The worktree is created under the stage bound too, so the bound can fire here first. On
 // Windows it did at 50ms: git worktree add outlasted the bound, the kill surfaced as a bare
 // "exit status 1", and the stage reported a repository whose worktree could not be created --
-// the misattribution #100 describes, one step earlier.
+// the misattribution #100 describes, one step earlier. The run deadline can fire here as well,
+// and is reported as itself rather than as the stage bound (#314).
 func createStageWorktree(tCtx context.Context, wtMgr *worktree.Manager, taskID string, bound time.Duration, repoDir string) (*worktree.Worktree, error) {
 	wt, err := wtMgr.Create(tCtx, taskID, "HEAD")
 	if err == nil {
 		return wt, nil
 	}
-	if errors.Is(tCtx.Err(), context.DeadlineExceeded) {
-		return nil, stageBoundError("creating the isolated test worktree", bound, repoDir, err.Error())
+	if cutErr := cutError(tCtx, "creating the isolated test worktree", bound, repoDir, err.Error()); cutErr != nil {
+		return nil, cutErr
 	}
 	return nil, fmt.Errorf("isolated test worktree could not be created in %s: %w", repoDir, err)
 }
 
 // stageBoundError reports the test stage cut off by its own deadline while doing what, in dir.
+// cutError calls it only once the stage's own deadline is the one that fired.
 func stageBoundError(what string, bound time.Duration, dir, output string) error {
 	return fmt.Errorf(
 		"%s hit the %s stage bound in %s before finishing; "+
