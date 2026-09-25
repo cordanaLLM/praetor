@@ -19,7 +19,8 @@ from common import (HookError, MANAGED_PROCESS_ENV, MAX_PROCESS_ENV_ENTRIES,
                     clean_env, run, snapshot)
 from checks import (go_packages, source_checks, governance_commands, context_changed,
                     audit_scope, local_package_patterns, checkpoint_checks,
-                    semgrep_commands, is_fixture, run_full_gate, FIXTURE_DIRECTORY)
+                    semgrep_commands, is_fixture, run_full_gate, gate_timeout,
+                    FIXTURE_DIRECTORY, GATE_LAUNCH_MARGIN, GATE_QUERY_TIMEOUT)
 import hooks
 from hooks import push_updates, new_branch_base, pre_push, push_check_mode, prepare_message
 from privacy import check_private_history, check_private_index
@@ -1068,14 +1069,43 @@ class ScopeAndGuard(unittest.TestCase):
                         GIT_CONFIG_KEY_0="remote.origin.pushurl",
                         GIT_CONFIG_VALUE_0="ssh://example.invalid/wrong")
         with mock.patch.dict(os.environ, injected, clear=True), \
-                mock.patch("checks.run") as process:
+                mock.patch("checks.run", return_value=b'{"timeout_seconds": 480}\n') as process:
             self.assertTrue(run_full_gate(Path(".")))
-        self.assertEqual(process.call_count, 2)
+        self.assertEqual(process.call_count, 3)
         for call in process.call_args_list:
             child_env = call.kwargs["env"]
             self.assertFalse(any(key == "GIT_CONFIG_COUNT"
                                  or key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
                                  for key in child_env), child_env)
+
+    def test_full_gate_timeout_follows_the_gate_run_deadline(self):
+        # Positive: a raised stage bound reaches the hook through the gate's own resolution, so
+        # the subprocess outlives the gate's deadline instead of cutting it at a fixed 600 s.
+        query = ["go", "run", "./cmd/standardsctl", "gate", "deadline", "--json"]
+        def process(argv, **kwargs):
+            return b'{"timeout_seconds": 2100, "timeout": "35m0s"}\n' if argv == query else b""
+        with mock.patch("checks.run", side_effect=process) as spawned:
+            self.assertTrue(run_full_gate(Path(".")))
+        calls = [(call.args[0][3:5], call.kwargs["timeout"]) for call in spawned.call_args_list]
+        self.assertEqual(calls, [(["gate", "deadline"], GATE_QUERY_TIMEOUT),
+                                 (["gate", "run"], 2100 + GATE_LAUNCH_MARGIN),
+                                 (["gate", "verify"], 2100 + GATE_LAUNCH_MARGIN)])
+
+    def test_full_gate_refuses_an_unusable_deadline(self):
+        # Negative: without a usable deadline the gate does not run under a guessed bound.
+        for report in (b"", b"not json", b"[]", b"{}", b'{"timeout_seconds": 0}',
+                       b'{"timeout_seconds": -5}', b'{"timeout_seconds": "480"}',
+                       b'{"timeout_seconds": true}', b'{"timeout_seconds": 1.5}'):
+            with self.subTest(report=report), mock.patch("checks.run", return_value=report) as spawned:
+                with self.assertRaisesRegex(HookError, "gate deadline"):
+                    run_full_gate(Path("."))
+                self.assertEqual(spawned.call_count, 1)
+
+    def test_gate_timeout_adds_only_the_launch_margin(self):
+        # Boundary: the smallest deadline, and the default 180 s bound plus the 300 s allowance,
+        # which keeps the hook at exactly the 600 s it used before the deadline was derived.
+        self.assertEqual(gate_timeout(b'{"timeout_seconds": 1}'), 1 + GATE_LAUNCH_MARGIN)
+        self.assertEqual(gate_timeout(b'{"timeout_seconds": 480}'), 600)
 
     def test_clean_env_final_bound_is_composable_for_nested_children(self):
         unmanaged = MAX_PROCESS_ENV_ENTRIES - len(MANAGED_PROCESS_ENV)
@@ -1383,10 +1413,11 @@ class ScopeAndGuard(unittest.TestCase):
                 if argv[0] == "git":
                     return run(argv, **kwargs)
                 calls.append(argv)
-                return b""
+                return b'{"timeout_seconds": 480}' if argv[3:5] == ["gate", "deadline"] else b""
             with mock.patch("checks.parallel"), mock.patch("checks.run", side_effect=process):
                 self.assertTrue(source_checks(root, [".standards.yaml"], base=base))
                 self.assertEqual(calls, [["make", "--no-print-directory", "state-audit"],
+                                        ["go", "run", "./cmd/standardsctl", "gate", "deadline", "--json"],
                                         ["go", "run", "./cmd/standardsctl", "gate", "run", "--path=."],
                                         ["go", "run", "./cmd/standardsctl", "gate", "verify", "--path=."]])
             def reject_pin(argv, **kwargs):
@@ -1396,6 +1427,17 @@ class ScopeAndGuard(unittest.TestCase):
             with mock.patch("checks.parallel"), mock.patch("checks.run", side_effect=reject_pin):
                 with self.assertRaisesRegex(HookError, "pin mismatch"):
                     source_checks(root, [".standards.yaml"], base=base)
+
+    def test_gate_timeout_reads_the_real_gate_deadline(self):
+        # The hook's bound comes from the CLI it runs, so replay the contract through the hook's
+        # own invocation: unset, an unusable value, the exact ceiling and one step past it.
+        query = ["go", "run", "./cmd/standardsctl", "gate", "deadline", "--json"]
+        expected = {"": 480, "soon": 480, "30m": 2100, "31m": 2100}
+        for value, seconds in expected.items():
+            with self.subTest(value=value):
+                environment = dict(clean_env(), PRAETOR_TEST_STAGE_TIMEOUT=value)
+                report = run(query, cwd=ROOT, env=environment, timeout=GATE_QUERY_TIMEOUT)
+                self.assertEqual(gate_timeout(report), seconds + GATE_LAUNCH_MARGIN)
 
     def test_audit_range_uses_exact_oid_and_touched_paths(self):
         with tempfile.TemporaryDirectory(prefix="praetor-audit-range-") as temp:

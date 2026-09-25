@@ -1,0 +1,4 @@
+type: fixed
+title: Derive the gate run's deadline from the resolved race-stage bound plus a named allowance for the other stages, so PRAETOR_TEST_STAGE_TIMEOUT can reach its 30-minute ceiling through `gate run`, the gatekeeper agent and the pre-push hook; report a stage cut by the run deadline as that deadline with its value instead of as the stage bound; add `gate deadline [--json]`
+issue: "#314"
+breaking: false

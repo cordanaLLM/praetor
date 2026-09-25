@@ -17,14 +17,14 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-const (
-	// gateRunTimeout bounds a full gating pipeline run.
-	gateRunTimeout = 5 * time.Minute
-	// gateQueryTimeout bounds the short git queries used by `gate verify`.
-	gateQueryTimeout = 15 * time.Second
-)
+// gateQueryTimeout bounds the short git queries used by `gate verify`.
+const gateQueryTimeout = 15 * time.Second
 
-// runGate dispatches the gate subcommands: run (default), verify and keygen.
+// gatedPipeline runs the gating pipeline. Tests substitute it to observe the deadline `gate run`
+// hands the pipeline without running a real gate.
+var gatedPipeline = gating.RunGatedPipeline
+
+// runGate dispatches the gate subcommands: run (default), verify, deadline and keygen.
 func runGate(args []string) error {
 	sub, rest := splitGateSubcommand(args)
 	switch sub {
@@ -32,10 +32,12 @@ func runGate(args []string) error {
 		return runGateRun(rest)
 	case "verify":
 		return runGateVerify(rest)
+	case "deadline":
+		return runGateDeadline(rest)
 	case "keygen":
 		return runGateKeygen(rest)
 	default:
-		return fmt.Errorf("unknown gate subcommand %q (expected run, verify or keygen)", sub)
+		return fmt.Errorf("unknown gate subcommand %q (expected run, verify, deadline or keygen)", sub)
 	}
 }
 
@@ -63,13 +65,17 @@ func runGateRun(args []string) error {
 		return fmt.Errorf("gate run accepts no positional arguments, got %q (flags must precede them)", fs.Args())
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), gateRunTimeout)
+	// The run deadline follows the race stage's resolved bound. A fixed five minutes cut the
+	// stage short whatever PRAETOR_TEST_STAGE_TIMEOUT asked for (#314).
+	budget := gating.EnvRunBudget()
+	ctx, cancel := gating.WithRunDeadline(context.Background(), budget)
 	defer cancel()
 
 	fmt.Printf("=== Praetor Anti-Direct-Merge Gating Pipeline ===\n")
 	fmt.Printf("Target Repository: %s (dry-run: %v)\n", *path, *dryRun)
+	fmt.Printf("Run Deadline: %s\n", budget)
 
-	rep, err := gating.RunGatedPipeline(ctx, *path, *dryRun)
+	rep, err := gatedPipeline(ctx, *path, *dryRun)
 	if err != nil {
 		return fmt.Errorf("gating pipeline execution failed: %w", err)
 	}
@@ -89,6 +95,49 @@ func runGateRun(args []string) error {
 	printGatingReport(rep)
 	if rep.Status == gating.StatusRejected {
 		return fmt.Errorf("repository rejected by gating pipeline")
+	}
+	return nil
+}
+
+// gateDeadlineReport is the machine-readable form of `gate deadline --json`.
+type gateDeadlineReport struct {
+	TimeoutSeconds       int64  `json:"timeout_seconds"`
+	Timeout              string `json:"timeout"`
+	StageBound           string `json:"stage_bound"`
+	OtherStagesAllowance string `json:"other_stages_allowance"`
+	Note                 string `json:"note,omitempty"`
+}
+
+// runGateDeadline prints the run deadline `gate run` applies in this environment, resolved from
+// PRAETOR_TEST_STAGE_TIMEOUT by the pipeline's own parser. The pre-push hook bounds its gate
+// subprocess by this value instead of a figure of its own, so the two cannot drift apart (#314).
+func runGateDeadline(args []string) error {
+	fs := flag.NewFlagSet("gate deadline", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "Output the resolved run deadline as JSON")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("gate deadline accepts no positional arguments, got %q", fs.Args())
+	}
+
+	budget := gating.EnvRunBudget()
+	if *asJSON {
+		if err := json.NewEncoder(os.Stdout).Encode(gateDeadlineReport{
+			TimeoutSeconds:       budget.TimeoutSeconds(),
+			Timeout:              budget.Timeout().String(),
+			StageBound:           budget.StageBound.String(),
+			OtherStagesAllowance: budget.Allowance.String(),
+			Note:                 budget.Note,
+		}); err != nil {
+			return fmt.Errorf("encode gate deadline: %w", err)
+		}
+		return nil
+	}
+	fmt.Printf("Run Deadline: %s\n", budget)
+	if budget.Note != "" {
+		fmt.Printf("Note: %s\n", budget.Note)
 	}
 	return nil
 }

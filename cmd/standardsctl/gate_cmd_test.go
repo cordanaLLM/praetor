@@ -48,7 +48,7 @@ func TestGateRun_Boundary_DefaultSubcommandAndHelp(t *testing.T) {
 	})
 	mustErrContain(t, err, "rejected by gating pipeline")
 
-	for _, sub := range []string{"run", "verify", "keygen"} {
+	for _, sub := range []string{"run", "verify", "deadline", "keygen"} {
 		_, err := captureStdout(t, func() error { return dispatchCommand("gate", []string{sub, "-h"}) })
 		if !errors.Is(err, flag.ErrHelp) {
 			t.Fatalf("gate %s -h: expected flag.ErrHelp, got %v", sub, err)
