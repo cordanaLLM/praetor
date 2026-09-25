@@ -1,20 +1,24 @@
 # Praetor Documentation Index
+
 > Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine.
 
 ## Core Governance & Invariants
-- [HISS Formal Specification](standards/hiss-spec.md): Complete specification of HISS-01 through HISS-21 invariants.
-- [Model Routing & Capacity Arbiter](standards/model-routing-and-fanout.md): Orchestration and fallback cascade for frontier and open models.
-- [Agent Operating Harness](https://github.com/CordanaLLM/praetor/blob/main/AGENTS.md): Canonical single-source-of-truth instructions transpiled into vendor harnesses.
-- [Archetype Authoring](guides/archetype-authoring.md): Archetype authoring, lattice joins, and profile manifests.
-- [Developer Onboarding](guides/onboarding.md): Developer setup, Git hooks, and environment bootstrapping.
-- [Architectural Decision Records](adr/README.md): ADR directory and architectural decision history.
+
+- [HISS Formal Specification](https://cordanallm.github.io/praetor/standards/hiss-spec/): Complete specification of HISS-01 through HISS-21 invariants.
+- [Model Routing & Capacity Arbiter](https://cordanallm.github.io/praetor/standards/model-routing-and-fanout/): Orchestration and fallback cascade for frontier and open models.
+- [Agent Hooks & Operating Harness](https://cordanallm.github.io/praetor/guides/agent-hooks/): Canonical operating instructions and native client hook coverage.
+- [Archetype Authoring](https://cordanallm.github.io/praetor/guides/archetype-authoring/): Archetype authoring, lattice joins, and profile manifests.
+- [Developer Onboarding](https://cordanallm.github.io/praetor/guides/onboarding/): Developer setup, Git hooks, and environment bootstrapping.
+- [Architectural Decision Records](https://cordanallm.github.io/praetor/adr/): ADR directory and architectural decision history.
 
 ## CLI Reference & Tooling
-- [Fast Repository Adoption](adoption.md): 1-step repository onboarding via CLI (standardsctl adopt), MCP (standards_adopt), and GitHub Action bots.
-- [Universal Dogfooding & Public Benchmarks](dogfooding.md): Self-governance auditing and dry-run benchmarking against non-owned public Git repositories.
-- [Praetor CLI Reference](guides/cli-reference.md): Command usage and flags for praetorctl / standardsctl.
-- [Branch Protection Ruleset](https://github.com/CordanaLLM/praetor/blob/main/.github/rulesets/main.json): Declarative GitHub ruleset for linear history and signed commits.
+
+- [Fast Repository Adoption](https://cordanallm.github.io/praetor/adoption/): One-step repository onboarding through the CLI, MCP, and hosted automation.
+- [Universal Dogfooding & Public Benchmarks](https://cordanallm.github.io/praetor/dogfooding/): Self-governance auditing and dry-run benchmarking against non-owned public repositories.
+- [API Reference](https://cordanallm.github.io/praetor/wiki/API-Reference/): Existing command and service reference for praetorctl and standardsctl.
+- [Operational Sync & Branch Protection](https://cordanallm.github.io/praetor/guides/operational-sync/): Declarative reconciliation of hosted rules, labels, and branch protection.
 
 ## Community & Funding
-- [Polar.sh Issue Bounties](sponsoring.md): Feature bounties and contributor rewards split via Polar.sh MoR.
-- [Monetization Strategy](monetization.md): In-IDE passive monetization (Idlen) and enterprise licensing framework.
+
+- [Polar.sh Issue Bounties](https://cordanallm.github.io/praetor/sponsoring/): Feature bounties and contributor rewards split via Polar.sh MoR.
+- [Monetization Strategy](https://cordanallm.github.io/praetor/monetization/): In-IDE passive monetization (Idlen) and enterprise licensing framework.

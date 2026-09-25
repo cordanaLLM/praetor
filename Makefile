@@ -1,4 +1,4 @@
-.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec secrets nosec-justified hiss-coverage flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test docs-lint docs-lint-test verify-all clean hooks setup
+.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec secrets nosec-justified hiss-coverage flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test docs-lint docs-lint-test docs-surface verify-all clean hooks setup
 
 BIN_DIR := bin
 # Windows cannot execute an extension-less PE, so the binary is named for the host rather than
@@ -150,8 +150,13 @@ docs-lint:
 	@node tools/markdownlint/verify.mjs
 # END praetor documentation gate
 
+docs-lint: docs-surface
+docs-surface:
+	@node tools/docsurface/verify.mjs
+
 docs-lint-test:
 	node tools/markdownlint/verify.mjs --self-test
+	node tools/docsurface/verify.mjs --self-test
 
 notebook-test:
 	python3 -B scripts/test_notebooklm_export.py

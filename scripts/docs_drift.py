@@ -18,11 +18,18 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
+from pathlib import Path
 import sys
+
+HOOK_SCRIPTS = Path(__file__).resolve().parents[1] / ".config" / "lefthook" / "scripts"
+sys.path.insert(0, str(HOOK_SCRIPTS))
+
+from common import HookError, run_bounded  # noqa: E402
 
 # Bounded so a pathological diff cannot make the check unbounded (HISS-02).
 MAX_DIFF_FILES = 5000
+MAX_DIFF_OUTPUT_BYTES = 1024 * 1024
+GIT_DIFF_TIMEOUT_SECONDS = 10
 
 # (surface pattern, expected docs pattern, human label).
 # Several surfaces may map to one document; that is normal, not a duplicate.
@@ -55,7 +62,7 @@ SURFACE_MAP: list[tuple[str, str, str]] = [
      r"^docs/standards/hiss-21-platform-neutrality\.md$", "platform neutrality gate"),
     (r"^(internal/workstation/|cmd/standardsctl/workstation\.go$|scripts/dev_install\.py$)",
      r"^docs/guides/workstation-update\.md$", "workstation install/status"),
-    (r"^(tools/markdownlint/|internal/adopt/documentation\.go$|internal/cifilter/filter\.go$|"
+    (r"^(tools/(markdownlint|docsurface)/|internal/adopt/documentation\.go$|internal/cifilter/filter\.go$|"
      r"\.github/workflows/praetor-docs\.yml$)",
      r"^docs/guides/documentation-governance\.md$", "Markdown documentation governance"),
     # The check guards its own documentation. Changing which surfaces are mapped changes what
@@ -70,13 +77,19 @@ ADR_PATTERN = re.compile(r"^docs/adr/")
 OPT_OUT = re.compile(r"no docs needed[: ]", re.IGNORECASE)
 
 
-def changed_files(base: str, head: str) -> list[str]:
-    """Return the paths changed between two commits."""
-    out = subprocess.run(
-        ["git", "diff", "--name-only", f"{base}..{head}"],
-        capture_output=True, text=True, check=True,
-    ).stdout.splitlines()
-    return [line.strip() for line in out[:MAX_DIFF_FILES] if line.strip()]
+def changed_files(base: str, head: str, runner=run_bounded) -> list[str]:
+    """Return a complete, bounded NUL-delimited path inventory for two commits."""
+    raw = runner(
+        ["git", "diff", "--name-only", "-z", f"{base}..{head}", "--"],
+        timeout=GIT_DIFF_TIMEOUT_SECONDS,
+        max_output=MAX_DIFF_OUTPUT_BYTES,
+    )
+    if raw and not raw.endswith(b"\0"):
+        raise HookError("git diff returned a malformed path inventory")
+    files = [os.fsdecode(item) for item in raw.split(b"\0") if item]
+    if len(files) > MAX_DIFF_FILES:
+        raise HookError(f"git diff path inventory exceeds {MAX_DIFF_FILES} files")
+    return files
 
 
 def violations(files: list[str]) -> list[str]:
@@ -102,7 +115,11 @@ def main() -> int:
     if OPT_OUT.search(os.environ.get("PR_BODY", "")):
         print("docs-drift: opt-out claimed in the pull request body ('no docs needed: ...').")
         return 0
-    found = violations(changed_files(base, head))
+    try:
+        found = violations(changed_files(base, head))
+    except HookError as error:
+        print(f"docs-drift: {error}", file=sys.stderr)
+        return 2
     if not found:
         print("docs-drift: every touched surface carries a documentation change.")
         return 0

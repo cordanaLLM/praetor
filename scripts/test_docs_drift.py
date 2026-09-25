@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Tests for the documentation-drift check."""
 
+import contextlib
+import io
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -89,6 +92,8 @@ class DocsDrift(unittest.TestCase):
         """The locked runner, emitter, selector, and workflow map to their operator guide."""
         surfaces = [
             "tools/markdownlint/verify.mjs",
+            "tools/docsurface/catalog.mjs",
+            "tools/docsurface/verify.mjs",
             "internal/adopt/documentation.go",
             "internal/cifilter/filter.go",
             ".github/workflows/praetor-docs.yml",
@@ -110,6 +115,90 @@ class DocsDrift(unittest.TestCase):
 
     def test_boundary_empty_diff_is_clean(self):
         self.assertEqual(docs_drift.violations([]), [])
+
+    def test_changed_files_uses_canonical_bounded_runner(self):
+        """Git execution carries an explicit deadline and shared output ceiling."""
+        calls = []
+
+        def runner(args, **kwargs):
+            calls.append((args, kwargs))
+            return b"README.md\0docs/index.md\0"
+
+        self.assertEqual(
+            docs_drift.changed_files("a" * 40, "b" * 40, runner=runner),
+            ["README.md", "docs/index.md"],
+        )
+        self.assertEqual(calls[0][0], [
+            "git", "diff", "--name-only", "-z", f"{'a' * 40}..{'b' * 40}", "--",
+        ])
+        self.assertEqual(calls[0][1], {
+            "timeout": docs_drift.GIT_DIFF_TIMEOUT_SECONDS,
+            "max_output": docs_drift.MAX_DIFF_OUTPUT_BYTES,
+        })
+
+    def test_changed_files_preserves_timeout_overflow_and_start_failures(self):
+        """Infrastructure failures cannot become an empty, passing diff."""
+        for message in (
+            "checkpoint command timed out",
+            "checkpoint command output exceeded its byte limit",
+            "git checkpoint process failed (FileNotFoundError)",
+            "git exited 2; checkpoint unverified",
+        ):
+            with self.subTest(message=message):
+                def runner(_args, **_kwargs):
+                    raise docs_drift.HookError(message)
+
+                escaped = message.replace("(", "\\(").replace(")", "\\)")
+                with self.assertRaisesRegex(docs_drift.HookError, escaped):
+                    docs_drift.changed_files("a" * 40, "b" * 40, runner=runner)
+
+    def test_changed_files_rejects_malformed_inventory(self):
+        """A partial final path is not silently accepted after a transport failure."""
+        with self.assertRaisesRegex(docs_drift.HookError, "malformed"):
+            docs_drift.changed_files(
+                "a" * 40,
+                "b" * 40,
+                runner=lambda _args, **_kwargs: b"README.md",
+            )
+
+    def test_changed_files_file_count_boundary_fails_closed(self):
+        """Exactly the path cap passes; one more never truncates to apparent success."""
+        exact = b"".join(f"f-{index}\0".encode() for index in range(docs_drift.MAX_DIFF_FILES))
+        over = exact + b"overflow\0"
+        self.assertEqual(len(docs_drift.changed_files(
+            "a" * 40, "b" * 40, runner=lambda _args, **_kwargs: exact,
+        )), docs_drift.MAX_DIFF_FILES)
+        with self.assertRaisesRegex(docs_drift.HookError, "exceeds"):
+            docs_drift.changed_files(
+                "a" * 40, "b" * 40, runner=lambda _args, **_kwargs: over,
+            )
+
+    def _main_with(self, environment):
+        with mock.patch.dict(os.environ, environment, clear=True), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            return docs_drift.main()
+
+    @mock.patch.object(docs_drift, "changed_files",
+                       side_effect=docs_drift.HookError("checkpoint command timed out"))
+    def test_main_reports_git_infrastructure_failure_as_error(self, _changed):
+        """A bounded-runner failure exits 2 instead of passing as an empty diff."""
+        self.assertEqual(self._main_with({"BASE_SHA": "a" * 40, "HEAD_SHA": "b" * 40}), 2)
+
+    @mock.patch.object(docs_drift, "changed_files", return_value=["scripts/docs_drift.py"])
+    def test_main_undocumented_surface_fails_without_opt_out(self, _changed):
+        """A mapped surface without its guide still blocks through the bounded inventory."""
+        self.assertEqual(self._main_with({"BASE_SHA": "a" * 40, "HEAD_SHA": "b" * 40}), 1)
+
+    @mock.patch.object(docs_drift, "changed_files", return_value=["scripts/docs_drift.py"])
+    def test_main_keeps_documented_pull_request_opt_out(self, _changed):
+        """The reviewed 'no docs needed: <reason>' opt-out keeps its documented behavior."""
+        environment = {
+            "BASE_SHA": "a" * 40,
+            "HEAD_SHA": "b" * 40,
+            "PR_BODY": "no docs needed: test-only change",
+        }
+        self.assertEqual(self._main_with(environment), 0)
 
     def test_every_mapped_docs_target_exists(self):
         """A surface mapped to a document that does not exist can never be satisfied.

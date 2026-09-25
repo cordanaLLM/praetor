@@ -102,7 +102,7 @@ flowchart LR
 | **Hermetic Devcontainers** | Reproducible multi-architecture dev environments pre-wiring toolchains and Editor setups. | `praetorctl devcontainer` |
 | **Monotonic Debt Ratcheting** | Baselined legacy debt with non-increasing debt invariants and touched-file clean rules. | `praetorctl baseline` |
 | **Supply Chain Provenance** | SLSA Level 3 attestations, Syft SBOMs, and Sigstore Cosign keyless signatures. | GoReleaser + Actions OIDC |
-| **Dual-Surface Documentation** | Material-for-MkDocs human UI paired with token-efficient `/llms.txt` and `/llms-full.txt` endpoints. | `mkdocs-llmstxt-md` |
+| **Dual-Surface Documentation** | Material-for-MkDocs human UI paired with a concise `/llms.txt` index and source-bound `/llms-full.txt` compatibility map. | `make docs-lint` catalog parity |
 
 ---
 

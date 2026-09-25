@@ -63,5 +63,5 @@ make verify-all
 
 Praetor provides machine-readable documentation endpoints for autonomous agents:
 
-- [`/llms.txt`](llms.txt): Concise, structured index of all architectural standards and API contracts.
-- [`/llms-full.txt`](llms-full.txt): Complete unrolled technical specifications and invariant matrices.
+- [`/llms.txt`](llms.txt): Concise, structured index of reviewed public guides and references.
+- [`/llms-full.txt`](llms-full.txt): Source-bound compatibility map for current repository authorities; policy values remain in those sources instead of being copied into a stale second specification.
