@@ -1,0 +1,3 @@
+type: fixed
+title: Wiki sync removes pages whose docs/wiki source was deleted, tracked through a wiki-side manifest so pages created in the wiki are kept
+breaking: false
