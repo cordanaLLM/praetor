@@ -23,6 +23,9 @@ const (
 	// MaxScanFileSize bounds the bytes read from any single source file. Larger files
 	// are counted in ScanReport.Skips.Oversize and never scanned.
 	MaxScanFileSize = 2 * 1024 * 1024
+	// DefaultMaxScanFiles bounds how many file entries one walk visits (HISS-02). A tree
+	// larger than this truncates the report instead of walking without a scalar bound.
+	DefaultMaxScanFiles = 200000
 	// maxReportedSkippedDirs bounds the ignored-directory list carried by a report.
 	maxReportedSkippedDirs = 128
 	// maxPathSegments bounds the per-segment ignore match (HISS-02).
@@ -48,6 +51,10 @@ type ScanOptions struct {
 	// path segment and case-insensitively, on top of the built-in generated,
 	// dependency and tool-state directories.
 	IgnoreDirs []string
+	// MaxFiles bounds how many file entries the walk visits, so the traversal carries a
+	// scalar bound and not only a deadline (HISS-02). Zero applies DefaultMaxScanFiles.
+	// Crossing the bound stops the walk and marks the report Truncated.
+	MaxFiles int
 }
 
 // InvariantViolation captures an individual HISS infraction.
@@ -70,6 +77,10 @@ type ScanSkips struct {
 	Symlinks int `json:"symlinks"`
 	// Oversize counts files above MaxScanFileSize that were not read.
 	Oversize int `json:"oversize"`
+	// Irregular counts entries that are neither regular files nor symlinks — FIFOs,
+	// devices, sockets — which are refused before any open. Opening one blocks past the
+	// scan deadline, because the deadline is only consulted between walk entries.
+	Irregular int `json:"irregular"`
 	// Unparsed counts files that were read but yielded no analyzable structure, so no
 	// rule ever ran against their contents. They are not clean: they are unexamined, and
 	// a zero-infraction report covering them is a lower bound rather than a verdict.
@@ -144,6 +155,9 @@ func (o ScanOptions) withDefaults() ScanOptions {
 	if o.Cap <= 0 {
 		o.Cap = MaxInfractionsCap
 	}
+	if o.MaxFiles <= 0 {
+		o.MaxFiles = DefaultMaxScanFiles
+	}
 	return o
 }
 
@@ -179,6 +193,8 @@ type scanWalker struct {
 	// goFiles accumulates the Go sources this walk read, so the call-graph pass can close
 	// cycles that span files. No single file's AST shows a two-function loop closing.
 	goFiles []string
+	// files counts the file entries visited, bounding the walk by ScanOptions.MaxFiles.
+	files int
 }
 
 // maxGitFileListBytes bounds the file list read from git (HISS-02). A listing larger than
@@ -299,24 +315,14 @@ func (w *scanWalker) visitFile(path, rel string, info os.FileInfo) error {
 	if w.rep.Truncated {
 		return filepath.SkipAll
 	}
-	// A file git does not report is not this repository's source, so it is neither
-	// scanned nor counted as unscanned coverage.
-	if !w.visible.hasFile(filepath.ToSlash(rel)) {
-		return nil
+	w.files++
+	if w.files > w.opts.MaxFiles {
+		// The walk carries a scalar bound, not only a deadline: past it the report is a
+		// lower bound and says so, instead of traversing an unbounded tree (HISS-02).
+		w.rep.Truncated = true
+		return filepath.SkipAll
 	}
-	if ShouldIgnorePath(rel) {
-		return nil
-	}
-	if !isScannableExt(strings.ToLower(filepath.Ext(rel))) {
-		w.rep.Coverage.recordUnscanned(rel)
-		return nil
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		w.rep.Skips.Symlinks++
-		return nil
-	}
-	if info.Size() > MaxScanFileSize {
-		w.rep.Skips.Oversize++
+	if w.skipFile(rel, info) {
 		return nil
 	}
 	// Remember Go sources for the call-graph pass. It runs after the walk because a cycle
@@ -325,6 +331,35 @@ func (w *scanWalker) visitFile(path, rel string, info os.FileInfo) error {
 		w.goFiles = append(w.goFiles, path)
 	}
 	return scanFile(w.root, rel, w.rep, w.opts)
+}
+
+// skipFile reports whether a file entry is out of scope for the scan, recording why in
+// the report's skip and coverage counters.
+//
+// The regular-file guard runs before any open. Opening a FIFO blocks until a writer
+// appears, and the scan deadline cannot interrupt it: the context is only consulted
+// between walk entries, so a planted pipe in an untrusted tree wedges the scanner
+// instead of truncating it.
+func (w *scanWalker) skipFile(rel string, info os.FileInfo) bool {
+	switch {
+	// A file git does not report is not this repository's source, so it is neither
+	// scanned nor counted as unscanned coverage.
+	case !w.visible.hasFile(filepath.ToSlash(rel)), ShouldIgnorePath(rel):
+		return true
+	case !isScannableExt(strings.ToLower(filepath.Ext(rel))):
+		w.rep.Coverage.recordUnscanned(rel)
+		return true
+	case info.Mode()&os.ModeSymlink != 0:
+		w.rep.Skips.Symlinks++
+		return true
+	case !info.Mode().IsRegular():
+		w.rep.Skips.Irregular++
+		return true
+	case info.Size() > MaxScanFileSize:
+		w.rep.Skips.Oversize++
+		return true
+	}
+	return false
 }
 
 // ShouldIgnoreDir reports whether a directory is skipped completely during traversal.

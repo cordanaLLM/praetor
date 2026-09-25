@@ -1,0 +1,3 @@
+type: fixed
+title: Refuse non-regular files in the HISS scan walk and bound the number of entries it visits, so a planted FIFO can no longer hang a scan past its deadline
+breaking: false
