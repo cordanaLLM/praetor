@@ -1,4 +1,0 @@
-type: fixed
-title: Run the dedupe scan's file inventory and the dogfood ephemeral clone under an isolated Git configuration, restrict remote dogfood targets to https URLs (ssh:// is no longer accepted, because the sandbox carries no credentials), and fail the dedupe verdict on any duplicate or utility-sprawl finding
-issue: "#295"
-breaking: true
