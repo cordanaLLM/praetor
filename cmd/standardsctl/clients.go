@@ -220,13 +220,9 @@ func validateClientPlanTarget(target, actual string) error {
 }
 
 func retainClientPlan(ctx context.Context, plan *clientsetup.Plan, output string, before []byte, exists bool) error {
-	metadata, err := json.MarshalIndent(plan, "", "  ")
+	files, err := clientPlanArtifacts(plan)
 	if err != nil {
 		return err
-	}
-	files := map[string][]byte{"plan.json": metadata}
-	if len(plan.Content) != 0 {
-		files[plan.ExportName] = plan.Content
 	}
 	if exists {
 		files["config.before"] = before
@@ -258,14 +254,25 @@ func buildClientPlan(ctx context.Context, registryPath, client string, before []
 	return clientsetup.BuildPlan(ctx, registry, clientsetup.Client(client), before)
 }
 
-func writeClientPlan(ctx context.Context, output string, plan *clientsetup.Plan) error {
+// clientPlanArtifacts is the one artifact set shared by prepared and retained plans:
+// secret-free metadata plus the candidate bytes when the plan carries any. An empty
+// candidate is omitted rather than written as a zero-byte configuration.
+func clientPlanArtifacts(plan *clientsetup.Plan) (map[string][]byte, error) {
 	metadata, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	files := map[string][]byte{"plan.json": append(metadata, '\n')}
 	if len(plan.Content) != 0 {
 		files[plan.ExportName] = plan.Content
+	}
+	return files, nil
+}
+
+func writeClientPlan(ctx context.Context, output string, plan *clientsetup.Plan) error {
+	files, err := clientPlanArtifacts(plan)
+	if err != nil {
+		return err
 	}
 	if err := contextopt.WriteArtifacts(ctx, output, files); err != nil {
 		return err

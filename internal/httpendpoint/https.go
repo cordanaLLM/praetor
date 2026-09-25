@@ -47,7 +47,7 @@ func literalURL(value string) bool {
 
 func canonicalAuthority(u *url.URL) bool {
 	host := u.Hostname()
-	if !canonicalHost(host) {
+	if !CanonicalHost(host) {
 		return false
 	}
 	authority := host
@@ -64,7 +64,11 @@ func canonicalAuthority(u *url.URL) bool {
 	return u.Host == authority
 }
 
-func canonicalHost(host string) bool {
+// CanonicalHost reports whether host is a canonical IP literal without a zone or a
+// lowercase ASCII DNS name (punycode accepted) of at most 253 bytes whose labels are
+// 1..63 alphanumeric or hyphen bytes without a leading or trailing hyphen. A scheme,
+// port, path, userinfo, trailing dot or wildcard makes the value non-canonical.
+func CanonicalHost(host string) bool {
 	if address, err := netip.ParseAddr(host); err == nil {
 		return address.Zone() == "" && address.String() == host
 	}

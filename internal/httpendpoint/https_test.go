@@ -34,3 +34,35 @@ func TestValidateHTTPSBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalHost(t *testing.T) {
+	for _, host := range []string{"example.test", "api.example.test", "xn--bcher-kva.example", "127.0.0.1", "::1", "a-b.example"} {
+		if !CanonicalHost(host) {
+			t.Fatalf("canonical host rejected: %q", host)
+		}
+	}
+	for _, host := range []string{"", "EXAMPLE.test", "https://example.test", "example.test:443", "example.test/path",
+		"user@example.test", "example.test.", ".example.test", "*.example.test", "-example.test", "example-.test",
+		"bad_name.example", "127.000.0.1", "1.2.3", "[::1]", "fe80::1%eth0", "exa mple.test"} {
+		if CanonicalHost(host) {
+			t.Fatalf("non-canonical host accepted: %q", host)
+		}
+	}
+}
+
+func TestCanonicalHostBounds(t *testing.T) {
+	for _, size := range []int{63, 64} {
+		if got := CanonicalHost(strings.Repeat("a", size) + ".test"); got != (size == 63) {
+			t.Fatalf("label boundary %d accepted=%t", size, got)
+		}
+	}
+	label := strings.Repeat("a", 61)
+	longest := strings.Join([]string{label, label, label, label}, ".") // 4*61 + 3 = 247 bytes
+	longest += ".abcde"                                                // 253 bytes
+	if len(longest) != 253 || !CanonicalHost(longest) {
+		t.Fatalf("253-byte host rejected: len=%d", len(longest))
+	}
+	if CanonicalHost(longest + "f") {
+		t.Fatal("254-byte host accepted")
+	}
+}

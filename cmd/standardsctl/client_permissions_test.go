@@ -74,6 +74,12 @@ func TestClientPermissionsPlanApplyVerify(t *testing.T) {
 	if err != nil || !bytes.Equal(backup, before) {
 		t.Fatalf("exact backup missing: %v", err)
 	}
+	plannedMetadata, planErr := os.ReadFile(filepath.Join(planDir, "plan.json"))
+	retainedMetadata, applyErr := os.ReadFile(filepath.Join(applyDir, "plan.json"))
+	if planErr != nil || applyErr != nil || !bytes.Equal(plannedMetadata, retainedMetadata) {
+		t.Fatalf("apply retained different plan metadata than plan wrote: %v %v\n%s\n%s",
+			planErr, applyErr, plannedMetadata, retainedMetadata)
+	}
 	replayDir := filepath.Join(root, "replay")
 	replayArgs := append([]string{"permissions", "apply"}, common...)
 	replayArgs = append(replayArgs, "--out", replayDir)
@@ -158,23 +164,32 @@ func TestClientPermissionsUnmanagedIgnoresArtifactOverlap(t *testing.T) {
 
 func TestClientPermissionsShadowedGrantDoesNotWrite(t *testing.T) {
 	clearPermissionEnvironment(t)
-	root := t.TempDir()
-	target := filepath.Join(root, "settings.json")
-	before := []byte(`{"theme":"dark","permissions":{"ask":["mcp(hindsight/*)"],"future":["keep"]}}`)
-	writeFixtureFile(t, root, "settings.json", string(before))
-	policy := permissionPolicy(t, root, true, []string{"mcp(hindsight/list)"})
-	output := filepath.Join(root, "must-not-exist")
-	args := []string{"permissions", "apply", "--client", "agy", "--fleet-config", policy,
-		"--manifest", filepath.Join(root, "missing-install.json"), "--target", target, "--out", output}
-	if err := runClients(args); err == nil || !strings.Contains(err.Error(), "permissions.ask") {
-		t.Fatalf("shadowed grant did not surface ask rule: %v", err)
-	}
-	got, err := os.ReadFile(target)
-	if err != nil || !bytes.Equal(got, before) {
-		t.Fatalf("rejected target changed: %v", err)
-	}
-	if _, err := os.Lstat(output); !os.IsNotExist(err) {
-		t.Fatalf("rejected operation created artifacts: %v", err)
+	for _, test := range []struct {
+		name, list, blocking, declared string
+	}{
+		{name: "mcp server wildcard", list: "ask", blocking: "mcp(hindsight/*)", declared: "mcp(hindsight/list)"},
+		{name: "url rule spelled with scheme and port", list: "deny", blocking: "read_url(https://example.test:8443/admin)", declared: "read_url(api.example.test)"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			target := filepath.Join(root, "settings.json")
+			before := []byte(`{"theme":"dark","permissions":{"` + test.list + `":["` + test.blocking + `"],"future":["keep"]}}`)
+			writeFixtureFile(t, root, "settings.json", string(before))
+			policy := permissionPolicy(t, root, true, []string{test.declared})
+			output := filepath.Join(root, "must-not-exist")
+			args := []string{"permissions", "apply", "--client", "agy", "--fleet-config", policy,
+				"--manifest", filepath.Join(root, "missing-install.json"), "--target", target, "--out", output}
+			if err := runClients(args); err == nil || !strings.Contains(err.Error(), "permissions."+test.list) {
+				t.Fatalf("shadowed grant did not surface %s rule: %v", test.list, err)
+			}
+			got, err := os.ReadFile(target)
+			if err != nil || !bytes.Equal(got, before) {
+				t.Fatalf("rejected target changed: %v", err)
+			}
+			if _, err := os.Lstat(output); !os.IsNotExist(err) {
+				t.Fatalf("rejected operation created artifacts: %v", err)
+			}
+		})
 	}
 }
 

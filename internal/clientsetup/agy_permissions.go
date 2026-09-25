@@ -7,11 +7,13 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"net"
 	"path"
 	"regexp"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/httpendpoint"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -267,10 +269,23 @@ func agyDomainTargetsOverlap(left, right string) bool {
 	return left == right || strings.HasSuffix(left, "."+right) || strings.HasSuffix(right, "."+left)
 }
 
+// normalizeAGYDomain reduces an existing operator URL rule to its host. Declared rules
+// are already bare canonical hosts; operator-owned deny/ask rules may carry a scheme,
+// userinfo, port or path, and each must still be compared by host so that an
+// overlapping higher-precedence rule cannot hide behind a different spelling.
 func normalizeAGYDomain(target string) string {
 	target = strings.ToLower(strings.TrimSpace(target))
-	if slash := strings.IndexByte(target, '/'); slash >= 0 {
-		target = target[:slash]
+	if _, rest, ok := strings.Cut(target, "://"); ok {
+		target = rest
+	}
+	if end := strings.IndexAny(target, "/?#"); end >= 0 {
+		target = target[:end]
+	}
+	if at := strings.LastIndexByte(target, '@'); at >= 0 {
+		target = target[at+1:]
+	}
+	if host, _, err := net.SplitHostPort(target); err == nil {
+		target = host
 	}
 	return strings.TrimSuffix(target, ".")
 }
@@ -352,8 +367,12 @@ func agyPermissionRule(rule string) bool {
 		return false
 	}
 	switch action {
-	case "read_file", "write_file", "read_url", "execute_url":
+	case "read_file", "write_file":
 		return target == "*" || !strings.ContainsRune(target, '*')
+	case "read_url", "execute_url":
+		// AGY matches URL rules by hostname and subdomain. A scheme, port, path or
+		// userinfo is not documented grammar and would escape the overlap check.
+		return target == "*" || httpendpoint.CanonicalHost(target)
 	case "command":
 		return agyCommandPermissionTarget(target)
 	case "mcp":

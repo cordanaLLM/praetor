@@ -22,7 +22,9 @@ root and permission keys plus existing allow/ask/deny entries, and returns a
 secret-free count/delta alongside candidate bytes excluded from JSON metadata.
 It refuses a declared grant that intersects a higher-precedence deny/ask rule by
 exact or action-wide match, literal command prefix, recursive file scope, URL
-domain/subdomain, or MCP server wildcard. A deny `read_file` scope also conflicts
+domain/subdomain, or MCP server wildcard. Declared URL targets must be bare
+canonical hosts; existing URL rules are reduced to their host before comparison,
+so a scheme, userinfo, port or path cannot hide an overlap. A deny `read_file` scope also conflicts
 with an intersecting `write_file` allow. Same-action regex rules fail closed when
 non-overlap cannot be proved; the adapter does not claim regex equivalence. Mixed
 absolute and workspace-relative file rules also fail closed because static planning

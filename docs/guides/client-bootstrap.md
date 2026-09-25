@@ -222,7 +222,8 @@ creating the target or artifact directory.
 AGY evaluates conflicts as Deny > Ask > Allow. Plan, apply and verify reject a
 declared allow grant intersecting an existing deny/ask rule by exact or
 action-wide match, literal command prefix, recursive file scope, URL
-domain/subdomain, or MCP server wildcard without removing that operator-owned
+domain/subdomain (an existing rule is compared by host even when it is spelled
+with a scheme, userinfo, port or path), or MCP server wildcard without removing that operator-owned
 rule. A deny `read_file` scope also conflicts with an intersecting `write_file`
 allow. The adapter does not interpret regex equivalence: a same-action regex on
 either side fails closed with a `cannot prove non-overlap` diagnostic. Native

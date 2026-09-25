@@ -37,7 +37,6 @@ type clientPermissionReport struct {
 	RuntimeVerified       bool     `json:"runtime_verified"`
 	BeforeCount           int      `json:"before_count"`
 	AfterCount            int      `json:"after_count"`
-	Added                 []string `json:"added,omitempty"`
 	Missing               []string `json:"missing,omitempty"`
 }
 
