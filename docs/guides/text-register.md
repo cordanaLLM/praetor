@@ -395,6 +395,9 @@ comment names for exactly this case.
 | `C8 token-ceiling` | `Options.MaxTokens` is set (opt-in, 0 means no ceiling) and `Report.EstimatedTokens` (the whole input, not prose alone) exceeds it |
 | `C9 grammar` | `message`, `brief` or `return` text contains a listed article, personal pronoun, copula, auxiliary, modal or politeness token, including straight/curly contractions; `as is` stays permitted by the clarity floor |
 | `C10 message-shape` | a brief lacks `goal`/`inputs`/`return`/`evidence`/`task`, a return lacks `verdict`/`changed`/`ran`/`evidence`/`open`, the answer field is not first, or known fields share a line |
+| `C11 runtime-source-escape` | `CheckRuntime` only (`internal/caveman/runtime.go`): a line carries a source-only construct that could hide prose, such as an off region, a fence line, a setext underline, structured text, an HTML entity or tag, or a Markdown link |
+| `C12 runtime-evidence-pointer` | `CheckRuntime` only: an `evidence:` field carries pointer markers (`sha256`, `lines:`) but is not the complete canonical `evidence: <path> sha256:<12 hex> lines:<n>` form (`evidenceRe`, `internal/caveman/scan.go`) |
+| `C13 unclosed-fence` | a fenced code block is still open when the text ends; everything after its opening fence would otherwise count as code and escape every other rule. Only a bare delimiter at least as long as the opener closes it, so a template holding inner fences needs a longer outer fence |
 
 The 2.0 threshold is measured, not chosen: the prose AGENTS.md read 8.7 articles per 100
 prose words, its hand-written caveman rewrite reads 0.3. Source-document `Check` masks quoted
@@ -407,7 +410,7 @@ surface (600 prose words for a persona or a skill; the evidence bound,
 compatibility; the CLI explicitly defaults to `message`.
 
 The summary's rule numbers refer to the eight numbered rules in the Caveman skill, not the
-`C1`-`C10` finding identifiers. Classification is intentionally conservative:
+`C1`-`C13` finding identifiers. Classification is intentionally conservative:
 
 | Skill rule | Summary classification | Implemented boundary |
 | :--- | :--- | :--- |

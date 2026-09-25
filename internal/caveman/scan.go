@@ -53,6 +53,7 @@ type line struct {
 // scanner carries region state from one line to the next.
 type scanner struct {
 	fence      string
+	fenceOpen  int
 	lang       string
 	off        bool
 	comment    bool
@@ -107,7 +108,7 @@ func (s *scanner) open(num int, trimmed string) lineKind {
 		return kindOff
 	case strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~"):
 		run := len(trimmed) - len(strings.TrimLeft(trimmed, trimmed[:1]))
-		s.fence, s.lang = trimmed[:run], strings.TrimSpace(trimmed[run:])
+		s.fence, s.lang, s.fenceOpen = trimmed[:run], strings.TrimSpace(trimmed[run:]), num
 		return kindCode
 	case strings.HasPrefix(trimmed, "<!--"):
 		s.comment = !strings.Contains(trimmed, "-->")
