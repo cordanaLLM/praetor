@@ -410,6 +410,9 @@ func runStateQuestionList(dir string) error {
 		if len(q.Options) > 0 {
 			fmt.Printf("       Options: %s\n", strings.Join(q.Options, " | "))
 		}
+		if q.Context != "" {
+			fmt.Printf("       Context: %s\n", q.Context)
+		}
 	}
 	return nil
 }

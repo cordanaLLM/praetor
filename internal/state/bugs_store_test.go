@@ -70,7 +70,7 @@ func TestBugIntegrityDetectsChangedSource(t *testing.T) {
 }
 
 func TestBugIntegrityFieldBoundsAndUnicode(t *testing.T) {
-	cases := []string{"\u2003title\u00a0", "\u0085title\v\f", strings.Repeat("\n", maxBugFieldBytes)}
+	cases := []string{"\u2003title\u00a0", "\u0085title\v\f", strings.Repeat("\n", maxLedgerFieldBytes)}
 	for _, value := range cases {
 		bug := BugEntry{ID: "BUG-001", Title: "boundary", Severity: "p1", Status: "open", Context: value, Resolution: value}
 		encoded, err := RenderBugsMarkdownStrict([]BugEntry{bug})
@@ -83,10 +83,10 @@ func TestBugIntegrityFieldBoundsAndUnicode(t *testing.T) {
 		}
 	}
 	root := writeBugFixture(t, defaultBugsMD())
-	if _, err := AddBug(root, BugEntry{Title: strings.Repeat("x", maxBugFieldBytes+1)}); err == nil {
+	if _, err := AddBug(root, BugEntry{Title: strings.Repeat("x", maxLedgerFieldBytes+1)}); err == nil {
 		t.Fatal("accepted oversized field")
 	}
-	if _, err := ParseBugsMarkdownStrict(strings.Repeat("x", maxBugLedgerBytes+1)); err == nil {
+	if _, err := ParseBugsMarkdownStrict(strings.Repeat("x", maxLedgerBytes+1)); err == nil {
 		t.Fatal("accepted oversized ledger")
 	}
 }

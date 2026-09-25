@@ -150,8 +150,8 @@ func RenderBugsMarkdown(bugs []BugEntry) string {
 // document, metadata inline in the v1 form. Ledger writers (AddBug, ResolveBug)
 // keep metadata in the bugs.meta.json sidecar instead.
 func RenderBugsMarkdownStrict(bugs []BugEntry) (string, error) {
-	if len(bugs) > maxBugEntries {
-		return "", fmt.Errorf("bug count exceeds %d", maxBugEntries)
+	if len(bugs) > maxLedgerEntries {
+		return "", fmt.Errorf("bug count exceeds %d", maxLedgerEntries)
 	}
 	var out strings.Builder
 	out.WriteString(defaultBugsMD())

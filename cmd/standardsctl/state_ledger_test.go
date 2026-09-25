@@ -80,3 +80,35 @@ func TestStateMigrateBugsCommand(t *testing.T) {
 		t.Fatalf("migrated ledger does not verify: %v", err)
 	}
 }
+
+// TestStateQuestionContextCommand covers --context end to end: it used to be accepted by
+// `state question add` and written nowhere, so `question list` could never show it.
+func TestStateQuestionContextCommand(t *testing.T) {
+	dir := t.TempDir()
+	add := []string{"question", "add", "--prompt=Ship it? | really", "--options=Yes,No", "--context=blocked on review", "--dir=" + dir}
+	if _, err := captureStdout(t, func() error { return dispatchCommand("state", add) }); err != nil {
+		t.Fatalf("question add: %v", err)
+	}
+	out, err := captureStdout(t, func() error { return dispatchCommand("state", []string{"question", "list", dir}) })
+	if err != nil || !strings.Contains(out, "[Q-001] Ship it? | really [PENDING]") ||
+		!strings.Contains(out, "Options: Yes | No") || !strings.Contains(out, "Context: blocked on review") {
+		t.Fatalf("question list lost a field: %q, %v", out, err)
+	}
+
+	// Negative: a question with no prompt is refused and records nothing.
+	if _, err := captureStdout(t, func() error {
+		return dispatchCommand("state", []string{"question", "add", "--context=orphan", "--dir=" + dir})
+	}); err == nil {
+		t.Fatal("question add without --prompt succeeded")
+	}
+	// Boundary: without --context the list prints no Context line.
+	if _, err := captureStdout(t, func() error {
+		return dispatchCommand("state", []string{"question", "add", "--prompt=Plain", "--dir=" + dir})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, err = captureStdout(t, func() error { return dispatchCommand("state", []string{"question", "list", dir}) })
+	if err != nil || strings.Count(out, "Context:") != 1 || strings.Contains(out, "orphan") {
+		t.Fatalf("unexpected context lines: %q, %v", out, err)
+	}
+}

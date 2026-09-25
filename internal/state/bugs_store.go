@@ -23,20 +23,21 @@ var (
 	sidecarStoreFile = bugStoreFile{bugMetaName, bugMetaPendingName}
 )
 
-// bugFiles is one read of BUGS.md and its optional metadata sidecar.
-type bugFiles struct {
+// ledgerFiles is one read of a table ledger (BUGS.md, QUESTIONS.md) and its optional
+// metadata sidecar.
+type ledgerFiles struct {
 	ledger, meta             []byte
 	ledgerExists, metaExists bool
 }
 
 // Reads reuse the same bounded, no-symlink snapshot contract as ingestion.
-func readBugFiles(ctx context.Context, rootPath string) (files bugFiles, err error) {
+func readBugFiles(ctx context.Context, rootPath string) (files ledgerFiles, err error) {
 	root, absent, err := openBugReadRoot(ctx, rootPath)
 	if err != nil {
 		return files, fmt.Errorf("open bug ledger directory: %w", err)
 	}
 	if absent {
-		return bugFiles{ledger: []byte(defaultBugsMD())}, nil
+		return ledgerFiles{ledger: []byte(defaultBugsMD())}, nil
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
 	return readBugFilesIn(ctx, root)
@@ -44,7 +45,7 @@ func readBugFiles(ctx context.Context, rootPath string) (files bugFiles, err err
 
 // readBugFilesIn reads both files from a pinned working directory. A missing
 // ledger reads as the empty default; a missing sidecar as no metadata.
-func readBugFilesIn(ctx context.Context, root *os.Root) (files bugFiles, err error) {
+func readBugFilesIn(ctx context.Context, root *os.Root) (files ledgerFiles, err error) {
 	files.ledger, files.ledgerExists, err = contextopt.ObserveRootSnapshot(ctx, root, bugLedgerName)
 	if err != nil {
 		return files, err
@@ -58,8 +59,8 @@ func readBugFilesIn(ctx context.Context, root *os.Root) (files bugFiles, err err
 
 // parseBugFiles validates the ledger against its sidecar. The document always
 // carries a non-nil index for writers to update.
-func parseBugFiles(files bugFiles) (*bugDocument, error) {
-	index := bugMetaIndex{}
+func parseBugFiles(files ledgerFiles) (*bugDocument, error) {
+	index := ledgerMetaIndex{}
 	if files.metaExists {
 		decoded, err := decodeBugMeta(files.meta)
 		if err != nil {
@@ -145,7 +146,7 @@ func updateBugLedgerContext(ctx context.Context, rootPath string, change func(*b
 // never leaves a row without its metadata. It can leave a record no row
 // references yet (readers ignore it; the next add of that ID replaces it) or a
 // resolve's ResolvedAt ahead of its row. Unchanged files are not written.
-func commitBugFiles(ctx context.Context, root *os.Root, files bugFiles, updated string, index bugMetaIndex) error {
+func commitBugFiles(ctx context.Context, root *os.Root, files ledgerFiles, updated string, index ledgerMetaIndex) error {
 	if files.metaExists || len(index) > 0 {
 		meta, err := encodeBugMeta(index)
 		if err != nil {
