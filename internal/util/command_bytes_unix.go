@@ -52,16 +52,21 @@ type commandGroupRegistry struct {
 	// the rest of its group was killed.
 	groups     map[int]<-chan struct{}
 	terminated bool
+	// parentDeath is the signal the kernel sends each command when this process dies, where the
+	// platform has one (parentDeathSignal); 0 sends none.
+	parentDeath syscall.Signal
 }
 
 // runningCommandGroups is the process-wide registry commandBytesCleanup records into.
 var runningCommandGroups = newCommandGroupRegistry()
 
 func newCommandGroupRegistry() *commandGroupRegistry {
-	return &commandGroupRegistry{groups: make(map[int]<-chan struct{})}
+	return &commandGroupRegistry{groups: make(map[int]<-chan struct{}), parentDeath: parentDeathSignal}
 }
 
-// track makes cmd run in a process group of its own, recorded in r while it runs.
+// track makes cmd run in a process group of its own, recorded in r while it runs. Where the
+// platform allows, the command is also killed when this process dies, even by SIGKILL, which
+// nothing here can forward (commandSysProcAttr).
 //
 // Cancellation asks the group to stop with SIGTERM, which git and most tools answer by
 // removing their lock and temporary files; exec.Cmd kills the direct child CommandWaitDelay
@@ -69,7 +74,7 @@ func newCommandGroupRegistry() *commandGroupRegistry {
 // called once the command returned, kills what is left of the group and forgets it, so a
 // grandchild cannot outlive the call.
 func (r *commandGroupRegistry) track(cmd *exec.Cmd) (start func() error, cleanup func() error) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = commandSysProcAttr(r.parentDeath)
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return os.ErrProcessDone

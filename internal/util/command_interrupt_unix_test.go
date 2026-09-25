@@ -50,10 +50,17 @@ const interruptPause = 2 * time.Second
 // TestCommandInterruptHelper is the parent process of the interrupt tests. It is inert unless
 // the environment selects a mode, and it runs one command through RunCommand in the
 // directory the parent test chose.
+//
+// The command gets no parent-death signal unless PRAETOR_COMMAND_PARENT_DEATH is set. That
+// signal kills the command whenever the helper dies, so a forwarding test would pass on Linux
+// even if the signal it tests never arrived; command_parent_death_linux_test.go tests it alone.
 func TestCommandInterruptHelper(t *testing.T) {
 	mode := os.Getenv("PRAETOR_COMMAND_INTERRUPT_TEST")
 	if mode == "" {
 		return
+	}
+	if os.Getenv("PRAETOR_COMMAND_PARENT_DEATH") == "" {
+		runningCommandGroups.parentDeath = 0
 	}
 	switch mode {
 	case "handled":
@@ -75,8 +82,8 @@ func TestCommandInterruptHelper(t *testing.T) {
 
 // startInterruptHelper starts the helper in mode, running script, as the leader of its own
 // process group, the way a shell starts a foreground job, and returns once its command
-// reported ready.
-func startInterruptHelper(t *testing.T, mode, script string) (*exec.Cmd, string, time.Time) {
+// reported ready. extraEnv is added to the helper's environment.
+func startInterruptHelper(t *testing.T, mode, script string, extraEnv ...string) (*exec.Cmd, string, time.Time) {
 	t.Helper()
 	binary, err := os.Executable()
 	if err != nil {
@@ -87,6 +94,7 @@ func startInterruptHelper(t *testing.T, mode, script string) (*exec.Cmd, string,
 	helper.Env = append(os.Environ(), "PRAETOR_COMMAND_INTERRUPT_TEST="+mode,
 		"PRAETOR_COMMAND_INTERRUPT_DIR="+dir, "PRAETOR_COMMAND_INTERRUPT_SCRIPT="+script,
 		"GOCOVERDIR="+t.TempDir())
+	helper.Env = append(helper.Env, extraEnv...)
 	helper.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := helper.Start(); err != nil {
 		t.Fatal(err)
