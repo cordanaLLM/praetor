@@ -42,7 +42,7 @@ func scanGoSource(data []byte, rel string, rep *ScanReport, opts ScanOptions) {
 		maxLOC:  opts.MaxFuncLOC,
 		isTest:  strings.HasSuffix(rel, "_test.go"),
 		safety:  safetyCommentLines(fset, file),
-		imports: fileImports(file),
+		imports: FileImports(file),
 	}
 	g.walk(file)
 }
@@ -54,7 +54,7 @@ type goScanner struct {
 	maxLOC  int
 	isTest  bool
 	safety  map[int]struct{}
-	imports goImports
+	imports GoImports
 	stack   []ast.Node
 }
 
@@ -85,6 +85,36 @@ func ReceiverName(fn *ast.FuncDecl) string {
 		return ""
 	}
 	return fn.Recv.List[0].Names[0].Name
+}
+
+// maxReceiverTypeDepth bounds the pointer, parenthesis and instantiation layers
+// ReceiverTypeName unwraps (HISS-02). A valid receiver nests at most a few deep.
+const maxReceiverTypeDepth = 8
+
+// ReceiverTypeName returns the declared type name at the root of a method receiver's type
+// expression, unwrapping a pointer, parentheses and a generic instantiation: *Set[T],
+// (Pair[K, V]) and T all name their base type. It reports false for any other shape.
+//
+// Matching only *ast.Ident and *ast.StarExpr collapsed every generic receiver to one
+// placeholder, so same-named methods on different generic types collided.
+func ReceiverTypeName(expr ast.Expr) (string, bool) {
+	for i := 0; i < maxReceiverTypeDepth; i++ {
+		switch t := expr.(type) {
+		case *ast.Ident:
+			return t.Name, true
+		case *ast.StarExpr:
+			expr = t.X
+		case *ast.ParenExpr:
+			expr = t.X
+		case *ast.IndexExpr:
+			expr = t.X
+		case *ast.IndexListExpr:
+			expr = t.X
+		default:
+			return "", false
+		}
+	}
+	return "", false
 }
 
 // CallTargetsEnclosing reports whether a call targets the enclosing function itself: a bare
@@ -332,7 +362,7 @@ var unsafeExports = map[string]struct{}{
 // unsafe.Pointer(p), and a local or a different package spelled unsafe is not.
 func (g *goScanner) checkUnsafe(sel *ast.SelectorExpr) {
 	pkg, ok := sel.X.(*ast.Ident)
-	if !ok || !g.imports.binds(pkg.Name, "unsafe") {
+	if !ok || !g.imports.Binds(pkg.Name, "unsafe") {
 		return
 	}
 	g.checkUnsafeUse(pkg.Name, sel.Pos(), "unsafe."+sel.Sel.Name)
@@ -343,7 +373,7 @@ func (g *goScanner) checkUnsafe(sel *ast.SelectorExpr) {
 // selector check never sees it. A dot-imported name in a type position without a
 // conversion, such as a parameter of type Pointer, is not reported.
 func (g *goScanner) checkDotUnsafeCall(call *ast.CallExpr) {
-	if !g.imports.dotImports("unsafe") {
+	if !g.imports.DotImports("unsafe") {
 		return
 	}
 	ident, ok := ast.Unparen(call.Fun).(*ast.Ident)

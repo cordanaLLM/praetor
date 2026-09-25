@@ -115,18 +115,18 @@ func TestFileImportsBindsResolvedNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	im := fileImports(file)
+	im := FileImports(file)
 	for _, bound := range [][2]string{{"http", "net/http"}, {"u", "unsafe"}, {"exec", "os/exec"}} {
-		if !im.binds(bound[0], bound[1]) {
+		if !im.Binds(bound[0], bound[1]) {
 			t.Errorf("%s must bind %s: %+v", bound[0], bound[1], im.byName)
 		}
 	}
 	for _, unbound := range [][2]string{{"unsafe", "unsafe"}, {"_", "embed"}, {"embed", "embed"}, {"http", "unsafe"}} {
-		if im.binds(unbound[0], unbound[1]) {
+		if im.Binds(unbound[0], unbound[1]) {
 			t.Errorf("%s must not bind %s: %+v", unbound[0], unbound[1], im.byName)
 		}
 	}
-	if !im.dotImports("strings") || im.dotImports("unsafe") {
+	if !im.DotImports("strings") || im.DotImports("unsafe") {
 		t.Errorf("dot imports = %+v, want only strings", im.dot)
 	}
 }
@@ -134,7 +134,7 @@ func TestFileImportsBindsResolvedNames(t *testing.T) {
 // TestFileImportsBoundaryMalformedSpecs keeps a partial AST from binding anything: a nil
 // file, a nil spec, a path that does not unquote and an empty path are all skipped.
 func TestFileImportsBoundaryMalformedSpecs(t *testing.T) {
-	if im := fileImports(nil); len(im.byName) != 0 || len(im.dot) != 0 {
+	if im := FileImports(nil); len(im.byName) != 0 || len(im.dot) != 0 {
 		t.Fatalf("nil file bound names: %+v", im)
 	}
 	file := &ast.File{Imports: []*ast.ImportSpec{
@@ -144,8 +144,8 @@ func TestFileImportsBoundaryMalformedSpecs(t *testing.T) {
 		{Path: &ast.BasicLit{Kind: token.STRING, Value: `""`}},
 		{Name: ast.NewIdent("u"), Path: &ast.BasicLit{Kind: token.STRING, Value: `"unsafe"`}},
 	}}
-	im := fileImports(file)
-	if len(im.byName) != 1 || !im.binds("u", "unsafe") {
+	im := FileImports(file)
+	if len(im.byName) != 1 || !im.Binds("u", "unsafe") {
 		t.Fatalf("malformed specs must be skipped and the valid one kept: %+v", im.byName)
 	}
 }
