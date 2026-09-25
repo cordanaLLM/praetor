@@ -16,16 +16,20 @@ praetorctl devcontainer verify
 Generation prepares the configuration and exact companion files. It does not
 build an image, execute the selected source, or certify application tests.
 The selected source must be a Git checkout declaring the Praetor module. Its
-tracked and nonignored untracked Go build sources, `go.mod`, `go.sum`, and
-`LICENSE` are captured twice; a changed snapshot fails preparation. Go's test
-surface, `_test.go` files and anything under a `testdata` directory, is not
-captured: the generated Dockerfile only runs `go build ./cmd/standardsctl`,
-which reads neither. The Git pathspec and the name check apply one rule,
-`util.IsGoNonTestSource` (`internal/util/gosource.go`), so a test file cannot
-enter a captured set, and an archive carrying one fails verification
-(`internal/devcontainer/bootstrap_source.go`). Embedded assets and unsupported
-native build inputs fail explicitly rather than being omitted. Capture is
-bounded to 4,096 files, 8 MiB total, and 1 MiB per file.
+tracked and nonignored untracked Go build sources, `go.mod`, `go.sum`,
+`LICENSE`, and the five declared `tools/markdownlint` assets the CLI embeds
+are captured twice; a changed snapshot fails preparation. Go's test surface,
+`_test.go` files and anything under a `testdata` directory, is not captured:
+the generated Dockerfile only runs `go build ./cmd/standardsctl`, which reads
+neither. The Git pathspec excludes it and the name check refuses it first, for
+declared assets too, through one rule, `util.IsGoTestSurface`
+(`internal/util/gosource.go`), so a test file cannot enter a captured set, and
+an archive carrying one fails verification
+(`internal/devcontainer/bootstrap_source.go`). A captured set holding
+`tools/markdownlint/assets.go` must hold every declared asset. Undeclared
+`go:embed` inputs and unsupported native build inputs fail explicitly rather
+than being omitted. Capture is bounded to 4,096 files, 8 MiB total, and 1 MiB
+per file.
 
 The recorded `customizations.praetor.bootstrap` specification identifies the
 source snapshot, compressed archive, Dockerfile, and immutable builder/base
