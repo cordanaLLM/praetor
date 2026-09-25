@@ -48,8 +48,11 @@ jobs:
       # Pinned, not floating. Two jobs build this same mkdocs.yml: this one, and the
       # "Documentation Integrity Audit" step in ci.yml, which installs
       # docs/presets/mkdocs/requirements.txt. Unconstrained here, the two resolved different
-      # trees, so a PR could go green on the audit and break on deploy. The pins are the
-      # floors that requirements.txt declares, which keeps the two builds on one tree.
+      # trees, so a PR could go green on the audit and break on deploy. The pins are exactly
+      # the floors requirements.txt declares, so both jobs resolve one tree today. They only
+      # stay equal if they move together: raising a floor in requirements.txt without raising
+      # the pin here re-opens the gap, in the direction where the audit passes on a version
+      # this job never builds.
       - name: Install Documentation Dependencies
         run: |
           python -m pip install --upgrade pip
