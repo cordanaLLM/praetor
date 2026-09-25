@@ -91,8 +91,18 @@ func TestDogfood_Negative_MissingTargetsDirAndBadURL(t *testing.T) {
 
 // writeCommittedFixture creates a one-commit repository that a clone can resolve without a
 // network, and returns its path.
+//
+// The fixture's own git commands run under testsupport.HermeticGitEnv, the package-wide
+// fixture environment: the operator's init.templateDir, commit hooks, signing setting and an
+// inherited GIT_DIR or GIT_INDEX_FILE from an enclosing hook cannot shape the fixture or
+// reach the enclosing repository, and the identity comes from that one helper rather than
+// from per-call -c flags.
 func writeCommittedFixture(t *testing.T, ctx context.Context) string {
 	t.Helper()
+	ctx, err := util.WithCommandEnvironment(ctx, testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatalf("hermetic fixture environment: %v", err)
+	}
 	fixture := t.TempDir()
 	if out, err := util.RunGit(ctx, fixture, "init", "-q"); err != nil {
 		t.Skipf("git unavailable: %v: %s", err, out)
@@ -103,8 +113,7 @@ func writeCommittedFixture(t *testing.T, ctx context.Context) string {
 	if out, err := util.RunGit(ctx, fixture, "add", "a.txt"); err != nil {
 		t.Fatalf("add: %v: %s", err, out)
 	}
-	if out, err := util.RunGit(ctx, fixture, "-c", "user.name=T", "-c", "user.email=t@example.invalid",
-		"-c", "commit.gpgsign=false", "commit", "-q", "-m", "fixture"); err != nil {
+	if out, err := util.RunGit(ctx, fixture, "commit", "-q", "-m", "fixture"); err != nil {
 		t.Fatalf("commit: %v: %s", err, out)
 	}
 	return fixture
