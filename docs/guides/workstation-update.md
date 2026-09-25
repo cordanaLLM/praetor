@@ -79,7 +79,7 @@ Prints one JSON object (`internal/workstation/status.go`):
 | `manifest_sha256` | Digest of the manifest file itself, for external tooling to reference an exact reported state. |
 | `checkout_head`, `up_to_date` | `--source`'s current commit, and whether it equals the installed `engine_commit`. Omitted when `--source` is not given. |
 | `lock_held` | Whether an installation lock is currently held in the bin directory (`--bin-dir`, or the manifest's own `bin_dir` when not given). Status never takes the lock itself. |
-| `clients` | Per-client configuration-root presence, resolved through C1 (`internal/clientsetup/roots.go`, `clientsetup.Root`). A client with no root entry yet reports a stated reason instead of a false negative; `--home` selects a foreign home directory for this resolution, the same override `harvest bundle --home` uses. |
+| `clients` | Per-client configuration-root presence, resolved through C1 (`internal/clientsetup/roots.go`, `clientsetup.Root`). Every known client has a root entry; a client whose resolution fails, for example a relocation variable naming a missing directory, reports a stated reason instead of a false negative; `--home` selects a foreign home directory for this resolution, the same override `harvest bundle --home` uses. |
 
 ## The install manifest
 

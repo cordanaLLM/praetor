@@ -28,8 +28,10 @@ func hostClientEnv(home string, foreign bool) clientsetup.Env {
 	env.AppData = os.Getenv("APPDATA")
 	env.LocalAppData = os.Getenv("LOCALAPPDATA")
 	env.ConfigHome = os.Getenv("XDG_CONFIG_HOME")
-	// Getenv stays nil: the Antigravity relocation variables are unverified table data,
-	// and the harvester has no native readback to confirm a root chosen through them.
+	// Only verified relocation variables (CLAUDE_CONFIG_DIR, CODEX_HOME and the like) are
+	// read: the Antigravity ones are unverified table data, and neither the harvester nor
+	// workstation status has a native readback to confirm a root chosen through them.
+	env.Getenv = clientsetup.VerifiedGetenv(os.Getenv)
 	return env
 }
 

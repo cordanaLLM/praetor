@@ -126,7 +126,7 @@ func TestResolveRejects(t *testing.T) {
 		wantText string
 	}{
 		{name: "unknown client", client: Client("unknown"), scope: ScopeGlobal, env: hostEnv("linux"), wantIs: ErrNoRoot},
-		{name: "known client without a recorded root", client: Codex, scope: ScopeGlobal, env: hostEnv("linux"), wantIs: ErrNoRoot},
+		{name: "empty client", client: Client(""), scope: ScopeGlobal, env: hostEnv("linux"), wantIs: ErrNoRoot},
 		{name: "unknown scope", client: AGY, scope: Scope("user"), env: hostEnv("linux"), wantText: "unknown scope"},
 		{name: "empty scope", client: AGY, env: hostEnv("linux"), wantText: "unknown scope"},
 		{name: "workspace scope with override", client: AGY, scope: ScopeWorkspace, env: hostEnv("linux"), override: "/x", wantText: "global scope only"},

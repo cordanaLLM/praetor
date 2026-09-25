@@ -37,6 +37,13 @@ and Windows tables are therefore tested on every CI leg, whatever the host.
 | :-- | :-- | :-- | :-- |
 | Antigravity global customization root | `$HOME/.gemini/config` | same | `%USERPROFILE%\.gemini\config` |
 | Antigravity workspace root | `<repo>/.agents` | same | same |
+| Claude Code global root | `$HOME/.claude` | same | `%USERPROFILE%\.claude` |
+| Cline global root | `$HOME/.cline` | same | `%USERPROFILE%\.cline` |
+| Codex global root | `$HOME/.codex` | same | `%USERPROFILE%\.codex` |
+| Continue global root | `$HOME/.continue` | same | `%USERPROFILE%\.continue` |
+| Gemini CLI global root | `$HOME/.gemini` | same | `%USERPROFILE%\.gemini` |
+| Kilo global root | `<xdg>/kilo` | same | same |
+| OpenCode global root | `<xdg>/opencode` | same | same |
 | Antigravity CLI settings | `$HOME/.gemini/antigravity-cli/settings.json` | same | `%USERPROFILE%\.gemini\antigravity-cli\settings.json` |
 | Antigravity IDE user settings | `<config>/Antigravity/User/settings.json` | `$HOME/Library/Application Support/Antigravity/User/settings.json` | `%APPDATA%\Antigravity\User\settings.json` |
 | Claude desktop configuration | `<config>/Claude/claude_desktop_config.json` | `$HOME/Library/Application Support/Claude/claude_desktop_config.json` | `%APPDATA%\Claude\claude_desktop_config.json` |
@@ -45,15 +52,31 @@ and Windows tables are therefore tested on every CI leg, whatever the host.
 
 `<config>` is `$XDG_CONFIG_HOME`, or `$HOME/.config` when that variable is unset or
 relative; the XDG base directory specification declares a relative value invalid. An
-unset `APPDATA` or `LOCALAPPDATA` derives from the home directory.
+unset `APPDATA` or `LOCALAPPDATA` derives from the home directory. `<xdg>` follows the
+same rule on every operating system, macOS and Windows included, because Kilo and
+OpenCode resolve it through the `xdg-basedir` package, which ignores the platform.
 
-The global root resolves in this order: an explicit override, then
-`ANTIGRAVITY_CONFIG_DIR`, then `GEMINI_CONFIG_DIR` plus `/config`, then the default.
-An override or variable that is relative, contains `.` or `..` segments, or names a
-missing directory is an error, never a fallback. Both variables are unverified:
-neither name occurs in the `agy` 1.2.5 binary. A root chosen through them is marked
-unverified and may be relied on only after a native readback agrees.
-`praetorctl harvest` does not consult them.
+A global root resolves in this order: an explicit override, then the client's
+relocation variables, then the default. An override or variable that is relative,
+contains `.` or `..` segments, or names a missing directory is an error, never a
+fallback. Each row in `globalRoots` (`internal/clientsetup/roots.go`) cites the
+documentation or source it was read from; `TestResolveEveryKnownClientPerOS` pins the
+defaults above.
+
+| Client | Relocation variable | Root it selects | Evidence |
+| :-- | :-- | :-- | :-- |
+| Antigravity | `ANTIGRAVITY_CONFIG_DIR`, then `GEMINI_CONFIG_DIR` | the value, then `<value>/config` | unverified |
+| Claude Code | `CLAUDE_CONFIG_DIR` | the value | verified |
+| Cline | `CLINE_DIR` | the value | verified |
+| Codex | `CODEX_HOME` | the value | verified |
+| Continue | `CONTINUE_GLOBAL_DIR` | the value | verified |
+| Gemini CLI | `GEMINI_CLI_HOME` | `<value>/.gemini` | verified |
+
+Neither Antigravity variable occurs in the `agy` 1.2.5 binary. A root chosen through
+them is marked unverified and may be relied on only after a native readback agrees.
+`praetorctl harvest` and `praetorctl workstation status` read only the verified
+variables (`clientsetup.VerifiedGetenv`). `OPENCODE_CONFIG_DIR` and `KILO_CONFIG_DIR`
+are not relocations: both add a directory after the global root, which stays loaded.
 
 Antigravity keeps a brain directory per product under `$HOME/.gemini`:
 `antigravity/brain`, `antigravity-ide/brain` and `antigravity-cli/brain`.
