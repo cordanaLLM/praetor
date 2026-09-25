@@ -82,8 +82,14 @@ function repositoryRoot(run = spawnSync, realpath = fs.realpathSync) {
   if (candidate === "") {
     fail("git rev-parse returned an empty repository root");
   }
+  return canonicalRoot(candidate, realpath);
+}
+
+// Confinement compares canonical paths on both sides: a root reached through a
+// directory link (macOS TMPDIR under /var -> /private/var) is the same tree.
+function canonicalRoot(root, realpath = fs.realpathSync) {
   try {
-    return realpath(candidate);
+    return realpath(root);
   } catch (error) {
     const detail = boundedProcessText(error?.message ?? String(error), "repository root error");
     fail(`cannot canonicalize repository root: ${detail}`);
@@ -133,7 +139,7 @@ function readBounded(root, relative, optional = false) {
   }
   const { full } = inspected;
   const resolved = fs.realpathSync(full);
-  const confined = path.relative(root, resolved);
+  const confined = path.relative(canonicalRoot(root), resolved);
   if (confined === ".." || confined.startsWith(`..${path.sep}`) || path.isAbsolute(confined)) {
     fail(`${relative} escapes the repository root`);
   }
@@ -614,6 +620,20 @@ function repositoryFixtures(root) {
   assert.throws(() => readBounded(root, "docs/bounded-read.txt"), /no larger than 1048576 bytes/u);
 }
 
+function linkedRootFixtures(base, root) {
+  writeFixture(root);
+  const linked = path.join(base, "linked-root");
+  // "junction" keeps the directory link unprivileged on Windows; other
+  // platforms ignore the type and create an ordinary symbolic link.
+  fs.symlinkSync(root, linked, "junction");
+  assert.doesNotThrow(() => verifyRepository(linked));
+  assert.equal(readBounded(linked, "README.md"), readBounded(root, "README.md"));
+  assert.equal(canonicalRoot(linked), canonicalRoot(root));
+  fs.writeFileSync(path.join(root, "docs", "llms-full.txt"), "# Stale copied policy\n");
+  assert.throws(() => verifyRepository(linked), /docs\/llms-full\.txt differs/u);
+  assert.throws(() => canonicalRoot(path.join(base, "missing-root")), /cannot canonicalize repository root/u);
+}
+
 function withLink(sectionIndex, linkIndex, change) {
   return catalog.llmsSections.map((section, currentSection) => ({
     ...section,
@@ -663,17 +683,20 @@ function copiedPolicyFixtures() {
 }
 
 function selfTest() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "praetor-docsurface-"));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "praetor-docsurface-"));
+  const root = path.join(base, "repository");
   try {
+    fs.mkdirSync(root);
     repositoryRootFixtures();
     portablePathFixtures();
     catalogFixtures();
     copiedPolicyFixtures();
     renderedSurfaceFixtures();
     repositoryFixtures(root);
+    linkedRootFixtures(base, root);
     process.stdout.write("documentation-surfaces: positive, negative, and boundary fixtures pass\n");
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(base, { recursive: true, force: true });
   }
 }
 
