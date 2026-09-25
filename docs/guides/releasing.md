@@ -15,6 +15,19 @@ page covers what that tag sets off, how to cut one, and how the moving flavor ta
 Once the first release exists, `@latest` stops following `main`. An adopter that wants
 unreleased commits has to ask for them, for example `@main`.
 
+### Signing and SBOM toolchain
+
+`release-binaries.yml` and `sbom.yml` install the tools the release assets depend on.
+`internal/bump/scan_actions.go` records the same action pins as the baseline
+`praetorctl bump` compares workflows against, and `internal/bump/release_pins_test.go`
+fails when the workflows and that baseline disagree.
+
+| Tool | Action pin | Installs | Why the pin reads the way it does |
+| :--- | :--- | :--- | :--- |
+| GoReleaser | `goreleaser/goreleaser-action@v7` | GoReleaser `~> v2`, from the step's `version` input | v7 moves the action runtime to node24 and adds only the optional `version-file` input, so the step's inputs are unchanged |
+| Syft | `anchore/sbom-action/download-syft@v0.24.2` | Syft `v1.51.1` | The invocations `syft dir:. -o cyclonedx-json=…` and the `.goreleaser.yaml` `sboms` args are unchanged, but a newer Syft catalogues more packages, so SBOM content differs from that of builds made with an older pin |
+| cosign | `sigstore/cosign-installer@v4.1.2` | cosign `v3.0.6`, the installer's default | No `cosign-release` input: a version hold there is invisible to the `praetorctl bump` scanner, and `internal/forge/cosign_bundle_test.go` rejects one. The installer publishes no moving `v4` tag, so the pin is exact |
+
 ## Verifying a published release
 
 Every signature this repository publishes is a **Sigstore bundle**: one `.sigstore.json`

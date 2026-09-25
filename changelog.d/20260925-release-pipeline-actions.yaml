@@ -1,0 +1,3 @@
+type: changed
+title: Release pipeline moves to goreleaser-action v7 and Syft v1.51.1 (download-syft v0.24.2), so release SBOMs list more packages
+breaking: false
