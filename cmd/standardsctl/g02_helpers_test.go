@@ -12,6 +12,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // fixtureAgentsMD is a minimal canonical AGENTS.md for hermetic fixtures.
@@ -75,17 +76,6 @@ func readFixtureFile(t *testing.T, dir, rel string) string {
 	return string(data)
 }
 
-// hermeticGitEnv isolates git from the developer's configuration, identity and HOME.
-func hermeticGitEnv(dir string) []string {
-	return append(os.Environ(),
-		"HOME="+dir,
-		"GIT_CONFIG_GLOBAL="+filepath.Join(dir, "no-such-gitconfig"),
-		"GIT_CONFIG_SYSTEM="+filepath.Join(dir, "no-such-gitconfig"),
-		"GIT_AUTHOR_NAME=praetor-test", "GIT_AUTHOR_EMAIL=test@example.invalid",
-		"GIT_COMMITTER_NAME=praetor-test", "GIT_COMMITTER_EMAIL=test@example.invalid",
-	)
-}
-
 // initGitFixture turns dir into a repository with every file committed on main and a
 // lefthook.yml, so the audit's hook gate has its configuration. It skips the test when
 // git is unavailable and returns the environment for further fixture git calls.
@@ -94,7 +84,7 @@ func initGitFixture(t *testing.T, dir string) []string {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git not available: %v", err)
 	}
-	env := hermeticGitEnv(dir)
+	env := testsupport.HermeticGitEnv(t)
 	writeFixtureFile(t, dir, "lefthook.yml", "pre-commit:\n  commands: {}\n")
 	for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"add", "-A"}, {"commit", "-q", "-m", "fixture"}} {
 		if out, err := runFixtureGit(t, dir, env, args...); err != nil {

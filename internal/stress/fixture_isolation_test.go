@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -65,46 +64,4 @@ func commitWithInheritedEnv(dir string) (string, error) {
 		}
 	}
 	return "", nil
-}
-
-// TestHermeticGitEnv_Boundary_CarriesEveryIsolationSetting pins the environment's contents,
-// so a later edit cannot drop one of them and leave the isolation looking intact.
-func TestHermeticGitEnv_Boundary_CarriesEveryIsolationSetting(t *testing.T) {
-	env := hermeticGitEnv(t)
-	required := []string{
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_SYSTEM=" + os.DevNull,
-		"GIT_CONFIG_GLOBAL=" + os.DevNull,
-		"GIT_TERMINAL_PROMPT=0",
-	}
-	for _, want := range required {
-		if !containsSetting(env, want) {
-			t.Errorf("hermetic environment is missing %s", want)
-		}
-	}
-	home := settingValue(env, "HOME=")
-	if home == "" || home == os.Getenv("HOME") {
-		t.Errorf("hermetic environment must redirect HOME away from the developer's, got %q", home)
-	}
-}
-
-func containsSetting(env []string, want string) bool {
-	for i := 0; i < len(env); i++ {
-		if env[i] == want {
-			return true
-		}
-	}
-	return false
-}
-
-// settingValue returns the last value for a prefix, matching how the environment resolves
-// a variable set twice.
-func settingValue(env []string, prefix string) string {
-	value := ""
-	for i := 0; i < len(env); i++ {
-		if strings.HasPrefix(env[i], prefix) {
-			value = strings.TrimPrefix(env[i], prefix)
-		}
-	}
-	return value
 }

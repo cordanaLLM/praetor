@@ -16,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/worktree"
 )
 
@@ -99,7 +100,7 @@ func TestProperty_ASTMergeOrthogonalIndependence(t *testing.T) {
 // machine rather than the code under test.
 func setupTestGitRepo(t *testing.T, dir string) {
 	t.Helper()
-	env := hermeticGitEnv(t)
+	env := testsupport.HermeticGitEnv(t)
 	cmds := [][]string{
 		{"git", "init"},
 		{"git", "config", "user.name", "Test"},
@@ -115,23 +116,6 @@ func setupTestGitRepo(t *testing.T, dir string) {
 			t.Fatalf("failed setup cmd %v: %v: %s", c, err, strings.TrimSpace(string(out)))
 		}
 	}
-}
-
-// hermeticGitEnv returns an environment no configuration outside the fixture can reach:
-// no system config, no global config, an empty home and no credential or terminal prompt.
-// os.DevNull keeps it correct on Windows, where that path is NUL.
-func hermeticGitEnv(t *testing.T) []string {
-	t.Helper()
-	home := t.TempDir()
-	return append(os.Environ(),
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_SYSTEM="+os.DevNull,
-		"GIT_CONFIG_GLOBAL="+os.DevNull,
-		"HOME="+home,
-		"USERPROFILE="+home,
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_ASKPASS=",
-	)
 }
 
 func TestStress_ConcurrentWorktreeOperations(t *testing.T) {

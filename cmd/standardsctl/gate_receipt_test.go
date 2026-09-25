@@ -14,6 +14,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -39,12 +40,7 @@ func newGateFixture(t *testing.T) *gateFixture {
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("fixture\n"), 0o600); err != nil {
 		t.Fatalf("seed file: %v", err)
 	}
-	env := append(os.Environ(),
-		"GIT_CONFIG_GLOBAL="+filepath.Join(dir, "no-such-gitconfig"),
-		"GIT_CONFIG_SYSTEM="+filepath.Join(dir, "no-such-gitconfig"),
-		"GIT_AUTHOR_NAME=praetor-test", "GIT_AUTHOR_EMAIL=test@example.invalid",
-		"GIT_COMMITTER_NAME=praetor-test", "GIT_COMMITTER_EMAIL=test@example.invalid",
-	)
+	env := testsupport.HermeticGitEnv(t)
 	for _, args := range [][]string{
 		{"init", "-q", "-b", "main"},
 		{"add", "README.md"},
