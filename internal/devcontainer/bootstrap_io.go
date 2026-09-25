@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -189,7 +190,9 @@ func decodeManagedConfig(data []byte, path string) (*DevContainer, error) {
 	if err := decoder.Decode(&dc); err != nil {
 		return nil, fmt.Errorf("devcontainer at %s does not match the managed schema: %w", path, err)
 	}
-	if decoder.More() {
+	// More() reports false on a stray "}" or "]", so it would accept
+	// `{...}}` and `{...}]]]garbage`. Only end of input closes the file.
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("devcontainer at %s carries content after its configuration object", path)
 	}
 	return &dc, nil
@@ -199,9 +202,9 @@ func decodeManagedConfig(data []byte, path string) (*DevContainer, error) {
 // compared after line-ending normalisation. The file is compared, never a
 // re-render of what decoded: Go's JSON decoder matches member names
 // case-insensitively and keeps the last of a duplicate pair, so
-// "POSTCREATECOMMAND", a repeated "remoteUser" and a stray trailing "}" all
-// survive a typed decode and re-marshal to the managed spelling. Comparing the
-// re-render would certify every one of them as in sync.
+// "POSTCREATECOMMAND" and a repeated "remoteUser" both survive a typed decode
+// and re-marshal to the managed spelling. Comparing the re-render would
+// certify both as in sync.
 //
 // CR is JSON whitespace, so a checkout with core.autocrlf=true holds a file
 // that differs from Render only in its line endings and that no operator
