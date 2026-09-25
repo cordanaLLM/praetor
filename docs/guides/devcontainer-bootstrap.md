@@ -95,6 +95,30 @@ DevContainers are preserved and reported as execution-unverified.
 
 ## Migration
 
+This release is breaking for existing adopter files and API callers.
+`Verify` and `standardsctl audit` now report drift on a `devcontainer.json`
+they previously accepted when it carries a key outside the managed schema, an
+aliased or duplicated key, or content after the configuration object.
+`LoadDevContainer` now refuses a key outside the managed schema. The
+`Synthesize*` functions refuse more than `MaxLoopLimit` profiles or facets
+instead of truncating them. The rendered features and `postCreateCommand` follow
+the selected feature set, so an unedited non-bootstrap file can report drift
+after the upgrade. To remediate, review the file and regenerate the bundle:
+
+```bash
+praetorctl devcontainer generate \
+  --source-root /path/to/reviewed/praetor \
+  --config .standards.yaml \
+  --output .devcontainer/devcontainer.json \
+  --force
+
+praetorctl devcontainer verify
+```
+
+`--force` replaces only the named bundle files. Move hand-added keys such as
+`initializeCommand` or `runArgs` out of the file first: audit cannot pass while
+they remain.
+
 Existing working custom or Praetor self-host DevContainers remain untouched.
 Legacy generated files that refer to missing Praetor paths now fail verification.
 Review those files, then run the generation command above with `--force` to
