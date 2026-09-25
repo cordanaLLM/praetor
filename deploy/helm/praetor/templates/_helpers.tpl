@@ -9,8 +9,9 @@ produce an invalid name.
 
 {{/*
 Release-scoped resource name. fullnameOverride wins outright; otherwise the name
-is "<release>-<chart name>", which is what this chart has always rendered, so an
-upgrade renames nothing.
+is "<release>-<chart name>". With both overrides empty that is the name this
+chart has always rendered, so such a release keeps its Deployment and Service
+across an upgrade; a set override now renames them (docs/guides/helm-chart.md).
 */}}
 {{- define "praetor.fullname" -}}
 {{- if .Values.fullnameOverride -}}
