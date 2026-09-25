@@ -1,0 +1,4 @@
+type: fixed
+title: Stop requiring the git-ignored .workingdir ledgers as flavor templates, so fresh clones and linked worktrees of conforming repositories pass the flavor audit and gate stage, and count only files, not directories, as satisfied templates
+issue: "#72"
+breaking: false

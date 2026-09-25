@@ -44,8 +44,8 @@ func TestTemplateSatisfied_Negative(t *testing.T) {
 	}
 }
 
-// Boundary: no alternatives declared falls back to exact-path behaviour, and a directory
-// at the template path counts as present exactly as util.PathExists reports it.
+// Boundary: no alternatives declared falls back to exact-path behaviour. A directory at the
+// template path is covered by TestTemplateSatisfied_Negative_DirectoryIsNotATemplate.
 func TestTemplateSatisfied_Boundary(t *testing.T) {
 	tmp := t.TempDir()
 	bare := flavor.TemplateItem{Path: "tsconfig.json"}
@@ -80,15 +80,6 @@ func TestTypeScriptNodeFlavor_AcceptsFlatConfigWorkspace(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, ".github", "workflows", "ci.yml"), []byte("name: CI\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{"STATE.md", "BUGS.md", "QUESTIONS.md"} {
-		if err := os.MkdirAll(filepath.Join(tmp, ".workingdir"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(tmp, ".workingdir", f), []byte("# x\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
 	report, err := flavor.AuditFlavor(tmp, "typescript-node")
 	if err != nil {
 		t.Fatalf("AuditFlavor: %v", err)

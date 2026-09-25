@@ -46,7 +46,7 @@ same commit therefore scores the same on every machine.
 
 | Term | Scored | Checked by |
 | :--- | :--- | :--- |
-| Templates | yes | the file, or one of its accepted alternatives, exists |
+| Templates | yes | the file, or one of its accepted alternatives, exists as a file (a directory of that name does not count) |
 | Settings | yes | the file exists **and**, where the setting declares a shape, parses |
 | Toolchains | no — advisory | `exec.LookPath` on the machine running the audit |
 
@@ -57,6 +57,10 @@ same commit therefore scores the same on every machine.
   file that is present but does not parse is reported under **Missing or Invalid Settings** and
   costs its share of the score: it configures no more than a file that is not there. Settings with
   no checkable shape are satisfied by presence, which is all that can be claimed about them.
+- **The session ledger is not a template.** `.workingdir/` is git-ignored, so a fresh clone or a
+  linked worktree of a conforming repository never carries it; `praetorctl state audit` checks the
+  ledger, and `flavor audit` scores only files the repository tracks
+  ([`internal/flavor/audit_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavor/audit_test.go)).
 - **Toolchains never decide pass or fail.** They are resolved from `PATH`, so scoring them measured
   the auditing machine: a conforming `go-service` repository scored 11/15 = 73.3% and failed the
   bar on a host with none of its four tools installed, inside the pre-push hook adoption generates.

@@ -71,9 +71,6 @@ func (f *GoServiceFlavor) RequiredTemplates() []TemplateItem {
 		{Path: ".github/workflows/ci.yml", Description: "Continuous integration matrix"},
 		{Path: ".github/workflows/security.yml", Description: "Automated vulnerability scan"},
 		{Path: "Dockerfile", Description: "Distroless container definition"},
-		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
-		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
-		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
 	}
 }
 
@@ -114,9 +111,6 @@ func (f *GoLibraryFlavor) RequiredTemplates() []TemplateItem {
 		{Path: ".standards.lock", Description: "SemVer lockfile"},
 		{Path: ".golangci.yml", Description: "Unified Go linter configuration"},
 		{Path: ".github/workflows/ci.yml", Description: "CI cross-platform build matrix"},
-		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
-		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
-		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
 	}
 }
 
@@ -157,9 +151,6 @@ func (f *NativeGPUSystemsFlavor) RequiredTemplates() []TemplateItem {
 		{Path: ".clang-tidy", Description: "Clang-tidy AST static analyzer config"},
 		{Path: ".clang-format", Description: "C/C++ code formatting rules"},
 		{Path: ".gitleaks.toml", Description: "Secret leak detection policy"},
-		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
-		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
-		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
 	}
 }
 
@@ -201,9 +192,6 @@ func (f *FrontendSvelteFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
 		{Path: "playwright.config.ts", Description: "E2E testing configuration"},
 		{Path: eslintConfigPath, Description: "ECMAScript & Svelte linter", AltPaths: eslintConfigAlternatives},
-		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
-		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
-		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
 	}
 }
 
@@ -288,9 +276,6 @@ const maxMLMarkers = 32
 func (f *PythonMLFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
 		{Path: "ruff.toml", Description: "Fast Python linter and formatter config"},
-		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
-		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
-		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
 	}
 }
 
@@ -333,9 +318,6 @@ func (f *OSImageFlavor) Detect(repoPath string) bool {
 func (f *OSImageFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
 		{Path: ".yamllint.yml", Description: "YAML lint policy for image and workflow definitions"},
-		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
-		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
-		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
 	}
 }
 
@@ -368,12 +350,11 @@ func (f *InfraK8sFlavor) Detect(repoPath string) bool {
 		CheckFileExists(filepath.Join(repoPath, "helmfile.yaml"))
 }
 
+// RequiredTemplates is empty: the infra-k8s verdict rests on its settings. The session
+// ledger under .workingdir/ is a template of no flavor, because it is git-ignored and a
+// fresh clone or linked worktree never carries it; `state audit` owns it.
 func (f *InfraK8sFlavor) RequiredTemplates() []TemplateItem {
-	return []TemplateItem{
-		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
-		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
-		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
-	}
+	return []TemplateItem{}
 }
 
 func (f *InfraK8sFlavor) RequiredSettings() []SettingItem {
@@ -420,9 +401,6 @@ func (f *AgenticAutonomousFlavor) RequiredTemplates() []TemplateItem {
 		{Path: ".paperclip/harness.json", Description: "Agent runtime operating contract and invariants"},
 		{Path: "AGENTS.md", Description: "Canonical agent operating harness"},
 		{Path: "CLAUDE.md", Description: "Compiled Claude instructions"},
-		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
-		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
-		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
 	}
 }
 
@@ -456,9 +434,6 @@ func (f *RustSystemsFlavor) RequiredTemplates() []TemplateItem {
 		{Path: "rustfmt.toml", Description: "Rust formatting and style guidelines"},
 		{Path: "clippy.toml", Description: "Rust AST and idiomatic static linting configuration"},
 		{Path: ".github/workflows/ci.yml", Description: "Continuous integration cargo build, test, and clippy"},
-		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
-		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
-		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
 	}
 }
 
@@ -509,9 +484,6 @@ func (f *TypeScriptNodeFlavor) RequiredTemplates() []TemplateItem {
 			AltPaths:    eslintConfigAlternatives,
 		},
 		{Path: ".github/workflows/ci.yml", Description: "Node.js CI test and build matrix"},
-		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
-		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
-		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
 	}
 }
 
@@ -560,9 +532,6 @@ func (f *JVMServiceFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
 		{Path: "checkstyle.xml", Description: "JVM code style and static analysis rules"},
 		{Path: ".github/workflows/ci.yml", Description: "Java / Kotlin build, test, and verification matrix"},
-		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
-		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
-		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
 	}
 }
 
@@ -598,9 +567,6 @@ func (f *MobileFlutterFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
 		{Path: "analysis_options.yaml", Description: "Dart and Flutter analyzer linter configuration"},
 		{Path: ".github/workflows/ci.yml", Description: "Flutter test and build validation matrix"},
-		{Path: ".workingdir/STATE.md", Description: "Session state ledger"},
-		{Path: ".workingdir/BUGS.md", Description: "Bug discovery ledger"},
-		{Path: ".workingdir/QUESTIONS.md", Description: "User decisions collection"},
 	}
 }
 

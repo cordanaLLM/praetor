@@ -91,16 +91,16 @@ The flavor stage scores required templates and settings, and a setting counts on
 is present **and** parses as the shape that setting declares
 ([onboarding guide](onboarding.md#what-the-flavor-score-measures)). A repository can
 therefore fail this stage with every template present: two settings that exist but do not parse put
-a go-library repository at 7 of 9 required items, 77.8%, below the 80% bar.
+a go-library repository at 4 of 6 required items, 66.7%, below the 80% bar.
 
 The failure names them, because at that point the push is already blocked:
 
 ```text
   4. [FAIL] Flavor Conformance        (3ms)
-     Reason: flavor audit failed (score: 77.8%, 0 missing templates, missing or invalid settings: lefthook.yml, .github/rulesets/main.json)
+     Reason: flavor audit failed (score: 66.7%, 0 missing templates, missing or invalid settings: lefthook.yml, .github/rulesets/main.json)
 ```
 
-Without the file list the whole report was `score: 77.8%, 0 missing templates`, which tells an
+Without the file list the whole report was `score: 66.7%, 0 missing templates`, which tells an
 operator that something is wrong and nothing about which file to open. `praetorctl flavor audit .`
 prints the same files with their names and descriptions under **Missing or Invalid Settings**.
 
