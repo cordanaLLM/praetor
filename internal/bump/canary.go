@@ -2,12 +2,12 @@ package bump
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
@@ -19,14 +19,23 @@ import (
 type CanaryStatus string
 
 const (
-	CanaryPlanned   CanaryStatus = "planned"
-	CanaryPassed    CanaryStatus = "passed"
-	CanaryFailed    CanaryStatus = "failed"
+	CanaryPlanned CanaryStatus = "planned"
+	CanaryPassed  CanaryStatus = "passed"
+	CanaryFailed  CanaryStatus = "failed"
+	// CanaryCancelled means the attempt was stopped by a deadline or
+	// cancellation before the update or test command finished. It is no verdict
+	// on the candidate: the test never completed.
+	CanaryCancelled CanaryStatus = "cancelled"
 	maxCanaryOutput              = 64 << 10
 )
 
-// ErrCanaryFailed identifies an unsuccessful update or configured test attempt.
-var ErrCanaryFailed = errors.New("canary execution failed")
+var (
+	// ErrCanaryFailed identifies an unsuccessful update or configured test attempt.
+	ErrCanaryFailed = errors.New("canary execution failed")
+	// ErrCanaryCancelled identifies an attempt stopped by a deadline or
+	// cancellation. The context error stays inspectable through errors.Is.
+	ErrCanaryCancelled = errors.New("canary cancelled")
+)
 
 // CanaryOptions specifies operational parameters for speculative bump testing.
 type CanaryOptions struct {
@@ -54,15 +63,19 @@ type CanaryResult struct {
 }
 
 // RunCanary speculatively tests an upgrade candidate in an isolated ephemeral worktree.
-func RunCanary(ctx context.Context, opts CanaryOptions) (*CanaryResult, error) {
+//
+// A worktree that cannot be removed afterwards is joined into the returned
+// error, even when the test passed: the attempt leaked a worktree and a branch,
+// and a nil error would tell the caller nothing is left to clean up.
+func RunCanary(ctx context.Context, opts CanaryOptions) (res *CanaryResult, resultErr error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("canary: context cannot be nil")
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("canary cancelled: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrCanaryCancelled, err)
 	}
 
-	res := &CanaryResult{
+	res = &CanaryResult{
 		Candidate: opts.Candidate,
 		Status:    CanaryFailed,
 	}
@@ -74,7 +87,7 @@ func RunCanary(ctx context.Context, opts CanaryOptions) (*CanaryResult, error) {
 	}
 
 	wtManager := worktree.NewManager(opts.RepoPath)
-	taskID := fmt.Sprintf("bump-%s-%d", sanitizeTaskID(opts.Candidate.Package), time.Now().UnixNano()%100000)
+	taskID := canaryTaskID(opts.Candidate.Package)
 
 	wt, err := wtManager.Create(ctx, taskID, "HEAD")
 	if err != nil {
@@ -83,25 +96,68 @@ func RunCanary(ctx context.Context, opts CanaryOptions) (*CanaryResult, error) {
 	res.WorktreePath = wt.Path
 
 	defer func() {
-		if !opts.Retention {
-			if rmErr := wtManager.Remove(context.WithoutCancel(ctx), taskID, true); rmErr != nil {
-				res.ExecutionLog += fmt.Sprintf("\nwarning: failed removing worktree %s: %v", taskID, rmErr)
-			}
+		if opts.Retention {
+			return
+		}
+		if rmErr := wtManager.Remove(context.WithoutCancel(ctx), taskID, true); rmErr != nil {
+			res.ExecutionLog += fmt.Sprintf("\nwarning: failed removing worktree %s: %v", taskID, rmErr)
+			resultErr = errors.Join(resultErr, fmt.Errorf("remove canary worktree %s: %w", taskID, rmErr))
 		}
 	}()
 
 	// Apply candidate version modification in worktree
 	if err := ApplyUpdate(ctx, wt.Path, opts.Candidate); err != nil {
 		res.ExecutionLog = fmt.Sprintf("failed updating manifest in worktree: %v", err)
+		if interrupted(ctx, err) {
+			res.Status = CanaryCancelled
+			return res, fmt.Errorf("%w: update manifest: %w", ErrCanaryCancelled, err)
+		}
 		return res, fmt.Errorf("%w: update manifest: %w", ErrCanaryFailed, err)
 	}
 
-	return res, executeCanaryTest(ctx, wt.Path, opts.TestCmd, opts.RepoPath, res)
+	return res, executeCanaryTest(ctx, wt.Path, opts, res)
 }
 
-func executeCanaryTest(ctx context.Context, wtPath, testCmdStr, repoPath string, res *CanaryResult) error {
+// canaryTaskID names the canary's worktree and branch. The random suffix keeps
+// two canaries for one package — concurrent, or retained from an earlier run —
+// from claiming the same worktree; the nanosecond clock modulo 100000 it
+// replaces repeated within a fraction of a millisecond.
+func canaryTaskID(pkg string) string {
+	return "bump-" + sanitizeTaskID(pkg) + "-" + rand.Text()
+}
+
+// defaultCanaryTestCommand returns the command a canary runs when its options
+// configure none, chosen by the manifest the candidate updates: a Node
+// candidate is tested by its package manager, not by the Go toolchain.
+func defaultCanaryTestCommand(manifestType string) (string, error) {
+	switch manifestType {
+	case "go.mod":
+		return "go test ./...", nil
+	case "package.json":
+		return "pnpm test", nil
+	default:
+		return "", fmt.Errorf("no default canary test command for manifest type %q; configure a test command", manifestType)
+	}
+}
+
+// interrupted reports whether a failed step was stopped by the caller's
+// deadline or cancellation, or by the command runner's fallback deadline,
+// rather than failing on its own. Output overflow also cancels the runner's
+// internal context, but that is a failure of the attempt and is not matched:
+// only the caller's context and a deadline count.
+func interrupted(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded)
+}
+
+func executeCanaryTest(ctx context.Context, wtPath string, opts CanaryOptions, res *CanaryResult) error {
+	testCmdStr := opts.TestCmd
 	if testCmdStr == "" {
-		testCmdStr = "go test -v ./..."
+		defaultCmd, err := defaultCanaryTestCommand(opts.Candidate.ManifestType)
+		if err != nil {
+			res.ExecutionLog = err.Error()
+			return fmt.Errorf("%w: %w", ErrCanaryFailed, err)
+		}
+		testCmdStr = defaultCmd
 	}
 
 	parts := strings.Fields(testCmdStr)
@@ -123,9 +179,16 @@ func executeCanaryTest(ctx context.Context, wtPath, testCmdStr, repoPath string,
 		res.Status = CanaryPassed
 		return nil
 	}
+	if interrupted(ctx, err) {
+		// A killed test is not breakage: no diagnostics are distilled, so the
+		// candidate is not blamed for a deadline it did not cause.
+		res.Status = CanaryCancelled
+		res.ExecutionLog += fmt.Sprintf("\nTest command interrupted before it finished: %v", err)
+		return fmt.Errorf("%w: test command: %w", ErrCanaryCancelled, err)
+	}
 	res.Status = CanaryFailed
 	res.ExecutionLog += fmt.Sprintf("\nConfigured test command failed: %v", err)
-	diagnosticErr := distillBreakage(ctx, repoPath, res.ExecutionLog, res)
+	diagnosticErr := distillBreakage(ctx, opts.RepoPath, res.ExecutionLog, res)
 	return errors.Join(fmt.Errorf("%w: test command: %w", ErrCanaryFailed, err), diagnosticErr)
 }
 

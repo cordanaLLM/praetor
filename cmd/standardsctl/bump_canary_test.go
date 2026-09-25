@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,6 +67,20 @@ func TestBumpTrainCLIPropagatesFailedCanary(t *testing.T) {
 	})
 	if !errors.Is(err, bump.ErrCanaryFailed) || !strings.Contains(text, "[ERROR]") || strings.Contains(text, "[CERTIFIED]") {
 		t.Fatalf("failed train did not propagate failure: %q, %v", text, err)
+	}
+}
+
+// A train entry stopped by the shared deadline is labelled CANCELLED; a real
+// failure, and an error that merely mentions cancellation, stay ERROR.
+func TestCanaryErrorLabelSeparatesCancellationFromFailure(t *testing.T) {
+	for err, want := range map[error]string{
+		fmt.Errorf("%w: test command: %w", bump.ErrCanaryCancelled, context.DeadlineExceeded): "CANCELLED",
+		fmt.Errorf("%w: test command: exit status 1", bump.ErrCanaryFailed):                   "ERROR",
+		errors.New("canary cancelled"): "ERROR",
+	} {
+		if got := canaryErrorLabel(err); got != want {
+			t.Errorf("canaryErrorLabel(%v) = %s, want %s", err, got, want)
+		}
 	}
 }
 
