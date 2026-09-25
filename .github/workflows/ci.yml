@@ -206,3 +206,60 @@ jobs:
       - name: Verify Binary Compilation
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
         run: make build
+
+  # The release pipeline and the update bot are configured in files that nothing else
+  # compiles or executes, so a key that a tool stopped accepting rots silently until a
+  # release or a bot run fails. Both validators are run against the files themselves.
+  # Linux-only by nature: they are CI configuration checks, not a gate over host
+  # behaviour, so there is nothing for a macOS or Windows runner to prove (HISS-21).
+  config-validation:
+    name: Release & Bot Configuration Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      # The two configuration files are the whole input of this job, so a change that
+      # touches neither skips it (HISS-18).
+      - name: Detect Configuration Changes
+        id: changed
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_REF="origin/${{ github.base_ref }}"
+          else
+            BASE_REF="HEAD~1"
+          fi
+          CHANGED=$(git diff --name-only "$BASE_REF"...HEAD -- .goreleaser.yaml renovate.json .github/workflows/ci.yml)
+          if [ -n "$CHANGED" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Validating: $CHANGED"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No release or bot configuration changed."
+          fi
+
+      - name: Validate GoReleaser Configuration
+        if: steps.changed.outputs.run == 'true'
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: check
+
+      - name: Setup Node Toolchain
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # --strict fails on a configuration the bot would silently migrate, which is how a
+      # renamed option is caught: without it the validator reports the migration and still
+      # exits 0.
+      - name: Validate Renovate Configuration
+        if: steps.changed.outputs.run == 'true'
+        run: npx --yes --package renovate@44 renovate-config-validator --strict renovate.json

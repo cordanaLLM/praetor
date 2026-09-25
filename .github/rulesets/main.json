@@ -37,6 +37,9 @@
       "parameters": {
         "required_status_checks": [
           {
+            "context": "Release \u0026 Bot Configuration Validation"
+          },
+          {
             "context": "Standards \u0026 Invariant Verification Gate"
           },
           {

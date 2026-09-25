@@ -10,7 +10,7 @@
   "assignees": [],
   "packageRules": [
     {
-      "matchPackagePatterns": ["*"],
+      "matchPackageNames": ["*"],
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "all non-major dependencies",
       "automerge": false

@@ -80,10 +80,12 @@ builds:
 
 archives:
   - id: default
-    format: tar.gz
+    # Renamed from the singular `format` in goreleaser v2.6, which now takes a list and
+    # is reported as deprecated by `goreleaser check`.
+    formats: [tar.gz]
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 sboms:
