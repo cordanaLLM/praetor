@@ -23,8 +23,13 @@ func TestEmbeddedAssetCheckoutBytesPinnedToLF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(attributes), "\ntools/markdownlint/* text eol=lf\n") {
-		t.Fatal("embedded Markdown gate assets lack a platform-neutral LF checkout policy")
+	for _, policy := range []string{
+		".gitattributes text eol=lf",
+		"tools/markdownlint/* text eol=lf",
+	} {
+		if !containsExactLFLine(string(attributes), policy) {
+			t.Fatalf("embedded Markdown gate checkout policy lacks exact LF line %q", policy)
+		}
 	}
 	for _, name := range Names() {
 		data, err := Read(name)
@@ -35,6 +40,38 @@ func TestEmbeddedAssetCheckoutBytesPinnedToLF(t *testing.T) {
 			t.Fatalf("embedded Markdown gate asset %s contains a carriage return", name)
 		}
 	}
+}
+
+func TestContainsExactLFLine(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want bool
+	}{
+		{name: "positive", text: "* text=auto\n.gitattributes text eol=lf\n", want: true},
+		{name: "negative comment", text: "# .gitattributes text eol=lf\n", want: false},
+		{name: "boundary suffix", text: ".gitattributes text eol=lf-extra\n", want: false},
+		{name: "boundary CRLF", text: ".gitattributes text eol=lf\r\n", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := containsExactLFLine(test.text, ".gitattributes text eol=lf"); got != test.want {
+				t.Fatalf("containsExactLFLine() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func containsExactLFLine(text, want string) bool {
+	if strings.Contains(text, "\r") {
+		return false
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if line == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {

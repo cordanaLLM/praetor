@@ -1,6 +1,10 @@
 # Default: let git handle text normally.
 * text=auto
 
+# This policy file carries exact LF-only rules below. Pin its own checkout bytes so
+# those rules remain machine-verifiable when core.autocrlf=true on Windows.
+.gitattributes text eol=lf
+
 # Go sources keep LF in the working tree on every platform. gofmt normalises line
 # endings as part of formatting, so a CRLF checkout makes it report every Go file as
 # unformatted -- 793 of them on Windows -- and makes the pre-commit gofmt rewrite files
