@@ -119,20 +119,25 @@ so `record-baseline: "false"` would have had no effect.
 
 The `standardsctl` that runs is the one the action's own ref carries: the step builds
 `cmd/standardsctl` out of the praetor checkout that `GITHUB_ACTION_PATH` points into, so
-`praetor-adopt@<tag>` and `@main` differ. That directory has to declare
-`module github.com/cordanaLLM/praetor`; with `uses: ./.github/actions/praetor-adopt` it is the
-adopter's own workspace, which is not praetor and is not built. A copy of the action vendored
-outside a praetor checkout falls back to
-`go install github.com/cordanaLLM/praetor/cmd/standardsctl@<the same ref>`; with neither, the step
-fails rather than running an unrelated version.
+`praetor-adopt@<tag>` and `@main` differ, and `@latest` builds the commit this repository's moving
+`latest` tag points at ([releasing](guides/releasing.md)). `standardsctl` itself is never
+installed from the module proxy.
 
-Three refs cannot be installed that way and are refused instead of guessed at: go reads `latest`,
-`upgrade` and `patch` as version queries rather than as refs
-([Go modules reference, version queries](https://go.dev/ref/mod#version-queries)), so
-`praetor-adopt@latest` vendored outside a checkout would install the proxy's highest release, not
-the commit this repository's moving `latest` tag points at
-([releasing](guides/releasing.md)). Against a praetor checkout — the usual remote `uses:` — every
-ref including `latest` builds that checkout and is unaffected.
+Outside praetor's own repository, reference the action as
+`cordanaLLM/praetor/.github/actions/praetor-adopt@<ref>`. The directory three levels above the
+action has to declare
+`module github.com/cordanaLLM/praetor` and hold `cmd/standardsctl`, and the step fails before
+anything runs when it does not:
+
+- `uses: ./.github/actions/praetor-adopt` in an adopter repository — that directory is the
+  adopter's own workspace.
+- A copy of the action kept in another repository, such as `acme/ci/...@main` — the ref GitHub
+  resolved names a commit of `acme/ci`, not of praetor. Installing praetor under that name would
+  run a branch tip for `@main`, the newest `v1.x.x` tag for `@v1`, and the newest release for
+  `@latest` ([Go modules reference, version queries](https://go.dev/ref/mod#version-queries)),
+  none of which the caller pinned.
+
+The error names the `uses:` form to switch to.
 
 The `report` output carries the combined output of the run. The step writes it — and, when the
 runner provides `GITHUB_STEP_SUMMARY`, appends it to the job summary — before re-raising the

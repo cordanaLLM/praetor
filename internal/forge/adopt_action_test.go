@@ -23,7 +23,6 @@ const (
 	adoptRunStepID   = "run-praetor"
 	adoptBuildStepID = "build-standardsctl"
 	adoptModule      = "github.com/cordanaLLM/praetor"
-	adoptModulePath  = adoptModule + "/cmd/standardsctl"
 	maxOutputLines   = 4096
 	adoptStepTimeout = 2 * time.Minute
 )
@@ -263,18 +262,48 @@ func runAdoptStep(t *testing.T, values map[string]string) stepOutcome {
 		func(binDir, _ string) []string { return adoptStepEnv(t, values, binDir) })
 }
 
+// actionSource is where GitHub loaded the action from: the repository and the ref the caller's
+// `uses:` named. It is the github context a step's env block can bind, as github.action_repository
+// and github.action_ref.
+type actionSource struct {
+	repository string
+	ref        string
+}
+
 // runAdoptBuildStep executes the build step's own shell body with the action checked out at
-// actionPath, the caller's ref in hand and whatever else the runner would export. An empty
-// actionPath stands for a runner that exported no GITHUB_ACTION_PATH at all.
-func runAdoptBuildStep(t *testing.T, actionPath, ref string, runner ...string) stepOutcome {
+// actionPath, loaded from source, and whatever else the runner would export. An empty actionPath
+// stands for a runner that exported no GITHUB_ACTION_PATH at all.
+func runAdoptBuildStep(t *testing.T, actionPath string, source actionSource, runner ...string) stepOutcome {
 	t.Helper()
+	bound := buildStepContextEnv(t, source)
 	return executeAdoptBody(t, adoptBuildStepID, "go", func(_, _ string) []string {
-		env := []string{"PRAETOR_STUB_ENV=GOBIN", "PRAETOR_STUB_EXIT=0", "PRAETOR_ACTION_REF=" + ref}
+		env := append([]string{"PRAETOR_STUB_ENV=GOBIN", "PRAETOR_STUB_EXIT=0"}, bound...)
 		if actionPath != "" {
 			env = append(env, "GITHUB_ACTION_PATH="+actionPath)
 		}
 		return append(env, runner...)
 	})
+}
+
+// buildStepContextEnv resolves the build step's env block the way GitHub would for an action loaded
+// from source, so the tests hand the step exactly what it asked the runner for. Whatever the step
+// chooses to bind, a ref it reads is a ref these tests can catch it installing.
+func buildStepContextEnv(t *testing.T, source actionSource) []string {
+	t.Helper()
+	contextValues := map[string]string{
+		"${{ github.action_repository }}": source.repository,
+		"${{ github.action_ref }}":        source.ref,
+	}
+	step := adoptStep(t, loadAdoptAction(t), adoptBuildStepID)
+	env := make([]string, 0, len(step.Env))
+	for key := range step.Env {
+		value, modelled := contextValues[step.Env[key]]
+		if !modelled {
+			t.Fatalf("the build step binds %s=%s, which these tests do not model", key, step.Env[key])
+		}
+		env = append(env, key+"="+value)
+	}
+	return env
 }
 
 // adoptStepEnv builds the environment GitHub would hand the run step, defaulting every input the
@@ -597,85 +626,84 @@ func adoptCheckoutFixture(t *testing.T, module string) (actionPath, root string)
 
 // TestPraetorAdoptBuild_Positive_BuildsTheCheckoutTheCallerPinned is the pin itself: the binary is
 // built from the praetor checkout the action was resolved from, so praetor-adopt@<ref> runs the
-// standardsctl of that ref rather than whatever the module proxy currently calls latest.
+// standardsctl of that ref rather than whatever the module proxy currently calls latest. `latest`
+// is included because this repository publishes a moving tag of that name, and a go install of
+// @latest would resolve the proxy's newest release instead of the commit the tag points at.
 func TestPraetorAdoptBuild_Positive_BuildsTheCheckoutTheCallerPinned(t *testing.T) {
-	actionPath, root := adoptCheckoutFixture(t, adoptModule)
-	got := runAdoptBuildStep(t, actionPath, "v1.2.3")
-	if got.exitCode != 0 {
-		t.Fatalf("build step exited %d:\n%s", got.exitCode, got.combined)
-	}
-	if len(got.invocations) != 1 || len(got.invocations[0]) != 7 {
-		t.Fatalf("build step ran go %v, want one build call", got.invocations)
-	}
-	binary := filepath.Join(got.runnerTemp, "standardsctl")
-	call := got.invocations[0]
-	call[2] = filepath.Clean(call[2])
-	want := []string{"build", "-C", root, "-o", binary, "./cmd/standardsctl", "GOBIN="}
-	if !equalInvocations([][]string{call}, [][]string{want}) {
-		t.Errorf("build step ran go %v, want %v", call, want)
-	}
-	if got.outputs["binary"] != binary {
-		t.Errorf("binary output is %q, want %q", got.outputs["binary"], binary)
-	}
-}
-
-// TestPraetorAdoptBuild_Boundary_VendoredCopyInstallsTheSameRef covers the layout where the action
-// does not sit in a praetor checkout: the install still names the caller's ref, never @latest.
-func TestPraetorAdoptBuild_Boundary_VendoredCopyInstallsTheSameRef(t *testing.T) {
-	actionPath, _ := adoptCheckoutFixture(t, "")
-	got := runAdoptBuildStep(t, actionPath, "v1.2.3")
-	if got.exitCode != 0 {
-		t.Fatalf("build step exited %d:\n%s", got.exitCode, got.combined)
-	}
-	want := [][]string{{"install", adoptModulePath + "@v1.2.3", "GOBIN=" + got.runnerTemp}}
-	if !equalInvocations(got.invocations, want) {
-		t.Errorf("build step ran go %v, want %v", got.invocations, want)
-	}
-	if got.outputs["binary"] != filepath.Join(got.runnerTemp, "standardsctl") {
-		t.Errorf("binary output is %q, want the installed path", got.outputs["binary"])
-	}
-}
-
-// TestPraetorAdoptBuild_Negative_ReservedVersionQueryRefInstallsNothing executes the ref this
-// repository itself publishes as a moving tag. go reserves latest, upgrade and patch as version
-// queries (go/ref/mod), so `go install ...@latest` would resolve the proxy's highest release
-// instead of the commit the `latest` tag points at; the two differ until sync-flavors.yml has run.
-// Asserting the absence of the literal "@latest" from the script text cannot see this, because the
-// string only appears once $ref is expanded at runtime.
-func TestPraetorAdoptBuild_Negative_ReservedVersionQueryRefInstallsNothing(t *testing.T) {
-	for _, ref := range []string{"latest", "upgrade", "patch"} {
+	for _, ref := range []string{"v1.2.3", "latest"} {
 		t.Run(ref, func(t *testing.T) {
-			actionPath, _ := adoptCheckoutFixture(t, "")
-			got := runAdoptBuildStep(t, actionPath, ref)
-			if got.exitCode == 0 {
-				t.Fatalf("the build step accepted %q as a ref:\n%s", ref, got.combined)
+			actionPath, root := adoptCheckoutFixture(t, adoptModule)
+			got := runAdoptBuildStep(t, actionPath, actionSource{repository: "cordanaLLM/praetor", ref: ref})
+			if got.exitCode != 0 {
+				t.Fatalf("build step exited %d:\n%s", got.exitCode, got.combined)
 			}
-			if len(got.invocations) != 0 {
-				t.Errorf("the build step still ran go %v", got.invocations)
+			if len(got.invocations) != 1 || len(got.invocations[0]) != 7 {
+				t.Fatalf("build step ran go %v, want one build call", got.invocations)
 			}
-			if _, published := got.outputs["binary"]; published {
-				t.Errorf("a refused ref still published a binary output: %v", got.outputs)
+			binary := filepath.Join(got.runnerTemp, "standardsctl")
+			call := got.invocations[0]
+			call[2] = filepath.Clean(call[2])
+			want := []string{"build", "-C", root, "-o", binary, "./cmd/standardsctl", "GOBIN="}
+			if !equalInvocations([][]string{call}, [][]string{want}) {
+				t.Errorf("build step ran go %v, want %v", call, want)
 			}
-			if !strings.Contains(got.combined, "version query") {
-				t.Errorf("the failure does not say why the ref is refused:\n%s", got.combined)
+			if got.outputs["binary"] != binary {
+				t.Errorf("binary output is %q, want %q", got.outputs["binary"], binary)
 			}
 		})
 	}
 }
 
-// TestPraetorAdoptBuild_Negative_ForeignModuleIsNotBuiltAsPraetor covers the layout a local
-// `uses: ./.github/actions/praetor-adopt` produces: three directories above the action is the
-// adopter's own workspace. A go.mod and a cmd/standardsctl directory are not evidence that the
-// module is praetor, so the step must fall back to the pinned install rather than compile it.
-func TestPraetorAdoptBuild_Negative_ForeignModuleIsNotBuiltAsPraetor(t *testing.T) {
-	actionPath, _ := adoptCheckoutFixture(t, "example.test/adopter")
-	got := runAdoptBuildStep(t, actionPath, "v1.2.3")
-	if got.exitCode != 0 {
-		t.Fatalf("build step exited %d:\n%s", got.exitCode, got.combined)
+// TestPraetorAdoptBuild_Negative_ActionOutsideAPraetorCheckoutBuildsNothing covers every layout in
+// which the directory three levels above the action is not praetor: a local
+// `uses: ./.github/actions/praetor-adopt` in an adopter repository, a copy of the action kept in
+// another repository, and a go.mod that names praetor without the command it would build. The ref
+// GitHub resolved such a copy at names a commit of that other repository, so installing praetor at
+// it would run a moving branch tip (`main`), the newest v1.x.x tag (`v1`) or the proxy's newest
+// release (`latest`) -- never a praetor the caller pinned. The step has to refuse and say how to
+// reference the action instead.
+func TestPraetorAdoptBuild_Negative_ActionOutsideAPraetorCheckoutBuildsNothing(t *testing.T) {
+	cases := map[string]struct {
+		module      string
+		dropCommand bool
+		source      actionSource
+	}{
+		"local uses in an adopter workspace": {module: "example.test/adopter"},
+		"copy with no ref to resolve":        {},
+		"copy kept in another repository":    {source: actionSource{repository: "acme/ci", ref: "main"}},
+		"copy at a major-version tag":        {source: actionSource{repository: "acme/ci", ref: "v1"}},
+		"copy at a moving latest tag":        {source: actionSource{repository: "acme/ci", ref: "latest"}},
+		"praetor go.mod without the command": {module: adoptModule, dropCommand: true, source: actionSource{repository: "acme/ci", ref: "v1.2.3"}},
 	}
-	want := [][]string{{"install", adoptModulePath + "@v1.2.3", "GOBIN=" + got.runnerTemp}}
-	if !equalInvocations(got.invocations, want) {
-		t.Errorf("build step ran go %v, want %v", got.invocations, want)
+	for name := range cases {
+		t.Run(name, func(t *testing.T) {
+			actionPath, root := adoptCheckoutFixture(t, cases[name].module)
+			if cases[name].dropCommand {
+				if err := os.RemoveAll(filepath.Join(root, "cmd")); err != nil {
+					t.Fatalf("remove command directory: %v", err)
+				}
+			}
+			got := runAdoptBuildStep(t, actionPath, cases[name].source)
+			assertBuildRefused(t, got, "cordanaLLM/praetor/.github/actions/praetor-adopt@")
+		})
+	}
+}
+
+// assertBuildRefused checks that a build step failed, ran no go command, published no binary and
+// said why in a message carrying want.
+func assertBuildRefused(t *testing.T, got stepOutcome, want string) {
+	t.Helper()
+	if got.exitCode == 0 {
+		t.Fatalf("the build step resolved a binary it cannot vouch for:\n%s", got.combined)
+	}
+	if len(got.invocations) != 0 {
+		t.Errorf("the build step still ran go %v", got.invocations)
+	}
+	if _, published := got.outputs["binary"]; published {
+		t.Errorf("a failed build still published a binary output: %v", got.outputs)
+	}
+	if !strings.Contains(got.combined, want) {
+		t.Errorf("the failure does not carry %q:\n%s", want, got.combined)
 	}
 }
 
@@ -684,19 +712,8 @@ func TestPraetorAdoptBuild_Negative_ForeignModuleIsNotBuiltAsPraetor(t *testing.
 // levels above the runner's checkout, where any module with a cmd/standardsctl would be built as
 // praetor -- the opposite of the refusal the step exists to make.
 func TestPraetorAdoptBuild_Negative_MissingActionPathRunsNothing(t *testing.T) {
-	got := runAdoptBuildStep(t, "", "v1.2.3")
-	if got.exitCode == 0 {
-		t.Fatalf("the build step ran without knowing its own checkout:\n%s", got.combined)
-	}
-	if len(got.invocations) != 0 {
-		t.Errorf("the build step still ran go %v", got.invocations)
-	}
-	if _, published := got.outputs["binary"]; published {
-		t.Errorf("a failed build still published a binary output: %v", got.outputs)
-	}
-	if !strings.Contains(got.combined, "GITHUB_ACTION_PATH") {
-		t.Errorf("the failure does not name the missing variable:\n%s", got.combined)
-	}
+	got := runAdoptBuildStep(t, "", actionSource{repository: "cordanaLLM/praetor", ref: "v1.2.3"})
+	assertBuildRefused(t, got, "GITHUB_ACTION_PATH")
 }
 
 // TestPraetorAdoptAction_Boundary_GoVersionDefaultBuildsThisModule pins the toolchain input to the
@@ -736,31 +753,14 @@ func goDirectiveOfEngine(t *testing.T) string {
 	return parts[0] + "." + parts[1]
 }
 
-// TestPraetorAdoptBuild_Negative_NoSourceAndNoRefRunsNothing is the case that must not quietly
-// resolve to some other praetor: with neither a checkout nor a ref there is nothing to pin to.
-func TestPraetorAdoptBuild_Negative_NoSourceAndNoRefRunsNothing(t *testing.T) {
-	actionPath, _ := adoptCheckoutFixture(t, "")
-	got := runAdoptBuildStep(t, actionPath, "")
-	if got.exitCode == 0 {
-		t.Fatalf("the build step resolved a binary out of nothing:\n%s", got.combined)
-	}
-	if len(got.invocations) != 0 {
-		t.Errorf("the build step still ran go %v", got.invocations)
-	}
-	if _, published := got.outputs["binary"]; published {
-		t.Errorf("a failed build still published a binary output: %v", got.outputs)
-	}
-	if !strings.Contains(got.combined, "no praetor source") {
-		t.Errorf("the failure does not say what is missing:\n%s", got.combined)
-	}
-}
-
-// TestPraetorAdoptBuild_Boundary_WindowsRunnerGetsAnExeSuffix keeps the two branches agreeing on
-// the file name: go install writes standardsctl.exe on a Windows runner, while go build writes
-// exactly the name it is handed, and the run step then executes whichever path this step published.
+// TestPraetorAdoptBuild_Boundary_WindowsRunnerGetsAnExeSuffix keeps the published path executable
+// on a Windows runner: go build -o writes exactly the name it is handed, so the .exe a Windows
+// executable carries has to be in that name, and the run step executes whatever path this step
+// published.
 func TestPraetorAdoptBuild_Boundary_WindowsRunnerGetsAnExeSuffix(t *testing.T) {
 	actionPath, _ := adoptCheckoutFixture(t, adoptModule)
-	got := runAdoptBuildStep(t, actionPath, "v1.2.3", "RUNNER_OS=Windows")
+	source := actionSource{repository: "cordanaLLM/praetor", ref: "v1.2.3"}
+	got := runAdoptBuildStep(t, actionPath, source, "RUNNER_OS=Windows")
 	if got.exitCode != 0 {
 		t.Fatalf("build step exited %d:\n%s", got.exitCode, got.combined)
 	}

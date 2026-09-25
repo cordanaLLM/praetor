@@ -46,14 +46,18 @@ runs:
     # output holding an absolute path.
     #
     # The binary has to be the praetor the caller pinned. GITHUB_ACTION_PATH is this action's own
-    # checkout at the ref the caller wrote (GitHub, "Variables": supported in composite actions),
-    # so the module three directories above it is praetor at that same ref. Building from there is
-    # what makes `praetor-adopt@<ref>` mean something. The two alternatives do not: `go install
-    # ...@latest` runs whatever the proxy's highest version is, unrelated to the ref, and a bare
-    # `go build ./cmd/standardsctl` compiles the *adopter's* checkout, which is not praetor.
+    # directory inside the repository GitHub checked out at the ref the caller wrote (GitHub,
+    # "Variables": supported in composite actions), so when that repository is praetor the module
+    # three directories above it is praetor at that same ref. Building from there is what makes
+    # `praetor-adopt@<ref>` mean something.
     #
-    # The install fallback covers a vendored copy of this action whose directory is not a praetor
-    # checkout; it is pinned to the same ref rather than to @latest.
+    # Any other layout fails, and there is no install to fall back on. With a local
+    # `uses: ./.github/actions/praetor-adopt`, or a copy of this action kept in another repository,
+    # the directory above is that repository and the ref GitHub resolved names one of *its*
+    # commits: `go install praetor/...@<that ref>` would pick whatever praetor calls by that name,
+    # a moving branch tip for `@main`, the newest v1.x.x tag for `@v1` and the proxy's newest
+    # release for `@latest` (go/ref/mod, "Version queries"). None of these is a praetor the caller
+    # pinned.
     #
     # The binary lands in the runner's own temporary directory rather than in /tmp: on a
     # self-hosted runner /tmp is shared between jobs, so a binary a previous job left behind would
@@ -61,8 +65,6 @@ runs:
     - name: Build standardsctl
       id: build-standardsctl
       shell: bash
-      env:
-        PRAETOR_ACTION_REF: ${{ github.action_ref }}
       run: |
         set -euo pipefail
 
@@ -75,11 +77,10 @@ runs:
         fi
 
         source_root="$GITHUB_ACTION_PATH/../../.."
-        ref="${PRAETOR_ACTION_REF:-}"
         bin_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
         binary="$bin_dir/standardsctl"
-        # go install writes standardsctl.exe on a Windows runner and go build writes exactly the
-        # name it is given, so the two branches agree on the suffix only if it is added here.
+        # go build -o writes exactly the name it is given, so the .exe a Windows executable
+        # carries has to be part of that name.
         if [ "${RUNNER_OS:-}" = "Windows" ]; then
           binary="$binary.exe"
         fi
@@ -92,25 +93,14 @@ runs:
           module="$(sed -n 's/^module[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' "$source_root/go.mod" | head -n 1 | tr -d '\r')"
         fi
 
-        if [ "$module" = "github.com/cordanaLLM/praetor" ] && [ -d "$source_root/cmd/standardsctl" ]; then
-          go build -C "$source_root" -o "$binary" ./cmd/standardsctl
-        elif [ -z "$ref" ]; then
-          echo "praetor-adopt: no praetor source next to the action and no action ref to install" >&2
+        if [ "$module" != "github.com/cordanaLLM/praetor" ] || [ ! -d "$source_root/cmd/standardsctl" ]; then
+          echo "praetor-adopt: the repository this action was loaded from is not a praetor checkout with" \
+            "cmd/standardsctl (module '${module:-none}'), so there is no praetor ref to build; reference it as" \
+            "cordanaLLM/praetor/.github/actions/praetor-adopt@<tag or commit>" >&2
           exit 1
-        else
-          # go reserves latest, upgrade and patch as version queries (go/ref/mod, "Version
-          # queries"), so `@latest` asks the proxy for its highest release instead of resolving
-          # the moving tag of that name this repository publishes (docs/guides/releasing.md).
-          # Installing it would run a commit the caller never pinned.
-          case "$ref" in
-            latest | upgrade | patch)
-              echo "praetor-adopt: '$ref' is a go version query rather than a ref; pin a tag, a branch or a commit" >&2
-              exit 1
-              ;;
-          esac
-          GOBIN="$bin_dir" go install "github.com/cordanaLLM/praetor/cmd/standardsctl@$ref"
         fi
 
+        go build -C "$source_root" -o "$binary" ./cmd/standardsctl
         echo "binary=$binary" >> "$GITHUB_OUTPUT"
 
     # Every value this step needs arrives through env. An expression written into a run body is
