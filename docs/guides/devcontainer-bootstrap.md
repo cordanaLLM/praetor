@@ -53,11 +53,18 @@ separate evidence. Verification uses the retained specification, so it does
 not require the original workstation source path or a hardcoded generator
 commit to remain available.
 
-Verification compares the file itself against the render of the expected
-configuration, after normalising CRLF line endings to LF so a Windows checkout
-with `core.autocrlf=true` is not reported as drift (HISS-21). JSON forbids an
-unescaped carriage return inside a string, so every CRLF in the file is
-whitespace between tokens and the normalisation cannot hide an edit.
+Verification compares `devcontainer.json` itself against the render of the
+expected configuration, after normalising CRLF line endings to LF so a Windows
+checkout with `core.autocrlf=true` does not report that file as drift (HISS-21).
+JSON forbids an unescaped carriage return inside a string, so every CRLF in the
+file is whitespace between tokens and the normalisation cannot hide an edit.
+The normalisation covers `devcontainer.json` only. Companions such as
+`Dockerfile.praetor` are checked against their recorded hashes as raw bytes,
+and adoption does not yet write a `.gitattributes` pin for `.devcontainer/`
+([#313](https://github.com/cordanaLLM/praetor/issues/313)). Until it does, a
+CRLF checkout of a ready bootstrap still fails verification on
+`Dockerfile.praetor`; add `.devcontainer/* text eol=lf` to the adopted
+repository's `.gitattributes`, as Praetor does for itself (`.gitattributes:47`).
 Verification does not compare a re-render of what decoded, because
 Go's JSON decoder matches member names case-insensitively and keeps the last of a
 duplicate pair: `POSTCREATECOMMAND`, `RemoteUser` and a repeated
@@ -66,8 +73,12 @@ spec spelling, while the DevContainer runtime reads object keys case-sensitively
 and would run none of them. A key outside the managed schema, such as a
 hand-added `initializeCommand` or `runArgs`, is named in the rejection; every
 other edit, including whitespace and content after the configuration object, is
-reported as drift. Keep such additions in a custom DevContainer, which adoption
-preserves and reports as execution-unverified.
+reported as drift. Adoption preserves an existing custom DevContainer and
+reports it as execution-unverified, but `standardsctl audit` verifies any
+`.devcontainer/devcontainer.json` against the declared standards
+(`cmd/standardsctl/audit.go`, `auditAgentContextAndDevcontainer`). A file
+carrying keys outside the managed schema therefore fails audit; no
+configuration keeps such keys and passes it.
 
 Without `--source-root`, or with an explicitly selected config-only catalog,
 generation writes an `unavailable` configuration and returns an error. Its
