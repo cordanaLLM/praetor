@@ -18,6 +18,11 @@ import (
 // recovery journal or written to the changelog.
 var ErrRenderTextUnrepresentable = errors.New("changelog render arguments must be UTF-8 text without NUL bytes")
 
+// ErrNoFragments reports a render with nothing to publish: changelog.d is missing, or it
+// holds no fragment and no pending render journal. Rendering nothing is not a release, so
+// the caller learns it instead of reading success over an unchanged CHANGELOG.md.
+var ErrNoFragments = errors.New("no changelog fragments to render")
+
 // RenderTextRepresentable reports whether a release argument can be journaled and written.
 // It mirrors the constraint the snapshot writer enforces (internal/contextopt validateText),
 // so the boundary refuses exactly what the storage layer would refuse, rather than a
@@ -82,7 +87,7 @@ func checkAbsentFragments(ctx context.Context, repoPath string) error {
 	if exists {
 		return errors.New("pending render journal exists but fragment directory is missing")
 	}
-	return nil
+	return fmt.Errorf("%w: changelog.d does not exist", ErrNoFragments)
 }
 
 func renderWithRoots(ctx context.Context, repoPath string, repo, fragmentsRoot *os.Root, version, date string) error {
@@ -93,7 +98,7 @@ func renderWithRoots(ctx context.Context, repoPath string, repo, fragmentsRoot *
 	if journal == nil {
 		journal, raw, err = prepareRenderJournal(ctx, repoPath, repo, fragmentsRoot, version, date)
 	}
-	if err != nil || journal == nil {
+	if err != nil {
 		return err
 	}
 	if journal.Version != version || (date != "" && journal.Date != date) {

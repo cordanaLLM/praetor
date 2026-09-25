@@ -1,0 +1,3 @@
+type: fixed
+title: Fail release preparation and changelog rendering with ErrNoFragments when changelog.d is missing or holds no fragment, instead of reporting success over an unchanged CHANGELOG.md
+breaking: false

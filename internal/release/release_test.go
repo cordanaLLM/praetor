@@ -2,9 +2,11 @@ package release
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/changelog"
@@ -108,5 +110,57 @@ func TestPrepareRelease_Boundary_SemverPatterns(t *testing.T) {
 		if _, ok := semver.Parse(v); ok {
 			t.Errorf("expected %q to be invalid SemVer", v)
 		}
+	}
+}
+
+// Negative + boundary: with no fragment to render, PrepareRelease fails instead of reporting
+// success over an unchanged CHANGELOG.md, and the message tells a missing changelog.d apart
+// from an empty one. Both wrap changelog.ErrNoFragments.
+func TestPrepareRelease_Negative_NoFragments(t *testing.T) {
+	cases := map[string]struct {
+		mkdir bool
+		want  string
+	}{
+		"absent fragment directory": {mkdir: false, want: "changelog.d does not exist"},
+		"empty fragment directory":  {mkdir: true, want: "changelog.d holds none"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			if tc.mkdir {
+				if err := os.Mkdir(filepath.Join(tmpDir, "changelog.d"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			opts := ReleaseOptions{RepoPath: tmpDir, Version: "v1.2.0", Date: "2026-09-11", SkipVerify: true, SkipClean: true}
+			err := PrepareRelease(context.Background(), opts)
+			if !errors.Is(err, changelog.ErrNoFragments) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %v: want ErrNoFragments naming %q", err, tc.want)
+			}
+			if _, statErr := os.Stat(filepath.Join(tmpDir, "CHANGELOG.md")); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("a refused render must not write CHANGELOG.md: %v", statErr)
+			}
+		})
+	}
+}
+
+// Boundary: the first release consumes the only fragment; preparing the next version with
+// nothing new fails rather than silently publishing nothing.
+func TestPrepareRelease_Boundary_SecondReleaseWithoutNewFragments(t *testing.T) {
+	tmpDir := t.TempDir()
+	if _, err := changelog.CreateFragment(tmpDir, changelog.Fragment{Type: changelog.TypeFixed, Title: "Only fix"}); err != nil {
+		t.Fatal(err)
+	}
+	opts := ReleaseOptions{RepoPath: tmpDir, Version: "v1.2.0", Date: "2026-09-11", SkipVerify: true, SkipClean: true}
+	if err := PrepareRelease(context.Background(), opts); err != nil {
+		t.Fatalf("first release: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(tmpDir, "CHANGELOG.md"))
+	if err != nil || !strings.Contains(string(content), "Only fix") {
+		t.Fatalf("first release must render its fragment: %q, %v", content, err)
+	}
+	opts.Version = "v1.2.1"
+	if err := PrepareRelease(context.Background(), opts); !errors.Is(err, changelog.ErrNoFragments) {
+		t.Fatalf("second release without fragments: got %v, want ErrNoFragments", err)
 	}
 }
