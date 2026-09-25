@@ -1,0 +1,3 @@
+type: fixed
+title: Report the failing step of the priority adoption sweep instead of an unconditional pass
+breaking: false

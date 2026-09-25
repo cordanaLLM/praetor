@@ -126,7 +126,7 @@ hiss-coverage:
 topology-audit:
 	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
 
-verify-all: adr-verify semgrep-test docs-drift-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: adr-verify semgrep-test docs-drift-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
 
 .PHONY: docs-drift-test
@@ -184,6 +184,10 @@ dev-repair-test:
 
 wiki-sync-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_sync_github_wiki.py'
+
+.PHONY: adopt-sweep-test
+adopt-sweep-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_adopt_priority_repos.py'
 
 clean:
 	rm -rf $(BIN_DIR)
