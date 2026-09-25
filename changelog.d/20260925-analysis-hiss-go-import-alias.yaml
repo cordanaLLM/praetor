@@ -1,0 +1,3 @@
+type: fixed
+title: Report Go unsafe uses reached through an import alias or a dot import, and stop accepting a bare, placeholder or mid-sentence SAFETY marker as a proof
+breaking: false
