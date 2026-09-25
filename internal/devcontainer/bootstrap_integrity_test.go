@@ -20,7 +20,10 @@ func preparedBootstrap(t *testing.T) *Bundle {
 	return bundle
 }
 
-func TestBootstrapIdentityIsStableAndIncludesTests(t *testing.T) {
+// TestBootstrapIdentityIsStableAndExcludesTests pins the identity to the build input: a
+// test or testdata edit leaves it unchanged, because go build never reads either, while a
+// source edit changes it.
+func TestBootstrapIdentityIsStableAndExcludesTests(t *testing.T) {
 	root := bootstrapSourceFixture(t)
 	options := BootstrapOptions{SourceRoot: root}
 	first, err := PrepareBundle(t.Context(), "adopted/app", []string{"framework"}, nil, options)
@@ -35,12 +38,21 @@ func TestBootstrapIdentityIsStableAndIncludesTests(t *testing.T) {
 		t.Fatal("unchanged capture changed bootstrap identity")
 	}
 	writeBootstrapFile(t, root, "cmd/standardsctl/main_test.go", "package main\nimport \"testing\"\nfunc TestSource(t *testing.T) {}\n")
+	writeBootstrapFile(t, root, "cmd/standardsctl/testdata/fixture.go", "package fixture\n")
 	third, err := PrepareBundle(t.Context(), "adopted/app", []string{"framework"}, nil, options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if third.Spec().SourceSHA256 == first.Spec().SourceSHA256 || third.Spec().ArchiveSHA256 == first.Spec().ArchiveSHA256 {
-		t.Fatal("test edit omitted from snapshot identity")
+	if !reflect.DeepEqual(first, third) {
+		t.Fatal("test-only edit changed the bootstrap identity or companions")
+	}
+	writeBootstrapFile(t, root, "cmd/standardsctl/extra.go", "package main\n")
+	fourth, err := PrepareBundle(t.Context(), "adopted/app", []string{"framework"}, nil, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fourth.Spec().SourceSHA256 == first.Spec().SourceSHA256 || fourth.Spec().ArchiveSHA256 == first.Spec().ArchiveSHA256 {
+		t.Fatal("source edit omitted from snapshot identity")
 	}
 }
 
@@ -50,7 +62,7 @@ func TestBootstrapSourceChangeDuringCaptureRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeBootstrapFile(t, root, "cmd/standardsctl/main_test.go", "package main\n")
+	writeBootstrapFile(t, root, "cmd/standardsctl/extra.go", "package main\n")
 	bundle := &Bundle{}
 	err = bundle.prepareSource(t.Context(), files, BootstrapOptions{SourceRoot: root}, &BootstrapSpec{})
 	if err == nil || !strings.Contains(err.Error(), "changed during") {

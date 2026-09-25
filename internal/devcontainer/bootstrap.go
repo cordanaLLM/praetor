@@ -69,7 +69,8 @@ func (b *Bundle) Spec() *BootstrapSpec {
 }
 
 // PrepareBundle never executes selected source or writes to the selected repository.
-// It snapshots all selected source/tests twice and refuses a changing capture.
+// It snapshots the selected build source twice and refuses a changing capture. Go's test
+// surface (_test.go files, testdata directories) is not a build input and is not captured.
 func PrepareBundle(ctx context.Context, name string, profiles, facets []string, options BootstrapOptions) (*Bundle, error) {
 	if err := validateBootstrapInputs(ctx, name, profiles, facets); err != nil {
 		return nil, err
@@ -133,7 +134,7 @@ func (b *Bundle) prepareSource(ctx context.Context, files []bootstrapSourceFile,
 		return err
 	}
 	if bootstrapSourceDigest(files) != bootstrapSourceDigest(repeated) {
-		return errors.New("praetor source or tests changed during bootstrap capture")
+		return errors.New("praetor source changed during bootstrap capture")
 	}
 	parts, err := frameBootstrapArchive(archive)
 	if err != nil {

@@ -31,17 +31,28 @@ func encodeBootstrapArchive(files []bootstrapSourceFile) ([]byte, error) {
 	if err := errors.Join(writer.Close(), gzipWriter.Close()); err != nil {
 		return nil, err
 	}
-	if base64.StdEncoding.EncodedLen(compressed.Len()) > maxBootstrapParts*bootstrapPartBytes {
-		return nil, errors.New("compressed bootstrap source exceeds four bounded archive frames")
+	if err := checkBootstrapArchiveFits(compressed.Len()); err != nil {
+		return nil, err
 	}
 	return compressed.Bytes(), nil
 }
 
-func frameBootstrapArchive(data []byte) ([]BootstrapArtifact, error) {
-	encoded := base64.StdEncoding.EncodeToString(data)
-	if len(encoded) == 0 || len(encoded) > maxBootstrapParts*bootstrapPartBytes {
-		return nil, errors.New("bootstrap archive framing exceeds bounds")
+// checkBootstrapArchiveFits is the single frame-capacity bound: encoding refuses an
+// archive framing could not carry, and framing re-checks the same rule. The error names
+// both sizes so an archive approaching the cap is diagnosable from the message alone.
+func checkBootstrapArchiveFits(archiveBytes int) error {
+	encoded := base64.StdEncoding.EncodedLen(archiveBytes)
+	if archiveBytes <= 0 || encoded > maxBootstrapParts*bootstrapPartBytes {
+		return fmt.Errorf("compressed bootstrap source needs %d base64 bytes; four bounded archive frames hold %d", encoded, maxBootstrapParts*bootstrapPartBytes)
 	}
+	return nil
+}
+
+func frameBootstrapArchive(data []byte) ([]BootstrapArtifact, error) {
+	if err := checkBootstrapArchiveFits(len(data)); err != nil {
+		return nil, err
+	}
+	encoded := base64.StdEncoding.EncodeToString(data)
 	var files []BootstrapArtifact
 	for i := 0; i < maxBootstrapParts && i*bootstrapPartBytes < len(encoded); i++ {
 		start := i * bootstrapPartBytes
