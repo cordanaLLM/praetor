@@ -61,6 +61,15 @@ same commit therefore scores the same on every machine.
   linked worktree of a conforming repository never carries it; `praetorctl state audit` checks the
   ledger, and `flavor audit` scores only files the repository tracks
   ([`internal/flavor/audit_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavor/audit_test.go)).
+- **Small flavors tolerate no missing setting.** With every template present, a repository passes
+  with as many missing or invalid settings as keep it at 80%. That is none for `python-ml`,
+  `os-image`, `frontend-svelte`, `jvm-service`, `mobile-flutter`, `agentic-autonomous` and
+  `infra-k8s`, and one for every other flavor: `python-ml` carries 1 template and 1 setting, so
+  one absent `.vscode/settings.json` scores 50%. The three ledger files used to count as present
+  templates on checkouts that carried them, which bought each of those flavors one more gap
+  (`go-service` two). `TestAuditFlavor_Boundary_SettingsGapTolerancePerFlavor` in
+  [`internal/flavor/audit_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavor/audit_test.go)
+  pins the number for every flavor.
 - **Toolchains never decide pass or fail.** They are resolved from `PATH`, so scoring them measured
   the auditing machine: a conforming `go-service` repository scored 11/15 = 73.3% and failed the
   bar on a host with none of its four tools installed, inside the pre-push hook adoption generates.
