@@ -146,6 +146,16 @@ Before snapshot governance checks, the disposable clone initializes its own
 missing private ledger and audits it. Incomplete or invalid existing state still
 fails. The live ledger is never copied into the clone.
 
+Snapshot Git reads ignore configuration injected through the environment:
+`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>` and
+`GIT_CONFIG_PARAMETERS` (what `git -c key=value push` sets) are removed, so a
+one-off setting cannot change the bytes a gate checks. Commit-time exports keep
+`GIT_INDEX_FILE`, `GIT_DIR` and `GIT_WORK_TREE` as Git set them, so
+`git commit -a` and `git commit -- <path>` are checked against the index they
+record, not the stale `.git/index`. Ref-backed snapshots use a fully clean
+environment. `.config/lefthook/scripts/common.py` (`index_env`, `clean_env`)
+implements this, and `.config/lefthook/scripts/test_hooks.py` covers both paths.
+
 After reviewing and staging your work, run `praetorctl state sync .`, then
 `git commit -s -m 'fix(scope): describe the change'`. Task, bug, question, staged,
 unstaged or untracked input changes require another sync. The hook does not create
