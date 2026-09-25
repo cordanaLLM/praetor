@@ -2,6 +2,7 @@ package bump
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -259,49 +260,61 @@ var ErrPackageNotRequired = errors.New("package not required by any go.mod")
 // Callers building an UpgradeCandidate must use it instead of a placeholder: the go.mod
 // fallback edit in applyGoUpdate matches on the literal "<package> <current version>", so
 // a placeholder current version can never match and the fallback always fails.
+//
+// Every go.mod is read under readManifest's rule, so a manifest the writer would refuse is
+// reported instead of scanned. A missing go.mod is skipped; a cancelled caller gets its
+// context error back.
 func CurrentGoModVersion(ctx context.Context, repoPath, pkg string) (version, moduleDir string, err error) {
+	if ctx == nil {
+		return "", "", fmt.Errorf("current go.mod version: context cannot be nil")
+	}
 	modules := DiscoverGoModules(ctx, repoPath)
 	if len(modules) == 0 {
 		modules = []string{"."}
 	}
+	var refused error
 	for i := 0; i < len(modules) && i < MaxDiscoveredModules; i++ {
-		modDir := filepath.Join(repoPath, modules[i])
-		found, scanErr := requiredVersionIn(filepath.Join(modDir, "go.mod"), pkg)
-		if scanErr != nil {
-			continue
+		found, readErr := requiredVersionIn(ctx, repoPath, modules[i], pkg)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", "", ctxErr
 		}
 		if found != "" {
 			return found, modules[i], nil
 		}
+		if readErr != nil {
+			refused = errors.Join(refused, readErr)
+		}
+	}
+	if refused != nil {
+		return "", "", fmt.Errorf("find %s under %s: %w", pkg, repoPath, refused)
 	}
 	return "", "", fmt.Errorf("%w: %s under %s", ErrPackageNotRequired, pkg, repoPath)
 }
 
-// closeManifest closes a manifest opened for reading. A close error on a read-only file
-// carries no data loss, so it is inspected and deliberately dropped rather than assigned
-// to the blank identifier.
-func closeManifest(file *os.File) {
-	if err := file.Close(); err != nil {
-		return
+// requiredVersionIn returns the version the go.mod in moduleRel requires for pkg, or "" when
+// there is no go.mod or its first MaxManifestLines lines do not require it. The read is
+// readManifest's, confined to repoPath, so this lookup, the scanners and the writer share one
+// manifest rule.
+func requiredVersionIn(ctx context.Context, repoPath, moduleRel, pkg string) (string, error) {
+	name := filepath.Join(moduleRel, "go.mod")
+	data, err := readManifest(ctx, repoPath, name)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
 	}
-}
-
-func requiredVersionIn(goModPath, pkg string) (string, error) {
-	file, err := os.Open(goModPath) // #nosec G304 -- go.mod path assembled from a caller-supplied repo root and a discovered module dir.
 	if err != nil {
-		return "", fmt.Errorf("open %s: %w", goModPath, err)
+		return "", err
 	}
-	defer closeManifest(file)
-
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	inRequire := false
 	for lines := 0; lines < MaxManifestLines && scanner.Scan(); lines++ {
-		fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(scanner.Text()), "require "))
-		if len(fields) >= 2 && fields[0] == pkg && strings.HasPrefix(fields[1], "v") {
+		line, isRequirement := gomanifest.RequirementLine(scanner.Text(), &inRequire)
+		fields := strings.Fields(line)
+		if isRequirement && len(fields) >= 2 && fields[0] == pkg && strings.HasPrefix(fields[1], "v") {
 			return fields[1], nil
 		}
 	}
 	if scanErr := scanner.Err(); scanErr != nil {
-		return "", fmt.Errorf("scan %s: %w", goModPath, scanErr)
+		return "", fmt.Errorf("scan %s: %w", name, scanErr)
 	}
 	return "", nil
 }

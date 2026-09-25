@@ -303,7 +303,7 @@ func runBumpApply(ctx context.Context, args []string) error {
 func newGoUpgradeCandidate(ctx context.Context, repoPath, pkg, targetVersion string) bump.UpgradeCandidate {
 	current, moduleDir, err := bump.CurrentGoModVersion(ctx, repoPath, pkg)
 	if err != nil {
-		fmt.Printf("[WARN] %s is not required by any go.mod under %s: %v\n", pkg, repoPath, err)
+		fmt.Printf("[WARN] no current go.mod version for %s under %s: %v\n", pkg, repoPath, err)
 	}
 	return bump.UpgradeCandidate{
 		Package:        pkg,
