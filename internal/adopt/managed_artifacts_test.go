@@ -228,3 +228,61 @@ func TestMergeManagedIgnoreRefusesAnOversizedFile(t *testing.T) {
 		t.Error("an ignore file beyond the bound must be refused")
 	}
 }
+
+// historicalFormatterBlock reproduces, byte for byte, the block adoption wrote before the
+// documentation facet joined the inventory: the same markers and paths under the old comment.
+func historicalFormatterBlock() string {
+	return managedIgnoreBegin + "\n" +
+		"# praetorctl audit compares these byte for byte. A formatter that rewrites\n" +
+		"# them fails the gate with an error that reads like a hand edit.\n" +
+		strings.Join(managedArtifacts(false), "\n") + "\n" + managedIgnoreEnd + "\n"
+}
+
+// Positive: an earlier adopter's .prettierignore differs from the current rendering only in the
+// explanatory comment, so audit accepts it as current instead of failing every such repository.
+func TestVerifyManagedFormatterIgnoreAcceptsHistoricalHeader(t *testing.T) {
+	for name, existing := range map[string]string{
+		"block only":          historicalFormatterBlock(),
+		"operator rules kept": "node_modules/\ndist/\n\n" + historicalFormatterBlock(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := VerifyManagedFormatterIgnore(existing, false); err != nil {
+				t.Fatalf("historical formatter inventory rejected as stale: %v", err)
+			}
+			merged, err := mergeManagedIgnore(existing, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(merged, "compares these byte for byte") || VerifyManagedFormatterIgnore(merged, false) != nil {
+				t.Fatalf("adoption did not converge the historical header to the current one:\n%s", merged)
+			}
+		})
+	}
+}
+
+// Negative: the historical comment excuses nothing else. A missing path, and the documentation
+// facet whose paths the historical inventory never named, stay stale.
+func TestVerifyManagedFormatterIgnoreHistoricalHeaderKeepsInventoryStrict(t *testing.T) {
+	if err := VerifyManagedFormatterIgnore(historicalFormatterBlock(), true); err == nil {
+		t.Fatal("historical inventory without documentation paths passed an enabled facet")
+	}
+	missing := strings.Replace(historicalFormatterBlock(), manifestFile+"\n", "", 1)
+	if err := VerifyManagedFormatterIgnore(missing, false); err == nil {
+		t.Fatal("historical header excused a missing managed path")
+	}
+}
+
+// Boundary: only the exact historical comment is recognised; an edited or partial one is stale.
+func TestVerifyManagedFormatterIgnoreHistoricalHeaderBoundary(t *testing.T) {
+	for name, existing := range map[string]string{
+		"edited word":   strings.Replace(historicalFormatterBlock(), "byte for byte", "byte-for-byte", 1),
+		"dropped line":  strings.Replace(historicalFormatterBlock(), "# them fails the gate with an error that reads like a hand edit.\n", "", 1),
+		"trailing text": strings.Replace(historicalFormatterBlock(), "hand edit.\n", "hand edit. \n", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := VerifyManagedFormatterIgnore(existing, false); err == nil {
+				t.Fatalf("non-historical header accepted:\n%s", existing)
+			}
+		})
+	}
+}

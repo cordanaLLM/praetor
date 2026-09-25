@@ -67,12 +67,28 @@ func managedArtifacts(documentationEnabled bool) []string {
 	return paths
 }
 
+const (
+	// managedFormatterHeader explains the block to whoever opens the ignore file.
+	managedFormatterHeader = "# praetorctl audit owns this canonical content. A formatter rewrite fails;\n" +
+		"# documentation text alone permits consistent LF/CRLF checkout conversion.\n"
+	// historicalFormatterHeader is the comment adoption wrote before the documentation facet
+	// joined the inventory. Only the comment changed, so audit still accepts it above the
+	// pre-documentation inventory rather than failing every earlier adopter's ignore file as
+	// stale; the next adopt run rewrites it to managedFormatterHeader.
+	historicalFormatterHeader = "# praetorctl audit compares these byte for byte. A formatter that rewrites\n" +
+		"# them fails the gate with an error that reads like a hand edit.\n"
+)
+
 // ManagedFormatterIgnoreBlock renders the exact formatter inventory for the active facets.
 func ManagedFormatterIgnoreBlock(documentationEnabled bool) string {
+	return renderFormatterIgnoreBlock(managedFormatterHeader, documentationEnabled)
+}
+
+func renderFormatterIgnoreBlock(header string, documentationEnabled bool) string {
 	var sb strings.Builder
 	sb.WriteString(managedIgnoreBegin)
-	sb.WriteString("\n# praetorctl audit owns this canonical content. A formatter rewrite fails;\n")
-	sb.WriteString("# documentation text alone permits consistent LF/CRLF checkout conversion.\n")
+	sb.WriteString("\n")
+	sb.WriteString(header)
 	for _, path := range managedArtifacts(documentationEnabled) {
 		sb.WriteString(path)
 		sb.WriteString("\n")
@@ -89,6 +105,10 @@ func ManagedFormatterIgnoreBlock(documentationEnabled bool) string {
 // of growing. An adopter's own entries are never touched: adoption owns the delimited region and
 // nothing else.
 func mergeManagedIgnore(existing string, documentationEnabled bool) (string, error) {
+	return mergeFormatterIgnoreBlock(existing, ManagedFormatterIgnoreBlock(documentationEnabled))
+}
+
+func mergeFormatterIgnoreBlock(existing, block string) (string, error) {
 	normalized, crlf, err := util.NormalizeLineEndingsStrict(existing)
 	if err != nil {
 		return "", fmt.Errorf("%s line endings are inconsistent: %w", prettierIgnoreFile, err)
@@ -101,7 +121,6 @@ func mergeManagedIgnore(existing string, documentationEnabled bool) (string, err
 	if err != nil {
 		return "", err
 	}
-	block := ManagedFormatterIgnoreBlock(documentationEnabled)
 	body := strings.TrimRight(strings.Join(kept, "\n"), "\n")
 	merged := block
 	if body == "" {
@@ -153,16 +172,26 @@ func (scan *managedFormatterScan) consume(line string, index int) error {
 	return nil
 }
 
-// VerifyManagedFormatterIgnore accepts only the converged managed block for active facets.
+// VerifyManagedFormatterIgnore accepts only the converged managed block for active facets, or
+// the historical rendering of the pre-documentation inventory that differs only in its comment.
 func VerifyManagedFormatterIgnore(existing string, documentationEnabled bool) error {
 	merged, err := mergeManagedIgnore(existing, documentationEnabled)
 	if err != nil {
 		return err
 	}
-	if merged != existing {
-		return fmt.Errorf("%s managed artifact block is stale", prettierIgnoreFile)
+	if merged == existing {
+		return nil
 	}
-	return nil
+	if !documentationEnabled {
+		historical, err := mergeFormatterIgnoreBlock(existing, renderFormatterIgnoreBlock(historicalFormatterHeader, false))
+		if err != nil {
+			return err
+		}
+		if historical == existing {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s managed artifact block is stale", prettierIgnoreFile)
 }
 
 // VerifyFormatterIgnore checks the facet-aware inventory when Prettier is configured or an

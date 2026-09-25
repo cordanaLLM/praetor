@@ -179,7 +179,9 @@ documentation assets, exact Makefile marker lines, README contract text,
 formatter paths, or a structurally declared hosted status context instead of
 silently treating them as active. Operator-owned files at the same paths, prose
 that mentions a marker, and unrelated ruleset metadata are not claimed by the
-disabled facet.
+disabled facet. A `.prettierignore` inventory written before this gate existed
+differs from the current one only in its comment line and still passes while
+the facet is disabled; the next `praetorctl adopt` rewrites the comment.
 
 `adoption.decline: [branch-ruleset]` leaves `.github/rulesets/main.json`
 operator-owned, as described in the
