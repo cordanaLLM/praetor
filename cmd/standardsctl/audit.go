@@ -182,11 +182,11 @@ func auditManifestAndLockfile(ctx context.Context, opts *auditOptions) (*config.
 // the real change set (touched-file clean rule) and, when a base ref is given, refuses a
 // baseline that grew versus the one committed on that ref.
 func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
-	opts.baselineKnown = util.FileExists(opts.baselinePath)
 	base, err := baseline.LoadBaseline(opts.baselinePath)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
+	opts.baselineKnown = !base.Absent
 	opts.baseline = base
 
 	scanOpts := hiss.ScanOptions{MaxFuncLOC: config.AuditMaxFuncLOC}
@@ -216,7 +216,7 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		fmt.Printf("[WARN] Touched-file clean rule judged by debt delta, not by touch; recorded reason: %s\n",
 			opts.debtDeltaReason)
 	}
-	if !ratchet.Passed && !util.FileExists(opts.baselinePath) && len(current) > 0 {
+	if !ratchet.Passed && base.Absent && len(current) > 0 {
 		return missingBaselineFailure(opts.baselinePath, len(current))
 	}
 	if !ratchet.Passed {

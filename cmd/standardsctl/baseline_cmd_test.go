@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
@@ -55,7 +56,33 @@ func TestBaselineRecord_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspect: %v", err)
 	}
-	mustContain(t, out, "=== acme/widgets Technical Debt Baseline ===", "Total Infractions: 0", "Zero technical debt recorded")
+	mustContain(t, out, "=== acme/widgets Technical Debt Baseline ===", "Total Infractions: 0",
+		"Zero technical debt recorded in this baseline.", "not a live scan")
+	// Inspect never scans, so it never claims compliance (BUG-802).
+	if strings.Contains(out, "compliant") {
+		t.Fatalf("inspect claimed compliance from a stored count:\n%s", out)
+	}
+}
+
+// TestBaselineInspect_MissingFileIsNotReportedAsCompliant pins BUG-802: a missing
+// baseline and a recorded zero used to print the same "100% compliant" line.
+func TestBaselineInspect_MissingFileIsNotReportedAsCompliant(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "absent.json")
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("baseline", []string{"--file=" + missing})
+	})
+	if err != nil {
+		t.Fatalf("inspecting a missing baseline: %v", err)
+	}
+	mustContain(t, out, "No baseline file at "+missing, "nothing was scanned", "baseline --record")
+	for _, claim := range []string{"compliant", "Zero technical debt", "Total Infractions"} {
+		if strings.Contains(out, claim) {
+			t.Errorf("missing baseline output contains %q:\n%s", claim, out)
+		}
+	}
+	if _, statErr := os.Stat(missing); !os.IsNotExist(statErr) {
+		t.Fatalf("inspect created the baseline file (stat err %v)", statErr)
+	}
 }
 
 func TestBaselineRecord_Negative(t *testing.T) {

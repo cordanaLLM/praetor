@@ -3,6 +3,7 @@ package baseline
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -86,6 +87,32 @@ func TestLoadBaseline_PositiveAndMissing(t *testing.T) {
 	loaded, err := LoadBaseline(savePath)
 	if err != nil || loaded.Repository != "cordanaLLM/praetor" || loaded.TotalInfractions != 1 {
 		t.Fatalf("loaded baseline mismatch: loaded=%+v, err=%v", loaded, err)
+	}
+}
+
+// TestLoadBaseline_AbsentMarksOnlyAMissingFile pins BUG-802: the empty snapshot for a
+// missing file is distinguishable from a recorded zero, and the marker is never saved.
+func TestLoadBaseline_AbsentMarksOnlyAMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	missing, err := LoadBaseline(filepath.Join(dir, "absent.json"))
+	if err != nil || !missing.Absent {
+		t.Fatalf("missing file: Absent=%v err=%v, want Absent", missing != nil && missing.Absent, err)
+	}
+
+	path := filepath.Join(dir, "zero.json")
+	if err := SaveBaseline(path, missing); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(string(data)), "absent") {
+		t.Fatalf("the Absent marker leaked into the saved file: %s", data)
+	}
+	recorded, err := LoadBaseline(path)
+	if err != nil || recorded.Absent || recorded.TotalInfractions != 0 {
+		t.Fatalf("recorded zero baseline: %+v, %v; want present with 0 infractions", recorded, err)
 	}
 }
 

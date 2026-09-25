@@ -64,6 +64,12 @@ func runIssueReconcile(ctx context.Context, args []string) error {
 	if strings.Count(*reposFlag, ",") >= maxReconciledRepos {
 		return fmt.Errorf("repository selection exceeds limit of %d comma-separated entries", maxReconciledRepos)
 	}
+	// An empty selection reconciles nothing; reporting that as a successful run exits 0
+	// on a scope typo such as --repos= or --repos=",", so it is refused (BUG-727).
+	repos := parseTargetRepos(*reposFlag, *owner)
+	if len(repos) == 0 {
+		return fmt.Errorf("issue reconcile needs at least one repository; --repos=%q selects none", *reposFlag)
+	}
 
 	tok := resolveForgeAuthToken(ctx, *tokenFlag)
 	if !*dryRun && tok == "" {
@@ -72,7 +78,7 @@ func runIssueReconcile(ctx context.Context, args []string) error {
 
 	engine := forge.NewReconcileEngine(*owner)
 	labels := newIssueLabelIndex()
-	if err := loadFleetIssues(ctx, tok, *endpoint, parseTargetRepos(*reposFlag, *owner), engine, labels); err != nil {
+	if err := loadFleetIssues(ctx, tok, *endpoint, repos, engine, labels); err != nil {
 		return fmt.Errorf("failed loading fleet issues: %w", err)
 	}
 

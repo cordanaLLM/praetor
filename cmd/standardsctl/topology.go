@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/topology"
@@ -38,7 +39,7 @@ func runTopology(args []string) error {
 func printTopologyUsage() {
 	fmt.Println("Usage: standardsctl topology <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  audit [--dev-root=...] Audits dev tree against workstation topology contract (DEV-01 to DEV-05)")
+	fmt.Println("  audit [--dev-root=...] Audits dev tree against the workstation topology rules DEV-01 and DEV-02")
 	fmt.Println("  clean [--dev-root=...] [--dry-run=true|false] Safely removes stray governance files from org roots")
 }
 
@@ -95,7 +96,13 @@ func runTopologyAudit(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("topology audit failed: %w", err)
 	}
+	printTopologyAuditReport(report)
+	return topologyAuditVerdict(report)
+}
 
+// printTopologyAuditReport prints the inventory, the invariant violations and the stray
+// files an audit found.
+func printTopologyAuditReport(report *topology.TopologyReport) {
 	fmt.Printf("=== Workstation Topology Audit: %s ===\n", report.DevRoot)
 	fmt.Printf("Organization Containers: %d (%v)\n", len(report.OrgContainers), report.OrgContainers)
 	fmt.Printf("Valid Leaf Repositories: %d\n", len(report.ValidRepos))
@@ -119,10 +126,25 @@ func runTopologyAudit(ctx context.Context, args []string) error {
 			fmt.Printf("  • %-42s [%s] (%s)\n", s.RelPath, safeStr, s.Reason)
 		}
 		fmt.Printf("\nRun 'standardsctl topology clean --dev-root=%s' to purge safe stray files.\n", report.DevRoot)
-		return fmt.Errorf("topology audit failed with %d stray governance files", len(report.StrayFiles))
 	}
+}
 
-	fmt.Println("[PASS] Workstation topology is 100% compliant with DEV-01 through DEV-05.")
+// topologyAuditVerdict fails on any invariant violation or stray file. A violation alone,
+// such as a repository placed directly in the dev root, used to fall through to the pass
+// line; and that line claimed DEV-01 through DEV-05 while internal/topology evaluates only
+// DEV-01 and DEV-02 (BUG-817).
+func topologyAuditVerdict(report *topology.TopologyReport) error {
+	problems := make([]string, 0, 2)
+	if n := len(report.Violations); n > 0 {
+		problems = append(problems, fmt.Sprintf("%d invariant violations", n))
+	}
+	if n := len(report.StrayFiles); n > 0 {
+		problems = append(problems, fmt.Sprintf("%d stray governance files", n))
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("topology audit failed with %s", strings.Join(problems, " and "))
+	}
+	fmt.Println("[PASS] Workstation topology complies with DEV-01 and DEV-02, the rules this audit evaluates.")
 	return nil
 }
 

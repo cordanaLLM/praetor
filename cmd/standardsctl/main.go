@@ -172,7 +172,7 @@ func printFleetCommands() {
 	fmt.Println("  project            Manage GitHub Projects v2 boards and track epic issues")
 	fmt.Println("  build              Request a polyglot build (execution backends currently unavailable)")
 	fmt.Println("  ci                 Analyze git diff and filter CI verification gates")
-	fmt.Println("  topology           Audit and clean workstation directory topology (DEV-01 to DEV-05)")
+	fmt.Println("  topology           Audit and clean workstation directory topology (DEV-01, DEV-02)")
 	fmt.Println("  workstation        Install this engine's binaries from a checkout, or report install status")
 	fmt.Println("  devsync            Copy project folders to Google Drive through rclone and back (stopgap)")
 	fmt.Println("  version            Print CLI version information")
