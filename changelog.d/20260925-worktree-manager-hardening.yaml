@@ -1,0 +1,3 @@
+type: fixed
+title: Resolve a relative worktree root once so returned paths match git, accept hyphenated base branches while refusing option-like and padded ones, remove locked worktrees under --force, delete the managed branch even when the worktree is already gone, and let worktree prune sweep merged orphaned wt/ branches
+breaking: false

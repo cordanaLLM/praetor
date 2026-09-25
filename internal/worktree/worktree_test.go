@@ -482,11 +482,36 @@ func TestWorktree_Positive_LockedWorktree(t *testing.T) {
 		t.Errorf("expected task-locked worktree with reason 'agent-in-progress'")
 	}
 
-	// Git prohibits removing locked worktrees even with single --force; unlock first
-	runInDir(t, repoDir, "worktree", "unlock", wt.Path)
-
+	// Git removes a locked worktree only when --force is given twice. The CLI promises
+	// forced removal of a locked worktree, so Remove(force) must succeed without an unlock.
 	if err := mgr.Remove(ctx, "task-locked", true); err != nil {
-		t.Fatalf("expected Remove(force=true) to succeed after unlock: %v", err)
+		t.Fatalf("expected Remove(force=true) to remove a locked worktree: %v", err)
+	}
+	if _, err := os.Stat(wt.Path); !os.IsNotExist(err) {
+		t.Fatalf("locked worktree directory should be gone after forced removal, stat error: %v", err)
+	}
+	if exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "--quiet", wt.Branch).Run() == nil {
+		t.Fatalf("forced removal of a locked worktree should delete branch %s", wt.Branch)
+	}
+}
+
+// Safe removal keeps its refusal of a locked worktree: only an explicit force overrides a lock.
+func TestWorktree_Negative_SafeRemovalRefusesLockedWorktree(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+	mgr := NewManager(repoDir)
+	ctx := context.Background()
+
+	wt, err := mgr.Create(ctx, "task-locked-safe", "main")
+	if err != nil {
+		t.Fatalf("failed creating worktree: %v", err)
+	}
+	runInDir(t, repoDir, "worktree", "lock", "--reason", "agent-in-progress", wt.Path)
+
+	if err := mgr.Remove(ctx, wt.TaskID, false); err == nil {
+		t.Fatal("safe removal of a locked worktree must be refused")
+	}
+	if _, err := os.Stat(wt.Path); err != nil {
+		t.Fatalf("refused removal must leave the locked worktree in place: %v", err)
 	}
 }
 
@@ -536,11 +561,214 @@ func TestWorktree_Negative_ValidationErrors(t *testing.T) {
 		"branch:colon",
 		"branch?glob",
 		"branch*star",
+		// Option-like values: git would parse them as flags and branch from HEAD.
+		"--force",
+		"-x",
+		"-",
+		// Padded values: validation must judge the value git receives, not a trimmed copy.
+		" main",
+		"main ",
+		"\tmain",
+		"main\n",
+		"main\x00",
+		"main\x7f",
+		"branch\\backslash",
 	}
 	for i := 0; i < len(invalidBranches); i++ {
 		if _, err := mgr.Create(ctx, "valid-task", invalidBranches[i]); !errors.Is(err, ErrInvalidBaseBranch) {
 			t.Errorf("expected ErrInvalidBaseBranch for %q, got %v", invalidBranches[i], err)
 		}
+	}
+	list, err := mgr.List(ctx)
+	if err != nil {
+		t.Fatalf("list worktrees: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("a rejected base branch must create no worktree, got %+v", list)
+	}
+}
+
+// TestWorktree_Positive_HyphenatedBaseBranch pins BUG-240: the old character set carried a
+// "\x00-\x1f" span that ContainsAny reads as three characters, one of them '-', so every
+// hyphenated base branch was refused. Every other Create in this file uses "main".
+func TestWorktree_Positive_HyphenatedBaseBranch(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+	mgr := NewManager(repoDir)
+	ctx := context.Background()
+
+	for _, base := range []string{"release-1.0", "hotfix-", "feature/multi-part-name"} {
+		runInDir(t, repoDir, "branch", base, "main")
+		want := strings.TrimSpace(runInDir(t, repoDir, "rev-parse", base))
+		taskID := "task-" + strings.NewReplacer("/", "-", ".", "-").Replace(base)
+
+		wt, err := mgr.Create(ctx, taskID, base)
+		if err != nil {
+			t.Fatalf("base branch %q must be accepted: %v", base, err)
+		}
+		if got := strings.TrimSpace(runInDir(t, wt.Path, "rev-parse", "HEAD")); got != want {
+			t.Fatalf("worktree for %q started at %s, want %s", base, got, want)
+		}
+		if wt.BaseBranch != base {
+			t.Fatalf("worktree records base %q, want %q", wt.BaseBranch, base)
+		}
+	}
+}
+
+// TestWorktree_Boundary_RelativeRootDir pins BUG-239: a relative root was applied twice,
+// once as git's working directory and again inside the path argument, so the returned Path
+// did not name the worktree git created.
+func TestWorktree_Boundary_RelativeRootDir(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+	t.Chdir(filepath.Dir(repoDir))
+	mgr := NewManager(filepath.Base(repoDir))
+	ctx := context.Background()
+
+	wt, err := mgr.Create(ctx, "task-relative", "main")
+	if err != nil {
+		t.Fatalf("create under a relative root: %v", err)
+	}
+	if !filepath.IsAbs(wt.Path) {
+		t.Fatalf("returned Path must be absolute, got %q", wt.Path)
+	}
+	gotPath, err := canonicalPath(wt.Path)
+	if err != nil {
+		t.Fatalf("returned Path %q does not exist: %v", wt.Path, err)
+	}
+	list, err := mgr.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	registered := false
+	for i := 0; i < len(list); i++ {
+		if listed, err := canonicalPath(list[i].Path); err == nil && listed == gotPath {
+			registered = list[i].Branch == wt.Branch
+		}
+	}
+	if !registered {
+		t.Fatalf("returned Path %q is not where git registered %s: %+v", wt.Path, wt.Branch, list)
+	}
+	if err := mgr.Remove(ctx, wt.TaskID, true); err != nil {
+		t.Fatalf("forced removal under a relative root: %v", err)
+	}
+}
+
+// TestWorktree_Negative_ForceRemovalOfVanishedWorktreeStillDeletesBranch pins BUG-507: when
+// 'git worktree remove' itself fails, the managed branch must still be deleted. The fixture
+// deletes the directory and prunes the administrative entry, which is how an out-of-band
+// cleanup leaves a branch that no worktree owns.
+func TestWorktree_Negative_ForceRemovalOfVanishedWorktreeStillDeletesBranch(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+	mgr := NewManager(repoDir)
+	ctx := context.Background()
+
+	wt, err := mgr.Create(ctx, "task-vanished", "main")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := os.RemoveAll(wt.Path); err != nil {
+		t.Fatalf("delete worktree directory: %v", err)
+	}
+	runInDir(t, repoDir, "worktree", "prune")
+
+	err = mgr.Remove(ctx, wt.TaskID, true)
+	if err == nil || !strings.Contains(err.Error(), "failed removing worktree") {
+		t.Fatalf("the failed worktree removal must be reported, got %v", err)
+	}
+	if exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "--quiet", wt.Branch).Run() == nil {
+		t.Fatalf("branch %s must be deleted even though worktree removal failed", wt.Branch)
+	}
+
+	// Removal converges: a second forced removal finds nothing to delete and says so.
+	if err := mgr.Remove(ctx, wt.TaskID, true); err == nil {
+		t.Fatal("removing an absent worktree and branch must report both failures")
+	}
+}
+
+// A branch still checked out in a registered worktree is never deleted by the branch step:
+// git refuses it, so a failed worktree removal cannot cost the worktree its branch.
+func TestWorktree_Boundary_ForceRemovalKeepsBranchOfSurvivingWorktree(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+	mgr := NewManager(repoDir)
+	ctx := context.Background()
+
+	wt, err := mgr.Create(ctx, "task-survivor", "main")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Give Remove a different path than git registered: the managed path is not a worktree
+	// anymore, while the branch lives on in the moved one.
+	moved := filepath.Join(t.TempDir(), "moved")
+	runInDir(t, repoDir, "worktree", "move", wt.Path, moved)
+
+	if err := mgr.Remove(ctx, wt.TaskID, true); err == nil {
+		t.Fatal("removing a worktree that is not at the managed path must fail")
+	}
+	if got := strings.TrimSpace(runInDir(t, moved, "branch", "--show-current")); got != wt.Branch {
+		t.Fatalf("the surviving worktree lost branch %s, now on %q", wt.Branch, got)
+	}
+}
+
+// TestWorktree_Positive_PruneSweepsMergedOrphanBranches pins the other half of BUG-507: Prune
+// deletes a managed branch no worktree owns once HEAD contains its commits, and keeps a
+// branch carrying unpublished commits, which is what safe removal preserves it for.
+func TestWorktree_Positive_PruneSweepsMergedOrphanBranches(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+	mgr := NewManager(repoDir)
+	ctx := context.Background()
+
+	merged, err := mgr.Create(ctx, "task-merged", "main")
+	if err != nil {
+		t.Fatalf("create merged: %v", err)
+	}
+	unmerged, err := mgr.Create(ctx, "task-unmerged", "main")
+	if err != nil {
+		t.Fatalf("create unmerged: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(unmerged.Path, "work.txt"), []byte("work\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	runInDir(t, unmerged.Path, "add", "work.txt")
+	runInDir(t, unmerged.Path, "commit", "-m", "unpublished work")
+	live, err := mgr.Create(ctx, "task-live", "main")
+	if err != nil {
+		t.Fatalf("create live: %v", err)
+	}
+	for _, wt := range []*Worktree{merged, unmerged} {
+		if err := mgr.Remove(ctx, wt.TaskID, false); err != nil {
+			t.Fatalf("safe removal of %s: %v", wt.TaskID, err)
+		}
+	}
+
+	if err := mgr.Prune(ctx); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	exists := func(branch string) bool {
+		return exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil
+	}
+	if exists(merged.Branch) {
+		t.Errorf("merged orphan branch %s must be swept", merged.Branch)
+	}
+	if !exists(unmerged.Branch) {
+		t.Errorf("branch %s carries unpublished commits and must be kept", unmerged.Branch)
+	}
+	if !exists(live.Branch) {
+		t.Errorf("branch %s is checked out in a registered worktree and must be kept", live.Branch)
+	}
+	if !exists("main") {
+		t.Error("prune must never touch an unmanaged branch")
+	}
+}
+
+// Prune in a repository with no commit yet has no managed branch to sweep and must not
+// fail on the unborn HEAD that a --merged query would reject.
+func TestWorktree_Boundary_PruneOnUnbornHead(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	dir := t.TempDir()
+	runInDir(t, dir, "init", "-b", "main")
+
+	if err := NewManager(dir).Prune(context.Background()); err != nil {
+		t.Fatalf("prune on an unborn HEAD: %v", err)
 	}
 }
 
@@ -610,17 +838,22 @@ func TestWorktree_Negative_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	if _, err := mgr.Create(ctx, "task-cancelled", "main"); err == nil {
-		t.Errorf("expected context cancellation error on Create, got nil")
+	// Any error would satisfy err != nil; the cancellation itself must be what is reported,
+	// so a caller can tell a cancelled operation from a failed one with errors.Is.
+	if _, err := mgr.Create(ctx, "task-cancelled", "main"); !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled on Create, got %v", err)
 	}
-	if err := mgr.Remove(ctx, "task-cancelled", false); err == nil {
-		t.Errorf("expected context cancellation error on Remove, got nil")
+	if err := mgr.Remove(ctx, "task-cancelled", false); !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled on Remove, got %v", err)
 	}
-	if _, err := mgr.List(ctx); err == nil {
-		t.Errorf("expected context cancellation error on List, got nil")
+	if err := mgr.Remove(ctx, "task-cancelled", true); !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled on forced Remove, got %v", err)
 	}
-	if err := mgr.Prune(ctx); err == nil {
-		t.Errorf("expected context cancellation error on Prune, got nil")
+	if _, err := mgr.List(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled on List, got %v", err)
+	}
+	if err := mgr.Prune(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled on Prune, got %v", err)
 	}
 }
 
@@ -654,6 +887,12 @@ func TestWorktree_Boundary_TaskIDLengths(t *testing.T) {
 	mgr := NewManager(repoDir)
 	ctx := context.Background()
 
+	// Exceeded length (129 chars) is decided by validation alone, on every platform.
+	tooLongID := strings.Repeat("x", MaxTaskIDLength+1)
+	if _, err := mgr.Create(ctx, tooLongID, "main"); !errors.Is(err, ErrTaskIDTooLong) {
+		t.Errorf("expected ErrTaskIDTooLong for %d chars, got %v", MaxTaskIDLength+1, err)
+	}
+
 	// Min length (1 char)
 	wtMin, err := mgr.Create(ctx, "a", "main")
 	if err != nil {
@@ -670,9 +909,10 @@ func TestWorktree_Boundary_TaskIDLengths(t *testing.T) {
 	maxID := strings.Repeat("x", MaxTaskIDLength)
 	wtMax, err := mgr.Create(ctx, maxID, "main")
 	if err != nil && os.PathSeparator == '\\' && strings.Contains(err.Error(), "$GIT_DIR' too big") {
-		// Windows Git setup.c PATH_MAX (260 byte) limit hit due to deep %TEMP% path; verify with safe length on Windows
-		maxID = strings.Repeat("x", 48)
-		wtMax, err = mgr.Create(ctx, maxID, "main")
+		// HISS-21: skip with the reason rather than retry with a shorter id. Retrying at 48
+		// characters and passing claimed a MaxTaskIDLength boundary this host never exercised.
+		t.Skipf("Windows Git PATH_MAX (260 bytes) cannot hold a %d-character task id under %s; "+
+			"the MaxTaskIDLength boundary is verified on Linux and macOS: %v", MaxTaskIDLength, repoDir, err)
 	}
 	if err != nil {
 		t.Fatalf("expected max-length taskID to succeed: %v", err)
@@ -682,12 +922,6 @@ func TestWorktree_Boundary_TaskIDLengths(t *testing.T) {
 	}
 	if wtMax.TaskID != maxID {
 		t.Errorf("expected TaskID %s, got %s", maxID, wtMax.TaskID)
-	}
-
-	// Exceeded length (129 chars)
-	tooLongID := strings.Repeat("x", MaxTaskIDLength+1)
-	if _, err := mgr.Create(ctx, tooLongID, "main"); !errors.Is(err, ErrTaskIDTooLong) {
-		t.Errorf("expected ErrTaskIDTooLong for %d chars, got %v", MaxTaskIDLength+1, err)
 	}
 }
 
@@ -760,15 +994,27 @@ func verifyParsedWorktreeVariations(t *testing.T, parsed []WorktreeInfo) {
 }
 
 func TestWorktree_Boundary_ManagerPathNormalization(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
 	mEmpty := NewManager("")
-	if mEmpty.RootDir() != "." {
-		t.Errorf("expected '.' for empty rootDir, got %q", mEmpty.RootDir())
+	if mEmpty.RootDir() != cwd {
+		t.Errorf("expected the current directory %q for empty rootDir, got %q", cwd, mEmpty.RootDir())
 	}
 
 	mSlash := NewManager("/tmp/foo/bar///")
-	expectedClean := filepath.Clean("/tmp/foo/bar")
+	expectedClean, err := filepath.Abs("/tmp/foo/bar")
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
 	if mSlash.RootDir() != expectedClean {
 		t.Errorf("expected %q, got %q", expectedClean, mSlash.RootDir())
+	}
+
+	mRelative := NewManager(filepath.Join("some", "..", "repo"))
+	if want := filepath.Join(cwd, "repo"); mRelative.RootDir() != want {
+		t.Errorf("expected relative root resolved to %q, got %q", want, mRelative.RootDir())
 	}
 
 	var nilMgr *Manager

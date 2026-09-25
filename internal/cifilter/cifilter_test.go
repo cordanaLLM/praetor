@@ -359,3 +359,27 @@ func TestClassifyChanges_ClaudeMdInSubdirectoryRunsContextSync(t *testing.T) {
 		t.Errorf("expected RunContextSync=true for a nested CLAUDE.md, got false")
 	}
 }
+
+// Negative: a path whose extension no classifier recognises is neither documentation nor
+// session state, so it must never ride the docs-only or state-only path, and the audit still
+// runs. Alone or mixed with a doc or a state file, it keeps the change set off both paths.
+func TestClassifyChanges_UnrecognisedExtensionIsNotDocsOrState(t *testing.T) {
+	for _, files := range [][]string{
+		{"scripts/release.sh"},
+		{"internal/data/fixture.bin"},
+		{"docs/guide.md", "scripts/release.sh"},
+		{".workingdir/STATE.md", "internal/data/fixture.bin"},
+	} {
+		cs := cifilter.ClassifyChanges(files)
+		if cs.DocsOnly || cs.StateOnly {
+			t.Errorf("%v: unrecognised path classified DocsOnly=%t StateOnly=%t", files, cs.DocsOnly, cs.StateOnly)
+		}
+		if cs.CodeChanged || cs.ConfigChanged || cs.AgentChanged {
+			t.Errorf("%v: unrecognised path claimed a source class: %+v", files, cs)
+		}
+		decision := cifilter.MakeDecision(cs, false)
+		if decision.RunDocsOnly || !decision.RunAudit {
+			t.Errorf("%v: expected audit without the docs-only path, got %+v", files, decision)
+		}
+	}
+}
