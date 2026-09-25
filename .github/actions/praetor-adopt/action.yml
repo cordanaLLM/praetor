@@ -12,7 +12,7 @@ inputs:
     required: false
     default: "adopt"
   dry-run:
-    description: "Run in dry-run simulation mode without writing files"
+    description: "adopt: plan without writing files. dogfood: no effect, since the action runs no target adoptions"
     required: false
     default: "false"
   force:
@@ -110,7 +110,8 @@ runs:
     #
     # Each boolean is passed as --flag=<value> rather than appended when the value is "true":
     # dogfood's --dry-run and adopt's --record-baseline both default to true in standardsctl, so an
-    # omitted flag is an opt-in, not an opt-out, and `dry-run: "false"` used to dry-run anyway.
+    # omitted flag is an opt-in, not an opt-out, and `record-baseline: "false"` used to record a
+    # baseline anyway.
     - name: Execute Praetor Action
       id: run-praetor
       shell: bash

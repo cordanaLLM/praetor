@@ -1,4 +1,4 @@
 type: security
-title: "`praetor-adopt` passes every input through the environment instead of splicing it into its script, writes its declared `report` output and the job summary even for a failed or refused run, builds the `standardsctl` of the ref the caller pinned and refuses a ref go reads as a version query, aims the follow-up `compile-context --verify` at the adopted path, validates `mode` and each boolean, and passes each boolean explicitly, so a dogfood run with `dry-run: false` now applies the adoption and `record-baseline: false` now skips the baseline"
+title: "`praetor-adopt` takes its inputs through the environment, always writes its `report` output and job summary, and builds `standardsctl` from its own pinned checkout; `record-baseline: false` is now honoured, `mode` and the booleans are validated, and a local or copied action fails instead of installing `@latest`"
 issue: "291"
 breaking: true
