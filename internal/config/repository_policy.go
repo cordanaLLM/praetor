@@ -21,10 +21,11 @@ const NoLockNotice = "no .standards.lock: built-in defaults and repository overr
 // repositoryPolicyTimeout bounds the policy read (HISS-02).
 const repositoryPolicyTimeout = 30 * time.Second
 
-// HISSComplexityCeiling is the ceiling a projection falls back to when no repository policy
-// could be resolved at all, because the workspace carries no manifest. It states the HISS-04
-// McCabe, cognitive and statement limits (<= 10, <= 15, <= 50) once, so the editor projections
-// and the language server cannot drift from each other.
+// HISSComplexityCeiling is the ceiling a projection states when the workspace has no resolvable
+// lock-backed policy: no manifest, a manifest without a lock, or a policy that does not resolve
+// (ResolveRepositoryComplexity tightens it by the manifest's overrides where it can). It states
+// the HISS-04 McCabe, cognitive and statement limits (<= 10, <= 15, <= 50) once, so the editor
+// projections, the language server and the MCP inspection cannot drift from each other.
 //
 // The function-length limit is AuditMaxFuncLOC rather than the 75 HISS-04 documents: the audit
 // caps every adopted repository at that length whatever its manifest declares, so a workspace

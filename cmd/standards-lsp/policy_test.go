@@ -61,7 +61,10 @@ func policyWarning(t *testing.T, notifs []JSONRPCNotification) string {
 	if len(notifs) != 1 || notifs[0].Method != "window/logMessage" || !ok || params["type"] != lspMessageTypeWarning {
 		t.Fatalf("want one window/logMessage warning, got %+v", notifs)
 	}
-	message, _ := params["message"].(string)
+	message, ok := params["message"].(string)
+	if !ok {
+		t.Fatalf("warning carries no message: %+v", params)
+	}
 	return message
 }
 
