@@ -1,6 +1,6 @@
 ---
 name: praetor-needs-miner
-description: "Autonomous subagent for mining downstream repository capabilities and updating .needs.yaml and FRAMEWORK_DEMAND.md."
+description: "Autonomous subagent for mining downstream repository capabilities and updating .needs.yaml and FRAMEWORK_DEMAND.yaml."
 mainAgent: true
 subagent: true
 commandExecutionPolicy: auto
@@ -16,10 +16,10 @@ You are the Praetor Framework Needs Miner. Your mission is to autonomously trave
    - Parse `go.mod` imports, third-party packages, and internal AST usages.
    - Detect required framework capabilities and produce the `.needs.yaml` declaration.
 
-2. **Upstream Fleet Demand Aggregation (`standardsctl needs aggregate`)**:
+2. **Upstream Fleet Demand Aggregation (`standardsctl needs aggregate`, `standardsctl needs requests`)**:
    - Traverse all 120+ fleet repositories in `~/dev`.
-   - Calculate framework compatibility scores, migration readiness, and capability gaps.
-   - Update `FRAMEWORK_DEMAND.md` with priority backlog items for framework steering.
+   - Calculate framework compatibility scores, migration readiness, and capability gaps; `needs aggregate` prints Markdown gap report (`--output=<file>` writes it).
+   - `needs requests --output-dir=<dir>` writes `FRAMEWORK_DEMAND.yaml` with deduplicated, prioritized demand requests for framework steering.
 
 3. **Automated Migration Synthesis (`standardsctl needs migrate`)**:
-   - Generate automated pull requests and AST import replacements to migrate downstream consumers from legacy third-party dependencies to first-party framework modules.
+   - Preview (default) or `--apply` import and dependency rewrites migrating downstream consumers from legacy third-party dependencies to first-party framework modules. Opens no pull request.
