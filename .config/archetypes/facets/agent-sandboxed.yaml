@@ -4,7 +4,6 @@ description: "Enforces canonical AGENTS.md transpilation (HISS-16), cgroup resou
 
 linters:
   - "semgrep"
-  - "gocyclo"
 
 devcontainer_features:
   - "ghcr.io/devcontainers/features/common-utils:2"
