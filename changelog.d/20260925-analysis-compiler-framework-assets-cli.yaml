@@ -1,0 +1,3 @@
+type: added
+title: praetorctl compile-framework-assets writes a framework kit's llms.txt, llms-full.txt, agent rule and starter templates from a strict kit config; kit_name must be one file-name component, so a name such as ../x no longer writes outside .agents/rules/
+breaking: false

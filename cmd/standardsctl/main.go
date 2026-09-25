@@ -120,7 +120,8 @@ func printUsage() {
 func printCoreCommands() {
 	fmt.Println("  init               Scaffold configuration, baseline, and agent context for new repo")
 	fmt.Println("  compile-context    Transpile canonical AGENTS.md to vendor-native formats (< 300 LOC)")
-	fmt.Println("  context-optimize   Analyze explicit context files and optionally write a private review pack")
+	fmt.Println("  compile-framework-assets  Write a framework kit's llms.txt, agent rule and starter templates")
+	fmt.Println("  context-optimize  Analyze explicit context files and optionally write a private review pack")
 	fmt.Println("  caveman            Lint agent-facing text (check) or estimate its token cost (estimate)")
 	fmt.Println("  clients            Prepare or apply client configurations from one shared tool registry")
 	fmt.Print("  notebook           Prepare source-grounded planning templates or validate generated drafts\n" +
@@ -233,33 +234,34 @@ func commandTable() map[string]commandFunc {
 // coreCommandTable holds the repository-scoped commands (see printCoreCommands).
 func coreCommandTable() map[string]commandFunc {
 	return map[string]commandFunc{
-		"init":             runInit,
-		"compile-context":  runCompileContext,
-		"context-optimize": runContextOptimize,
-		"caveman":          runCaveman,
-		"notebook":         runNotebook,
-		"planning":         runPlanning,
-		"prompt-optimize":  runPromptOptimize,
-		"audit":            runAudit,
-		"adr":              runADR,
-		"bugs":             runBugs,
-		"baseline":         runBaseline,
-		"devcontainer":     runDevContainer,
-		"devsync":          runDevsync,
-		"flavor":           runFlavor,
-		"flavors":          runFlavors,
-		"docs":             runDocs,
-		"hindsight":        runHindsight,
-		"state":            runState,
-		"dedupe":           runDedupe,
-		"hiss":             runHiss,
-		"hook":             runHook,
-		"models":           runModels,
-		"operational":      runOperational,
-		"plan":             runPlan,
-		"sync":             runSync,
-		"sentinel":         runSentinel,
-		"worktree":         runWorktree,
+		"init":                     runInit,
+		"compile-context":          runCompileContext,
+		"compile-framework-assets": runCompileFrameworkAssets,
+		"context-optimize":         runContextOptimize,
+		"caveman":                  runCaveman,
+		"notebook":                 runNotebook,
+		"planning":                 runPlanning,
+		"prompt-optimize":          runPromptOptimize,
+		"audit":                    runAudit,
+		"adr":                      runADR,
+		"bugs":                     runBugs,
+		"baseline":                 runBaseline,
+		"devcontainer":             runDevContainer,
+		"devsync":                  runDevsync,
+		"flavor":                   runFlavor,
+		"flavors":                  runFlavors,
+		"docs":                     runDocs,
+		"hindsight":                runHindsight,
+		"state":                    runState,
+		"dedupe":                   runDedupe,
+		"hiss":                     runHiss,
+		"hook":                     runHook,
+		"models":                   runModels,
+		"operational":              runOperational,
+		"plan":                     runPlan,
+		"sync":                     runSync,
+		"sentinel":                 runSentinel,
+		"worktree":                 runWorktree,
 	}
 }
 
