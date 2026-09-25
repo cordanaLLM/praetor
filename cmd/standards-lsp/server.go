@@ -197,7 +197,8 @@ func (s *Server) dispatchRequest(ctx context.Context, req JSONRPCRequest) (*JSON
 
 	switch req.Method {
 	case "initialize":
-		return s.handleInitialize(ctx, req), nil, nil
+		resp, notifs := s.handleInitialize(ctx, req)
+		return resp, notifs, nil
 	case "initialized":
 		return nil, nil, nil
 	case "shutdown":
@@ -259,8 +260,9 @@ func (s *Server) methodNotFound(req JSONRPCRequest) *JSONRPCResponse {
 // handleInitialize answers the handshake and adopts the opened workspace's complexity policy.
 // The ceilings used to be constants here, so a repository that tightened max_func_loc got a
 // language server that accepted functions its own `praetorctl audit` rejects (issue #360).
-func (s *Server) handleInitialize(ctx context.Context, req JSONRPCRequest) *JSONRPCResponse {
-	s.adoptWorkspacePolicy(ctx, req.Params)
+// A fallback is stated in a window/logMessage warning written after the response.
+func (s *Server) handleInitialize(ctx context.Context, req JSONRPCRequest) (*JSONRPCResponse, []JSONRPCNotification) {
+	notifs := s.adoptWorkspacePolicy(ctx, req.Params)
 	return &JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
@@ -273,25 +275,39 @@ func (s *Server) handleInitialize(ctx context.Context, req JSONRPCRequest) *JSON
 				"version": s.version,
 			},
 		},
-	}
+	}, notifs
 }
 
-// adoptWorkspacePolicy resolves the opened workspace's complexity ceilings. A workspace that
-// cannot be located or resolved keeps the HISS-04 ceiling the server started with: a
-// handshake that fails over a policy read would leave the editor with no diagnostics at all,
-// which is strictly worse than diagnosing against the documented default.
-func (s *Server) adoptWorkspacePolicy(ctx context.Context, paramsRaw json.RawMessage) {
+// lspMessageTypeWarning is the LSP MessageType for a warning (LSP 3.17, window/logMessage).
+const lspMessageTypeWarning = 2
+
+// adoptWorkspacePolicy resolves the opened workspace's complexity ceilings, the same way the
+// editor projections and the MCP inspection do. A policy that exists but does not resolve yet
+// yields the HISS-04 ceiling tightened by any readable override; an interrupted resolution
+// keeps the ceiling the server started with. Either fallback is returned as a warning to log:
+// a handshake that failed over a policy read would leave the editor with no diagnostics at all,
+// and one that fell back silently would hide why they differ from the repository's policy.
+func (s *Server) adoptWorkspacePolicy(ctx context.Context, paramsRaw json.RawMessage) []JSONRPCNotification {
 	root := initializeWorkspaceRoot(paramsRaw)
 	if root == "" {
-		return
+		return nil
 	}
-	complexity, err := config.ResolveRepositoryComplexity(ctx, root)
+	complexity, warning, err := config.ResolveRepositoryComplexity(ctx, root)
 	if err != nil {
-		return
+		warning = fmt.Sprintf("workspace policy not resolved (%v); keeping the HISS-04 ceiling", err)
+	} else {
+		s.policyMu.Lock()
+		s.complexity = complexity
+		s.policyMu.Unlock()
 	}
-	s.policyMu.Lock()
-	defer s.policyMu.Unlock()
-	s.complexity = complexity
+	if warning == "" {
+		return nil
+	}
+	return []JSONRPCNotification{{
+		JSONRPC: "2.0",
+		Method:  "window/logMessage",
+		Params:  map[string]any{"type": lspMessageTypeWarning, "message": "standards-lsp: " + warning},
+	}}
 }
 
 // initializeWorkspaceRoot picks the workspace directory out of the initialize params,

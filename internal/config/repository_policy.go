@@ -103,20 +103,75 @@ func ResolveRepositoryPolicy(ctx context.Context, configPath string, manifest *M
 	return &effective.Policy, "", nil
 }
 
-// ResolveRepositoryComplexity resolves the complexity ceilings a workspace root imposes and
-// completes any limit the repository left unset from HISSComplexityCeiling. An unadopted
-// workspace -- one with no <root>/.standards.yaml -- resolves to that ceiling itself, which
-// is what the editor and LSP projections asserted unconditionally before this existed.
-func ResolveRepositoryComplexity(ctx context.Context, root string) (ComplexityPolicy, error) {
+// ResolveRepositoryComplexity resolves the complexity ceilings a workspace root imposes, for
+// the projections that restate them: the editor configurations, the language server and the
+// MCP symbol inspection. A locked repository resolves exactly as ResolveRepositoryPolicy does,
+// with any limit it left unset completed from HISSComplexityCeiling.
+//
+// Every other state resolves to HISSComplexityCeiling tightened by whatever complexity
+// overrides the manifest declares, never to the DefaultPolicy baseline the plan preview shows:
+//   - no <root>/.standards.yaml: the workspace is unadopted;
+//   - a manifest without a lock: no audit runs yet, and the first one after adoption caps
+//     function length at AuditMaxFuncLOC, so the 100-line, cyclomatic-15 baseline would tell
+//     an editor to accept what that audit rejects;
+//   - a manifest or lock that cannot be resolved, including the lock `praetorctl init` writes
+//     before any catalog is pinned: the returned warning names the cause. The projection keeps
+//     working, as it did before it read policy at all, and `praetorctl audit` still fails on
+//     the same state, so the fallback hides nothing.
+//
+// An error is returned only for a nil context or a resolution the caller's ctx interrupted;
+// an interrupted resolution is never reported as a policy the repository declares.
+func ResolveRepositoryComplexity(ctx context.Context, root string) (ComplexityPolicy, string, error) {
+	if ctx == nil {
+		return ComplexityPolicy{}, "", errors.New("resolving repository complexity requires a context")
+	}
 	if root == "" {
 		root = "."
 	}
-	policy, _, err := ResolveRepositoryPolicy(ctx, filepath.Join(root, ManifestFileName), nil)
+	configPath := filepath.Join(root, ManifestFileName)
+	if !util.FileExists(configPath) {
+		return HISSComplexityCeiling(), "", nil
+	}
+	manifest, err := LoadManifest(configPath)
 	if err != nil {
-		return ComplexityPolicy{}, err
+		return unresolvedComplexity(ctx, nil, err)
 	}
-	if policy == nil {
-		return HISSComplexityCeiling(), nil
+	policy, notice, err := ResolveRepositoryPolicy(ctx, configPath, manifest)
+	switch {
+	case err != nil:
+		return unresolvedComplexity(ctx, manifest, err)
+	case policy == nil:
+		// The manifest vanished between the two reads: the workspace is unadopted now.
+		return HISSComplexityCeiling(), "", nil
+	case notice == NoLockNotice:
+		return ceilingWithOverrides(manifest), "", nil
 	}
-	return policy.Complexity.WithHISSDefaults(), nil
+	return policy.Complexity.WithHISSDefaults(), "", nil
+}
+
+// ceilingWithOverrides is HISSComplexityCeiling tightened by the manifest's complexity
+// overrides. Overrides only ever tighten (applyOverride), so a manifest cannot use this path
+// to state a limit looser than the ceiling.
+func ceilingWithOverrides(manifest *Manifest) ComplexityPolicy {
+	ceiling := HISSComplexityCeiling()
+	if manifest != nil && manifest.Overrides.Complexity != nil {
+		ceiling.applyOverride(manifest.Overrides.Complexity)
+	}
+	return ceiling
+}
+
+// unresolvedComplexity is the projection fallback for a policy that exists but cannot be
+// resolved. A cause the caller's context produced is returned as an error instead.
+func unresolvedComplexity(ctx context.Context, manifest *Manifest, cause error) (ComplexityPolicy, string, error) {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ComplexityPolicy{}, "", fmt.Errorf("resolve repository complexity: %w", ctxErr)
+	}
+	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+		return ComplexityPolicy{}, "", fmt.Errorf("resolve repository complexity: %w", cause)
+	}
+	ceiling := ceilingWithOverrides(manifest)
+	warning := fmt.Sprintf("repository policy unresolved (%v); stating the HISS-04 ceiling "+
+		"(cyclomatic %d, cognitive %d, %d lines, %d statements) until it resolves",
+		cause, ceiling.MaxCyclomatic, ceiling.MaxCognitive, ceiling.MaxFuncLOC, ceiling.MaxStatements)
+	return ceiling, warning, nil
 }

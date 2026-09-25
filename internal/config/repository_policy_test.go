@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,9 +66,9 @@ func TestResolveRepositoryPolicy_Positive_LockedMatchesAudit(t *testing.T) {
 		t.Fatalf("pinned profile or audit cap not applied: %+v", policy.Complexity)
 	}
 
-	complexity, err := ResolveRepositoryComplexity(t.Context(), root)
-	if err != nil || complexity != audited.Policy.Complexity.WithHISSDefaults() {
-		t.Fatalf("complexity = %+v err=%v, want %+v", complexity, err, audited.Policy.Complexity)
+	complexity, warning, err := ResolveRepositoryComplexity(t.Context(), root)
+	if err != nil || warning != "" || complexity != audited.Policy.Complexity.WithHISSDefaults() {
+		t.Fatalf("complexity = %+v warning=%q err=%v, want %+v", complexity, warning, err, audited.Policy.Complexity)
 	}
 }
 
@@ -79,9 +80,9 @@ func TestResolveRepositoryPolicy_Boundary_NoLockAndNoManifest(t *testing.T) {
 	if policy != nil || notice != "" || err != nil {
 		t.Fatalf("absent manifest = (%+v, %q, %v), want (nil, \"\", nil)", policy, notice, err)
 	}
-	complexity, err := ResolveRepositoryComplexity(t.Context(), root)
-	if err != nil || complexity != HISSComplexityCeiling() {
-		t.Fatalf("unadopted workspace = %+v err=%v, want the ceiling", complexity, err)
+	complexity, warning, err := ResolveRepositoryComplexity(t.Context(), root)
+	if err != nil || warning != "" || complexity != HISSComplexityCeiling() {
+		t.Fatalf("unadopted workspace = %+v warning=%q err=%v, want the ceiling", complexity, warning, err)
 	}
 
 	writePolicyFile(t, root, ManifestFileName,
@@ -90,12 +91,17 @@ func TestResolveRepositoryPolicy_Boundary_NoLockAndNoManifest(t *testing.T) {
 	if err != nil || notice != NoLockNotice {
 		t.Fatalf("no-lock manifest = notice %q err=%v", notice, err)
 	}
+	// The plan preview shows the lock-less repository against the built-in baseline ...
 	if policy.Complexity.MaxFuncLOC != 42 || policy.Complexity.MaxCyclomatic != DefaultPolicy().Complexity.MaxCyclomatic {
 		t.Fatalf("no-lock policy must be defaults plus overrides, got %+v", policy.Complexity)
 	}
-	complexity, err = ResolveRepositoryComplexity(t.Context(), root)
-	if err != nil || complexity.MaxFuncLOC != 42 {
-		t.Fatalf("repository override lost: %+v err=%v", complexity, err)
+	// ... but a projection states the HISS-04 ceiling tightened by the overrides, never that
+	// baseline's looser 15/20/100/75.
+	complexity, warning, err = ResolveRepositoryComplexity(t.Context(), root)
+	want := HISSComplexityCeiling()
+	want.MaxFuncLOC = 42
+	if err != nil || warning != "" || complexity != want {
+		t.Fatalf("no-lock projection = %+v warning=%q err=%v, want %+v", complexity, warning, err, want)
 	}
 
 	// A caller that already decoded the manifest is not re-read from disk.
@@ -117,9 +123,6 @@ func TestResolveRepositoryPolicy_Negative_Failures(t *testing.T) {
 	if _, _, err := ResolveRepositoryPolicy(t.Context(), filepath.Join(corrupt, ManifestFileName), nil); err == nil {
 		t.Fatal("corrupt manifest accepted")
 	}
-	if _, err := ResolveRepositoryComplexity(t.Context(), corrupt); err == nil {
-		t.Fatal("corrupt manifest resolved to a complexity policy")
-	}
 
 	// A lock that exists but cannot be resolved is an error, never the no-lock fallback.
 	locked := policyFixture(t, "complexity:\n  max_func_loc: 50\n", "", "")
@@ -134,8 +137,77 @@ func TestResolveRepositoryPolicy_Negative_Failures(t *testing.T) {
 
 // An empty root is the working directory; this package directory has no manifest.
 func TestResolveRepositoryComplexity_Boundary_EmptyRoot(t *testing.T) {
-	complexity, err := ResolveRepositoryComplexity(t.Context(), "")
-	if err != nil || complexity != HISSComplexityCeiling() {
-		t.Fatalf("empty root = %+v err=%v, want the ceiling", complexity, err)
+	complexity, warning, err := ResolveRepositoryComplexity(t.Context(), "")
+	if err != nil || warning != "" || complexity != HISSComplexityCeiling() {
+		t.Fatalf("empty root = %+v warning=%q err=%v, want the ceiling", complexity, warning, err)
+	}
+}
+
+// A manifest without a lock never widens the ceiling: an override looser than it is ignored,
+// exactly as the audit-compat layer would cap it after adoption, and one tighter is kept.
+func TestResolveRepositoryComplexity_Boundary_NoLockNeverLooserThanCeiling(t *testing.T) {
+	root := t.TempDir()
+	writePolicyFile(t, root, ManifestFileName, "version: 1\nrepository:\n  owner: example\n  name: demo\n")
+	complexity, warning, err := ResolveRepositoryComplexity(t.Context(), root)
+	if err != nil || warning != "" || complexity != HISSComplexityCeiling() {
+		t.Fatalf("no-lock, no overrides = %+v warning=%q err=%v, want the ceiling", complexity, warning, err)
+	}
+
+	writePolicyFile(t, root, ManifestFileName, "version: 1\nrepository:\n  owner: example\n  name: demo\n"+
+		"overrides:\n  complexity:\n    max_cyclomatic: 20\n    max_func_loc: 100\n    max_statements: 49\n")
+	complexity, _, err = ResolveRepositoryComplexity(t.Context(), root)
+	want := HISSComplexityCeiling()
+	want.MaxStatements = 49
+	if err != nil || complexity != want {
+		t.Fatalf("looser overrides = %+v err=%v, want %+v", complexity, err, want)
+	}
+}
+
+// A policy that exists but cannot be resolved -- including the lock `praetorctl init` writes,
+// which pins nothing and carries no digest -- falls back to the ceiling tightened by whatever
+// overrides the manifest declares, and says so. It is never an error: the projections kept
+// working in that state before they read policy at all.
+func TestResolveRepositoryComplexity_Negative_UnresolvablePolicyWarns(t *testing.T) {
+	const manifest = "version: 1\nrepository:\n  owner: example\n  name: demo\nprofiles: [framework]\n" +
+		"overrides:\n  complexity:\n    max_func_loc: 42\n"
+	ceiling := HISSComplexityCeiling()
+	withOverride := ceiling
+	withOverride.MaxFuncLOC = 42
+	for name, tc := range map[string]struct {
+		manifest, lock, cause string
+		want                  ComplexityPolicy
+	}{
+		"init lock":        {manifest, "# SemVer lockfile\nversion: 1\npinned_version: \"v0.0.0\"\n", "lockfile digest", withOverride},
+		"corrupt lock":     {manifest, "not: [a lock\n", "resolve effective policy", withOverride},
+		"corrupt manifest": {"version: [\n", "", "manifest", ceiling},
+	} {
+		root := t.TempDir()
+		writePolicyFile(t, root, ManifestFileName, tc.manifest)
+		if tc.lock != "" {
+			writePolicyFile(t, root, ".standards.lock", tc.lock)
+		}
+		complexity, warning, err := ResolveRepositoryComplexity(t.Context(), root)
+		if err != nil || complexity != tc.want {
+			t.Errorf("%s: %+v err=%v, want %+v", name, complexity, err, tc.want)
+		}
+		if !strings.Contains(warning, "repository policy unresolved") || !strings.Contains(warning, tc.cause) {
+			t.Errorf("%s: warning %q does not name the cause %q", name, warning, tc.cause)
+		}
+	}
+}
+
+// A resolution the caller's context interrupted is an error, never a warning-backed fallback,
+// and a nil context is refused before any read.
+func TestResolveRepositoryComplexity_Negative_InterruptedResolution(t *testing.T) {
+	var noContext context.Context
+	if _, _, err := ResolveRepositoryComplexity(noContext, t.TempDir()); err == nil {
+		t.Fatal("nil context accepted")
+	}
+	root := policyFixture(t, "complexity:\n  max_func_loc: 50\n", "", "")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	complexity, warning, err := ResolveRepositoryComplexity(ctx, root)
+	if err == nil || !errors.Is(err, context.Canceled) || warning != "" || complexity != (ComplexityPolicy{}) {
+		t.Fatalf("cancelled resolution = %+v warning=%q err=%v", complexity, warning, err)
 	}
 }

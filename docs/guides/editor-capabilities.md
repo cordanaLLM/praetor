@@ -72,18 +72,38 @@ absent and at its boundary.
 
 The JetBrains inspection profile and the Neovim server settings state the
 complexity ceilings the repository's policy resolves to, which are the ceilings
-`praetorctl audit` enforces there. `praetorctl editors` and `praetorctl adopt`
-resolve them through `config.ResolveRepositoryPolicy`
-(`internal/config/repository_policy.go`), the resolver `praetorctl plan` uses: a
-locked repository resolves pinned profiles, repository overrides and the audit
-function-length cap; a manifest without a lock resolves built-in defaults plus
-repository overrides. `standards-lsp` resolves the workspace named in its
-`initialize` request, and the MCP `standards_inspect_symbols` tool resolves its
-server root. A workspace without `.standards.yaml`, or one whose policy cannot be
-read by the language server, falls back to `config.HISSComplexityCeiling`:
-cyclomatic 10, cognitive 15, statements 50 and the audit's function length
-(`config.AuditMaxFuncLOC`, 60). An unreadable policy fails `editors` and the MCP
-inspection instead of falling back.
+`praetorctl audit` enforces there. `praetorctl adopt` uses the policy its
+session already resolved. `praetorctl editors`, `standards-lsp` (for the
+workspace named in its `initialize` request) and the MCP
+`standards_inspect_symbols` tool (for its server root) use
+`config.ResolveRepositoryComplexity` (`internal/config/repository_policy.go`).
+A locked repository resolves exactly as `praetorctl plan` resolves it: pinned
+profiles, repository overrides and the audit function-length cap.
+
+Every other state resolves to `config.HISSComplexityCeiling` (cyclomatic 10,
+cognitive 15, statements 50 and the audit's function length,
+`config.AuditMaxFuncLOC` = 60), tightened by any complexity override the
+manifest declares. Overrides only tighten, so these states never state a limit
+looser than the ceiling:
+
+| Workspace state | Result | Stated |
+| :--- | :--- | :--- |
+| no `.standards.yaml` | ceiling | nothing |
+| manifest, no `.standards.lock` | ceiling tightened by overrides | nothing |
+| manifest or lock that does not resolve, including the lock `praetorctl init` writes | ceiling tightened by any readable override | `[WARN] repository policy unresolved ...` (CLI output, MCP report, LSP `window/logMessage`) |
+
+The lock-less row differs from `praetorctl plan` on purpose. The plan preview
+shows built-in defaults plus overrides (15/20/100/75 before overrides), but no
+audit runs before adoption and the first one after it caps function length at
+60, so an editor told 100 would accept what that audit rejects. An unresolvable
+policy warns rather than failing, because these commands generated editor files
+before they read policy at all; `praetorctl audit` still fails on that state.
+Only a nil or cancelled context fails the resolution: `editors` and the MCP
+inspection return the error, and `standards-lsp` keeps its current ceiling and
+logs the reason. Tests:
+`internal/config/repository_policy_test.go`,
+`cmd/standardsctl/editors_test.go`, `cmd/standards-lsp/policy_test.go`,
+`cmd/standards-mcp/server_test.go`.
 
 ## Existing configuration
 

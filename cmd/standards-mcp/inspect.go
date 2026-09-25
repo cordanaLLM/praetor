@@ -259,13 +259,18 @@ func (s *Server) inspectSymbolsAtPath(ctx context.Context, path string) (string,
 	if len(files) == 0 {
 		return "No Go source files found for symbol inspection.", nil
 	}
-	bounds, err := config.ResolveRepositoryComplexity(ctx, s.rootDir)
+	// A policy that exists but does not resolve yet reports against the HISS-04 ceiling and
+	// says so, as the editor projections do; only an interrupted resolution fails the tool.
+	bounds, warning, err := config.ResolveRepositoryComplexity(ctx, s.rootDir)
 	if err != nil {
 		return "", fmt.Errorf("resolve complexity policy for %s: %w", s.rootDir, err)
 	}
 	fset := token.NewFileSet()
 	var b strings.Builder
 	b.WriteString("=== Go AST Symbol & HISS-04 Complexity Inspection ===\n\n")
+	if warning != "" {
+		fmt.Fprintf(&b, "[WARN] %s\n\n", warning)
+	}
 	for _, file := range files {
 		s.inspectSingleFile(fset, file, bounds, &b)
 	}

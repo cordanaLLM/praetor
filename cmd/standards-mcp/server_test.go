@@ -622,11 +622,29 @@ func TestServer_Boundary_InspectSymbolsFollowsRepositoryPolicy(t *testing.T) {
 	expectText(t, "tight policy", tight, "HISS-04 WARN: LOC]")
 }
 
+// A policy that exists but does not resolve reports against the HISS-04 ceiling, tightened by
+// any readable override, and says so; only a resolution the caller interrupted fails the tool.
 func TestServer_Negative_InspectSymbolsUnresolvablePolicy(t *testing.T) {
 	srv, root := newFixtureServer(t)
+	// The lock `praetorctl init` writes pins nothing and carries no digest.
+	writeFixtureFile(t, root, ".standards.lock", "# SemVer lockfile\nversion: 1\npinned_version: \"v0.0.0\"\n")
+	writeFixtureFile(t, root, ".standards.yaml", fixtureManifestWithComplexity("    max_func_loc: 26\n"))
+	initLocked := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "complex.go"})
+	expectText(t, "init lock", initLocked, "[WARN] repository policy unresolved")
+	expectText(t, "init lock", initLocked, "LOC: 27 (<=26)")
+	expectText(t, "init lock", initLocked, "Cyclo: 13 (<=10)")
+
 	writeFixtureFile(t, root, ".standards.yaml", "version: [\n")
-	res := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "main.go"})
-	expectError(t, "corrupt manifest", res, "resolve complexity policy")
+	corrupt := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "main.go"})
+	expectText(t, "corrupt manifest", corrupt, "[WARN] repository policy unresolved")
+	expectText(t, "corrupt manifest", corrupt, fmt.Sprintf("(<=%d)", config.AuditMaxFuncLOC))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := srv.inspectSymbolsAtPath(ctx, filepath.Join(root, "main.go")); err == nil ||
+		!strings.Contains(err.Error(), "resolve complexity policy") {
+		t.Errorf("interrupted resolution = %v, want an error", err)
+	}
 }
 
 func TestServer_Negative_InspectSymbols(t *testing.T) {

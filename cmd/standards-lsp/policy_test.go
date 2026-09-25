@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -35,16 +36,37 @@ func fileURI(path string) string {
 	return (&url.URL{Scheme: "file", Path: slashed}).String()
 }
 
-func initialize(t *testing.T, srv *Server, params any) {
+// initialize runs the handshake and returns the notifications written after its response.
+func initialize(t *testing.T, srv *Server, params any) []JSONRPCNotification {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": params})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp, _ := mustHandle(t, srv, context.Background(), string(raw)); resp == nil || resp.Error != nil {
+	resp, notifs := mustHandle(t, srv, context.Background(), string(raw))
+	if resp == nil || resp.Error != nil {
 		t.Fatalf("initialize failed: %+v", resp)
 	}
+	return notifs
 }
+
+// policyWarning returns the message of the single window/logMessage warning in notifs, or ""
+// when there is none.
+func policyWarning(t *testing.T, notifs []JSONRPCNotification) string {
+	t.Helper()
+	if len(notifs) == 0 {
+		return ""
+	}
+	params, ok := notifs[0].Params.(map[string]any)
+	if len(notifs) != 1 || notifs[0].Method != "window/logMessage" || !ok || params["type"] != lspMessageTypeWarning {
+		t.Fatalf("want one window/logMessage warning, got %+v", notifs)
+	}
+	message, _ := params["message"].(string)
+	return message
+}
+
+// initLock is the lock `praetorctl init` writes: it pins nothing and carries no digest.
+const initLock = "# SemVer lockfile\nversion: 1\npinned_version: \"v0.0.0\"\n"
 
 func lengthDiagnostics(t *testing.T, srv *Server, loc int) int {
 	t.Helper()
@@ -63,7 +85,9 @@ func TestLSP_Positive_InitializeAdoptsWorkspacePolicy(t *testing.T) {
 		"rootPath":         map[string]any{"rootPath": root},
 	} {
 		srv := NewServer(&bytes.Buffer{}, &bytes.Buffer{}, "v1.0.0")
-		initialize(t, srv, params)
+		if warning := policyWarning(t, initialize(t, srv, params)); warning != "" {
+			t.Errorf("%s: a resolvable workspace logged %q", name, warning)
+		}
 		if got := srv.complexityPolicy(); got.MaxFuncLOC != 40 || got.MaxStatements != 3 {
 			t.Fatalf("%s: adopted %+v, want the workspace's 40/3", name, got)
 		}
@@ -89,10 +113,47 @@ func TestLSP_Negative_UnresolvableWorkspaceKeepsCeiling(t *testing.T) {
 		"empty folder list": map[string]any{"workspaceFolders": []any{}},
 	} {
 		srv := NewServer(&bytes.Buffer{}, &bytes.Buffer{}, "v1.0.0")
-		initialize(t, srv, params)
+		warning := policyWarning(t, initialize(t, srv, params))
 		if got := srv.complexityPolicy(); got != config.HISSComplexityCeiling() {
 			t.Errorf("%s: adopted %+v, want the fallback ceiling", name, got)
 		}
+		// Only a workspace that names a policy the server could not resolve is worth a warning.
+		if wantWarning := name == "corrupt manifest"; (warning != "") != wantWarning ||
+			(wantWarning && !strings.Contains(warning, "repository policy unresolved")) {
+			t.Errorf("%s: warning %q", name, warning)
+		}
+	}
+}
+
+// The lock `praetorctl init` writes does not resolve; the server still adopts the manifest's
+// own override within the ceiling and logs why, where it used to fall back silently.
+func TestLSP_Negative_UnresolvedLockAdoptsOverridesAndWarns(t *testing.T) {
+	root := policyWorkspace(t, tightManifest)
+	if err := os.WriteFile(filepath.Join(root, ".standards.lock"), []byte(initLock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(&bytes.Buffer{}, &bytes.Buffer{}, "v1.0.0")
+	warning := policyWarning(t, initialize(t, srv, map[string]any{"rootUri": fileURI(root)}))
+	if !strings.Contains(warning, "repository policy unresolved") || !strings.Contains(warning, "lockfile digest") {
+		t.Errorf("fallback not stated: %q", warning)
+	}
+	want := config.HISSComplexityCeiling()
+	want.MaxFuncLOC, want.MaxStatements = 40, 3
+	if got := srv.complexityPolicy(); got != want {
+		t.Errorf("adopted %+v, want %+v", got, want)
+	}
+
+	// An interrupted resolution keeps what the server had and says so.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	fresh := NewServer(&bytes.Buffer{}, &bytes.Buffer{}, "v1.0.0")
+	raw, err := json.Marshal(map[string]any{"rootUri": fileURI(root)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	interrupted := policyWarning(t, fresh.adoptWorkspacePolicy(ctx, raw))
+	if !strings.Contains(interrupted, "workspace policy not resolved") || fresh.complexityPolicy() != config.HISSComplexityCeiling() {
+		t.Errorf("interrupted resolution = %q, %+v", interrupted, fresh.complexityPolicy())
 	}
 }
 
