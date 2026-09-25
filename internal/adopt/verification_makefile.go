@@ -424,8 +424,8 @@ func makefileDirective(fields []string) string {
 }
 
 // makefileLineIsAmbiguous reports whether a line may define targets only Make can resolve: an
-// include, a define, an $(eval ...) call, a computed or pattern target name, or a line longer than
-// the scan bound, which is read in part and therefore unresolved. The line is
+// include, a define, an $(eval ...) or ${eval ...} call, a computed or pattern target name, or a
+// line longer than the scan bound, which is read in part and therefore unresolved. The line is
 // already trimmed and is not a recipe line. A bare modifier is not ambiguous: measured against
 // GNU Make 4.4.1, a Makefile holding "override verify-all := x" or "override CFLAGS += -Wall"
 // beside an "all:" rule answers "make verify-all" with "No rule to make target".
@@ -457,6 +457,8 @@ func mayDefineVerificationTarget(data string) bool {
 	return mayDefineTarget(data, "verify-all")
 }
 
+// mayDefineTarget reports whether data may already own target: a rule for it, a line only Make can
+// resolve, or more than maxMakefileLines lines, whose unread tail may hold either (HISS-02).
 func mayDefineTarget(data, target string) bool {
 	if hasVerificationTarget(data, target) {
 		return true

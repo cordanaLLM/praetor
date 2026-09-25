@@ -128,6 +128,7 @@ func TestMakefileOwnershipSeparatesAssignmentsFromAmbiguousForms(t *testing.T) {
 		"define":                   {"define recipe\n@echo custom\nendef\n", true},
 		"override-define":          {"override define recipe\n@echo custom\nendef\n", true},
 		"eval":                     {"$(eval verify-all: dep)\n", true},
+		"brace-eval":               {"${eval verify-all: dep}\n", true},
 		"generated-target":         {"$(TARGET):\n\t@echo custom\n", true},
 		"pattern-target":           {"verify-%:\n\t@echo custom\n", true},
 		"assignment":               {"verify-all := x\nall:\n\t@echo original\n", false},
@@ -202,5 +203,26 @@ func TestMakefileScanBoundLeavesOwnershipAmbiguous(t *testing.T) {
 	at := strings.Repeat("x", maxMakefileLineBytes-len(declaration)) + declaration + "\n"
 	if !hasVerificationTarget(at, "verify-all") {
 		t.Fatalf("a line of exactly %d bytes must still be read whole", maxMakefileLineBytes)
+	}
+}
+
+// Boundary: the file scan stops at maxMakefileLines (HISS-02). The last line inside the bound is
+// still read by the rule-versus-assignment parser, a Makefile of exactly the bound built from
+// assignments owns nothing, and one line more leaves the unread tail unresolved, so both the
+// verify-all and the docs-lint ownership checks report it as ambiguous.
+func TestMakefileLineCountBoundLeavesOwnershipAmbiguous(t *testing.T) {
+	assignments := strings.Repeat("V := a:b\n", maxMakefileLines-1)
+	if !hasVerificationTarget(assignments+"verify-all: dep", "verify-all") {
+		t.Fatalf("a rule on line %d was not read", maxMakefileLines)
+	}
+	if hasVerificationTarget(assignments+"verify-all := dep", "verify-all") {
+		t.Fatalf("an assignment on line %d was read as a rule", maxMakefileLines)
+	}
+	if mayDefineVerificationTarget(assignments) || mayDefineTarget(assignments, "docs-lint") {
+		t.Fatalf("a Makefile of exactly %d lines of assignments was reported as owning a target", maxMakefileLines)
+	}
+	past := assignments + "V := c\n"
+	if !mayDefineVerificationTarget(past) || !mayDefineTarget(past, "docs-lint") {
+		t.Fatalf("a Makefile past %d lines must stay ambiguous so adoption preserves it", maxMakefileLines)
 	}
 }

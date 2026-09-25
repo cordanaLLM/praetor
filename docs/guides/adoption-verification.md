@@ -29,11 +29,13 @@ Because the cut comes first, an `=` that a comment or a recipe carries decides n
 `verify-all: lint ## run gates (FAST=1)` and `verify-all: ; FOO=1 echo c` are rules and are
 preserved. So are double-colon rules (`verify-all:: dep`), target lists (`all verify-all: dep`) and
 rules whose prerequisites hold a substitution reference (`verify-all: $(SRCS:.c=.o)`), along with
-the forms only Make itself can resolve: an `include` or `define` directive, `$(eval ...)`, a target
-name containing `$` or `%`, and a line longer than the 8192-byte scan bound, which is read in part
-and therefore left to Make. The table tests behind this contract are in
-`internal/adopt/verification_makefile_target_test.go`; each row was measured against GNU Make
-4.4.1.
+the forms only Make itself can resolve: an `include` or `define` directive, `$(eval ...)` or
+`${eval ...}`, a target name containing `$` or `%`, a line longer than the 8192-byte scan bound,
+which is read in part, and a Makefile longer than 4096 lines, which is read only in part as well;
+both are left to Make. The documentation gate uses the same reader to decide whether the project
+already owns `docs-lint` (`mayDefineTarget` in `internal/adopt/verification_makefile.go`). The
+table tests behind this contract are in `internal/adopt/verification_makefile_target_test.go`; each
+row was measured against GNU Make 4.4.1.
 
 Repositories declaring `docs:seo-portal` also receive a locked Markdown gate,
 its dedicated required CI workflow, and private scratch-link protection. The
