@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 type bootstrapWrite struct {
@@ -143,11 +145,11 @@ func verifyRecordedBootstrap(ctx context.Context, path string, raw []byte, actua
 	if err != nil {
 		return err
 	}
-	expectedBytes, err := Render(expectedCopy)
+	identical, err := rendersExactly(raw, expectedCopy)
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(raw, expectedBytes) {
+	if !identical {
 		return errors.New("recorded bootstrap configuration differs from declared profiles or contains unrecognized edits")
 	}
 	artifacts, err := readBootstrapCompanions(ctx, path, spec)
@@ -169,11 +171,55 @@ func readBootstrapConfig(ctx context.Context, path string) ([]byte, *DevContaine
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read devcontainer file %s: %w", path, err)
 	}
-	var dc DevContainer
-	if err := json.Unmarshal(data, &dc); err != nil {
+	dc, err := decodeManagedConfig(data, path)
+	if err != nil {
 		return nil, nil, err
 	}
-	return data, &dc, nil
+	return data, dc, nil
+}
+
+// decodeManagedConfig decodes the whole file rather than the fields the schema
+// happens to name. A tolerant decode drops keys such as initializeCommand or
+// runArgs, so the rejection names the offending key instead of reporting a
+// nameless mismatch. It is a first filter, not the verification rule: only
+// rendersExactly settles whether a file is in sync.
+func decodeManagedConfig(data []byte, path string) (*DevContainer, error) {
+	var dc DevContainer
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&dc); err != nil {
+		return nil, fmt.Errorf("devcontainer at %s does not match the managed schema: %w", path, err)
+	}
+	// More() reports false on a stray "}" or "]", so it would accept
+	// `{...}}` and `{...}]]]garbage`. Only end of input closes the file.
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("devcontainer at %s carries content after its configuration object", path)
+	}
+	return &dc, nil
+}
+
+// rendersExactly reports whether the bytes on disk are the render of want,
+// compared after line-ending normalisation. The file is compared, never a
+// re-render of what decoded: Go's JSON decoder matches member names
+// case-insensitively and keeps the last of a duplicate pair, so
+// "POSTCREATECOMMAND" and a repeated "remoteUser" both survive a typed decode
+// and re-marshal to the managed spelling. Comparing the re-render would
+// certify both as in sync.
+//
+// CR is JSON whitespace, so a checkout with core.autocrlf=true holds a file
+// that differs from Render only in its line endings and that no operator
+// edited. util.NormalizeLineEndings is the rule the register block already
+// applies for the same reason (HISS-21, HISS-19); it cannot mask tampering,
+// because JSON forbids an unescaped CR inside a string, so every CRLF in the
+// file is whitespace between tokens. Render emits LF, so only the file side needs normalising. Both
+// verification paths, recorded bootstrap and legacy, apply this one rule.
+func rendersExactly(raw []byte, want *DevContainer) (bool, error) {
+	rendered, err := Render(want)
+	if err != nil {
+		return false, err
+	}
+	normalized, _ := util.NormalizeLineEndings(string(raw))
+	return normalized == string(rendered), nil
 }
 
 func validateBootstrapProjection(dc *DevContainer, spec *BootstrapSpec) error {

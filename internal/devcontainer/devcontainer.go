@@ -23,6 +23,7 @@ const (
 	DefaultDockerfilePath = "../docker/dev/Dockerfile"
 	GoFeatureRef          = "ghcr.io/devcontainers/features/go:1"
 	CommonUtilsFeature    = "ghcr.io/devcontainers/features/common-utils:2"
+	NativeGPUProfile      = "native-gpu-systems"
 )
 
 // BuildConfig defines the container build context and dockerfile location.
@@ -105,6 +106,13 @@ func synthesize(name string, profiles []string, facets []string, selected []conf
 	if len(selected) > MaxLoopLimit {
 		return nil, errors.New("selected DevContainer features exceed bounds")
 	}
+	// Every profile and facet loop below stops at MaxLoopLimit, so an oversized
+	// input would be truncated into a container contradicting what was declared.
+	// PrepareBundle already refuses that input; the two entry points must not
+	// disagree about which manifests are synthesizable.
+	if err := validateSynthesisBounds(name, profiles, facets); err != nil {
+		return nil, err
+	}
 	containerName := strings.TrimSpace(name)
 	if containerName == "" {
 		containerName = "workspace"
@@ -113,7 +121,7 @@ func synthesize(name string, profiles []string, facets []string, selected []conf
 	features := synthesizeFeatures(selected, profiles, facets)
 	extensions := synthesizeExtensions(profiles, facets, selected)
 	settings := synthesizeSettings(profiles, facets, selected)
-	postCmd := synthesizePostCreateCommand(profiles)
+	postCmd := synthesizePostCreateCommand(profiles, selected)
 
 	dc := &DevContainer{
 		Name: containerName,
@@ -145,9 +153,12 @@ func synthesizeFeatures(selected []config.DevContainerFeature, profiles []string
 		return features
 	}
 
-	// Always wire Go feature for Go-based repositories
-	features[GoFeatureRef] = map[string]interface{}{
-		"version": DefaultGoVersion,
+	// The Go feature follows the declared profiles: the native toolchain rejects
+	// Go tooling in its extensions and settings, so it receives no Go runtime.
+	if containerHasGoToolchain(profiles, nil) {
+		features[GoFeatureRef] = map[string]interface{}{
+			"version": DefaultGoVersion,
+		}
 	}
 
 	for i := 0; i < len(facets) && i < MaxLoopLimit; i++ {
@@ -163,6 +174,17 @@ func synthesizeFeatures(selected []config.DevContainerFeature, profiles []string
 	return features
 }
 
+// hasNativeGPUProfile reports whether the declared profiles select the native
+// toolchain, whose container carries C/C++ tooling instead of Go.
+func hasNativeGPUProfile(profiles []string) bool {
+	for i := 0; i < len(profiles) && i < MaxLoopLimit; i++ {
+		if strings.ToLower(strings.TrimSpace(profiles[i])) == NativeGPUProfile {
+			return true
+		}
+	}
+	return false
+}
+
 // synthesizeExtensions constructs deduplicated IDE extensions based on profiles and facets.
 func synthesizeExtensions(profiles []string, facets []string, selected []config.DevContainerFeature) []string {
 	extList := []string{
@@ -170,22 +192,14 @@ func synthesizeExtensions(profiles []string, facets []string, selected []config.
 		"eamodio.gitlens",
 	}
 
-	hasNativeGPU := false
-	for _, p := range profiles {
-		if strings.ToLower(strings.TrimSpace(p)) == "native-gpu-systems" {
-			hasNativeGPU = true
-			break
-		}
-	}
-
-	if hasNativeGPU {
+	if hasNativeGPUProfile(profiles) {
 		extList = append(extList,
 			"llvm-vs-code-extensions.vscode-clangd",
 			"mesonbuild.mesonbuild",
 			"ms-vscode.cmake-tools",
 			"ms-python.python",
 		)
-	} else if shouldAddGoTooling(selected) {
+	} else if containerHasGoToolchain(profiles, selected) {
 		extList = append(extList, "golang.go")
 	}
 
@@ -212,21 +226,13 @@ func synthesizeSettings(profiles []string, facets []string, selected []config.De
 		"editor.formatOnSave": true,
 	}
 
-	hasNativeGPU := false
-	for _, p := range profiles {
-		if strings.ToLower(strings.TrimSpace(p)) == "native-gpu-systems" {
-			hasNativeGPU = true
-			break
-		}
-	}
-
-	if hasNativeGPU {
+	if hasNativeGPUProfile(profiles) {
 		settings["clangd.path"] = "clangd"
 		settings["clangd.arguments"] = []string{
 			"--compile-commands-dir=core/build",
 			"--header-insertion=never",
 		}
-	} else if shouldAddGoTooling(selected) {
+	} else if containerHasGoToolchain(profiles, selected) {
 		settings["go.toolsManagement.autoUpdate"] = true
 		settings["go.useLanguageServer"] = true
 		settings["go.lintTool"] = "golangci-lint"
@@ -244,20 +250,40 @@ func synthesizeSettings(profiles []string, facets []string, selected []config.De
 }
 
 func hasGoFeature(selected []config.DevContainerFeature) bool {
-	for _, feature := range selected {
-		if strings.HasSuffix(feature.Identity(), "/go") {
+	for i := 0; i < len(selected) && i < MaxLoopLimit; i++ {
+		if strings.HasSuffix(selected[i].Identity(), "/go") {
 			return true
 		}
 	}
 	return false
 }
 
-func shouldAddGoTooling(selected []config.DevContainerFeature) bool {
-	return selected == nil || hasGoFeature(selected)
+// containerHasGoToolchain reports whether the container this synthesis produces
+// will carry a Go runtime. It is one predicate for the feature map, the IDE
+// tooling and the startup command, which must not disagree: a pinned catalog
+// owns the feature set whenever one was selected, and only the legacy path with
+// no selection falls back to the declared profiles. The profile gate alone is
+// not that answer on the production path, where ResolveDevContainerFeatures
+// always returns a non-nil slice (internal/config/devcontainer_features.go:47)
+// and the union decides.
+func containerHasGoToolchain(profiles []string, selected []config.DevContainerFeature) bool {
+	if selected != nil {
+		return hasGoFeature(selected)
+	}
+	return !hasNativeGPUProfile(profiles)
 }
 
-// synthesizePostCreateCommand determines appropriate startup command.
-func synthesizePostCreateCommand(profiles []string) string {
+// synthesizePostCreateCommand determines appropriate startup command. Profiles
+// is a list, so framework and native-gpu-systems can both be declared. The Go
+// startup command is emitted only when the container actually receives a Go
+// toolchain, because a container built without one cannot run
+// "go run ./cmd/standardsctl"; conversely a selected catalog that carries the
+// Go feature keeps the command even alongside the native profile, whose gate
+// only decides which IDE tooling is installed.
+func synthesizePostCreateCommand(profiles []string, selected []config.DevContainerFeature) string {
+	if !containerHasGoToolchain(profiles, selected) {
+		return "make verify-all"
+	}
 	for i := 0; i < len(profiles) && i < MaxLoopLimit; i++ {
 		p := strings.ToLower(strings.TrimSpace(profiles[i]))
 		if p == "framework" {
@@ -358,12 +384,9 @@ func LoadDevContainer(ctx context.Context, path string) (*DevContainer, error) {
 		return nil, fmt.Errorf("failed to read devcontainer file %s: %w", path, err)
 	}
 
-	var dc DevContainer
-	if err := json.Unmarshal(data, &dc); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal devcontainer json at %s: %w", path, err)
-	}
-
-	return &dc, nil
+	// The same decoder readBootstrapConfig uses. Two decoders for one schema
+	// drift apart the next time the schema changes (HISS-19).
+	return decodeManagedConfig(data, path)
 }
 
 // Verify validates that the devcontainer file at path matches expected configuration.
@@ -376,17 +399,11 @@ func Verify(ctx context.Context, path string, expected *DevContainer) error {
 		return verifyRecordedBootstrap(ctx, path, raw, actual, expected)
 	}
 
-	actualBytes, err := Render(actual)
+	identical, err := rendersExactly(raw, expected)
 	if err != nil {
 		return err
 	}
-
-	expectedBytes, err := Render(expected)
-	if err != nil {
-		return err
-	}
-
-	if string(actualBytes) != string(expectedBytes) {
+	if !identical {
 		return fmt.Errorf("devcontainer at %s does not match expected configuration", path)
 	}
 
