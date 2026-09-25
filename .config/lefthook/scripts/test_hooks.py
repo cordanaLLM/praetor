@@ -469,6 +469,78 @@ print("fixture hook self-tests passed")
         self.assertTrue(command(transient, "git", "show-ref", "--verify",
                                 "refs/heads/config-isolation").stdout)
 
+    def hook_env(self, index=None, **extra):
+        """The environment a pre-commit hook inherits; ``index`` is the one Git records."""
+        env = {key: value for key, value in os.environ.items()
+               if key not in {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}
+               and key not in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}
+               and not key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
+        if index is not None:
+            env["GIT_INDEX_FILE"] = str(index)
+        return {**env, **LOCALE_ENV, **extra}
+
+    def test_index_snapshot_exports_the_hook_index_without_command_line_config(self):
+        # `git commit -a` and `git commit <path>` run pre-commit with GIT_INDEX_FILE naming
+        # index.lock or next-index-*.lock. The export must hold the bytes that commit records,
+        # not the stale .git/index, while the caller's -c configuration stays outside it.
+        self.write("data.json", '{"index": "stale"}\n')
+        alternate = Path(self.temp.name) / "next-index-hook.lock"
+        shutil.copyfile(self.repo / ".git/index", alternate)
+        (self.repo / "data.json").write_text('{"index": "recorded"}\n', newline="\n")
+        subprocess.run(["git", "add", "--", "data.json"], cwd=self.repo, check=True,
+                       env=self.hook_env(alternate), capture_output=True, timeout=30)
+        attributes = Path(self.temp.name) / "leak-attributes"
+        attributes.write_text("* filter=leak\n", newline="\n")
+        smudge = "sed s/^/LEAKED/"
+        encodings = {
+            "count": {"GIT_CONFIG_COUNT": "2",
+                      "GIT_CONFIG_KEY_0": "core.attributesFile",
+                      "GIT_CONFIG_VALUE_0": attributes.as_posix(),
+                      "GIT_CONFIG_KEY_1": "filter.leak.smudge", "GIT_CONFIG_VALUE_1": smudge},
+            "parameters": {"GIT_CONFIG_PARAMETERS":
+                           f"'core.attributesfile'='{attributes.as_posix()}' "
+                           f"'filter.leak.smudge'='{smudge}'"},
+        }
+        for name, leak in encodings.items():
+            with self.subTest(encoding=name):
+                env = self.hook_env(alternate, **leak)
+                # Control: the injected configuration is live for an unscrubbed Git, so the
+                # clean export below is evidence rather than an assertion that cannot fail.
+                with tempfile.TemporaryDirectory() as control:
+                    subprocess.run(["git", "checkout-index", "--all", "--force",
+                                    f"--prefix={control}/"], cwd=self.repo, env=env,
+                                   check=True, capture_output=True, timeout=30)
+                    self.assertTrue((Path(control) / "data.json").read_bytes()
+                                    .startswith(b"LEAKED"))
+                with mock.patch.dict(os.environ, env, clear=True), \
+                        contextlib.chdir(self.repo), snapshot() as directory:
+                    self.assertEqual((directory / "data.json").read_bytes(),
+                                     b'{"index": "recorded"}\n')
+                    self.assertEqual((directory / "README.md").read_bytes(), b"# Fixture\n")
+
+    def test_commit_all_and_path_commit_check_the_bytes_git_records(self):
+        self.write("data.json", '{"seed": 0}\n')
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "test: seed json fixture")
+        for index, mode in enumerate((("-a",), ("--", "data.json"))):
+            with self.subTest(mode=mode):
+                head = command(self.repo, "git", "rev-parse", "HEAD").stdout
+                # .git/index holds valid JSON; the bytes the commit records do not.
+                self.write("data.json", '{"broken":\n', stage=False)
+                rejected = command(self.repo, "git", "commit", "-q", "-s", "-m",
+                                   "test: record broken json", *mode, ok=False)
+                self.assertNotEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
+                self.assertIn(b"data.json: Expecting value", rejected.stdout + rejected.stderr)
+                self.assertEqual(command(self.repo, "git", "rev-parse", "HEAD").stdout, head)
+                # .git/index holds invalid JSON; the bytes the commit records are valid.
+                self.write("data.json", '{"broken":\n')
+                recorded = f'{{"recorded": {index}}}\n'
+                self.write("data.json", recorded, stage=False)
+                accepted = command(self.repo, "git", "commit", "-q", "-s", "-m",
+                                   "test: record valid json", *mode, ok=False)
+                self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+                self.assertEqual(command(self.repo, "git", "show", "HEAD:data.json").stdout,
+                                 recorded.encode())
+
     def test_merge_retaining_remote_private_baseline_is_not_new_private_content(self):
         external = Path(self.temp.name) / "merge-source"
         external.mkdir()

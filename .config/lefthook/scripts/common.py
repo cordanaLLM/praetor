@@ -246,19 +246,32 @@ def changed(base, head="HEAD"):
     return paths(git("diff", "--name-only", "-z", "--no-renames", base, head, "--"))
 
 
-def clean_env():
+def index_env():
+    """Environment for reading the index Git hands the hook, without the caller's `-c` config.
+
+    Git names the index a commit will record through GIT_INDEX_FILE: `git commit -a` points it
+    at index.lock and `git commit <path>` at a next-index-*.lock, both of which differ from
+    .git/index while the hook runs. The pre-commit export must read that file, so only the
+    command-line configuration is removed here; GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE stay
+    exactly as Git set them. clean_env() builds on this and also drops the repository selection.
+    """
     env = dict(os.environ)
     if len(env) > MAX_PROCESS_ENV_ENTRIES:
         raise HookError(f"process environment exceeds {MAX_PROCESS_ENV_ENTRIES} entries")
-    for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
-                "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
-        env.pop(key, None)
     # Scan a statically bounded snapshot. Removing the count and legacy aggregate disables the
     # Git config injection; removing every indexed value also keeps transport URLs and other
     # caller data out of descendant process environments.
     for key in tuple(env)[:MAX_PROCESS_ENV_ENTRIES]:
         if key in TRANSIENT_GIT_CONFIG_KEYS or key.startswith(TRANSIENT_GIT_CONFIG_PREFIXES):
             env.pop(key, None)
+    return env
+
+
+def clean_env():
+    env = index_env()
+    for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+                "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
+        env.pop(key, None)
     env.update(MANAGED_PROCESS_ENV)
     if len(env) > MAX_PROCESS_ENV_ENTRIES:
         raise HookError(f"process environment exceeds {MAX_PROCESS_ENV_ENTRIES} entries")
@@ -275,9 +288,10 @@ def snapshot(ref=None):
             # Snapshot checks consume repository bytes, not the operator's checkout
             # preference. Without this pin, Windows' core.autocrlf=true rewrites LF
             # shell/YAML blobs to CRLF and the isolated gate rejects bytes absent from
-            # the index it claims to inspect.
+            # the index it claims to inspect. The export reads the index the commit will
+            # record (index_env), never the stale .git/index clean_env would select.
             git(*SNAPSHOT_GIT_CONFIG, "checkout-index", "--all", "--force",
-                f"--prefix={dest}/", env=env)
+                f"--prefix={dest}/", env=index_env())
             # Lefthook's validator requires a repository even though it only
             # validates configuration. This metadata belongs solely to the export.
             run(["git", "init", "--quiet", str(dest)], env=env)
