@@ -81,7 +81,8 @@ func generateDevContainerBundle(ctx context.Context, manifest *config.Manifest, 
 		return fmt.Errorf("write devcontainer bundle: %w", err)
 	}
 	if bundle.Spec().State == devcontainer.BootstrapUnavailable {
-		return fmt.Errorf("%w: %s; select --source-root before rebuilding the container", devcontainer.ErrBootstrapUnavailable, bundle.Spec().Reason)
+		return fmt.Errorf("%w: %s; rerun generate with --source-root <complete Praetor checkout> before rebuilding the container "+
+			"(it replaces this unedited placeholder without --force)", devcontainer.ErrBootstrapUnavailable, bundle.Spec().Reason)
 	}
 	fmt.Printf("[PREPARED, NOT EXECUTED] %s for %s; source %s (%d companions)\n", opts.outputPath, bundle.Config.Name, bundle.Spec().SourceSHA256, len(bundle.Artifacts))
 	return nil

@@ -95,7 +95,16 @@ configuration keeps such keys and passes it.
 Without `--source-root`, or with an explicitly selected config-only catalog,
 generation writes an `unavailable` configuration and returns an error. Its
 startup fails with an actionable message; it cannot report a missing CLI as
-ready. Invalid explicit source paths, mutable image references, incomplete
+ready. To remediate, rerun the same command with `--source-root`. It replaces
+the placeholder without `--force` while the file is exactly what Praetor
+rendered for the same profiles and features, CRLF line endings aside; any edit
+keeps the file behind `--force` (`admitReplacement` in
+`internal/devcontainer/bootstrap_io.go`, tests in
+`internal/devcontainer/bootstrap_replace_test.go`). `--force` without
+`--source-root` never replaces a ready bootstrap with a placeholder: the
+configuration would stop starting and `Dockerfile.praetor` and the source parts
+would be left orphaned. Select a source root, or remove the bundle files first
+to drop the bootstrap deliberately. Invalid explicit source paths, mutable image references, incomplete
 bundles, symlinks, and altered companions are errors. Optional `--builder-image`
 and `--base-image` overrides must include lowercase SHA-256 digests.
 
