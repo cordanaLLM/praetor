@@ -260,6 +260,9 @@ jobs:
       # --strict fails on a configuration the bot would silently migrate, which is how a
       # renamed option is caught: without it the validator reports the migration and still
       # exits 0.
+      # --no-global validates renovate.json as repository config. A file named on the
+      # command line is otherwise read as global self-hosted config, which accepts
+      # global-only options (allowedCommands, onboarding) that the hosted bot rejects.
       - name: Validate Renovate Configuration
         if: steps.changed.outputs.run == 'true'
-        run: npx --yes --package renovate@44 renovate-config-validator --strict renovate.json
+        run: npx --yes --package renovate@44 renovate-config-validator --strict --no-global renovate.json
