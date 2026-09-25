@@ -1,0 +1,3 @@
+type: fixed
+title: Keep the caller's context Err in the loop when transcript ingestion adds its one-minute bound, and make the gc cancellation test double close Done when it cancels
+breaking: false

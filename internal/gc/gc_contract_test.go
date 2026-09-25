@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -253,21 +254,77 @@ func TestRemoveEntries_RejectsSameSizeReplacement(t *testing.T) {
 	}
 }
 
+// cancelAfterChecks is a context that cancels itself on the (limit+1)th Err poll, so a test
+// can place cancellation between two specific checks. It honours the context.Context
+// contract rather than only the polling path: Done is a real channel that closes at the
+// same moment Err first reports context.Canceled, and both stay in that state afterwards,
+// so code that selects on Done observes the same cancellation as code that polls Err.
 type cancelAfterChecks struct {
+	mu     sync.Mutex
 	checks int
 	limit  int
+	done   chan struct{}
+}
+
+func newCancelAfterChecks(limit int) *cancelAfterChecks {
+	return &cancelAfterChecks{limit: limit, done: make(chan struct{})}
 }
 
 func (c *cancelAfterChecks) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (c *cancelAfterChecks) Done() <-chan struct{}       { return nil }
+func (c *cancelAfterChecks) Done() <-chan struct{}       { return c.done }
 func (c *cancelAfterChecks) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.checks > c.limit {
+		return context.Canceled
+	}
 	c.checks++
 	if c.checks > c.limit {
+		close(c.done)
 		return context.Canceled
 	}
 	return nil
 }
 func (c *cancelAfterChecks) Value(any) any { return nil }
+
+// channelClosed reports whether done is closed without blocking.
+func channelClosed(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	default:
+		return false
+	}
+}
+
+// TestCancelAfterChecksHonoursTheContextContract pins the double itself: Done stays open while
+// Err reports nil (positive), closes exactly when Err first reports cancellation (boundary),
+// and neither reverts on later polls (negative: no un-cancellation, no double close).
+func TestCancelAfterChecksHonoursTheContextContract(t *testing.T) {
+	ctx := newCancelAfterChecks(2)
+	for poll := 1; poll <= 2; poll++ {
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("poll %d: Err = %v before the limit", poll, err)
+		}
+		if channelClosed(ctx.Done()) {
+			t.Fatalf("poll %d: Done closed while Err reports nil", poll)
+		}
+	}
+	if err := ctx.Err(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("poll past the limit: Err = %v, want context.Canceled", err)
+	}
+	if !channelClosed(ctx.Done()) {
+		t.Fatal("Err reports cancellation but Done is still open")
+	}
+	for poll := 0; poll < 3; poll++ {
+		if err := ctx.Err(); !errors.Is(err, context.Canceled) {
+			t.Fatalf("later poll %d: Err = %v, cancellation reverted", poll, err)
+		}
+	}
+	if !channelClosed(ctx.Done()) {
+		t.Fatal("Done reopened after cancellation")
+	}
+}
 
 func TestRemoveEntries_StopsDuringRemovalOnCancellation(t *testing.T) {
 	rootPath := t.TempDir()
@@ -292,10 +349,13 @@ func TestRemoveEntries_StopsDuringRemovalOnCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := &cancelAfterChecks{limit: 1}
+	ctx := newCancelAfterChecks(1)
 	err = removeEntries(ctx, root, []treeEntry{{path: "first", info: firstInfo}, {path: "second", info: secondInfo}})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancellation during removal, got %v", err)
+	}
+	if !channelClosed(ctx.Done()) {
+		t.Fatal("removal stopped on cancellation the context never signalled through Done")
 	}
 	if _, statErr := os.Stat(first); statErr != nil {
 		t.Fatalf("cancellation removed later entry unexpectedly: %v", statErr)

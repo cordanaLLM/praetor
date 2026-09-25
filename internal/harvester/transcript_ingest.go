@@ -209,9 +209,30 @@ func transcriptDestination(directory, source string) (string, error) {
 	return absolute, nil
 }
 
+// boundedTranscriptContext bounds an ingestion run by one minute when the caller set no
+// deadline, and otherwise returns the caller's context unchanged with a no-op cancel. The
+// bounded child keeps the caller's Err in the loop, so a caller whose Err does work (a
+// poll-driven cancellation hook) still runs it instead of being shadowed by the child.
 func boundedTranscriptContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	if _, hasDeadline := ctx.Deadline(); hasDeadline {
 		return ctx, func() {}
 	}
-	return context.WithTimeout(ctx, time.Minute)
+	bounded, cancel := context.WithTimeout(ctx, time.Minute)
+	return callerErrContext{Context: bounded, caller: ctx}, cancel
+}
+
+// callerErrContext is a bounded child context whose Err consults the caller's context first.
+// Deadline, Done and Value come from the child, which already closes Done when the caller's
+// Done closes; only Err needs forwarding, because the child answers Err from its own state
+// and never calls the caller's.
+type callerErrContext struct {
+	context.Context
+	caller context.Context
+}
+
+func (c callerErrContext) Err() error {
+	if err := c.caller.Err(); err != nil {
+		return err
+	}
+	return c.Context.Err()
 }
