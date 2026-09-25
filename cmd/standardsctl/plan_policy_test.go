@@ -106,3 +106,11 @@ func TestPlanEffectivePolicy_Negative_CorruptLockIsNotSwallowed(t *testing.T) {
 		t.Errorf("a corrupt lock must fail, got policy=%+v notice=%q", policy.Complexity, notice)
 	}
 }
+
+// A manifest that vanished between load and resolution is an error, never a nil policy.
+func TestPlanEffectivePolicy_Negative_MissingManifest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".standards.yaml")
+	if policy, _, err := planEffectivePolicy(path, &config.Manifest{}); err == nil || policy != nil {
+		t.Fatalf("missing manifest = %+v, %v", policy, err)
+	}
+}

@@ -166,6 +166,11 @@ func writeAgentHarness(ctx context.Context, repoPath string) error {
 func writeOnboardEditors(ctx context.Context, repoPath string) error {
 	opts := editor.DefaultOptions()
 	opts.WorkspaceRoot = repoPath
+	// Complexity is deliberately left at config.HISSComplexityCeiling here. Onboarding writes
+	// the manifest and lock before the pinned profile catalog is materialized in the target
+	// repository, so the declared policy is not resolvable at this point in the scaffold;
+	// `praetorctl adopt` and `praetorctl editors generate` restate the resolved ceilings once
+	// it is (issue #360).
 	set, err := editor.SynthesizeContext(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("synthesize editor configs: %w", err)

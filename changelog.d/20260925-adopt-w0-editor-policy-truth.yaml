@@ -1,0 +1,4 @@
+type: fixed
+title: Editor projections, standards-lsp and the MCP symbol inspection now state the complexity ceilings the repository's resolved policy enforces instead of a hard-coded 75-line limit; editor renderers emit only the language server, extensions, commands and private directories the capability plan proved (#365); plan and flavor headings no longer name cordanaLLM/praetor in every repository (#361)
+issue: "#360"
+breaking: false

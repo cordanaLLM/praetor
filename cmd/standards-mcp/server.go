@@ -388,7 +388,9 @@ func writePlanHeader(b *strings.Builder, manifest *config.Manifest, policy *conf
 	if err != nil {
 		return fmt.Errorf("resolve branch protection reviews: %w", err)
 	}
-	b.WriteString("=== cordanaLLM/praetor Reconcile Plan (Dry Run) ===\n")
+	// Repository-neutral heading; the manifest-backed identity follows on the next line.
+	// This used to name this product's own repository in every adopted repository (#361).
+	b.WriteString("=== Praetor Reconcile Plan (Dry Run) ===\n")
 	fmt.Fprintf(b, "Repository: %s/%s\n", manifest.Repository.Owner, manifest.Repository.Name)
 	fmt.Fprintf(b, "Profiles:   %v\nFacets:     %v\n\nTarget Invariants:\n", manifest.Profiles, manifest.Facets)
 	fmt.Fprintf(b, "  - Max Cyclomatic Complexity: <= %d\n", policy.Complexity.MaxCyclomatic)
@@ -621,7 +623,7 @@ func (s *Server) createInspectSymbolsTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("inspection cancelled: %v", err)), nil
 		}
 
-		report, err := s.inspectSymbolsAtPath(targetPath)
+		report, err := s.inspectSymbolsAtPath(ctx, targetPath)
 		if err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Inspection failed: %v", err)), nil
 		}

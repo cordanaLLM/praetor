@@ -51,8 +51,12 @@ func TestEditorWriteMergesJSONAndPreservesHumanFiles(t *testing.T) {
 		".vscode/tasks.json":      `{"version":"2.0.0","tasks":[{"label":"Human","type":"shell","command":"echo human"}]}`,
 		".editorconfig":           "root = false\n# human policy\n",
 	})
+	addCapabilityEvidence(t, root)
 	opts := DefaultOptions()
+	opts.WorkspaceRoot = root
 	opts.Editors = []string{EditorVSCode, EditorUniversal}
+	opts.ExtensionRegistry = "open-vsx"
+	opts.Extensions = []ExtensionRecommendation{{ID: "golang.go", Registry: "open-vsx", Verified: true}}
 	set := mustSynthesize(t, opts)
 	report, err := WriteWithReport(set, root)
 	if err != nil {
@@ -88,8 +92,9 @@ func TestEditorWriteMergesJSONAndPreservesHumanFiles(t *testing.T) {
 }
 
 func TestEditorWriteRejectsManagedConflictBeforeAnyMutation(t *testing.T) {
-	root := t.TempDir()
+	root := evidenceWorkspace(t)
 	opts := DefaultOptions()
+	opts.WorkspaceRoot = root
 	opts.Editors = []string{EditorVSCode}
 	set := mustSynthesize(t, opts)
 	if err := Write(set, root); err != nil {

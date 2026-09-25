@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // =========================================================================
@@ -113,5 +116,61 @@ func TestRunEditors_Boundary_EmptyEditorsFlagKeepsDefault(t *testing.T) {
 		if !strings.Contains(string(settings), "antigravity.searchMaxWorkspaceFileCount") {
 			t.Errorf("args %v: default set (includes antigravity) missing antigravity key", resolved)
 		}
+	}
+}
+
+// =========================================================================
+// Resolved complexity policy (#360)
+// =========================================================================
+
+func generatedMaxLoc(t *testing.T, root string) string {
+	t.Helper()
+	if _, err := captureStdout(t, func() error {
+		return runEditors([]string{"generate", "--path=" + root, "--editors=jetbrains"})
+	}); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	profile, err := os.ReadFile(filepath.Join(root, ".idea", "inspectionProfiles", "standards.xml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, after, ok := strings.Cut(string(profile), `name="maxLoc" value="`)
+	if !ok {
+		t.Fatalf("profile states no maxLoc:\n%s", profile)
+	}
+	value, _, _ := strings.Cut(after, `"`)
+	return value
+}
+
+func TestRunEditors_Positive_ProjectsTheRepositoryPolicy(t *testing.T) {
+	root := t.TempDir()
+	manifest := "version: 1\nrepository:\n  owner: example\n  name: demo\noverrides:\n  complexity:\n    max_func_loc: 42\n"
+	if err := os.WriteFile(filepath.Join(root, ".standards.yaml"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := generatedMaxLoc(t, root); got != "42" {
+		t.Errorf("maxLoc = %s, want the repository's 42", got)
+	}
+}
+
+func TestRunEditors_Boundary_UnadoptedWorkspaceGetsTheAuditLength(t *testing.T) {
+	if got, want := generatedMaxLoc(t, t.TempDir()), fmt.Sprint(config.AuditMaxFuncLOC); got != want {
+		t.Errorf("maxLoc = %s, want the audit length %s", got, want)
+	}
+}
+
+func TestRunEditors_Negative_UnresolvablePolicyWritesNothing(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".standards.yaml"), []byte("version: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := captureStdout(t, func() error {
+		return runEditors([]string{"generate", "--path=" + root, "--editors=jetbrains"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "resolve complexity policy") {
+		t.Fatalf("corrupt manifest = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".idea")); !os.IsNotExist(statErr) {
+		t.Errorf("a failed resolution wrote editor files: %v", statErr)
 	}
 }

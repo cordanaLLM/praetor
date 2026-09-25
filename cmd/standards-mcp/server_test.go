@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -499,6 +500,23 @@ func TestServer_Positive_PlanAndAuditOnSyncedRepo(t *testing.T) {
 	expectText(t, "audit", audit, "7/7 MCP audit gates passed")
 }
 
+// The heading names the tool, never a repository; the manifest identity follows it (#361).
+func TestWritePlanHeader_NamesTheManifestRepository(t *testing.T) {
+	for _, repo := range []config.RepositoryMetadata{{Owner: "golusoris", Name: "golusoris"}, {}} {
+		var b strings.Builder
+		if err := writePlanHeader(&b, &config.Manifest{Repository: repo}, config.DefaultPolicy()); err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.SplitN(b.String(), "\n", 3)
+		if lines[0] != "=== Praetor Reconcile Plan (Dry Run) ===" || lines[1] != "Repository: "+repo.Owner+"/"+repo.Name {
+			t.Errorf("header for %+v = %q", repo, lines[:2])
+		}
+		if strings.Contains(b.String(), "cordanaLLM/praetor") {
+			t.Errorf("header names this product's repository:\n%s", b.String())
+		}
+	}
+}
+
 func TestWritePlanHeaderRejectsInvalidReviewMode(t *testing.T) {
 	policy := config.DefaultPolicy()
 	policy.BranchProtection.ReviewMode = "unreviewed"
@@ -561,8 +579,16 @@ func TestServer_Boundary_AuditLockfileIsDirectory(t *testing.T) {
 
 // ---- inspect_symbols ---------------------------------------------------------------------------
 
+// fixtureManifestWithComplexity is the fixture manifest with a repository complexity override.
+func fixtureManifestWithComplexity(complexity string) string {
+	return "version: 1\nrepository:\n  owner: \"fixture\"\n  name: \"repo\"\nprofiles:\n  - \"framework\"\nfacets: []\n" +
+		"overrides:\n  complexity:\n" + complexity
+}
+
 func TestServer_Positive_InspectSymbolsMeasuresComplexity(t *testing.T) {
-	srv, _ := newFixtureServer(t)
+	srv, root := newFixtureServer(t)
+	writeFixtureFile(t, root, ".standards.yaml", fixtureManifestWithComplexity(
+		"    max_cyclomatic: 10\n    max_cognitive: 15\n    max_func_loc: 75\n    max_statements: 50\n"))
 
 	res := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "."})
 	expectText(t, "inspect dir", res, "Func: Greet")
@@ -570,11 +596,37 @@ func TestServer_Positive_InspectSymbolsMeasuresComplexity(t *testing.T) {
 	expectText(t, "inspect dir", res, "Cyclo: 13 (<=10)")
 	expectText(t, "inspect dir", res, "HISS-04 WARN: Cyclo")
 
+	// The manifest asks for 75 lines; the audit caps it at its own length, and so does this.
 	single := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "main.go"})
-	expectText(t, "inspect file", single, "Func: Greet | LOC: 6 (<=75) | Stmts: 3 (<=50) | Cyclo: 2 (<=10) | Cognitive: 1 (<=15) [PASS]")
+	expectText(t, "inspect file", single, fmt.Sprintf(
+		"Func: Greet | LOC: 6 (<=%d) | Stmts: 3 (<=50) | Cyclo: 2 (<=10) | Cognitive: 1 (<=15) [PASS]", config.AuditMaxFuncLOC))
 	if strings.Contains(single.Content[0].Text, "WARN") {
 		t.Errorf("clean file reported a warning:\n%s", single.Content[0].Text)
 	}
+}
+
+// The verdict follows the inspected repository's resolved policy, not a literal ceiling (#360):
+// the same function passes under a looser policy and fails under a tighter one.
+func TestServer_Boundary_InspectSymbolsFollowsRepositoryPolicy(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	loose := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "complex.go"})
+	expectText(t, "resolved defaults", loose, "Cyclo: 13 (<=15)")
+	if strings.Contains(loose.Content[0].Text, "WARN") {
+		t.Errorf("the resolved default policy admits Classify:\n%s", loose.Content[0].Text)
+	}
+
+	writeFixtureFile(t, root, ".standards.yaml", fixtureManifestWithComplexity("    max_cyclomatic: 13\n    max_func_loc: 26\n"))
+	tight := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "complex.go"})
+	expectText(t, "tight policy", tight, "LOC: 27 (<=26)")
+	expectText(t, "tight policy", tight, "Cyclo: 13 (<=13)")
+	expectText(t, "tight policy", tight, "HISS-04 WARN: LOC]")
+}
+
+func TestServer_Negative_InspectSymbolsUnresolvablePolicy(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	writeFixtureFile(t, root, ".standards.yaml", "version: [\n")
+	res := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "main.go"})
+	expectError(t, "corrupt manifest", res, "resolve complexity policy")
 }
 
 func TestServer_Negative_InspectSymbols(t *testing.T) {
@@ -626,12 +678,13 @@ func TestServer_Boundary_MeasureFuncMetrics(t *testing.T) {
 	}
 
 	// Boundary: exactly at the caps is a pass; one over each cap names the bound.
-	at := funcMetrics{LOC: maxFuncLOC, Statements: maxStatements, Cyclomatic: maxCyclomatic, Cognitive: maxCognitive}
-	if v := at.violations(); len(v) != 0 {
+	bounds := config.HISSComplexityCeiling()
+	at := funcMetrics{LOC: bounds.MaxFuncLOC, Statements: bounds.MaxStatements, Cyclomatic: bounds.MaxCyclomatic, Cognitive: bounds.MaxCognitive}
+	if v := at.violations(bounds); len(v) != 0 {
 		t.Errorf("metrics at the caps reported %v", v)
 	}
-	over := funcMetrics{LOC: maxFuncLOC + 1, Statements: maxStatements + 1, Cyclomatic: maxCyclomatic + 1, Cognitive: maxCognitive + 1}
-	if v := strings.Join(over.violations(), ","); v != "LOC,Stmts,Cyclo,Cognitive" {
+	over := funcMetrics{LOC: bounds.MaxFuncLOC + 1, Statements: bounds.MaxStatements + 1, Cyclomatic: bounds.MaxCyclomatic + 1, Cognitive: bounds.MaxCognitive + 1}
+	if v := strings.Join(over.violations(bounds), ","); v != "LOC,Stmts,Cyclo,Cognitive" {
 		t.Errorf("violations over every cap = %q", v)
 	}
 }

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/editor"
 )
 
@@ -42,6 +44,14 @@ func runEditors(args []string) error {
 	if ids := splitCommaList(*editorsFlag); len(ids) > 0 {
 		opts.Editors = ids
 	}
+	// Editor projections must state the ceilings `praetorctl audit` enforces in this very
+	// repository. This command never resolved the manifest at all, so it wrote a 75-line
+	// function limit into every workspace regardless of policy (issue #360).
+	complexity, err := config.ResolveRepositoryComplexity(context.Background(), root)
+	if err != nil {
+		return fmt.Errorf("resolve complexity policy for %s: %w", root, err)
+	}
+	opts.Complexity = complexity
 
 	switch sub {
 	case "generate":

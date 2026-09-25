@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -17,7 +16,10 @@ func printPlanHeader(manifest *config.Manifest, policy *config.ResolvedPolicy) e
 	if err != nil {
 		return fmt.Errorf("resolve branch protection reviews: %w", err)
 	}
-	fmt.Println("=== cordanaLLM/praetor Reconcile Plan (Dry Run) ===")
+	// The heading names the tool, never a repository: it used to print this product's own
+	// owner/name in every adopted repository, contradicting the manifest-backed identity on
+	// the very next line (issue #361).
+	fmt.Println("=== Praetor Reconcile Plan (Dry Run) ===")
 	fmt.Printf("Repository: %s/%s\n", manifest.Repository.Owner, manifest.Repository.Name)
 	fmt.Printf("Profiles:   %v\n", manifest.Profiles)
 	fmt.Printf("Facets:     %v\n", manifest.Facets)
@@ -61,47 +63,25 @@ func checkPlanDrift(policy *config.ResolvedPolicy, rootDir string) ([]string, []
 
 // planEffectivePolicy resolves the same policy the audit will enforce.
 //
-// plan previously reported config.DefaultPolicy() with only the repository's own overrides applied,
-// so it never saw the pinned profiles and facets at all. For one repository that produced three
-// different answers to one question: the archetype file declared max_func_loc 75, plan printed 100
-// and audit enforced 60. A dry run that does not preview what the real run will do is worse than no
-// dry run, because it is believed.
+// plan previously reported config.DefaultPolicy() with only the repository's own overrides
+// applied, so it never saw the pinned profiles and facets at all. For one repository that
+// produced three different answers to one question: the archetype file declared max_func_loc
+// 75, plan printed 100 and audit enforced 60. A dry run that does not preview what the real
+// run will do is worse than no dry run, because it is believed.
 //
-// Audit is set, so this resolves through the same audit-compatibility ceiling the audit path
-// applies. Leaving it unset would report the uncapped value and reproduce the same disagreement
-// one number further along.
+// The resolution itself is config.ResolveRepositoryPolicy, shared with the editor projections
+// and the language server so those cannot disagree with this preview either (issue #360). The
+// notice is returned rather than printed so a caller that is not a dry run stays quiet.
 func planEffectivePolicy(configPath string, manifest *config.Manifest) (*config.ResolvedPolicy, string, error) {
-	root, err := filepath.Abs(filepath.Dir(configPath))
+	policy, notice, err := config.ResolveRepositoryPolicy(context.Background(), configPath, manifest)
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve planned root: %w", err)
+		return nil, "", err
 	}
-	// Without a lockfile there are no pinned profiles to resolve, so defaults plus the
-	// repository's own overrides is the whole policy rather than a degraded stand-in. This is
-	// the ungoverned case -- planning a repository before it is adopted -- and it must keep
-	// working, so the absence is checked for explicitly instead of being inferred from a read
-	// error, which would also swallow a corrupt or unreadable lock.
-	if !util.PathExists(filepath.Join(root, ".standards.lock")) {
-		policy := config.DefaultPolicy()
-		policy.ApplyOverrides(manifest.Overrides)
-		const notice = "no .standards.lock: built-in defaults and repository overrides only"
-		fmt.Printf("[INFO] %s\n", notice)
-		return policy, notice, nil
+	if policy == nil {
+		return nil, "", fmt.Errorf("no manifest to plan at %s", configPath)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), planPolicyTimeout)
-	defer cancel()
-	effective, err := config.LoadEffectivePolicyContext(ctx, config.EffectiveOptions{
-		Root:         root,
-		ManifestPath: configPath,
-		Audit:        true,
-	})
-	if err != nil {
-		return nil, "", fmt.Errorf("resolve effective policy: %w", err)
-	}
-	return &effective.Policy, "", nil
+	return policy, notice, nil
 }
-
-// planPolicyTimeout bounds the policy read (HISS-02).
-const planPolicyTimeout = 30 * time.Second
 
 func runPlan(args []string) error {
 	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
@@ -119,9 +99,12 @@ func runPlan(args []string) error {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	policy, _, err := planEffectivePolicy(*configPath, manifest)
+	policy, notice, err := planEffectivePolicy(*configPath, manifest)
 	if err != nil {
 		return err
+	}
+	if notice != "" {
+		fmt.Printf("[INFO] %s\n", notice)
 	}
 
 	if err := printPlanHeader(manifest, policy); err != nil {

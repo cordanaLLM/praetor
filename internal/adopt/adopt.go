@@ -489,6 +489,11 @@ func reconcileEditors(ctx context.Context, s *adoptSession) error {
 	edOpts := editor.DefaultOptions()
 	edOpts.WorkspaceRoot = s.repoPath
 	edOpts.Archetype = s.arch
+	// The session already resolved the policy this repository is adopted under; the editor
+	// projections state its ceilings rather than a literal of their own (issue #360).
+	if s.policy != nil {
+		edOpts.Complexity = s.policy.Policy.Complexity
+	}
 	// Synthesis observes the workspace to decide which languages are present, so it needs the
 	// caller's deadline rather than a background one.
 	set, err := editor.SynthesizeContext(ctx, edOpts)

@@ -221,7 +221,7 @@ func syncFlavors(ctx context.Context, dir string, transitions []flavors.TagTrans
 }
 
 func printFlavorPlan(transitions []flavors.TagTransition) {
-	fmt.Println("=== cordanaLLM/praetor Release Flavor Reconciler ===")
+	fmt.Println("=== Praetor Release Flavor Reconciler ===")
 	for i := 0; i < len(transitions) && i < flavors.MaxFlavors; i++ {
 		tr := transitions[i]
 		current := tr.CurrentRef

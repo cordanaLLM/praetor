@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // =========================================================================
@@ -604,26 +606,27 @@ func TestLSP_Boundary_EmptyFileAndLOCThreshold(t *testing.T) {
 		t.Errorf("expected 0 diagnostics for an empty file, got %+v err=%v", emptyDiags, err)
 	}
 
-	// Exactly 75 LOC (func line + 73 body lines + closing brace) passes.
-	var exact75 strings.Builder
-	exact75.WriteString("package sample\n\nfunc Exact75() {\n")
-	for i := 0; i < 73; i++ {
-		exact75.WriteString("\tprintln(1)\n")
+	// Before initialize names a workspace, the audit's own function length is the ceiling:
+	// exactly that many lines pass and one more fails (BUG-445).
+	limit := config.HISSComplexityCeiling().MaxFuncLOC
+	if diags := analyze(t, "file:///exact.go", wideFunc("Exact", limit)); countDiagnostics(diags, "HISS-04", "LOC") != 0 {
+		t.Errorf("function with exactly %d LOC must not trigger the LOC limit, got %+v", limit, diags)
 	}
-	exact75.WriteString("}\n")
-	if diags := analyze(t, "file:///exact75.go", exact75.String()); countDiagnostics(diags, "HISS-04", "LOC") != 0 {
-		t.Errorf("function with exactly 75 LOC must not trigger the LOC limit, got %+v", diags)
+	if diags := analyze(t, "file:///over.go", wideFunc("Over", limit+1)); countDiagnostics(diags, "HISS-04", "LOC") != 1 {
+		t.Errorf("function with %d LOC must trigger the LOC limit, got %+v", limit+1, diags)
 	}
+}
 
-	var over75 strings.Builder
-	over75.WriteString("package sample\n\nfunc Over75() {\n")
-	for i := 0; i < 74; i++ {
-		over75.WriteString("\tprintln(1)\n")
+// wideFunc returns a function spanning exactly loc lines (signature and closing brace
+// included) whose body holds a single statement, so only the length rule can fire.
+func wideFunc(name string, loc int) string {
+	var sb strings.Builder
+	sb.WriteString("package sample\n\nfunc " + name + "() {\n\tprintln(\n")
+	for i := 0; i < loc-4; i++ {
+		sb.WriteString("\t\t1,\n")
 	}
-	over75.WriteString("}\n")
-	if diags := analyze(t, "file:///over75.go", over75.String()); countDiagnostics(diags, "HISS-04", "LOC") != 1 {
-		t.Errorf("function with 76 LOC must trigger the LOC limit, got %+v", diags)
-	}
+	sb.WriteString("\t)\n}\n")
+	return sb.String()
 }
 
 func TestLSP_Boundary_StatementThreshold(t *testing.T) {

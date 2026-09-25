@@ -144,6 +144,25 @@ func TestPlan_3D(t *testing.T) {
 	mustErrContain(t, err, "no positional arguments")
 }
 
+// The heading names the tool, never a repository; the manifest identity follows it (#361).
+func TestPrintPlanHeader_NamesTheManifestRepository(t *testing.T) {
+	for _, repo := range []config.RepositoryMetadata{{Owner: "golusoris", Name: "golusoris"}, {}} {
+		out, err := captureStdout(t, func() error {
+			return printPlanHeader(&config.Manifest{Repository: repo}, config.DefaultPolicy())
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.SplitN(out, "\n", 3)
+		if lines[0] != "=== Praetor Reconcile Plan (Dry Run) ===" || lines[1] != "Repository: "+repo.Owner+"/"+repo.Name {
+			t.Errorf("header for %+v = %q", repo, lines[:2])
+		}
+		if strings.Contains(out, "cordanaLLM/praetor") {
+			t.Errorf("header names this product's repository:\n%s", out)
+		}
+	}
+}
+
 func TestPrintPlanHeaderRejectsInvalidReviewMode(t *testing.T) {
 	policy := config.DefaultPolicy()
 	policy.BranchProtection.ReviewMode = "unreviewed"
