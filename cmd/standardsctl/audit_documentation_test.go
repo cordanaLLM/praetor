@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -162,9 +163,137 @@ func TestAuditDocumentationGateDisabledAllowsOperatorLookalikes(t *testing.T) {
 }
 
 func declinedBranchRulesetManifest(facets ...string) *config.Manifest {
+	return declinedDocumentationManifest([]string{"branch-ruleset"}, facets...)
+}
+
+func declinedDocumentationManifest(declines []string, facets ...string) *config.Manifest {
 	return &config.Manifest{
 		Facets:   facets,
-		Adoption: &config.AdoptionPolicy{Decline: []string{"branch-ruleset"}},
+		Adoption: &config.AdoptionPolicy{Decline: declines},
+	}
+}
+
+// operatorOwnedDocumentationStep is a declinable adoption step whose surface the documentation
+// gate reads, with the Praetor bytes adoption would have written there made stale.
+type operatorOwnedDocumentationStep struct {
+	name    string
+	step    string
+	enabled bool
+	stale   func(*testing.T, string)
+}
+
+func operatorOwnedDocumentationSteps() []operatorOwnedDocumentationStep {
+	return []operatorOwnedDocumentationStep{
+		{name: "enabled makefile", step: "makefile", enabled: true, stale: func(t *testing.T, root string) {
+			writeFixtureFile(t, root, "Makefile", "verify-all:\n\t@true\n")
+		}},
+		{name: "enabled git-ignore", step: "git-ignore", enabled: true, stale: func(t *testing.T, root string) {
+			writeFixtureFile(t, root, ".gitignore", "# operator rules\n/.workingdir/\n/.workingdir2/\n")
+		}},
+		{name: "enabled formatter-ignore", step: "formatter-ignore", enabled: true, stale: func(t *testing.T, root string) {
+			writeFixtureFile(t, root, ".prettierrc", "{}\n")
+			writeFixtureFile(t, root, adopt.FormatterIgnoreFile, adopt.ManagedFormatterIgnoreBlock(false))
+		}},
+		{name: "disabled makefile", step: "makefile", stale: func(t *testing.T, root string) {
+			writeFixtureFile(t, root, "Makefile", adopt.DocumentationMakefileBlock())
+		}},
+		{name: "disabled formatter-ignore", step: "formatter-ignore", stale: func(t *testing.T, root string) {
+			writeFixtureFile(t, root, adopt.FormatterIgnoreFile, adopt.ManagedFormatterIgnoreBlock(true))
+		}},
+	}
+}
+
+func (step operatorOwnedDocumentationStep) fixture(t *testing.T) (string, []string) {
+	t.Helper()
+	if !step.enabled {
+		root := t.TempDir()
+		step.stale(t, root)
+		return root, nil
+	}
+	root := documentationAuditFixture(t)
+	step.stale(t, root)
+	return root, []string{"docs:seo-portal"}
+}
+
+// Positive: adoption skips a declined step (#408), so the bytes it would have written are
+// operator-owned. Audit must accept whatever the operator keeps there instead of demanding
+// Praetor bytes that rerunning adopt can never restore.
+func TestAuditDocumentationGateHonorsOperatorOwnedDeclines(t *testing.T) {
+	for _, step := range operatorOwnedDocumentationSteps() {
+		t.Run(step.name, func(t *testing.T) {
+			root, facets := step.fixture(t)
+			manifest := declinedDocumentationManifest([]string{step.step}, facets...)
+			if err := auditDocumentationGate(t.Context(), manifest, root); err != nil {
+				t.Fatalf("declined %s surface failed audit: %v", step.step, err)
+			}
+		})
+	}
+}
+
+// Negative: the same stale surface still fails while the step is not declined, including when
+// the manifest declines a different step; a decline covers its own step only.
+func TestAuditDocumentationGateUndeclinedStepsStayFailClosed(t *testing.T) {
+	for _, step := range operatorOwnedDocumentationSteps() {
+		t.Run(step.name, func(t *testing.T) {
+			root, facets := step.fixture(t)
+			for _, declines := range [][]string{nil, {"readme"}} {
+				manifest := declinedDocumentationManifest(declines, facets...)
+				if err := auditDocumentationGate(t.Context(), manifest, root); err == nil {
+					t.Fatalf("stale %s surface passed audit with declines %v", step.step, declines)
+				}
+			}
+		})
+	}
+}
+
+// Boundary: a decline resolves exactly as adoption resolves it. Case and surrounding space
+// canonicalise; an unknown, mandatory, or oversized decline list fails closed even when it
+// also names the step.
+func TestAuditDocumentationGateDeclineBoundary(t *testing.T) {
+	for _, step := range operatorOwnedDocumentationSteps() {
+		t.Run(step.name, func(t *testing.T) {
+			root, facets := step.fixture(t)
+			spelled := declinedDocumentationManifest([]string{"  " + strings.ToUpper(step.step) + " "}, facets...)
+			if err := auditDocumentationGate(t.Context(), spelled, root); err != nil {
+				t.Fatalf("canonicalised %s decline was not honored: %v", step.step, err)
+			}
+			for _, declines := range [][]string{
+				{step.step, "not-an-artifact"},
+				{step.step, "documentation-gate"},
+				slices.Repeat([]string{step.step}, 65),
+			} {
+				manifest := declinedDocumentationManifest(declines, facets...)
+				if err := auditDocumentationGate(t.Context(), manifest, root); err == nil {
+					t.Fatalf("malformed decline list %v did not fail closed", declines[:2])
+				}
+			}
+		})
+	}
+}
+
+// Negative: declining git-ignore hands the file to the operator, not the privacy invariant.
+// Both scratch roots must still be effectively ignored.
+func TestAuditDocumentationGateGitIgnoreDeclineKeepsScratchPrivacy(t *testing.T) {
+	for name, ignore := range map[string]string{
+		"missing second root": "/.workingdir/\n",
+		"later negation":      "/.workingdir/\n/.workingdir2/\n!/.workingdir2/\n!/.workingdir2/**\n",
+		"absent":              "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := documentationAuditFixture(t)
+			if ignore == "" {
+				if err := os.Remove(filepath.Join(root, ".gitignore")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeFixtureFile(t, root, ".gitignore", ignore)
+			}
+			manifest := declinedDocumentationManifest([]string{"git-ignore"}, "docs:seo-portal")
+			err := auditDocumentationGate(t.Context(), manifest, root)
+			if err == nil || !strings.Contains(err.Error(), "effectively exclude") {
+				t.Fatalf("declined git-ignore excused unignored private scratch: %v", err)
+			}
+		})
 	}
 }
 

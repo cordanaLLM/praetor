@@ -34,50 +34,94 @@ func auditExactDocumentationFile(ctx context.Context, rootDir, rel string, expec
 	return nil
 }
 
+// documentationDeclines records which declinable adoption steps behind the documentation
+// gate's surfaces the manifest declines. Adoption skips a declined step (#408), so its file is
+// operator-owned: the gate neither requires the Praetor bytes adoption would have written there
+// nor claims Praetor bytes the operator keeps there. Undeclined steps stay fail-closed.
+type documentationDeclines struct {
+	ruleset, makefile, gitIgnore, formatter bool
+}
+
+func resolveDocumentationDeclines(manifest *config.Manifest) (documentationDeclines, error) {
+	var declines documentationDeclines
+	for _, step := range []struct {
+		name     string
+		declined *bool
+	}{
+		{"branch-ruleset", &declines.ruleset},
+		{"makefile", &declines.makefile},
+		{"git-ignore", &declines.gitIgnore},
+		{"formatter-ignore", &declines.formatter},
+	} {
+		declined, err := adopt.ManifestArtifactDeclined(manifest, step.name)
+		if err != nil {
+			return documentationDeclines{}, fmt.Errorf("[FAIL] Resolve %s adoption decline: %w", step.name, err)
+		}
+		*step.declined = declined
+	}
+	return declines, nil
+}
+
+// summary names what the enabled gate verified, and which surfaces it left to the operator.
+func (declines documentationDeclines) summary() string {
+	parts := []string{"local verify-all", "hosted required context", "private scratch ignores", "formatter inventory"}
+	if declines.makefile {
+		parts[0] = "Makefile declined by adoption.decline"
+	}
+	if declines.ruleset {
+		parts[1] = "hosted context; branch ruleset declined by adoption.decline"
+	}
+	if declines.gitIgnore {
+		parts[2] = "effective private scratch ignores; .gitignore declined by adoption.decline"
+	}
+	if declines.formatter {
+		parts[3] = "formatter inventory declined by adoption.decline"
+	}
+	return strings.Join(parts, ", ")
+}
+
 func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, rootDir string) error {
 	documentationEnabled, err := adopt.DocumentationEnabled(manifest.Facets)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Resolve documentation facet: %w", err)
 	}
-	// A declined branch ruleset is operator-owned (#408): adoption never writes it, so the
-	// documentation gate neither requires its context there nor claims a context found there.
-	rulesetDeclined, err := adopt.ManifestArtifactDeclined(manifest, "branch-ruleset")
+	declines, err := resolveDocumentationDeclines(manifest)
 	if err != nil {
-		return fmt.Errorf("[FAIL] Resolve branch-ruleset adoption decline: %w", err)
+		return err
 	}
 	if !documentationEnabled {
-		return auditDocumentationGateDisabled(ctx, rootDir, rulesetDeclined)
+		return auditDocumentationGateDisabled(ctx, rootDir, declines)
 	}
 	count, err := auditDocumentationAssets(ctx, rootDir)
 	if err != nil {
 		return err
 	}
-	if err := auditDocumentationLocalWiring(ctx, rootDir); err != nil {
+	if err := auditDocumentationLocalWiring(ctx, rootDir, declines); err != nil {
 		return err
 	}
-	if err := auditDocumentationHostedWiring(ctx, manifest, rootDir, rulesetDeclined); err != nil {
+	if err := auditDocumentationHostedWiring(ctx, manifest, rootDir, declines.ruleset); err != nil {
 		return err
 	}
-	hosted := "hosted required context"
-	if rulesetDeclined {
-		hosted = "hosted context; branch ruleset declined by adoption.decline"
-	}
-	fmt.Printf("[PASS] Locked documentation gate verified (%d assets, local verify-all, %s, private scratch ignores).\n",
-		count, hosted)
+	fmt.Printf("[PASS] Locked documentation gate verified (%d assets, %s).\n", count, declines.summary())
 	return nil
 }
 
-func auditDocumentationGateDisabled(ctx context.Context, rootDir string, rulesetDeclined bool) error {
+func auditDocumentationGateDisabled(ctx context.Context, rootDir string, declines documentationDeclines) error {
 	if err := auditDisabledDocumentationAssets(ctx, rootDir); err != nil {
 		return err
 	}
-	if err := auditDisabledDocumentationMakefile(ctx, rootDir); err != nil {
-		return err
+	if !declines.makefile {
+		if err := auditDisabledDocumentationMakefile(ctx, rootDir); err != nil {
+			return err
+		}
 	}
-	if !rulesetDeclined {
+	if !declines.ruleset {
 		if err := auditDisabledDocumentationRuleset(ctx, rootDir); err != nil {
 			return err
 		}
+	}
+	if declines.formatter {
+		return nil
 	}
 	if err := adopt.VerifyFormatterIgnore(ctx, rootDir, false); err != nil {
 		return fmt.Errorf("[FAIL] Disabled documentation formatter inventory is stale: %w", err)
@@ -166,7 +210,25 @@ func auditDocumentationAssets(ctx context.Context, rootDir string) (int, error) 
 	return len(names), nil
 }
 
-func auditDocumentationLocalWiring(ctx context.Context, rootDir string) error {
+func auditDocumentationLocalWiring(ctx context.Context, rootDir string, declines documentationDeclines) error {
+	if !declines.makefile {
+		if err := auditDocumentationMakefileWiring(ctx, rootDir); err != nil {
+			return err
+		}
+	}
+	if err := auditDocumentationScratchIgnores(ctx, rootDir, declines.gitIgnore); err != nil {
+		return err
+	}
+	if declines.formatter {
+		return nil
+	}
+	if err := adopt.VerifyFormatterIgnore(ctx, rootDir, true); err != nil {
+		return fmt.Errorf("[FAIL] Documentation formatter inventory is stale: %w", err)
+	}
+	return nil
+}
+
+func auditDocumentationMakefileWiring(ctx context.Context, rootDir string) error {
 	makefile, err := contextopt.ReadSnapshot(ctx, filepath.Join(rootDir, "Makefile"))
 	if err != nil {
 		return fmt.Errorf("[FAIL] Read Makefile documentation wiring: %w", err)
@@ -178,6 +240,28 @@ func auditDocumentationLocalWiring(ctx context.Context, rootDir string) error {
 	if strings.Count(normalizedMakefile, adopt.DocumentationMakefileBlock()) != 1 {
 		return fmt.Errorf("[FAIL] Makefile does not attach the locked docs-lint target to verify-all")
 	}
+	return nil
+}
+
+// auditDocumentationScratchIgnores proves both private scratch roots are ignored. A declined
+// git-ignore step leaves the rules' wording to the operator, never the privacy invariant the
+// private-scratch link policy rests on, so the effective check runs either way.
+func auditDocumentationScratchIgnores(ctx context.Context, rootDir string, declined bool) error {
+	remedy := "run 'praetorctl adopt'"
+	if declined {
+		remedy = "git-ignore is declined by adoption.decline; add the rule to the operator-owned .gitignore"
+	} else if err := auditManagedGitIgnoreBlock(ctx, rootDir); err != nil {
+		return err
+	}
+	for _, probe := range []string{".workingdir/PRAETOR-AUDIT-PROBE", ".workingdir2/PRAETOR-AUDIT-PROBE"} {
+		if _, err := util.RunGit(ctx, rootDir, "check-ignore", "--no-index", "--", probe); err != nil {
+			return fmt.Errorf("[FAIL] .gitignore does not effectively exclude %s (%s): %w", probe, remedy, err)
+		}
+	}
+	return nil
+}
+
+func auditManagedGitIgnoreBlock(ctx context.Context, rootDir string) error {
 	ignore, err := contextopt.ReadSnapshot(ctx, filepath.Join(rootDir, ".gitignore"))
 	if err != nil {
 		return fmt.Errorf("[FAIL] Read .gitignore documentation privacy rules: %w", err)
@@ -188,14 +272,6 @@ func auditDocumentationLocalWiring(ctx context.Context, rootDir string) error {
 	}
 	if !strings.HasSuffix(normalized, adopt.ManagedGitIgnoreBlock()) {
 		return fmt.Errorf("[FAIL] .gitignore must end with the canonical Praetor private-artifact block")
-	}
-	for _, probe := range []string{".workingdir/PRAETOR-AUDIT-PROBE", ".workingdir2/PRAETOR-AUDIT-PROBE"} {
-		if _, err := util.RunGit(ctx, rootDir, "check-ignore", "--no-index", "--", probe); err != nil {
-			return fmt.Errorf("[FAIL] .gitignore does not effectively exclude %s: %w", probe, err)
-		}
-	}
-	if err := adopt.VerifyFormatterIgnore(ctx, rootDir, true); err != nil {
-		return fmt.Errorf("[FAIL] Documentation formatter inventory is stale: %w", err)
 	}
 	return nil
 }

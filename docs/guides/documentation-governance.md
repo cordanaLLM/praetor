@@ -187,7 +187,17 @@ operator-owned, as described in the
 writes the documentation context into it, disabling the facet does not ask
 `--force` to rewrite it, and audit still requires the workflow to report
 **Documentation Governance** but neither requires nor rejects that context in
-the ruleset. The documentation gate itself cannot be declined:
+the ruleset.
+
+The other declinable steps behind the gate's surfaces follow the same rule.
+Declining `makefile` leaves the `Makefile` to the operator: audit neither
+requires the managed `docs-lint` block nor, with the facet disabled, rejects
+one. Declining `formatter-ignore` does the same for `.prettierignore`. Declining
+`git-ignore` waives only the managed `.gitignore` tail block; audit still runs
+`git check-ignore` and fails until the operator's own rules exclude both
+private scratch roots. A decline list with an unknown or mandatory name fails
+audit as it fails adoption, and an undeclined step is still checked in full.
+The documentation gate itself cannot be declined:
 `adoption.decline: [documentation-gate]` fails adoption and audit, because
 removing the `docs:seo-portal` facet is the one switch that converges every
 documentation surface.
