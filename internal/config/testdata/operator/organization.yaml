@@ -8,4 +8,4 @@ clients:
   selected:
     agy:
       permissions:
-        allow: ["run_command(praetorctl)"]
+        allow: ["command(praetorctl)"]

@@ -54,7 +54,7 @@ func TestOperatorSettingsFourLayersMergeWithContributors(t *testing.T) {
 		"mode (deployment tightens)": {settings.Clients.Mode, ClientModeStrict},
 		"max age (fleet)":            {settings.Clients.VerifiedMaxAge, 72 * time.Hour},
 		"scopes (fleet)":             {agy.Scopes, []string{ScopeGlobal, ScopeWorkspace}},
-		"grants append":              {agy.Permissions.Allow, []string{"mcp(praetor)", "run_command(praetorctl)"}},
+		"grants append":              {agy.Permissions.Allow, []string{"mcp(hindsight/hindsight_list_knowledge_pages)", "command(praetorctl)"}},
 		"agy grants opted in":        {agy.Permissions.Manage, true},
 		"codex grants not managed":   {settings.Clients.Selected[clientid.Codex].Permissions.Manage, false},
 		"binary (workstation)":       {agy.Binary, filepath.Join(host, "bin", "agy")},

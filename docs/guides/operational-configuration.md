@@ -32,7 +32,7 @@ Supplied locally or from the operational fork, and ignored by this repository:
 | `.config/fleet-topology.yaml` | organisations governed and archetype membership, reported by `harvest fleet` |
 | `.config/fleet.yaml` | fleet-wide runner defaults (tier 1 of the runner matrix) |
 | `.config/orgs/<org>.yaml` | organisation runner overrides (tier 2) |
-| `.config/operator/` | operator settings the fork carries, such as fleet-wide and per-workstation settings files; reserved for the fork, and no engine command reads it yet |
+| `.config/operator/` | operator settings the fork carries, such as fleet-wide and per-workstation settings files; explicitly selected by hook, client and workstation commands |
 | `deploy/arc/` | Actions Runner Controller scale sets for the operator's cluster |
 | `deploy/k8s/` | GitOps application and kustomization targeting the operator's cluster |
 

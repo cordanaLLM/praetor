@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/clientsetup"
@@ -60,13 +61,21 @@ func TestClientApplyRejectsChangedSnapshotAndSymlink(t *testing.T) {
 }
 
 func TestClientApplyRejectsArtifactOverlapBeforeWriting(t *testing.T) {
-	for _, suffix := range []string{".", "plan.json", "nested/settings.json"} {
-		t.Run(suffix, func(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		target func(string) string
+		output func(string) string
+	}{
+		{name: "equal", target: func(root string) string { return filepath.Join(root, "same") }, output: func(root string) string { return filepath.Join(root, "same") }},
+		{name: "target under output", target: func(root string) string { return filepath.Join(root, "backup", "settings.json") }, output: func(root string) string { return filepath.Join(root, "backup") }},
+		{name: "output under target", target: func(root string) string { return filepath.Join(root, "settings.json") }, output: func(root string) string { return filepath.Join(root, "settings.json", "backup") }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			registry := filepath.Join(root, "registry.json")
 			writeClientFixture(t, registry, []byte(`{"version":1,"servers":[{"name":"shared","command":`+quoted(trueCommand)+`}]}`))
-			output := filepath.Join(root, "backup")
-			target := filepath.Join(output, filepath.FromSlash(suffix))
+			output := test.output(root)
+			target := test.target(root)
 			if err := runClients([]string{"apply", "--registry", registry, "--client", "gemini", "--target", target, "--out", output}); err == nil {
 				t.Fatal("target overlapping backup was accepted")
 			}
@@ -179,5 +188,45 @@ func writeClientFixture(t *testing.T, path string, content []byte) {
 	t.Helper()
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestConfirmUnchangedClientPlanRequiresPlannedSnapshot(t *testing.T) {
+	before := []byte(`{"permissions":{"allow":["command(git status)"]}}`)
+	tests := []struct {
+		name    string
+		current []byte // nil leaves the target absent
+		exists  bool
+		wantErr bool
+	}{
+		{name: "existing target still matches", current: before, exists: true},
+		{name: "absent target still absent", exists: false},
+		{name: "target drifted after planning", current: []byte(`{}`), exists: true, wantErr: true},
+		{name: "target removed after planning", exists: true, wantErr: true},
+		{name: "target created after planning", current: []byte{}, exists: false, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			target := filepath.Join(root, "settings.json")
+			if test.current != nil {
+				writeClientFixture(t, target, test.current)
+			}
+			expected := before
+			if !test.exists {
+				expected = nil
+			}
+			plan := &clientsetup.Plan{Client: clientsetup.AGY}
+			err := confirmUnchangedClientPlan(t.Context(), plan, target, filepath.Join(root, "out"), expected, test.exists)
+			if test.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "changed after planning") {
+					t.Fatalf("drifted target accepted: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

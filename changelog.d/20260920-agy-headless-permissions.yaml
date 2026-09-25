@@ -1,0 +1,4 @@
+type: fixed
+title: Apply and verify declared least-privilege AGY grants for governed headless sessions
+issue: "#409"
+breaking: false

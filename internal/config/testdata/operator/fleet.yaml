@@ -8,7 +8,7 @@ clients:
       registry: registry.json
       permissions:
         manage: true   # operator hosts opt in; the engine default is false
-        allow: ["mcp(praetor)"]
+        allow: ["mcp(hindsight/hindsight_list_knowledge_pages)"]
 hooks:
   command_policy:
     deny: ['\bexample-org/']

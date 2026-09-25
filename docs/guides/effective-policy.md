@@ -86,11 +86,12 @@ file: a fleet, organization, deployment or workstation document may hold these
 sections beside `complexity`, or on their own. They go through the same loader and
 bounds, and into the same effective digest.
 
-`audit` resolves and seals these sections but does not act on them. The commands
-that act on them read `EffectivePolicy.OperatorSettings()` in
-`internal/config/operator_sections.go`: `praetorctl hook` for `hooks`, the client
-commands for `clients`, and the workstation commands for `update`. Each of those
-commands ships in its own change.
+`audit` resolves and seals these sections but does not act on them. Host commands
+select the fleet and workstation documents through `config.SelectOperatorSettings`
+and load the same schema through `config.LoadOperatorSettings`. `praetorctl hook`
+consumes `hooks`; `praetorctl clients permissions` consumes the AGY permission
+selection under `clients`. Repository policy and host activation therefore share
+one schema without making `audit` inspect a user's home directory.
 
 A workstation document, the layer that holds host paths:
 
@@ -101,7 +102,7 @@ clients:
       binary: /home/operator/.local/bin/agy
       permissions:
         manage: true
-        allow: ["mcp(praetor)"]
+        allow: ["mcp(hindsight/hindsight_list_knowledge_pages)"]
 hooks:
   command_policy:
     deny: ['\bexample-org/']
@@ -150,6 +151,32 @@ for a client in its own layer, as the example above does for `agy`. Adopters who
 set neither get neither.
 `config.ValidateCommandPolicyDeny` is the one check for those bounds; the hook
 policy validates through it.
+
+AGY 1.2.7 grants use exact `action(target)` rules. The managed adapter accepts
+`read_file`, `write_file`, `read_url`, `execute_url`, `command` and `mcp`; an MCP
+target names exact `server/tool`, `server/*`, or global `*`. File and URL rules
+accept only the documented global `*`, not partial globs. A `read_url` or
+`execute_url` target is a bare lowercase host or IP literal, such as
+`read_url(example.test)`: AGY matches URL rules by hostname and subdomain, so a
+scheme, port, path or userinfo is rejected, as is a DNS name whose last label is
+decimal or `0x`-hexadecimal, which WHATWG URL parsing reads as IPv4
+(`httpendpoint.CanonicalHost`, tested in `internal/httpendpoint/https_test.go` and
+`internal/clientsetup/agy_permissions_test.go`). Existing ask/deny URL rules are
+compared by their host through `net/url`, but only when that host is unambiguous:
+userinfo, a scheme without `//` (`https:example.test`), a DNS name with a bare
+port (`example.test:443` is lexically `scheme:opaque`), an empty or out-of-range
+port, a percent sign, a backslash, or a host that is not canonical makes planning
+fail closed with a `cannot prove non-overlap` diagnostic. The operator loader keeps the grant strings generic so
+future clients can carry their own syntax, while `clients permissions` validates
+the selected AGY rules before producing or changing a settings file.
+
+An allow rule controls which matching call can proceed without approval. Do not
+infer an active-workspace exception: an AGY 1.2.7 headless replay denied a native
+read inside its active workspace when no matching `read_file(...)` grant was
+loaded. A governed read-only review therefore starts AGY in a separate disposable
+workspace and explicitly grants the reviewed repository through
+`read_file(...)`. Starting AGY inside the reviewed repository does not make that
+repository readable or read-only by policy.
 
 ### How layers merge
 
