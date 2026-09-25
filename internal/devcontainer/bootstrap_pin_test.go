@@ -49,6 +49,12 @@ func pinnedDigestDrift(dockerfile []byte, pin string) error {
 		return fmt.Errorf("pinned image %q carries no sha256 digest", pin)
 	}
 	lines := strings.Split(string(dockerfile), "\n")
+	// A bound that stops scanning certifies the lines it never read. The
+	// oversized file is refused instead, the way synthesize refuses an
+	// oversized manifest rather than truncating it (HISS-02).
+	if len(lines) > MaxLoopLimit {
+		return fmt.Errorf("Dockerfile carries %d lines, past the %d-line bound", len(lines), MaxLoopLimit)
+	}
 	matched := 0
 	for i := 0; i < len(lines) && i < MaxLoopLimit; i++ {
 		ref := dockerfileImageRef(lines[i])
@@ -115,6 +121,15 @@ func TestPinnedDigestDriftNamesItsReason(t *testing.T) {
 	if err := pinnedDigestDrift([]byte(agreeing), pin); err != nil {
 		t.Fatalf("second agreeing stage reported drift: %v", err)
 	}
+	// A Dockerfile exactly at the line bound is still read to its last line.
+	lastLine := "FROM golang:1.27-alpine@" + digest + "\n"
+	atBound := strings.Repeat("# filler\n", MaxLoopLimit-2) + lastLine
+	if got := strings.Count(atBound, "\n") + 1; got != MaxLoopLimit {
+		t.Fatalf("fixture is not at the bound: %d lines", got)
+	}
+	if err := pinnedDigestDrift([]byte(atBound), pin); err != nil {
+		t.Fatalf("Dockerfile at the line bound reported drift: %v", err)
+	}
 
 	// 2. Negative and 3. boundary: every failure names its reason.
 	for _, tc := range []struct {
@@ -128,6 +143,10 @@ func TestPinnedDigestDriftNamesItsReason(t *testing.T) {
 		{"unrelated repository only", "FROM alpine:3.20@" + digest + "\n", pin, "no FROM instruction references golang"},
 		{"pin without digest", "FROM golang:1.27-alpine@" + digest + "\n", "docker.io/library/golang:1.27-alpine", "carries no sha256 digest"},
 		{"empty Dockerfile", "", pin, "no FROM instruction references golang"},
+		// Past the bound: an agreeing FROM inside the window and a drifting
+		// one below it. The scan used to stop short, match the first and
+		// report green while the drift went unread.
+		{"past the line bound", "FROM golang:1.27-alpine@" + digest + "\n" + strings.Repeat("# filler\n", MaxLoopLimit-1) + "FROM golang:1.27-alpine@" + other + "\n", pin, "past the"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := pinnedDigestDrift([]byte(tc.dockerfile), tc.pin)

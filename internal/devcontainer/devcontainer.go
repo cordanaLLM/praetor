@@ -121,7 +121,7 @@ func synthesize(name string, profiles []string, facets []string, selected []conf
 	features := synthesizeFeatures(selected, profiles, facets)
 	extensions := synthesizeExtensions(profiles, facets, selected)
 	settings := synthesizeSettings(profiles, facets, selected)
-	postCmd := synthesizePostCreateCommand(profiles)
+	postCmd := synthesizePostCreateCommand(profiles, selected)
 
 	dc := &DevContainer{
 		Name: containerName,
@@ -155,7 +155,7 @@ func synthesizeFeatures(selected []config.DevContainerFeature, profiles []string
 
 	// The Go feature follows the declared profiles: the native toolchain rejects
 	// Go tooling in its extensions and settings, so it receives no Go runtime.
-	if !hasNativeGPUProfile(profiles) {
+	if containerHasGoToolchain(profiles, nil) {
 		features[GoFeatureRef] = map[string]interface{}{
 			"version": DefaultGoVersion,
 		}
@@ -262,13 +262,30 @@ func shouldAddGoTooling(selected []config.DevContainerFeature) bool {
 	return selected == nil || hasGoFeature(selected)
 }
 
+// containerHasGoToolchain reports whether the container this synthesis produces
+// will carry a Go runtime. It is the same decision synthesizeFeatures makes, in
+// one place, because the startup command and the feature map must not disagree:
+// a pinned catalog owns the feature set whenever one was selected, and only the
+// legacy path with no selection falls back to the declared profiles. The
+// profile gate alone is not that answer on the production path, where
+// ResolveDevContainerFeatures always returns a non-nil slice
+// (internal/config/devcontainer_features.go:47) and the union decides.
+func containerHasGoToolchain(profiles []string, selected []config.DevContainerFeature) bool {
+	if selected != nil {
+		return hasGoFeature(selected)
+	}
+	return !hasNativeGPUProfile(profiles)
+}
+
 // synthesizePostCreateCommand determines appropriate startup command. Profiles
-// is a list, so framework and native-gpu-systems can both be declared; the Go
-// startup command is emitted only when the same gate that selects the Go
-// feature, extensions and settings also selected them, because a container
-// built without a Go toolchain cannot run "go run ./cmd/standardsctl".
-func synthesizePostCreateCommand(profiles []string) string {
-	if hasNativeGPUProfile(profiles) {
+// is a list, so framework and native-gpu-systems can both be declared. The Go
+// startup command is emitted only when the container actually receives a Go
+// toolchain, because a container built without one cannot run
+// "go run ./cmd/standardsctl"; conversely a selected catalog that carries the
+// Go feature keeps the command even alongside the native profile, whose gate
+// only decides which IDE tooling is installed.
+func synthesizePostCreateCommand(profiles []string, selected []config.DevContainerFeature) string {
+	if !containerHasGoToolchain(profiles, selected) {
 		return "make verify-all"
 	}
 	for i := 0; i < len(profiles) && i < MaxLoopLimit; i++ {

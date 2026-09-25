@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 type bootstrapWrite struct {
@@ -194,19 +195,28 @@ func decodeManagedConfig(data []byte, path string) (*DevContainer, error) {
 	return &dc, nil
 }
 
-// rendersExactly reports whether the bytes on disk are exactly the render of
-// want. The file is compared, never a re-render of what decoded: Go's JSON
-// decoder matches member names case-insensitively and keeps the last of a
-// duplicate pair, so "POSTCREATECOMMAND", a repeated "remoteUser" and a stray
-// trailing "}" all survive a typed decode and re-marshal to the managed
-// spelling. Comparing the re-render would certify every one of them as in sync.
-// Both verification paths, recorded bootstrap and legacy, apply this one rule.
+// rendersExactly reports whether the bytes on disk are the render of want,
+// compared after line-ending normalisation. The file is compared, never a
+// re-render of what decoded: Go's JSON decoder matches member names
+// case-insensitively and keeps the last of a duplicate pair, so
+// "POSTCREATECOMMAND", a repeated "remoteUser" and a stray trailing "}" all
+// survive a typed decode and re-marshal to the managed spelling. Comparing the
+// re-render would certify every one of them as in sync.
+//
+// CR is JSON whitespace, so a checkout with core.autocrlf=true holds a file
+// that differs from Render only in its line endings and that no operator
+// edited. util.NormalizeLineEndings is the rule the register block already
+// applies for the same reason (HISS-21, HISS-19); it cannot mask tampering,
+// because JSON forbids an unescaped CR inside a string, so every CRLF in the
+// file is whitespace between tokens. Render emits LF, so only the file side needs normalising. Both
+// verification paths, recorded bootstrap and legacy, apply this one rule.
 func rendersExactly(raw []byte, want *DevContainer) (bool, error) {
 	rendered, err := Render(want)
 	if err != nil {
 		return false, err
 	}
-	return bytes.Equal(raw, rendered), nil
+	normalized, _ := util.NormalizeLineEndings(string(raw))
+	return normalized == string(rendered), nil
 }
 
 func validateBootstrapProjection(dc *DevContainer, spec *BootstrapSpec) error {

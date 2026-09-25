@@ -53,8 +53,12 @@ separate evidence. Verification uses the retained specification, so it does
 not require the original workstation source path or a hardcoded generator
 commit to remain available.
 
-Verification compares the file itself, byte for byte, against the render of the
-expected configuration. It does not compare a re-render of what decoded, because
+Verification compares the file itself against the render of the expected
+configuration, after normalising CRLF line endings to LF so a Windows checkout
+with `core.autocrlf=true` is not reported as drift (HISS-21). JSON forbids an
+unescaped carriage return inside a string, so every CRLF in the file is
+whitespace between tokens and the normalisation cannot hide an edit.
+Verification does not compare a re-render of what decoded, because
 Go's JSON decoder matches member names case-insensitively and keeps the last of a
 duplicate pair: `POSTCREATECOMMAND`, `RemoteUser` and a repeated
 `postCreateCommand` all decode into the managed struct and re-marshal to the
@@ -93,11 +97,20 @@ Runtime/profile selection is sourced from the selected pinned catalog entries.
 Only the selected profile and facets contribute DevContainer features; duplicate
 references must agree on options. Without a pinned catalog the profile still
 decides: a `native-gpu-systems` repository receives the C/C++ toolchain
-extensions, no Go feature and a `postCreateCommand` that does not invoke the Go
-toolchain, even when `framework` is declared alongside it. More than
-`MaxLoopLimit` declared profiles or facets is refused rather than truncated.
-This does not establish IDE feature-installation or application-tool execution
-proof.
+extensions and no Go feature, even when `framework` is declared alongside it.
+
+The generated `postCreateCommand` follows the feature set the container actually
+receives, not the profile list. `go run ./cmd/standardsctl compile-context` is
+emitted only for a `framework` repository whose features install a Go toolchain:
+the selected catalog decides that whenever one was selected, and the profile
+decides it only on the legacy path with no selection. A `framework` repository
+whose catalog carries no Go feature therefore starts with `make verify-all`
+alone, which changes what `standardsctl audit` expects from an existing
+non-bootstrap `.devcontainer/devcontainer.json` for that combination. Profiles
+choose which IDE tooling is installed; they do not overrule the catalog about
+what is present. More than `MaxLoopLimit` declared profiles or facets is refused
+rather than truncated. This does not establish IDE feature-installation or
+application-tool execution proof.
 
 ## Infrastructure test environments
 

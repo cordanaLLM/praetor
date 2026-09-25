@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // injectTopLevelKey places an extra member at the head of a rendered configuration.
@@ -113,11 +115,18 @@ func TestVerifySeesKeysOutsideTheManagedSchema(t *testing.T) {
 	}
 }
 
-// TestLoadDevContainerRefusesWhatVerifyRefuses pins the single decoder: the
-// reader and the verifier must not disagree about what the schema admits.
-func TestLoadDevContainerRefusesWhatVerifyRefuses(t *testing.T) {
+// TestLoadDevContainerSharesTheVerifierDecoder pins what actually holds between
+// the reader and the verifier, and nothing beyond it. LoadDevContainer is a
+// decode; it is handed no expected configuration, so it cannot compare bytes
+// and cannot see an aliased, duplicated or trailing-token spelling that decodes
+// into the managed struct. The invariant is therefore one-directional: every
+// file decodeManagedConfig refuses is refused by both, and a file the reader
+// accepts is not thereby in sync. The table below records which side of that
+// line each tampering falls on, so a later change to the decoder that silently
+// moves a case has to move this table with it.
+func TestLoadDevContainerSharesTheVerifierDecoder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "devcontainer.json")
-	dc := &DevContainer{Name: "load-test", RemoteUser: DefaultRemoteUser}
+	dc := &DevContainer{Name: "load-test", RemoteUser: DefaultRemoteUser, PostCreateCommand: "make verify-all"}
 	if err := WriteDevContainer(t.Context(), path, dc); err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +135,7 @@ func TestLoadDevContainerRefusesWhatVerifyRefuses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 1. Positive: what Praetor wrote loads back unchanged.
+	// 1. Positive: what Praetor wrote loads back unchanged and verifies.
 	loaded, err := LoadDevContainer(t.Context(), path)
 	if err != nil {
 		t.Fatalf("written configuration rejected: %v", err)
@@ -134,21 +143,42 @@ func TestLoadDevContainerRefusesWhatVerifyRefuses(t *testing.T) {
 	if loaded.Name != dc.Name || loaded.RemoteUser != dc.RemoteUser {
 		t.Fatalf("loaded configuration differs: %+v", loaded)
 	}
-
-	// 2. Negative: an unknown key is refused, not silently dropped.
-	if err := os.WriteFile(path, tamperedConfig(t, rendered, "runArgs"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadDevContainer(t.Context(), path); err == nil || !strings.Contains(err.Error(), "runArgs") {
-		t.Fatalf("LoadDevContainer dropped an unknown key: %v", err)
+	if err := Verify(t.Context(), path, dc); err != nil {
+		t.Fatalf("written configuration failed verification: %v", err)
 	}
 
-	// 3. Boundary: a second document after the object is refused.
-	if err := os.WriteFile(path, tamperedConfig(t, rendered, "trailingObject"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadDevContainer(t.Context(), path); err == nil || !strings.Contains(err.Error(), "carries content after") {
-		t.Fatalf("LoadDevContainer accepted trailing content: %v", err)
+	// 2. Negative and 3. boundary: every tampering this file defines, against
+	// both entry points. readerReason is empty where only the byte comparison
+	// can see the edit.
+	for _, tc := range []struct{ name, readerReason string }{
+		{"initializeCommand", "initializeCommand"},
+		{"runArgs", "runArgs"},
+		{"nullOnCreateCommand", "onCreateCommand"},
+		{"trailingObject", "carries content after"},
+		{"uppercasedKey", ""},
+		{"capitalisedKey", ""},
+		{"duplicatedKey", ""},
+		{"trailingBrace", ""},
+		{"trailingBracket", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(path, tamperedConfig(t, rendered, tc.name), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := Verify(t.Context(), path, dc); err == nil {
+				t.Fatal("verification reported a tampered file as in sync")
+			}
+			_, err := LoadDevContainer(t.Context(), path)
+			if tc.readerReason == "" {
+				if err != nil {
+					t.Fatalf("the reader grew a rule the table does not record: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.readerReason) {
+				t.Fatalf("the reader did not refuse what the shared decoder refuses: %v", err)
+			}
+		})
 	}
 }
 
@@ -266,4 +296,148 @@ func TestSynthesizeRefusesOversizedProfileSets(t *testing.T) {
 	if prepared == nil || !strings.Contains(prepared.Error(), reason) {
 		t.Fatalf("PrepareBundle and Synthesize disagree about the bound: %v", prepared)
 	}
+}
+
+// TestVerifyAcceptsACRLFCheckout pins HISS-21 for the comparison this batch
+// changed. Verification stopped decoding and re-rendering the file and started
+// comparing its bytes, which made every CRLF line ending a mismatch: a Windows
+// checkout with core.autocrlf=true failed audit on a file nobody edited. CR is
+// JSON whitespace, so the comparison normalises line endings and nothing else.
+func TestVerifyAcceptsACRLFCheckout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "devcontainer.json")
+	dc := &DevContainer{Name: "crlf-test", RemoteUser: DefaultRemoteUser, PostCreateCommand: "make verify-all"}
+	rendered, err := Render(dc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asCRLF := func(data []byte) []byte { return bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n")) }
+
+	// 1. Positive: the render checked out with CRLF is in sync.
+	if err := os.WriteFile(path, asCRLF(rendered), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(t.Context(), path, dc); err != nil {
+		t.Fatalf("a CRLF checkout of the managed render was called drift: %v", err)
+	}
+
+	// 2. Negative: normalising line endings does not normalise anything else,
+	// so every tampering is still refused when the file arrives with CRLF.
+	for _, name := range []string{"uppercasedKey", "duplicatedKey", "trailingBrace", "runArgs"} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(path, asCRLF(tamperedConfig(t, rendered, name)), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := Verify(t.Context(), path, dc); err == nil {
+				t.Fatal("a CRLF checkout hid the tampering")
+			}
+		})
+	}
+
+	// 3. Boundary: a file whose endings are mixed, which is what a partial
+	// checkout or a hand edit on Windows produces.
+	mixed := bytes.Replace(rendered, []byte("\n"), []byte("\r\n"), 1)
+	if err := os.WriteFile(path, mixed, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(t.Context(), path, dc); err != nil {
+		t.Fatalf("a mixed-ending file was called drift: %v", err)
+	}
+}
+
+// TestVerifyAcceptsACRLFRecordedBootstrap covers the second verification path
+// with the same rule, so the two cannot drift apart on line endings either.
+func TestVerifyAcceptsACRLFRecordedBootstrap(t *testing.T) {
+	bundle, err := PrepareBundle(t.Context(), "adopted/app", []string{"framework"}, nil, BootstrapOptions{SourceRoot: bootstrapSourceFixture(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), ".devcontainer", "devcontainer.json")
+	if err := WriteBundle(t.Context(), target, bundle, false); err != nil {
+		t.Fatal(err)
+	}
+	expected := mustBaseContainer(t)
+
+	// 1. Positive: the bundle Praetor wrote verifies as written.
+	if err := Verify(t.Context(), target, expected); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Negative and 3. boundary: the same file with CRLF endings verifies,
+	// and one further edited byte does not.
+	written, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crlf := bytes.ReplaceAll(written, []byte("\n"), []byte("\r\n"))
+	if err := os.WriteFile(target, crlf, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(t.Context(), target, expected); err != nil {
+		t.Fatalf("a CRLF checkout of a recorded bootstrap was called drift: %v", err)
+	}
+	if err := os.WriteFile(target, bytes.Replace(crlf, []byte(`"vscode"`), []byte(`"root"`), 1), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(t.Context(), target, expected); err == nil {
+		t.Fatal("a CRLF checkout hid an edited remoteUser")
+	}
+}
+
+// TestPostCreateCommandFollowsTheSelectedFeatures pins the startup command to
+// the feature set the container actually receives. The profile gate is not that
+// answer: on the production path ResolveDevContainerFeatures always returns a
+// non-nil selection, so the pinned catalog decides whether Go is present, and
+// the native profile only decides which IDE tooling is installed.
+func TestPostCreateCommandFollowsTheSelectedFeatures(t *testing.T) {
+	withGo := []config.DevContainerFeature{{Ref: GoFeatureRef, Options: map[string]interface{}{}}}
+	withoutGo := []config.DevContainerFeature{{Ref: CommonUtilsFeature, Options: map[string]interface{}{}}}
+
+	for _, tc := range []struct {
+		name     string
+		profiles []string
+		selected []config.DevContainerFeature
+		wantGo   bool
+	}{
+		// 1. Positive: a framework repository whose catalog carries Go.
+		{"framework with go in the catalog", []string{"framework"}, withGo, true},
+		{"both profiles with go in the catalog", []string{"framework", "native-gpu-systems"}, withGo, true},
+		// 2. Negative: the same profiles, a catalog without Go.
+		{"framework without go in the catalog", []string{"framework"}, withoutGo, false},
+		{"both profiles without go in the catalog", []string{"framework", "native-gpu-systems"}, withoutGo, false},
+		// 3. Boundary: an empty but non-nil selection is a catalog that
+		// selected nothing, and a nil selection is the legacy profile path.
+		{"empty selection", []string{"framework"}, []config.DevContainerFeature{}, false},
+		{"legacy framework", []string{"framework"}, nil, true},
+		{"legacy both profiles", []string{"framework", "native-gpu-systems"}, nil, false},
+		{"legacy native only", []string{"native-gpu-systems"}, nil, false},
+		{"no profile at all", nil, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dc, err := SynthesizeFromProfilesWithFeatures("app", tc.profiles, nil, tc.selected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runsGo := strings.Contains(dc.PostCreateCommand, "go run ")
+			if runsGo != tc.wantGo {
+				t.Fatalf("postCreateCommand %q, want a Go startup command: %v", dc.PostCreateCommand, tc.wantGo)
+			}
+			// The invariant behind the table: a container is never told to
+			// start by running a toolchain its feature set does not install.
+			if runsGo && !containerCarriesGo(dc) {
+				t.Fatalf("postCreateCommand %q runs Go, features are %v", dc.PostCreateCommand, dc.Features)
+			}
+		})
+	}
+}
+
+// containerCarriesGo reports whether the synthesized feature map installs a Go
+// toolchain, read from the rendered container rather than from the gate under
+// test.
+func containerCarriesGo(dc *DevContainer) bool {
+	for ref := range dc.Features {
+		if strings.HasSuffix((config.DevContainerFeature{Ref: ref}).Identity(), "/go") {
+			return true
+		}
+	}
+	return false
 }
