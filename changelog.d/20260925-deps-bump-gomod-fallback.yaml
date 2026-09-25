@@ -1,0 +1,3 @@
+type: fixed
+title: Confine the bump go.mod fallback edit to the one require line naming the package at its current version, refuse it without a known current version or a module-version target, and report the go get failure even when the fallback edit succeeds
+breaking: false
