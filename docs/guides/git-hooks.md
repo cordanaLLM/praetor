@@ -142,6 +142,18 @@ Git metadata at `praetor-receipts/<commit>.json`, without staging an artifact. E
 P0 blockers, audit failures, zero-warning lint failures and all gosec rules remain
 enforced. The full gate and CI remain the final integration checks.
 
+The hook bounds the `gate run` and `gate verify` subprocesses by the gate's own run deadline,
+not by a figure of its own. `run_full_gate` in
+[`checks.py`](../../.config/lefthook/scripts/checks.py) first runs `gate deadline --json`, which
+resolves `PRAETOR_TEST_STAGE_TIMEOUT` through the pipeline's parser: the race-stage bound, clamped
+to its 30-minute ceiling, plus the allowance for the other stages. It then adds a two-minute
+launch margin (`GATE_LAUNCH_MARGIN`) for `go run` to rebuild the CLI. With the variable unset that
+is 8 + 2 = 10 minutes, the value the hook used to hard-code; at the ceiling it is 37 minutes. The
+hook previously stopped the gate at a fixed 600 seconds, below the documented ceiling, so a raised
+bound could never take effect on a push (#314). A deadline report the hook cannot use fails the
+push rather than running the gate under a guessed bound. The deadline itself is described in
+[adoption verification](adoption-verification.md#the-whole-runs-deadline).
+
 Before snapshot governance checks, the disposable clone initializes its own
 missing private ledger and audits it. Incomplete or invalid existing state still
 fails. The live ledger is never copied into the clone.

@@ -14,6 +14,12 @@ GO_CONFIG = {"go.mod", "go.sum", "go.work", "go.work.sum", "Makefile",
 GO_EXTENSIONS = {".go", ".s", ".c", ".h", ".cc", ".cpp", ".syso"}
 CONTEXT = {"AGENTS.md", "CLAUDE.md", ".windsurfrules",
            ".github/copilot-instructions.md", ".gemini/GEMINI.md", ".codex/rules.md"}
+# `go run` rebuilds the CLI before the gate starts its own clock. The gate enforces its run
+# deadline itself; this margin only keeps the hook from killing it before it can report
+# which deadline fired.
+GATE_LAUNCH_MARGIN = 120
+# Bounds `gate deadline --json`: a build of the CLI and one environment read.
+GATE_QUERY_TIMEOUT = 300
 
 
 def context_changed(names):
@@ -228,11 +234,31 @@ def source_checks(directory, names, gate="all", base=None):
     return run_full_gate(directory) if full_gate else False
 
 
+def gate_timeout(report):
+    """Bound the gate subprocess by the gate's own resolved run deadline plus the launch margin.
+
+    ``report`` is the output of ``gate deadline --json``. The gate resolves
+    PRAETOR_TEST_STAGE_TIMEOUT, clamps it and adds its allowance for the other stages
+    itself; the hook reuses that value instead of parsing the variable a second time, so the
+    two cannot drift. A fixed 600 s here killed the gate below its documented ceiling (#314).
+    """
+    try:
+        seconds = json.loads(report)["timeout_seconds"]
+    except (ValueError, KeyError, TypeError) as error:
+        raise HookError(f"gate deadline: no usable run deadline in {report!r}: {error}") from error
+    if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds <= 0:
+        raise HookError(f"gate deadline: run deadline must be a positive number of seconds, got {seconds!r}")
+    return seconds + GATE_LAUNCH_MARGIN
+
+
 def run_full_gate(directory):
     command = ["go", "run", "./cmd/standardsctl", "gate"]
+    report = run([*command, "deadline", "--json"], cwd=directory, env=clean_env(),
+                 timeout=GATE_QUERY_TIMEOUT)
+    timeout = gate_timeout(report)
     for subcommand in ("run", "verify"):
         run([*command, subcommand, "--path=."], cwd=directory, env=clean_env(),
-            timeout=600, capture=False)
+            timeout=timeout, capture=False)
     return True
 
 
