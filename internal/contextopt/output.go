@@ -66,14 +66,18 @@ func (p *Plan) outputPath(outputDir string) (string, error) {
 	}
 	for i := 0; i < len(p.options.Sources); i++ {
 		source := filepath.Join(p.options.Root, p.options.Sources[i])
-		if overlaps(abs, source) {
+		if Overlaps(abs, source) {
 			return "", fmt.Errorf("output must not overlap a selected source")
 		}
 	}
 	return abs, nil
 }
 
-func overlaps(first, second string) bool {
+// Overlaps reports whether either path lexically contains the other; equal paths
+// overlap. Paths filepath.Rel cannot relate, such as different Windows volumes or an
+// absolute path against a relative one, are disjoint. Callers resolve symlinks first
+// when aliases matter.
+func Overlaps(first, second string) bool {
 	relative, err := filepath.Rel(first, second)
 	if err == nil && filepath.IsLocal(relative) {
 		return true

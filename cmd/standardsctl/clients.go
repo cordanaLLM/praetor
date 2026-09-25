@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/clientsetup"
@@ -90,15 +89,7 @@ func publishClientPlan(ctx context.Context, plan *clientsetup.Plan, target, outp
 		return err
 	}
 	if !plan.Changed {
-		actual, actualExists, err := contextopt.ObserveSnapshot(ctx, target)
-		if err != nil {
-			return err
-		}
-		if actualExists != exists || !bytes.Equal(actual, before) {
-			return errors.New("client configuration changed after planning; inspect retained plan and current file")
-		}
-		_, err = fmt.Fprintf(os.Stdout, "Configuration for %s at %s already matches the plan; backup and plan: %s. Native trust and tool execution remain unverified.\n", plan.Client, target, output)
-		return err
+		return confirmUnchangedClientPlan(ctx, plan, target, output, before, exists)
 	}
 	if err := contextopt.EnsureDirectory(ctx, filepath.Dir(target), 0o700); err != nil {
 		return err
@@ -115,6 +106,20 @@ func publishClientPlan(ctx context.Context, plan *clientsetup.Plan, target, outp
 		return errors.New("client configuration changed after publication; inspect retained plan and current file")
 	}
 	_, err = fmt.Fprintf(os.Stdout, "Configured %s at %s; backup and plan: %s. Native trust and tool execution remain unverified.\n", plan.Client, target, output)
+	return err
+}
+
+// confirmUnchangedClientPlan leaves the target untouched when the plan changes
+// nothing, but still proves the file matches the snapshot the plan was built from.
+func confirmUnchangedClientPlan(ctx context.Context, plan *clientsetup.Plan, target, output string, before []byte, exists bool) error {
+	actual, actualExists, err := contextopt.ObserveSnapshot(ctx, target)
+	if err != nil {
+		return err
+	}
+	if actualExists != exists || !bytes.Equal(actual, before) {
+		return errors.New("client configuration changed after planning; inspect retained plan and current file")
+	}
+	_, err = fmt.Fprintf(os.Stdout, "Configuration for %s at %s already matches the plan; backup and plan: %s. Native trust and tool execution remain unverified.\n", plan.Client, target, output)
 	return err
 }
 
@@ -176,33 +181,10 @@ func separatedClientPublicationPathsWithResolver(ctx context.Context, target, ou
 	if err != nil {
 		return "", "", fmt.Errorf("resolve client artifact path: %w", err)
 	}
-	if err := validateClientPublicationSeparation(resolvedTarget, resolvedOutput); err != nil {
-		return "", "", err
+	if contextopt.Overlaps(resolvedTarget, resolvedOutput) {
+		return "", "", errors.New("client target and artifact directory must not contain each other")
 	}
 	return targetPath, outputPath, nil
-}
-
-func validateClientPublicationSeparation(targetPath, outputPath string) error {
-	targetInOutput, err := clientPathContains(outputPath, targetPath)
-	if err != nil {
-		return err
-	}
-	outputInTarget, err := clientPathContains(targetPath, outputPath)
-	if err != nil {
-		return err
-	}
-	if targetInOutput || outputInTarget {
-		return errors.New("client target and artifact directory must not contain each other")
-	}
-	return nil
-}
-
-func clientPathContains(parent, candidate string) (bool, error) {
-	rel, err := filepath.Rel(parent, candidate)
-	if err != nil {
-		return false, err
-	}
-	return rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)), nil
 }
 
 func validateClientPlanTarget(target, actual string) error {

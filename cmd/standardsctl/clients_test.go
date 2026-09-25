@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/clientsetup"
@@ -187,5 +188,45 @@ func writeClientFixture(t *testing.T, path string, content []byte) {
 	t.Helper()
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestConfirmUnchangedClientPlanRequiresPlannedSnapshot(t *testing.T) {
+	before := []byte(`{"permissions":{"allow":["command(git status)"]}}`)
+	tests := []struct {
+		name    string
+		current []byte // nil leaves the target absent
+		exists  bool
+		wantErr bool
+	}{
+		{name: "existing target still matches", current: before, exists: true},
+		{name: "absent target still absent", exists: false},
+		{name: "target drifted after planning", current: []byte(`{}`), exists: true, wantErr: true},
+		{name: "target removed after planning", exists: true, wantErr: true},
+		{name: "target created after planning", current: []byte{}, exists: false, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			target := filepath.Join(root, "settings.json")
+			if test.current != nil {
+				writeClientFixture(t, target, test.current)
+			}
+			expected := before
+			if !test.exists {
+				expected = nil
+			}
+			plan := &clientsetup.Plan{Client: clientsetup.AGY}
+			err := confirmUnchangedClientPlan(t.Context(), plan, target, filepath.Join(root, "out"), expected, test.exists)
+			if test.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "changed after planning") {
+					t.Fatalf("drifted target accepted: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

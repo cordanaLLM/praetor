@@ -337,6 +337,39 @@ func TestClientPermissionsRejectSyntheticSymlinkAliasesBeforeWrites(t *testing.T
 	}
 }
 
+// A target and artifact directory that filepath.Rel cannot relate, such as C: and D:
+// on Windows, cannot contain each other. The separation check must accept them rather
+// than surface the Rel error. The absolute-versus-relative pair reproduces the same
+// Rel error on every platform; the volume pair exercises the real case on Windows and
+// stays a plain disjoint pair elsewhere.
+func TestClientPublicationSeparationAcceptsIncomparablePaths(t *testing.T) {
+	root := t.TempDir()
+	target, output := filepath.Join(root, "settings.json"), filepath.Join(root, "artifacts")
+	tests := []struct {
+		name, resolvedTarget, resolvedOutput string
+	}{
+		{"different Windows volumes", `C:\cfg\settings.json`, `D:\artifacts`},
+		{"absolute target against relative artifact directory", target, "artifacts"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resolve := func(_ context.Context, candidate string) (string, error) {
+				if candidate == target {
+					return test.resolvedTarget, nil
+				}
+				return test.resolvedOutput, nil
+			}
+			gotTarget, gotOutput, err := separatedClientPublicationPathsWithResolver(t.Context(), target, output, resolve)
+			if err != nil {
+				t.Fatalf("incomparable paths rejected: %v", err)
+			}
+			if gotTarget != target || gotOutput != output {
+				t.Fatalf("separated paths = %q, %q; want %q, %q", gotTarget, gotOutput, target, output)
+			}
+		})
+	}
+}
+
 func TestClientPermissionsRejectExistingEmptySettingsForEveryAction(t *testing.T) {
 	clearPermissionEnvironment(t)
 	policyRoot := t.TempDir()
