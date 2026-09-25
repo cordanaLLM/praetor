@@ -63,15 +63,15 @@ func checkPlanDrift(policy *config.ResolvedPolicy, rootDir string) ([]string, []
 
 // planEffectivePolicy resolves the same policy the audit will enforce.
 //
-// plan previously reported config.DefaultPolicy() with only the repository's own overrides
-// applied, so it never saw the pinned profiles and facets at all. For one repository that
-// produced three different answers to one question: the archetype file declared max_func_loc
-// 75, plan printed 100 and audit enforced 60. A dry run that does not preview what the real
-// run will do is worse than no dry run, because it is believed.
+// plan previously reported config.DefaultPolicy() with only the repository's own overrides applied,
+// so it never saw the pinned profiles and facets at all. For one repository that produced three
+// different answers to one question: the archetype file declared max_func_loc 75, plan printed 100
+// and audit enforced 60. A dry run that does not preview what the real run will do is worse than no
+// dry run, because it is believed.
 //
 // The resolution itself is config.ResolveRepositoryPolicy, shared with the editor projections
 // and the language server so those cannot disagree with this preview either (issue #360). The
-// notice is returned rather than printed so a caller that is not a dry run stays quiet.
+// no-lock notice is printed here, as it always was, and also returned for callers that test it.
 func planEffectivePolicy(configPath string, manifest *config.Manifest) (*config.ResolvedPolicy, string, error) {
 	policy, notice, err := config.ResolveRepositoryPolicy(context.Background(), configPath, manifest)
 	if err != nil {
@@ -79,6 +79,9 @@ func planEffectivePolicy(configPath string, manifest *config.Manifest) (*config.
 	}
 	if policy == nil {
 		return nil, "", fmt.Errorf("no manifest to plan at %s", configPath)
+	}
+	if notice != "" {
+		fmt.Printf("[INFO] %s\n", notice)
 	}
 	return policy, notice, nil
 }
@@ -99,12 +102,9 @@ func runPlan(args []string) error {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	policy, notice, err := planEffectivePolicy(*configPath, manifest)
+	policy, _, err := planEffectivePolicy(*configPath, manifest)
 	if err != nil {
 		return err
-	}
-	if notice != "" {
-		fmt.Printf("[INFO] %s\n", notice)
 	}
 
 	if err := printPlanHeader(manifest, policy); err != nil {
