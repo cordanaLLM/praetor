@@ -666,9 +666,12 @@ func TestAggregateFleetWithHarvestDeduplicates(t *testing.T) {
 	if err := os.MkdirAll(invDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
+	// brandnew carries a language signal in its name: a harvested repository with none is
+	// skipped as unsupported rather than scored (BUG-864). The harvested testservice has
+	// none either, and is still folded into the on-disk row instead of counted again.
 	inventory := `[
 		{"Name": "testservice", "Type": "Git", "Remote": "git@github.com:org/testservice.git"},
-		{"Name": "brandnew", "Type": "Git", "Remote": "git@github.com:org/brandnew.git"}
+		{"Name": "brandnew-svelte", "Type": "Git", "Remote": "git@github.com:org/brandnew.git"}
 	]`
 	if err := os.WriteFile(filepath.Join(invDir, "dev-inventory.json"), []byte(inventory), 0o600); err != nil {
 		t.Fatal(err)

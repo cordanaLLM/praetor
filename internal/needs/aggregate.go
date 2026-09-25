@@ -199,9 +199,27 @@ func (a *fleetAggregation) mergeHarvest(ctx context.Context, harvestPath string)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("harvest merge aborted: %w", ctxErr)
 		}
+		if harvested[i].Language == LanguageUnsupported {
+			a.skipUnsupported(harvested[i].Repository)
+			continue
+		}
 		a.add(&harvested[i], true)
 	}
 	return nil
+}
+
+// skipUnsupported counts a harvested repository no language signal identified as
+// discovered and lists it as skipped, the way an on-disk repository with no matching
+// analyzer is reported. An identity already seen is not counted twice.
+func (a *fleetAggregation) skipUnsupported(repository string) {
+	if key := repoIdentityKey(repository); key != "" {
+		if _, dup := a.seen[key]; dup {
+			return
+		}
+		a.seen[key] = struct{}{}
+	}
+	a.report.TotalRepositories++
+	a.report.SkippedRepositories = append(a.report.SkippedRepositories, repository)
 }
 
 // repoIdentityKey normalises a repository identity so that the same repository scanned
@@ -307,15 +325,20 @@ func discoverFleetRepos(ctx context.Context, root string) ([]string, error) {
 	return repoDirs, nil
 }
 
-// isManifestFile excludes symlinks whose targets may be outside the fleet root.
+// isManifestFile reports whether info is a manifest that marks a repository directory:
+// every file a registered analyzer detects a repository by (CMakeLists.txt and setup.py
+// included, BUG-864), plus the Praetor declarations. Symlinks are excluded because their
+// targets may be outside the fleet root.
 func isManifestFile(info os.FileInfo) bool {
 	if info == nil || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
-	name := info.Name()
-	return name == "go.mod" || name == "package.json" || name == "pyproject.toml" ||
-		name == "requirements.txt" || name == "Cargo.toml" || name == "meson.build" ||
-		name == ".standards.yaml" || name == ".needs.yaml"
+	switch info.Name() {
+	case "go.mod", "package.json", "pyproject.toml", "requirements.txt", "setup.py",
+		"Cargo.toml", "meson.build", "CMakeLists.txt", ".standards.yaml", ".needs.yaml":
+		return true
+	}
+	return false
 }
 
 // compileGapsAndLeaderboard sorts leaderboard and formats gap details.

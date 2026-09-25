@@ -179,19 +179,24 @@ func shouldSkipDir(info os.FileInfo, path, rootDir string) bool {
 		return true
 	}
 	for i := 0; i < bound; i++ {
-		if isExcludedDirSegment(segments[i]) {
+		if isExcludedDirSegment(segments[i], i) {
 			return true
 		}
 	}
 	return false
 }
 
-// isExcludedDirSegment reports whether a single path segment names a directory that never
-// contains first-party sources.
-func isExcludedDirSegment(name string) bool {
+// isExcludedDirSegment reports whether the path segment at index depth (0 = directly
+// under the walk root) names a directory that never contains first-party sources.
+// vendor/, node_modules/ and dot-directories are excluded at any depth. scratch/ and
+// cache/ are local work areas only at the walk root; deeper, as in src/cache or
+// internal/cache, they are ordinary package directories and are scanned (BUG-864).
+func isExcludedDirSegment(name string, depth int) bool {
 	switch name {
-	case "vendor", "node_modules", "scratch", "cache":
+	case "vendor", "node_modules":
 		return true
+	case "scratch", "cache":
+		return depth == 0
 	}
 	return strings.HasPrefix(name, ".")
 }

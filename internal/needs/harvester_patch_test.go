@@ -10,11 +10,12 @@ func TestInferLanguageFromItemBranches(t *testing.T) {
 		name string
 		want string
 	}{
-		// Names that merely contain the letters "arr" are not part of the *arr stack.
-		{"go-arrow", "go"},
-		{"carrot-service", "go"},
-		{"barrier", "go"},
-		{"narrative-api", "go"},
+		// Names that merely contain the letters "arr" are not part of the *arr stack, and
+		// with no other signal their language is unsupported, not a Go default (BUG-864).
+		{"go-arrow", LanguageUnsupported},
+		{"carrot-service", LanguageUnsupported},
+		{"barrier", LanguageUnsupported},
+		{"narrative-api", LanguageUnsupported},
 		// Real *arr projects still resolve to python.
 		{"sonarr", "python"},
 		{"my-radarr-helper", "python"},
@@ -26,7 +27,8 @@ func TestInferLanguageFromItemBranches(t *testing.T) {
 		{"vmafx", "native"},
 		{"gpu-bench", "native"},
 		{"rust-compute", "rust"},
-		{"plain-service", "go"},
+		{"plain-service", LanguageUnsupported},
+		{"", LanguageUnsupported},
 	}
 	for _, tc := range cases {
 		got := inferLanguageFromItem(HarvestRepoItem{Name: tc.name}, nil)
@@ -41,6 +43,29 @@ func TestInferLanguageFromItemPrefersPatchEvidence(t *testing.T) {
 	got := inferLanguageFromItem(HarvestRepoItem{Name: "sonarr"}, []string{"github.com/gin-gonic/gin"})
 	if got != "go" {
 		t.Errorf("expected patch evidence to win, got %q", got)
+	}
+}
+
+// TestCodifyHarvestedInventoryMarksUnknownLanguageUnsupported: no patch evidence and no
+// name signal yields an explicit unsupported entry without Go framework, kits or score.
+func TestCodifyHarvestedInventoryMarksUnknownLanguageUnsupported(t *testing.T) {
+	harvest := t.TempDir()
+	writeFixture(t, harvest, filepath.Join("dev-inventory", "dev-inventory.json"),
+		`[{"Name": "plain-service", "Type": "Git", "HasPatches": true}]`)
+	writeFixture(t, harvest, filepath.Join("dev-patches", "plain-service.patch"),
+		"--- a/notes.txt\n+++ b/notes.txt\n@@ -1,1 +1,2 @@\n+todo\n")
+
+	results, err := CodifyHarvestedInventory(t.Context(), harvest)
+	if err != nil {
+		t.Fatalf("CodifyHarvestedInventory() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 codified repo, got %d", len(results))
+	}
+	got := results[0]
+	if got.Language != LanguageUnsupported || got.Framework != "" || len(got.BuilderKits) != 0 ||
+		len(got.Dependencies) != 0 || got.Readiness.Score != 0 {
+		t.Fatalf("unknown-language repo = %+v, want unsupported with no framework, kits, deps or score", got)
 	}
 }
 

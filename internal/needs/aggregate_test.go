@@ -33,6 +33,57 @@ func TestAggregateFleetSkipsUnanalyzableRepositories(t *testing.T) {
 	}
 }
 
+// TestDiscoverFleetReposRecognisesEveryAnalyzerManifest pins BUG-864: a CMake-only and a
+// setup.py-only repository are discovered, because the native and Python analyzers
+// already detect them; root-level scratch/ and dot-directories stay out of the walk.
+func TestDiscoverFleetReposRecognisesEveryAnalyzerManifest(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, filepath.Join("native", "CMakeLists.txt"), "find_package(OpenSSL REQUIRED)\n")
+	writeFixture(t, root, filepath.Join("pylib", "setup.py"), "setup(install_requires=['requests'])\n")
+	writeFixture(t, root, filepath.Join("scratch", "trial", "go.mod"), "module example.com/trial\n")
+	writeFixture(t, root, filepath.Join(".workingdir", "go.mod"), "module example.com/ledger\n")
+
+	dirs, err := discoverFleetRepos(context.Background(), root)
+	if err != nil {
+		t.Fatalf("discoverFleetRepos() error = %v", err)
+	}
+	want := map[string]bool{filepath.Join(root, "native"): true, filepath.Join(root, "pylib"): true}
+	if len(dirs) != len(want) {
+		t.Fatalf("discovered %v, want exactly %v", dirs, want)
+	}
+	for _, dir := range dirs {
+		if !want[dir] {
+			t.Errorf("unexpected repository %s", dir)
+		}
+	}
+}
+
+// TestAggregateFleetWithHarvestSkipsUnsupportedLanguage: a harvested repository with no
+// language signal is counted and listed as skipped, never scored as a Go repository.
+func TestAggregateFleetWithHarvestSkipsUnsupportedLanguage(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, filepath.Join("svc", "go.mod"), "module example.com/svc\ngo 1.24\n")
+	harvest := t.TempDir()
+	writeFixture(t, harvest, filepath.Join("dev-inventory", "dev-inventory.json"),
+		`[{"Name": "plain-service", "Type": "Git"}, {"Name": "plain-service", "Type": "Git"}]`)
+
+	report, err := AggregateFleetWithHarvest(context.Background(), root, "", harvest)
+	if err != nil {
+		t.Fatalf("AggregateFleetWithHarvest() error = %v", err)
+	}
+	if report.ScannedRepositories != 1 || report.TotalRepositories != 2 {
+		t.Fatalf("scanned/total = %d/%d, want 1/2", report.ScannedRepositories, report.TotalRepositories)
+	}
+	if len(report.SkippedRepositories) != 1 || report.SkippedRepositories[0] != "plain-service" {
+		t.Fatalf("skipped = %v, want [plain-service] once", report.SkippedRepositories)
+	}
+	for _, entry := range report.Leaderboard {
+		if entry.Repository == "plain-service" {
+			t.Fatal("a repository of unknown language must not appear on the leaderboard")
+		}
+	}
+}
+
 func TestAggregateFleetNegativeCancelledContext(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, filepath.Join("svc", "go.mod"), "module example.com/svc\ngo 1.24\n")
