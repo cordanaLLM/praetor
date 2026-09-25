@@ -17,6 +17,8 @@ func runSBOM(args []string) error {
 	fs := flag.NewFlagSet("sbom", flag.ContinueOnError)
 	path := fs.String("path", ".", "Path to repository to generate SBOM for")
 	out := fs.String("out", "", "Output file path (default stdout)")
+	moduleVersion := fs.String("module-version", "",
+		"Version of the scanned module to record (default: its release tag on HEAD, omitted when HEAD has none)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -25,7 +27,7 @@ func runSBOM(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	bom, err := supplychain.GenerateCycloneDX(ctx, *path)
+	bom, err := supplychain.GenerateCycloneDX(ctx, *path, supplychain.SBOMOptions{ModuleVersion: *moduleVersion})
 	if err != nil {
 		return fmt.Errorf("failed generating CycloneDX SBOM: %w", err)
 	}

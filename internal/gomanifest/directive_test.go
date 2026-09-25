@@ -99,29 +99,37 @@ func TestReplaceLine_Boundary_EmptyAndComment(t *testing.T) {
 }
 
 func TestParseReplaceDirective_Positive_VersionedAndLocal(t *testing.T) {
-	oldPath, newPath, newVersion, ok := ParseReplaceDirective("old.example/a => new.example/a v1.2.3")
-	if !ok || oldPath != "old.example/a" || newPath != "new.example/a" || newVersion != "v1.2.3" {
-		t.Fatalf("versioned: old=%q new=%q ver=%q ok=%v", oldPath, newPath, newVersion, ok)
+	got, ok := ParseReplaceDirective("old.example/a => new.example/a v1.2.3")
+	want := ReplaceDirective{OldPath: "old.example/a", NewPath: "new.example/a", NewVersion: "v1.2.3"}
+	if !ok || got != want {
+		t.Fatalf("versioned: got %+v ok=%v, want %+v", got, ok, want)
 	}
 
-	oldPath, newPath, newVersion, ok = ParseReplaceDirective("old.example/a v1.0.0 => ../local/a")
-	if !ok || oldPath != "old.example/a" || newPath != "../local/a" || newVersion != "" {
-		t.Fatalf("local: old=%q new=%q ver=%q ok=%v", oldPath, newPath, newVersion, ok)
+	got, ok = ParseReplaceDirective("old.example/a v1.0.0 => ../local/a")
+	want = ReplaceDirective{OldPath: "old.example/a", OldVersion: "v1.0.0", NewPath: "../local/a"}
+	if !ok || got != want {
+		t.Fatalf("local: got %+v ok=%v, want %+v", got, ok, want)
 	}
 }
 
 func TestParseReplaceDirective_Negative_NoArrow(t *testing.T) {
-	if _, _, _, ok := ParseReplaceDirective("old.example/a new.example/a v1.2.3"); ok {
+	if _, ok := ParseReplaceDirective("old.example/a new.example/a v1.2.3"); ok {
 		t.Fatal("a line without '=>' must be refused")
 	}
 }
 
-func TestParseReplaceDirective_Boundary_EmptySides(t *testing.T) {
-	if _, _, _, ok := ParseReplaceDirective(" => new.example/a v1.0.0"); ok {
+func TestParseReplaceDirective_Boundary_EmptySidesAndBothVersions(t *testing.T) {
+	if _, ok := ParseReplaceDirective(" => new.example/a v1.0.0"); ok {
 		t.Fatal("an empty left side must be refused")
 	}
-	if _, _, _, ok := ParseReplaceDirective("old.example/a => "); ok {
+	if _, ok := ParseReplaceDirective("old.example/a => "); ok {
 		t.Fatal("an empty right side must be refused")
+	}
+	// The left-hand version scopes the directive and must survive parsing.
+	got, ok := ParseReplaceDirective("old.example/a v1.0.0 => new.example/a v2.0.0 // pinned")
+	want := ReplaceDirective{OldPath: "old.example/a", OldVersion: "v1.0.0", NewPath: "new.example/a", NewVersion: "v2.0.0"}
+	if !ok || got != want {
+		t.Fatalf("both versions: got %+v ok=%v, want %+v", got, ok, want)
 	}
 }
 

@@ -69,26 +69,40 @@ func ReplaceLine(raw string, inBlock *bool) (string, bool) {
 	return strings.TrimPrefix(line, "replace "), *inBlock || strings.HasPrefix(line, "replace ")
 }
 
-// ParseReplaceDirective splits one already-unblocked replace line ("old[ vX] => new[ vY]")
-// into the module path being replaced and its replacement. newVersion is empty for a local
-// filesystem replacement ("old => ../local/dir"), which go.mod permits without a version;
-// the caller decides what an empty replacement version means for its own output.
-func ParseReplaceDirective(line string) (oldPath, newPath, newVersion string, ok bool) {
+// ReplaceDirective is one go.mod replace directive: "OldPath[ OldVersion] =>
+// NewPath[ NewVersion]".
+//
+// OldVersion is empty when the directive replaces every version of OldPath, and
+// otherwise limits it to that one version, as the go command applies it. NewVersion is
+// empty for a local filesystem replacement ("old => ../local/dir"), which go.mod
+// permits without a version; the caller decides what that means for its own output.
+type ReplaceDirective struct {
+	OldPath    string
+	OldVersion string
+	NewPath    string
+	NewVersion string
+}
+
+// ParseReplaceDirective splits one already-unblocked replace line into the module being
+// replaced and its replacement, keeping the version on each side of the arrow.
+func ParseReplaceDirective(line string) (ReplaceDirective, bool) {
 	left, right, found := strings.Cut(line, "=>")
 	if !found {
-		return "", "", "", false
+		return ReplaceDirective{}, false
 	}
 	leftFields := strings.Fields(strings.TrimSpace(left))
 	rightFields := strings.Fields(strings.TrimSpace(right))
 	if len(leftFields) == 0 || len(rightFields) == 0 {
-		return "", "", "", false
+		return ReplaceDirective{}, false
 	}
-	oldPath = leftFields[0]
-	newPath = rightFields[0]
+	directive := ReplaceDirective{OldPath: leftFields[0], NewPath: rightFields[0]}
+	if len(leftFields) >= 2 {
+		directive.OldVersion = leftFields[1]
+	}
 	if len(rightFields) >= 2 {
-		newVersion = rightFields[1]
+		directive.NewVersion = rightFields[1]
 	}
-	return oldPath, newPath, newVersion, true
+	return directive, true
 }
 
 // ModulePath extracts the module directive's path from a single go.mod line, e.g.
