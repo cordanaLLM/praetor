@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -19,6 +21,48 @@ const maxSigningDefects = len(cosignV2OnlyFlags) + 1
 
 // maxSigningLines bounds the comment sweep of one signing surface (HISS-02).
 const maxSigningLines = 4096
+
+// maxVersionDigits bounds the major-version digit scan of one action pin (HISS-02).
+const maxVersionDigits = 8
+
+// cosignInstallerPinRegex captures the full version tag pinned for sigstore/cosign-installer,
+// so a Renovate bump beyond v4 (say to v5) is parsed rather than matched against one literal.
+var cosignInstallerPinRegex = regexp.MustCompile(`sigstore/cosign-installer@(\S+)`)
+
+// cosignInstallerMajor extracts the major version pinned for sigstore/cosign-installer in
+// text. It reports ok=false when the action is not pinned at all, or the pin does not start
+// with a parseable "vN" major, so a bad edit fails closed instead of silently passing.
+func cosignInstallerMajor(text string) (int, bool) {
+	m := cosignInstallerPinRegex.FindStringSubmatch(text)
+	if m == nil {
+		return 0, false
+	}
+	tag := m[1]
+	if len(tag) < 2 || tag[0] != 'v' {
+		return 0, false
+	}
+	rest := tag[1:]
+	end := 0
+	for end < len(rest) && end < maxVersionDigits && rest[end] >= '0' && rest[end] <= '9' {
+		end++
+	}
+	if end == 0 {
+		return 0, false
+	}
+	major, err := strconv.Atoi(rest[:end])
+	if err != nil {
+		return 0, false
+	}
+	return major, true
+}
+
+// cosignInstallerCapable reports whether text pins sigstore/cosign-installer at v4 or newer,
+// whose default cosign-release is a v3 capable of --bundle-only sign-blob invocations. A
+// missing or unparseable pin is not capable.
+func cosignInstallerCapable(text string) bool {
+	major, ok := cosignInstallerMajor(text)
+	return ok && major >= 4
+}
 
 // withoutComments drops whole-line YAML and shell comments, so prose that names a removed
 // flag in order to explain the migration is not mistaken for an invocation that uses it.
@@ -92,8 +136,8 @@ func TestWorkflowsInstallCosignV3CapableInstaller(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
 	for _, name := range []string{"release-binaries.yml", "sbom.yml"} {
 		text := string(workflows[name])
-		if !strings.Contains(text, "sigstore/cosign-installer@v4") {
-			t.Errorf("%s: cosign-installer is not v4 or newer, so the runner would get cosign v2", name)
+		if !cosignInstallerCapable(text) {
+			t.Errorf("%s: cosign-installer is not pinned at v4 or newer, so the runner would get cosign v2", name)
 		}
 		if strings.Contains(text, "cosign-release:") {
 			t.Errorf("%s: pins cosign-release; the installer default is the tracked version", name)
@@ -133,6 +177,28 @@ func TestCosignBundleDefectsBoundaries(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := cosignBundleDefects(tc.name, tc.text); len(got) != tc.want {
 				t.Errorf("defects %v, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// Boundary: v4 and any newer major such as a Renovate bump to v5 are capable, the
+// pre-migration v3 pin is not, and a pin the parser cannot read fails closed rather than
+// passing by accident.
+func TestCosignInstallerCapableBoundaries(t *testing.T) {
+	cases := []struct {
+		name, text string
+		want       bool
+	}{
+		{"pinned at v4", "uses: sigstore/cosign-installer@v4.1.2", true},
+		{"renovate bump to v5", "uses: sigstore/cosign-installer@v5.0.0", true},
+		{"pre-migration v3", "uses: sigstore/cosign-installer@v3.8.1", false},
+		{"unparseable pin", "uses: sigstore/cosign-installer@latest", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cosignInstallerCapable(tc.text); got != tc.want {
+				t.Errorf("cosignInstallerCapable(%q) = %v, want %v", tc.text, got, tc.want)
 			}
 		})
 	}

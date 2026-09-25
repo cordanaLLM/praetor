@@ -92,7 +92,7 @@ func TestReleasePipelineStalePinsReportDrift(t *testing.T) {
 	}
 	for _, a := range actions {
 		if a.CurrentVersion == a.LatestVersion {
-			t.Errorf("%s@%s reported as current; the registry should name %s", a.Action, a.CurrentVersion, knownActionLatest[a.Action])
+			t.Errorf("%s@%s: scan reported no drift, but this stale pre-upgrade pin should have resolved behind the registry latest", a.Action, a.CurrentVersion)
 		}
 		if a.LatestVersion != knownActionLatest[a.Action] {
 			t.Errorf("%s latest %s, want registry %s", a.Action, a.LatestVersion, knownActionLatest[a.Action])
