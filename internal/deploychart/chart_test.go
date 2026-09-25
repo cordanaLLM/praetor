@@ -119,7 +119,10 @@ func name(doc document) string {
 	if !ok {
 		return ""
 	}
-	value, _ := metadata["name"].(string)
+	value, ok := metadata["name"].(string)
+	if !ok {
+		return ""
+	}
 	return value
 }
 
@@ -231,7 +234,10 @@ func containerName(t *testing.T, docs []document) string {
 	if !ok {
 		t.Fatalf("containers[0] = %v, want a mapping", containers[0])
 	}
-	value, _ := entry["name"].(string)
+	value, ok := entry["name"].(string)
+	if !ok {
+		t.Fatalf("containers[0].name = %v, want a string", entry["name"])
+	}
 	return value
 }
 
