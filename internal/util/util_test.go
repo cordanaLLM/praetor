@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -311,6 +312,79 @@ func TestRunCommand_Boundary_NilContextAndDeadline(t *testing.T) {
 	}
 }
 
+// A warning printed by a successful run is not data: callers parse RunCommand's text as
+// paths, JSON and tokens (BUG-847).
+func TestRunCommand_Positive_ReturnsStandardOutputOnly(t *testing.T) {
+	ctx, binary := bytesHelper(t, "warn")
+	out, err := RunCommand(ctx, "", binary, "-test.run=^TestCommandBytesHelper$")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "value" {
+		t.Fatalf("standard error leaked into the output: %q", out)
+	}
+}
+
+// A failure keeps its exit status and carries its standard error in the error text, and the
+// returned text is the standard output produced before the failure.
+func TestRunCommand_Negative_FailureCarriesStandardError(t *testing.T) {
+	ctx, binary := bytesHelper(t, "failure")
+	out, err := RunCommand(ctx, "", binary, "-test.run=^TestCommandBytesHelper$")
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 8 {
+		t.Fatalf("exit status lost: %v", err)
+	}
+	if out != "partial" || !strings.Contains(err.Error(), "failure evidence") {
+		t.Fatalf("failure evidence lost: %q, %v", out, err)
+	}
+}
+
+func TestRunCommand_Boundary_DiagnosticAndOutputCaps(t *testing.T) {
+	ctx, binary := bytesHelper(t, "loudfailure")
+	_, err := RunCommand(ctx, "", binary, "-test.run=^TestCommandBytesHelper$")
+	if err == nil {
+		t.Fatal("failing command reported success")
+	}
+	if message := err.Error(); !strings.HasSuffix(message, "... [truncated]") ||
+		len(message) > maxCommandDiagnosticBytes+256 {
+		t.Fatalf("diagnostic not bounded: %d bytes", len(message))
+	}
+	ctx, binary = bytesHelper(t, "atcap")
+	out, err := RunCommand(ctx, "", binary, "-test.run=^TestCommandBytesHelper$")
+	if err != nil || len(out) != MaxCommandOutputBytes {
+		t.Fatalf("output at the cap rejected: %d bytes, %v", len(out), err)
+	}
+	ctx, binary = bytesHelper(t, "overcap")
+	out, err = RunCommand(ctx, "", binary, "-test.run=^TestCommandBytesHelper$")
+	if err == nil || !strings.Contains(err.Error(), "exceeds") || len(out) > MaxCommandOutputBytes {
+		t.Fatalf("output past the cap accepted: %d bytes, %v", len(out), err)
+	}
+}
+
+// A descendant that holds the output pipe must neither keep the call waiting for
+// CommandWaitDelay nor outlive the deadline (BUG-889).
+func TestRunCommand_Boundary_KillsDescendantsOnDeadline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process-group cleanup is Unix-only (command_bytes_unix.go); Windows keeps " +
+			"direct-child cancellation bounded by CommandWaitDelay")
+	}
+	root := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := RunCommand(ctx, root, "sh", "-c", "(sleep 0.3; touch leaked) & wait")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("deadline not reported: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed >= CommandWaitDelay {
+		t.Fatalf("waited %v for a descendant holding the output pipe", elapsed)
+	}
+	time.Sleep(600 * time.Millisecond)
+	if _, statErr := os.Stat(filepath.Join(root, "leaked")); !os.IsNotExist(statErr) {
+		t.Fatalf("a descendant survived the deadline: %v", statErr)
+	}
+}
+
 func TestEnsureDeadline_3D(t *testing.T) {
 	// Positive: a context without a deadline receives the fallback.
 	ctx, cancel := ensureDeadline(context.Background(), 42*time.Second)
@@ -379,6 +453,24 @@ func TestResolveAuthToken_Precedence(t *testing.T) {
 	t.Setenv("GH_TOKEN", "")
 	if got := ResolveAuthToken(""); got != "gh-cli-token" {
 		t.Errorf("gh CLI fallback: got %q, want %q", got, "gh-cli-token")
+	}
+}
+
+// gh prints update notices on standard error; they must never become part of the token.
+func TestResolveAuthTokenContext_Positive_IgnoresStandardError(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("POSIX shell stub required")
+	}
+	stubDir := t.TempDir()
+	script := "#!/bin/sh\necho 'A new release of gh is available' >&2\necho gh-cli-token\n"
+	if err := os.WriteFile(filepath.Join(stubDir, "gh"), []byte(script), 0o700); err != nil {
+		t.Fatalf("write gh stub: %v", err)
+	}
+	t.Setenv("PATH", stubDir)
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	if got := ResolveAuthTokenContext(context.Background(), ""); got != "gh-cli-token" {
+		t.Errorf("token polluted by standard error: %q", got)
 	}
 }
 

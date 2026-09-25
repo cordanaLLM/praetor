@@ -1,0 +1,3 @@
+type: fixed
+title: util.RunCommand and util.RunGit return standard output only and carry a failure's standard error in the error, strip the git repository variables (GIT_DIR, GIT_INDEX_FILE and the rest git itself clears) from inherited child environments so a hook's repository cannot be written through the gate's test stage or git fixtures, cap each stream at 16 MiB, and kill the child's whole process group on cancellation and return
+breaking: false

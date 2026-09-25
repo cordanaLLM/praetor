@@ -33,15 +33,16 @@ func (b *commandBuffer) Write(p []byte) (int, error) {
 // commandStdinKey scopes child standard input to one operation tree.
 type commandStdinKey struct{}
 
-// MaxCommandOutputBytes is the largest per-stream cap a bounded command accepts.
+// MaxCommandOutputBytes is the largest per-stream cap a bounded command accepts, and the cap
+// RunCommand applies to each of standard output and standard error.
 const MaxCommandOutputBytes = 16 << 20
 
 // MaxCommandStdinBytes bounds the input WithCommandStdin accepts: the cap of an output stream.
 const MaxCommandStdinBytes = MaxCommandOutputBytes
 
-// WithCommandStdin makes RunCommandBytes feed exactly input to the child's standard input.
-// It copies the input. Without it the child reads an empty stream, as before. RunCommandStream
-// ignores it: its caller already supplies an explicit stdin reader.
+// WithCommandStdin makes RunCommandBytes and RunCommand feed exactly input to the child's
+// standard input. It copies the input. Without it the child reads an empty stream, as before.
+// RunCommandStream ignores it: its caller already supplies an explicit stdin reader.
 func WithCommandStdin(ctx context.Context, input []byte) (context.Context, error) {
 	if ctx == nil {
 		return nil, errors.New("command stdin requires a context")
@@ -62,7 +63,8 @@ type commandStreams struct {
 
 // RunCommandBytes executes fixed argv with a deadline and a 1..16 MiB cap per stream.
 // It respects WithCommandEnvironment and WithCommandStdin, cancels on overflow, and
-// preserves whitespace.
+// preserves whitespace. Without WithCommandEnvironment the child inherits the ambient
+// environment minus the variables that bind git to a repository (commandEnvironment).
 func RunCommandBytes(ctx context.Context, dir, name string, maxBytes int, args ...string) (CommandBytes, error) {
 	return runBoundedCommand(ctx, dir, name, maxBytes, commandStreams{}, args)
 }
@@ -94,9 +96,7 @@ func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, stre
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.WaitDelay = CommandWaitDelay
-	if environment, ok := ctx.Value(commandEnvironmentKey{}).([]string); ok {
-		cmd.Env = append([]string{}, environment...)
-	}
+	cmd.Env = commandEnvironment(ctx, cmd)
 	cmd.Stdin = streams.stdin
 	if cmd.Stdin == nil {
 		if input, ok := ctx.Value(commandStdinKey{}).([]byte); ok {

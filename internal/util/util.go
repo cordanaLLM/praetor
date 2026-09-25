@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,7 +19,7 @@ const (
 	// locked OS keyring.
 	DefaultAuthTokenTimeout = 15 * time.Second
 	// CommandWaitDelay bounds how long RunCommand waits for output pipes still held by
-	// grandchildren after the context expired and the direct child was killed.
+	// descendants after the direct child exited or the context expired.
 	CommandWaitDelay = 5 * time.Second
 )
 
@@ -179,27 +178,45 @@ func extractPathStyle(trimmed string) (owner, repo string) {
 	return "", ""
 }
 
-// RunCommand executes a command and returns its trimmed combined output.
+// maxCommandDiagnosticBytes bounds how much of a failed command's standard error RunCommand
+// embeds in its error, on the same terms MaxErrorBodyBytes bounds an HTTP error body.
+const maxCommandDiagnosticBytes = MaxErrorBodyBytes
+
+// RunCommand executes a command and returns its trimmed standard output.
 //
-// HISS-02: the command always runs under a context that carries a deadline. A nil
-// context, or a context without a deadline (context.Background/TODO), is given
-// DefaultCommandTimeout, so no subprocess started through this helper can block forever.
+// Standard error never mixes into the returned text, which callers parse as paths, JSON or
+// tokens: a warning printed by a successful run is not data (BUG-847). When the command
+// fails, the error carries up to 64 KiB of its standard error, so the reason still reaches
+// whoever reports the failure, and the returned text is the standard output produced
+// before the failure. errors.Is and errors.As still see the underlying *exec.ExitError and
+// context error.
+//
+// RunCommand shares RunCommandBytes' execution boundary (HISS-19). HISS-02: a nil context,
+// or one without a deadline, is given DefaultCommandTimeout. Each stream is capped at
+// MaxCommandOutputBytes and an overflow cancels the command. On Unix the child runs in its
+// own process group, which is killed on cancellation and on return, so a grandchild cannot
+// outlive the call (BUG-889). The child's environment follows commandEnvironment: without
+// WithCommandEnvironment it inherits the ambient one minus the variables that bind git to a
+// repository (BUG-886).
 func RunCommand(ctx context.Context, dir string, name string, args ...string) (string, error) {
+	// ensureDeadline also turns a nil context, which runBoundedCommand refuses, into one.
 	ctx, cancel := ensureDeadline(ctx, DefaultCommandTimeout)
 	defer cancel()
-
-	// #nosec G204 -- RunCommand is the single audited exec entry point. The binary and
-	// arguments are supplied by praetor's own call sites, never parsed from a shell
-	// string; values originating from users or config must pass ValidateExecArg first.
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	if environment, ok := ctx.Value(commandEnvironmentKey{}).([]string); ok {
-		cmd.Env = make([]string, len(environment))
-		copy(cmd.Env, environment)
+	result, err := runBoundedCommand(ctx, dir, name, MaxCommandOutputBytes, commandStreams{}, args)
+	stdout := strings.TrimSpace(string(result.Stdout))
+	if err != nil {
+		return stdout, withCommandDiagnostic(err, result.Stderr)
 	}
-	cmd.WaitDelay = CommandWaitDelay
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
+	return stdout, nil
+}
+
+// withCommandDiagnostic appends a failed command's trimmed, bounded standard error to err.
+func withCommandDiagnostic(err error, stderr []byte) error {
+	diagnostic := strings.TrimSpace(string(stderr))
+	if diagnostic == "" {
+		return err
+	}
+	return fmt.Errorf("%w: %s", err, TruncateExcerpt(diagnostic, maxCommandDiagnosticBytes))
 }
 
 // ensureDeadline returns a context guaranteed to carry a deadline. A nil context or one
@@ -215,7 +232,7 @@ func ensureDeadline(ctx context.Context, fallback time.Duration) (context.Contex
 	return context.WithTimeout(ctx, fallback)
 }
 
-// RunGit executes a git command with context timeout and returns trimmed output.
+// RunGit executes a git command through RunCommand and returns its trimmed standard output.
 func RunGit(ctx context.Context, dir string, args ...string) (string, error) {
 	return RunCommand(ctx, dir, "git", args...)
 }
@@ -287,8 +304,10 @@ func ResolveAuthTokenContext(ctx context.Context, explicitToken string) string {
 // commandEnvironmentKey scopes subprocess environment to one operation tree.
 type commandEnvironmentKey struct{}
 
-// WithCommandEnvironment makes RunCommand and RunGit use exactly environment for this
-// context's child processes. It copies the input and never changes process-wide state.
+// WithCommandEnvironment makes RunCommand, RunGit, RunCommandBytes and RunCommandStream use
+// exactly environment for this context's child processes, in place of the ambient
+// environment minus the git repository variables. It is also how a caller opts back into an
+// inherited GIT_DIR. It copies the input and never changes process-wide state.
 func WithCommandEnvironment(ctx context.Context, environment []string) (context.Context, error) {
 	if ctx == nil {
 		return nil, errors.New("command environment requires a context")
