@@ -33,8 +33,11 @@ func (b *commandBuffer) Write(p []byte) (int, error) {
 // commandStdinKey scopes child standard input to one operation tree.
 type commandStdinKey struct{}
 
+// MaxCommandOutputBytes is the largest per-stream cap a bounded command accepts.
+const MaxCommandOutputBytes = 16 << 20
+
 // MaxCommandStdinBytes bounds the input WithCommandStdin accepts: the cap of an output stream.
-const MaxCommandStdinBytes = 16 << 20
+const MaxCommandStdinBytes = MaxCommandOutputBytes
 
 // WithCommandStdin makes RunCommandBytes feed exactly input to the child's standard input.
 // It copies the input. Without it the child reads an empty stream, as before. RunCommandStream
@@ -80,8 +83,8 @@ func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, stre
 	if ctx == nil {
 		return CommandBytes{}, errors.New("command bytes requires a context")
 	}
-	if maxBytes < 1 || maxBytes > 16<<20 {
-		return CommandBytes{}, errors.New("command byte cap must be 1..16777216")
+	if maxBytes < 1 || maxBytes > MaxCommandOutputBytes {
+		return CommandBytes{}, fmt.Errorf("command byte cap must be 1..%d", MaxCommandOutputBytes)
 	}
 	ctx, deadlineCancel := ensureDeadline(ctx, DefaultCommandTimeout)
 	defer deadlineCancel()
