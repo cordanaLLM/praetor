@@ -2,10 +2,13 @@ package forge
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // canonicalTableRowPattern matches one row of AGENTS.md's "Core Directives & Invariants"
@@ -150,5 +153,111 @@ func TestRenderHISSInvariantTable_Boundary_EmptyAndPipeEscaping(t *testing.T) {
 	delimitersOnly := strings.ReplaceAll(rowLine, `\|`, "")
 	if got := strings.Count(delimitersOnly, "|"); got != 5 {
 		t.Errorf("expected 5 real column delimiters in %q, got %d", rowLine, got)
+	}
+}
+
+// mermaidNode matches a node definition such as AGENTS["AGENTS.md\n(canonical source)"].
+var mermaidNode = regexp.MustCompile(`(\w+)\["([^"]*)"\]`)
+
+// mermaidEdge matches one "A --> B" edge; the source side may carry its label inline.
+var mermaidEdge = regexp.MustCompile(`^\s*(\w+)(?:\["[^"]*"\])?\s*-->\s*(\w+)`)
+
+// flowEdges returns every mermaid edge in content as {from, to}, each node resolved to the
+// first line of its label.
+func flowEdges(content string) [][2]string {
+	labels := make(map[string]string)
+	for _, m := range mermaidNode.FindAllStringSubmatch(content, -1) {
+		labels[m[1]] = strings.SplitN(m[2], `\n`, 2)[0]
+	}
+	var edges [][2]string
+	for _, line := range strings.Split(content, "\n") {
+		if m := mermaidEdge.FindStringSubmatch(line); m != nil {
+			edges = append(edges, [2]string{labels[m[1]], labels[m[2]]})
+		}
+	}
+	return edges
+}
+
+// compileContextFlowViolations names every way a diagram misstates the compile-context data
+// flow: AGENTS.md must feed compile-context, compile-context must feed the vendor files,
+// and no edge may produce AGENTS.md.
+func compileContextFlowViolations(content string) []string {
+	var violations []string
+	feedsTranspiler, feedsVendors := false, false
+	for _, edge := range flowEdges(content) {
+		from, to := edge[0], edge[1]
+		switch {
+		case strings.HasPrefix(to, "AGENTS.md"):
+			violations = append(violations, from+" -> "+to+" makes AGENTS.md an output")
+		case strings.HasPrefix(from, "AGENTS.md") && strings.Contains(to, "compile-context"):
+			feedsTranspiler = true
+		case strings.Contains(from, "compile-context") && strings.Contains(to, "CLAUDE.md"):
+			feedsVendors = true
+		}
+	}
+	if !feedsTranspiler {
+		violations = append(violations, "AGENTS.md does not feed compile-context")
+	}
+	if !feedsVendors {
+		violations = append(violations, "compile-context does not feed the vendor files")
+	}
+	return violations
+}
+
+// TestHomeWiki_Positive_CompileContextFlowsFromAGENTS pins BUG-680: compile-context reads
+// AGENTS.md (its --source default) and writes the vendor files. The preset landing page
+// carried the same inverted diagram and is held to the same rule.
+func TestHomeWiki_Positive_CompileContextFlowsFromAGENTS(t *testing.T) {
+	if got := compileContextFlowViolations(generateHomeWiki("cordanaLLM/praetor").Content); len(got) != 0 {
+		t.Errorf("generated Home diagram: %v", got)
+	}
+	preset, err := os.ReadFile(filepath.Join("..", "..", "docs", "presets", "mkdocs", "docs", "index.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := compileContextFlowViolations(string(preset)); len(got) != 0 {
+		t.Errorf("mkdocs preset index diagram: %v", got)
+	}
+}
+
+// TestHomeWiki_Negative_RejectsManifestToAGENTSFlow replays the diagram Home.md shipped
+// before the fix, .standards.yaml -> compile-context -> AGENTS.md, through the same check.
+func TestHomeWiki_Negative_RejectsManifestToAGENTSFlow(t *testing.T) {
+	old := "```mermaid\nflowchart LR\n" +
+		`    MANIFEST[".standards.yaml"] --> TRANSPILER["praetorctl compile-context"]` + "\n" +
+		`    TRANSPILER --> AGENTS["AGENTS.md\n(Canonical Truth)"]` + "\n" +
+		`    AGENTS --> GATES["Verification Cascade"]` + "\n```\n"
+	got := compileContextFlowViolations(old)
+	want := []string{
+		"praetorctl compile-context -> AGENTS.md makes AGENTS.md an output",
+		"AGENTS.md does not feed compile-context",
+		"compile-context does not feed the vendor files",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("violations = %q, want %q", got, want)
+	}
+}
+
+// TestCheckedInWiki_Boundary_MatchesGenerator holds every generator-owned page under
+// docs/wiki byte-equal to GenerateWiki's output, so a generator fix cannot land without the
+// published copy (the Home.md diagram and the HISS-16 table both drifted that way). The
+// repository name comes from the root's base name, so the root is spelled ".../praetor".
+// HISS-Matrix.md is hand-written and not generated, so it is not compared.
+func TestCheckedInWiki_Boundary_MatchesGenerator(t *testing.T) {
+	manifest, err := GenerateWiki(t.Context(), filepath.Join(t.TempDir(), "praetor"), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Pages) == 0 {
+		t.Fatal("generator produced no pages")
+	}
+	for _, page := range manifest.Pages {
+		data, err := os.ReadFile(filepath.Join("..", "..", "docs", "wiki", page.Name))
+		if err != nil {
+			t.Fatalf("generated page %s has no checked-in copy: %v", page.Name, err)
+		}
+		if got, _ := util.NormalizeLineEndings(string(data)); got != page.Content {
+			t.Errorf("docs/wiki/%s differs from GenerateWiki output; regenerate it", page.Name)
+		}
 	}
 }

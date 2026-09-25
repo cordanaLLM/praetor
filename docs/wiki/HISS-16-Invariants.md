@@ -6,15 +6,18 @@ HISS-16 establishes formal engineering determinism across polyglot repositories.
 
 | Invariant | Scope | Rule | Verification |
 | :--- | :--- | :--- | :--- |
-| **HISS-01** | Control Flow | Call graph is strictly a Directed Acyclic Graph (DAG); zero recursion. | AST check |
-| **HISS-02** | Loops & I/O | Compile-time scalar loop bound; context timeout on all I/O. | Compiler lint |
-| **HISS-03** | Memory | Zero dynamic heap allocation in hot-path simulation/render loops. | Alloc sweep |
-| **HISS-04** | Complexity | McCabe Cyclomatic $\le 10$, Cognitive $\le 15$, Func LOC $\le 75$. | gocyclo / AST |
-| **HISS-07** | Errors | Zero unwrap / expect; all errors handled or wrapped. | Static check |
-| **HISS-10** | Hygiene | Zero warning tolerance across compiler, linters, and formatters. | CI gate |
-| **HISS-14** | Contracts | Public APIs are append-only; breaking changes require 'Migration:'. | Conventional commit |
-| **HISS-15** | Testing | Mandatory 3D tests (Positive, Negative, Boundary) on all public interfaces. | Race test suite |
-| **HISS-16** | Context | Single source of truth in AGENTS.md; vendor targets transpiled. | compile-context --verify |
+| **HISS-01** | control flow | recursion prohibited; call graph = DAG | build |
+| **HISS-02** | loops, I/O | scalar upper bound on every loop; explicit `context.Context` timeout on every I/O | Semgrep / AST |
+| **HISS-04** | complexity | McCabe cyclomatic <= 10, cognitive <= 15, func LOC <= 75, statements <= 50 | AST sweep |
+| **HISS-07** | errors | zero `.unwrap()` / `.expect()`; every error handled or wrapped with context | linter / compiler |
+| **HISS-10** | warnings | zero warnings: compiler, linter, format sweeps | sweep |
+| **HISS-15** | 3D testing | positive + negative + boundary tests mandatory, every public interface | CI coverage gate |
+| **HISS-16** | context integrity | single canonical `AGENTS.md`; vendor files compiled via `standardsctl compile-context`; `AGENTS.md` passes caveman lint | pre-commit |
+| **HISS-17** | state ledger | turn start: `praetorctl state status` + `.workingdir/OPEN.md`, never whole `.workingdir/STATE.md`; tasks via `standardsctl state task`; turn end: `standardsctl state sync .` | pre-commit / CI |
+| **HISS-18** | CI efficiency | diff-aware gating; docs/state-only change skips heavy race + security gates via `standardsctl ci filter` | CI |
+| **HISS-19** | reuse before writing | one behavior = one implementation; extend or call existing, config formats included | `dedupe scan` in verify-all |
+| **HISS-20** | replayable evidence | every rule has fixtures replayed both directions; coverage claim reproducible, never asserted | `hiss coverage --verify` in verify-all |
+| **HISS-21** | platform neutrality | gates, hooks, emitted templates run on Linux, macOS, Windows, or skip with stated reason; gate that cannot run != passing gate | Platform Neutrality matrix in CI |
 
 ## Zero-Warning Cascade
 
@@ -23,5 +26,5 @@ flowchart TD
     IDE["1. IDE / standards-lsp"] --> HOOKS["2. Pre-Commit / lefthook"]
     HOOKS --> PUSH["3. Pre-Push / audit"]
     PUSH --> CI["4. CI Ephemeral Sandbox"]
-    CI --> ADMIT["5. Admission Controller"]
+    CI --> ADMIT["5. PR Admission\n(standardsctl forge validate-pr in CI)"]
 ```
