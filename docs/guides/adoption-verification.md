@@ -57,7 +57,6 @@ authority path (`adopt.AuditBranchProtection`) to verify branch protection:
 - An unknown decline item, malformed decline entry, or unreadable `.standards.yaml`
   fails closed, ensuring invalid configuration cannot produce a false pass.
 
-
 ### Stages that do not apply are skipped, not failed
 
 `praetorctl gate run` reports a stage it cannot meaningfully run as skipped, with the reason, rather
