@@ -374,9 +374,12 @@ func TestClassifyChanges_UnrecognisedExtensionIsNotDocsOrState(t *testing.T) {
 		if cs.DocsOnly || cs.StateOnly {
 			t.Errorf("%v: unrecognised path classified DocsOnly=%t StateOnly=%t", files, cs.DocsOnly, cs.StateOnly)
 		}
-		if cs.CodeChanged || cs.ConfigChanged || cs.AgentChanged {
-			t.Errorf("%v: unrecognised path claimed a source class: %+v", files, cs)
-		}
+		// Known fail-open (tracked upstream, not asserted here): isCode/isConfig/isAgent
+		// in filter.go do not recognise ".sh", so a shell-script-only change (e.g.
+		// scripts/release.sh) leaves CodeChanged/ConfigChanged/AgentChanged all false too.
+		// makeTargetedDecision then sets RunTests/RunLinters/RunSecurity false and
+		// SkipHeavyGates true, so a shell-script-only diff silently skips the race and
+		// security gates. Do not pin that source-class outcome as a passing contract here.
 		decision := cifilter.MakeDecision(cs, false)
 		if decision.RunDocsOnly || !decision.RunAudit {
 			t.Errorf("%v: expected audit without the docs-only path, got %+v", files, decision)
