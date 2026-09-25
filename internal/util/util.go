@@ -19,7 +19,9 @@ const (
 	// locked OS keyring.
 	DefaultAuthTokenTimeout = 15 * time.Second
 	// CommandWaitDelay bounds how long RunCommand waits for output pipes still held by
-	// descendants after the direct child exited or the context expired.
+	// descendants after the direct child exited or the context expired. On Unix it is also
+	// the grace a command asked to stop gets before it is killed: SIGTERM when its context
+	// ends, or the signal that is ending this process (TerminateCommandsOnSignal).
 	CommandWaitDelay = 5 * time.Second
 )
 
@@ -194,9 +196,11 @@ const maxCommandDiagnosticBytes = MaxErrorBodyBytes
 // RunCommand shares RunCommandBytes' execution boundary (HISS-19). HISS-02: a nil context,
 // or one without a deadline, is given DefaultCommandTimeout. Each stream is capped at
 // MaxCommandOutputBytes and an overflow cancels the command. On Unix the child runs in its
-// own process group, which is killed on cancellation and on return, so a grandchild cannot
-// outlive the call (BUG-889). That group no longer receives a terminal's Ctrl-C, so a
-// program's main calls TerminateCommandsOnSignal to kill it when a signal ends the program.
+// own process group. Cancellation sends that group SIGTERM, so git can remove its locks,
+// and the child is killed if it is still running CommandWaitDelay later; the group is
+// killed on return, so a grandchild cannot outlive the call (BUG-889). The group no longer
+// receives a terminal's Ctrl-C, so a program's main calls TerminateCommandsOnSignal to
+// forward that signal to it.
 // The child's environment follows commandEnvironment: without WithCommandEnvironment it
 // inherits the ambient one minus the variables that bind git to a repository (BUG-886).
 func RunCommand(ctx context.Context, dir string, name string, args ...string) (string, error) {

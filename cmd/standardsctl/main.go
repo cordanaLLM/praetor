@@ -187,8 +187,9 @@ func main() {
 	args := os.Args[2:]
 	if !ownsTerminationSignals(cmd) {
 		// Every command praetorctl runs sits in a process group of its own, out of reach of
-		// a terminal's Ctrl-C, and no subcommand observes the signal: this kills those
-		// groups before the signal ends praetorctl, instead of leaving them running.
+		// a terminal's Ctrl-C, and no subcommand observes the signal: this forwards the
+		// signal to those groups, so git still cleans up, and kills any group still running
+		// after a grace before the signal ends praetorctl, instead of leaving them running.
 		util.TerminateCommandsOnSignal()
 	}
 
