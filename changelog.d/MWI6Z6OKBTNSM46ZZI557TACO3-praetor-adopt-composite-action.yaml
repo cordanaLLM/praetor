@@ -1,3 +1,0 @@
-type: security
-title: praetor-adopt composite action passes its inputs through the environment and writes its report output
-issue: "291"

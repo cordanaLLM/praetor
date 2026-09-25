@@ -1,3 +1,0 @@
-type: added
-title: "`praetor-adopt` appends its report to the caller job summary, so a failed run output survives the step"
-issue: "291"

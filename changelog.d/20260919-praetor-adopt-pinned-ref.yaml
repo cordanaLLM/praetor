@@ -1,4 +1,0 @@
-type: fixed
-title: "`praetor-adopt` builds the `standardsctl` of the ref the caller pinned, validates `mode`, and passes each boolean opt-out explicitly"
-issue: "291"
-breaking: true

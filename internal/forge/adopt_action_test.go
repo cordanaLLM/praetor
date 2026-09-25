@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"gopkg.in/yaml.v3"
 )
@@ -701,7 +702,9 @@ func TestPraetorAdoptBuild_Negative_MissingActionPathRunsNothing(t *testing.T) {
 // TestPraetorAdoptAction_Boundary_GoVersionDefaultBuildsThisModule pins the toolchain input to the
 // module the build step compiles. The step no longer installs a published version; it builds this
 // checkout, so a default below go.mod's own directive only works while GOTOOLCHAIN may download
-// one, and fails outright under GOTOOLCHAIN=local.
+// one, and fails outright under GOTOOLCHAIN=local. The repository-wide sweep of toolchain pins,
+// AuditGoToolchain (toolchain_checks.go), reports only a default below the directive; this test
+// asks the one default this action declares to be the directive itself.
 func TestPraetorAdoptAction_Boundary_GoVersionDefaultBuildsThisModule(t *testing.T) {
 	declared, ok := loadAdoptAction(t).Inputs["go-version"]
 	if !ok {
@@ -714,27 +717,23 @@ func TestPraetorAdoptAction_Boundary_GoVersionDefaultBuildsThisModule(t *testing
 	}
 }
 
-// goDirectiveOfEngine returns the major.minor of the go directive in praetor's own go.mod.
+// goDirectiveOfEngine returns the major.minor of the go directive in praetor's own go.mod, read
+// with gomanifest.GoDirective, the parser AuditGoToolchain compares every other pin against.
 func goDirectiveOfEngine(t *testing.T) string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(engineRoot, "go.mod")) //nolint:gosec // the module under test
 	if err != nil {
 		t.Fatalf("read go.mod: %v", err)
 	}
-	lines := strings.Split(string(data), "\n")
-	for i := 0; i < len(lines) && i < maxOutputLines; i++ {
-		version, found := strings.CutPrefix(strings.TrimSpace(lines[i]), "go ")
-		if !found {
-			continue
-		}
-		parts := strings.Split(strings.TrimSpace(version), ".")
-		if len(parts) < 2 {
-			t.Fatalf("go.mod declares an unreadable go directive %q", lines[i])
-		}
-		return parts[0] + "." + parts[1]
+	directive, declared := gomanifest.GoDirective(data)
+	if !declared {
+		t.Fatal("go.mod declares no go directive")
 	}
-	t.Fatal("go.mod declares no go directive")
-	return ""
+	parts := strings.Split(directive, ".")
+	if len(parts) < 2 {
+		t.Fatalf("go.mod declares an unreadable go directive %q", directive)
+	}
+	return parts[0] + "." + parts[1]
 }
 
 // TestPraetorAdoptBuild_Negative_NoSourceAndNoRefRunsNothing is the case that must not quietly
