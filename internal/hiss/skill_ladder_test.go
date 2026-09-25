@@ -2,10 +2,11 @@ package hiss
 
 import (
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -45,7 +46,7 @@ func scannedRules(t *testing.T) []string {
 			set[match[1]] = true
 		}
 	}
-	return sortedSet(set)
+	return slices.Sorted(maps.Keys(set))
 }
 
 // ladderRules returns the rule IDs the skill lists under its AST scan step, the one
@@ -65,16 +66,7 @@ func ladderRules(t *testing.T, text string) []string {
 			set[ruleCitation.FindString(line)] = true
 		}
 	}
-	return sortedSet(set)
-}
-
-func sortedSet(set map[string]bool) []string {
-	out := make([]string, 0, len(set))
-	for id := range set {
-		out = append(out, id)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(set))
 }
 
 // TestHISSAuditSkill_Positive_LadderMatchesScan keeps the skill's scanner step equal to

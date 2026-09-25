@@ -1,10 +1,11 @@
 package config
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -74,15 +75,6 @@ func facetMember(t *testing.T, path, key string) (string, []string) {
 	return "", list
 }
 
-func sortedIDs(index map[string]string) []string {
-	ids := make([]string, 0, len(index))
-	for id := range index {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
-}
-
 // TestShippedFacets_Positive_EveryFacetDeclaresItsID pins the identity rule the authoring
 // guide states: a facet is named by its id field, never by its file name, so every shipped
 // facet carries one and the index key equals it.
@@ -106,7 +98,7 @@ func TestShippedFacets_Negative_NoGoOnlyLinter(t *testing.T) {
 	if _, ok := facets["agent:sandboxed"]; !ok {
 		t.Fatal("agent:sandboxed is not indexed; the guard would pass vacuously")
 	}
-	for _, id := range sortedIDs(facets) {
+	for _, id := range slices.Sorted(maps.Keys(facets)) {
 		_, linters := facetMember(t, facets[id], "linters")
 		for _, linter := range linters {
 			if goOnlyTools[linter] {
@@ -132,7 +124,7 @@ func TestShippedFacets_Negative_UngatedHISSCitesTheExtendedSpec(t *testing.T) {
 		t.Fatalf("AGENTS.md invariant table parsed as %v; the fixture assumption is stale", gated)
 	}
 	facets := shippedFacetIndex(t)
-	for _, id := range sortedIDs(facets) {
+	for _, id := range slices.Sorted(maps.Keys(facets)) {
 		description, _ := facetMember(t, facets[id], "description")
 		for _, cited := range hissCitation.FindAllString(description, -1) {
 			if !gated[cited] && !strings.Contains(description, extendedSpecPath) {
