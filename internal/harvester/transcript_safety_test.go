@@ -6,6 +6,7 @@ package harvester
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,6 +162,94 @@ func TestIngestTranscriptPartialCancellationIsRetryable(t *testing.T) {
 	retry, err := IngestTranscript(context.Background(), opts)
 	if err != nil || !retry.Complete || retry.Stored != 1 || retry.AlreadyPresent != 1 {
 		t.Fatalf("retry: %+v, %v", retry, err)
+	}
+}
+
+// TestIngestTranscriptPartialCancellationWithoutCallerDeadline is the same partial-ingest
+// cancellation with a caller that set no deadline, which is the path where IngestTranscript
+// wraps the caller's context in its own one-minute bound. The caller's Err hook must still run
+// inside that bound: when it did not, the hook never fired and both events were stored.
+func TestIngestTranscriptPartialCancellationWithoutCallerDeadline(t *testing.T) {
+	source := transcriptFixture(t, transcriptEvent+transcriptEvent)
+	cache := t.TempDir()
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, hasDeadline := parent.Deadline(); hasDeadline {
+		t.Fatal("fixture parent must carry no deadline")
+	}
+	ctx := cancelAfterTranscriptWrite{Context: parent, cache: cache, cancel: cancel}
+	partial, err := IngestTranscript(ctx, TranscriptIngestOptions{SourcePath: source, CacheDir: cache})
+	if err == nil || partial.Stored != 1 || partial.Complete || partial.NextCursor == "" {
+		t.Fatalf("partial: %+v, %v", partial, err)
+	}
+}
+
+// errHookContext counts every Err poll it receives before answering from its embedded context.
+type errHookContext struct {
+	context.Context
+	polls *int
+}
+
+func (c errHookContext) Err() error {
+	*c.polls++
+	return c.Context.Err()
+}
+
+// TestBoundedTranscriptContextKeepsCallerErrHook is the positive dimension: with no caller
+// deadline the returned context carries the one-minute bound, and every Err poll reaches the
+// caller's own Err, so a caller-side cancellation is reported through the bounded context.
+func TestBoundedTranscriptContextKeepsCallerErrHook(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
+	polls := 0
+	bounded, cancel := boundedTranscriptContext(errHookContext{Context: parent, polls: &polls})
+	defer cancel()
+	deadline, ok := bounded.Deadline()
+	if !ok || time.Until(deadline) > time.Minute || time.Until(deadline) <= 0 {
+		t.Fatalf("bounded deadline = %v (set %v), want within one minute", deadline, ok)
+	}
+	if err := bounded.Err(); err != nil || polls != 1 {
+		t.Fatalf("live poll: Err = %v, caller polls = %d, want nil and 1", err, polls)
+	}
+	cancelParent()
+	if err := bounded.Err(); !errors.Is(err, context.Canceled) || polls != 2 {
+		t.Fatalf("after caller cancel: Err = %v, caller polls = %d, want Canceled and 2", err, polls)
+	}
+	select {
+	case <-bounded.Done():
+	default:
+		t.Fatal("caller cancellation did not close the bounded Done channel")
+	}
+}
+
+// TestBoundedTranscriptContextKeepsCallerDeadline is the boundary dimension: a caller that
+// already set a deadline gets its own context back, untouched, and the returned cancel is a
+// no-op that leaves the caller's context live.
+func TestBoundedTranscriptContextKeepsCallerDeadline(t *testing.T) {
+	parent, cancelParent := context.WithTimeout(context.Background(), time.Hour)
+	defer cancelParent()
+	bounded, cancel := boundedTranscriptContext(parent)
+	cancel()
+	if bounded != parent {
+		t.Fatalf("a caller deadline must be kept as is, got a different context %T", bounded)
+	}
+	if err := parent.Err(); err != nil {
+		t.Fatalf("the no-op cancel cancelled the caller's context: %v", err)
+	}
+}
+
+// TestBoundedTranscriptContextCancelStaysLocal is the negative dimension: releasing the bound
+// cancels the bounded context without reaching back into the caller's context.
+func TestBoundedTranscriptContextCancelStaysLocal(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
+	bounded, cancel := boundedTranscriptContext(parent)
+	cancel()
+	if err := bounded.Err(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("released bound: Err = %v, want Canceled", err)
+	}
+	if err := parent.Err(); err != nil {
+		t.Fatalf("releasing the bound cancelled the caller's context: %v", err)
 	}
 }
 

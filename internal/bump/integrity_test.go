@@ -17,10 +17,10 @@ func TestDiscoverGoModulesCheckedRejectsIncompleteDiscovery(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "go.work"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := DiscoverGoModulesChecked(root); err == nil || len(got) != 0 {
+	if got, err := DiscoverGoModulesChecked(t.Context(), root); err == nil || len(got) != 0 {
 		t.Fatalf("invalid go.work accepted: %v, %v", got, err)
 	}
-	if got := DiscoverGoModules(root); len(got) != 0 {
+	if got := DiscoverGoModules(t.Context(), root); len(got) != 0 {
 		t.Fatalf("legacy discovery returned partial modules: %v", got)
 	}
 }
@@ -38,7 +38,7 @@ func TestDiscoverGoModulesCheckedConfinesWorkspaceModules(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "go.work"), []byte("use ../outside\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := DiscoverGoModulesChecked(repo); err == nil || len(got) != 0 {
+	if got, err := DiscoverGoModulesChecked(t.Context(), repo); err == nil || len(got) != 0 {
 		t.Fatalf("escaping module accepted: %v, %v", got, err)
 	}
 }
@@ -52,7 +52,7 @@ func TestDiscoverGoModulesCheckedFindsBoundedModules(t *testing.T) {
 		}
 		writeGoMod(t, dir, "module example.com/fixture\n")
 	}
-	got, err := DiscoverGoModulesChecked(repo)
+	got, err := DiscoverGoModulesChecked(t.Context(), repo)
 	if err != nil || len(got) != 1 || got[0] != "module" {
 		t.Fatalf("modules=%v, err=%v", got, err)
 	}
@@ -110,7 +110,7 @@ func TestFallbackScanReportsLineAndScannerBounds(t *testing.T) {
 	for _, body := range []string{strings.Repeat("// filler\n", MaxManifestLines+1), strings.Repeat("x", 70000)} {
 		repo := t.TempDir()
 		writeGoMod(t, repo, body)
-		if got, err := scanGoModFallback(repo, ".", ScanOptions{}); err == nil || len(got) != 0 {
+		if got, err := scanGoModFallback(t.Context(), repo, ".", ScanOptions{}); err == nil || len(got) != 0 {
 			t.Fatalf("truncated fallback accepted %d records: %v", len(got), err)
 		}
 	}
@@ -182,7 +182,7 @@ func TestWorkflowScanRejectsUnreadableSource(t *testing.T) {
 	if err := os.Symlink("missing", filepath.Join(workflow, "ci.yml")); err != nil {
 		t.Fatal(err)
 	}
-	if got, _, err := ScanWorkflowActions(repo); err == nil || len(got) != 0 {
+	if got, _, err := ScanWorkflowActions(t.Context(), repo); err == nil || len(got) != 0 {
 		t.Fatalf("unreadable workflow accepted: %v, %v", got, err)
 	}
 }

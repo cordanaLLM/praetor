@@ -1,0 +1,3 @@
+type: fixed
+title: Replace test assertions that cannot fail and fixtures that read the developer's machine, in the baseline fuzz target, the stress suite, the gc helpers and the manifest tests
+breaking: false

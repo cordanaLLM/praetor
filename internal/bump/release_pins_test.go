@@ -54,7 +54,7 @@ func writeReleaseWorkflow(t *testing.T, uses []string) string {
 // Positive: every release-pipeline action the engine's own workflows use is pinned at the
 // registry version, and each one is used at least once, so the check is not vacuous.
 func TestReleasePipelinePinsMatchRegistry(t *testing.T) {
-	actions, _, err := ScanWorkflowActions(filepath.Join("..", ".."))
+	actions, _, err := ScanWorkflowActions(t.Context(), filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatalf("scan engine workflows: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestReleasePipelineStalePinsReportDrift(t *testing.T) {
 		"anchore/sbom-action/download-syft@v0.18.0",
 		"sigstore/cosign-installer@v3.8.1",
 	}
-	actions, _, err := ScanWorkflowActions(writeReleaseWorkflow(t, stale))
+	actions, _, err := ScanWorkflowActions(t.Context(), writeReleaseWorkflow(t, stale))
 	if err != nil {
 		t.Fatalf("scan fixture: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestReleasePipelineRegistryBoundaries(t *testing.T) {
 		uses = append(uses, name+"@"+knownActionLatest[name])
 	}
 	uses = append(uses, "example/unregistered-action@v0.0.1")
-	actions, _, err := ScanWorkflowActions(writeReleaseWorkflow(t, uses))
+	actions, _, err := ScanWorkflowActions(t.Context(), writeReleaseWorkflow(t, uses))
 	if err != nil {
 		t.Fatalf("scan fixture: %v", err)
 	}

@@ -76,19 +76,7 @@ func TestJoinLattice_HighestStandardWins(t *testing.T) {
 	}
 }
 
-func TestLoadManifest_Dogfood(t *testing.T) {
-	manifest, err := LoadManifest("../../.standards.yaml")
-	if err != nil {
-		t.Fatalf("failed to load root .standards.yaml: %v", err)
-	}
-
-	if manifest.Repository.Name != "praetor" && manifest.Repository.Name != "standards" {
-		t.Fatalf("expected repo name 'praetor' or 'standards', got '%s'", manifest.Repository.Name)
-	}
-	if len(manifest.Profiles) == 0 {
-		t.Fatalf("expected at least 1 profile")
-	}
-	if len(manifest.Facets) == 0 {
-		t.Fatalf("expected at least 1 facet")
-	}
-}
+// The manifest tests live in strict_manifest_test.go: hermetic fixtures with exact
+// assertions, the KnownFields refusals, the empty-document boundary and one guarded read
+// of this repository's own manifest. A second copy here read the live checkout and
+// accepted either of two repository names, which is not an assertion.

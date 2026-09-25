@@ -4,6 +4,7 @@
 package bump
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -64,7 +65,7 @@ var deprecatedActionVersions = map[string]map[string]string{
 }
 
 // ScanWorkflowActions inspects all workflow YAML files in repoPath/.github/workflows/.
-func ScanWorkflowActions(repoPath string) ([]ActionCandidate, []DeprecationWarning, error) {
+func ScanWorkflowActions(ctx context.Context, repoPath string) ([]ActionCandidate, []DeprecationWarning, error) {
 	workflowDir, err := util.ConfinePath(repoPath, filepath.Join(".github", "workflows"))
 	if err != nil {
 		return nil, nil, err
@@ -86,7 +87,7 @@ func ScanWorkflowActions(repoPath string) ([]ActionCandidate, []DeprecationWarni
 		if entry.IsDir() || (filepath.Ext(entry.Name()) != ".yml" && filepath.Ext(entry.Name()) != ".yaml") {
 			continue
 		}
-		cands, deps, err := parseWorkflowFile(repoPath, entry.Name(), seen)
+		cands, deps, err := parseWorkflowFile(ctx, repoPath, entry.Name(), seen)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -96,8 +97,8 @@ func ScanWorkflowActions(repoPath string) ([]ActionCandidate, []DeprecationWarni
 	return candidates, deprecations, nil
 }
 
-func parseWorkflowFile(repoPath, fileName string, seen map[string]bool) ([]ActionCandidate, []DeprecationWarning, error) {
-	content, err := readManifest(repoPath, filepath.Join(".github", "workflows", fileName))
+func parseWorkflowFile(ctx context.Context, repoPath, fileName string, seen map[string]bool) ([]ActionCandidate, []DeprecationWarning, error) {
+	content, err := readManifest(ctx, repoPath, filepath.Join(".github", "workflows", fileName))
 	if err != nil {
 		return nil, nil, fmt.Errorf("read workflow %s: %w", fileName, err)
 	}

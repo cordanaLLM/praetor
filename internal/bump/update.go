@@ -66,7 +66,7 @@ func applyGoUpdate(ctx context.Context, targetDir string, cand UpgradeCandidate,
 
 func fallbackGoModEdit(ctx context.Context, targetDir string, cand UpgradeCandidate) error {
 	goModPath := filepath.Join(targetDir, "go.mod")
-	data, err := readManifest(targetDir, "go.mod")
+	data, err := readManifest(ctx, targetDir, "go.mod")
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func applyNodeUpdate(ctx context.Context, targetDir string, cand UpgradeCandidat
 
 func updatePackageManifest(ctx context.Context, targetDir string, cand UpgradeCandidate) error {
 	pkgFile := filepath.Join(targetDir, "package.json")
-	data, err := readManifest(targetDir, "package.json")
+	data, err := readManifest(ctx, targetDir, "package.json")
 	if err != nil {
 		return err
 	}

@@ -31,7 +31,7 @@ jobs:
 		t.Fatalf("failed writing test workflow: %v", err)
 	}
 
-	actions, deps, err := ScanWorkflowActions(tmpDir)
+	actions, deps, err := ScanWorkflowActions(t.Context(), tmpDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestScanWorkflowActions_Negative(t *testing.T) {
 // TestScanWorkflowActions_Boundary verifies edge cases with empty or missing directories.
 func TestScanWorkflowActions_Boundary(t *testing.T) {
 	tmpDir := t.TempDir()
-	actions, deps, err := ScanWorkflowActions(tmpDir)
+	actions, deps, err := ScanWorkflowActions(t.Context(), tmpDir)
 	if err != nil || len(actions) != 0 || len(deps) != 0 {
 		t.Fatalf("expected 0 actions and 0 deps on missing dir")
 	}
@@ -82,7 +82,7 @@ func TestScanWorkflowActions_Boundary(t *testing.T) {
 		t.Fatalf("failed write: %v", err)
 	}
 
-	actions, deps, err = ScanWorkflowActions(tmpDir)
+	actions, deps, err = ScanWorkflowActions(t.Context(), tmpDir)
 	if err != nil || len(actions) != 0 || len(deps) != 0 {
 		t.Errorf("expected 0 results on empty workflow")
 	}
