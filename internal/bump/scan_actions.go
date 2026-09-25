@@ -27,9 +27,9 @@ var knownActionLatest = map[string]string{
 	"actions/deploy-pages":              "v4",
 	"actions/configure-pages":           "v5",
 	"fsfe/reuse-action":                 "v5",
-	"goreleaser/goreleaser-action":      "v6",
+	"goreleaser/goreleaser-action":      "v7",
 	"sigstore/cosign-installer":         "v4.1.2",
-	"anchore/sbom-action/download-syft": "v0.18.0",
+	"anchore/sbom-action/download-syft": "v0.24.2",
 }
 
 // Deprecated action versions known to target obsolete runtimes (e.g. Node 20 runner deprecation).
