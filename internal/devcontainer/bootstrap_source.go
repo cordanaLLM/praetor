@@ -59,13 +59,22 @@ func captureBootstrapSource(ctx context.Context, root string) ([]bootstrapSource
 	return files, nil
 }
 
+// bootstrapSourcePathspec lists exactly what validateBootstrapSourceName accepts. It
+// previously also globbed *.s, *.S, *.c, *.h and *.syso, which that validator rejects as
+// "non-Go build inputs", so the first native file committed anywhere in the tree --
+// including a scanner fixture under testdata -- failed the bootstrap. Asking git for files
+// the validator refuses is a contradiction that can only ever produce an error.
+//
+// The exclusions drop Go's test surface (util.IsGoNonTestSource): the recorded Dockerfile
+// only runs go build ./cmd/standardsctl, which never reads a _test.go file or a testdata
+// directory. Carrying them roughly doubled the compressed archive and pushed it to 96% of
+// the four-frame cap, so one added test failed every bootstrap (BUG-985). The glob magic
+// makes the leading ** match testdata at the root as well as at any depth.
+var bootstrapSourcePathspec = []string{"*.go", "go.mod", "go.sum", "LICENSE", ":(exclude)*_test.go", ":(exclude,glob)**/testdata/**"}
+
 func bootstrapSourcePaths(ctx context.Context, root string) ([]string, error) {
-	// The pathspec lists exactly what validateBootstrapSourceName accepts. It previously
-	// also globbed *.s, *.S, *.c, *.h and *.syso, which that validator rejects as
-	// "non-Go build inputs", so the first native file committed anywhere in the tree --
-	// including a scanner fixture under testdata -- failed the bootstrap. Asking git for
-	// files the validator refuses is a contradiction that can only ever produce an error.
-	data, err := runSourceGit(ctx, root, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.go", "go.mod", "go.sum", "LICENSE")
+	args := append([]string{"ls-files", "--cached", "--others", "--exclude-standard", "-z", "--"}, bootstrapSourcePathspec...)
+	data, err := runSourceGit(ctx, root, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -113,15 +122,21 @@ func validateBootstrapSourceName(name string) error {
 	if name == "" || len(name) > maxBootstrapPathBytes || filepath.ToSlash(filepath.Clean(name)) != name || filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") || strings.ContainsAny(name, "\\\x00\r\n") {
 		return errors.New("invalid bootstrap source path")
 	}
-	switch name {
-	case "go.mod", "go.sum", "LICENSE":
+	return validateBootstrapSourceKind(name)
+}
+
+// validateBootstrapSourceKind admits the module files and non-test Go source, the inputs
+// go build ./cmd/standardsctl reads; bootstrapSourcePathspec asks git for exactly these.
+func validateBootstrapSourceKind(name string) error {
+	switch {
+	case name == "go.mod", name == "go.sum", name == "LICENSE":
 		return nil
-	default:
-		if !strings.HasSuffix(name, ".go") {
-			return errors.New("unsupported bootstrap source file; non-Go build inputs require explicit capture support")
-		}
-		return nil
+	case !strings.HasSuffix(name, ".go"):
+		return errors.New("unsupported bootstrap source file; non-Go build inputs require explicit capture support")
+	case !util.IsGoNonTestSource(name):
+		return fmt.Errorf("bootstrap source %s is test-only; go build never reads _test.go files or testdata directories", name)
 	}
+	return nil
 }
 
 func validateBootstrapSourceFile(name string, data []byte) error {
@@ -197,11 +212,22 @@ func bootstrapSourceAvailable(ctx context.Context, root string) (bool, error) {
 	return true, nil
 }
 
+// validateBootstrapSourceSet is the one check every captured or decoded set passes. It
+// re-applies the name rule to each member, so a test-only or otherwise refused path cannot
+// enter a set through any caller, whatever produced the list.
 func validateBootstrapSourceSet(files []bootstrapSourceFile) error {
-	if !containsBootstrapSource(files, "cmd/standardsctl/main.go") || !containsBootstrapSource(files, "go.mod") || !containsBootstrapSource(files, "go.sum") || !containsBootstrapSource(files, "LICENSE") {
-		return errors.New("bootstrap requires CLI sources, go.mod, go.sum and LICENSE")
+	if len(files) > maxBootstrapFiles {
+		return errors.New("bootstrap source exceeds 4096 files")
+	}
+	for _, required := range []string{"cmd/standardsctl/main.go", "go.mod", "go.sum", "LICENSE"} {
+		if !containsBootstrapSource(files, required) {
+			return errors.New("bootstrap requires CLI sources, go.mod, go.sum and LICENSE")
+		}
 	}
 	for _, file := range files {
+		if err := validateBootstrapSourceName(file.Name); err != nil {
+			return err
+		}
 		if file.Name == "go.mod" && !declaresPraetorModule(file.Data) {
 			return errors.New("bootstrap archive must declare the Praetor module")
 		}

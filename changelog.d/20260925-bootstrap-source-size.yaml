@@ -1,0 +1,3 @@
+type: fixed
+title: Capture only Go build sources in the DevContainer bootstrap archive, excluding _test.go files and testdata directories, so Praetor's own compressed source drops from 96% to 53% of the four-frame cap and one added test no longer fails every bootstrap; a recorded bootstrap archive that still carries test files now fails devcontainer verify and standardsctl audit until it is regenerated
+breaking: true

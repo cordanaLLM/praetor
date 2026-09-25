@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -19,6 +18,13 @@ const (
 	maxGitScopeBytes = 8 << 20
 )
 
+// sourceFiles lists the Go source this repository owns.
+//
+// testdata is excluded on both scope paths, the git listing and the directory walk, so the
+// two agree; util.IsGoNonTestSource is the one rule, shared with the DevContainer bootstrap
+// capture. Go itself never builds testdata, and a fixture corpus is deliberately
+// repetitive: a rule needing a tested and an untested copy of the same function must contain
+// two near-identical files, so reporting them as clones reports the evidence as the defect.
 func sourceFiles(ctx context.Context, repoPath string) ([]string, error) {
 	if ctx == nil {
 		return nil, errors.New("dedupe scan requires a context")
@@ -49,7 +55,7 @@ func gitSourceFiles(ctx context.Context, repoPath string) ([]string, error) {
 	var files []string
 	for _, entry := range entries {
 		path := string(entry)
-		if !isGoSource(path) {
+		if !util.IsGoNonTestSource(path) {
 			continue
 		}
 		if !filepath.IsLocal(path) {
@@ -88,7 +94,7 @@ func directorySourceFiles(ctx context.Context, repoPath string) ([]string, error
 			}
 			return nil
 		}
-		if !isGoSource(path) {
+		if !util.IsGoNonTestSource(path) {
 			return nil
 		}
 		rel, err := filepath.Rel(repoPath, path)
@@ -99,18 +105,4 @@ func directorySourceFiles(ctx context.Context, repoPath string) ([]string, error
 		return nil
 	})
 	return files, err
-}
-
-// isGoSource reports whether path is Go source this repository owns.
-//
-// testdata is excluded on both scope paths, the git listing and the directory walk, so the
-// two agree. Go itself never builds testdata, and a fixture corpus is deliberately
-// repetitive: a rule needing a tested and an untested copy of the same function must contain
-// two near-identical files, so reporting them as clones reports the evidence as the defect.
-func isGoSource(path string) bool {
-	if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-		return false
-	}
-	slashed := filepath.ToSlash(path)
-	return !strings.HasPrefix(slashed, "testdata/") && !strings.Contains(slashed, "/testdata/")
 }
