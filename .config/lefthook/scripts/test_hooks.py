@@ -38,10 +38,13 @@ LOCALE_ENV = {"LC_ALL": "C", "LANGUAGE": "C"}
 # export step -- reintroduced CRLF into a fixture-committed .go file before gofmt ever saw
 # it, and gofmt reports any CRLF file as unformatted. That masked
 # test_vet_checks_staged_go_package's intended "go vet: wrong type" assertion behind
-# "Run gofmt and stage the intended changes: main.go" on Windows. Forcing autocrlf off for
-# every git invocation this suite makes (env, not a per-repo `git config`, so it also covers
-# the hook's own subprocess tree once lefthook and the Python hooks inherit it) is the one
-# shared fix, matching how internal/bump pins -c core.autocrlf=false for the same reason (#282).
+# "Run gofmt and stage the intended changes: main.go" on Windows. NO_AUTOCRLF_ENV forces
+# autocrlf off for every git invocation this suite makes itself (env, not a per-repo
+# `git config`). It does not reach the hook's nested Git: common.index_env() and clean_env()
+# strip GIT_CONFIG_COUNT and its indexed keys at the gate boundary, so each nested checkout in
+# common.snapshot() passes SNAPSHOT_GIT_CONFIG (-c core.autocrlf=false) itself, matching how
+# internal/bump pins the same flag (#282).
+# test_snapshot_pins_autocrlf_against_persistent_configuration replays that pin.
 NO_AUTOCRLF_ENV = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.autocrlf",
                    "GIT_CONFIG_VALUE_0": "false"}
 AUTOCRLF_ENV = {**NO_AUTOCRLF_ENV, "GIT_CONFIG_VALUE_0": "true"}
@@ -517,6 +520,23 @@ print("fixture hook self-tests passed")
                     self.assertEqual((directory / "data.json").read_bytes(),
                                      b'{"index": "recorded"}\n')
                     self.assertEqual((directory / "README.md").read_bytes(), b"# Fixture\n")
+
+    def test_snapshot_pins_autocrlf_against_persistent_configuration(self):
+        # Scrubbing -c configuration leaves the operator's persistent configuration in force,
+        # and Git for Windows sets core.autocrlf=true there. Each nested checkout must pin it.
+        self.write("data.json", '{"line": "lf"}\n')
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "test: commit lf fixture")
+        persistent = Path(self.temp.name) / "autocrlf-gitconfig"
+        persistent.write_text("[core]\n\tautocrlf = true\n", newline="\n")
+        env = self.hook_env(GIT_CONFIG_GLOBAL=str(persistent), GIT_CONFIG_NOSYSTEM="1")
+        with tempfile.TemporaryDirectory() as control:
+            subprocess.run(["git", "checkout-index", "--all", "--force", f"--prefix={control}/"],
+                           cwd=self.repo, env=env, check=True, capture_output=True, timeout=30)
+            self.assertEqual((Path(control) / "data.json").read_bytes(), b'{"line": "lf"}\r\n')
+        for ref in (None, "HEAD"):
+            with self.subTest(ref=ref), mock.patch.dict(os.environ, env, clear=True), \
+                    contextlib.chdir(self.repo), snapshot(ref) as directory:
+                self.assertEqual((directory / "data.json").read_bytes(), b'{"line": "lf"}\n')
 
     def test_commit_all_and_path_commit_check_the_bytes_git_records(self):
         self.write("data.json", '{"seed": 0}\n')
