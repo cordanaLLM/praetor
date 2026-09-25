@@ -313,9 +313,10 @@ func issueNumbers(parent *forge.IssueUpsertResult, children []*forge.IssueUpsert
 	return numbers
 }
 
-// TestPublishPreMigrationEpic_RepublishCreatesNothing pins the upsert: publishing the
-// same epic again resolves every issue already on the forge by title, creates nothing
-// and modifies nothing.
+// TestPublishPreMigrationEpic_RepublishCreatesNothing pins create-missing publishing:
+// publishing the epic again resolves every issue already on the forge by title, creates
+// nothing and modifies nothing, even when the regenerated epic's bodies and labels
+// changed in between. Publishing never converges an existing issue.
 func TestPublishPreMigrationEpic_RepublishCreatesNothing(t *testing.T) {
 	ctx := context.Background()
 	f := &fakeForge{}
@@ -327,6 +328,8 @@ func TestPublishPreMigrationEpic_RepublishCreatesNothing(t *testing.T) {
 	}
 	first := issueNumbers(parent, children)
 
+	epic.ParentEpic.Body += "\n- **Mapping Availability**: `90.0%`\n"
+	epic.ChildIssues[0].Labels = []string{"task", "relabelled"}
 	again, againChildren, err := PublishPreMigrationEpic(ctx, f, epic)
 	if err != nil {
 		t.Fatalf("republish failed: %v", err)

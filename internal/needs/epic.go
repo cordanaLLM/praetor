@@ -175,17 +175,22 @@ func renderEpicChecklistMarkdown(repoName string, repoNeeds *RepoNeeds, plan *Mi
 	return sb.String()
 }
 
-// PublishPreMigrationEpic synchronizes the pre-migration parent epic and decomposed tasks
-// to the target forge.
+// PublishPreMigrationEpic publishes the pre-migration parent epic and decomposed tasks
+// to the target forge, creating only the issues that do not exist yet.
 //
 // Publishing resolves every issue by title against the forge's issue inventory, the
 // identity forge.SyncIssues upserts on, so publishing again creates no second epic: an
 // issue whose title already exists is reused as it is, and only missing issues are
-// created. An existing issue is never modified, so a task the operator closed or
-// relabelled stays that way. A partial earlier publish therefore resumes, and each child
-// chains onto the real number of the task before it whether that task was just created
-// or already existed. Every title is checked against the inventory before the first
-// write; a duplicate or ambiguous title fails the publish with nothing created.
+// created. A partial earlier publish therefore resumes, and each child chains onto the
+// real number of the task before it whether that task was just created or already
+// existed. Every title is checked against the inventory before the first write; a
+// duplicate or ambiguous title fails the publish with nothing created.
+//
+// Publishing does not synchronize existing issues. Their body, labels, dependency
+// references and state are never converged onto the regenerated epic, so a task the
+// operator closed or relabelled stays that way, and an epic republished after its
+// readiness changed keeps the body it was first published with. No result is ever
+// forge.IssueUpdated.
 func PublishPreMigrationEpic(ctx context.Context, f forge.Forge, epic *PreMigrationEpic) (*forge.IssueUpsertResult, []*forge.IssueUpsertResult, error) {
 	if f == nil {
 		return nil, nil, ErrNilForge

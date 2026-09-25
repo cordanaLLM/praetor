@@ -203,6 +203,15 @@ issues sharing a planned title, or an incomplete inventory stops the publish
 before the first issue is created. The command prints `created` or
 `already published` for each issue.
 
+Publishing creates missing issues; it does not synchronize existing ones. An
+issue that already exists keeps its body, labels, dependency references and
+state, so an epic republished after its readiness changed still shows the body
+it was first published with, and a task the operator closed stays closed.
+Identity is the trimmed title, not a machine marker: renaming a published
+issue makes the next publish create a new one under the generated title.
+`TestPublishPreMigrationEpic_RepublishCreatesNothing` pins that a republish
+modifies nothing.
+
 `needs epic --dev-dir` lists every discovered directory it generated no epic
 for under `[SKIP]`, with the reason: a directory needs a Git checkout with HEAD
 metadata, a `.standards.yaml`, or a `.needs.yaml` to count as a prepared

@@ -313,7 +313,8 @@ func parseEpicFlags(args []string) (epicFlags, error) {
 	fs.StringVar(&f.devDir, "dev-dir", "", "Run fleet-wide epic generation across all repositories in directory")
 	fs.StringVar(&f.framework, "framework", defaultFrameworkDir(), "Target framework repository path")
 	fs.StringVar(&f.output, "output", "", "Optional markdown file path to write pre-migration epic")
-	fs.BoolVar(&f.publish, "publish", false, "Publish pre-migration parent epic and child tasks to remote forge")
+	fs.BoolVar(&f.publish, "publish", false, "Publish pre-migration parent epic and child tasks to remote forge; "+
+		"creates only issues whose titles are missing and never updates existing ones")
 	fs.StringVar(&f.token, "token", "", "Forge API token (default: GITHUB_TOKEN or gh auth token)")
 	fs.StringVar(&f.endpoint, "endpoint", "", "Forge API endpoint (default: https://api.github.com)")
 	fs.StringVar(&f.owner, "owner", "", "Forge owner to publish into (overrides the repository manifest and git remote)")
