@@ -223,9 +223,9 @@ func resolveGlobal(entry globalRoot, env Env, override string) (Resolution, erro
 	if relocated, found, err := relocatedRoot(entry, env); err != nil || found {
 		return relocated, err
 	}
-	base := env.Home
-	if entry.base == baseXDGConfig {
-		base = xdgConfigHome(env)
+	base := xdgConfigHome(env)
+	if entry.base == baseHome {
+		base = env.Home
 	}
 	return Resolution{Path: joinFor(env.GOOS, base, entry.segments...), Source: SourceDefault, Verified: true}, nil
 }
