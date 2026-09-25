@@ -88,6 +88,8 @@ nav:
           - ADR-0007 Universal Frameworks Hub: adr/0007-universal-frameworks-org-and-demand-deduplication.md
           - ADR-0008 Spec-Driven Provider Integration: adr/0008-spec-driven-provider-integration.md
           - ADR-0009 Structural Unification: adr/0009-structural-unification.md
+          - ADR-0010 Text Register per Task: adr/0010-text-register-per-task.md
+          - ADR-0011 Agent Client Wrapping & Operational Rollout: adr/0011-agent-client-wrapping-and-operational-rollout.md
   - Tribunus:
       - Data Sync: tribunus/data-sync.md
   - Guides & Adoption:
