@@ -35,17 +35,25 @@ type packageJSONFormat struct {
 // never reported drift (issue #97). Resolution now lives in
 // internal/nodemanifest, shared with internal/docdistill, which had the
 // mirror-image bug of reading only the root.
-func DiscoverNodePackages(repoPath string) []string {
+//
+// Discovery errors, including a set truncated at
+// nodemanifest.MaxWorkspaceDirs, are returned rather than turned into an empty
+// set: an empty set reads as "no Node manifests", which is a different and
+// false answer.
+func DiscoverNodePackages(repoPath string) ([]string, error) {
 	dirs, err := nodemanifest.DiscoverPackageDirs(repoPath)
 	if err != nil {
-		return nil
+		return dirs, fmt.Errorf("discover Node packages: %w", err)
 	}
-	return dirs
+	return dirs, nil
 }
 
 // ScanNodeDependencies inspects Node/pnpm packages in repoPath for upgrades.
 func ScanNodeDependencies(ctx context.Context, repoPath string, opts ScanOptions) ([]UpgradeCandidate, error) {
-	pkgDirs := DiscoverNodePackages(repoPath)
+	pkgDirs, err := DiscoverNodePackages(repoPath)
+	if err != nil {
+		return nil, err
+	}
 	if len(pkgDirs) == 0 {
 		return nil, nil
 	}

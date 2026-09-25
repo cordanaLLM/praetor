@@ -1,0 +1,3 @@
+type: fixed
+title: Report a Node workspace with more than 2000 package directories as truncated in docdistill and bump scans instead of scanning a silently shortened manifest set
+breaking: false
