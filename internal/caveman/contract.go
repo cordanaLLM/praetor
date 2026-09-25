@@ -511,6 +511,18 @@ type messageShape struct {
 	required []string
 }
 
+// SchemaFields returns the fields C10 requires for kind, the mandatory first field first,
+// or nil when kind has no enforced shape. A producer that states the shape to another
+// agent reads it here, so the stated schema and the check cannot drift. The result is a
+// copy the caller may modify.
+func SchemaFields(kind MessageKind) []string {
+	shape, enforced := shapeFor(kind)
+	if !enforced {
+		return nil
+	}
+	return append([]string(nil), shape.required...)
+}
+
 func shapeFor(kind MessageKind) (messageShape, bool) {
 	switch kind.normalized() {
 	case KindBrief:

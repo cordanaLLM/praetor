@@ -1,0 +1,4 @@
+type: fixed
+title: State the internal return fields in the repair prompt so a provider summary can pass the proposal-summary register check
+issue: "#414"
+breaking: false

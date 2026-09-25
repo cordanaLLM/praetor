@@ -608,6 +608,36 @@ func TestRuntimeProfileJoinsWrappedSentences(t *testing.T) {
 	}
 }
 
+func TestSchemaFieldsStateTheEnforcedShape(t *testing.T) {
+	want := map[MessageKind]string{KindBrief: "goal,inputs,return,evidence,task", KindReturn: "verdict,changed,ran,evidence,open"}
+	for kind, fields := range want {
+		got := SchemaFields(kind)
+		if strings.Join(got, ",") != fields {
+			t.Fatalf("%s fields = %v, want %s", kind, got, fields)
+		}
+		lines := make([]string, 0, len(got))
+		for _, field := range got {
+			lines = append(lines, field+": none")
+		}
+		if report := CheckRuntime(strings.Join(lines, "\n"), Options{Kind: kind}); !report.Passed() {
+			t.Fatalf("%s text built from stated fields failed: %+v", kind, report.Findings)
+		}
+		missing := strings.Join(lines[:len(lines)-1], "\n")
+		if report := CheckRuntime(missing, Options{Kind: kind}); !hasFinding(report, RuleMessageShape, "missing "+got[len(got)-1]+" field") {
+			t.Fatalf("%s text without last stated field passed: %+v", kind, report.Findings)
+		}
+		got[0] = "mutated"
+		if again := SchemaFields(kind); again[0] == "mutated" {
+			t.Fatalf("%s fields share caller-owned storage", kind)
+		}
+	}
+	for _, kind := range []MessageKind{KindMessage, KindContext, "", "unknown"} {
+		if got := SchemaFields(kind); got != nil {
+			t.Fatalf("unshaped kind %q returned fields %v", kind, got)
+		}
+	}
+}
+
 func TestContractCoverageClassifiesEverySkillRule(t *testing.T) {
 	wantMechanical := map[MessageKind]string{
 		KindMessage: "1",

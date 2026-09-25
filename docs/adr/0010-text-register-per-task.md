@@ -191,7 +191,9 @@ hand at the source and kept terse by a lint, never rewritten at run time.
     validates its static prompt scaffold and the Responses API instructions against
     `surfaces.prompts`, then appends untrusted source and test data. It validates
     `Proposal.Summary` against the task row as a return before `applyProposal`; invalid
-    provider prose therefore cannot mutate the candidate tree. Reports retain all four
+    provider prose therefore cannot mutate the candidate tree. For an internal task row the
+    prompt scaffold states the return fields from `caveman.SchemaFields`, so the provider
+    is asked for the shape the check enforces. Reports retain all four
     validation records with the original `Resolution.Source` values.
 
     Runtime repair policies require complete task and prompt resolutions bound to one

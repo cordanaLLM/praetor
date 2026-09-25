@@ -98,7 +98,24 @@ func repairPromptPrefix(job dogfood.RepairJob) string {
 	if config.TextRegister(job.PromptRegister) == config.TextRegisterInternal {
 		scaffold = registeredRepairPromptRules
 	}
+	if contract := repairSummaryContract(job); contract != "" {
+		scaffold += "\n" + contract
+	}
 	return scaffold + "\nTASK_BRIEF:"
+}
+
+// repairSummaryContract states the return shape validateProposalSummary enforces on
+// Proposal.Summary. Only an internal task register validates the summary; social and docs
+// record not_applicable and get no line. The field list comes from the checker itself,
+// so the prompt cannot ask for a shape the validator rejects.
+func repairSummaryContract(job dogfood.RepairJob) string {
+	if config.TextRegister(job.Register) != config.TextRegisterInternal {
+		return ""
+	}
+	fields := caveman.SchemaFields(caveman.KindReturn)
+	return fmt.Sprintf("summary: %d lines; each line `field: value`; fields in order %s; empty value `none`; "+
+		"fragments only; no articles, pronouns, copulas, auxiliaries, modals, politeness, markdown, HTML",
+		len(fields), strings.Join(fields, ", "))
 }
 
 func fullProseRepairPromptInstructions() string {

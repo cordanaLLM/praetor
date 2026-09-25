@@ -49,7 +49,10 @@ scaffold with the independent `prompts` surface row before reading source eviden
 It validates the separate Responses API instructions with the same prompt row before
 provider dispatch and validates `proposal.summary` with the task row before any candidate
 source mutation. Internal text must pass the Caveman brief, message or return contract as
-appropriate. Runtime checks reject source-document escape constructs and expose prose
+appropriate. When the task row resolves to `internal`, the scaffold carries a `summary:`
+line that names the return fields in the order `caveman.SchemaFields` reports them, so
+the provider is told the shape the summary check enforces
+(`TestRepairPromptStatesTheSummaryReturnShape` in `internal/repairrun/register_test.go`). Runtime checks reject source-document escape constructs and expose prose
 hidden in quotes or inline code; `social` and `docs` produce an explicit `not_applicable`
 record. The execution
 report preserves the four records as `job_instructions_validation`, `prompt_validation`,

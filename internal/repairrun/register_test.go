@@ -365,7 +365,12 @@ func TestRunAcceptsInternalReturnAtTheSummaryBoundary(t *testing.T) {
 		}
 		return &TestResult{Passed: passed, Packages: c.TestPackages, Tests: []TestOutcome{{Package: "fixture", Name: "TestValue", Status: status}}}, nil, nil
 	}
-	generate := func(_ context.Context, _ ProviderConfig, _ string) (*Proposal, error) {
+	generate := func(_ context.Context, _ ProviderConfig, prompt string) (*Proposal, error) {
+		stated := strings.Join(statedSummaryFields(prompt), ",")
+		if stated != strings.Join(caveman.SchemaFields(caveman.KindReturn), ",") ||
+			strings.Index(prompt, "summary: ") > strings.Index(prompt, "UNTRUSTED_DATA_JSON:") {
+			t.Fatalf("provider prompt states summary fields %q before evidence, want return shape:\n%s", stated, prompt)
+		}
 		return &Proposal{Summary: validInternalRepairSummary, Edits: []Edit{{Path: "internal/fixture/value.go", OriginalSHA256: bytesSHA([]byte(originalFixture)), Content: repairedFixture}}}, nil
 	}
 	result, err := run(t.Context(), f.configPath, f.reportPath, generate, verify)
@@ -535,6 +540,72 @@ func TestProviderInstructionsResolvePromptSurfaceIndependently(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRepairPromptStatesTheSummaryReturnShape proves the provider is told the summary shape
+// the validator enforces. The summary is built only from what the prompt states, the way a
+// model would, so a prompt that omits or misstates the shape fails here.
+func TestRepairPromptStatesTheSummaryReturnShape(t *testing.T) {
+	internalBrief := "goal: reproduce failure\ninputs: retained evidence\nreturn: proposal only\nevidence: bounded case\ntask: ci_debugging\n" +
+		config.RegisterDirective(config.TextRegisterInternal)
+	cases := []struct {
+		name, taskRegister, promptRegister, instructions string
+		promptStatus                                     config.EmissionStatus
+		stated                                           bool
+	}{
+		{"internal task internal prompt", "internal", "internal", internalBrief, config.EmissionPass, true},
+		{"internal task docs prompt", "internal", "docs", internalBrief, config.EmissionNotApplicable, true},
+		{"docs task internal prompt", "docs", "internal", "Review retained failure. " + config.RegisterDirective(config.TextRegisterDocs), config.EmissionPass, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			job := dogfood.RepairJob{Register: tc.taskRegister, RegisterSource: "surfaces.agent", MaxOutputTokens: 512,
+				PromptRegister: tc.promptRegister, PromptRegisterSource: "surfaces.prompts",
+				RegisterManifestSHA256: config.AbsentRegisterAuthority().ManifestSHA256(), Instructions: tc.instructions}
+			prompt, validations, err := repairPromptInstructions(job)
+			if err != nil || validations.Prompt == nil || validations.Prompt.Status != tc.promptStatus {
+				t.Fatalf("prompt=%q validations=%+v err=%v", prompt, validations, err)
+			}
+			fields := statedSummaryFields(prompt)
+			if !tc.stated {
+				if fields != nil {
+					t.Fatalf("summary shape stated for unvalidated %s summary: %q", tc.taskRegister, prompt)
+				}
+				return
+			}
+			if strings.Index(prompt, "summary: ") > strings.Index(prompt, "TASK_BRIEF:") || len(fields) == 0 {
+				t.Fatalf("summary shape missing from engine-owned prefix:\n%s", prompt)
+			}
+			lines := make([]string, 0, len(fields))
+			for _, field := range fields {
+				lines = append(lines, field+": none")
+			}
+			if validation, err := validateProposalSummary(job, strings.Join(lines, "\n")); err != nil || validation.Status != config.EmissionPass {
+				t.Fatalf("summary following stated shape %v rejected: %+v %v", fields, validation, err)
+			}
+			if validation, err := validateProposalSummary(job, strings.Join(lines[:len(lines)-1], "\n")); err == nil || validation.Status != config.EmissionFail {
+				t.Fatalf("summary without stated field %q accepted: %+v", fields[len(fields)-1], validation)
+			}
+		})
+	}
+}
+
+// statedSummaryFields reads the field list from the prompt's summary line, or nil.
+func statedSummaryFields(prompt string) []string {
+	const marker = "fields in order "
+	for _, line := range strings.Split(prompt, "\n") {
+		rest, found := strings.CutPrefix(line, "summary: ")
+		if !found {
+			continue
+		}
+		start := strings.Index(rest, marker)
+		if start < 0 {
+			return []string{}
+		}
+		list, _, _ := strings.Cut(rest[start+len(marker):], ";")
+		return strings.Split(list, ", ")
+	}
+	return nil
 }
 
 func TestStatusRejectsSummaryChangedAfterValidation(t *testing.T) {
