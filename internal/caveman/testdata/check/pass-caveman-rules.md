@@ -8,6 +8,6 @@
 
 3. **Lead with output.** Direct answers, diffs, commands. No filler preamble, no "Based on", no restatement, no chatter.
 
-8. **No evasion.** Never attempt `--no-verify`, `LEFTHOOK=0`, or modifying `.git/hooks`. `cordana-standards[bot]` re-checks every pull request in ephemeral isolated sandbox.
+8. **No evasion.** Never attempt `--no-verify`, `LEFTHOOK=0`, or modifying `.git/hooks`. CI re-checks every pull request in an isolated runner.
 
 push rejected x2: state stale (gate run wrote receipt after sync). fix: resync, push. no bypass.
