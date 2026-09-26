@@ -117,7 +117,7 @@ func foreignInstructions(existing string) string {
 }
 
 func buildAgentHarnessDirectives() string {
-	return `## Core Directives & Invariants (Modernized NASA JPL Power-of-10)
+	return `## Core Directives & Invariants
 
 | Invariant | Rule | Enforcement | On fail |
 | :--- | :--- | :--- | :--- |

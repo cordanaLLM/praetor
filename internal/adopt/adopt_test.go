@@ -1077,7 +1077,7 @@ func TestAdopt_AgentsMD_ForcePreservesCustomInstructions(t *testing.T) {
 		}
 		assertNoIssues(t, rep)
 		content := mustRead(t, filepath.Join(repoPath, "AGENTS.md"))
-		if !strings.Contains(content, "Modernized NASA JPL Power-of-10") {
+		if !strings.Contains(content, "Core Directives & Invariants") {
 			t.Errorf("%s: expected updated harness", name)
 		}
 		if !strings.Contains(content, "# Custom Repo Instructions") || !strings.Contains(content, "Don't touch this proprietary text!") {

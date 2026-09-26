@@ -6,13 +6,16 @@ import (
 )
 
 func TestHarnessDirectives_ParseGatedInvariants(t *testing.T) {
-	content := buildAgentHarnessDirectives()
+	content, err := buildAgentHarness("owner/repo", "praetor", &VerificationPlan{})
+	if err != nil {
+		t.Fatalf("buildAgentHarness failed: %v", err)
+	}
 	gated, err := hisscatalog.ParseGatedInvariants(content)
 	if err != nil {
-		t.Fatalf("ParseGatedInvariants failed on harness output: %v", err)
+		t.Fatalf("ParseGatedInvariants failed on full harness output: %v", err)
 	}
 	if len(gated) == 0 {
-		t.Fatalf("ParseGatedInvariants found no invariants in harness output")
+		t.Fatalf("ParseGatedInvariants found no invariants in full harness output")
 	}
 	foundHISS01 := false
 	for _, inv := range gated {

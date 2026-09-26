@@ -25,8 +25,8 @@ func canonicalAgentsMD(t *testing.T) string {
 }
 
 // wikiRepoRoot returns a fresh repository root named name whose AGENTS.md is agentsMD. The
-// wiki portal is named after the root's base name, so tests that compare against the
-// checked-in pages name it "praetor".
+// wiki portal is named after the root's origin remote or directory structure, so tests that compare against the
+// checked-in pages create a parent directory named cordanaLLM and name the root praetor.
 func wikiRepoRoot(t *testing.T, name, agentsMD string) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), name)
@@ -344,8 +344,8 @@ func TestHomeWiki_Negative_RejectsManifestToAGENTSFlow(t *testing.T) {
 // output over the repository's own AGENTS.md, so a generator or table change cannot land
 // without the published copy (the Home.md diagram, the invariant table and the hand-written
 // matrix all drifted that way). docs/wiki may carry no page the generator does not own: the
-// wiki sync publishes every file there. The repository name comes from the root's base
-// name, so the root is spelled ".../praetor".
+// wiki sync publishes every file there. The repository name comes from the root's
+// origin remote or directory structure.
 func TestCheckedInWiki_Boundary_MatchesGenerator(t *testing.T) {
 	pages := generatedPages(t, wikiRepoRoot(t, filepath.Join("cordanaLLM", "praetor"), canonicalAgentsMD(t)))
 	if len(pages) == 0 {
@@ -357,7 +357,7 @@ func TestCheckedInWiki_Boundary_MatchesGenerator(t *testing.T) {
 			t.Fatalf("generated page %s has no checked-in copy: %v", name, err)
 		}
 		if got, _ := util.NormalizeLineEndings(string(data)); got != page.Content {
-			t.Errorf("docs/wiki/%s differs from GenerateWiki output; regenerate it with 'praetorctl forge sync-wiki' from a checkout named praetor", name)
+			t.Errorf("docs/wiki/%s differs from GenerateWiki output; regenerate it with 'praetorctl forge sync-wiki' (or the equivalent generator for your origin)", name)
 		}
 	}
 	entries, err := os.ReadDir(filepath.Join("..", "..", "docs", "wiki"))

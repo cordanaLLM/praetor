@@ -4,8 +4,7 @@ These guides cover the private state Praetor keeps for a repository and the plan
 on it: the `.workingdir/` ledger, planning drafts, the wishes ledger, issue synchronization
 and the cleanup of released resources.
 
-Read [State ledger integrity](../state-ledger-integrity.md) first: every other page here reads
-or writes that ledger.
+Read [State ledger integrity](../state-ledger-integrity.md) first to understand the `.workingdir/` ledger, which the planning and wishes tools rely on. The issue synchronization and garbage collection tools operate independently of it.
 
 - [State ledger integrity](../state-ledger-integrity.md): the private `.workingdir/` ledger,
   its audit and the rules that keep it consistent.

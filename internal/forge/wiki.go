@@ -104,6 +104,9 @@ func readGatedInvariants(ctx context.Context, repoRoot string) ([]hisscatalog.Ga
 }
 
 // resolveWikiRepoName derives the "<owner>/<repo>" name the wiki portal is generated for.
+// It uses util.ResolveRepoIdentity, which reads remote.origin.url or falls back to
+// the parent and base directory names (e.g. "cordanaLLM/praetor"). Checkouts at ~/dev/<name>
+// without an origin remote will fail because the parent "dev" is rejected as an owner.
 func resolveWikiRepoName(ctx context.Context, repoRoot string) (string, error) {
 	owner, repo, err := util.ResolveRepoIdentity(ctx, repoRoot)
 	if err != nil {
@@ -303,16 +306,22 @@ const hissMatrixAdmission = `---
 
 ## Pull Request Admission
 
-Every pull request is admitted by the repository's configured automation, which requires all three
+Every pull request is admitted by ` + "`standardsctl forge validate-pr`" + `, which requires all three
 of the following in the PR description:
 
 1. A checked HISS-16 context-integrity box.
 2. A checked HISS-15 3D-testing box.
-3. A fenced ` + "` ```receipt `" + ` block carrying the ` + "`.standards-receipt.json`" + ` envelope produced by
-   the local gate. The block is parsed as JSON, its Ed25519 signature is verified
-   against ` + "`receipt.public_key`" + ` pinned in the repository's configuration, its recorded output hash is
-   checked against the gate output it carries, and its ` + "`commit_sha`" + ` must equal the pull
-   request head. Prose, a bare code block, or the words "Exit-0 Receipt" satisfy nothing.
+3. A fenced ` + "` ```receipt `" + ` (or ` + "` ~~~receipt `" + `) block carrying the ` + "`.standards-receipt.json`" + `
+   envelope produced by ` + "`praetorctl gate run`" + `. The block is parsed as JSON, its Ed25519
+   signature is verified against ` + "`receipt.public_key`" + ` pinned in ` + "`.standards.yaml`" + `, its
+   recorded output hash is checked against the gate output it carries, and its ` + "`commit_sha`" + `
+   must equal the pull request head. Prose, a bare code block, or the words "Exit-0 Receipt"
+   satisfy nothing.
+
+A checked box is a task-list item (` + "`- [x]`" + `, ` + "`* [x]`" + `, ` + "`1. [x]`" + `); a ` + "`[x]`" + ` quoted mid-sentence
+or inside a code fence is not counted. A description that ends inside an unclosed fence is
+rejected, because everything after the opening delimiter renders as code. The rules live in
+` + "`internal/forge/pr.go`" + ` and are pinned by ` + "`internal/forge/pr_template_test.go`" + `.
 
 ---
 
@@ -321,19 +330,20 @@ of the following in the PR description:
 ` + "```mermaid" + `
 flowchart TD
     subgraph Local["Local Workstation"]
-        LSP["1. IDE / LSP integration"] --> HOOK["2. Pre-Commit / git hooks"]
+        LSP["1. IDE / standards-lsp"] --> HOOK["2. Pre-Commit / lefthook"]
         HOOK --> AUDIT["3. Pre-Push / standardsctl audit"]
     end
     subgraph Remote["Remote CI & Admission"]
-        AUDIT --> CI["4. Ephemeral Isolated Sandbox CI"]
-        CI --> ADMIT["5. PR Admission Automation"]
+        AUDIT --> CI["4. Ephemeral Isolated Sandbox"]
+        CI --> ADMIT["5. PR Admission / standardsctl forge validate-pr"]
     end
 ` + "```" + `
 
-Layer 5 is the PR admission check running in the repository's continuous integration
-pipeline. It validates the governance checklist and Exit-0 receipt as described under
-[Pull Request Admission](#pull-request-admission). The automation strictly enforces
-the HISS matrix requirements on every proposed change.
+Layer 5 is the "Validate PR Governance Checklist & Exit-0 Receipts" step in
+` + "`.github/workflows/ci.yml`" + `, which runs ` + "`standardsctl forge validate-pr`" + ` as described under
+[Pull Request Admission](#pull-request-admission). No ` + "`cordana-standards[bot]`" + ` runs any check:
+` + "`.config/github-app/manifest.json`" + ` specifies that app but nothing provisions it, and
+` + "`internal/forge/pr.go`" + ` only requests it as a reviewer.
 `
 
 func generateHISSMatrixWiki(repoName string, rules []hisscatalog.Rule, gated []hisscatalog.GatedInvariant) WikiPage {
@@ -343,6 +353,7 @@ The High-Integrity Systems Standard (HISS) defines ` + catalogRange(rules) + `. 
 lists each one for ` + "`" + repoName + "`" + `: its enforcement, its failure action, and whether this
 repository's ` + "`AGENTS.md`" + ` gates it ([` + hissInvariantsPage + `](` + hissInvariantsPage + `.md) shows the gated rules). The rows
 come from the core HISS rule catalog, the registry the ` + "`standards_explain_rule`" + ` MCP tool serves.
+The Enforcement column describes the checks this repository runs.
 
 ` + renderHISSMatrixTable(rules, gated) + `
 
