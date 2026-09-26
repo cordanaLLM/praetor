@@ -36,6 +36,8 @@ esac
 
 SOURCE_DIR=$(cd "$SOURCE_ARGUMENT" && pwd -P)
 readonly SOURCE_DIR
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+readonly SCRIPT_DIR
 RUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/praetor-wiki-sync.XXXXXX")
 readonly RUN_DIR
 readonly CLONE_DIR="$RUN_DIR/wiki"
@@ -167,6 +169,20 @@ if (( ${#stale_names[@]} > 0 )); then
 fi
 
 cp -- "${source_entries[@]}" "$CLONE_DIR/"
+
+# The wiki runs no JavaScript, so each ```figure fence becomes a <picture> of the figure's SVGs on
+# the published site, with a link to the interactive version there; the base URL is mkdocs.yml's
+# site_url (docs/adr/0015-interactive-figures-from-vendored-interfig.md, section 5). A figure that
+# cannot be rendered stops the sync before anything is committed.
+copied_pages=()
+for source_name in "${source_names[@]}"; do
+  copied_pages+=("$CLONE_DIR/$source_name")
+done
+if ! python3 -B "$SCRIPT_DIR/docs_diagrams.py" portable --wiki "${copied_pages[@]}"; then
+  echo "Wiki figures could not be rendered; nothing was committed." >&2
+  exit 1
+fi
+
 printf '%s\n' "${source_names[@]}" >"$MANIFEST_PATH"
 git_bounded --literal-pathspecs -C "$CLONE_DIR" add -- "${source_names[@]}" "$MANIFEST_NAME"
 
