@@ -1,0 +1,3 @@
+type: fixed
+title: Factor the BASE_REF/git-diff hand-written copies in ci.yml into a shared reusable .github/actions/changed-paths composite action.
+breaking: false
