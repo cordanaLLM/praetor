@@ -263,3 +263,62 @@ func TestGitLiteralExclude_Boundary_GlobCharactersAreLiteral(t *testing.T) {
 		t.Fatalf("excluding an absent path must leave every change: %q", got)
 	}
 }
+
+// TestGitWorkingTreeChanges_Positive_HonoursTheUserGlobalExcludes: a file that only the
+// user's global ignore hides is not a change, exactly as plain `git status` reports it,
+// although the probe itself runs with a sealed git environment.
+func TestGitWorkingTreeChanges_Positive_HonoursTheUserGlobalExcludes(t *testing.T) {
+	dir := statusRepo(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	writeStatusFile(t, home, filepath.Join(".config", "git", "ignore"), ".DS_Store\n")
+	writeStatusFile(t, dir, ".DS_Store", "finder\n")
+	if changes := mustChanges(t, dir); len(changes) != 0 {
+		t.Fatalf("a globally ignored file was reported as a change: %v", changes)
+	}
+}
+
+// TestGitWorkingTreeChanges_Negative_WithoutAGlobalIgnoreTheFileIsAChange: the same file
+// with no global excludes file anywhere is an untracked change.
+func TestGitWorkingTreeChanges_Negative_WithoutAGlobalIgnoreTheFileIsAChange(t *testing.T) {
+	dir := statusRepo(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	writeStatusFile(t, dir, ".DS_Store", "finder\n")
+	changes := mustChanges(t, dir)
+	if len(changes) != 1 || !strings.Contains(changes[0], ".DS_Store") {
+		t.Fatalf("an unignored untracked file must be reported, got %v", changes)
+	}
+}
+
+// TestGitWorkingTreeChanges_Boundary_ConfiguredExcludesFileWins: a core.excludesFile set in
+// the user's global config is used instead of the XDG default, and XDG_CONFIG_HOME outranks
+// HOME for the default; a directory in place of the file is not an excludes file.
+func TestGitWorkingTreeChanges_Boundary_ConfiguredExcludesFileWins(t *testing.T) {
+	dir := statusRepo(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	custom := filepath.Join(home, "custom-ignore")
+	writeStatusFile(t, home, "custom-ignore", "*.swp\n")
+	writeStatusFile(t, home, ".gitconfig", "[core]\n\texcludesFile = "+filepath.ToSlash(custom)+"\n")
+	writeStatusFile(t, dir, "notes.swp", "swap\n")
+	if changes := mustChanges(t, dir); len(changes) != 0 {
+		t.Fatalf("the configured excludes file was not honoured: %v", changes)
+	}
+	if got := defaultGlobalExcludes("/xdg", "/home/u"); got != filepath.Join("/xdg", "git", "ignore") {
+		t.Fatalf("XDG_CONFIG_HOME must win for the default, got %q", got)
+	}
+	if got := defaultGlobalExcludes("", ""); got != "" {
+		t.Fatalf("no XDG and no HOME must yield no default, got %q", got)
+	}
+	notAFile := t.TempDir()
+	t.Setenv("HOME", notAFile)
+	if err := os.MkdirAll(filepath.Join(notAFile, ".config", "git", "ignore"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if args := globalExcludesArgs(t.Context(), dir); args != nil {
+		t.Fatalf("a directory is not an excludes file, got %v", args)
+	}
+}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -57,8 +59,8 @@ func GitWorkingTreeChanges(ctx context.Context, dir string, timeout time.Duratio
 		return nil, err
 	}
 	scope := append([]string{"--", ":/"}, pathspec...)
-	status, err := RunGitTreeProbe(probeCtx, dir, MaxCommandOutputBytes, timeout, append([]string{
-		"status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"}, scope...)...)
+	statusArgs := append(globalExcludesArgs(probeCtx, dir), "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none")
+	status, err := RunGitTreeProbe(probeCtx, dir, MaxCommandOutputBytes, timeout, append(statusArgs, scope...)...)
 	if err != nil {
 		return nil, fmt.Errorf("git status in %s: %w", dir, withCommandDiagnostic(err, status.Stderr))
 	}
@@ -164,4 +166,56 @@ func hiddenIndexEntries(out []byte) []string {
 		}
 	}
 	return hidden
+}
+
+// globalExcludesArgs points the sealed status probe at the caller's global excludes file, so
+// the probe treats as ignored exactly what a plain `git status` does. Git resolves
+// core.excludesFile from the global config and otherwise falls back to
+// $XDG_CONFIG_HOME/git/ignore or ~/.config/git/ignore; the probe's sealed environment
+// (GIT_CONFIG_GLOBAL=/dev/null, no HOME) removes both, so a file only the user's global
+// ignore hides (.DS_Store, .idea/) would read as an untracked change. The path is resolved
+// here from the caller's environment and passed explicitly. This widens nothing: the
+// repository-local .git/info/exclude is already honoured inside the probe.
+func globalExcludesArgs(ctx context.Context, dir string) []string {
+	path := configuredGlobalExcludes(ctx, dir)
+	if path == "" {
+		home := os.Getenv("HOME")
+		if home == "" {
+			// Git for Windows falls back to %USERPROFILE%, which os.UserHomeDir returns. No
+			// home directory at all means no default excludes file, which is what git sees too.
+			if userHome, err := os.UserHomeDir(); err == nil {
+				home = userHome
+			}
+		}
+		path = defaultGlobalExcludes(os.Getenv("XDG_CONFIG_HOME"), home)
+	}
+	if path == "" {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil
+	}
+	return []string{"-c", "core.excludesFile=" + path}
+}
+
+// configuredGlobalExcludes reads core.excludesFile from the caller's global git config,
+// expanded by git itself (--path). It returns "" when the key is unset or git fails.
+func configuredGlobalExcludes(ctx context.Context, dir string) string {
+	out, err := RunGit(ctx, dir, "config", "--global", "--path", "--get", "core.excludesFile")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+// defaultGlobalExcludes is git's fallback location for the global excludes file.
+func defaultGlobalExcludes(xdgConfigHome, home string) string {
+	if xdgConfigHome != "" {
+		return filepath.Join(xdgConfigHome, "git", "ignore")
+	}
+	if home != "" {
+		return filepath.Join(home, ".config", "git", "ignore")
+	}
+	return ""
 }
