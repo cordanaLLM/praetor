@@ -177,6 +177,10 @@ func TestRustSelfRecursionIsReported(t *testing.T) {
 	assertSelfCalls(t, "src/a.rs", "impl T {\n    fn count(n: u32) -> u32 {\n        1 + Self::count(n - 1)\n    }\n}\n", 3)
 	assertSelfCalls(t, "src/s.rs", "fn f(n: u32) -> u32 { if n == 0 { 0 } else { f(n - 1) } }\n", 1)
 	assertSelfCalls(t, "src/w.rs", "impl N {\n    pub fn walk(\n        &self,\n        n: u32,\n    ) -> u32 {\n        Self::walk(self, n)\n    }\n}\n", 6)
+	// Every header form the function-header grammar accepts opens a decided function.
+	for _, header := range []string{"pub(super) fn", "const fn", "pub(crate) unsafe fn", `extern "C" fn`, "#[inline] pub const fn"} {
+		assertSelfCalls(t, "src/h.rs", header+" f(n: u32) -> u32 {\n    if n == 0 { 0 } else { f(n - 1) }\n}\n", 2)
+	}
 }
 
 // TestRustSelfRecursionShadowsLexically is the positive dimension of Rust shadowing: a local

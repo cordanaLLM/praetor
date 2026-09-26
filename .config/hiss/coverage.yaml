@@ -81,10 +81,11 @@ rules:
           array lengths, and a header that ends in a semicolon opens no body. A macro may
           rewrite its input into a call of something else (syscall!(recv(fd)) calls
           libc::recv), so a call inside the input of any macro but the standard expression
-          macros (assert!, format!, vec!, ...) is not decided. Mutual recursion, recursion
-          inside a nested fn, a trait impl or a user-defined macro's input, a turbofish or
-          path-qualified self-call, and any function whose header the scanner does not
-          recognise (pub(super), const, unsafe or extern fn) are held as gaps.
+          macros (assert!, format!, vec!, ...) is not decided. A function behind any header
+          the Rust grammar allows (a visibility such as pub(super), const, async, unsafe or
+          extern) is decided like a plain fn. Mutual recursion, recursion inside a nested fn,
+          a trait impl or a user-defined macro's input, and a turbofish or path-qualified
+          self-call are held as gaps.
       - language: python
         state: partial
         mechanism: internal/hiss selfcall.go selfCalls, driven by scanPythonLines
