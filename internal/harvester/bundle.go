@@ -1,6 +1,7 @@
 package harvester
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -69,6 +70,7 @@ var (
 var SensitiveBundleCategories = []string{
 	"agent-config",
 	"claude-config",
+	"claude-desktop-config",
 	"cli-history",
 	"codex-config",
 	"copilot-config",
@@ -115,6 +117,9 @@ type BundleFileRecord struct {
 	SizeBytes    int64  `json:"size_bytes"`
 	SHA256       string `json:"sha256"`
 	Category     string `json:"category"`
+	// Redacted counts the credential values replaced with RedactedValue in this file;
+	// SizeBytes and SHA256 describe the redacted bytes the bundle holds.
+	Redacted int `json:"redacted,omitempty"`
 }
 
 // WorkstationBundleReport summarizes the harvested bundle contents.
@@ -126,6 +131,8 @@ type WorkstationBundleReport struct {
 	Categories      map[string]int     `json:"categories"`
 	ManifestPath    string             `json:"manifest_path"`
 	Records         []BundleFileRecord `json:"records"`
+	// RedactedValues totals the credential values replaced across all configuration files.
+	RedactedValues int `json:"redacted_values,omitempty"`
 	// Skipped records every source the bundler could not or would not copy, so that a
 	// bundle is never silently incomplete.
 	Skipped []string `json:"skipped,omitempty"`
@@ -179,7 +186,11 @@ func (c *bundleCollector) copyOrNote(ctx context.Context, src, dst, cat string) 
 		c.note("skip %s: manifest record limit %d reached", src, MaxManifestRecords)
 		return
 	}
-	rec, err := copyFileWithHash(ctx, src, dst, cat, c.baseDir)
+	copyFile := copyFileWithHash
+	if needsRedaction(cat, src) {
+		copyFile = copyRedactedConfig
+	}
+	rec, err := copyFile(ctx, src, dst, cat, c.baseDir)
 	if err != nil {
 		c.note("skip %s: %v", src, err)
 		return
@@ -462,7 +473,58 @@ func copyFileWithHash(ctx context.Context, src, dst, category, baseDir string) (
 			rec, err = nil, fmt.Errorf("close source file %s: %w", src, cErr)
 		}
 	}()
+	return writeHashedBundleFile(ctx, dst, category, baseDir, func(w io.Writer) (int64, error) {
+		written, cpErr := copyFileStream(ctx, w, sFile)
+		if cpErr != nil {
+			return written, fmt.Errorf("copy stream from %s to %s: %w", src, dst, cpErr)
+		}
+		return written, nil
+	})
+}
 
+// copyRedactedConfig copies a JSON configuration file with every credential value
+// replaced (see redactJSONSecrets). A file that is too large or not valid JSON is refused
+// rather than copied verbatim, because its credentials could not be removed.
+func copyRedactedConfig(ctx context.Context, src, dst, category, baseDir string) (rec *BundleFileRecord, err error) {
+	sFile, sErr := openRegularSource(src)
+	if sErr != nil {
+		return nil, sErr
+	}
+	defer func() {
+		if cErr := sFile.Close(); cErr != nil && err == nil {
+			rec, err = nil, fmt.Errorf("close source file %s: %w", src, cErr)
+		}
+	}()
+	info, err := sFile.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("inspect configuration %s: %w", src, err)
+	}
+	if info.Size() > maxRedactedConfigBytes {
+		return nil, fmt.Errorf("configuration %s exceeds %d bytes; not copied because it cannot be redacted", src, maxRedactedConfigBytes)
+	}
+	var raw bytes.Buffer
+	if _, err := copyFileStream(ctx, &raw, sFile); err != nil {
+		return nil, fmt.Errorf("read configuration %s: %w", src, err)
+	}
+	redacted, count, err := redactJSONSecrets(raw.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("redact configuration %s: %w", src, err)
+	}
+	rec, err = writeHashedBundleFile(ctx, dst, category, baseDir, func(w io.Writer) (int64, error) {
+		written, wErr := w.Write(redacted)
+		return int64(written), wErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	rec.Redacted = count
+	return rec, nil
+}
+
+// writeHashedBundleFile creates dst owner-only inside baseDir, lets write fill it while every byte
+// is hashed, and returns the manifest record for what reached the disk. The destination
+// close is checked, so a write failure reported only at close never yields a record.
+func writeHashedBundleFile(ctx context.Context, dst, category, baseDir string, write func(io.Writer) (int64, error)) (rec *BundleFileRecord, err error) {
 	dFile, dErr := createSecureDest(ctx, dst, baseDir)
 	if dErr != nil {
 		return nil, dErr
@@ -474,9 +536,9 @@ func copyFileWithHash(ctx context.Context, src, dst, category, baseDir string) (
 	}()
 
 	hasher := sha256.New()
-	written, cpErr := copyFileStream(ctx, io.MultiWriter(dFile, hasher), sFile)
+	written, cpErr := write(io.MultiWriter(dFile, hasher))
 	if cpErr != nil {
-		return nil, fmt.Errorf("copy stream from %s to %s: %w", src, dst, cpErr)
+		return nil, cpErr
 	}
 
 	rel, relErr := filepath.Rel(baseDir, dst)
@@ -929,6 +991,7 @@ func writeBundleManifest(ctx context.Context, report *WorkstationBundleReport) (
 	for i := 0; i < len(report.Records) && i < MaxManifestRecords; i++ {
 		report.TotalBytes += report.Records[i].SizeBytes
 		report.Categories[report.Records[i].Category]++
+		report.RedactedValues += report.Records[i].Redacted
 	}
 
 	manifestData, err := json.MarshalIndent(report, "", "  ")

@@ -25,7 +25,7 @@ func TestBundlePreservesUmask(t *testing.T) {
 		return
 	}
 	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "home", ".gemini", "config", "mcp_config.json"), "secret")
+	mustWriteFile(t, filepath.Join(root, "home", ".gemini", "config", "mcp_config.json"), `{"env":{"TOKEN":"secret"}}`)
 	mustMkdirAll(t, filepath.Join(root, "out", "agent-configs"))
 	executable, err := os.Executable()
 	if err != nil {
