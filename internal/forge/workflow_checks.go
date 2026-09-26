@@ -147,11 +147,14 @@ type workflowJob struct {
 	Steps           []workflowStep   `yaml:"steps"`
 }
 
-// workflowStep is the step subset the Go cache audit decides on. `with:` values are not all
-// strings -- `cache: false` is a bool, `fetch-depth: 0` an int -- so the map is untyped.
+// workflowStep is the step subset the Go cache audit and the portability checks decide on.
+// `with:` values are not all strings -- `cache: false` is a bool, `fetch-depth: 0` an int --
+// so the map is untyped.
 type workflowStep struct {
 	Name string         `yaml:"name"`
+	If   string         `yaml:"if"`
 	Uses string         `yaml:"uses"`
+	Run  string         `yaml:"run"`
 	With map[string]any `yaml:"with"`
 }
 

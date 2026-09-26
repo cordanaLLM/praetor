@@ -63,6 +63,15 @@ reason and states where the coverage is recovered.
 `windows-latest` with `fail-fast: false`, compiling, vetting and testing every package and then
 running the harness self-tests through `scripts/portability_selftest.py`.
 
+Every leg then runs `node tools/markdownlint/verify.mjs --self-test`. That runner is a
+Go-embedded asset which adoption copies into every `docs:seo-portal` repository's `verify-all`,
+so it is a generated template under this invariant. The documentation workflows run it on
+Linux only. Its Windows-specific path is described in
+[documentation governance](../guides/documentation-governance.md#locked-markdown-rules).
+`TestPortabilityReplaysMarkdownGateSelfTestOnEveryLeg` in
+`internal/forge/workflow_guard_test.go` fails if the step is removed, moved before Node is set
+up, or given a condition that could skip it on some legs.
+
 The driver exists because the suites' exit codes are not a sufficient pass condition. It
 requires that every suite exited zero **and** that at least `--min-executed` tests actually ran,
 printing each skip with its reason. A platform quietly losing coverage then shows up as a number

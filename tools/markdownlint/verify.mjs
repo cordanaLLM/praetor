@@ -27,6 +27,7 @@ const TRUNCATION_MARKER_BYTES = 256;
 const MAX_COMMAND_BYTES = 24_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 const INSTALL_TIMEOUT_MS = 300_000;
+const NPM_CI_ARGS = Object.freeze(["ci", "--ignore-scripts", "--no-audit", "--no-fund"]);
 const MARKDOWN_SUFFIXES = [".md", ".markdown", ".mdx", ".md.tmpl", ".markdown.tmpl", ".mdx.tmpl"];
 const SCRATCH_ROOTS = new Set([".workingdir", ".workingdir2"]);
 const FILESYSTEM_SYMLINK_UNAVAILABLE = new Set(["EPERM", "EACCES", "ENOSYS"]);
@@ -322,15 +323,52 @@ function inventory(root) {
   return selected;
 }
 
+// Windows cannot start the npm batch shim without a shell: since the CVE-2024-27980 fix,
+// spawnSync rejects a .cmd or .bat file with EINVAL unless `shell` is set, and enabling `shell`
+// with an argument list is deprecated (DEP0190). The Windows Node distribution ships npm
+// beside node.exe, so the gate runs that npm-cli.js through the running Node binary and
+// never involves cmd.exe. Other platforms resolve `npm` on PATH.
+function npmInvocation(platform, execPath, args) {
+  if (platform !== "win32") {
+    return { file: "npm", args: [...args] };
+  }
+  const cli = path.join(path.dirname(execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  if (fs.statSync(cli, { throwIfNoEntry: false })?.isFile() !== true) {
+    fail(`npm CLI not found beside ${execPath} at ${cli}; on Windows the gate runs npm ` +
+      "through the Node binary because the npm batch shim cannot start without a shell");
+  }
+  return { file: execPath, args: [cli, ...args] };
+}
+
 function install(toolDir, temporary) {
   for (let index = 0; index < TOOL_FILES.length && index < TOOL_FILES.length; index += 1) {
     fs.copyFileSync(path.join(toolDir, TOOL_FILES[index]), path.join(temporary, TOOL_FILES[index]));
   }
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  command(npm, ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], {
+  const npm = npmInvocation(process.platform, process.execPath, NPM_CI_ARGS);
+  command(npm.file, npm.args, {
     cwd: temporary,
     timeout: INSTALL_TIMEOUT_MS,
   });
+}
+
+function npmInvocationSelfTest(temporary) {
+  const nodeDir = path.join(temporary, "node distribution");
+  const execPath = path.join(nodeDir, "node.exe");
+  const cli = path.join(nodeDir, "node_modules", "npm", "bin", "npm-cli.js");
+  for (const platform of ["linux", "darwin"]) {
+    assert.deepEqual(npmInvocation(platform, execPath, NPM_CI_ARGS), { file: "npm", args: NPM_CI_ARGS });
+  }
+  assert.throws(() => npmInvocation("win32", execPath, NPM_CI_ARGS), /npm CLI not found beside/u);
+  fs.mkdirSync(cli, { recursive: true });
+  assert.throws(() => npmInvocation("win32", execPath, NPM_CI_ARGS), /npm CLI not found beside/u);
+  fs.rmdirSync(cli);
+  fs.writeFileSync(cli, "");
+  const windows = npmInvocation("win32", execPath, NPM_CI_ARGS);
+  assert.deepEqual(windows, { file: execPath, args: [cli, ...NPM_CI_ARGS] });
+  assert.ok(!/\.(?:cmd|bat)$/iu.test(windows.file));
+  fs.rmSync(nodeDir, { recursive: true, force: true });
+  process.stdout.write("npm invocation fixtures: PATH npm off Windows, Node-run npm-cli.js on Windows, " +
+    "missing CLI fails closed\n");
 }
 
 function filesystemSymlinkUnavailable(error) {
@@ -513,6 +551,9 @@ function main() {
   const toolDir = path.dirname(fileURLToPath(import.meta.url));
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "praetor-markdownlint-"));
   try {
+    if (selfTest) {
+      npmInvocationSelfTest(temporary);
+    }
     install(toolDir, temporary);
     if (selfTest) {
       inventorySelfTest(temporary);

@@ -157,7 +157,7 @@ func TestRunnerUsesLockedInstallWithoutNpx(t *testing.T) {
 	}
 	text := string(data)
 	for _, required := range []string{
-		"npm.cmd", "ci", "--ignore-scripts", "--no-audit", "--no-fund", "spawnSync", "timeout",
+		`"ci", "--ignore-scripts", "--no-audit", "--no-fund"`, "spawnSync", "timeout",
 		"MAX_CAPTURE_BYTES", "MAX_DIAGNOSTIC_OUTPUT_BYTES", "MAX_DIAGNOSTIC_OUTPUT_LINES", "emitBounded",
 	} {
 		if !strings.Contains(text, required) {
@@ -175,6 +175,32 @@ func TestRunnerUsesLockedInstallWithoutNpx(t *testing.T) {
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("runner does not keep privacy scanning broader than style lint: missing %q", required)
+		}
+	}
+}
+
+// Windows refuses to spawn a .cmd or .bat file without a shell (CVE-2024-27980), and a shell
+// with an argument list is deprecated (DEP0190). The runner must reach npm through the Node
+// binary on Windows, and its self-test must replay that resolution on every platform.
+func TestRunnerStartsNpmWithoutWindowsBatchShim(t *testing.T) {
+	data, err := Read("verify.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		`path.join(path.dirname(execPath), "node_modules", "npm", "bin", "npm-cli.js")`,
+		"return { file: execPath, args: [cli, ...args] };",
+		"npmInvocation(process.platform, process.execPath, NPM_CI_ARGS)",
+		"npmInvocationSelfTest(temporary);",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("runner lacks Windows-safe npm resolution %q", required)
+		}
+	}
+	for _, forbidden := range []string{`"npm.cmd"`, `'npm.cmd'`, "shell: true", `"cmd.exe"`} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("runner spawns npm through %s, which fails with EINVAL or needs a shell on Windows", forbidden)
 		}
 	}
 }

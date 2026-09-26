@@ -59,6 +59,17 @@ The runner copies the canonical tool assets to a temporary directory, executes
 `node_modules/` directory. Every subprocess has a timeout, and the temporary
 installation is removed after success or failure.
 
+On Linux and macOS the runner starts `npm` from `PATH`. On Windows it cannot:
+Node refuses to spawn the `npm.cmd` batch shim without a shell and fails with
+`EINVAL` (CVE-2024-27980), and passing arguments through a shell is deprecated
+(DEP0190). The runner therefore starts the `node_modules/npm/bin/npm-cli.js`
+that the Windows Node distribution installs beside `node.exe`, through the
+running Node binary. If that file is absent, the gate fails and names the path it
+expected. `npmInvocation` in `tools/markdownlint/verify.mjs` holds this rule, and
+`make docs-lint-test` replays it for both platform families on every host. The
+Windows leg of `.github/workflows/portability.yml` runs the same self-test,
+including the real locked install.
+
 Praetor pins `tools/markdownlint/*` to LF in its own `.gitattributes` because
 those source files are Go-embedded bootstrap inputs. Adopted copies may use
 either consistent LF or CRLF checkout text. Audit compares their normalized
