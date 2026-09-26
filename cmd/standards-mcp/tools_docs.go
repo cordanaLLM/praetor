@@ -126,8 +126,12 @@ func (s *Server) createVersionAuditTool() (mcp.Tool, error) {
 func formatVersionAudit(repoPath string, report *bump.VersionAuditReport) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "=== Codebase Version Audit: %s ===\n", repoPath)
-	fmt.Fprintf(&sb, "Score: %.1f%% | Scanned: %d | Up to Date: %d | Deprecations: %d\n\n",
-		report.ModernizationScore, report.TotalScanned, report.UpToDate, len(report.Deprecations))
+	fmt.Fprintf(&sb, "Score: %.1f%% | Scanned: %d | Up to Date: %d | Actions: %d | Deprecations: %d\n\n",
+		report.ModernizationScore, report.TotalScanned, report.UpToDate, len(report.Actions), len(report.Deprecations))
+
+	// The tool promises workflow-action auditing; the inventory is the same one `bump audit`
+	// prints (BUG-872).
+	sb.WriteString(bump.FormatActionsInventory(report.Actions))
 
 	if len(report.Deprecations) > 0 {
 		sb.WriteString("Deprecation Advisories:\n")

@@ -145,14 +145,11 @@ func (s *Server) runAdoptTool(ctx context.Context, args map[string]any) (*mcp.To
 
 func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) string {
 	var sb strings.Builder
-	mode := "APPLIED"
-	if len(r.Errors) > 0 {
-		mode = "INCOMPLETE"
-	}
-	if dryRun {
-		mode = "SIMULATED (DRY RUN)"
-	}
-	fmt.Fprintf(&sb, "=== Praetor Repository Adoption [%s] ===\n", mode)
+	// adopt.AdoptReport.Outcome decides the mode: errors win over a dry run, so a failed
+	// plan reads INCOMPLETE rather than SIMULATED (BUG-871).
+	outcomeReport := *r
+	outcomeReport.DryRun = r.DryRun || dryRun
+	fmt.Fprintf(&sb, "=== Praetor Repository Adoption [%s] ===\n", adoptModes[outcomeReport.Outcome()])
 	fmt.Fprintf(&sb, "State: %s | Archetype: %s\n", r.State, r.Archetype)
 	fmt.Fprintf(&sb, "Facets: %s\n", strings.Join(r.Facets, ", "))
 	formatAdoptDebt(&sb, r, dryRun)
@@ -172,6 +169,10 @@ func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) string {
 	for _, f := range r.ReconciledFiles {
 		fmt.Fprintf(&sb, "  ~ %s\n", f)
 	}
+	sb.WriteString("Governance Pillars:\n")
+	for _, pillar := range outcomeReport.Pillars() {
+		sb.WriteString("  " + pillar.Line() + "\n")
+	}
 	for _, failure := range r.Errors {
 		fmt.Fprintf(&sb, "[ERROR] %s\n", failure)
 	}
@@ -179,6 +180,12 @@ func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) string {
 		fmt.Fprintf(&sb, "[WARN] %s\n", warning)
 	}
 	return sb.String()
+}
+
+var adoptModes = map[adopt.AdoptOutcome]string{
+	adopt.OutcomeIncomplete: "INCOMPLETE",
+	adopt.OutcomeSimulated:  "SIMULATED (DRY RUN)",
+	adopt.OutcomeApplied:    "APPLIED",
 }
 
 func formatAdoptDebt(sb *strings.Builder, r *adopt.AdoptReport, dryRun bool) {
