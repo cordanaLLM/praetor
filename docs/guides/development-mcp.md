@@ -160,6 +160,10 @@ ceilings `praetorctl audit` enforces in that repository:
 - No `.standards.yaml`, or a manifest without `.standards.lock`, reports the
   HISS-04 ceiling (cyclomatic 10, cognitive 15, statements 50, 60 lines),
   tightened by any complexity override the manifest declares.
+- Every 60 above is `hiss.DefaultMaxFuncLOC` (`internal/hiss/hiss.go`), the
+  scanner's own default and the one constant every function-length default
+  derives from; `TestServer_Boundary_InspectSymbolsLengthIsScannerDefault` in
+  `cmd/standards-mcp/server_test.go` pins the locked and unadopted cases to it.
 - A manifest or lock that does not resolve, including the lock `praetorctl init`
   writes, reports that same ceiling and opens with
   `[WARN] repository policy unresolved (<cause>); stating the HISS-04 ceiling ...`.
