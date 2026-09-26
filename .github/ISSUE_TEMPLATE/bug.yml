@@ -63,8 +63,8 @@ body:
     id: environment
     attributes:
       label: "Environment"
-      description: "OS, Go version, architecture (e.g. Linux x86_64, Go 1.24)"
-      placeholder: "Linux 6.8, go version go1.24.0 linux/amd64"
+      description: "OS, Go version, architecture (e.g. Linux x86_64, Go 1.27)"
+      placeholder: "Linux 6.12, go version go1.27.1 linux/amd64"
     validations:
       required: true
   - type: checkboxes
