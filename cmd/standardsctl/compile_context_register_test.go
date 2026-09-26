@@ -81,7 +81,7 @@ func TestCompileContextRegister_Boundary(t *testing.T) {
 	if out, err := runCompileContextCmd(t, dir, "--verify"); err != nil {
 		t.Fatalf("verify without a manifest: %v\n%s", err, out)
 	}
-	if !strings.Contains(readFixtureFile(t, dir, "AGENTS.md"), "every other label and any brief without one = internal.") {
+	if !strings.Contains(readFixtureFile(t, dir, "AGENTS.md"), "every other label and any unlabeled text = internal.") {
 		t.Fatal("the default block must name the internal fallback")
 	}
 
