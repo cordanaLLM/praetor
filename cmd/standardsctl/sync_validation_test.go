@@ -144,6 +144,30 @@ func TestSyncMissingCompanionsRetainsScaffoldAndPreventsRemoteWrites(t *testing.
 	}
 }
 
+// A valid lock whose catalog is not materialized is reported unverified and keeps sync
+// incomplete; selecting the catalog with --catalog-root verifies it.
+func TestSyncReportsSourceLessLockUnverified(t *testing.T) {
+	f := newSyncValidationFixture(t)
+	catalog := t.TempDir()
+	if err := os.Mkdir(filepath.Join(catalog, ".config"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(f.dir, ".config", "archetypes"), filepath.Join(catalog, ".config", "archetypes")); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runSyncCmd(t, "--config="+f.manifestPath)
+	mustErrContain(t, err, "companion checks missing or unverified")
+	mustContain(t, out, "[UNVERIFIED] Lockfile .standards.lock", config.ErrLockUnverifiable.Error())
+	if strings.Contains(out, "[OK] Lockfile") || strings.Contains(out, "Local sync checks finished") {
+		t.Fatalf("source-less lock reported verified:\n%s", out)
+	}
+	out, err = runSyncCmd(t, "--config="+f.manifestPath, "--catalog-root="+catalog)
+	if err != nil {
+		t.Fatalf("selected catalog: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[OK] Lockfile .standards.lock verified", "0 companion checks missing")
+}
+
 func TestSyncRejectsChangedDeclaredRulesetPolicy(t *testing.T) {
 	f := newSyncValidationFixture(t)
 	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", true))

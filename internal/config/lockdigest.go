@@ -43,6 +43,12 @@ var (
 	ErrLockEntryMissing = errors.New("lockfile does not pin a declared profile or facet")
 	// ErrLockDigestMismatch reports a pinned digest that disagrees with the source file.
 	ErrLockDigestMismatch = errors.New("lockfile digest does not match the archetype source")
+	// ErrLockSourceMissing reports a present catalog that defines no archetype with a
+	// declared id: the archetype was removed, or its content-declared id: was changed.
+	ErrLockSourceMissing = errors.New("catalog defines no archetype with the pinned id")
+	// ErrLockUnverifiable reports well-formed pins whose content cannot be hashed because
+	// the selected catalog has no .config/archetypes directory.
+	ErrLockUnverifiable = errors.New("lockfile content digests are unverifiable: the selected catalog has no .config/archetypes directory")
 )
 
 // lockEntry pins one archetype or facet at a version and content digest.
@@ -57,7 +63,7 @@ type standardsLock struct {
 	Version       int         `yaml:"version"`
 	PinnedVersion string      `yaml:"pinned_version"`
 	Digest        string      `yaml:"digest"`
-	GeneratedAt   string      `yaml:"generated_at"`
+	GeneratedAt   string      `yaml:"generated_at,omitempty"`
 	Profiles      []lockEntry `yaml:"profiles"`
 	Facets        []lockEntry `yaml:"facets"`
 }
@@ -157,57 +163,122 @@ func canonicalLockDigest(lock *standardsLock) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// verifyLockEntries checks every declared id against the lockfile and, when the archetype
-// sources are present in the repository, against the recomputed content digest.
-func verifyLockEntries(ctx context.Context, declared []string, entries []lockEntry, sources map[string]string, kind string) error {
-	pinned := make(map[string]lockEntry, len(entries))
-	for i := 0; i < len(entries) && i < maxLockEntries; i++ {
-		pinned[entries[i].ID] = entries[i]
+// verifyAggregateDigest checks the top-level digest against the canonical digest of
+// every pinned entry. Lock validation and effective policy share this one check.
+func verifyAggregateDigest(lock *standardsLock) error {
+	topLevel, err := normalizeDigest(lock.Digest)
+	if err != nil {
+		return fmt.Errorf("top-level digest: %w", err)
 	}
-
-	for i := 0; i < len(declared) && i < maxLockEntries; i++ {
-		id := declared[i]
-		entry, ok := pinned[id]
-		if !ok {
-			return fmt.Errorf("%w: %s %q", ErrLockEntryMissing, kind, id)
-		}
-		digest, err := normalizeDigest(entry.Digest)
-		if err != nil {
-			return fmt.Errorf("%s %q: %w", kind, id, err)
-		}
-		sourcePath, hasSource := sources[id]
-		if !hasSource {
-			continue
-		}
-		actual, err := fileDigest(ctx, sourcePath)
-		if err != nil {
-			return err
-		}
-		if actual != digest {
-			return fmt.Errorf("%w: %s %q pins %s%s but %s hashes to %s%s",
-				ErrLockDigestMismatch, kind, id, digestPrefix, digest, sourcePath, digestPrefix, actual)
-		}
+	if expected := canonicalLockDigest(lock); topLevel != expected {
+		return fmt.Errorf("top-level digest is %s%s but the pinned entries hash to %s%s: %w",
+			digestPrefix, topLevel, digestPrefix, expected, ErrLockDigestMismatch)
 	}
 	return nil
 }
 
-// archetypeSources indexes the repository's archetype and facet definitions when present.
-// A repository consuming remote archetypes simply has no sources to recompute against.
+// pinnedSource pairs a declared archetype id with its lock pin and catalog source.
+// path is empty only when no catalog is materialized.
+type pinnedSource struct {
+	id   string
+	pin  lockEntry
+	path string
+}
+
+// resolveLockPins is the one declared-id -> pin -> catalog-source resolution shared by
+// lock validation and effective policy. A declared id without a pin is
+// ErrLockEntryMissing. A nil sources index means no catalog is materialized and every
+// path stays empty; a non-nil index must define every declared id, so a removed
+// archetype or a changed content-declared id: is ErrLockSourceMissing, never a skip.
+func resolveLockPins(declared []string, entries []lockEntry, sources map[string]string, kind string) ([]pinnedSource, error) {
+	pins := make(map[string]lockEntry, len(entries))
+	for i := 0; i < len(entries) && i < maxLockEntries; i++ {
+		pins[entries[i].ID] = entries[i]
+	}
+	resolved := make([]pinnedSource, 0, len(declared))
+	for i := 0; i < len(declared) && i < maxLockEntries; i++ {
+		id := declared[i]
+		pin, ok := pins[id]
+		if !ok {
+			return nil, fmt.Errorf("%w: %s %q", ErrLockEntryMissing, kind, id)
+		}
+		path, ok := sources[id]
+		if !ok && sources != nil {
+			return nil, fmt.Errorf("lock requires materialized %s %q in the selected catalog: %w", kind, id, ErrLockSourceMissing)
+		}
+		resolved = append(resolved, pinnedSource{id: id, pin: pin, path: path})
+	}
+	return resolved, nil
+}
+
+// verifyLockEntries hashes every declared entry's catalog source against its pin and
+// returns how many entries had no catalog to hash against.
+func verifyLockEntries(ctx context.Context, declared []string, entries []lockEntry, sources map[string]string, kind string) (int, error) {
+	resolved, err := resolveLockPins(declared, entries, sources, kind)
+	if err != nil {
+		return 0, err
+	}
+	unverified := 0
+	for i := 0; i < len(resolved) && i < maxLockEntries; i++ {
+		entry := resolved[i]
+		digest, err := normalizeDigest(entry.pin.Digest)
+		if err != nil {
+			return 0, fmt.Errorf("%s %q: %w", kind, entry.id, err)
+		}
+		if entry.path == "" {
+			unverified++
+			continue
+		}
+		actual, err := fileDigest(ctx, entry.path)
+		if err != nil {
+			return 0, err
+		}
+		if actual != digest {
+			return 0, fmt.Errorf("%w: %s %q pins %s%s but %s hashes to %s%s",
+				ErrLockDigestMismatch, kind, entry.id, digestPrefix, digest, entry.path, digestPrefix, actual)
+		}
+	}
+	return unverified, nil
+}
+
+// archetypeSources indexes a catalog's archetype and facet definitions. Both indexes
+// are nil when the catalog has no .config/archetypes directory, the one state in which
+// pinned content cannot be recomputed. A present catalog without a facets directory
+// yields an empty facet index, so a declared facet is missing rather than unverifiable.
 func archetypeSources(ctx context.Context, rootDir string) (profiles, facets map[string]string, err error) {
 	profiles, err = optionalArchetypeIndex(ctx, rootDir, archetypeDirName)
-	if err != nil {
+	if err != nil || profiles == nil {
 		return nil, nil, err
 	}
 	facets, err = optionalArchetypeIndex(ctx, rootDir, filepath.Join(archetypeDirName, facetDirName))
-	return profiles, facets, err
+	if err != nil {
+		return nil, nil, err
+	}
+	if facets == nil {
+		facets = map[string]string{}
+	}
+	return profiles, facets, nil
 }
 
+// optionalArchetypeIndex returns a nil index only when the directory is absent; one that
+// exists but cannot be indexed, including a path that is not a directory, is an error.
+// A relative root resolves against the working directory, as normalizeEffectiveOptions
+// resolves CatalogRoot, because ConfinePath returns an absolute path and the index
+// relativizes every entry against root.
 func optionalArchetypeIndex(ctx context.Context, root, rel string) (map[string]string, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve archetype catalog root: %w", err)
+	}
 	path, err := util.ConfinePath(root, rel)
 	if err != nil {
 		return nil, err
 	}
-	return indexArchetypesWithSnapshots(ctx, root, path, nil, true)
+	index, err := indexArchetypesWithSnapshots(ctx, root, path, nil, false)
+	if util.DirectoryAbsent(path, err) {
+		return nil, nil
+	}
+	return index, err
 }
 
 // readLockSource refuses nonregular inputs before opening them, bounds the read,

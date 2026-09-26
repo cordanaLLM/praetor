@@ -84,7 +84,7 @@ func validatedSourcePins(ctx context.Context, root string, manifest *Manifest, p
 	if err != nil {
 		return nil, err
 	}
-	if _, err := ValidateLockfile(ctx, root, manifest); err != nil {
+	if _, err := ValidateLockfileWithOptions(ctx, LockValidationOptions{Root: root, RequireSources: true}, manifest); err != nil {
 		return nil, fmt.Errorf("validate lock source: %w", err)
 	}
 	after, err := readLockSource(ctx, path)

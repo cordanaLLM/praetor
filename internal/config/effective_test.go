@@ -206,8 +206,8 @@ func TestLoadEffectivePolicyAuditCompatibilityAndCatalogRoot(t *testing.T) {
 	if err := os.Rename(filepath.Join(root, ".config"), filepath.Join(catalog, ".config")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadEffectivePolicyContext(t.Context(), EffectiveOptions{Root: root}); err == nil {
-		t.Fatal("missing materialized profile accepted")
+	if _, err := LoadEffectivePolicyContext(t.Context(), EffectiveOptions{Root: root}); !errors.Is(err, ErrLockSourceMissing) {
+		t.Fatalf("missing materialized profile accepted: %v", err)
 	}
 	// The built-in default already is the audit ceiling (BUG-309), so the looser pinned 75
 	// resolves to it either way; the audit layer adds only its provenance as a tied source.

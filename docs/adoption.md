@@ -175,3 +175,35 @@ reports lock generation as skipped; it cannot promise a complete adoption. Live
 errors retain the partial report, since earlier scaffolding may already exist.
 The same source option applies to `adopt --all-missing`; integrations invoking
 adoption must supply it or arrange an already valid target lock.
+
+## Lock verification outcomes
+
+Every command that reads `.standards.lock` uses one validator,
+`ValidateLockfileWithOptions` in `internal/config/lock.go`. It recomputes each
+declared profile and facet digest from a catalog. The catalog is the `.config/archetypes`
+directory under `--catalog-root` (MCP: `catalog_root`), or under the repository when
+no catalog root is given. The effective policy gate resolves the same catalog, so
+both gates hash the same bytes.
+
+| Outcome | Meaning |
+| :-- | :-- |
+| verified | Every declared entry's catalog file hashed to its pin. |
+| unverifiable | Pins and the aggregate digest are valid, but the catalog has no `.config/archetypes` directory. |
+| invalid | A version, pin, digest or catalog defect. Invalid locks are errors, never a status. |
+
+A catalog that exists must define every declared id. An archetype whose `id:` field
+was changed, or whose file was deleted, fails with `ErrLockSourceMissing` instead of
+skipping the digest comparison.
+
+Each command handles `unverifiable` as follows:
+
+- `praetorctl audit` and the MCP `standards_audit` tool fail with `ErrLockUnverifiable`.
+- `praetorctl sync` prints `[UNVERIFIED]` and exits incomplete; `--catalog-root` selects a catalog.
+- `praetorctl adopt` records the outcome with a warning; `--lock-source-root` verifies against that bundle.
+- `praetorctl harvest onboard` completes with `lock_verified: false` and `lock_status: unverifiable`.
+- Lock generation refuses a source bundle without a catalog.
+
+Generated locks omit `generated_at`; a lock that sets it still validates. The
+behavior is pinned by `internal/config/lock_test.go`,
+`cmd/standardsctl/lockdigest_test.go`, `cmd/standardsctl/sync_validation_test.go`,
+`internal/adopt/lock_test.go` and `internal/harvester/onboard_safety_test.go`.

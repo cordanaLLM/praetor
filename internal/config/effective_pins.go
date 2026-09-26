@@ -48,33 +48,22 @@ func validateEffectivePins(lock *standardsLock, manifest *Manifest) error {
 	if err := validateLockMetadata(lock, manifest); err != nil {
 		return err
 	}
-	digest, err := normalizeDigest(lock.Digest)
-	if err != nil {
-		return err
-	}
-	if digest != canonicalLockDigest(lock) {
-		return fmt.Errorf("%w: top-level digest does not match pinned entries", ErrLockDigestMismatch)
-	}
-	return nil
+	return verifyAggregateDigest(lock)
 }
 
+// resolvePinnedKind always requires the catalog: an absent one resolves as an empty
+// index, so every declared id is ErrLockSourceMissing instead of unverifiable.
 func (l *effectiveLoader) resolvePinnedKind(ids []string, entries []lockEntry, sources map[string]string, kind string) ([]PolicyLayer, error) {
-	pins := make(map[string]lockEntry, len(entries))
-	for i := 0; i < len(entries) && i < maxLockEntries; i++ {
-		pins[entries[i].ID] = entries[i]
+	if sources == nil {
+		sources = map[string]string{}
 	}
-	layers := make([]PolicyLayer, 0, len(ids))
-	for i := 0; i < len(ids) && i < maxLockEntries; i++ {
-		id := ids[i]
-		pin, ok := pins[id]
-		if !ok {
-			return nil, fmt.Errorf("%w: %s %q", ErrLockEntryMissing, kind, id)
-		}
-		path, ok := sources[id]
-		if !ok {
-			return nil, fmt.Errorf("effective policy requires materialized %s %q in the selected catalog", kind, id)
-		}
-		layer, err := l.pinnedLayer(path, kind, pin)
+	resolved, err := resolveLockPins(ids, entries, sources, kind)
+	if err != nil {
+		return nil, err
+	}
+	layers := make([]PolicyLayer, 0, len(resolved))
+	for i := 0; i < len(resolved) && i < maxLockEntries; i++ {
+		layer, err := l.pinnedLayer(resolved[i].path, kind, resolved[i].pin)
 		if err != nil {
 			return nil, err
 		}

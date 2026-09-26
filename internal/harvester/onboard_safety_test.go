@@ -77,13 +77,16 @@ func TestOnboardRepositoryConfinesGeneratedOutputs(t *testing.T) {
 	}
 }
 
+// onboardFixtureArchetype is the caller-pinned profile source the fixture lock hashes.
+const onboardFixtureArchetype = "id: framework\nname: caller-pinned fixture archetype\n"
+
 // verifiedOnboardFixture supplies a source-less consumer lock whose pins are declared
 // by the caller. Production onboarding must preserve and validate those caller pins.
 func verifiedOnboardFixture(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
 	mustWriteFile(t, filepath.Join(repo, ".standards.yaml"), "version: 1\nprofiles: [framework]\n")
-	digest := sha256.Sum256([]byte("caller-pinned fixture archetype"))
+	digest := sha256.Sum256([]byte(onboardFixtureArchetype))
 	pin := "sha256:" + hex.EncodeToString(digest[:])
 	aggregate := sha256.Sum256([]byte("profile:framework=" + pin + "\n"))
 	lock := map[string]any{"version": 1, "pinned_version": "v1.2.3", "digest": "sha256:" + hex.EncodeToString(aggregate[:]),
@@ -96,19 +99,52 @@ func verifiedOnboardFixture(t *testing.T) string {
 	return repo
 }
 
+func writeOnboardCatalog(t *testing.T, repo, body string) {
+	t.Helper()
+	dir := filepath.Join(repo, ".config", "archetypes")
+	mustMkdirAll(t, dir)
+	mustWriteFile(t, filepath.Join(dir, "framework.yaml"), body)
+}
+
 func TestOnboardRepositoryVerifiedCallerLock(t *testing.T) {
 	repo := verifiedOnboardFixture(t)
+	writeOnboardCatalog(t, repo, onboardFixtureArchetype)
 	before, err := os.ReadFile(filepath.Join(repo, ".standards.lock"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	plan, err := OnboardRepository(context.Background(), repo, false)
-	if err != nil || !plan.LockVerified {
+	if err != nil || !plan.LockVerified || plan.LockStatus != config.LockStatusVerified {
 		t.Fatalf("valid caller lock rejected: %+v %v", plan, err)
 	}
 	after, err := os.ReadFile(filepath.Join(repo, ".standards.lock"))
 	if err != nil || string(after) != string(before) {
 		t.Fatalf("caller pins changed: %v", err)
+	}
+}
+
+// A lock whose catalog is not materialized is valid but unverified: onboarding does not
+// fail on it, and it does not claim the content digests were checked.
+func TestOnboardRepositoryReportsSourceLessLockUnverifiable(t *testing.T) {
+	repo := verifiedOnboardFixture(t)
+	plan, err := OnboardRepository(context.Background(), repo, false)
+	if err != nil {
+		t.Fatalf("source-less caller lock must not make onboarding incomplete: %v", err)
+	}
+	if plan.LockVerified || plan.LockStatus != config.LockStatusUnverifiable {
+		t.Fatalf("source-less lock reported as verified: %+v", plan)
+	}
+}
+
+func TestOnboardRepositoryRejectsRenamedCatalogArchetype(t *testing.T) {
+	repo := verifiedOnboardFixture(t)
+	writeOnboardCatalog(t, repo, "id: renamed\nname: caller-pinned fixture archetype\n")
+	plan, err := OnboardRepository(context.Background(), repo, false)
+	if !errors.Is(err, ErrOnboardingIncomplete) || !errors.Is(err, config.ErrLockSourceMissing) {
+		t.Fatalf("renamed archetype id skipped digest verification: %v", err)
+	}
+	if plan == nil || plan.LockVerified || plan.LockStatus != "" {
+		t.Fatalf("missing truthful partial plan: %+v", plan)
 	}
 }
 

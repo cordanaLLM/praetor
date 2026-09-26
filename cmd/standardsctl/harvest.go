@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/harvester"
 )
 
@@ -321,8 +322,22 @@ func runHarvestOnboard(ctx context.Context, args []string) error {
 		for _, action := range plan.Actions {
 			fmt.Printf("  - %s\n", action)
 		}
+		if line := onboardLockLine(plan.LockStatus); line != "" {
+			fmt.Println(line)
+		}
 	}
 	return errors.Join(failures...)
+}
+
+// onboardLockLine states a live run's lock outcome; a dry run verifies nothing.
+func onboardLockLine(status config.LockStatus) string {
+	switch status {
+	case config.LockStatusVerified:
+		return "  [OK] .standards.lock pins and content digests verified"
+	case config.LockStatusUnverifiable:
+		return fmt.Sprintf("  [UNVERIFIED] .standards.lock pins are valid, but %v; materialize it with praetorctl adopt --lock-source-root", config.ErrLockUnverifiable)
+	}
+	return ""
 }
 
 // onboardTargets resolves the repositories `harvest onboard` must act on: either the

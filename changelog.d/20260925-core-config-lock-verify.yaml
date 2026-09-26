@@ -1,0 +1,3 @@
+type: fixed
+title: Lock validation fails when a present .config/archetypes catalog no longer defines a declared id instead of skipping its digest check, and a lock with no catalog to hash is reported unverifiable instead of verified; audit fails closed on it and hashes against the same --catalog-root as the effective policy gate, sync prints [UNVERIFIED] and gains --catalog-root, adopt and harvest onboard report the outcome (lock_status), and generated locks no longer write an empty generated_at
+breaking: true

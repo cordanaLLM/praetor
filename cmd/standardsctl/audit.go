@@ -134,7 +134,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 	rootDir := opts.rootDir
 	gates := []func() error{
 		func() error { return auditRepoIdentity(manifest, rootDir) },
-		func() error { return auditLockDigestsContext(ctx, manifest, rootDir) },
+		func() error { return auditLockDigestsContext(ctx, manifest, rootDir, opts.policy.CatalogRoot) },
 		func() error { return auditBaselineAndInvariants(ctx, opts) },
 		func() error { return auditReadmeGovernance(ctx, manifest, opts) },
 		func() error { return auditDocumentationGate(ctx, manifest, rootDir) },

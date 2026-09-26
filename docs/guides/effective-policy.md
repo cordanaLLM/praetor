@@ -299,7 +299,9 @@ which already capped function length at 60.
 
 Existing repositories with lock pins but no local archetypes must either select a
 matching source bundle with `--catalog-root` or materialize the pinned catalog
-during adoption. The resolver supplies exact validated `CatalogArtifacts` for
+during adoption. The audit's lockfile digest gate hashes against that same catalog
+and fails when none is materialized; the outcomes are listed in
+[Lock verification outcomes](../adoption.md#lock-verification-outcomes). The resolver supplies exact validated `CatalogArtifacts` for
 bootstrap; these contain only selected profiles/facets, never external fleet,
 deployment or workstation configuration. Files with changed digests are rejected.
 

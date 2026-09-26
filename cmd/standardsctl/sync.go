@@ -191,6 +191,7 @@ func runSync(args []string) error {
 	remote := fs.Bool("remote", false, "Also reconcile branch protection on GitHub (an explicit opt-in; nothing is pushed without it)")
 	token := fs.String("token", "", "Forge API token for --remote (default: GITHUB_TOKEN, then GH_TOKEN; the gh CLI is never consulted)")
 	endpoint := fs.String("endpoint", "", "Forge API endpoint for --remote (default: https://api.github.com)")
+	catalogRoot := fs.String("catalog-root", "", "Root containing pinned .config/archetypes for lock digest verification (default: reconciled root)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -222,7 +223,7 @@ func runSync(args []string) error {
 	if err := reconcileLabels(ctx, rootDir); err != nil {
 		return err
 	}
-	missing, err := verifySyncCompanions(ctx, rootDir, manifest)
+	missing, err := verifySyncCompanions(ctx, rootDir, *catalogRoot, manifest)
 	if err != nil {
 		return err
 	}
@@ -230,7 +231,7 @@ func runSync(args []string) error {
 		return err
 	}
 	if missing > 0 {
-		return fmt.Errorf("local sync verification incomplete: %d companion checks missing; generated labels and ruleset retained", missing)
+		return fmt.Errorf("local sync verification incomplete: %d companion checks missing or unverified; generated labels and ruleset retained", missing)
 	}
 
 	if *remote {

@@ -58,9 +58,138 @@ func TestValidateLockfilePositiveLocalAndRemoteSources(t *testing.T) {
 			}
 		}
 		result, err := ValidateLockfile(context.Background(), root, manifest)
-		if err != nil || result == nil || result.Profiles != 1 || result.Facets != 0 {
+		if err != nil || result == nil || result.Profiles != 1 || result.Facets != 0 || result.Verified() != local {
 			t.Fatalf("local=%v: result=%+v err=%v", local, result, err)
 		}
+		if !local && result.Status != LockStatusUnverifiable {
+			t.Fatalf("source-less lock must be unverifiable, got %q", result.Status)
+		}
+	}
+}
+
+func writeLockTestCatalog(t *testing.T, root, rel, body string) {
+	t.Helper()
+	path := filepath.Join(root, ".config", "archetypes", filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateLockfilePresentCatalogMustDefineDeclaredIDs(t *testing.T) {
+	for name, source := range map[string]struct{ file, body string }{
+		"renamed id":        {"framework.yaml", "id: renamed\nname: Framework\n"},
+		"removed archetype": {"other.yaml", "id: other\nname: Other\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, manifest := writeConfigLockFixture(t, lockTestDocument())
+			writeLockTestCatalog(t, root, source.file, source.body)
+			result, err := ValidateLockfile(context.Background(), root, manifest)
+			if !errors.Is(err, ErrLockSourceMissing) || result != nil {
+				t.Fatalf("declared id absent from a present catalog must fail: %+v / %v", result, err)
+			}
+		})
+	}
+	// Boundary: an empty catalog directory is present, not absent.
+	root, manifest := writeConfigLockFixture(t, lockTestDocument())
+	if err := os.MkdirAll(filepath.Join(root, ".config", "archetypes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateLockfile(context.Background(), root, manifest); !errors.Is(err, ErrLockSourceMissing) {
+		t.Fatalf("empty catalog must not downgrade to unverifiable: %v", err)
+	}
+}
+
+func TestValidateLockfileFacetsRequireCatalogFacetDirectory(t *testing.T) {
+	facet := "id: security:high\nname: High\n"
+	profileDigest, facetDigest := lockTestDigest(lockTestSource), lockTestDigest(facet)
+	lines := []string{"facet:security:high=" + facetDigest, "profile:framework=" + profileDigest}
+	doc := lockTestDocument()
+	doc["facets"] = []map[string]any{{"id": "security:high", "version": "v1.0.0", "digest": facetDigest}}
+	doc["digest"] = lockTestDigest(strings.Join(lines, "\n") + "\n")
+	root, manifest := writeConfigLockFixture(t, doc)
+	manifest.Facets = []string{"security:high"}
+	writeLockTestCatalog(t, root, "framework.yaml", lockTestSource)
+	if _, err := ValidateLockfile(context.Background(), root, manifest); !errors.Is(err, ErrLockSourceMissing) {
+		t.Fatalf("a present catalog without its facets directory must fail: %v", err)
+	}
+	writeLockTestCatalog(t, root, "facets/security-high.yaml", facet)
+	result, err := ValidateLockfile(context.Background(), root, manifest)
+	if err != nil || !result.Verified() || result.Facets != 1 {
+		t.Fatalf("complete catalog must verify: %+v / %v", result, err)
+	}
+}
+
+func TestValidateLockfileWithOptionsCatalogAndRequireSources(t *testing.T) {
+	root, manifest := writeConfigLockFixture(t, lockTestDocument())
+	catalog := t.TempDir()
+	writeLockTestCatalog(t, catalog, "framework.yaml", lockTestSource)
+	// Positive: a remote-catalog adopter verifies against the selected catalog.
+	opts := LockValidationOptions{Root: root, CatalogRoot: catalog, RequireSources: true}
+	result, err := ValidateLockfileWithOptions(context.Background(), opts, manifest)
+	if err != nil || !result.Verified() {
+		t.Fatalf("selected catalog must verify: %+v / %v", result, err)
+	}
+	// Negative: tampered catalog content is a mismatch, whichever root holds it.
+	writeLockTestCatalog(t, catalog, "framework.yaml", lockTestSource+"changed: true\n")
+	if _, err := ValidateLockfileWithOptions(context.Background(), opts, manifest); !errors.Is(err, ErrLockDigestMismatch) {
+		t.Fatalf("tampered catalog must fail: %v", err)
+	}
+	// Negative: RequireSources fails closed without a catalog.
+	opts.CatalogRoot = ""
+	result, err = ValidateLockfileWithOptions(context.Background(), opts, manifest)
+	if !errors.Is(err, ErrLockUnverifiable) || result != nil {
+		t.Fatalf("source-less lock must fail closed: %+v / %v", result, err)
+	}
+	// Boundary: invalid pins stay invalid rather than unverifiable.
+	doc := lockTestDocument()
+	doc["digest"] = lockTestDigest("wrong aggregate")
+	invalidRoot, _ := writeConfigLockFixture(t, doc)
+	if _, err := ValidateLockfile(context.Background(), invalidRoot, manifest); !errors.Is(err, ErrLockDigestMismatch) {
+		t.Fatalf("source-less aggregate mismatch must stay invalid: %v", err)
+	}
+}
+
+func TestValidateLockfileCatalogBoundaries(t *testing.T) {
+	// Boundary: nothing declared has nothing to hash, with or without a catalog.
+	doc := map[string]any{"version": 1, "pinned_version": "v1.0.0", "digest": lockTestDigest("\n")}
+	root, _ := writeConfigLockFixture(t, doc)
+	opts := LockValidationOptions{Root: root, RequireSources: true}
+	result, err := ValidateLockfileWithOptions(context.Background(), opts, &Manifest{Version: 1})
+	if err != nil || !result.Verified() {
+		t.Fatalf("empty declaration must verify: %+v / %v", result, err)
+	}
+	// Negative: a catalog path that is a file is an error, never an absent catalog.
+	root, manifest := writeConfigLockFixture(t, lockTestDocument())
+	if err := os.MkdirAll(filepath.Join(root, ".config"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".config", "archetypes"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := ValidateLockfile(context.Background(), root, manifest); err == nil {
+		t.Fatalf("non-directory catalog accepted: %+v", result)
+	}
+	var missing *LockValidation
+	if missing.Verified() {
+		t.Fatal("nil validation must not report verified")
+	}
+}
+
+func TestValidateLockfileGeneratedAtIsOptional(t *testing.T) {
+	for name, value := range map[string]any{"omitted": nil, "empty": "", "stamped": "2026-09-12T00:00:00Z"} {
+		t.Run(name, func(t *testing.T) {
+			doc := lockTestDocument()
+			if value != nil {
+				doc["generated_at"] = value
+			}
+			root, manifest := writeConfigLockFixture(t, doc)
+			if _, err := ValidateLockfile(context.Background(), root, manifest); err != nil {
+				t.Fatalf("generated_at %s rejected: %v", name, err)
+			}
+		})
 	}
 }
 
@@ -77,6 +206,36 @@ func TestValidateLockfileRelativeRoot(t *testing.T) {
 	t.Chdir(parent)
 	if _, err := ValidateLockfile(context.Background(), filepath.Base(root), manifest); err != nil {
 		t.Fatalf("relative repository root must remain supported: %v", err)
+	}
+}
+
+// A relative CatalogRoot resolves against the working directory, as EffectiveOptions
+// resolves its CatalogRoot, so both gates accept the same --catalog-root spelling.
+func TestValidateLockfileRelativeCatalogRoot(t *testing.T) {
+	root, manifest := writeConfigLockFixture(t, lockTestDocument())
+	catalog := t.TempDir()
+	writeLockTestCatalog(t, catalog, "framework.yaml", lockTestSource)
+	work := filepath.Join(filepath.Dir(catalog), "work")
+	if err := os.Mkdir(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(work)
+	for _, spelling := range []string{
+		filepath.Join("..", filepath.Base(catalog)),                              // positive: parent-relative
+		filepath.Join("..", "work", "..", filepath.Base(catalog)),                // boundary: uncleaned
+		filepath.Join("..", filepath.Base(catalog)) + string(filepath.Separator), // boundary: trailing separator
+	} {
+		opts := LockValidationOptions{Root: root, CatalogRoot: spelling, RequireSources: true}
+		result, err := ValidateLockfileWithOptions(context.Background(), opts, manifest)
+		if err != nil || !result.Verified() {
+			t.Fatalf("relative catalog %q must verify: %+v / %v", spelling, result, err)
+		}
+	}
+	// Negative: a relative catalog is still hashed, so tampering is a mismatch.
+	writeLockTestCatalog(t, catalog, "framework.yaml", lockTestSource+"changed: true\n")
+	opts := LockValidationOptions{Root: root, CatalogRoot: filepath.Join("..", filepath.Base(catalog)), RequireSources: true}
+	if _, err := ValidateLockfileWithOptions(context.Background(), opts, manifest); !errors.Is(err, ErrLockDigestMismatch) {
+		t.Fatalf("tampered relative catalog must fail: %v", err)
 	}
 }
 
