@@ -63,7 +63,10 @@ func DialectFor(client string) (Dialect, bool) {
 }
 
 // Decode turns one bounded stdin payload into the canonical payload of event. The
-// command-line event is authoritative: a payload naming another event is an error.
+// command-line event is authoritative: a payload naming another event is an error. A
+// payload that is a JSON object but fails to decode still yields its event and the
+// client's stop_hook_active flag (continuedStop), so the return boundary can bound the
+// deny of a malformed SubagentStop payload the same way it bounds a register violation.
 func (d Dialect) Decode(event Event, payload []byte) (Canonical, error) {
 	if d.decode != nil {
 		return d.decode(d, event, payload)
@@ -72,6 +75,14 @@ func (d Dialect) Decode(event Event, payload []byte) (Canonical, error) {
 	if err != nil {
 		return Canonical{}, err
 	}
+	canonical, err := d.decodeNative(event, object)
+	if err != nil {
+		return Canonical{Event: event, StopActive: continuedStop(event, object)}, err
+	}
+	return canonical, nil
+}
+
+func (d Dialect) decodeNative(event Event, object map[string]json.RawMessage) (Canonical, error) {
 	if err := d.checkEventName(event, object); err != nil {
 		return Canonical{}, err
 	}
@@ -79,6 +90,16 @@ func (d Dialect) Decode(event Event, payload []byte) (Canonical, error) {
 		return decodeNativeAgentTraffic(d.Client, event, object)
 	}
 	return d.decodeNativeTool(event, object)
+}
+
+// continuedStop reports whether a post-return payload says a stop hook already continued
+// the subagent. Only a JSON true counts; an absent or malformed flag is false.
+func continuedStop(event Event, object map[string]json.RawMessage) bool {
+	if event != EventPostReturn {
+		return false
+	}
+	active, _, err := optionalBool(object, "stop_hook_active")
+	return err == nil && active
 }
 
 // decodeNativeTool reads the tool-hook shape the native clients share: tool name,

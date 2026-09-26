@@ -52,7 +52,8 @@ func budgetFor(event Event) time.Duration {
 func evaluate(ctx context.Context, dialect Dialect, row Registration, in Invocation) (Canonical, Verdict) {
 	canonical, err := decodeCanonical(ctx, dialect, row.Event, in)
 	if err != nil {
-		canonical = Canonical{Event: row.Event}
+		// Only the event and a return's stop_hook_active survive a decode failure (Decode).
+		canonical = Canonical{Event: row.Event, StopActive: canonical.StopActive}
 		return canonical, returnBoundary(row, canonical, Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] Invalid hook input: " + err.Error()})
 	}
 	return canonical, returnBoundary(row, canonical, judge(ctx, row, canonical, in))

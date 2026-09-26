@@ -266,7 +266,7 @@ control in the [Claude Code hook reference](https://code.claude.com/docs/en/hook
 [Codex hooks](https://developers.openai.com/codex/hooks)). `SubagentStop` also fires for
 Claude Code's internal agents, such as prompt suggestions and `/btw` side questions. The
 return boundary therefore denies only a register violation in a Praetor-owned return, which
-the subagent can rewrite:
+the subagent can rewrite, and a payload it cannot decode, which fails closed:
 
 - The Claude row's matcher `^.+$` never matches an empty `agent_type`, so internal agents of
   a session without a named agent never reach the hook.
@@ -281,6 +281,10 @@ the subagent can rewrite:
   deny becomes a skip and the binding is released, so it cannot outlive the agent. A later
   resume of that agent is unowned, like any completed agent (`evaluateAgentReturn`,
   `internal/agenthook/agent_traffic.go`; `returnBoundary`, `internal/agenthook/evaluate.go`).
+  The bound also covers a payload that fails to decode, such as one without `agent_id`:
+  `Dialect.Decode` keeps its `stop_hook_active` flag, so the first stop is denied as
+  `Invalid hook input` and the continued one is a skip. Only a JSON `true` counts; an
+  absent or non-boolean flag keeps the deny.
 - Codex enforces no register at this boundary, so every Codex `SubagentStop` result is a
   skip, including a null `last_assistant_message`.
 

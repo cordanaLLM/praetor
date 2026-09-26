@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -109,6 +110,52 @@ func TestClaudeReturnStopHookActiveEscape(t *testing.T) {
 	wrongType := stopPayload(t, "session-loop", "agent-loop", "general-purpose", "yes", proseReturn)
 	requireOutcome(t, "non-boolean stop_hook_active", runAgentHook(t, root, state, "claude", EventPostReturn, wrongType), 2,
 		"stop_hook_active must be boolean")
+}
+
+// TestClaudeMalformedReturnAfterContinuationIsNotHeldAgain: a SubagentStop payload the engine
+// cannot decode is denied as invalid hook input, which keeps the subagent running. Once the
+// client reports a stop-hook continuation, the repeat is a stated skip like a repeated
+// register violation, so a malformed payload cannot hold the subagent without end.
+func TestClaudeMalformedReturnAfterContinuationIsNotHeldAgain(t *testing.T) {
+	root, state := repository(t, true), t.TempDir()
+	for _, tc := range []struct {
+		name       string
+		stopActive any
+		exit       int
+		text       string
+	}{
+		{"continued", true, 0, "not blocked again after a stop-hook continuation (stop_hook_active): Invalid hook input: agent_id"},
+		{"first stop", false, 2, "[BLOCKED BY HISS] Invalid hook input: agent_id"},
+		{"flag absent", nil, 2, "[BLOCKED BY HISS] Invalid hook input: agent_id"},
+		{"flag not boolean", "true", 2, "[BLOCKED BY HISS] Invalid hook input: agent_id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fields := map[string]any{"hook_event_name": "SubagentStop", "session_id": "session-bad", "cwd": root}
+			if tc.stopActive != nil {
+				fields["stop_hook_active"] = tc.stopActive
+			}
+			requireOutcome(t, tc.name, runAgentHook(t, root, state, "claude", EventPostReturn, commandPayload(t, fields)), tc.exit, tc.text)
+		})
+	}
+}
+
+func TestDecodeKeepsStopActiveOfARejectedReturn(t *testing.T) {
+	dialect, ok := DialectFor("claude")
+	if !ok {
+		t.Fatal("claude dialect missing")
+	}
+	payload := []byte(`{"hook_event_name":"SubagentStop","session_id":"s","agent_id":"","stop_hook_active":true}`)
+	canonical, err := dialect.Decode(EventPostReturn, payload)
+	if err == nil || !reflect.DeepEqual(canonical, Canonical{Event: EventPostReturn, StopActive: true}) {
+		t.Fatalf("rejected return = %+v, %v; want only the event and StopActive", canonical, err)
+	}
+	canonical, err = dialect.Decode(EventPreDispatch, []byte(`{"hook_event_name":"PreToolUse","stop_hook_active":true}`))
+	if err == nil || canonical.StopActive {
+		t.Fatalf("a dispatch payload must not carry StopActive: %+v, %v", canonical, err)
+	}
+	if canonical, err = dialect.Decode(EventPostReturn, []byte(`[true]`)); err == nil || !reflect.DeepEqual(canonical, Canonical{}) {
+		t.Fatalf("non-object payload = %+v, %v", canonical, err)
+	}
 }
 
 // TestClaudeDispatchSurvivesAFullStoreOfLeakedBindings: agents killed before SubagentStop
