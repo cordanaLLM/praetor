@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -17,7 +18,7 @@ const maxPolicyBytes = 8 << 20
 // EffectiveOptions selects explicit sources without consulting the process home,
 // environment, network, or implicit user configuration. CatalogRoot contains
 // .config/archetypes. External documents contribute their root complexity mapping and
-// their clients, hooks and update sections.
+// their operator sections (operatorSectionNames).
 // Omitted paths add no layer; explicitly selected missing files are errors.
 // Callers enforce authorization/confinement for these explicit paths. Root selects
 // the lockfile location, while ManifestPath can deliberately select another file.
@@ -201,7 +202,8 @@ func (l *effectiveLoader) externalLayers(opts EffectiveOptions, layers []PolicyL
 }
 
 // externalLayer decodes one explicitly selected document. It must carry at least one owned
-// section: complexity, clients, hooks or update. Other root keys stay tolerated.
+// section: complexity or an operator section (operatorSectionNames). Other root keys stay
+// tolerated.
 func (l *effectiveLoader) externalLayer(id, path string) (PolicyLayer, error) {
 	node, layer, err := l.document(path, id)
 	if err != nil {
@@ -214,7 +216,8 @@ func (l *effectiveLoader) externalLayer(id, path string) (PolicyLayer, error) {
 	}
 	complexity := policyMember(node, "complexity")
 	if complexity == nil && !owned {
-		return layer, fmt.Errorf("%s policy requires a complexity, clients, hooks or update section", id)
+		return layer, fmt.Errorf("%s policy requires a complexity section or one of the operator sections %s",
+			id, strings.Join(operatorSectionNames[:], ", "))
 	}
 	layer.Complexity, err = decodeComplexity(complexity)
 	if err != nil {

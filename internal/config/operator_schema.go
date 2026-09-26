@@ -25,6 +25,15 @@ const (
 	MaxCommandPolicyPatternBytes = 512
 	// MaxPermissionGrants bounds one client's merged grant list.
 	MaxPermissionGrants = 32
+	// MaxBuilderKits bounds framework.targets.<language>.builder_kits.
+	MaxBuilderKits = 8
+	// MaxReconcileRepos bounds forge.reconcile_repos and the repository set of one
+	// `issue reconcile` run.
+	MaxReconcileRepos = 256
+	// MaxOrgContainers bounds the merged topology.org_containers list.
+	MaxOrgContainers = 64
+	// MaxFrameworkModuleBytes bounds framework.targets.<language>.module.
+	MaxFrameworkModuleBytes = 256
 
 	maxGrantBytes        = 512
 	maxSettingValueBytes = 4096
@@ -42,7 +51,7 @@ const (
 	kindBool                       // boolean scalar, canonical "true" or "false"
 	kindList                       // sequence of strings
 	kindArgv                       // sequence of candidates: a string or a sequence of strings
-	kindEntry                      // clients.selected.<id>: lists the client, holds its keys
+	kindEntry                      // clients.selected.<id>, framework.targets.<language>: lists the entry, holds its keys
 	kindMapping                    // a nested mapping with keys of its own
 )
 
@@ -66,8 +75,9 @@ type settingSpec struct {
 	check    settingCheck
 }
 
-// operatorSpecs is the schema, keyed by dotted path; `*` stands for a client identifier.
-// A key that is not listed here is an error naming the key.
+// operatorSpecs is the schema, keyed by dotted path; `*` stands for the identifier a
+// wildcard prefix (wildcardPrefixes) names. A key that is not listed here is an error naming
+// the key.
 var operatorSpecs = map[string]settingSpec{
 	"clients":                               {kind: kindMapping},
 	"clients.mode":                          {rule: ruleTighten, strict: ClientModeStrict, check: oneOf(ClientModeAdvisory, ClientModeStrict)},
@@ -102,6 +112,20 @@ var operatorSpecs = map[string]settingSpec{
 	"update.allowed_signers":                {check: documentPath},
 	"update.receipt_public_key":             {check: matching(receiptKeyPattern, "empty or 64 lowercase hex characters (Ed25519)")},
 	"update.bin_dir":                        {host: true, check: hostPath},
+	"framework":                             {kind: kindMapping},
+	"framework.targets":                     {kind: kindMapping},
+	"framework.targets.*":                   {kind: kindEntry},
+	"framework.targets.*.module":            {check: frameworkModule},
+	"framework.targets.*.builder_kits":      {kind: kindList, maxItems: MaxBuilderKits, check: repositoryList},
+	"framework.targets.*.contract":          {check: documentPath},
+	"framework.targets.*.checkout":          {host: true, check: frameworkCheckout},
+	"framework.migration_branch":            {check: optional(branchName)},
+	"forge":                                 {kind: kindMapping},
+	"forge.default_owner":                   {check: optional(githubOwner)},
+	"forge.reconcile_repos":                 {kind: kindList, maxItems: MaxReconcileRepos, check: repositoryList},
+	"forge.review_bot":                      {check: optional(reviewBot)},
+	"topology":                              {kind: kindMapping},
+	"topology.org_containers":               {kind: kindList, rule: ruleAppend, maxItems: MaxOrgContainers, check: orgContainerList},
 }
 
 // reservedValues are accepted spellings whose feature has not shipped yet.
@@ -117,44 +141,73 @@ var (
 	receiptKeyPattern = regexp.MustCompile(`^(|[0-9a-f]{64})$`)
 	bareCommand       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`)
 	settingKey        = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	orgContainerName  = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 )
 
-const selectedPrefix = "clients.selected."
+// Wildcard prefixes: the schema path element after each is an identifier, written `*` in
+// operatorSpecs and checked by the prefix's own parser.
+const (
+	selectedPrefix         = "clients.selected."
+	frameworkTargetsPrefix = "framework.targets."
+)
 
-// genericSettingPath replaces the client identifier of a clients.selected path with `*`.
-func genericSettingPath(path string) string {
-	rest, ok := strings.CutPrefix(path, selectedPrefix)
-	if !ok {
-		return path
-	}
-	_, tail, nested := strings.Cut(rest, ".")
-	if !nested {
-		return selectedPrefix + "*"
-	}
-	return selectedPrefix + "*." + tail
+// wildcardPrefixes maps each wildcard prefix to the check its identifier must pass.
+var wildcardPrefixes = [...]struct {
+	prefix string
+	check  func(id string) error
+}{
+	{selectedPrefix, func(id string) error {
+		_, err := clientid.Parse(id)
+		return err
+	}},
+	{frameworkTargetsPrefix, func(id string) error {
+		_, err := ParseFrameworkLanguage(id)
+		return err
+	}},
 }
 
-// settingClient returns the client identifier of a clients.selected path, or "".
-func settingClient(path string) clientid.ID {
-	rest, ok := strings.CutPrefix(path, selectedPrefix)
-	if !ok {
-		return ""
+// settingWildcard returns the wildcard prefix a path starts with, the identifier after it
+// and the path of the key below the identifier ("" for the entry itself). A path outside
+// every wildcard prefix returns three empty strings.
+func settingWildcard(path string) (prefix, id, field string) {
+	for _, wildcard := range wildcardPrefixes {
+		rest, ok := strings.CutPrefix(path, wildcard.prefix)
+		if !ok {
+			continue
+		}
+		id, field, _ = strings.Cut(rest, ".")
+		return wildcard.prefix, id, field
 	}
-	id, _, _ := strings.Cut(rest, ".")
-	return clientid.ID(id)
+	return "", "", ""
+}
+
+// genericSettingPath replaces the identifier of a wildcard path with `*`.
+func genericSettingPath(path string) string {
+	prefix, _, field := settingWildcard(path)
+	if prefix == "" {
+		return path
+	}
+	if field == "" {
+		return prefix + "*"
+	}
+	return prefix + "*." + field
 }
 
 // settingSpecFor looks a concrete path up in the schema. An unknown key and an unknown
-// client are errors that name what was written.
+// wildcard identifier (a client, a framework language) are errors that name what was written.
 func settingSpecFor(path string) (settingSpec, error) {
 	generic := genericSettingPath(path)
 	spec, ok := operatorSpecs[generic]
 	if !ok {
 		return spec, fmt.Errorf("unknown setting %q", path)
 	}
-	if client := settingClient(path); client != "" {
-		if _, err := clientid.Parse(string(client)); err != nil {
-			return spec, fmt.Errorf("clients.selected: %w", err)
+	prefix, id, _ := settingWildcard(path)
+	for _, wildcard := range wildcardPrefixes {
+		if wildcard.prefix != prefix {
+			continue
+		}
+		if err := wildcard.check(id); err != nil {
+			return spec, fmt.Errorf("%s: %w", strings.TrimSuffix(prefix, "."), err)
 		}
 	}
 	return spec, nil
@@ -294,6 +347,77 @@ func pythonCandidate(layer string, candidate []string) error {
 	for _, arg := range candidate[1:] {
 		if arg == "" || !util.LiteralString(arg, maxPythonArgBytes) {
 			return fmt.Errorf("arguments must be literals of 1..%d bytes", maxPythonArgBytes)
+		}
+	}
+	return nil
+}
+
+// optional accepts an empty value, which leaves the key unset, and applies check otherwise.
+func optional(check settingCheck) settingCheck {
+	return func(layer string, setting OperatorSetting) error {
+		if setting.Value == "" {
+			return nil
+		}
+		return check(layer, setting)
+	}
+}
+
+// frameworkModule accepts an empty value or a module-path-shaped value of at most
+// MaxFrameworkModuleBytes (IsModulePathShaped).
+func frameworkModule(_ string, setting OperatorSetting) error {
+	if setting.Value == "" {
+		return nil
+	}
+	if len(setting.Value) > MaxFrameworkModuleBytes || !IsModulePathShaped(setting.Value) {
+		return fmt.Errorf("%s must be a module path of at most %d bytes whose first element is a host, like example.com/acme/kit",
+			setting.Path, MaxFrameworkModuleBytes)
+	}
+	return nil
+}
+
+// frameworkCheckout accepts a checkout for the go target only: the framework index is
+// observed from a Go module checkout, and no other language has a source observer.
+func frameworkCheckout(layer string, setting OperatorSetting) error {
+	if _, language, _ := settingWildcard(setting.Path); setting.Value != "" && language != "go" {
+		return fmt.Errorf("%s: a framework checkout is accepted for the go target only", setting.Path)
+	}
+	return hostPath(layer, setting)
+}
+
+// repositoryList accepts <owner>/<name> coordinates (util.SplitGitHubRepository), each once.
+func repositoryList(_ string, setting OperatorSetting) error {
+	for i, coordinate := range setting.List {
+		if _, _, err := util.SplitGitHubRepository(coordinate); err != nil {
+			return fmt.Errorf("%s entry %d: %w", setting.Path, i, err)
+		}
+		if slices.Contains(setting.List[:i], coordinate) {
+			return fmt.Errorf("%s entry %d repeats %s", setting.Path, i, coordinate)
+		}
+	}
+	return nil
+}
+
+func githubOwner(_ string, setting OperatorSetting) error {
+	if err := util.ValidateGitHubOwner(setting.Value); err != nil {
+		return fmt.Errorf("%s: %w", setting.Path, err)
+	}
+	return nil
+}
+
+// reviewBot accepts a GitHub owner, optionally followed by the [bot] suffix of an app account.
+func reviewBot(_ string, setting OperatorSetting) error {
+	if err := util.ValidateGitHubOwner(strings.TrimSuffix(setting.Value, "[bot]")); err != nil {
+		return fmt.Errorf("%s must be a GitHub account, optionally with a [bot] suffix: %w", setting.Path, err)
+	}
+	return nil
+}
+
+// orgContainerList accepts folder names of 1..64 lowercase letters, digits, '.', '_' or '-'.
+func orgContainerList(_ string, setting OperatorSetting) error {
+	for i, name := range setting.List {
+		if !orgContainerName.MatchString(name) {
+			return fmt.Errorf("%s entry %d must be 1..64 lowercase letters, digits, '.', '_' or '-', starting with a letter or digit",
+				setting.Path, i)
 		}
 	}
 	return nil

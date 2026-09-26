@@ -348,13 +348,17 @@ func TestOperatorSettingsRetainedDigestRoundTripAndTamper(t *testing.T) {
 func TestOperatorSchemaKeysHaveFields(t *testing.T) {
 	settings := DefaultOperatorSettings()
 	selection := defaultClientSelection()
+	var target FrameworkTarget
+	entries := map[string]map[string]any{selectedPrefix: selection.targets(), frameworkTargetsPrefix: target.targets()}
 	for path, spec := range operatorSpecs {
 		if spec.kind == kindMapping {
 			continue
 		}
 		targets, key := settings.targets(), path
-		if field, ok := strings.CutPrefix(path, selectedPrefix+"*"); ok {
-			targets, key = selection.targets(), strings.TrimPrefix(field, ".")
+		for prefix, entry := range entries {
+			if field, ok := strings.CutPrefix(path, prefix+"*"); ok {
+				targets, key = entry, strings.TrimPrefix(field, ".")
+			}
 		}
 		if _, ok := targets[key]; !ok {
 			t.Errorf("schema key %s has no settings field", path)

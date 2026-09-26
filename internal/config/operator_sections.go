@@ -10,9 +10,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/clientid"
 )
 
-// Operator settings: the clients, hooks and update sections of the external policy layers.
-// They are decoded by the same loader, under the same bounds and into the same sealed
-// digest as complexity; there is no second settings system.
+// Operator settings: the clients, hooks, update, framework, forge and topology sections of
+// the external policy layers. They are decoded by the same loader, under the same bounds and
+// into the same sealed digest as complexity; there is no second settings system.
 
 // Values of clients.mode. Advisory reports an ungoverned client and lets work continue;
 // strict refuses a launch below `discovered` and fails verify below `observed`.
@@ -41,12 +41,17 @@ const (
 	ScopeWorkspace = "workspace"
 )
 
-// OperatorSettings is the merged clients, hooks and update configuration. Like
-// EffectivePolicy it is immutable by convention.
+// OperatorSettings is the merged operator configuration. Like EffectivePolicy it is
+// immutable by convention. The framework, forge and topology sections are omitted from the
+// sealed digest while they are empty, so a document without them keeps the digest it had
+// before they existed.
 type OperatorSettings struct {
-	Clients ClientSettings `json:"clients"`
-	Hooks   HookSettings   `json:"hooks"`
-	Update  UpdateSettings `json:"update"`
+	Clients   ClientSettings    `json:"clients"`
+	Hooks     HookSettings      `json:"hooks"`
+	Update    UpdateSettings    `json:"update"`
+	Framework FrameworkSettings `json:"framework,omitzero"`
+	Forge     ForgeSettings     `json:"forge,omitzero"`
+	Topology  TopologySettings  `json:"topology,omitzero"`
 }
 
 // ClientSettings selects and configures the agent clients a workstation governs.
@@ -106,6 +111,44 @@ type UpdateSettings struct {
 	BinDir           string        `json:"bin_dir,omitempty"`
 }
 
+// FrameworkSettings names the frameworks the needs engine scores repositories against
+// (ADR-0014). Every value is operator data: the engine ships none, and a language without a
+// target has no framework to map its dependencies to.
+type FrameworkSettings struct {
+	// Targets maps a framework language (FrameworkLanguages) to that language's framework.
+	Targets map[string]FrameworkTarget `json:"targets,omitzero"`
+	// MigrationBranch is the branch `needs migrate` creates; empty selects the built-in name.
+	MigrationBranch string `json:"migration_branch,omitzero"`
+}
+
+// FrameworkTarget is one language's framework. BuilderKits[0] is where demand requests for
+// the language are routed. Contract keeps the spelling of the layer that set it;
+// ResolveOperatorPath resolves a relative one against that layer's file. Checkout is host
+// data, accepted for go in the workstation layer only.
+type FrameworkTarget struct {
+	Module      string   `json:"module,omitzero"`
+	BuilderKits []string `json:"builder_kits,omitzero"`
+	Contract    string   `json:"contract,omitzero"`
+	Checkout    string   `json:"checkout,omitzero"`
+}
+
+// ForgeSettings supplies what an owner-dependent forge command uses when neither its flags
+// nor the repository manifest name a value.
+type ForgeSettings struct {
+	// DefaultOwner is the last step of owner resolution (ResolveRepositoryIdentity).
+	DefaultOwner string `json:"default_owner,omitzero"`
+	// ReconcileRepos is the repository set `issue reconcile` walks without --repos.
+	ReconcileRepos []string `json:"reconcile_repos,omitzero"`
+	// ReviewBot is the bot account requested as a reviewer; empty requests none.
+	ReviewBot string `json:"review_bot,omitzero"`
+}
+
+// TopologySettings names the organisation folders of the workstation dev root that the
+// topology audit and the cleanup guard recognise besides the built-in set.
+type TopologySettings struct {
+	OrgContainers []string `json:"org_containers,omitzero"`
+}
+
 // DefaultOperatorSettings are the built-in values. Every known client is governed and
 // required where its binary is present, and ungoverned clients are reported rather than
 // blocking. Praetor manages no client's grant list by default: operator hosts opt in with
@@ -130,7 +173,7 @@ func defaultClientSelection() ClientSelection {
 }
 
 // OperatorSettings returns the merged settings, or the built-in values when no layer carried
-// a clients, hooks or update section.
+// an operator section.
 func (p *EffectivePolicy) OperatorSettings() OperatorSettings {
 	if p == nil || p.Operator == nil {
 		return DefaultOperatorSettings()
