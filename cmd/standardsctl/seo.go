@@ -27,28 +27,15 @@ func runSEO(args []string) error {
 		fmt.Println("  sitemap*.xml at the root, and robots.txt. Exits non-zero on any finding.")
 		return nil
 	}
-	if len(args) == 0 || args[0] != "audit" {
-		return errors.New(seoUsage)
-	}
-	fs := flag.NewFlagSet("seo audit", flag.ContinueOnError)
-	asJSON := fs.Bool("json", false, "Print the report as one line of JSON")
-	requireRobots := fs.Bool("require-robots", false,
-		"Fail when the site root has no robots.txt (crawlers read it only at a host root, so a project site under a path cannot serve one)")
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
-	}
-	if fs.NArg() > 1 {
-		return errors.New(seoUsage)
-	}
-	root := "site"
-	if fs.NArg() == 1 {
-		root = fs.Arg(0)
-	}
-	report, err := seo.AuditSite(context.Background(), root, seo.SiteAuditOptions{RequireRobots: *requireRobots})
+	parsed, err := parseSEOAuditArgs(args)
 	if err != nil {
 		return err
 	}
-	if *asJSON {
+	report, err := seo.AuditSite(context.Background(), parsed.root, parsed.options)
+	if err != nil {
+		return err
+	}
+	if parsed.asJSON {
 		if err := printJSON(report); err != nil {
 			return err
 		}
@@ -56,9 +43,39 @@ func runSEO(args []string) error {
 		printSEOReport(report)
 	}
 	if !report.Valid {
-		return fmt.Errorf("[FAIL] %d SEO finding(s) in %s", len(report.Findings), root)
+		return fmt.Errorf("[FAIL] %d SEO finding(s) in %s", len(report.Findings), parsed.root)
 	}
 	return nil
+}
+
+// seoAuditArgs is a parsed `seo audit` command line.
+type seoAuditArgs struct {
+	root    string
+	asJSON  bool
+	options seo.SiteAuditOptions
+}
+
+// parseSEOAuditArgs parses `audit [--json] [--require-robots] [site-dir]`; site-dir
+// defaults to site, the MkDocs output directory.
+func parseSEOAuditArgs(args []string) (seoAuditArgs, error) {
+	if len(args) == 0 || args[0] != "audit" {
+		return seoAuditArgs{}, errors.New(seoUsage)
+	}
+	fs := flag.NewFlagSet("seo audit", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "Print the report as one line of JSON")
+	requireRobots := fs.Bool("require-robots", false,
+		"Fail when the site root has no robots.txt (crawlers read it only at a host root, so a project site under a path cannot serve one)")
+	if err := fs.Parse(args[1:]); err != nil {
+		return seoAuditArgs{}, err
+	}
+	if fs.NArg() > 1 {
+		return seoAuditArgs{}, errors.New(seoUsage)
+	}
+	parsed := seoAuditArgs{root: "site", asJSON: *asJSON, options: seo.SiteAuditOptions{RequireRobots: *requireRobots}}
+	if fs.NArg() == 1 {
+		parsed.root = fs.Arg(0)
+	}
+	return parsed, nil
 }
 
 // printSEOReport prints the counts on a clean run too, so a pass cannot be mistaken for an
