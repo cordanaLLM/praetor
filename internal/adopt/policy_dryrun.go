@@ -22,12 +22,15 @@ func newAdoptionManifest(ctx context.Context, s *adoptSession) (*config.Manifest
 	if err != nil {
 		return nil, err
 	}
-	return &config.Manifest{
+	manifest := &config.Manifest{
 		Version:    1,
 		Repository: config.RepositoryMetadata{Owner: s.identity.owner, Name: s.identity.name},
 		Profiles:   []string{s.arch}, Facets: s.facets,
-		Register: &config.RegisterPolicy{Sources: sources},
-	}, nil
+	}
+	if sources != nil {
+		manifest.Register = &config.RegisterPolicy{Sources: sources}
+	}
+	return manifest, nil
 }
 
 // managedHarnessInputs are the register.sources rows adoption declares for the Paperclip
@@ -39,9 +42,10 @@ func managedHarnessInputs() []config.RegisterSourceInput {
 	}
 }
 
+// adoptionRegisterSources returns nil when no harness will exist to bind to.
 func adoptionRegisterSources(ctx context.Context, s *adoptSession) (*config.RegisterSources, error) {
 	plan, err := planHarness(ctx, s)
-	if err != nil {
+	if err != nil || plan.absent() {
 		return nil, err
 	}
 	return managedRegisterSources(ctx, plan.data)
@@ -65,6 +69,8 @@ type harnessPlan struct {
 	data    []byte
 	write   *paperclip.Harness
 	refresh bool
+	// rules reports whether writing the harness also writes rules.md.
+	rules bool
 	// onDisk reports whether a harness file exists before this run writes one.
 	onDisk bool
 	// unresolved reports a run without a repository identity: the harness platform names the
@@ -72,41 +78,64 @@ type harnessPlan struct {
 	unresolved bool
 }
 
+// absent reports a harness that neither exists nor is written by this run: the paperclip
+// step is declined or the repository identity is unresolved, and no harness is on disk, so
+// there is nothing to bind register.sources to.
+func (p harnessPlan) absent() bool {
+	return !p.onDisk && p.write == nil
+}
+
 func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 	path, err := repoFile(s.repoPath, paperclipFile)
 	if err != nil {
 		return harnessPlan{}, err
 	}
-	exists, declined := fileExists(path), s.declines("paperclip")
-	synthesized, err := paperclip.SynthesizeHarness(ctx, s.repoPath)
+	exists := fileExists(path)
+	if s.declines("paperclip") {
+		return keptHarnessPlan(ctx, path, exists, false)
+	}
+	synthesized, fresh, err := synthesizeHarness(ctx, s.repoPath)
 	if errors.Is(err, util.ErrRepoIdentityUnresolved) {
-		return unresolvedHarnessPlan(ctx, path, exists)
+		return keptHarnessPlan(ctx, path, exists, true)
 	}
 	if err != nil {
-		return harnessPlan{}, fmt.Errorf("synthesize paperclip harness: %w", err)
+		return harnessPlan{}, err
 	}
-	fresh, err := paperclip.MarshalHarness(synthesized)
-	if err != nil {
-		return harnessPlan{}, fmt.Errorf("marshal paperclip harness: %w", err)
-	}
-	if !exists || (s.opts.Force && !declined) {
-		return harnessPlan{data: fresh, write: synthesized, onDisk: exists}, nil
+	if !exists || s.opts.Force {
+		return harnessPlan{data: fresh, write: synthesized, rules: true, onDisk: exists}, nil
 	}
 	existing, err := existingHarness(ctx, path)
-	if err != nil || bytes.Equal(existing, fresh) || declined {
+	if err != nil || bytes.Equal(existing, fresh) {
 		return harnessPlan{data: existing, onDisk: true}, err
 	}
 	return planEarlierHarness(ctx, s.repoPath, existing, synthesized, fresh)
 }
 
-// unresolvedHarnessPlan keeps an existing harness as the bytes register.sources binds and
-// plans none otherwise: without a repository identity there is no platform to synthesize.
-func unresolvedHarnessPlan(ctx context.Context, path string, exists bool) (harnessPlan, error) {
+// keptHarnessPlan never plans a write. A declined paperclip step does not run, and a run
+// without a repository identity has no platform to synthesize (BUG-852), so a planned
+// harness would bind the manifest to a file nothing produces. An existing harness stays
+// byte for byte; with none on disk the plan is absent.
+func keptHarnessPlan(ctx context.Context, path string, exists, unresolved bool) (harnessPlan, error) {
 	if !exists {
-		return harnessPlan{unresolved: true}, nil
+		return harnessPlan{unresolved: unresolved}, nil
 	}
 	existing, err := existingHarness(ctx, path)
-	return harnessPlan{data: existing, onDisk: true, unresolved: true}, err
+	if err != nil {
+		return harnessPlan{}, err
+	}
+	return harnessPlan{data: existing, onDisk: true, unresolved: unresolved}, nil
+}
+
+func synthesizeHarness(ctx context.Context, repoPath string) (*paperclip.Harness, []byte, error) {
+	synthesized, err := paperclip.SynthesizeHarness(ctx, repoPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("synthesize paperclip harness: %w", err)
+	}
+	fresh, err := paperclip.MarshalHarness(synthesized)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal paperclip harness: %w", err)
+	}
+	return synthesized, fresh, nil
 }
 
 // planEarlierHarness refreshes an existing harness only when it is unmodified output of an
@@ -118,8 +147,8 @@ func planEarlierHarness(ctx context.Context, repoPath string, existing []byte, s
 	if err != nil {
 		return harnessPlan{}, fmt.Errorf("compare existing paperclip harness with earlier output: %w", err)
 	}
-	if prior {
-		return harnessPlan{data: fresh, write: synthesized, refresh: true, onDisk: true}, nil
+	if prior.Generated {
+		return harnessPlan{data: fresh, write: synthesized, refresh: true, rules: prior.Rules, onDisk: true}, nil
 	}
 	return harnessPlan{data: existing, onDisk: true}, nil
 }
@@ -183,12 +212,14 @@ func plannedPolicyInputs(ctx context.Context, s *adoptSession) ([]byte, []byte, 
 	return manifest, lock, err
 }
 
+// plannedManifestBytes is the manifest reconcileManifest leaves on disk. --force never
+// rewrites an existing manifest, so it plans from that manifest too.
 func plannedManifestBytes(ctx context.Context, s *adoptSession) ([]byte, error) {
 	data, exists, err := observeAdoptionInput(ctx, s, manifestFile)
 	if err != nil {
 		return nil, err
 	}
-	if exists && !s.opts.Force {
+	if exists {
 		path, err := repoFile(s.repoPath, manifestFile)
 		if err != nil {
 			return nil, err

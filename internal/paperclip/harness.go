@@ -1,7 +1,6 @@
 package paperclip
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -119,29 +118,56 @@ var (
 	}
 )
 
-// PriorGenerated reports whether the harness under repoPath is unmodified output of an
-// earlier release for current's identity: harness.json byte-identical to one earlier
-// synthesis, and rules.md absent or equal to that synthesis's rendering. Adoption refreshes
-// only such a harness; an edited one is operator-owned and stays byte for byte.
-func PriorGenerated(ctx context.Context, repoPath string, current *Harness) (bool, error) {
+// PriorState is how the harness under a repository compares with earlier releases' output.
+type PriorState struct {
+	// Generated: harness.json is one earlier synthesis for the current identity, and rules.md
+	// is absent or that synthesis's rendering. Adoption refreshes only such a harness; an
+	// edited one is operator-owned and stays byte for byte.
+	Generated bool
+	// Rules: rules.md exists. A refresh rewrites it only then, so a rules.md the operator
+	// removed stays removed.
+	Rules bool
+}
+
+// PriorGenerated compares the harness under repoPath with every earlier synthesis for
+// current's identity. One consistent CRLF checkout style (core.autocrlf on Windows) compares
+// as the LF bytes the release wrote.
+func PriorGenerated(ctx context.Context, repoPath string, current *Harness) (PriorState, error) {
 	if ctx == nil || current == nil {
-		return false, fmt.Errorf("paperclip: prior harness check requires context and current harness")
+		return PriorState{}, fmt.Errorf("paperclip: prior harness check requires context and current harness")
 	}
 	harnessData, rulesData, rulesExist, err := readHarnessFiles(ctx, repoPath)
 	if err != nil {
-		return false, err
+		return PriorState{}, err
+	}
+	state := PriorState{Rules: rulesExist}
+	harnessText, rulesText, ok := releaseText(harnessData, rulesData)
+	if !ok {
+		return state, nil
 	}
 	for index := 0; index < len(priorRegisterDirectives); index++ {
 		prior := priorHarness(current, priorRegisterDirectives[index])
 		rendered, err := MarshalHarness(&prior)
 		if err != nil {
-			return false, err
+			return PriorState{}, err
 		}
-		if bytes.Equal(rendered, harnessData) {
-			return !rulesExist || string(rulesData) == renderRules(&prior), nil
+		if harnessText == string(rendered) {
+			state.Generated = !rulesExist || rulesText == renderRules(&prior)
+			return state, nil
 		}
 	}
-	return false, nil
+	return state, nil
+}
+
+// releaseText folds one consistent CRLF checkout style to LF. A release never wrote mixed
+// endings or a lone carriage return, so either one makes ok false: the harness is edited.
+func releaseText(harness, rules []byte) (string, string, bool) {
+	harnessText, _, err := util.NormalizeLineEndingsStrict(string(harness))
+	if err != nil {
+		return "", "", false
+	}
+	rulesText, _, err := util.NormalizeLineEndingsStrict(string(rules))
+	return harnessText, rulesText, err == nil
 }
 
 func priorHarness(current *Harness, directive string) Harness {
@@ -229,8 +255,15 @@ func MarshalHarness(h *Harness) ([]byte, error) {
 }
 
 // WriteHarness writes .paperclip/harness.json and .paperclip/rules.md into repoPath.
-// Both targets are confined to repoPath so a symlinked .paperclip cannot redirect them.
 func WriteHarness(h *Harness, repoPath string) error {
+	return WriteHarnessFiles(h, repoPath, true)
+}
+
+// WriteHarnessFiles writes .paperclip/harness.json and, when rules is set, .paperclip/rules.md.
+// A refresh of earlier output passes PriorState.Rules, so it never recreates a rules.md the
+// operator removed. Both targets are confined to repoPath so a symlinked .paperclip cannot
+// redirect them.
+func WriteHarnessFiles(h *Harness, repoPath string, rules bool) error {
 	data, err := MarshalHarness(h)
 	if err != nil {
 		return err
@@ -249,6 +282,9 @@ func WriteHarness(h *Harness, repoPath string) error {
 	}
 	if err := util.WriteFileSecure(jsonPath, data, filePerm); err != nil {
 		return fmt.Errorf("write %s: %w", jsonPath, err)
+	}
+	if !rules {
+		return nil
 	}
 
 	mdPath, err := util.ConfinePath(repoPath, filepath.Join(paperclipDir, rulesFile))

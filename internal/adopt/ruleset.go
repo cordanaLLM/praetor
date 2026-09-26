@@ -98,13 +98,12 @@ func reconcilePaperclip(ctx context.Context, s *adoptSession) error {
 		return nil
 	}
 	if !s.opts.DryRun {
-		if err := paperclip.WriteHarness(plan.write, s.repoPath); err != nil {
+		if err := paperclip.WriteHarnessFiles(plan.write, s.repoPath, plan.rules); err != nil {
 			return fmt.Errorf("write paperclip harness: %w", err)
 		}
 	}
 	if plan.refresh {
-		s.report.recordReconciled(paperclipFile,
-			"Refreshed unmodified earlier Praetor Paperclip harness and rules to the current contract text")
+		s.report.recordReconciled(paperclipFile, refreshedHarnessNote(plan.rules))
 		return nil
 	}
 	s.report.recordCreated(paperclipFile, "Scaffolded Paperclip agent runtime harness and AGit rules")
@@ -120,6 +119,14 @@ func unresolvedHarnessNote(onDisk bool) string {
 	}
 	return action + ": its platform needs repository.owner and repository.name in " + manifestFile +
 		" or an origin remote naming <owner>/<repo>; set them, or add the remote, and re-run"
+}
+
+func refreshedHarnessNote(rules bool) string {
+	if rules {
+		return "Refreshed unmodified earlier Praetor Paperclip harness and rules to the current contract text"
+	}
+	return "Refreshed unmodified earlier Praetor Paperclip harness to the current contract text; " +
+		".paperclip/rules.md stays absent"
 }
 
 // generatedPersonas are the canonical personas adoption writes into an adopted repository.

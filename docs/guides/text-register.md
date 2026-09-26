@@ -585,11 +585,18 @@ who wrote it:
 - A harness byte-identical to what an earlier release synthesized for this
   repository (`harness.json`, and `rules.md` when present) is refreshed to the
   current contract text, which passes the lint, and the contract binds the
-  refreshed bytes. The recognized earlier texts are pinned in
+  refreshed bytes. A consistent CRLF checkout (`core.autocrlf=true` on Windows)
+  counts as those bytes; mixed line endings count as an edit. A `rules.md` that
+  was removed stays removed. The recognized earlier texts are pinned in
   `internal/paperclip/harness.go` (`PriorGenerated`).
 - Any other harness is operator-owned. Adoption keeps its bytes and binds the
   contract to its decoded values. When those values fail the lint, edit them or
   run `praetorctl adopt --force`.
+- With `adoption.decline: [paperclip]`, adoption never writes a harness, in
+  either mode. An existing one stays byte for byte and the contract binds it.
+  With no harness on disk, adoption adds no `register.sources` and reports
+  `preserved without register.sources`; declare the contract for the
+  repository's own agent-facing text, or audit keeps failing.
 
 `praetorctl adopt --force` regenerates the harness and re-binds an existing
 contract to it. It keeps every declared input, including rows an operator

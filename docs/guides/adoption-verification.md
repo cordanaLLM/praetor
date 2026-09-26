@@ -510,7 +510,11 @@ replacing operator fields, and binds a valid operator-owned harness byte for byt
 `TestAdoptCustomHarnessPreservesBytesAndBindsActualCoverage` in
 `internal/adopt/adopt_test.go`). A harness still byte-identical to an earlier
 release's output is refreshed to the current text first
-(`TestAdoptUpgradesReleasedHarnessToPassingSourceGate`). `--force` regenerates the
+(`TestAdoptUpgradesReleasedHarnessToPassingSourceGate`), including a CRLF checkout
+(`TestAdoptUpgradesCRLFReleasedHarness`). A declined paperclip step writes no
+harness and binds no contract to one it does not write
+(`TestAdoptDeclinedPaperclipWithoutHarnessBindsNothing` in
+`internal/adopt/harness_plan_test.go`). `--force` regenerates the
 harness and re-binds an existing contract, keeping every declared input
 (`TestAdoptForceRebindsExtendedSourceContract` in
 `internal/adopt/manifest_sources_test.go`). An existing `register.sources` that

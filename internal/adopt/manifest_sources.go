@@ -41,6 +41,9 @@ func planExistingManifest(ctx context.Context, s *adoptSession, full string, dat
 	if err != nil {
 		return manifestPlan{}, false, err
 	}
+	if sources == nil {
+		return manifestPlan{data: data, note: unboundSourcesNote(harness)}, false, nil
+	}
 	replacement, changed, err := setManifestSources(ctx, data, sources, replace)
 	if err != nil {
 		return manifestPlan{}, false, err
@@ -48,9 +51,24 @@ func planExistingManifest(ctx context.Context, s *adoptSession, full string, dat
 	return manifestPlan{data: replacement, note: manifestSourcesNote(declared, sources, changed, s.opts.Force)}, changed, nil
 }
 
+// unboundSourcesNote reports a manifest left without register.sources: no harness exists and
+// this run writes none, because the paperclip step is declined or the repository identity is
+// unresolved, so adoption has no managed text to bind and the audit stays red until the
+// operator resolves the identity and re-runs, or declares the repository's own sources.
+func unboundSourcesNote(harness harnessPlan) string {
+	reason, remedy := "paperclip is declined", ""
+	if harness.unresolved {
+		reason = "repository identity is unresolved"
+		remedy = "set repository.owner and repository.name or add an origin remote and re-run, or "
+	}
+	return "Existing standards manifest preserved without register.sources: " + reason +
+		" and .paperclip/harness.json does not exist, so adoption has no managed text to bind; " + remedy +
+		"declare register.sources for this repository's agent-facing text before audit passes"
+}
+
 // reconcileRegisterSources returns the register.sources adoption leaves in the manifest and
 // whether they replace the declared contract. A missing contract gets the managed harness
-// rows. A declared contract must pass its own gate first, so adoption never re-blesses drift
+// rows, or nil when no harness will exist. A declared contract must pass its own gate first, so adoption never re-blesses drift
 // it did not cause; it then keeps every declared input and only recomputes the counts and
 // digest when this run rewrites the harness those inputs select (--force, or a refresh of
 // unmodified earlier output).
@@ -58,6 +76,9 @@ func reconcileRegisterSources(ctx context.Context, root string, declared *config
 	harness harnessPlan,
 ) (*config.RegisterSources, bool, error) {
 	if declared == nil {
+		if harness.absent() {
+			return nil, false, nil
+		}
 		sources, err := managedRegisterSources(ctx, harness.data)
 		return sources, false, err
 	}
@@ -78,14 +99,15 @@ func reconcileRegisterSources(ctx context.Context, root string, declared *config
 }
 
 // verifyDeclaredSources checks a declared contract against the harness as it stands: the
-// file on disk, or the planned bytes when none exists yet. A contract that instead matches
-// the harness this run is about to write also passes: an earlier step of the same run
-// bound it there, and the paperclip step writes those bytes later in the chain.
+// file on disk, or the planned bytes when none exists yet and this run writes one. A
+// contract that instead matches the harness this run is about to write also passes: an
+// earlier step of the same run bound it there, and the paperclip step writes those bytes
+// later in the chain. An absent harness overlays nothing, so a contract selecting it fails.
 func verifyDeclaredSources(ctx context.Context, root string, declared *config.RegisterSources, harness harnessPlan) error {
 	planned := map[string][]byte{paperclipFile: harness.data}
-	current := planned
-	if harness.onDisk {
-		current = nil
+	var current map[string][]byte
+	if !harness.onDisk && harness.write != nil {
+		current = planned
 	}
 	_, err := cavemansource.ExtractDeclaredContent(ctx, root, declared, current)
 	if err == nil || harness.write == nil || !harness.onDisk {
