@@ -23,6 +23,25 @@ SCOPE_SPEC.loader.exec_module(SCOPE)
 # suffix. An extensionless bin/praetorctl was never found by the hooks on Windows, so every state
 # verification there failed and Stop reported the ledger unverifiable.
 PRAETORCTL = "bin/praetorctl" + (".exe" if os.name == "nt" else "")
+# How each client runs a registered command hook, per its own docs or shipped source (the table
+# in docs/guides/agent-hooks.md cites each one). Claude Code spawns an exec-form registration
+# (`args` present) directly, with no shell and ${CLAUDE_PROJECT_DIR} substituted per element,
+# from whatever directory the session's cwd has drifted to. Gemini CLI runs the command string
+# through bash (PowerShell on Windows) in the workspace root that holds .gemini/settings.json.
+# Codex runs it through the login shell in the session cwd on Linux and macOS, and through
+# %COMSPEC% /C on Windows.
+CLAUDE_PROJECT_DIR = "${CLAUDE_PROJECT_DIR}"
+CODEX_WINDOWS_GAP = ("Codex runs hooks through cmd.exe on Windows, which has no $( ) for the "
+                     "registration's Git-root lookup; see docs/guides/agent-hooks.md")
+
+
+def gemini_argv(command):
+    """The argv Gemini CLI's hook runner spawns for one command string on this host."""
+    if os.name != "nt":
+        return ["bash", "-c", command]
+    shell = shutil.which("pwsh") or "powershell"
+    return [shell, "-NoProfile", "-NonInteractive", "-Command",
+            command + "; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"]
 
 
 class LifecycleOutput(unittest.TestCase):
@@ -180,19 +199,37 @@ class NativeLefthook(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
-    def run_registered(self, settings, key, payload, entry=0):
+    def registered_process(self, settings, action, cwd):
+        """The argv, cwd and environment the client owning `settings` runs `action` with."""
+        root = str(self.root)
+        if settings == ".claude/settings.json":
+            program = shutil.which(action["command"])
+            self.assertIsNotNone(program, f"{action['command']} is not on PATH")
+            return ([program, *(arg.replace(CLAUDE_PROJECT_DIR, root) for arg in action["args"])],
+                    cwd, {"CLAUDE_PROJECT_DIR": root})
+        if settings == ".gemini/settings.json":
+            return gemini_argv(action["command"]), self.root, {"GEMINI_PROJECT_DIR": root}
+        if os.name == "nt":
+            self.skipTest(CODEX_WINDOWS_GAP)
+        return ["/bin/sh", "-c", action["command"]], cwd, {}
+
+    def run_registered(self, settings, key, payload, entry=0, cwd=None):
         spec = json.loads((ROOT / settings).read_text())
-        hook = spec["hooks"][key][entry]
-        command = hook["hooks"][0]["command"]
-        nested = self.root / "nested path with spaces"
-        nested.mkdir(exist_ok=True)
-        shell = "/bin/sh" if os.name != "nt" else shutil.which("sh")
-        if shell is None:
-            self.skipTest("no sh on PATH; registered client hooks are shell commands")
-        result = subprocess.run([shell, "-c", command], cwd=nested,
-                                input=json.dumps(payload), text=True,
-                                capture_output=True, timeout=60, check=False)
-        return result
+        action = spec["hooks"][key][entry]["hooks"][0]
+        if cwd is None:
+            cwd = self.root / "nested path with spaces"
+            cwd.mkdir(exist_ok=True)
+        argv, directory, extra = self.registered_process(settings, action, cwd)
+        return subprocess.run(argv, cwd=directory, env={**os.environ, **extra},
+                              input=json.dumps(payload), text=True,
+                              capture_output=True, timeout=60, check=False)
+
+    def foreign_repository(self):
+        """A second Git repository whose own .config/agent/hooks must never be the one run."""
+        foreign = Path(tempfile.mkdtemp(prefix="praetor-foreign-repo-"))
+        self.addCleanup(shutil.rmtree, foreign, True)
+        subprocess.run(["git", "init", "-q", str(foreign)], capture_output=True, timeout=20, check=True)
+        return foreign
 
     def test_native_settings_units_and_registered_commands(self):
         claude = json.loads((ROOT / ".claude/settings.json").read_text())["hooks"]
@@ -206,8 +243,44 @@ class NativeLefthook(unittest.TestCase):
         codex = json.loads((ROOT / ".codex/hooks.json").read_text())["hooks"]
         self.assertEqual(codex["PreToolUse"][0]["hooks"][0]["timeout"], 15)
         self.assertIn("codex_pre_tool.py", codex["PreToolUse"][0]["hooks"][0]["command"])
-        self.assertIn("checkpoint.py", claude["Stop"][0]["hooks"][0]["command"])
+        self.assertTrue(claude["Stop"][0]["hooks"][0]["args"][-1].endswith("/checkpoint.py"))
         self.assertIn("checkpoint.py", gemini["AfterAgent"][0]["hooks"][0]["command"])
+
+    def test_claude_and_gemini_registrations_need_no_shell_substitution(self):
+        claude = json.loads((ROOT / ".claude/settings.json").read_text())["hooks"]
+        gemini = json.loads((ROOT / ".gemini/settings.json").read_text())["hooks"]
+        claude_actions = [action for groups in claude.values() for group in groups for action in group["hooks"]]
+        gemini_actions = [action for groups in gemini.values() for group in groups for action in group["hooks"]]
+        self.assertEqual(len(claude_actions), 4)
+        self.assertEqual(len(gemini_actions), 4)
+        for action in claude_actions:
+            self.assertEqual(action["command"], "python3")
+            self.assertEqual(action["args"][0], "-B")
+            self.assertTrue(action["args"][1].startswith(CLAUDE_PROJECT_DIR + "/.config/agent/hooks/"))
+        for action in gemini_actions:
+            self.assertNotIn("args", action)
+            self.assertRegex(action["command"], r"^python3 -B \.config/agent/hooks/[a-z_]+\.py$")
+        self.assertFalse((ROOT / ".claude/mcp.json").exists())
+        self.assertFalse((ROOT / ".gemini/mcp_config.json").exists())
+        server = json.loads((ROOT / ".gemini/settings.json").read_text())["mcpServers"]["praetor-dev"]
+        self.assertEqual([server["command"], *server["args"]], ["python3", "scripts/dev_mcp.py", "serve"])
+
+    def test_claude_registrations_run_from_any_session_cwd(self):
+        outside = Path(tempfile.mkdtemp(prefix="praetor-outside-repo-"))
+        self.addCleanup(shutil.rmtree, outside, True)
+        allowed = {"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                   "tool_input": {"command": "git status"}}
+        denied = {**allowed, "tool_input": {"command": "git commit --no-verify"}}
+        for cwd in (outside, self.foreign_repository()):
+            with self.subTest(cwd=cwd.name):
+                result = self.run_registered(".claude/settings.json", "PreToolUse", allowed, cwd=cwd)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                result = self.run_registered(".claude/settings.json", "PreToolUse", denied, cwd=cwd)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("shared hook policy rejected", result.stderr)
+                stop = self.run_registered(".claude/settings.json", "Stop", {"hook_event_name": "Stop"}, cwd=cwd)
+                self.assertEqual(stop.returncode, 0, stop.stderr)
+                self.assertEqual(json.loads(stop.stdout), {})
 
     def test_registered_guards_and_checkpoint_lifecycle(self):
         for settings, key, tool in ((".claude/settings.json", "PreToolUse", "Bash"),
@@ -216,23 +289,26 @@ class NativeLefthook(unittest.TestCase):
             allowed = {"hook_event_name": key, "tool_name": tool,
                        "tool_input": {"command": "git status"}}
             denied = {**allowed, "tool_input": {"command": "git commit --no-verify"}}
-            self.assertEqual(self.run_registered(settings, key, allowed).returncode, 0)
-            self.assertEqual(self.run_registered(settings, key, denied).returncode, 2)
+            with self.subTest(settings=settings):
+                self.assertEqual(self.run_registered(settings, key, allowed).returncode, 0)
+                self.assertEqual(self.run_registered(settings, key, denied).returncode, 2)
 
         (self.root / "README.md").write_text("dirty\n")
         self.state("sync")
         for settings, key, event in ((".claude/settings.json", "PostToolUse", "PostToolUse"),
                                      (".gemini/settings.json", "AfterTool", "AfterTool"),
                                      (".codex/hooks.json", "PostToolUse", "PostToolUse")):
-            result = self.run_registered(settings, key, {"hook_event_name": event})
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("additionalContext", json.loads(result.stdout)["hookSpecificOutput"])
+            with self.subTest(settings=settings, key=key):
+                result = self.run_registered(settings, key, {"hook_event_name": event})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("additionalContext", json.loads(result.stdout)["hookSpecificOutput"])
         for settings, key in ((".claude/settings.json", "Stop"),
                               (".gemini/settings.json", "AfterAgent"),
                               (".codex/hooks.json", "Stop")):
-            stop = self.run_registered(settings, key, {"hook_event_name": key})
-            self.assertEqual(stop.returncode, 0, stop.stderr)
-            self.assertEqual(json.loads(stop.stdout)["decision"], "block")
+            with self.subTest(settings=settings, key=key):
+                stop = self.run_registered(settings, key, {"hook_event_name": key})
+                self.assertEqual(stop.returncode, 0, stop.stderr)
+                self.assertEqual(json.loads(stop.stdout)["decision"], "block")
         (self.root / "README.md").write_text("fixture\n")
         (self.root / ".workingdir").mkdir(exist_ok=True)
         (self.root / ".workingdir/private.txt").write_text("private\n")
@@ -240,9 +316,10 @@ class NativeLefthook(unittest.TestCase):
         for settings, key, event in ((".claude/settings.json", "Stop", "Stop"),
                                      (".gemini/settings.json", "AfterAgent", "AfterAgent"),
                                      (".codex/hooks.json", "Stop", "Stop")):
-            result = self.run_registered(settings, key, {"hook_event_name": event})
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(json.loads(result.stdout), {})
+            with self.subTest(settings=settings, key=key):
+                result = self.run_registered(settings, key, {"hook_event_name": event})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), {})
 
     def test_native_adapter_rejects_malformed_event_names_without_typeerror(self):
         for payload in ({"hook_event_name": None}, {"hook_event_name": 7},
@@ -386,6 +463,38 @@ class NativeLefthook(unittest.TestCase):
                     result = self.run_registered(settings, event, payload, entry=1)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(before, self.git("rev-parse", "HEAD"))
+
+    def test_scope_passes_out_of_repository_paths_and_cwds_until_a_checkpoint_is_due(self):
+        outside = Path(tempfile.mkdtemp(prefix="praetor-scope-outside-"))
+        self.addCleanup(shutil.rmtree, outside, True)
+        memory = str(outside / "memory" / "notes.md")
+        not_due = (self.scope_payload(memory), self.scope_payload(memory, cwd=str(outside)),
+                   self.scope_payload("notes.md", cwd=str(outside)),
+                   self.scope_payload("notes.md", cwd=str(self.foreign_repository())))
+        for payload in not_due:
+            with self.subTest(path=payload["tool_input"]["file_path"], cwd=payload["cwd"]):
+                self.assertEqual(SCOPE.check(payload), 0)
+        (self.root / "README.md").write_text("dirty\n")
+        for payload in not_due:
+            with self.subTest(due=True, path=payload["tool_input"]["file_path"], cwd=payload["cwd"]):
+                with self.assertRaises(ValueError):
+                    SCOPE.check(payload)
+        (self.root / "README.md").write_text("fixture\n")
+        for change in ({"tool_input": {"file_path": ""}}, {"tool_input": {"file_path": "a\x00b"}},
+                       {"cwd": "relative"}):
+            with self.subTest(shape=change), self.assertRaises(ValueError):
+                SCOPE.check(self.scope_payload(**change))
+
+    def test_registered_file_guard_fails_closed_per_call_for_a_foreign_repository_cwd(self):
+        (self.root / "README.md").write_text("dirty\n")
+        foreign = self.foreign_repository()
+        payload = self.scope_payload(str(self.root / "README.md"), tool_name="Edit", cwd=str(foreign))
+        denied = self.run_registered(".claude/settings.json", "PreToolUse", payload, entry=1, cwd=foreign)
+        self.assertEqual(denied.returncode, 2, denied.stdout + denied.stderr)
+        self.assertIn("outside the configured repository", denied.stderr)
+        payload["cwd"] = str(self.root)
+        allowed = self.run_registered(".claude/settings.json", "PreToolUse", payload, entry=1, cwd=foreign)
+        self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
 
     def test_scope_policy_disabled_legacy_missing_and_not_due(self):
         clean = self.scope_bridge(json.dumps(self.scope_payload()).encode())

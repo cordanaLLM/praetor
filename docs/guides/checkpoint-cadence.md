@@ -61,7 +61,9 @@ The optional backward-compatible `enforce_batch_scope` field enables native
 file-tool admission once due: Claude `Edit`/`Write` and Gemini `replace`/
 `write_file` must name one target path, which is allowed only when it is already
 in the current public dirty batch. Confined `.workingdir` paths remain allowed
-for private state and evidence. This is a bounded file-scope check; it does not
+for private state and evidence. Before a checkpoint is due only the payload's
+shape is checked, so a target or session directory outside the repository
+passes; once due, both must be inside it. This is a bounded file-scope check; it does not
 classify semantic repairs, inspect shell wrappers, or cover Codex `apply_patch`.
 Tool events check public changes against file count or age of the HEAD commit.
 Stop additionally applies `on_stop`, so a completed work chunk can be checkpointed

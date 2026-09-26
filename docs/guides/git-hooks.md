@@ -225,6 +225,14 @@ accepting an older installed binary. Generated adoption bundles require their ow
 compatible CLI and hook integration; this repository's activation is not evidence
 that every adopted client enforces state freshness.
 
+The native pre-edit bridge (Claude `Edit`/`Write`, Gemini `replace`/`write_file`) calls the
+shared `agent-checkpoint-pre-edit` job, `.config/lefthook/scripts/checkpoint_scope.py`, and
+requires `PRAETOR_CHECKPOINT_SCOPE_OK`. Until a checkpoint is due it checks only the payload's
+shape, so a path or session cwd outside the repository passes. Once one is due, both must sit
+inside this repository (see [checkpoint cadence](checkpoint-cadence.md)). How each client
+locates the bridges is described in
+[agent hooks](agent-hooks.md#registrations-in-use-today).
+
 Useful local commands:
 
 ```bash

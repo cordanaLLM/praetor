@@ -148,19 +148,16 @@ class _WithoutProcessGroup:
 # executable suffix. The fixture used to link an extensionless bin/praetorctl, which the hooks
 # never found on Windows.
 PRAETORCTL = "bin/praetorctl" + (".exe" if os.name == "nt" else "")
-# Registered client hooks are shell commands. POSIX has sh at /bin/sh; Windows has none there, and
-# the clients run hooks through the sh on PATH (Git for Windows ships one).
-POSIX_SHELL = "/bin/sh" if os.name != "nt" else shutil.which("sh")
+# Codex runs a command hook through the login shell on Linux and macOS and through %COMSPEC% /C
+# on Windows (codex-rs/hooks/src/engine/command_runner.rs; see docs/guides/agent-hooks.md). The
+# tracked registration resolves the Git root with $( ), which cmd.exe does not have, so on Windows
+# the registration itself cannot run: a stated gap, never a Git Bash sh standing in for cmd.exe.
+CODEX_WINDOWS_GAP = ("Codex runs hooks through cmd.exe on Windows, which has no $( ) for the "
+                     "registration's Git-root lookup; see docs/guides/agent-hooks.md")
 # The policy prints job output and failures only, so a passing job is evidenced by what it
 # printed, never by Lefthook's success line naming it. commit-msg and pre-push print this after
 # verifying the live ledger.
 STATE_VERIFIED = b'PRAETOR_STATE_RESULT={"schema_version":1,"verified":true}'
-
-
-def require_posix_shell(test):
-    """Skip a registered-command case, naming why, where no sh exists to run it."""
-    if POSIX_SHELL is None:
-        test.skipTest("no sh on PATH; registered client hooks are shell commands")
 
 
 def cli_path(repo):
@@ -807,13 +804,14 @@ print("fixture hook self-tests passed")
         self.assertNotRegex("Write", registration["matcher"])
         action = registration["hooks"][0]
         self.assertEqual(action["type"], "command")
-        require_posix_shell(self)
+        if os.name == "nt":
+            self.skipTest(CODEX_WINDOWS_GAP)
         nested = self.repo / "nested directory"
         nested.mkdir()
         for command_text, expected in (("git status", 0), ("git commit --no-verify", 2)):
             payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
                                   "tool_input": {"command": command_text}}).encode()
-            result = command(nested, POSIX_SHELL, "-c", action["command"],
+            result = command(nested, "/bin/sh", "-c", action["command"],
                              data=payload, ok=False)
             self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
 

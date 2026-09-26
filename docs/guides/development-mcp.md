@@ -50,9 +50,9 @@ location, the lock and rollback behavior, and `workstation status`.
 Already running CLI/MCP processes continue using their original executable until
 restarted. The development connection below still builds directly from source.
 
-The tracked configs register `praetor-dev`; they contain no machine-specific paths
-or credentials. Both run `scripts/dev_mcp.py serve`, which builds once per server
-startup. Existing native connections keep that binary after source edits. Restart
+The tracked configs (`.codex/config.toml`, `.mcp.json`, `.gemini/settings.json`)
+register `praetor-dev`; they contain no machine-specific paths or credentials. All three
+run `scripts/dev_mcp.py serve`, which builds once per server startup. Existing native connections keep that binary after source edits. Restart
 or reconnect the server before testing the new code, or use the fresh direct
 commands below. Check the server's initialization version against a fresh probe's
 `provenance.server_version`; a matching Git commit alone misses uncommitted edits.
@@ -81,8 +81,15 @@ the documented child environment. Its native connection remains subject to
 Claude's project approval. If a client cannot load the project connection, record
 that limitation and use the direct wire client.
 
+**Gemini CLI:** start Gemini in the checkout root. Its project `.gemini/settings.json`
+registers the server as `python3 scripts/dev_mcp.py serve` with a 120-second request
+timeout. Gemini reads project settings only from the directory it starts in and launches a
+stdio server there when no `cwd` is set, so the relative path always names this checkout's
+script. Check the loaded server with `gemini mcp list` and use `/mcp` to inspect the
+connection. See the [Gemini CLI MCP reference](https://geminicli.com/docs/tools/mcp-server/).
+
 **Other supported clients:** use `praetorctl clients prepare` or the documented
-native plan for Gemini, OpenCode v1, Continue, Cline, Kilo, or AGY. Inspect the
+native plan for OpenCode v1, Continue, Cline, Kilo, or AGY. Inspect the
 exact destination or argv, complete that client's approval/reload flow, and
 perform the initialization, discovery, and harmless readback checks. Existing
 projection tests establish serialization and conflict handling; they are not
