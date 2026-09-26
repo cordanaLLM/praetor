@@ -1,0 +1,3 @@
+type: fixed
+title: praetorctl devcontainer generate --source-root now replaces Praetor's own unedited unavailable placeholder without --force, so the advised remediation works; --force without a source root no longer replaces a ready bootstrap with a placeholder that cannot start and would orphan Dockerfile.praetor and the source parts
+breaking: false

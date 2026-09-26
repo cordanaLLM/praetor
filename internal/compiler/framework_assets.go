@@ -5,10 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// kitNamePattern keeps kit_name to one file-name component. kit_name names the agent rule
+// file under .agents/rules/, so a path separator or a ".." would write outside that
+// directory, and a leading dot would hide the file (BUG-618).
+var kitNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// maxKitConfigBytes bounds the kit config read (HISS-02); a kit config is a short list of
+// names and rules, so a larger file is a mistake, not a kit.
+const maxKitConfigBytes = 1 << 20
+
+// ErrInvalidKitName reports a kit_name that is not one safe file-name component.
+var ErrInvalidKitName = errors.New("kit_name must be 1-64 characters of letters, digits, '.', '_' or '-', starting with a letter or digit")
 
 // FrameworkKitConfig defines metadata and assets to compile for a language builder kit.
 type FrameworkKitConfig struct {
@@ -38,11 +51,8 @@ func CompileFrameworkAssets(ctx context.Context, kit *FrameworkKitConfig, output
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if kit == nil {
-		return nil, errors.New("framework kit config cannot be nil")
-	}
-	if kit.KitName == "" {
-		return nil, errors.New("kit_name cannot be empty")
+	if err := validateFrameworkKit(kit); err != nil {
+		return nil, err
 	}
 
 	res := &CompiledFrameworkAssets{
@@ -67,6 +77,41 @@ func CompileFrameworkAssets(ctx context.Context, kit *FrameworkKitConfig, output
 	}
 
 	return res, nil
+}
+
+// LoadFrameworkKitConfig reads one framework kit config: a single YAML document with the
+// FrameworkKitConfig keys and no others. The kit is validated here as well as in
+// CompileFrameworkAssets, so a caller that only loads learns about a bad kit_name early.
+func LoadFrameworkKitConfig(path string) (*FrameworkKitConfig, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("framework kit config path cannot be empty")
+	}
+	data, err := util.ReadConfinedLimited(filepath.Dir(path), filepath.Base(path), maxKitConfigBytes)
+	if err != nil {
+		return nil, fmt.Errorf("read framework kit config %s: %w", path, err)
+	}
+	var kit FrameworkKitConfig
+	if err := util.DecodeYAMLStrict(data, &kit); err != nil {
+		return nil, fmt.Errorf("parse framework kit config %s: %w", path, err)
+	}
+	if err := validateFrameworkKit(&kit); err != nil {
+		return nil, fmt.Errorf("framework kit config %s: %w", path, err)
+	}
+	return &kit, nil
+}
+
+// validateFrameworkKit refuses a kit before anything is written for it.
+func validateFrameworkKit(kit *FrameworkKitConfig) error {
+	if kit == nil {
+		return errors.New("framework kit config cannot be nil")
+	}
+	if kit.KitName == "" {
+		return errors.New("kit_name cannot be empty")
+	}
+	if !kitNamePattern.MatchString(kit.KitName) {
+		return fmt.Errorf("%w: %q", ErrInvalidKitName, kit.KitName)
+	}
+	return nil
 }
 
 func generateDocsSurfaces(kit *FrameworkKitConfig, outputDir string, res *CompiledFrameworkAssets) error {
@@ -114,7 +159,12 @@ func generateAgentRules(kit *FrameworkKitConfig, outputDir string, res *Compiled
 		}
 	}
 
-	rulePath := filepath.Join(rulesDir, fmt.Sprintf("%s.md", kit.KitName))
+	// kit_name is validated as one file-name component; ConfinePath is the second guard
+	// WriteFileSecure's contract asks for, and it also refuses a symlink that leaves rulesDir.
+	rulePath, err := util.ConfinePath(rulesDir, kit.KitName+".md")
+	if err != nil {
+		return fmt.Errorf("confine agent rule path: %w", err)
+	}
 	if err := util.WriteFileSecure(rulePath, []byte(sb.String()), 0o600); err != nil {
 		return fmt.Errorf("write agent rule: %w", err)
 	}

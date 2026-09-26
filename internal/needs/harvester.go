@@ -85,6 +85,9 @@ func codifySingleHarvestRepo(item HarvestRepoItem, patchesDir string) (RepoNeeds
 	}
 
 	lang := inferLanguageFromItem(item, patchDeps)
+	if lang == LanguageUnsupported {
+		return unsupportedHarvestRepo(repoIdentifier), nil
+	}
 	repoNeeds := RepoNeeds{
 		Version:      1,
 		Repository:   repoIdentifier,
@@ -107,8 +110,25 @@ func codifySingleHarvestRepo(item HarvestRepoItem, patchesDir string) (RepoNeeds
 	return repoNeeds, nil
 }
 
+// unsupportedHarvestRepo records a harvested repository whose language could not be
+// determined. It carries no framework, builder kit, dependencies or readiness score: any
+// of those would be a Go default presented as a finding about the repository.
+func unsupportedHarvestRepo(repository string) RepoNeeds {
+	return RepoNeeds{
+		Version:      1,
+		Repository:   repository,
+		Language:     LanguageUnsupported,
+		Languages:    []string{LanguageUnsupported},
+		BuilderKits:  make([]string, 0),
+		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
+		Dependencies: make([]DependencyDemand, 0),
+		UpdatedAt:    time.Now().UTC(),
+	}
+}
+
 // inferLanguageFromItem guesses a harvested repository's language. Dependencies already
 // extracted from its patch are the stronger signal and take precedence over the name.
+// Neither signal -> LanguageUnsupported, never a Go default (BUG-864).
 func inferLanguageFromItem(item HarvestRepoItem, patchDeps []string) string {
 	if lang := inferLanguageFromDeps(patchDeps); lang != "" {
 		return lang
@@ -125,7 +145,7 @@ func inferLanguageFromItem(item HarvestRepoItem, patchDeps []string) string {
 	case strings.Contains(nameLower, "rust"):
 		return "rust"
 	default:
-		return "go"
+		return LanguageUnsupported
 	}
 }
 

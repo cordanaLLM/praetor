@@ -121,7 +121,9 @@ type TopologyReport struct {
 	Violations    []string    `json:"violations"`
 }
 
-// AuditWorkstationTopology audits devRoot against workstation contract DEV-01 through DEV-05.
+// AuditWorkstationTopology audits devRoot against the workstation topology rules it
+// implements: DEV-01 (repositories live in organization folders) and DEV-02 (no root
+// compatibility symlinks). DEV-03 through DEV-05 are not evaluated here.
 func AuditWorkstationTopology(ctx context.Context, devRoot string) (*TopologyReport, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context cancelled: %w", err)

@@ -75,6 +75,36 @@ func TestDevContainerCLIMissingSourceIsVisibleFailure(t *testing.T) {
 	}
 }
 
+func TestDevContainerCLIRemediationRerunReplacesOwnPlaceholder(t *testing.T) {
+	manifest, output := cliBootstrapPaths(t)
+	base := []string{"generate", "--config", manifest, "--output", output}
+	err := runDevContainer(base)
+	if !errors.Is(err, devcontainer.ErrBootstrapUnavailable) || !strings.Contains(err.Error(), "--source-root") {
+		t.Fatalf("unavailable generation hid the remediation: %v", err)
+	}
+	withSource := append(append([]string{}, base...), "--source-root", cliBootstrapSource(t))
+	if _, err := captureStdout(t, func() error { return runDevContainer(withSource) }); err != nil {
+		t.Fatalf("the advised --source-root rerun needed a hidden --force: %v", err)
+	}
+	if err := runDevContainer([]string{"verify", "--config", manifest, "--output", output}); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runDevContainer(append(base, "--force")); err == nil || errors.Is(err, devcontainer.ErrBootstrapUnavailable) {
+		t.Fatalf("--force without --source-root replaced a ready bootstrap: %v", err)
+	}
+	got, err := os.ReadFile(output)
+	if err != nil || string(got) != string(ready) {
+		t.Fatal("ready bootstrap changed")
+	}
+	if err := runDevContainer([]string{"verify", "--config", manifest, "--output", output}); err != nil {
+		t.Fatalf("refused downgrade stranded the ready bundle: %v", err)
+	}
+}
+
 func TestDevContainerCLIRejectsInvalidManifestBeforeWriting(t *testing.T) {
 	for _, version := range []string{"0", "2"} {
 		t.Run(version, func(t *testing.T) {

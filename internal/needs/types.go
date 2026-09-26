@@ -12,6 +12,10 @@ const (
 	outputDirPerm    os.FileMode = 0o700
 )
 
+// LanguageUnsupported is the language of a repository no signal identified. Such a
+// repository is reported as skipped, never scored against a default framework.
+const LanguageUnsupported = "unsupported"
+
 // CapabilityKey represents a standardized architectural or runtime capability.
 type CapabilityKey string
 

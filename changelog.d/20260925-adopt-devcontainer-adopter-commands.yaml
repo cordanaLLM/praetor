@@ -1,0 +1,3 @@
+type: fixed
+title: Generated native-gpu-systems DevContainer and VS Code settings no longer pin clangd to --compile-commands-dir=core/build, so clangd finds compile_commands.json in the adopter's own layout; an unedited native bundle generated earlier now reports drift until regenerated
+breaking: true

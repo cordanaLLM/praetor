@@ -72,8 +72,15 @@ func recordBaseline(path string, previous *baseline.Baseline, opts baseline.Reco
 	return nil
 }
 
-// printBaseline lists the recorded infractions.
+// printBaseline lists the recorded infractions. Inspect mode reads the stored snapshot and
+// never scans, so it states what was recorded, never whether the repository complies: a
+// missing file and a recorded zero both used to print "100% compliant" (BUG-802).
 func printBaseline(path string, b *baseline.Baseline) {
+	if b.Absent {
+		fmt.Printf("No baseline file at %s: no technical debt has been recorded and nothing was scanned.\n", path)
+		fmt.Println("Run 'praetorctl baseline --record' to scan and record, or 'praetorctl audit' for a live check.")
+		return
+	}
 	repo := b.Repository
 	if repo == "" {
 		repo = "repository"
@@ -88,6 +95,7 @@ func printBaseline(path string, b *baseline.Baseline) {
 	}
 
 	if b.TotalInfractions == 0 {
-		fmt.Println("Zero technical debt recorded. Repository is 100% compliant.")
+		fmt.Println("Zero technical debt recorded in this baseline.")
 	}
+	fmt.Println("This is the stored snapshot, not a live scan; run 'praetorctl audit' to check the repository.")
 }

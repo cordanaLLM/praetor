@@ -47,6 +47,10 @@ type Baseline struct {
 	// --allow-increase; it is what reviewers and the growth guard see.
 	IncreaseRationale string       `json:"increase_rationale,omitempty"`
 	Infractions       []Infraction `json:"infractions"`
+	// Absent is set by LoadBaseline when no baseline file exists. The empty snapshot it
+	// returns then means "nothing recorded", not "zero debt recorded"; it is never
+	// serialized, so a saved baseline is always a recorded one.
+	Absent bool `json:"-"`
 }
 
 // RatchetResult details the evaluation of a commit/PR against the baseline.
@@ -67,7 +71,7 @@ type RecordOptions struct {
 }
 
 // LoadBaseline reads and parses .standards-baseline.json. A missing file is an empty
-// baseline; any other read error is returned.
+// baseline marked Absent; any other read error is returned.
 func LoadBaseline(path string) (*Baseline, error) {
 	// #nosec G304 -- the baseline path is the operator's own repository file, passed
 	// explicitly by the caller; there is no root to confine it to.
@@ -79,6 +83,7 @@ func LoadBaseline(path string) (*Baseline, error) {
 				GeneratedAt:      time.Now().UTC().Format(time.RFC3339),
 				TotalInfractions: 0,
 				Infractions:      []Infraction{},
+				Absent:           true,
 			}, nil
 		}
 		return nil, fmt.Errorf("failed to read baseline %s: %w", path, err)

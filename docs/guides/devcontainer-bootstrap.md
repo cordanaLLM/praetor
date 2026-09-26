@@ -95,7 +95,16 @@ configuration keeps such keys and passes it.
 Without `--source-root`, or with an explicitly selected config-only catalog,
 generation writes an `unavailable` configuration and returns an error. Its
 startup fails with an actionable message; it cannot report a missing CLI as
-ready. Invalid explicit source paths, mutable image references, incomplete
+ready. To remediate, rerun the same command with `--source-root`. It replaces
+the placeholder without `--force` while the file is exactly what Praetor
+rendered for the same profiles and features, CRLF line endings aside; any edit
+keeps the file behind `--force` (`admitReplacement` in
+`internal/devcontainer/bootstrap_io.go`, tests in
+`internal/devcontainer/bootstrap_replace_test.go`). `--force` without
+`--source-root` never replaces a ready bootstrap with a placeholder: the
+configuration would stop starting and `Dockerfile.praetor` and the source parts
+would be left orphaned. Select a source root, or remove the bundle files first
+to drop the bootstrap deliberately. Invalid explicit source paths, mutable image references, incomplete
 bundles, symlinks, and altered companions are errors. Optional `--builder-image`
 and `--base-image` overrides must include lowercase SHA-256 digests.
 
@@ -158,6 +167,20 @@ choose which IDE tooling is installed; they do not overrule the catalog about
 what is present. More than `MaxLoopLimit` declared profiles or facets is refused
 rather than truncated. This does not establish IDE feature-installation or
 application-tool execution proof.
+
+A `native-gpu-systems` DevContainer no longer passes clangd
+`--compile-commands-dir=core/build`. Without that flag clangd searches each
+edited file's ancestor directories and their `build/` subdirectories for
+`compile_commands.json` ([clangd project setup](https://clangd.llvm.org/installation)),
+which finds a root, `build/` or `core/build/` database alike; the fixed directory
+pointed every other layout at a missing path. The DevContainer settings and the
+`.vscode/settings.json` adoption writes share one definition,
+`util.ClangdArguments` in `internal/util/clangd.go`; the regression tests are in
+`internal/devcontainer/adopter_paths_test.go`. An unedited native bundle generated
+before this change reports drift in `praetorctl devcontainer verify` and
+`standardsctl audit`; regenerate it with the `--source-root ... --force` command
+above. Adoption keeps an existing `.vscode/settings.json` unless it runs with
+`--force`.
 
 ### Test sources leave the bootstrap archive
 

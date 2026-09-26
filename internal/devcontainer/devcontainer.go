@@ -12,6 +12,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Invariant bounds and defaults.
@@ -228,10 +229,7 @@ func synthesizeSettings(profiles []string, facets []string, selected []config.De
 
 	if hasNativeGPUProfile(profiles) {
 		settings["clangd.path"] = "clangd"
-		settings["clangd.arguments"] = []string{
-			"--compile-commands-dir=core/build",
-			"--header-insertion=never",
-		}
+		settings["clangd.arguments"] = util.ClangdArguments()
 	} else if containerHasGoToolchain(profiles, selected) {
 		settings["go.toolsManagement.autoUpdate"] = true
 		settings["go.useLanguageServer"] = true
@@ -279,7 +277,10 @@ func containerHasGoToolchain(profiles []string, selected []config.DevContainerFe
 // toolchain, because a container built without one cannot run
 // "go run ./cmd/standardsctl"; conversely a selected catalog that carries the
 // Go feature keeps the command even alongside the native profile, whose gate
-// only decides which IDE tooling is installed.
+// only decides which IDE tooling is installed. This is the legacy self-host
+// baseline that Verify checks non-bootstrap files against (verifyLegacyBootstrapInputs
+// requires the Praetor checkout it names); PrepareBundle replaces it through
+// applyBootstrap, so no generated bundle carries it.
 func synthesizePostCreateCommand(profiles []string, selected []config.DevContainerFeature) string {
 	if !containerHasGoToolchain(profiles, selected) {
 		return "make verify-all"

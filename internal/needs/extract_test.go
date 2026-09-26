@@ -56,6 +56,59 @@ func TestShouldSkipDir3D(t *testing.T) {
 	}
 }
 
+// TestShouldSkipDirScopesScratchAndCacheToWalkRoot pins BUG-864: scratch/ and cache/ are
+// local work areas only directly under the walk root; nested, they are package names.
+func TestShouldSkipDirScopesScratchAndCacheToWalkRoot(t *testing.T) {
+	root := t.TempDir()
+	cases := map[string]bool{
+		"scratch":                            true,
+		"cache":                              true,
+		".workingdir":                        true,
+		filepath.Join("pkg", "vendor"):       true,
+		filepath.Join("web", "node_modules"): true,
+		filepath.Join("src", ".hidden"):      true,
+		filepath.Join("src", "cache"):        false,
+		filepath.Join("internal", "scratch"): false,
+		filepath.Join("scratch", "cache"):    true,
+	}
+	for rel, want := range cases {
+		dir := filepath.Join(root, rel)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Lstat(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := shouldSkipDir(info, dir, root); got != want {
+			t.Errorf("shouldSkipDir(%s) = %v, want %v", rel, got, want)
+		}
+	}
+}
+
+// TestScanRepoScansNestedCachePackage checks the scan end to end: imports in
+// internal/cache are demand, imports in the root-level scratch/ are not.
+func TestScanRepoScansNestedCachePackage(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "go.mod", "module example.com/cached\n\ngo 1.24\n")
+	writeFixture(t, dir, filepath.Join("internal", "cache", "cache.go"),
+		"package cache\n\nimport \"github.com/redis/rueidis\"\n\nvar _ rueidis.Client\n")
+	writeFixture(t, dir, filepath.Join("scratch", "try.go"),
+		"package scratch\n\nimport \"github.com/gin-gonic/gin\"\n\nvar _ = gin.Default\n")
+
+	repoNeeds, err := ScanRepo(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("ScanRepo() error = %v", err)
+	}
+	packages := make([]string, 0, len(repoNeeds.Dependencies))
+	for _, dep := range repoNeeds.Dependencies {
+		packages = append(packages, dep.Package)
+	}
+	if len(packages) != 1 || packages[0] != "github.com/redis/rueidis" {
+		t.Fatalf("dependencies = %v, want only the internal/cache import", packages)
+	}
+}
+
 func TestScanRepoFromRelativeDotPath(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "go.mod", "module example.com/dotscan\n\ngo 1.24\n")

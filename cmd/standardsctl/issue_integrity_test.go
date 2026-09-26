@@ -107,6 +107,35 @@ func TestIssueReconcileCompleteFleetPreservesApplyAndDryRun(t *testing.T) {
 	}
 }
 
+// TestIssueReconcileRefusesEmptyRepositoryScope pins BUG-727: a selection that resolves
+// to no repository is an error before any forge read, never a "[PASS]" over nothing.
+func TestIssueReconcileRefusesEmptyRepositoryScope(t *testing.T) {
+	var writes atomic.Int32
+	srv := reconciliationInventoryServer(t, "complete", &writes)
+	for _, repos := range []string{"", ",", " , ,", "   "} {
+		output, err := captureStdout(t, func() error {
+			return dispatchCommand("issue", []string{"reconcile", "--owner=example",
+				"--repos=" + repos, "--token=fixture", "--endpoint=" + srv.URL})
+		})
+		if err == nil || !strings.Contains(err.Error(), "at least one repository") {
+			t.Errorf("--repos=%q: err = %v, want an empty-scope refusal", repos, err)
+		}
+		if strings.Contains(output, "[PASS]") {
+			t.Errorf("--repos=%q printed a success summary: %s", repos, output)
+		}
+	}
+	// Positive: a one-repository scope still reconciles.
+	if _, err := captureStdout(t, func() error {
+		return dispatchCommand("issue", []string{"reconcile", "--owner=example",
+			"--repos=example/complete", "--token=fixture", "--endpoint=" + srv.URL})
+	}); err != nil {
+		t.Fatalf("single-repository scope failed: %v", err)
+	}
+	if writes.Load() != 0 {
+		t.Fatalf("dry-run reconcile wrote %d times", writes.Load())
+	}
+}
+
 func TestIssueReconcileRepositorySelectionBoundBeforeRead(t *testing.T) {
 	for _, count := range []int{256, 257} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {

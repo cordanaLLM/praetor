@@ -18,6 +18,9 @@ type bootstrapWrite struct {
 	path           string
 	data, expected []byte
 	exists         bool
+	// config marks the devcontainer.json write, the only one that can hold a recorded
+	// bootstrap specification.
+	config bool
 }
 
 // WriteBundle preflights every exact companion and publishes the JSON last.
@@ -39,7 +42,7 @@ func WriteBundle(ctx context.Context, path string, bundle *Bundle, force bool) e
 	if err != nil {
 		return err
 	}
-	if err := observeBootstrapWrites(ctx, writes, force); err != nil {
+	if err := observeBootstrapWrites(ctx, writes, bundle, force); err != nil {
 		return err
 	}
 	if err := contextopt.EnsureDirectory(ctx, filepath.Dir(path), 0755); err != nil {
@@ -56,19 +59,79 @@ func WriteBundle(ctx context.Context, path string, bundle *Bundle, force bool) e
 	return nil
 }
 
-func observeBootstrapWrites(ctx context.Context, writes []bootstrapWrite, force bool) error {
+// observeBootstrapWrites records what each planned write replaces and admits every
+// replacement before anything is written.
+func observeBootstrapWrites(ctx context.Context, writes []bootstrapWrite, bundle *Bundle, force bool) error {
 	for i := range writes {
 		data, exists, err := contextopt.ObserveSnapshot(ctx, writes[i].path)
 		if err != nil {
 			return err
 		}
-		if exists && !bytes.Equal(data, writes[i].data) && !force {
-			return fmt.Errorf("preserving existing DevContainer artifact %s; review it before explicit replacement", writes[i].path)
-		}
 		writes[i].expected = data
 		writes[i].exists = exists
+		if !exists || bytes.Equal(data, writes[i].data) {
+			continue
+		}
+		if err := admitReplacement(writes[i], bundle, force); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// admitReplacement decides whether an existing, differing artifact may be replaced.
+//
+// Praetor's own unedited unavailable placeholder carries no working configuration, so
+// the --source-root rerun that generation advises replaces it without --force; before,
+// the rerun stopped at the placeholder the first run had just written (BUG-812).
+// Everything else still needs --force. --force with an unavailable bundle never replaces
+// a ready recorded bootstrap: that would swap a configuration that can start for one
+// that cannot, and strand its Dockerfile.praetor and source parts.
+func admitReplacement(write bootstrapWrite, bundle *Bundle, force bool) error {
+	if isOwnUnavailablePlaceholder(write, bundle.Config) {
+		return nil
+	}
+	if !force {
+		return fmt.Errorf("preserving existing DevContainer artifact %s; review it before explicit replacement with --force", write.path)
+	}
+	recorded := recordedBootstrap(write)
+	if recorded != nil && recorded.State == BootstrapReady && bundle.Spec().State == BootstrapUnavailable {
+		return fmt.Errorf("refusing to replace the ready DevContainer bootstrap at %s with an unavailable placeholder; "+
+			"select a complete Praetor source root, or remove the bundle files first to drop the bootstrap deliberately", write.path)
+	}
+	return nil
+}
+
+// recordedBootstrap returns the valid bootstrap specification recorded in the config a
+// write replaces, or nil when the write is a companion or the file is not a managed
+// config carrying a valid specification.
+func recordedBootstrap(write bootstrapWrite) *BootstrapSpec {
+	if !write.config {
+		return nil
+	}
+	dc, err := decodeManagedConfig(write.expected, write.path)
+	if err != nil {
+		return nil
+	}
+	spec := (&Bundle{Config: dc}).Spec()
+	if validateBootstrapSpec(spec) != nil {
+		return nil
+	}
+	return spec
+}
+
+// isOwnUnavailablePlaceholder reports whether the replaced config is exactly what Praetor
+// renders for current with the recorded unavailable specification: the byte-exact file
+// generation writes for the same profiles and features, compared by the verify rule
+// (rendersExactly). Any operator edit, even one in the managed formatting, falls through
+// to --force.
+func isOwnUnavailablePlaceholder(write bootstrapWrite, current *DevContainer) bool {
+	spec := recordedBootstrap(write)
+	if spec == nil || spec.State != BootstrapUnavailable || current == nil {
+		return false
+	}
+	identical, err := rendersExactly(write.expected, withBootstrap(current, spec))
+	return err == nil && identical
 }
 
 func validateBundleContents(ctx context.Context, bundle *Bundle) error {
@@ -222,16 +285,24 @@ func rendersExactly(raw []byte, want *DevContainer) (bool, error) {
 	return normalized == string(rendered), nil
 }
 
+// withBootstrap returns a copy of dc with spec's bootstrap-owned fields applied; dc
+// itself is left untouched.
+func withBootstrap(dc *DevContainer, spec *BootstrapSpec) *DevContainer {
+	projected := *dc
+	if dc.Customizations != nil {
+		custom := *dc.Customizations
+		projected.Customizations = &custom
+	}
+	applyBootstrap(&projected, spec)
+	return &projected
+}
+
 func validateBootstrapProjection(dc *DevContainer, spec *BootstrapSpec) error {
-	expected := *dc
-	custom := *dc.Customizations
-	expected.Customizations = &custom
-	applyBootstrap(&expected, spec)
 	actualData, err := Render(dc)
 	if err != nil {
 		return err
 	}
-	expectedData, err := Render(&expected)
+	expectedData, err := Render(withBootstrap(dc, spec))
 	if err != nil {
 		return err
 	}
@@ -253,7 +324,7 @@ func planBootstrapWrites(path string, bundle *Bundle, data []byte) ([]bootstrapW
 		}
 		writes = append(writes, bootstrapWrite{path: target, data: bytes.Clone(artifact.Content)})
 	}
-	writes = append(writes, bootstrapWrite{path: path, data: data})
+	writes = append(writes, bootstrapWrite{path: path, data: data, config: true})
 	return writes, nil
 }
 
@@ -275,17 +346,11 @@ func expectedBootstrapConfig(expected *DevContainer, spec *BootstrapSpec) (*DevC
 	if expected == nil {
 		return nil, errors.New("expected DevContainer is absent")
 	}
-	expectedCopy := *expected
-	if expected.Customizations != nil {
-		custom := *expected.Customizations
-		expectedCopy.Customizations = &custom
-	}
 	selected := (&Bundle{Config: expected}).Spec()
 	if selected == nil {
 		selected = spec
 	}
-	applyBootstrap(&expectedCopy, selected)
-	return &expectedCopy, nil
+	return withBootstrap(expected, selected), nil
 }
 
 func readBootstrapCompanions(ctx context.Context, path string, spec *BootstrapSpec) ([]BootstrapArtifact, error) {

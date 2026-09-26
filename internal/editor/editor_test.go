@@ -279,6 +279,11 @@ func TestEditor_Positive_ArchetypeNativeGPUSystems(t *testing.T) {
 	if !strings.Contains(vsSettings, "clangd") {
 		t.Errorf("expected clangd in VSCode settings for native-gpu-systems: %s", vsSettings)
 	}
+	// clangd finds compile_commands.json itself; a fixed directory pinned every adopter to
+	// one repository's core/build layout (BUG-879).
+	if strings.Contains(vsSettings, "--compile-commands-dir") || !strings.Contains(vsSettings, "--header-insertion=never") {
+		t.Errorf("clangd arguments not the shared adopter-neutral set: %s", vsSettings)
+	}
 
 	// Verify ClangTidy in JetBrains
 	ideaXML := fileMap[".idea/inspectionProfiles/standards.xml"]

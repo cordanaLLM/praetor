@@ -1,0 +1,3 @@
+type: fixed
+title: needs discovery finds CMakeLists.txt and setup.py repositories, scans nested cache/ and scratch/ packages (only the walk root's own scratch/ and cache/ stay excluded), and reports a harvested repository with no language signal as skipped instead of scoring it as Go
+breaking: false
