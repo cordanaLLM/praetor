@@ -88,7 +88,7 @@ func TestScanWorkflowActionsIgnoresCommentedUses(t *testing.T) {
 	}
 	body := "jobs:\n  build:\n    steps:\n" +
 		"      # - uses: actions/checkout@v1\n" +
-		"      - uses: actions/checkout@v4.1.2 # uses: actions/setup-go@v1\n"
+		"      - uses: actions/checkout@v7.0.1 # uses: actions/setup-go@v1\n"
 	if err := os.WriteFile(filepath.Join(dir, "ci.yml"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -96,11 +96,11 @@ func TestScanWorkflowActionsIgnoresCommentedUses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanWorkflowActions: %v", err)
 	}
-	if len(actions) != 1 || actions[0].Action != "actions/checkout" || actions[0].CurrentVersion != "v4.1.2" {
-		t.Fatalf("actions = %+v, want only the live actions/checkout@v4.1.2", actions)
+	if len(actions) != 1 || actions[0].Action != "actions/checkout" || actions[0].CurrentVersion != "v7.0.1" {
+		t.Fatalf("actions = %+v, want only the live actions/checkout@v7.0.1", actions)
 	}
 	if !actions[0].UpToDate {
-		t.Errorf("actions/checkout@v4.1.2 against registry %s reported drift", actions[0].LatestVersion)
+		t.Errorf("actions/checkout@v7.0.1 against registry %s reported drift", actions[0].LatestVersion)
 	}
 	if len(deprecations) != 0 {
 		t.Errorf("a commented-out pin raised deprecations: %+v", deprecations)

@@ -14,7 +14,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/topology"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
 )
 
 // maxPathSegments bounds the per-path segment loop in shouldSkipDir (HISS-02).
