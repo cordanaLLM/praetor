@@ -44,7 +44,7 @@ jobs:
 	for _, act := range actions {
 		if act.Action == "actions/checkout" {
 			foundCheckout = true
-			if act.CurrentVersion != "v3" || act.LatestVersion != "v4" || !act.Deprecated {
+			if act.CurrentVersion != "v3" || act.LatestVersion != "v7" || !act.Deprecated {
 				t.Errorf("checkout@v3 metadata mismatch: %+v", act)
 			}
 		}

@@ -45,7 +45,7 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
       - uses: actions/deploy-pages@v4
 `)
-	got, deps, err := ScanWorkflowActions(repo)
+	got, deps, err := ScanWorkflowActions(t.Context(), repo)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -72,7 +72,7 @@ jobs:
       - uses: actions/upload-pages-artifact@v5
       - uses: actions/deploy-pages@v5
 `)
-	got, deps, err := ScanWorkflowActions(repo)
+	got, deps, err := ScanWorkflowActions(t.Context(), repo)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -98,7 +98,7 @@ jobs:
       - uses: actions/deploy-pages@v5.0.1
       - uses: example/pages-publisher@v0.1.0
 `)
-	got, deps, err := ScanWorkflowActions(repo)
+	got, deps, err := ScanWorkflowActions(t.Context(), repo)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}

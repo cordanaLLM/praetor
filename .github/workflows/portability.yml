@@ -250,7 +250,7 @@ jobs:
       # instead; this step is the leg that proves that path works on the platform it exists for.
       - name: Setup Node Toolchain
         if: ${{ !cancelled() }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: npm

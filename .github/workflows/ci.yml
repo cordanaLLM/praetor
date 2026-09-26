@@ -87,7 +87,7 @@ jobs:
       # version pages.yml and portability.yml pin.
       - name: Setup Python Toolchain
         id: python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.14'
 
@@ -250,7 +250,7 @@ jobs:
 
     steps:
       - name: Checkout Source Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
@@ -271,7 +271,7 @@ jobs:
 
       - name: Setup Node Toolchain
         if: steps.changed.outputs.run == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
 
