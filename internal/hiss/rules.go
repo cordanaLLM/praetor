@@ -275,38 +275,73 @@ func charLiteralWidth(line string, i int) int {
 
 // hasBannedCall reports whether line calls name (name followed by '(') as a whole
 // identifier, so fgets( never matches gets( and retrieval( never matches eval(.
-func hasBannedCall(line, name string) bool {
-	offset := 0
-	for i := 0; i < len(line); i++ {
-		pos := strings.Index(line[offset:], name)
-		if pos < 0 {
-			return false
-		}
-		at := offset + pos
-		if isBannedCallSite(line, at, len(name)) {
-			return true
-		}
-		offset = at + 1
-	}
-	return false
-}
-
-// isBannedCallSite reports whether the occurrence at `at` invokes the bare builtin: a whole
-// identifier, not reached through a selector, followed by an argument list.
 //
 // Whitespace between the identifier and the parenthesis does not change the call, so
 // `gets (buf)` must not escape a rule that catches `gets(buf)`. A leading dot means the name
 // resolves to a method rather than the builtin, which is why `interpreter.eval(node)` on a
 // hand-written AST walker is not dynamic execution.
-func isBannedCallSite(line string, at, nameLen int) bool {
-	if at > 0 && (isIdentByte(line[at-1]) || line[at-1] == '.') {
-		return false
+func hasBannedCall(line, name string) bool {
+	return hasCall(line, name, isSelectorByte)
+}
+
+// hasCall reports whether line invokes callee: a whole-identifier occurrence followed, after
+// optional blanks, by an argument list, and not preceded by a byte for which excluded reports
+// true. The banned-builtin rules and the direct-recursion rule share it so the two can never
+// disagree about what a call looks like.
+func hasCall(line, callee string, excluded func(byte) bool) bool {
+	at := nextIdent(line, callee, 0)
+	for i := 0; i < len(line) && at >= 0; i++ {
+		if (at == 0 || !excluded(line[at-1])) && opensArgs(line, at+len(callee)) {
+			return true
+		}
+		at = nextIdent(line, callee, at+1)
 	}
-	after := at + nameLen
+	return false
+}
+
+// opensArgs reports whether an argument list opens at after, allowing blanks before it.
+func opensArgs(line string, after int) bool {
 	for after < len(line) && (line[after] == ' ' || line[after] == '\t') {
 		after++
 	}
 	return after < len(line) && line[after] == '('
+}
+
+// nextIdent returns the index of the first occurrence of name at or after from that stands as
+// a whole identifier, with no identifier byte on either side, or -1 when there is none.
+func nextIdent(text, name string, from int) int {
+	if name == "" {
+		return -1
+	}
+	for i := 0; i < len(text) && from <= len(text); i++ {
+		pos := strings.Index(text[from:], name)
+		if pos < 0 {
+			return -1
+		}
+		at := from + pos
+		end := at + len(name)
+		if (at == 0 || !isIdentByte(text[at-1])) && (end == len(text) || !isIdentByte(text[end])) {
+			return at
+		}
+		from = at + 1
+	}
+	return -1
+}
+
+// containsIdent reports whether name occurs in text as a whole identifier.
+func containsIdent(text, name string) bool {
+	return nextIdent(text, name, 0) >= 0
+}
+
+// isSelectorByte reports whether a name preceded by c is reached through a selector or is
+// the tail of a longer identifier, and so does not resolve to the bare name.
+func isSelectorByte(c byte) bool {
+	return isIdentByte(c) || c == '.'
+}
+
+// isPathByte extends isSelectorByte with ':' for Rust, where other::f names a different item.
+func isPathByte(c byte) bool {
+	return isSelectorByte(c) || c == ':'
 }
 
 func isIdentByte(c byte) bool {
@@ -432,39 +467,74 @@ func isNativeDeclaratorName(name string) bool {
 // Python
 // ---------------------------------------------------------------------------
 
+// pythonFunc is one open def, or one open class body when class is set. A class is kept on
+// the same stack only so a def knows whether it is a method: it is never measured.
 type pythonFunc struct {
 	name   string
 	start  int
 	indent int
+	class  bool
+	// owner is the class the def sits directly in, empty for a plain function.
+	owner string
+	// sigOpen holds until the header's closing colon, which may be lines below the def.
+	sigOpen bool
+	sig     string
+	calls   selfCalls
+}
+
+// pythonScanner carries the cross-line state of one Python file.
+type pythonScanner struct {
+	rel      string
+	rep      *ScanReport
+	maxLOC   int
+	stripper literalStripper
+	open     []pythonFunc
+	lastCode int
+	// depth is the bracket depth left open by earlier lines.
+	depth int
+	// abort and joiner place each line against the HISS-07 abort policy.
+	abort  pythonAbortScope
+	joiner pythonLineJoiner
 }
 
 // scanPythonLines tracks a stack of open functions so that nested defs do not end
 // their enclosing function, and ends every function at its last code line so that
 // trailing blank and comment lines are not counted.
 func scanPythonLines(lines []string, rel string, rep *ScanReport, opts ScanOptions) {
-	var open []pythonFunc
-	lastCode := 0
-	stripper := &literalStripper{syn: pythonSyntax}
-	abort := pythonAbortScope{file: isPythonTestPath(rel) || isPythonEntryFile(rel)}
-	var joiner pythonLineJoiner
+	s := &pythonScanner{rel: rel, rep: rep, maxLOC: opts.MaxFuncLOC, stripper: literalStripper{syn: pythonSyntax},
+		abort: pythonAbortScope{file: isPythonTestPath(rel) || isPythonEntryFile(rel)}}
 	for idx, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		code := stripper.strip(line)
-		scanPythonLineInvariants(code, rel, idx+1, rep)
-		if !abort.observe(line, code, joiner.continues(code)) {
-			checkPythonAbort(code, rel, idx+1, rep)
-		}
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		indent := lineIndent(line)
-		open = closePythonFuncs(open, indent, lastCode, rel, rep, opts.MaxFuncLOC)
-		lastCode = idx + 1
-		if isPythonDef(trimmed) && len(open) < maxPythonNesting {
-			open = append(open, pythonFunc{name: extractPythonFuncName(trimmed), start: idx + 1, indent: indent})
-		}
+		s.observe(idx, line)
 	}
-	closePythonFuncs(open, -1, lastCode, rel, rep, opts.MaxFuncLOC)
+	s.close(-1)
+}
+
+// observe feeds one physical line.
+//
+// A line that starts inside an open bracket or a triple-quoted string continues the statement
+// above it, so its indentation says nothing about which function it belongs to. Reading it as
+// a dedent closed a black-formatted function at its `) -> T:` line and a function holding a
+// column-0 multi-line string at that string, leaving the rest of the body in no function.
+func (s *pythonScanner) observe(idx int, line string) {
+	continued := s.stripper.fence != "" || s.depth > 0
+	code := s.stripper.strip(line)
+	scanPythonLineInvariants(code, s.rel, idx+1, s.rep)
+	if !s.abort.observe(line, code, s.joiner.continues(code)) {
+		checkPythonAbort(code, s.rel, idx+1, s.rep)
+	}
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return
+	}
+	colon, depth := pythonBrackets(code, s.depth)
+	s.depth = depth
+	if !continued {
+		indent := lineIndent(line)
+		s.close(indent)
+		s.openScope(trimmed, idx, indent)
+	}
+	s.lastCode = idx + 1
+	s.observeCalls(code, colon, idx+1)
 }
 
 // lineIndent returns the width of line's leading spaces and tabs.
@@ -546,18 +616,83 @@ func isPythonDef(trimmed string) bool {
 	return strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "async def ")
 }
 
-// closePythonFuncs pops every open function at or deeper than indent (a code line at
-// that indent ends them) and checks its length up to lastCode.
-func closePythonFuncs(open []pythonFunc, indent, lastCode int, rel string, rep *ScanReport, maxLOC int) []pythonFunc {
-	for i := 0; i < maxPythonNesting && len(open) > 0; i++ {
-		top := open[len(open)-1]
+// openScope pushes the def or class this line opens, if any. A nested def binds its name in
+// every enclosing function, so a bare call to that name there reaches the nested def.
+func (s *pythonScanner) openScope(trimmed string, idx, indent int) {
+	isClass := strings.HasPrefix(trimmed, "class ")
+	if !isClass && !isPythonDef(trimmed) {
+		return
+	}
+	name := leadingIdent(strings.TrimPrefix(trimmed, "class "))
+	if !isClass {
+		name = extractPythonFuncName(trimmed)
+	}
+	for i := 0; i < len(s.open); i++ {
+		if s.open[i].name == name {
+			s.open[i].calls.bound = true
+		}
+	}
+	if len(s.open) >= maxPythonNesting {
+		return
+	}
+	owner := ""
+	if n := len(s.open); n > 0 && s.open[n-1].class {
+		owner = s.open[n-1].name
+	}
+	s.open = append(s.open, pythonFunc{name: name, start: idx + 1, indent: indent, class: isClass,
+		owner: owner, sigOpen: !isClass, calls: selfCalls{name: name}})
+}
+
+// observeCalls finishes an open def header and hands the body text to every open function.
+func (s *pythonScanner) observeCalls(code string, colon, lineNum int) {
+	body := code
+	if n := len(s.open); n > 0 && s.open[n-1].sigOpen {
+		top := &s.open[n-1]
+		if colon < 0 {
+			top.sig = appendSignature(top.sig, code)
+			return
+		}
+		top.sig = appendSignature(top.sig, code[:colon])
+		s.closeSignature(top)
+		body = code[colon+1:]
+	}
+	for i := 0; i < len(s.open); i++ {
+		if !s.open[i].class {
+			s.open[i].calls.observe(body, lineNum)
+		}
+	}
+}
+
+// closeSignature decides how the def is reached from its own body, and treats a parameter
+// sharing an open function's name as a local that shadows it.
+func (s *pythonScanner) closeSignature(top *pythonFunc) {
+	top.sigOpen = false
+	params := ""
+	if open := strings.IndexByte(top.sig, '('); open >= 0 {
+		params = top.sig[open+1:]
+	}
+	pythonCallees(&top.calls, top.owner, leadingIdent(params))
+	for i := 0; i < len(s.open); i++ {
+		if containsIdent(params, s.open[i].name) {
+			s.open[i].calls.bound = true
+		}
+	}
+}
+
+// close pops every open scope at or deeper than indent (a code line at that indent ends
+// them), checks each function's length up to the last code line, and decides its recursion.
+func (s *pythonScanner) close(indent int) {
+	for i := 0; i < maxPythonNesting && len(s.open) > 0; i++ {
+		top := s.open[len(s.open)-1]
 		if top.indent < indent {
 			break
 		}
-		checkPythonFuncLen(top.start, lastCode, top.name, rel, rep, maxLOC)
-		open = open[:len(open)-1]
+		if !top.class {
+			checkPythonFuncLen(top.start, s.lastCode, top.name, s.rel, s.rep, s.maxLOC)
+			top.calls.report(s.rep, s.rel)
+		}
+		s.open = s.open[:len(s.open)-1]
 	}
-	return open
 }
 
 // scanPythonLineInvariants inspects one line with literals and comments stripped.
@@ -609,6 +744,10 @@ type rustScanner struct {
 	strip literalStripper
 	// entry reports that fn follows the top-level fn main, the binary entry point.
 	entry bool
+	// calls follows the function fn has open for HISS-01, and blocks the impl and trait
+	// bodies around it.
+	calls  rustSelfCalls
+	blocks rustBlockScope
 }
 
 func scanRustLines(lines []string, rel string, rep *ScanReport, opts ScanOptions) {
@@ -618,6 +757,7 @@ func scanRustLines(lines []string, rel string, rep *ScanReport, opts ScanOptions
 		fn:    braceTracker{rel: rel, rep: rep, maxLOC: opts.MaxFuncLOC},
 		test:  rustTestScope{file: isRustTestPath(rel), block: braceTracker{scopeOnly: true}},
 		strip: literalStripper{syn: cLikeSyntax},
+		calls: rustSelfCalls{rel: rel, rep: rep},
 	}
 	for idx := range lines {
 		s.scanLine(lines, idx)
@@ -641,7 +781,11 @@ func (s *rustScanner) scanLine(lines []string, idx int) {
 		// same name inside its impl block.
 		s.entry = name == "main" && lineIndent(line) == 0
 	}
+	wasOpen := s.fn.inFunc
 	s.fn.observe(code, strings.TrimSpace(line), idx, isHeader, name)
+	s.calls.observe(rustLine{code: code, num: idx + 1, header: isHeader, name: name, inImpl: s.blocks.inImpl(),
+		entered: !wasOpen && s.fn.start == idx+1, open: s.fn.inFunc, pending: s.fn.pending})
+	s.blocks.observe(code)
 	// The header line of fn main is part of it even when the body closes on that same line
 	// (`fn main() { std::process::exit(run()) }`), where the tracker is done before and after.
 	scope.entry = scope.entry || s.inEntry() || (isHeader && s.entry)
