@@ -23,8 +23,6 @@ import (
 const (
 	// DefaultRemoteName is the rclone crypt remote init creates.
 	DefaultRemoteName = "praetor-sync"
-	// DefaultBase is the folder the crypt remote encrypts into: praetor-sync/ at the Drive root.
-	DefaultBase = "gdrive:praetor-sync"
 	// DefaultRemote is where push, pull and ls read and write.
 	DefaultRemote = DefaultRemoteName + ":"
 	// keyBytes is the length of each generated crypt key before encoding.
@@ -38,7 +36,7 @@ var ErrRemoteExists = errors.New("devsync: rclone remote already exists")
 type InitOptions struct {
 	// RemoteName is the crypt remote to create; empty selects DefaultRemoteName.
 	RemoteName string
-	// Base is the remote folder the crypt remote encrypts into; empty selects DefaultBase.
+	// Base is the remote folder the crypt remote encrypts into; required.
 	Base   string
 	Rclone Rclone
 }
@@ -47,7 +45,10 @@ type InitOptions struct {
 // rclone's own "config create --obscure". It refuses to replace a remote of the same name.
 func Init(ctx context.Context, opts InitOptions) error {
 	name := defaultString(opts.RemoteName, DefaultRemoteName)
-	base := defaultString(opts.Base, DefaultBase)
+	if strings.TrimSpace(opts.Base) == "" {
+		return errors.New("devsync init: --base required: name your rclone remote folder")
+	}
+	base := strings.TrimSpace(opts.Base)
 	if err := validateRemoteName(name); err != nil {
 		return err
 	}

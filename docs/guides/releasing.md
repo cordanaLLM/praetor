@@ -183,7 +183,7 @@ praetorctl provenance --checksums dist/checksums.txt --out provenance.json
 | `--checksums` | none | sha256sum manifest such as GoReleaser's `checksums.txt`; every listed file, resolved beside the manifest, becomes a subject digested from its bytes, and each line's digest is a cross-check like `--digest` |
 | `--artifact` | base name of `--file` | Subject name |
 | `--digest` | none | Expected SHA-256 (64 lowercase hex characters); the run fails unless `--file` hashes to it |
-| `--builder` | `ghcr.io/cordanallm/builder` | Builder ID recorded in the predicate |
+| `--builder` | `$GITHUB_SERVER_URL/$GITHUB_WORKFLOW_REF` in GitHub Actions; required elsewhere | Builder ID recorded in the predicate |
 | `--out` | stdout | Output file |
 
 The subject digest always comes from the file's bytes, never from `--digest`, so a
@@ -191,6 +191,7 @@ statement cannot name a digest nobody computed. The run is refused when:
 
 - `--file` is missing, including when `--digest` is given alone, unless `--checksums`
   names the subjects; `--checksums` beside `--file`, `--artifact` or `--digest`;
+- `--builder` is missing outside GitHub Actions, or blank;
 - a `--checksums` line is not `<sha256>  <name>` or `<sha256> *<name>`, names a path
   outside the manifest's directory, or lists a file that hashes to anything else;
 - the file, or any file the manifest lists, is empty, larger than 2 GiB
@@ -199,7 +200,9 @@ statement cannot name a digest nobody computed. The run is refused when:
 - `--digest` is malformed or differs from the computed digest. The error names the
   computed digest.
 
-Every run prints an `UNSIGNED` warning on stderr, so stdout stays parseable JSON, and the
+Every statement records the `buildDefinition.buildType`
+`https://cordanallm.github.io/praetor/slsa/build/v1` (`supplychain.DefaultBuildType`). Every
+run prints an `UNSIGNED` warning on stderr, so stdout stays parseable JSON, and the
 `--out` summary line calls the statement unsigned. The statement itself holds exactly the
 four in-toto v1 [Statement](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md)
 fields, `_type`, `subject`, `predicateType` and `predicate`, and each subject only `name`

@@ -21,6 +21,9 @@ func provenanceArtifact(t *testing.T, content string) (path, digest string) {
 }
 
 func TestRunProvenance_Positive_SubjectDigestFromFile(t *testing.T) {
+	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+	t.Setenv("GITHUB_WORKFLOW_REF", "example.com/acme/praetor/.github/workflows/release.yml@refs/tags/v1.0.0")
+
 	artifact, want := provenanceArtifact(t, "built binary\n")
 
 	stdout, err := captureStdout(t, func() error { return runProvenance([]string{"-file", artifact}) })
@@ -33,6 +36,14 @@ func TestRunProvenance_Positive_SubjectDigestFromFile(t *testing.T) {
 	}
 	if stmt.Subject[0].Digest["sha256"] != want || stmt.Subject[0].Name != "praetorctl" {
 		t.Errorf("subject = %+v, want praetorctl sha256 %s", stmt.Subject, want)
+	}
+	const wantBuilder = "https://github.com/example.com/acme/praetor/.github/workflows/release.yml@refs/tags/v1.0.0"
+	if stmt.Predicate.RunDetails.Builder.ID != wantBuilder {
+		t.Errorf("builder = %q, want %q", stmt.Predicate.RunDetails.Builder.ID, wantBuilder)
+	}
+	const wantBuildType = "https://cordanallm.github.io/praetor/slsa/build/v1"
+	if stmt.Predicate.BuildDefinition.BuildType != wantBuildType {
+		t.Errorf("buildType = %q, want %q", stmt.Predicate.BuildDefinition.BuildType, wantBuildType)
 	}
 	if err := supplychain.CheckInTotoStatement([]byte(stdout)); err != nil {
 		t.Errorf("stdout is not a strict in-toto v1 statement: %v", err)
@@ -65,7 +76,7 @@ func TestRunProvenance_Negative_DigestAloneOrMismatchRefused(t *testing.T) {
 		t.Errorf("-digest without -file must be refused, got %v", err)
 	}
 	out := filepath.Join(t.TempDir(), "provenance.json")
-	err := runProvenance([]string{"-file", artifact, "-digest", stale, "-out", out})
+	err := runProvenance([]string{"-file", artifact, "-digest", stale, "-builder", "example.com/acme/builder", "-out", out})
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("mismatching -digest must be refused naming the computed digest, got %v", err)
 	}
@@ -76,7 +87,7 @@ func TestRunProvenance_Negative_DigestAloneOrMismatchRefused(t *testing.T) {
 
 func TestRunProvenance_Boundary_EmptyArtifactRefused(t *testing.T) {
 	artifact, _ := provenanceArtifact(t, "")
-	if err := runProvenance([]string{"-file", artifact}); err == nil || !strings.Contains(err.Error(), "empty") {
+	if err := runProvenance([]string{"-file", artifact, "-builder", "example.com/acme/builder"}); err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Errorf("zero-byte artifact must be refused, got %v", err)
 	}
 }
@@ -137,6 +148,9 @@ func TestRunProvenance_Positive_ChecksumsCoverEveryArchive(t *testing.T) {
 // manifest, a malformed one and a line whose file no longer matches it all fail before any
 // statement is written.
 func TestRunProvenance_Negative_ChecksumsRefusals(t *testing.T) {
+	// The builder resolves from the workflow identity, so each refusal below is the manifest's.
+	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+	t.Setenv("GITHUB_WORKFLOW_REF", "example.com/acme/praetor/.github/workflows/release.yml@refs/tags/v1.0.0")
 	order := []string{"a.tar.gz"}
 	good, digests := releaseDist(t, map[string]string{"a.tar.gz": "archive\n"}, order)
 	stale := writeFixtureFile(t, filepath.Dir(good), "stale.txt", strings.Repeat("0", 64)+"  a.tar.gz\n")
@@ -163,5 +177,53 @@ func TestRunProvenance_Negative_ChecksumsRefusals(t *testing.T) {
 				t.Fatalf("a statement was written despite the error: %v", statErr)
 			}
 		})
+	}
+}
+
+func TestRunProvenance_BuilderResolution_PNB(t *testing.T) {
+	artifact, _ := provenanceArtifact(t, "binary content\n")
+
+	// 1. builder env set -> derived
+	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+	t.Setenv("GITHUB_WORKFLOW_REF", "example.com/acme/repo/.github/workflows/build.yml@refs/heads/main")
+	got, err := resolveBuilder("")
+	if err != nil {
+		t.Fatalf("resolveBuilder with env set: %v", err)
+	}
+	const wantDerived = "https://github.com/example.com/acme/repo/.github/workflows/build.yml@refs/heads/main"
+	if got != wantDerived {
+		t.Errorf("resolveBuilder() = %q, want %q", got, wantDerived)
+	}
+
+	// 2. unset+empty flag -> error
+	t.Setenv("GITHUB_SERVER_URL", "")
+	t.Setenv("GITHUB_WORKFLOW_REF", "")
+	if _, err := resolveBuilder(""); err == nil || !strings.Contains(err.Error(), "-builder is required outside GitHub Actions") {
+		t.Errorf("resolveBuilder with unset env and empty flag: want the required-flag error, got %v", err)
+	}
+	if err := runProvenance([]string{"-file", artifact}); err == nil || !strings.Contains(err.Error(), "-builder is required outside GitHub Actions") {
+		t.Errorf("runProvenance with unset env and no flag: want error, got %v", err)
+	}
+	if err := runProvenance([]string{"-file", artifact, "-builder", ""}); err == nil || !strings.Contains(err.Error(), "-builder is required outside GitHub Actions") {
+		t.Errorf("runProvenance with unset env and empty flag: want error, got %v", err)
+	}
+
+	// 3. flag wins
+	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+	t.Setenv("GITHUB_WORKFLOW_REF", "example.com/acme/repo/.github/workflows/build.yml@refs/heads/main")
+	got, err = resolveBuilder("explicit-builder")
+	if err != nil {
+		t.Fatalf("resolveBuilder with explicit flag: %v", err)
+	}
+	if got != "explicit-builder" {
+		t.Errorf("resolveBuilder flag wins: got %q, want explicit-builder", got)
+	}
+
+	// 4. whitespace flag -> error
+	if _, err := resolveBuilder("   "); err == nil || !strings.Contains(err.Error(), "-builder") {
+		t.Errorf("resolveBuilder with whitespace flag: want error, got %v", err)
+	}
+	if err := runProvenance([]string{"-file", artifact, "-builder", "   "}); err == nil || !strings.Contains(err.Error(), "-builder") {
+		t.Errorf("runProvenance with whitespace flag: want error, got %v", err)
 	}
 }

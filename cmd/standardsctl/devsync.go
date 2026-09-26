@@ -51,7 +51,7 @@ func printDevsyncUsage() {
 	fmt.Println("Usage: praetorctl devsync <subcommand> [arguments]")
 	fmt.Println("\nCopies project folders to Google Drive through rclone and back (development stopgap).")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  init [--remote-name=praetor-sync] [--base=gdrive:praetor-sync] [--rclone-config=path]")
+	fmt.Println("  init --base=<remote:folder> [--remote-name=praetor-sync] [--rclone-config=path]")
 	fmt.Println("  push [--dev=<home>/dev] [--remote=praetor-sync:] [--host=<hostname>] [--dry-run]")
 	fmt.Println("       [--max-archive-size=2GiB] [--rclone-config=path]")
 	fmt.Println("  pull --host=<host> [--remote=praetor-sync:] [--into=<user data dir>/praetor/devsync] [--rclone-config=path]")
@@ -75,7 +75,7 @@ func parseDevsyncFlags(fs *flag.FlagSet, args []string) error {
 func runDevsyncInit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("devsync init", flag.ContinueOnError)
 	name := fs.String("remote-name", devsync.DefaultRemoteName, "rclone crypt remote to create")
-	base := fs.String("base", devsync.DefaultBase, "remote folder the crypt remote encrypts into")
+	base := fs.String("base", "", "remote folder the crypt remote encrypts into (required, e.g. remote:folder)")
 	config := fs.String("rclone-config", "", "rclone config file (default: rclone's own)")
 	if err := parseDevsyncFlags(fs, args); err != nil {
 		return err

@@ -27,7 +27,7 @@ func writeArtifact(t *testing.T, name string, content []byte) (path, digest stri
 func TestGenerateSLSAProvenance_Positive_DigestFromArtifactBytes(t *testing.T) {
 	path, want := writeArtifact(t, "praetorctl-linux-amd64", []byte("release binary bytes\n"))
 
-	stmt, err := GenerateSLSAProvenance(t.Context(), ProvenanceRequest{ArtifactPath: path, BuilderID: "ghcr.io/cordanallm/builder"})
+	stmt, err := GenerateSLSAProvenance(t.Context(), ProvenanceRequest{ArtifactPath: path, BuilderID: "example.com/acme/builder"})
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -36,6 +36,13 @@ func TestGenerateSLSAProvenance_Positive_DigestFromArtifactBytes(t *testing.T) {
 	}
 	if stmt.Subject[0].Name != "praetorctl-linux-amd64" {
 		t.Errorf("subject name should default to the file's base name, got %q", stmt.Subject[0].Name)
+	}
+	const wantBuildType = "https://cordanallm.github.io/praetor/slsa/build/v1"
+	if DefaultBuildType != wantBuildType {
+		t.Errorf("DefaultBuildType = %q, want %q", DefaultBuildType, wantBuildType)
+	}
+	if stmt.Predicate.BuildDefinition.BuildType != wantBuildType {
+		t.Errorf("BuildType = %q, want %q", stmt.Predicate.BuildDefinition.BuildType, wantBuildType)
 	}
 
 	named, err := GenerateSLSAProvenance(t.Context(), ProvenanceRequest{ArtifactPath: path, ArtifactName: "praetorctl", BuilderID: "b", ExpectedSHA256: want})

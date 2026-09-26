@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -101,7 +102,7 @@ func parseProvenanceFlags(args []string) (provenanceFlags, error) {
 	fs := flag.NewFlagSet("provenance", flag.ContinueOnError)
 	fs.StringVar(&f.file, "file", "", "Artifact file whose bytes the subject digest is computed from (required unless -checksums)")
 	fs.StringVar(&f.artifact, "artifact", "", "Subject name (default: base name of -file)")
-	fs.StringVar(&f.builder, "builder", "ghcr.io/cordanallm/builder", "Builder identifier")
+	fs.StringVar(&f.builder, "builder", "", "Builder identifier (default in GitHub Actions: $GITHUB_SERVER_URL/$GITHUB_WORKFLOW_REF; required elsewhere)")
 	fs.StringVar(&f.digest, "digest", "", "Optional expected SHA-256 hex digest; the run fails unless -file hashes to it")
 	fs.StringVar(&f.checksums, "checksums", "",
 		"sha256sum manifest, such as GoReleaser's checksums.txt: every listed file beside it becomes a subject, "+
@@ -117,7 +118,31 @@ func parseProvenanceFlags(args []string) (provenanceFlags, error) {
 		return f, fmt.Errorf("flag -file is required (or -checksums for every file a sha256sum manifest lists): " +
 			"the subject digest is computed from the artifact bytes, and -digest is only a cross-check against them")
 	}
+	builder, err := resolveBuilder(f.builder)
+	if err != nil {
+		return f, err
+	}
+	f.builder = builder
 	return f, nil
+}
+
+// resolveBuilder returns the -builder value, or in GitHub Actions the running workflow's
+// identity ($GITHUB_SERVER_URL/$GITHUB_WORKFLOW_REF). Outside GitHub Actions there is no
+// identity to derive, and no default names someone else's builder, so the flag is required.
+func resolveBuilder(flagValue string) (string, error) {
+	if flagValue != "" {
+		trimmed := strings.TrimSpace(flagValue)
+		if trimmed == "" {
+			return "", fmt.Errorf("flag -builder cannot be blank")
+		}
+		return trimmed, nil
+	}
+	serverURL := strings.TrimSpace(os.Getenv("GITHUB_SERVER_URL"))
+	workflowRef := strings.TrimSpace(os.Getenv("GITHUB_WORKFLOW_REF"))
+	if serverURL != "" && workflowRef != "" {
+		return strings.TrimRight(serverURL, "/") + "/" + strings.TrimLeft(workflowRef, "/"), nil
+	}
+	return "", fmt.Errorf("flag -builder is required outside GitHub Actions (GITHUB_SERVER_URL and GITHUB_WORKFLOW_REF are unset)")
 }
 
 // provenanceStatement builds the statement from the one subject source f names.

@@ -160,3 +160,25 @@ func TestDevsyncCLIListWithRealRclone(t *testing.T) {
 		t.Fatalf("ls of an empty remote = %q, %v", out, err)
 	}
 }
+
+func TestDevsyncCLIInit_BaseRequirement_PNB(t *testing.T) {
+	isolateDevsyncEnv(t)
+
+	// Negative: init without --base -> error naming base required
+	err := runDevsync([]string{"init"})
+	if err == nil || !strings.Contains(err.Error(), "--base required") {
+		t.Fatalf("runDevsync(init) = %v; want error naming --base required", err)
+	}
+
+	// Boundary: init with empty --base -> error
+	err = runDevsync([]string{"init", "--base="})
+	if err == nil || !strings.Contains(err.Error(), "--base required") {
+		t.Fatalf("runDevsync(init --base=) = %v; want error naming --base required", err)
+	}
+
+	// Boundary: init with whitespace --base -> error
+	err = runDevsync([]string{"init", "--base=   "})
+	if err == nil || !strings.Contains(err.Error(), "--base required") {
+		t.Fatalf("runDevsync(init --base='   ') = %v; want error naming --base required", err)
+	}
+}

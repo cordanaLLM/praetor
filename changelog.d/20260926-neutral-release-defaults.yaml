@@ -1,0 +1,3 @@
+type: changed
+title: "Ship no maintainer defaults in provenance, devsync and the Starlight preset. Migration: praetorctl provenance takes --builder, or in GitHub Actions derives it from GITHUB_SERVER_URL/GITHUB_WORKFLOW_REF, instead of defaulting to a maintainer builder image; statements record the buildType https://cordanallm.github.io/praetor/slsa/build/v1 instead of https://cordana.ai/slsa/build/v1, so verifiers pinning the old buildType must update it; praetorctl devsync init requires --base=<remote:folder> instead of defaulting to a folder in a Google Drive remote; the Starlight preset package is named praetor-docs-preset-starlight."
+breaking: true

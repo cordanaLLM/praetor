@@ -1,5 +1,5 @@
 {
-  "name": "@cordana/docs-preset-starlight",
+  "name": "praetor-docs-preset-starlight",
   "version": "1.0.0",
   "description": "Astro Starlight documentation preset with pre-wired Schema.org JSON-LD and Core Web Vitals optimization",
   "type": "module",
