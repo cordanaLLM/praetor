@@ -237,6 +237,25 @@ but no longer defines a pinned archetype's `id:` fails the same way with
 [lock verification outcomes](../adoption.md#lock-verification-outcomes) for the
 full outcome table shared with the CLI.
 
+### Adoption and version-audit parity
+
+`standards_adopt` and `praetorctl adopt` render one outcome and one set of
+governance pillar lines, both derived from the adoption report
+(`AdoptReport.Outcome` and `AdoptReport.Pillars` in `internal/adopt/report.go`).
+A dry run that recorded an error is reported `[INCOMPLETE]`, not
+`[SIMULATED (DRY RUN)]`, and a pillar whose step warned, failed, was declined or
+never ran names that status instead of a success mark. A dry run against a fresh
+repository without `source_root` shows both: the DevContainer pillar reads
+`warned` and the result is `[INCOMPLETE]`.
+
+`standards_version_audit` lists the workflow-action inventory that
+`praetorctl bump audit` prints, rendered by the same
+`bump.FormatActionsInventory`, and counts it in its summary line
+(`TestFormatVersionAuditListsActions` in
+`cmd/standards-mcp/report_renderers_test.go`). The audit queries upstream
+registries, so exercise it through a real call only where network access is
+intended.
+
 ## Retained public dogfood loops
 
 Use the [public dogfooding guide](../dogfooding.md) for the shared CLI/MCP
