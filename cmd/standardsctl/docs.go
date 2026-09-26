@@ -36,6 +36,8 @@ func runDocs(args []string) error {
 		return runDocsAudit(ctx, subArgs)
 	case "lookup":
 		return runDocsLookup(subArgs)
+	case "funding":
+		return runDocsFunding(ctx, subArgs)
 	case "-h", "--help", "help":
 		printDocsUsage()
 		return nil
@@ -51,6 +53,7 @@ func printDocsUsage() {
 	fmt.Println("  sync [path] [--force] [--offline]   Harvest and compress docs for declared dependencies")
 	fmt.Println("  audit [path]                        Audit documentation coverage for declared packages")
 	fmt.Println("  lookup <package> [path]             Retrieve and print distilled documentation")
+	fmt.Println("  funding [path] [--config=f] [--check]  Render funding surfaces from operator configuration")
 }
 
 func runDocsSync(ctx context.Context, args []string) error {

@@ -307,8 +307,10 @@ and at most 4 KiB, and duplicate section titles, routes, authority labels, or
 authority sources fail before rendering.
 
 The catalog does not own funding, badge, or social-link state; those surfaces
-stay operator-configured in `README.md`, `mkdocs.yml`, and
-`.github/FUNDING.yml`. The `Community & Funding` links render from the catalog
+in `README.md`, `mkdocs.yml`, and `.github/FUNDING.yml` render from the
+operator's `.config/operator/funding.yaml` through `praetorctl docs funding`
+(see [operational configuration](operational-configuration.md#funding-example)).
+The `Community & Funding` links render from the catalog
 only because `docs/sponsoring.md` and `docs/monetization.md` are published
 pages. The pull-request gate performs no network requests. Run
 `make docs-lint-test` to replay the valid, drifted, copied-policy, and boundary

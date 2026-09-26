@@ -1,20 +1,2 @@
-# GitHub Funding Configuration for CordanaLLM & Praetor
-
-# GitHub Sponsors usernames
-github: [CordanaLLM]
-
-# Polar.sh integration (Merchant of Record & Issue Bounties)
-polar: CordanaLLM
-
-# Ko-fi integration
-ko_fi: cordana
-
-# Open Collective username
-open_collective: cordanallm
-
-# Custom funding URLs
-custom: [
-  "https://polar.sh/CordanaLLM",
-  "https://ko-fi.com/cordana",
-  "https://github.com/sponsors/CordanaLLM"
-]
+# Rendered by `praetorctl docs funding` from .config/operator/funding.yaml. Do not edit by hand.
+# Not configured: no funding channel is published. Supported keys: github, polar, ko_fi, open_collective, custom.

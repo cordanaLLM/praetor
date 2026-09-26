@@ -2,6 +2,8 @@
 
 Praetor and the CordanaLLM Ecosystem use **Polar.sh** as Merchant of Record (MoR) to link transparent feature bounties, issue funding, and contributor reward splits directly to our GitHub roadmap.
 
+> Funding accounts are operator configuration. The README badges, `.github/FUNDING.yml`, and this site's social links and bounty announcement list only the accounts named in `.config/operator/funding.yaml`; see [operational configuration](guides/operational-configuration.md#funding-example).
+
 ---
 
 ## 🎯 How Polar.sh Rewards Work

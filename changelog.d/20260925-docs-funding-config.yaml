@@ -1,0 +1,3 @@
+type: added
+title: "praetorctl docs funding renders .github/FUNDING.yml, the README funding badges and support section, and the MkDocs bounty announcement and social links from the operator-owned .config/operator/funding.yaml; without it every surface renders empty, so the engine no longer publishes funding links for accounts nobody configured"
+breaking: false
