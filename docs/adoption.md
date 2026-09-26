@@ -97,6 +97,69 @@ jobs:
 
 Comment `/adopt` on any PR to have `cordana-standards[bot]` automatically scaffold Praetor governance and commit the baseline.
 
+### Inputs, the binary, and the `report` output
+
+| Input | Reaches | Effect |
+| :-- | :-- | :-- |
+| `path` | `PRAETOR_PATH` | `--path=<value>`, and the `--source`/`--target-dir` of the `compile-context --verify` that follows an adopt run; an empty value is refused before anything runs |
+| `mode` | `PRAETOR_MODE` | selects the subcommand, `adopt` or `dogfood`; any other value is refused |
+| `dry-run` | `PRAETOR_DRY_RUN` | `--dry-run=<value>`; in `dogfood` mode it changes nothing, because `dogfood` applies adoptions only to `--targets` repositories (`testTargetAdoptions` in `internal/dogfood/dogfood.go`) and the action passes none, so the host is audited either way |
+| `force` | `PRAETOR_FORCE` | `--force=<value>`, adopt only |
+| `record-baseline` | `PRAETOR_RECORD_BASELINE` | `--record-baseline=<value>`, adopt only |
+| `go-version` | `actions/setup-go` | the toolchain the step compiles `standardsctl` with; it never reaches `standardsctl`, and it has to satisfy the `go` directive of praetor's `go.mod` |
+
+All five runtime inputs reach the run step as environment variables rather than as expressions
+spliced into its script, so a value carrying a shell metacharacter or a newline is data rather
+than script. `path` and the three booleans are then passed to `standardsctl` as single arguments;
+`mode` is not passed at all, it picks the subcommand. `mode` and the booleans are validated
+first: `mode: Dogfod` is a failure, not a silent `adopt` run. Each boolean is passed as
+`--flag=<value>` rather than added when it is `true`, because `dogfood --dry-run` and
+`adopt --record-baseline` default to true in `standardsctl` — an omitted flag would be an opt-in,
+so `record-baseline: "false"` would have had no effect.
+
+The `standardsctl` that runs is the one the action's own ref carries: the step builds
+`cmd/standardsctl` out of the praetor checkout that `GITHUB_ACTION_PATH` points into, so
+`praetor-adopt@<tag>` and `@main` differ, and `@latest` builds the commit this repository's moving
+`latest` tag points at ([releasing](guides/releasing.md)). `standardsctl` itself is never
+installed from the module proxy.
+
+Outside praetor's own repository, reference the action as
+`cordanaLLM/praetor/.github/actions/praetor-adopt@<ref>`. The directory three levels above the
+action has to declare
+`module github.com/cordanaLLM/praetor` and hold `cmd/standardsctl`, and the step fails before
+anything runs when it does not:
+
+- `uses: ./.github/actions/praetor-adopt` in an adopter repository — that directory is the
+  adopter's own workspace.
+- A copy of the action kept in another repository, such as `acme/ci/...@main` — the ref GitHub
+  resolved names a commit of `acme/ci`, not of praetor. Installing praetor under that name would
+  run a branch tip for `@main`, the newest `v1.x.x` tag for `@v1`, and the newest release for
+  `@latest` ([Go modules reference, version queries](https://go.dev/ref/mod#version-queries)),
+  none of which the caller pinned.
+
+The error names the `uses:` form to switch to.
+
+The `report` output carries the combined output of the run. The step writes it — and, when the
+runner provides `GITHUB_STEP_SUMMARY`, appends it to the job summary — before re-raising the
+command's exit status, and it does so for a refused input as well as for a failed run. Read it
+from the job summary after a failure: whether a composite action's declared output still reaches
+the caller once one of its steps has exited nonzero is not something GitHub documents. The append
+itself is executed by the tests below; the survival of the output is what stays unasserted.
+
+```yaml
+      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@main
+        id: praetor
+        with:
+          mode: dogfood
+          dry-run: "true"
+      - run: echo "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          REPORT: ${{ steps.praetor.outputs.report }}
+```
+
+Everything above is pinned by `internal/forge/adopt_action_test.go`, which executes the action's own
+shell bodies against a stub binary and reads the input defaults out of `action.yml`.
+
 ## Migration: explicit sources for missing lockfiles
 
 Live adoption no longer creates the old placeholder lock. Pass

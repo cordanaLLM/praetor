@@ -1,0 +1,4 @@
+type: security
+title: "`praetor-adopt` takes its inputs through the environment, always writes its `report` output and job summary, and builds `standardsctl` from its own pinned checkout; `record-baseline: false` is now honoured, `mode` and the booleans are validated, and a local or copied action fails instead of installing `@latest`"
+issue: "291"
+breaking: true
