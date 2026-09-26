@@ -358,32 +358,47 @@ func mergeImports3Way(base, ours, theirs map[string]ImportItem) ([]ImportItem, [
 	return merged, conflicts
 }
 
+// resolveImport merges one import path: kept by both sides, it takes the name
+// mergeImportName resolves; deleted by either side, it is dropped; added by one side, it
+// is kept.
 func resolveImport(path string, base, ours, theirs map[string]ImportItem) (*ImportItem, *Conflict) {
-	_, inBase := base[path]
+	b, inBase := base[path]
 	o, inOurs := ours[path]
 	t, inTheirs := theirs[path]
-	if inOurs && inTheirs {
-		if o.Alias == t.Alias {
-			return &o, nil
-		}
-		return nil, &Conflict{
-			Symbol: "import:" + path,
-			Kind:   "import",
-			Reason: fmt.Sprintf("Conflicting import aliases for %s: %q vs %q", path, o.Alias, t.Alias),
-			Ours:   o.Alias,
-			Theirs: t.Alias,
-		}
-	}
-	if inBase {
+	switch {
+	case inOurs && inTheirs:
+		return mergeImportName(path, b, inBase, o, t)
+	case inBase:
 		return nil, nil // Omitted when deleted by either side.
-	}
-	if inOurs {
+	case inOurs:
 		return &o, nil
-	}
-	if inTheirs {
+	case inTheirs:
 		return &t, nil
 	}
 	return nil, nil
+}
+
+// mergeImportName resolves the name an import both sides keep is written under, 3-way: the
+// name both sides agree on, or the one side's where the other kept base's. Comparing ours
+// with theirs alone reported renaming an import on one branch as a conflict with the
+// branch that left it alone. A rename under code the other side added that still uses the
+// old name is caught by the post-merge guard as a type error the merge introduces.
+func mergeImportName(path string, b ImportItem, inBase bool, o, t ImportItem) (*ImportItem, *Conflict) {
+	baseName := absentValue
+	if inBase {
+		baseName = b.Alias
+	}
+	if name, decided := expect3(baseName, o.Alias, t.Alias); decided {
+		return &ImportItem{Path: path, Alias: name}, nil
+	}
+	return nil, &Conflict{
+		Symbol: "import:" + path,
+		Kind:   "import",
+		Reason: fmt.Sprintf("Conflicting import aliases for %s: %q vs %q", path, o.Alias, t.Alias),
+		Ours:   o.Alias,
+		Theirs: t.Alias,
+		Base:   b.Alias,
+	}
 }
 
 // mergeDecls3Way resolves every item key of the three inputs and returns the items to

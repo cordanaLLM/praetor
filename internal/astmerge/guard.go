@@ -39,12 +39,15 @@ var guardPosition = regexp.MustCompile(regexp.QuoteMeta(guardFile) + `:\d+:\d+: 
 // semanticFacts is what the guard compares across base, ours, theirs and the merged file:
 // the value and type of every package-level constant, the kind of every other
 // package-level declaration and method, the order the package-level variable initializers
-// run in, and the type errors.
+// run in, and the type errors. layout and places record where the declarations and the
+// initializers are written (see layoutOf), which orders the initializers each side adds.
 type semanticFacts struct {
 	consts map[string]string
 	decls  map[string]string
 	init   []string
 	errs   map[string]bool
+	layout []layoutEntry
+	places map[string]initPlace
 }
 
 // guardResult re-checks a clean merge before it is reported and turns it into a conflict
@@ -109,6 +112,7 @@ func collectFacts(src string) semanticFacts {
 		facts.record(scope.Lookup(name))
 	}
 	facts.init = initializerKeys(info.InitOrder)
+	facts.layout, facts.places = layoutOf(file, scope, info.InitOrder)
 	return facts
 }
 
@@ -345,7 +349,8 @@ func declConflicts(base, ours, theirs, got semanticFacts) []Conflict {
 // initOrderConflicts reports the first pair of initializers the merged file runs in an
 // order the inputs do not imply: both sides run them in one order, or one side kept
 // base's order and the other changed it. A pair both sides order differently with no base
-// order to decide by is ambiguous and fails closed too.
+// order to decide by is ambiguous and fails closed too, and so is a pair of initializers
+// each side added at the same place (see initPairs.crossAddedInOrder).
 func initOrderConflicts(base, ours, theirs, got semanticFacts) []Conflict {
 	if len(got.init) > maxGuardInitializers {
 		return []Conflict{{
@@ -354,10 +359,13 @@ func initOrderConflicts(base, ours, theirs, got semanticFacts) []Conflict {
 			Reason: fmt.Sprintf("the merged file has %d variable initializers, more than the %d the guard verifies", len(got.init), maxGuardInitializers),
 		}}
 	}
-	b, o, t := initRanks(got.init, base), initRanks(got.init, ours), initRanks(got.init, theirs)
+	pairs := initPairs{
+		base: initRanks(got.init, base), ours: initRanks(got.init, ours), theirs: initRanks(got.init, theirs),
+		oursSlot: initSlots(got.init, ours, base, theirs), theirsSlot: initSlots(got.init, theirs, base, ours),
+	}
 	for i := range got.init {
 		for j := i + 1; j < len(got.init); j++ {
-			if pairKeptInOrder(i, j, b, o, t) {
+			if pairs.keptInOrder(i, j) {
 				continue
 			}
 			return []Conflict{{
@@ -387,38 +395,66 @@ func initRanks(merged []string, version semanticFacts) []int {
 	return out
 }
 
-// pairKeptInOrder reports whether running merged initializer i before j is what the inputs
-// imply. A pair only one side holds keeps that side's order: the other side never saw one
-// of the two, so it cannot have meant to reorder them. A pair neither side holds is
-// unconstrained.
-func pairKeptInOrder(i, j int, base, ours, theirs []int) bool {
-	oursHolds := ours[i] >= 0 && ours[j] >= 0
-	theirsHolds := theirs[i] >= 0 && theirs[j] >= 0
-	switch {
-	case oursHolds && theirsHolds:
-		return pairKeptByBoth(i, j, base, ours, theirs)
-	case oursHolds:
-		return ours[i] < ours[j]
-	case theirsHolds:
-		return theirs[i] < theirs[j]
-	}
-	return true
+// initPairs holds, per merged initializer index, its rank in base, ours and theirs (see
+// initRanks) and its slot in each side (see initSlots).
+type initPairs struct {
+	base, ours, theirs   []int
+	oursSlot, theirsSlot []string
 }
 
-// pairKeptByBoth resolves a pair both sides hold 3-way: the order they agree on, or the
-// order of the side that changed base's. Differing orders with no base order to decide by
-// are ambiguous.
-func pairKeptByBoth(i, j int, base, ours, theirs []int) bool {
-	oursFirst, theirsFirst := ours[i] < ours[j], theirs[i] < theirs[j]
+// keptInOrder reports whether running merged initializer i before j is what the inputs
+// imply. A pair only one side holds keeps that side's order: the other side never saw one
+// of the two, so it cannot have meant to reorder them. A pair neither side holds is
+// constrained only when each side added one of the two (see crossAddedInOrder).
+func (p initPairs) keptInOrder(i, j int) bool {
+	oursHolds := p.ours[i] >= 0 && p.ours[j] >= 0
+	theirsHolds := p.theirs[i] >= 0 && p.theirs[j] >= 0
+	switch {
+	case oursHolds && theirsHolds:
+		return p.keptByBoth(i, j)
+	case oursHolds:
+		return p.ours[i] < p.ours[j]
+	case theirsHolds:
+		return p.theirs[i] < p.theirs[j]
+	}
+	return p.crossAddedInOrder(i, j)
+}
+
+// keptByBoth resolves a pair both sides hold 3-way: the order they agree on, or the order
+// of the side that changed base's. Differing orders with no base order to decide by are
+// ambiguous.
+func (p initPairs) keptByBoth(i, j int) bool {
+	oursFirst, theirsFirst := p.ours[i] < p.ours[j], p.theirs[i] < p.theirs[j]
 	if oursFirst == theirsFirst {
 		return oursFirst
 	}
-	if base[i] < 0 || base[j] < 0 {
+	if p.base[i] < 0 || p.base[j] < 0 {
 		return false
 	}
-	baseFirst := base[i] < base[j]
+	baseFirst := p.base[i] < p.base[j]
 	if oursFirst == baseFirst {
 		return theirsFirst
 	}
 	return oursFirst
+}
+
+// crossAddedInOrder fails a pair of initializers one side added each when both sides
+// added theirs at the same slot (see anchors.slot), such as a variable each side appends
+// at the end of the file: no input implies an order for the two, and the merge used to run
+// ours first, which no side wrote. The pair fails closed as it does inside a parenthesized
+// var block. Initializers added at different slots stand where their sides put them.
+func (p initPairs) crossAddedInOrder(i, j int) bool {
+	switch {
+	case p.addedBy(p.ours, p.theirs, i) && p.addedBy(p.theirs, p.ours, j):
+		return p.oursSlot[i] != p.theirsSlot[j]
+	case p.addedBy(p.theirs, p.ours, i) && p.addedBy(p.ours, p.theirs, j):
+		return p.theirsSlot[i] != p.oursSlot[j]
+	}
+	return true
+}
+
+// addedBy reports whether merged initializer k is one side's addition: held by that side
+// alone, not by base or the other side.
+func (p initPairs) addedBy(side, other []int, k int) bool {
+	return side[k] >= 0 && other[k] < 0 && p.base[k] < 0
 }
