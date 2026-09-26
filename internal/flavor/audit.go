@@ -1,11 +1,13 @@
 package flavor
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 
@@ -129,8 +131,29 @@ func resolveAuditTarget(repoPath string) (string, error) {
 	return detected, nil
 }
 
-// AuditFlavor audits a repository against a target flavor (or auto-detected if empty/"auto").
+// DefaultAuditTimeout bounds AuditFlavor, whose callers bring no deadline of their own
+// (HISS-02). An audit reads a few dozen small files and resolves a handful of binaries.
+const DefaultAuditTimeout = 60 * time.Second
+
+// AuditFlavor audits a repository against a target flavor (or auto-detected if empty/"auto"),
+// bounded by DefaultAuditTimeout. Callers that carry a context use AuditFlavorContext.
 func AuditFlavor(repoPath string, targetFlavor string) (*FlavorAuditReport, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultAuditTimeout)
+	defer cancel()
+	return AuditFlavorContext(ctx, repoPath, targetFlavor)
+}
+
+// AuditFlavorContext audits a repository against a target flavor under ctx. Every template
+// and setting read and every toolchain lookup is preceded by a ctx check, so a cancelled or
+// expired context stops the audit with ctx's error instead of finishing a verdict nobody is
+// waiting for; the gate's flavor stage used to check ctx only before and after the whole audit.
+func AuditFlavorContext(ctx context.Context, repoPath string, targetFlavor string) (*FlavorAuditReport, error) {
+	if ctx == nil {
+		return nil, errors.New("audit flavor: context cannot be nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("audit flavor cancelled: %w", err)
+	}
 	if targetFlavor == "" || targetFlavor == "auto" {
 		resolved, err := resolveAuditTarget(repoPath)
 		if err != nil {
@@ -149,9 +172,15 @@ func AuditFlavor(repoPath string, targetFlavor string) (*FlavorAuditReport, erro
 		RepoPath: repoPath,
 	}
 
-	auditTemplates(repoPath, flv.RequiredTemplates(), report)
-	auditSettings(repoPath, flv.RequiredSettings(), report)
-	auditToolchains(repoPath, flv.RequiredToolchains(), report)
+	if err := auditTemplates(ctx, repoPath, flv.RequiredTemplates(), report); err != nil {
+		return nil, err
+	}
+	if err := auditSettings(ctx, repoPath, flv.RequiredSettings(), report); err != nil {
+		return nil, err
+	}
+	if err := auditToolchains(ctx, repoPath, flv.RequiredToolchains(), report); err != nil {
+		return nil, err
+	}
 
 	report.Score = conformanceScore(report)
 	report.Passed = report.Score >= passingScore && len(report.MissingTemplates) == 0
@@ -180,15 +209,27 @@ func conformanceScore(report *FlavorAuditReport) float64 {
 	return (float64(present) / float64(total)) * 100.0
 }
 
-func auditTemplates(repoPath string, templates []TemplateItem, report *FlavorAuditReport) {
+// auditCancelled reports ctx's error, naming what the audit was checking when it stopped.
+func auditCancelled(ctx context.Context, what, path string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("audit flavor cancelled before %s %s: %w", what, path, err)
+	}
+	return nil
+}
+
+func auditTemplates(ctx context.Context, repoPath string, templates []TemplateItem, report *FlavorAuditReport) error {
 	report.TemplatesTotal = len(templates)
 	for _, t := range templates {
+		if err := auditCancelled(ctx, "template", t.Path); err != nil {
+			return err
+		}
 		if TemplateSatisfied(repoPath, t) {
 			report.TemplatesPresent++
 		} else {
 			report.MissingTemplates = append(report.MissingTemplates, t)
 		}
 	}
+	return nil
 }
 
 // TemplateSatisfied reports whether the repository carries the template under its
@@ -206,15 +247,19 @@ func TemplateSatisfied(repoPath string, t TemplateItem) bool {
 	return false
 }
 
-func auditSettings(repoPath string, settings []SettingItem, report *FlavorAuditReport) {
+func auditSettings(ctx context.Context, repoPath string, settings []SettingItem, report *FlavorAuditReport) error {
 	report.SettingsTotal = len(settings)
 	for _, s := range settings {
+		if err := auditCancelled(ctx, "setting", s.Path); err != nil {
+			return err
+		}
 		if SettingSatisfied(repoPath, s) {
 			report.SettingsValid++
 		} else {
 			report.MissingSettings = append(report.MissingSettings, s)
 		}
 	}
+	return nil
 }
 
 // maxSettingBytes bounds a setting file read (HISS-02). A configuration file larger than
@@ -243,15 +288,19 @@ func SettingSatisfied(repoPath string, s SettingItem) bool {
 	return s.Validator(content)
 }
 
-func auditToolchains(repoPath string, toolchains []ToolchainItem, report *FlavorAuditReport) {
+func auditToolchains(ctx context.Context, repoPath string, toolchains []ToolchainItem, report *FlavorAuditReport) error {
 	report.ToolchainsTotal = len(toolchains)
 	for _, tc := range toolchains {
+		if err := auditCancelled(ctx, "toolchain", tc.Binary); err != nil {
+			return err
+		}
 		if toolchainAvailable(repoPath, tc) {
 			report.ToolchainsAvailable++
 		} else {
 			report.MissingToolchains = append(report.MissingToolchains, tc)
 		}
 	}
+	return nil
 }
 
 func toolchainAvailable(repoPath string, tc ToolchainItem) bool {

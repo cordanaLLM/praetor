@@ -3,6 +3,7 @@ package gating
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -220,16 +221,29 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+// wantSkip asserts that a stage reported a skip with the given verdict and returns its reason.
+func wantSkip(t *testing.T, err error, want StageStatus) string {
+	t.Helper()
+	skip, ok := asStageSkip(err)
+	if !ok {
+		t.Fatalf("expected a %s verdict, got error %v", want, err)
+	}
+	if skip.status != want {
+		t.Fatalf("expected a %s verdict, got %s (%s)", want, skip.status, skip.reason)
+	}
+	return skip.reason
+}
+
 func TestExecuteStage_3D(t *testing.T) {
 	cfg, _ := newTestConfig(t, t.TempDir(), false)
 	ctx := context.Background()
 
 	// Positive: a passing stage records its message.
-	pass := stage{"Pass", func(context.Context, *stageConfig) (string, error) { return "skipped: no go.mod", nil }}
+	pass := stage{"Pass", func(context.Context, *stageConfig) (string, error) { return "0 infractions", nil }}
 	if err := executeStage(ctx, pass, cfg); err != nil {
 		t.Fatalf("passing stage returned %v", err)
 	}
-	if got := cfg.rep.Stages[0]; !got.Passed || got.Message != "skipped: no go.mod" {
+	if got := cfg.rep.Stages[0]; got.Status != StagePassed || got.Message != "0 infractions" {
 		t.Errorf("unexpected stage result: %+v", got)
 	}
 
@@ -239,7 +253,7 @@ func TestExecuteStage_3D(t *testing.T) {
 	if err := executeStage(ctx, fail, cfg); !errors.Is(err, boom) {
 		t.Fatalf("expected the stage error to propagate, got %v", err)
 	}
-	if got := cfg.rep.Stages[1]; got.Passed || got.Message != "boom" {
+	if got := cfg.rep.Stages[1]; got.Status != StageFailed || !got.Failed() || got.Message != "boom" {
 		t.Errorf("unexpected failing stage result: %+v", got)
 	}
 
@@ -248,8 +262,43 @@ func TestExecuteStage_3D(t *testing.T) {
 	if err := executeStage(ctx, quiet, cfg); err != nil {
 		t.Fatalf("quiet stage returned %v", err)
 	}
-	if got := cfg.rep.Stages[2]; !got.Passed || got.Message != "" {
+	if got := cfg.rep.Stages[2]; got.Status != StagePassed || got.Message != "" {
 		t.Errorf("unexpected quiet stage result: %+v", got)
+	}
+}
+
+// A stage that ran nothing is recorded as skipped or not applicable, never as passed, and it
+// does not stop the pipeline. Before StageStatus both of these recorded Passed=true.
+func TestExecuteStage_SkipVerdicts(t *testing.T) {
+	cfg, _ := newTestConfig(t, t.TempDir(), false)
+	ctx := context.Background()
+
+	cases := []struct {
+		fn     func(context.Context, *stageConfig) (string, error)
+		status StageStatus
+		reason string
+	}{
+		{func(context.Context, *stageConfig) (string, error) { return "", skipped("dry run: nothing ran") }, StageSkipped, "dry run: nothing ran"},
+		{func(context.Context, *stageConfig) (string, error) { return "", notApplicable("no go.mod") }, StageNotApplicable, "no go.mod"},
+	}
+	for i, tc := range cases {
+		if err := executeStage(ctx, stage{"Skip", tc.fn}, cfg); err != nil {
+			t.Fatalf("case %d: a skip must not stop the pipeline, got %v", i, err)
+		}
+		got := cfg.rep.Stages[i]
+		if got.Status != tc.status || got.Message != tc.reason || got.Failed() {
+			t.Errorf("case %d: got %+v, want status %s and reason %q", i, got, tc.status, tc.reason)
+		}
+	}
+
+	// Boundary: the verdict reaches the JSON report as a status string, and no passed field
+	// survives to be read as a pass.
+	raw, err := json.Marshal(cfg.rep.Stages[0])
+	if err != nil {
+		t.Fatalf("marshal stage: %v", err)
+	}
+	if !strings.Contains(string(raw), `"status":"skipped"`) || strings.Contains(string(raw), `"passed"`) {
+		t.Errorf("stage JSON must carry the status and no passed bool: %s", raw)
 	}
 }
 
@@ -304,14 +353,104 @@ func TestRunSecurityStage_3D(t *testing.T) {
 		t.Errorf("expected a missing-%s error, got %v", GosecConfigFile, err)
 	}
 
-	// Boundary: a repository without go.mod skips the Go scanners and says so.
+	// Boundary: a repository without go.mod reports the Go scanners not applicable.
 	nonGo, nonGoRecorded := newTestConfig(t, t.TempDir(), false)
-	msg, err := runSecurityStage(ctx, nonGo)
-	if err != nil {
-		t.Fatalf("expected a non-Go repository to skip, got %v", err)
+	_, err := runSecurityStage(ctx, nonGo)
+	if reason := wantSkip(t, err, StageNotApplicable); !strings.Contains(reason, "no go.mod") || len(*nonGoRecorded) != 0 {
+		t.Errorf("expected a no-go.mod reason and no commands, got %q / %+v", reason, *nonGoRecorded)
 	}
-	if !strings.Contains(msg, "skipped") || len(*nonGoRecorded) != 0 {
-		t.Errorf("expected a skip message and no commands, got %q / %+v", msg, *nonGoRecorded)
+
+	// Boundary: a dry run lists no packages and starts neither scanner, even where both are
+	// installed and the configuration is present.
+	dry, dryRecorded := newTestConfig(t, goDir, true)
+	_, err = runSecurityStage(ctx, dry)
+	if reason := wantSkip(t, err, StageSkipped); !strings.Contains(reason, "dry run") || len(*dryRecorded) != 0 {
+		t.Errorf("a dry run must run no scanner, got %q / %+v", reason, *dryRecorded)
+	}
+}
+
+// writeLockfiles gives dir the non-empty manifest and lockfile the prefetch stage requires.
+func writeLockfiles(t *testing.T, dir string) {
+	t.Helper()
+	writeFile(t, filepath.Join(dir, ".standards.yaml"), "version: 1\n")
+	writeFile(t, filepath.Join(dir, ".standards.lock"), "version: 1\n")
+}
+
+// The prefetch stage runs go mod verify and go mod download through the stage runner, and a
+// dry run runs neither: download writes the module cache and can reach the network.
+func TestRunPrefetchStage_3D(t *testing.T) {
+	ctx := context.Background()
+	goDir := newGoModuleDir(t)
+	writeLockfiles(t, goDir)
+
+	// Positive: a real run verifies and downloads, in that order, in the repository.
+	cfg, recorded := newTestConfig(t, goDir, false)
+	if _, err := runPrefetchStage(ctx, cfg); err != nil {
+		t.Fatalf("prefetch stage failed: %v", err)
+	}
+	var got []string
+	for _, c := range *recorded {
+		got = append(got, c.name+" "+strings.Join(c.args, " "))
+	}
+	if strings.Join(got, "; ") != "go mod verify; go mod download" {
+		t.Errorf("unexpected prefetch commands: %v", got)
+	}
+
+	// Negative: a dry run verifies the lockfiles and runs no go command.
+	dry, dryRecorded := newTestConfig(t, goDir, true)
+	_, err := runPrefetchStage(ctx, dry)
+	if reason := wantSkip(t, err, StageSkipped); !strings.Contains(reason, "lockfiles verified") || len(*dryRecorded) != 0 {
+		t.Errorf("a dry run must run no go command, got %q / %+v", reason, *dryRecorded)
+	}
+
+	// Negative: a dry run still fails on a missing lockfile; the read-only check still runs.
+	noLock, _ := newTestConfig(t, newGoModuleDir(t), true)
+	if _, err := runPrefetchStage(ctx, noLock); err == nil || errors.As(err, new(*stageSkip)) {
+		t.Errorf("a dry run must still reject missing lockfiles, got %v", err)
+	}
+
+	// Boundary: without a go.mod the stage is not applicable, dry run or not.
+	nonGoDir := t.TempDir()
+	writeLockfiles(t, nonGoDir)
+	for _, dryRun := range []bool{false, true} {
+		nonGo, nonGoRecorded := newTestConfig(t, nonGoDir, dryRun)
+		_, err := runPrefetchStage(ctx, nonGo)
+		if reason := wantSkip(t, err, StageNotApplicable); !strings.Contains(reason, "no go.mod") || len(*nonGoRecorded) != 0 {
+			t.Errorf("dry run %v: got %q / %+v", dryRun, reason, *nonGoRecorded)
+		}
+	}
+}
+
+// A whole dry run changes nothing: it records the mutating and network stages as skipped,
+// runs the read-only ones for real, and invokes no command at all.
+func TestExecuteStages_DryRunInvokesNoCommand(t *testing.T) {
+	repo := goLibraryRepo(t, nil)
+	cfg, recorded := newTestConfig(t, repo, true)
+
+	if err := executeStages(context.Background(), cfg); err != nil {
+		t.Fatalf("dry run rejected a conforming repository: %v (%+v)", err, cfg.rep.Stages)
+	}
+	if len(*recorded) != 0 {
+		t.Fatalf("a dry run invoked commands: %+v", *recorded)
+	}
+	want := map[string]StageStatus{
+		"Prefetch & Lockfiles":   StageSkipped,
+		"HISS Invariant Scan":    StagePassed,
+		"Security & SCA Scan":    StageSkipped,
+		"Flavor Conformance":     StagePassed,
+		"Race-Detector Tests":    StageSkipped,
+		"Ed25519 Exit-0 Receipt": StageSkipped,
+	}
+	if len(cfg.rep.Stages) != len(want) {
+		t.Fatalf("expected %d stages, got %+v", len(want), cfg.rep.Stages)
+	}
+	for _, s := range cfg.rep.Stages {
+		if s.Status != want[s.Name] {
+			t.Errorf("stage %s: status %s, want %s", s.Name, s.Status, want[s.Name])
+		}
+	}
+	if _, err := os.Stat(filepath.Join(repo, ReceiptFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a dry run wrote a receipt: %v", err)
 	}
 }
 
@@ -331,10 +470,17 @@ func TestRunHissStage_3D(t *testing.T) {
 		t.Skip("fixture produced no infractions; scanner rules changed")
 	}
 
-	// Negative: no baseline recorded, so the legacy debt is a new violation.
+	// Negative: no baseline recorded, so the legacy debt is a new violation, and the rejection
+	// names it as [rule] file:line rather than only counting it.
 	cfg, _ := newTestConfig(t, repoDir, false)
-	if _, err := runHissStage(ctx, cfg); err == nil {
-		t.Error("expected unbaselined infractions to fail the stage")
+	_, err = runHissStage(ctx, cfg)
+	if err == nil {
+		t.Fatal("expected unbaselined infractions to fail the stage")
+	}
+	first := scan.Violations[0]
+	named := fmt.Sprintf("[%s] %s:%d", first.RuleID, first.FilePath, first.LineNumber)
+	if !strings.Contains(err.Error(), named) || !strings.Contains(err.Error(), "(new)") {
+		t.Errorf("the rejection must name %q, got %q", named, err)
 	}
 
 	// Positive: with the debt recorded in .standards-baseline.json the ratchet passes,
@@ -368,12 +514,9 @@ func TestRunTestStage_3D(t *testing.T) {
 
 	// Boundary: a dry run executes nothing and says so.
 	dry, dryRecorded := newTestConfig(t, t.TempDir(), true)
-	msg, err := dry.runTestStageForTest(ctx)
-	if err != nil {
-		t.Fatalf("dry run returned %v", err)
-	}
-	if !strings.Contains(msg, "dry run") || len(*dryRecorded) != 0 {
-		t.Errorf("dry run executed work: %q / %+v", msg, *dryRecorded)
+	_, err := dry.runTestStageForTest(ctx)
+	if reason := wantSkip(t, err, StageSkipped); !strings.Contains(reason, "dry run") || len(*dryRecorded) != 0 {
+		t.Errorf("dry run executed work: %q / %+v", reason, *dryRecorded)
 	}
 
 	// Negative: a directory that is not a git repository cannot yield an isolated
@@ -429,12 +572,9 @@ func TestRunReceiptStage_Boundary_DryRunMintsNothing(t *testing.T) {
 	cfg, _ := newTestConfig(t, repoDir, true)
 	cfg.rep.DryRun = true
 
-	msg, err := runReceiptStage(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("dry-run receipt stage returned %v", err)
-	}
-	if !strings.Contains(msg, "no Exit-0 receipt") {
-		t.Errorf("expected an explicit dry-run note, got %q", msg)
+	_, err := runReceiptStage(context.Background(), cfg)
+	if reason := wantSkip(t, err, StageSkipped); !strings.Contains(reason, "no Exit-0 receipt") {
+		t.Errorf("expected an explicit dry-run note, got %q", reason)
 	}
 	if cfg.rep.ReceiptSignature != "" || cfg.rep.ReceiptPath != "" {
 		t.Errorf("dry run produced receipt metadata: %+v", cfg.rep)
@@ -468,8 +608,8 @@ func TestRunReceiptStage_Positive_SignsRealStageOutput(t *testing.T) {
 	cfg.rep.CommitSHA = "0123456789abcdef0123456789abcdef01234567"
 	cfg.rep.WorktreeClean = true
 	cfg.rep.Stages = append(cfg.rep.Stages,
-		StageResult{Name: "Prefetch & Lockfiles", Passed: true},
-		StageResult{Name: "HISS Invariant Scan", Passed: true, Message: "0 infractions within the 0 baselined limit"},
+		StageResult{Name: "Prefetch & Lockfiles", Status: StagePassed},
+		StageResult{Name: "HISS Invariant Scan", Status: StagePassed, Message: "0 infractions within the 0 baselined limit"},
 	)
 
 	msg, err := runReceiptStage(context.Background(), cfg)
@@ -499,8 +639,9 @@ func TestRunReceiptStage_Positive_SignsRealStageOutput(t *testing.T) {
 		t.Errorf("receipt identity = %s@%s, want acme/widget@%s", rf.Repository, rf.CommitSHA, cfg.rep.CommitSHA)
 	}
 
-	// Any later edit to the recorded stage results invalidates the signature.
-	cfg.rep.Stages[0].Passed = false
+	// Any later edit to the recorded stage results invalidates the signature, including
+	// relabelling a stage that passed as one that was skipped.
+	cfg.rep.Stages[0].Status = StageSkipped
 	if err := lockdown.VerifyPinnedReceipt(&rf.ExecutionReceipt, pub, cfg.rep.StageOutput()); err == nil {
 		t.Error("expected a mutated stage list to invalidate the receipt")
 	}
@@ -536,8 +677,8 @@ func TestStageOutput_3D(t *testing.T) {
 		CommitSHA:     "deadbeef",
 		WorktreeClean: true,
 		Stages: []StageResult{
-			{Name: "Prefetch & Lockfiles", Passed: true},
-			{Name: "HISS Invariant Scan", Passed: true, Message: "0 infractions\nwithin limit"},
+			{Name: "Prefetch & Lockfiles", Status: StagePassed},
+			{Name: "HISS Invariant Scan", Status: StagePassed, Message: "0 infractions\nwithin limit"},
 		},
 	}
 
@@ -556,15 +697,25 @@ func TestStageOutput_3D(t *testing.T) {
 		t.Errorf("stage messages must be flattened:\n%s", first)
 	}
 
-	// Negative: a changed stage outcome changes the signed payload.
-	rep.Stages[0].Passed = false
-	if string(rep.StageOutput()) == first {
-		t.Error("stage output did not change when a stage outcome changed")
+	if !strings.Contains(first, "stage\tPrefetch & Lockfiles\tpassed\t") {
+		t.Errorf("stage lines must carry the verdict:\n%s", first)
 	}
 
-	// Boundary: an empty report still renders a complete header.
+	// Negative: a stage that did not run changes the signed payload and says so. With a
+	// passed bool, a skipped stage and a passed one rendered the same line.
+	rep.Stages[0].Status = StageSkipped
+	skippedOutput := string(rep.StageOutput())
+	if skippedOutput == first || !strings.Contains(skippedOutput, "stage\tPrefetch & Lockfiles\tskipped\t") {
+		t.Errorf("a skipped stage must be signed as skipped:\n%s", skippedOutput)
+	}
+	rep.Stages[0].Status = StageNotApplicable
+	if string(rep.StageOutput()) == skippedOutput {
+		t.Error("not applicable and skipped must sign differently")
+	}
+
+	// Boundary: an empty report still renders a complete header, under the v2 version.
 	empty := (&PipelineReport{}).StageOutput()
-	if !strings.HasPrefix(string(empty), "praetor-gate-output/v1\n") {
+	if !strings.HasPrefix(string(empty), GateOutputVersion+"\n") || GateOutputVersion != "praetor-gate-output/v2" {
 		t.Errorf("unexpected empty-report output: %q", string(empty))
 	}
 }
@@ -583,7 +734,7 @@ func TestRunGatedPipeline_Negative_And_Boundary(t *testing.T) {
 	if negRep.Status != StatusRejected {
 		t.Errorf("expected StatusRejected for empty dir, got %s", negRep.Status)
 	}
-	if len(negRep.Stages) != 1 || negRep.Stages[0].Passed {
+	if len(negRep.Stages) != 1 || !negRep.Stages[0].Failed() {
 		t.Errorf("expected rejection at stage 1, got %+v", negRep.Stages)
 	}
 	if negRep.ReceiptSignature != "" {
@@ -627,12 +778,9 @@ func TestRunTestStage_Boundary_NonGoRepository(t *testing.T) {
 		},
 	}
 
-	msg, err := runTestStage(ctx, cfg)
-	if err != nil {
-		t.Fatalf("expected a non-Go repository to be skipped, got: %v", err)
-	}
-	if msg != "no go.mod: Go race-detector tests skipped" {
-		t.Errorf("unexpected skip message: %q", msg)
+	_, err := runTestStage(ctx, cfg)
+	if reason := wantSkip(t, err, StageNotApplicable); reason != "no go.mod: Go race-detector tests skipped" {
+		t.Errorf("unexpected skip message: %q", reason)
 	}
 	if ran {
 		t.Error("go test was executed in a repository with no go.mod")

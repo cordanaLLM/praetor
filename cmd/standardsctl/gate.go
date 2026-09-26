@@ -53,7 +53,10 @@ func splitGateSubcommand(args []string) (string, []string) {
 func runGateRun(args []string) error {
 	fs := flag.NewFlagSet("gate run", flag.ContinueOnError)
 	path := fs.String("path", ".", "Path to repository to verify against gating pipeline")
-	dryRun := fs.Bool("dry-run", false, "Skip the race-detector test stage; no receipt is minted")
+	dryRun := fs.Bool("dry-run", false,
+		"Run only the read-only stages (lockfiles, HISS scan, flavor conformance); skip module "+
+			"prefetch, security scanners and race tests, which write the module cache or reach the "+
+			"network; no receipt is minted")
 	asJSON := fs.Bool("json", false, "Output pipeline results as JSON")
 
 	if err := fs.Parse(args); err != nil {
@@ -290,11 +293,7 @@ func printGatingReport(rep *gating.PipelineReport) {
 	fmt.Printf("\nPipeline Result: %s (total: %v)\n", rep.Status, rep.TotalElapsed.Round(time.Millisecond))
 	fmt.Printf("Scanned: %s @ %s (worktree clean: %v)\n", rep.Repository, rep.CommitSHA, rep.WorktreeClean)
 	for idx, s := range rep.Stages {
-		statusStr := "[PASS]"
-		if !s.Passed {
-			statusStr = "[FAIL]"
-		}
-		fmt.Printf("  %d. %s %-25s (%v)\n", idx+1, statusStr, s.Name, s.Duration.Round(time.Millisecond))
+		fmt.Printf("  %d. %-6s %-25s (%v)\n", idx+1, stageLabel(s.Status), s.Name, s.Duration.Round(time.Millisecond))
 		if s.Message != "" {
 			fmt.Printf("     Reason: %s\n", s.Message)
 		}
@@ -307,5 +306,23 @@ func printGatingReport(rep *gating.PipelineReport) {
 	}
 	if rep.DryRun {
 		fmt.Printf("\nDry run: no Exit-0 receipt was minted (tests did not run).\n")
+	}
+}
+
+// stageLabel renders a stage verdict as its report tag. A stage that did not run never
+// prints [PASS]: that tag is reserved for checks that executed and held.
+func stageLabel(status gating.StageStatus) string {
+	switch status {
+	case gating.StagePassed:
+		return "[PASS]"
+	case gating.StageSkipped:
+		return "[SKIP]"
+	case gating.StageNotApplicable:
+		return "[N/A]"
+	case gating.StageFailed:
+		return "[FAIL]"
+	default:
+		// An unknown verdict is not evidence of a pass.
+		return "[" + strings.ToUpper(string(status)) + "]"
 	}
 }

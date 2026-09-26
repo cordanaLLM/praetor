@@ -88,6 +88,21 @@ func TestRunFlavorStage_Boundary_OneInvalidSettingStillClearsTheBar(t *testing.T
 	}
 }
 
+// TestRunFlavorStage_Boundary_ProfileWithoutFlavorIsNotApplicable pins the verdict for a
+// repository whose declared profile no flavor implements: not applicable, not passed.
+// pages-site is the profile internal/flavor's own not-applicable case uses: no flavor
+// implements it.
+func TestRunFlavorStage_Boundary_ProfileWithoutFlavorIsNotApplicable(t *testing.T) {
+	const profileWithoutFlavor = "pages-site"
+	repo := goLibraryRepo(t, map[string]string{
+		".standards.yaml": "version: 1\nrepository:\n  owner: fixture\n  name: fixture\nprofiles:\n  - " + profileWithoutFlavor + "\n",
+	})
+	_, err := runFlavorStage(context.Background(), &stageConfig{repoDir: repo})
+	if reason := wantSkip(t, err, StageNotApplicable); !strings.Contains(reason, profileWithoutFlavor) {
+		t.Errorf("the verdict must name the profile, got %q", reason)
+	}
+}
+
 // TestRunFlavorStage_Boundary_CancelledContextIsNotAVerdict keeps the stage's own I/O
 // contract asserted: a cancelled context fails the stage rather than auditing anyway.
 func TestRunFlavorStage_Boundary_CancelledContextIsNotAVerdict(t *testing.T) {
