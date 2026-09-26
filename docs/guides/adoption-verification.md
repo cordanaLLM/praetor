@@ -231,7 +231,10 @@ The scan stages read the working tree, while the receipt names a commit. `gate r
 differs from HEAD:
 
 - a modified, staged or untracked file anywhere in the repository, the receipt file itself
-  excepted, because the gate rewrites it and a checkout may keep it untracked;
+  excepted, because the gate rewrites it and a checkout may keep it untracked. "Untracked"
+  means what plain `git status` lists: the repository's ignore files, `.git/info/exclude` and
+  your global excludes file (`core.excludesFile`, else `~/.config/git/ignore`) all apply, so
+  editor and OS files you ignore globally do not block the gate;
 - an index entry flagged assume-unchanged or skip-worktree, which `git status` never compares;
 - an ignored `.standards-baseline.json` or `.gosec.json`. Both relax what the gate enforces --
   the baseline raises the HISS limit, the gosec configuration selects the rules -- and
