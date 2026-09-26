@@ -61,6 +61,12 @@ capabilities:
         - python.external.six
         - python.external.urllib3
         - python.external.watchdog
+        - ui.external.types_react
+        - ui.external.types_react_dom
+        - ui.external.esbuild
+        - ui.external.playwright
+        - ui.external.react
+        - ui.external.react_dom
     optional:
         - clikit.cli
         - mcp.server
@@ -407,6 +413,54 @@ dependencies:
       status: gap
       target_builder_kit: golusoris/sveltesentio
       notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: '@types/react'
+      version: 19.3.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.types_react
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: '@types/react-dom'
+      version: 19.3.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.types_react_dom
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: esbuild
+      version: 0.28.2
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.esbuild
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: playwright
+      version: 1.63.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.playwright
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: react
+      version: 19.3.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.react
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: react-dom
+      version: 19.3.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.react_dom
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
     - package: markdownlint-cli2
       version: 0.23.2
       language: typescript
@@ -441,8 +495,8 @@ dependencies:
       notes: External npm dependency requiring SvelteSentio adapter or evaluation
 readiness:
     basis: catalog-declared
-    score: 6.521739130434782
-    total_third_party_deps: 46
+    score: 5.769230769230769
+    total_third_party_deps: 52
     covered_deps: 3
-    gap_deps: 43
-updated_at: 2026-09-26T20:00:03.831077002Z
+    gap_deps: 49
+updated_at: 2026-09-26T23:55:15.606310667Z
