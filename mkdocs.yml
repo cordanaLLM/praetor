@@ -34,6 +34,7 @@ theme:
     - navigation.tracking
     - navigation.tabs
     - navigation.sections
+    - navigation.indexes
     - navigation.top
     - header.autohide
     - content.code.copy
@@ -78,18 +79,87 @@ markdown_extensions:
   - pymdownx.tabbed:
       alternate_style: true
 
+# Navigation: at most seven tabs, human-first. Every page under docs/ appears here exactly
+# once, except the moved stubs listed in not_in_nav, which exist only so old links resolve.
+# Plans and research are kept together under Project > Project Records as historical records.
 nav:
   - Home: index.md
-  - Governance & Standards:
+  - Guides:
+      - guides/index.md
+      - Adoption & Onboarding:
+          - guides/adopt/index.md
+          - Fast Adoption: adoption.md
+          - Repository Onboarding: guides/onboarding.md
+          - Adoption Verification: guides/adoption-verification.md
+          - Archetype & Facet Authoring: guides/archetype-authoring.md
+          - Effective Audit Policy: guides/effective-policy.md
+          - Review Policy: guides/review-policy.md
+          - Planning-Artifact Onboarding: guides/planning-onboarding.md
+          - Framework Capability Evidence: guides/needs-capability-evidence.md
+      - Agents, Clients & Model Routing:
+          - guides/agents-and-clients/index.md
+          - Agent Lifecycle Coverage: guides/agent-lifecycle.md
+          - Agent Hooks: guides/agent-hooks.md
+          - Client Bootstrap: guides/client-bootstrap.md
+          - Client Connections: guides/client-connections.md
+          - Editor Capabilities: guides/editor-capabilities.md
+          - Context Optimizer: context-optimizer.md
+          - Transcript Ingestion: guides/transcript-ingestion.md
+          - Model Routing & Capacity Arbiter: standards/model-routing-and-fanout.md
+          - Tribunus Data Sync: tribunus/data-sync.md
+      - Contributing, Hooks & CI:
+          - guides/contributor-workflow/index.md
+          - Contributing Guide: guides/contributing.md
+          - Git Hooks: guides/git-hooks.md
+          - Development MCP: guides/development-mcp.md
+          - Checkpoint Cadence: guides/checkpoint-cadence.md
+          - CI Caching: guides/ci-caching.md
+      - State Ledger & Planning:
+          - guides/state-and-planning/index.md
+          - State Ledger Integrity: guides/state-ledger-integrity.md
+          - Detailed Planning Drafts: guides/planning-drafts.md
+          - Wishes and Polls: guides/wishes-and-polls.md
+          - Issue Sync Integrity: guides/issue-sync-integrity.md
+          - Garbage Collection: guides/garbage-collection.md
+      - Dogfooding:
+          - guides/dogfood/index.md
+          - Fleet Dogfooding: dogfooding.md
+          - Dogfood Suites: guides/dogfood-suites.md
+          - Capability Discovery: guides/capability-discovery.md
+          - Scheduled Dogfood: guides/scheduled-dogfood.md
+          - Dogfood Scheduling: guides/dogfood-scheduling.md
+          - Dogfood Repairs: guides/dogfood-repairs.md
+          - Dogfood Repair Execution: guides/dogfood-repair-execution.md
+          - Dogfood Repair Timer: guides/dogfood-repair-timer.md
+      - Workstations & Operations:
+          - guides/workstations-and-operations/index.md
+          - Workstation Install & Status: guides/workstation-update.md
+          - DevContainer Bootstrap: guides/devcontainer-bootstrap.md
+          - Workstation Inventory: guides/workstation-inventory.md
+          - Workstation Sync: guides/devsync.md
+          - Operational Configuration: guides/operational-configuration.md
+          - Operational Sync: guides/operational-sync.md
+      - Build, Release & Deployment:
+          - guides/build-and-release/index.md
+          - Releasing and Release Flavors: guides/releasing.md
+          - Helm Chart: guides/helm-chart.md
+          - Canary Evidence: guides/canary-evidence.md
+          - Universal Builder: guides/universal-builder.md
+      - Documentation Governance:
+          - guides/docs-governance/index.md
+          - Documentation Governance: guides/documentation-governance.md
+          - Documentation Drift: guides/documentation-drift.md
+          - Text Register: guides/text-register.md
+          - GitHub Wiki Sync: guides/github-wiki-sync.md
+  - Standards:
       - HISS Formal Specification: standards/hiss-spec.md
-      - HISS Refinement Audit: research/hiss-rule-refinement.md
-      - Model Routing & Capacity Arbiter: standards/model-routing-and-fanout.md
-      - Context Optimizer: context-optimizer.md
-  - Architecture & Design:
+      - HISS Invariants: wiki/HISS-Invariants.md
+      - HISS Compliance Matrix: wiki/HISS-Matrix.md
+      - HISS Rule Matching: standards/hiss-rule-matching.md
+      - HISS-21 Platform Neutrality: standards/hiss-21-platform-neutrality.md
+  - Architecture & Decisions:
       - C4 Architecture Models: architecture/c4-models.md
-      - Shared Lifecycle Management: plans/lifecycle-management.md
-      - Bidirectional Module Contracts: plans/bidirectional-contracts.md
-      - Shared Planning and Reconciliation: plans/shared-planning-and-reconciliation.md
+      - Architecture Lattice: wiki/Architecture-Lattice.md
       - Architectural Decisions (ADR):
           - Decision Lattice Index: adr/README.md
           - ADR-0001 Universal Context Transpiler: adr/0001-universal-context-transpiler.md
@@ -104,78 +174,38 @@ nav:
           - ADR-0010 Text Register per Task: adr/0010-text-register-per-task.md
           - ADR-0011 Agent Client Wrapping & Operational Rollout: adr/0011-agent-client-wrapping-and-operational-rollout.md
           - ADR-0012 Current Delivery, Runner & Pipeline State: adr/0012-current-delivery-runner-and-pipeline-state.md
-  - Tribunus:
-      - Data Sync: tribunus/data-sync.md
-  - Guides & Adoption:
-      - Detailed Planning Drafts: guides/planning-drafts.md
-      - Developer Onboarding: guides/onboarding.md
-      - Checkpoint Cadence: guides/checkpoint-cadence.md
-      - Agent Lifecycle Coverage: guides/agent-lifecycle.md
-      - Agent Hooks: guides/agent-hooks.md
-      - Garbage Collection: guides/garbage-collection.md
-      - Contributing Guide: guides/contributing.md
-      - Archetype Authoring: guides/archetype-authoring.md
-      - Adoption Verification: guides/adoption-verification.md
-      - Documentation Governance: guides/documentation-governance.md
-      - Canary Evidence: guides/canary-evidence.md
-      - Editor Capabilities: guides/editor-capabilities.md
-      - CI Caching: guides/ci-caching.md
-      - Client Bootstrap: guides/client-bootstrap.md
-      - Client Connections: guides/client-connections.md
-      - DevContainer Bootstrap: guides/devcontainer-bootstrap.md
-      - Development MCP: guides/development-mcp.md
-      - Dogfood Repair Execution: guides/dogfood-repair-execution.md
-      - Dogfood Repair Timer: guides/dogfood-repair-timer.md
-      - Dogfood Repairs: guides/dogfood-repairs.md
-      - Dogfood Scheduling: guides/dogfood-scheduling.md
-      - Dogfood Suites: guides/dogfood-suites.md
-      - Capability Discovery: guides/capability-discovery.md
-      - Wishes and Polls: guides/wishes-and-polls.md
-      - Effective Policy: guides/effective-policy.md
-      - Text Register: guides/text-register.md
-      - Operational Configuration: guides/operational-configuration.md
-      - Git Hooks: guides/git-hooks.md
-      - GitHub Wiki Sync: guides/github-wiki-sync.md
-      - Helm Chart: guides/helm-chart.md
-      - Issue Sync Integrity: guides/issue-sync-integrity.md
-      - Needs Capability Evidence: guides/needs-capability-evidence.md
-      - Operational Sync: guides/operational-sync.md
-      - Releasing and Release Flavors: guides/releasing.md
-      - Scheduled Dogfood: guides/scheduled-dogfood.md
-      - State Ledger Integrity: guides/state-ledger-integrity.md
-      - Transcript Ingestion: guides/transcript-ingestion.md
-      - Universal Builder: guides/universal-builder.md
-      - Workstation Inventory: guides/workstation-inventory.md
-      - Workstation Sync: guides/devsync.md
-      - Fast Adoption Engine: adoption.md
-      - Fleet Dogfooding: dogfooding.md
-  - Plans:
-      - Golusoris Core Migration: plans/golusoris-migration-plan.md
-      - Infrastructure Development Environments: plans/infrastructure-development-environments.md
-      - Bidirectional Module Contracts: plans/bidirectional-contracts.md
-      - Lifecycle Management: plans/lifecycle-management.md
-      - Package Development Pipeline: plans/package-development-pipeline.md
-      - Wish Platform Integration: plans/wish-platform-integration.md
-      - IDE Agent Setup: plans/ide-agent-setup.md
-      - Upstream Contribution Workflow: plans/upstream-contribution-workflow.md
-  - Research:
-      - IDE Agent Bootstrap: research/ide-agent-bootstrap.md
-      - Wish Voting Platforms: research/wish-voting-platforms.md
-      - Infrastructure Sandboxes: research/infrastructure-sandboxes.md
-      - Public Capability Discovery: research/dogfood-capability-discovery.md
-      - Compact Management Data: research/compact-management-data.md
-      - Go Package Reuse: research/go-package-reuse.md
-      - HISS Rule Refinement: research/hiss-rule-refinement.md
-  - Wiki:
-      - Home: wiki/Home.md
-      - API Reference: wiki/API-Reference.md
-      - Architecture Lattice: wiki/Architecture-Lattice.md
-      - HISS Invariants: wiki/HISS-Invariants.md
-      - HISS Matrix: wiki/HISS-Matrix.md
-  - Presets:
-      - MkDocs Preset README: presets/mkdocs/README.md
-      - MkDocs Preset Example: presets/mkdocs/docs/index.md
-      - Starlight Preset README: presets/starlight/README.md
-  - Funding & Community:
+  - Reference:
+      - API & CLI Reference: wiki/API-Reference.md
+      - Wiki Portal: wiki/Home.md
+      - Documentation Presets:
+          - MkDocs Preset README: presets/mkdocs/README.md
+          - MkDocs Preset Example: presets/mkdocs/docs/index.md
+          - Starlight Preset README: presets/starlight/README.md
+  - Project:
       - Sponsoring & Bounties: sponsoring.md
       - Monetization Strategy: monetization.md
+      - Project Records (historical):
+          - project-records/index.md
+          - Plans:
+              - Bidirectional Module Contracts: plans/bidirectional-contracts.md
+              - Golusoris Core Migration: plans/golusoris-migration-plan.md
+              - IDE Agent Setup: plans/ide-agent-setup.md
+              - Infrastructure Development Environments: plans/infrastructure-development-environments.md
+              - Lifecycle Management: plans/lifecycle-management.md
+              - Package Development Pipeline: plans/package-development-pipeline.md
+              - Shared Planning and Reconciliation: plans/shared-planning-and-reconciliation.md
+              - Upstream Contribution Workflow: plans/upstream-contribution-workflow.md
+              - Wish Platform Integration: plans/wish-platform-integration.md
+          - Research:
+              - Compact Management Data: research/compact-management-data.md
+              - Public Capability Discovery: research/dogfood-capability-discovery.md
+              - Go Package Reuse: research/go-package-reuse.md
+              - HISS Rule Refinement: research/hiss-rule-refinement.md
+              - IDE Agent Bootstrap: research/ide-agent-bootstrap.md
+              - Infrastructure Sandboxes: research/infrastructure-sandboxes.md
+              - Wish Voting Platforms: research/wish-voting-platforms.md
+
+# Moved-page stubs: kept so existing links and bookmarks resolve, deliberately not in nav.
+not_in_nav: |
+  /standards/hiss-16-spec.md
+  /wiki/HISS-16-Invariants.md
