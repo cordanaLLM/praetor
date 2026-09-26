@@ -16,6 +16,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/harvester"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func runHarvest(args []string) error {
@@ -85,6 +86,13 @@ func runHarvestWorkstation(ctx context.Context, args []string) error {
 	if rep == nil {
 		return fmt.Errorf("failed scanning workstation: %w", err)
 	}
+	// Normalize path separators at the output boundary so JSON output isn't platform-shaped (HISS-21).
+	for i, r := range rep.MissingRulesRepos {
+		rep.MissingRulesRepos[i] = util.NormalizeSlashes(r)
+	}
+	for i, wt := range rep.StaleWorktrees {
+		rep.StaleWorktrees[i] = util.NormalizeSlashes(wt)
+	}
 	if *jsonOutput {
 		if err := json.NewEncoder(os.Stdout).Encode(rep); err != nil {
 			return fmt.Errorf("encode workstation report: %w", err)
@@ -92,19 +100,27 @@ func runHarvestWorkstation(ctx context.Context, args []string) error {
 		return errors.Join(err, workstationInventoryError(rep))
 	}
 
+	printWorkstationReport(rep)
+	return errors.Join(err, workstationInventoryError(rep))
+}
+
+// printWorkstationReport renders the text audit. Repository and worktree names are paths
+// relative to the dev root that the scan builds with the host separator, so Windows printed
+// acme\widgets where every other host printed acme/widgets. They are shown in slash form
+// through util.NormalizeSlashes, which, unlike filepath.ToSlash, is observable off Windows.
+func printWorkstationReport(rep *harvester.WorkstationReport) {
 	fmt.Println("=== Workstation Governance & Worktree Audit ===")
 	fmt.Printf("Active Dev Repositories: %d\n", rep.DevReposCount)
 	fmt.Printf("Agent Documents Found:   %d\n", len(rep.DiscoveredAgentDoc))
 	fmt.Printf("Repositories Missing Rules (%d):\n", len(rep.MissingRulesRepos))
 	for _, r := range rep.MissingRulesRepos {
-		fmt.Printf("  - %s\n", r)
+		fmt.Printf("  - %s\n", util.NormalizeSlashes(r))
 	}
 	fmt.Printf("Stale Ephemeral Worktrees (%d):\n", len(rep.StaleWorktrees))
 	for _, wt := range rep.StaleWorktrees {
-		fmt.Printf("  - %s\n", wt)
+		fmt.Printf("  - %s\n", util.NormalizeSlashes(wt))
 	}
 	fmt.Printf("Repository inventory complete: %t (truncated: %t)\n", rep.RepositoryInventoryComplete, rep.RepositoryInventoryTruncated)
-	return errors.Join(err, workstationInventoryError(rep))
 }
 
 func workstationInventoryError(report *harvester.WorkstationReport) error {

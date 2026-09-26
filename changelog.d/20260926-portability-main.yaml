@@ -1,0 +1,3 @@
+type: fixed
+title: Restore the macOS and Windows Platform Neutrality legs (the file-tool batch guard matches the checkout by identity instead of spelling, the private-link Markdown rule runs when reached through a symlinked temp directory instead of passing silently, and workstation and batch-adoption reports show repository names with forward slashes on Windows)
+breaking: false

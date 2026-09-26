@@ -59,6 +59,14 @@ The runner copies the canonical tool assets to a temporary directory, executes
 `node_modules/` directory. Every subprocess has a timeout, and the temporary
 installation is removed after success or failure.
 
+The private-link rule also runs from that temporary copy. It acts only when started
+as a script, which `invokedAsScript` in `tools/markdownlint/no-private-scratch-links.mjs`
+decides by comparing real paths: Node loads a main module from its real path, and
+every macOS temporary directory sits under the `/var` symlink, so comparing
+spellings let the rule exit 0 there without reading a file. The self-test runs the
+rule a second time through a symlinked path to the temporary directory, so that
+failure shows on every host.
+
 On Linux and macOS the runner starts `npm` from `PATH`. On Windows it cannot:
 Node refuses to spawn the `npm.cmd` batch shim without a shell and fails with
 `EINVAL` (CVE-2024-27980), and passing arguments through a shell is deprecated

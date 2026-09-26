@@ -185,7 +185,7 @@ def planning_probe_draft():
                   "boundary": ["The input byte limit is enforced."]}
     return {"schema_version": 1, "id": "probe-draft",
             "project": {"id": "probe-project", "title": "Probe",
-                        "repository": "cordana/probe", "revision": "fixture"},
+                        "repository": "example/probe", "revision": "fixture"},
             "sources": [{"id": "source-1", "kind": "research",
                          "locator": "private://probe", "revision": "v1",
                          "sha256": source_hash, "provenance": "caller_asserted",
@@ -357,7 +357,7 @@ def repair_status_checks(client, root):
                                 "register": "internal", "register_source": "surfaces.agent",
                                 "prompt_register": "internal", "prompt_register_source": "surfaces.prompts",
                                 "register_manifest_sha256": manifest_sha},
-              "provider": {"base_url": "https://litellm.ai.cauda.dev/v1",
+              "provider": {"base_url": "https://gateway.example.invalid/v1",
                            "token_command": str(root / "nonexistent-helper"),
                            "token_command_sha256": "b" * 64, "model": "cheap",
                            "max_input_bytes": 65536, "max_output_tokens": 256}}

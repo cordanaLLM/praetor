@@ -531,6 +531,21 @@ class NativeLefthook(unittest.TestCase):
         exercises the ancestor-symlink class and leaves the root's own-symlink checks in
         checkpoint.py's _policy_bytes walk (a deliberate, unrelated confinement control) alone.
         """
+        aliased_root = self.aliased_root()
+        SCOPE.ROOT = aliased_root
+        (self.root / "README.md").write_text("dirty\n")
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Edit",
+                  "tool_input": {"file_path": str(aliased_root / "README.md")},
+                  "cwd": str(aliased_root)}
+        self.assertEqual(SCOPE.check(payload), 0)
+
+    def aliased_root(self):
+        """The fixture root spelled through a symlink to its parent, as macOS and Windows do.
+
+        macOS reaches every temp root through /var -> /private/var and Windows through an 8.3
+        short name, so the spelling a client hands over and the resolved one differ above the
+        checkout; this alias reproduces that split on any host.
+        """
         alias = Path(tempfile.mkdtemp(prefix="praetor-ancestor-alias-"))
         # Symlinking the shared temp root itself (self.root.parent) needs privileges this
         # sandbox does not have; replacing a directory this call just created and owns with a
@@ -538,13 +553,29 @@ class NativeLefthook(unittest.TestCase):
         alias.rmdir()
         alias.symlink_to(self.root.parent)
         self.addCleanup(alias.unlink)
-        aliased_root = alias / self.root.name
-        SCOPE.ROOT = aliased_root
+        return alias / self.root.name
+
+    def test_registered_file_guard_matches_the_checkout_by_identity_not_spelling(self):
+        """An absolute client path spelled through a symlinked ancestor still names this checkout.
+
+        The guard's ROOT comes from Path(__file__).resolve() while the client sends the path as
+        the session spells it, so on macOS and Windows every absolute path in a due checkout
+        was refused as outside the repository. A symlink below the root must still be refused.
+        """
+        aliased = self.aliased_root()
         (self.root / "README.md").write_text("dirty\n")
-        payload = {"hook_event_name": "PreToolUse", "tool_name": "Edit",
-                  "tool_input": {"file_path": str(aliased_root / "README.md")},
-                  "cwd": str(aliased_root)}
-        self.assertEqual(SCOPE.check(payload), 0)
+        (self.root / "nested").mkdir()
+        (self.root / "nested/link").symlink_to(self.root)
+        for relative, code, message in (("README.md", 0, ""),
+                                        ("new.go", 2, "rejects a new public file path"),
+                                        ("nested/link/README.md", 2, "must not traverse a symlink")):
+            with self.subTest(path=relative):
+                payload = self.scope_payload(str(aliased / relative), tool_name="Edit",
+                                             cwd=str(aliased))
+                result = self.run_registered(".claude/settings.json", "PreToolUse", payload,
+                                             entry=1, cwd=aliased)
+                self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                self.assertIn(message, result.stderr)
 
     def scope_payload(self, path="new.go", **changes):
         return {"hook_event_name": "PreToolUse", "tool_name": "Write",

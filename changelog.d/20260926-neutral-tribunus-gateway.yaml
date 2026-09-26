@@ -1,0 +1,3 @@
+type: fixed
+title: Replace maintainer-specific URLs, tokens, and model identifiers in Tribunus LiteLLM gateway comments, test fixtures, documentation examples, and developer MCP probe configurations with operator-neutral examples
+breaking: false

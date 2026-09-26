@@ -316,6 +316,35 @@ def resolved_relative_to(path, root):
     return Path(path).resolve().relative_to(Path(root).resolve())
 
 
+def unresolved_relative_to(path, root):
+    """Return absolute ``path`` relative to ``root``, preserving spellings below ``root``.
+
+    ``resolved_relative_to`` follows all symlinks. Callers like checkpoint_scope.py need
+    to see un-resolved paths within ``root`` to detect symlink traversals. But spelling
+    matches fail above ``root`` off-Linux (macOS /var vs /private/var, Windows 8.3 names).
+    Both broke when tests began sending absolute paths during due checkpoints (#461).
+
+    We match ``root`` by filesystem identity (``os.path.samestat``) against the outermost
+    ancestor of ``path`` that is that directory, returning the unresolved remainder.
+    """
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        raise ValueError(f"{os.fspath(path)!r} is not an absolute path")
+    if os.pardir in candidate.parts:
+        raise ValueError(f"{os.fspath(path)!r} contains a parent traversal")
+    try:
+        target = os.stat(root)
+    except OSError as err:
+        raise ValueError(f"{os.fspath(root)!r} cannot be inspected") from err
+    for ancestor in (*reversed(candidate.parents), candidate):
+        try:
+            if os.path.samestat(os.stat(ancestor), target):
+                return candidate.relative_to(ancestor)
+        except OSError:
+            pass
+    raise ValueError(f"{os.fspath(path)!r} is not below {os.fspath(root)!r}")
+
+
 class HookBudget:
     """One deadline every process a native hook starts takes its timeout from.
 

@@ -1921,6 +1921,32 @@ class ScopeAndGuard(unittest.TestCase):
             finally:
                 alias.unlink()
 
+    def test_unresolved_relative_to_matches_root_by_identity_and_keeps_the_rest_as_spelled(self):
+        """The root is found by identity above it; nothing below it is resolved.
+
+        The alias stands in for macOS's /var -> /private/var and Windows's 8.3 short names: a
+        spelling of the root's ancestors that differs from the resolved root while naming the
+        same directory, reproducible on every host.
+        """
+        with tempfile.TemporaryDirectory(prefix="praetor-unresolved-real-") as temp:
+            root = Path(temp).resolve()
+            (root / "sub").mkdir()
+            (root / "sub/link").symlink_to(root)
+            alias = root.parent / (root.name + "-alias")
+            alias.symlink_to(root)
+            self.addCleanup(alias.unlink)
+            relative = common.unresolved_relative_to
+            self.assertEqual(relative(alias / "sub/file.go", root), Path("sub/file.go"))
+            self.assertEqual(relative(root / "sub/file.go", alias), Path("sub/file.go"))
+            # A symlink below the root stays visible instead of collapsing onto the root.
+            self.assertEqual(relative(alias / "sub/link/file.go", root), Path("sub/link/file.go"))
+            self.assertEqual(relative(alias, root), Path("."))
+            for outside in (root.parent / "file.go", Path("sub/file.go"), alias / "sub/../file.go"):
+                with self.subTest(path=str(outside)), self.assertRaises(ValueError):
+                    relative(outside, root)
+            with self.assertRaises(ValueError):
+                relative(root / "file.go", root / "missing")
+
     def test_process_failure_and_timeout_are_not_swallowed(self):
         with self.assertRaises(HookError):
             run(["python3", "-c", "raise SystemExit(7)"])

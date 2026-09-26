@@ -13,6 +13,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/harvester"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // adoptTimeout bounds one adoption run, including git and scanner subprocesses.
@@ -215,8 +216,10 @@ func batchAdoptMissing(ctx context.Context, devDir string, dryRun, force, record
 	return nil
 }
 
-// printBatchResult prints one batch entry and reports whether it succeeded.
+// printBatchResult reports one --all-missing adoption. repoName is relative to the dev root
+// and built with the host separator; it is shown in slash form on every platform.
 func printBatchResult(repoName string, dryRun bool, rep *adopt.AdoptReport, err error) bool {
+	repoName = util.NormalizeSlashes(repoName)
 	if err != nil {
 		fmt.Printf("[FAIL] %s: %v\n", repoName, err)
 		if rep != nil {
