@@ -71,6 +71,9 @@ func runFlavorInspect(args []string) error {
 	fmt.Println("Required Templates:")
 	for _, t := range flv.RequiredTemplates() {
 		fmt.Printf("  - %-30s (%s)\n", t.Path, t.Description)
+		if t.Producer != "" {
+			fmt.Printf("    %-30s written by: %s\n", "", t.Producer)
+		}
 		if len(t.AltPaths) > 0 {
 			fmt.Printf("    %-30s or: %s\n", "", strings.Join(t.AltPaths, ", "))
 		}
@@ -176,6 +179,9 @@ func applyFlavor(ctx context.Context, dir, targetFlv string, force bool) error {
 	fmt.Printf("  Created Templates (%d): %s\n", len(report.CreatedTemplates), strings.Join(report.CreatedTemplates, ", "))
 	if len(report.SkippedTemplates) > 0 {
 		fmt.Printf("  Skipped Existing  (%d): %s\n", len(report.SkippedTemplates), strings.Join(report.SkippedTemplates, ", "))
+	}
+	if len(report.DeferredTemplates) > 0 {
+		fmt.Printf("  Left to Producer  (%d): %s\n", len(report.DeferredTemplates), strings.Join(report.DeferredTemplates, ", "))
 	}
 	fmt.Printf("  WorkingDir State:     %v\n", report.WorkingDirCreated)
 

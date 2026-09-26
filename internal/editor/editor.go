@@ -14,6 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/templates"
 )
 
 const (
@@ -183,7 +184,10 @@ func SynthesizeContext(ctx context.Context, opts Options) (_ *EditorConfigSet, e
 		editorMap[e] = true
 	}
 
-	files := dispatchEditorFiles(editorMap, arch, plan)
+	files, err := dispatchEditorFiles(editorMap, arch, plan)
+	if err != nil {
+		return nil, err
+	}
 
 	return &EditorConfigSet{
 		Editors: editors,
@@ -191,7 +195,7 @@ func SynthesizeContext(ctx context.Context, opts Options) (_ *EditorConfigSet, e
 	}, nil
 }
 
-func dispatchEditorFiles(editorMap map[string]bool, arch string, plan Plan) []GeneratedFile {
+func dispatchEditorFiles(editorMap map[string]bool, arch string, plan Plan) ([]GeneratedFile, error) {
 	var files []GeneratedFile
 	if editorMap[EditorUniversal] {
 		files = append(files, generateUniversalEditorConfig()...)
@@ -210,13 +214,21 @@ func dispatchEditorFiles(editorMap map[string]bool, arch string, plan Plan) []Ge
 		{EditorEmacs, generateEmacs},
 		{EditorFleet, generateFleet},
 		{EditorSublime, generateSublime},
-		{EditorVisualStudio, generateVisualStudio},
 	} {
 		if editorMap[generator.editor] {
 			files = append(files, generator.generate(arch, plan)...)
 		}
 	}
-	return files
+	// Visual Studio renders a shared template, which can fail, so it sits outside the
+	// table of generators that cannot. It stays last, as it was in the table.
+	if !editorMap[EditorVisualStudio] {
+		return files, nil
+	}
+	tidy, err := generateVisualStudio()
+	if err != nil {
+		return nil, err
+	}
+	return append(files, tidy...), nil
 }
 
 var editorAliases = map[string]string{
@@ -857,32 +869,23 @@ func generateSublime(_ string, plan Plan) []GeneratedFile {
 	}
 }
 
-func generateVisualStudio(_ string, _ Plan) []GeneratedFile {
-	tidy := `# cordanaLLM/praetor High-Integrity Systems Standard (HISS) Clang-Tidy Configuration
----
-Checks: >
-  -*,
-  bugprone-*,
-  cert-*,
-  clang-analyzer-*,
-  cppcoreguidelines-*,
-  modernize-*,
-  performance-*,
-  readability-*,
-  -readability-identifier-length
+// clangTidyTemplate is the one .clang-tidy body praetor ships. The native-gpu-systems flavor
+// scaffolds the same template (internal/flavor/definitions.go), so the file an adopter gets
+// does not depend on which command created it.
+const clangTidyTemplate = "native/.clang-tidy.tmpl"
 
-WarningsAsErrors: ''
-HeaderFilterRegex: '.*'
-FormatStyle: file
-...
-`
+func generateVisualStudio() ([]GeneratedFile, error) {
+	tidy, err := templates.RenderFile(clangTidyTemplate, templates.Context{})
+	if err != nil {
+		return nil, fmt.Errorf("render Visual Studio clang-tidy configuration: %w", err)
+	}
 	return []GeneratedFile{
 		{
 			Path:    ".clang-tidy",
 			Content: tidy,
 			Editor:  EditorVisualStudio,
 		},
-	}
+	}, nil
 }
 
 func fileExists(path string) bool {
