@@ -124,6 +124,27 @@ func popularPublicURL(url string) bool {
 // It does not disable user hooks: these are new clones and Praetor's generated
 // hooks are deliberately left inactive by the disposable-clone adoption option.
 func publicCommandContext(ctx context.Context, dir string) (context.Context, error) {
+	return untrustedCloneContext(ctx, dir, "https")
+}
+
+// untrustedCloneContext is the one isolation environment every clone of a repository
+// Praetor does not own runs in: the public loop and the ephemeral dogfood sandbox. dir
+// holds the scratch HOME and TMPDIR, and protocols is the colon-separated GIT_ALLOW_PROTOCOL
+// allow-list for that caller.
+//
+// The environment replaces the parent's rather than extending it, so a credential helper, an
+// agent socket, a GIT_TEMPLATE_DIR or an insteadOf rewrite cannot reach a checkout of
+// untrusted content. That also means an authenticated transport has nothing to authenticate
+// with, which is why the remote sandbox accepts https only.
+//
+// GIT_ALLOW_PROTOCOL is what refuses a transport, including a repository handed in as a bare
+// path rather than a URL: measured on git 2.55.0, "clone -- <local path>" under a list
+// without file fails with "transport 'file' not allowed". protocol.file.allow=never restates
+// that policy in configuration, for a git that stops honouring the variable its own
+// documentation calls legacy. It cannot tighten the allow-list and it does not win against
+// it: the public-loop fixture clones a local path with GIT_ALLOW_PROTOCOL=file while this
+// pair says never (installPublicGitFixture in public_test.go).
+func untrustedCloneContext(ctx context.Context, dir, protocols string) (context.Context, error) {
 	git, err := exec.LookPath("git")
 	if err != nil {
 		return nil, err
@@ -140,9 +161,10 @@ func publicCommandContext(ctx context.Context, dir string) (context.Context, err
 		return nil, err
 	}
 	env := []string{"HOME=" + home, "TMPDIR=" + tmp, "LANG=C.UTF-8", "PATH=" + util.ScrubbedToolPath(git),
-		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=https",
-		"GIT_ATTR_NOSYSTEM=1", "GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0=",
-		"GIT_CONFIG_KEY_1=core.fsmonitor", "GIT_CONFIG_VALUE_1=false"}
+		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=" + protocols,
+		"GIT_ATTR_NOSYSTEM=1", "GIT_CONFIG_COUNT=3", "GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0=",
+		"GIT_CONFIG_KEY_1=core.fsmonitor", "GIT_CONFIG_VALUE_1=false",
+		"GIT_CONFIG_KEY_2=protocol.file.allow", "GIT_CONFIG_VALUE_2=never"}
 	return util.WithCommandEnvironment(ctx, env)
 }
 

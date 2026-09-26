@@ -42,8 +42,14 @@ func sourceFiles(ctx context.Context, repoPath string) ([]string, error) {
 	return directorySourceFiles(ctx, repoPath)
 }
 
+// gitSourceFiles enumerates the scanned repository's own sources through the hardened
+// probe. A dedupe scan inspects a repository Praetor does not own, so it must not let that
+// repository decide what runs: a plain inventory call honours the scanned tree's
+// core.fsmonitor and core.hooksPath, which executed a repository-configured program during
+// praetorctl dedupe scan. util.RunGitProbe disables both and scrubs the inherited
+// environment; internal/hiss enumerates the same way for the same reason.
 func gitSourceFiles(ctx context.Context, repoPath string) ([]string, error) {
-	out, err := util.RunCommandBytes(ctx, repoPath, "git", maxGitScopeBytes,
+	out, err := util.RunGitProbe(ctx, repoPath, maxGitScopeBytes,
 		"ls-files", "--cached", "--others", "--exclude-standard", "--deduplicate", "-z", "--", ".")
 	if err != nil {
 		return nil, fmt.Errorf("enumerate dedupe Git scope: %w", err)

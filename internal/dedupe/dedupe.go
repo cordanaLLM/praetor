@@ -162,28 +162,63 @@ func checkUtilitySprawl(fset *token.FileSet, node *ast.File, relPath string, rep
 	})
 }
 
+// gitSprawlReplacement names both audited entry points because neither answers for every
+// call. util.RunGit inherits the ambient environment and the inspected repository's own
+// configuration, so recommending it alone reproduced the defect this rule exists to prevent
+// -- a scanned tree's core.fsmonitor command executing during the scan. util.RunGitProbe
+// scrubs that environment but is read-only by construction (internal/util/git_probe.go
+// forces a five-second deadline and core.hooksPath=devnull), so recommending it alone tells
+// a clone, fetch or commit to silently drop its hooks and die at five seconds. The
+// .golangci.yml forbidigo rule for the same call names the same pair (plus util.RunCommand,
+// which answers for a non-git binary), and
+// TestScanRepo_Boundary_SprawlAdviceMatchesTheLinterRule reads this constant's helper names
+// and requires that message to carry each of them, so the two cannot drift apart unnoticed.
+const gitSprawlReplacement = "util.RunGit(ctx, repoPath, ...), or util.RunGitProbe(ctx, repoPath, maxBytes, ...) " +
+	"for a read-only inspection of a repository Praetor does not own"
+
+// gitExecForm reports where an os/exec constructor keeps the executable name and how to
+// print the call. exec.Command takes the name first; exec.CommandContext takes the context
+// first and the name second.
+func gitExecForm(function string) (nameIndex int, pattern string, ok bool) {
+	switch function {
+	case "Command":
+		return 0, `exec.Command("git", ...)`, true
+	case "CommandContext":
+		return 1, `exec.CommandContext(ctx, "git", ...)`, true
+	default:
+		return 0, "", false
+	}
+}
+
+// checkAdHocGit reports a direct exec of git and names the helper to use instead.
+//
+// The name index comes from gitExecForm. Asserting a literal "git" at Args[0] for both
+// constructors left the CommandContext arm dead by construction -- Args[0] is then the
+// context expression, never a BasicLit -- so exec.CommandContext(ctx, "git", ...) passed the
+// name check and was dropped one line later (BUG-755, and one clause of BUG-818).
 func checkAdHocGit(call *ast.CallExpr, relPath string, line int, report *DedupeReport) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return
 	}
 	ident, ok := sel.X.(*ast.Ident)
-	if !ok {
+	if !ok || ident.Name != "exec" {
 		return
 	}
-
-	if ident.Name == "exec" && (sel.Sel.Name == "Command" || sel.Sel.Name == "CommandContext") {
-		if len(call.Args) > 0 {
-			if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Value == "\"git\"" {
-				report.SprawlItems = append(report.SprawlItems, SprawlItem{
-					File:        relPath,
-					Line:        line,
-					Pattern:     "exec.Command(\"git\", ...)",
-					Replacement: "util.RunGit(ctx, repoPath, ...)",
-				})
-			}
-		}
+	nameIndex, pattern, ok := gitExecForm(sel.Sel.Name)
+	if !ok || len(call.Args) <= nameIndex {
+		return
 	}
+	lit, ok := call.Args[nameIndex].(*ast.BasicLit)
+	if !ok || lit.Value != `"git"` {
+		return
+	}
+	report.SprawlItems = append(report.SprawlItems, SprawlItem{
+		File:        relPath,
+		Line:        line,
+		Pattern:     pattern,
+		Replacement: gitSprawlReplacement,
+	})
 }
 
 func collectDuplicates(hashMap map[string][]FileLocation, locMap map[string]int, report *DedupeReport) {
@@ -221,5 +256,14 @@ func calculateScore(report *DedupeReport) {
 		score = 0.0
 	}
 	report.CleanlinessScore = score
-	report.Passed = score >= 80.0 && len(report.Duplicates) == 0
+	// A finding the verdict never mentions is a finding nobody acts on. Five points per
+	// sprawl item against an 80 threshold meant four ad-hoc utility call sites scored 80
+	// and passed, so the gate reported success while listing the infractions underneath
+	// it. Every sprawl item now has to be resolved or waived, exactly like a clone.
+	//
+	// The finding lists are the verdict, and the score only describes how far a failing
+	// repository is from clean: with both lists empty every deduction is zero and the score
+	// is always exactly 100, so keeping "score >= 80" in the condition was dead logic that a
+	// third finding category would have slipped past unnoticed.
+	report.Passed = len(report.Duplicates) == 0 && len(report.SprawlItems) == 0
 }
