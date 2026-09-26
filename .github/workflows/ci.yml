@@ -64,6 +64,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             editors/vscode/package-lock.json
+            tools/figures/package-lock.json
             tools/markdownlint/package-lock.json
 
       - name: Install Security Toolchains (govulncheck & gosec)
@@ -186,9 +187,14 @@ jobs:
         run: |
           echo "Documentation change detected. Running MkDocs verification."
           python3 -m pip install --require-hashes -r docs/presets/mkdocs/requirements.txt
+          # The figure player bundle is gitignored; build it before MkDocs copies docs/ (ADR-0015).
+          npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
+          npm --prefix tools/figures run bundle
           mkdocs build --strict
-          # A strict build still passes when a ```mermaid block ships as a code listing.
-          python3 -B scripts/docs_diagrams.py --config mkdocs.yml --docs docs --site site
+          # A strict build still passes when a ```mermaid block ships as a code listing or a
+          # ```figure fence does not become a figure; `sources` catches a stale committed figure.
+          python3 -B scripts/docs_diagrams.py site --config mkdocs.yml --docs docs --site site
+          python3 -B scripts/docs_diagrams.py sources
           python3 -B scripts/test_docs_seo_presets.py
           go run ./cmd/standardsctl seo audit site
           # The preset's own mkdocs.yml is built (and mermaid-checked) by the docs-presets
@@ -362,7 +368,7 @@ jobs:
           DOCS_SITE_URL="$PRESET_ROOT_URL" mkdocs build --strict -f docs/presets/mkdocs/mkdocs.yml -d "$RUNNER_TEMP/preset-mkdocs-root"
           DOCS_SITE_URL="$PRESET_SUBPATH_URL" mkdocs build --strict -f docs/presets/mkdocs/mkdocs.yml -d "$RUNNER_TEMP/preset-mkdocs-subpath"
           # A strict build still passes when a ```mermaid block ships as a code listing.
-          python3 -B scripts/docs_diagrams.py --config docs/presets/mkdocs/mkdocs.yml \
+          python3 -B scripts/docs_diagrams.py site --config docs/presets/mkdocs/mkdocs.yml \
             --docs docs/presets/mkdocs/docs --site "$RUNNER_TEMP/preset-mkdocs-root"
 
       - name: Setup Node Toolchain

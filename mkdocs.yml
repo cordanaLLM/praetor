@@ -8,8 +8,32 @@ site_author: Lusoris
 # every page head is one template rather than a copy that can drift from it. The template
 # sits inside docs_dir, so exclude_docs keeps MkDocs from also publishing its Jinja source
 # as a static page. `praetorctl seo audit site` checks the built result.
+#
+# docs/figures/ holds the TypeScript figure specs. tools/figures/build.mjs turns them into the
+# committed SVG and JSON under docs/assets/figures/; the specs themselves are not published.
 exclude_docs: |
   presets/mkdocs/overrides/
+  /figures/
+
+# Interactive figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md). The hook turns
+# each ```figure fence into a <picture> of the committed SVGs; the loader, built by
+# `npm --prefix tools/figures run bundle` before `mkdocs build`, mounts the player near the
+# viewport. Without the bundle every figure still shows its SVG. scripts/docs_diagrams.py reads
+# this hooks entry to decide that ```figure fences are enabled for this site.
+hooks:
+  - scripts/mkdocs_figures_hook.py
+
+extra_javascript:
+  - path: assets/javascripts/figures/loader.js
+    type: module
+
+extra_css:
+  - stylesheets/figures.css
+
+copyright: >-
+  Figures drawn with
+  <a href="https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig">interfig</a>,
+  (c) 2025 Vectorize AI, Inc., MIT License.
 
 theme:
   name: material
@@ -151,6 +175,7 @@ nav:
           - Documentation Drift: guides/documentation-drift.md
           - Text Register: guides/text-register.md
           - GitHub Wiki Sync: guides/github-wiki-sync.md
+          - Interactive Figures: guides/figures.md
   - Standards:
       - HISS Formal Specification: standards/hiss-spec.md
       - HISS Invariants: wiki/HISS-Invariants.md
@@ -175,6 +200,7 @@ nav:
           - ADR-0011 Agent Client Wrapping & Operational Rollout: adr/0011-agent-client-wrapping-and-operational-rollout.md
           - ADR-0012 Current Delivery, Runner & Pipeline State: adr/0012-current-delivery-runner-and-pipeline-state.md
           - ADR-0013 Container Image & Helm Chart Delivery: adr/0013-container-image-and-helm-chart-delivery.md
+          - ADR-0015 Interactive Figures from Vendored interfig: adr/0015-interactive-figures-from-vendored-interfig.md
   - Reference:
       - API & CLI Reference: wiki/API-Reference.md
       - Wiki Portal: wiki/Home.md

@@ -96,22 +96,11 @@ the image tagged with its `appVersion` (ADR-0013).
 ## 3. Level 3: Component Diagram (Gating Engine)
 
 The Component diagram details the internal workflow of the Anti-Direct-Merge Gating Pipeline (`internal/gating/pipeline.go`).
+Its tabs play four runs: a clean run that signs the receipt, a HISS violation rejected at stage 2, a dry run,
+and a missing signing key that fails stage 6 closed.
 
-```mermaid
-flowchart LR
-    INPUT["Merge / Commit Candidate"] --> PREFETCH["1. Prefetch & Lockfiles\n(.standards.yaml + .standards.lock,\ngo mod verify / download)"]
-    PREFETCH -->|"passed / not_applicable (no go.mod) / skipped (dry run)"| AST_SCAN["2. HISS Invariant Scan\n(HISS-01/02/04/07/08/09, resolved\nfunction-length limit, baseline ratchet)"]
-    AST_SCAN -->|"passed: no new infractions"| SECURITY["3. Security & SCA Scan\n(govulncheck, gosec)"]
-    SECURITY -->|"passed / not_applicable (no go.mod) / skipped (dry run)"| FLAVOR["4. Flavor Conformance\n(flavor audit)"]
-    FLAVOR -->|"passed / not_applicable (no flavor)"| RACE_TEST["5. Race-Detector Tests\n(go test -race in worktree)"]
-    RACE_TEST -->|"passed / not_applicable (no go.mod) / skipped (dry run, no C toolchain)"| RECEIPT["6. Ed25519 Exit-0 Receipt\n(signs praetor-gate-output/v2;\nskipped on dry run)"]
-
-    PREFETCH -->|"Missing lockfile / checksum mismatch"| REJECT["Rejected Disposition (Exit 1)"]
-    AST_SCAN -->|"New violations / incomplete scan"| REJECT
-    SECURITY -->|"Findings / missing scanner"| REJECT
-    FLAVOR -->|"Score below 80% / missing template"| REJECT
-    RACE_TEST -->|"Data race / test failure"| REJECT
-    RECEIPT -->|"No signing key"| REJECT
+```figure
+gating-pipeline
 ```
 
 Stage order and names come from `executeStages` in `internal/gating/pipeline.go`. Each stage records

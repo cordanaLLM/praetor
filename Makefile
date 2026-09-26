@@ -181,12 +181,26 @@ docs-lint-test:
 	node tools/markdownlint/verify.mjs --self-test
 	node tools/docsurface/verify.mjs --self-test
 
-# The rendered half of scripts/docs_diagrams.py runs after mkdocs build in pages.yml and the CI
-# docs audit; this replays its fixtures and checks both mkdocs.yml files declare the fence.
+# The rendered half of scripts/docs_diagrams.py (`site`) runs after mkdocs build in pages.yml and
+# the CI docs audit; this replays its Mermaid and figure fixtures, both directions, and checks both
+# mkdocs.yml files declare the diagram kinds their pages use.
 .PHONY: docs-diagrams-test
 verify-all: docs-diagrams-test
 docs-diagrams-test:
 	python3 -B scripts/test_docs_diagrams.py
+
+# Interactive figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md): the build's
+# unit tests, a fresh build compared byte for byte with the committed SVG and JSON plus the player
+# size budget, and the Node-free source check (hashes, spec/JSON pairs, fence slugs, evidence,
+# the README block). A hand-edited or stale SVG fails both `check` and `sources`.
+.PHONY: docs-figures-check
+verify-all: docs-figures-check
+docs-figures-check:
+	npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
+	npm --prefix tools/figures test
+	npm --prefix tools/figures run typecheck
+	npm --prefix tools/figures run check
+	python3 -B scripts/docs_diagrams.py sources
 
 # The presets' JSON-LD must read identity from the site's config, never name this project:
 # a source check always, and rendered MkDocs builds when mkdocs-material is installed.

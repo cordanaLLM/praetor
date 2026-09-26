@@ -254,8 +254,28 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: tools/markdownlint/package-lock.json
+          cache-dependency-path: |
+            tools/figures/package-lock.json
+            tools/markdownlint/package-lock.json
 
       - name: Markdown Gate Self-Test
         if: ${{ !cancelled() }}
         run: node tools/markdownlint/verify.mjs --self-test
+
+      # `make docs-figures-check` is a verify-all gate, so it must run on every platform, and make
+      # is not on the Windows image: these are its commands. esbuild and TypeScript arrive as
+      # per-platform npm optional dependencies, so this leg proves the locked --ignore-scripts
+      # install works, and that a rebuild is byte-identical to the committed SVG and JSON, on each
+      # OS (the hashed files are pinned to LF in .gitattributes). The Chromium smoke test needs a
+      # built site and runs in pages.yml on Linux only.
+      - name: Figure Build Check
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
+          npm --prefix tools/figures test
+          npm --prefix tools/figures run typecheck
+          npm --prefix tools/figures run check
+          "$PYTHON" -B scripts/docs_diagrams.py sources
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
