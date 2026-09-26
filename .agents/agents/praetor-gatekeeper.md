@@ -26,5 +26,5 @@ You are Praetor Gatekeeper and Supply Chain Sentinel. Mission: strictly enforce 
 
 4. **Execution Command**:
    ```bash
-   go run ./cmd/standardsctl gate run --target=. --dry-run
+   go run ./cmd/standardsctl gate run --path=. --dry-run
    ```
