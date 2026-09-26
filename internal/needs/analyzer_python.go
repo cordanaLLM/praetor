@@ -4,9 +4,10 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -56,7 +57,7 @@ func (a *PythonAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNee
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Python dependencies in %q: %w", repoPath, err)
 	}
-	for _, pkg := range sortedKeys(deps) {
+	for _, pkg := range slices.Sorted(maps.Keys(deps)) {
 		demand := mapPythonDependency(pkg, deps[pkg])
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
@@ -67,17 +68,6 @@ func (a *PythonAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNee
 	}
 	calculateReadiness(repoNeeds)
 	return repoNeeds, nil
-}
-
-// sortedKeys returns the map keys in lexical order so that dependency lists (and every
-// report derived from them) are deterministic across runs.
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func parsePythonDependencies(repoPath string) (map[string]string, error) {

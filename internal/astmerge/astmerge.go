@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -566,7 +568,7 @@ func (dm declMerge) resolveModified(key string, b DeclItem, inB bool, o, t DeclI
 // When both sides reorder, base's order leads and the guard rejects any initialization
 // order the result gets wrong.
 func collectOrderedKeys(base, ours, theirs *ParsedAST) []string {
-	basePos, oursPos, theirsPos := indexOf(base.DeclOrder), indexOf(ours.DeclOrder), indexOf(theirs.DeclOrder)
+	basePos, oursPos, theirsPos := util.PositionIndex(base.DeclOrder), util.PositionIndex(ours.DeclOrder), util.PositionIndex(theirs.DeclOrder)
 	shared := heldBy(base.DeclOrder, oursPos, theirsPos)
 	baseOrder := orderOf(basePos, shared)
 	oursKept := slices.Equal(orderOf(oursPos, shared), baseOrder)
@@ -591,7 +593,7 @@ func collectOrderedKeys(base, ours, theirs *ParsedAST) []string {
 // reordering of side, its last shared key may stand mid-order, and inserting there would
 // shift the position of every key order places after it.
 func interleaveKeys(order, side []string) []string {
-	index := indexOf(order)
+	index := util.PositionIndex(order)
 	inSide := make(map[string]bool, len(side))
 	last := -1
 	for i, key := range side {
@@ -628,15 +630,6 @@ func insertSlot(order []string, inSide map[string]bool, anchor int) int {
 		slot++
 	}
 	return slot
-}
-
-// indexOf maps each key to its position in keys.
-func indexOf(keys []string) map[string]int {
-	index := make(map[string]int, len(keys))
-	for i, key := range keys {
-		index[key] = i
-	}
-	return index
 }
 
 func renderGoCode(pkgName string, header fileHeader, imports []ImportItem, decls []string) (string, error) {

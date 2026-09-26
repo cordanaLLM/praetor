@@ -35,7 +35,8 @@ func printDedupeUsage() {
 	fmt.Println("Usage: praetorctl dedupe <subcommand> [args]")
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  scan [dir]                         Scan repository for AST clones and utility sprawl")
-	fmt.Println("  cadence [--threshold=20] [--record] Check commit cadence and trigger sweep every N changes")
+	fmt.Println("  cadence [--threshold=20] [--added-lines=1000] [--added-files=10] [--record]")
+	fmt.Println("                                     Trigger a sweep every N commits or on Go source growth")
 }
 
 func runDedupeScan(args []string) error {
@@ -91,7 +92,9 @@ func runDedupeScan(args []string) error {
 
 func runDedupeCadence(args []string) error {
 	fs := flag.NewFlagSet("dedupe cadence", flag.ContinueOnError)
-	threshold := fs.Int("threshold", 20, "Commit threshold between deduplication sweeps")
+	threshold := fs.Int("threshold", dedupe.DefaultCadenceCommits, "Commit threshold between deduplication sweeps")
+	addedLines := fs.Int("added-lines", dedupe.DefaultCadenceAddedLines, "Go source lines added since the last sweep that make a new one due")
+	addedFiles := fs.Int("added-files", dedupe.DefaultCadenceAddedFiles, "Go source files added since the last sweep that make a new one due")
 	record := fs.Bool("record", false, "Record cadence timestamp/commit upon execution")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -105,16 +108,17 @@ func runDedupeCadence(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	shouldRun, delta, err := dedupe.CheckCadence(ctx, dir, *threshold)
+	limits := dedupe.CadenceLimits{Commits: *threshold, AddedLines: *addedLines, AddedFiles: *addedFiles}
+	status, err := dedupe.CheckCadence(ctx, dir, limits)
 	if err != nil {
 		return fmt.Errorf("cadence check failed: %w", err)
 	}
 
-	fmt.Printf("Cadence check: %d commits since last sweep (threshold: %d, trigger: %v)\n",
-		delta, *threshold, shouldRun)
+	fmt.Printf("Cadence check: %d commits, %d Go source lines and %d Go source files added since last sweep (thresholds: %d / %d / %d, trigger: %v)\n",
+		status.CommitsSince, status.AddedLines, status.AddedFiles, *threshold, *addedLines, *addedFiles, status.Due)
 
-	if shouldRun {
-		fmt.Println("Triggering periodic codebase deduplication audit...")
+	if status.Due {
+		fmt.Printf("Triggering periodic codebase deduplication audit: %s\n", status.Reason)
 		if err := runDedupeScan([]string{dir}); err != nil {
 			return err
 		}

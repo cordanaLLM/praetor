@@ -168,7 +168,7 @@ func constsAgreedOracle(base, ours, theirs, merged semanticFacts) []string {
 // initOracle reports each pair of initializers base, ours and theirs run in one order that
 // the merged file runs in the other.
 func initOracle(base, ours, theirs, merged semanticFacts) []string {
-	o, t, m := positions(ours.init), positions(theirs.init), positions(merged.init)
+	o, t, m := util.PositionIndex(ours.init), util.PositionIndex(theirs.init), util.PositionIndex(merged.init)
 	var out []string
 	for i, x := range base.init {
 		for _, y := range base.init[i+1:] {
@@ -179,14 +179,6 @@ func initOracle(base, ours, theirs, merged semanticFacts) []string {
 				out = append(out, fmt.Sprintf("init %s before %s: base, ours and theirs agree, merged flips", x, y))
 			}
 		}
-	}
-	return out
-}
-
-func positions(keys []string) map[string]int {
-	out := make(map[string]int, len(keys))
-	for i, key := range keys {
-		out[key] = i
 	}
 	return out
 }

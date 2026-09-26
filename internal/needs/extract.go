@@ -396,24 +396,10 @@ func conventionalModuleRoot(importPath string) string {
 		return importPath
 	}
 	root := strings.Join(segments[:depth], "/")
-	if isMajorVersionSegment(segments[depth]) {
+	if util.IsGoMajorVersionElement(segments[depth]) {
 		root += "/" + segments[depth]
 	}
 	return root
-}
-
-// isMajorVersionSegment reports whether a path segment is a Go major-version suffix (v2,
-// v3, ...).
-func isMajorVersionSegment(segment string) bool {
-	if len(segment) < 2 || segment[0] != 'v' {
-		return false
-	}
-	for i := 1; i < len(segment); i++ {
-		if segment[i] < '0' || segment[i] > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // calculateReadiness computes the framework adoption score and dependency counts.

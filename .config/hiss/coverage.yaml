@@ -48,13 +48,58 @@ rules:
           Only goto is reported. Recursion in native code is not decided by the line scanner
           and is held as a gap.
       - language: rust
-        state: unsupported
-        mechanism: none
-        rationale: No Rust control-flow rule exists; neither recursion nor an equivalent jump is decided.
+        state: partial
+        mechanism: internal/hiss selfcall.go rustSelfCalls, driven by scanRustLines
+        rationale: >-
+          Direct recursion is reported by the spelling that resolves to the function: a free
+          function calling its bare name, and, in an inherent impl or a trait body, a method
+          calling self.f or Self::f and an associated function calling Self::f. A bare call
+          inside an impl or trait body resolves to a free function, a path such as other::f
+          names a different item, and a local binding of the same name shadows it, so none of
+          those are reported. Shadowing follows Rust's lexical scopes: a let from the end of
+          its statement to the end of its block, a for, if-let or while-let pattern inside the
+          block it heads, a match arm's pattern in its guard and body, a closure parameter
+          inside the closure, and a nested fn or use for the whole body. A struct pattern's
+          braces belong to the pattern, and a later arm on the match's line binds as a first
+          arm does. An arm ends where rustc ends it: at its comma, or at the brace closing a
+          block-like body ({, if, match, loop, ...) unless an else, a method call or ? carries
+          it on, so a brace inside an if-else branch or a nested match ends nothing, while a
+          -, &, | or < after that brace opens the next arm's pattern. A body that starts on
+          the line after the arrow is read at its first token. A closure's body is a whole
+          expression and ends only at a comma, a semicolon or its enclosing bracket, and the
+          pipe of an or-pattern or a bitwise or is not taken for a closure's opening pipe. A
+          call outside that scope, before the let or after the block, loop, arm or closure
+          ends, is still reported, and a name followed by a parenthesis is a call rather than
+          a binding. A binding is read from one line only: a let pattern or a closure
+          parameter list wrapped across lines, or an arm whose guard or arrow sits on a later
+          line than the name, is not recognised as binding the name, so a call of that local
+          is reported. A match arm's pattern calls nothing; its guard and body are call sites,
+          where the arm's own bindings are already in scope. Inside impl Trait for T,
+          self.f and Self::f reach an inherent T::f first, which may sit in any file of the
+          crate, and Self::f picks among T's impls by argument type, so no function there is
+          decided; the header is classified with its attributes, const generic braces and
+          array lengths, and a header that ends in a semicolon opens no body. A macro may
+          rewrite its input into a call of something else (syscall!(recv(fd)) calls
+          libc::recv), so a call inside the input of any macro but the standard expression
+          macros (assert!, format!, vec!, ...) is not decided, nor is a function written in a
+          macro_rules template, whose signature holds a $metavariable. A function behind any
+          header the Rust grammar allows (a visibility such as pub(super), const, async,
+          unsafe or extern) is decided like a plain fn. Mutual recursion, recursion inside a
+          nested fn, a trait impl, a macro_rules template or a user-defined macro's input, and
+          a turbofish or path-qualified self-call are held as gaps.
       - language: python
-        state: unsupported
-        mechanism: none
-        rationale: No Python control-flow rule exists.
+        state: partial
+        mechanism: internal/hiss selfcall.go selfCalls, driven by scanPythonLines
+        rationale: >-
+          Direct recursion is reported by the spelling that resolves to the function: a plain
+          function calling its bare name, including from a nested def, and a method calling
+          self.f, cls.f or Owner.f. A bare call inside a method resolves to the module-level
+          name, a call through another object is delegation, and a parameter, assignment,
+          loop target, import or nested def of the same name shadows the function, so none of
+          those are reported. A binding shadows the name only in the function that makes it,
+          so a nested def's parameter or local does not hide the enclosing function's own
+          self-call, and a call from inside that nested def reaches its local. Mutual and
+          indirect recursion and recursion through a lambda are held as gaps.
   - id: HISS-02
     title: Bounded Loops and I/O Timeouts
     coverage:
@@ -98,8 +143,13 @@ rules:
         state: partial
         mechanism: internal/hiss rules.go python indentation tracker
         rationale: >-
-          Function length is decided by indentation. The other three caps have no Python
-          check, and Python test files carry no length exemption.
+          Function length is decided by indentation. A line that starts inside an open bracket
+          or a string (triple-quoted, or carried by a trailing backslash) continues the
+          statement above it and never ends the function, so a column-0 list element or
+          multi-line string is measured with its body. A bracket depth the scanner misreads
+          resets at the next line starting with a statement-only keyword such as def, class or
+          return, which no bracket can hold. The other three caps have no Python check, and
+          Python test files carry no length exemption.
       - language: c
         state: partial
         mechanism: internal/hiss rules.go braceTracker

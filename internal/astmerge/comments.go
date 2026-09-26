@@ -5,6 +5,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // anchor is a spec a comment written inside a block renders next to: right after it, or
@@ -151,7 +153,7 @@ func newCommentSide(p *ParsedAST) commentSide {
 			texts = append(texts, commentText(item))
 		}
 	}
-	return commentSide{p: p, pos: indexOf(p.DeclOrder), all: countTexts(texts)}
+	return commentSide{p: p, pos: util.PositionIndex(p.DeclOrder), all: countTexts(texts)}
 }
 
 // commentConflicts reports every stretch of free comments both sides rewrite differently.

@@ -28,3 +28,18 @@ func IsGoTestSurface(path string) bool {
 	slashed := filepath.ToSlash(path)
 	return strings.HasSuffix(slashed, "_test.go") || strings.HasPrefix(slashed, "testdata/") || strings.Contains(slashed, "/testdata/")
 }
+
+// IsGoMajorVersionElement reports whether s is a Go major-version path element such as v2 or
+// v10: a "v" followed by one or more decimal digits. The HISS import-alias resolver and the
+// needs module-path analyser both apply this one rule.
+func IsGoMajorVersionElement(s string) bool {
+	if len(s) < 2 || s[0] != 'v' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
