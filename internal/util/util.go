@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -251,16 +252,111 @@ func DirExists(path string) bool {
 }
 
 // CleanGitURL normalizes git remote URLs (SSH, HTTPS, git://).
-func CleanGitURL(url string) string {
-	trimmed := strings.TrimSpace(url)
+func CleanGitURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
 	trimmed = strings.TrimSuffix(trimmed, "/")
 	trimmed = strings.TrimSuffix(trimmed, ".git")
 	return strings.TrimSuffix(trimmed, "/")
 }
 
-// ExtractOwnerAndRepo returns owner and repository name from a git URL.
-func ExtractOwnerAndRepo(url string) (owner, repo string) {
-	trimmed := CleanGitURL(url)
+// ErrGitRemoteNotNetwork is returned by ParseGitRemote for a remote that does not name a
+// network host: a local path, a file:// URL, a Windows drive path or an unsupported scheme.
+var ErrGitRemoteNotNetwork = errors.New("util: git remote does not name a network host and repository")
+
+// maxRemoteExcerptBytes bounds how much of a rejected remote an error repeats.
+const maxRemoteExcerptBytes = 256
+
+// GitRemote is a network git remote split into the host it talks to and the repository
+// path on that host.
+type GitRemote struct {
+	// Host is the lower-cased host name, without user info, port or trailing dot.
+	Host string
+	// Path is the repository path on Host without surrounding slashes or ".git", such as
+	// "acme/widgets", or "group/subgroup/widgets" on a forge with nested namespaces.
+	Path string
+	// Owner and Repo are the last two segments of Path, as ExtractOwnerAndRepo reports them.
+	Owner string
+	Repo  string
+}
+
+// gitRemoteSchemes are the URL schemes git uses to reach a network host.
+var gitRemoteSchemes = map[string]bool{"https": true, "http": true, "ssh": true, "git": true, "git+ssh": true}
+
+// ParseGitRemote parses a network git remote: a URL with an https, http, ssh, git or
+// git+ssh scheme, or git's scp-like [user@]host:path form. Anything else, including a
+// local path and a file:// URL, is ErrGitRemoteNotNetwork, so a caller that compares the
+// host can never mistake a directory for a forge.
+func ParseGitRemote(raw string) (GitRemote, error) {
+	excerpt := remoteExcerpt(raw)
+	trimmed := CleanGitURL(raw)
+	if trimmed == "" || strings.ContainsFunc(trimmed, unicode.IsControl) || strings.ContainsAny(trimmed, " \\") {
+		return GitRemote{}, fmt.Errorf("%w: %q", ErrGitRemoteNotNetwork, excerpt)
+	}
+	host, path, err := splitGitRemote(trimmed)
+	if err != nil {
+		return GitRemote{}, fmt.Errorf("%w: %q: %w", ErrGitRemoteNotNetwork, excerpt, err)
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	path = strings.Trim(path, "/")
+	owner, repo := extractPathStyle(path)
+	if host == "" || owner == "" || repo == "" {
+		return GitRemote{}, fmt.Errorf("%w: %q lacks a host or an <owner>/<repo> path", ErrGitRemoteNotNetwork, excerpt)
+	}
+	return GitRemote{Host: host, Path: path, Owner: owner, Repo: repo}, nil
+}
+
+// remoteExcerpt renders a remote for an error message without the user info of a URL,
+// which may carry a token, and bounded to maxRemoteExcerptBytes.
+func remoteExcerpt(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if scheme, rest, found := strings.Cut(trimmed, "://"); found {
+		end := strings.IndexByte(rest, '/')
+		if end < 0 {
+			end = len(rest)
+		}
+		if at := strings.LastIndexByte(rest[:end], '@'); at >= 0 {
+			trimmed = scheme + "://" + rest[at+1:]
+		}
+	}
+	return TruncateExcerpt(trimmed, maxRemoteExcerptBytes)
+}
+
+// splitGitRemote separates a cleaned remote into its host and repository path.
+func splitGitRemote(trimmed string) (host, path string, err error) {
+	if strings.Contains(trimmed, "://") {
+		parsed, parseErr := url.Parse(trimmed)
+		if parseErr != nil {
+			return "", "", parseErr
+		}
+		if !gitRemoteSchemes[strings.ToLower(parsed.Scheme)] || parsed.Opaque != "" {
+			return "", "", fmt.Errorf("scheme %q is not a network git transport", parsed.Scheme)
+		}
+		return parsed.Hostname(), parsed.Path, nil
+	}
+	// git reads host:path as scp-like only when no slash precedes the first colon; any
+	// other string without "://" is a local path.
+	hostPart, path, found := strings.Cut(trimmed, ":")
+	if !found || strings.Contains(hostPart, "/") {
+		return "", "", errors.New("local path")
+	}
+	if at := strings.LastIndexByte(hostPart, '@'); at >= 0 {
+		hostPart = hostPart[at+1:]
+	}
+	if len(hostPart) < 2 || strings.ContainsAny(hostPart, "[]") {
+		// A one-letter host is a Windows drive such as C:, which git treats as local.
+		return "", "", errors.New("drive letter or bracketed host")
+	}
+	return hostPart, path, nil
+}
+
+// ExtractOwnerAndRepo returns owner and repository name from a git URL. A network remote
+// goes through ParseGitRemote; any other string, such as a local path, falls back to its
+// last two slash-separated segments.
+func ExtractOwnerAndRepo(raw string) (owner, repo string) {
+	if remote, err := ParseGitRemote(raw); err == nil {
+		return remote.Owner, remote.Repo
+	}
+	trimmed := CleanGitURL(raw)
 	if trimmed == "" {
 		return "", ""
 	}

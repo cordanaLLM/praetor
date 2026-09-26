@@ -1,0 +1,3 @@
+type: fixed
+title: sync --remote refuses an origin on another host or a local path (new --forge-host flag, default github.com), so acme/widgets on gitlab.com no longer authorizes a GitHub ruleset write
+breaking: false

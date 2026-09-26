@@ -32,10 +32,16 @@ const rulesetName = "praetor-main-protection"
 // ErrRemoteTokenMissing reports a --remote sync without any usable credential.
 var ErrRemoteTokenMissing = errors.New("--remote requires --token, GITHUB_TOKEN or GH_TOKEN")
 
+// defaultForgeHost is the git host a --remote sync expects origin to point at.
+const defaultForgeHost = "github.com"
+
 // remoteSyncOptions carries the explicit inputs of a --remote reconciliation.
 type remoteSyncOptions struct {
 	token    string
 	endpoint string
+	// host is the git host origin must name; the API endpoint alone cannot say which
+	// host a checkout talks to (a test stub or a GitHub Enterprise API path differs).
+	host string
 }
 
 func reconcileLabels(ctx context.Context, rootDir string) error {
@@ -142,17 +148,35 @@ func resolveSyncToken(explicit string) string {
 	return os.Getenv("GH_TOKEN")
 }
 
+// validateForgeHost accepts a bare host name such as github.com: no scheme, port, user
+// info, path or whitespace, because it is compared with the host origin names.
+func validateForgeHost(host string) error {
+	if host == "" || strings.ContainsAny(host, "/:@\\ \t\r\n") {
+		return fmt.Errorf("--forge-host must be a bare host name such as %s, got %q", defaultForgeHost, host)
+	}
+	return nil
+}
+
 // verifyOriginIdentity refuses to write to any forge repository other than the one the
 // checkout's origin remote points at, so a foreign manifest cannot redirect the ruleset.
-func verifyOriginIdentity(ctx context.Context, rootDir, owner, name string) error {
+// The host is part of the identity: acme/widgets on gitlab.com, or a local directory
+// whose path ends in acme/widgets, never authorizes a write to acme/widgets on GitHub.
+func verifyOriginIdentity(ctx context.Context, rootDir, host, owner, name string) error {
 	out, err := util.RunGit(ctx, rootDir, "config", "--get", "remote.origin.url")
 	if err != nil || strings.TrimSpace(out) == "" {
 		return fmt.Errorf("cannot verify manifest repository %s/%s: no origin remote in %s", owner, name, rootDir)
 	}
-	remoteOwner, remoteRepo := util.ExtractOwnerAndRepo(out)
-	if !strings.EqualFold(remoteOwner, owner) || !strings.EqualFold(remoteRepo, name) {
-		return fmt.Errorf("manifest declares %s/%s but origin points at %s/%s; refusing to modify a foreign repository",
-			owner, name, remoteOwner, remoteRepo)
+	remote, err := util.ParseGitRemote(out)
+	if err != nil {
+		return fmt.Errorf("cannot verify manifest repository %s/%s: origin is not a %s remote: %w", owner, name, host, err)
+	}
+	if !strings.EqualFold(remote.Host, host) {
+		return fmt.Errorf("manifest declares %s/%s on %s but origin points at host %s; refusing to modify a foreign repository",
+			owner, name, host, remote.Host)
+	}
+	if !strings.EqualFold(remote.Path, owner+"/"+name) {
+		return fmt.Errorf("manifest declares %s/%s but origin points at %s; refusing to modify a foreign repository",
+			owner, name, remote.Path)
 	}
 	return nil
 }
@@ -168,7 +192,10 @@ func reconcileRemoteForge(ctx context.Context, rootDir string, manifest *config.
 	if owner == "" || name == "" {
 		return errors.New("manifest repository.owner and repository.name must be set before writing to the forge")
 	}
-	if err := verifyOriginIdentity(ctx, rootDir, owner, name); err != nil {
+	if err := validateForgeHost(remote.host); err != nil {
+		return err
+	}
+	if err := verifyOriginIdentity(ctx, rootDir, remote.host, owner, name); err != nil {
 		return err
 	}
 
@@ -192,6 +219,7 @@ func runSync(args []string) error {
 	token := fs.String("token", "", "Forge API token for --remote (default: GITHUB_TOKEN, then GH_TOKEN; the gh CLI is never consulted)")
 	endpoint := fs.String("endpoint", "", "Forge API endpoint for --remote (default: https://api.github.com)")
 	catalogRoot := fs.String("catalog-root", "", "Root containing pinned .config/archetypes for lock digest verification (default: reconciled root)")
+	forgeHost := fs.String("forge-host", defaultForgeHost, "Git host the origin remote must point at for --remote (GitHub Enterprise: the server's host name)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -199,7 +227,7 @@ func runSync(args []string) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("sync accepts no positional arguments, got %q", fs.Args())
 	}
-	remoteOpts := remoteSyncOptions{token: *token, endpoint: *endpoint}
+	remoteOpts := remoteSyncOptions{token: *token, endpoint: *endpoint, host: *forgeHost}
 
 	// HISS-02: local reconciliation and the forge round trips share one deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)

@@ -301,11 +301,15 @@ labels:
 type forgeStub struct {
 	mu          sync.Mutex
 	writes      []string
+	requests    int
 	writeStatus int
 }
 
 func (s *forgeStub) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		s.requests++
+		s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
 			if _, err := w.Write([]byte("[]")); err != nil {
@@ -327,6 +331,67 @@ func (s *forgeStub) recorded() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string{}, s.writes...)
+}
+
+func (s *forgeStub) requestCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.requests
+}
+
+// TestSync_Remote_OriginHost covers BUG-893: the origin host is part of the repository
+// identity, so a matching owner/name on another host or in a local path never
+// authorizes a GitHub write, and no request of any kind reaches the forge.
+func TestSync_Remote_OriginHost(t *testing.T) {
+	f := newSyncValidationFixture(t)
+	env := initGitFixture(t, f.dir)
+	stub := &forgeStub{writeStatus: http.StatusCreated}
+	srv := httptest.NewServer(stub.handler())
+	t.Cleanup(srv.Close)
+	setOrigin := func(t *testing.T, remote string) {
+		t.Helper()
+		if out, gerr := runFixtureGit(t, f.dir, env, "config", "remote.origin.url", remote); gerr != nil {
+			t.Fatalf("set origin %q: %v (%s)", remote, gerr, out)
+		}
+	}
+	runRemote := func(extra ...string) (string, error) {
+		args := append([]string{"--config=" + f.manifestPath, "--remote", "--token=ghp_x", "--endpoint=" + srv.URL}, extra...)
+		return runSyncCmd(t, args...)
+	}
+
+	// Negative: same owner/name, wrong host or no host at all.
+	for remote, needle := range map[string]string{
+		"https://gitlab.com/acme/widgets.git":          "origin points at host gitlab.com",
+		"git@gitlab.com:acme/widgets.git":              "origin points at host gitlab.com",
+		"https://evil.example/github.com/acme/widgets": "origin points at host evil.example",
+		"/srv/git/acme/widgets":                        "origin is not a github.com remote",
+		"file:///srv/git/acme/widgets":                 "origin is not a github.com remote",
+		"https://github.com/acme/widgets/extra":        "origin points at acme/widgets/extra",
+	} {
+		setOrigin(t, remote)
+		_, err := runRemote()
+		mustErrContain(t, err, needle)
+	}
+	// Negative: a --forge-host that is not a bare host name is refused up front.
+	setOrigin(t, "https://github.com/acme/widgets")
+	_, err := runRemote("--forge-host=https://github.com")
+	mustErrContain(t, err, "--forge-host must be a bare host name")
+	if n := stub.requestCount(); n != 0 {
+		t.Fatalf("a refused origin must not reach the forge, got %d requests", n)
+	}
+
+	// Positive: host and path compare case-insensitively.
+	setOrigin(t, "https://GitHub.com/Acme/Widgets.git")
+	if out, err := runRemote(); err != nil {
+		t.Fatalf("matching origin refused: %v\n%s", err, out)
+	}
+	// Boundary: a GitHub Enterprise host is accepted only when named explicitly.
+	setOrigin(t, "git@ghe.example.com:acme/widgets.git")
+	_, err = runRemote()
+	mustErrContain(t, err, "origin points at host ghe.example.com")
+	if out, err := runRemote("--forge-host=ghe.example.com"); err != nil {
+		t.Fatalf("explicit enterprise host refused: %v\n%s", err, out)
+	}
 }
 
 func TestSync_Remote_Negative(t *testing.T) {
