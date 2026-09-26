@@ -34,7 +34,7 @@ var catalog = []Rule{
 		ID:            "HISS-01",
 		Title:         "Control Flow - Acyclic DAG Control Flow",
 		Specification: "Call graphs must form a Directed Acyclic Graph: G = (V, E), ∀v ∈ V, (v, v) ∉ E*\nDirect and mutual recursion are strictly prohibited in production runtimes.",
-		Enforcement:   "The internal/hiss scanner, deciding a subset per language: Go goto plus direct and mutual recursion between plain functions (a cycle through methods is not decided); Rust and Python direct recursion only; C and C++ goto only. Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'.",
+		Enforcement:   "The internal/hiss scanner, deciding a subset per language. Go: goto, direct recursion, and mutual or indirect recursion between plain functions (a cycle through methods is not decided). Rust and Python: direct recursion only. C and C++: goto only. Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'.",
 		FailureAction: "Immediate build failure.",
 	},
 	{

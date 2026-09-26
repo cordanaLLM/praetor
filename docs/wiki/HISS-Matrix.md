@@ -9,7 +9,7 @@ runs the checks its adoption generates.
 
 | Invariant | Title | Gated | Enforcement | Failure action |
 | :--- | :--- | :--- | :--- | :--- |
-| **HISS-01** | Control Flow - Acyclic DAG Control Flow | yes | AST call-graph analyzer and static linter checks. | Immediate build failure. |
+| **HISS-01** | Control Flow - Acyclic DAG Control Flow | yes | The internal/hiss scanner, deciding a subset per language. Go: goto, direct recursion, and mutual or indirect recursion between plain functions (a cycle through methods is not decided). Rust and Python: direct recursion only. C and C++: goto only. Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'. | Immediate build failure. |
 | **HISS-02** | Loops & I/O - Bounded Loops & Mandatory I/O Timeouts | yes | Semgrep rules and AST sweep. | Pre-commit and CI blocker. |
 | **HISS-03** | Zero Frame Malloc | no | NOT ENFORCED. No allocation benchmark gate exists in this repository. | None today; the rule is advisory until a check is attached. |
 | **HISS-04** | Complexity Bounds & Modular Sizing | yes | gocyclo, gocognit and funlen via golangci-lint (.golangci.yml), plus the standards_inspect_symbols AST scanner. | Build sweep blocker. |
