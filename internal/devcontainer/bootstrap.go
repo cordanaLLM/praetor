@@ -18,7 +18,7 @@ const (
 	bootstrapDockerfile  = "Dockerfile.praetor"
 	maxBootstrapParts    = 4
 	bootstrapPartBytes   = 512 * 1024
-	DefaultBuilderImage  = "docker.io/library/golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125"
+	DefaultBuilderImage  = "docker.io/library/golang:1.27-alpine@sha256:4cb7ac979db5fcc41cae44b2227ba5ab8a51e8807f40d9ba4dee20a0ad960b5b"
 	// The 26.04 tag drops the hyphen the 24.04 and earlier tags carried:
 	// mcr.microsoft.com/devcontainers/base publishes "ubuntu26.04", and
 	// "ubuntu-26.04" is not a tag on that repository. The digest is what the
