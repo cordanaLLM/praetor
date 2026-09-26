@@ -15,7 +15,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -44,33 +43,41 @@ type remoteSyncOptions struct {
 	host string
 }
 
-func reconcileLabels(ctx context.Context, rootDir string) error {
+// reconcileLabels verifies .config/labels.yaml, synthesizing it when missing, and returns
+// the labels now on disk: the taxonomy a --remote sync writes to GitHub.
+func reconcileLabels(ctx context.Context, rootDir string) ([]forge.Label, error) {
 	labelsPath := filepath.Join(rootDir, ".config", "labels.yaml")
 	data, exists, err := contextopt.ObserveSnapshot(ctx, labelsPath)
 	if err != nil {
-		return fmt.Errorf("labels observation failed: %w", err)
+		return nil, fmt.Errorf("labels observation failed: %w", err)
 	}
 	if !exists {
 		fmt.Println("  [FIX] Synthesizing missing .config/labels.yaml...")
 		if err := synthesizeDefaultLabels(labelsPath); err != nil {
-			return fmt.Errorf("failed creating labels manifest: %w", err)
+			return nil, fmt.Errorf("failed creating labels manifest: %w", err)
 		}
 		data, err = contextopt.ReadSnapshot(ctx, labelsPath)
 		if err != nil {
-			return fmt.Errorf("labels readback failed: %w", err)
+			return nil, fmt.Errorf("labels readback failed: %w", err)
 		}
 	}
-	count, err := validateSyncLabels(data)
+	labels, err := forge.ParseLabelTaxonomy(data)
 	if err != nil {
-		return fmt.Errorf(".config/labels.yaml validation failed: %w", err)
+		return nil, fmt.Errorf(".config/labels.yaml validation failed: %w", err)
 	}
 	if exists {
-		if _, err = reconcileLabelDescriptions(ctx, labelsPath, data); err != nil {
-			return fmt.Errorf("failed updating managed label descriptions: %w", err)
+		updated, err := reconcileLabelDescriptions(ctx, labelsPath, data, labels)
+		if err != nil {
+			return nil, fmt.Errorf("failed updating managed label descriptions: %w", err)
+		}
+		if !bytes.Equal(updated, data) {
+			if labels, err = forge.ParseLabelTaxonomy(updated); err != nil {
+				return nil, fmt.Errorf(".config/labels.yaml validation after description update failed: %w", err)
+			}
 		}
 	}
-	fmt.Printf("  [OK] Labels verified (.config/labels.yaml: schema and %d unique labels; remote labels not checked)\n", count)
-	return nil
+	fmt.Printf("  [OK] Labels verified (.config/labels.yaml: schema and %d unique labels)\n", len(labels))
+	return labels, nil
 }
 
 // managedLabelDescriptions holds the canonical description sync.go itself authors for a
@@ -84,17 +91,13 @@ var managedLabelDescriptions = map[string]string{
 // on disk has drifted from canonical (e.g. wording from before the HISS standard rename),
 // leaving every other byte of the file untouched. It returns the bytes now on disk so the
 // caller reports against what it actually wrote rather than re-reading. Idempotent: nothing
-// to replace once the canonical text is already present.
-func reconcileLabelDescriptions(ctx context.Context, labelsPath string, data []byte) ([]byte, error) {
-	var taxonomy struct {
-		Labels []forge.Label `yaml:"labels"`
-	}
-	if err := yaml.Unmarshal(data, &taxonomy); err != nil {
-		return data, fmt.Errorf("labels parse for description reconciliation: %w", err)
-	}
+// to replace once the canonical text is already present. labels is data already parsed
+// by forge.ParseLabelTaxonomy.
+func reconcileLabelDescriptions(ctx context.Context, labelsPath string, data []byte, labels []forge.Label) ([]byte, error) {
 	updated := data
 	changed := false
-	for _, label := range taxonomy.Labels {
+	for i := 0; i < len(labels) && i < forge.MaxLabelsLimit; i++ {
+		label := labels[i]
 		canonical, managed := managedLabelDescriptions[label.Name]
 		if !managed || label.Description == canonical || !bytes.Contains(updated, []byte(label.Description)) {
 			continue
@@ -181,14 +184,24 @@ func verifyOriginIdentity(ctx context.Context, rootDir, host, owner, name string
 	return nil
 }
 
-// reconcileRemoteForge pushes the branch protection ruleset and returns every failure:
-// a missing credential, an unset or foreign repository identity, or a rejected API call.
-func reconcileRemoteForge(ctx context.Context, rootDir string, manifest *config.Manifest, bp *config.BranchProtectionPolicy, remote remoteSyncOptions, contexts []string) error {
+// remoteSyncInputs is the locally verified state a --remote sync writes to the forge.
+type remoteSyncInputs struct {
+	manifest *config.Manifest
+	policy   *config.BranchProtectionPolicy
+	contexts []string
+	// labels is the taxonomy from .config/labels.yaml, as forge.ParseLabelTaxonomy read it.
+	labels []forge.Label
+}
+
+// reconcileRemoteForge pushes the branch protection ruleset and the label taxonomy and
+// returns every failure: a missing credential, an unset or foreign repository identity,
+// or a rejected API call.
+func reconcileRemoteForge(ctx context.Context, rootDir string, in remoteSyncInputs, remote remoteSyncOptions) error {
 	token := resolveSyncToken(remote.token)
 	if token == "" {
 		return ErrRemoteTokenMissing
 	}
-	owner, name := manifest.Repository.Owner, manifest.Repository.Name
+	owner, name := in.manifest.Repository.Owner, in.manifest.Repository.Name
 	if owner == "" || name == "" {
 		return errors.New("manifest repository.owner and repository.name must be set before writing to the forge")
 	}
@@ -202,20 +215,25 @@ func reconcileRemoteForge(ctx context.Context, rootDir string, manifest *config.
 	gh := forge.NewGitHubDriver(token, remote.endpoint)
 	gh.SetRepository(owner, name)
 	gh.RulesetName = rulesetName
-	gh.RequiredStatusChecks = append([]string(nil), contexts...)
+	gh.RequiredStatusChecks = append([]string(nil), in.contexts...)
 	gh.StrictStatusChecks = true
 	fmt.Printf("  [SYNC] Reconciling branch protection ruleset on GitHub for %s/%s...\n", owner, name)
-	if err := gh.ReconcileProtection(ctx, "main", bp); err != nil {
+	if err := gh.ReconcileProtection(ctx, "main", in.policy); err != nil {
 		return err
 	}
 	fmt.Println("  [OK] Remote branch protection synchronized on GitHub")
+	fmt.Printf("  [SYNC] Reconciling %d labels from .config/labels.yaml on GitHub...\n", len(in.labels))
+	if err := gh.ReconcileLabels(ctx, in.labels); err != nil {
+		return fmt.Errorf("reconcile labels: %w", err)
+	}
+	fmt.Println("  [OK] Remote labels synchronized on GitHub (labels absent from .config/labels.yaml are left alone)")
 	return nil
 }
 
 func runSync(args []string) error {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
 	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml; its directory is the reconciled root")
-	remote := fs.Bool("remote", false, "Also reconcile branch protection on GitHub (an explicit opt-in; nothing is pushed without it)")
+	remote := fs.Bool("remote", false, "Also reconcile branch protection and labels on GitHub (an explicit opt-in; nothing is pushed without it)")
 	token := fs.String("token", "", "Forge API token for --remote (default: GITHUB_TOKEN, then GH_TOKEN; the gh CLI is never consulted)")
 	endpoint := fs.String("endpoint", "", "Forge API endpoint for --remote (default: https://api.github.com)")
 	catalogRoot := fs.String("catalog-root", "", "Root containing pinned .config/archetypes for lock digest verification (default: reconciled root)")
@@ -248,7 +266,8 @@ func runSync(args []string) error {
 
 	fmt.Printf("Reconciling configuration for %s/%s...\n", manifest.Repository.Owner, manifest.Repository.Name)
 
-	if err := reconcileLabels(ctx, rootDir); err != nil {
+	labels, err := reconcileLabels(ctx, rootDir)
+	if err != nil {
 		return err
 	}
 	missing, err := verifySyncCompanions(ctx, rootDir, *catalogRoot, manifest)
@@ -263,11 +282,12 @@ func runSync(args []string) error {
 	}
 
 	if *remote {
-		if err := reconcileRemoteForge(ctx, rootDir, manifest, &policy.BranchProtection, remoteOpts, contexts); err != nil {
-			return fmt.Errorf("remote branch protection sync failed: %w", err)
+		in := remoteSyncInputs{manifest: manifest, policy: &policy.BranchProtection, contexts: contexts, labels: labels}
+		if err := reconcileRemoteForge(ctx, rootDir, in, remoteOpts); err != nil {
+			return fmt.Errorf("remote forge sync failed: %w", err)
 		}
 	} else {
-		fmt.Println("  [INFO] Remote forge untouched (pass --remote to reconcile branch protection on GitHub)")
+		fmt.Println("  [INFO] Remote forge untouched (pass --remote to reconcile branch protection and labels on GitHub)")
 	}
 
 	fmt.Printf("Local sync checks finished: labels and ruleset verified; %d companion checks missing.\n", missing)

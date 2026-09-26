@@ -30,8 +30,9 @@ const (
 	maxMilestonePages = 50
 	// maxRulesetPages bounds ruleset pagination (HISS-02): at most 1000 rulesets.
 	maxRulesetPages = 10
-	// MaxLabelsLimit bounds a single label reconciliation batch (HISS-02).
-	MaxLabelsLimit = 500
+	// MaxLabelsLimit bounds a label taxonomy (ParseLabelTaxonomy) and so a single label
+	// reconciliation batch (HISS-02): one bound, so a taxonomy that validates can be written.
+	MaxLabelsLimit = 1000
 )
 
 // errPageCeiling marks a listing that still returned full pages at its page bound: the
