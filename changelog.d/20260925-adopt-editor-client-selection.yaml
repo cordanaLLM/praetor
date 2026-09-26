@@ -1,0 +1,3 @@
+type: added
+title: .standards.yaml accepts editors and agent_clients lists that limit which editor configurations adopt, onboarding and praetorctl editors generate and which vendor context files and agent persona directories compile-context writes and verifies; an absent key keeps every editor and projection, an empty list selects none, and unselected surfaces are reported as not applicable and never recreated
+breaking: false

@@ -98,7 +98,7 @@ func runNeedsScan(ctx context.Context, args []string) error {
 func runNeedsReport(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs report", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
-	framework := fs.String("framework", defaultFrameworkDir(), "Target framework repository path")
+	framework := fs.String("framework", "", "Target framework repository path "+frameworkUsageDefault)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -107,7 +107,11 @@ func runNeedsReport(ctx context.Context, args []string) error {
 		return fmt.Errorf("invalid repository target: %w", err)
 	}
 
-	fwIndex, err := needs.InspectFramework(ctx, *framework)
+	frameworkDir, err := selectFrameworkDir(fs, *framework)
+	if err != nil {
+		return fmt.Errorf("needs report: %w", err)
+	}
+	fwIndex, err := needs.InspectFramework(ctx, frameworkDir)
 	if err != nil {
 		return fmt.Errorf("failed to inspect framework: %w", err)
 	}
@@ -131,16 +135,16 @@ func runNeedsReport(ctx context.Context, args []string) error {
 
 func runNeedsAggregate(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs aggregate", flag.ContinueOnError)
-	devDir := fs.String("dev-dir", defaultDevDir(), "Fleet dev root directory")
-	framework := fs.String("framework", defaultFrameworkDir(), "Framework repository path")
+	devDir := fs.String("dev-dir", "", "Fleet dev root directory "+devRootUsageDefault)
+	framework := fs.String("framework", "", "Framework repository path "+frameworkUsageDefault)
 	outputFile := fs.String("output", "", "Optional file path to write markdown report")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	report, err := needs.AggregateFleet(ctx, *devDir, *framework)
+	report, err := aggregateFleet(ctx, fs, *devDir, *framework)
 	if err != nil {
-		return fmt.Errorf("fleet aggregation failed: %w", err)
+		return err
 	}
 
 	md := needs.RenderFrameworkDemandMarkdown(report)
@@ -158,7 +162,7 @@ func runNeedsAggregate(ctx context.Context, args []string) error {
 func runNeedsMigrate(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs migrate", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
-	framework := fs.String("framework", defaultFrameworkDir(), "Framework repository path")
+	framework := fs.String("framework", "", "Framework repository path "+frameworkUsageDefault)
 	dryRun := fs.Bool("dry-run", true, "Preview migration without mutating files")
 	apply := fs.Bool("apply", false, "Request application (blocked until module-version/API evidence is validated)")
 	if err := fs.Parse(args); err != nil {
@@ -174,7 +178,11 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 		return fmt.Errorf("invalid repository target: %w", err)
 	}
 
-	plan, err := needs.PlanMigration(ctx, *path, *framework)
+	frameworkDir, err := selectFrameworkDir(fs, *framework)
+	if err != nil {
+		return fmt.Errorf("needs migrate: %w", err)
+	}
+	plan, err := needs.PlanMigration(ctx, *path, frameworkDir)
 	if err != nil {
 		return fmt.Errorf("failed to plan migration: %w", err)
 	}
@@ -243,16 +251,16 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 
 func runNeedsRequests(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs requests", flag.ContinueOnError)
-	devDir := fs.String("dev-dir", defaultDevDir(), "Fleet dev root directory")
-	framework := fs.String("framework", defaultFrameworkDir(), "Framework repository path")
+	devDir := fs.String("dev-dir", "", "Fleet dev root directory "+devRootUsageDefault)
+	framework := fs.String("framework", "", "Framework repository path "+frameworkUsageDefault)
 	outputDir := fs.String("output-dir", "", "Optional output directory to write demand requests")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	report, err := needs.AggregateFleet(ctx, *devDir, *framework)
+	report, err := aggregateFleet(ctx, fs, *devDir, *framework)
 	if err != nil {
-		return fmt.Errorf("fleet aggregation failed: %w", err)
+		return err
 	}
 
 	requests := needs.SynthesizeDemands(report)
@@ -311,7 +319,7 @@ func parseEpicFlags(args []string) (epicFlags, error) {
 	f := epicFlags{}
 	fs.StringVar(&f.path, "path", ".", "Target repository path")
 	fs.StringVar(&f.devDir, "dev-dir", "", "Run fleet-wide epic generation across all repositories in directory")
-	fs.StringVar(&f.framework, "framework", defaultFrameworkDir(), "Target framework repository path")
+	fs.StringVar(&f.framework, "framework", "", "Target framework repository path "+frameworkUsageDefault)
 	fs.StringVar(&f.output, "output", "", "Optional markdown file path to write pre-migration epic")
 	fs.BoolVar(&f.publish, "publish", false, "Publish pre-migration parent epic and child tasks to remote forge; "+
 		"creates only issues whose titles are missing and never updates existing ones")
@@ -327,6 +335,9 @@ func parseEpicFlags(args []string) (epicFlags, error) {
 	}
 	if len(positional) != 0 {
 		return epicFlags{}, fmt.Errorf("needs epic accepts no positional arguments; use --path (got %q)", positional)
+	}
+	if f.framework, err = selectFrameworkDir(fs, f.framework); err != nil {
+		return epicFlags{}, fmt.Errorf("needs epic: %w", err)
 	}
 	return f, nil
 }
@@ -476,26 +487,20 @@ func resolveRepoCoordinates(ctx context.Context, path string) (string, string, e
 	return util.ResolveRepoIdentity(ctx, path)
 }
 
-// defaultDevDir is the fleet root used when --dev-dir is not given: PRAETOR_DEV_DIR, or
-// <home>/dev. No workstation path is baked into the binary.
-func defaultDevDir() string {
-	if dir := os.Getenv("PRAETOR_DEV_DIR"); dir != "" {
-		return dir
+// aggregateFleet resolves the fleet dev root and the framework checkout of `needs
+// aggregate` and `needs requests`, then aggregates the fleet's framework demand.
+func aggregateFleet(ctx context.Context, fs *flag.FlagSet, devDir, framework string) (*needs.FleetDemandReport, error) {
+	root, err := resolveDevRootDir(devDir, "--dev-dir")
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", fs.Name(), err)
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return "dev"
+	frameworkDir, err := selectFrameworkDir(fs, framework)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", fs.Name(), err)
 	}
-	return filepath.Join(home, "dev")
-}
-
-// defaultFrameworkDir is the Golusoris checkout used when --framework is not given:
-// PRAETOR_FRAMEWORK_DIR, or <dev dir>/golusoris/golusoris. When it does not exist the
-// needs engine reports the missing selected path; --framework="" explicitly selects
-// the unverified built-in catalog.
-func defaultFrameworkDir() string {
-	if dir := os.Getenv("PRAETOR_FRAMEWORK_DIR"); dir != "" {
-		return dir
+	report, err := needs.AggregateFleet(ctx, root, frameworkDir)
+	if err != nil {
+		return nil, fmt.Errorf("fleet aggregation failed: %w", err)
 	}
-	return filepath.Join(defaultDevDir(), "golusoris", "golusoris")
+	return report, nil
 }

@@ -269,6 +269,39 @@ with a command-synchronization warning. Review the declared plan; `--force` can
 refresh a recognized generated harness boundary while retaining project content.
 Malformed or oversized command metadata now fails before any adoption writes.
 
+`lefthook.yml` follows the same rule (`internal/adopt/lefthook_identity.go`):
+
+- A byte-exact earlier Praetor rendering is replaced by the current one and activated,
+  `--force` or not. The recognised renderings are listed by SHA-256 in
+  `priorLefthookDigests`; `internal/adopt/testdata/lefthook/` reproduces each one.
+  An edited copy is not exact: it is preserved and not activated.
+- A configuration that reaches `.config/lefthook/praetor.yml`, the vendorable canonical
+  policy, through `extends` or through the `configs` of a `remotes` entry is never
+  replaced, `--force` included. Neither are the files vendored beside it:
+  `.config/agent/hooks/block_evasion.py` and the checkpoint scripts under
+  `.config/lefthook/scripts/`, so the policy and its scripts stay one version. A missing
+  checkpoint script is still installed. Adoption reports the skip and does not activate
+  the file; update the vendored policy as
+  [`.config/lefthook/README.md`](https://github.com/cordanaLLM/praetor/blob/main/.config/lefthook/README.md)
+  describes.
+- A configuration defining every generated job plus others is never replaced either;
+  the skip reason names the extra jobs `--force` would have dropped. Jobs count whether
+  they are declared in `commands` or `scripts` maps or in a `jobs` list. The checkpoint
+  jobs are optional here, so a configuration extended before the checkpoint lifecycle
+  became available stays protected once it is.
+- Any other existing configuration keeps the `--force` contract: preserved without it,
+  replaced with it.
+
+The generated hooks resolve `praetorctl` or, failing that, `standardsctl` through the
+same expression as the generated Makefile's `PRAETORCTL` variable
+(`util.ShellCLIResolution` in `internal/util/clinames.go`). A missing binary blocks the
+commit or push; a `./cmd/standardsctl` source tree no longer stands in for one. The
+`govet` and `security` jobs run only where the repository root holds a `go.mod` and
+otherwise print `no go.mod at the repository root, skipping <tool>`, matching the gate
+stages above. A module kept in a subdirectory is not scanned by these jobs. Tests:
+`internal/adopt/lefthook_identity_test.go`, `internal/adopt/checkpoint_test.go`,
+`internal/adopt/hooks_gomod_test.go`, `internal/adopt/cli_name_test.go`.
+
 Run the resulting commands under the intended toolchain and retain actual results
 before claiming application verification. Public dogfood governance verification,
 HISS language coverage, native tests, and deployment smoke tests remain distinct

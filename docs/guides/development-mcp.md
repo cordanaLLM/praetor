@@ -138,6 +138,12 @@ does: prose there fails with `AGENTS.md fails the caveman lint` and the first fi
 pass names its counts (see [the context gate](text-register.md#the-context-gate)). The
 fixture above is terse, so it passes.
 
+The same manifest selects which vendor files exist. `agent_clients: [claude]` in the
+fixture's `.standards.yaml` makes the writing call compile only `CLAUDE.md` and list the
+other five as `[NOT_APPLICABLE]`; a `verify_only` call then reads only `CLAUDE.md`. An
+unknown id fails both calls with `unknown agent client id(s)`. The rule is described in
+[editor and agent client selection](editor-capabilities.md#selecting-agent-clients).
+
 For each defect, retain the input, expected behavior, actual response, provenance,
 and filesystem evidence. Exercise positive, negative, and boundary behavior of the
 affected tool. Report placeholder results, missing operations, and blocked

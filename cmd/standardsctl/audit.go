@@ -139,7 +139,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditReadmeGovernance(ctx, manifest, opts) },
 		func() error { return auditDocumentationGate(ctx, manifest, rootDir) },
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
-		func() error { return auditAgentProjections(rootDir) },
+		func() error { return auditAgentProjections(ctx, rootDir) },
 		func() error { return auditCavemanAgentSurfaces(rootDir) },
 		func() error { return auditBranchProtectionAndSupplyChain(manifest, rootDir) },
 		func() error { return auditPaperclipHarness(ctx, manifest, rootDir) },
@@ -248,16 +248,34 @@ func describeRatchetFailure(ratchet *baseline.RatchetResult) error {
 		ratchet.CurrentCount, len(ratchet.NewViolations), len(ratchet.TouchedCleanViolations), strings.Join(msgs, "\n"))
 }
 
+// verifiedTargetList names the projections one verification read, and any agent_clients left
+// out, so the audit line never claims a projection it did not check.
+func verifiedTargetList(res *compiler.CompileResult) string {
+	names := make([]string, 0, len(res.Files))
+	for _, f := range res.Files {
+		names = append(names, f.RelativePath)
+	}
+	list := "none"
+	if len(names) > 0 {
+		list = strings.Join(names, ", ")
+	}
+	if len(res.NotApplicable) > 0 {
+		list += " (not applicable: " + strings.Join(res.NotApplicable, ", ") + ")"
+	}
+	return list
+}
+
 func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
 	root := opts.rootDir
 	tr := compiler.NewTranspiler()
 	if _, err := compiler.SyncRegisterBlock(ctx, root, opts.agentsPath, false); err != nil {
 		return fmt.Errorf("[FAIL] Agent context text register: %w", err)
 	}
-	if err := tr.VerifyContext(ctx, opts.agentsPath, root); err != nil {
+	res, err := tr.VerifyCompiled(ctx, opts.agentsPath, root)
+	if err != nil {
 		return fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
 	}
-	fmt.Println("[PASS] Cross-agent context targets (Claude, Cursor, Copilot, Windsurf, Gemini, Codex) verified in sync.")
+	fmt.Printf("[PASS] Cross-agent context targets verified in sync: %s.\n", verifiedTargetList(res))
 	lint, err := compiler.LintContext(ctx, opts.agentsPath)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Agent context: %w", err)
@@ -285,9 +303,10 @@ func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Mani
 
 // auditAgentProjections fails when any vendor or plugin copy of a persona under
 // .agents/agents differs from its canonical source, so a loosened persona copy can no
-// longer pass the audit unnoticed.
-func auditAgentProjections(rootDir string) error {
-	verified, err := verifyAgentProjections(rootDir)
+// longer pass the audit unnoticed. Persona directories agent_clients leaves out are not
+// checked, as compile-context --verify does not check them.
+func auditAgentProjections(ctx context.Context, rootDir string) error {
+	verified, err := verifyAgentProjections(ctx, rootDir)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Agent persona projections out of sync: %w", err)
 	}

@@ -18,7 +18,7 @@ func TestVerifyAgentProjections_Positive_RejectsAnOrphanProjection(t *testing.T)
 	if err := os.WriteFile(orphan, []byte("stale copy\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := verifyAgentProjections(root)
+	_, err := verifyAgentProjections(t.Context(), root)
 	if err == nil {
 		t.Fatal("an orphan projection was accepted")
 	}
@@ -30,7 +30,7 @@ func TestVerifyAgentProjections_Positive_RejectsAnOrphanProjection(t *testing.T)
 // Negative: a tree whose projections all correspond to canonical personas verifies.
 func TestVerifyAgentProjections_Negative_AcceptsAMatchingTree(t *testing.T) {
 	root := projectionFixture(t)
-	verified, err := verifyAgentProjections(root)
+	verified, err := verifyAgentProjections(t.Context(), root)
 	if err != nil {
 		t.Fatalf("a matching tree was rejected: %v", err)
 	}
@@ -47,13 +47,13 @@ func TestVerifyAgentProjections_Boundary_IgnoresNonPersonaFilesAndAbsentDirs(t *
 	if err := os.WriteFile(notes, []byte("not a persona\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verifyAgentProjections(root); err != nil {
+	if _, err := verifyAgentProjections(t.Context(), root); err != nil {
 		t.Errorf("a non-persona file was treated as a projection: %v", err)
 	}
 	if err := os.Remove(filepath.Join(root, ".agents", "plugins", "praetor", "plugin.json")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verifyAgentProjections(root); err != nil {
+	if _, err := verifyAgentProjections(t.Context(), root); err != nil {
 		t.Errorf("a repository shipping no plugin was rejected: %v", err)
 	}
 }
@@ -63,7 +63,7 @@ func projectionFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	persona := []byte("---\nname: praetor-auditor\n---\n\nBody.\n")
-	dirs := append([]string{".agents/agents", ".agents/plugins/praetor/agents"}, vendorAgentDirs()...)
+	dirs := append([]string{".agents/agents", ".agents/plugins/praetor/agents"}, allPersonaDirs(t)...)
 	for _, dir := range dirs {
 		full := filepath.Join(root, filepath.FromSlash(dir))
 		if err := os.MkdirAll(full, 0o755); err != nil {

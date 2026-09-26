@@ -43,9 +43,11 @@ func verifyCompiledContext(ctx context.Context, tr *compiler.Transpiler, source,
 	if _, err := compiler.SyncRegisterBlock(ctx, filepath.Dir(source), source, false); err != nil {
 		return fmt.Errorf("context verification failed: %s: %w", source, err)
 	}
-	if err := tr.VerifyContext(ctx, source, targetDir); err != nil {
+	res, err := tr.VerifyCompiled(ctx, source, targetDir)
+	if err != nil {
 		return fmt.Errorf("context verification failed: %w", err)
 	}
+	printNotApplicableTargets(res)
 	lint, err := compiler.LintContext(ctx, source)
 	if err != nil {
 		return fmt.Errorf("context verification failed: %w", err)
@@ -61,8 +63,11 @@ func verifyCompiledContext(ctx context.Context, tr *compiler.Transpiler, source,
 	}
 	fmt.Printf("  %d personas and %d skills passed the caveman lint (<= %d prose words each).\n",
 		personasLinted, skillsLinted, compiler.AgentTextCeiling)
-	verified, err := verifyAgentProjections(targetDir)
+	verified, err := verifyAgentProjections(ctx, targetDir)
 	if err != nil {
+		return fmt.Errorf("agent persona verification failed: %w", err)
+	}
+	if err := printNotApplicablePersonaDirs(ctx, targetDir); err != nil {
 		return fmt.Errorf("agent persona verification failed: %w", err)
 	}
 	skills, err := verifyPluginSkills(targetDir)
@@ -98,7 +103,31 @@ func compileVendorTargets(ctx context.Context, tr *compiler.Transpiler, source, 
 	for _, f := range res.Files {
 		fmt.Printf("  [COMPILED] %-35s (%d lines, budget <= %d)\n", f.RelativePath, f.LineCount, compiler.MaxLineBudget)
 	}
+	printNotApplicableTargets(res)
 	return nil
+}
+
+// printNotApplicableTargets names the projections agent_clients leaves out. They are neither
+// written nor verified, so one the repository deleted stays deleted.
+func printNotApplicableTargets(res *compiler.CompileResult) {
+	printNotApplicable(res.NotApplicable)
+}
+
+// printNotApplicablePersonaDirs names the persona directories agent_clients leaves out, on the
+// same terms as printNotApplicableTargets.
+func printNotApplicablePersonaDirs(ctx context.Context, targetDir string) error {
+	dirs, err := notApplicablePersonaDirs(ctx, targetDir)
+	if err != nil {
+		return err
+	}
+	printNotApplicable(dirs)
+	return nil
+}
+
+func printNotApplicable(rels []string) {
+	for _, rel := range rels {
+		fmt.Println(compiler.NotApplicableLine(rel))
+	}
 }
 
 // compileContext writes the vendor context files and every persona projection; any
@@ -116,6 +145,9 @@ func compileContext(ctx context.Context, tr *compiler.Transpiler, source, target
 	}
 	if len(agentFiles) > 0 {
 		fmt.Printf("  [COMPILED] %d autonomous agent vendor projections.\n", len(agentFiles))
+	}
+	if err := printNotApplicablePersonaDirs(ctx, targetDir); err != nil {
+		return fmt.Errorf("agent projection failed: %w", err)
 	}
 	pluginFiles, err := projectPluginAgents(targetDir)
 	if err != nil {

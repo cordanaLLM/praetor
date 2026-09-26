@@ -174,6 +174,15 @@ type Manifest struct {
 	// repository-only and stays out of ResolvedPolicy, so no fleet or profile layer can set
 	// it and the resolved policy never changes because of it (ADR-0010).
 	Register *RegisterPolicy `yaml:"register,omitempty"`
+	// Editors selects the editor configurations `praetorctl adopt`, onboarding and
+	// `praetorctl editors` generate. An absent key keeps every supported editor, the behaviour
+	// before the key existed; a present list, empty included, selects exactly what it names
+	// (#202). Ids are resolved and rejected by internal/editor, which owns the editor set.
+	Editors []string `yaml:"editors,omitempty"`
+	// AgentClients selects the vendor context projections compile-context writes and
+	// verifies, with the same absent-versus-present rule as Editors. Ids are resolved and
+	// rejected by internal/agentcontext, which owns the projection registry.
+	AgentClients []string `yaml:"agent_clients,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.

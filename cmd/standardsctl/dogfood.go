@@ -107,7 +107,7 @@ func printRemoteResults(remotes []dogfood.RemoteAdoptionResult) {
 func printDogfoodSummary(rep *dogfood.DogfoodReport) {
 	fmt.Println("\nGovernance Self-Audit:")
 	if rep.ContextSyncPassed {
-		fmt.Println("  [PASS] Cross-agent context targets in sync (AGENTS.md -> CLAUDE/Cursor/Gemini/Codex)")
+		fmt.Println("  [PASS] Cross-agent context targets in sync with AGENTS.md (the projections agent_clients selects)")
 	} else {
 		fmt.Println("  [FAIL] Context targets out of sync")
 	}

@@ -7,13 +7,79 @@ unconditional Go settings, Go inspections or a Go problem matcher.
 
 ## Selecting editors
 
-Both subcommands take `--editors=id[,id...]`, a comma-separated list of editor ids
-or aliases (`cmd/standardsctl/editors.go`). Omitting the flag, or passing an empty
-or all-separator value, targets every editor in `editor.DefaultOptions()`. Any id
-that does not resolve through `editor.Options.Editors` (`internal/editor/editor.go`)
-fails the whole run with `unknown editor id(s): <ids>; supported: <canonical ids>`
-and writes nothing: a partially-matched `--editors` list used to synthesize only
-the recognized subset and silently drop the rest.
+A repository declares the editors it uses in `.standards.yaml`:
+
+```yaml
+editors: [vscode, neovim]
+```
+
+`praetorctl adopt`, onboarding and both `editors` subcommands resolve that list
+through `editor.SelectEditors` (`internal/editor/selection.go`):
+
+| Declaration | Result |
+| :--- | :--- |
+| key absent (or `editors:` with no value) | every supported editor, as before the key existed |
+| a list of ids or aliases | exactly those editors |
+| `editors: []` | no editor; nothing is generated or verified |
+
+Every supported editor outside the selection is reported as not applicable:
+`[NOT_APPLICABLE] Editors not selected: ...` from the CLI, and a `skip` action on
+`editors` in the adoption report. Its files are neither generated nor verified, so a
+file the repository deleted is not recreated by the next run. Existing files of an
+unselected editor are left in place; delete them yourself.
+
+Both subcommands also take `--editors=id[,id...]`, a comma-separated list of editor
+ids or aliases (`cmd/standardsctl/editors.go`). A non-empty flag overrides the
+manifest for that run. Omitting the flag, or passing an empty or all-separator value,
+falls back to the manifest. Any id that does not resolve, from the flag or the
+manifest, fails the whole run with `unknown editor id(s): <ids>; supported:
+<canonical ids>` and writes nothing: a partially-matched list used to synthesize only
+the recognized subset and silently drop the rest. Without the flag, a manifest that
+cannot be read fails the same way instead of falling back to every editor.
+
+Tests: `internal/editor/selection_test.go`,
+`cmd/standardsctl/editors_selection_test.go`,
+`internal/adopt/client_selection_test.go`,
+`internal/harvester/onboard_selection_test.go`.
+
+## Selecting agent clients
+
+`agent_clients` selects the vendor context files `praetorctl compile-context` compiles
+from `AGENTS.md` and the persona directories it copies `.agents/agents/*.md` into, with
+the same absent, list and empty rules as `editors`:
+
+```yaml
+agent_clients: [claude, codex]
+```
+
+| Id | Context file | Persona directory |
+| :--- | :--- | :--- |
+| `claude` | `CLAUDE.md` | `.claude/agents` |
+| `cursor` | `.cursor/rules/hiss-invariants.mdc` | none |
+| `copilot` | `.github/copilot-instructions.md` | `.github/agents` |
+| `windsurf` | `.windsurfrules` | none |
+| `gemini` | `.gemini/GEMINI.md` | `.gemini/agents` |
+| `codex` | `.codex/rules.md` | `.codex/agents` |
+
+The registry is `vendorTargets` in `internal/agentcontext/render.go`. The compiler
+reads the key from the manifest beside `AGENTS.md`, the one that already governs the
+[text register](text-register.md) block, so `compile-context`, `compile-context
+--verify`, `praetorctl audit`, adoption, onboarding and the MCP
+`standards_compile_context` tool agree on which projections exist. Persona copies are
+resolved by `compiler.SelectPersonaDirs` from the manifest at the root the personas are
+projected into, which is the same file when `AGENTS.md` sits at that root. Unselected
+context files and persona directories print as `[NOT_APPLICABLE]` and are neither
+written, verified nor removed, so a directory the repository deletes stays deleted and
+one it keeps for its own use is left alone. An unknown id fails with
+`unknown agent client id(s): <ids>; supported: <ids>`.
+
+The plugin copy under `.agents/plugins/praetor/agents` belongs to no client and is kept
+whenever `.agents/plugins/praetor/plugin.json` exists. Tests:
+`internal/agentcontext/render_selection_test.go`,
+`internal/compiler/transpiler_selection_test.go`,
+`internal/compiler/agents_selection_test.go`,
+`cmd/standardsctl/compile_context_clients_test.go`,
+`internal/adopt/client_selection_test.go`.
 
 ## Antigravity IDE
 

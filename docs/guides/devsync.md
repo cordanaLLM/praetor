@@ -44,8 +44,10 @@ without them nothing can be restored.
 praetorctl devsync push            # add --dry-run to see what would be uploaded
 ```
 
-Push looks through `~/dev` (or `$PRAETOR_DEV_DIR`, or `--dev`) and writes one
-`.tar.gz` archive per unit:
+Push looks through the dev folder and writes one `.tar.gz` archive per unit. The dev
+folder is `--dev`, otherwise `$PRAETOR_DEV_ROOT`, otherwise the earlier
+`$PRAETOR_DEV_DIR`, otherwise `~/dev`; with none of them and no usable home directory
+push fails and names `--dev` (`resolveDevRootDir` in `cmd/standardsctl/devroot.go`).
 
 | Unit | Archive on the remote |
 | :--- | :--- |
@@ -115,12 +117,12 @@ Pull downloads every archive of that workstation and unpacks it below
 (`~/.local/share` or `$XDG_DATA_HOME` on Linux, `~/Library/Application Support` on
 macOS, `%LOCALAPPDATA%` on Windows); `--into` chooses another.
 
-Pull never overwrites working copies. It refuses a target inside the dev folder and one
-that already holds files. Move the restored projects into place yourself. While
-unpacking, every entry must stay inside the target: absolute names, `..` segments, hard
-links and symbolic links that point outside the target or through another link are
-refused. Restoring an archive that contains symbolic links on Windows needs Developer
-Mode or an elevated prompt.
+Pull never overwrites working copies. It refuses a target inside the dev folder (resolved
+as for push, without `--dev`) and one that already holds files. Move the restored
+projects into place yourself. While unpacking, every entry must stay inside the target:
+absolute names, `..` segments, hard links and symbolic links that point outside the
+target or through another link are refused. Restoring an archive that contains symbolic
+links on Windows needs Developer Mode or an elevated prompt.
 
 ## List
 

@@ -110,7 +110,7 @@ func runAdopt(args []string) error {
 	recordBaseline := fs.Bool("record-baseline", true, "Record or estimate legacy debt using verified local pins and catalog, or --lock-source-root (including --dry-run)")
 	lockSource := fs.String("lock-source-root", "", "Praetor source bundle with validated pins and local archetypes for missing lockfiles")
 	allMissing := fs.Bool("all-missing", false, "Adopt all detected unmanaged repositories under --dev-dir")
-	devDir := fs.String("dev-dir", "", "Root directory scanned by --all-missing (default: $HOME/dev)")
+	devDir := fs.String("dev-dir", "", "Root directory scanned by --all-missing "+devRootUsageDefault)
 	path := fs.String("path", ".", "Target repository path to adopt")
 	defaults := adopt.DefaultVerificationLimits()
 	maxEntries := fs.Int("verification-max-entries", 0, fmt.Sprintf("Directory entries verification discovery may walk (default %d, ceiling %d)", defaults.MaxEntries, adopt.VerificationEntriesCeiling))
@@ -129,7 +129,7 @@ func runAdopt(args []string) error {
 	defer cancel()
 
 	if *allMissing {
-		root, err := resolveHomeSubdir(*devDir, "--dev-dir", "dev")
+		root, err := resolveDevRootDir(*devDir, "--dev-dir")
 		if err != nil {
 			return fmt.Errorf("adopt --all-missing: %w", err)
 		}

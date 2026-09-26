@@ -18,8 +18,16 @@ func isolateDevsyncEnv(t *testing.T) string {
 	}
 	t.Setenv(rcloneBinaryEnv, filepath.Join(home, "no-such-rclone"))
 	dev := filepath.Join(home, "dev")
-	t.Setenv("PRAETOR_DEV_DIR", dev)
-	for _, file := range []string{filepath.Join("org", "repo", ".git", "HEAD"), filepath.Join("org", "repo", "main.go")} {
+	t.Setenv(devRootEnv, dev)
+	t.Setenv(legacyDevRootEnv, "")
+	writeDevsyncRepo(t, dev, "org", "repo")
+	return dev
+}
+
+// writeDevsyncRepo creates the git repository <dev>/<org>/<name> holding one file.
+func writeDevsyncRepo(t *testing.T, dev, org, name string) {
+	t.Helper()
+	for _, file := range []string{filepath.Join(org, name, ".git", "HEAD"), filepath.Join(org, name, "main.go")} {
 		path := filepath.Join(dev, file)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
@@ -28,7 +36,53 @@ func isolateDevsyncEnv(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	return dev
+}
+
+func TestDevsyncCLIDevRootEnv(t *testing.T) {
+	legacy := isolateDevsyncEnv(t)
+	canonical := t.TempDir()
+	writeDevsyncRepo(t, canonical, "team", "app")
+	push := func() (string, error) {
+		return captureStdout(t, func() error { return runDevsync([]string{"push", "--host=ws1", "--dry-run"}) })
+	}
+
+	// Boundary: only the earlier PRAETOR_DEV_DIR name set still selects the tree.
+	t.Setenv(devRootEnv, "")
+	t.Setenv(legacyDevRootEnv, legacy)
+	out, err := push()
+	if err != nil {
+		t.Fatal(err, out)
+	}
+	mustContain(t, out, "ws1/dev/org/repo.tar.gz")
+
+	// Positive + boundary: PRAETOR_DEV_ROOT is honoured and wins when both are set.
+	t.Setenv(devRootEnv, canonical)
+	out, err = push()
+	if err != nil {
+		t.Fatal(err, out)
+	}
+	mustContain(t, out, "ws1/dev/team/app.tar.gz")
+	if strings.Contains(out, "org/repo") {
+		t.Fatalf("push read PRAETOR_DEV_DIR although PRAETOR_DEV_ROOT is set:\n%s", out)
+	}
+
+	// Positive: pull guards the PRAETOR_DEV_ROOT tree, not <home>/dev.
+	_, err = captureStdout(t, func() error { return runDevsync([]string{"pull", "--host=ws1", "--into=" + canonical}) })
+	if err == nil || !strings.Contains(err.Error(), "inside the dev folder") {
+		t.Fatalf("pull into PRAETOR_DEV_ROOT = %v; want the dev-folder refusal", err)
+	}
+
+	// Negative: without any dev root push and pull fail instead of using ./dev.
+	t.Setenv(devRootEnv, "")
+	t.Setenv(legacyDevRootEnv, "")
+	clearHomeDir(t)
+	if _, err := push(); err == nil || !strings.Contains(err.Error(), "--dev") {
+		t.Fatalf("push without a dev root = %v; want an error naming --dev", err)
+	}
+	_, err = captureStdout(t, func() error { return runDevsync([]string{"pull", "--host=ws1", "--into=" + t.TempDir()}) })
+	if err == nil || !strings.Contains(err.Error(), devRootEnv) {
+		t.Fatalf("pull without a dev root = %v; want an error naming %s", err, devRootEnv)
+	}
 }
 
 func TestDevsyncCLIDispatch(t *testing.T) {

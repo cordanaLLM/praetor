@@ -141,12 +141,22 @@ func generatedPersonas() []scaffold {
 	}}
 }
 
+// reconcileAgentDefinitions writes the canonical personas and projects them into the persona
+// directory of every agent client agent_clients selects; the directories it leaves out are
+// reported not applicable and never written.
 func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 	personas := generatedPersonas()
 	for i := 0; i < len(personas) && i < maxTranspileTargets; i++ {
 		if _, err := s.scaffoldFile(personas[i]); err != nil {
 			return err
 		}
+	}
+	_, excluded, err := compiler.SelectPersonaDirs(ctx, s.repoPath)
+	if err != nil {
+		return fmt.Errorf("read agent_clients selection from %s: %w", manifestFile, err)
+	}
+	for i := 0; i < len(excluded) && i < maxTranspileTargets; i++ {
+		s.report.recordNotApplicable(excluded[i], "Not selected by agent_clients in "+manifestFile)
 	}
 	if s.opts.DryRun {
 		return nil

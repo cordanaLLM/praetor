@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
@@ -485,8 +486,24 @@ func reconcileDevContainer(ctx context.Context, s *adoptSession) error {
 // only regenerated with Force, and .clang-tidy/.editorconfig are always preserved
 // because they carry hand-tuned project settings.
 func reconcileEditors(ctx context.Context, s *adoptSession) error {
+	declared, err := config.LoadDeclaredTooling(ctx, s.repoPath)
+	if err != nil {
+		return fmt.Errorf("read editors selection from %s: %w", manifestFile, err)
+	}
+	selection, err := editor.SelectEditors(declared.Editors)
+	if err != nil {
+		return fmt.Errorf("editors in %s: %w", manifestFile, err)
+	}
+	if len(selection.NotApplicable) > 0 {
+		s.report.recordNotApplicable("editors", "Not selected by editors in "+manifestFile+": "+
+			strings.Join(selection.NotApplicable, ", "))
+	}
+	if len(selection.Editors) == 0 {
+		return nil
+	}
 	edOpts := editor.DefaultOptions()
 	edOpts.WorkspaceRoot = s.repoPath
+	edOpts.Editors = selection.Editors
 	edOpts.Archetype = s.arch
 	// The session already resolved the policy this repository is adopted under; the editor
 	// projections state its ceilings rather than a literal of their own (issue #360).

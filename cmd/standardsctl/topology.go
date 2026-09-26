@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -43,18 +42,15 @@ func printTopologyUsage() {
 	fmt.Println("  clean [--dev-root=...] [--dry-run=true|false] Safely removes stray governance files from org roots")
 }
 
-// defaultDevRoot returns $HOME/dev when it exists and is a directory. It never falls back
-// to a hard-coded workstation path: on a machine without that directory the caller must
-// pass --dev-root rather than have the command operate on somebody else's tree.
+// defaultDevRoot returns the resolved dev root ($PRAETOR_DEV_ROOT, $PRAETOR_DEV_DIR or
+// <home>/dev) when it exists and is a directory. It never falls back to a hard-coded
+// workstation path: on a machine without that directory the caller must pass --dev-root
+// rather than have the command operate on somebody else's tree.
 func defaultDevRoot() (string, error) {
-	home, err := os.UserHomeDir()
+	devPath, err := resolveDevRootDir("", "--dev-root")
 	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
+		return "", err
 	}
-	if home == "" {
-		return "", fmt.Errorf("home directory is empty")
-	}
-	devPath := filepath.Join(home, "dev")
 	info, err := os.Stat(devPath)
 	if err != nil {
 		return "", fmt.Errorf("stat %s: %w", devPath, err)
@@ -66,7 +62,7 @@ func defaultDevRoot() (string, error) {
 }
 
 // resolveDevRoot picks the dev root from --dev-root, then the first positional argument,
-// and only then from the $HOME/dev default.
+// and only then from the resolved default dev root.
 func resolveDevRoot(flagValue string, positional []string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
@@ -76,14 +72,14 @@ func resolveDevRoot(flagValue string, positional []string) (string, error) {
 	}
 	root, err := defaultDevRoot()
 	if err != nil {
-		return "", fmt.Errorf("no --dev-root given and the $HOME/dev default is unusable: %w", err)
+		return "", fmt.Errorf("no --dev-root given and the default dev root is unusable: %w", err)
 	}
 	return root, nil
 }
 
 func runTopologyAudit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("topology audit", flag.ContinueOnError)
-	devRootFlag := fs.String("dev-root", "", "Target workstation dev root directory (default: $HOME/dev)")
+	devRootFlag := fs.String("dev-root", "", "Target workstation dev root directory "+devRootUsageDefault)
 	if err := fs.Parse(reorderArgs(args, boolFlagNames(fs))); err != nil {
 		return err
 	}
@@ -162,7 +158,7 @@ func topologyAuditVerdict(report *topology.TopologyReport) error {
 
 func runTopologyClean(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("topology clean", flag.ContinueOnError)
-	devRootFlag := fs.String("dev-root", "", "Target workstation dev root directory (default: $HOME/dev)")
+	devRootFlag := fs.String("dev-root", "", "Target workstation dev root directory "+devRootUsageDefault)
 	dryRun := fs.Bool("dry-run", true, "Simulate cleaning without deleting files")
 	if err := fs.Parse(reorderArgs(args, boolFlagNames(fs))); err != nil {
 		return err

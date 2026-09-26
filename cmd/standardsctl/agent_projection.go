@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -31,19 +33,30 @@ const (
 // ErrAgentProjectionDrift reports a persona copy that no longer matches its source.
 var ErrAgentProjectionDrift = errors.New("agent persona projection differs from its canonical source")
 
-// vendorAgentDirs mirrors the vendor targets written by compiler.CompileAgents; the
-// compile-context round trip test keeps the two lists in step.
-func vendorAgentDirs() []string {
-	return []string{".claude/agents", ".codex/agents", ".github/agents", ".gemini/agents"}
-}
-
-// agentProjectionDirs lists every directory a persona is projected into under rootDir.
-func agentProjectionDirs(rootDir string) []string {
-	dirs := vendorAgentDirs()
+// agentProjectionDirs lists every directory a persona is projected into under rootDir: the
+// persona directory of each agent client the manifest selects, resolved by
+// compiler.SelectPersonaDirs exactly as compiler.CompileAgents resolves it when writing, plus
+// the plugin copy when the repository ships the plugin.
+func agentProjectionDirs(ctx context.Context, rootDir string) ([]string, error) {
+	dirs, _, err := compiler.SelectPersonaDirs(ctx, rootDir)
+	if err != nil {
+		return nil, err
+	}
 	if util.FileExists(filepath.Join(rootDir, filepath.FromSlash(pluginManifestRel))) {
 		dirs = append(dirs, pluginAgentsRel)
 	}
-	return dirs
+	return dirs, nil
+}
+
+// notApplicablePersonaDirs lists the persona directories agent_clients leaves out. It is nil
+// when the repository defines no canonical persona, since nothing is then left out.
+func notApplicablePersonaDirs(ctx context.Context, rootDir string) ([]string, error) {
+	names, err := listCanonicalAgents(rootDir)
+	if err != nil || len(names) == 0 {
+		return nil, err
+	}
+	_, excluded, err := compiler.SelectPersonaDirs(ctx, rootDir)
+	return excluded, err
 }
 
 // listCanonicalAgents returns the persona file names under .agents/agents, or nil when
@@ -81,13 +94,17 @@ func readCanonicalAgent(rootDir, name string) ([]byte, error) {
 }
 
 // verifyAgentProjections checks that every projection of every canonical persona exists
-// and is byte-identical to its source. It returns the number of verified copies.
-func verifyAgentProjections(rootDir string) (int, error) {
+// and is byte-identical to its source. It returns the number of verified copies. A persona
+// directory agent_clients leaves out is neither required nor read.
+func verifyAgentProjections(ctx context.Context, rootDir string) (int, error) {
 	names, err := listCanonicalAgents(rootDir)
 	if err != nil {
 		return 0, err
 	}
-	dirs := agentProjectionDirs(rootDir)
+	dirs, err := agentProjectionDirs(ctx, rootDir)
+	if err != nil {
+		return 0, err
+	}
 	verified := 0
 	for i := 0; i < len(names) && i < maxAgentProjections; i++ {
 		want, err := readCanonicalAgent(rootDir, names[i])
