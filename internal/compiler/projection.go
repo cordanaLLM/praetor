@@ -152,41 +152,80 @@ func printNotApplicable(w io.Writer, rels []string) error {
 
 // CompileContextProjections writes the vendor context files, every persona projection and the
 // plugin persona and skill copies; any projection failure is an error, never a silently skipped
-// success line. The CLI's compile-context and the MCP standards_compile_context write call both
-// run it.
+// success line. Every canonical persona and skill is read, and every target is checked, before
+// the first file is written, so a refused target leaves the whole tree unchanged. The CLI's
+// compile-context and the MCP standards_compile_context write call both run it.
 func CompileContextProjections(ctx context.Context, w io.Writer, tr *Transpiler, source, targetDir string) error {
 	sw := &syncWriter{w: w}
 	sw.printf("Compiling agent context from canonical %s...\n", source)
+	plan, err := planAgentSurfaces(ctx, targetDir)
+	if err != nil {
+		return fmt.Errorf("agent projection failed: %w", err)
+	}
 	if err := CompileVendorTargets(ctx, w, tr, source, targetDir); err != nil {
 		return err
 	}
-
-	agentsSrc := filepath.Join(targetDir, filepath.FromSlash(CanonicalAgentsRel))
-	agentFiles, err := CompileAgents(ctx, agentsSrc, targetDir)
-	if err != nil {
-		return fmt.Errorf("agent projection failed: %w", err)
+	if err := writeAgentSurfaces(ctx, sw, targetDir, plan); err != nil {
+		return err
 	}
-	if len(agentFiles) > 0 {
-		sw.printf("  [COMPILED] %d autonomous agent vendor projections.\n", len(agentFiles))
-	}
-	if err := printNotApplicablePersonaDirs(ctx, w, targetDir); err != nil {
-		return fmt.Errorf("agent projection failed: %w", err)
-	}
-	pluginFiles, err := ProjectPluginAgents(ctx, targetDir)
-	if err != nil {
-		return fmt.Errorf("plugin agent projection failed: %w", err)
-	}
-	if pluginFiles > 0 {
-		sw.printf("  [COMPILED] %d plugin agent projections (%s).\n", pluginFiles, PluginAgentsRel)
-	}
-	pluginSkills, err := ProjectPluginSkills(ctx, targetDir)
-	if err != nil {
-		return fmt.Errorf("plugin skill projection failed: %w", err)
-	}
-	if pluginSkills > 0 {
-		sw.printf("  [COMPILED] %d plugin skill projections (%s).\n", pluginSkills, PluginSkillsRel)
-	}
-
 	sw.println("Cross-agent context transpilation completed successfully.")
 	return sw.err
+}
+
+// agentSurfacePlan holds every persona and plugin copy one compile writes: the persona copies
+// agent_clients selects, and the plugin persona and skill copies when the plugin ships.
+type agentSurfacePlan struct {
+	personas, pluginPersonas, pluginSkills []projectionFile
+}
+
+// planAgentSurfaces reads every canonical persona and skill and checks every copy's target
+// (checkProjectionFiles), writing nothing. The persona and plugin directories are the ones
+// verify reads (agentProjectionDirs), so write and verify refuse the same trees.
+func planAgentSurfaces(ctx context.Context, targetDir string) (agentSurfacePlan, error) {
+	var plan agentSurfacePlan
+	dirs, _, err := SelectPersonaDirs(ctx, targetDir)
+	if err != nil {
+		return plan, err
+	}
+	if plan.personas, err = personaProjections(ctx, targetDir, dirs); err != nil {
+		return plan, err
+	}
+	if plan.pluginPersonas, err = personaProjections(ctx, targetDir, pluginPersonaDirs(targetDir)); err != nil {
+		return plan, err
+	}
+	if plan.pluginSkills, err = pluginSkillProjections(ctx, targetDir); err != nil {
+		return plan, err
+	}
+	for _, files := range [][]projectionFile{plan.personas, plan.pluginPersonas, plan.pluginSkills} {
+		if err := checkProjectionFiles(ctx, targetDir, files); err != nil {
+			return plan, err
+		}
+	}
+	return plan, nil
+}
+
+// writeAgentSurfaces writes a checked plan and reports each surface it wrote.
+func writeAgentSurfaces(ctx context.Context, sw *syncWriter, targetDir string, plan agentSurfacePlan) error {
+	if err := writeProjectionFiles(ctx, targetDir, plan.personas); err != nil {
+		return fmt.Errorf("agent projection failed: %w", err)
+	}
+	if n := len(plan.personas); n > 0 {
+		sw.printf("  [COMPILED] %d autonomous agent vendor projections.\n", n)
+	}
+	if err := printNotApplicablePersonaDirs(ctx, sw.w, targetDir); err != nil {
+		return fmt.Errorf("agent projection failed: %w", err)
+	}
+	if err := writeProjectionFiles(ctx, targetDir, plan.pluginPersonas); err != nil {
+		return fmt.Errorf("plugin agent projection failed: %w", err)
+	}
+	if n := len(plan.pluginPersonas); n > 0 {
+		sw.printf("  [COMPILED] %d plugin agent projections (%s).\n", n, PluginAgentsRel)
+	}
+	if err := writeProjectionFiles(ctx, targetDir, plan.pluginSkills); err != nil {
+		return fmt.Errorf("plugin skill projection failed: %w", err)
+	}
+	if n := len(plan.pluginSkills); n > 0 {
+		sw.printf("  [COMPILED] %d plugin skill projections (%s).\n", n, PluginSkillsRel)
+	}
+	return nil
 }

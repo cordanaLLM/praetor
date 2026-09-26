@@ -12,7 +12,7 @@ import (
 // itself (ADR-0010 decision 11) rather than an emission surface a manifest can opt out of.
 // It returns the number of personas linted.
 func LintCanonicalPersonas(ctx context.Context, rootDir string) (int, error) {
-	names, err := listCanonicalAgents(rootDir)
+	names, err := listCanonicalAgents(ctx, rootDir)
 	if err != nil {
 		return 0, err
 	}
@@ -33,7 +33,7 @@ func LintCanonicalPersonas(ctx context.Context, rootDir string) (int, error) {
 // canonical skill's SKILL.md under .agents/skills, on the same SurfaceContext basis as
 // LintCanonicalPersonas. It returns the number of skills linted.
 func LintCanonicalSkillFiles(ctx context.Context, rootDir string) (int, error) {
-	names, err := listCanonicalSkills(rootDir)
+	names, err := listCanonicalSkills(ctx, rootDir)
 	if err != nil {
 		return 0, err
 	}

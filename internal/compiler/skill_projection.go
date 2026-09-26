@@ -5,10 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
-
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -30,27 +26,25 @@ var errSkillDirSymlink = errors.New("skill directory must be a directory, never 
 
 // listCanonicalSkills returns the skill directories the repository declares, in name order.
 // A symlinked entry is an error, never a skipped skill.
-func listCanonicalSkills(rootDir string) (_ []string, err error) {
-	path, err := util.ConfinePath(rootDir, filepath.FromSlash(CanonicalSkillsRel))
-	if err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(path)
+func listCanonicalSkills(ctx context.Context, rootDir string) ([]string, error) {
+	return listSkillDir(ctx, rootDir, CanonicalSkillsRel)
+}
+
+// listSkillDir returns the skill directories in dir below rootDir, by name, through
+// readConfinedDir, so a symlinked component on the way to dir is refused rather than listed
+// through. An absent directory holds none.
+func listSkillDir(ctx context.Context, rootDir, dir string) ([]string, error) {
+	entries, err := readConfinedDir(ctx, rootDir, dir, maxSkillProjections)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read %s: %w", dir, err)
 	}
 	if len(entries) > maxSkillProjections {
-		return nil, fmt.Errorf("%s holds more than %d skills", CanonicalSkillsRel, maxSkillProjections)
+		return nil, fmt.Errorf("%s holds more than %d skills", dir, maxSkillProjections)
 	}
-	names, err := skillDirNames(CanonicalSkillsRel, entries)
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(names)
-	return names, nil
+	return skillDirNames(dir, entries)
 }
 
 // skillDirNames returns the directory entries of one skills directory, refusing a symlinked
@@ -84,35 +78,42 @@ func skillEntryRel(dir, name string) string {
 	return dir + "/" + name + "/" + SkillEntryName
 }
 
-// ProjectPluginSkills writes every canonical skill into the plugin, so installing the plugin
-// delivers the skills the repository declares rather than the personas alone.
-func ProjectPluginSkills(ctx context.Context, rootDir string) (int, error) {
-	if !util.FileExists(filepath.Join(rootDir, filepath.FromSlash(PluginManifestRel))) {
-		return 0, nil
+// pluginSkillProjections reads every canonical skill once (readCanonicalSkill) and returns its
+// plugin copy, or nothing when the repository does not ship the plugin. It writes nothing.
+func pluginSkillProjections(ctx context.Context, rootDir string) ([]projectionFile, error) {
+	if !shipsPlugin(rootDir) {
+		return nil, nil
 	}
-	names, err := listCanonicalSkills(rootDir)
+	names, err := listCanonicalSkills(ctx, rootDir)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	written := 0
+	files := make([]projectionFile, 0, len(names))
 	for i := 0; i < len(names); i++ {
 		data, err := readCanonicalSkill(ctx, rootDir, names[i])
 		if err != nil {
-			return written, err
+			return nil, err
 		}
-		dir, err := util.ConfinePath(rootDir, filepath.Join(filepath.FromSlash(PluginSkillsRel), names[i]))
-		if err != nil {
-			return written, err
-		}
-		if err := util.MkdirSecure(dir, projectedDirPerm); err != nil {
-			return written, err
-		}
-		if err := writeVendorAgent(ctx, filepath.Join(dir, SkillEntryName), string(data)); err != nil {
-			return written, fmt.Errorf("write plugin skill %s: %w", names[i], err)
-		}
-		written++
+		files = append(files, projectionFile{rel: skillEntryRel(PluginSkillsRel, names[i]), data: data})
 	}
-	return written, nil
+	return files, nil
+}
+
+// ProjectPluginSkills writes every canonical skill into the plugin, so installing the plugin
+// delivers the skills the repository declares rather than the personas alone. Every copy is
+// checked before the first is written. It returns the number of files written.
+func ProjectPluginSkills(ctx context.Context, rootDir string) (int, error) {
+	files, err := pluginSkillProjections(ctx, rootDir)
+	if err != nil {
+		return 0, err
+	}
+	if err := checkProjectionFiles(ctx, rootDir, files); err != nil {
+		return 0, err
+	}
+	if err := writeProjectionFiles(ctx, rootDir, files); err != nil {
+		return 0, err
+	}
+	return len(files), nil
 }
 
 // VerifyPluginSkills checks the projection in both directions: every declared skill is shipped,
@@ -120,10 +121,10 @@ func ProjectPluginSkills(ctx context.Context, rootDir string) (int, error) {
 // lets a stale copy survive indefinitely, which is how six orphaned personas came to sit in
 // this plugin with one of them holding an absolute developer path.
 func VerifyPluginSkills(ctx context.Context, rootDir string) (int, error) {
-	if !util.FileExists(filepath.Join(rootDir, filepath.FromSlash(PluginManifestRel))) {
+	if !shipsPlugin(rootDir) {
 		return 0, nil
 	}
-	names, err := listCanonicalSkills(rootDir)
+	names, err := listCanonicalSkills(ctx, rootDir)
 	if err != nil {
 		return 0, err
 	}
@@ -138,30 +139,16 @@ func VerifyPluginSkills(ctx context.Context, rootDir string) (int, error) {
 		}
 		verified++
 	}
-	return verified, rejectOrphanSkills(rootDir, names)
+	return verified, rejectOrphanSkills(ctx, rootDir, names)
 }
 
 // rejectOrphanSkills fails when the plugin ships a skill the repository does not declare.
-func rejectOrphanSkills(rootDir string, names []string) error {
+func rejectOrphanSkills(ctx context.Context, rootDir string, names []string) error {
 	declared := make(map[string]bool, len(names))
 	for i := 0; i < len(names); i++ {
 		declared[names[i]] = true
 	}
-	path, err := util.ConfinePath(rootDir, filepath.FromSlash(PluginSkillsRel))
-	if err != nil {
-		return err
-	}
-	entries, err := os.ReadDir(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if len(entries) > maxSkillProjections {
-		return fmt.Errorf("%s holds more than %d skills", PluginSkillsRel, maxSkillProjections)
-	}
-	shipped, err := skillDirNames(PluginSkillsRel, entries)
+	shipped, err := listSkillDir(ctx, rootDir, PluginSkillsRel)
 	if err != nil {
 		return err
 	}

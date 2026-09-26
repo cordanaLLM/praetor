@@ -347,18 +347,28 @@ A tool call and the CLI therefore check and write the same things:
   leading and trailing whitespace.
 - More than 50 files in `.agents/agents` fail both modes instead of being
   truncated.
-- No symlink below `target_dir` is followed. A symlinked output, or a
-  symlinked directory above one, is refused on write and on verify, with or
-  without `-allow-outside-root`; so is a symlinked persona, skill or plugin
-  copy wherever the call reads or writes it. A write checks every vendor
-  output before the first one is written, so a refusal leaves all of them
-  unchanged. That flag still admits a `target_dir` outside the root; it no
-  longer lets a link redirect an output.
+- Every file the call writes below `target_dir` (the vendor files, the
+  persona copies such as `.claude/agents/*.md`, and the plugin persona and
+  skill copies), and every persona and skill it reads from `.agents`, is
+  reached without following a symlink. A symlinked file, or a symlinked
+  directory anywhere between `target_dir` and the file (`.claude`, `.agents`,
+  `.agents/plugins/praetor`), is refused on write and on verify for the same
+  reason, with or without `-allow-outside-root`. That flag still admits a
+  `target_dir` outside the root; it no longer lets a link redirect a write.
+  The writer itself (`contextopt.WriteSnapshotIn`) creates and opens every
+  directory below `target_dir` without following a link, so a link planted
+  after the check is refused too.
+- A write reads every persona and skill and checks every one of those files
+  before it writes the first, so a refusal leaves the vendor files, the
+  persona copies and the plugin copies unchanged. The text register splice
+  into `source` is not one of those files: a refused vendor file can leave
+  `source` spliced.
 
 Tests: `cmd/standards-mcp/server_projection_test.go`,
 `TestCompileContextRejectsSymlinkedOutputDescendants` and
 `TestCompileContextWritesRealOutputDescendants` in
-`cmd/standards-mcp/server_path_test.go`, and `internal/compiler/output_paths_test.go`.
+`cmd/standards-mcp/server_path_test.go`, `internal/compiler/output_paths_test.go`,
+and `internal/contextopt/write_in_test.go`.
 
 `standards_audit` does not run the persona and skill checks yet; see
 [the persona and skill gate](text-register.md#the-persona-and-skill-gate).

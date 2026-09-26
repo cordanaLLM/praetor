@@ -12,7 +12,6 @@ func TestCompileAgents_Positive(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	srcDir := filepath.Join(tmpDir, ".agents", "agents")
-	outDir := filepath.Join(tmpDir, "out")
 	if err := os.MkdirAll(srcDir, 0755); err != nil {
 		t.Fatalf("mkdir src dir: %v", err)
 	}
@@ -23,7 +22,7 @@ func TestCompileAgents_Positive(t *testing.T) {
 		t.Fatalf("write test agent: %v", err)
 	}
 
-	files, err := CompileAgents(ctx, srcDir, outDir)
+	files, err := CompileAgents(ctx, tmpDir)
 	if err != nil {
 		t.Fatalf("CompileAgents failed: %v", err)
 	}
@@ -33,7 +32,7 @@ func TestCompileAgents_Positive(t *testing.T) {
 	}
 
 	for _, expectedVendor := range []string{".claude", ".codex", ".github", ".gemini"} {
-		expectedFile := filepath.Join(outDir, expectedVendor, "agents", "test-helper.md")
+		expectedFile := filepath.Join(tmpDir, expectedVendor, "agents", "test-helper.md")
 		if _, statErr := os.Stat(expectedFile); os.IsNotExist(statErr) {
 			t.Errorf("expected vendor file %s to exist", expectedFile)
 		}
@@ -45,13 +44,13 @@ func TestCompileAgents_Negative_CancelledContext(t *testing.T) {
 	cancel()
 
 	tmpDir := t.TempDir()
-	_, err := CompileAgents(ctx, tmpDir, tmpDir)
+	_, err := CompileAgents(ctx, tmpDir)
 	if err == nil {
 		t.Fatal("expected error for cancelled context, got nil")
 	}
 
 	var absentContext context.Context
-	_, nilErr := CompileAgents(absentContext, tmpDir, tmpDir)
+	_, nilErr := CompileAgents(absentContext, tmpDir)
 	if nilErr == nil {
 		t.Fatal("expected error for nil context, got nil")
 	}
@@ -61,8 +60,8 @@ func TestCompileAgents_Boundary_EmptyAndNonExistent(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	// Non-existent directory returns nil without error
-	files, err := CompileAgents(ctx, filepath.Join(tmpDir, "nonexistent"), tmpDir)
+	// A root without a canonical persona directory projects nothing, without error.
+	files, err := CompileAgents(ctx, tmpDir)
 	if err != nil {
 		t.Fatalf("expected no error on non-existent dir, got %v", err)
 	}
@@ -70,8 +69,8 @@ func TestCompileAgents_Boundary_EmptyAndNonExistent(t *testing.T) {
 		t.Fatalf("expected 0 files, got %d", len(files))
 	}
 
-	// Directory with non-markdown file
-	emptyDir := filepath.Join(tmpDir, "empty")
+	// A persona directory holding only a non-markdown file projects nothing either.
+	emptyDir := filepath.Join(tmpDir, ".agents", "agents")
 	if err := os.MkdirAll(emptyDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +78,7 @@ func TestCompileAgents_Boundary_EmptyAndNonExistent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	files, err = CompileAgents(ctx, emptyDir, tmpDir)
+	files, err = CompileAgents(ctx, tmpDir)
 	if err != nil {
 		t.Fatalf("expected no error on empty dir, got %v", err)
 	}

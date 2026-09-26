@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -45,16 +44,48 @@ func agentProjectionDirs(ctx context.Context, rootDir string) ([]string, error) 
 	if err != nil {
 		return nil, err
 	}
-	if util.FileExists(filepath.Join(rootDir, filepath.FromSlash(PluginManifestRel))) {
-		dirs = append(dirs, PluginAgentsRel)
+	return append(dirs, pluginPersonaDirs(rootDir)...), nil
+}
+
+// shipsPlugin reports whether the repository ships the praetor plugin (PluginManifestRel).
+func shipsPlugin(rootDir string) bool {
+	return util.FileExists(filepath.Join(rootDir, filepath.FromSlash(PluginManifestRel)))
+}
+
+// pluginPersonaDirs is the plugin persona directory when the repository ships the plugin, and
+// nothing otherwise.
+func pluginPersonaDirs(rootDir string) []string {
+	if !shipsPlugin(rootDir) {
+		return nil
 	}
-	return dirs, nil
+	return []string{PluginAgentsRel}
+}
+
+// personaProjections reads every canonical persona once (readCanonicalAgent) and returns its
+// copy in each of dirs, persona by persona. It writes nothing; the copies are checked and
+// written by the caller, all of them checked before the first is written.
+func personaProjections(ctx context.Context, rootDir string, dirs []string) ([]projectionFile, error) {
+	names, err := listCanonicalAgents(ctx, rootDir)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]projectionFile, 0, len(names)*len(dirs))
+	for i := 0; i < len(names); i++ {
+		data, err := readCanonicalAgent(ctx, rootDir, names[i])
+		if err != nil {
+			return nil, err
+		}
+		for j := 0; j < len(dirs); j++ {
+			files = append(files, projectionFile{rel: dirs[j] + "/" + names[i], data: data})
+		}
+	}
+	return files, nil
 }
 
 // notApplicablePersonaDirs lists the persona directories agent_clients leaves out. It is nil
 // when the repository defines no canonical persona, since nothing is then left out.
 func notApplicablePersonaDirs(ctx context.Context, rootDir string) ([]string, error) {
-	names, err := listCanonicalAgents(rootDir)
+	names, err := listCanonicalAgents(ctx, rootDir)
 	if err != nil || len(names) == 0 {
 		return nil, err
 	}
@@ -63,21 +94,27 @@ func notApplicablePersonaDirs(ctx context.Context, rootDir string) ([]string, er
 }
 
 // listCanonicalAgents returns the persona file names under .agents/agents, or nil when
-// the directory is absent. A directory above the cap, or a persona entry that is not a
-// regular file, is an error: skipping either would verify less than compile-context writes.
-func listCanonicalAgents(rootDir string) ([]string, error) {
-	dir := filepath.Join(rootDir, filepath.FromSlash(CanonicalAgentsRel))
-	entries, err := os.ReadDir(dir)
+// the directory is absent. A directory above the cap, a symlinked or misplaced component on the
+// way to it, or a persona entry that is not a regular file, is an error: skipping any of them
+// would verify less than compile-context writes, and compile-context and verify both list here.
+func listCanonicalAgents(ctx context.Context, rootDir string) ([]string, error) {
+	return listPersonaDir(ctx, rootDir, CanonicalAgentsRel)
+}
+
+// listPersonaDir returns the persona file names in the directory dir below rootDir, by name,
+// through readConfinedDir. An absent directory holds none.
+func listPersonaDir(ctx context.Context, rootDir, dir string) ([]string, error) {
+	entries, err := readConfinedDir(ctx, rootDir, dir, maxAgentProjections)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
-		if util.DirectoryAbsent(dir, err) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("read %s: %w", dir, err)
 	}
 	if len(entries) > maxAgentProjections {
-		return nil, fmt.Errorf("%s holds more than %d files", CanonicalAgentsRel, maxAgentProjections)
+		return nil, fmt.Errorf("%s holds more than %d files", dir, maxAgentProjections)
 	}
-	return personaNames(CanonicalAgentsRel, entries)
+	return personaNames(dir, entries)
 }
 
 // personaNames returns the .md entries of one persona directory, refusing any that is not a
@@ -111,7 +148,7 @@ func readCanonicalAgent(ctx context.Context, rootDir, name string) ([]byte, erro
 // and matches its source up to leading and trailing whitespace. It returns the number of
 // verified copies. A persona directory agent_clients leaves out is neither required nor read.
 func VerifyAgentProjections(ctx context.Context, rootDir string) (int, error) {
-	names, err := listCanonicalAgents(rootDir)
+	names, err := listCanonicalAgents(ctx, rootDir)
 	if err != nil {
 		return 0, err
 	}
@@ -137,7 +174,7 @@ func VerifyAgentProjections(ctx context.Context, rootDir string) (int, error) {
 	// read, so it is never compared, so it can say anything and drift forever. Six such orphans
 	// accumulated here, and one had gone stale holding an absolute developer path in a plugin
 	// that ships to other machines.
-	if err := rejectOrphanProjections(rootDir, dirs, names); err != nil {
+	if err := rejectOrphanProjections(ctx, rootDir, dirs, names); err != nil {
 		return verified, err
 	}
 	return verified, nil
@@ -145,13 +182,13 @@ func VerifyAgentProjections(ctx context.Context, rootDir string) (int, error) {
 
 // rejectOrphanProjections fails when a projection directory holds a persona the canonical set
 // does not define.
-func rejectOrphanProjections(rootDir string, dirs, names []string) error {
+func rejectOrphanProjections(ctx context.Context, rootDir string, dirs, names []string) error {
 	canonical := make(map[string]bool, len(names))
 	for i := 0; i < len(names); i++ {
 		canonical[names[i]] = true
 	}
 	for j := 0; j < len(dirs); j++ {
-		found, err := listProjectedAgents(rootDir, dirs[j])
+		found, err := listPersonaDir(ctx, rootDir, dirs[j])
 		if err != nil {
 			return err
 		}
@@ -165,30 +202,6 @@ func rejectOrphanProjections(rootDir string, dirs, names []string) error {
 		}
 	}
 	return nil
-}
-
-// listProjectedAgents returns the persona files present in one projection directory.
-func listProjectedAgents(rootDir, dir string) (_ []string, err error) {
-	path, err := util.ConfinePath(rootDir, filepath.FromSlash(dir))
-	if err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if len(entries) > maxAgentProjections {
-		return nil, fmt.Errorf("%s holds more than %d files", dir, maxAgentProjections)
-	}
-	names, err := personaNames(dir, entries)
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(names)
-	return names, nil
 }
 
 // verifyProjection compares one projection with the canonical content, ignoring leading and
@@ -207,32 +220,18 @@ func verifyProjection(ctx context.Context, rootDir, rel string, want []byte) err
 }
 
 // ProjectPluginAgents copies the canonical personas into the plugin agents directory when
-// the repository ships the praetor plugin. It returns the number of files written.
+// the repository ships the praetor plugin. Every copy is checked before the first is written.
+// It returns the number of files written.
 func ProjectPluginAgents(ctx context.Context, rootDir string) (int, error) {
-	if !util.FileExists(filepath.Join(rootDir, filepath.FromSlash(PluginManifestRel))) {
-		return 0, nil
-	}
-	names, err := listCanonicalAgents(rootDir)
+	files, err := personaProjections(ctx, rootDir, pluginPersonaDirs(rootDir))
 	if err != nil {
 		return 0, err
 	}
-	targetDir, err := util.ConfinePath(rootDir, filepath.FromSlash(PluginAgentsRel))
-	if err != nil {
+	if err := checkProjectionFiles(ctx, rootDir, files); err != nil {
 		return 0, err
 	}
-	if err := util.MkdirSecure(targetDir, projectedDirPerm); err != nil {
+	if err := writeProjectionFiles(ctx, rootDir, files); err != nil {
 		return 0, err
 	}
-	written := 0
-	for i := 0; i < len(names); i++ {
-		data, err := readCanonicalAgent(ctx, rootDir, names[i])
-		if err != nil {
-			return written, err
-		}
-		if err := writeVendorAgent(ctx, filepath.Join(targetDir, names[i]), string(data)); err != nil {
-			return written, fmt.Errorf("write plugin persona %s: %w", names[i], err)
-		}
-		written++
-	}
-	return written, nil
+	return len(files), nil
 }

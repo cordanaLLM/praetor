@@ -196,3 +196,82 @@ func TestPluginSkillsRefuseSymlinkedSkillDirectories(t *testing.T) {
 		})
 	}
 }
+
+// symlinkOrSkip creates link -> target, or skips: a host without symlinks cannot hold the
+// symlinked component these tests refuse.
+func symlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+}
+
+// Negative: the persona writer itself follows no symlinked directory, independent of the
+// pre-check in front of it. contextopt.WriteSnapshot resolved an existing .claude/agents, so a
+// .claude pointing out of the root received the persona.
+func TestWriteConfinedTextRefusesSymlinkedDirectory(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	victim := filepath.Join(outside, "agents", "reviewer.md")
+	writeOutputFixture(t, victim, "victim\n")
+	symlinkOrSkip(t, outside, filepath.Join(root, ".claude"))
+	err := writeConfinedText(t.Context(), root, ".claude/agents/reviewer.md", []byte("persona\n"))
+	if err == nil || !strings.Contains(err.Error(), "directory component must not be a symlink or file: .claude") {
+		t.Fatalf("want the symlinked .claude refused, got %v", err)
+	}
+	expectOutputFixture(t, victim, "victim\n")
+}
+
+// Negative: CompileAgents refuses a symlinked persona directory, and a symlinked canonical
+// directory, before it writes a single copy, with the error verify returns for the same tree.
+func TestCompileAgentsRefusesSymlinkedDirectoriesBeforeAnyWrite(t *testing.T) {
+	const refused = "path component must be a directory, never a symlink"
+	cases := map[string]struct {
+		link string // root-relative directory replaced by a symlink to its relocated copy
+		want string
+	}{
+		"persona dir":   {link: ".claude", want: "target .claude/agents/helper.md: " + refused},
+		"canonical dir": {link: ".agents", want: "read .agents/agents: " + refused},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := writePersonaFixture(t, "")
+			if err := os.MkdirAll(filepath.Join(root, ".claude", "agents"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			moved := filepath.Join(t.TempDir(), "moved")
+			if err := os.Rename(filepath.Join(root, tc.link), moved); err != nil {
+				t.Fatal(err)
+			}
+			symlinkOrSkip(t, moved, filepath.Join(root, tc.link))
+			_, err := CompileAgents(t.Context(), root)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want %q, got %v", tc.want, err)
+			}
+			for _, dir := range []string{".github/agents", ".codex/agents", ".gemini/agents"} {
+				if personaDirWritten(root, dir) {
+					t.Errorf("%s written before the refusal", dir)
+				}
+			}
+			if _, err := os.Lstat(filepath.Join(moved, "agents", "helper.md")); tc.link == ".claude" && !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("wrote through the symlinked .claude: %v", err)
+			}
+			if _, verr := VerifyAgentProjections(t.Context(), root); verr == nil || !strings.Contains(verr.Error(), refused) {
+				t.Errorf("verify must refuse the same tree, got %v", verr)
+			}
+		})
+	}
+}
+
+// Boundary: checkOutputPath tolerates only an output that does not exist yet. Any other failure
+// to inspect it (here a name the platform refuses to look up) is surfaced, never read as
+// "absent, so writable".
+func TestCheckOutputPathSurfacesLeafInspectionErrors(t *testing.T) {
+	root := t.TempDir()
+	if err := checkOutputPath(t.Context(), root, "absent.md"); err != nil {
+		t.Fatalf("an absent output must be writable: %v", err)
+	}
+	err := checkOutputPath(t.Context(), root, "bad\x00name.md")
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("want the lookup failure surfaced, got %v", err)
+	}
+}

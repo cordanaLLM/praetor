@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -170,7 +169,7 @@ func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 	if s.opts.DryRun {
 		return nil
 	}
-	projected, err := compiler.CompileAgents(ctx, filepath.Join(s.repoPath, ".agents", "agents"), s.repoPath)
+	projected, err := compiler.CompileAgents(ctx, s.repoPath)
 	if err != nil {
 		return fmt.Errorf("compile agent definitions: %w", err)
 	}

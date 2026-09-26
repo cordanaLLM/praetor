@@ -102,33 +102,19 @@ func (t *Transpiler) WriteOutputsContext(ctx context.Context, result *CompileRes
 	if result == nil || len(result.Files) > MaxAgentFiles {
 		return errors.New("invalid or oversized compiled outputs")
 	}
-	if err := checkOutputPaths(ctx, targetDir, result); err != nil {
+	files := make([]projectionFile, 0, len(result.Files))
+	for _, file := range result.Files {
+		files = append(files, projectionFile{rel: file.RelativePath, data: []byte(file.Content)})
+	}
+	if err := checkProjectionFiles(ctx, targetDir, files); err != nil {
 		return err
 	}
-	for _, file := range result.Files {
-		path, err := projectionPath(targetDir, file.RelativePath)
-		if err != nil {
-			return err
-		}
-		if err := writeVendorAgent(ctx, path, file.Content); err != nil {
-			return fmt.Errorf("target %s: %w", file.RelativePath, err)
-		}
+	// The target directory is the operator's chosen boundary, so it is created the way every
+	// other root is (contextopt.EnsureDirectory); everything below it is written confined.
+	if err := contextopt.EnsureDirectory(ctx, targetDir, projectedDirPerm); err != nil {
+		return err
 	}
-	return nil
-}
-
-// checkOutputPaths runs the writer's path refusals (checkOutputPath) over every output before
-// the first write, so a symlinked target or directory component leaves all of them unchanged.
-func checkOutputPaths(ctx context.Context, targetDir string, result *CompileResult) error {
-	for _, file := range result.Files {
-		if _, err := projectionPath(targetDir, file.RelativePath); err != nil {
-			return fmt.Errorf("target %s: %w", file.RelativePath, err)
-		}
-		if err := checkOutputPath(ctx, targetDir, file.RelativePath); err != nil {
-			return fmt.Errorf("target %s: %w", file.RelativePath, err)
-		}
-	}
-	return nil
+	return writeProjectionFiles(ctx, targetDir, files)
 }
 
 // Verify checks that existing target files match compiled output without modification.

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
@@ -92,7 +95,7 @@ func TestMCPVerifyIgnoresWhitespaceOnlyPersonaDrift(t *testing.T) {
 
 // Boundary: the persona cap is one number. At the cap compile-context writes and verify passes;
 // one above it verify fails on the canonical directory instead of verifying the first 64 and
-// ignoring the rest (#383), and the write refuses it too.
+// ignoring the rest (#383), and the write refuses it with the same error before writing anything.
 func TestMCPPersonaCapBoundary(t *testing.T) {
 	for _, count := range []int{compiler.MaxAgentFiles, compiler.MaxAgentFiles + 1} {
 		t.Run(fmt.Sprintf("personas=%d", count), func(t *testing.T) {
@@ -107,7 +110,10 @@ func TestMCPPersonaCapBoundary(t *testing.T) {
 			}
 			want := fmt.Sprintf(".agents/agents holds more than %d files", compiler.MaxAgentFiles)
 			expectError(t, "above cap verify", verifyInPlace(t, srv), want)
-			expectError(t, "above cap write", callTool(t, srv, "standards_compile_context", nil), "agent directory exceeds 50 entries")
+			claude := filepath.Join(root, "CLAUDE.md")
+			writePathFixture(t, claude, "first output unchanged\n")
+			expectError(t, "above cap write", callTool(t, srv, "standards_compile_context", nil), want)
+			assertPathFixture(t, claude, "first output unchanged\n")
 		})
 	}
 }
@@ -158,11 +164,13 @@ func TestMCPVerifyRefusesSymlinkedPersonas(t *testing.T) {
 }
 
 // Negative: plugin copies are written without following a symlink. util.WriteFileSecure opened
-// the link and overwrote its target with the persona or skill text.
+// the link and overwrote its target with the persona or skill text. The refusal comes before the
+// first write, so the vendor files and the persona copies are left unchanged too.
 func TestMCPWriteRefusesSymlinkedPluginTargets(t *testing.T) {
+	notRegular := ": compiled output must be a regular file, never a symlink or directory"
 	cases := map[string]struct{ link, want string }{
-		"persona": {link: compiler.PluginAgentsRel + "/reviewer.md", want: "write plugin persona reviewer.md"},
-		"skill":   {link: compiler.PluginSkillsRel + "/brief/" + compiler.SkillEntryName, want: "write plugin skill brief"},
+		"persona": {link: compiler.PluginAgentsRel + "/reviewer.md"},
+		"skill":   {link: compiler.PluginSkillsRel + "/brief/" + compiler.SkillEntryName},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -177,8 +185,14 @@ func TestMCPWriteRefusesSymlinkedPluginTargets(t *testing.T) {
 			if err := os.Symlink(victim, link); err != nil {
 				t.Fatal(err)
 			}
-			expectError(t, "symlinked plugin target", callTool(t, srv, "standards_compile_context", nil), tc.want)
+			claude := filepath.Join(root, "CLAUDE.md")
+			writePathFixture(t, claude, "first output unchanged\n")
+			expectError(t, "symlinked plugin target", callTool(t, srv, "standards_compile_context", nil), "target "+tc.link+notRegular)
 			assertPathFixture(t, victim, "protected\n")
+			assertPathFixture(t, claude, "first output unchanged\n")
+			if _, err := os.Lstat(filepath.Join(root, ".claude", "agents", "reviewer.md")); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("a persona copy was written before the refusal: %v", err)
+			}
 		})
 	}
 }
@@ -201,4 +215,102 @@ func writePluginFixture(t *testing.T, root string) {
 	writePathFixture(t, filepath.Join(root, filepath.FromSlash(compiler.PluginManifestRel)), `{"name":"praetor"}`)
 	writePersona(t, root, "reviewer.md", fixturePersona)
 	writePathFixture(t, filepath.Join(root, filepath.FromSlash(compiler.CanonicalSkillsRel), "brief", compiler.SkillEntryName), fixtureSkill)
+}
+
+// linkedDirCase replaces one directory of a compiled tree with a symlink to a relocated copy of
+// itself. probe is the root-relative file a write through the link would rewrite; the refusal
+// texts are the ones write and verify must return.
+type linkedDirCase struct {
+	link, probe   string
+	outside       bool
+	write, verify string
+}
+
+func linkedDirCases() map[string]linkedDirCase {
+	const refused = "path component must be a directory, never a symlink"
+	projection := func(rel string) linkedDirCase {
+		return linkedDirCase{link: rel[:strings.LastIndex(rel, "/agents/")], probe: rel, write: "target " + rel + ": " + refused,
+			verify: "projection " + rel + " missing or unreadable (run 'praetorctl compile-context'): " + refused}
+	}
+	outside := projection(".claude/agents/reviewer.md")
+	outside.outside = true
+	return map[string]linkedDirCase{
+		"persona dir outside root": outside,
+		"persona dir in root":      projection(".claude/agents/reviewer.md"),
+		"plugin dir in root":       projection(compiler.PluginAgentsRel + "/reviewer.md"),
+		"canonical dir in root": {link: ".agents", probe: ".claude/agents/reviewer.md",
+			write: "read .agents/agents: " + refused, verify: "read .agents/agents: " + refused},
+	}
+}
+
+// relocateBehindLink moves root/rel to a fresh directory (outside root when outside is set) and
+// leaves a symlink to it at rel. It returns the relocated directory.
+func relocateBehindLink(t *testing.T, root, rel string, outside bool) string {
+	t.Helper()
+	parent := filepath.Join(root, "relocated")
+	if outside {
+		parent = t.TempDir()
+	}
+	moved := filepath.Join(parent, filepath.Base(rel))
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.Rename(link, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(moved, link); err != nil {
+		t.Skipf("symlinks unavailable on this host, so no symlinked directory can exist: %v", err)
+	}
+	return moved
+}
+
+// treeSnapshot maps every regular file below dir to its content.
+func treeSnapshot(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	files := map[string]string{}
+	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || !entry.Type().IsRegular() {
+			return err
+		}
+		files[path] = readPathFixture(t, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+// Negative: MCP write refuses a symlinked persona, plugin or canonical directory before
+// writing anything, exactly as MCP verify refuses it. The write followed the link: a .claude
+// pointing out of the root received the personas (a repository could plant them in
+// ~/.claude/agents), and an in-root link was written through while verify refused it, so an
+// MCP-compiled tree failed the CLI gate. Each relocated copy starts in sync, so following the
+// link would pass verify and let the write succeed: the refusal is the only way either fails.
+func TestMCPCompileContextRefusesSymlinkedProjectionDirs(t *testing.T) {
+	for name, tc := range linkedDirCases() {
+		for _, verify := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/verify=%t", name, verify), func(t *testing.T) {
+				srv, root := newFixtureServer(t)
+				writePluginFixture(t, root)
+				compileInPlace(t, srv)
+				moved := relocateBehindLink(t, root, tc.link, tc.outside)
+				if verify {
+					expectError(t, "verify", verifyInPlace(t, srv), tc.verify)
+					return
+				}
+				writePathFixture(t, filepath.Join(root, filepath.FromSlash(tc.probe)), "victim\n")
+				claude := filepath.Join(root, "CLAUDE.md")
+				writePathFixture(t, claude, "first output unchanged\n")
+				before := treeSnapshot(t, moved)
+				expectError(t, "write", callTool(t, srv, "standards_compile_context", nil), tc.write)
+				assertPathFixture(t, filepath.Join(root, filepath.FromSlash(tc.probe)), "victim\n")
+				assertPathFixture(t, claude, "first output unchanged\n")
+				if after := treeSnapshot(t, moved); fmt.Sprint(after) != fmt.Sprint(before) {
+					t.Errorf("the relocated directory changed behind the link:\nbefore %v\nafter  %v", before, after)
+				}
+			})
+		}
+	}
 }

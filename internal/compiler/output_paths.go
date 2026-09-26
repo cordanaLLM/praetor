@@ -3,14 +3,20 @@ package compiler
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
+// projectedFilePerm is the mode ceiling of every compiled output and persona or skill copy.
+const projectedFilePerm os.FileMode = 0o644
+
 // errOutputNotRegular refuses an existing compiled output that is a symlink, a directory or
-// any other non-regular file: the writer (contextopt.WriteSnapshot) would refuse it too.
+// any other non-regular file: the writer (contextopt.WriteSnapshotIn) would refuse it too.
 var errOutputNotRegular = errors.New("compiled output must be a regular file, never a symlink or directory")
 
 // openOutputParent pins the directory holding rel below root and returns it with rel's final
@@ -39,7 +45,70 @@ func readConfinedText(ctx context.Context, root, rel string) (data []byte, err e
 	return contextopt.ReadRootSnapshot(ctx, dir, leaf)
 }
 
-// checkOutputPath applies the path refusals contextopt.WriteSnapshot makes at write time: an
+// readConfinedDir lists the directory rel below root without following a symlink at any
+// component of rel, bounded by contextopt.MaxDuration (HISS-02). It reads at most limit+1
+// entries, so a caller can refuse a directory above its cap, and returns them by name. A
+// component that does not exist is os.ErrNotExist; one that is a symlink or a file is refused.
+func readConfinedDir(ctx context.Context, root, rel string, limit int) (entries []os.DirEntry, err error) {
+	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
+	defer cancel()
+	dir, err := contextopt.OpenDirectoryIn(ctx, root, filepath.FromSlash(rel))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, dir.Close()) }()
+	listing, err := dir.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, listing.Close()) }()
+	entries, err = listing.ReadDir(limit + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return entries, nil
+}
+
+// writeConfinedText writes rel below root through contextopt.WriteSnapshotIn, which creates and
+// walks every directory component of rel without following a symlink. The writer therefore
+// refuses exactly what checkOutputPath and readConfinedText refuse, so write and verify agree.
+func writeConfinedText(ctx context.Context, root, rel string, data []byte) error {
+	return contextopt.WriteSnapshotIn(ctx, root, filepath.FromSlash(rel), data, projectedFilePerm)
+}
+
+// projectionFile is one compiled output or persona or skill copy: the declared slash path it
+// is written to below the target directory, and the bytes it receives.
+type projectionFile struct {
+	rel  string
+	data []byte
+}
+
+// checkProjectionFiles runs the writer's path refusals (projectionPath, checkOutputPath) over
+// every file before the first is written, so a refused target leaves all of them unchanged.
+func checkProjectionFiles(ctx context.Context, root string, files []projectionFile) error {
+	for _, file := range files {
+		if _, err := projectionPath(root, file.rel); err != nil {
+			return fmt.Errorf("target %s: %w", file.rel, err)
+		}
+		if err := checkOutputPath(ctx, root, file.rel); err != nil {
+			return fmt.Errorf("target %s: %w", file.rel, err)
+		}
+	}
+	return nil
+}
+
+// writeProjectionFiles writes every file through writeConfinedText, in order.
+func writeProjectionFiles(ctx context.Context, root string, files []projectionFile) error {
+	for _, file := range files {
+		if err := writeConfinedText(ctx, root, file.rel, file.data); err != nil {
+			return fmt.Errorf("target %s: %w", file.rel, err)
+		}
+	}
+	return nil
+}
+
+// checkOutputPath applies the path refusals contextopt.WriteSnapshotIn makes at write time: an
 // existing component of rel that is a symlink or not a directory, or an existing output that
 // is not a regular file. Callers run it over every output before the first write, so a refusal
 // leaves every output untouched. A component that does not exist yet ends the walk: nothing

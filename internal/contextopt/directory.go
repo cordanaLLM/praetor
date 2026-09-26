@@ -37,7 +37,7 @@ func EnsureDirectory(ctx context.Context, path string, mode os.FileMode) (err er
 	return ensureDirectoryPath(ctx, abs, mode)
 }
 
-func ensureDirectoryPath(ctx context.Context, abs string, mode os.FileMode) (err error) {
+func ensureDirectoryPath(ctx context.Context, abs string, mode os.FileMode) error {
 	base, parts, err := existingAncestry(abs)
 	if err != nil {
 		return err
@@ -46,25 +46,63 @@ func ensureDirectoryPath(ctx context.Context, abs string, mode os.FileMode) (err
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, root.Close()) }()
+	leaf, err := ensureComponents(ctx, root, parts, mode)
+	if err != nil {
+		return err
+	}
+	return errors.Join(ctx.Err(), leaf.Close())
+}
+
+// ensureDirectoryIn creates the absent directories of root/rel and returns the pinned
+// directory, with root as the confinement boundary. root must exist; its own ancestry is
+// resolved once, as OpenDirectoryIn resolves it. Every component of rel, existing or created,
+// is then walked without following a symlink: an existing component that is a symlink or not
+// a directory is refused rather than followed. EnsureDirectory resolves whatever already
+// exists instead, so a symlinked directory inside the governed tree carried its writes out of
+// it. Existing directory permissions are left unchanged. The walk is bounded by MaxDuration
+// (HISS-02). The caller closes the result.
+func ensureDirectoryIn(ctx context.Context, root, rel string, mode os.FileMode) (*os.Root, error) {
+	if ctx == nil || mode == 0 || mode&^0o755 != 0 {
+		return nil, errors.New("directory creation requires a context and nonzero permissions at most 0755")
+	}
+	ctx, cancel := context.WithTimeout(ctx, MaxDuration)
+	defer cancel()
+	parts, err := relativeComponents(rel)
+	if err != nil {
+		return nil, err
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	base, err := openDirectory(ctx, absRoot)
+	if err != nil {
+		return nil, err
+	}
+	return ensureComponents(ctx, base, parts, mode)
+}
+
+// ensureComponents creates and descends each of parts below root without following a
+// symlink. It owns root: every directory it does not return is closed, on failure too.
+func ensureComponents(ctx context.Context, root *os.Root, parts []string, mode os.FileMode) (*os.Root, error) {
 	for i := 0; i < len(parts) && i < maxPathComponents; i++ {
 		name := parts[i]
-		if name == "" {
+		if name == "" || name == "." {
 			continue
 		}
 		if err := ensureChildDirectory(ctx, root, name, mode); err != nil {
-			return err
+			return nil, errors.Join(err, root.Close())
 		}
 		next, err := childDirectory(ctx, root, name)
 		if err != nil {
-			return err
+			return nil, errors.Join(err, root.Close())
 		}
 		if err := root.Close(); err != nil {
-			return errors.Join(err, next.Close())
+			return nil, errors.Join(err, next.Close())
 		}
 		root = next
 	}
-	return ctx.Err()
+	return root, nil
 }
 
 func ensureChildDirectory(ctx context.Context, root *os.Root, name string, mode os.FileMode) error {
