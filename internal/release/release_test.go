@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/changelog"
 	"github.com/cordanaLLM/praetor/internal/semver"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestPrepareRelease_Positive(t *testing.T) {
@@ -162,5 +163,58 @@ func TestPrepareRelease_Boundary_SecondReleaseWithoutNewFragments(t *testing.T) 
 	opts.Version = "v1.2.1"
 	if err := PrepareRelease(context.Background(), opts); !errors.Is(err, changelog.ErrNoFragments) {
 		t.Fatalf("second release without fragments: got %v, want ErrNoFragments", err)
+	}
+}
+
+// committedReleaseRepo commits one changelog fragment in a fresh repository, or skips the test
+// where git is unavailable (HISS-21: the clean check asks git).
+func committedReleaseRepo(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+	dir := t.TempDir()
+	if _, err := changelog.CreateFragment(dir, changelog.Fragment{Type: changelog.TypeFixed, Title: "Committed fix"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"add", "-A"},
+		{"-c", "user.name=praetor-test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+			"commit", "-q", "-m", "fixture"},
+	} {
+		if out, err := util.RunGit(t.Context(), dir, args...); err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+	}
+	return dir
+}
+
+// Positive: a committed tree passes the clean check and the release renders.
+func TestPrepareRelease_Positive_CleanCommittedTree(t *testing.T) {
+	dir := committedReleaseRepo(t)
+	opts := ReleaseOptions{RepoPath: dir, Version: "v1.2.0", Date: "2026-09-11", SkipVerify: true}
+	if err := PrepareRelease(t.Context(), opts); err != nil {
+		t.Fatalf("a clean committed tree was refused: %v", err)
+	}
+}
+
+// Negative: the repository's own status.showUntrackedFiles=no must not let an untracked file
+// through the clean check (BUG-890), and the refusal names the file.
+func TestPrepareRelease_Negative_UntrackedFileHiddenByRepositoryConfig(t *testing.T) {
+	dir := committedReleaseRepo(t)
+	if out, err := util.RunGit(t.Context(), dir, "config", "status.showUntrackedFiles", "no"); err != nil {
+		t.Fatalf("git config: %v (%s)", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "hidden.txt"), []byte("h"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opts := ReleaseOptions{RepoPath: dir, Version: "v1.2.0", Date: "2026-09-11", SkipVerify: true}
+	err := PrepareRelease(t.Context(), opts)
+	if err == nil || !strings.Contains(err.Error(), "uncommitted changes: ?? hidden.txt") {
+		t.Fatalf("an untracked file hidden by repository config must refuse the release, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "CHANGELOG.md")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("a refused release must not render CHANGELOG.md: %v", statErr)
 	}
 }
