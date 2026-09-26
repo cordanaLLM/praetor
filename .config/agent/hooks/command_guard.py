@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
 """Share Lefthook's command policy across compatible native before-tool hooks."""
 
+import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / ".config/lefthook/scripts"))
+from common import session_root
+
 MAX_INPUT = 1024 * 1024
 MAX_DIAGNOSTIC = 4096
 PASSED = b"PRAETOR_COMMAND_POLICY_OK"
+
+
+def payload_cwd(payload: bytes):
+    """Return the session cwd a native payload names; the shared job judges everything else."""
+    try:
+        value = json.loads(payload)
+    except (RecursionError, UnicodeDecodeError, ValueError):
+        return None
+    return value.get("cwd") if isinstance(value, dict) else None
 
 
 def check_job(payload: bytes, job: str, marker: bytes) -> int:
@@ -21,7 +34,8 @@ def check_job(payload: bytes, job: str, marker: bytes) -> int:
         with tempfile.TemporaryFile() as output:
             result = subprocess.run(
                 ["lefthook", "run", job, "--no-tty", "--no-auto-install"],
-                cwd=ROOT, input=payload, stdout=output, stderr=subprocess.STDOUT,
+                cwd=session_root(ROOT, payload_cwd(payload)), input=payload,
+                stdout=output, stderr=subprocess.STDOUT,
                 timeout=10, check=False,
             )
             output.seek(0)

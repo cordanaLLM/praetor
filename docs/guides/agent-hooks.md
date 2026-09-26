@@ -16,7 +16,8 @@ a later change, after both implementations have been replayed against the same p
 
 Every Python adapter finds the repository from its own file location
 (`ROOT = Path(__file__).resolve().parents[3]`), so a registration only has to locate the
-script. Each client gets the form its own documentation or shipped source supports:
+script. The one exception is a linked worktree of that repository, covered below. Each
+client gets the form its own documentation or shipped source supports:
 
 | Client | Registration | How the client runs it | Why this form |
 | :-- | :-- | :-- | :-- |
@@ -32,6 +33,21 @@ What this means in practice:
   returned. `test_claude_registrations_run_from_any_session_cwd` in
   `scripts/test_checkpoint_hooks.py` runs the Claude registrations from a temporary
   directory and from a foreign repository.
+- **A session inside a linked worktree is judged by that worktree.** After a Claude session
+  enters a worktree, `${CLAUDE_PROJECT_DIR}` still names the checkout it started in, while
+  the payload's `cwd` follows it into the worktree (hooks reference, "Worktrees are
+  different"). So the start checkout's adapter runs. `session_root` in
+  `.config/lefthook/scripts/common.py` compares Git common directories. When the payload
+  `cwd` sits in a linked worktree of the same repository, `command_guard.py`,
+  `checkpoint_scope.py` and `checkpoint.py` under `.config/agent/hooks/` run their Lefthook
+  job in that worktree. That worktree's policy, ledger and dirty batch then decide the call.
+  This holds in either direction, and for worktrees under `.claude/worktrees/` or anywhere
+  else. Any other cwd keeps the adapter's own repository. That covers no cwd, a path outside
+  every repository, a submodule and a foreign or nested repository. The due-state checks
+  below then still deny. `test_claude_hooks_judge_a_linked_worktree_session_by_that_worktree`,
+  `test_claude_hooks_started_in_a_worktree_judge_the_checkout_the_session_moved_to` and
+  `test_session_root_selects_only_a_linked_worktree_of_the_same_repository` in
+  `scripts/test_checkpoint_hooks.py` cover each case.
 - **Gemini and Codex keep a fixed session directory**, so no drift is possible there.
 - **Windows.** The Claude and Gemini registrations need no POSIX shell. The Codex one cannot
   run under `cmd.exe`, which has no `$( )`. Its `commandWindows` override stays unset rather

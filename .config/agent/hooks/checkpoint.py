@@ -8,18 +8,18 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / ".config/lefthook/scripts"))
-from common import HookError, run_bounded
+from common import HookError, run_bounded, session_root
 
 LIMIT = 1024 * 1024
 MARKER = "PRAETOR_CHECKPOINT_RESULT="
 STATE_MARKER = "PRAETOR_STATE_RESULT="
 
 
-def verify_state():
+def verify_state(root=ROOT):
     """Require a fresh existing ledger; Stop must not silently perform its upkeep."""
     raw = run_bounded(
         ["lefthook", "run", "agent-state-stop", "--no-tty", "--no-auto-install"],
-        cwd=ROOT, timeout=20, max_output=LIMIT,
+        cwd=root, timeout=20, max_output=LIMIT,
     )
     rows = [line[len(STATE_MARKER):] for line in raw.decode().splitlines()
             if line.startswith(STATE_MARKER)]
@@ -31,11 +31,11 @@ def verify_state():
         raise ValueError("shared state job did not verify ledger freshness")
 
 
-def checkpoint(event):
+def checkpoint(event, root=ROOT):
     """Require execution of the configured shared job, not just exit zero."""
     raw = run_bounded(
         ["lefthook", "run", "agent-checkpoint-" + event,
-         "--no-tty", "--no-auto-install"], cwd=ROOT, timeout=30, max_output=LIMIT,
+         "--no-tty", "--no-auto-install"], cwd=root, timeout=30, max_output=LIMIT,
     )
     rows = [line[len(MARKER):] for line in raw.decode().splitlines()
             if line.startswith(MARKER)]
@@ -73,16 +73,17 @@ def respond(payload):
         raise ValueError("stop_hook_active must be a boolean")
     active = payload.get("stop_hook_active", False)
     stopping = name in {"Stop", "AfterAgent"}
+    root = session_root(ROOT, payload.get("cwd"))
     if stopping:
         try:
-            verify_state()
+            verify_state(root)
         except (HookError, OSError, ValueError, subprocess.TimeoutExpired) as error:
             reason = ("Praetor state could not be verified: " + str(error)[:1000]
                       + ". Inspect and repair the existing ledger, run praetorctl state "
                       "sync ., then retry; do not report completion while state is unverified.")
             return blocked(reason, active)
     try:
-        report = checkpoint("stop" if stopping else "tool")
+        report = checkpoint("stop" if stopping else "tool", root)
         if not report["enabled"] or not report["due"]:
             return {}
         reason = ("Praetor checkpoint due: " + "; ".join(report["actions"])

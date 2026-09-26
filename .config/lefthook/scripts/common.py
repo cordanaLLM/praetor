@@ -30,6 +30,9 @@ SNAPSHOT_GIT_CONFIG = ("-c", "core.autocrlf=false")
 # Those settings select the outer push transport; they are not policy for nested fixture
 # repositories and must not cross the isolated gate boundary.
 MAX_PROCESS_ENV_ENTRIES = 4096
+# One `git rev-parse` per checkout identity: two absolute paths, answered from local metadata.
+SESSION_GIT_TIMEOUT = 5
+SESSION_GIT_OUTPUT = 16 * 1024
 TRANSIENT_GIT_CONFIG_KEYS = ("GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
 TRANSIENT_GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
 MANAGED_PROCESS_ENV = {
@@ -295,6 +298,43 @@ def resolved_relative_to(path, root):
     message catches the ``ValueError`` this raises (identical to ``Path.relative_to``).
     """
     return Path(path).resolve().relative_to(Path(root).resolve())
+
+
+def _checkout_identity(directory):
+    """Return the resolved toplevel and Git common directory of the checkout holding a path."""
+    raw = run_bounded(["git", "rev-parse", "--path-format=absolute", "--show-toplevel",
+                       "--git-common-dir"], cwd=directory, timeout=SESSION_GIT_TIMEOUT,
+                      max_output=SESSION_GIT_OUTPUT, env=clean_env())
+    lines = os.fsdecode(raw).splitlines()
+    if len(lines) != 2 or not all(lines):
+        raise HookError("git reported no checkout identity")
+    return Path(lines[0]).resolve(), Path(lines[1]).resolve()
+
+
+def session_root(root, cwd):
+    """Return the checkout whose policy, ledger and batch judge a native call made from ``cwd``.
+
+    Claude Code keeps ${CLAUDE_PROJECT_DIR} on the checkout a session started in after the
+    session enters a linked worktree, while the payload's ``cwd`` follows it there (hooks
+    reference, "Worktrees are different"). A linked worktree of the same repository shares
+    ``root``'s Git common directory, and its own toplevel is the checkout the call works in.
+    Every other ``cwd`` -- missing, not an absolute directory, outside any repository, in a
+    submodule or another repository -- keeps ``root``, so the caller's own checks decide it.
+    """
+    if not isinstance(cwd, str) or not cwd or "\0" in cwd:
+        return root
+    directory = Path(cwd)
+    try:
+        if (not directory.is_absolute() or not directory.is_dir()
+                or directory.resolve() == Path(root).resolve()):
+            return root
+        own_top, own_common = _checkout_identity(root)
+        top, common = _checkout_identity(directory)
+    except (HookError, OSError, RuntimeError, ValueError):
+        return root
+    if common != own_common or top == own_top:
+        return root
+    return top
 
 
 def paths(raw):

@@ -168,7 +168,7 @@ class NativeLefthook(unittest.TestCase):
         policy["commit_after_files"] = 1
         policy["enforce_batch_scope"] = True
         (self.root / ".config/agent/checkpoint.json").write_text(json.dumps(policy))
-        (self.root / ".gitignore").write_text("/.workingdir/\n/bin/\n")
+        (self.root / ".gitignore").write_text("/.workingdir/\n/bin/\n/.claude/worktrees/\n")
         (self.root / "Makefile").write_text(f".PHONY: hook-cli\nhook-cli:\n\ttest -x {PRAETORCTL}\n")
         (self.root / "bin").mkdir()
         os.link(self.binary, self.root / PRAETORCTL)
@@ -178,10 +178,20 @@ class NativeLefthook(unittest.TestCase):
         self.state("init")
         self.state("sync")
 
-    def state(self, action):
-        result = subprocess.run([str(self.root / PRAETORCTL), "state", action, "."],
-                                cwd=self.root, text=True, capture_output=True, timeout=30)
+    def state(self, action, root=None):
+        root = self.root if root is None else root
+        result = subprocess.run([str(root / PRAETORCTL), "state", action, "."],
+                                cwd=root, text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def linked_worktree(self, location):
+        """A linked worktree of the fixture with the CLI and the ledger a new worktree needs."""
+        self.git("worktree", "add", "-q", "-b", "checkpoint/" + location.parent.name, str(location))
+        (location / "bin").mkdir()
+        os.link(self.binary, location / PRAETORCTL)
+        self.state("init", location)
+        self.state("sync", location)
+        return location
 
     def git(self, *args):
         env = dict(os.environ)
@@ -199,9 +209,9 @@ class NativeLefthook(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
-    def registered_process(self, settings, action, cwd):
+    def registered_process(self, settings, action, cwd, project=None):
         """The argv, cwd and environment the client owning `settings` runs `action` with."""
-        root = str(self.root)
+        root = str(self.root if project is None else project)
         if settings == ".claude/settings.json":
             program = shutil.which(action["command"])
             self.assertIsNotNone(program, f"{action['command']} is not on PATH")
@@ -213,13 +223,13 @@ class NativeLefthook(unittest.TestCase):
             self.skipTest(CODEX_WINDOWS_GAP)
         return ["/bin/sh", "-c", action["command"]], cwd, {}
 
-    def run_registered(self, settings, key, payload, entry=0, cwd=None):
+    def run_registered(self, settings, key, payload, entry=0, cwd=None, project=None):
         spec = json.loads((ROOT / settings).read_text())
         action = spec["hooks"][key][entry]["hooks"][0]
         if cwd is None:
             cwd = self.root / "nested path with spaces"
             cwd.mkdir(exist_ok=True)
-        argv, directory, extra = self.registered_process(settings, action, cwd)
+        argv, directory, extra = self.registered_process(settings, action, cwd, project)
         return subprocess.run(argv, cwd=directory, env={**os.environ, **extra},
                               input=json.dumps(payload), text=True,
                               capture_output=True, timeout=60, check=False)
@@ -495,6 +505,76 @@ class NativeLefthook(unittest.TestCase):
         payload["cwd"] = str(self.root)
         allowed = self.run_registered(".claude/settings.json", "PreToolUse", payload, entry=1, cwd=foreign)
         self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+
+    def claude_worktree_calls(self, worktree, cwd, project=None):
+        """Run the Claude Edit guard (new and dirty path) and Stop hook for a session in `cwd`."""
+        edit = self.scope_payload(str(worktree / "new.go"), tool_name="Edit", cwd=str(cwd))
+        new = self.run_registered(".claude/settings.json", "PreToolUse", edit, entry=1,
+                                  cwd=cwd, project=project)
+        edit["tool_input"]["file_path"] = str(worktree / "README.md")
+        dirty = self.run_registered(".claude/settings.json", "PreToolUse", edit, entry=1,
+                                    cwd=cwd, project=project)
+        stop = self.run_registered(".claude/settings.json", "Stop",
+                                   {"hook_event_name": "Stop", "cwd": str(cwd)},
+                                   cwd=cwd, project=project)
+        self.assertEqual(dirty.returncode, 0, dirty.stdout + dirty.stderr)
+        self.assertEqual(stop.returncode, 0, stop.stderr)
+        return new, json.loads(stop.stdout)
+
+    def test_claude_hooks_judge_a_linked_worktree_session_by_that_worktree(self):
+        """Claude keeps ${CLAUDE_PROJECT_DIR} on the start checkout after entering a worktree.
+
+        The payload cwd follows the session into the worktree (hooks reference, "Worktrees are
+        different"), so the guard must judge that worktree's own batch and ledger, never the
+        start checkout's, whether the worktree sits under .claude/worktrees or elsewhere.
+        """
+        external = Path(tempfile.mkdtemp(prefix="praetor-linked-worktree-"))
+        self.addCleanup(shutil.rmtree, external, True)
+        worktrees = (self.linked_worktree(self.root / ".claude/worktrees/agent/tree"),
+                     self.linked_worktree(external / "tree"))
+        (self.root / "README.md").write_text("main checkout is due\n")
+        self.state("sync")
+        for worktree in worktrees:
+            with self.subTest(worktree=str(worktree)):
+                nested = worktree / "nested"
+                nested.mkdir()
+                new, stop = self.claude_worktree_calls(worktree, nested)
+                self.assertEqual(new.returncode, 0, new.stdout + new.stderr)
+                self.assertEqual(stop, {})
+                (worktree / "README.md").write_text("worktree is due\n")
+                self.state("sync", worktree)
+                new, stop = self.claude_worktree_calls(worktree, nested)
+                self.assertEqual(new.returncode, 2, new.stdout + new.stderr)
+                self.assertIn("rejects a new public file path", new.stderr)
+                self.assertIn("Praetor checkpoint due:", stop["reason"])
+
+    def test_claude_hooks_started_in_a_worktree_judge_the_checkout_the_session_moved_to(self):
+        worktree = self.linked_worktree(self.root / ".claude/worktrees/agent/tree")
+        (self.root / "README.md").write_text("main checkout is due\n")
+        self.state("sync")
+        new, stop = self.claude_worktree_calls(self.root, self.root, project=worktree)
+        self.assertEqual(new.returncode, 2, new.stdout + new.stderr)
+        self.assertIn("Praetor checkpoint due:", stop["reason"])
+
+    def test_session_root_selects_only_a_linked_worktree_of_the_same_repository(self):
+        session_root = ADAPTER.session_root
+        worktree = self.linked_worktree(self.root / ".claude/worktrees/agent/tree")
+        (worktree / "nested").mkdir()
+        outside = Path(tempfile.mkdtemp(prefix="praetor-session-outside-"))
+        self.addCleanup(shutil.rmtree, outside, True)
+        foreign = self.foreign_repository()
+        nested_git = self.root / "vendored"
+        subprocess.run(["git", "init", "-q", str(nested_git)], capture_output=True, timeout=20, check=True)
+        for cwd in (str(worktree), str(worktree / "nested")):
+            with self.subTest(cwd=cwd):
+                self.assertEqual(session_root(self.root, cwd), worktree.resolve())
+        self.assertEqual(session_root(worktree, str(self.root)), self.root.resolve())
+        kept = (None, 7, [], "", "relative/dir", "a\x00b", str(self.root / "missing"),
+                str(self.root / "README.md"), str(self.root), str(self.root / "bin"),
+                str(outside), str(foreign), str(nested_git))
+        for cwd in kept:
+            with self.subTest(cwd=cwd):
+                self.assertIs(session_root(self.root, cwd), self.root)
 
     def test_scope_policy_disabled_legacy_missing_and_not_due(self):
         clean = self.scope_bridge(json.dumps(self.scope_payload()).encode())
