@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/clientid"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -24,11 +25,19 @@ type TargetFile struct {
 type CompileResult struct {
 	SourcePath string
 	Files      []TargetFile
+	// NotApplicable lists the projections the client selection leaves out, by relative path.
+	// They are neither written nor verified, so a projection the repository deleted stays
+	// deleted.
+	NotApplicable []string
 }
 
 // Transpiler compiles canonical AGENTS.md into vendor-native agent configurations.
 type Transpiler struct {
 	MaxLines int
+	// Clients selects the projections CompileContent emits, by agent client id. nil emits
+	// every projection, the behaviour before selection existed; a non-nil list, empty
+	// included, emits exactly the projections of the clients it names (#202).
+	Clients []string
 }
 
 // NewTranspiler creates a Transpiler with standard budget constraints.
@@ -38,21 +47,83 @@ func NewTranspiler() *Transpiler {
 	}
 }
 
-// vendorTarget pairs a compiled file with the AGENTS.md `## <Vendor>` heading that belongs
-// to that file alone. Every line outside such a section is shared by all targets.
+// vendorTarget pairs a compiled file with the agent client that reads it and the AGENTS.md
+// `## <Vendor>` heading that belongs to that file alone. Every line outside such a section is
+// shared by all targets. Client ids reuse internal/clientid where the client is known there;
+// Cursor, Copilot and Windsurf have a projection but no client setup adapter.
 type vendorTarget struct {
+	client  string
 	path    string
 	section string
 	prefix  string
 }
 
 var vendorTargets = [6]vendorTarget{
-	{path: "CLAUDE.md", section: "Claude Code"},
-	{path: ".cursor/rules/hiss-invariants.mdc", section: "Cursor", prefix: cursorFrontmatter},
-	{path: ".github/copilot-instructions.md", section: "GitHub Copilot"},
-	{path: ".windsurfrules", section: "Windsurf"},
-	{path: ".gemini/GEMINI.md", section: "Gemini"},
-	{path: ".codex/rules.md", section: "Codex"},
+	{client: string(clientid.Claude), path: "CLAUDE.md", section: "Claude Code"},
+	{client: "cursor", path: ".cursor/rules/hiss-invariants.mdc", section: "Cursor", prefix: cursorFrontmatter},
+	{client: "copilot", path: ".github/copilot-instructions.md", section: "GitHub Copilot"},
+	{client: "windsurf", path: ".windsurfrules", section: "Windsurf"},
+	{client: string(clientid.Gemini), path: ".gemini/GEMINI.md", section: "Gemini"},
+	{client: string(clientid.Codex), path: ".codex/rules.md", section: "Codex"},
+}
+
+// maxSelectedClients bounds a declared client list (HISS-02). A list longer than this cannot
+// name distinct projections and is rejected rather than scanned.
+const maxSelectedClients = 64
+
+// Clients returns the agent client id of every projection, in registry order.
+func Clients() []string {
+	ids := make([]string, 0, len(vendorTargets))
+	for _, target := range vendorTargets {
+		ids = append(ids, target.client)
+	}
+	return ids
+}
+
+// selectTargets resolves a client selection to the projections it emits, in registry order,
+// and the relative paths it leaves out. nil selects every projection. An id that names no
+// projection fails the whole selection: a silently ignored typo reads as a working
+// declaration until the projection it meant to keep goes missing.
+func selectTargets(clients []string) ([]vendorTarget, []string, error) {
+	if clients == nil {
+		return vendorTargets[:], nil, nil
+	}
+	if len(clients) > maxSelectedClients {
+		return nil, nil, fmt.Errorf("agent_clients names at most %d clients, got %d", maxSelectedClients, len(clients))
+	}
+	chosen := make(map[string]bool, len(clients))
+	var unknown []string
+	for _, id := range clients {
+		name := strings.ToLower(strings.TrimSpace(id))
+		if !knownClient(name) {
+			unknown = append(unknown, id)
+			continue
+		}
+		chosen[name] = true
+	}
+	if len(unknown) > 0 {
+		return nil, nil, fmt.Errorf("unknown agent client id(s): %s; supported: %s",
+			strings.Join(unknown, ", "), strings.Join(Clients(), ", "))
+	}
+	targets := make([]vendorTarget, 0, len(vendorTargets))
+	var excluded []string
+	for _, target := range vendorTargets {
+		if chosen[target.client] {
+			targets = append(targets, target)
+			continue
+		}
+		excluded = append(excluded, target.path)
+	}
+	return targets, excluded, nil
+}
+
+func knownClient(name string) bool {
+	for _, target := range vendorTargets {
+		if target.client == name {
+			return true
+		}
+	}
+	return false
 }
 
 // CompileContent synthesizes vendor-specific files directly from in-memory markdown content.
@@ -62,12 +133,16 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 	if strings.TrimSpace(content) == "" {
 		return nil, fmt.Errorf("canonical AGENTS.md content is empty")
 	}
+	targets, excluded, err := selectTargets(t.Clients)
+	if err != nil {
+		return nil, err
+	}
 	lines, owners, err := ownVendorLines(content)
 	if err != nil {
 		return nil, err
 	}
-	files := make([]TargetFile, 0, len(vendorTargets))
-	for _, target := range vendorTargets {
+	files := make([]TargetFile, 0, len(targets))
+	for _, target := range targets {
 		body := target.prefix + generatedHeader + selectVendorLines(lines, owners, target.section)
 		count := countLines(body)
 		if count > t.MaxLines {
@@ -77,8 +152,9 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 	}
 
 	return &CompileResult{
-		SourcePath: "AGENTS.md",
-		Files:      files,
+		SourcePath:    "AGENTS.md",
+		Files:         files,
+		NotApplicable: excluded,
 	}, nil
 }
 

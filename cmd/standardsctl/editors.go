@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/editor"
@@ -32,39 +33,85 @@ func runEditors(args []string) error {
 	fs := flag.NewFlagSet("editors "+sub, flag.ContinueOnError)
 	path := fs.String("path", ".", "Workspace root directory")
 	editorsFlag := fs.String("editors", "",
-		"Comma-separated editor ids/aliases to target (default: every supported editor)")
+		"Comma-separated editor ids/aliases to target (default: editors in .standards.yaml, else every supported editor)")
 	positional, err := parseInterspersed(fs, subArgs)
 	if err != nil {
 		return err
 	}
 	root := positionalAt(positional, 0, *path)
+	if sub != "generate" && sub != "verify" {
+		return fmt.Errorf("unknown editors command: %s", sub)
+	}
 
+	opts, selection, err := resolveEditorsOptions(root, *editorsFlag)
+	if err != nil {
+		return err
+	}
+	reportNotApplicableEditors(selection)
+	if len(selection.Editors) == 0 {
+		return nil
+	}
+	if sub == "generate" {
+		return runEditorsGenerate(opts, root)
+	}
+	return runEditorsVerify(opts, root)
+}
+
+// resolveEditorsOptions builds the synthesis options for root. The editor set is --editors
+// when given, else the editors list in root's .standards.yaml, else every supported editor
+// (#202).
+func resolveEditorsOptions(root, editorsFlag string) (editor.Options, editor.Selection, error) {
+	ctx := context.Background()
+	ids, err := requestedEditors(ctx, root, editorsFlag)
+	if err != nil {
+		return editor.Options{}, editor.Selection{}, err
+	}
+	selection, err := editor.SelectEditors(ids)
+	if err != nil {
+		return editor.Options{}, editor.Selection{}, err
+	}
 	opts := editor.DefaultOptions()
 	opts.WorkspaceRoot = root
-	if ids := splitCommaList(*editorsFlag); len(ids) > 0 {
-		opts.Editors = ids
-	}
+	opts.Editors = selection.Editors
 	// Editor projections must state the ceilings `praetorctl audit` enforces in this very
 	// repository. This command never resolved the manifest at all, so it wrote a 75-line
 	// function limit into every workspace regardless of policy (issue #360). A policy that
 	// cannot be resolved yet, such as the lock `praetorctl init` writes, falls back to the
 	// HISS-04 ceiling with a warning rather than failing a command that worked before.
-	complexity, warning, err := config.ResolveRepositoryComplexity(context.Background(), root)
+	complexity, warning, err := config.ResolveRepositoryComplexity(ctx, root)
 	if err != nil {
-		return fmt.Errorf("resolve complexity policy for %s: %w", root, err)
+		return editor.Options{}, editor.Selection{}, fmt.Errorf("resolve complexity policy for %s: %w", root, err)
 	}
 	if warning != "" {
 		fmt.Printf("[WARN] %s\n", warning)
 	}
 	opts.Complexity = complexity
+	return opts, selection, nil
+}
 
-	switch sub {
-	case "generate":
-		return runEditorsGenerate(opts, root)
-	case "verify":
-		return runEditorsVerify(opts, root)
-	default:
-		return fmt.Errorf("unknown editors command: %s", sub)
+// requestedEditors returns the --editors ids when the flag names any. Otherwise it returns the
+// manifest's declaration, nil when the key is absent. An unreadable manifest fails here
+// rather than falling back to every editor: that fallback would recreate the files a
+// declared selection excludes.
+func requestedEditors(ctx context.Context, root, editorsFlag string) ([]string, error) {
+	if flagged := splitCommaList(editorsFlag); len(flagged) > 0 {
+		return flagged, nil
+	}
+	declared, err := config.LoadDeclaredTooling(ctx, root)
+	if err != nil {
+		return nil, fmt.Errorf("read the editors selection of %s (pass --editors to override): %w", root, err)
+	}
+	return declared.Editors, nil
+}
+
+// reportNotApplicableEditors names the supported editors the selection leaves out: their
+// files are neither generated nor verified, so one the repository deleted stays deleted.
+func reportNotApplicableEditors(selection editor.Selection) {
+	if len(selection.NotApplicable) > 0 {
+		fmt.Printf("[NOT_APPLICABLE] Editors not selected: %s\n", strings.Join(selection.NotApplicable, ", "))
+	}
+	if len(selection.Editors) == 0 {
+		fmt.Println("[NOT_APPLICABLE] No editor is selected; nothing to generate or verify.")
 	}
 }
 

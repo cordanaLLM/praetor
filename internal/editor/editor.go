@@ -130,23 +130,9 @@ func DefaultOptions() Options {
 		WorkspaceRoot: ".",
 		BinaryDir:     "bin",
 		Archetype:     "framework",
-		Editors: []string{
-			EditorUniversal,
-			EditorVSCode,
-			EditorCursor,
-			EditorWindsurf,
-			EditorJetBrains,
-			EditorNeovim,
-			EditorZed,
-			EditorHelix,
-			EditorEmacs,
-			EditorFleet,
-			EditorSublime,
-			EditorVisualStudio,
-			EditorAntigravity,
-		},
-		IncludeMCP: true,
-		IncludeLSP: true,
+		Editors:       append([]string(nil), supportedEditorIDs...),
+		IncludeMCP:    true,
+		IncludeLSP:    true,
 	}
 }
 
@@ -171,8 +157,7 @@ func SynthesizeContext(ctx context.Context, opts Options) (_ *EditorConfigSet, e
 	defer cancel()
 	editors, unknown := normalizeEditors(opts.Editors)
 	if len(unknown) > 0 {
-		return nil, fmt.Errorf("unknown editor id(s): %s; supported: %s",
-			strings.Join(unknown, ", "), strings.Join(supportedEditorIDs, ", "))
+		return nil, unknownEditorsError(unknown)
 	}
 	if len(editors) == 0 {
 		return nil, errors.New("no valid editors declared for synthesis")

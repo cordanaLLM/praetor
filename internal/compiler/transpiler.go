@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"path/filepath"
 )
@@ -25,17 +26,40 @@ func (t *Transpiler) Compile(agentsMdPath string) (*CompileResult, error) {
 	return t.CompileContext(ctx, agentsMdPath)
 }
 
+// CompileContext reads agentsMdPath and compiles the projections its repository selects.
+// Unless t.Clients is set, the selection is agent_clients in the manifest beside the source,
+// the same manifest that governs the text register block, so compile, verify and audit agree
+// on which projections exist.
 func (t *Transpiler) CompileContext(ctx context.Context, agentsMdPath string) (*CompileResult, error) {
 	contentBytes, err := contextopt.ReadSnapshot(ctx, agentsMdPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read source %s: %w", agentsMdPath, err)
 	}
-	res, err := t.CompileContent(string(contentBytes))
+	selected, err := t.forRepository(ctx, filepath.Dir(agentsMdPath))
+	if err != nil {
+		return nil, err
+	}
+	res, err := selected.CompileContent(string(contentBytes))
 	if err != nil {
 		return nil, err
 	}
 	res.SourcePath = agentsMdPath
 	return res, nil
+}
+
+// forRepository returns t when it already carries a selection, otherwise a copy selecting the
+// agent clients the manifest at root declares.
+func (t *Transpiler) forRepository(ctx context.Context, root string) (*Transpiler, error) {
+	if t.Clients != nil {
+		return t, nil
+	}
+	selection, err := config.LoadDeclaredTooling(ctx, root)
+	if err != nil {
+		return nil, fmt.Errorf("agent client selection: %w", err)
+	}
+	selected := *t
+	selected.Clients = selection.AgentClients
+	return &selected, nil
 }
 
 // CompileContent delegates pure rendering to the shared leaf renderer.
@@ -85,20 +109,27 @@ func (t *Transpiler) Verify(agentsMdPath string, targetDir string) error {
 }
 
 func (t *Transpiler) VerifyContext(ctx context.Context, agentsMdPath, targetDir string) error {
+	_, err := t.VerifyCompiled(ctx, agentsMdPath, targetDir)
+	return err
+}
+
+// VerifyCompiled is VerifyContext returning the result it verified, so a caller can name the
+// projections it checked and the ones the client selection left out.
+func (t *Transpiler) VerifyCompiled(ctx context.Context, agentsMdPath, targetDir string) (*CompileResult, error) {
 	res, err := t.CompileContext(ctx, agentsMdPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	for _, f := range res.Files {
 		fullPath := filepath.Join(targetDir, f.RelativePath)
 		existing, err := contextopt.ReadSnapshot(ctx, fullPath)
 		if err != nil {
-			return fmt.Errorf("target %s missing or unreadable: %w", f.RelativePath, err)
+			return nil, fmt.Errorf("target %s missing or unreadable: %w", f.RelativePath, err)
 		}
 		if !bytes.Equal(bytes.TrimSpace(existing), bytes.TrimSpace([]byte(f.Content))) {
-			return fmt.Errorf("target %s is out of sync with %s; run 'praetorctl compile-context' to reconcile", f.RelativePath, agentsMdPath)
+			return nil, fmt.Errorf("target %s is out of sync with %s; run 'praetorctl compile-context' to reconcile", f.RelativePath, agentsMdPath)
 		}
 	}
-	return nil
+	return res, nil
 }

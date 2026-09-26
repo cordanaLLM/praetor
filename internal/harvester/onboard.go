@@ -147,7 +147,14 @@ func writeAgentHarness(ctx context.Context, repoPath string) error {
 	if _, err := compiler.SyncRegisterBlock(ctx, repoPath, agentsPath, true); err != nil {
 		return fmt.Errorf("splice text register into %s: %w", agentsPath, err)
 	}
+	// An existing manifest may select editors and agent clients (#202); the manifest
+	// onboarding scaffolds itself selects neither, so every one applies.
+	declared, err := config.LoadDeclaredTooling(ctx, repoPath)
+	if err != nil {
+		return fmt.Errorf("read editors and agent_clients selection: %w", err)
+	}
 	tr := compiler.NewTranspiler()
+	tr.Clients = declared.AgentClients
 	data, err := readOnboardDocument(ctx, agentsPath)
 	if err != nil {
 		return err
@@ -165,12 +172,20 @@ func writeAgentHarness(ctx context.Context, repoPath string) error {
 			return err
 		}
 	}
-	return writeOnboardEditors(ctx, repoPath)
+	return writeOnboardEditors(ctx, repoPath, declared.Editors)
 }
 
-func writeOnboardEditors(ctx context.Context, repoPath string) error {
+func writeOnboardEditors(ctx context.Context, repoPath string, declared []string) error {
+	selection, err := editor.SelectEditors(declared)
+	if err != nil {
+		return fmt.Errorf("editors in .standards.yaml: %w", err)
+	}
+	if len(selection.Editors) == 0 {
+		return ctx.Err()
+	}
 	opts := editor.DefaultOptions()
 	opts.WorkspaceRoot = repoPath
+	opts.Editors = selection.Editors
 	// Complexity is deliberately left at config.HISSComplexityCeiling here. Onboarding writes
 	// the manifest and lock before the pinned profile catalog is materialized in the target
 	// repository, so the declared policy is not resolvable at this point in the scaffold;

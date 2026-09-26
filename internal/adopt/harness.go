@@ -193,12 +193,16 @@ func trimSeparator(tail string) string {
 	return tail
 }
 
-func reconcileAgentHarness(_ context.Context, s *adoptSession) error {
+func reconcileAgentHarness(ctx context.Context, s *adoptSession) error {
+	declared, err := config.LoadDeclaredTooling(ctx, s.repoPath)
+	if err != nil {
+		return fmt.Errorf("read agent_clients selection from %s: %w", manifestFile, err)
+	}
 	agentsContent, err := resolveAgentsContent(s)
 	if err != nil {
 		return err
 	}
-	return transpileAgentTargets(s, agentsContent)
+	return transpileAgentTargets(s, agentsContent, declared.AgentClients)
 }
 
 func resolveAgentsContent(s *adoptSession) (string, error) {
@@ -279,12 +283,18 @@ func mergeExistingAgentsContent(s *adoptSession, full, existing, harness string)
 	return merged, nil
 }
 
-// transpileAgentTargets compiles AGENTS.md into every vendor context file. A compile
-// failure is fatal: HISS-16 guarantees that the vendor files mirror AGENTS.md.
-func transpileAgentTargets(s *adoptSession, agentsContent string) error {
-	res, err := compiler.NewTranspiler().CompileContent(agentsContent)
+// transpileAgentTargets compiles AGENTS.md into the vendor context files of the selected
+// agent clients (nil selects every client). A compile failure is fatal: HISS-16 guarantees
+// that the vendor files mirror AGENTS.md.
+func transpileAgentTargets(s *adoptSession, agentsContent string, clients []string) error {
+	tr := compiler.NewTranspiler()
+	tr.Clients = clients
+	res, err := tr.CompileContent(agentsContent)
 	if err != nil {
 		return fmt.Errorf("context compilation: %w", err)
+	}
+	for i := 0; i < len(res.NotApplicable) && i < maxTranspileTargets; i++ {
+		s.report.recordNotApplicable(res.NotApplicable[i], "Not selected by agent_clients in "+manifestFile)
 	}
 	for i := 0; i < len(res.Files) && i < maxTranspileTargets; i++ {
 		f := res.Files[i]

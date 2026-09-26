@@ -34,8 +34,14 @@ func (r *AdoptReport) recordReconciledAs(path, action, details string) {
 
 // recordSkipped records a deliberate safety skip as both an action and a warning.
 func (r *AdoptReport) recordSkipped(path, details string) {
-	r.ActionDetails = append(r.ActionDetails, ActionDetail{Path: path, Action: actionSkip, Details: details})
+	r.recordNotApplicable(path, details)
 	r.Warnings = append(r.Warnings, path+": "+details)
+}
+
+// recordNotApplicable records a surface the manifest's selection leaves out. It is an action,
+// not a warning: nothing was refused for safety, the repository declared it does not use it.
+func (r *AdoptReport) recordNotApplicable(path, details string) {
+	r.ActionDetails = append(r.ActionDetails, ActionDetail{Path: path, Action: actionSkip, Details: details})
 }
 
 // addError records a non-fatal failure that the caller must surface.

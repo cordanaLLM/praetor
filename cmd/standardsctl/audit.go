@@ -248,16 +248,34 @@ func describeRatchetFailure(ratchet *baseline.RatchetResult) error {
 		ratchet.CurrentCount, len(ratchet.NewViolations), len(ratchet.TouchedCleanViolations), strings.Join(msgs, "\n"))
 }
 
+// verifiedTargetList names the projections one verification read, and any agent_clients left
+// out, so the audit line never claims a projection it did not check.
+func verifiedTargetList(res *compiler.CompileResult) string {
+	names := make([]string, 0, len(res.Files))
+	for _, f := range res.Files {
+		names = append(names, f.RelativePath)
+	}
+	list := "none"
+	if len(names) > 0 {
+		list = strings.Join(names, ", ")
+	}
+	if len(res.NotApplicable) > 0 {
+		list += " (not applicable: " + strings.Join(res.NotApplicable, ", ") + ")"
+	}
+	return list
+}
+
 func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
 	root := opts.rootDir
 	tr := compiler.NewTranspiler()
 	if _, err := compiler.SyncRegisterBlock(ctx, root, opts.agentsPath, false); err != nil {
 		return fmt.Errorf("[FAIL] Agent context text register: %w", err)
 	}
-	if err := tr.VerifyContext(ctx, opts.agentsPath, root); err != nil {
+	res, err := tr.VerifyCompiled(ctx, opts.agentsPath, root)
+	if err != nil {
 		return fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
 	}
-	fmt.Println("[PASS] Cross-agent context targets (Claude, Cursor, Copilot, Windsurf, Gemini, Codex) verified in sync.")
+	fmt.Printf("[PASS] Cross-agent context targets verified in sync: %s.\n", verifiedTargetList(res))
 	lint, err := compiler.LintContext(ctx, opts.agentsPath)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Agent context: %w", err)

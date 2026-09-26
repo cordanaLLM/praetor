@@ -43,9 +43,11 @@ func verifyCompiledContext(ctx context.Context, tr *compiler.Transpiler, source,
 	if _, err := compiler.SyncRegisterBlock(ctx, filepath.Dir(source), source, false); err != nil {
 		return fmt.Errorf("context verification failed: %s: %w", source, err)
 	}
-	if err := tr.VerifyContext(ctx, source, targetDir); err != nil {
+	res, err := tr.VerifyCompiled(ctx, source, targetDir)
+	if err != nil {
 		return fmt.Errorf("context verification failed: %w", err)
 	}
+	printNotApplicableTargets(res)
 	lint, err := compiler.LintContext(ctx, source)
 	if err != nil {
 		return fmt.Errorf("context verification failed: %w", err)
@@ -98,7 +100,16 @@ func compileVendorTargets(ctx context.Context, tr *compiler.Transpiler, source, 
 	for _, f := range res.Files {
 		fmt.Printf("  [COMPILED] %-35s (%d lines, budget <= %d)\n", f.RelativePath, f.LineCount, compiler.MaxLineBudget)
 	}
+	printNotApplicableTargets(res)
 	return nil
+}
+
+// printNotApplicableTargets names the projections agent_clients leaves out. They are neither
+// written nor verified, so one the repository deleted stays deleted.
+func printNotApplicableTargets(res *compiler.CompileResult) {
+	for _, rel := range res.NotApplicable {
+		fmt.Printf("  [NOT_APPLICABLE] %-35s (not selected by agent_clients)\n", rel)
+	}
 }
 
 // compileContext writes the vendor context files and every persona projection; any
