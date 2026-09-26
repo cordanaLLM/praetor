@@ -10,6 +10,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -47,12 +48,87 @@ func TestSyncRulesetFollowsTheJoinedProfileBranchProtection(t *testing.T) {
 		t.Fatalf("joined ruleset rejected: %v\n%s", err, out)
 	}
 	mustContain(t, out, "Branch protection ruleset verified", "0 companion checks missing")
-	// Boundary: an archetype the resolver refuses leaves sync incomplete, never finished.
-	writeFixtureFile(t, f.dir, ".config/archetypes/other.yaml", "id: other\nlinter: [semgrep]\n")
-	out, err = runSyncCmd(t, "--config="+f.manifestPath)
-	if err == nil || strings.Contains(out, "Local sync checks finished") {
-		t.Fatalf("unresolvable catalog finished sync: %v\n%s", err, out)
+}
+
+// strictSyncFixture pins a framework profile that requires signed commits and two
+// reviewers, while the ruleset on disk still renders the weaker built-in defaults.
+func strictSyncFixture(t *testing.T) *auditFixture {
+	t.Helper()
+	f := newSyncValidationFixture(t)
+	writeFixtureFile(t, f.dir, ".config/archetypes/framework.yaml",
+		"id: \"framework\"\nname: \"Framework\"\nbranch_protection:\n  require_signed_commits: true\n  required_approving_reviewers: 2\n")
+	lf := &lockFixture{dir: f.dir}
+	lf.writeLock(t, lf.digestOf(t, ".config/archetypes/framework.yaml"), lf.digestOf(t, ".config/archetypes/facets/security-high.yaml"), "")
+	return f
+}
+
+// A valid lock whose catalog is not materialized leaves the policy unresolved. sync then
+// neither verifies the retained ruleset nor synthesizes one from a stand-in policy, counts
+// the single cause once and never reaches the forge; --catalog-root resolves it.
+func TestSyncLeavesTheRulesetUncheckedWhileThePolicyIsUnresolved(t *testing.T) {
+	f := strictSyncFixture(t)
+	catalog := t.TempDir()
+	if err := os.Mkdir(filepath.Join(catalog, ".config"), 0o700); err != nil {
+		t.Fatal(err)
 	}
+	if err := os.Rename(filepath.Join(f.dir, ".config", "archetypes"), filepath.Join(catalog, ".config", "archetypes")); err != nil {
+		t.Fatal(err)
+	}
+	rulesetPath := filepath.Join(f.dir, ".github/rulesets/main.json")
+	weaker := readFixtureFile(t, f.dir, ".github/rulesets/main.json")
+	stub := &forgeStub{writeStatus: http.StatusCreated}
+	srv := httptest.NewServer(stub.handler())
+	t.Cleanup(srv.Close)
+	// Negative: the retained defaults ruleset is weaker than the profile; it is not verified.
+	out, err := runSyncCmd(t, "--config="+f.manifestPath, "--remote", "--token=test-fixture", "--endpoint="+srv.URL)
+	mustErrContain(t, err, "1 companion checks missing or unverified")
+	mustContain(t, out, "[UNVERIFIED] Lockfile .standards.lock",
+		"[UNVERIFIED] Branch protection ruleset .github/rulesets/main.json neither checked nor synthesized", "counted once")
+	if strings.Contains(out, "Branch protection ruleset verified") || len(stub.recorded()) != 0 {
+		t.Fatalf("unresolved policy verified the ruleset or reached the forge:\n%s", out)
+	}
+	if got := readFixtureFile(t, f.dir, ".github/rulesets/main.json"); got != weaker {
+		t.Fatal("retained ruleset rewritten under an unresolved policy")
+	}
+	// Boundary: an absent ruleset is not synthesized from a stand-in policy.
+	if err := os.Remove(rulesetPath); err != nil {
+		t.Fatal(err)
+	}
+	out, err = runSyncCmd(t, "--config="+f.manifestPath)
+	mustErrContain(t, err, "1 companion checks missing or unverified")
+	if strings.Contains(out, "Synthesizing declarative branch protection ruleset") || util.PathExists(rulesetPath) {
+		t.Fatalf("ruleset synthesized under an unresolved policy:\n%s", out)
+	}
+	// Positive: the selected catalog resolves the policy; the ruleset follows the profile.
+	out, err = runSyncCmd(t, "--config="+f.manifestPath, "--catalog-root="+catalog)
+	if err != nil {
+		t.Fatalf("selected catalog: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Synthesizing declarative branch protection ruleset", "Branch protection ruleset verified", "0 companion checks missing")
+	if !hasType(rulesetTypes(t, f.dir), "required_signatures") {
+		t.Fatal("ruleset synthesized without the profile's signed commits")
+	}
+}
+
+// A verified lock whose policy still does not resolve (here an explicit zero complexity
+// override, which the resolver rejects) is its own cause: the ruleset is left unchecked and
+// counted once, alongside any other missing companion.
+func TestSyncCountsAnUnresolvedPolicyOnceBesideAVerifiedLock(t *testing.T) {
+	f := newSyncValidationFixture(t)
+	writeFixtureFile(t, f.dir, ".standards.yaml",
+		fixtureManifest("acme", "widgets", false)+"overrides:\n  complexity:\n    max_cyclomatic: 0\n")
+	out, err := runSyncCmd(t, "--config="+f.manifestPath)
+	mustErrContain(t, err, "1 companion checks missing or unverified")
+	mustContain(t, out, "[OK] Lockfile .standards.lock verified", "neither checked nor synthesized", "verification incomplete")
+	if strings.Contains(out, "Branch protection ruleset verified") {
+		t.Fatalf("ruleset verified against a stand-in policy:\n%s", out)
+	}
+	// Boundary: a second, distinct cause is counted on its own.
+	if err := os.Remove(filepath.Join(f.dir, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = runSyncCmd(t, "--config="+f.manifestPath)
+	mustErrContain(t, err, "2 companion checks missing or unverified")
 }
 
 func TestSyncRejectsInvalidExistingArtifacts(t *testing.T) {

@@ -19,7 +19,14 @@ lists each dimension's join rule. `praetorctl adopt` renders
 `.github/rulesets/main.json` from the resolved branch protection, and
 `praetorctl sync` and the audit's locked documentation gate check the ruleset
 against that same policy (`TestSyncRulesetFollowsTheJoinedProfileBranchProtection`,
-`TestAuditDocumentationGateUsesTheEffectiveBranchProtection`). Linters, memory
+`TestAuditDocumentationGateUsesTheEffectiveBranchProtection`). When the policy
+does not resolve, for example because the pinned catalog is not materialized and
+no `--catalog-root` is given, sync has no policy to check against: it prints
+`[UNVERIFIED]`, neither validates nor synthesizes the ruleset, and exits
+incomplete without reaching the forge. A lock the catalog cannot verify is the
+same cause and is counted once
+(`TestSyncLeavesTheRulesetUncheckedWhileThePolicyIsUnresolved`,
+`TestSyncCountsAnUnresolvedPolicyOnceBesideAVerifiedLock`). Linters, memory
 and error unwraps are resolved and sealed into the digest; no gate executes the
 linter list yet.
 

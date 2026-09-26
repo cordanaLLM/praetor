@@ -237,8 +237,10 @@ func finishEffectivePolicy(ctx context.Context, manifest *Manifest, layers []Pol
 		return nil, err
 	}
 	result.Manifest = manifest
-	// Preserve current non-complexity behavior until those controls have their own
-	// schema and consumer migration. No external control is silently implied.
+	// The pinned profiles and facets already joined their controls in ResolvePolicy; the
+	// repository's branch protection and supply chain overrides apply after that join, so
+	// they only tighten it (review_mode: single_maintainer is the one explicit relaxation).
+	// External layers carry no controls, so none is silently implied.
 	result.Policy.ApplyOverrides(Overrides{
 		BranchProtection: manifest.Overrides.BranchProtection,
 		SupplyChain:      manifest.Overrides.SupplyChain,
