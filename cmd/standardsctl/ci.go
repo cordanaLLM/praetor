@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/cifilter"
@@ -38,7 +39,7 @@ func runCI(args []string) error {
 func printCIUsage() {
 	fmt.Println("Usage: standardsctl ci <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  filter [--dir=.] [--base=ref] [--head=ref] [--json] [--env] [--force]  Analyze diff and filter CI gates")
+	fmt.Println("  filter [--dir=.] [--config=<dir>/.standards.yaml] [--base=ref] [--head=ref] [--json] [--env] [--force]  Analyze diff and filter CI gates")
 }
 
 func runCIFilter(ctx context.Context, args []string) error {
@@ -49,6 +50,7 @@ func runCIFilter(ctx context.Context, args []string) error {
 	asJSON := fs.Bool("json", false, "Output decision as JSON")
 	asEnv := fs.Bool("env", false, "Output decision formatted for GitHub Actions $GITHUB_OUTPUT")
 	force := fs.Bool("force", false, "Force execution of all CI test and security gates")
+	manifest := fs.String("config", "", "Path to the .standards.yaml whose overrides.ci governs the decision (default <dir>/.standards.yaml)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -57,11 +59,16 @@ func runCIFilter(ctx context.Context, args []string) error {
 		return fmt.Errorf("ci filter accepts no positional arguments, got %q", fs.Args())
 	}
 
+	manifestPath := *manifest
+	if manifestPath == "" {
+		manifestPath = filepath.Join(*dir, ".standards.yaml")
+	}
 	opts := cifilter.FilterOptions{
-		RepoDir:  *dir,
-		BaseRef:  *baseRef,
-		HeadRef:  *headRef,
-		ForceAll: *force,
+		RepoDir:      *dir,
+		BaseRef:      *baseRef,
+		HeadRef:      *headRef,
+		ForceAll:     *force,
+		ManifestPath: manifestPath,
 	}
 
 	dec, err := cifilter.AnalyzeChanges(ctx, opts)

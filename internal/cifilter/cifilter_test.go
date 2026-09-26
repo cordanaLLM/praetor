@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/cifilter"
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 func TestAnalyzeChangesRejectsMissingOrCancelledContext(t *testing.T) {
@@ -394,8 +395,9 @@ func TestClassifyChanges_ClaudeMdInSubdirectoryRunsContextSync(t *testing.T) {
 }
 
 // Negative: a path whose extension no classifier recognises is neither documentation nor
-// session state, so it must never ride the docs-only or state-only path, and the audit still
-// runs. Alone or mixed with a doc or a state file, it keeps the change set off both paths.
+// session state, so it must never ride the docs-only or state-only path. It fails closed
+// (BUG-236, BUG-241): alone or mixed with a doc or a state file it selects tests, linters,
+// security and context sync, and the reason names the unclassified kind.
 func TestClassifyChanges_UnrecognisedExtensionIsNotDocsOrState(t *testing.T) {
 	for _, files := range [][]string{
 		{"scripts/release.sh"},
@@ -407,15 +409,108 @@ func TestClassifyChanges_UnrecognisedExtensionIsNotDocsOrState(t *testing.T) {
 		if cs.DocsOnly || cs.StateOnly {
 			t.Errorf("%v: unrecognised path classified DocsOnly=%t StateOnly=%t", files, cs.DocsOnly, cs.StateOnly)
 		}
-		// Known fail-open (tracked upstream, not asserted here): isCode/isConfig/isAgent
-		// in filter.go do not recognise ".sh", so a shell-script-only change (e.g.
-		// scripts/release.sh) leaves CodeChanged/ConfigChanged/AgentChanged all false too.
-		// makeTargetedDecision then sets RunTests/RunLinters/RunSecurity false and
-		// SkipHeavyGates true, so a shell-script-only diff silently skips the race and
-		// security gates. Do not pin that source-class outcome as a passing contract here.
-		decision := cifilter.MakeDecision(cs, false)
-		if decision.RunDocsOnly || !decision.RunAudit {
-			t.Errorf("%v: expected audit without the docs-only path, got %+v", files, decision)
+		if !cs.UnclassifiedChanged || !cs.ConfigChanged {
+			t.Errorf("%v: unrecognised path must fail closed as configuration, got %+v", files, cs)
 		}
+		decision := cifilter.MakeDecision(cs, false)
+		if decision.RunDocsOnly || !decision.RunAudit || decision.SkipHeavyGates ||
+			!decision.RunTests || !decision.RunLinters || !decision.RunSecurity || !decision.RunContextSync ||
+			!strings.Contains(decision.Reason, "unclassified") {
+			t.Errorf("%v: expected the fail-closed targeted matrix, got %+v", files, decision)
+		}
+	}
+}
+
+// Negative (BUG-236): each file kind that no classifier named used to switch every heavy
+// gate off. Every one of them now fails closed.
+func TestUnclassifiedFileKindsRunHeavyGates(t *testing.T) {
+	for _, path := range []string{
+		"Dockerfile", "build/Dockerfile", "scripts/release.sh", "templates/ci.yml.tmpl",
+		"tools/tool.toml", "internal/data/fixture.json", ".gitignore",
+	} {
+		decision := cifilter.MakeDecision(cifilter.ClassifyChanges([]string{path}), false)
+		if !decision.RunTests || !decision.RunLinters || !decision.RunSecurity || decision.SkipHeavyGates ||
+			!decision.ChangeSet.UnclassifiedChanged {
+			t.Errorf("%s did not fail closed: %+v", path, decision)
+		}
+	}
+	// Boundary: a recognised source or config kind is not reported as unclassified.
+	for _, path := range []string{"main.go", "go.mod", ".github/workflows/ci.yml", "package.json"} {
+		if cs := cifilter.ClassifyChanges([]string{path}); cs.UnclassifiedChanged {
+			t.Errorf("%s is a recognised kind but was reported unclassified", path)
+		}
+	}
+}
+
+// Negative (BUG-562): a dependency or build manifest ending in .txt changes what CI
+// installs or builds, so it selects the security and test gates even under docs/.
+func TestBuildManifestTextIsConfiguration(t *testing.T) {
+	for _, path := range []string{
+		"requirements.txt", ".config/semgrep/requirements.txt", "docs/presets/mkdocs/requirements.txt",
+		"requirements-dev.txt", "constraints.txt", "CMakeLists.txt", "native/cmakelists.TXT",
+	} {
+		cs := cifilter.ClassifyChanges([]string{path})
+		decision := cifilter.MakeDecision(cs, false)
+		if cs.DocsOnly || !cs.ConfigChanged || cs.UnclassifiedChanged || !decision.RunTests || !decision.RunSecurity {
+			t.Errorf("%s must classify as configuration, got %+v / %+v", path, cs, decision)
+		}
+	}
+	// Boundary: a plain text document keeps the documentation path.
+	for _, path := range []string{"docs/llms.txt", "docs/llms-full.txt", "LICENSES/EUPL-1.2.txt", "notes.txt"} {
+		if cs := cifilter.ClassifyChanges([]string{path}); !cs.DocsOnly {
+			t.Errorf("%s must stay documentation, got %+v", path, cs)
+		}
+	}
+}
+
+// Negative (BUG-242): every file compile-context writes is agent text, so a vendor-only
+// change runs the HISS-16 compile-context --verify gate instead of the docs-only path.
+func TestCompiledVendorFilesRunContextSync(t *testing.T) {
+	for _, path := range []string{
+		".cursor/rules/hiss-invariants.mdc", ".windsurfrules", ".github/copilot-instructions.md",
+		".gemini/GEMINI.md", ".codex/rules.md", "CLAUDE.md",
+	} {
+		cs := cifilter.ClassifyChanges([]string{path})
+		decision := cifilter.MakeDecision(cs, false)
+		if cs.DocsOnly || !cs.AgentChanged || cs.UnclassifiedChanged || !decision.RunContextSync || decision.RunDocsOnly {
+			t.Errorf("%s must classify as an agent file, got %+v / %+v", path, cs, decision)
+		}
+	}
+	// Boundary: the vendor paths match exactly, so a same-named file elsewhere is not a
+	// compiled target; a Markdown copy stays documentation.
+	if cs := cifilter.ClassifyChanges([]string{"docs/examples/.gemini/GEMINI.md"}); cs.AgentChanged || !cs.DocsOnly {
+		t.Errorf("a GEMINI.md outside .gemini/ must stay documentation, got %+v", cs)
+	}
+}
+
+// overrides.ci switches (BUG-652) only ever add gates: each false switch forces the full
+// matrix where the default would skip heavy gates, and leaves a code change unchanged.
+func TestMakePolicyDecision(t *testing.T) {
+	docs := cifilter.ClassifyChanges([]string{"docs/guide.md"})
+	state := cifilter.ClassifyChanges([]string{".workingdir/STATE.md"})
+	code := cifilter.ClassifyChanges([]string{"main.go"})
+
+	// Positive: the default policy keeps the selective decisions.
+	defaults := config.DefaultCIPolicy()
+	if d := cifilter.MakePolicyDecision(docs, false, defaults); !d.RunDocsOnly || !d.SkipHeavyGates {
+		t.Fatalf("default policy must keep docs-only, got %+v", d)
+	}
+	// Negative: diff-aware filtering off runs the full matrix for every change set.
+	off := config.CIPolicy{DiffAwareFiltering: false, SkipHeavyGatesOnDocsOrState: true}
+	for _, cs := range []*cifilter.ChangeSet{docs, state, code} {
+		if d := cifilter.MakePolicyDecision(cs, false, off); d.SkipHeavyGates || !d.RunTests || !d.RunSecurity || !d.RunContextSync {
+			t.Fatalf("diff_aware_filtering=false must run the full matrix, got %+v", d)
+		}
+	}
+	// Negative: heavy-gate skipping off runs the full matrix for docs-only and state-only.
+	noSkip := config.CIPolicy{DiffAwareFiltering: true, SkipHeavyGatesOnDocsOrState: false}
+	for _, cs := range []*cifilter.ChangeSet{docs, state} {
+		if d := cifilter.MakePolicyDecision(cs, false, noSkip); d.SkipHeavyGates || d.RunDocsOnly || !d.RunTests {
+			t.Fatalf("skip_heavy_gates_on_docs_or_state=false must run the full matrix, got %+v", d)
+		}
+	}
+	// Boundary: a code change is already a heavy decision; the switch leaves it targeted.
+	if d := cifilter.MakePolicyDecision(code, false, noSkip); !strings.Contains(d.Reason, "targeted") || !d.RunTests {
+		t.Fatalf("a code change must keep the targeted matrix, got %+v", d)
 	}
 }

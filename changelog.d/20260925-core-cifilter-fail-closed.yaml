@@ -1,0 +1,3 @@
+type: fixed
+title: "ci filter fails closed: unclassified file kinds (shell scripts, Dockerfiles, templates, TOML, JSON), dependency manifests ending in .txt and compiled vendor agent files now select tests, linters, security or context sync; an unresolvable base ref runs the full matrix instead of diffing the working tree; and overrides.ci in .standards.yaml now governs the decision"
+breaking: false

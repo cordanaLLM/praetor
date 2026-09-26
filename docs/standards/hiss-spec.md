@@ -174,6 +174,8 @@ CI pipelines evaluate the git diff before choosing which gates to run:
 
 - `standardsctl ci filter` classifies a change and exports the gates it requires.
 - A docs-only or session-state-only change skips the heavy race detector and security suites; every other change keeps full invariant coverage.
+- The filter fails closed. A file kind no classifier recognises (a shell script, a Dockerfile, a template) counts as configuration and runs tests, linters and security. A dependency manifest ending in `.txt` (`requirements*.txt`, `CMakeLists.txt`) is configuration, not documentation. An unresolvable base ref or an unreadable manifest runs the full matrix. Every file `compile-context` writes counts as agent text and runs the HISS-16 context check (`internal/cifilter/filter.go`, `internal/cifilter/cifilter_test.go`).
+- `overrides.ci` in `.standards.yaml` governs the filter. Setting `diff_aware_filtering: false` runs the full matrix for every change; setting `skip_heavy_gates_on_docs_or_state: false` runs it for docs-only and state-only changes. A manifest without the block keeps both on; a declared block reads an omitted key as `false`. `ci filter --config` names another manifest (`internal/config/config.go` `EffectiveCI`, `internal/cifilter/changed_files_test.go`).
 - A gate that is skipped by classification is distinct from a gate that fails: the filter's decision is itself part of the recorded evidence.
 
 ### HISS-19: Reuse Before Writing

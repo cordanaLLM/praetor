@@ -167,11 +167,25 @@ type Overrides struct {
 	// all: a bot-opened pull request is either possible or it is not, and a release flow built
 	// on one fails on a red main with nothing reporting the setting that caused it (#153).
 	Actions *ActionsPolicy `yaml:"actions,omitempty"`
-	// CI is declared by the schema and currently has no consumer: internal/cifilter
-	// computes its decision without reading the manifest, so these values do not change
-	// behaviour. Declared here so the manifest parses rather than being silently dropped,
-	// and so the gap is visible instead of invisible.
+	// CI governs `ci filter` (HISS-18): internal/cifilter reads it through EffectiveCI, so
+	// setting either switch to false makes the filter run more gates, never fewer.
 	CI *CIPolicy `yaml:"ci,omitempty"`
+}
+
+// EffectiveCI returns the manifest's CI policy, or DefaultCIPolicy when the manifest declares
+// no `overrides.ci` block. A declared block is read as written: a key it omits is false, the
+// stricter setting.
+func (o Overrides) EffectiveCI() CIPolicy {
+	if o.CI == nil {
+		return DefaultCIPolicy()
+	}
+	return *o.CI
+}
+
+// DefaultCIPolicy is the HISS-18 behaviour a repository gets without an `overrides.ci`
+// block: diff-aware filtering on, and docs-only or state-only changes skip heavy gates.
+func DefaultCIPolicy() CIPolicy {
+	return CIPolicy{DiffAwareFiltering: true, SkipHeavyGatesOnDocsOrState: true}
 }
 
 // ActionsPolicy declares GitHub Actions workflow permissions for a repository.
@@ -186,7 +200,11 @@ type ActionsPolicy struct {
 
 // CIPolicy declares diff-aware gating intent (HISS-18).
 type CIPolicy struct {
-	DiffAwareFiltering          bool `yaml:"diff_aware_filtering"`
+	// DiffAwareFiltering false makes `ci filter` select the full verification matrix for
+	// every change set.
+	DiffAwareFiltering bool `yaml:"diff_aware_filtering"`
+	// SkipHeavyGatesOnDocsOrState false makes a docs-only or state-only change run the full
+	// matrix instead of skipping the race and security gates.
 	SkipHeavyGatesOnDocsOrState bool `yaml:"skip_heavy_gates_on_docs_or_state"`
 }
 

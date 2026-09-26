@@ -151,3 +151,26 @@ func TestCompileContentNestedFenceOpensNoVendorSection(t *testing.T) {
 		}
 	}
 }
+
+// VendorTargetPaths is the list the CI filter classifies agent files by (BUG-242), so it must
+// name exactly the files CompileContent writes, and a caller that edits its copy must not
+// change what the next caller sees.
+func TestVendorTargetPathsMatchCompiledFiles(t *testing.T) {
+	paths := VendorTargetPaths()
+	if strings.Join(paths, "\n") != strings.Join(testPaths, "\n") {
+		t.Fatalf("vendor target paths = %q, want %q", paths, testPaths)
+	}
+	result, err := NewTranspiler().CompileContent("# Fixture\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, file := range result.Files {
+		if file.RelativePath != paths[i] {
+			t.Fatalf("compiled file %d = %s, listed %s", i, file.RelativePath, paths[i])
+		}
+	}
+	paths[0] = "mutated.md"
+	if again := VendorTargetPaths(); again[0] != "CLAUDE.md" {
+		t.Fatalf("a caller's edit leaked into the shared list: %q", again)
+	}
+}

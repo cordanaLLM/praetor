@@ -113,6 +113,43 @@ func TestCIFilter_Env_WritesOnlyToTheProvidedOutputFile(t *testing.T) {
 	mustErrContain(t, err, "GITHUB_OUTPUT")
 }
 
+// overrides.ci in the repository's own .standards.yaml governs the decision, and --config
+// names another manifest (BUG-652).
+func TestCIFilter_ReadsManifestCIPolicy(t *testing.T) {
+	dir := newCIRepo(t)
+	strict := "version: 1\noverrides:\n  ci:\n    diff_aware_filtering: false\n    skip_heavy_gates_on_docs_or_state: true\n"
+
+	// Positive: <dir>/.standards.yaml is read by default.
+	writeFixtureFile(t, dir, ".standards.yaml", strict)
+	out, err := runCIFilterCmd(t, "--dir="+dir, "--base=main", "--head=HEAD", "--json")
+	if err != nil {
+		t.Fatalf("ci filter: %v\n%s", err, out)
+	}
+	if dec := decodeDecision(t, out); dec.SkipHeavyGates || !dec.RunTests || !strings.Contains(dec.Reason, "diff_aware_filtering") {
+		t.Fatalf("the repository manifest must disable diff-aware filtering, got %+v", dec)
+	}
+
+	// Boundary: --config naming a manifest without a ci block keeps the default decision.
+	lenient := writeFixtureFile(t, t.TempDir(), ".standards.yaml", "version: 1\n")
+	out, err = runCIFilterCmd(t, "--dir="+dir, "--config="+lenient, "--base=main", "--head=HEAD", "--json")
+	if err != nil {
+		t.Fatalf("ci filter --config: %v\n%s", err, out)
+	}
+	if dec := decodeDecision(t, out); !dec.RunDocsOnly || !dec.SkipHeavyGates {
+		t.Fatalf("--config must replace the repository manifest, got %+v", dec)
+	}
+
+	// Negative: an unparsable manifest fails closed to the full matrix.
+	broken := writeFixtureFile(t, t.TempDir(), ".standards.yaml", "version: [\n")
+	out, err = runCIFilterCmd(t, "--dir="+dir, "--config="+broken, "--base=main", "--head=HEAD", "--json")
+	if err != nil {
+		t.Fatalf("ci filter broken manifest: %v\n%s", err, out)
+	}
+	if dec := decodeDecision(t, out); dec.SkipHeavyGates || !dec.RunSecurity {
+		t.Fatalf("an unparsable manifest must select the full matrix, got %+v", dec)
+	}
+}
+
 func TestCIFilter_Boundary(t *testing.T) {
 	// Outside a repository the filter fails safe to the full matrix.
 	dir := t.TempDir()
