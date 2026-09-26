@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/compiler"
@@ -50,6 +51,9 @@ func evaluateAgentHandback(ctx context.Context, row Registration, canonical Cano
 		return trafficDenied(err)
 	}
 	entry, err := store.active(ctx, row.Client, canonical.ConversationID, canonical.AgentID)
+	if errors.Is(err, errNoCorrelation) {
+		return unownedAgent()
+	}
 	if err != nil {
 		return trafficDenied(err)
 	}
@@ -73,6 +77,9 @@ func evaluateHandbackReceipt(ctx context.Context, row Registration, canonical Ca
 		err = store.markHandbackDelivered(ctx, row.Client, canonical.ConversationID, canonical.AgentID,
 			canonical.ToolUseID, canonical.Return)
 	}
+	if errors.Is(err, errNoCorrelation) {
+		return unownedAgent()
+	}
 	if err != nil {
 		return trafficDenied(fmt.Errorf("confirm handback: %w", err))
 	}
@@ -84,6 +91,9 @@ func evaluateHandbackAbort(ctx context.Context, row Registration, canonical Cano
 	if err == nil {
 		err = store.cancelHandback(ctx, row.Client, canonical.ConversationID, canonical.AgentID,
 			canonical.ToolUseID, canonical.Return)
+	}
+	if errors.Is(err, errNoCorrelation) {
+		return unownedAgent()
 	}
 	if err != nil {
 		return trafficDenied(fmt.Errorf("release handback: %w", err))
@@ -130,32 +140,57 @@ func evaluateDispatchReceipt(ctx context.Context, row Registration, canonical Ca
 	return Verdict{Outcome: Allow}
 }
 
+// evaluateAgentReturn judges a subagent's final text at SubagentStop. A deny there does not
+// block anything: Claude Code and Codex both keep the subagent running and hand it the
+// reason as its next instruction. So only a register violation in a Praetor-owned return,
+// which the subagent can rewrite, denies; everything it cannot repair is a stated skip, and
+// evaluate's stop_hook_active escape (returnBoundary) bounds the retry to one pass.
 func evaluateAgentReturn(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	if row.Client == "codex" {
-		return Verdict{Outcome: Skip, Reason: "codex return register unenforceable: spawn payload has no documented subagent correlation key"}
+		return codexReturn(canonical)
 	}
 	store, err := newCorrelationStore(ctx, root, in.CorrelationDir)
 	if err != nil {
-		return trafficDenied(err)
+		return returnNotJudged(err)
 	}
 	entry, err := store.active(ctx, row.Client, canonical.ConversationID, canonical.AgentID)
+	if errors.Is(err, errNoCorrelation) {
+		return unownedAgent()
+	}
 	if err != nil {
-		return trafficDenied(err)
+		return returnNotJudged(err)
 	}
-	if entry.HandbackDelivered {
-		if err := store.complete(ctx, row.Client, canonical.ConversationID, canonical.AgentID); err != nil {
-			return trafficDenied(err)
+	if !entry.HandbackDelivered {
+		if verdict := validateAgentReturn(entry.Resolution, canonical.Return); verdict.Outcome != Allow {
+			return verdict // keep correlation: a continued subagent must be checked again
 		}
-		return Verdict{Outcome: Allow}
-	}
-	verdict := validateAgentReturn(entry.Resolution, canonical.Return)
-	if verdict.Outcome != Allow {
-		return verdict // keep correlation: a continued subagent must be checked again
 	}
 	if err := store.complete(ctx, row.Client, canonical.ConversationID, canonical.AgentID); err != nil {
-		return trafficDenied(err)
+		return returnNotJudged(fmt.Errorf("release agent correlation: %w", err))
 	}
-	return verdict
+	return Verdict{Outcome: Allow}
+}
+
+// codexReturn reports the Codex return boundary: its spawn receipt carries no documented
+// key linking the dispatch to the later agent id, and last_assistant_message is nullable.
+func codexReturn(canonical Canonical) Verdict {
+	if strings.TrimFunc(canonical.Return, isPythonSpace) == "" {
+		return Verdict{Outcome: Skip, Reason: "codex return capture unavailable: last_assistant_message is absent"}
+	}
+	return Verdict{Outcome: Skip, Reason: "codex return register unenforceable: spawn payload has no documented subagent correlation key"}
+}
+
+// unownedAgent reports an agent Praetor did not dispatch through a gated brief (a client
+// internal agent, an SDK or foreground launch, or a completed or expired binding): its text
+// has no stored register contract, so the boundary is unenforceable, never a deny.
+func unownedAgent() Verdict {
+	return Verdict{Outcome: Skip, Reason: "subagent text register unenforceable: no Praetor-owned dispatch binds this agent"}
+}
+
+// returnNotJudged turns a store failure at SubagentStop into a stated skip: the subagent
+// cannot repair it, and a deny would only keep it running.
+func returnNotJudged(err error) Verdict {
+	return Verdict{Outcome: Skip, Reason: "subagent return not judged: " + err.Error()}
 }
 
 // validateAgentBrief resolves the brief's task through the digest-bound register

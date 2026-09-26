@@ -103,7 +103,8 @@ praetorctl hook <client> <event>
 ```
 
 Both arguments match `^[a-z-]+$`. The registration table is the support matrix; a pair
-without a row is rejected before any input is read.
+without a row is rejected before any input is read. The one exception is engine skew,
+described under [Rollout](#rollout-the-installed-engine-must-serve-the-tracked-rows).
 
 | Client | Event | Native event | Matcher | Budget | Registration string |
 | :-- | :-- | :-- | :-- | :-- | :-- |
@@ -119,7 +120,7 @@ without a row is rejected before any input is read.
 | `claude` | `handback-receipt` | `PostToolUse` | `^SubagentHandback$` | 15 s | `praetorctl hook claude handback-receipt` |
 | `claude` | `handback-abort` | `PostToolUseFailure` | `^SubagentHandback$` | 15 s | `praetorctl hook claude handback-abort` |
 | `claude` | `handback-abort` | `PermissionDenied` | `^SubagentHandback$` | 15 s | `praetorctl hook claude handback-abort` |
-| `claude` | `post-return` | `SubagentStop` | none | 60 s | `praetorctl hook claude post-return` |
+| `claude` | `post-return` | `SubagentStop` | `^.+$` | 60 s | `praetorctl hook claude post-return` |
 | `codex` | `pre-tool` | `PreToolUse` | `^Bash$` | 15 s | `praetorctl hook codex pre-tool` |
 | `codex` | `post-tool` | `PostToolUse` | none | 60 s | `praetorctl hook codex post-tool` |
 | `codex` | `stop` | `Stop` | none | 60 s | `praetorctl hook codex stop` |
@@ -150,7 +151,9 @@ in each native client file; AGY reads its row from `.agents/plugins/praetor/hook
 ## One invocation
 
 1. **Arguments.** Grammar, then the table. A failure prints the usage with every supported
-   pair and exits 2, the blocking code of the native clients.
+   pair and exits 2, the blocking code of the native clients. An event that no row of this
+   engine carries, named for a `claude`, `codex`, `gemini` or `lefthook` registration, is
+   a stated skip instead (`unsupportedResponse`, `internal/agenthook/hook.go`).
 2. **Input.** Every payload-carrying event reads stdin up to 1 MiB within the evaluation
    budget, so a client that never closes stdin cannot hold the hook. `environment` reads
    nothing.
@@ -211,6 +214,31 @@ Claude rejects an explicitly foreground `Agent` call because its return can prec
 dispatch receipt needed for correlation. An omitted background flag keeps the client's
 documented background default.
 
+A deny at `SubagentStop` blocks nothing: Claude Code and Codex keep the subagent running
+and hand it the reason as its next instruction (exit 2 table and `SubagentStop` decision
+control in the [Claude Code hook reference](https://code.claude.com/docs/en/hooks#subagentstop);
+[Codex hooks](https://developers.openai.com/codex/hooks)). `SubagentStop` also fires for
+Claude Code's internal agents, such as prompt suggestions and `/btw` side questions. The
+return boundary therefore denies only a register violation in a Praetor-owned return, which
+the subagent can rewrite:
+
+- The Claude row's matcher `^.+$` never matches an empty `agent_type`, so internal agents of
+  a session without a named agent never reach the hook.
+- An agent without an active binding is not Praetor-owned: an internal agent under a named
+  session agent, an SDK or foreground launch without a dispatch receipt, a completed agent
+  the parent resumes, or an expired binding. Its `SubagentStop`, `pre-handback`,
+  `handback-receipt` and `handback-abort` calls report `no Praetor-owned dispatch binds this
+  agent` as a skip (`unownedAgent`, `internal/agenthook/agent_traffic.go`).
+- A correlation store failure at `SubagentStop` is a skip that names the fault
+  (`subagent return not judged: …`). The pre-launch gate still fails closed on the same fault.
+- `stop_hook_active` bounds the retry: once a stop hook has continued the subagent, a second
+  deny becomes a skip and the binding stays for a later resume (`returnBoundary`,
+  `internal/agenthook/evaluate.go`).
+- Codex enforces no register at this boundary, so every Codex `SubagentStop` result is a
+  skip, including a null `last_assistant_message`.
+
+`internal/agenthook/agent_return_boundary_test.go` replays each case.
+
 Codex exposes both the dispatch brief and `SubagentStop.last_assistant_message`, so its
 brief and return capture adapters are tracked and replayed. The current spawn
 `PostToolUse` payload does not expose a documented key that links the tool call to the
@@ -242,6 +270,7 @@ registered on a human-operator reply surface.
 | Situation | `claude`, `codex`, `gemini` | `lefthook` |
 | :-- | :-- | :-- |
 | unsupported or malformed arguments | exit 2, usage on stderr | exit 2, usage on stderr |
+| event no row of this engine carries (engine skew) | exit 0, `praetor hook: this praetorctl serves no <event> event: …, skipped` on stderr | same |
 | stdin missing, empty, over 1 MiB, not one JSON object, late | exit 2, reason on stderr | exit 1, reason on stderr |
 | payload event contradicts the argument | exit 2 | exit 1 |
 | command tool without a command string | exit 2 | exit 1 |
@@ -257,6 +286,30 @@ A skip is a neutral allow that always states its reason; it never prints the mar
 because no policy was evaluated. Reasons are bounded to 4096 bytes and never echo the
 command, which may carry a secret. A deny keeps its exit code even when the client has
 already closed a stream.
+
+## Rollout: the installed engine must serve the tracked rows
+
+Tracked registrations call `praetorctl` through `PATH` (ADR 0011, decision 1), not the
+checkout. An engine installed before a row existed answers that row with the usage and
+exit 2. For the subagent rows that blocks every Claude `Agent`, Codex `spawn_agent` and
+Gemini `invoke_agent` launch, and keeps a Claude or Codex subagent that reaches
+`SubagentStop` running. After pulling a change that adds rows, reinstall before starting a
+client session:
+
+```bash
+make dev-install            # or: praetorctl workstation install --source <checkout>
+praetorctl workstation status
+```
+
+`status` reports the installed commit ([Workstation install and status](workstation-update.md)).
+An engine built from this change on reports a later event it does not know as a stated skip
+in the client's dialect instead of blocking. A known event registered for a client without
+that row, an unknown client, malformed arguments and an unknown `agy` event keep the usage
+and exit 2: the agy encoder has no response shape for an event it does not know. Tracked
+registration strings are pinned to the table by
+`TestRegistrationTableMatchesTheTrackedClientFiles`, so a runtime event this engine does not
+know means skew, not a typo (`TestRunSkipsAnEventNewerThanTheEngine`,
+`TestHookProcessSkipsAnEventNewerThanTheEngine`).
 
 ## Built-in command policy
 
@@ -490,7 +543,8 @@ registrations match the shell tool only, and the `lefthook` dialect keeps its be
   `decision: block` vs `continue: false`) those two events are specified to use; that
   needs `Dialect.Encode`'s per-dialect override the way agy's own already has one.
 - `dialect.Decode` populating `Canonical.FilePath`, `ConversationID`, `Step` and
-  `StopActive` from a real payload; `pre-edit`'s normalised stdin and `stop`'s repeated-pass
+  `StopActive` from a real payload outside the agent-traffic events (`post-return` already
+  decodes `stop_hook_active`); `pre-edit`'s normalised stdin and `stop`'s repeated-pass
   wording are ready for it but a real payload does not carry it yet, so a real `pre-edit`
   call denies fail-closed and `stop_hook_active` never changes the wording a live client
   sees.

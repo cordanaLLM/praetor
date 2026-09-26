@@ -183,10 +183,25 @@ func TestHookProcessClaudeHandbackGateAcrossProcesses(t *testing.T) {
 		{"claude pre-handback", handback(validReturn), 0},
 		{"claude handback-receipt", handbackReceipt(validReturn), 0},
 		{"claude post-return", closing, 0},
+		{"claude post-return", closing, 0}, // resumed after completion: unowned, skipped, never held
 	} {
 		if result, exit := hookProcess(t, root, step.arguments, step.payload); exit != step.exit {
 			t.Fatalf("%s: exit %d, want %d; stdout %q stderr %q", step.arguments, exit, step.exit, result.Stdout, result.Stderr)
 		}
+	}
+}
+
+// TestHookProcessSkipsAnEventNewerThanTheEngine: a tracked row naming an event this binary
+// does not know is engine skew; the process answers a stated skip, not a blocking usage exit.
+func TestHookProcessSkipsAnEventNewerThanTheEngine(t *testing.T) {
+	root := hookRepository(t, true)
+	result, exit := hookProcess(t, root, "claude future-event", []byte(`{}`))
+	if exit != 0 || !bytes.Contains(result.Stderr, []byte("serves no future-event event")) {
+		t.Fatalf("skew: exit %d stdout %q stderr %q", exit, result.Stdout, result.Stderr)
+	}
+	if result, exit := hookProcess(t, root, "agy future-event", []byte(`{}`)); exit != 2 ||
+		!bytes.Contains(result.Stderr, []byte("usage: praetorctl hook")) {
+		t.Fatalf("agy skew: exit %d stdout %q stderr %q", exit, result.Stdout, result.Stderr)
 	}
 }
 

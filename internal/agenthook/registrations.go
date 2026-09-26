@@ -44,7 +44,11 @@ var registrationTable = []Registration{
 	{Client: "claude", Event: EventHandbackReceipt, NativeEvent: "PostToolUse", Matcher: "^SubagentHandback$", Timeout: 15 * time.Second},
 	{Client: "claude", Event: EventHandbackAbort, NativeEvent: "PostToolUseFailure", Matcher: "^SubagentHandback$", Timeout: 15 * time.Second},
 	{Client: "claude", Event: EventHandbackAbort, NativeEvent: "PermissionDenied", Matcher: "^SubagentHandback$", Timeout: 15 * time.Second},
-	{Client: "claude", Event: EventPostReturn, NativeEvent: "SubagentStop", Timeout: 60 * time.Second},
+	// SubagentStop also fires for Claude Code's internal agents (prompt suggestions, /btw side
+	// questions), whose agent_type is empty unless the session runs as a named agent. The
+	// matcher selects a nonempty agent_type, so those human-facing answers never reach the
+	// gate; an internal agent under a named session agent is uncorrelated and skipped.
+	{Client: "claude", Event: EventPostReturn, NativeEvent: "SubagentStop", Matcher: "^.+$", Timeout: 60 * time.Second},
 	{Client: "codex", Event: EventPreTool, NativeEvent: "PreToolUse", Matcher: "^Bash$", Timeout: 15 * time.Second},
 	{Client: "codex", Event: EventPostTool, NativeEvent: "PostToolUse", Timeout: 60 * time.Second},
 	{Client: "codex", Event: EventStop, NativeEvent: "Stop", Timeout: 60 * time.Second},

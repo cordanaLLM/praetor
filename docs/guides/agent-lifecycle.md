@@ -34,7 +34,7 @@ lifecycle configuration and runtime qualification are separate:
 | Client | MCP projection | Native lifecycle definition | Events and current qualification |
 | --- | --- | --- | --- |
 | Codex | native command/export | `.codex/hooks.json` | `spawn_agent` briefs gated and `SubagentStop` bodies captured; no documented spawn-to-agent correlation key, so task-register enforcement on returns is unenforceable |
-| Claude Code | merge `.mcp.json` | `.claude/settings.json` | Background `Agent` briefs are correlated to documented `SubagentHandback` reports across isolated worktrees; delivery is committed only after tool success, failed launches and handbacks are released, legacy `SubagentStop` returns remain covered, and session activation remains unverified |
+| Claude Code | merge `.mcp.json` | `.claude/settings.json` | Background `Agent` briefs are correlated to documented `SubagentHandback` reports across isolated worktrees; delivery is committed only after tool success, failed launches and handbacks are released, legacy `SubagentStop` returns of Praetor-owned agents remain covered, internal and unowned agents are skipped rather than held, and session activation remains unverified |
 | Gemini CLI | merge `.gemini/settings.json` | `.gemini/settings.json` | `invoke_agent` briefs are gated; the exact returned-report field lacks documented or recorded proof, so return capture and register enforcement remain unenforceable |
 | OpenCode v1 | merge `opencode.json` | not implemented | Projection and conflict tests only |
 | Continue | merge `.continue/mcpServers/praetor.yaml` | not implemented | Projection and conflict tests only |

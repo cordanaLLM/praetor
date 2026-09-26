@@ -36,7 +36,7 @@ type Invocation struct {
 func Run(ctx context.Context, in Invocation) Response {
 	row, err := ParseArguments(in.Client, in.Event)
 	if err != nil {
-		return usageResponse(err)
+		return unsupportedResponse(in, err)
 	}
 	dialect, known := DialectFor(row.Client)
 	if !known {
@@ -59,6 +59,34 @@ func recordDirOf(getenv func(string) string) string {
 		return ""
 	}
 	return getenv(RecordDirEnv)
+}
+
+// unsupportedResponse answers a pair without a row. A known exit-code client naming an event
+// that no row of this engine carries gets a stated skip: the tracked registrations are pinned
+// to this table by TestRegistrationTableMatchesTheTrackedClientFiles, so an event this engine
+// has never heard of means the registration is newer than the installed praetorctl, and
+// failing closed there would block the operator's client (every subagent launch, or a
+// subagent that cannot stop) until a reinstall. Malformed arguments, an unknown client, a
+// known event registered for a client without that row, and agy (its encoder has no response
+// shape for an event it does not know) keep the usage and the blocking exit code.
+func unsupportedResponse(in Invocation, err error) Response {
+	dialect, known := DialectFor(in.Client)
+	if !known || dialect.encode != nil || !argumentShape.MatchString(in.Event) || engineEvent(Event(in.Event)) {
+		return usageResponse(err)
+	}
+	reason := "this praetorctl serves no " + in.Event + " event: the registration is newer than the installed engine; " +
+		"reinstall it from the checkout (praetorctl workstation install --source <checkout>)"
+	return dialect.Encode(Canonical{Event: Event(in.Event)}, Verdict{Outcome: Skip, Reason: reason})
+}
+
+// engineEvent reports whether any registration row of this engine carries event.
+func engineEvent(event Event) bool {
+	for _, row := range registrationTable {
+		if row.Event == event {
+			return true
+		}
+	}
+	return false
 }
 
 func usageResponse(err error) Response {

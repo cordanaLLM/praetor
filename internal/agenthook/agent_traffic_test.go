@@ -141,11 +141,17 @@ func TestCodexReturnCaptureReportsUnenforceableCorrelation(t *testing.T) {
 				fields["last_assistant_message"] = body
 			}
 			response := runAgentHook(t, root, t.TempDir(), "codex", EventPostReturn, commandPayload(t, fields))
-			if (response.ExitCode == 0) != fixture.Capture {
-				t.Fatalf("capture=%v want %v: %+v", response.ExitCode == 0, fixture.Capture, response)
+			// Every Codex return is a stated skip, never a deny: a Codex SubagentStop exit 2
+			// keeps the subagent running, and this boundary enforces no register.
+			text := "return register unenforceable"
+			switch {
+			case fixture.Missing:
+				text = "last_assistant_message is absent"
+			case fixture.Oversized:
+				text = "not judged, its register is unenforceable: Invalid hook input"
 			}
-			if fixture.Capture && !strings.Contains(string(response.Stderr), "return register unenforceable") {
-				t.Fatalf("capture hid register gap: %+v", response)
+			if response.ExitCode != 0 || !strings.Contains(string(response.Stderr), text) {
+				t.Fatalf("exit %d, stderr must name %q: %+v", response.ExitCode, text, response)
 			}
 		})
 	}
@@ -179,9 +185,9 @@ func TestClaudeHandbackCorrelationRetainsInvalidRetryAndIgnoresClosingText(t *te
 	if response := runAgentHook(t, root, state, "claude", EventPostReturn, closing); response.ExitCode != 0 {
 		t.Fatalf("closing text was mistaken for the report: %+v", response)
 	}
-	if response := runAgentHook(t, root, state, "claude", EventPostReturn, closing); response.ExitCode != 2 ||
-		!strings.Contains(string(response.Stderr), "correlation missing") {
-		t.Fatalf("completed correlation remained: %+v", response)
+	if response := runAgentHook(t, root, state, "claude", EventPostReturn, closing); response.ExitCode != 0 ||
+		!strings.Contains(string(response.Stderr), "no Praetor-owned dispatch") {
+		t.Fatalf("completed correlation remained or a resumed agent was held: %+v", response)
 	}
 }
 

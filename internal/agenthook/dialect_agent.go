@@ -138,6 +138,9 @@ func decodeNativeReceipt(client string, canonical Canonical, object map[string]j
 	return canonical, err
 }
 
+// decodeNativeReturn reads a SubagentStop payload. last_assistant_message is optional for
+// both clients: Claude's closing text follows a SubagentHandback report, and Codex documents
+// it as nullable. stop_hook_active marks a subagent a stop hook already continued once.
 func decodeNativeReturn(client string, canonical Canonical, object map[string]json.RawMessage) (Canonical, error) {
 	if client != "claude" && client != "codex" {
 		return Canonical{}, fmt.Errorf("%w: %s has no return payload", ErrUnsupported, client)
@@ -146,12 +149,10 @@ func decodeNativeReturn(client string, canonical Canonical, object map[string]js
 	if canonical.AgentID, err = requiredString(object, "agent_id"); err != nil {
 		return Canonical{}, err
 	}
-	if client == "claude" {
-		canonical.Return, err = optionalString(object, "last_assistant_message")
-	} else {
-		canonical.Return, err = requiredString(object, "last_assistant_message")
+	if canonical.Return, err = optionalString(object, "last_assistant_message"); err != nil {
+		return Canonical{}, err
 	}
-	if err != nil {
+	if canonical.StopActive, _, err = optionalBool(object, "stop_hook_active"); err != nil {
 		return Canonical{}, err
 	}
 	return canonical, nil

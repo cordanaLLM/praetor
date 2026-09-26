@@ -30,6 +30,11 @@ const (
 	correlationDirOverhead  = 3
 )
 
+// errNoCorrelation reports an agent without a Praetor-owned dispatch binding: launched
+// without a gated brief, already completed, or expired. Its text is not a Praetor-owned
+// boundary, so callers report it as unenforceable instead of denying it.
+var errNoCorrelation = errors.New("agent correlation missing")
+
 type correlationEntry struct {
 	Resolution        config.Resolution `json:"resolution"`
 	CreatedAt         int64             `json:"created_at"`
@@ -151,9 +156,9 @@ func (s correlationStore) active(ctx context.Context, client, session, agentID s
 		if !errors.Is(readErr, os.ErrNotExist) {
 			return fmt.Errorf("read delivered correlation: %w", readErr)
 		}
-		entry, readErr = s.read(active)
+		entry, readErr = s.readActive(active)
 		if readErr != nil {
-			return fmt.Errorf("agent correlation missing: %w", readErr)
+			return readErr
 		}
 		found = entry
 		return nil
@@ -176,9 +181,9 @@ func (s correlationStore) markHandbackValidated(ctx context.Context, client, ses
 		} else if !errors.Is(readErr, os.ErrNotExist) {
 			return fmt.Errorf("read delivered correlation: %w", readErr)
 		}
-		entry, readErr := s.read(active)
+		entry, readErr := s.readActive(active)
 		if readErr != nil {
-			return fmt.Errorf("agent correlation missing: %w", readErr)
+			return readErr
 		}
 		entry.HandbackDigest = correlationHandbackDigest(toolID, text)
 		return s.write(active, entry)
@@ -200,9 +205,9 @@ func (s correlationStore) markHandbackDelivered(ctx context.Context, client, ses
 		} else if !errors.Is(readErr, os.ErrNotExist) {
 			return fmt.Errorf("read delivered correlation: %w", readErr)
 		}
-		entry, readErr := s.read(active)
+		entry, readErr := s.readActive(active)
 		if readErr != nil {
-			return fmt.Errorf("agent correlation missing: %w", readErr)
+			return readErr
 		}
 		if entry.HandbackDigest == "" || entry.HandbackDigest != correlationHandbackDigest(toolID, text) {
 			return errors.New("handback receipt does not match a validated report")
@@ -228,9 +233,9 @@ func (s correlationStore) cancelHandback(ctx context.Context, client, session, a
 		return err
 	}
 	return s.withLock(ctx, func() error {
-		entry, readErr := s.read(active)
+		entry, readErr := s.readActive(active)
 		if readErr != nil {
-			return fmt.Errorf("agent correlation missing: %w", readErr)
+			return readErr
 		}
 		if entry.HandbackDigest == "" || entry.HandbackDigest != correlationHandbackDigest(toolID, text) {
 			return errors.New("handback abort does not match a validated report")
@@ -371,6 +376,19 @@ func (s correlationStore) write(name string, entry correlationEntry) error {
 		return err
 	}
 	return util.WriteFileAtomic(path, append(data, '\n'), util.SecureFilePerm)
+}
+
+// readActive reads one active agent row. A missing row is errNoCorrelation; any other
+// failure stays a store error.
+func (s correlationStore) readActive(name string) (correlationEntry, error) {
+	entry, err := s.read(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return correlationEntry{}, fmt.Errorf("%w: %w", errNoCorrelation, err)
+	}
+	if err != nil {
+		return correlationEntry{}, fmt.Errorf("read agent correlation: %w", err)
+	}
+	return entry, nil
 }
 
 func (s correlationStore) read(name string) (correlationEntry, error) {
