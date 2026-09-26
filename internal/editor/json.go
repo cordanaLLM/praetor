@@ -6,8 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -197,15 +198,6 @@ type jsonMergeFrame struct {
 	key    string
 }
 
-func sortedJSONKeys(value map[string]any) []string {
-	keys := make([]string, 0, len(value))
-	for key := range value {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func mergeJSONValue(have, want any) (any, bool, error) {
 	root := have
 	changed := false
@@ -244,7 +236,7 @@ func mergeJSONObject(frame jsonMergeFrame, desired map[string]any, queue *[]json
 		return false, fmt.Errorf("managed object for key %q conflicts with the existing value", frame.key)
 	}
 	changed := false
-	for _, key := range sortedJSONKeys(desired) {
+	for _, key := range slices.Sorted(maps.Keys(desired)) {
 		desiredValue := desired[key]
 		existingValue, found := existing[key]
 		if !found {
@@ -319,7 +311,7 @@ func jsonObjectContains(have any, desired map[string]any, queue *[]jsonMergeFram
 	if !ok {
 		return false
 	}
-	for _, key := range sortedJSONKeys(desired) {
+	for _, key := range slices.Sorted(maps.Keys(desired)) {
 		existingValue, found := existing[key]
 		if !found {
 			return false

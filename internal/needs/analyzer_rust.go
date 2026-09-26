@@ -3,7 +3,9 @@ package needs
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -51,7 +53,7 @@ func (a *RustAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Cargo.toml in %q: %w", repoPath, err)
 	}
-	for _, pkg := range sortedKeys(deps) {
+	for _, pkg := range slices.Sorted(maps.Keys(deps)) {
 		demand := mapRustDependency(pkg, deps[pkg])
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
