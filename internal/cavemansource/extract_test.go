@@ -141,11 +141,11 @@ func TestExtractDeclaredNegative(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not tracked") {
 		t.Fatalf("untracked source accepted: %v", err)
 	}
-	if _, err = ExtractDeclaredContent(context.Background(), root, declared); err != nil {
+	if _, err = ExtractDeclaredContent(context.Background(), root, declared, nil); err != nil {
 		t.Fatalf("pre-commit declared content rejected: %v", err)
 	}
 	declared.SHA256 = "sha256:" + strings.Repeat("0", 64)
-	if _, err = ExtractDeclaredContent(context.Background(), root, declared); err == nil || !strings.Contains(err.Error(), "sha256 mismatch") {
+	if _, err = ExtractDeclaredContent(context.Background(), root, declared, nil); err == nil || !strings.Contains(err.Error(), "sha256 mismatch") {
 		t.Fatalf("stale pre-commit declaration accepted: %v", err)
 	}
 }
@@ -1480,5 +1480,66 @@ func TestDecodePrintfEscapesRuntime(t *testing.T) {
 	}
 	if _, err := decodePrintfEscapes(`before\cafter`); err == nil || !strings.Contains(err.Error(), "early termination") {
 		t.Fatalf("printf early termination accepted: %v", err)
+	}
+}
+
+// TestExtractInputsWithDocumentsOverlaysOneFile: a supplied document replaces the repository
+// file at its path (which need not exist) while every other input still reads from root,
+// and the result is the one the same bytes produce on disk.
+func TestExtractInputsWithDocumentsOverlaysOneFile(t *testing.T) {
+	root := t.TempDir()
+	writeSourceFile(t, root, "hooks/check.sh", "echo \"result: pass.\"\n")
+	harness := sourceInput("prompts/harness.json", config.SourceFormatJSON, "rules.*")
+	hook := sourceInput("hooks/check.sh", config.SourceFormatShell, "")
+	inputs := []config.RegisterSourceInput{harness, hook}
+	document := []byte(`{"rules":["next: stop.","scope: repo."]}`)
+	overlaid, err := ExtractInputsWithDocuments(t.Context(), root, inputs,
+		map[string][]byte{"prompts/harness.json": document})
+	if err != nil || overlaid.Applicable != 3 {
+		t.Fatalf("overlay extraction: values=%d err=%v", overlaid.Applicable, err)
+	}
+	writeSourceFile(t, root, "prompts/harness.json", string(document))
+	onDisk, err := ExtractInputs(t.Context(), root, inputs)
+	if err != nil || onDisk.SHA256 != overlaid.SHA256 {
+		t.Fatalf("overlay digest %s != on-disk digest %s (err=%v)", overlaid.SHA256, onDisk.SHA256, err)
+	}
+	writeSourceFile(t, root, "prompts/harness.json", `{"rules":["stale: value."]}`)
+	again, err := ExtractInputsWithDocuments(t.Context(), root, inputs,
+		map[string][]byte{"prompts/harness.json": document})
+	if err != nil || again.SHA256 != overlaid.SHA256 {
+		t.Fatalf("overlay did not take precedence over the on-disk file: %s err=%v", again.SHA256, err)
+	}
+}
+
+func TestExtractInputsWithDocumentsRejections(t *testing.T) {
+	harness := sourceInput("prompts/harness.json", config.SourceFormatJSON, "rules.*")
+	document := map[string][]byte{"prompts/harness.json": []byte(`{"rules":["next: stop."]}`)}
+	hook := sourceInput("hooks/check.sh", config.SourceFormatShell, "")
+	if _, err := CoverageFromDocuments(t.Context(), []config.RegisterSourceInput{harness, hook}, document); err == nil ||
+		!strings.Contains(err.Error(), "in-memory source hooks/check.sh is missing") {
+		t.Fatalf("documents-only extraction read an unsupplied input: %v", err)
+	}
+	mismatched := sourceInput("prompts/harness.yaml", config.SourceFormatJSON, "rules.*")
+	if _, err := ExtractInputsWithDocuments(t.Context(), t.TempDir(), []config.RegisterSourceInput{mismatched},
+		map[string][]byte{"prompts/harness.yaml": []byte(`{"rules":["next: stop."]}`)}); err == nil ||
+		!strings.Contains(err.Error(), "does not match format json") {
+		t.Fatalf("document with a mismatched extension accepted: %v", err)
+	}
+}
+
+func TestExtractInputsWithDocumentsByteBoundary(t *testing.T) {
+	prefix := `{"rules":["next: stop."],"pad":"`
+	suffix := `"}`
+	exact := prefix + strings.Repeat("x", contextopt.MaxSourceBytes-len(prefix)-len(suffix)) + suffix
+	harness := sourceInput("prompts/harness.json", config.SourceFormatJSON, "rules.*")
+	inputs := []config.RegisterSourceInput{harness}
+	if result, err := CoverageFromDocuments(t.Context(), inputs,
+		map[string][]byte{"prompts/harness.json": []byte(exact)}); err != nil || result.Applicable != 1 {
+		t.Fatalf("exact %d-byte document rejected: values=%d err=%v", contextopt.MaxSourceBytes, result.Applicable, err)
+	}
+	over := prefix + strings.Repeat("x", contextopt.MaxSourceBytes-len(prefix)-len(suffix)+1) + suffix
+	if _, err := CoverageFromDocuments(t.Context(), inputs,
+		map[string][]byte{"prompts/harness.json": []byte(over)}); err == nil || !strings.Contains(err.Error(), "exceeds 1048576 bytes") {
+		t.Fatalf("%d-byte document accepted: %v", contextopt.MaxSourceBytes+1, err)
 	}
 }

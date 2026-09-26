@@ -2,7 +2,6 @@ package adopt
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
@@ -10,7 +9,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -87,27 +85,27 @@ func reconcileLabels(ctx context.Context, s *adoptSession) error {
 }
 
 func reconcilePaperclip(ctx context.Context, s *adoptSession) error {
-	full, err := repoFile(s.repoPath, paperclipFile)
+	plan, err := planHarness(ctx, s)
 	if err != nil {
 		return err
 	}
-	exists := fileExists(full)
-	if exists && !s.opts.Force {
+	if plan.unresolved && (!plan.onDisk || s.opts.Force) {
+		s.report.recordSkipped(paperclipFile, unresolvedHarnessNote(plan.onDisk))
+		return nil
+	}
+	if plan.write == nil {
 		s.report.recordReconciled(paperclipFile, "Existing Paperclip agent runtime harness verified present")
 		return nil
 	}
-	harness, err := paperclip.SynthesizeHarness(ctx, s.repoPath)
-	if errors.Is(err, util.ErrRepoIdentityUnresolved) {
-		s.report.recordSkipped(paperclipFile, unresolvedHarnessNote(exists))
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("synthesize paperclip harness: %w", err)
-	}
 	if !s.opts.DryRun {
-		if err := paperclip.WriteHarness(harness, s.repoPath); err != nil {
+		if err := paperclip.WriteHarness(plan.write, s.repoPath); err != nil {
 			return fmt.Errorf("write paperclip harness: %w", err)
 		}
+	}
+	if plan.refresh {
+		s.report.recordReconciled(paperclipFile,
+			"Refreshed unmodified earlier Praetor Paperclip harness and rules to the current contract text")
+		return nil
 	}
 	s.report.recordCreated(paperclipFile, "Scaffolded Paperclip agent runtime harness and AGit rules")
 	return nil

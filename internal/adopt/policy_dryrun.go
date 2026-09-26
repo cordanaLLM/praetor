@@ -1,6 +1,7 @@
 package adopt
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,16 +30,26 @@ func newAdoptionManifest(ctx context.Context, s *adoptSession) (*config.Manifest
 	}, nil
 }
 
-func adoptionRegisterSources(ctx context.Context, s *adoptSession) (*config.RegisterSources, error) {
-	data, err := adoptionHarnessDocument(ctx, s)
-	if err != nil {
-		return nil, err
-	}
-	inputs := []config.RegisterSourceInput{
+// managedHarnessInputs are the register.sources rows adoption declares for the Paperclip
+// harness it owns.
+func managedHarnessInputs() []config.RegisterSourceInput {
+	return []config.RegisterSourceInput{
 		{Path: paperclipFile, Surface: config.SurfacePrompts, Kind: "message", Format: config.SourceFormatJSON, Selector: "operating_contract.*"},
 		{Path: paperclipFile, Surface: config.SurfacePrompts, Kind: "message", Format: config.SourceFormatJSON, Selector: "invariants.*"},
 	}
-	coverage, err := cavemansource.CoverageFromDocuments(ctx, inputs, map[string][]byte{paperclipFile: data})
+}
+
+func adoptionRegisterSources(ctx context.Context, s *adoptSession) (*config.RegisterSources, error) {
+	plan, err := planHarness(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+	return managedRegisterSources(ctx, plan.data)
+}
+
+func managedRegisterSources(ctx context.Context, harness []byte) (*config.RegisterSources, error) {
+	inputs := managedHarnessInputs()
+	coverage, err := cavemansource.CoverageFromDocuments(ctx, inputs, map[string][]byte{paperclipFile: harness})
 	if err != nil {
 		return nil, fmt.Errorf("compute source coverage harness: %w", err)
 	}
@@ -45,28 +57,80 @@ func adoptionRegisterSources(ctx context.Context, s *adoptSession) (*config.Regi
 		SHA256: coverage.SHA256, Inputs: inputs}, nil
 }
 
-func adoptionHarnessDocument(ctx context.Context, s *adoptSession) ([]byte, error) {
+// harnessPlan is the Paperclip harness adoption leaves on disk. data is what register.sources
+// binds to; write is the synthesized harness this run writes, nil when the existing one stays.
+// The manifest and paperclip steps both read it, so the bytes the contract binds cannot
+// drift from the bytes adoption writes.
+type harnessPlan struct {
+	data    []byte
+	write   *paperclip.Harness
+	refresh bool
+	// onDisk reports whether a harness file exists before this run writes one.
+	onDisk bool
+	// unresolved reports a run without a repository identity: the harness platform names the
+	// repository, so none is synthesized and an existing harness stays as it is (BUG-852).
+	unresolved bool
+}
+
+func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 	path, err := repoFile(s.repoPath, paperclipFile)
 	if err != nil {
-		return nil, err
+		return harnessPlan{}, err
 	}
-	if fileExists(path) && !s.opts.Force {
-		if _, err := paperclip.LoadHarnessContext(ctx, path); err != nil {
-			return nil, fmt.Errorf("validate existing source coverage harness: %w", err)
-		}
-		data, err := contextopt.ReadSnapshot(ctx, path)
-		if err != nil {
-			return nil, fmt.Errorf("read existing source coverage harness: %w", err)
-		}
-		return data, nil
+	exists, declined := fileExists(path), s.declines("paperclip")
+	synthesized, err := paperclip.SynthesizeHarness(ctx, s.repoPath)
+	if errors.Is(err, util.ErrRepoIdentityUnresolved) {
+		return unresolvedHarnessPlan(ctx, path, exists)
 	}
-	harness, err := paperclip.SynthesizeHarness(ctx, s.repoPath)
 	if err != nil {
-		return nil, fmt.Errorf("synthesize source coverage harness: %w", err)
+		return harnessPlan{}, fmt.Errorf("synthesize paperclip harness: %w", err)
 	}
-	data, err := paperclip.MarshalHarness(harness)
+	fresh, err := paperclip.MarshalHarness(synthesized)
 	if err != nil {
-		return nil, fmt.Errorf("marshal source coverage harness: %w", err)
+		return harnessPlan{}, fmt.Errorf("marshal paperclip harness: %w", err)
+	}
+	if !exists || (s.opts.Force && !declined) {
+		return harnessPlan{data: fresh, write: synthesized, onDisk: exists}, nil
+	}
+	existing, err := existingHarness(ctx, path)
+	if err != nil || bytes.Equal(existing, fresh) || declined {
+		return harnessPlan{data: existing, onDisk: true}, err
+	}
+	return planEarlierHarness(ctx, s.repoPath, existing, synthesized, fresh)
+}
+
+// unresolvedHarnessPlan keeps an existing harness as the bytes register.sources binds and
+// plans none otherwise: without a repository identity there is no platform to synthesize.
+func unresolvedHarnessPlan(ctx context.Context, path string, exists bool) (harnessPlan, error) {
+	if !exists {
+		return harnessPlan{unresolved: true}, nil
+	}
+	existing, err := existingHarness(ctx, path)
+	return harnessPlan{data: existing, onDisk: true, unresolved: true}, err
+}
+
+// planEarlierHarness refreshes an existing harness only when it is unmodified output of an
+// earlier release; any other harness is operator-owned and stays byte for byte.
+func planEarlierHarness(ctx context.Context, repoPath string, existing []byte, synthesized *paperclip.Harness,
+	fresh []byte,
+) (harnessPlan, error) {
+	prior, err := paperclip.PriorGenerated(ctx, repoPath, synthesized)
+	if err != nil {
+		return harnessPlan{}, fmt.Errorf("compare existing paperclip harness with earlier output: %w", err)
+	}
+	if prior {
+		return harnessPlan{data: fresh, write: synthesized, refresh: true, onDisk: true}, nil
+	}
+	return harnessPlan{data: existing, onDisk: true}, nil
+}
+
+func existingHarness(ctx context.Context, path string) ([]byte, error) {
+	if _, err := paperclip.LoadHarnessContext(ctx, path); err != nil {
+		return nil, fmt.Errorf("validate existing source coverage harness: %w", err)
+	}
+	data, err := contextopt.ReadSnapshot(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("read existing source coverage harness: %w", err)
 	}
 	return data, nil
 }
@@ -125,12 +189,12 @@ func plannedManifestBytes(ctx context.Context, s *adoptSession) ([]byte, error) 
 		return nil, err
 	}
 	if exists && !s.opts.Force {
-		sources, err := adoptionRegisterSources(ctx, s)
+		path, err := repoFile(s.repoPath, manifestFile)
 		if err != nil {
 			return nil, err
 		}
-		planned, _, err := addManifestSources(ctx, data, sources)
-		return planned, err
+		planned, _, err := planExistingManifest(ctx, s, path, data)
+		return planned.data, err
 	}
 	manifest, err := newAdoptionManifest(ctx, s)
 	if err != nil {

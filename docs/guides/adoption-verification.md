@@ -505,13 +505,20 @@ Generated Makefiles run `caveman-sources` (`praetorctl caveman check
 --configured-sources`) inside `verify-all`, and `praetorctl audit` fails when
 `.standards.yaml` has no `register.sources`. Re-running adoption on a repository
 with an existing manifest adds the contract for its Paperclip harness without
-replacing operator fields, and binds a valid existing harness byte for byte
+replacing operator fields, and binds a valid operator-owned harness byte for byte
 (`TestAdoptExistingManifestAddsSourceContractWithoutDroppingContent` and
 `TestAdoptCustomHarnessPreservesBytesAndBindsActualCoverage` in
-`internal/adopt/adopt_test.go`). An existing `register.sources` that fails its own
-gate stops adoption (`TestAdoptRejectsStaleExistingSourceContract`). The
-[text-register guide](text-register.md#tracked-runtime-sources) describes the
-contract.
+`internal/adopt/adopt_test.go`). A harness still byte-identical to an earlier
+release's output is refreshed to the current text first
+(`TestAdoptUpgradesReleasedHarnessToPassingSourceGate`). `--force` regenerates the
+harness and re-binds an existing contract, keeping every declared input
+(`TestAdoptForceRebindsExtendedSourceContract` in
+`internal/adopt/manifest_sources_test.go`). An existing `register.sources` that
+fails its own gate stops adoption in both modes
+(`TestAdoptRejectsStaleExistingSourceContract`,
+`TestAdoptForceRefusesDriftedSourceContract`). The
+[text-register guide](text-register.md#upgrading-an-adopted-repository) describes the
+upgrade path.
 
 Run the resulting commands under the intended toolchain and retain actual results
 before claiming application verification. Public dogfood governance verification,

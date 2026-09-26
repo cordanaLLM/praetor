@@ -26,13 +26,13 @@ type discoveredInput struct {
 	path  string
 }
 
-func discoverInputs(ctx context.Context, root string, inputs []config.RegisterSourceInput) ([]discoveredInput, []string, error) {
+func discoverInputs(ctx context.Context, root string, inputs []config.RegisterSourceInput, documents map[string][]byte) ([]discoveredInput, []string, error) {
 	if len(inputs) == 0 || len(inputs) > config.MaxRegisterSourceInputs {
 		return nil, nil, fmt.Errorf("caveman source inputs require 1..%d rows", config.MaxRegisterSourceInputs)
 	}
 	items := make([]discoveredInput, 0, len(inputs))
 	for index := range inputs {
-		found, err := discoverInput(ctx, root, inputs[index])
+		found, err := discoverInput(ctx, root, inputs[index], documents)
 		if err != nil {
 			return nil, nil, fmt.Errorf("caveman source input %d: %w", index, err)
 		}
@@ -51,9 +51,12 @@ func discoverInputs(ctx context.Context, root string, inputs []config.RegisterSo
 	return items, files, nil
 }
 
-func discoverInput(ctx context.Context, root string, input config.RegisterSourceInput) ([]discoveredInput, error) {
+func discoverInput(ctx context.Context, root string, input config.RegisterSourceInput, documents map[string][]byte) ([]discoveredInput, error) {
 	if err := input.Validate(); err != nil {
 		return nil, err
+	}
+	if _, ok := documents[input.Path]; ok || root == "" {
+		return discoverDocument(input, ok)
 	}
 	abs, err := confinedSourcePath(root, input.Path)
 	if err != nil {
@@ -73,6 +76,18 @@ func discoverInput(ctx context.Context, root string, input config.RegisterSource
 		return []discoveredInput{{input: input, path: input.Path}}, nil
 	}
 	return walkSourceDirectory(ctx, root, abs, input)
+}
+
+// discoverDocument resolves a file input served from caller-supplied document bytes in place
+// of the repository file. An empty root admits nothing else, so a missing document fails.
+func discoverDocument(input config.RegisterSourceInput, supplied bool) ([]discoveredInput, error) {
+	if !supplied {
+		return nil, fmt.Errorf("in-memory source %s is missing", input.Path)
+	}
+	if !matchesFormat(input.Path, input.Format) {
+		return nil, fmt.Errorf("%s extension does not match format %s", input.Path, input.Format)
+	}
+	return []discoveredInput{{input: input, path: input.Path}}, nil
 }
 
 func walkSourceDirectory(ctx context.Context, root, abs string, input config.RegisterSourceInput) ([]discoveredInput, error) {

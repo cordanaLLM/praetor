@@ -76,7 +76,7 @@ register:
 | `tasks.<label>.max_tokens` | none | 256..8192 when written | `register max_tokens for "<k>" must be 256..8192` |
 | `evidence.inline_max_lines` | 58 | 1..58, tighten only | `register evidence bound must be 1..58` |
 | `evidence.inline_max_tokens` | 1500 | 1..1500, tighten only | `register evidence bound must be 1..1500` |
-| `sources.expected` / `sources.not_applicable` / `sources.sha256` | none | 1..256 applicable values; 0..256 explicitly classified exclusions; full lowercase SHA-256 | applicable count, exclusion count, or digest mismatch |
+| `sources.expected` / `sources.not_applicable` / `sources.sha256` | none | 1..16384 applicable values; 0..16384 explicitly classified exclusions; full lowercase SHA-256 | applicable count, exclusion count, or digest mismatch |
 | `sources.inputs[]` | none | 1..64 tracked shell, Python, Go, JSON, or YAML scopes | strict field, path, parser, selector, surface, and kind errors |
 
 No default row carries `max_tokens`, and the rendered block prints no token numbers for
@@ -566,13 +566,39 @@ register:
 ```
 
 `praetorctl caveman check --configured-sources --root=.` verifies coverage,
-then lints every decoded value. `make caveman-sources`, `make verify-all`, CI,
-and `praetorctl audit` run that contract for Praetor. New adoption writes the
+then lints every decoded value. `praetorctl audit` runs the same checker
+(`configuredCavemanInputs` in `cmd/standardsctl/caveman.go`), so the two cannot
+disagree about which values are linted: classified exclusions are skipped
+before the surface verdict is checked, in both
+(`TestConfiguredSourceGatesShareOneChecker`). `make caveman-sources` and
+`make verify-all` (which CI runs) call it for Praetor. New adoption writes the
 same contract for its generated Paperclip harness and adds the source target to
-the generated Makefile. Existing manifests gain that contract without replacing
-operator fields; existing valid Paperclip harness bytes remain unchanged and the
-contract binds their actual decoded values. Both `audit` and the dedicated command
-fail closed when `register.sources` is absent.
+the generated Makefile. Both `audit` and the dedicated command fail closed when
+`register.sources` is absent.
+
+#### Upgrading an adopted repository
+
+Run `praetorctl adopt`. It adds `register.sources` to an existing manifest
+without replacing operator fields. The Paperclip harness it binds depends on
+who wrote it:
+
+- A harness byte-identical to what an earlier release synthesized for this
+  repository (`harness.json`, and `rules.md` when present) is refreshed to the
+  current contract text, which passes the lint, and the contract binds the
+  refreshed bytes. The recognized earlier texts are pinned in
+  `internal/paperclip/harness.go` (`PriorGenerated`).
+- Any other harness is operator-owned. Adoption keeps its bytes and binds the
+  contract to its decoded values. When those values fail the lint, edit them or
+  run `praetorctl adopt --force`.
+
+`praetorctl adopt --force` regenerates the harness and re-binds an existing
+contract to it. It keeps every declared input, including rows an operator
+added, and recomputes only `expected`, `not_applicable` and `sha256`. Adoption
+never re-blesses drift it did not cause: in both modes, a declared contract that
+fails its own gate before the run stops adoption with `existing
+register.sources fails its configured gate`. Fix the reported drift, then
+rerun. The fixtures, including the harness the 462e3f3a release wrote, are in
+`internal/adopt/manifest_sources_test.go` and `internal/paperclip/prior_test.go`.
 
 `shell` extracts static quoted `echo`, bounded `%s` `printf`, here-document
 output, and exact trailing `>&2` or `1>&2` redirection. Shell expansion and
@@ -613,8 +639,10 @@ praetorctl caveman check --root=. --surface=prompts \
 
 A directory matching no requested files, an extractor producing no values, or
 a non-internal surface returns an error rather than a green no-op. One contract
-is bounded to 64 inputs, 64 discovered files, 256 applicable values, and 256
-explicitly classified exclusions. Each file is at most 1 MiB, each value at
+is bounded to 64 inputs and 64 discovered files. One selector's match set or one
+Go string table yields at most 256 values; the whole contract extracts at most
+16,384 applicable values and 16,384 explicitly classified exclusions, one full
+table per input (`config.MaxRegisterSourceOutputs`). Each file is at most 1 MiB, each value at
 most 64 KiB and at most 1,024 logical lines; all selected text is at most 1
 MiB. Positive, negative, exact-limit, and +1 fixtures live in
 `internal/cavemansource` and

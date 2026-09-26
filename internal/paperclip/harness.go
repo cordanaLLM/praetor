@@ -1,6 +1,7 @@
 package paperclip
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -87,6 +88,90 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 		AGitPushFormat:    agitPushFormat,
 		Invariants:        invariants,
 	}, nil
+}
+
+// priorOperatingContract, priorRegisterDirectives and priorInvariants are the texts every
+// earlier release synthesized, from 5d08985f until the contract moved to Caveman. The
+// directive row was absent before the text register (#204) and changed form with the caveman
+// skill (#225). They are literals, not calls, so a later change to the current text cannot
+// silently rewrite what "earlier output" means.
+var (
+	priorOperatingContract = []string{
+		"Pushing a branch is NOT shipping: an open PR is required, but still not shipped work until merged.",
+		"Rebase onto main immediately: run git fetch origin && git rebase origin/main before proposing.",
+		"Rule 0 Terminal Disposition: every run must end with a structured disposition (in_review or blocked).",
+		"Ed25519 Exit-0 Receipts: attach cryptographic execution receipts to all PR proposals.",
+		"Timeout Resilience: timeout is not failure; re-check open PRs before retrying to prevent duplicate PRs.",
+	}
+	priorRegisterDirectives = []string{
+		"",
+		"Text register internal: telegraphic: no filler, no preamble, no restatement; facts, paths, commands, verdict.",
+		"Text register internal: `caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict.",
+	}
+	priorInvariants = []string{
+		"HISS-01: Acyclic DAG control flow (no recursion)",
+		"HISS-02: Scalar upper bounds on all loops; context timeout on all I/O",
+		"HISS-04: McCabe Cyclomatic <= 10, Cognitive <= 15, Func LOC <= 75",
+		"HISS-07: Zero .unwrap() / .expect(); all errors handled or wrapped",
+		"HISS-10: Zero-warning tolerance across compiler, linters, and formatters",
+		"HISS-15: 3D testing mandatory (Positive, Negative, Boundary >= 2 checks/dim)",
+		"HISS-16: Canonical AGENTS.md compiled to vendor harnesses",
+	}
+)
+
+// PriorGenerated reports whether the harness under repoPath is unmodified output of an
+// earlier release for current's identity: harness.json byte-identical to one earlier
+// synthesis, and rules.md absent or equal to that synthesis's rendering. Adoption refreshes
+// only such a harness; an edited one is operator-owned and stays byte for byte.
+func PriorGenerated(ctx context.Context, repoPath string, current *Harness) (bool, error) {
+	if ctx == nil || current == nil {
+		return false, fmt.Errorf("paperclip: prior harness check requires context and current harness")
+	}
+	harnessData, rulesData, rulesExist, err := readHarnessFiles(ctx, repoPath)
+	if err != nil {
+		return false, err
+	}
+	for index := 0; index < len(priorRegisterDirectives); index++ {
+		prior := priorHarness(current, priorRegisterDirectives[index])
+		rendered, err := MarshalHarness(&prior)
+		if err != nil {
+			return false, err
+		}
+		if bytes.Equal(rendered, harnessData) {
+			return !rulesExist || string(rulesData) == renderRules(&prior), nil
+		}
+	}
+	return false, nil
+}
+
+func priorHarness(current *Harness, directive string) Harness {
+	prior := *current
+	prior.OperatingContract = append([]string(nil), priorOperatingContract...)
+	if directive != "" {
+		prior.OperatingContract = append(prior.OperatingContract, directive)
+	}
+	prior.Invariants = priorInvariants
+	return prior
+}
+
+func readHarnessFiles(ctx context.Context, repoPath string) ([]byte, []byte, bool, error) {
+	jsonPath, err := util.ConfinePath(repoPath, filepath.Join(paperclipDir, harnessFile))
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("resolve %s: %w", harnessFile, err)
+	}
+	harnessData, err := contextopt.ReadSnapshot(ctx, jsonPath)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("read %s: %w", harnessFile, err)
+	}
+	mdPath, err := util.ConfinePath(repoPath, filepath.Join(paperclipDir, rulesFile))
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("resolve %s: %w", rulesFile, err)
+	}
+	rulesData, rulesExist, err := contextopt.ObserveSnapshot(ctx, mdPath)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("read %s: %w", rulesFile, err)
+	}
+	return harnessData, rulesData, rulesExist, nil
 }
 
 // resolvePlatform derives owner/name from the manifest, then the origin remote

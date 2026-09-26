@@ -457,39 +457,21 @@ func createAdoptionManifest(ctx context.Context, s *adoptSession, full string) e
 }
 
 func reconcileExistingManifest(ctx context.Context, s *adoptSession, full string) error {
-	// An existing manifest is an input: one the config loader rejects fails adoption here
-	// and is never reported as verified present on existence alone (BUG-853).
-	manifest, err := config.LoadManifest(full)
-	if err != nil {
-		return fmt.Errorf("existing %s: %w", manifestFile, err)
-	}
 	data, _, err := contextopt.ObserveSnapshot(ctx, full)
 	if err != nil {
 		return err
 	}
-	desired, err := adoptionRegisterSources(ctx, s)
-	if err != nil {
-		return err
-	}
-	if err := verifyExistingRegisterSources(ctx, s.repoPath, manifest, desired, s.opts.Force); err != nil {
-		return err
-	}
-	replacement, changed, err := addManifestSources(ctx, data, desired)
+	plan, changed, err := planExistingManifest(ctx, s, full, data)
 	if err != nil {
 		return err
 	}
 	if changed && !s.opts.DryRun {
-		err = contextopt.ReplaceSnapshot(ctx, full, replacement,
-			contextopt.ReplaceOptions{Expected: data, Exists: true, Mode: filePerm})
+		if err := contextopt.ReplaceSnapshot(ctx, full, plan.data,
+			contextopt.ReplaceOptions{Expected: data, Exists: true, Mode: filePerm}); err != nil {
+			return err
+		}
 	}
-	if err != nil {
-		return err
-	}
-	note := forcedManifestNote(s.opts.Force)
-	if changed {
-		note = "Added omission-resistant register.sources coverage; preserved existing declarations"
-	}
-	s.report.recordReconciled(manifestFile, note)
+	s.report.recordReconciled(manifestFile, plan.note)
 	return nil
 }
 

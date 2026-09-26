@@ -64,7 +64,7 @@ func ExtractDeclared(ctx context.Context, root string, declared *config.Register
 	if declared == nil {
 		return Result{}, errors.New("register.sources is not configured")
 	}
-	result, files, err := extractInputs(ctx, root, declared.Inputs)
+	result, files, err := extractInputs(ctx, root, declared.Inputs, nil)
 	if err != nil {
 		return Result{}, err
 	}
@@ -75,13 +75,17 @@ func ExtractDeclared(ctx context.Context, root string, declared *config.Register
 }
 
 // ExtractDeclaredContent verifies declared coverage against current source bytes without
-// requiring those bytes in Git. Adoption uses this during the pre-commit rerun window;
-// repository gates use ExtractDeclared and retain tracked-source enforcement.
-func ExtractDeclaredContent(ctx context.Context, root string, declared *config.RegisterSources) (Result, error) {
+// requiring those bytes in Git; documents overlay repository files as in
+// ExtractInputsWithDocuments. Adoption uses this during the pre-commit rerun window and
+// before it has written a planned file; repository gates use ExtractDeclared and retain
+// tracked-source enforcement.
+func ExtractDeclaredContent(ctx context.Context, root string, declared *config.RegisterSources,
+	documents map[string][]byte,
+) (Result, error) {
 	if declared == nil {
 		return Result{}, errors.New("register.sources is not configured")
 	}
-	result, _, err := extractInputs(ctx, root, declared.Inputs)
+	result, _, err := extractInputs(ctx, root, declared.Inputs, documents)
 	if err != nil {
 		return Result{}, err
 	}
@@ -105,41 +109,37 @@ func verifyDeclaredResult(result Result, declared *config.RegisterSources) (Resu
 // ExtractInputs extracts ad-hoc CLI scopes without requiring Git tracking or a coverage
 // declaration. It still fails when no runtime text is found.
 func ExtractInputs(ctx context.Context, root string, inputs []config.RegisterSourceInput) (Result, error) {
-	result, _, err := extractInputs(ctx, root, inputs)
+	return ExtractInputsWithDocuments(ctx, root, inputs, nil)
+}
+
+// ExtractInputsWithDocuments extracts inputs like ExtractInputs, but a file input whose path
+// is a key of documents reads those bytes in place of the repository file, which need not
+// exist. Adoption uses it to re-bind a declared contract to a harness it has not written
+// yet. An empty root reads documents only and fails on any input they do not supply.
+func ExtractInputsWithDocuments(ctx context.Context, root string, inputs []config.RegisterSourceInput,
+	documents map[string][]byte,
+) (Result, error) {
+	result, _, err := extractInputs(ctx, root, inputs, documents)
 	return result, err
 }
 
-// CoverageFromDocuments computes the same structured-source inventory from in-memory
+// CoverageFromDocuments computes the inventory of inputs served entirely from in-memory
 // documents. Adoption uses it before the generated harness exists on disk.
 func CoverageFromDocuments(ctx context.Context, inputs []config.RegisterSourceInput, documents map[string][]byte) (Result, error) {
-	if ctx == nil {
-		return Result{}, errors.New("caveman source extraction requires context")
-	}
-	accumulator := sourceAccumulator{inventory: make([]string, 0, len(inputs))}
-	budget := documentBudget{seen: make(map[string]bool, len(documents))}
-	for index := range inputs {
-		accumulator.inventory = append(accumulator.inventory,
-			inventoryRecord(discoveredInput{input: inputs[index], path: inputs[index].Path}))
-		extracted, err := extractDocumentInput(ctx, inputs[index], documents, &budget)
-		if err != nil {
-			return Result{}, err
-		}
-		if err := accumulator.add(extracted); err != nil {
-			return Result{}, err
-		}
-	}
-	return accumulator.result()
+	return ExtractInputsWithDocuments(ctx, "", inputs, documents)
 }
 
-func extractInputs(ctx context.Context, root string, inputs []config.RegisterSourceInput) (Result, []string, error) {
+func extractInputs(ctx context.Context, root string, inputs []config.RegisterSourceInput,
+	documents map[string][]byte,
+) (Result, []string, error) {
 	if ctx == nil {
 		return Result{}, nil, errors.New("caveman source extraction requires context")
 	}
-	items, files, err := discoverInputs(ctx, root, inputs)
+	items, files, err := discoverInputs(ctx, root, inputs, documents)
 	if err != nil {
 		return Result{}, nil, err
 	}
-	reader := sourceReader{ctx: ctx, root: root, cache: make(map[string][]byte, len(files))}
+	reader := sourceReader{ctx: ctx, root: root, documents: documents, cache: make(map[string][]byte, len(files))}
 	packageGoverned, err := collectMCPGovernedFunctions(items, &reader)
 	if err != nil {
 		return Result{}, nil, err
@@ -162,49 +162,36 @@ func extractInputs(ctx context.Context, root string, inputs []config.RegisterSou
 	return result, files, err
 }
 
-type documentBudget struct {
-	seen  map[string]bool
-	total int
-}
-
-func (b *documentBudget) observe(path string, data []byte) error {
-	if b.seen[path] {
-		return nil
-	}
-	b.total += len(data)
-	if len(data) > contextopt.MaxSourceBytes || b.total > contextopt.MaxTotalBytes {
-		return errors.New("in-memory source documents exceed byte bounds")
-	}
-	b.seen[path] = true
-	return nil
-}
-
-func extractDocumentInput(ctx context.Context, input config.RegisterSourceInput, documents map[string][]byte, budget *documentBudget) ([]Source, error) {
-	if err := input.Validate(); err != nil {
-		return nil, err
-	}
-	if input.Format != config.SourceFormatJSON && input.Format != config.SourceFormatYAML {
-		return nil, errors.New("in-memory coverage supports JSON/YAML documents only")
-	}
-	data, ok := documents[input.Path]
-	if !ok {
-		return nil, fmt.Errorf("in-memory source %s is missing", input.Path)
-	}
-	if err := budget.observe(input.Path, data); err != nil {
-		return nil, err
-	}
-	return extractStructured(ctx, discoveredInput{input: input, path: input.Path}, data)
-}
-
 type sourceReader struct {
-	ctx   context.Context
-	root  string
-	cache map[string][]byte
-	total int
+	ctx       context.Context
+	root      string
+	documents map[string][]byte
+	cache     map[string][]byte
+	total     int
 }
 
 func (r *sourceReader) read(path string) ([]byte, error) {
 	if data, ok := r.cache[path]; ok {
+		return data, nil
+	}
+	data, err := r.load(path)
+	if err != nil {
+		return nil, err
+	}
+	r.total += len(data)
+	if r.total > contextopt.MaxTotalBytes {
+		return nil, fmt.Errorf("caveman source files exceed %d bytes", contextopt.MaxTotalBytes)
+	}
+	r.cache[path] = data
+	return data, nil
+}
+
+// load returns the caller-supplied document for path, or the bounded repository snapshot.
+func (r *sourceReader) load(path string) ([]byte, error) {
+	if data, ok := r.documents[path]; ok {
+		if len(data) > contextopt.MaxSourceBytes {
+			return nil, fmt.Errorf("caveman source %s exceeds %d bytes", path, contextopt.MaxSourceBytes)
+		}
 		return data, nil
 	}
 	abs, err := confinedSourcePath(r.root, path)
@@ -215,11 +202,6 @@ func (r *sourceReader) read(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read caveman source %s: %w", path, err)
 	}
-	r.total += len(data)
-	if r.total > contextopt.MaxTotalBytes {
-		return nil, fmt.Errorf("caveman source files exceed %d bytes", contextopt.MaxTotalBytes)
-	}
-	r.cache[path] = data
 	return data, nil
 }
 

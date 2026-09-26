@@ -1,4 +1,4 @@
 type: added
-title: Enforce tracked hook, MCP, and prompt runtime text through canonical register sources, and fail audit when register.sources is absent
+title: Enforce tracked hook, MCP, and prompt runtime text through canonical register sources, fail audit when register.sources is absent, and let adopt refresh unmodified earlier Paperclip harnesses and re-bind declared sources under --force
 breaking: true
 issue: "#364"
