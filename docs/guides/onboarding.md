@@ -36,7 +36,9 @@ a Go library.
   the governance tool rather than the repository.
 - Where nothing matches, `flavor audit` and `flavor apply` refuse with `ErrNoFlavorMatched` instead
   of scoring the repository against a flavor that describes nothing about it. Pass `--flavor=<name>`
-  to audit against one deliberately.
+  to audit against one deliberately. `praetorctl adopt` scaffolds no flavor templates there and
+  warns, naming `praetorctl flavor apply --flavor=<name>`; a flat Go module with only root `.go`
+  files is one such repository.
 
 ## What the flavor score measures
 
