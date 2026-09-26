@@ -1,12 +1,12 @@
 {
-  "name": "cordana-standards",
-  "url": "https://standards.cordana.ai",
+  "name": "praetor-governance-bot",
+  "url": "https://example.invalid",
   "hook_attributes": {
-    "url": "https://standards.cordana.ai/webhooks/github",
+    "url": "https://example.invalid/webhooks/github",
     "active": true
   },
-  "redirect_url": "https://standards.cordana.ai/auth/callback",
-  "description": "Autonomous governance bot enforcing HISS invariants, semantic merge conflict resolution, and fleet configuration reconciliation across cordanaLLM repositories.",
+  "redirect_url": "https://example.invalid/auth/callback",
+  "description": "Autonomous governance bot enforcing HISS invariants, semantic merge conflict resolution, and fleet configuration reconciliation across governed repositories.",
   "public": false,
   "default_permissions": {
     "checks": "write",
