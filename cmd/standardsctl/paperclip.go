@@ -41,7 +41,8 @@ func printPaperclipUsage() {
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  harness [--path=.]                               Synthesize Paperclip agent harness and AGit rules")
 	fmt.Println("  disposition --issue=<id> --status=<status> ...   Emit Rule 0 structured terminal disposition record")
-	fmt.Println("  verify [--path=.] [--disposition=path]           Verify run satisfies Rule 0 and contract invariants")
+	fmt.Println("  verify [--path=.] [--disposition=path] [--config=path]")
+	fmt.Println("                                                   Verify run satisfies Rule 0 and contract invariants")
 }
 
 func runPaperclipHarness(ctx context.Context, args []string) error {
@@ -85,7 +86,8 @@ func runPaperclipDisposition(ctx context.Context, args []string) error {
 		return fmt.Errorf("create disposition: %w", err)
 	}
 
-	if err := disp.Validate(ctx); err != nil {
+	// The CLI never attaches a receipt, so no pinned key is needed to validate it here.
+	if err := disp.Validate(ctx, nil); err != nil {
 		return fmt.Errorf("validate disposition: %w", err)
 	}
 
@@ -105,10 +107,15 @@ func runPaperclipDisposition(ctx context.Context, args []string) error {
 	return nil
 }
 
+// runPaperclipVerify verifies a disposition against the repository at --path. A receipt
+// attached to the disposition is checked against the Ed25519 key pinned in .standards.yaml
+// (receipt.public_key), never against the key the receipt carries; the key is resolved only
+// when a receipt is present, so receipt-less dispositions need no pin.
 func runPaperclipVerify(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("paperclip verify", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
 	dispPath := fs.String("disposition", "", "Path to disposition JSON file to verify")
+	manifestPath := fs.String("config", "", "Path to .standards.yaml carrying receipt.public_key (default <path>/.standards.yaml)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -123,7 +130,14 @@ func runPaperclipVerify(ctx context.Context, args []string) error {
 		return fmt.Errorf("read disposition: %w", err)
 	}
 
-	if err := paperclip.VerifyRun(ctx, *path, disp); err != nil {
+	opts := paperclip.VerifyOptions{DispositionPath: *dispPath}
+	if disp.Receipt != nil {
+		if opts.PinnedKey, err = resolveVerifyKey("", *path, *manifestPath); err != nil {
+			return fmt.Errorf("[FAIL] Paperclip verification failed: resolve pinned receipt key: %w", err)
+		}
+	}
+
+	if err := paperclip.VerifyRun(ctx, *path, disp, opts); err != nil {
 		return fmt.Errorf("[FAIL] Paperclip verification failed: %w", err)
 	}
 

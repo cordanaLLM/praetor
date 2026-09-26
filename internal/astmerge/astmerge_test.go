@@ -85,11 +85,42 @@ func Divide(a, b int) int {
 	}
 }
 
+// orthogonalTestSources returns a base and two sides that each rewrite a different
+// function onto a new import. Version keeps fmt in use in all three: without it the merged
+// file, which takes ProcessA from ours and ProcessB from theirs, imports fmt and never
+// uses it (see TestMerge_Negative_ImportLeftUnusedByTheMergeConflicts).
 func orthogonalTestSources() (string, string, string) {
+	const version = "\nfunc Version() string {\n\treturn fmt.Sprint(1)\n}\n"
+	base, ours, theirs := unusedImportTestSources()
+	return base + version, ours + version, theirs + version
+}
+
+func unusedImportTestSources() (string, string, string) {
 	base := "package service\n\nimport \"fmt\"\n\nfunc ProcessA() string {\n\treturn fmt.Sprintf(\"A\")\n}\n\nfunc ProcessB() string {\n\treturn fmt.Sprintf(\"B\")\n}\n"
 	ours := "package service\n\nimport (\n\t\"fmt\"\n\t\"strings\"\n)\n\nfunc ProcessA() string {\n\treturn strings.ToUpper(\"A-v2\")\n}\n\nfunc ProcessB() string {\n\treturn fmt.Sprintf(\"B\")\n}\n"
 	theirs := "package service\n\nimport (\n\t\"fmt\"\n\t\"time\"\n)\n\nfunc ProcessA() string {\n\treturn fmt.Sprintf(\"A\")\n}\n\nfunc ProcessB() string {\n\treturn time.Now().String()\n}\n"
 	return base, ours, theirs
+}
+
+// TestMerge_Negative_ImportLeftUnusedByTheMergeConflicts: each side still uses fmt, but
+// the merge takes the function that dropped it from each side, so the merged file imports
+// fmt and never uses it. The test above expected that uncompilable file as a clean merge;
+// the post-merge guard reports it instead.
+func TestMerge_Negative_ImportLeftUnusedByTheMergeConflicts(t *testing.T) {
+	base, ours, theirs := unusedImportTestSources()
+	res, err := Merge(base, ours, theirs)
+	if err != nil {
+		t.Fatalf("Merge failed: %v", err)
+	}
+	if res.Clean || res.MergedCode != "" {
+		t.Fatalf("expected a conflict without merged code, got clean=%v:\n%s", res.Clean, res.MergedCode)
+	}
+	if len(res.Conflicts) != 1 || res.Conflicts[0].Kind != kindSemantic || !strings.Contains(res.Conflicts[0].Reason, `"fmt" imported and not used`) {
+		t.Errorf("expected one semantic conflict naming the unused import, got %+v", res.Conflicts)
+	}
+	if res.ResolvedCount != 2 {
+		t.Errorf("the guard must keep the structural merge's resolved count, got %d", res.ResolvedCount)
+	}
 }
 
 func TestMerge_Positive_OrthogonalModificationsAndImports(t *testing.T) {

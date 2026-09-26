@@ -1,0 +1,3 @@
+type: fixed
+title: Render Mermaid diagrams on the documentation site (declare the superfences mermaid fence in mkdocs.yml, check every built page for pre.mermaid in the Pages and docs CI builds), and link repository files outside docs/ by URL so the strict site build passes again
+breaking: false

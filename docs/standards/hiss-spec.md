@@ -91,7 +91,7 @@ Production software must never panic or unwrap:
   `process::exit` and `process::abort`; and Python `sys.exit`. Tests and binary entry points may
   abort: Go `main.main`, a top-level Rust `fn main`, and the Python `if __name__ == "__main__":`
   block or top-level `def main`. The assert family and exit wrappers such as `log.Fatal` are
-  recorded as gaps in [`.config/hiss/coverage.yaml`](../../.config/hiss/coverage.yaml), not
+  recorded as gaps in [`.config/hiss/coverage.yaml`](https://github.com/cordanaLLM/praetor/blob/main/.config/hiss/coverage.yaml), not
   enforced.
 
 ### HISS-08: Static Determinism & Banned Functions

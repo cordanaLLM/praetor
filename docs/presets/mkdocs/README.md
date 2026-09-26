@@ -25,3 +25,8 @@ mkdocs serve
 mkdocs build --strict
 # Built artifacts in site/ with sitemap.xml and minified HTML
 ```
+
+Diagrams render only because `mkdocs.yml` declares the `mermaid` custom fence under
+`pymdownx.superfences`. In the praetor repository, CI checks the built preset with
+`scripts/docs_mermaid.py` (see the
+[documentation governance guide](../../guides/documentation-governance.md#site-build-and-mermaid-diagrams)).

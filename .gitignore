@@ -21,9 +21,11 @@ coverage.txt
 coverage.html
 /tmp/
 
-# .standards-receipt.json is deliberately NOT ignored: the Exit-0 receipt is the tracked
-# evidence that `praetorctl gate run` passed for a commit, and `praetorctl gate verify`
-# checks it against the receipt.public_key pinned in .standards.yaml.
+# .standards-receipt.json is deliberately NOT ignored: the Exit-0 receipt `praetorctl gate run`
+# writes stays visible as untracked evidence, and `praetorctl gate verify` checks it against the
+# receipt.public_key pinned in .standards.yaml. Leave it uncommitted: it attests the commit it
+# was minted for, so committing it moves HEAD off that commit. Paste it into the PR body instead
+# (.github/pull_request_template.md).
 
 # Python bytecode. The hooks run with -B so the tree normally stays clean, but any direct
 # python3 invocation (a unittest run, a manual script) writes it, and `git add -A` then stages

@@ -19,10 +19,11 @@ Operate within Paperclip orchestration harness (`apps/ai/paperclip*` / `papercli
    - Code shipped only when target branch merged with authoritative Ed25519 Exit-0 receipt attached.
 
 3. **AGit Submission Protocol**:
-   - Changes are pushed to Gerrit/Paperclip review refs:
+   - Changes are pushed to Gerrit/Paperclip review refs, then to review branch `paperclip/<issue-id>`:
      ```bash
-     git push origin HEAD:refs/for/main -o topic=<issue-id>
+     git push origin HEAD:refs/for/main -o topic=<issue-id> && git push origin HEAD:refs/heads/paperclip/<issue-id>
      ```
+   - AGit push opens review, records no local ref. Second push records `refs/remotes/origin/paperclip/<issue-id>` = local proof for `paperclip verify`. Explicit destination -> never pushes local `main` to remote `main`.
 
 ---
 
@@ -42,9 +43,9 @@ make verify-all
 ```
 
 ### Step 3: Submit Changes via AGit
-Push commits using Paperclip AGit topic format:
+Push commits using Paperclip AGit topic format plus review branch (`agit_push_format` in `.paperclip/harness.json`):
 ```bash
-git push origin HEAD:refs/for/main -o topic=<issue-id>
+git push origin HEAD:refs/for/main -o topic=<issue-id> && git push origin HEAD:refs/heads/paperclip/<issue-id>
 ```
 
 ### Step 4: Record Rule 0 Disposition & Verify Contract
@@ -74,3 +75,8 @@ Generate cryptographically verifiable terminal disposition record:
   ```bash
   praetorctl paperclip verify --path=.
   ```
+  - `in_review` fails unless: working tree clean (disposition file + root `.standards-receipt.json` exempt); some ref under `refs/remotes/` contains HEAD. Local refs only, no network. Step 3 second push satisfies it on any branch or detached HEAD; upstream config not needed.
+  - AGit `refs/for/*` push alone records no local ref -> fails. No branch-push permission -> fetch forge review head into `refs/remotes/` instead, e.g. forges exposing `refs/pull/<n>/head`: `git fetch origin +refs/pull/<n>/head:refs/remotes/origin/pull/<n>`.
+  - Status: whitespace + case ignored, `done` -> `in_review`. Whitespace-only issue, note, proof, recovery owner rejected.
+  - Attached `receipt` = envelope carrying `gate_output`; verified against `receipt.public_key` pinned in `.standards.yaml` (`--config=<path>` names another manifest), never key embedded in receipt. Receipt without pin fails.
+  - Receipt `commit_sha` must equal HEAD, any status (same binding as `praetorctl gate verify`) -> receipt signed for earlier commit cannot be replayed. Mint receipt after final commit; leave `.standards-receipt.json` uncommitted (committing it moves HEAD off attested commit).

@@ -217,18 +217,14 @@ func resolveVerifyKey(supplied, path, manifestPath string) (ed25519.PublicKey, e
 	return lockdown.PinnedPublicKey(resolvedManifest)
 }
 
-// verifyReceiptCommit binds a receipt to the commit currently checked out.
+// verifyReceiptCommit binds a receipt to the commit currently checked out, through the same
+// lockdown.VerifyReceiptCommit that paperclip verify uses, under the gate query timeout.
 func verifyReceiptCommit(repoPath, receiptSHA string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), gateQueryTimeout)
 	defer cancel()
 
-	head, err := util.RunGit(ctx, repoPath, "rev-parse", "HEAD")
-	if err != nil {
-		return fmt.Errorf("[FAIL] cannot resolve HEAD in %s: %w", repoPath, err)
-	}
-	head = strings.TrimSpace(head)
-	if head != receiptSHA {
-		return fmt.Errorf("[FAIL] receipt attests commit %s but HEAD is %s", receiptSHA, head)
+	if err := lockdown.VerifyReceiptCommit(ctx, repoPath, receiptSHA); err != nil {
+		return fmt.Errorf("[FAIL] %w", err)
 	}
 	return nil
 }

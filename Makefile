@@ -158,6 +158,13 @@ docs-lint-test:
 	node tools/markdownlint/verify.mjs --self-test
 	node tools/docsurface/verify.mjs --self-test
 
+# The rendered half of scripts/docs_mermaid.py runs after mkdocs build in pages.yml and the CI
+# docs audit; this replays its fixtures and checks both mkdocs.yml files declare the fence.
+.PHONY: docs-mermaid-test
+verify-all: docs-mermaid-test
+docs-mermaid-test:
+	python3 -B scripts/test_docs_mermaid.py
+
 notebook-test:
 	python3 -B scripts/test_notebooklm_export.py
 	python3 -B scripts/test_planning_import.py

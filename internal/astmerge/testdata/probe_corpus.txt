@@ -1,0 +1,16143 @@
+# Recorded astmerge probe cases (see corpus_test.go). Each case was regenerated from its
+# seed by the adversarial probe that exposed the per-spec merge's silent semantic changes:
+# a random base of const, var and func declarations, and one or two random edits per side
+# (insert, delete, edit, move, split, join, ungroup, group, doc, moveblock, splitout,
+# addfunc). sides=single means theirs only adds an unrelated function. from= names the
+# probe categories the seed was recorded under, against origin/main (out_main) and the
+# first per-spec attempt (out_double, out_single). model=commutative cases carry, under
+# --- model, the const values and var initialization order that applying the two sides'
+# edits in either order produces; model=ambiguous cases have no single expected result.
+# "@header" stands for the declarations every probe file starts with.
+=== seed=2 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+var v1 = rec("v1")
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	t11v = rec("t11v")
+)
+
+func F1() {}
+=== seed=47 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+var v1 = rec("v1")
+
+const (
+	C1 = iota
+)
+
+const (
+	C2 = 7
+)
+
+const (
+	C3 = iota + 2
+)
+--- ours
+@header
+
+const (
+	C1 = iota
+)
+
+const (
+	C3 = iota + 2
+)
+--- theirs
+@header
+
+var v1 = rec("v1")
+
+const (
+	C1 = iota
+)
+
+func TF6() {}
+
+const (
+	C3 = iota + 2
+)
+=== seed=89 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+	o2v = rec("o2v")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- theirs
+@header
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func TF7() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+=== seed=91 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+
+var (
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+func F1() {}
+
+var v2 = rec("v2")
+--- theirs
+@header
+
+var v1 = rec("v1")
+
+var (
+	v2 = rec("v2")
+)
+
+func F1() {}
+=== seed=121 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+var v2 = rec("v2")
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+	v1 = rec("v1")
+)
+
+func OF3() {}
+--- theirs
+@header
+=== seed=145 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const (
+	C1 = iota - 1
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = iota - 1
+	T3 = 7
+)
+
+func TF4() {}
+
+func F1() {}
+=== seed=160 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+const C1 = iota - 1
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+=== seed=177 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2
+	C3
+	C4
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2 = 7
+	C3
+)
+--- theirs
+@header
+
+const (
+	C3 = iota - 1
+	C4
+)
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2
+)
+--- model
+C1=7:untyped int C2=7:untyped int C3=-1:untyped int | init
+=== seed=187 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+)
+
+func OF4() {}
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+)
+
+func F1() {}
+=== seed=256 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+// Doc 0
+const C1 = iota
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+func OF6() {}
+--- theirs
+@header
+
+func F1() {}
+
+// Doc 0
+const (
+	C1 = iota
+)
+=== seed=269 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+)
+--- ours
+@header
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	N6 = iota
+	C1 = iota - 1
+)
+=== seed=307 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = iota * 10
+	C2
+	C3
+)
+
+const C4 = 7
+--- ours
+@header
+
+const (
+	C1 = iota * 10
+	C2
+	C3
+)
+
+func OF2() {}
+
+const C4 = 7
+--- theirs
+@header
+
+const (
+	C1 = iota * 10
+	T6 = 7
+	C2
+	C3
+)
+--- model
+C1=0:untyped int C2=7:untyped int C3=7:untyped int T6=7:untyped int | init
+=== seed=324 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const C1 = 7
+--- ours
+@header
+
+func F1() {}
+
+const C1 = iota - 1
+
+func OF5() {}
+--- theirs
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = 7
+)
+--- model
+C1=-1:untyped int | init
+=== seed=326 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+)
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+)
+
+func TF6() {}
+
+func F1() {}
+--- model
+C1=1:untyped int C2=2:untyped int C3=4:untyped int | init
+=== seed=330 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = 7
+)
+
+// Doc 1
+const (
+	C2 = iota - 1
+)
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = 7
+)
+
+// Doc 1
+const (
+	C2 = iota - 1
+)
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = 7
+	C2 = iota - 1
+)
+--- model
+C1=7:untyped int C2=0:untyped int | init
+=== seed=366 sides=double model=commutative from=out_double/WRONG_COMMUT,out_main/WRONG_COMMUT
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+func F1() {}
+
+func OF2() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- theirs
+@header
+
+func F1() {}
+
+func TF10() {}
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+--- model
+ | init v2,v1
+=== seed=379 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = 7
+	C2
+	C3
+	C4
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = 7
+	O1
+	C2
+	C3
+	C4
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = iota * 10
+	C2
+	C4
+	C3
+)
+
+func F1() {}
+--- model
+C1=0:untyped int C2=20:untyped int C3=40:untyped int C4=30:untyped int O1=10:untyped int | init
+=== seed=383 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota - 1
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+func TF29() {}
+=== seed=384 sides=double model=ambiguous from=out_double/COMPILE_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	O1
+)
+--- theirs
+@header
+
+func F1() {}
+=== seed=397 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG
+--- base
+@header
+
+var v1 = rec("v1")
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+func OF30() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func TF41() {}
+
+func F1() {}
+=== seed=404 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+// Doc 1
+const (
+	C1 = iota
+	C2 = iota
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+// Doc 1
+const (
+	C1 = iota
+	N2
+	C2 = iota
+)
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var v1 = rec("v1")
+
+// Doc 1
+const (
+	C1 = iota
+	C2 = iota
+)
+--- model
+C1=0:untyped int C2=2:untyped int N2=1:untyped int | init v2,v3,v1
+=== seed=412 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = iota * 10
+)
+
+// Doc 1
+const C2 = iota - 1
+--- ours
+@header
+
+const (
+	C1 = iota * 10
+)
+--- theirs
+@header
+
+const (
+	T7 = iota
+	C1 = iota * 10
+)
+
+// Doc 1
+const C2 = iota - 1
+--- model
+C1=10:untyped int T7=0:untyped int | init
+=== seed=467 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+// Doc 0
+const C1 = iota
+
+func F1() {}
+--- ours
+@header
+
+// Doc O
+const C1 = iota
+
+func F1() {}
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota + 2
+)
+
+func F1() {}
+--- model
+C1=2:untyped int | init
+=== seed=468 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota * 10
+	C2 = 7
+)
+
+func F1() {}
+
+const C3 = iota - 1
+
+const (
+	C4 = iota * 10
+	C5
+)
+--- ours
+@header
+
+const (
+	C1 = iota * 10
+)
+
+func F1() {}
+
+const C3 = iota - 1
+
+const (
+	C4 = iota * 10
+	C5
+)
+--- theirs
+@header
+
+const (
+	C1 = iota * 10
+	C2 = 7
+)
+
+func TF6() {}
+
+func F1() {}
+
+const C3 = iota - 1
+
+const (
+	C4 = iota * 10
+	C5
+)
+=== seed=503 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const C1 = 7
+
+func F1() {}
+
+func F2() {}
+--- ours
+@header
+
+const C1 = 7
+
+func F1() {}
+
+func F2() {}
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = iota * 10
+
+func F2() {}
+=== seed=507 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+// Doc 0
+const C1 = 7
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+func TF12() {}
+=== seed=511 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const C1 = 1 << iota
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+)
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = iota * 10
+--- model
+C1=0:untyped int | init
+=== seed=514 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const C1 = iota + 2
+
+var v1 = rec("v1")
+--- ours
+@header
+
+// Doc O
+const C1 = iota + 2
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+const (
+	C1 = iota + 2
+)
+
+var v1 = rec("v1")
+--- model
+C1=2:untyped int | init v1
+=== seed=516 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = 7
+)
+--- ours
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = 7
+	N1
+)
+
+func OF2() {}
+--- theirs
+@header
+
+func F1() {}
+=== seed=524 sides=double model=ambiguous from=out_double/STRONG
+--- base
+@header
+
+const (
+	C1 = iota - 1
+	C2
+	C3 = 7
+	C4
+)
+
+const (
+	C5 = iota - 1
+	C6
+	C7
+)
+--- ours
+@header
+
+const (
+	C1 = iota - 1
+	C3 = 7
+	C4
+)
+
+const (
+	C5 = iota - 1
+	C6
+	C7
+)
+--- theirs
+@header
+
+const (
+	C1 = iota - 1
+	C3 = 7
+	C4
+)
+
+const (
+	C5 = iota - 1
+	C2
+	C7
+)
+
+const C6 = iota * 10
+=== seed=572 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+	C2 = 1 << iota
+	C3 = 7
+	C4
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+	C2 = 1 << iota
+	O1
+	C3 = 7
+	C4
+)
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+	C2 = 1 << iota
+	T3
+	C3 = 7
+	C4 = iota + 2
+)
+--- model
+C1=-1:untyped int C2=2:untyped int C3=7:untyped int C4=7:untyped int O1=8:untyped int T3=4:untyped int | init
+=== seed=600 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota + 2
+	C2
+	C3 = 7
+	C4
+)
+
+const (
+	C5 = iota - 1
+)
+
+// Doc 3
+const (
+	C6 = iota * 10
+)
+
+const (
+	C7 = 1 << iota
+	C8 = iota * 10
+)
+--- ours
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota + 2
+	C2
+	C3 = 7
+)
+
+const (
+	C5 = iota - 1
+	C4
+)
+
+// Doc 3
+const (
+	C6 = iota * 10
+)
+
+const (
+	C7 = 1 << iota
+	C8 = iota * 10
+)
+--- theirs
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota + 2
+	C2
+	C3 = 7
+	C4
+)
+
+// Doc 3
+const C6 = iota * 10
+
+const (
+	C7 = 1 << iota
+	C8 = iota * 10
+)
+=== seed=620 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota - 1
+	C2 = iota * 10
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = iota - 1
+	C2 = iota * 10
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+const (
+	C1 = iota - 1
+)
+
+const C2 = iota * 10
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- model
+C1=-1:untyped int C2=0:untyped int | init v2,v3,v1
+=== seed=629 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	T3
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+--- model
+C1=1:untyped int T3=2:untyped int | init
+=== seed=716 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+var v1 = rec("v1")
+
+const (
+	C1 = 1 << iota
+)
+--- ours
+@header
+
+var v1 = rec("v1")
+
+const (
+	C1 = iota + 2
+	O3 = iota * 10
+)
+--- theirs
+@header
+
+var v1 = rec("v1")
+
+// Doc T
+const (
+	C1 = 1 << iota
+)
+--- model
+C1=2:untyped int O3=10:untyped int | init v1
+=== seed=726 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+const C1 = iota * 10
+
+const (
+	C2 = iota - 1
+	C3
+)
+--- ours
+@header
+
+const C1 = iota
+
+const (
+	C2 = iota - 1
+	C3
+	O2
+)
+--- theirs
+@header
+
+const (
+	C1 = iota * 10
+	C2 = iota - 1
+	C3
+)
+
+func TF9() {}
+--- model
+C1=0:untyped int C2=0:untyped int C3=1:untyped int O2=2:untyped int | init
+=== seed=750 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+=== seed=753 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+var v1 = rec("v1")
+
+func F1() {}
+
+var v2 = rec("v2")
+--- ours
+@header
+
+var v1 = rec("v1")
+
+var v2 = rec("v2")
+
+func F1() {}
+--- theirs
+@header
+
+var v1 = rec("v1")
+
+func TF19() {}
+
+func F1() {}
+=== seed=754 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota * 10
+)
+
+var v1 = rec("v1")
+--- ours
+@header
+
+const C1 = iota * 10
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = iota * 10
+)
+=== seed=764 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+func OF7() {}
+--- theirs
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+=== seed=783 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+const (
+	C1 = iota + 2
+)
+
+func F1() {}
+
+func F2() {}
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+func TF66() {}
+=== seed=807 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = 7
+	C2 = iota
+	C3
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = 7
+	C3
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = 7
+	C2 = iota
+)
+
+const C3 = iota - 1
+
+func F1() {}
+--- model
+C1=7:untyped int C3=-1:untyped int | init
+=== seed=818 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+const C1 = iota - 1
+
+// Doc 1
+const (
+	C2 = 7
+	C3
+	C4
+	C5
+)
+
+const C6 = 1 << iota
+--- ours
+@header
+
+const C1 = iota - 1
+
+// Doc 1
+const (
+	C2 = 7
+	C3
+	C4
+	C5
+)
+
+func OF8() {}
+--- theirs
+@header
+
+const C1 = iota - 1
+
+// Doc 1
+const (
+	C2 = 7
+	C3
+	C4
+	C5
+)
+=== seed=837 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = iota - 1
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+func OF1() {}
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C1 = iota - 1
+	C2
+)
+--- theirs
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+
+func TF4() {}
+
+const (
+	C1 = iota - 1
+	C2
+)
+=== seed=857 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2 = iota - 1
+	C3
+)
+--- ours
+@header
+
+const (
+	C1 = 7
+)
+
+const (
+	C2 = iota * 10
+	C3
+)
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+)
+
+const (
+	C2 = iota * 10
+	C3
+)
+=== seed=872 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = iota
+	C2
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+func F1() {}
+--- model
+C1=0:untyped int C2=1:untyped int | init
+=== seed=875 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = iota * 10
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C2 = 1 << iota
+	C1 = iota - 1
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = iota * 10
+	C2
+)
+
+const N5 = iota * 10
+
+func F1() {}
+--- model
+C1=0:untyped int C2=1:untyped int N5=0:untyped int | init
+=== seed=880 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	n1v = rec("n1v")
+)
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+func TF4() {}
+=== seed=898 sides=double model=commutative from=out_double/WRONG_COMMUT,out_main/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+const (
+	C1 = iota
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+const C1 = iota
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+
+const (
+	C1 = iota
+)
+--- model
+C1=0:untyped int | init v2,v1
+=== seed=899 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+)
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = iota + 2
+)
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	T8 = 7
+	N6
+)
+--- model
+C1=2:untyped int N6=7:untyped int T8=7:untyped int | init
+=== seed=905 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const (
+	C1 = 7
+	C2 = iota + 2
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota
+	C2 = iota + 2
+)
+
+func OF2() {}
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = 7
+)
+
+func F1() {}
+=== seed=911 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+var v1 = rec("v1")
+
+const (
+	C1 = iota
+)
+--- ours
+@header
+
+var v1 = rec("v1")
+
+// Doc O
+const (
+	C1 = iota
+	N8
+)
+--- theirs
+@header
+
+const (
+	C1 = iota
+)
+--- model
+C1=0:untyped int N8=1:untyped int | init
+=== seed=953 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota + 2
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota + 2
+	C2
+)
+
+func OF1() {}
+--- theirs
+@header
+
+func F1() {}
+
+// Doc T
+const (
+	C1 = iota + 2
+	C2
+)
+--- model
+C1=2:untyped int C2=3:untyped int | init
+=== seed=964 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+const C1 = 1 << iota
+--- ours
+@header
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = 1 << iota
+=== seed=971 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const C1 = iota * 10
+--- ours
+@header
+
+func F1() {}
+
+// Doc O
+const C1 = iota * 10
+
+func OF4() {}
+--- theirs
+@header
+
+func F1() {}
+=== seed=977 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota * 10
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota * 10
+	N2
+)
+--- theirs
+@header
+
+func F1() {}
+
+func TF8() {}
+=== seed=987 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	o2v = rec("o2v")
+	v1 = rec("v1")
+)
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+=== seed=1018 sides=double model=commutative from=out_double/WRONG_COMMUT,out_main/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+// Doc 1
+const C1 = 1 << iota
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+// Doc 1
+const C1 = 1 << iota
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func TF3() {}
+--- model
+ | init v2,v1
+=== seed=1041 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota - 1
+)
+
+const (
+	C2 = 7
+	C3 = iota + 2
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota - 1
+)
+
+const (
+	C3 = iota + 2
+)
+
+func F1() {}
+--- theirs
+@header
+
+const C1 = iota * 10
+
+const (
+	C2 = 7
+	C3
+)
+
+func F1() {}
+=== seed=1042 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+// Doc 0
+const C1 = 7
+
+var v1 = rec("v1")
+--- ours
+@header
+
+// Doc 0
+const C1 = 1 << iota
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+const C1 = iota + 2
+=== seed=1052 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota
+	O2 = iota * 10
+)
+
+func F1() {}
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = iota
+)
+
+func F1() {}
+--- model
+C1=0:untyped int O2=10:untyped int | init
+=== seed=1057 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+const (
+	C4 = iota - 1
+	C5 = iota - 1
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	C5 = iota - 1
+	C2
+	C3
+)
+
+// Doc O
+const (
+	C4 = iota - 1
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+const (
+	C4 = iota - 1
+	C5
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- model
+C1=0:untyped int C2=2:untyped int C3=3:untyped int C4=-1:untyped int C5=1:untyped int | init v1,v2,v3
+=== seed=1060 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = iota + 2
+	C2
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = iota - 1
+	C2
+)
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+func TF4() {}
+
+const (
+	C1 = iota + 2
+	C2
+)
+--- model
+C1=-1:untyped int C2=0:untyped int | init v2,v1
+=== seed=1065 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = 7
+	O6 = iota * 10
+	C2
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = 7
+	C2
+	T7 = 7
+)
+
+func F1() {}
+--- model
+C1=7:untyped int C2=20:untyped int O6=10:untyped int T7=7:untyped int | init
+=== seed=1074 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+// Doc 1
+const C1 = iota * 10
+
+var v4 = rec("v4")
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+// Doc O
+const C1 = iota * 10
+
+var v4 = rec("v4")
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var v1 = rec("v1")
+
+// Doc 1
+const C1 = iota * 10
+
+var v4 = rec("v4")
+--- model
+C1=0:untyped int | init v2,v3,v1,v4
+=== seed=1105 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+var (
+	n9v = rec("n9v")
+	v1 = rec("v1")
+)
+=== seed=1112 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota - 1
+	C2
+	C3
+	C4
+)
+
+func F1() {}
+
+const (
+	C5 = iota + 2
+)
+
+func F2() {}
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota - 1
+	C2
+	C3
+	C4
+)
+
+func F1() {}
+
+const (
+	C5 = iota + 2
+)
+
+const (
+	O2 = iota * 10
+)
+
+func F2() {}
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = iota - 1
+	C2
+	C3
+	C4
+)
+
+func F1() {}
+
+const C5 = iota + 2
+
+func F2() {}
+=== seed=1131 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+
+var v2 = rec("v2")
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+
+var v2 = rec("v2")
+--- theirs
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+
+var v2 = rec("v2")
+=== seed=1136 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+const C3 = 7
+--- ours
+@header
+
+const (
+	C1 = iota
+)
+
+const C3 = 7
+--- theirs
+@header
+
+const (
+	C1 = iota
+	C2
+	T4
+)
+
+const C3 = 7
+=== seed=1141 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = 1 << iota
+	C2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = 1 << iota
+	C2
+)
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+)
+--- theirs
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = 1 << iota
+	C2
+	T5
+)
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+)
+=== seed=1158 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota * 10
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota * 10
+	C2
+	O3
+)
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota * 10
+	C2 = 7
+)
+--- model
+C1=0:untyped int C2=7:untyped int O3=7:untyped int | init
+=== seed=1162 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota - 1
+	C2
+	C3
+)
+
+const (
+	C4 = 7
+)
+--- ours
+@header
+
+const (
+	C1 = iota - 1
+	C2
+	C3
+	C4 = 7
+)
+--- theirs
+@header
+
+const (
+	C1 = iota - 1
+	C2
+)
+
+const (
+	C3 = iota
+	C4 = 7
+)
+--- model
+C1=-1:untyped int C2=0:untyped int C3=2:untyped int C4=7:untyped int | init
+=== seed=1180 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = 7
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C2 = iota + 2
+	C3
+)
+
+func F2() {}
+
+// Doc 4
+const (
+	C4 = iota - 1
+	C5 = iota * 10
+	C6
+)
+--- ours
+@header
+
+const C1 = iota * 10
+
+func F1() {}
+
+// Doc 2
+const (
+	C2 = iota + 2
+	C3
+)
+
+func F2() {}
+
+// Doc 4
+const (
+	C4 = iota - 1
+	O4
+	C5 = iota * 10
+	C6
+)
+--- theirs
+@header
+
+const (
+	C1 = 7
+	T6
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C2 = iota + 2
+	C3
+)
+
+func F2() {}
+
+// Doc 4
+const (
+	C4 = iota - 1
+	C6
+)
+=== seed=1233 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+=== seed=1248 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota + 2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota + 2
+	O1
+)
+
+func OF2() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+=== seed=1250 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+var v1 = rec("v1")
+
+var v2 = rec("v2")
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+--- theirs
+@header
+
+var v1 = rec("v1")
+
+var (
+	v2 = rec("v2")
+)
+=== seed=1256 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+const C1 = 7
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+func OF2() {}
+--- theirs
+@header
+
+func F1() {}
+=== seed=1263 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = 1 << iota
+	C2 = iota * 10
+)
+
+const C3 = iota - 1
+--- ours
+@header
+
+const C2 = iota * 10
+
+const C3 = iota - 1
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = 1 << iota
+	T6
+	C2 = iota * 10
+)
+
+const C3 = iota - 1
+=== seed=1282 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+var (
+	o1v = rec("o1v")
+	v1 = rec("v1")
+)
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = 7
+	C2
+)
+
+var (
+	v1 = rec("v1")
+)
+--- model
+C1=7:untyped int C2=7:untyped int | init o1v,v1
+=== seed=1289 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+
+var v1 = rec("v1")
+
+func F4() {}
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+
+func F4() {}
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+var v1 = rec("v1")
+
+func F3() {}
+
+func F4() {}
+=== seed=1303 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota - 1
+	C2 = 1 << iota
+	C3
+	C4 = iota + 2
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C5 = iota
+	C6
+	C7 = 1 << iota
+)
+
+func F2() {}
+--- ours
+@header
+
+const (
+	C2 = 1 << iota
+	C3
+	C4 = iota + 2
+)
+
+// Doc 2
+const (
+	C5 = iota
+	C6
+	C7 = 1 << iota
+)
+
+func F1() {}
+
+func F2() {}
+--- theirs
+@header
+
+const (
+	C1 = iota - 1
+	C6
+	C2 = 1 << iota
+	C3
+	C4 = iota + 2
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C5 = iota
+	C7 = 1 << iota
+)
+
+func F2() {}
+=== seed=1320 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+// Doc 0
+const C1 = 7
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+// Doc 0
+const C1 = 7
+=== seed=1345 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+=== seed=1347 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota
+	O1
+)
+
+func OF4() {}
+
+func F1() {}
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = iota
+)
+
+func F1() {}
+--- model
+C1=0:untyped int O1=1:untyped int | init
+=== seed=1364 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+)
+
+const (
+	C4 = iota * 10
+	C5 = iota - 1
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+	C4 = iota * 10
+	C5 = iota - 1
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+	C4 = iota * 10
+	C5 = iota - 1
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+=== seed=1393 sides=double model=commutative from=out_double/WRONG_COMMUT,out_main/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const C1 = iota
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+var (
+	v3 = rec("v3")
+)
+
+const C1 = iota
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func TF12() {}
+
+const C1 = iota
+--- model
+C1=0:untyped int | init v2,v1,v3
+=== seed=1395 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+const C4 = 1 << iota
+--- ours
+@header
+
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+const C4 = 7
+--- theirs
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+const C4 = 1 << iota
+
+func TF7() {}
+--- model
+C1=0:untyped int C2=1:untyped int C4=7:untyped int | init
+=== seed=1412 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const C1 = 1 << iota
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+const C1 = 1 << iota
+--- theirs
+@header
+
+func F1() {}
+=== seed=1414 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- theirs
+@header
+
+func TF2() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+=== seed=1424 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const C1 = iota - 1
+--- ours
+@header
+
+func F1() {}
+
+// Doc O
+const C1 = iota - 1
+--- theirs
+@header
+
+func F1() {}
+
+// Doc T
+const C1 = iota
+--- model
+C1=0:untyped int | init
+=== seed=1441 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+--- model
+ | init v2,v1
+=== seed=1452 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = 7
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = iota
+	C2
+)
+
+func OF1() {}
+--- theirs
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+func F1() {}
+
+func F2() {}
+--- model
+C1=0:untyped int C2=1:untyped int | init
+=== seed=1453 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+const (
+	C1 = iota
+)
+
+const (
+	C2 = iota + 2
+)
+--- ours
+@header
+
+const (
+	C1 = iota
+	C2 = iota + 2
+)
+--- theirs
+@header
+
+const (
+	C1 = iota
+	N3
+)
+
+const C2 = iota + 2
+=== seed=1465 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+var v1 = rec("v1")
+
+func F1() {}
+
+var (
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- theirs
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+=== seed=1484 sides=double model=commutative from=out_double/STRONG,out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func OF1() {}
+
+var (
+	v3 = rec("v3")
+)
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+	t6v = rec("t6v")
+)
+
+var (
+	v1 = rec("v1")
+	v3 = rec("v3")
+)
+--- model
+ | init v2,t6v,v1,v3
+=== seed=1499 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = 7
+	C2
+)
+
+func F1() {}
+
+func OF3() {}
+--- theirs
+@header
+
+const (
+	C1 = 7
+	T7
+	C2
+)
+
+func TF4() {}
+
+func F1() {}
+--- model
+C1=7:untyped int C2=7:untyped int T7=7:untyped int | init
+=== seed=1509 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = 7
+)
+
+func F1() {}
+
+const (
+	C2 = iota
+)
+--- ours
+@header
+
+const (
+	C1 = 7
+)
+
+func F1() {}
+
+const (
+	C2 = iota
+	O1
+)
+--- theirs
+@header
+
+const C1 = 1 << iota
+
+func F1() {}
+
+const (
+	C2 = iota
+)
+--- model
+C1=1:untyped int C2=0:untyped int O1=1:untyped int | init
+=== seed=1512 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const (
+	C1 = iota + 2
+	C2 = iota - 1
+)
+
+var (
+	v4 = rec("v4")
+)
+
+const (
+	C3 = iota * 10
+)
+
+var (
+	v5 = rec("v5")
+	v6 = rec("v6")
+)
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const (
+	C1 = iota + 2
+	C2 = iota - 1
+)
+
+var (
+	v4 = rec("v4")
+)
+
+const (
+	C3 = iota * 10
+)
+
+var (
+	v1 = rec("v1")
+	v5 = rec("v5")
+	v6 = rec("v6")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+// Doc T
+const (
+	C1 = iota + 2
+	C2 = iota - 1
+)
+
+var (
+	v4 = rec("v4")
+)
+
+const (
+	C3 = iota * 10
+)
+
+var (
+	v5 = rec("v5")
+	v6 = rec("v6")
+)
+--- model
+C1=2:untyped int C2=0:untyped int C3=0:untyped int | init v2,v3,v4,v1,v5,v6
+=== seed=1519 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+--- ours
+@header
+
+func F1() {}
+
+func OF4() {}
+--- theirs
+@header
+
+func F1() {}
+
+func TF7() {}
+
+var (
+	v1 = rec("v1")
+)
+=== seed=1525 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+)
+
+func OF7() {}
+--- theirs
+@header
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+)
+
+func F1() {}
+--- model
+C1=2:untyped int C2=3:untyped int C3=4:untyped int | init
+=== seed=1541 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const C1 = iota - 1
+--- ours
+@header
+
+// Doc O
+const C1 = iota - 1
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = iota + 2
+--- model
+C1=2:untyped int | init
+=== seed=1547 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const C1 = 7
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+
+func F2() {}
+--- ours
+@header
+
+var v1 = rec("v1")
+
+func F1() {}
+
+func F2() {}
+--- theirs
+@header
+
+const C1 = 7
+
+func TF5() {}
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+
+func F2() {}
+=== seed=1591 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+)
+
+var v1 = rec("v1")
+--- ours
+@header
+
+const (
+	C1 = iota + 2
+	C3 = iota + 2
+)
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+	T7
+)
+--- model
+C1=2:untyped int C3=3:untyped int T7=4:untyped int | init
+=== seed=1615 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const C1 = iota * 10
+--- ours
+@header
+
+func F1() {}
+
+// Doc O
+const C1 = iota * 10
+--- theirs
+@header
+
+func F1() {}
+
+// Doc T
+const C1 = iota * 10
+--- model
+C1=0:untyped int | init
+=== seed=1624 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	C2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	O1
+	C2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+)
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	T6
+	C2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func TF5() {}
+--- model
+C1=0:untyped int C2=3:untyped int O1=2:untyped int T6=1:untyped int | init v1,v2,v3
+=== seed=1671 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+--- ours
+@header
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+func TF6() {}
+=== seed=1676 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+// Doc O
+const (
+	C1 = iota * 10
+	C2
+)
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = iota + 2
+
+const (
+	C2 = iota * 10
+)
+--- model
+C1=0:untyped int C2=0:untyped int | init
+=== seed=1723 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = 7
+)
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+// Doc O
+const (
+	C1 = iota
+)
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+// Doc T
+const C1 = 7
+--- model
+C1=0:untyped int | init
+=== seed=1756 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+--- theirs
+@header
+
+func F1() {}
+
+func TF8() {}
+=== seed=1771 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = 7
+	C2
+	C3
+	C4
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = 7
+	C3
+	C4
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+const (
+	C3 = 7
+	C4
+)
+
+func F1() {}
+--- model
+C1=7:untyped int C3=7:untyped int C4=7:untyped int | init
+=== seed=1796 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2 = iota
+)
+--- theirs
+@header
+
+func F1() {}
+
+func TF3() {}
+
+const (
+	C1 = 7
+	C2
+)
+--- model
+C1=7:untyped int C2=1:untyped int | init
+=== seed=1802 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+=== seed=1805 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+)
+
+const C4 = iota * 10
+
+func F1() {}
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = 1 << iota
+	C2
+	C3
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+)
+
+func F1() {}
+=== seed=1810 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+=== seed=1812 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+const (
+	C1 = iota * 10
+	C2 = iota - 1
+	C3
+	C4
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C5 = iota
+	C6
+	C7
+)
+--- ours
+@header
+
+const (
+	C1 = iota * 10
+	C2
+	C3
+	C4
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C5 = iota
+	C6
+	C7
+)
+--- theirs
+@header
+
+const (
+	C1 = iota * 10
+	C3
+	C4
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C5 = iota
+	C2 = iota - 1
+	C6
+	C7
+)
+--- model
+C1=0:untyped int C2=1:untyped int C3=10:untyped int C4=20:untyped int C5=0:untyped int C6=2:untyped int C7=3:untyped int | init
+=== seed=1827 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C1 = 1 << iota
+	C2
+	C3 = 1 << iota
+)
+
+var (
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C1 = 1 << iota
+	C2
+	C3 = 1 << iota
+)
+
+var (
+	v5 = rec("v5")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C1 = 1 << iota
+	C2
+	C3 = 1 << iota
+)
+
+var (
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- model
+C1=1:untyped int C2=2:untyped int C3=4:untyped int | init v1,v2,v5,v3,v4
+=== seed=1830 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota - 1
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota - 1
+	O1
+	C2
+)
+
+func F1() {}
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = iota - 1
+	C2
+)
+
+func F1() {}
+--- model
+C1=-1:untyped int C2=1:untyped int O1=0:untyped int | init
+=== seed=1839 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = iota * 10
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+func F1() {}
+
+var (
+	v5 = rec("v5")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+func F1() {}
+
+const (
+	C1 = iota * 10
+	N2
+)
+
+var (
+	v5 = rec("v5")
+)
+--- theirs
+@header
+
+var (
+	v4 = rec("v4")
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+// Doc T
+const (
+	C1 = iota * 10
+)
+
+var (
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+var (
+	v5 = rec("v5")
+)
+--- model
+C1=0:untyped int N2=10:untyped int | init v4,v1,v2,v3,v5
+=== seed=1852 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+--- ours
+@header
+
+var v1 = rec("v1")
+
+func F1() {}
+--- theirs
+@header
+
+var v1 = rec("v1")
+
+func F1() {}
+=== seed=1861 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+	C2 = iota
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C2 = iota
+	C1
+)
+--- theirs
+@header
+
+const (
+	C1 = iota - 1
+	C2 = iota
+)
+
+func F1() {}
+--- model
+C1=1:untyped int C2=0:untyped int | init
+=== seed=1879 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota - 1
+)
+
+const (
+	C2 = 7
+	C3 = iota + 2
+	C4
+)
+
+func F2() {}
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C2 = 7
+	C3 = iota + 2
+	C4
+)
+
+func F2() {}
+
+// Doc 1
+const (
+	C1 = iota - 1
+	O1
+)
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = iota * 10
+
+const (
+	C3 = iota + 2
+	C2 = 7
+	C4
+)
+
+func F2() {}
+=== seed=1929 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota * 10
+	C2
+)
+
+const (
+	C3 = iota + 2
+	C4 = iota * 10
+)
+--- ours
+@header
+
+const (
+	C1 = iota * 10
+	C2
+)
+
+func OF1() {}
+
+const (
+	C4 = iota * 10
+)
+
+const C3 = iota * 10
+--- theirs
+@header
+
+const (
+	C1 = iota * 10
+	C2
+)
+
+const (
+	C3 = iota + 2
+	C4
+)
+=== seed=1953 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const C1 = iota
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+// Doc O
+const C1 = iota
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = iota
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var v3 = rec("v3")
+=== seed=1964 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+var v1 = rec("v1")
+
+const (
+	C1 = 7
+	C2
+	C3 = iota + 2
+	C4
+)
+--- ours
+@header
+
+var v1 = rec("v1")
+
+func OF4() {}
+
+const (
+	C1 = 7
+	C2
+	C3 = iota + 2
+	C4
+)
+--- theirs
+@header
+
+const (
+	C1 = 7
+	C2
+	C3 = iota + 2
+	C4
+)
+
+func TF9() {}
+=== seed=1966 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+const C1 = 7
+
+func F2() {}
+
+var v4 = rec("v4")
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+// Doc O
+const C1 = 7
+
+func F2() {}
+
+var v4 = rec("v4")
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+const C1 = 7
+
+func F2() {}
+
+var v4 = rec("v4")
+=== seed=1988 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C1 = iota
+)
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C1 = iota
+)
+
+func OF2() {}
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C1 = iota
+)
+=== seed=1993 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+// Doc 1
+const (
+	C1 = iota + 2
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+// Doc 1
+const (
+	C1 = iota + 2
+	N3 = iota * 10
+)
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+// Doc 1
+const (
+	T8 = iota + 2
+	C1 = iota + 2
+)
+--- model
+C1=3:untyped int N3=20:untyped int T8=2:untyped int | init v2,v1
+=== seed=1997 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota - 1
+	C2
+	C3
+	C4
+)
+
+const (
+	C5 = iota
+	C6
+)
+
+const (
+	C7 = iota + 2
+)
+--- ours
+@header
+
+const (
+	C1 = iota - 1
+	C2
+	C3
+	C4
+)
+
+const (
+	C5 = iota
+	C6
+	C7 = iota + 2
+)
+--- theirs
+@header
+
+const (
+	C1 = iota - 1
+	T3
+	C2
+	C3
+	C4
+)
+
+const (
+	C5 = iota
+	C6
+	C7 = iota + 2
+)
+=== seed=2054 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const C1 = iota - 1
+--- ours
+@header
+
+func F1() {}
+
+func OF23() {}
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = iota
+=== seed=2059 sides=double model=ambiguous from=out_double/COMPILE_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	T5
+)
+
+func F1() {}
+
+func TF4() {}
+=== seed=2101 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+const (
+	C3 = iota + 2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+const (
+	C3 = iota + 2
+)
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+const (
+	C3 = iota + 2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- model
+C1=1:untyped int C2=2:untyped int C3=2:untyped int | init v2,v1
+=== seed=2156 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+var v1 = rec("v1")
+--- ours
+@header
+
+func F1() {}
+
+func OF7() {}
+
+func F2() {}
+--- theirs
+@header
+
+var v1 = rec("v1")
+
+func F1() {}
+
+func F2() {}
+=== seed=2159 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+// Doc 0
+const C1 = 1 << iota
+
+const (
+	C2 = 7
+	C3
+	C4 = iota + 2
+	C5
+)
+
+const (
+	C6 = 1 << iota
+	C7 = iota + 2
+	C8 = iota + 2
+)
+
+// Doc 3
+const (
+	C9 = iota + 2
+	C10
+	C11 = iota * 10
+)
+--- ours
+@header
+
+// Doc 0
+const C1 = 1 << iota
+
+const (
+	C2 = 7
+	C3
+	C4 = iota + 2
+	C5
+)
+
+const (
+	C7 = iota + 2
+	C8 = iota + 2
+)
+
+// Doc 3
+const (
+	C9 = iota + 2
+	C10
+	C11 = iota * 10
+)
+--- theirs
+@header
+
+// Doc 0
+const C1 = 1 << iota
+
+const (
+	C2 = 7
+	C3
+	C4 = iota + 2
+	C5
+)
+
+const (
+	C6 = 1 << iota
+	C11
+	C7 = iota + 2
+	T3 = 7
+	C8 = iota + 2
+)
+
+// Doc 3
+const (
+	C9 = iota + 2
+	C10
+)
+=== seed=2171 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+var v1 = rec("v1")
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2 = iota
+)
+
+// Doc 3
+const (
+	C3 = iota + 2
+	C4 = iota + 2
+	C5 = iota * 10
+	C6
+)
+
+const (
+	C7 = iota * 10
+	C8 = iota - 1
+	C9 = iota + 2
+	C10
+)
+--- ours
+@header
+
+var v1 = rec("v1")
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2 = iota
+)
+
+// Doc 3
+const (
+	C3 = iota + 2
+	C4 = iota + 2
+	C5 = iota * 10
+	C6
+)
+
+const (
+	C8 = iota - 1
+	C9 = iota + 2
+	C10
+)
+--- theirs
+@header
+
+var v1 = rec("v1")
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2 = iota
+)
+
+// Doc 3
+const (
+	C3 = iota + 2
+	C4 = iota + 2
+	C5 = iota * 10
+	C6
+)
+
+const (
+	C8 = iota - 1
+	C9 = iota + 2
+	C10
+)
+=== seed=2181 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+func F1() {}
+
+const C1 = 7
+--- ours
+@header
+
+func F1() {}
+
+func OF9() {}
+--- theirs
+@header
+
+func F1() {}
+=== seed=2184 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota * 10
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+// Doc O
+const (
+	C1 = iota * 10
+)
+--- theirs
+@header
+
+const C1 = 1 << iota
+
+func F1() {}
+--- model
+C1=1:untyped int | init
+=== seed=2192 sides=double model=ambiguous from=out_double/COMPILE_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const C1 = iota
+
+const (
+	C2 = iota - 1
+)
+--- ours
+@header
+
+const (
+	C2 = iota - 1
+	C1
+)
+--- theirs
+@header
+
+const C1 = iota
+=== seed=2197 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+const C1 = iota + 2
+
+func F1() {}
+
+func F2() {}
+
+// Doc 3
+const (
+	C2 = 7
+	C3 = 7
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+const C1 = iota + 2
+
+func F1() {}
+
+func F2() {}
+
+// Doc 3
+const (
+	C2 = 7
+	C3
+)
+
+func OF3() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- theirs
+@header
+
+const C1 = iota + 2
+
+func F1() {}
+
+func F2() {}
+
+// Doc 3
+const (
+	C2 = iota - 1
+	C3 = 7
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- model
+C1=2:untyped int C2=-1:untyped int C3=0:untyped int | init v2,v3
+=== seed=2206 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+const C1 = iota - 1
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+func OF19() {}
+--- theirs
+@header
+
+func F1() {}
+=== seed=2208 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+const (
+	C3 = iota
+	C4 = iota * 10
+	C5 = iota * 10
+)
+--- ours
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+const (
+	C4 = iota * 10
+	C5 = iota * 10
+)
+
+const C3 = 1 << iota
+--- theirs
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+const (
+	C3 = iota
+	C4
+	C5 = iota * 10
+)
+=== seed=2211 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+// Doc 0
+const C1 = iota - 1
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+
+func TF3() {}
+=== seed=2215 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota
+)
+
+const (
+	C2 = iota - 1
+)
+--- ours
+@header
+
+const (
+	C1 = iota
+)
+
+const (
+	C2 = iota - 1
+	O1
+)
+--- theirs
+@header
+
+const (
+	C1 = iota
+)
+
+func TF4() {}
+=== seed=2217 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = iota - 1
+	C2
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const C1 = 1 << iota
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = iota - 1
+	T9
+	N10 = iota - 1
+	C2
+)
+=== seed=2238 sides=double model=commutative from=out_double/WRONG_COMMUT,out_main/WRONG_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const C1 = iota * 10
+
+func F2() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+func F1() {}
+
+const C1 = iota * 10
+
+func F2() {}
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = iota * 10
+
+func F2() {}
+
+func TF6() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func TF4() {}
+--- model
+C1=0:untyped int | init v2,v1
+=== seed=2252 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+// Doc 1
+const (
+	C2 = iota
+	C3
+	C4
+)
+--- ours
+@header
+
+// Doc 1
+const (
+	C2 = iota
+	C3
+	C4
+)
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+// Doc T
+const (
+	C2 = iota
+	C3
+	C4
+)
+--- model
+C2=0:untyped int C3=1:untyped int C4=2:untyped int | init
+=== seed=2260 sides=double model=ambiguous from=out_double/STRONG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+)
+
+// Doc 2
+const (
+	C1 = iota - 1
+	C2
+	C3
+)
+
+const (
+	C4 = iota * 10
+	C5 = 7
+)
+
+const (
+	C6 = iota + 2
+	C7
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+)
+
+// Doc 2
+const (
+	C1 = iota - 1
+	C2
+	O4
+	C3
+)
+
+const (
+	C4 = iota * 10
+	C5 = 7
+	C6 = iota + 2
+	C7
+)
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v1 = rec("v1")
+	v4 = rec("v4")
+)
+
+// Doc 2
+const (
+	C1 = iota - 1
+	C2
+	C3
+)
+
+const (
+	C4 = iota * 10
+	C5 = 7
+	C6 = iota + 2
+	C7
+)
+=== seed=2261 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+const C1 = iota + 2
+
+const C2 = iota - 1
+
+func F1() {}
+--- ours
+@header
+
+const C1 = iota - 1
+
+// Doc O
+const C2 = iota - 1
+
+func F1() {}
+--- theirs
+@header
+
+const C2 = 7
+
+func F1() {}
+
+const C1 = iota + 2
+--- model
+C1=-1:untyped int C2=7:untyped int | init
+=== seed=2263 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota - 1
+)
+
+func F1() {}
+
+const (
+	C2 = iota * 10
+	C3 = iota
+)
+
+// Doc 3
+const (
+	C4 = iota + 2
+	C5 = iota
+	C6
+)
+
+const (
+	C7 = iota - 1
+	C8
+	C9 = iota * 10
+)
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota - 1
+)
+
+func F1() {}
+
+const (
+	C2 = iota * 10
+	C3 = iota
+)
+
+// Doc 3
+const (
+	C4 = iota + 2
+	C5 = iota
+	C6
+)
+
+const (
+	C7 = iota - 1
+	C8
+)
+
+const (
+	C9 = iota * 10
+)
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota - 1
+)
+
+func F1() {}
+
+// Doc T
+const (
+	C2 = iota * 10
+	C3 = iota
+)
+
+// Doc 3
+const (
+	C4 = iota + 2
+	C5 = iota
+	C6
+)
+
+const (
+	C7 = iota - 1
+	C8
+	C9
+)
+=== seed=2280 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+	C2 = 7
+	C3
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+	C2 = 7
+	C3
+)
+
+func OF3() {}
+
+func OF1() {}
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+	C2 = 7
+)
+=== seed=2296 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+)
+--- ours
+@header
+
+func F1() {}
+
+func OF9() {}
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = 7
+=== seed=2314 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+)
+
+func F2() {}
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+=== seed=2317 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+	C4
+)
+
+const (
+	C5 = iota + 2
+	C6
+)
+--- ours
+@header
+
+var (
+	v5 = rec("v5")
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+)
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+	C4
+)
+
+const (
+	C5 = iota + 2
+	C6
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+	C4
+)
+
+func TF3() {}
+
+const (
+	C5 = iota + 2
+	C6
+)
+--- model
+C1=2:untyped int C2=3:untyped int C3=4:untyped int C4=5:untyped int C5=2:untyped int C6=3:untyped int | init v5,v1,v2,v3,v4
+=== seed=2331 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+)
+--- ours
+@header
+
+func F1() {}
+
+const C1 = 1 << iota
+--- theirs
+@header
+
+func F1() {}
+=== seed=2336 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const C1 = 7
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota
+)
+
+func F1() {}
+--- theirs
+@header
+
+const C1 = iota - 1
+
+func F1() {}
+=== seed=2342 sides=double model=commutative from=out_double/WRONG_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota
+	O5
+	O2
+	C2
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = iota
+	T8
+	C2
+)
+
+func F1() {}
+--- model
+C1=0:untyped int C2=4:untyped int O2=3:untyped int O5=2:untyped int T8=1:untyped int | init
+=== seed=2371 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+func OF1() {}
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C2 = iota * 10
+)
+
+func F1() {}
+=== seed=2386 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota
+)
+
+func F1() {}
+--- ours
+@header
+
+// Doc O
+const C1 = iota
+
+func F1() {}
+--- theirs
+@header
+
+const C1 = iota
+
+func F1() {}
+=== seed=2388 sides=double model=commutative from=out_double/WRONG_COMMUT,out_main/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = iota * 10
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func OF2() {}
+
+const (
+	C1 = iota * 10
+)
+
+func OF6() {}
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+// Doc T
+const (
+	C1 = iota * 10
+)
+--- model
+C1=0:untyped int | init v2,v1
+=== seed=2396 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const C1 = iota - 1
+
+const (
+	C2 = iota + 2
+	C3
+)
+--- ours
+@header
+
+const (
+	C2 = iota + 2
+	C3
+)
+--- theirs
+@header
+
+const C1 = iota - 1
+
+// Doc T
+const (
+	C2 = iota + 2
+	C3
+)
+--- model
+C2=2:untyped int C3=3:untyped int | init
+=== seed=2421 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = 1 << iota
+	C2
+)
+
+func F1() {}
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = 1 << iota
+	T3
+	C2
+)
+
+func F1() {}
+--- model
+C1=1:untyped int C2=4:untyped int T3=2:untyped int | init
+=== seed=2432 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+// Doc 1
+const C2 = 1 << iota
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+	O3
+)
+
+// Doc 1
+const C2 = 1 << iota
+--- theirs
+@header
+
+const C1 = 1 << iota
+
+// Doc 1
+const C2 = 1 << iota
+
+var (
+	n5v = rec("n5v")
+	v1 = rec("v1")
+)
+=== seed=2447 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota * 10
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+func OF1() {}
+--- theirs
+@header
+
+// Doc T
+const C1 = iota * 10
+
+func F1() {}
+=== seed=2456 sides=double model=commutative from=out_double/WRONG_COMMUT,out_main/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+--- model
+ | init v2,v1
+=== seed=2467 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+const (
+	C3 = iota + 2
+	C4
+)
+--- ours
+@header
+
+const (
+	C1 = 7
+)
+
+const (
+	C3 = iota + 2
+	C4
+)
+--- theirs
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+const (
+	T3 = iota - 1
+	C3 = iota + 2
+	C4
+)
+--- model
+C1=7:untyped int C3=3:untyped int C4=4:untyped int T3=-1:untyped int | init
+=== seed=2472 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+
+func OF2() {}
+--- theirs
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+=== seed=2486 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+func OF33() {}
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	N37
+)
+
+func TF38() {}
+
+func F1() {}
+=== seed=2489 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	C2 = iota + 2
+)
+
+func F1() {}
+--- ours
+@header
+
+// Doc 0
+const (
+	C2 = iota + 2
+)
+
+func F1() {}
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota
+)
+
+func F1() {}
+
+func TF4() {}
+--- model
+ | init
+=== seed=2500 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = 7
+)
+
+// Doc 1
+const (
+	C2 = iota
+)
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = 7
+	O1 = iota
+)
+
+// Doc 1
+const (
+	C2 = iota
+	O2
+)
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = 7
+)
+=== seed=2514 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	O3 = 1 << iota
+	C2
+)
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+)
+
+const C2 = iota * 10
+--- model
+C1=2:untyped int C2=0:untyped int O3=2:untyped int | init
+=== seed=2516 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+// Doc 0
+const C1 = iota * 10
+
+// Doc 1
+const (
+	C2 = iota + 2
+)
+--- ours
+@header
+
+// Doc 0
+const C1 = iota * 10
+
+func OF8() {}
+--- theirs
+@header
+
+// Doc 0
+const C1 = iota * 10
+
+// Doc 1
+const (
+	C2 = iota + 2
+	N9
+)
+=== seed=2544 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+// Doc 0
+const C1 = iota - 1
+
+func F1() {}
+--- ours
+@header
+
+// Doc O
+const C1 = iota - 1
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+=== seed=2554 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota * 10
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+)
+--- theirs
+@header
+
+func F1() {}
+
+// Doc T
+const (
+	C1 = iota * 10
+)
+
+func TF4() {}
+--- model
+C1=2:untyped int | init
+=== seed=2563 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const C1 = iota
+
+const (
+	C2 = iota * 10
+	C3
+)
+--- ours
+@header
+
+const C1 = iota
+
+func OF2() {}
+
+const (
+	C2 = iota * 10
+	C3
+)
+--- theirs
+@header
+
+const C1 = iota
+
+const (
+	C2 = iota * 10
+	C3
+)
+
+func TF3() {}
+--- model
+C1=0:untyped int C2=0:untyped int C3=10:untyped int | init
+=== seed=2576 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+	C2
+)
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+)
+
+const C2 = iota + 2
+=== seed=2600 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+)
+--- ours
+@header
+
+func F1() {}
+
+const C1 = iota
+
+func OF1() {}
+--- theirs
+@header
+
+func F1() {}
+
+func TF3() {}
+=== seed=2604 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C1 = 1 << iota
+	C2
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+// Doc O
+const (
+	C1 = 1 << iota
+	C2
+)
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = 1 << iota
+	C2
+)
+--- model
+C1=1:untyped int C2=2:untyped int | init
+=== seed=2610 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota
+	C2 = iota
+)
+
+// Doc 2
+const (
+	C3 = iota
+	C4 = iota
+)
+--- ours
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota
+	N2
+	C2 = iota
+)
+
+// Doc 2
+const (
+	C3 = iota
+	C4
+)
+--- theirs
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C2 = iota
+)
+
+// Doc 2
+const (
+	C3 = iota
+	C4 = iota
+)
+=== seed=2618 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const C1 = iota
+
+const (
+	C2 = iota + 2
+	C3 = 1 << iota
+	C4
+)
+--- ours
+@header
+
+const (
+	C2 = iota + 2
+	C3 = 1 << iota
+	C4
+)
+--- theirs
+@header
+
+const C1 = iota
+
+const (
+	C2 = iota + 2
+	N3
+	C3 = 1 << iota
+	C4
+)
+--- model
+C2=2:untyped int C3=4:untyped int C4=8:untyped int N3=3:untyped int | init
+=== seed=2619 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+const (
+	C1 = iota * 10
+	C2
+)
+
+const (
+	C3 = iota
+)
+--- ours
+@header
+
+const (
+	C1 = iota * 10
+	C2
+	C3 = iota
+)
+
+func OF2() {}
+--- theirs
+@header
+
+const (
+	C1 = iota * 10
+)
+
+const C3 = iota
+=== seed=2643 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+func F1() {}
+
+func OF9() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+=== seed=2650 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota * 10
+)
+--- ours
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota * 10
+	O8 = iota - 1
+	O4
+)
+--- theirs
+@header
+
+func F1() {}
+
+func TF12() {}
+=== seed=2668 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = 7
+	C2
+	C3
+	C4
+)
+
+const C5 = 7
+--- ours
+@header
+
+const (
+	C1 = 7
+	O2 = 7
+	C2
+	C3
+	C4
+)
+
+const C5 = 7
+
+func OF1() {}
+--- theirs
+@header
+
+const (
+	C1 = 7
+	C2
+	C3
+	C4
+)
+
+const C5 = 7
+
+func TF4() {}
+--- model
+C1=7:untyped int C2=7:untyped int C3=7:untyped int C4=7:untyped int C5=7:untyped int O2=7:untyped int | init
+=== seed=2740 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const C1 = 7
+
+func F1() {}
+
+const C2 = iota
+--- ours
+@header
+
+func F1() {}
+
+func OF4() {}
+
+const C1 = 7
+
+const C2 = iota
+--- theirs
+@header
+
+func F1() {}
+
+const C2 = iota
+=== seed=2744 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+const (
+	C1 = iota
+	C2
+	O4
+)
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v3 = rec("v3")
+)
+
+var v2 = rec("v2")
+--- theirs
+@header
+
+const (
+	T9 = 1 << iota
+	C1 = iota
+	C2
+)
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v3 = rec("v3")
+)
+
+var v2 = rec("v2")
+--- model
+C1=1:untyped int C2=2:untyped int O4=3:untyped int T9=1:untyped int | init v1,v3,v2
+=== seed=2748 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const (
+	C1 = iota - 1
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var v3 = rec("v3")
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const (
+	C1 = iota - 1
+	N4
+)
+
+func F1() {}
+=== seed=2752 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota - 1
+)
+
+func F1() {}
+
+func F2() {}
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+=== seed=2779 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+var v2 = rec("v2")
+
+const (
+	C1 = 7
+	C2
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C1 = 7
+)
+
+const C2 = iota * 10
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+var v2 = rec("v2")
+
+func TF4() {}
+
+const (
+	C1 = 7
+	C2
+)
+=== seed=2781 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const C1 = 1 << iota
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+// Doc O
+const C1 = 1 << iota
+--- theirs
+@header
+
+const C1 = iota
+
+func F1() {}
+--- model
+C1=0:untyped int | init
+=== seed=2810 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+var v1 = rec("v1")
+
+const (
+	C1 = iota
+	C2
+	C3
+)
+--- ours
+@header
+
+var v1 = rec("v1")
+
+// Doc O
+const (
+	C1 = iota
+	C2
+	C3
+)
+--- theirs
+@header
+
+var v1 = rec("v1")
+
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+func TF3() {}
+--- model
+C1=0:untyped int C2=1:untyped int C3=2:untyped int | init v1
+=== seed=2814 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const C1 = iota
+
+const (
+	C2 = 7
+)
+--- ours
+@header
+
+const (
+	C1 = iota
+)
+
+const (
+	C2 = 7
+)
+--- theirs
+@header
+
+const C2 = 7
+=== seed=2830 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+)
+--- ours
+@header
+
+func F1() {}
+
+const C1 = 1 << iota
+--- theirs
+@header
+
+func F1() {}
+=== seed=2862 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota * 10
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+	C2
+)
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota * 10
+	C2
+	T11
+)
+--- model
+C1=1:untyped int C2=2:untyped int T11=4:untyped int | init
+=== seed=2863 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+// Doc O
+const (
+	C1 = 1 << iota
+	C2
+)
+--- theirs
+@header
+
+func F1() {}
+
+// Doc T
+const (
+	C1 = 1 << iota
+	C2
+)
+
+func TF3() {}
+--- model
+C1=1:untyped int C2=2:untyped int | init
+=== seed=2866 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota
+)
+
+// Doc 1
+const C2 = iota + 2
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota
+)
+
+// Doc 1
+const C2 = iota + 2
+
+func OF1() {}
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota
+)
+=== seed=2874 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const C1 = iota - 1
+
+const (
+	C2 = 1 << iota
+	C3
+	C4
+)
+--- ours
+@header
+
+const (
+	C2 = 1 << iota
+	C3
+	C4
+)
+
+func OF3() {}
+--- theirs
+@header
+
+const C1 = iota - 1
+
+// Doc T
+const (
+	C2 = 1 << iota
+	C3
+	C4
+)
+--- model
+C2=1:untyped int C3=2:untyped int C4=4:untyped int | init
+=== seed=2885 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota * 10
+	C2 = 7
+)
+
+const (
+	C3 = iota * 10
+)
+
+func F1() {}
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota * 10
+	C2 = 7
+)
+
+func OF1() {}
+
+const (
+	C3 = iota * 10
+)
+
+func F1() {}
+--- theirs
+@header
+
+// Doc 0
+const (
+	C2 = 7
+)
+
+// Doc T
+const (
+	C3 = iota * 10
+)
+
+func F1() {}
+=== seed=2892 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota * 10
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = iota * 10
+)
+
+func F1() {}
+=== seed=2893 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+// Doc 1
+const (
+	C4 = iota * 10
+	C5
+)
+--- ours
+@header
+
+const (
+	C1 = iota
+	C2
+	C3
+	C4 = iota * 10
+)
+
+const C5 = iota - 1
+--- theirs
+@header
+
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+func TF7() {}
+
+// Doc 1
+const (
+	C4 = iota * 10
+	C5
+)
+
+func TF5() {}
+=== seed=2929 sides=double model=commutative from=out_double/WRONG_COMMUT,out_main/WRONG_COMMUT
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v5 = rec("v5")
+)
+--- theirs
+@header
+
+func F1() {}
+
+var (
+	v3 = rec("v3")
+)
+
+var v2 = rec("v2")
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- model
+ | init v3,v2,v5
+=== seed=2944 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota - 1
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = iota - 1
+	C2 = iota
+)
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+// Doc T
+const (
+	C1 = iota - 1
+	C2
+)
+--- model
+C1=-1:untyped int C2=1:untyped int | init
+=== seed=2983 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const C1 = iota
+--- ours
+@header
+
+func F1() {}
+
+func OF2() {}
+
+// Doc O
+const C1 = iota
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+)
+
+func TF3() {}
+--- model
+C1=0:untyped int | init
+=== seed=3030 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const C1 = 7
+
+// Doc 1
+const C2 = 1 << iota
+--- ours
+@header
+
+const C1 = 7
+
+// Doc O
+const C2 = 1 << iota
+--- theirs
+@header
+
+const C1 = 1 << iota
+
+// Doc T
+const C2 = 1 << iota
+--- model
+C1=1:untyped int C2=1:untyped int | init
+=== seed=3047 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota + 2
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C2 = 7
+	C3
+)
+--- ours
+@header
+
+func F1() {}
+
+// Doc 2
+const (
+	C2 = 7
+	C3
+)
+
+func OF3() {}
+--- theirs
+@header
+
+const (
+	C1 = iota + 2
+	T7
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C2 = 7
+)
+=== seed=3061 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const C1 = 7
+
+// Doc 1
+const (
+	C2 = 7
+)
+--- ours
+@header
+
+const C1 = 7
+
+// Doc 1
+const (
+	C2 = iota - 1
+)
+--- theirs
+@header
+
+// Doc T
+const C1 = 7
+
+// Doc 1
+const (
+	C2 = 7
+	T12
+)
+--- model
+C1=7:untyped int C2=-1:untyped int T12=0:untyped int | init
+=== seed=3085 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = iota + 2
+)
+
+const C2 = 7
+
+func F1() {}
+--- ours
+@header
+
+const C2 = 7
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+)
+--- theirs
+@header
+
+const (
+	C1 = iota + 2
+	N5
+)
+
+const C2 = 7
+
+func F1() {}
+--- model
+C1=2:untyped int C2=7:untyped int N5=3:untyped int | init
+=== seed=3086 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+func OF1() {}
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- theirs
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+=== seed=3087 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+const (
+	C1 = 1 << iota
+	C2
+	C3 = 7
+	C4 = 1 << iota
+)
+
+func F2() {}
+--- ours
+@header
+
+var (
+	v4 = rec("v4")
+	v1 = rec("v1")
+)
+
+func F1() {}
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const (
+	C1 = 1 << iota
+	C2
+	C3 = 7
+	C4 = 1 << iota
+)
+
+func F2() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+const (
+	C1 = 1 << iota
+	C2
+	C3 = 7
+	C4 = 1 << iota
+)
+
+func F2() {}
+--- model
+C1=1:untyped int C2=2:untyped int C3=7:untyped int C4=8:untyped int | init v4,v1,v3
+=== seed=3109 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = 1 << iota
+	C2 = iota - 1
+)
+--- ours
+@header
+
+func F1() {}
+
+func OF2() {}
+
+func F2() {}
+
+const (
+	C2 = iota - 1
+)
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+const C2 = 7
+=== seed=3141 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = iota * 10
+	C2
+	C3
+)
+
+func F3() {}
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = iota * 10
+	O4
+	C2
+	C3 = iota * 10
+)
+
+func F3() {}
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = iota * 10
+	C3
+	C2
+)
+
+func F3() {}
+--- model
+C1=0:untyped int C2=30:untyped int C3=10:untyped int O4=20:untyped int | init
+=== seed=3177 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const C1 = iota + 2
+
+// Doc 1
+const C2 = 1 << iota
+--- ours
+@header
+
+const C1 = iota + 2
+--- theirs
+@header
+
+const C1 = iota + 2
+
+// Doc 1
+const C2 = 1 << iota
+
+func TF4() {}
+=== seed=3180 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+	C2
+)
+
+func OF1() {}
+--- theirs
+@header
+
+const (
+	C1 = iota
+	T5
+	C2
+)
+
+func F1() {}
+--- model
+C1=0:untyped int C2=2:untyped int T5=1:untyped int | init
+=== seed=3198 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	C2 = iota - 1
+)
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C3 = iota - 1
+	C4
+)
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	N3
+	C2 = iota - 1
+)
+
+var (
+	o4v = rec("o4v")
+	v1 = rec("v1")
+)
+
+const (
+	C3 = iota - 1
+	C4
+)
+--- theirs
+@header
+
+// Doc 0
+const (
+	C2 = iota - 1
+)
+
+var (
+	v1 = rec("v1")
+)
+
+// Doc T
+const (
+	C3 = iota - 1
+	C4
+)
+=== seed=3206 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+// Doc O
+const (
+	C1 = 1 << iota
+	C2
+)
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = 1 << iota
+	C2
+)
+
+func F1() {}
+--- model
+C1=1:untyped int C2=2:untyped int | init
+=== seed=3207 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota + 2
+)
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+const (
+	C1 = iota + 2
+)
+--- theirs
+@header
+
+var v1 = rec("v1")
+=== seed=3239 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+const C1 = 1 << iota
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+// Doc O
+const C1 = 1 << iota
+
+func OF4() {}
+
+var (
+	v1 = rec("v1")
+)
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+var (
+	v1 = rec("v1")
+)
+--- model
+C1=1:untyped int | init v1
+=== seed=3321 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota
+	N3
+	C2
+)
+
+const (
+	C3 = 1 << iota
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = iota
+	T6
+	C2
+	C3
+)
+
+func F1() {}
+--- model
+C1=0:untyped int C2=3:untyped int C3=1:untyped int N3=2:untyped int T6=1:untyped int | init
+=== seed=3325 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota + 2
+)
+
+func F1() {}
+
+const (
+	C2 = iota
+	C3
+)
+--- ours
+@header
+
+const C1 = iota + 2
+
+func F1() {}
+
+const (
+	C2 = iota
+	C3
+)
+--- theirs
+@header
+
+const (
+	C1 = iota + 2
+	C2
+)
+
+func F1() {}
+=== seed=3353 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+	C2
+	C3
+)
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C4 = 7
+	C5
+	C6 = iota
+	C7
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+	C2
+	C3
+)
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C4 = 7
+	C6 = iota
+	C7
+)
+--- theirs
+@header
+
+const (
+	C4 = 7
+	C5
+	C6 = iota
+	C7
+)
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+	C2
+	C3
+)
+
+var (
+	v1 = rec("v1")
+)
+=== seed=3382 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = 7
+	C2 = iota + 2
+)
+
+func F1() {}
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = 7
+	C2 = iota + 2
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = 7
+	C2 = iota + 2
+)
+
+func F1() {}
+--- model
+C1=7:untyped int C2=3:untyped int | init
+=== seed=3386 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+)
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var v1 = rec("v1")
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+// Doc T
+const (
+	C1 = iota + 2
+	C2
+	C3
+)
+--- model
+C1=2:untyped int C2=3:untyped int C3=4:untyped int | init v2,v3,v1
+=== seed=3405 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+const (
+	C1 = iota * 10
+	C2 = iota + 2
+	C3
+	C4
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+const (
+	C5 = 1 << iota
+	C6
+)
+--- ours
+@header
+
+const (
+	C1 = iota * 10
+	C2
+	C3
+	C4
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+const (
+	C5 = 1 << iota
+	C6
+)
+--- theirs
+@header
+
+const (
+	C1 = iota * 10
+	C2 = iota + 2
+	C3
+	C4
+)
+
+var v2 = rec("v2")
+
+var (
+	v1 = rec("v1")
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+const (
+	C5 = 1 << iota
+	C6
+)
+--- model
+C1=0:untyped int C2=10:untyped int C3=20:untyped int C4=30:untyped int C5=1:untyped int C6=2:untyped int | init v2,v1,v3,v4
+=== seed=3415 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C1 = 7
+	C2
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C1 = 7
+	C2
+)
+
+func OF1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C1 = iota + 2
+	C2 = iota
+)
+--- model
+C1=2:untyped int C2=1:untyped int | init v1
+=== seed=3433 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+const C1 = iota + 2
+--- ours
+@header
+
+func F1() {}
+
+const C1 = iota
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = iota + 2
+=== seed=3434 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const (
+	C1 = iota
+)
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+const (
+	C1 = iota
+)
+--- theirs
+@header
+
+const (
+	C1 = iota
+)
+
+var (
+	v1 = rec("v1")
+)
+
+func TF2() {}
+=== seed=3476 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+)
+--- theirs
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+)
+=== seed=3478 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota - 1
+	C2
+	C3
+)
+
+func F2() {}
+
+func F3() {}
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+
+// Doc 1
+const (
+	C1 = iota - 1
+	O1
+	C2
+	C3
+)
+--- theirs
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota - 1
+	N3
+	C2
+	C3
+)
+
+func F2() {}
+
+func F3() {}
+--- model
+C1=-1:untyped int C2=2:untyped int C3=3:untyped int N3=0:untyped int O1=1:untyped int | init
+=== seed=3495 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+const (
+	C3 = iota + 2
+)
+--- ours
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+func OF4() {}
+
+const C3 = iota + 2
+--- theirs
+@header
+
+const (
+	C1 = iota
+)
+
+const (
+	C2 = iota - 1
+	C3 = iota + 2
+)
+=== seed=3501 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = 7
+	C2 = iota
+)
+
+const (
+	C3 = 7
+	C4 = 1 << iota
+	C5
+	C6
+)
+
+func F1() {}
+--- ours
+@header
+
+// Doc 0
+const (
+	C2 = iota
+	C3 = 7
+	C4 = 1 << iota
+	C5
+	C1
+	C6
+)
+
+func F1() {}
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = 7
+	C2 = iota
+)
+
+func TF5() {}
+
+const (
+	C3 = 7
+	C4 = 1 << iota
+	C5
+	C6
+)
+
+func F1() {}
+=== seed=3504 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+)
+
+const (
+	C4 = iota * 10
+	C5 = iota * 10
+	C6
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+	O2 = iota
+)
+
+const (
+	C4 = iota * 10
+	C6
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+	v1 = rec("v1")
+)
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+)
+
+const (
+	C5 = iota * 10
+	C6
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+=== seed=3511 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+	C2
+)
+
+func OF1() {}
+--- theirs
+@header
+
+func F1() {}
+
+// Doc T
+const (
+	C1 = iota
+	C2
+)
+--- model
+C1=0:untyped int C2=1:untyped int | init
+=== seed=3525 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+=== seed=3529 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var o1v = rec("o1v")
+--- theirs
+@header
+
+func F1() {}
+
+var (
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+)
+=== seed=3555 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const (
+	C1 = iota + 2
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+const C1 = iota + 2
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = iota + 2
+	C2
+	T5 = 1 << iota
+)
+
+func F1() {}
+=== seed=3572 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const C1 = iota
+--- ours
+@header
+
+const C1 = iota * 10
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = iota - 1
+=== seed=3607 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = 7
+	C2
+	C3
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = 7
+	C2
+	C3
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = 7
+	T4
+	C2
+	C3
+)
+
+func F1() {}
+--- model
+C1=7:untyped int C2=7:untyped int C3=7:untyped int T4=7:untyped int | init
+=== seed=3610 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+const C2 = 7
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+)
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+func TF6() {}
+=== seed=3619 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = iota + 2
+	C2
+	C3 = 7
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+)
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2
+	C3 = 7
+)
+--- model
+C1=2:untyped int C2=3:untyped int C3=4:untyped int | init
+=== seed=3626 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = iota + 2
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+const (
+	C1 = iota + 2
+)
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	T4 = iota + 2
+	C1 = iota + 2
+)
+
+func F1() {}
+--- model
+C1=3:untyped int T4=2:untyped int | init v2,v1
+=== seed=3632 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+--- ours
+@header
+
+var v2 = rec("v2")
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+--- model
+ | init v2,v1
+=== seed=3648 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+
+const C1 = 7
+--- ours
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+func F1() {}
+=== seed=3659 sides=double model=commutative from=out_double/WRONG_COMMUT,out_main/WRONG_COMMUT
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = 7
+)
+
+var v1 = rec("v1")
+
+var v2 = rec("v2")
+
+func F1() {}
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = 7
+)
+
+var v2 = rec("v2")
+
+var v1 = rec("v1")
+
+func F1() {}
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = 7
+)
+
+var v1 = rec("v1")
+
+var v2 = rec("v2")
+
+func F1() {}
+--- model
+C1=7:untyped int | init v2,v1
+=== seed=3679 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+var v1 = rec("v1")
+
+const (
+	C1 = iota
+	C2
+	C3
+)
+--- ours
+@header
+
+var v1 = rec("v1")
+
+// Doc O
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+func OF2() {}
+--- theirs
+@header
+
+const (
+	C1 = iota
+	C2
+	C3
+)
+--- model
+C1=0:untyped int C2=1:untyped int C3=2:untyped int | init
+=== seed=3704 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C1 = iota * 10
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+)
+--- theirs
+@header
+
+var v1 = rec("v1")
+
+const (
+	C1 = iota * 10
+	N7 = iota + 2
+)
+=== seed=3738 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+var (
+	v1 = rec("v1")
+	v3 = rec("v3")
+)
+--- model
+C1=0:untyped int C2=1:untyped int C3=2:untyped int | init v3,v1
+=== seed=3743 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+var v1 = rec("v1")
+
+var v2 = rec("v2")
+--- ours
+@header
+
+var v2 = rec("v2")
+--- theirs
+@header
+
+var v1 = rec("v1")
+
+func TF6() {}
+=== seed=3748 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+--- ours
+@header
+
+var v1 = rec("v1")
+
+func F1() {}
+
+func OF4() {}
+--- theirs
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+=== seed=3784 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota + 2
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota - 1
+)
+
+func F1() {}
+=== seed=3799 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = 7
+)
+
+func F1() {}
+
+func F2() {}
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = 7
+)
+
+func F1() {}
+
+func F2() {}
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = 7
+	T2
+)
+
+func F1() {}
+
+func F2() {}
+--- model
+C1=7:untyped int T2=7:untyped int | init
+=== seed=3860 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+// Doc 1
+const (
+	C2 = iota * 10
+)
+--- ours
+@header
+
+// Doc O
+const C1 = 1 << iota
+
+// Doc 1
+const (
+	C2 = iota * 10
+)
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	C2 = iota * 10
+	N4 = 7
+)
+=== seed=3866 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const C1 = 7
+
+const C2 = 7
+--- ours
+@header
+
+func F1() {}
+
+// Doc O
+const C1 = 7
+
+// Doc O
+const C2 = 7
+--- theirs
+@header
+
+func F1() {}
+
+// Doc 1
+const C1 = 7
+
+const (
+	C2 = 7
+)
+--- model
+C1=7:untyped int C2=7:untyped int | init
+=== seed=3872 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota - 1
+)
+
+// Doc 1
+const (
+	C2 = iota - 1
+	C3
+)
+
+const (
+	C4 = 1 << iota
+)
+--- ours
+@header
+
+const (
+	C1 = iota - 1
+	C2 = iota - 1
+	C3
+)
+
+const (
+	C4 = 1 << iota
+)
+--- theirs
+@header
+
+const (
+	C1 = iota - 1
+)
+
+func TF3() {}
+
+// Doc 1
+const (
+	C2 = iota - 1
+	C3
+)
+
+const (
+	C4 = 1 << iota
+)
+=== seed=3939 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2 = 7
+	C3
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2 = 7
+	C3
+)
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2 = 7
+	C3
+)
+
+func TF2() {}
+--- model
+C1=7:untyped int C2=7:untyped int C3=7:untyped int | init
+=== seed=3943 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+)
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+)
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+)
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+)
+=== seed=3945 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const C1 = 1 << iota
+
+// Doc 1
+const (
+	C2 = iota * 10
+	C3 = iota - 1
+)
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+// Doc 1
+const (
+	C2 = iota * 10
+	C3 = iota - 1
+)
+
+func OF1() {}
+--- theirs
+@header
+
+const C1 = 1 << iota
+
+// Doc 1
+const (
+	C3 = iota - 1
+)
+=== seed=3963 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota
+	C2 = iota
+	C3
+)
+
+const (
+	C4 = iota + 2
+	C5
+	C6
+	C7 = iota + 2
+)
+
+func F1() {}
+
+func F2() {}
+--- ours
+@header
+
+const (
+	C4 = iota + 2
+	C5
+	C6
+	C7 = iota + 2
+)
+
+func F1() {}
+
+const (
+	C2 = iota
+	C3
+)
+
+func F2() {}
+--- theirs
+@header
+
+const (
+	C4 = iota + 2
+	C5
+	C6
+	C7 = iota + 2
+)
+
+const (
+	C1 = iota
+	C2 = iota
+	C3
+)
+
+func F1() {}
+
+func F2() {}
+=== seed=4029 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+func F1() {}
+=== seed=4032 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+var (
+	o1v = rec("o1v")
+	v1 = rec("v1")
+)
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+
+func TF5() {}
+=== seed=4036 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+=== seed=4041 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+var (
+	n5v = rec("n5v")
+	v2 = rec("v2")
+	v1 = rec("v1")
+)
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+)
+=== seed=4072 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = 7
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+func OF15() {}
+--- theirs
+@header
+
+func F1() {}
+=== seed=4078 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+// Doc 0
+const C1 = 7
+
+const (
+	C2 = iota
+	C3
+)
+--- ours
+@header
+
+// Doc O
+const C1 = 7
+
+func OF7() {}
+
+const (
+	C2 = iota
+	C3
+)
+--- theirs
+@header
+
+const C1 = iota - 1
+
+const (
+	C2 = iota
+	C3
+)
+--- model
+C1=-1:untyped int C2=0:untyped int C3=1:untyped int | init
+=== seed=4079 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = 1 << iota
+	C2
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+const C2 = iota
+
+func F1() {}
+--- model
+C1=1:untyped int C2=0:untyped int | init
+=== seed=4081 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota * 10
+)
+
+// Doc 1
+const (
+	C2 = 7
+	C3
+	C4
+)
+--- ours
+@header
+
+const C1 = iota - 1
+
+// Doc 1
+const (
+	C2 = 7
+	C3
+	C4
+)
+--- theirs
+@header
+
+const (
+	C1 = iota * 10
+	C4
+)
+
+// Doc 1
+const (
+	C2 = 7
+	C3
+)
+=== seed=4090 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+var (
+	v1 = rec("v1")
+)
+
+func F3() {}
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+func TF13() {}
+
+func F3() {}
+=== seed=4094 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+// Doc 1
+const (
+	C1 = iota * 10
+	C2
+	C3
+)
+
+const (
+	C4 = 7
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+// Doc 1
+const (
+	C1 = iota * 10
+	C3
+	C4 = 7
+	C2
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+// Doc 1
+const (
+	C1 = iota * 10
+	C2
+	C3
+)
+
+func TF5() {}
+
+const (
+	C4 = 7
+)
+=== seed=4114 sides=double model=commutative from=out_double/WRONG_COMMUT,out_main/WRONG_COMMUT
+--- base
+@header
+
+// Doc 0
+const C1 = iota
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const C2 = 1 << iota
+--- ours
+@header
+
+// Doc 0
+const C1 = iota
+
+var (
+	v2 = rec("v2")
+)
+
+func OF10() {}
+
+var v1 = rec("v1")
+
+const C2 = 1 << iota
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const C2 = 1 << iota
+--- model
+C1=0:untyped int C2=1:untyped int | init v2,v1
+=== seed=4127 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota + 2
+	O1
+	C2
+	C3
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = iota + 2
+	C2
+	T2
+	C3
+)
+
+func F1() {}
+--- model
+C1=2:untyped int C2=4:untyped int C3=6:untyped int O1=3:untyped int T2=5:untyped int | init
+=== seed=4158 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+var v1 = rec("v1")
+
+var (
+	v2 = rec("v2")
+)
+--- theirs
+@header
+
+var v2 = rec("v2")
+=== seed=4195 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+const (
+	C4 = iota * 10
+	C5
+)
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota * 10
+	C2
+	C3
+	C4 = iota * 10
+	C5
+)
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+func TF6() {}
+
+const (
+	C4 = iota * 10
+	C5
+)
+=== seed=4196 sides=double model=ambiguous from=out_double/STRONG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+const C1 = iota + 2
+
+const (
+	C2 = iota - 1
+	C3
+	C4
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const (
+	C2 = iota - 1
+	C3
+	C4
+	C1
+)
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+const C1 = iota + 2
+
+const (
+	C2 = iota - 1
+	C3
+)
+=== seed=4197 sides=double model=commutative from=out_main/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+var v2 = rec("v2")
+
+func F1() {}
+--- theirs
+@header
+
+var v2 = rec("v2")
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+--- model
+ | init v2,v1
+=== seed=4198 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func OF3() {}
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var v1 = rec("v1")
+
+var (
+	v4 = rec("v4")
+	t7v = rec("t7v")
+	v5 = rec("v5")
+)
+--- model
+ | init v2,v1,v4,t7v,v5
+=== seed=4261 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota - 1
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+func OF13() {}
+--- theirs
+@header
+
+const C1 = 7
+
+func F1() {}
+=== seed=4280 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota
+)
+
+const (
+	C2 = 1 << iota
+	C3
+	C4
+)
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota
+)
+
+// Doc O
+const (
+	C2 = 1 << iota
+	C3
+	C4
+)
+--- theirs
+@header
+
+const (
+	C2 = 1 << iota
+	C3
+	C4
+)
+--- model
+C2=1:untyped int C3=2:untyped int C4=4:untyped int | init
+=== seed=4281 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const C1 = iota + 2
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+)
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+)
+=== seed=4284 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const C1 = 1 << iota
+
+// Doc 1
+const (
+	C2 = iota
+	C3
+)
+
+// Doc 2
+const (
+	C4 = 1 << iota
+)
+--- ours
+@header
+
+const C1 = 1 << iota
+
+const C2 = iota
+
+// Doc 2
+const (
+	C4 = 1 << iota
+	C3
+)
+--- theirs
+@header
+
+// Doc T
+const C1 = 1 << iota
+
+// Doc 1
+const (
+	C2 = iota
+	C3
+)
+
+const C4 = iota * 10
+=== seed=4288 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+=== seed=4299 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+const C3 = iota + 2
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+const C3 = iota + 2
+
+func OF3() {}
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+=== seed=4305 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+	C2 = iota
+	C3
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C2 = iota
+	C1 = iota
+	C3
+)
+--- theirs
+@header
+
+func F1() {}
+
+// Doc T
+const (
+	C1 = iota
+	C3 = iota
+	C2 = iota
+)
+--- model
+C1=2:untyped int C2=1:untyped int C3=0:untyped int | init
+=== seed=4317 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+const C1 = 1 << iota
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+)
+=== seed=4332 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = 7
+)
+--- ours
+@header
+
+func F1() {}
+--- theirs
+@header
+
+// Doc 1
+const C1 = 7
+
+func F1() {}
+=== seed=4336 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota * 10
+	C2 = iota + 2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota * 10
+)
+
+const (
+	C2 = iota - 1
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func OF3() {}
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota * 10
+	C2 = iota + 2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+=== seed=4352 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const C1 = iota + 2
+
+const (
+	C2 = iota * 10
+	C3 = iota + 2
+	C4
+	C5 = iota - 1
+)
+--- ours
+@header
+
+func F1() {}
+
+// Doc 1
+const C1 = iota + 2
+
+const (
+	C3 = iota + 2
+	C2
+	O3
+	C4
+	C5 = iota - 1
+)
+--- theirs
+@header
+
+func F1() {}
+
+// Doc 1
+const C1 = iota + 2
+
+const (
+	C2 = iota * 10
+	C4
+	C5 = iota - 1
+)
+
+func TF4() {}
+=== seed=4372 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+const (
+	C3 = iota * 10
+	C4 = 1 << iota
+)
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+const (
+	C3 = iota * 10
+	C4 = 1 << iota
+)
+
+func OF1() {}
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = 1 << iota
+	C2
+	C4 = 1 << iota
+)
+=== seed=4381 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = iota - 1
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+)
+
+func F2() {}
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = iota - 1
+	T4
+)
+--- model
+C1=-1:untyped int T4=0:untyped int | init
+=== seed=4391 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota + 2
+	C2 = iota - 1
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota + 2
+)
+
+const C2 = 1 << iota
+
+func F1() {}
+--- theirs
+@header
+
+// Doc T
+const (
+	C2 = iota - 1
+)
+
+func F1() {}
+--- model
+C2=1:untyped int | init
+=== seed=4409 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota
+)
+
+const (
+	C2 = 7
+)
+--- ours
+@header
+
+const C1 = iota * 10
+
+const (
+	C2 = 7
+)
+--- theirs
+@header
+
+const (
+	C2 = 7
+	T7 = iota - 1
+)
+=== seed=4423 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2 = iota - 1
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2
+)
+--- theirs
+@header
+
+func F1() {}
+
+// Doc T
+const (
+	C1 = 7
+	C2 = iota - 1
+)
+--- model
+C1=7:untyped int C2=7:untyped int | init
+=== seed=4461 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+func OF1() {}
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = iota
+)
+
+func F1() {}
+=== seed=4477 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+
+func F2() {}
+
+func OF2() {}
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+=== seed=4485 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+const (
+	C2 = 1 << iota
+)
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+	C2 = 1 << iota
+)
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	C2 = 1 << iota
+)
+=== seed=4511 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota * 10
+	C2
+)
+
+const (
+	C3 = 7
+)
+
+const (
+	C4 = iota - 1
+)
+--- ours
+@header
+
+const (
+	C1 = iota * 10
+	C2
+	C3 = 7
+)
+
+func OF4() {}
+
+const (
+	C4 = iota - 1
+)
+--- theirs
+@header
+
+const (
+	C3 = 7
+)
+
+func TF7() {}
+
+const (
+	C1 = iota * 10
+	C2
+)
+
+const (
+	C4 = iota - 1
+)
+=== seed=4563 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = iota - 1
+)
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+const C1 = iota - 1
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = iota - 1
+	T3
+)
+=== seed=4564 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2 = 1 << iota
+)
+
+const (
+	C3 = iota * 10
+	C4 = 7
+	C5
+)
+
+// Doc 2
+const (
+	C6 = iota - 1
+	C7 = iota * 10
+)
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+	C2 = 1 << iota
+)
+
+const (
+	C4 = 7
+	O2
+	C3
+	C5
+)
+
+// Doc 2
+const (
+	C6 = iota - 1
+	C7 = iota * 10
+)
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	C2 = 1 << iota
+)
+
+const (
+	C3 = iota * 10
+	C5
+)
+
+// Doc 2
+const (
+	C6 = 7
+	C7 = iota * 10
+)
+=== seed=4591 sides=double model=commutative from=out_double/WRONG_COMMUT,out_main/WRONG_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+)
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+)
+--- theirs
+@header
+
+func F1() {}
+
+var (
+	v3 = rec("v3")
+)
+
+const (
+	C1 = iota
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- model
+C1=0:untyped int | init v3,v1,v2
+=== seed=4606 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = iota + 2
+	C2 = iota * 10
+)
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C2 = iota * 10
+)
+
+func OF3() {}
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2 = iota * 10
+)
+
+func F2() {}
+=== seed=4616 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG
+--- base
+@header
+
+const C1 = iota * 10
+
+func F1() {}
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = iota * 10
+)
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+func TF7() {}
+=== seed=4621 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+// Doc 1
+const (
+	C1 = iota - 1
+	C2
+	C3
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+// Doc 1
+const (
+	C1 = iota - 1
+	C2
+	O2
+	C3
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+// Doc 1
+const (
+	C1 = iota - 1
+	C2
+	T9 = 7
+	C3
+)
+
+func TF8() {}
+--- model
+C1=-1:untyped int C2=0:untyped int C3=7:untyped int O2=7:untyped int T9=7:untyped int | init v1
+=== seed=4627 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C1 = 1 << iota
+	C2 = 1 << iota
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C1 = 1 << iota
+	C2
+)
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	C2 = 1 << iota
+)
+--- model
+C1=1:untyped int C2=2:untyped int | init
+=== seed=4666 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const C1 = 7
+
+const C2 = 7
+--- ours
+@header
+
+const C1 = 7
+
+// Doc O
+const C2 = iota * 10
+--- theirs
+@header
+
+const C1 = 7
+
+const C2 = 1 << iota
+=== seed=4708 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+func F1() {}
+
+func OF10() {}
+--- theirs
+@header
+
+func F1() {}
+
+func TF29() {}
+=== seed=4713 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota * 10
+)
+
+const (
+	C2 = 1 << iota
+	C3 = 7
+	C4
+)
+
+const (
+	C5 = iota * 10
+	C6
+	C7 = iota + 2
+	C8
+)
+--- ours
+@header
+
+const (
+	C1 = iota * 10
+)
+
+const (
+	C2 = 1 << iota
+	C3
+	C4
+)
+
+const (
+	C5 = iota * 10
+	C6
+)
+
+const (
+	C7 = iota + 2
+	C8
+)
+--- theirs
+@header
+
+const (
+	C1 = iota * 10
+)
+
+const (
+	C3 = 7
+	C4
+)
+
+const (
+	C5 = iota * 10
+	C6
+	C7 = iota + 2
+	C8
+)
+=== seed=4735 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = 1 << iota
+	C2
+	C3 = 1 << iota
+	C4
+)
+
+const (
+	C5 = 1 << iota
+	C6 = iota + 2
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+const (
+	C7 = 1 << iota
+	C8
+	C9
+)
+--- ours
+@header
+
+var (
+	v5 = rec("v5")
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = 1 << iota
+	C2
+	C3 = 1 << iota
+	C4
+)
+
+const (
+	C5 = 1 << iota
+	C6 = iota + 2
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+// Doc O
+const (
+	C7 = 1 << iota
+	C8
+	C9
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+// Doc T
+const (
+	C1 = 1 << iota
+	C2
+	C3 = 1 << iota
+	C4
+)
+
+const (
+	C5 = 1 << iota
+	C6 = iota + 2
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+const (
+	C7 = 1 << iota
+	C8
+	C9
+)
+
+func TF5() {}
+--- model
+C1=1:untyped int C2=2:untyped int C3=4:untyped int C4=8:untyped int C5=1:untyped int C6=3:untyped int C7=1:untyped int C8=2:untyped int C9=4:untyped int | init v5,v1,v2,v3,v4
+=== seed=4737 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+const C1 = 7
+
+const (
+	C2 = iota + 2
+	C3
+)
+--- ours
+@header
+
+const C1 = 7
+
+const (
+	C2 = iota + 2
+	O2
+	O4
+	C3
+)
+--- theirs
+@header
+
+const (
+	C1 = iota + 2
+	C3
+)
+=== seed=4768 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+func OF1() {}
+
+const (
+	C1 = iota + 2
+	C2
+)
+--- theirs
+@header
+
+const (
+	C1 = iota + 2
+	C2
+)
+
+func F1() {}
+
+func TF2() {}
+--- model
+C1=2:untyped int C2=3:untyped int | init
+=== seed=4777 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v3 = rec("v3")
+)
+
+func F1() {}
+=== seed=4792 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var v3 = rec("v3")
+--- ours
+@header
+
+var v1 = rec("v1")
+
+var v3 = rec("v3")
+--- theirs
+@header
+
+var (
+	v3 = rec("v3")
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func TF10() {}
+=== seed=4829 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+var v3 = rec("v3")
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+
+var v3 = rec("v3")
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+
+var v3 = rec("v3")
+=== seed=4839 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota
+)
+
+var v1 = rec("v1")
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+)
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = iota
+)
+
+var v1 = rec("v1")
+=== seed=4843 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const C1 = 1 << iota
+--- ours
+@header
+
+const C1 = iota * 10
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+// Doc T
+const C1 = 1 << iota
+--- model
+C1=0:untyped int | init
+=== seed=4852 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+func F1() {}
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = 1 << iota
+	O2
+)
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+)
+--- model
+C1=0:untyped int O2=1:untyped int | init
+=== seed=4866 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const (
+	C1 = iota + 2
+)
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+)
+--- theirs
+@header
+
+func F1() {}
+
+func TF11() {}
+=== seed=4869 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+const C1 = 7
+
+func F1() {}
+
+// Doc 2
+const (
+	C2 = iota * 10
+	C3 = iota + 2
+	C4
+)
+--- ours
+@header
+
+const C1 = 7
+
+func OF1() {}
+
+func F1() {}
+
+// Doc 2
+const (
+	C2 = iota * 10
+	C3 = iota + 2
+	C4
+)
+--- theirs
+@header
+
+func F1() {}
+
+// Doc 2
+const (
+	C3 = iota + 2
+	C4
+)
+
+const C2 = iota - 1
+=== seed=4910 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const C1 = iota + 2
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota + 2
+)
+
+func OF8() {}
+
+func F1() {}
+--- theirs
+@header
+
+// Doc T
+const C1 = iota + 2
+
+func F1() {}
+--- model
+C1=2:untyped int | init
+=== seed=4918 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+)
+--- ours
+@header
+
+func F1() {}
+
+func OF24() {}
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = 7
+=== seed=4932 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	O3 = iota
+	O1
+)
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	T5
+)
+=== seed=4941 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const C1 = 7
+
+const (
+	C2 = 1 << iota
+)
+--- ours
+@header
+
+const C1 = 7
+
+func OF5() {}
+--- theirs
+@header
+
+const (
+	C2 = iota
+	C1
+)
+=== seed=4948 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = 7
+)
+
+const C2 = 1 << iota
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+func F1() {}
+--- model
+C1=0:untyped int C2=1:untyped int | init
+=== seed=4978 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+func F2() {}
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	n3v = rec("n3v")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+func F2() {}
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+	v1 = rec("v1")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+func F2() {}
+--- model
+ | init v2,v1,n3v,v3
+=== seed=4982 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2 = 7
+	C3 = 1 << iota
+	C4 = iota - 1
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3 = 1 << iota
+	C4 = iota - 1
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C2 = 7
+	C3 = 1 << iota
+	C4 = iota - 1
+)
+
+const C1 = iota * 10
+
+func F1() {}
+=== seed=5020 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = 1 << iota
+	C2 = iota * 10
+	C3
+)
+
+// Doc 1
+const (
+	C4 = iota * 10
+	C5
+)
+--- ours
+@header
+
+// Doc 0
+const (
+	C2 = iota * 10
+	C3
+)
+
+// Doc 1
+const (
+	C4 = iota * 10
+	C5
+	O2
+)
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = 1 << iota
+	T4
+	C2 = iota * 10
+	C3
+)
+
+// Doc 1
+const (
+	C4 = iota * 10
+	C5
+)
+=== seed=5035 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota * 10
+	C2
+	C3
+	C4 = iota
+)
+
+// Doc 1
+const (
+	C5 = iota
+	C6 = iota - 1
+	C7
+)
+--- ours
+@header
+
+const (
+	C1 = iota * 10
+	C2
+	C3
+	C4 = iota
+)
+
+func OF1() {}
+
+// Doc 1
+const (
+	C5 = iota
+	C6 = iota - 1
+	C7
+)
+--- theirs
+@header
+
+const (
+	C1 = iota * 10
+	C2
+	C3
+	T2
+	C4 = iota
+	C5 = iota
+	C6 = iota - 1
+	C7
+)
+=== seed=5041 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = 1 << iota
+	C2
+	C3 = iota * 10
+	C4
+)
+
+// Doc 1
+const (
+	C5 = iota
+	C6
+)
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = 1 << iota
+	O2
+	C2
+	C3 = iota * 10
+	C4
+)
+
+// Doc 1
+const (
+	C5 = iota
+	C6
+)
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = 1 << iota
+	T4
+	C2
+	C3 = iota * 10
+	C4
+)
+
+// Doc 1
+const (
+	C5 = iota
+	C6
+)
+--- model
+C1=1:untyped int C2=8:untyped int C3=40:untyped int C4=50:untyped int C5=0:untyped int C6=1:untyped int O2=4:untyped int T4=2:untyped int | init
+=== seed=5051 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+)
+
+const (
+	C4 = iota - 1
+	C5
+)
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+const (
+	C4 = iota - 1
+	C3
+	C5
+)
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+)
+
+const C4 = iota + 2
+=== seed=5059 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C1 = 7
+)
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+// Doc O
+const (
+	C1 = 7
+	N4
+)
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+// Doc T
+const (
+	C1 = 7
+)
+--- model
+C1=7:untyped int N4=7:untyped int | init
+=== seed=5063 sides=double model=commutative from=out_double/STRONG,out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v5 = rec("v5")
+	v3 = rec("v3")
+)
+
+var (
+	v2 = rec("v2")
+	v4 = rec("v4")
+)
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- model
+ | init v5,v3,v2,v4
+=== seed=5072 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const C1 = 1 << iota
+
+// Doc 2
+const (
+	C2 = iota - 1
+	C3
+	C4
+)
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+const C1 = 1 << iota
+
+// Doc 2
+const (
+	C2 = iota - 1
+	C3
+	N2 = 1 << iota
+	C4
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+// Doc 2
+const (
+	C2 = iota - 1
+	C1
+	C3
+	C4
+)
+--- model
+C1=0:untyped int C2=-1:untyped int C3=1:untyped int C4=16:untyped int N2=8:untyped int | init v2,v1
+=== seed=5104 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func OF7() {}
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+var v2 = rec("v2")
+=== seed=5110 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const C1 = iota + 2
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+// Doc O
+const C1 = iota + 2
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+const C1 = 7
+=== seed=5123 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+var v1 = rec("v1")
+
+func F1() {}
+--- ours
+@header
+
+func OF4() {}
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+=== seed=5125 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+)
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	T11
+	T9
+	C2
+)
+--- model
+C1=2:untyped int T11=3:untyped int T9=4:untyped int | init
+=== seed=5145 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func OF1() {}
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+--- model
+ | init v2,v3,v1
+=== seed=5152 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v2 = rec("v2")
+	v1 = rec("v1")
+)
+--- theirs
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- model
+ | init v2,v1
+=== seed=5180 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+const (
+	C1 = iota
+	C2
+	C3 = iota - 1
+	C4
+)
+
+func F1() {}
+
+const (
+	C5 = iota + 2
+	C6 = 7
+)
+
+func F2() {}
+--- ours
+@header
+
+const (
+	C1 = iota
+	C2
+	C4
+)
+
+func F1() {}
+
+const (
+	C5 = iota + 2
+	C6 = 7
+)
+
+func F2() {}
+--- theirs
+@header
+
+const (
+	C1 = iota
+	C2
+	C4
+)
+
+func F1() {}
+
+const (
+	C5 = iota + 2
+	C6 = 7
+)
+
+func F2() {}
+=== seed=5186 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+	v6 = rec("v6")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v6 = rec("v6")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+)
+
+var (
+	v5 = rec("v5")
+	v6 = rec("v6")
+)
+--- model
+ | init v1,v2,v6,v3,v5
+=== seed=5209 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota * 10
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota * 10
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota * 10
+	T2 = iota - 1
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+--- model
+C1=0:untyped int T2=0:untyped int | init v2,v1
+=== seed=5217 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+// Doc 2
+const (
+	C1 = 1 << iota
+	C2
+)
+
+func F3() {}
+
+func F4() {}
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+// Doc 2
+const (
+	C1 = 1 << iota
+	C2
+)
+
+func OF1() {}
+
+func F3() {}
+
+func F4() {}
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+const C1 = iota * 10
+
+func F3() {}
+
+func F4() {}
+=== seed=5257 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const C1 = iota
+
+func F1() {}
+--- ours
+@header
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = iota - 1
+)
+
+func F1() {}
+=== seed=5260 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const C1 = 1 << iota
+
+const (
+	C2 = iota * 10
+	C3 = iota + 2
+)
+--- ours
+@header
+
+func F1() {}
+
+const C1 = iota
+
+// Doc O
+const (
+	C2 = iota * 10
+	C3 = iota + 2
+)
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = 1 << iota
+
+const (
+	C2 = iota * 10
+	C3 = iota + 2
+)
+=== seed=5272 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+)
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const (
+	C1 = 1 << iota
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var v3 = rec("v3")
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+)
+=== seed=5325 sides=double model=ambiguous from=out_main/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+	C4
+)
+
+const (
+	C5 = iota * 10
+	C6 = iota - 1
+)
+
+const (
+	C7 = iota
+)
+
+// Doc 3
+const (
+	C8 = 1 << iota
+	C9
+	C10 = 7
+	C11 = iota
+)
+
+const C12 = iota * 10
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+	C4
+	C5 = iota * 10
+	C6 = iota - 1
+)
+
+const (
+	C7 = iota
+)
+
+// Doc 3
+const (
+	C8 = 1 << iota
+	C9
+	C10 = 7
+	C11 = iota
+)
+
+const C12 = iota * 10
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3
+	C4
+	C5 = iota * 10
+	C6 = iota - 1
+)
+
+const (
+	C7 = iota
+)
+
+// Doc 3
+const (
+	C8 = 1 << iota
+	C9
+	C10 = 7
+	C11 = iota
+)
+
+const C12 = iota * 10
+=== seed=5336 sides=double model=commutative from=out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+const C3 = iota
+--- ours
+@header
+
+const (
+	C1 = 7
+	N2
+	C2
+)
+
+const C3 = iota
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = 7
+	C2
+)
+
+const C3 = iota
+--- model
+C1=7:untyped int C2=7:untyped int C3=0:untyped int N2=7:untyped int | init
+=== seed=5359 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = iota - 1
+	C2 = 7
+	C3
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = iota - 1
+	C2 = 7
+	N1
+	C3
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+// Doc T
+const (
+	C1 = iota - 1
+	C3
+	C2 = 7
+)
+--- model
+C1=-1:untyped int C2=7:untyped int C3=1:untyped int N1=0:untyped int | init v1,v2
+=== seed=5403 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3 = iota - 1
+	C4 = 1 << iota
+)
+
+const (
+	C5 = iota
+	C6
+)
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3 = iota - 1
+	C4 = 1 << iota
+	O1
+)
+
+const (
+	C5 = iota
+	C6
+)
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+	C3 = iota - 1
+	C4 = 1 << iota
+)
+
+const (
+	T4 = iota - 1
+)
+
+const (
+	C5 = iota
+	C6
+)
+=== seed=5409 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const C1 = iota - 1
+
+var v1 = rec("v1")
+--- ours
+@header
+
+const C1 = iota - 1
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+const C1 = iota + 2
+
+func TF13() {}
+
+var v1 = rec("v1")
+=== seed=5411 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG
+--- base
+@header
+
+const C1 = iota - 1
+
+const (
+	C2 = iota + 2
+)
+--- ours
+@header
+
+const (
+	C2 = iota + 2
+	C1 = iota * 10
+)
+--- theirs
+@header
+
+const (
+	C2 = iota + 2
+)
+=== seed=5412 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota + 2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const C2 = iota + 2
+--- ours
+@header
+
+const (
+	C1 = iota + 2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- theirs
+@header
+
+const (
+	C1 = iota + 2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func TF3() {}
+
+const C2 = iota + 2
+
+func TF2() {}
+=== seed=5424 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota * 10
+	C2 = iota - 1
+	C3 = 7
+)
+
+// Doc 1
+const (
+	C4 = 7
+	C5
+)
+--- ours
+@header
+
+const (
+	C1 = iota * 10
+	C3
+	C2 = iota - 1
+)
+
+// Doc 1
+const (
+	C4 = 7
+	C5
+)
+--- theirs
+@header
+
+const (
+	C2 = iota - 1
+	N2
+	C3 = 7
+)
+
+// Doc 1
+const (
+	C4 = 7
+	C5
+)
+=== seed=5425 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota * 10
+	C2
+	C3
+	C4
+)
+
+// Doc 1
+const (
+	C5 = iota - 1
+	C6
+	C7
+)
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota * 10
+	C2
+	C3
+	C4
+)
+
+func OF3() {}
+
+// Doc 1
+const (
+	C5 = iota - 1
+	C6
+	C7
+)
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota * 10
+	C2
+	C3
+	C4
+	C5 = iota - 1
+	C6
+	C7
+)
+=== seed=5433 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+func F2() {}
+
+// Doc 3
+const (
+	C1 = iota * 10
+	C2
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func OF3() {}
+
+func F1() {}
+
+func F2() {}
+
+// Doc 3
+const (
+	C1 = iota * 10
+	C2
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func F1() {}
+
+func F2() {}
+
+// Doc 3
+const (
+	C1 = iota * 10
+	T4
+	C2
+)
+=== seed=5454 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota - 1
+	C2
+	C3
+	C4 = iota * 10
+)
+
+// Doc 1
+const (
+	C5 = 7
+	C6
+)
+
+const (
+	C7 = iota - 1
+)
+--- ours
+@header
+
+const (
+	C1 = iota - 1
+	C2
+	C3
+	C4 = iota * 10
+)
+
+func OF2() {}
+
+// Doc 1
+const (
+	C5 = 7
+	C6
+)
+
+const (
+	C7 = iota - 1
+	O3
+)
+--- theirs
+@header
+
+const (
+	C1 = iota - 1
+	C3
+	C4 = iota * 10
+	C5 = 7
+	C6
+	C2
+)
+
+const (
+	C7 = iota - 1
+)
+=== seed=5460 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota * 10
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = iota * 10
+	C2
+)
+
+func F1() {}
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = iota * 10
+	N3 = 7
+	C2
+)
+
+func F1() {}
+--- model
+C1=0:untyped int C2=7:untyped int N3=7:untyped int | init
+=== seed=5470 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+--- theirs
+@header
+
+func F1() {}
+=== seed=5474 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+const (
+	C1 = iota * 10
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = iota * 10
+	C2
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = iota * 10
+	C2
+)
+
+func TF7() {}
+
+func F1() {}
+--- model
+C1=0:untyped int C2=10:untyped int | init
+=== seed=5533 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+)
+--- ours
+@header
+
+func F1() {}
+
+const C1 = iota + 2
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = 1 << iota
+	T4 = 1 << iota
+)
+
+func TF5() {}
+=== seed=5557 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const C1 = iota * 10
+
+func F1() {}
+--- ours
+@header
+
+const C1 = iota * 10
+
+func OF1() {}
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+func TF5() {}
+=== seed=5586 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const (
+	C1 = 7
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = 7
+	O4 = 7
+)
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+=== seed=5622 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C1 = 7
+	C2 = iota * 10
+	C3
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C2 = iota * 10
+	C3
+)
+
+var (
+	v4 = rec("v4")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+const (
+	C1 = 7
+	C2
+	C3
+)
+
+var (
+	t10v = rec("t10v")
+	v2 = rec("v2")
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+=== seed=5643 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2
+)
+
+const C3 = 7
+--- ours
+@header
+
+const C3 = 7
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2 = 1 << iota
+)
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2
+)
+=== seed=5649 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2
+	C3 = iota + 2
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2
+	C3 = iota + 2
+)
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	T3
+	C2
+	C3 = iota + 2
+)
+--- model
+C1=7:untyped int C2=7:untyped int C3=5:untyped int T3=7:untyped int | init
+=== seed=5655 sides=double model=commutative from=out_double/CONFLICT_COMMUT,out_main/CONFLICT_COMMUT
+--- base
+@header
+
+const C1 = 1 << iota
+
+var v1 = rec("v1")
+--- ours
+@header
+
+// Doc O
+const C1 = 1 << iota
+--- theirs
+@header
+
+const C1 = 7
+
+var v1 = rec("v1")
+--- model
+C1=7:untyped int | init
+=== seed=5661 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+const C1 = 1 << iota
+
+func F1() {}
+--- ours
+@header
+
+// Doc O
+const C1 = 1 << iota
+
+func F1() {}
+--- theirs
+@header
+
+func F1() {}
+
+func TF8() {}
+=== seed=5676 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+const C1 = iota
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+)
+--- theirs
+@header
+
+func F1() {}
+=== seed=5693 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+var v2 = rec("v2")
+--- ours
+@header
+
+var (
+	o4v = rec("o4v")
+	v1 = rec("v1")
+)
+
+var v2 = rec("v2")
+--- theirs
+@header
+=== seed=5695 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+// Doc 2
+const (
+	C1 = iota * 10
+	C2 = 7
+)
+
+const C3 = iota * 10
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+// Doc 2
+const (
+	C1 = iota * 10
+	C2 = 7
+)
+
+func OF1() {}
+
+const C3 = iota * 10
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+// Doc 2
+const (
+	C2 = 7
+)
+
+const C3 = iota * 10
+=== seed=5698 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+func F1() {}
+--- ours
+@header
+
+const C1 = 1 << iota
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	T3 = 1 << iota
+)
+
+func F1() {}
+=== seed=5739 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_MATCH,out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+func F1() {}
+
+func OF1() {}
+
+var (
+	v1 = rec("v1")
+)
+
+func OF2() {}
+--- theirs
+@header
+
+func F1() {}
+
+func TF3() {}
+=== seed=5747 sides=double model=commutative from=out_double/CONFLICT_COMMUT
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+)
+
+const (
+	C2 = iota
+)
+
+func F1() {}
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = 1 << iota
+	C2
+	T3
+)
+
+func F1() {}
+--- model
+C1=1:untyped int C2=0:untyped int T3=1:untyped int | init
+=== seed=5760 sides=double model=commutative from=out_main/COMPILE
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+	C2
+	C3
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+	C2
+	C3
+)
+
+func OF1() {}
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota
+	C3
+	N3
+)
+--- model
+C1=0:untyped int C3=1:untyped int N3=2:untyped int | init
+=== seed=5784 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+
+var v1 = rec("v1")
+--- ours
+@header
+
+func F1() {}
+
+func F2() {}
+
+func OF7() {}
+
+func F3() {}
+--- theirs
+@header
+
+func F1() {}
+
+func F2() {}
+
+func F3() {}
+=== seed=5787 sides=double model=ambiguous from=out_main/CLEAN_AMBIG_MATCH
+--- base
+@header
+
+func F1() {}
+
+const C1 = iota * 10
+
+func F2() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+func F1() {}
+
+const C1 = iota * 10
+
+func F2() {}
+
+var (
+	v1 = rec("v1")
+)
+
+func OF1() {}
+--- theirs
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const C1 = iota * 10
+
+func F2() {}
+=== seed=5835 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH,out_main/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+--- ours
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+
+func TF19() {}
+=== seed=5838 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+// Doc 2
+const (
+	C1 = iota * 10
+	C2 = iota
+	C3
+)
+
+// Doc 3
+const (
+	C4 = iota
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+// Doc 2
+const (
+	C1 = iota * 10
+	C2 = iota
+)
+--- theirs
+@header
+
+var (
+	v4 = rec("v4")
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+)
+
+// Doc 2
+const (
+	C1 = iota * 10
+	C2 = iota
+	C3
+)
+
+// Doc 3
+const (
+	C4 = iota
+)
+--- model
+C1=0:untyped int C2=1:untyped int | init v4,v1,v2,v3
+=== seed=5845 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota * 10
+	C2 = iota
+	C3
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota * 10
+	C2 = iota
+	C3
+)
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+// Doc T
+const (
+	C1 = iota * 10
+	C2 = iota
+	C3
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func TF5() {}
+--- model
+C1=0:untyped int C2=1:untyped int C3=2:untyped int | init v2,v1
+=== seed=5879 sides=double model=commutative from=out_double/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = 7
+	C2
+	C3 = 1 << iota
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+const (
+	C1 = 7
+	C2
+	N2 = iota
+	C3 = 1 << iota
+	N4
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- theirs
+@header
+
+const (
+	C1 = 7
+	C2
+	C3 = 1 << iota
+)
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+--- model
+C1=7:untyped int C2=7:untyped int C3=8:untyped int N2=2:untyped int N4=16:untyped int | init v2,v1
+=== seed=5925 sides=double model=ambiguous from=out_main/COMPILE_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v4 = rec("v4")
+)
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func OF4() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	t5v = rec("t5v")
+	v2 = rec("v2")
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+func F1() {}
+=== seed=5951 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG,out_main/CONFLICT_AMBIG
+--- base
+@header
+
+func F1() {}
+
+var v1 = rec("v1")
+--- ours
+@header
+
+func F1() {}
+
+func OF7() {}
+--- theirs
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+)
+=== seed=5956 sides=double model=ambiguous from=out_double/COMPILE_AMBIG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const (
+	C1 = iota - 1
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const (
+	C1 = iota - 1
+	O1
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const C1 = iota - 1
+=== seed=5967 sides=double model=ambiguous from=out_double/CLEAN_AMBIG_NOMATCH
+--- base
+@header
+
+const (
+	C1 = iota - 1
+	C2 = 1 << iota
+)
+
+const C3 = iota
+--- ours
+@header
+
+const (
+	C1 = iota - 1
+	C2 = 1 << iota
+	N4
+)
+
+// Doc O
+const C3 = iota
+--- theirs
+@header
+
+const (
+	C1 = iota - 1
+	T7
+)
+
+const C3 = iota
+=== seed=5979 sides=double model=ambiguous from=out_double/CONFLICT_AMBIG
+--- base
+@header
+
+const (
+	C1 = iota
+)
+
+// Doc 1
+const C2 = iota
+--- ours
+@header
+
+const C1 = iota * 10
+--- theirs
+@header
+
+const (
+	C1 = 7
+)
+
+// Doc T
+const C2 = iota
+=== seed=6292 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+// Doc 1
+const C1 = 7
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+var (
+	v3 = rec("v3")
+	v1 = rec("v1")
+)
+
+// Doc 1
+const C1 = 7
+
+var (
+	v2 = rec("v2")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+)
+
+func TF6() {}
+
+// Doc 1
+const C1 = 7
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- model
+C1=7:untyped int | init v3,v1,v2
+=== seed=6516 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+// Doc 1
+const C1 = iota - 1
+
+const (
+	C2 = iota - 1
+	C3
+	C4
+	C5
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- ours
+@header
+
+var (
+	v5 = rec("v5")
+	v1 = rec("v1")
+)
+
+var v2 = rec("v2")
+
+// Doc 1
+const C1 = iota - 1
+
+const (
+	C2 = iota - 1
+	C3
+	C4
+	C5
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+// Doc 1
+const C1 = iota - 1
+
+const (
+	C2 = iota - 1
+	C3
+	C4 = 1 << iota
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- model
+C1=-1:untyped int C2=-1:untyped int C3=0:untyped int C4=4:untyped int | init v5,v1,v2,v3,v4
+=== seed=6538 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+const (
+	C1 = 7
+	C2 = 7
+	C3
+	C4
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+// Doc 2
+const (
+	C5 = iota + 2
+	C6 = 7
+)
+
+var (
+	v4 = rec("v4")
+)
+
+func F1() {}
+--- ours
+@header
+
+const (
+	C1 = 7
+	C2 = 7
+	C3
+	C4
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+// Doc 2
+const (
+	C5 = iota + 2
+	C6 = 7
+)
+
+var (
+	v1 = rec("v1")
+	v4 = rec("v4")
+)
+
+func F1() {}
+--- theirs
+@header
+
+const (
+	C1 = 7
+	C2 = 7
+)
+
+const (
+	C3 = iota * 10
+	C4
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+// Doc T
+const (
+	C5 = iota + 2
+	C6 = 7
+)
+
+var (
+	v4 = rec("v4")
+)
+
+func F1() {}
+--- model
+C1=7:untyped int C2=7:untyped int C3=0:untyped int C4=10:untyped int C5=2:untyped int C6=7:untyped int | init v2,v3,v1,v4
+=== seed=6943 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+const (
+	C1 = iota
+	C2 = iota
+	C3 = iota + 2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+const (
+	C4 = iota + 2
+	C5
+)
+--- ours
+@header
+
+const (
+	C1 = iota
+	C2 = iota
+	C3 = iota + 2
+)
+
+var (
+	v4 = rec("v4")
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v5 = rec("v5")
+)
+
+const (
+	C4 = iota + 2
+	C5
+)
+--- theirs
+@header
+
+const (
+	C1 = iota
+	C2 = iota
+	C3 = iota + 2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	t3v = rec("t3v")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+const (
+	C4 = iota + 2
+	C5
+)
+--- model
+C1=0:untyped int C2=1:untyped int C3=4:untyped int C4=2:untyped int C5=3:untyped int | init v4,v1,v2,t3v,v3,v5
+=== seed=7608 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+const (
+	C1 = iota + 2
+	C2 = iota + 2
+)
+
+const (
+	C3 = 7
+	C4
+	C5 = iota * 10
+	C6
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+--- ours
+@header
+
+const (
+	C1 = iota + 2
+	C2
+)
+
+const (
+	C3 = 7
+	C4
+	C5 = iota * 10
+	C6
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+--- theirs
+@header
+
+const (
+	C1 = iota + 2
+	C2 = iota + 2
+)
+
+// Doc T
+const (
+	C3 = 7
+	C4
+	C5 = iota * 10
+	C6
+)
+
+var (
+	v4 = rec("v4")
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+)
+--- model
+C1=2:untyped int C2=3:untyped int C3=7:untyped int C4=7:untyped int C5=20:untyped int C6=30:untyped int | init v4,v1,v2,v3
+=== seed=7961 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const (
+	C1 = 7
+	C2 = iota
+	C3 = iota
+)
+
+const (
+	C4 = iota + 2
+	C5 = iota - 1
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+var (
+	v6 = rec("v6")
+	v7 = rec("v7")
+)
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const (
+	C1 = 7
+	C2 = iota
+	C3
+)
+
+const (
+	C4 = iota + 2
+	C5 = iota - 1
+)
+
+var (
+	v1 = rec("v1")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+var (
+	v6 = rec("v6")
+	v7 = rec("v7")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const (
+	C1 = 7
+	C2 = iota
+	C3 = iota
+)
+
+func TF8() {}
+
+const (
+	C4 = iota + 2
+	N5
+	C5 = iota - 1
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+var (
+	v6 = rec("v6")
+	v7 = rec("v7")
+)
+--- model
+C1=7:untyped int C2=1:untyped int C3=2:untyped int C4=2:untyped int C5=1:untyped int N5=3:untyped int | init v2,v3,v1,v4,v5,v6,v7
+=== seed=8464 sides=double model=ambiguous from=out_double/STRONG
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota * 10
+)
+
+// Doc 2
+const (
+	C2 = iota - 1
+	C3
+	C4 = iota * 10
+)
+
+const (
+	C5 = iota * 10
+	C6 = 1 << iota
+	C7
+)
+--- ours
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota * 10
+)
+
+// Doc 2
+const (
+	C2 = iota - 1
+	C3
+	C4 = iota * 10
+)
+
+const (
+	C5 = iota * 10
+	C6 = 1 << iota
+	O1
+	C7
+)
+--- theirs
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota * 10
+)
+
+// Doc 2
+const (
+	C2 = iota - 1
+	N6
+	C3
+)
+
+const (
+	C5 = iota * 10
+	C6 = 1 << iota
+	C4 = iota * 10
+	C7
+)
+=== seed=9114 sides=double model=commutative from=out_double/STRONG
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	C2 = 1 << iota
+	C3 = iota - 1
+	C4 = iota
+)
+
+const (
+	C5 = iota - 1
+	C6
+	C7
+	C8
+)
+
+// Doc 2
+const C9 = iota * 10
+
+func F1() {}
+
+func F2() {}
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	C2 = 1 << iota
+	C3 = iota - 1
+	C4 = iota
+)
+
+const (
+	C5 = iota - 1
+	O1
+	C6
+	C7
+	C8
+)
+
+// Doc 2
+const C9 = iota * 10
+
+func F1() {}
+
+func F2() {}
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota
+	C2 = 1 << iota
+	C3 = iota - 1
+)
+
+const (
+	C5 = iota - 1
+	C6
+	C7
+	C4 = iota
+	C8
+)
+
+// Doc 2
+const C9 = iota * 10
+
+func F1() {}
+
+func TF2() {}
+
+func F2() {}
+--- model
+C1=0:untyped int C2=2:untyped int C3=1:untyped int C4=4:untyped int C5=-1:untyped int C6=1:untyped int C7=2:untyped int C8=5:untyped int C9=0:untyped int O1=0:untyped int | init
+=== seed=31 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const C1 = iota - 1
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+var v3 = rec("v3")
+
+const C1 = iota - 1
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const C1 = iota - 1
+
+func F1() {}
+
+func Unrelated() {}
+--- model
+C1=-1:untyped int | init v2,v1,v3
+=== seed=79 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+--- ours
+@header
+
+const (
+	C1 = 7
+	O3
+	C2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v4 = rec("v4")
+)
+
+var v3 = rec("v3")
+--- theirs
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+func Unrelated() {}
+--- model
+C1=7:untyped int C2=7:untyped int O3=7:untyped int | init v1,v2,v4,v3
+=== seed=535 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+// Doc 0
+const C1 = iota
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const C2 = iota
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+const C2 = iota
+--- theirs
+@header
+
+// Doc 0
+const C1 = iota
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const C2 = iota
+
+func Unrelated() {}
+--- model
+C2=0:untyped int | init v2,v1
+=== seed=620 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota - 1
+	C2 = iota * 10
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = iota - 1
+	C2 = iota * 10
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+const (
+	C1 = iota - 1
+	C2 = iota * 10
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func Unrelated() {}
+--- model
+C1=-1:untyped int C2=10:untyped int | init v2,v3,v1
+=== seed=708 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+func Unrelated() {}
+--- model
+ | init v2,v1
+=== seed=750 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+func Unrelated() {}
+--- model
+ | init v2,v1
+=== seed=772 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+const C1 = iota * 10
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+// Doc O
+const C1 = iota * 10
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+const C1 = iota * 10
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func Unrelated() {}
+--- model
+C1=0:untyped int | init v2,v1
+=== seed=804 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const C1 = 7
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+const C1 = 1 << iota
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const C1 = 7
+
+func F1() {}
+
+func Unrelated() {}
+--- model
+C1=1:untyped int | init v2,v1
+=== seed=809 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota
+	C2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C3 = iota - 1
+	C4
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+--- ours
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota
+)
+
+const C2 = iota * 10
+
+var (
+	v4 = rec("v4")
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C3 = iota - 1
+	C4
+)
+
+var (
+	v3 = rec("v3")
+)
+--- theirs
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota
+	C2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C3 = iota - 1
+	C4
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+func Unrelated() {}
+--- model
+C1=0:untyped int C2=0:untyped int C3=-1:untyped int C4=0:untyped int | init v4,v1,v2,v3
+=== seed=825 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+	C2 = 7
+	C3
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F2() {}
+
+const (
+	C4 = iota
+	C5
+	C6
+)
+--- ours
+@header
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+	C2 = 7
+)
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+func F2() {}
+
+const (
+	C4 = iota
+	C5
+	C6
+)
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = iota - 1
+	C2 = 7
+	C3
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F2() {}
+
+const (
+	C4 = iota
+	C5
+	C6
+)
+
+func Unrelated() {}
+--- model
+C1=-1:untyped int C2=7:untyped int C4=0:untyped int C5=1:untyped int C6=2:untyped int | init v2,v1
+=== seed=848 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = 7
+	C2 = iota - 1
+	C3
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- ours
+@header
+
+const (
+	C1 = 7
+	C2 = iota - 1
+	C3
+)
+
+func OF2() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v5 = rec("v5")
+)
+
+var v4 = rec("v4")
+--- theirs
+@header
+
+const (
+	C1 = 7
+	C2 = iota - 1
+	C3
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func Unrelated() {}
+--- model
+C1=7:untyped int C2=0:untyped int C3=1:untyped int | init v1,v2,v3,v5,v4
+=== seed=945 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+var (
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v3 = rec("v3")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+var (
+	v3 = rec("v3")
+)
+
+func Unrelated() {}
+--- model
+ | init v2,v1,v3
+=== seed=1017 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = 7
+	C2
+	C3
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+const (
+	C1 = 7
+)
+
+const (
+	C2 = 1 << iota
+	C3
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = 7
+	C2
+	C3
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+func Unrelated() {}
+--- model
+C1=7:untyped int C2=1:untyped int C3=2:untyped int | init v2,v1,v3,v4
+=== seed=1018 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+// Doc 1
+const C1 = 1 << iota
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+// Doc 1
+const C1 = 1 << iota
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+// Doc 1
+const C1 = 1 << iota
+
+func Unrelated() {}
+--- model
+C1=1:untyped int | init v2,v1
+=== seed=1070 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota * 10
+	C2
+	C3 = iota - 1
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+// Doc O
+const (
+	C1 = iota * 10
+	C2
+	C3 = iota - 1
+)
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+const (
+	C1 = iota * 10
+	C2
+	C3 = iota - 1
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func Unrelated() {}
+--- model
+C1=0:untyped int C2=10:untyped int C3=1:untyped int | init v2,v1
+=== seed=1286 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+func F1() {}
+
+const C3 = iota + 2
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+	v4 = rec("v4")
+)
+
+var v1 = rec("v1")
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+func F1() {}
+
+const C3 = iota + 2
+
+var (
+	v3 = rec("v3")
+	v5 = rec("v5")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+func F1() {}
+
+const C3 = iota + 2
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func Unrelated() {}
+--- model
+C1=1:untyped int C2=2:untyped int C3=2:untyped int | init v2,v4,v1,v3,v5
+=== seed=1393 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const C1 = iota
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+var (
+	v3 = rec("v3")
+)
+
+const C1 = iota
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const C1 = iota
+
+func Unrelated() {}
+--- model
+C1=0:untyped int | init v2,v1,v3
+=== seed=1441 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+func Unrelated() {}
+--- model
+ | init v2,v3,v1
+=== seed=1475 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C3 = iota + 2
+	C4
+	C5 = 7
+	C6
+)
+--- ours
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C3 = iota + 2
+	C4
+	C5 = 7
+	C6
+)
+--- theirs
+@header
+
+const (
+	C1 = 7
+	C2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+func F2() {}
+
+const (
+	C3 = iota + 2
+	C4
+	C5 = 7
+	C6
+)
+
+func Unrelated() {}
+--- model
+C1=7:untyped int C2=7:untyped int C3=2:untyped int C4=3:untyped int C5=7:untyped int C6=7:untyped int | init v2,v1
+=== seed=1773 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = 7
+	C2
+)
+
+func F2() {}
+
+func F3() {}
+--- ours
+@header
+
+func F1() {}
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+const (
+	C1 = 7
+	C2
+)
+
+func F2() {}
+
+func F3() {}
+--- theirs
+@header
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C1 = 7
+	C2
+)
+
+func F2() {}
+
+func F3() {}
+
+func Unrelated() {}
+--- model
+C1=7:untyped int C2=7:untyped int | init v2,v1
+=== seed=1799 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+	v6 = rec("v6")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v5 = rec("v5")
+	v6 = rec("v6")
+)
+
+var v4 = rec("v4")
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+	v6 = rec("v6")
+)
+
+func F1() {}
+
+func Unrelated() {}
+--- model
+ | init v1,v2,v3,v5,v6,v4
+=== seed=1827 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C1 = 1 << iota
+	C2
+	C3 = 1 << iota
+)
+
+var (
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C1 = 1 << iota
+	C2
+	C3 = 1 << iota
+)
+
+var (
+	v5 = rec("v5")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func F1() {}
+
+// Doc 2
+const (
+	C1 = 1 << iota
+	C2
+	C3 = 1 << iota
+)
+
+var (
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func Unrelated() {}
+--- model
+C1=1:untyped int C2=2:untyped int C3=4:untyped int | init v1,v2,v5,v3,v4
+=== seed=1924 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+func Unrelated() {}
+--- model
+ | init v2,v3,v1
+=== seed=1951 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var v3 = rec("v3")
+--- ours
+@header
+
+var v2 = rec("v2")
+
+var v1 = rec("v1")
+
+var v3 = rec("v3")
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var v3 = rec("v3")
+
+func Unrelated() {}
+--- model
+ | init v2,v1,v3
+=== seed=1986 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota - 1
+	C2
+)
+
+const (
+	C3 = iota + 2
+	C4
+	C5
+	C6
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+const (
+	C1 = iota - 1
+	C2
+)
+
+const (
+	C3 = iota + 2
+	C4
+	C5
+	C6
+)
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+const (
+	C1 = iota - 1
+	C2
+)
+
+const (
+	C3 = iota + 2
+	C4
+	C5
+	C6
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func Unrelated() {}
+--- model
+C1=-1:untyped int C2=0:untyped int C3=2:untyped int C4=3:untyped int C5=4:untyped int C6=5:untyped int | init v2,v1
+=== seed=1998 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+var (
+	v6 = rec("v6")
+	v7 = rec("v7")
+)
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v6 = rec("v6")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+var (
+	v7 = rec("v7")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+var (
+	v6 = rec("v6")
+	v7 = rec("v7")
+)
+
+func Unrelated() {}
+--- model
+ | init v1,v2,v6,v3,v4,v5,v7
+=== seed=2060 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+
+func OF4() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+func Unrelated() {}
+--- model
+ | init v2,v3,v1
+=== seed=2101 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+const (
+	C3 = iota + 2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+const (
+	C3 = iota + 2
+)
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+const (
+	C1 = 1 << iota
+	C2
+)
+
+const (
+	C3 = iota + 2
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func Unrelated() {}
+--- model
+C1=1:untyped int C2=2:untyped int C3=2:untyped int | init v2,v1
+=== seed=2238 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const C1 = iota * 10
+
+func F2() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- ours
+@header
+
+func F1() {}
+
+const C1 = iota * 10
+
+func F2() {}
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+--- theirs
+@header
+
+func F1() {}
+
+const C1 = iota * 10
+
+func F2() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+func Unrelated() {}
+--- model
+C1=0:untyped int | init v2,v1
+=== seed=2308 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v1 = rec("v1")
+	o4v = rec("o4v")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func Unrelated() {}
+--- model
+ | init v2,v3,v1,o4v,v4,v5
+=== seed=2317 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+	C4
+)
+
+const (
+	C5 = iota + 2
+	C6
+)
+--- ours
+@header
+
+var (
+	v5 = rec("v5")
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+)
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+	C4
+)
+
+const (
+	C5 = iota + 2
+	C6
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func F1() {}
+
+const (
+	C1 = iota + 2
+	C2
+	C3
+	C4
+)
+
+const (
+	C5 = iota + 2
+	C6
+)
+
+func Unrelated() {}
+--- model
+C1=2:untyped int C2=3:untyped int C3=4:untyped int C4=5:untyped int C5=2:untyped int C6=3:untyped int | init v5,v1,v2,v3,v4
+=== seed=2351 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func F2() {}
+
+func F3() {}
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+var (
+	v5 = rec("v5")
+)
+
+var v4 = rec("v4")
+
+func F2() {}
+
+func F3() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func F2() {}
+
+func F3() {}
+
+func Unrelated() {}
+--- model
+ | init v1,v2,v3,v5,v4
+=== seed=2406 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func F1() {}
+
+func Unrelated() {}
+--- model
+ | init v4,v5,v3,v1,v2
+=== seed=2558 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+// Doc 0
+const (
+	C1 = iota - 1
+	C2
+	C3
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C4 = 1 << iota
+	C5 = 7
+)
+--- ours
+@header
+
+// Doc 0
+const (
+	C1 = iota - 1
+	C2
+	C3
+)
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+const (
+	C4 = 1 << iota
+	C5 = 7
+)
+--- theirs
+@header
+
+// Doc 0
+const (
+	C1 = iota - 1
+	C2
+	C3
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+const (
+	C4 = 1 << iota
+	C5 = 7
+)
+
+func Unrelated() {}
+--- model
+C1=-1:untyped int C2=0:untyped int C3=1:untyped int C4=1:untyped int C5=7:untyped int | init v2,v1
+=== seed=2612 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota - 1
+)
+
+const (
+	C2 = iota + 2
+)
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+--- ours
+@header
+
+const (
+	C1 = iota - 1
+)
+
+const (
+	C2 = iota + 2
+)
+
+func F1() {}
+
+var (
+	v2 = rec("v2")
+)
+
+var v1 = rec("v1")
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+--- theirs
+@header
+
+const (
+	C1 = iota - 1
+)
+
+const (
+	C2 = iota + 2
+)
+
+func F1() {}
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+func Unrelated() {}
+--- model
+C1=-1:untyped int C2=2:untyped int | init v2,v1,v3,v4
+=== seed=2654 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+// Doc 4
+const (
+	C2 = iota * 10
+)
+--- ours
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota
+)
+
+var (
+	v1 = rec("v1")
+	o1v = rec("o1v")
+	v2 = rec("v2")
+)
+
+var (
+	v4 = rec("v4")
+)
+
+var v3 = rec("v3")
+
+// Doc 4
+const (
+	C2 = iota * 10
+)
+--- theirs
+@header
+
+func F1() {}
+
+// Doc 1
+const (
+	C1 = iota
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+)
+
+// Doc 4
+const (
+	C2 = iota * 10
+)
+
+func Unrelated() {}
+--- model
+C1=0:untyped int C2=0:untyped int | init v1,o1v,v2,v4,v3
+=== seed=2677 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const C1 = iota + 2
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+	v6 = rec("v6")
+)
+
+var (
+	v7 = rec("v7")
+)
+
+func F1() {}
+--- ours
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const C1 = iota + 2
+
+var (
+	v7 = rec("v7")
+)
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+	v6 = rec("v6")
+)
+
+func F1() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+const C1 = iota + 2
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+	v6 = rec("v6")
+)
+
+var (
+	v7 = rec("v7")
+)
+
+func F1() {}
+
+func Unrelated() {}
+--- model
+C1=2:untyped int | init v1,v2,v3,v7,v4,v5,v6
+=== seed=2686 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2 = iota * 10
+	C3
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+--- ours
+@header
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func OF3() {}
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2 = iota * 10
+	C3
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+--- theirs
+@header
+
+func F1() {}
+
+const (
+	C1 = 7
+	C2 = iota * 10
+	C3
+)
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+)
+
+var (
+	v3 = rec("v3")
+	v4 = rec("v4")
+	v5 = rec("v5")
+)
+
+func Unrelated() {}
+--- model
+C1=7:untyped int C2=10:untyped int C3=20:untyped int | init v3,v4,v5,v1,v2
+=== seed=2744 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+--- ours
+@header
+
+const (
+	C1 = iota
+	C2
+	O4
+)
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v3 = rec("v3")
+)
+
+var v2 = rec("v2")
+--- theirs
+@header
+
+const (
+	C1 = iota
+	C2
+)
+
+var (
+	v1 = rec("v1")
+)
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func Unrelated() {}
+--- model
+C1=0:untyped int C2=1:untyped int O4=2:untyped int | init v1,v3,v2
+=== seed=2786 sides=single model=commutative from=out_single/WRONG_COMMUT
+--- base
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+	v6 = rec("v6")
+)
+
+func F2() {}
+--- ours
+@header
+
+var (
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+var v1 = rec("v1")
+
+func F1() {}
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+	v6 = rec("v6")
+)
+
+func F2() {}
+--- theirs
+@header
+
+var (
+	v1 = rec("v1")
+	v2 = rec("v2")
+	v3 = rec("v3")
+)
+
+func F1() {}
+
+var (
+	v4 = rec("v4")
+	v5 = rec("v5")
+	v6 = rec("v6")
+)
+
+func F2() {}
+
+func Unrelated() {}
+--- model
+ | init v2,v3,v1,v4,v5,v6

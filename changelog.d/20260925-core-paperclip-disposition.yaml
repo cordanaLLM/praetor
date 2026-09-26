@@ -1,0 +1,3 @@
+type: fixed
+title: Verify Paperclip disposition receipts against the pinned key, the gate output and the checked-out commit, apply one status and whitespace rule to created and decoded dispositions, require in_review runs to leave a clean tree (the gate receipt file exempt) and HEAD on a remote-tracking ref, and make the harness push protocol record that ref
+breaking: true

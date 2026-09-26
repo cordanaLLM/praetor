@@ -25,6 +25,14 @@ const (
 	dirPerm os.FileMode = 0o755
 )
 
+// agitPushFormat is the push protocol every synthesized harness prescribes. The AGit push opens
+// the review; it updates no local ref, so the second push of the same commit to a review branch
+// records a remote-tracking ref that VerifyRun reads as local proof HEAD left the machine. The
+// explicit destination never pushes a local main to the remote main, whatever branch is checked
+// out.
+const agitPushFormat = "git push origin HEAD:refs/for/main -o topic=<issue-id> && " +
+	"git push origin HEAD:refs/heads/paperclip/<issue-id>"
+
 // Harness represents the Paperclip agent runtime configuration.
 type Harness struct {
 	Version           int      `json:"version"`
@@ -64,7 +72,7 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 		Version:           1,
 		Platform:          resolvePlatform(ctx, repoPath),
 		OperatingContract: contract,
-		AGitPushFormat:    "git push origin HEAD:refs/for/main -o topic=<issue-id>",
+		AGitPushFormat:    agitPushFormat,
 		Invariants:        invariants,
 	}, nil
 }

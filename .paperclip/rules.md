@@ -10,7 +10,7 @@
 
 ## AGit Push Protocol
 ```bash
-git push origin HEAD:refs/for/main -o topic=<issue-id>
+git push origin HEAD:refs/for/main -o topic=<issue-id> && git push origin HEAD:refs/heads/paperclip/<issue-id>
 ```
 
 ## High-Integrity Invariants
