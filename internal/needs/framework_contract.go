@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -159,7 +160,7 @@ func contractRelative(importPath, framework string) string {
 // github.com/acme/lib/v2 matches a contract that replaces github.com/acme/lib.
 func stripMajorSuffix(modulePath string) string {
 	index := strings.LastIndex(modulePath, "/")
-	if index <= 0 || !isMajorVersionSegment(modulePath[index+1:]) {
+	if index <= 0 || !util.IsGoMajorVersionElement(modulePath[index+1:]) {
 		return modulePath
 	}
 	return modulePath[:index]

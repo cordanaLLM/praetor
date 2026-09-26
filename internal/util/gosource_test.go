@@ -77,3 +77,20 @@ func TestIsGoTestSurfaceClaimsTestFilesAndTestdataAtAnyExtension(t *testing.T) {
 		})
 	}
 }
+
+// The HISS alias resolver and the needs analyser used to carry one private copy each of this
+// check; both now call the shared one, so its edges are pinned here once.
+func TestIsGoMajorVersionElement(t *testing.T) {
+	for s, want := range map[string]bool{
+		// Positive: major-version elements.
+		"v2": true, "v10": true, "v0": true,
+		// Negative: anything else.
+		"": false, "x2": false, "v2a": false, "V2": false, "2": false, "v-2": false,
+		// Boundary: the bare prefix and a single digit.
+		"v": false, "v9": true,
+	} {
+		if got := util.IsGoMajorVersionElement(s); got != want {
+			t.Errorf("IsGoMajorVersionElement(%q) = %v, want %v", s, got, want)
+		}
+	}
+}
