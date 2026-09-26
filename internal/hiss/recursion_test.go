@@ -209,6 +209,25 @@ func TestRustSelfRecursionShadowsLexically(t *testing.T) {
 		"after block arm":         {"fn f(o: Option<fn() -> u8>) -> u8 {\n    match (o, 1) {\n        (Some(f), _) => { f() }\n        (None, _) => f(None),\n    }\n}\n", []int{4}},
 		"after block arm blank":   {"fn f(o: Option<fn() -> u8>) -> u8 {\n    match o {\n        Some(f) => {\n            f()\n        }\n\n        None => f(None),\n    }\n}\n", []int{7}},
 		"after operator in arm":   {"fn f(o: Option<fn() -> u8>) -> u8 {\n    match o {\n        Some(g) => 1 + match 1 { _ => 2 } + f(None),\n        None => 0,\n    }\n}\n", []int{3}},
+		// A guard sees its own arm's pattern, never a later arm's, and a second mention of the
+		// name in the guard or an or-pattern is not left over for the next arm.
+		"guard before binding arm": {"fn f(s: Option<u8>) -> bool {\n    match s {\n        Some(n) if f(None) => n > 0,\n        Some(f) => f > 0,\n        None => false,\n    }\n}\n", []int{3}},
+		"after guard mention":      {"fn f(s: Option<fn()>) -> u8 {\n    match s {\n        Some(f) if f as usize != 0 => 1,\n        _ => f(None),\n    }\n}\n", []int{4}},
+		"after or-pattern":         {"fn f(s: E) -> u8 {\n    match s {\n        E::A(f) | E::B(f) => 1,\n        _ => f(E::C),\n    }\n}\n", []int{4}},
+		"after guarded block arm":  {"fn f(o: Option<fn() -> u8>) -> u8 {\n    match o {\n        Some(f) if f() > 0 => { f() }\n        _ => f(None),\n    }\n}\n", []int{4}},
+		"after guard arrow on end": {"fn f(o: Option<fn() -> u8>) -> u8 {\n    match o {\n        Some(f) if f() > 0 =>\n        {\n            f()\n        }\n        _ => f(None),\n    }\n}\n", []int{7}},
+		"after next-line block":    {"fn f(o: Option<fn() -> u8>) -> u8 {\n    match o {\n        Some(f) =>\n            { f() }\n        None => f(None),\n    }\n}\n", []int{5}},
+		// A block-like arm body ends before a binary operator, so each of these opens the next
+		// arm's pattern: a negative literal, a reference, a leading vert, a qualified path.
+		"after arm, negative":  {"fn f(n: i32) -> i32 {\n    match n {\n        f if f > 10 => { 1 }\n        -1 => f(n + 1),\n        _ => 0,\n    }\n}\n", []int{4}},
+		"after arm, reference": {"fn f(n: &i32) -> i32 {\n    match n {\n        f if *f > 10 => { 1 }\n        &-1 => f(&0),\n        _ => 0,\n    }\n}\n", []int{4}},
+		"after arm, vert":      {"fn f(n: i32) -> i32 {\n    match n {\n        f if f > 10 => { 1 }\n        | 5 | 6 => f(0),\n        _ => 0,\n    }\n}\n", []int{4}},
+		"after arm, qpath":     {"fn f(n: i32) -> i32 {\n    match n {\n        f if f > 10 => { 1 }\n        <S as T>::C => f(0),\n        _ => 0,\n    }\n}\n", []int{4}},
+		// A struct pattern's scope still ends with its arm or block, and a one-line match
+		// ends each arm's scope at its comma.
+		"after struct arm":     {"fn f(s: E) -> u8 {\n    match s {\n        E::S { f, .. } => f(),\n        E::T => f(E::U),\n    }\n}\n", []int{4}},
+		"after struct let":     {"fn f(s: S, n: u8) -> u8 {\n    {\n        let S { f, .. } = s;\n        f();\n    }\n    f(s, n - 1)\n}\n", []int{6}},
+		"after one-line match": {"fn f(s: Option<fn() -> u8>) -> u8 {\n    let r = match s { None => 0, Some(f) => f() };\n    r + f(None)\n}\n", []int{3}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assertSelfCalls(t, "src/lib.rs", tc.src, tc.want...)
@@ -249,6 +268,20 @@ func TestRustScopedBindingsShadow(t *testing.T) {
 		"closure block op":    "fn f(v: &[fn() -> u8]) -> u8 {\n    v.iter().map(|f| { 0 } + f()).sum()\n}\n",
 		"closure after or":    "fn f(k: K, v: &[fn() -> u8]) -> u8 {\n    match k {\n        K::A | K::B => v.iter().map(|f| f()).sum(),\n    }\n}\n",
 		"closure after bitor": "fn f(a: u8, b: u8, v: &[fn() -> u8]) -> u8 {\n    (a | b) + v.iter().map(|f| f()).sum::<u8>()\n}\n",
+		// A pattern's bindings are in scope in its guard.
+		"arm guard":          "fn f(s: Option<fn() -> bool>) -> u8 {\n    match s {\n        Some(f) if f() => 1,\n        _ => 0,\n    }\n}\n",
+		"arm guard one line": "fn f(s: Option<fn() -> bool>) -> u8 { match s { Some(f) if f() => 1, _ => 0 } }\n",
+		"arm guard and body": "fn f(s: Option<fn() -> u8>) -> u8 {\n    match s {\n        Some(f) if f() > 0 => { f() }\n        _ => 0,\n    }\n}\n",
+		// A later arm on the match's line binds as a first arm does.
+		"second arm on line": "fn f(s: Option<fn() -> u8>) -> u8 {\n    match s { None => 0, Some(f) => f() }\n}\n",
+		"arm after block":    "fn f(s: Option<fn() -> u8>) -> u8 {\n    match s { None => { 0 } Some(f) => f() }\n}\n",
+		// A struct pattern's braces belong to the pattern.
+		"struct arm":       "fn f(s: S) -> u8 {\n    match s {\n        S { f, .. } => f(),\n    }\n}\n",
+		"struct field arm": "fn f(s: S) -> u8 {\n    match s {\n        S { g: f, .. } => f(),\n    }\n}\n",
+		"struct arm guard": "fn f(s: S) -> u8 {\n    match s {\n        S { f, .. } if f() > 0 => 1,\n        _ => 0,\n    }\n}\n",
+		"struct if let":    "fn f(s: S) -> u8 {\n    if let S { f, .. } = s {\n        f()\n    } else { 0 }\n}\n",
+		"struct let":       "fn f(s: S) -> u8 {\n    let S { f, .. } = s;\n    f()\n}\n",
+		"struct closure":   "fn f(v: &[S]) -> u8 {\n    v.iter().map(|S { f, .. }| f()).sum()\n}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			assertSelfCalls(t, "src/lib.rs", src)
@@ -310,24 +343,32 @@ func TestRustBindingAt(t *testing.T) {
 		kind    rustBindKind
 		keyword int
 	}{
-		"let f = 1;":              {rustLetBinding, 0},
-		"let a = 1; let f = 2;":   {rustLetBinding, 11},
-		"if let Some(f) = o {":    {rustHeadBinding, 3},
-		"while let Some(f) = o {": {rustHeadBinding, 6},
-		"a && let Some(f) = o {":  {rustHeadBinding, 5},
-		"for (i, f) in v {":       {rustHeadBinding, 0},
-		"let g = |a, f| a;":       {rustClosureBinding, -1},
-		"Some(f) => 1,":           {rustArmBinding, -1},
-		"x = f(1);":               {rustNoBinding, -1},
-		"let r = match f(n) {":    {rustNoBinding, -1},
-		"f!(x) => 1,":             {rustNoBinding, -1},
-		"f::g() => 1,":            {rustNoBinding, -1},
-		"a => f,":                 {rustNoBinding, -1},
-		"return f;":               {rustNoBinding, -1},
-		"let x = y; f":            {rustNoBinding, -1},
-		"for x in v { f }":        {rustNoBinding, -1},
-		"let g = |a| a; f":        {rustNoBinding, -1},
-		"deliver(f) if f.ok() =>": {rustArmBinding, -1},
+		"let f = 1;":                       {rustLetBinding, 0},
+		"let a = 1; let f = 2;":            {rustLetBinding, 11},
+		"if let Some(f) = o {":             {rustHeadBinding, 3},
+		"while let Some(f) = o {":          {rustHeadBinding, 6},
+		"a && let Some(f) = o {":           {rustHeadBinding, 5},
+		"for (i, f) in v {":                {rustHeadBinding, 0},
+		"let g = |a, f| a;":                {rustClosureBinding, -1},
+		"Some(f) => 1,":                    {rustArmBinding, -1},
+		"x = f(1);":                        {rustNoBinding, -1},
+		"let r = match f(n) {":             {rustNoBinding, -1},
+		"f!(x) => 1,":                      {rustNoBinding, -1},
+		"f::g() => 1,":                     {rustNoBinding, -1},
+		"a => f,":                          {rustNoBinding, -1},
+		"return f;":                        {rustNoBinding, -1},
+		"let x = y; f":                     {rustNoBinding, -1},
+		"for x in v { f }":                 {rustNoBinding, -1},
+		"let g = |a| a; f":                 {rustNoBinding, -1},
+		"deliver(f) if f.ok() =>":          {rustArmBinding, -1},
+		"None => 0, Some(f) =>":            {rustArmBinding, -1},
+		"None => {} Some(f) =>":            {rustArmBinding, -1},
+		"A => {} f =>":                     {rustArmBinding, -1},
+		"S { f, .. } => f(),":              {rustArmBinding, -1},
+		"A => g(f), B =>":                  {rustNoBinding, -1},
+		"A => (1, f), B =>":                {rustNoBinding, -1},
+		"A => if c { 1 } else { f }, B =>": {rustNoBinding, -1},
+		"A => S { a: 1 }.g(f), B =>":       {rustNoBinding, -1},
 	} {
 		at := nextIdent(code, "f", 0)
 		kind, keyword := rustBindingAt(code, at)
@@ -353,7 +394,8 @@ func TestRustArmAndClosureEdges(t *testing.T) {
 		",": true, "}": true, "None => 0,": true, "(a, b) =>": true, "[x] =>": true, "_ =>": true,
 		"1 =>": true, "#[cfg(x)]": true, "..=9 =>": true, "::a::B =>": true, "'x' =>": true,
 		"else { f() }": false, "elsewhere =>": true, "in v {": false, ".max(f())": false,
-		"?": false, "= s {": false, "{ 1 }": false, "+ f()": false, "-1 =>": false, "": false,
+		"?": false, "= s {": false, "{ 1 }": false, "+ f()": false, "": false,
+		"-1 =>": true, "&-1 =>": true, "| 5 | 6 =>": true, "<S as T>::C =>": true, "* 2": false,
 	} {
 		if got := rustArmEnds(text); got != want {
 			t.Errorf("rustArmEnds(%q) = %v, want %v", text, got, want)
@@ -366,6 +408,45 @@ func TestRustArmAndClosureEdges(t *testing.T) {
 	} {
 		if got := rustInClosureParams(before); got != want {
 			t.Errorf("rustInClosureParams(%q) = %v, want %v", before, got, want)
+		}
+	}
+}
+
+// TestRustPatternBraces pins the struct-pattern braces a binding stands inside, which it must
+// be outside of when its semicolon, head brace, guard, arrow or pipe brings it into scope.
+func TestRustPatternBraces(t *testing.T) {
+	for code, want := range map[string]struct {
+		kind rustBindKind
+		n    int
+	}{
+		"let S { f, .. } = s;":            {rustLetBinding, 1},
+		"if let S { a: T { f } } = s {":   {rustHeadBinding, 2},
+		"for S { f } in v {":              {rustHeadBinding, 1},
+		"let f = S { a: 1 };":             {rustLetBinding, 0},
+		"S { f, .. } => f(),":             {rustArmBinding, 1},
+		"E::V { a: S { f }, .. } => f(),": {rustArmBinding, 2},
+		"S { f } if matches!(f, S {}) =>": {rustArmBinding, 1},
+		"Some(f) => S { a: 1 },":          {rustArmBinding, 0},
+		"v.map(|S { f, .. }| f())":        {rustClosureBinding, 1},
+		"v.map(|f| S { f })":              {rustClosureBinding, 0},
+		"g(f)":                            {rustNoBinding, 0},
+	} {
+		at := nextIdent(code, "f", 0)
+		keyword := -1
+		if kw := lastIdent(code[:at], "let"); kw >= 0 {
+			keyword = kw
+		} else if kw := lastIdent(code[:at], "for"); kw >= 0 {
+			keyword = kw
+		}
+		if got := rustPatternBraces(code, at, want.kind, keyword); got != want.n {
+			t.Errorf("rustPatternBraces(%q) = %d, want %d", code, got, want.n)
+		}
+	}
+	for code, want := range map[string]int{
+		"Some(f) if f() => 1,": 8, "Some(f) => if c { 1 } else { 2 },": 8, "S { f } =>": 8, "f": 1,
+	} {
+		if got := rustArmTrigger(code, strings.IndexByte(code, 'f')); got != want {
+			t.Errorf("rustArmTrigger(%q) = %d, want %d", code, got, want)
 		}
 	}
 }
@@ -386,7 +467,7 @@ func TestRustWalkBounds(t *testing.T) {
 	if len(w.pending) != 1 || w.pending[0].pipe != 2 {
 		t.Fatalf("a closure binding must wait for its closing pipe, got %+v", w.pending)
 	}
-	w.startLine()
+	w.startLine("")
 	if len(w.pending) != 0 {
 		t.Fatalf("a closure binding must not outlive its line, got %+v", w.pending)
 	}

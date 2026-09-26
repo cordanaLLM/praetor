@@ -132,25 +132,34 @@ never for the enclosing function's own, and a class body binds nothing a functio
 Rust scopes are lexical, so `internal/hiss/rustscope.go` walks the body byte by byte and tracks
 brace and parenthesis depth. A `let` shadows from the semicolon ending it to the end of its
 block, so `let f = f(n - 1);` still calls the function. A `for`, `if let` or `while let` pattern
-shadows inside the block it heads, a match arm's pattern from its `=>` to the end of the arm, and
-a closure parameter from the closing `|` to the end of the closure. An item (`fn`, `use`, `const`,
+shadows inside the block it heads, a match arm's pattern from its guard's `if` (or its `=>` when
+the arm has no guard) to the end of the arm, and a closure parameter from the closing `|` to the
+end of the closure. A struct pattern's braces belong to the pattern, so `let S { f, .. } = s;`
+and `S { f, .. } => f()` bind `f` like any other pattern. An item (`fn`, `use`, `const`,
 `static`) covers the whole body. A match arm's pattern names a path and calls nothing, so
-`Variant(x) =>` is not a call site, while the arm's guard and body are.
+`Variant(x) =>` is not a call site. The arm's guard and body are call sites, but the arm's own
+bindings are already in scope there: in `Some(f) if f() => 1` the guard calls the local, while a
+guard that calls `f` in an arm whose pattern does not bind it reaches the function. A later arm
+on the match's line binds as a first arm does (`match s { None => 0, Some(f) => f() }`).
 
 An arm and a closure end where rustc's grammar ends them, not at the next closing brace. An arm
 ends at its comma, or, when its body starts with a block-like expression (`{`, `if`, `match`,
 `loop`, `while`, `for`, `unsafe`, `const`), at the brace closing that expression, unless the next
-token (on the same line or a later one) is `else`, a method call or `?`. So in
-`Some(f) => if c { 1 } else { f() }` the brace after `1` ends nothing and `f()` reaches the local,
-while a comma-less block arm still ends before the next arm's pattern. A closure's body is a
+token (on the same line or a later one) is `else`, a method call or `?`. rustc ends such a body
+before a binary operator, so a `-`, `&`, `|` or `<` there opens the next arm's pattern (a
+negative literal, a reference, a leading vert, a qualified path). A body that starts on the line
+after `=>` is read at its first token. So in `Some(f) => if c { 1 } else { f() }` the brace after
+`1` ends nothing and `f()` reaches the local, while a comma-less block arm still ends before the
+next arm's pattern. A closure's body is a
 whole expression (`|f| { 0 } + f()` is one body), so it ends only at a comma, a semicolon or the
 bracket around it. The opening pipe of a closure's parameters is the last pipe before the name
 when what precedes it cannot be an operand (`(|`, `= |`, `move |`), so the pipe of an or-pattern
 (`A | B => v.map(|f| f())`) or of a bitwise or is not taken for it.
 
-A binding is read from one line: a `let` pattern or closure parameter list wrapped across lines
-is not recognised as binding the name, so a call of that local is reported. Keep such a pattern
-on one line, or rename the local.
+A binding is read from one line: a `let` pattern or closure parameter list wrapped across lines,
+or a match arm whose guard or `=>` sits on a later line than the name, is not recognised as
+binding the name, so a call of that local is reported. Keep such a pattern on one line, or rename
+the local.
 
 A macro may rewrite its input: `syscall!(recv(fd, buf))` expands to `libc::recv`, and tracing's
 `debug!(x = debug(&v))` never calls a function named `debug`. A call inside the input of any macro
