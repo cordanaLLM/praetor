@@ -767,6 +767,63 @@ func TestAdoptionManifest_CheckoutLayoutIsNotIdentity(t *testing.T) {
 	}
 }
 
+// TestAdopt_NoRemoteWritesNoGuessedPlatform pins BUG-852 across adoption output: a checkout
+// at <parent>/<name> with no origin remote gets no Paperclip harness, so neither the old
+// cordanaLLM/<name> default nor the <parent>/<name> layout reaches harness.json or rules.md,
+// and no other file adoption writes names the layout as owner/name.
+func TestAdopt_NoRemoteWritesNoGuessedPlatform(t *testing.T) {
+	requireGit(t)
+	repo := filepath.Join(t.TempDir(), "acme", "widget")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initTestGit(t, repo)
+	mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/widget\n\ngo 1.24\n")
+	opts := AdoptOptions{Path: repo, SkipGitValidation: true, SkipHookActivation: true, LockSourceRoot: newAdoptLockSource(t)}
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatalf("adoption failed: %v", err)
+	}
+	// Boundary: a re-run that still has no identity keeps writing no harness and says why.
+	report, err := Adopt(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("re-run failed: %v", err)
+	}
+	if fileExists(filepath.Join(repo, filepath.FromSlash(paperclipFile))) || fileExists(filepath.Join(repo, ".paperclip", "rules.md")) {
+		t.Fatal("adoption without an identity wrote a Paperclip harness")
+	}
+	if note := findActionDetail(report.ActionDetails, paperclipFile); !strings.Contains(note, "Paperclip harness not written") {
+		t.Fatalf("paperclip step does not say why it wrote nothing: %q", note)
+	}
+	for _, guessed := range []string{"cordanaLLM/widget", "acme/widget"} {
+		if hit := findAdoptedText(t, repo, guessed); hit != "" {
+			t.Fatalf("adoption wrote the guessed identity %q into %s", guessed, hit)
+		}
+	}
+}
+
+// findAdoptedText returns the first file adoption wrote under repo that contains text, or "".
+// Git metadata and the private ledger, which record the checkout path, are not adoption output.
+func findAdoptedText(t *testing.T, repo, text string) string {
+	t.Helper()
+	found := ""
+	err := filepath.WalkDir(repo, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil || found != "" {
+			return walkErr
+		}
+		if entry.IsDir() && (entry.Name() == ".git" || entry.Name() == ".workingdir") {
+			return filepath.SkipDir
+		}
+		if entry.Type().IsRegular() && strings.Contains(mustRead(t, path), text) {
+			found = path
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return found
+}
+
 // TestAdopt_RerunCompletesOnceIdentityIsSet pins the recovery the unresolved-identity warning
 // names. Boundary: a re-run that finds the origin remote installs the checkpoint lifecycle,
 // which reads that remote, but never rewrites the empty identity in the existing manifest,
@@ -785,8 +842,18 @@ func TestAdopt_RerunCompletesOnceIdentityIsSet(t *testing.T) {
 	mustWrite(t, filepath.Join(source, filepath.FromSlash(checkpointScript)), "#!/usr/bin/env python3\nprint('shared')\n")
 	mustWrite(t, filepath.Join(source, filepath.FromSlash(checkpointCommon)), "class HookError(Exception):\n    pass\n")
 	opts := AdoptOptions{Path: repo, SkipGitValidation: true, SkipHookActivation: true, LockSourceRoot: source}
-	if _, err := Adopt(t.Context(), opts); err != nil {
+	first, err := Adopt(t.Context(), opts)
+	if err != nil {
 		t.Fatalf("first adoption failed: %v", err)
+	}
+	if fileExists(filepath.Join(repo, filepath.FromSlash(checkpointPolicy))) ||
+		mustRead(t, filepath.Join(repo, readmeFile)) != readme {
+		t.Fatal("first adoption without an identity installed the checkpoint policy or the README block")
+	}
+	if fileExists(filepath.Join(repo, filepath.FromSlash(paperclipFile))) ||
+		!strings.Contains(findActionDetail(first.ActionDetails, paperclipFile), "Paperclip harness not written") {
+		t.Fatalf("first adoption without an identity wrote a harness or did not say why not: %q",
+			findActionDetail(first.ActionDetails, paperclipFile))
 	}
 	manifestPath := filepath.Join(repo, manifestFile)
 	firstManifest := mustRead(t, manifestPath)
@@ -803,6 +870,11 @@ func TestAdopt_RerunCompletesOnceIdentityIsSet(t *testing.T) {
 	}
 	if mustRead(t, filepath.Join(repo, readmeFile)) != readme {
 		t.Fatal("README block was reconciled against a manifest that names no identity")
+	}
+	harness := mustRead(t, filepath.Join(repo, filepath.FromSlash(paperclipFile)))
+	rules := mustRead(t, filepath.Join(repo, ".paperclip", "rules.md"))
+	if !strings.Contains(harness, `"platform": "acme/orphan"`) || !strings.HasPrefix(rules, "# Paperclip Operating Rules (acme/orphan)\n") {
+		t.Fatalf("re-run harness does not name the remote identity:\n%s\n%s", harness, rules)
 	}
 	handSet := strings.NewReplacer(`owner: ""`, "owner: acme", `name: ""`, "name: orphan").Replace(firstManifest)
 	mustWrite(t, manifestPath, handSet)

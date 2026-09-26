@@ -56,19 +56,28 @@ unset flag keeps the default. The flags apply to single-repository adoption; bat
   local path or `file://` origin names where a copy sits and counts as no remote
   (`TestReadOriginRemote_Negative_LocalRemoteIsNotIdentity`). Without such a remote,
   both stay empty, the report warns `repository identity unresolved`, the checkpoint
-  lifecycle is not installed, and the README badge block is skipped. A remote read git does not answer, such as a cancelled run, fails adoption
-  instead of counting as no identity. `repository.visibility` is always left unset
-  because adoption cannot observe it offline
-  (`TestAdoptionManifest_UnresolvedIdentityStaysEmpty`).
+  lifecycle is not installed, and the README badge block is skipped. The Paperclip
+  harness `platform` and `rules.md` heading name the identity `.standards.yaml`
+  declares, else the origin remote's; with neither, adoption writes no harness, the
+  report records `Paperclip harness not written`, and an existing harness stays as it
+  is. `praetorctl paperclip harness` fails the same way instead of writing a guessed
+  `cordanaLLM/<dir>` (`TestSynthesizeHarness_Negative_NoIdentityIsAnError`). No `cordanaLLM/<name>` default and no `<parent>/<name>` guess
+  reaches any adopted file; flavor stubs name the checkout directory alone
+  (`TestAdopt_NoRemoteWritesNoGuessedPlatform`,
+  `TestApplyFlavor_Negative_CheckoutLayoutIsNotOwner`). A remote read git does not
+  answer, such as a cancelled run, fails adoption instead of counting as no identity.
+  `repository.visibility` is always left unset because adoption cannot observe it
+  offline (`TestAdoptionManifest_UnresolvedIdentityStaysEmpty`).
 - **Recovering an unresolved identity.** Until both fields are set, `praetorctl audit`
   fails with `Manifest repository owner and name must not be empty`
   (`cmd/standardsctl/audit.go`), so the audit pre-commit hook blocks commits. Adoption
   never rewrites an existing manifest, so set `repository.owner` and `repository.name`
   in `.standards.yaml` by hand. Add the `origin` remote too and re-run `praetorctl adopt`:
-  the re-run installs the checkpoint policy and evaluator, which need that remote, and
-  reconciles the README block from the fields you set. A re-run that finds the remote
-  while the manifest still names no identity installs the checkpoint lifecycle but
-  leaves the manifest and the README as they are (`TestAdopt_RerunCompletesOnceIdentityIsSet`).
+  the re-run installs the checkpoint policy and evaluator, which need that remote,
+  writes the Paperclip harness, and reconciles the README block from the fields you
+  set. A re-run that finds the remote while the manifest still names no identity
+  installs the checkpoint lifecycle and the harness but leaves the manifest and the
+  README as they are (`TestAdopt_RerunCompletesOnceIdentityIsSet`).
 - **Profile.** The profile an existing `.standards.yaml` declares outranks `--profile`,
   which outranks file markers. A conflicting `--profile` is reported as ignored
   (`TestAdopt_DeclaredProfileGovernsAdoption`).

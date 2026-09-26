@@ -20,6 +20,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/harvester"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestDispatchCommand_HelpAndVersion(t *testing.T) {
@@ -462,7 +463,18 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 		t.Fatalf("paperclip -h failed: %v", err)
 	}
 
-	// Paperclip harness synthesis
+	// Negative (BUG-852): with no manifest identity and no origin remote there is no platform
+	// to name, so synthesis fails and writes nothing instead of a guessed cordanaLLM/<dir>.
+	unidentified := t.TempDir()
+	err := dispatchCommand("paperclip", []string{"harness", "--path=" + unidentified})
+	if !errors.Is(err, util.ErrRepoIdentityUnresolved) {
+		t.Fatalf("paperclip harness without an identity = %v, want ErrRepoIdentityUnresolved", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(unidentified, ".paperclip")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("paperclip harness without an identity wrote .paperclip: %v", statErr)
+	}
+
+	// Paperclip harness synthesis for the identity the fixture manifest declares
 	if err := dispatchCommand("paperclip", []string{"harness", "--path=" + tmpDir}); err != nil {
 		t.Fatalf("paperclip harness failed: %v", err)
 	}

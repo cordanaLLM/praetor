@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -97,26 +99,45 @@ labels:
 `
 }
 
+// reconcilePaperclip scaffolds the Paperclip harness. Its platform names the repository, so a
+// run whose identity is unresolved writes no harness, in a dry run too, and keeps an existing
+// one as it is instead of naming a guessed repository (BUG-852).
 func reconcilePaperclip(ctx context.Context, s *adoptSession) error {
 	full, err := repoFile(s.repoPath, paperclipFile)
 	if err != nil {
 		return err
 	}
-	if fileExists(full) && !s.opts.Force {
+	exists := fileExists(full)
+	if exists && !s.opts.Force {
 		s.report.recordReconciled(paperclipFile, "Existing Paperclip agent runtime harness verified present")
 		return nil
 	}
+	harness, err := paperclip.SynthesizeHarness(ctx, s.repoPath)
+	if errors.Is(err, util.ErrRepoIdentityUnresolved) {
+		s.report.recordSkipped(paperclipFile, unresolvedHarnessNote(exists))
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("synthesize paperclip harness: %w", err)
+	}
 	if !s.opts.DryRun {
-		harness, err := paperclip.SynthesizeHarness(ctx, s.repoPath)
-		if err != nil {
-			return fmt.Errorf("synthesize paperclip harness: %w", err)
-		}
 		if err := paperclip.WriteHarness(harness, s.repoPath); err != nil {
 			return fmt.Errorf("write paperclip harness: %w", err)
 		}
 	}
 	s.report.recordCreated(paperclipFile, "Scaffolded Paperclip agent runtime harness and AGit rules")
 	return nil
+}
+
+// unresolvedHarnessNote says why the paperclip step wrote nothing: the harness platform names
+// the repository, and adoption found no identity to name.
+func unresolvedHarnessNote(onDisk bool) string {
+	action := "Paperclip harness not written"
+	if onDisk {
+		action = "Existing Paperclip harness kept as is, not compared with the current contract"
+	}
+	return action + ": its platform needs repository.owner and repository.name in " + manifestFile +
+		" or an origin remote naming <owner>/<repo>; set them, or add the remote, and re-run"
 }
 
 // generatedPersonas are the canonical personas adoption writes into an adopted repository.

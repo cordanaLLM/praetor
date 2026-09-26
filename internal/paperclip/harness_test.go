@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -16,28 +17,69 @@ func TestSynthesizeHarness_Negative_NilContext(t *testing.T) {
 	}
 }
 
-// unresolvableRepo returns a directory whose parent is named dev, so that neither git
-// (the context is cancelled) nor the <owner>/<repo> path shape can identify it and the
-// basename fallback is exercised.
-func unresolvableRepo(t *testing.T, name string) string {
+// identifiedRepo returns a repository whose .standards.yaml declares acme/widget, the
+// identity every test that is not about identity resolution synthesizes for.
+func identifiedRepo(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "dev", name)
+	repo := t.TempDir()
+	writeRepoFile(t, repo, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n")
+	return repo
+}
+
+// writeRepoFile writes body to rel under repo, creating parent directories.
+func writeRepoFile(t *testing.T, repo, rel, body string) {
+	t.Helper()
+	path := filepath.Join(repo, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// layoutShapedRepo returns <tmp>/<owner>/<name> with no manifest and no origin remote: the
+// shape util.ResolveRepoIdentity's directory fallback reads as owner/name.
+func layoutShapedRepo(t *testing.T, owner, name string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), owner, name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return dir
 }
 
-func TestSynthesizeHarness_Boundary_CancelledContextFallsBackToBasename(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	dir := unresolvableRepo(t, "leaf")
-	h, err := SynthesizeHarness(ctx, dir)
+// Positive: the origin remote names the platform, not the directory the checkout sits in.
+func TestSynthesizeHarness_Positive_PlatformFromOriginRemote(t *testing.T) {
+	dir := layoutShapedRepo(t, "parent-dir", "checkout-dir")
+	testsupport.InitGitRepoWithOrigin(t, dir, "https://github.com/acme/widget.git")
+	h, err := SynthesizeHarness(t.Context(), dir)
 	if err != nil {
-		t.Fatalf("a cancelled context only disables the git lookup: %v", err)
+		t.Fatal(err)
 	}
-	if h.Platform != "cordanaLLM/leaf" {
-		t.Fatalf("expected basename fallback, got %s", h.Platform)
+	if h.Platform != "acme/widget" {
+		t.Fatalf("platform = %q, want the origin remote's acme/widget", h.Platform)
+	}
+}
+
+// Negative (BUG-852): with no manifest identity and no origin remote there is no platform to
+// write. The checkout layout is not an identity and no cordanaLLM owner is substituted.
+func TestSynthesizeHarness_Negative_NoIdentityIsAnError(t *testing.T) {
+	dir := layoutShapedRepo(t, "acme", "widget")
+	h, err := SynthesizeHarness(t.Context(), dir)
+	if !errors.Is(err, util.ErrRepoIdentityUnresolved) || h != nil {
+		t.Fatalf("SynthesizeHarness = (%v, %v), want no harness and ErrRepoIdentityUnresolved", h, err)
+	}
+}
+
+// Boundary: a cancelled context leaves the remote unread. That is a failed read, not an
+// answer that the repository has no identity, and it never degrades to a guessed platform.
+func TestSynthesizeHarness_Boundary_CancelledContextIsNotUnresolved(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	h, err := SynthesizeHarness(ctx, layoutShapedRepo(t, "acme", "widget"))
+	if err == nil || errors.Is(err, util.ErrRepoIdentityUnresolved) || h != nil {
+		t.Fatalf("SynthesizeHarness = (%v, %v), want no harness and a read error", h, err)
 	}
 }
 
@@ -48,7 +90,7 @@ func TestWriteHarness_Negative_NilHarness(t *testing.T) {
 }
 
 func TestWriteHarness_Negative_EscapingPaperclipDirIsRefused(t *testing.T) {
-	repo := t.TempDir()
+	repo := identifiedRepo(t)
 	outside := t.TempDir()
 	if err := os.Symlink(outside, filepath.Join(repo, ".paperclip")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
@@ -65,14 +107,16 @@ func TestWriteHarness_Negative_EscapingPaperclipDirIsRefused(t *testing.T) {
 	}
 }
 
+// Boundary: a manifest naming only an owner declares no platform, so resolution goes on to
+// the origin remote; without one it is unresolved rather than cordanaLLM/<basename>.
 func TestResolvePlatform_Boundary_IncompleteManifestFallsThrough(t *testing.T) {
-	dir := unresolvableRepo(t, "repo")
-	if err := os.WriteFile(filepath.Join(dir, ".standards.yaml"), []byte("repository:\n  owner: only-owner\n"), 0o644); err != nil {
-		t.Fatal(err)
+	dir := layoutShapedRepo(t, "acme", "repo")
+	writeRepoFile(t, dir, ".standards.yaml", "repository:\n  owner: only-owner\n")
+	if got, err := resolvePlatform(t.Context(), dir); !errors.Is(err, util.ErrRepoIdentityUnresolved) || got != "" {
+		t.Fatalf("resolvePlatform = (%q, %v), want unresolved", got, err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if got := resolvePlatform(ctx, dir); got != "cordanaLLM/repo" {
-		t.Fatalf("incomplete manifest must fall through to the basename, got %s", got)
+	testsupport.InitGitRepoWithOrigin(t, dir, "git@github.com:remote-owner/remote-repo.git")
+	if got, err := resolvePlatform(t.Context(), dir); err != nil || got != "remote-owner/remote-repo" {
+		t.Fatalf("resolvePlatform = (%q, %v), want the origin remote after an incomplete manifest", got, err)
 	}
 }

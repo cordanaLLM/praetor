@@ -43,10 +43,17 @@ type Harness struct {
 }
 
 // SynthesizeHarness generates a Paperclip agent harness embedding fleet contracts. The
-// repository identity lookup (a git subprocess) runs under the caller's context.
+// repository identity lookup (a git subprocess) runs under the caller's context. The
+// platform is the identity .standards.yaml declares, else the origin remote's; with neither
+// the error wraps util.ErrRepoIdentityUnresolved and no harness is returned, because the
+// platform names a repository and none may be guessed.
 func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("paperclip: context cannot be nil")
+	}
+	platform, err := resolvePlatform(ctx, repoPath)
+	if err != nil {
+		return nil, err
 	}
 	contract := []string{
 		"Pushing a branch is NOT shipping: an open PR is required, but still not shipped work until merged.",
@@ -70,24 +77,26 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 
 	return &Harness{
 		Version:           1,
-		Platform:          resolvePlatform(ctx, repoPath),
+		Platform:          platform,
 		OperatingContract: contract,
 		AGitPushFormat:    agitPushFormat,
 		Invariants:        invariants,
 	}, nil
 }
 
-// resolvePlatform derives owner/name from the manifest, then the git identity, then
-// the directory basename.
-func resolvePlatform(ctx context.Context, repoPath string) string {
+// resolvePlatform derives owner/name from the manifest, then the origin remote
+// (util.ResolveRemoteIdentity). It never reads the checkout path and never substitutes a
+// default owner: a parent directory names wherever the checkout sits, not its owner.
+func resolvePlatform(ctx context.Context, repoPath string) (string, error) {
 	if platform, ok := manifestPlatform(repoPath); ok {
-		return platform
+		return platform, nil
 	}
-	owner, repo, err := util.ResolveRepoIdentity(ctx, repoPath)
-	if err == nil && owner != "" && repo != "" {
-		return fmt.Sprintf("%s/%s", owner, repo)
+	owner, repo, err := util.ResolveRemoteIdentity(ctx, repoPath)
+	if err != nil {
+		return "", fmt.Errorf("paperclip: harness platform needs repository.owner and repository.name in %s or an origin remote: %w",
+			manifestFile, err)
 	}
-	return fmt.Sprintf("cordanaLLM/%s", filepath.Base(repoPath))
+	return owner + "/" + repo, nil
 }
 
 // manifestPlatform reads owner/name from .standards.yaml when present and complete.
