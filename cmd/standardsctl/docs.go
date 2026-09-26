@@ -77,7 +77,10 @@ func runDocsSync(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("Successfully synchronized %d package documentation sheets into .workingdir/docs/distilled/.\n", len(cat.Packages))
-	for _, doc := range cat.Packages {
+	// Sorted, so two syncs of an unchanged tree print the same report and a diff between
+	// them shows what changed rather than how the map was walked.
+	for _, key := range cat.SortedKeys() {
+		doc := cat.Packages[key]
 		fmt.Printf("  - [%s] %s@%s (%d tokens)\n", doc.Kind, doc.PackageName, doc.Version, doc.TokenCount)
 	}
 	return nil
@@ -143,11 +146,11 @@ func runDocsLookup(args []string) error {
 		return err
 	}
 
-	for _, doc := range cat.Packages {
-		if doc.PackageName == pkg {
-			fmt.Println(doc.RawMarkdown)
-			return nil
-		}
+	// One selection rule, shared with the MCP docs tool: exact match first, suffix match
+	// only as a fallback, and a stable choice between cached versions.
+	if doc, found := cat.Lookup(pkg); found {
+		fmt.Println(doc.RawMarkdown)
+		return nil
 	}
 
 	// Fallback to searching distilled files

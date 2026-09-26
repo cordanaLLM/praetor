@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -89,13 +91,51 @@ func consumeToken(stack []jsonFrame, token any) error {
 	f := &stack[len(stack)-1]
 	if f.keys != nil && f.keyNext {
 		key, ok := token.(string)
-		if !ok || f.keys[key] {
+		if !ok {
 			return fmt.Errorf("invalid or duplicate JSON key")
 		}
-		f.keys[key] = true
+		folded := foldKey(key)
+		if f.keys[folded] {
+			return fmt.Errorf("invalid or duplicate JSON key")
+		}
+		f.keys[folded] = true
 		f.keyNext = false
 		return nil
 	}
 	consumeValue(stack)
 	return nil
+}
+
+// maxFoldOrbit bounds the walk around a rune's case-folding orbit (HISS-02). Unicode
+// orbits are at most four runes long; the bound exists so a future table cannot make the
+// loop unbounded.
+const maxFoldOrbit = 8
+
+// foldKey returns the spelling encoding/json compares field names by: ASCII letters
+// upper-cased, every other rune folded to the smallest rune in its case-folding orbit.
+//
+// Rejecting only byte-exact duplicates was not strictness. The decoder that runs next
+// matches fields case-insensitively, so {"quality": 1, "Quality": 2} passed the
+// uniqueness check and then decoded with the second spelling silently overwriting the
+// first. Folding here makes a case-variant duplicate the same refusal an exact duplicate
+// already is. The fold is reimplemented because encoding/json keeps its own unexported.
+func foldKey(key string) string {
+	return strings.Map(foldRune, key)
+}
+
+func foldRune(r rune) rune {
+	if r < utf8.RuneSelf {
+		if 'a' <= r && r <= 'z' {
+			return r - ('a' - 'A')
+		}
+		return r
+	}
+	for i := 0; i < maxFoldOrbit; i++ {
+		folded := unicode.SimpleFold(r)
+		if folded <= r {
+			return folded
+		}
+		r = folded
+	}
+	return r
 }

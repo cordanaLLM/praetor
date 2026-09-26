@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -56,7 +55,11 @@ var (
 )
 
 // TranscribeDiscussionToADR converts an approved RFC discussion into an immutable ADR record.
-func TranscribeDiscussionToADR(ctx context.Context, disc Discussion, adrDir string) (*ADR, error) {
+//
+// A relative adrDir is a location inside repoRoot and the record is written confined to
+// repoRoot, so a repository that ships its ADR directory (or an ancestor) as a link leading
+// outside it cannot redirect the record (BUG-826). An absolute adrDir is written as given.
+func TranscribeDiscussionToADR(ctx context.Context, disc Discussion, repoRoot, adrDir string) (*ADR, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context cancelled before discussion transcription: %w", err)
 	}
@@ -65,11 +68,12 @@ func TranscribeDiscussionToADR(ctx context.Context, disc Discussion, adrDir stri
 		return nil, err
 	}
 
-	if err := util.MkdirSecure(adrDir, adrDirPerm); err != nil {
-		return nil, fmt.Errorf("failed to create ADR directory %s: %w", adrDir, err)
+	out := generatedDir{root: repoRoot, dir: adrDir}
+	if err := out.mkdir(adrDirPerm); err != nil {
+		return nil, fmt.Errorf("failed to create ADR directory %s: %w", out.location(), err)
 	}
 
-	nextNumber, err := resolveNextADRNumber(adrDir)
+	nextNumber, err := resolveNextADRNumber(out.location())
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve next ADR sequence number: %w", err)
 	}
@@ -81,13 +85,13 @@ func TranscribeDiscussionToADR(ctx context.Context, disc Discussion, adrDir stri
 		slug = fmt.Sprintf("discussion-%d", disc.ID)
 	}
 	filename := fmt.Sprintf("%04d-%s.md", nextNumber, slug)
-	filePath := filepath.Join(adrDir, filename)
+	filePath := out.path(filename)
 	if util.PathExists(filePath) {
 		return nil, fmt.Errorf("ADR %s already exists: an accepted record is immutable", filePath)
 	}
 
 	content := renderADRContent(nextNumber, disc)
-	if err := util.WriteFileNoFollow(filePath, []byte(content), adrFilePerm); err != nil {
+	if err := out.write(filename, []byte(content), adrFilePerm); err != nil {
 		return nil, fmt.Errorf("failed to write ADR file to %s: %w", filePath, err)
 	}
 

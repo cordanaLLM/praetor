@@ -61,7 +61,7 @@ func runForge(args []string) error {
 
 func runForgeSyncWiki(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("forge sync-wiki", flag.ContinueOnError)
-	outputDir := fs.String("output", "docs/wiki", "Output directory for generated wiki")
+	outputDir := fs.String("output", "docs/wiki", "Output directory for generated wiki; a relative path must stay inside the repository")
 	rest, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err

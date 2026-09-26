@@ -586,4 +586,212 @@ func TestWriteFileNoFollow_Boundary_DirectoryAndMissingFile(t *testing.T) {
 	if err := WriteFileNoFollow(filepath.Join(dir, "fresh.txt"), nil, 0o600); err != nil {
 		t.Errorf("expected an empty write to a fresh path to succeed, got %v", err)
 	}
+	if err := WriteFileNoFollow(filepath.Join(dir, "missing", "ledger.json"), []byte("x"), 0o600); err == nil {
+		t.Errorf("expected a write below a missing directory to fail")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a failed write must not create its directory, stat err = %v", err)
+	}
+}
+
+// TestWriteFileNoFollow_Negative_HardLinkedVictimUntouched pins the replace-by-rename
+// half of BUG-827: the old in-place truncate wrote through a hard link planted at the
+// ledger path onto whatever file it shared an inode with.
+func TestWriteFileNoFollow_Negative_HardLinkedVictimUntouched(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim.txt")
+	if err := os.WriteFile(victim, []byte("do not touch"), 0o600); err != nil {
+		t.Fatalf("seed victim: %v", err)
+	}
+	ledger := filepath.Join(dir, "milestones.json")
+	if err := os.Link(victim, ledger); err != nil {
+		t.Skipf("hard links unsupported on this filesystem: %v", err)
+	}
+	if err := WriteFileNoFollow(ledger, []byte("ledger"), 0o600); err != nil {
+		t.Fatalf("WriteFileNoFollow: %v", err)
+	}
+	if data, err := os.ReadFile(victim); err != nil || string(data) != "do not touch" { // #nosec G304 -- test-local path from t.TempDir
+		t.Errorf("victim = (%q, %v), want it untouched", data, err)
+	}
+	if data, err := ReadFileNoFollow(ledger); err != nil || string(data) != "ledger" {
+		t.Errorf("ledger = (%q, %v), want the new contents", data, err)
+	}
+}
+
+// TestWriteFileNoFollow_Boundary_ReplaceNeverWidensExisting keeps WriteFileSecure's
+// ceiling across the switch to rename: a replacement keeps only the bits the old file had
+// that perm also grants, and no staged temp file survives.
+func TestWriteFileNoFollow_Boundary_ReplaceNeverWidensExisting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not available on Windows")
+	}
+	dir := t.TempDir()
+	ledger := filepath.Join(dir, "BACKLOG.md")
+	if err := os.WriteFile(ledger, []byte("old"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := os.Chmod(ledger, 0o640); err != nil {
+		t.Fatalf("chmod seed: %v", err)
+	}
+	if err := WriteFileNoFollow(ledger, []byte("new"), 0o604); err != nil {
+		t.Fatalf("WriteFileNoFollow: %v", err)
+	}
+	info, err := os.Lstat(ledger)
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("mode = %#o, want 0600 (0640 & 0604)", got)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("expected only %s in %s, got %v", filepath.Base(ledger), dir, entries)
+	}
+}
+
+// writeProtectedFixture seeds a ledger with the given mode and restores a removable mode
+// before t.TempDir's cleanup, which a read-only file would otherwise fail on Windows.
+func writeProtectedFixture(t *testing.T, dir string, mode os.FileMode) string {
+	t.Helper()
+	ledger := filepath.Join(dir, "BACKLOG.md")
+	if err := os.WriteFile(ledger, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := os.Chmod(ledger, mode); err != nil {
+		t.Fatalf("chmod seed: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(ledger, 0o600); err != nil {
+			t.Errorf("restore mode: %v", err)
+		}
+	})
+	return ledger
+}
+
+// TestWriteFileNoFollow_Negative_WriteProtectedLedgerRefused keeps the write protection
+// the in-place writer honored: a rename needs only a writable directory, so without the
+// owner-write check a read-only ledger was replaced silently.
+func TestWriteFileNoFollow_Negative_WriteProtectedLedgerRefused(t *testing.T) {
+	dir := t.TempDir()
+	ledger := writeProtectedFixture(t, dir, 0o400)
+	if err := WriteFileNoFollow(ledger, []byte("clobber"), 0o600); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("WriteFileNoFollow on a read-only ledger = %v, want os.ErrPermission", err)
+	}
+	if err := WriteFileConfined(dir, filepath.Base(ledger), []byte("clobber"), 0o600); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("WriteFileConfined on a read-only ledger = %v, want os.ErrPermission", err)
+	}
+	if data, err := os.ReadFile(ledger); err != nil || string(data) != "keep" { // #nosec G304 -- test-local path from t.TempDir
+		t.Errorf("ledger = (%q, %v), want it untouched", data, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Errorf("expected only the ledger in %s, got (%v, %v)", dir, entries, err)
+	}
+}
+
+// TestWriteFileNoFollow_Boundary_OwnerWriteBitAlonePermitsReplace pins the edge of the
+// write-protection check: the owner-write bit is the whole test, so a file carrying only
+// that bit is still replaced.
+func TestWriteFileNoFollow_Boundary_OwnerWriteBitAlonePermitsReplace(t *testing.T) {
+	dir := t.TempDir()
+	ledger := writeProtectedFixture(t, dir, 0o200)
+	if err := WriteFileNoFollow(ledger, []byte("new"), 0o600); err != nil {
+		t.Fatalf("WriteFileNoFollow on an owner-writable ledger: %v", err)
+	}
+	if err := os.Chmod(ledger, 0o600); err != nil {
+		t.Fatalf("chmod for read-back: %v", err)
+	}
+	if data, err := ReadFileNoFollow(ledger); err != nil || string(data) != "new" {
+		t.Errorf("ledger = (%q, %v), want the replaced contents", data, err)
+	}
+}
+
+func TestWriteFileConfined_Positive(t *testing.T) {
+	root, _ := confinedFixture(t)
+	rel := filepath.Join("alias", "milestones.json")
+	if err := WriteFileConfined(root, rel, []byte("first"), 0o600); err != nil {
+		t.Fatalf("WriteFileConfined through an in-root link: %v", err)
+	}
+	if err := WriteFileConfined(root, rel, []byte("second"), 0o600); err != nil {
+		t.Fatalf("WriteFileConfined replacing the ledger: %v", err)
+	}
+	if data, err := ReadFileNoFollow(filepath.Join(root, "inner", "milestones.json")); err != nil || string(data) != "second" {
+		t.Errorf("ledger = (%q, %v), want the replaced contents at the link target", data, err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "inner"))
+	if err != nil || len(entries) != 1 {
+		t.Errorf("expected only the ledger in inner, got (%v, %v)", entries, err)
+	}
+}
+
+func TestWriteFileConfined_Negative(t *testing.T) {
+	root, outside := confinedFixture(t)
+	victim := filepath.Join(root, "inner", "victim.txt")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("seed victim: %v", err)
+	}
+	if err := os.Symlink("victim.txt", filepath.Join(root, "inner", "ledger.json")); err != nil {
+		t.Fatalf("symlink ledger: %v", err)
+	}
+	cases := []struct {
+		rel  string
+		perm os.FileMode
+		want error
+	}{
+		{filepath.Join("inner", "ledger.json"), 0o600, ErrSymlinkDestination},
+		{filepath.Join("out", "planted.json"), 0o600, ErrPathEscapesRoot},
+		{filepath.Join("..", "sibling.json"), 0o600, ErrPathEscapesRoot},
+		{filepath.Join(outside, "abs.json"), 0o600, ErrAbsoluteRelPath},
+		{"ok.json", 0o666, ErrInsecurePerm},
+	}
+	for _, tc := range cases {
+		if err := WriteFileConfined(root, tc.rel, []byte("clobber"), tc.perm); !errors.Is(err, tc.want) {
+			t.Errorf("WriteFileConfined(%q, %#o) = %v, want %v", tc.rel, tc.perm, err, tc.want)
+		}
+	}
+	if data, err := os.ReadFile(victim); err != nil || string(data) != "keep" { // #nosec G304 -- test-local path from t.TempDir
+		t.Errorf("victim = (%q, %v), want it untouched", data, err)
+	}
+	assertEmptyDir(t, outside)
+	if err := WriteFileConfined(root, filepath.Join("missing", "ledger.json"), []byte("x"), 0o600); err == nil {
+		t.Errorf("expected a write below a missing directory to fail")
+	}
+}
+
+// TestWriteFileConfined_Boundary_SwapAfterCheck pins BUG-826's window: a ledger directory
+// swapped for an escaping link after ConfinePath's check. The pinned write refuses it; the
+// old composition (ConfinePath, then WriteFileNoFollow on the checked path) follows the
+// link and lands outside the root, which is why the ledger writers moved to
+// WriteFileConfined.
+func TestWriteFileConfined_Boundary_SwapAfterCheck(t *testing.T) {
+	root, outside := confinedFixture(t)
+	if err := WriteFileConfined(root, ".", []byte("x"), 0o600); !errors.Is(err, ErrRootItself) || errors.Is(err, ErrSymlinkDestination) {
+		t.Errorf(`WriteFileConfined(root, ".") = %v, want ErrRootItself only`, err)
+	}
+	if err := os.Symlink(filepath.Join(root, "inner"), filepath.Join(root, "absolute")); err != nil {
+		t.Fatalf("symlink absolute: %v", err)
+	}
+	if err := WriteFileConfined(root, filepath.Join("absolute", "ledger.json"), []byte("x"), 0o600); err == nil {
+		t.Errorf("expected an in-root link with an absolute target to be refused by the pinned open")
+	}
+
+	absRoot, inside, err := confineBelow(root, filepath.Join("inner", "milestones.json"))
+	if err != nil {
+		t.Fatalf("confineBelow: %v", err)
+	}
+	swapForLink(t, filepath.Join(root, "inner"), outside)
+	if err := writeConfined(absRoot, inside, []byte("ledger"), 0o600); !errors.Is(err, ErrPathEscapesRoot) {
+		t.Errorf("directory swapped for an escaping link = %v, want ErrPathEscapesRoot like the check reports", err)
+	}
+	assertEmptyDir(t, outside)
+
+	if err := WriteFileNoFollow(filepath.Join(absRoot, inside), []byte("ledger"), 0o600); err != nil {
+		t.Fatalf("WriteFileNoFollow on the checked path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "milestones.json")); err != nil {
+		t.Errorf("expected the root-less write to follow the swapped link (documented contract), stat err = %v", err)
+	}
 }

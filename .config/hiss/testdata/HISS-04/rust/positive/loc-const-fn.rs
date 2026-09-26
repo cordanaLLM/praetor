@@ -1,5 +1,5 @@
-// `pub extern "C" fn` is not one of the six accepted header prefixes.
-pub extern "C" fn long_extern(mut count: i32) -> i32 {
+// A 76-line `const fn`, measured since the header grammar accepts any qualifier run before fn.
+const fn long_const(mut count: i32) -> i32 {
     count += 1;
     count += 1;
     count += 1;

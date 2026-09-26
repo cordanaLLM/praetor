@@ -1,5 +1,5 @@
-// `pub(super) fn` is not one of the six accepted header prefixes.
-pub(super) fn long_pub_super(mut count: i32) -> i32 {
+// `pub extern "C" fn`, measured since the header grammar accepts extern with its ABI string.
+pub extern "C" fn long_extern(mut count: i32) -> i32 {
     count += 1;
     count += 1;
     count += 1;

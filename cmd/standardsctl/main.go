@@ -191,7 +191,7 @@ func main() {
 		// a terminal's Ctrl-C, and no subcommand observes the signal: this forwards the
 		// signal to those groups, so git still cleans up, and kills any group still running
 		// after a grace before the signal ends praetorctl, instead of leaving them running.
-		util.TerminateCommandsOnSignal()
+		util.TerminateCommandsOnSignal(os.Exit)
 	}
 
 	if err := dispatchCommand(cmd, args); err != nil {

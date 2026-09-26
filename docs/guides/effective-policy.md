@@ -263,6 +263,16 @@ file fails. The catalog root contains `.config/archetypes` and its `facets`
 subdirectory; every declared profile/facet must match the repository lock digest.
 The default catalog root is the audited repository.
 
+Adoption writes the pinned catalog into the repository's own `.config/archetypes`
+and asks git whether the repository's ignore rules exclude each file. An excluded
+file is still written, so a local audit works, but adoption reports an error for
+it: git will not commit the file, and a clean checkout or CI run then audits
+without its pinned catalog. A kernel-style tree that ignores a bare `.config` is
+the usual cause, and a negation cannot re-include a path under an ignored
+directory, so the ignore rule itself has to change. When git cannot answer (not
+installed, not a work tree) adoption states the skipped check as a warning.
+Tests: `internal/adopt/ignored_paths_test.go`.
+
 The same explicit configuration can be mounted into a container, bot, plugin or
 workstation. A private GitOps fork can own these files while consuming the public
 application. These flags configure one audit invocation; they do not install a

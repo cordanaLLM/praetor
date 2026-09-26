@@ -35,6 +35,44 @@ It cannot resolve a name, follow a call, or know a type. A rule whose axiom need
 cannot be decided this way, and the coverage catalog records such a rule as `unsupported` with its
 gap fixtures rather than claiming an enforcement that does not exist.
 
+## Rust: scopes follow braces
+
+Test code and function bodies are both brace-delimited items, and one tracker (`braceTracker` in
+`internal/hiss/rules.go`) follows both:
+
+- A `#[cfg(test)]`, `#[test]` or path-qualified test attribute such as `#[tokio::test]` makes test
+  code of exactly the item it annotates, up to the brace that closes it. Code after a closed test
+  module is production code again. `#![cfg(test)]` and the Cargo test paths (`tests/`, `benches/`,
+  `*_test.rs`, `tests.rs`, `test.rs`) still cover the whole file.
+- A function header is any visibility (`pub`, `pub(crate)`, `pub(super)`, `pub(in path)`) followed
+  by any run of `const`, `async`, `unsafe`, `safe`, `default` and `extern` qualifiers before `fn`.
+  The grammar matches the line after literals are stripped, so a `fn` in a string or comment is not
+  a header. Outer attributes may precede the header on the same line (`#[inline] pub fn`,
+  `#[tokio::main] async fn main() {`).
+- The abort policy exempts the body of the unindented `fn main`; rustfmt indents a method of the
+  same name inside its `impl` block, so the method stays library code. The header line belongs to
+  `fn main` too, so a one-line `fn main() { std::process::exit(run()) }` is exempt.
+- An abort macro is a call only with its delimiter after the bang (`panic!(`, `todo![`,
+  `unreachable!{`), so an identifier compared with `!=` is not reported.
+
+`internal/hiss/rust_scope_test.go` and `internal/hiss/abort_policy_test.go` pin each case.
+
+## Python: the entry point follows logical lines
+
+The abort policy allows `sys.exit` inside the top-level `if __name__ == "__main__":` block and the
+top-level `def main`. The scope (`pythonAbortScope` in `internal/hiss/rules.go`) opens on the
+column-zero line that starts either one and closes on the next column-zero code line.
+
+Python ignores indentation inside open brackets and after a trailing backslash, so a column-zero
+line there continues the line above it. black wraps a long signature and puts its closing
+`) -> int:` at column zero. `pythonLineJoiner` counts brackets in the literal-stripped code and
+treats such a line as a continuation, which neither closes nor opens the scope. An unbalanced
+closer leaves the count at zero rather than below it.
+
+`TestAbortPolicy_Boundary_PythonWrappedSignatureKeepsTheEntryOpen` in
+`internal/hiss/abort_policy_test.go` and the fixture
+`.config/hiss/testdata/HISS-07/python/negative/wrapped-entry-signature.py` pin the wrapped case.
+
 ## Go: one pass reads a package, not a file
 
 Most matchers decide a line. HISS-01 cannot be decided that way in full: a function that calls
@@ -46,6 +84,12 @@ component of two or more functions, naming the path.
 Package scope is complete here rather than convenient. A call cycle spanning two packages would
 need each package to import the other, and the Go compiler rejects that outright, so every call
 cycle a buildable program can contain is inside one package.
+
+A name the function binds itself shadows the package-level name of the same spelling for the whole
+body: its receiver, a parameter, a named result, a local, a range variable or a closure parameter.
+A call through such a name adds no edge, a bare call is not direct recursion, and `os.Exit` on a
+binding named `os` is not the process exit (`funcDeclares` in `internal/hiss/go_ast.go`). A method
+is called through its receiver, so a local named like the method does not hide its recursion.
 
 Two limits are deliberate and recorded as gap fixtures rather than left implicit:
 

@@ -12,6 +12,6 @@ func commandBytesCleanup(cmd *exec.Cmd) (start func() error, cleanup func() erro
 	return cmd.Start, func() error { return nil }
 }
 
-// TerminateCommandsOnSignal is a no-op here: commands are not moved to a group of their own,
-// so a console interrupt already reaches them without help.
-func TerminateCommandsOnSignal() {}
+// TerminateCommandsOnSignal is a no-op here and never calls the exit it is given: commands are
+// not moved to a group of their own, so a console interrupt already reaches them without help.
+func TerminateCommandsOnSignal(func(code int)) {}

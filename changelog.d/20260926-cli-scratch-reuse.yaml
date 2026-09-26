@@ -1,0 +1,3 @@
+type: fixed
+title: The documentation audit proves scratch privacy from the repository's own ignore files, so an operator's global excludes file no longer satisfies it, and the editor language scan skips every shared scratch directory, so a .standards gate worktree no longer exhausts its file bound
+breaking: false

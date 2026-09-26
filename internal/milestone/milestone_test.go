@@ -708,3 +708,40 @@ func TestMilestone_SyncOverflowLeavesLocalFilesIntact(t *testing.T) {
 		t.Fatal("failed merge rewrote backlog")
 	}
 }
+
+// TestMilestone_Boundary_LinkedWorkingDirStaysConfined pins the confined ledger writes
+// (BUG-826): a .workingdir linked to another directory inside the repository receives the
+// ledgers at the link target, and one linked outside the repository receives nothing.
+func TestMilestone_Boundary_LinkedWorkingDirStaysConfined(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	wDir := filepath.Join(dir, state.WorkingDirName)
+	if err := os.Rename(wDir, filepath.Join(dir, "ledgers")); err != nil {
+		t.Fatalf("move workingdir: %v", err)
+	}
+	if err := os.Symlink("ledgers", wDir); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+	if _, err := CreateMilestone(ctx, dir, "linked", "", nil); err != nil {
+		t.Fatalf("CreateMilestone below an in-root linked workingdir: %v", err)
+	}
+	for _, name := range []string{MilestonesFile, BacklogFile} {
+		if data, err := util.ReadFileNoFollow(filepath.Join(dir, "ledgers", name)); err != nil || !strings.Contains(string(data), "linked") {
+			t.Errorf("%s at the link target = (%q, %v), want the new milestone", name, data, err)
+		}
+	}
+
+	outside := t.TempDir()
+	if err := os.Remove(wDir); err != nil {
+		t.Fatalf("remove link: %v", err)
+	}
+	if err := os.Symlink(outside, wDir); err != nil {
+		t.Fatalf("symlink outside: %v", err)
+	}
+	if _, err := CreateMilestone(ctx, dir, "escaped", "", nil); !errors.Is(err, util.ErrPathEscapesRoot) {
+		t.Errorf("CreateMilestone through an escaping workingdir = %v, want ErrPathEscapesRoot", err)
+	}
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+		t.Errorf("expected nothing written outside the repository, got (%v, %v)", entries, err)
+	}
+}

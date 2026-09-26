@@ -297,6 +297,24 @@ func TestAuditDocumentationGateGitIgnoreDeclineKeepsScratchPrivacy(t *testing.T)
 	}
 }
 
+// Boundary: only the repository's own ignore files prove scratch privacy. A global excludes
+// file hides .workingdir2 on this machine alone, so it must not satisfy the audit.
+func TestAuditDocumentationGateIgnoresOperatorGlobalExcludes(t *testing.T) {
+	home := t.TempDir()
+	excludes := filepath.Join(home, "excludes")
+	writeFixtureFile(t, home, "excludes", "/.workingdir2/\n")
+	writeFixtureFile(t, home, "gitconfig", "[core]\n\texcludesFile = "+filepath.ToSlash(excludes)+"\n")
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, "gitconfig"))
+
+	root := documentationAuditFixture(t)
+	writeFixtureFile(t, root, ".gitignore", "/.workingdir/\n")
+	manifest := declinedDocumentationManifest([]string{"git-ignore"}, "docs:seo-portal")
+	err := auditDocumentationGate(t.Context(), manifest, root)
+	if err == nil || !strings.Contains(err.Error(), ".workingdir2/PRAETOR-AUDIT-PROBE") {
+		t.Fatalf("a personal excludes file proved repository scratch privacy: %v", err)
+	}
+}
+
 func TestAuditDocumentationGateHonorsBranchRulesetDecline(t *testing.T) {
 	root := documentationAuditFixture(t)
 	if err := os.Remove(filepath.Join(root, ".github", "rulesets", "main.json")); err != nil {

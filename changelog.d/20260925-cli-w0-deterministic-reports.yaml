@@ -1,0 +1,3 @@
+type: fixed
+title: Order every map-backed report and lookup deterministically, refuse case-variant duplicate JSON keys, and apply the runner platform constraint to the routing fallback
+breaking: false

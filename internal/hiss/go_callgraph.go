@@ -270,8 +270,9 @@ func (g *callGraph) addCalls(caller string, fn *ast.FuncDecl) {
 			return true
 		}
 		ident, ok := call.Fun.(*ast.Ident)
-		// A local of the same name shadows the function, so the call does not reach it.
-		if !ok || declaresLocal(fn.Body, ident.Name) || ident.Name == caller {
+		// A parameter, named result or local of the same name shadows the function, so the
+		// call does not reach it.
+		if !ok || funcDeclares(fn, ident.Name) || ident.Name == caller {
 			return true
 		}
 		if g.count >= maxCallGraphEdges {

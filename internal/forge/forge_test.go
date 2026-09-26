@@ -538,7 +538,7 @@ func TestTranscribeDiscussionToADR_Positive(t *testing.T) {
 		CreatedAt:            time.Now(),
 	}
 
-	adr, err := TranscribeDiscussionToADR(ctx, disc, tempDir)
+	adr, err := TranscribeDiscussionToADR(ctx, disc, tempDir, tempDir)
 	if err != nil {
 		t.Fatalf("unexpected error transcribing discussion: %v", err)
 	}
@@ -674,7 +674,7 @@ func TestTranscribeDiscussionToADR_Negative_UnapprovedAndEmpty(t *testing.T) {
 		ContextText:  "Some context",
 		DecisionText: "Some decision",
 	}
-	_, err := TranscribeDiscussionToADR(ctx, unapproved, tempDir)
+	_, err := TranscribeDiscussionToADR(ctx, unapproved, tempDir, tempDir)
 	if err == nil {
 		t.Fatalf("expected error transcribing unapproved discussion")
 	}
@@ -686,7 +686,7 @@ func TestTranscribeDiscussionToADR_Negative_UnapprovedAndEmpty(t *testing.T) {
 		ContextText:  "Some context",
 		DecisionText: "Some decision",
 	}
-	_, errTitle := TranscribeDiscussionToADR(ctx, emptyTitle, tempDir)
+	_, errTitle := TranscribeDiscussionToADR(ctx, emptyTitle, tempDir, tempDir)
 	if errTitle == nil {
 		t.Fatalf("expected error on empty discussion title")
 	}
@@ -783,7 +783,7 @@ func TestTranscribeDiscussionToADR_Boundary_IncrementalNumbering(t *testing.T) {
 		DecisionText: "Valid decision",
 	}
 
-	adr, err := TranscribeDiscussionToADR(ctx, disc, tempDir)
+	adr, err := TranscribeDiscussionToADR(ctx, disc, tempDir, tempDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -806,7 +806,7 @@ func TestTranscribeDiscussionToADR_Boundary_NonLatinTitleAndOverwrite(t *testing
 		ContextText:  "context",
 		DecisionText: "decision",
 	}
-	adr1, err := TranscribeDiscussionToADR(ctx, first, tempDir)
+	adr1, err := TranscribeDiscussionToADR(ctx, first, tempDir, tempDir)
 	if err != nil {
 		t.Fatalf("unexpected error transcribing a non-Latin title: %v", err)
 	}
@@ -817,7 +817,7 @@ func TestTranscribeDiscussionToADR_Boundary_NonLatinTitleAndOverwrite(t *testing
 	second := first
 	second.ID = 12
 	second.Title = "アーキテクチャ"
-	adr2, err := TranscribeDiscussionToADR(ctx, second, tempDir)
+	adr2, err := TranscribeDiscussionToADR(ctx, second, tempDir, tempDir)
 	if err != nil {
 		t.Fatalf("unexpected error transcribing the second non-Latin title: %v", err)
 	}
@@ -839,7 +839,7 @@ func TestTranscribeDiscussionToADR_Boundary_NonLatinTitleAndOverwrite(t *testing
 	// An existing record is immutable: a collision is an error, never a silent rewrite.
 	third := first
 	third.ID = 11
-	if _, err := TranscribeDiscussionToADR(ctx, third, tempDir); err == nil {
+	if _, err := TranscribeDiscussionToADR(ctx, third, tempDir, tempDir); err == nil {
 		t.Log("no collision possible because the sequence number advanced")
 	}
 }

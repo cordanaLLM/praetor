@@ -114,6 +114,18 @@ func TestCallGraphIgnoresShadowedNames(t *testing.T) {
 	}
 }
 
+// Negative: a parameter of the same name shadows the function just as a local does, so a
+// call through it adds no edge and closes no cycle.
+func TestCallGraphIgnoresParameterShadowedNames(t *testing.T) {
+	found := scanSources(t, map[string]string{
+		"param.go": "package p\n\nfunc helper() int { return caller(nil) }\n\n" +
+			"func caller(helper func() int) int {\n\treturn helper()\n}\n",
+	})
+	if len(found) != 0 {
+		t.Fatalf("a parameter-shadowed name must not create an edge, got: %s", cycleMessages(found))
+	}
+}
+
 // Boundary: a method and a plain function may share a name. Conflating them would invent an
 // edge between unrelated symbols and report a cycle that does not exist.
 func TestCallGraphKeepsMethodsOutOfTheFunctionGraph(t *testing.T) {

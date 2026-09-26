@@ -15,6 +15,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/needs"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -140,7 +141,7 @@ func (scan *workspaceLanguageScan) visit(path string, entry fs.DirEntry, walkErr
 	if walkErr != nil {
 		return walkErr
 	}
-	if entry.IsDir() && path != scan.root && ignoredWorkspaceDir(path, entry.Name()) {
+	if entry.IsDir() && path != scan.root && ignoredWorkspaceDir(entry.Name()) {
 		return fs.SkipDir
 	}
 	if entry.IsDir() {
@@ -156,12 +157,17 @@ func (scan *workspaceLanguageScan) visit(path string, entry fs.DirEntry, walkErr
 	return nil
 }
 
-func ignoredWorkspaceDir(path, name string) bool {
+// ignoredWorkspaceDir skips version-control, dependency and build-output trees, and the scratch
+// directories every repository walker shares through util.IsScratchDir: agent state and linked
+// worktrees under .claude, Praetor's cache and gate worktrees under .standards, and the private
+// ledgers. A worktree is a whole copy of the checkout, so entering one exhausts the file bound
+// on an ordinary working checkout; skipping only .claude/worktrees left .standards/worktrees in.
+func ignoredWorkspaceDir(name string) bool {
 	switch name {
-	case ".git", ".workingdir", ".workingdir2", ".worktrees", "node_modules", "vendor", "dist", "build", "target":
+	case ".git", ".worktrees", "node_modules", "vendor", "dist", "build", "target":
 		return true
 	default:
-		return name == "worktrees" && filepath.Base(filepath.Dir(path)) == ".claude"
+		return util.IsScratchDir(name)
 	}
 }
 

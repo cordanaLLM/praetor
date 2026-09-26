@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -67,11 +66,7 @@ func auditWorkflowGoCaches(name string, data []byte, owner map[string]string) ([
 	if err := yaml.Unmarshal(data, &spec); err != nil {
 		return nil, fmt.Errorf("workflow %s: parse: %w", name, err)
 	}
-	ids := make([]string, 0, len(spec.Jobs))
-	for id := range spec.Jobs {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
+	ids := sortedJobIDs(spec.Jobs)
 	var findings []GoCacheFinding
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
 		job := spec.Jobs[ids[i]]

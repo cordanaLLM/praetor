@@ -1,0 +1,3 @@
+type: fixed
+title: The Go HISS scanner treats a receiver, parameter, named result, range variable or closure parameter as shadowing a package-level name, so a call through one is no longer reported as direct recursion (HISS-01), no longer adds a call-graph edge, and os.Exit on a binding named os is no longer reported as the process exit (HISS-07)
+breaking: false

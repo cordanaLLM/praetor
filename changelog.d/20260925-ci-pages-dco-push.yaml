@@ -1,0 +1,4 @@
+type: fixed
+title: Keep GitHub Pages deploy credentials off pull request runs and check DCO 1.1 sign-off on direct pushes
+issue: "#292"
+breaking: false

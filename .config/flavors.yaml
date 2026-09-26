@@ -1,4 +1,8 @@
 # Global Version Flavors and Track Definitions
+#
+# update_frequency: on_push, on_release and on_patch are followed by every sync;
+# manual holds the tag until 'praetorctl flavors sync --flavor=<name>' names it.
+# stability is reported on every plan line. See docs/guides/releasing.md.
 version: 1
 flavors:
   bleeding:
@@ -28,4 +32,3 @@ flavors:
     tag_pattern: "v{{lts_version}}"
     update_frequency: "on_patch"
     stability: "enterprise-stable"
-

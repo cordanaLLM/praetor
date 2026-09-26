@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -115,9 +116,16 @@ func visitVerificationInput(ctx context.Context, root, rel string, entry fs.DirE
 	return nil
 }
 
+// skipVerificationDirectory reports a directory that holds no verification input of the
+// repository's own. The scratch directories come from util.IsScratchDir: a .claude/worktrees
+// tree alone holds whole copies of the checkout and ran the walk past its entry bound on an
+// ordinary working checkout.
 func skipVerificationDirectory(name string) bool {
+	if util.IsScratchDir(name) {
+		return true
+	}
 	switch name {
-	case ".git", ".workingdir", ".workingdir2", "node_modules", "vendor", "bin", "obj", "build", "dist", "target", ".venv", "__pycache__":
+	case ".git", "node_modules", "vendor", "bin", "obj", "build", "dist", "target", ".venv", "__pycache__":
 		return true
 	default:
 		return false

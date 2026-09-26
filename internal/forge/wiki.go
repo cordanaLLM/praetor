@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Invariant bounds adhering to HISS-02.
@@ -38,6 +36,10 @@ type WikiManifest struct {
 }
 
 // GenerateWiki synthesizes the formal governance wiki documentation suite.
+//
+// A relative outputDir is a location inside repoRoot and every page is written confined to
+// repoRoot, so a repository that ships docs/wiki (or an ancestor) as a link leading outside
+// it cannot redirect the pages (BUG-826). An absolute outputDir is written as given.
 func GenerateWiki(ctx context.Context, repoRoot, outputDir string) (*WikiManifest, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context cancelled before wiki generation: %w", err)
@@ -58,7 +60,7 @@ func GenerateWiki(ctx context.Context, repoRoot, outputDir string) (*WikiManifes
 		generateAPIReferenceWiki(),
 	}
 
-	if err := writeWikiPages(ctx, outputDir, pages); err != nil {
+	if err := writeWikiPages(ctx, generatedDir{root: repoRoot, dir: outputDir}, pages); err != nil {
 		return nil, fmt.Errorf("failed writing wiki pages to %s: %w", outputDir, err)
 	}
 
@@ -86,9 +88,9 @@ func resolveWikiRepoName(repoRoot string) (string, error) {
 	return wikiOwner + "/" + base, nil
 }
 
-func writeWikiPages(ctx context.Context, outputDir string, pages []WikiPage) error {
-	if err := util.MkdirSecure(outputDir, wikiDirPerm); err != nil {
-		return fmt.Errorf("failed to create wiki output directory %s: %w", outputDir, err)
+func writeWikiPages(ctx context.Context, out generatedDir, pages []WikiPage) error {
+	if err := out.mkdir(wikiDirPerm); err != nil {
+		return fmt.Errorf("failed to create wiki output directory %s: %w", out.location(), err)
 	}
 
 	for i := 0; i < len(pages) && i < MaxWikiPagesLimit; i++ {
@@ -96,8 +98,8 @@ func writeWikiPages(ctx context.Context, outputDir string, pages []WikiPage) err
 			return fmt.Errorf("context cancelled during wiki generation at page %s: %w", pages[i].Name, err)
 		}
 		page := &pages[i]
-		page.Path = filepath.Join(outputDir, page.Name)
-		if err := util.WriteFileNoFollow(page.Path, []byte(page.Content), wikiPageFilePerm); err != nil {
+		page.Path = out.path(page.Name)
+		if err := out.write(page.Name, []byte(page.Content), wikiPageFilePerm); err != nil {
 			return fmt.Errorf("failed writing wiki page %s: %w", page.Name, err)
 		}
 	}

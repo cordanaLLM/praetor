@@ -3,6 +3,7 @@ package flavors
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -12,11 +13,45 @@ import (
 
 // Flavor defines a release track and its tag convention.
 type Flavor struct {
-	Description     string `yaml:"description"`
-	SourceRef       string `yaml:"source_ref"`
-	TagPattern      string `yaml:"tag_pattern"`
+	Description string `yaml:"description"`
+	SourceRef   string `yaml:"source_ref"`
+	TagPattern  string `yaml:"tag_pattern"`
+	// UpdateFrequency decides whether a sync moves the flavor's tag on its own: one of the
+	// Frequency constants, or empty for automatic.
 	UpdateFrequency string `yaml:"update_frequency"`
-	Stability       string `yaml:"stability"`
+	// Stability is the flavor's declared stability label; the plan reports it beside the tag.
+	Stability string `yaml:"stability"`
+}
+
+// Update frequencies a flavor may declare. on_push, on_release and on_patch name the event
+// that moves the flavor's source ref, and every sync follows the source automatically (the
+// sync workflow runs on each push to main and on a schedule). manual holds the tag until an
+// operator names the flavor for one sync. An undeclared frequency is automatic, which is how
+// every flavor behaved before the field was read.
+const (
+	FrequencyOnPush    = "on_push"
+	FrequencyOnRelease = "on_release"
+	FrequencyOnPatch   = "on_patch"
+	FrequencyManual    = "manual"
+)
+
+// IsManual reports whether the flavor's tag moves only when an operator names it.
+func (f Flavor) IsManual() bool {
+	return strings.TrimSpace(f.UpdateFrequency) == FrequencyManual
+}
+
+// validateFrequency refuses a frequency no sync understands. Reading an unknown value as
+// automatic would move a tag its author meant to hold, and reading it as manual would
+// freeze one they meant to follow; either silent guess is the defect a declared field
+// exists to prevent.
+func validateFrequency(name string, f Flavor) error {
+	switch strings.TrimSpace(f.UpdateFrequency) {
+	case "", FrequencyOnPush, FrequencyOnRelease, FrequencyOnPatch, FrequencyManual:
+		return nil
+	default:
+		return fmt.Errorf("flavor %q: unknown update_frequency %q (supported: %s, %s, %s, %s)",
+			name, f.UpdateFrequency, FrequencyOnPush, FrequencyOnRelease, FrequencyOnPatch, FrequencyManual)
+	}
 }
 
 // Config represents .config/flavors.yaml.
@@ -35,8 +70,11 @@ type TagTransition struct {
 	TargetRef string
 	// TargetCommit is the commit TargetRef resolves to, empty when it does not resolve.
 	TargetCommit string
-	// Action is one of ActionCreate, ActionUpdate, ActionNoop or ActionUnresolved.
+	// Action is one of ActionCreate, ActionUpdate, ActionNoop, ActionUnresolved or ActionHeld.
 	Action string
+	// UpdateFrequency and Stability carry the flavor's declared values into the report.
+	UpdateFrequency string
+	Stability       string
 }
 
 // Transition actions produced by PlanTransitions.
@@ -51,6 +89,9 @@ const (
 	// tag must not be retargeted in that case: force-moving latest or lts onto whatever
 	// happens to be checked out silently destroys a release pointer.
 	ActionUnresolved = "unresolved"
+	// ActionHeld means the flavor declares update_frequency manual and this plan did not
+	// name it, so its tag stays where it is whatever its source resolves to.
+	ActionHeld = "held"
 )
 
 // MaxFlavors is the scalar upper bound (HISS-02) on the number of flavors a single plan
@@ -86,6 +127,12 @@ func LoadConfigContext(ctx context.Context, path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse flavors config at %s: %w", path, err)
 	}
+	names := FlavorNames(&cfg)
+	for i := 0; i < len(names) && i < MaxFlavors; i++ {
+		if err := validateFrequency(names[i], cfg.Flavors[names[i]]); err != nil {
+			return nil, fmt.Errorf("invalid flavors config at %s: %w", path, err)
+		}
+	}
 
 	return &cfg, nil
 }
@@ -113,14 +160,27 @@ func FlavorNames(cfg *Config) []string {
 // absent from the map has no tag yet. resolve turns the flavor's declared source ref into
 // a commit, so the noop comparison is commit against commit rather than name against
 // version string. A source ref that does not resolve yields ActionUnresolved instead of a
-// silent fallback to HEAD.
+// silent fallback to HEAD. Every manual flavor is held; PlanSelected moves one by name.
 func PlanTransitions(cfg *Config, currentTags map[string]string, resolve RefResolver) []TagTransition {
+	return PlanSelected(cfg, currentTags, resolve, nil)
+}
+
+// PlanSelected is PlanTransitions restricted to the named flavors. A nil or empty selection
+// plans every declared flavor, holding the manual ones; a selection plans only the flavors it
+// names, and naming a manual flavor is what lets it move. Names are checked by
+// UnknownFlavors before a plan is made.
+func PlanSelected(cfg *Config, currentTags map[string]string, resolve RefResolver, selected []string) []TagTransition {
 	names := FlavorNames(cfg)
 	transitions := make([]TagTransition, 0, len(names))
 
 	for i := 0; i < len(names) && i < MaxFlavors; i++ {
 		name := names[i]
-		sourceRef := SourceRefFor(cfg.Flavors[name])
+		named := slices.Contains(selected, name)
+		if len(selected) > 0 && !named {
+			continue
+		}
+		flavor := cfg.Flavors[name]
+		sourceRef := SourceRefFor(flavor)
 
 		var targetCommit string
 		var resolved bool
@@ -128,16 +188,38 @@ func PlanTransitions(cfg *Config, currentTags map[string]string, resolve RefReso
 			targetCommit, resolved = resolve(sourceRef)
 		}
 
+		action := classifyAction(currentTags[name], targetCommit, resolved)
+		if flavor.IsManual() && !named {
+			action = ActionHeld
+		}
 		transitions = append(transitions, TagTransition{
-			FlavorName:   name,
-			CurrentRef:   currentTags[name],
-			TargetRef:    sourceRef,
-			TargetCommit: targetCommit,
-			Action:       classifyAction(currentTags[name], targetCommit, resolved),
+			FlavorName:      name,
+			CurrentRef:      currentTags[name],
+			TargetRef:       sourceRef,
+			TargetCommit:    targetCommit,
+			Action:          action,
+			UpdateFrequency: strings.TrimSpace(flavor.UpdateFrequency),
+			Stability:       strings.TrimSpace(flavor.Stability),
 		})
 	}
 
 	return transitions
+}
+
+// UnknownFlavors returns the names in selected that the configuration does not declare, so
+// a misspelled --flavor fails instead of planning nothing.
+func UnknownFlavors(cfg *Config, selected []string) []string {
+	var declared map[string]Flavor
+	if cfg != nil {
+		declared = cfg.Flavors
+	}
+	var unknown []string
+	for i := 0; i < len(selected) && i < MaxFlavors; i++ {
+		if _, ok := declared[selected[i]]; !ok {
+			unknown = append(unknown, selected[i])
+		}
+	}
+	return unknown
 }
 
 func classifyAction(current, targetCommit string, resolved bool) string {

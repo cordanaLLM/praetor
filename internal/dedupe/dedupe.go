@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // FileLocation points to a file and line number.
@@ -97,9 +98,13 @@ func ScanRepoContext(ctx context.Context, repoPath string) (*DedupeReport, error
 // deliberately repetitive: a rule needing a tested and an untested copy of the same function
 // must contain two near-identical files, so scanning them reports duplication that is the
 // point of the fixture rather than a defect. The HISS scanner skips the same name.
+//
+// The scratch directories come from util.IsScratchDir, the list the HISS scanner and adopt's
+// verification planner share: a .claude/worktrees copy of the checkout is the same source
+// again, and scanning it reported every function as its own duplicate.
 func shouldSkipDir(name string) bool {
 	return name == ".git" || name == "vendor" || name == "node_modules" ||
-		name == ".workingdir" || name == "testdata"
+		name == "testdata" || util.IsScratchDir(name)
 }
 
 func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, hashMap map[string][]FileLocation, locMap map[string]int, report *DedupeReport) error {

@@ -86,6 +86,13 @@ Production software must never panic or unwrap:
 - Total ban on Rust `.unwrap()` and `.expect()` in non-test code.
 - Total ban on unchecked Go error returns (`_ = doSomething()`).
 - All error flows must handle the error or wrap it with domain context.
+- Abort policy: library code returns an error instead of ending the process. The scanner reports
+  Go `panic` and `os.Exit`; Rust `panic!`, `todo!`, `unimplemented!`, `unreachable!`,
+  `process::exit` and `process::abort`; and Python `sys.exit`. Tests and binary entry points may
+  abort: Go `main.main`, a top-level Rust `fn main`, and the Python `if __name__ == "__main__":`
+  block or top-level `def main`. The assert family and exit wrappers such as `log.Fatal` are
+  recorded as gaps in [`.config/hiss/coverage.yaml`](../../.config/hiss/coverage.yaml), not
+  enforced.
 
 ### HISS-08: Static Determinism & Banned Functions
 

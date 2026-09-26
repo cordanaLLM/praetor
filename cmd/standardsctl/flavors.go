@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"flag"
 	"fmt"
@@ -160,15 +161,20 @@ func applyFlavorTransitions(ctx context.Context, dir string, transitions []flavo
 	}
 
 	moved := make([]string, 0, len(transitions))
-	pending := 0
+	pending, held := 0, 0
 	for i := 0; i < len(transitions) && i < flavors.MaxFlavors; i++ {
 		tr := transitions[i]
-		if tr.Action == flavors.ActionUnresolved {
+		switch tr.Action {
+		case flavors.ActionUnresolved:
 			pending++
 			fmt.Printf("Pending %s: source %s resolves to no commit; tag left untouched\n", tr.FlavorName, tr.TargetRef)
 			continue
-		}
-		if tr.Action != flavors.ActionCreate && tr.Action != flavors.ActionUpdate {
+		case flavors.ActionHeld:
+			held++
+			fmt.Printf("Held %s: update_frequency manual; name it with --flavor=%s to move it\n", tr.FlavorName, tr.FlavorName)
+			continue
+		case flavors.ActionCreate, flavors.ActionUpdate:
+		default:
 			continue
 		}
 		// --no-sign keeps the moving tag lightweight. With tag.gpgSign=true, as on a
@@ -181,8 +187,8 @@ func applyFlavorTransitions(ctx context.Context, dir string, transitions []flavo
 		fmt.Printf("Updated tag %s -> %s (%s)\n", tr.FlavorName, tr.TargetCommit, tr.TargetRef)
 		moved = append(moved, tr.FlavorName)
 	}
-	fmt.Printf("Flavors synchronized: %d tag(s) moved, %d already current, %d pending.\n",
-		len(moved), len(transitions)-len(moved)-pending, pending)
+	fmt.Printf("Flavors synchronized: %d tag(s) moved, %d already current, %d pending, %d held.\n",
+		len(moved), len(transitions)-len(moved)-pending-held, pending, held)
 	return moved, nil
 }
 
@@ -232,8 +238,9 @@ func printFlavorPlan(transitions []flavors.TagTransition) {
 		if target == "" {
 			target = "<unresolved>"
 		}
-		fmt.Printf("  [%s] %-10s : %s -> %s (source: %s)\n",
-			strings.ToUpper(tr.Action), tr.FlavorName, current, target, tr.TargetRef)
+		fmt.Printf("  [%s] %-10s : %s -> %s (source: %s; update: %s; stability: %s)\n",
+			strings.ToUpper(tr.Action), tr.FlavorName, current, target, tr.TargetRef,
+			cmp.Or(tr.UpdateFrequency, "automatic"), cmp.Or(tr.Stability, "undeclared"))
 	}
 }
 
@@ -245,6 +252,7 @@ func runFlavors(args []string) error {
 	fs.BoolVar(&opts.Strict, "strict", false, "sync: fail before moving any tag when a declared source ref resolves to no commit")
 	fs.BoolVar(&opts.Push, "push", false, "sync: publish the moved tags to --remote in one atomic force-push")
 	fs.StringVar(&opts.Remote, "remote", "origin", "sync: remote that --push publishes to")
+	selection := fs.String("flavor", "", "Comma-separated flavors to plan or sync; the only way a manual flavor moves")
 
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -259,9 +267,13 @@ func runFlavors(args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load flavors config: %w", err)
 	}
+	selected := splitCSV(*selection)
+	if unknown := flavors.UnknownFlavors(cfg, selected); len(unknown) > 0 {
+		return fmt.Errorf("--flavor names undeclared flavor(s): %s", strings.Join(unknown, ", "))
+	}
 
 	resolve := func(ref string) (string, bool) { return resolveFlavorRef(ctx, *dir, ref) }
-	transitions := flavors.PlanTransitions(cfg, fetchCurrentTags(ctx, *dir, cfg), resolve)
+	transitions := flavors.PlanSelected(cfg, fetchCurrentTags(ctx, *dir, cfg), resolve, selected)
 	printFlavorPlan(transitions)
 
 	switch action {

@@ -251,3 +251,23 @@ An agent asking about a rule needs to know whether anything will stop it. Return
 specification with no enforcement note reads as a gate that exists, which is the defect the HISS-20
 coverage catalog was built to remove — a declared mechanism nothing implements. The same honesty
 applies here: the tool reports the rule *and* whether it bites.
+
+## Package docs answer the same way twice
+
+`standards_package_docs` resolves a package name through one selection rule, shared with
+`praetorctl docs lookup` (`DocCatalog.Lookup`, `internal/docdistill/types.go`):
+
+1. an exact `package_name` match wins;
+2. a path-suffix match (`yaml.v3` for `gopkg.in/yaml.v3`) answers only when nothing matches
+   exactly, so a suffix can never beat a package the caller named in full;
+3. when the catalog holds the same package at several versions, the greatest catalog key
+   (`name@version`) in sorted order wins. That order is lexical, not semantic: probe a
+   specific version by asking for the catalog entry rather than expecting semver ordering.
+
+Before this rule the tool ranged the catalog map, so two calls against one cache could
+return different versions and a suffix match could win over an exact one
+(`internal/docdistill/catalog_lookup_test.go` pins all three points).
+
+The fact tallies printed by `standards_hindsight_optimize` and by `praetorctl hindsight
+distill|audit` are sorted by category for the same reason: two runs over an unchanged
+repository produce identical output, so a diff between them shows a real change.

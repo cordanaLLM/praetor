@@ -159,18 +159,26 @@ that adds it.
 
 `.config/flavors.yaml` declares each flavor and the ref it follows:
 
-| Flavor | Source ref | Stability |
-| :--- | :--- | :--- |
-| `bleeding` | `refs/heads/main` | experimental |
-| `edge` | `refs/heads/main` | pre-release |
-| `latest` | `refs/tags/v*`, highest SemVer tag with no prerelease component | stable |
-| `lts` | `refs/heads/lts-*`, highest by the same sort | enterprise-stable |
+| Flavor | Source ref | Update frequency | Stability |
+| :--- | :--- | :--- | :--- |
+| `bleeding` | `refs/heads/main` | `on_push` | experimental |
+| `edge` | `refs/heads/main` | `manual` | pre-release |
+| `latest` | `refs/tags/v*`, highest SemVer tag with no prerelease component | `on_release` | stable |
+| `lts` | `refs/heads/lts-*`, highest by the same sort | `on_patch` | enterprise-stable |
+
+`update_frequency` decides whether a sync moves the tag on its own. `on_push`, `on_release`
+and `on_patch` name the event that moves the source ref; every sync follows it
+automatically, and an undeclared frequency behaves the same way. `manual` holds the tag:
+`plan` and `sync` report the flavor as `HELD` and leave its tag where it is, whatever its
+source resolves to, until an operator names it with `--flavor`. Any other value fails the
+config load. `stability` is reported on every plan line and changes nothing else.
 
 ```bash
 praetorctl flavors plan                 # print each flavor's current and target commit
 praetorctl flavors sync                 # move the local tags
 praetorctl flavors sync --push          # ...and publish them
 praetorctl flavors sync --strict        # fail if any source ref resolves to nothing
+praetorctl flavors sync --flavor=edge   # move a manual flavor, and only the flavors named
 ```
 
 | Flag | Default | Effect |
@@ -178,6 +186,7 @@ praetorctl flavors sync --strict        # fail if any source ref resolves to not
 | `--push` | off | Publishes every tag the sync moved in one `git push --atomic --force`, so the remote takes all of them or none |
 | `--remote` | `origin` | Remote that `--push` publishes to |
 | `--strict` | off | Fails before any tag moves when a declared source ref resolves to no commit |
+| `--flavor` | all declared | Comma-separated flavors to plan or sync; the only way a `manual` flavor moves. An undeclared name fails before any tag moves |
 | `--config` | `.config/flavors.yaml` | Flavor declarations |
 | `--dir` | `.` | Repository root |
 
@@ -187,7 +196,9 @@ A flavor whose source ref resolves to no commit is **pending**. That is the norm
 `lts-*` branch. `sync` prints it as `Pending <flavor>`, leaves its tag exactly where it is,
 and still moves every other flavor. It never falls back to `HEAD`, so a stable channel is
 never aliased to `main`. The workflow runs `flavors sync --push`, so the tags published are
-the flavors declared in the config, not a list of names kept in YAML.
+the flavors declared in the config, not a list of names kept in YAML. A scheduled or push run
+holds `edge`; dispatching `.github/workflows/sync-flavors.yml` with the `flavor` input (for
+example `edge`) passes `--flavor` and moves only the flavors named.
 
 Moving tags are lightweight tags created with `git tag --no-sign`. A workstation with
 `tag.gpgSign=true` would otherwise turn them into signed annotated tags that need a
@@ -195,6 +206,8 @@ message, and the sync would fail.
 
 `cmd/standardsctl/flavors_cli_test.go` covers pending flavors, `--strict`, the atomic push
 against a bare repository, and the signing configuration.
+`cmd/standardsctl/flavors_frequency_test.go` and `internal/flavors/frequency_test.go` cover
+held manual flavors, `--flavor`, and the refused frequencies.
 
 ## Known limits
 

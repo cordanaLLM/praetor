@@ -108,3 +108,28 @@ func TestScanMutualRecursionIsReported(t *testing.T) {
 		t.Errorf("the finding must name the cycle path, got %q", rep.Violations[0].Message)
 	}
 }
+
+// TestScanSignatureBindingShadowsTheFunction is a negative dimension: a parameter or named
+// result of the function's own name is what a bare call reaches, so the call is not
+// recursion. Checking only body locals reported both.
+func TestScanSignatureBindingShadowsTheFunction(t *testing.T) {
+	rep := scanSource(t, "package p\n\nfunc walk(walk func()) {\n\twalk()\n}\n\n"+
+		"func next() (next func() int) {\n\tnext = func() int { return 1 }\n\tnext()\n\treturn\n}\n")
+
+	if rep.Breakdown["HISS-01"] != 0 {
+		t.Fatalf("a parameter or named result of the same name is not the function: %+v", rep.Violations)
+	}
+}
+
+// TestScanRecursiveMethodDespiteASameNamedLocal is the boundary: a method is called through
+// its receiver, so a local named like the method cannot shadow the call and the recursion is
+// still reported.
+func TestScanRecursiveMethodDespiteASameNamedLocal(t *testing.T) {
+	rep := scanSource(t, "package p\n\ntype T struct{ next *T }\n\nfunc (t *T) Walk() int {\n\tWalk := 1\n"+
+		"\tif t.next == nil {\n\t\treturn Walk\n\t}\n\treturn t.Walk()\n}\n")
+
+	if rep.Breakdown["HISS-01"] != 1 {
+		t.Fatalf("a recursive method must be reported despite a same-named local, got %d: %+v",
+			rep.Breakdown["HISS-01"], rep.Violations)
+	}
+}
