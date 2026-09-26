@@ -8,6 +8,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/state"
+	"github.com/cordanaLLM/praetor/templates"
 )
 
 // TestAuditFlavor_Positive_FreshCloneWithoutLedgerScoresFull pins the fix for the gate
@@ -156,7 +157,7 @@ func fullyConformingRepo(t *testing.T, flv flavor.Flavor, withLedger bool) strin
 	t.Helper()
 	files := make(map[string]string)
 	for _, tmpl := range flv.RequiredTemplates() {
-		files[tmpl.Path] = "fixture\n"
+		files[tmpl.Path] = conformingTemplateBody(t, tmpl)
 	}
 	for _, s := range flv.RequiredSettings() {
 		files[s.Path] = fixtureSetting
@@ -167,6 +168,27 @@ func fullyConformingRepo(t *testing.T, flv flavor.Flavor, withLedger bool) strin
 		}
 	}
 	return repoWithFiles(t, files)
+}
+
+// fixtureMarkdown satisfies the Markdown validator the producer-owned harness files carry.
+const fixtureMarkdown = "# Harness\n\nRun make verify-all before concluding a turn.\n"
+
+// conformingTemplateBody is a body that satisfies the template's validator: the embedded
+// body flavor apply would scaffold, or, for a producer-owned file flavor apply never
+// writes, a minimal document of the producer's format.
+func conformingTemplateBody(t *testing.T, tmpl flavor.TemplateItem) string {
+	t.Helper()
+	if tmpl.Source != "" {
+		body, err := templates.RenderFile(tmpl.Source, templates.Context{RepoName: "widget", Owner: "acme"})
+		if err != nil {
+			t.Fatalf("render %s for %s: %v", tmpl.Source, tmpl.Path, err)
+		}
+		return body
+	}
+	if strings.HasSuffix(tmpl.Path, ".md") {
+		return fixtureMarkdown
+	}
+	return fixtureSetting
 }
 
 // settingsGapsTolerated removes the flavor's settings one at a time, in declaration order, and

@@ -2,23 +2,13 @@ package flavor_test
 
 // The bodies an adopter actually receives. Before this file the only assertion on a
 // scaffolded template was os.Stat on the path (flavor_test.go, TestApplyFlavor_NewArchetypes),
-// so every version, schema and image reference inside defaultTemplateContent could change,
-// or rot, without a test noticing. HISS-20 wants the claim replayable in both directions:
-// each case below fails if the value regresses AND fails if the value is merely absent.
+// so every version, schema and image reference inside a scaffolded file could change, or
+// rot, without a test noticing. HISS-20 wants the claim replayable in both directions: each
+// case below fails if the value regresses AND fails if the value is merely absent.
 //
-// Three cases are tied to this branch and fail on origin/main unchanged, because
-// defaultTemplateContent there emits an undigested "gcr.io/distroless/static:nonroot", the
-// 2021 rustfmt edition and a template still on the golangci v1 schema:
-//
-//	TestScaffoldedDockerfileNamesADigestPinnedDebian13Runtime
-//	TestScaffoldedRustfmtNamesThe2024Edition
-//	TestScaffoldedGolangciConfigEqualsTheShippedTemplate
-//
-// The remaining two, TestScaffoldedGolangciConfigCarriesTheV2Schema and
-// TestRequiredTemplatesWithoutABodyStillEmitOnlyAStub, are characterisation rather than new
-// coverage: they hold on origin/main too, and they are here to pin behaviour that nothing
-// else pins, not to demonstrate a change. Naming them rather than counting them keeps this
-// header from going stale the next time a case is added.
+// Every body now comes from templates/ (TemplateItem.Source), so the file a reviewer reads
+// there is the file an adopter receives. TestScaffoldedBodiesAreTheShippedTemplates holds
+// that equality for every flavor; the remaining cases pin what the bodies must say.
 
 import (
 	"os"
@@ -28,10 +18,12 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
+	"github.com/cordanaLLM/praetor/templates"
 )
 
-// digestPinned matches a FROM line carrying tag plus an explicit sha256 digest.
-var digestPinned = regexp.MustCompile(`^FROM \S+:[^@\s]+@sha256:[0-9a-f]{64}$`)
+// digestPinned matches a FROM line carrying tag plus an explicit sha256 digest, optionally
+// naming the stage.
+var digestPinned = regexp.MustCompile(`^FROM \S+:[^@\s]+@sha256:[0-9a-f]{64}(?: AS \S+)?$`)
 
 // scaffoldInto applies a flavor to an empty repository and returns the file bodies.
 //
@@ -60,17 +52,41 @@ func scaffoldInto(t *testing.T, flavorName string, want ...string) map[string]st
 	return bodies
 }
 
-func TestScaffoldedDockerfileNamesADigestPinnedDebian13Runtime(t *testing.T) {
+// fromLines returns every FROM instruction of a Dockerfile, in order.
+func fromLines(body string) []string {
+	var froms []string
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "FROM ") {
+			froms = append(froms, line)
+		}
+	}
+	return froms
+}
+
+// BUG-581: the scaffolded Dockerfile was a single distroless stage copying a binary that
+// nothing had built into the context, so `docker build .` failed on every adopter. It must
+// now build from source: a Go builder stage whose output the distroless runtime copies.
+func TestScaffoldedDockerfileBuildsFromSourceOnADigestPinnedDebian13Runtime(t *testing.T) {
 	body := scaffoldInto(t, "go-service", "Dockerfile")["Dockerfile"]
-	from, _, ok := strings.Cut(body, "\n")
-	if !ok {
-		t.Fatalf("emitted Dockerfile has no FROM line: %q", body)
+	froms := fromLines(body)
+	if len(froms) != 2 {
+		t.Fatalf("expected a builder and a runtime stage, got FROM lines %q in:\n%s", froms, body)
 	}
-	if !digestPinned.MatchString(from) {
-		t.Errorf("HISS-11: emitted runtime is not tag-plus-digest pinned: %q", from)
+	for _, from := range froms {
+		if !digestPinned.MatchString(from) {
+			t.Errorf("HISS-11: stage is not tag-plus-digest pinned: %q", from)
+		}
 	}
-	if !strings.Contains(from, "gcr.io/distroless/static-debian13:nonroot") {
-		t.Errorf("emitted runtime is not the Debian 13 distroless image: %q", from)
+	if !strings.HasPrefix(froms[0], "FROM golang:") || !strings.HasSuffix(froms[0], " AS builder") {
+		t.Errorf("first stage is not the Go builder: %q", froms[0])
+	}
+	if !strings.Contains(froms[1], "gcr.io/distroless/static-debian13:nonroot") {
+		t.Errorf("runtime stage is not the Debian 13 distroless image: %q", froms[1])
+	}
+	for _, want := range []string{"RUN CGO_ENABLED=0", "COPY --from=builder ", "USER 65532:65532"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("emitted Dockerfile lacks %q:\n%s", want, body)
+		}
 	}
 	// Negative: the rolling alias resolves to the same digest today and diverges the
 	// day distroless promotes it, so its absence is the property under test.
@@ -98,33 +114,41 @@ func TestScaffoldedGolangciConfigCarriesTheV2Schema(t *testing.T) {
 	}
 }
 
-// The emitted .golangci.yml and templates/go/.golangci.yml.tmpl are two copies of one
-// file, and the template's own header concedes the equality was "held by reading only"
-// because praetorctl dedupe scan compares Go functions and cannot see a YAML/Go-string
-// pair. This is the gate that header asks for: HISS-19 covers config formats, and the two
-// copies had in fact already drifted -- the template carried the v1 schema until this
-// branch while the scaffolder emitted v2. It fails on origin/main unchanged.
-func TestScaffoldedGolangciConfigEqualsTheShippedTemplate(t *testing.T) {
-	body := scaffoldInto(t, "go-service", ".golangci.yml")[".golangci.yml"]
-	raw, err := os.ReadFile(filepath.Join("..", "..", "templates", "go", ".golangci.yml.tmpl"))
-	if err != nil {
-		t.Fatalf("read the shipped golangci template: %v", err)
-	}
-	if shipped := withoutLeadingComments(string(raw)); shipped != body {
-		t.Errorf("templates/go/.golangci.yml.tmpl and defaultTemplateContent have drifted.\ntemplate:\n%s\nemitted:\n%s", shipped, body)
-	}
-}
-
-// withoutLeadingComments drops the header comment block a shipped template carries for its
-// readers; everything after the first non-comment line is the body an adopter would get.
-func withoutLeadingComments(text string) string {
-	lines := strings.SplitAfter(text, "\n")
-	for i, line := range lines {
-		if !strings.HasPrefix(line, "#") {
-			return strings.Join(lines[i:], "")
+// Every scaffolded file is its embedded template rendered for the repository, byte for byte.
+// This replaces a single-file equality test between templates/go/.golangci.yml.tmpl and a Go
+// string literal, a pair that had already drifted once (#336): there is no second copy left.
+func TestScaffoldedBodiesAreTheShippedTemplates(t *testing.T) {
+	sourced := 0
+	for _, flv := range flavor.List() {
+		root := t.TempDir()
+		report, err := flavor.ApplyFlavor(t.Context(), root, flv.Name(), false)
+		if err != nil || len(report.Errors) > 0 {
+			t.Fatalf("apply %s: err %v, recorded %v", flv.Name(), err, report.Errors)
+		}
+		for _, tmpl := range flv.RequiredTemplates() {
+			if tmpl.Source == "" {
+				continue
+			}
+			sourced++
+			got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(tmpl.Path)))
+			if err != nil {
+				t.Errorf("%s scaffolded no %s: %v", flv.Name(), tmpl.Path, err)
+				continue
+			}
+			// With no origin remote, ResolveRepoIdentity reads <owner>/<repo> off the path.
+			identity := templates.Context{RepoName: filepath.Base(root), Owner: filepath.Base(filepath.Dir(root))}
+			want, err := templates.RenderFile(tmpl.Source, identity)
+			if err != nil {
+				t.Fatalf("render %s: %v", tmpl.Source, err)
+			}
+			if string(got) != want {
+				t.Errorf("%s: scaffolded %s differs from %s", flv.Name(), tmpl.Path, tmpl.Source)
+			}
 		}
 	}
-	return ""
+	if sourced == 0 {
+		t.Fatal("no template declares a Source; the equality would hold vacuously")
+	}
 }
 
 func TestScaffoldedRustfmtNamesThe2024Edition(t *testing.T) {
@@ -137,17 +161,34 @@ func TestScaffoldedRustfmtNamesThe2024Edition(t *testing.T) {
 	}
 }
 
-// Boundary: a required template with no case in defaultTemplateContent degrades to a
-// one-line comment. That is issue #336 and it is asserted here rather than left
-// undocumented, so closing #336 shows up as a failing test instead of a surprise.
-func TestRequiredTemplatesWithoutABodyStillEmitOnlyAStub(t *testing.T) {
+// BUG-028/BUG-029: the workflows were one-line comments. They are workflows now, and the
+// GitHub expressions in them reach the adopter verbatim rather than as template actions.
+func TestScaffoldedWorkflowsCarryJobsAndGitHubExpressions(t *testing.T) {
 	bodies := scaffoldInto(t, "go-service", ".github/workflows/ci.yml", ".github/workflows/security.yml")
 	for rel, body := range bodies {
-		if strings.Contains(body, "jobs:") {
-			t.Errorf("%s now has real content; #336 is closed and this expectation is stale", rel)
+		if !strings.Contains(body, "\njobs:\n") {
+			t.Errorf("%s declares no jobs: %q", rel, body)
 		}
-		if !strings.HasPrefix(body, "# "+filepath.Base(rel)+" configuration for ") {
-			t.Errorf("%s is neither a stub nor a workflow: %q", rel, body)
+		if strings.HasPrefix(body, "# "+filepath.Base(rel)+" configuration for ") {
+			t.Errorf("%s is still the comment placeholder: %q", rel, body)
 		}
+		if !strings.Contains(body, "${{ runner.os }}") {
+			t.Errorf("%s lost its GitHub expressions in rendering", rel)
+		}
+	}
+	for _, name := range []string{"rust-systems", "typescript-node", "jvm-service", "mobile-flutter"} {
+		body := scaffoldInto(t, name, ".github/workflows/ci.yml")[".github/workflows/ci.yml"]
+		if !strings.Contains(body, "\njobs:\n") || !strings.Contains(body, "runs-on: ubuntu-26.04") {
+			t.Errorf("%s scaffolds a CI workflow without a pinned job: %q", name, body)
+		}
+	}
+}
+
+// #410: a comment-only .gitleaks.toml replaced gitleaks' built-in rules with none. The
+// scaffolded file extends them.
+func TestScaffoldedGitleaksConfigExtendsTheDefaultRules(t *testing.T) {
+	body := scaffoldInto(t, "native-gpu-systems", ".gitleaks.toml")[".gitleaks.toml"]
+	if !strings.Contains(body, "\n[extend]\nuseDefault = true\n") {
+		t.Errorf("scaffolded gitleaks config does not extend the default rules: %q", body)
 	}
 }

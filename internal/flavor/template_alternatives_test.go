@@ -77,7 +77,7 @@ func TestTypeScriptNodeFlavor_AcceptsFlatConfigWorkspace(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmp, ".github", "workflows"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, ".github", "workflows", "ci.yml"), []byte("name: CI\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, ".github", "workflows", "ci.yml"), []byte(fixtureWorkflow), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	report, err := flavor.AuditFlavor(tmp, "typescript-node")

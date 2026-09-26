@@ -278,11 +278,15 @@ func adoptSteps() []namedStep {
 		{"security-policy", reconcileSecurityPolicy},
 		{"adr", reconcileADR},
 		{"readme", reconcileReadme},
+		// Ahead of branch-ruleset: the flavor scaffolds CI workflows, and the ruleset's
+		// required status checks are derived from the workflows present. Run after it, the
+		// first adoption certified a ruleset missing the scaffolded jobs and the next run
+		// rewrote it.
+		{"working-dir-and-flavor", reconcileWorkingDirAndFlavor},
 		{"branch-ruleset", reconcileBranchRuleset},
 		{"labels", reconcileLabels},
 		{"paperclip", reconcilePaperclip},
 		{"agent-definitions", reconcileAgentDefinitions},
-		{"working-dir-and-flavor", reconcileWorkingDirAndFlavor},
 		{"git-hooks", reconcileGitHooks},
 	}
 }
