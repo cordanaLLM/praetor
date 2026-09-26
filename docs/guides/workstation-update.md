@@ -19,6 +19,10 @@ and places them, with their legacy aliases (`standardsctl`, `standards-mcp`,
 `internal/clientsetup/roots.go`, `LocationBinDir`). `status` reports what is installed
 there without changing anything.
 
+Both commands take flags in any order and no positional argument. A stray positional is
+refused, and so is any token after a `--` terminator, since everything after `--` is
+positional (`parseInterspersed`, `cmd/standardsctl/flagargs.go`).
+
 `scripts/dev_install.py` (`make dev-install`) is a thin wrapper around the same command:
 it runs the MCP functional probe first, then calls `workstation install --source <this
 checkout>` (HISS-19 — the atomic install exists in one place, not two). See
