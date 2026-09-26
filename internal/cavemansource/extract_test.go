@@ -524,7 +524,7 @@ func exercise() { consume(`+argument+`); mcp.TextResult("result: pass.") }
 			input := sourceInput("mcp", config.SourceFormatGo, "mcp.outputs")
 			input.Surface = config.SurfaceMCP
 			_, err := ExtractInputs(t.Context(), root, []config.RegisterSourceInput{input})
-			if tc.reject != (err != nil) || tc.reject && !strings.Contains(err.Error(), "exceeds depth") {
+			if tc.reject != (err != nil) || tc.reject && !strings.Contains(err.Error(), fmt.Sprintf("reaches depth limit %d", maxGoSelectorDepth)) {
 				t.Fatalf("wrappers=%d reject=%t err=%v", tc.wrappers, tc.reject, err)
 			}
 		})

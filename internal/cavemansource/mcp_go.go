@@ -459,7 +459,7 @@ func (a *mcpResultMutationAnalysis) expressionKind(expression ast.Expr) mcpResul
 		steps = append(steps, step)
 		expression = inner
 	}
-	a.scanner.fail(expression, fmt.Sprintf("mcp result expression exceeds depth %d", maxGoSelectorDepth))
+	a.scanner.fail(expression, fmt.Sprintf("mcp result expression reaches depth limit %d", maxGoSelectorDepth))
 	return mcpResultValueNone
 }
 
