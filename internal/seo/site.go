@@ -43,6 +43,9 @@ type SiteAuditOptions struct {
 	// robots.txt only at a host root (RFC 9309 section 2.3), so a project site served under
 	// a path cannot publish one and the default treats it as optional.
 	RequireRobots bool
+	// AllowPlaceholders permits the presence of example-org/example-repo and PlaceholderLang
+	// in the site's pages, which the preset test build emits natively.
+	AllowPlaceholders bool
 }
 
 // SiteFinding is one reason a built site fails the audit.
@@ -94,7 +97,7 @@ func AuditSite(ctx context.Context, root string, opts SiteAuditOptions) (*SiteRe
 	if !info.IsDir() {
 		return nil, fmt.Errorf("seo: site root %q is not a directory", root)
 	}
-	audit := &siteAudit{ctx: ctx, root: resolved, report: &SiteReport{Root: root, Sitemaps: []SitemapFile{}}}
+	audit := &siteAudit{ctx: ctx, root: resolved, options: opts, report: &SiteReport{Root: root, Sitemaps: []SitemapFile{}}}
 	if err := filepath.WalkDir(resolved, audit.visit); err != nil {
 		return nil, fmt.Errorf("seo: audit %q: %w", root, err)
 	}
@@ -113,6 +116,7 @@ type siteAudit struct {
 	ctx     context.Context
 	root    string
 	entries int
+	options SiteAuditOptions
 	report  *SiteReport
 }
 
@@ -161,6 +165,14 @@ func (a *siteAudit) auditPage(rel string) {
 	if err != nil {
 		a.add(rel, err.Error())
 		return
+	}
+	if !a.options.AllowPlaceholders {
+		if bytes.Contains(data, []byte("example-org/example-repo")) {
+			a.add(rel, "carries unedited example-org/example-repo placeholder")
+		}
+		if bytes.Contains(data, []byte("PlaceholderLang")) {
+			a.add(rel, "carries unedited PlaceholderLang placeholder")
+		}
 	}
 	blocks, err := headJSONLD(data)
 	if err != nil {
@@ -411,12 +423,23 @@ func isHTMLSpace(c byte) bool {
 // into b; bytes.ToLower would re-encode some non-ASCII runes at a different length.
 func lowerASCII(b []byte) []byte {
 	out := make([]byte, len(b))
+	inComment := false
 	for i := 0; i < len(b); i++ {
-		c := b[i]
-		if c >= 'A' && c <= 'Z' {
-			c += 'a' - 'A'
+		if !inComment && bytes.HasPrefix(b[i:], []byte("<!--")) {
+			inComment = true
 		}
-		out[i] = c
+		c := b[i]
+		if inComment {
+			out[i] = ' '
+			if bytes.HasSuffix(b[:i+1], []byte("-->")) {
+				inComment = false
+			}
+		} else {
+			if c >= 'A' && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			out[i] = c
+		}
 	}
 	return out
 }

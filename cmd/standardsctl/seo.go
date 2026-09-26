@@ -10,7 +10,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/seo"
 )
 
-const seoUsage = "usage: praetorctl seo audit [--json] [--require-robots] [site-dir]"
+const seoUsage = "usage: praetorctl seo audit [--json] [--require-robots] [--allow-placeholders] [site-dir]"
 
 // maxSEOFindingsPrinted bounds the findings the text report prints (HISS-02); --json
 // carries every recorded finding.
@@ -22,7 +22,7 @@ const maxSEOFindingsPrinted = 256
 // package's unit fixtures (BUG-526, BUG-691).
 func runSEO(args []string) error {
 	if len(args) > 0 && isHelpToken(args[0]) {
-		fmt.Println("Usage: praetorctl seo audit [--json] [--require-robots] [site-dir]")
+		fmt.Println("Usage: praetorctl seo audit [--json] [--require-robots] [--allow-placeholders] [site-dir]")
 		fmt.Println("  Audits a built site (default: site): JSON-LD in every HTML page head, every")
 		fmt.Println("  sitemap*.xml at the root, and robots.txt. Exits non-zero on any finding.")
 		return nil
@@ -65,13 +65,18 @@ func parseSEOAuditArgs(args []string) (seoAuditArgs, error) {
 	asJSON := fs.Bool("json", false, "Print the report as one line of JSON")
 	requireRobots := fs.Bool("require-robots", false,
 		"Fail when the site root has no robots.txt (crawlers read it only at a host root, so a project site under a path cannot serve one)")
+	allowPlaceholders := fs.Bool("allow-placeholders", false,
+		"Permit example-org/example-repo and PlaceholderLang strings in the site's pages")
 	if err := fs.Parse(args[1:]); err != nil {
 		return seoAuditArgs{}, err
 	}
 	if fs.NArg() > 1 {
 		return seoAuditArgs{}, errors.New(seoUsage)
 	}
-	parsed := seoAuditArgs{root: "site", asJSON: *asJSON, options: seo.SiteAuditOptions{RequireRobots: *requireRobots}}
+	parsed := seoAuditArgs{root: "site", asJSON: *asJSON, options: seo.SiteAuditOptions{
+		RequireRobots:     *requireRobots,
+		AllowPlaceholders: *allowPlaceholders,
+	}}
 	if fs.NArg() == 1 {
 		parsed.root = fs.Arg(0)
 	}

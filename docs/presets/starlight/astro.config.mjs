@@ -32,11 +32,11 @@ function basePath(url) {
 // `programmingLanguage` no SoftwareSourceCode block is emitted; with an empty `repository`
 // no GitHub link either. runtimePlatform and license are optional.
 const sourceCode = {
-  name: 'cordanaLLM/praetor',
-  repository: 'https://github.com/cordanaLLM/praetor',
-  programmingLanguage: 'Go',
+  name: 'example-org/example-repo',
+  repository: 'https://github.com/example-org/example-repo',
+  programmingLanguage: 'PlaceholderLang',
   runtimePlatform: '',
-  license: 'https://spdx.org/licenses/EUPL-1.2.html',
+  license: 'https://spdx.org/licenses/MIT.html',
 };
 
 // Site-wide Schema.org JSON-LD, one `head` entry. The per-page TechArticle comes from
@@ -64,8 +64,8 @@ export default defineConfig({
   base: basePath(site),
   integrations: [
     starlight({
-      title: 'cordanaLLM/praetor Documentation',
-      description: 'Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine',
+      title: 'example-org/example-repo Documentation',
+      description: 'Project documentation',
       social: sourceCode.repository ? { github: sourceCode.repository } : {},
       customCss: [
         './src/styles/custom.css',

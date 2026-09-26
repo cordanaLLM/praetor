@@ -1,13 +1,13 @@
-site_name: "cordanaLLM/praetor"
+site_name: "example-org/example-repo"
 # Operator configuration, not a shipped value: the URL the built site is served from.
 # Set DOCS_SITE_URL at build time (for example https://<owner>.github.io/<repo>/). Unset
 # or empty, the build writes no canonical links, no JSON-LD URLs and an empty sitemap.xml,
 # so Material's navigation.instant, which reads that sitemap, falls back to full page loads.
 site_url: !ENV DOCS_SITE_URL
-site_description: "Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine"
-site_author: "cordanaLLM"
-repo_url: "https://github.com/cordanaLLM/praetor"
-repo_name: "cordanaLLM/praetor"
+site_description: "Project documentation"
+site_author: "example-org"
+repo_url: "https://github.com/example-org/example-repo"
+repo_name: "example-org/example-repo"
 
 # overrides/main.html reads every identity value from this file: the TechArticle author is
 # site_author (site_name when unset), and the site-wide SoftwareSourceCode block needs
@@ -16,8 +16,8 @@ repo_name: "cordanaLLM/praetor"
 # 404.html, which has no page and so no TechArticle, then carries no JSON-LD at all.
 extra:
   source_code:
-    programming_language: "Go"
-    license: "https://spdx.org/licenses/EUPL-1.2.html"
+    programming_language: "PlaceholderLang"
+    license: "https://spdx.org/licenses/MIT.html"
 
 theme:
   name: material

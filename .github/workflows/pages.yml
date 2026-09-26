@@ -68,6 +68,14 @@ jobs:
       - name: Verify Mermaid Diagrams Render
         run: python3 -B scripts/docs_mermaid.py --config mkdocs.yml --docs docs --site site
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+
+      - name: SEO Integrity Audit
+        run: go run ./cmd/standardsctl seo audit site
+
       - name: Upload Pages Artifact
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3

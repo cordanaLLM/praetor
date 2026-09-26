@@ -180,16 +180,18 @@ func TestAuditSite_Boundary_HeadDetection(t *testing.T) {
 		// A "</head>" inside a script body is raw text, not the end of the head.
 		"rawtext.html": page(`<script>var s = "</head>";</script>` + jsonLD(siteCode)),
 		// A '>' inside a quoted attribute does not close the start tag.
-		"quoted.html":  page(`<script data-x="a>b" type="application/ld+json">` + siteCode + `</script>`),
-		"unterm.html":  "<html><head>" + `<script type="application/ld+json">` + siteCode,
-		"emptyld.html": page(jsonLD("   ")),
-		"sitemap.xml":  siteSitemap,
+		"quoted.html":        page(`<script data-x="a>b" type="application/ld+json">` + siteCode + `</script>`),
+		"unterm.html":        "<html><head>" + `<script type="application/ld+json">` + siteCode,
+		"emptyld.html":       page(jsonLD("   ")),
+		"commenthead.html":   "<html><!-- <head> --> <head>" + jsonLD(siteCode) + "</head></html>",
+		"commentscript.html": page("<!-- " + jsonLD(`{"@type":`) + " -->" + jsonLD(siteCode)),
+		"sitemap.xml":        siteSitemap,
 	})
 	report := auditSite(t, root, SiteAuditOptions{})
 	requireFinding(t, report, "nohead.html", "no <head> element")
 	requireFinding(t, report, "unterm.html", "unterminated <script> element in <head>")
 	requireFinding(t, report, "emptyld.html", "empty payload")
-	for _, clean := range []string{"implicit.html", "rawtext.html", "quoted.html"} {
+	for _, clean := range []string{"implicit.html", "rawtext.html", "quoted.html", "commenthead.html", "commentscript.html"} {
 		for _, f := range report.Findings {
 			if f.File == clean {
 				t.Errorf("%s: unexpected finding %q", clean, f.Message)

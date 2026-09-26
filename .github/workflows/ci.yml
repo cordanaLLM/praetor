@@ -189,6 +189,8 @@ jobs:
           mkdocs build --strict
           # A strict build still passes when a ```mermaid block ships as a code listing.
           python3 -B scripts/docs_mermaid.py --config mkdocs.yml --docs docs --site site
+          python3 -B scripts/test_docs_seo_presets.py
+          go run ./cmd/standardsctl seo audit site
           # The preset's own mkdocs.yml is built (and mermaid-checked) by the docs-presets
           # job, on every change under docs/presets/, not only on documentation-only pull
           # requests.
