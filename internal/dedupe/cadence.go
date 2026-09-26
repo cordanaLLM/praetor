@@ -50,8 +50,11 @@ type CadenceStatus struct {
 	CommitsSince int
 	AddedLines   int
 	AddedFiles   int
-	// Unmeasured is set when the recorded sweep commit is absent from this history (a rewrite
-	// or a shallow clone), so growth since it cannot be counted.
+	// Unmeasured is set when the recorded sweep commit does not resolve to a commit object
+	// in this repository (pruned after a rewrite, missing from a shallow clone, or recorded
+	// in another clone), so growth since it cannot be counted. The check reads the object
+	// store, not reachability: a commit a rebase or amend left unreachable still resolves
+	// until garbage collection and is measured as a tree diff against HEAD.
 	Unmeasured bool
 	// Reason names the trigger that made the sweep due; it is empty when none did.
 	Reason string
