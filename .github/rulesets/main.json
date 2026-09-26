@@ -40,6 +40,9 @@
             "context": "Release \u0026 Bot Configuration Validation"
           },
           {
+            "context": "Documentation Preset Builds"
+          },
+          {
             "context": "Standards \u0026 Invariant Verification Gate"
           },
           {

@@ -2,9 +2,15 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import sitemap from '@astrojs/sitemap';
 
+// Operator configuration, not a shipped value: the URL the built site is served from. Set
+// DOCS_SITE_URL at build time (for example https://<owner>.github.io/<repo>/). Unset or empty,
+// `site` stays undefined: canonical links and the JSON-LD carry no URL, and the sitemap
+// integration skips generation instead of emitting URLs for a host nobody configured.
+const site = process.env.DOCS_SITE_URL || undefined;
+
 // https://astro.build/config
 export default defineConfig({
-  site: 'https://standards.cordana.ai',
+  site,
   integrations: [
     starlight({
       title: 'cordanaLLM/praetor Documentation',

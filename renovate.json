@@ -8,6 +8,9 @@
   ],
   "labels": ["dependencies", "flavor:latest"],
   "assignees": [],
+  "pip-compile": {
+    "managerFilePatterns": ["/^docs/presets/mkdocs/requirements\\.txt$/"]
+  },
   "packageRules": [
     {
       "matchPackageNames": ["*"],
@@ -23,6 +26,25 @@
     {
       "matchManagers": ["github-actions"],
       "pinDigests": true
+    },
+    {
+      "description": "Starlight preset: package.json stays on exact versions, package-lock.json moves with them, and CI builds the preset from the lock with npm ci.",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["docs/presets/starlight/**"],
+      "rangeStrategy": "pin",
+      "groupName": "starlight docs preset"
+    },
+    {
+      "description": "MkDocs preset: requirements.txt is the hashed lock the pip-compile manager compiles from requirements.in, so pip_requirements must not rewrite it on its own.",
+      "matchManagers": ["pip_requirements"],
+      "matchFileNames": ["docs/presets/mkdocs/requirements.txt"],
+      "enabled": false
+    },
+    {
+      "description": "MkDocs preset: requirements.in pins move together, the hashed lock is recompiled, and CI installs it with --require-hashes.",
+      "matchManagers": ["pip-compile"],
+      "matchFileNames": ["docs/presets/mkdocs/**"],
+      "groupName": "mkdocs docs preset"
     }
   ]
 }

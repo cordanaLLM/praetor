@@ -7,23 +7,39 @@ Production-ready documentation preset powered by [Astro Starlight](https://starl
   - System font stacks only, so no web font is downloaded and no text waits on one.
   - `content-visibility: auto` on `article` and `section` to skip rendering offscreen content.
   - No layout-shift rules are needed: Starlight's hero image carries `width`/`height` attributes and Markdown images get their intrinsic size from `astro:assets`.
-- **Automated XML Sitemap**: Generated using `@astrojs/sitemap`.
+- **Automated XML Sitemap**: Generated using `@astrojs/sitemap` once `DOCS_SITE_URL` is set (see [Site URL](#site-url)).
 - **Search and Accessibility**: Full keyboard navigation, dark/light contrast conformity, and WCAG AA compliance.
 
 ## Quickstart
 
 ```bash
 cd docs/presets/starlight
-npm install
+npm ci
 npm run dev
 ```
 
 ## Build & Verify
 
 ```bash
-npm run build
+DOCS_SITE_URL=https://<owner>.github.io/<repo>/ npm run build
 # Built artifacts in dist/ with sitemap-index.xml and sitemap-0.xml
 ```
+
+## Site URL
+
+`site` in `astro.config.mjs` reads `DOCS_SITE_URL` at build time; the preset ships no domain.
+Set it to the URL the site is served from. Without it the build still passes, but canonical
+links carry no URL, the `TechArticle` JSON-LD from `src/components/SEOHead.astro` has no `url`
+fields, and `@astrojs/sitemap` skips generation with a warning, so `dist/` has no sitemap.
+
+## Pinned Dependencies
+
+`package.json` pins each dependency to an exact version and `package-lock.json` locks the whole
+tree, including every platform's optional binaries. `npm ci` installs exactly that tree and fails
+when `package.json` and the lock disagree; use `npm install` only to change a version, and commit
+both files. Renovate keeps the exact pins (`rangeStrategy: pin` in `renovate.json`) and groups the
+updates as `starlight docs preset`. The `docs-presets` job in `.github/workflows/ci.yml` runs
+`npm ci` and builds this preset whenever a file under `docs/presets/` changes.
 
 The content collection is configured in `src/content.config.ts` with Starlight's `docsLoader()`
 (the Content Layer layout Starlight 0.30+ requires). The sidebar groups **Standards & Invariants**
