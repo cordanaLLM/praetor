@@ -52,6 +52,16 @@ rejects `{{- if }}` before a single rule can run. The chart's own `Chart.yaml` a
 `values.yaml` are ordinary documents and stay linted, and a `templates/` directory with no
 `Chart.yaml` beside it is not a chart at all.
 
+A staged change to `lefthook.yml`, a native client hook file (`.claude/settings.json`,
+`.codex/hooks.json`, `.gemini/settings.json`), anything under `.config/lefthook/` or
+`.config/agent/`, or one of the two hook test scripts runs the harness self-tests
+(`.config/lefthook/scripts/checks.py`): `lefthook validate`, `test_hooks.py`,
+`test_security_scope.py`, `test_checkpoint.py`, `scripts/test_checkpoint_hooks.py`, and
+`scripts/test_praetor_hook.py`. The last one runs the tracked agent-hook strings through
+`sh -c` against the skew guard `.config/agent/hooks/praetor_hook.py`
+([Agent hooks](agent-hooks.md#rollout-engine-skew-never-blocks-a-client)). `make hooks-test`
+runs the same scripts.
+
 The entire `/.workingdir/` directory is private, Git-ignored workstation state.
 Git metadata checks reject staged additions and changes beneath it, including
 forced staging and submodule entries, before exporting the index. Push checks
