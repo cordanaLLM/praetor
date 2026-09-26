@@ -1,7 +1,8 @@
 # Agent hooks
 
-`praetorctl hook <client> <event>` is the one agent-hook entrypoint. A client registration
-contains that call and nothing else: no shell substitution, no interpreter name, no flags.
+`praetorctl hook <client> <event>` is the one agent-hook entrypoint. The engine call takes
+no shell substitution, no interpreter name and no flags; a registration outside any checkout
+contains that call and nothing else.
 The command reads the client's payload from stdin, takes the workspace from the payload,
 judges the call in process and answers in that client's dialect.
 
