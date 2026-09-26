@@ -550,20 +550,6 @@ func (s *Server) prepareContextSource(ctx context.Context, source string, verify
 	return source, nil
 }
 
-// confineContextOutputs resolves every permitted descendant before any writes.
-// The concrete paths are then opened without following any additional symlinks.
-func (s *Server) confineContextOutputs(ctx context.Context, result *compiler.CompileResult, targetDir string) ([]string, error) {
-	paths := make([]string, len(result.Files))
-	for i, file := range result.Files {
-		path, err := s.resolveContextPath(ctx, filepath.Join(targetDir, file.RelativePath))
-		if err != nil {
-			return nil, fmt.Errorf("target %s: %w", file.RelativePath, err)
-		}
-		paths[i] = path
-	}
-	return paths, nil
-}
-
 func (s *Server) resolveContextPath(ctx context.Context, path string) (string, error) {
 	if _, err := s.confinePath(path); err != nil {
 		return "", err
