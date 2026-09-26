@@ -6,8 +6,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -416,20 +418,20 @@ func runHarvestBundle(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("Harvest Complete: %d files bundled (%d bytes)\n", rep.TotalFiles, rep.TotalBytes)
-	fmt.Println("Categories:")
-	// Sorted for the same reason as the docs and hindsight reports: two harvests of one
-	// workstation must print the same lines in the same order.
-	categories := make([]string, 0, len(rep.Categories))
-	for cat := range rep.Categories {
-		categories = append(categories, cat)
-	}
-	sort.Strings(categories)
-	for _, cat := range categories {
-		fmt.Printf("  - %s: %d files\n", cat, rep.Categories[cat])
-	}
+	printBundleCategories(rep.Categories)
 	printBundleWarnings(rep)
 	fmt.Printf("Cryptographic manifest: %s\n", rep.ManifestPath)
 	return nil
+}
+
+// printBundleCategories lists the bundle's category tally in sorted order, for the same
+// reason as the docs and hindsight reports: two harvests of one workstation must print the
+// same lines in the same order.
+func printBundleCategories(categories map[string]int) {
+	fmt.Println("Categories:")
+	for _, cat := range slices.Sorted(maps.Keys(categories)) {
+		fmt.Printf("  - %s: %d files\n", cat, categories[cat])
+	}
 }
 
 // printBundleWarnings names the captured categories that routinely contain credentials and
