@@ -1,8 +1,22 @@
 # GitHub wiki sync
 
-The `Wiki Sync` workflow copies the regular Markdown files in `docs/wiki/` to
-the repository wiki. It updates source-owned filenames and preserves other wiki
-pages. The workflow and each Git network process have explicit time limits.
+`praetorctl forge sync-wiki [--output=docs/wiki]` (`internal/forge.GenerateWiki`,
+invoked from `cmd/standardsctl/forge.go`) generates the pages under `docs/wiki/`
+from repository content; running it and committing its output is how an operator
+refreshes them. The `Wiki Sync` workflow only copies that already-generated
+`docs/wiki/` into the repository wiki — it does not call `sync-wiki` itself, so a
+regenerate-and-commit is still required to keep the published wiki current. The
+workflow triggers on a push to `main` that touches `docs/wiki/**`,
+`.github/workflows/wiki-sync.yml` or `scripts/sync_github_wiki.sh`, and on manual
+`workflow_dispatch`; it does not run on every push.
+
+Every top-level entry directly under `docs/wiki/` must be a regular, non-symlinked
+file whose name ends in `.md`; `scripts/sync_github_wiki.sh` rejects any other
+entry (a directory, symlink, or non-`.md` file) and exits 2 before copying
+anything, so one bad entry blocks the whole sync. The source directory holds at
+most 256 such files (`MAX_WIKI_FILES`); more also exits 2. The workflow updates
+source-owned filenames and preserves other wiki pages. The workflow and each Git
+network process have explicit time limits.
 
 ## Removing pages
 

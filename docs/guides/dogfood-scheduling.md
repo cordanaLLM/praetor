@@ -75,24 +75,27 @@ An optional `repair_policy` enables local failure triage plans:
 
 ```json
 {
-  "routing_config": "/home/example/dev/praetor/.config/model-routing.json",
+  "routing_config": "/home/example/dev/praetor/.config/models/routing.yaml",
   "task": "ci_debugging",
   "input_tokens": 8000,
   "output_tokens": 2000,
-  "max_cost": 0.10,
-  "register": "internal",
-  "register_source": "surfaces.agent",
-  "prompt_register": "internal",
-  "prompt_register_source": "surfaces.prompts"
+  "max_cost": 0.10
 }
 ```
 
 The object is the value of `repair_policy`, with optional `usage_path` for an
-explicit capacity observation and optional `max_output_tokens` for a resolved task
-budget. All illustrated fields are required. Copy the four register values from the
-task and prompt resolutions reported by `praetorctl dogfood repairs`; an empty or
-partial resolution is rejected. Its files are
-snapshotted with the suite. Actual failed suite reports produce plans under
+explicit capacity observation. `routing_config`, `task`, `input_tokens`,
+`output_tokens` and `max_cost` are required; an empty or partial object is
+rejected. `register`, `register_source`, `max_output_tokens`, `prompt_register`,
+`prompt_register_source` and `register_manifest_sha256` are accepted but ignored:
+`ScheduleStatus` and `ScheduleRun` replace the whole register tuple from the
+current task and prompt resolutions in the manifest `routing_config` points at —
+the same canonicalization `dogfood repairs` applies (`CanonicalRepairPolicy` in
+`internal/dogfood/repair.go`; `TestScheduleCanonicalizesCallerRepairRegisterPolicy`
+in `internal/dogfood/schedule_test.go`). There are no register values to copy from
+`praetorctl dogfood repairs`: its standard output reports only status, job count,
+estimated cost and report fingerprint (see [local repair plans](dogfood-repairs.md)).
+Its files are snapshotted with the suite. Actual failed suite reports produce plans under
 `run-000001/repairs`; nil reports and prevalidation errors cannot invent repair
 jobs. Planning uses at most one extra minute of bookkeeping even after suite
 cancellation; cancellation cannot silently discard a completed failure report.
