@@ -196,7 +196,7 @@ the security scanners (`go list`, govulncheck, gosec), the race-detector tests a
 fetch modules and query the vulnerability database, so a dry run that started them was not one.
 `TestExecuteStages_DryRunInvokesNoCommand` in
 [`internal/gating/gating_test.go`](../../internal/gating/gating_test.go) runs a whole dry run
-through a recording command runner and fails if any command starts.
+through a recording command runner and fails if any command starts through the stage runner.
 
 The gatekeeper persona that adoption writes (`.agents/agents/repo-gatekeeper.md`) and the
 pre-migration epic's verification task both run the full gate, `praetorctl gate run --path=.`,

@@ -68,7 +68,7 @@ const maxDescribedViolations = 3
 // Describe renders why the ratchet failed: the counts, then the first few new and
 // touched-file violations as [rule] file:line - message, and whether the total rose.
 //
-// It is the one renderer for a ratchet rejection. `praetorctl audit` and the gate's HISS stage
+// It is a shared renderer for a ratchet rejection. `praetorctl audit` and the gate's HISS stage
 // both reject on this result, and the gate used to report only the counts, so the push it had
 // just blocked named no file to open.
 func (r *RatchetResult) Describe() string {

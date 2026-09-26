@@ -4,6 +4,8 @@
 
 Accepted — 2026-09-26. Supersedes ADR-0001, ADR-0003, ADR-0004, ADR-0005 and ADR-0006.
 
+*Note (2026-09-26, fix/w4-gate-stage-verdicts): §3 is partially stale. A `--dry-run` now skips the prefetch and SCA scanner stages, `flavor.AuditFlavor` is now `flavor.AuditFlavorContext`, and missing-file cases are recorded as `not_applicable` rather than `skipped`.*
+
 ## Context
 
 Five Accepted records describe behaviour the tree no longer has, or never had. An Accepted body is

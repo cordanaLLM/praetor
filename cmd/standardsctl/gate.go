@@ -305,7 +305,7 @@ func printGatingReport(rep *gating.PipelineReport) {
 		return
 	}
 	if rep.DryRun {
-		fmt.Printf("\nDry run: no Exit-0 receipt was minted (tests did not run).\n")
+		fmt.Printf("\nDry run: no Exit-0 receipt was minted (prefetch, security scanners, and tests did not run).\n")
 	}
 }
 

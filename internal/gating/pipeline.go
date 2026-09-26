@@ -286,9 +286,11 @@ func executeStage(ctx context.Context, s stage, cfg *stageConfig) error {
 	msg, err := s.fn(ctx, cfg)
 	res := StageResult{Name: s.name, Status: StagePassed, Message: msg}
 	if skip, ok := errors.AsType[*stageSkip](err); ok {
-		// A skip is decided before any check runs, so a deadline that fires afterwards
-		// is the next stage's to report, not a reason to reclassify this one.
-		res.Status, res.Message, err = skip.status, skip.reason, nil
+		if cutErr := attributeRunCut(ctx, s.name, err); !errors.Is(cutErr, err) {
+			res.Status, res.Message, err = StageFailed, cutErr.Error(), cutErr
+		} else {
+			res.Status, res.Message, err = skip.status, skip.reason, nil
+		}
 	} else if err = attributeRunCut(ctx, s.name, err); err != nil {
 		res.Status, res.Message = StageFailed, err.Error()
 	}
@@ -638,7 +640,10 @@ func removeWorktree(ctx context.Context, wtMgr *worktree.Manager, taskID string)
 // runReceiptStage signs the real concatenated stage output with the long-lived Ed25519
 // key resolved by lockdown.LoadSigningKey. It fails closed when no key is configured, and
 // it never mints a receipt for a dry run, which by definition did not run the tests.
-func runReceiptStage(_ context.Context, cfg *stageConfig) (string, error) {
+func runReceiptStage(ctx context.Context, cfg *stageConfig) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("context cancelled before receipt could be minted: %w", err)
+	}
 	rep := cfg.rep
 	if cfg.dryRun {
 		return "", skipped("dry run: no Exit-0 receipt minted")
