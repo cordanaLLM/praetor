@@ -261,6 +261,24 @@ class WikiSyncTests(unittest.TestCase):
             self.assertIn("lists more than 256 pages", result.stderr)
             self.assertEqual(remote_head(remote), before)
 
+    def test_default_bot_identity_is_neutral(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="praetor-wiki-test-") as directory:
+            root = Path(directory)
+            source = make_source(root, {"Home.md": "# New\n"})
+            remote = root / "wiki.git"
+            init_bare(remote)
+            seed_remote(remote, {"Home.md": "# Old\n", MANIFEST: "Home.md\n"})
+
+            env = {**os.environ}
+            env.pop("WIKI_GIT_NAME", None)
+            env.pop("WIKI_GIT_EMAIL", None)
+
+            run(str(SCRIPT), str(source), str(remote), extra_env=env)
+
+            output = run("git", "log", "-1", "--format=%an <%ae>", cwd=remote)
+            self.assertEqual(output.stdout.strip(), "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>")
+
+
     def test_manifest_at_the_page_limit_removes_every_stale_page(self) -> None:
         with tempfile.TemporaryDirectory(prefix="praetor-wiki-test-") as directory:
             root = Path(directory)
