@@ -283,7 +283,7 @@ marked `-text` remains byte-sensitive. This also prevents an ordinary Windows Gi
 command using `core.autocrlf=true` from changing the marker merely by refreshing index
 stat metadata; staged changes, untracked bytes, and changed text content still stale it.
 Every state observation runs through `util.RunGitTreeProbe`
-([`internal/util/git_status.go`](../../internal/util/git_status.go)), the same probe the gate's
+([`internal/util/git_status.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/util/git_status.go)), the same probe the gate's
 clean-tree check uses, so the two cannot drift to different line-ending models. State inspection
 refuses a repository whose own configuration names a clean or process filter through
 `util.RefuseGitStatusFilters`, and refuses assume-unchanged and skip-worktree index entries as
