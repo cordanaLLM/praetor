@@ -1012,6 +1012,9 @@ func TestAdopt_RerunCompletesOnceIdentityIsSet(t *testing.T) {
 		t.Fatalf("re-run must keep the empty identity and only add register.sources: %+v %v\n%s",
 			rerun, err, mustRead(t, manifestPath))
 	}
+	if got := mustRead(t, manifestPath); !strings.HasPrefix(got, firstManifest) {
+		t.Fatalf("re-run rewrote the lines of the existing manifest:\n%s", got)
+	}
 	policy := mustRead(t, filepath.Join(repo, filepath.FromSlash(checkpointPolicy)))
 	if !strings.Contains(policy, `"repository": "acme/orphan"`) {
 		t.Fatalf("re-run checkpoint policy does not name the remote identity:\n%s", policy)

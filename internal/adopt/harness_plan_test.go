@@ -8,6 +8,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/paperclip"
 )
 
 const declinedPaperclipManifest = legacyManifest + "adoption:\n  decline: [paperclip]\n"
@@ -66,7 +67,7 @@ func TestAdoptDeclinedPaperclipKeepsExistingHarness(t *testing.T) {
 }
 
 // TestAdoptDeclinedPaperclipRejectsContractOnAbsentHarness: a declared contract that selects
-// a harness nobody writes fails its own gate; adoption does not overlay planned bytes.
+// a harness nobody writes fails its own gate.
 func TestAdoptDeclinedPaperclipRejectsContractOnAbsentHarness(t *testing.T) {
 	repoPath := newTestRepo(t, "legacy")
 	bound, err := managedRegisterSources(t.Context(), []byte(releasedHarness(t, "harness.json.golden")))
@@ -77,6 +78,25 @@ func TestAdoptDeclinedPaperclipRejectsContractOnAbsentHarness(t *testing.T) {
 	if _, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, false)); err == nil ||
 		!strings.Contains(err.Error(), "fails its configured gate") {
 		t.Fatalf("contract on an absent declined harness accepted: %v", err)
+	}
+}
+
+// TestVerifyDeclaredSourcesOverlaysOnlyBytesThisRunWrites pins the overlay guard: planned
+// bytes stand in for an absent harness only when this run writes them, so a plan that holds
+// bytes nothing writes never satisfies a contract bound to them.
+func TestVerifyDeclaredSourcesOverlaysOnlyBytesThisRunWrites(t *testing.T) {
+	repoPath := newTestRepo(t, "legacy")
+	data := []byte(releasedHarness(t, "harness.json.golden"))
+	bound, err := managedRegisterSources(t.Context(), data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyDeclaredSources(t.Context(), repoPath, bound, harnessPlan{data: data}); err == nil {
+		t.Fatal("planned bytes nothing writes satisfied the contract")
+	}
+	written := harnessPlan{data: data, write: &paperclip.Harness{}}
+	if err := verifyDeclaredSources(t.Context(), repoPath, bound, written); err != nil {
+		t.Fatalf("bytes this run writes did not stand in for the absent harness: %v", err)
 	}
 }
 

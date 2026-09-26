@@ -144,9 +144,15 @@ func equalRegisterSources(left, right *config.RegisterSources) bool {
 }
 
 // setManifestSources writes sources under register.sources. An existing value is replaced
-// only when replace is set; every other node, comment and key order stays.
+// only when replace is set. Every other line stays as the operator wrote it; a layout the
+// text patch cannot address is re-encoded with every node, comment and key order kept.
 func setManifestSources(ctx context.Context, data []byte, sources *config.RegisterSources, replace bool) ([]byte, bool, error) {
 	document, err := decodeAdoptManifestNode(ctx, data)
+	if err != nil {
+		return nil, false, err
+	}
+	// The text patch reads the line positions of the tree as decoded, so it runs first.
+	patched, patchedOK, err := patchManifestSources(data, document.Content[0], sources)
 	if err != nil {
 		return nil, false, err
 	}
@@ -167,8 +173,21 @@ func setManifestSources(ctx context.Context, data []byte, sources *config.Regist
 	} else {
 		appendAdoptYAMLMapping(register, "sources", encoded)
 	}
-	output, err := encodeAdoptManifest(document)
+	output, err := manifestOutput(ctx, document, patched, patchedOK)
 	return output, err == nil, err
+}
+
+// manifestOutput re-encodes document, and returns the text patch instead when it decodes to
+// the same manifest.
+func manifestOutput(ctx context.Context, document *yaml.Node, patched []byte, patchedOK bool) ([]byte, error) {
+	output, err := encodeAdoptManifest(document)
+	if err != nil {
+		return nil, err
+	}
+	if patchedOK && sameManifest(ctx, patched, output) {
+		return patched, nil
+	}
+	return output, nil
 }
 
 func manifestRegisterMapping(root *yaml.Node) (*yaml.Node, error) {
@@ -230,10 +249,8 @@ func adoptYAMLMappingValue(mapping *yaml.Node, key string) (*yaml.Node, bool, er
 	if mapping.Kind != yaml.MappingNode || len(mapping.Content) > maxAdoptManifestMappingNodes {
 		return nil, false, errors.New("manifest mapping exceeds source reconciliation bound")
 	}
-	for index := 0; index+1 < len(mapping.Content) && index < maxAdoptManifestMappingNodes; index += 2 {
-		if mapping.Content[index].Value == key {
-			return mapping.Content[index+1], true, nil
-		}
+	if index := mappingKeyIndex(mapping, key); index >= 0 {
+		return mapping.Content[index+1], true, nil
 	}
 	return nil, false, nil
 }

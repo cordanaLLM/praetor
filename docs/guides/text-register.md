@@ -579,7 +579,10 @@ the generated Makefile. Both `audit` and the dedicated command fail closed when
 #### Upgrading an adopted repository
 
 Run `praetorctl adopt`. It adds `register.sources` to an existing manifest
-without replacing operator fields. The Paperclip harness it binds depends on
+without replacing operator fields, and changes only the lines of that block:
+comments, blank lines and indentation elsewhere stay as written. A flow-style
+root or `register` mapping is re-encoded instead, with every value kept
+(`internal/adopt/manifest_text.go`). The Paperclip harness it binds depends on
 who wrote it:
 
 - A harness byte-identical to what an earlier release synthesized for this
