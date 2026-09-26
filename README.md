@@ -97,7 +97,7 @@ Praetor enforces the **High-Integrity Systems Standard (HISS)**—adapting NASA-
 * **HISS-15 (3D Testing Discipline)**: Positive, negative, and boundary tests mandatory for all public APIs.
 * **HISS-16 (Canonical Operating Harness)**: Single canonical `AGENTS.md` harness with unbypassable server-authoritative verification.
 * **HISS-17 (State Ledger Discipline)**: Every agent turn reads and updates the local `.workingdir` ledger instead of re-deriving state from scratch.
-* **HISS-18 (Diff-Aware CI Efficiency)**: `standardsctl ci filter` classifies each change so a docs- or state-only diff skips the heavy race and security gates.
+* **HISS-18 (Diff-Aware CI Efficiency)**: `praetorctl ci filter` classifies each change so a docs- or state-only diff skips the heavy race and security gates.
 * **HISS-19 (Reuse Before Writing)**: One behavior has exactly one implementation; `praetorctl dedupe scan` enforces it as a clone and utility-sprawl gate.
 * **HISS-20 (Replayable Enforcement Evidence)**: Every coverage claim in `.config/hiss/coverage.yaml` is replayed against a fixture corpus in both directions, never merely asserted.
 * **HISS-21 (Platform Neutrality)**: A gate runs on Linux, macOS and Windows, or skips with a stated reason; a gate that cannot run is not a passing gate.
