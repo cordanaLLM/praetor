@@ -1,13 +1,13 @@
-# cordana-standards[bot] Permissions and Scope Specification
+# Praetor Governance Bot Permissions and Scope Specification
 
 ## Purpose
 
-`cordana-standards[bot]` is a dedicated, organization-level GitHub App designed to eliminate self-review circularity (e.g. operator accounts requesting PR approvals from themselves) and automate high-integrity repository maintenance.
+The Praetor governance bot is a dedicated, organization-level GitHub App designed to eliminate self-review circularity (e.g. operator accounts requesting PR approvals from themselves) and automate high-integrity repository maintenance.
 
 ## Status
 
 Nothing provisions, installs or authenticates as this App today. No workflow, command or
-runtime reads `manifest.json`, and `internal/forge/pr.go` only names `cordana-standards[bot]`
+runtime reads `manifest.json`, and `internal/forge/pr.go` only names `praetor-governance-bot`
 as a requested reviewer. The manifest and this matrix are the operator's input for creating
 the App by hand (below); `docs/guides/operational-configuration.md` points operators here.
 
@@ -33,5 +33,5 @@ requests (`write` is Read & Write, `read` is Read-only). `scripts/test_github_ap
 1. Navigate to Organization Settings $\to$ Developer settings $\to$ GitHub Apps.
 2. Select **New GitHub App from manifest**.
 3. Upload or paste `.config/github-app/manifest.json`.
-4. Generate and download the private RSA key (`cordana-standards.pem`).
-5. Record the `App ID` and `Installation ID` in your organization secrets as `STANDARDS_BOT_APP_ID` and `STANDARDS_BOT_PRIVATE_KEY`.
+4. Generate and download the private RSA key (`praetor-governance-bot.pem`).
+5. Record the `App ID` and `Installation ID` in your organization secrets as `PRAETOR_BOT_APP_ID` and `PRAETOR_BOT_PRIVATE_KEY`.
