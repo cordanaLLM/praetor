@@ -34,6 +34,9 @@ jobs:
     name: Execute Fast Adoption
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-26.04
+    # Both jobs build standardsctl and adopt one repository; a finite bound replaces GitHub's
+    # 360-minute default for a run that hangs on the network.
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -126,6 +129,7 @@ jobs:
       (contains(github.event.comment.body, '/adopt') || contains(github.event.comment.body, '/dogfood')) &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: read
@@ -149,6 +153,8 @@ jobs:
       # GITHUB_REPOSITORY is the runner's own default variable.
       - name: Resolve Pull Request Head
         id: pr-head
+        # One API call; it answers in seconds or not at all.
+        timeout-minutes: 2
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

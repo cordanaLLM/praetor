@@ -206,9 +206,20 @@ func admitsOnlyTrustedCommenters(conjunct, event string) bool {
 	if trustedAssociationList(conjunct) {
 		return true
 	}
-	parts := topLevelParts(conjunct, "||")
+	return everyPart(topLevelParts(conjunct, "||"), trustedAssociationEquality)
+}
+
+// everyPart reports whether holds is true of every part of a disjunction. A disjunction with
+// more parts than the audit reads (maxPermissionScopes) is not decided at all: the parts past
+// the cap could name the event or admit a stranger, so reading only the first ones and
+// answering yes would decide the job away on a part nobody looked at. It answers no, which
+// leaves the job reported.
+func everyPart(parts []string, holds func(string) bool) bool {
+	if len(parts) == 0 || len(parts) > maxPermissionScopes {
+		return false
+	}
 	for i := 0; i < len(parts) && i < maxPermissionScopes; i++ {
-		if !trustedAssociationEquality(parts[i]) {
+		if !holds(parts[i]) {
 			return false
 		}
 	}
@@ -384,16 +395,12 @@ func balancedGroups(text string) bool {
 // One level of grouping is resolved, which is what workflow conditions spell. A disjunction
 // part that holds a conjunction binds one way or the other depending on operator precedence,
 // so it reaches comparisonExcludes whole and is left undecided there; so is a conjunct nested
-// deeper. An undecided condition is reported rather than guessed away.
+// deeper, and so is a disjunction longer than the audit reads (everyPart). An undecided
+// condition is reported rather than guessed away.
 func excludesEvent(conjunct, event string) bool {
 	group := unwrapGroup(conjunct)
 	if parts := topLevelParts(group, "||"); len(parts) > 1 {
-		for i := 0; i < len(parts) && i < maxPermissionScopes; i++ {
-			if !comparisonExcludes(parts[i], event) {
-				return false
-			}
-		}
-		return true
+		return everyPart(parts, func(part string) bool { return comparisonExcludes(part, event) })
 	}
 	parts := topLevelParts(group, "&&")
 	for i := 0; i < len(parts) && i < maxPermissionScopes; i++ {

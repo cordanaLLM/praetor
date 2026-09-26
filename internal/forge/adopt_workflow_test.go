@@ -2,6 +2,7 @@ package forge
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -66,6 +67,18 @@ func stepIndex(job workflowJob, accept func(workflowStep) bool) int {
 		}
 	}
 	return -1
+}
+
+// mustStepIndex is stepIndex for a mutation that needs the step to exist. A missing step fails
+// the test that asked for it; an index of -1 would panic instead and abort the whole package's
+// test binary, hiding every other result, the repository-wide permission guard included.
+func mustStepIndex(t *testing.T, job workflowJob, accept func(workflowStep) bool) int {
+	t.Helper()
+	index := stepIndex(job, accept)
+	if index < 0 {
+		t.Fatal("the job has no step this mutation needs; adopt.yml changed shape")
+	}
+	return index
 }
 
 // yamlNode parses one value the way workflowSpec holds a raw node: a permissions key or a
@@ -227,29 +240,30 @@ func TestAdoptWorkflow_Negative_CredentialGapsAreReported(t *testing.T) {
 	}
 	cases := []struct {
 		name   string
-		mutate func(spec *workflowSpec)
+		mutate func(t *testing.T, spec *workflowSpec)
 		want   string
 	}{
-		{"the shipped shape", func(spec *workflowSpec) { *spec = shipped }, "a comment reaches it while it holds contents, pull-requests, issues: write"},
-		{"a workflow-level grant", func(spec *workflowSpec) { spec.Permissions = yamlNode(t, "contents: write") }, "the workflow grants contents: write"},
-		{"the commit step in the comment job", moveCommitStepToCommentJob(t), "pushes in a job a comment reaches"},
-		{"a comment job that writes", func(spec *workflowSpec) {
+		{"the shipped shape", func(_ *testing.T, spec *workflowSpec) { *spec = shipped }, "a comment reaches it while it holds contents, pull-requests, issues: write"},
+		{"a workflow-level grant", func(t *testing.T, spec *workflowSpec) { spec.Permissions = yamlNode(t, "contents: write") }, "the workflow grants contents: write"},
+		{"the commit step in the comment job", moveCommitStepToCommentJob, "pushes in a job a comment reaches"},
+		{"a comment job that writes", func(t *testing.T, spec *workflowSpec) {
 			job := spec.Jobs[adoptCommentJob]
 			job.Permissions = yamlNode(t, "contents: write")
 			spec.Jobs[adoptCommentJob] = job
 		}, "a comment reaches it while it holds contents: write"},
-		{"a checkout that keeps its credential", func(spec *workflowSpec) {
-			spec.Jobs[adoptCommentJob].Steps[stepIndex(spec.Jobs[adoptCommentJob], isCheckout)].With[persistCredentialsKey] = true
+		{"a checkout that keeps its credential", func(t *testing.T, spec *workflowSpec) {
+			comment := spec.Jobs[adoptCommentJob]
+			comment.Steps[mustStepIndex(t, comment, isCheckout)].With[persistCredentialsKey] = true
 		}, "persists a credential"},
-		{"the token handed to the adoption step", func(spec *workflowSpec) {
+		{"the token handed to the adoption step", func(t *testing.T, spec *workflowSpec) {
 			dispatch := spec.Jobs[adoptDispatchJob]
-			dispatch.Steps[stepIndex(dispatch, usesPraetorAdopt)].Env = yamlNode(t, "GH_TOKEN: "+adoptTokenExpression)
+			dispatch.Steps[mustStepIndex(t, dispatch, usesPraetorAdopt)].Env = yamlNode(t, "GH_TOKEN: "+adoptTokenExpression)
 		}, "is handed the token"},
-		{"an env the check cannot read", func(spec *workflowSpec) {
+		{"an env the check cannot read", func(t *testing.T, spec *workflowSpec) {
 			dispatch := spec.Jobs[adoptDispatchJob]
-			dispatch.Steps[stepIndex(dispatch, usesPraetorAdopt)].Env = yamlNode(t, "${{ fromJSON(vars.ADOPT_ENV) }}")
+			dispatch.Steps[mustStepIndex(t, dispatch, usesPraetorAdopt)].Env = yamlNode(t, "${{ fromJSON(vars.ADOPT_ENV) }}")
 		}, "takes its env from one expression"},
-		{"boundary: the dispatch fence dropped", func(spec *workflowSpec) {
+		{"boundary: the dispatch fence dropped", func(_ *testing.T, spec *workflowSpec) {
 			job := spec.Jobs[adoptDispatchJob]
 			job.If = ""
 			spec.Jobs[adoptDispatchJob] = job
@@ -258,7 +272,7 @@ func TestAdoptWorkflow_Negative_CredentialGapsAreReported(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			spec := parseAdoptWorkflow(t)
-			tc.mutate(&spec)
+			tc.mutate(t, &spec)
 			gaps := adoptCredentialGaps(spec)
 			if !strings.Contains(strings.Join(gaps, "\n"), tc.want) {
 				t.Fatalf("gaps = %q, want one containing %q", gaps, tc.want)
@@ -267,30 +281,28 @@ func TestAdoptWorkflow_Negative_CredentialGapsAreReported(t *testing.T) {
 	}
 }
 
-// moveCommitStepToCommentJob returns a mutation that appends the dispatch job's pushing step
-// to the comment job.
-func moveCommitStepToCommentJob(t *testing.T) func(spec *workflowSpec) {
+// moveCommitStepToCommentJob appends the dispatch job's pushing step to the comment job.
+func moveCommitStepToCommentJob(t *testing.T, spec *workflowSpec) {
 	t.Helper()
-	return func(spec *workflowSpec) {
-		dispatch := spec.Jobs[adoptDispatchJob]
-		index := stepIndex(dispatch, func(step workflowStep) bool { return strings.Contains(step.Run, "git push") })
-		if index < 0 {
-			t.Fatal("the dispatch job has no pushing step to move")
-		}
-		comment := spec.Jobs[adoptCommentJob]
-		comment.Steps = append(comment.Steps, dispatch.Steps[index])
-		spec.Jobs[adoptCommentJob] = comment
-	}
+	dispatch := spec.Jobs[adoptDispatchJob]
+	index := mustStepIndex(t, dispatch, func(step workflowStep) bool { return strings.Contains(step.Run, "git push") })
+	comment := spec.Jobs[adoptCommentJob]
+	comment.Steps = append(comment.Steps, dispatch.Steps[index])
+	spec.Jobs[adoptCommentJob] = comment
 }
 
 func isCheckout(step workflowStep) bool { return strings.HasPrefix(step.Uses, checkoutActionPrefix) }
 
 func usesPraetorAdopt(step workflowStep) bool { return step.Uses == adoptActionUses }
 
+func isHeadLookup(step workflowStep) bool { return step.ID == adoptHeadStepID }
+
+func isRatchet(step workflowStep) bool { return strings.Contains(step.Run, " audit") }
+
 // commentCheckoutGap names why the comment job would not run against the pull request head
 // the lookup resolved, or returns "".
 func commentCheckoutGap(job workflowJob) string {
-	lookup := stepIndex(job, func(step workflowStep) bool { return step.ID == adoptHeadStepID })
+	lookup := stepIndex(job, isHeadLookup)
 	checkout := stepIndex(job, isCheckout)
 	switch {
 	case lookup < 0:
@@ -319,20 +331,22 @@ func TestAdoptWorkflow_Positive_CommentJobChecksOutTheResolvedHead(t *testing.T)
 	}
 	cases := []struct {
 		name   string
-		mutate func(job *workflowJob)
+		mutate func(t *testing.T, job *workflowJob)
 		want   string
 	}{
-		{"negative: the old ref", func(job *workflowJob) {
-			job.Steps[stepIndex(*job, isCheckout)].With["ref"] = "${{ github.event.pull_request.head.ref || github.ref }}"
+		{"negative: the old ref", func(t *testing.T, job *workflowJob) {
+			job.Steps[mustStepIndex(t, *job, isCheckout)].With["ref"] = "${{ github.event.pull_request.head.ref || github.ref }}"
 		}, "not the resolved head"},
-		{"negative: no ref at all", func(job *workflowJob) { delete(job.Steps[stepIndex(*job, isCheckout)].With, "ref") }, "not the resolved head"},
-		{"boundary: checkout first", func(job *workflowJob) { slices.Reverse(job.Steps) }, "before the head is resolved"},
-		{"boundary: no lookup", func(job *workflowJob) { job.Steps[0].ID = "" }, "no step resolves"},
+		{"negative: no ref at all", func(t *testing.T, job *workflowJob) {
+			delete(job.Steps[mustStepIndex(t, *job, isCheckout)].With, "ref")
+		}, "not the resolved head"},
+		{"boundary: checkout first", func(_ *testing.T, job *workflowJob) { slices.Reverse(job.Steps) }, "before the head is resolved"},
+		{"boundary: no lookup", func(t *testing.T, job *workflowJob) { job.Steps[mustStepIndex(t, *job, isHeadLookup)].ID = "" }, "no step resolves"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			job := adoptJob(t, parseAdoptWorkflow(t), adoptCommentJob)
-			tc.mutate(&job)
+			tc.mutate(t, &job)
 			if gap := commentCheckoutGap(job); !strings.Contains(gap, tc.want) {
 				t.Fatalf("gap = %q, want containing %q", gap, tc.want)
 			}
@@ -365,7 +379,7 @@ func targetPathGap(job workflowJob) string {
 	if adopt < 0 || stepInput(job.Steps[adopt], "path") != adoptTargetPath {
 		return "the adoption step does not take target_path as its path input"
 	}
-	ratchet := stepIndex(job, func(step workflowStep) bool { return strings.Contains(step.Run, " audit") })
+	ratchet := stepIndex(job, isRatchet)
 	if ratchet < 0 {
 		return "no step runs the debt ratchet"
 	}
@@ -394,19 +408,20 @@ func TestAdoptWorkflow_Positive_TargetPathReachesBothCommands(t *testing.T) {
 	}
 	cases := []struct {
 		name   string
-		mutate func(job *workflowJob)
+		mutate func(t *testing.T, job *workflowJob)
 		want   string
 	}{
-		{"negative: the path input dropped", func(job *workflowJob) { delete(job.Steps[stepIndex(*job, usesPraetorAdopt)].With, "path") }, "path input"},
-		{"boundary: the ratchet audits the root", func(job *workflowJob) {
-			ratchet := stepIndex(*job, func(step workflowStep) bool { return strings.Contains(step.Run, " audit") })
-			job.Steps[ratchet].Run = `"$PRAETOR_BIN" audit`
+		{"negative: the path input dropped", func(t *testing.T, job *workflowJob) {
+			delete(job.Steps[mustStepIndex(t, *job, usesPraetorAdopt)].With, "path")
+		}, "path input"},
+		{"boundary: the ratchet audits the root", func(t *testing.T, job *workflowJob) {
+			job.Steps[mustStepIndex(t, *job, isRatchet)].Run = `"$PRAETOR_BIN" audit`
 		}, "debt ratchet does not read target_path"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			job := adoptJob(t, parseAdoptWorkflow(t), adoptDispatchJob)
-			tc.mutate(&job)
+			tc.mutate(t, &job)
 			if gap := targetPathGap(job); !strings.Contains(gap, tc.want) {
 				t.Fatalf("gap = %q, want containing %q", gap, tc.want)
 			}
@@ -419,10 +434,7 @@ func TestAdoptWorkflow_Positive_TargetPathReachesBothCommands(t *testing.T) {
 func runHeadLookup(t *testing.T, number, answer string, code int) stepOutcome {
 	t.Helper()
 	job := adoptJob(t, parseAdoptWorkflow(t), adoptCommentJob)
-	lookup := stepIndex(job, func(step workflowStep) bool { return step.ID == adoptHeadStepID })
-	if lookup < 0 {
-		t.Fatal("the comment job has no head lookup step")
-	}
+	lookup := mustStepIndex(t, job, isHeadLookup)
 	bound := map[string]string{adoptTokenExpression: "token-under-test", "${{ github.event.issue.number }}": number}
 	env := []string{
 		"GITHUB_REPOSITORY=" + adoptTestRepository, "PRAETOR_STUB_STDOUT=" + answer,
@@ -585,23 +597,23 @@ func TestAdoptWorkflow_Positive_OnlyTheDispatchJobKeepsAGoCache(t *testing.T) {
 func TestAdoptWorkflow_Negative_CacheGapsAreReported(t *testing.T) {
 	cases := []struct {
 		name   string
-		mutate func(spec *workflowSpec)
+		mutate func(t *testing.T, spec *workflowSpec)
 		want   string
 	}{
-		{"the comment job's action cache left on", func(spec *workflowSpec) {
+		{"the comment job's action cache left on", func(t *testing.T, spec *workflowSpec) {
 			comment := spec.Jobs[adoptCommentJob]
-			delete(comment.Steps[stepIndex(comment, usesPraetorAdopt)].With, "cache")
+			delete(comment.Steps[mustStepIndex(t, comment, usesPraetorAdopt)].With, "cache")
 		}, "job adopt-comment: step \"Execute Dogfood Benchmark\" leaves the action's setup-go cache on"},
-		{"the dispatch job's action cache left on", func(spec *workflowSpec) {
+		{"the dispatch job's action cache left on", func(t *testing.T, spec *workflowSpec) {
 			dispatch := spec.Jobs[adoptDispatchJob]
-			dispatch.Steps[stepIndex(dispatch, usesPraetorAdopt)].With["cache"] = true
+			dispatch.Steps[mustStepIndex(t, dispatch, usesPraetorAdopt)].With["cache"] = true
 		}, "job adopt: step \"Execute Fast Adoption\" leaves the action's setup-go cache on"},
-		{"a cache step in the comment job", func(spec *workflowSpec) {
+		{"a cache step in the comment job", func(_ *testing.T, spec *workflowSpec) {
 			comment := spec.Jobs[adoptCommentJob]
 			comment.Steps = append(comment.Steps, workflowStep{Name: "Restore Go caches", Uses: goCacheActionPath})
 			spec.Jobs[adoptCommentJob] = comment
 		}, "restores and saves a cache in a job a comment starts"},
-		{"boundary: the dispatch job's setup-go dropped", func(spec *workflowSpec) {
+		{"boundary: the dispatch job's setup-go dropped", func(_ *testing.T, spec *workflowSpec) {
 			dispatch := spec.Jobs[adoptDispatchJob]
 			dispatch.Steps = slices.DeleteFunc(dispatch.Steps, func(step workflowStep) bool {
 				return strings.HasPrefix(step.Uses, setupGoPrefix)
@@ -612,9 +624,76 @@ func TestAdoptWorkflow_Negative_CacheGapsAreReported(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			spec := parseAdoptWorkflow(t)
-			tc.mutate(&spec)
+			tc.mutate(t, &spec)
 			if gaps := adoptCacheGaps(spec); !strings.Contains(strings.Join(gaps, "\n"), tc.want) {
 				t.Fatalf("gaps = %q, want one containing %q", gaps, tc.want)
+			}
+		})
+	}
+}
+
+// adoptTimeoutGaps names every job of the workflow that sets no timeout-minutes of its own,
+// and the head lookup step when it sets none: without one GitHub lets a hung job run for 360
+// minutes. The keys are read through a shape local to this test, so the shared workflowJob
+// gains no field that only a test reads and that a valid spelling elsewhere could fail to
+// parse.
+func adoptTimeoutGaps(t *testing.T, data []byte) []string {
+	t.Helper()
+	var spec struct {
+		Jobs map[string]struct {
+			TimeoutMinutes any `yaml:"timeout-minutes"`
+			Steps          []struct {
+				ID             string `yaml:"id"`
+				TimeoutMinutes any    `yaml:"timeout-minutes"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &spec); err != nil {
+		t.Fatalf("parse %s: %v", adoptWorkflowFile, err)
+	}
+	var gaps []string
+	ids := slices.Sorted(maps.Keys(spec.Jobs))
+	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
+		job := spec.Jobs[ids[i]]
+		if job.TimeoutMinutes == nil {
+			gaps = append(gaps, "job "+ids[i]+" sets no timeout-minutes")
+		}
+		for j := 0; j < len(job.Steps) && j < maxStepsPerJob; j++ {
+			if job.Steps[j].ID == adoptHeadStepID && job.Steps[j].TimeoutMinutes == nil {
+				gaps = append(gaps, "step "+adoptHeadStepID+" calls the API with no timeout-minutes")
+			}
+		}
+	}
+	return gaps
+}
+
+// HISS-02: every job, and the one step that makes a network call of its own, runs under an
+// explicit bound. Positive: the shipped file. Negative: a job's bound removed. Boundary: the
+// job bounds kept and only the head lookup's step bound removed.
+func TestAdoptWorkflow_Positive_EveryJobAndTheHeadLookupAreBounded(t *testing.T) {
+	workflows, _ := engineWorkflows(t)
+	shipped := string(workflows[adoptWorkflowFile])
+	if gaps := adoptTimeoutGaps(t, []byte(shipped)); len(gaps) != 0 {
+		t.Fatalf("unbounded: %q", gaps)
+	}
+	cases := []struct {
+		name   string
+		remove string
+		want   string
+	}{
+		{"negative: the dispatch job's bound removed", "    timeout-minutes: 30\n    permissions:\n      contents: write\n", "job adopt sets no timeout-minutes"},
+		{"boundary: only the head lookup's bound removed", "        timeout-minutes: 2\n", "step pr-head calls the API with no timeout-minutes"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if strings.Count(shipped, tc.remove) != 1 {
+				t.Fatalf("adopt.yml no longer holds %q once, so this mutation decides nothing", tc.remove)
+			}
+			// The first line of the matched text is the bound; the rest only anchors it.
+			_, anchor, _ := strings.Cut(tc.remove, "\n")
+			mutated := strings.Replace(shipped, tc.remove, anchor, 1)
+			if gaps := adoptTimeoutGaps(t, []byte(mutated)); !slices.Contains(gaps, tc.want) {
+				t.Fatalf("gaps = %q, want %q", gaps, tc.want)
 			}
 		})
 	}

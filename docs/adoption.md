@@ -93,11 +93,13 @@ jobs:
       contains(github.event.comment.body, '/adopt') &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: read
     steps:
       - id: pr-head
+        timeout-minutes: 2
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -178,8 +180,9 @@ Two checks keep the split honest. `AuditPullRequestPermissions` in
 `internal/forge/adopt_workflow_test.go` pins the rest: only the dispatch job writes and pushes,
 every checkout drops its credential, the comment job checks out the head it resolved,
 `target_path` reaches both the adoption and the ratchet through env, only the dispatch job keeps
-a Go cache and stays visible to `AuditGoBuildCaches`, and the head lookup's own shell body is
-executed against a stub `gh`, which is how a fork head is shown to be refused.
+a Go cache and stays visible to `AuditGoBuildCaches`, every job and the head lookup run under an
+explicit `timeout-minutes`, and the head lookup's own shell body is executed against a stub `gh`,
+which is how a fork head is shown to be refused.
 
 ### Inputs, the binary, and the `report` output
 

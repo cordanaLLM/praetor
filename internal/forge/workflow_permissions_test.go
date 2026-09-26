@@ -3,6 +3,7 @@ package forge
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -331,6 +332,15 @@ func TestAuditPullRequestPermissions_Boundary_JobConditionsDecideReachability(t 
 	onlyTarget := []string{pullRequestTargetEvent}
 	both := []string{pullRequestEvent, pullRequestTargetEvent}
 	none := []string(nil)
+	// pushes returns a group of count `== 'push'` tests joined by ||, with extra appended as one
+	// more part when it is not empty.
+	pushes := func(count int, extra string) string {
+		parts := slices.Repeat([]string{"github.event_name == 'push'"}, count)
+		if extra != "" {
+			parts = append(parts, extra)
+		}
+		return "(" + strings.Join(parts, " || ") + ")"
+	}
 	cases := []struct {
 		name      string
 		condition string
@@ -389,6 +399,11 @@ func TestAuditPullRequestPermissions_Boundary_JobConditionsDecideReachability(t 
 		{"a differently cased event name still names the event", "github.event_name == 'Pull_Request'", onlyPullRequest, onlyPullRequest},
 		{"a differently cased exclusion still excludes", "github.event_name != 'PULL_REQUEST'", onlyPullRequest, none},
 		{"an empty literal names no event", "github.event_name == ''", onlyPullRequest, none},
+		// The audit reads at most maxPermissionScopes parts of a disjunction. One part past
+		// that used to go unread while the parts read decided the event away.
+		{"a disjunction group as long as the audit reads decides", pushes(maxPermissionScopes, ""), onlyPullRequest, none},
+		{"a disjunction group one part longer stays undecided", pushes(maxPermissionScopes+1, ""), onlyPullRequest, onlyPullRequest},
+		{"the part past the cap is not skipped", pushes(maxPermissionScopes, "github.event_name == 'pull_request'"), onlyPullRequest, onlyPullRequest},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -412,6 +427,15 @@ func TestAuditPullRequestPermissions_Boundary_CommenterGatesDecideIssueCommentRe
 	association := authorAssociationExpression
 	owners := func(count int) string {
 		return "contains(fromJSON('[" + strings.TrimSuffix(strings.Repeat(`"OWNER",`, count), ",") + "]'), " + association + ")"
+	}
+	// ownerTests returns a group of count trusted equality tests joined by ||, with extra
+	// appended as one more part when it is not empty.
+	ownerTests := func(count int, extra string) string {
+		parts := slices.Repeat([]string{association + " == 'OWNER'"}, count)
+		if extra != "" {
+			parts = append(parts, extra)
+		}
+		return "github.event.issue.pull_request && (" + strings.Join(parts, " || ") + ")"
 	}
 	cases := []struct {
 		name      string
@@ -446,6 +470,11 @@ func TestAuditPullRequestPermissions_Boundary_CommenterGatesDecideIssueCommentRe
 		// The gate says who may start a comment run; a pull request run carries no comment,
 		// and whether it reaches the job is the event test's business alone.
 		{"the gate leaves pull_request reachable", trustedCommenterGate, withPullRequest, onlyPullRequest},
+		// The audit reads at most maxPermissionScopes parts of a disjunction. A stranger's way
+		// in placed one part past that used to go unread, and the gate was taken as present.
+		{"trusted equalities as many as the audit reads", ownerTests(maxPermissionScopes, ""), comment, none},
+		{"trusted equalities one more than the audit reads", ownerTests(maxPermissionScopes+1, ""), comment, comment},
+		{"a stranger's way in past the cap is not skipped", ownerTests(maxPermissionScopes, "true"), comment, comment},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
