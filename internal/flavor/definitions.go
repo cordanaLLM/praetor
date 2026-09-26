@@ -40,6 +40,14 @@ func builtinFlavorList() []Flavor {
 	}
 }
 
+// The commands that produce the templates flavor apply defers (TemplateItem.Producer).
+// Adoption writes the manifest, the lockfile, the agent harness and the Paperclip harness;
+// compile-context projects CLAUDE.md from AGENTS.md.
+const (
+	producerAdopt          = "praetorctl adopt"
+	producerCompileContext = "praetorctl compile-context"
+)
+
 func builtinFlavors() map[string]Flavor {
 	flavors := builtinFlavorList()
 	result := make(map[string]Flavor, len(flavors))
@@ -66,11 +74,14 @@ func (f *GoServiceFlavor) Detect(repoPath string) bool {
 
 func (f *GoServiceFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: ".golangci.yml", Description: "Unified Go linter configuration"},
-		{Path: ".gosec.json", Description: "Go security analyzer configuration"},
-		{Path: ".github/workflows/ci.yml", Description: "Continuous integration matrix"},
-		{Path: ".github/workflows/security.yml", Description: "Automated vulnerability scan"},
-		{Path: "Dockerfile", Description: "Distroless container definition"},
+		{Path: ".golangci.yml", Description: "Unified Go linter configuration", Source: "go/.golangci.yml.tmpl", Validator: validYAMLMapping},
+		{Path: ".gosec.json", Description: "Go security analyzer configuration", Source: "go/.gosec.json.tmpl", Validator: validJSONObject},
+		{Path: ".github/workflows/ci.yml", Description: "Continuous integration matrix", Source: "go/ci-go.yml.tmpl", Validator: validWorkflow},
+		{Path: ".github/workflows/security.yml", Description: "Automated vulnerability scan", Source: "go/security-go.yml.tmpl", Validator: validWorkflow},
+		// Multi-stage: a golang builder compiles the binary a distroless runtime copies, so
+		// `docker build .` works from source. The single-stage body this replaced copied a
+		// prebuilt binary that nothing had put in the build context (BUG-581).
+		{Path: "Dockerfile", Description: "Distroless container definition", Source: "go/Dockerfile.distroless.tmpl", Validator: validDockerfile},
 	}
 }
 
@@ -107,10 +118,10 @@ func (f *GoLibraryFlavor) Detect(repoPath string) bool {
 
 func (f *GoLibraryFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: ".standards.yaml", Description: "Praetor standards declaration"},
-		{Path: ".standards.lock", Description: "SemVer lockfile"},
-		{Path: ".golangci.yml", Description: "Unified Go linter configuration"},
-		{Path: ".github/workflows/ci.yml", Description: "CI cross-platform build matrix"},
+		{Path: ".standards.yaml", Description: "Praetor standards declaration", Producer: producerAdopt, Validator: validYAMLMapping},
+		{Path: ".standards.lock", Description: "SemVer lockfile", Producer: producerAdopt, Validator: validYAMLMapping},
+		{Path: ".golangci.yml", Description: "Unified Go linter configuration", Source: "go/.golangci.yml.tmpl", Validator: validYAMLMapping},
+		{Path: ".github/workflows/ci.yml", Description: "CI cross-platform build matrix", Source: "go/ci-go.yml.tmpl", Validator: validWorkflow},
 	}
 }
 
@@ -148,9 +159,9 @@ func (f *NativeGPUSystemsFlavor) Detect(repoPath string) bool {
 
 func (f *NativeGPUSystemsFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: ".clang-tidy", Description: "Clang-tidy AST static analyzer config"},
-		{Path: ".clang-format", Description: "C/C++ code formatting rules"},
-		{Path: ".gitleaks.toml", Description: "Secret leak detection policy"},
+		{Path: ".clang-tidy", Description: "Clang-tidy AST static analyzer config", Source: "native/.clang-tidy.tmpl", Validator: validYAMLMapping},
+		{Path: ".clang-format", Description: "C/C++ code formatting rules", Source: "native/.clang-format.tmpl", Validator: validYAMLMapping},
+		{Path: ".gitleaks.toml", Description: "Secret leak detection policy", Source: "native/.gitleaks.toml.tmpl", Validator: validGitleaksConfig},
 	}
 }
 
@@ -190,8 +201,8 @@ func (f *FrontendSvelteFlavor) Detect(repoPath string) bool {
 
 func (f *FrontendSvelteFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: "playwright.config.ts", Description: "E2E testing configuration"},
-		{Path: eslintConfigPath, Description: "ECMAScript & Svelte linter", AltPaths: eslintConfigAlternatives},
+		{Path: "playwright.config.ts", Description: "E2E testing configuration", Source: "svelte/playwright.config.ts.tmpl", Validator: carriesCode},
+		eslintTemplate("ECMAScript & Svelte linter"),
 	}
 }
 
@@ -275,7 +286,7 @@ const maxMLMarkers = 32
 
 func (f *PythonMLFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: "ruff.toml", Description: "Fast Python linter and formatter config"},
+		{Path: "ruff.toml", Description: "Fast Python linter and formatter config", Source: "python/ruff.toml.tmpl", Validator: assignsTOMLKey},
 	}
 }
 
@@ -317,7 +328,7 @@ func (f *OSImageFlavor) Detect(repoPath string) bool {
 
 func (f *OSImageFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: ".yamllint.yml", Description: "YAML lint policy for image and workflow definitions"},
+		{Path: ".yamllint.yml", Description: "YAML lint policy for image and workflow definitions", Source: "osimage/.yamllint.yml.tmpl", Validator: validYAMLMapping},
 	}
 }
 
@@ -398,9 +409,9 @@ func (f *AgenticAutonomousFlavor) Detect(_ string) bool {
 
 func (f *AgenticAutonomousFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: ".paperclip/harness.json", Description: "Agent runtime operating contract and invariants"},
-		{Path: "AGENTS.md", Description: "Canonical agent operating harness"},
-		{Path: "CLAUDE.md", Description: "Compiled Claude instructions"},
+		{Path: ".paperclip/harness.json", Description: "Agent runtime operating contract and invariants", Producer: producerAdopt, Validator: validJSONObject},
+		{Path: "AGENTS.md", Description: "Canonical agent operating harness", Producer: producerAdopt, Validator: validMarkdownDocument},
+		{Path: "CLAUDE.md", Description: "Compiled Claude instructions", Producer: producerCompileContext, Validator: validMarkdownDocument},
 	}
 }
 
@@ -431,9 +442,9 @@ func (f *RustSystemsFlavor) Detect(repoPath string) bool {
 
 func (f *RustSystemsFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: "rustfmt.toml", Description: "Rust formatting and style guidelines"},
-		{Path: "clippy.toml", Description: "Rust AST and idiomatic static linting configuration"},
-		{Path: ".github/workflows/ci.yml", Description: "Continuous integration cargo build, test, and clippy"},
+		{Path: "rustfmt.toml", Description: "Rust formatting and style guidelines", Source: "rust/rustfmt.toml.tmpl", Validator: assignsTOMLKey},
+		{Path: "clippy.toml", Description: "Rust AST and idiomatic static linting configuration", Source: "rust/clippy.toml.tmpl", Validator: assignsTOMLKey},
+		{Path: ".github/workflows/ci.yml", Description: "Continuous integration cargo build, test, and clippy", Source: "rust/ci-rust.yml.tmpl", Validator: validWorkflow},
 	}
 }
 
@@ -476,14 +487,14 @@ func (f *TypeScriptNodeFlavor) RequiredTemplates() []TemplateItem {
 		{
 			Path:        "tsconfig.json",
 			Description: "TypeScript compiler options and strict type checking",
+			Source:      "node/tsconfig.json.tmpl",
 			AltPaths:    []string{"tsconfig.base.json", "jsconfig.json"},
+			// Not validJSONObject: tsc reads tsconfig.json as JSON with comments and trailing
+			// commas, and `tsc --init` writes one full of comments.
+			Validator: carriesCode,
 		},
-		{
-			Path:        eslintConfigPath,
-			Description: "TypeScript / Node.js static analysis rules",
-			AltPaths:    eslintConfigAlternatives,
-		},
-		{Path: ".github/workflows/ci.yml", Description: "Node.js CI test and build matrix"},
+		eslintTemplate("TypeScript / Node.js static analysis rules"),
+		{Path: ".github/workflows/ci.yml", Description: "Node.js CI test and build matrix", Source: "node/ci-node.yml.tmpl", Validator: validWorkflow},
 	}
 }
 
@@ -530,8 +541,8 @@ func (f *JVMServiceFlavor) Detect(repoPath string) bool {
 
 func (f *JVMServiceFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: "checkstyle.xml", Description: "JVM code style and static analysis rules"},
-		{Path: ".github/workflows/ci.yml", Description: "Java / Kotlin build, test, and verification matrix"},
+		{Path: "checkstyle.xml", Description: "JVM code style and static analysis rules", Source: "jvm/checkstyle.xml.tmpl", Validator: validXMLDocument},
+		{Path: ".github/workflows/ci.yml", Description: "Java / Kotlin build, test, and verification matrix", Source: "jvm/ci-jvm.yml.tmpl", Validator: validWorkflow},
 	}
 }
 
@@ -565,8 +576,8 @@ func (f *MobileFlutterFlavor) Detect(repoPath string) bool {
 
 func (f *MobileFlutterFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: "analysis_options.yaml", Description: "Dart and Flutter analyzer linter configuration"},
-		{Path: ".github/workflows/ci.yml", Description: "Flutter test and build validation matrix"},
+		{Path: "analysis_options.yaml", Description: "Dart and Flutter analyzer linter configuration", Source: "flutter/analysis_options.yaml.tmpl", Validator: validYAMLMapping},
+		{Path: ".github/workflows/ci.yml", Description: "Flutter test and build validation matrix", Source: "flutter/ci-flutter.yml.tmpl", Validator: validWorkflow},
 	}
 }
 

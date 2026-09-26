@@ -1,10 +1,25 @@
+<%- /*
+Scaffolded as playwright.config.ts by frontend-svelte, using the options @playwright/test
+documents. The documented example also sets baseURL to http://localhost:3000 and a webServer
+running "npm run start". Both are left out deliberately: they assert an application server on
+a port and a start script that nothing has checked the repository has, and a SvelteKit
+project does not serve on 3000. A repository adds them once it knows its own values.
+*/ -%>
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-	webServer: {
-		command: 'npm run build && npm run preview',
-		port: 4173
-	},
 	testDir: 'tests',
-	testMatch: /(.+\.)?(test|spec)\.[jt]s/
+	fullyParallel: true,
+	forbidOnly: !!process.env.CI,
+	retries: process.env.CI ? 2 : 0,
+	reporter: 'html',
+	use: {
+		trace: 'on-first-retry',
+	},
+	projects: [
+		{
+			name: 'chromium',
+			use: { ...devices['Desktop Chrome'] },
+		},
+	],
 });

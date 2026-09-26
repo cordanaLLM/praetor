@@ -8,6 +8,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/templates"
 )
 
 const (
@@ -52,18 +53,18 @@ praetorctl audit
 
 // buildAgentHarness renders the canonical harness, terminated by harnessEndMarker.
 func buildAgentHarness(repoName, arch string, plan *VerificationPlan) (string, error) {
-	tCtx := TemplateContext{
+	tCtx := templates.Context{
 		RepoName:  repoName,
 		Archetype: arch,
 		VerifyCmd: verifyCommand,
 		TestCmd:   verificationTestText(plan),
 		Runtime:   strings.Join(plan.Runtimes, ", "),
 	}
-	header, err := RenderTemplate("harness_header", agentHarnessTemplate, tCtx)
+	header, err := templates.Render("harness_header", agentHarnessTemplate, tCtx)
 	if err != nil {
 		return "", fmt.Errorf("render harness header: %w", err)
 	}
-	footer, err := RenderTemplate("harness_footer", agentHarnessFooterTemplate, tCtx)
+	footer, err := templates.Render("harness_footer", agentHarnessFooterTemplate, tCtx)
 	if err != nil {
 		return "", fmt.Errorf("render harness footer: %w", err)
 	}

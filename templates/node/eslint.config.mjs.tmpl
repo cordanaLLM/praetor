@@ -1,0 +1,16 @@
+<%- /*
+Scaffolded as eslint.config.mjs by typescript-node and frontend-svelte, only where no file
+ESLint already loads is present (internal/flavor/eslint.go). ESLint's recommended rules for
+JavaScript, in the form @eslint/js documents: plugins must name js, or
+extends: ["js/recommended"] resolves to nothing.
+*/ -%>
+import { defineConfig } from "eslint/config";
+import js from "@eslint/js";
+
+export default defineConfig([
+	{
+		files: ["**/*.{js,mjs,cjs}"],
+		plugins: { js },
+		extends: ["js/recommended"],
+	},
+]);

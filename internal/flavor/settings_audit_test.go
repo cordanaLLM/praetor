@@ -20,7 +20,7 @@ func conformingGoLibrary(t *testing.T, settings map[string]string) string {
 		".standards.yaml":            "version: 1\n",
 		".standards.lock":            "version: 1\n",
 		".golangci.yml":              "version: \"2\"\n",
-		".github/workflows/ci.yml":   "name: ci\n",
+		".github/workflows/ci.yml":   fixtureWorkflow,
 		"lefthook.yml":               "pre-commit:\n  commands:\n    gofmt:\n      run: gofmt -l .\n",
 		".github/rulesets/main.json": "{\"name\": \"main\", \"enforcement\": \"active\"}\n",
 	}
@@ -35,12 +35,15 @@ func conformingNativeGPU(t *testing.T, settings map[string]string) string {
 	files := map[string]string{
 		".clang-tidy":                "Checks: '-*,bugprone-*'\n",
 		".clang-format":              "BasedOnStyle: LLVM\n",
-		".gitleaks.toml":             "title = \"leaks\"\n",
+		".gitleaks.toml":             "title = \"leaks\"\n[extend]\nuseDefault = true\n",
 		".vscode/settings.json":      "{\"C_Cpp.default.cppStandard\": \"c++20\"}\n",
 		".github/rulesets/main.json": "{\"name\": \"main\", \"enforcement\": \"active\"}\n",
 	}
 	return repoWithFiles(t, withOverrides(files, settings))
 }
+
+// fixtureWorkflow is the smallest file validWorkflow accepts: a workflow with one job.
+const fixtureWorkflow = "name: ci\non: push\njobs:\n  test:\n    runs-on: ubuntu-26.04\n    steps:\n      - run: make verify-all\n"
 
 // withOverrides applies a case's replacements over a flavor's own files, so a case changes
 // exactly one of them and reads the effect off the report. The repository itself is written

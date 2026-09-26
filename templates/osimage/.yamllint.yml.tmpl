@@ -1,0 +1,14 @@
+<%- /*
+Scaffolded as .yamllint.yml by os-image (internal/flavor/definitions.go). yamllint's default
+rule set, relaxed only where it fights the formats an image forge carries: workflows key on
+"on", which the truthy rule reads as a boolean, and neither workflows nor image definitions
+open with a "---" document marker.
+*/ -%>
+extends: default
+
+rules:
+  document-start: disable
+  line-length:
+    max: 120
+  truthy:
+    check-keys: false

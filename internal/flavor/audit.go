@@ -3,6 +3,7 @@ package flavor
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -191,15 +192,23 @@ func auditTemplates(repoPath string, templates []TemplateItem, report *FlavorAud
 	}
 }
 
+// maxTemplateCandidates bounds the paths one template is looked up under (HISS-02).
+const maxTemplateCandidates = 32
+
 // TemplateSatisfied reports whether the repository carries the template under its
-// canonical path or any accepted alternative. Every template is a file, so a directory
-// that happens to carry the name configures nothing and does not satisfy it.
+// canonical path or any accepted alternative, as a regular file whose content satisfies
+// the template's validator.
+//
+// Presence used to be the whole check. The scaffolder wrote a one-line comment for every
+// template it had no body for, and the audit then scored that comment as the workflow,
+// the gitleaks policy or the agent harness it stood in for (BUG-028, BUG-029). A directory
+// at the path configures nothing either, and a symbolic link counts only where it resolves
+// to a regular file inside the repository: readRequiredFile is the single policy for both.
 func TemplateSatisfied(repoPath string, t TemplateItem) bool {
-	if util.FileExists(filepath.Join(repoPath, t.Path)) {
-		return true
-	}
-	for _, alt := range t.AltPaths {
-		if util.FileExists(filepath.Join(repoPath, alt)) {
+	candidates := append([]string{t.Path}, t.AltPaths...)
+	for i := 0; i < len(candidates) && i < maxTemplateCandidates; i++ {
+		content, ok := readRequiredFile(repoPath, candidates[i])
+		if ok && (t.Validator == nil || t.Validator(content)) {
 			return true
 		}
 	}
@@ -233,14 +242,38 @@ const maxSettingBytes = 1 << 20
 // reading that path will reject. Absent, unreadable and implausibly large are equally
 // unsatisfied, because the audit can claim nothing about content it never read.
 func SettingSatisfied(repoPath string, s SettingItem) bool {
-	content, err := util.ReadConfinedLimited(repoPath, s.Path, maxSettingBytes)
-	if err != nil {
+	content, ok := readRequiredFile(repoPath, s.Path)
+	if !ok {
 		return false
 	}
 	if s.Validator == nil {
 		return true
 	}
 	return s.Validator(content)
+}
+
+// readRequiredFile reads one file a flavor requires, or reports that the repository does
+// not carry it. Templates and settings share it, so both follow one policy:
+//
+//   - the path is confined to the repository, and a symbolic link is followed only when it
+//     resolves inside it (util.ConfinePath);
+//   - only a regular file counts. A directory configures nothing, and a FIFO or device at a
+//     configuration path would block or stream the read rather than end it;
+//   - the read is bounded by maxSettingBytes (util.ReadConfinedLimited).
+func readRequiredFile(repoPath, rel string) ([]byte, bool) {
+	path, err := util.ConfinePath(repoPath, rel)
+	if err != nil {
+		return nil, false
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, false
+	}
+	content, err := util.ReadConfinedLimited(repoPath, rel, maxSettingBytes)
+	if err != nil {
+		return nil, false
+	}
+	return content, true
 }
 
 func auditToolchains(repoPath string, toolchains []ToolchainItem, report *FlavorAuditReport) {
