@@ -1,6 +1,8 @@
-# NOTHING READS THIS FILE. No go:embed and no non-test Go reference names
-# templates/; the only consumers are internal/forge/go_cache_checks_test.go,
-# which lints the directory, and docs/guides/ci-caching.md. Every file an
+# NOTHING READS THIS FILE. No go:embed names templates/, and the one non-test
+# reader, forge.AuditGoToolchain (internal/forge/toolchain_checks.go), opens
+# only the Dockerfile templates to check their Go pins against go.mod. The other
+# consumers are internal/forge/go_cache_checks_test.go, which lints the
+# directory, and docs/guides/ci-caching.md. Every file an
 # adopter receives comes from defaultTemplateContent in
 # internal/flavor/scaffold.go, so editing this file changes nothing for
 # anybody. That is issue #336, which owns the decision to embed templates/ or
