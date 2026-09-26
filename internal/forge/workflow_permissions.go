@@ -252,24 +252,39 @@ func balancedGroups(text string) bool {
 // its own. A conjunct that unwraps to a disjunction rules the event out only when every one
 // of its parts does, which is what keeps `(github.event_name == 'push' || github.event_name
 // == 'pull_request')` reachable from pull_request while fencing pull_request_target off.
-// Without that split the whole disjunction reached namedEvent as one comparison value and
-// matched no event at all, so every job carrying such a guard went unaudited.
+// A conjunct that unwraps to a conjunction rules it out when any one of its parts does, as
+// the top-level conjuncts do, which is what keeps the same-repository guard `(github.event_name
+// == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)`
+// reachable from pull_request. Read as one comparison, either group handed the comparison a
+// value that named no event, and the job carrying it went unaudited.
 //
-// One level of grouping is resolved, which is what workflow conditions spell. A conjunct
-// nested deeper is left undecided, and an undecided condition is reported rather than
-// guessed away.
+// One level of grouping is resolved, which is what workflow conditions spell. A disjunction
+// part that holds a conjunction binds one way or the other depending on operator precedence,
+// so it reaches comparisonExcludes whole and is left undecided there; so is a conjunct nested
+// deeper. An undecided condition is reported rather than guessed away.
 func excludesEvent(conjunct, event string) bool {
-	parts := topLevelParts(unwrapGroup(conjunct), "||")
+	group := unwrapGroup(conjunct)
+	if parts := topLevelParts(group, "||"); len(parts) > 1 {
+		for i := 0; i < len(parts) && i < maxPermissionScopes; i++ {
+			if !comparisonExcludes(parts[i], event) {
+				return false
+			}
+		}
+		return true
+	}
+	parts := topLevelParts(group, "&&")
 	for i := 0; i < len(parts) && i < maxPermissionScopes; i++ {
-		if !comparisonExcludes(parts[i], event) {
-			return false
+		if comparisonExcludes(parts[i], event) {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // comparisonExcludes reports whether one `github.event_name` comparison rules this event
-// out: a test that it is not this event, or that it is some other named one.
+// out: a test that it is not this event, or that it is some other named one. A right-hand
+// side that is not one quoted literal decides nothing: "some other event" is a guess about
+// a value the file does not spell, and it is the guess that hides a reachable job.
 func comparisonExcludes(comparison, event string) bool {
 	rest, named := strings.CutPrefix(unwrapGroup(comparison), eventNameExpression)
 	if !named {
@@ -277,17 +292,30 @@ func comparisonExcludes(comparison, event string) bool {
 	}
 	rest = strings.TrimSpace(rest)
 	if value, negated := strings.CutPrefix(rest, "!="); negated {
-		return event == namedEvent(value)
+		name, literal := namedEvent(value)
+		return literal && strings.EqualFold(event, name)
 	}
 	if value, equal := strings.CutPrefix(rest, "=="); equal {
-		return event != namedEvent(value)
+		name, literal := namedEvent(value)
+		return literal && !strings.EqualFold(event, name)
 	}
 	return false
 }
 
-// namedEvent returns the event name a comparison's right-hand side spells. Parentheses are
-// trimmed with the quotes: a condition may spell the comparison `!= ('pull_request')`, and
-// an unbalanced one survives the split that produced this conjunct.
-func namedEvent(value string) string {
-	return strings.Trim(strings.TrimSpace(value), "'()")
+// namedEvent returns the event name a comparison's right-hand side spells, and whether it
+// spells exactly one quoted literal. Parentheses around the literal are trimmed: a condition
+// may spell the comparison `!= ('pull_request')`, and an unbalanced one survives the split
+// that produced this conjunct. Inside the literal a quote is escaped by doubling it, so a
+// lone one ends the literal early and whatever follows it is more expression, not more name.
+// The comparison is case-insensitive at the caller because GitHub compares strings that way.
+func namedEvent(value string) (string, bool) {
+	value = strings.Trim(strings.TrimSpace(value), "() \t")
+	if len(value) < 2 || value[0] != '\'' || value[len(value)-1] != '\'' {
+		return "", false
+	}
+	inner := value[1 : len(value)-1]
+	if strings.Contains(strings.ReplaceAll(inner, "''", ""), "'") {
+		return "", false
+	}
+	return strings.ReplaceAll(inner, "''", "'"), true
 }

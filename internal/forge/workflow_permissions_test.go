@@ -212,6 +212,30 @@ func TestAuditPullRequestPermissions_Positive_ReportsAJobGuardedByADisjunctionGr
 	}
 }
 
+// The common same-repository guard, spelled as one parenthesised group, still leaves a pull
+// request from a branch of this repository with the workflow's write scope. Reading the
+// whole group as one comparison reported nothing here, while the unparenthesised spelling of
+// the same condition reported the finding.
+func TestAuditPullRequestPermissions_Positive_ReportsAJobBehindTheSameRepositoryGuardGroup(t *testing.T) {
+	const guard = "github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository"
+	for _, condition := range []string{guard, "(" + guard + ")"} {
+		t.Run(condition, func(t *testing.T) {
+			body := strings.Replace(theShapePagesShipsNow,
+				"permissions:\n  contents: read\njobs:",
+				"permissions:\n  contents: write\njobs:", 1)
+			body = strings.Replace(body,
+				"  build:\n    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')",
+				"  build:\n    if: \""+condition+"\"", 1)
+
+			findings := auditPermissionsDocument(t, "pages.yml", body)
+
+			if len(findings) != 1 || findings[0].Job != "build" || findings[0].Scope != "contents" {
+				t.Fatalf("expected one contents:write finding against build, got %v", findings)
+			}
+		})
+	}
+}
+
 func TestAuditPullRequestPermissions_Positive_ReportsTheWriteAllShorthand(t *testing.T) {
 	body := strings.Replace(theShapePagesShipsNow,
 		"permissions:\n  contents: read", "permissions: write-all", 1)
@@ -300,6 +324,25 @@ func TestAuditPullRequestPermissions_Boundary_JobConditionsDecideReachability(t 
 		// Each conjunct used to be judged against the whole declaration list, so neither
 		// one excluded on its own and a job fenced off from both events was reported.
 		{"both events fenced off leaves nothing reachable", "github.event_name != 'pull_request' && github.event_name != 'pull_request_target'", both, none},
+		// A group holding a top-level conjunction is the same-repository guard. Unwrapped and
+		// read as one comparison, its right-hand side "'pull_request' && ..." named no event,
+		// so the equality test fenced off the very event it names and the job went unreported.
+		{"a same-repository guard group keeps the event it names", "(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)", onlyPullRequest, onlyPullRequest},
+		{"a same-repository guard group fences off the other event", "(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)", both, onlyPullRequest},
+		{"a conjunction group excludes through any of its parts", "(github.event_name != 'pull_request' && github.ref == 'refs/heads/main')", onlyPullRequest, none},
+		{"a conjunction group naming another event excludes", "(github.event_name == 'push' && github.ref == 'refs/heads/main')", onlyPullRequest, none},
+		// A disjunction part that holds a conjunction binds differently under either operator
+		// precedence, and names the event under both; it is not read as one comparison.
+		{"a conjunction inside a disjunction group decides nothing", "(github.event_name == 'push' || github.event_name == 'pull_request' && github.actor == 'bot')", onlyPullRequest, onlyPullRequest},
+		// Only a single quoted literal names an event. Anything else is a value the file does
+		// not decide, and reading it as "some other event" guessed the job away.
+		{"a comparison against an expression decides nothing", "github.event_name == github.event.inputs.kind", onlyPullRequest, onlyPullRequest},
+		{"an escaped quote stays inside the literal it escapes", "github.event_name == 'pull_request''s'", onlyPullRequest, none},
+		{"a quote that ends the literal early is not escaped", "(github.event_name != 'pull_request''' && 'x')", onlyPullRequest, onlyPullRequest},
+		// GitHub compares strings without regard to case.
+		{"a differently cased event name still names the event", "github.event_name == 'Pull_Request'", onlyPullRequest, onlyPullRequest},
+		{"a differently cased exclusion still excludes", "github.event_name != 'PULL_REQUEST'", onlyPullRequest, none},
+		{"an empty literal names no event", "github.event_name == ''", onlyPullRequest, none},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
