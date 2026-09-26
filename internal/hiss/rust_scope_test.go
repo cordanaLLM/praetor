@@ -82,6 +82,7 @@ func TestRustFnHeader_Positive_EveryQualifiedHeaderIsMeasured(t *testing.T) {
 	headers := []string{
 		"pub(super) fn", "const fn", "pub(crate) unsafe fn", `extern "C" fn`, `pub extern "C" fn`,
 		"pub const unsafe fn", "async unsafe fn", "pub(in crate::a) fn", "default fn", "pub(crate) async fn",
+		"#[inline] pub fn", "#[must_use] #[cfg(feature = \"x\")] const fn",
 	}
 	for i, prefix := range headers {
 		t.Run(prefix, func(t *testing.T) {
@@ -110,6 +111,8 @@ func TestRustFnHeader_Negative_FnTypesAndLiteralsAreNotHeaders(t *testing.T) {
 		"// fn commented() {",
 		"fnord();",
 		"self.fn_table.len()",
+		"#[cfg(test)] mod tests {",
+		"#[derive(Debug)] struct S { f: fn() }",
 	} {
 		if name, ok := rustFnHeaderName(strings.TrimSpace((&literalStripper{syn: cLikeSyntax}).strip(line))); ok {
 			t.Fatalf("%q read as header %q", line, name)

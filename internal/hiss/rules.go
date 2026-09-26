@@ -28,14 +28,20 @@ var (
 	// qualifiers (const, async, unsafe, safe, default, extern with or without its ABI string),
 	// then fn and the name. A fixed prefix list silently skipped every header it did not
 	// spell out, so const, unsafe, extern "C" and pub(super) functions were never measured.
-	rustFnHeader = regexp.MustCompile(`^(?:pub\s*(?:\([^)]*\))?\s+)?(?:(?:const|async|unsafe|safe|default|extern)\s+)*fn\s+(?:r#)?([A-Za-z_]\w*)`)
+	//
+	// Outer attributes may precede the header on the same line (`#[tokio::main] async fn
+	// main() {`); anchoring the grammar at fn's visibility left such a function unmeasured and,
+	// for fn main, not recognised as the entry point.
+	rustFnHeader = regexp.MustCompile(`^(?:#\s*\[[^\]]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?(?:(?:const|async|unsafe|safe|default|extern)\s+)*fn\s+(?:r#)?([A-Za-z_]\w*)`)
 	// rustTestAttr opens an item compiled only for tests: #[cfg(test)], #[test] and a
 	// path-qualified test attribute such as #[tokio::test].
 	rustTestAttr = regexp.MustCompile(`^#\s*\[\s*(?:cfg\s*\(\s*test\s*\)|(?:[A-Za-z_]\w*\s*::\s*)*test\s*[\](])`)
 	// rustInnerTestAttr is #![cfg(test)], which makes the whole file test code.
 	rustInnerTestAttr = regexp.MustCompile(`^#\s*!\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]`)
 	// rustAbortMacro and rustProcessExit are the Rust abort forms of the HISS-07 abort policy.
-	rustAbortMacro  = regexp.MustCompile(`\b(panic|todo|unimplemented|unreachable)\s*!`)
+	// A macro call needs its delimiter after the bang, so an identifier compared with `!=`
+	// (`if todo != 0`) is not a call.
+	rustAbortMacro  = regexp.MustCompile(`\b(panic|todo|unimplemented|unreachable)\s*!\s*[(\[{]`)
 	rustProcessExit = regexp.MustCompile(`\bprocess\s*::\s*(exit|abort)\s*\(`)
 	// pythonSysExit is the Python abort form of the HISS-07 abort policy.
 	pythonSysExit = regexp.MustCompile(`\bsys\s*\.\s*exit\s*\(`)
@@ -636,7 +642,9 @@ func (s *rustScanner) scanLine(lines []string, idx int) {
 		s.entry = name == "main" && lineIndent(line) == 0
 	}
 	s.fn.observe(code, strings.TrimSpace(line), idx, isHeader, name)
-	scope.entry = scope.entry || s.inEntry()
+	// The header line of fn main is part of it even when the body closes on that same line
+	// (`fn main() { std::process::exit(run()) }`), where the tracker is done before and after.
+	scope.entry = scope.entry || s.inEntry() || (isHeader && s.entry)
 	scanRustLineInvariants(code, lines, idx, s.rel, s.rep, scope)
 }
 

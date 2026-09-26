@@ -244,3 +244,93 @@ func TestAbortPolicy_Negative_PythonStrayCloserDoesNotHideAWrappedEntry(t *testi
 		t.Fatalf("a wrapped def main after a stray closer is still the entry point: %+v", rep.Violations)
 	}
 }
+
+func TestAbortPolicy_Negative_RustBangEqualsIsNotAMacroCall(t *testing.T) {
+	root := t.TempDir()
+	// A macro call needs its delimiter after the bang. An identifier spelled like an abort
+	// macro and compared with != is an ordinary expression.
+	writeFixture(t, root, "src/lib.rs", strings.Join([]string{
+		"pub fn f(todo: u8, panic: u8) -> bool {",
+		"    if todo != 0 { return true; }",
+		"    let unreachable = panic!=1;",
+		"    unreachable",
+		"}",
+		"",
+	}, "\n"))
+
+	if rep := scanFixture(t, root, ScanOptions{}); len(rep.Violations) != 0 {
+		t.Fatalf("a != comparison is not an abort macro: %+v", rep.Violations)
+	}
+}
+
+func TestAbortPolicy_Boundary_RustOneLineAndAttributedMain(t *testing.T) {
+	root := t.TempDir()
+	// fn main is the entry point even when its body closes on the header line, and when an
+	// attribute such as #[tokio::main] shares the header line. The function after each main
+	// is library code again.
+	writeFixture(t, root, "src/main.rs", strings.Join([]string{
+		"fn main() { std::process::exit(run()) }", // 1 entry point
+		"fn helper() { std::process::exit(1) }",   // 2 library code
+		"",
+	}, "\n"))
+	writeFixture(t, root, "src/bin/tool.rs", strings.Join([]string{
+		"#[tokio::main] async fn main() {", // 1
+		"    panic!(\"entry point\");",     // 2 entry point
+		"}",                                // 3
+		"#[inline] fn after() {",           // 4
+		"    todo!()",                      // 5 library code
+		"}",                                // 6
+		"",
+	}, "\n"))
+
+	rep := scanFixture(t, root, ScanOptions{})
+	assertViolations(t, rep, []expectedViolation{{"HISS-07", "src/main.rs", 2}, {"HISS-07", "src/bin/tool.rs", 5}})
+}
+
+func TestAbortPolicy_Negative_GoSignatureBindingsShadowOS(t *testing.T) {
+	root := t.TempDir()
+	// A receiver, parameter, named result, closure parameter or range variable named os hides
+	// the package for the whole body, so os.Exit there calls the local value's method.
+	writeFixture(t, root, "lib/sig.go", strings.Join([]string{
+		"package lib", "", "import \"os\"", "",
+		"var _ = os.Args", "",
+		"type q struct{}", "",
+		"func (q) Exit(int) {}", "",
+		"func Param(os q) { os.Exit(1) }",
+		"func Result() (os q) { os.Exit(1); return }",
+		"func (os q) Recv() { os.Exit(1) }",
+		"func Closure() { _ = func(os q) { os.Exit(1) } }",
+		"func Range(qs []q) {",
+		"\tfor _, os := range qs {",
+		"\t\tos.Exit(1)",
+		"\t}",
+		"}", "",
+	}, "\n"))
+
+	if rep := scanFixture(t, root, ScanOptions{}); len(rep.Violations) != 0 {
+		t.Fatalf("a binding named os in the signature, a closure or a range clause shadows the package: %+v", rep.Violations)
+	}
+}
+
+func TestAbortPolicy_Boundary_GoShadowIsScopedToItsFunction(t *testing.T) {
+	root := t.TempDir()
+	// A parameter named os shadows the package only inside its own function; the next
+	// function reaches package os again.
+	writeFixture(t, root, "lib/scope.go", strings.Join([]string{
+		"package lib",                        // 1
+		"",                                   // 2
+		"import \"os\"",                      // 3
+		"",                                   // 4
+		"type q struct{}",                    // 5
+		"",                                   // 6
+		"func (q) Exit(int) {}",              // 7
+		"",                                   // 8
+		"func Shadowed(os q) { os.Exit(1) }", // 9
+		"func Unshadowed(o q) { os.Exit(o.n()) }", // 10
+		"func (q) n() int { return 1 }",           // 11
+		"",
+	}, "\n"))
+
+	rep := scanFixture(t, root, ScanOptions{})
+	assertViolations(t, rep, []expectedViolation{{"HISS-07", "lib/scope.go", 10}})
+}

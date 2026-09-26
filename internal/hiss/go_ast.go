@@ -164,17 +164,61 @@ func declaresLocal(body *ast.BlockStmt, name string) bool {
 		if found || n == nil {
 			return false
 		}
-		switch decl := n.(type) {
-		case *ast.AssignStmt:
-			if decl.Tok == token.DEFINE {
-				found = identListDeclares(decl.Lhs, name)
-			}
-		case *ast.ValueSpec:
-			found = identsDeclare(decl.Names, name)
-		}
+		found = nodeDeclares(n, name)
 		return !found
 	})
 	return found
+}
+
+// nodeDeclares reports whether one node of a function body binds name: a short variable
+// declaration, a var or const statement, a range clause that declares its variables, or a
+// parameter or named result of a function literal.
+func nodeDeclares(n ast.Node, name string) bool {
+	switch decl := n.(type) {
+	case *ast.AssignStmt:
+		return decl.Tok == token.DEFINE && identListDeclares(decl.Lhs, name)
+	case *ast.ValueSpec:
+		return identsDeclare(decl.Names, name)
+	case *ast.RangeStmt:
+		return decl.Tok == token.DEFINE && identListDeclares([]ast.Expr{decl.Key, decl.Value}, name)
+	case *ast.FuncLit:
+		return funcTypeDeclares(decl.Type, name)
+	default:
+		return false
+	}
+}
+
+// funcDeclares reports whether fn binds name anywhere in its scope: as its receiver, a
+// parameter, a named result, or a local its body declares. Each of these hides a
+// package-level function or an imported package of the same name for the whole body.
+//
+// Checking only the body missed the signature, so `func F(os fs) { os.Exit(1) }` was
+// reported as the process exit and `func walk(walk func()) { walk() }` as recursion.
+func funcDeclares(fn *ast.FuncDecl, name string) bool {
+	if fn == nil {
+		return false
+	}
+	return fieldListDeclares(fn.Recv, name) || funcTypeDeclares(fn.Type, name) || declaresLocal(fn.Body, name)
+}
+
+// funcTypeDeclares reports whether a function signature binds name as a parameter or a named
+// result.
+func funcTypeDeclares(ft *ast.FuncType, name string) bool {
+	return ft != nil && (fieldListDeclares(ft.Params, name) || fieldListDeclares(ft.Results, name))
+}
+
+// fieldListDeclares reports whether any field of a receiver, parameter or result list is
+// named name.
+func fieldListDeclares(list *ast.FieldList, name string) bool {
+	if list == nil {
+		return false
+	}
+	for i := 0; i < len(list.List); i++ {
+		if identsDeclare(list.List[i].Names, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // identListDeclares reports whether any expression is an identifier with the given name.
@@ -224,10 +268,11 @@ func (g *goScanner) checkSelfRecursion(call *ast.CallExpr) {
 	if !CallTargetsEnclosing(call.Fun, fn.Name.Name, ReceiverName(fn)) {
 		return
 	}
-	// A local of the same name shadows the function, so the call reaches the local rather
-	// than recursing. Checked only once a name match is found, so the cost is paid only by
-	// candidate findings.
-	if declaresLocal(fn.Body, fn.Name.Name) {
+	// In a plain function a parameter, named result or local of the same name shadows the
+	// function, so the call reaches that binding rather than recursing. A method is called
+	// through its receiver, which no binding of the method's name can shadow. Checked only
+	// once a name match is found, so the cost is paid only by candidate findings.
+	if fn.Recv == nil && funcDeclares(fn, fn.Name.Name) {
 		return
 	}
 	g.record("HISS-01", call.Pos(), fn.Name.Name,
@@ -286,8 +331,9 @@ func (g *goScanner) checkFuncLOC(fn *ast.FuncDecl) {
 // the binary entry point main.main are the places allowed to abort.
 //
 // os.Exit is resolved through the file's imports, so an aliased or dot import is the same
-// call and a local that shadows the package name is not; os.Exit passed as a value is not a
-// call and stays allowed, which is how an entry point hands its exit to a library.
+// call and a receiver, parameter, named result or local that shadows the package name is
+// not; os.Exit passed as a value is not a call and stays allowed, which is how an entry
+// point hands its exit to a library.
 func (g *goScanner) checkAbort(call *ast.CallExpr) {
 	if g.isTest || g.inEntryPoint() {
 		return
@@ -319,11 +365,10 @@ func (g *goScanner) osExitCallee(fun ast.Expr) (string, bool) {
 	return "", false
 }
 
-// shadowed reports whether the enclosing function declares a local named name, which then
-// hides the package-level binding of the same name.
+// shadowed reports whether the enclosing function binds name as its receiver, a parameter,
+// a named result or a local, any of which hides the package-level binding of the same name.
 func (g *goScanner) shadowed(name string) bool {
-	fn := g.enclosingFunc()
-	return fn != nil && declaresLocal(fn.Body, name)
+	return funcDeclares(g.enclosingFunc(), name)
 }
 
 // inEntryPoint reports whether the walk is inside main.main, the binary entry point, which

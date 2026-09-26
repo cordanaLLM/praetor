@@ -47,9 +47,13 @@ Test code and function bodies are both brace-delimited items, and one tracker (`
 - A function header is any visibility (`pub`, `pub(crate)`, `pub(super)`, `pub(in path)`) followed
   by any run of `const`, `async`, `unsafe`, `safe`, `default` and `extern` qualifiers before `fn`.
   The grammar matches the line after literals are stripped, so a `fn` in a string or comment is not
-  a header.
+  a header. Outer attributes may precede the header on the same line (`#[inline] pub fn`,
+  `#[tokio::main] async fn main() {`).
 - The abort policy exempts the body of the unindented `fn main`; rustfmt indents a method of the
-  same name inside its `impl` block, so the method stays library code.
+  same name inside its `impl` block, so the method stays library code. The header line belongs to
+  `fn main` too, so a one-line `fn main() { std::process::exit(run()) }` is exempt.
+- An abort macro is a call only with its delimiter after the bang (`panic!(`, `todo![`,
+  `unreachable!{`), so an identifier compared with `!=` is not reported.
 
 `internal/hiss/rust_scope_test.go` and `internal/hiss/abort_policy_test.go` pin each case.
 
@@ -80,6 +84,12 @@ component of two or more functions, naming the path.
 Package scope is complete here rather than convenient. A call cycle spanning two packages would
 need each package to import the other, and the Go compiler rejects that outright, so every call
 cycle a buildable program can contain is inside one package.
+
+A name the function binds itself shadows the package-level name of the same spelling for the whole
+body: its receiver, a parameter, a named result, a local, a range variable or a closure parameter.
+A call through such a name adds no edge, a bare call is not direct recursion, and `os.Exit` on a
+binding named `os` is not the process exit (`funcDeclares` in `internal/hiss/go_ast.go`). A method
+is called through its receiver, so a local named like the method does not hide its recursion.
 
 Two limits are deliberate and recorded as gap fixtures rather than left implicit:
 
