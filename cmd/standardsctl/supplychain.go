@@ -49,24 +49,32 @@ func runSBOM(args []string) error {
 	return nil
 }
 
+// unsignedProvenanceWarning goes to stderr on every provenance run, so the JSON on stdout
+// stays parseable while nobody mistakes the statement for a signed attestation.
+const unsignedProvenanceWarning = "warning: the SLSA provenance statement is UNSIGNED; it is not an attestation " +
+	"until it is wrapped in a signed DSSE envelope whose signature and signer identity are verified"
+
 func runProvenance(args []string) error {
 	fs := flag.NewFlagSet("provenance", flag.ContinueOnError)
-	artifact := fs.String("artifact", "praetorctl", "Name of the artifact")
+	file := fs.String("file", "", "Artifact file whose bytes the subject digest is computed from (required)")
+	artifact := fs.String("artifact", "", "Subject name (default: base name of -file)")
 	builder := fs.String("builder", "ghcr.io/cordanallm/builder", "Builder identifier")
-	digest := fs.String("digest", "", "SHA256 hex digest of the artifact")
+	digest := fs.String("digest", "", "Optional expected SHA-256 hex digest; the run fails unless -file hashes to it")
 	out := fs.String("out", "", "Output file path (default stdout)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *digest == "" {
-		return fmt.Errorf("flag -digest is required")
+	if *file == "" {
+		return fmt.Errorf("flag -file is required: the subject digest is computed from the artifact bytes, and -digest is only a cross-check against them")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDigestDuration+contextopt.MaxDuration)
 	defer cancel()
 
-	stmt, err := supplychain.GenerateSLSAProvenance(ctx, *artifact, *builder, *digest)
+	stmt, err := supplychain.GenerateSLSAProvenance(ctx, supplychain.ProvenanceRequest{
+		ArtifactPath: *file, ArtifactName: *artifact, BuilderID: *builder, ExpectedSHA256: *digest,
+	})
 	if err != nil {
 		return fmt.Errorf("failed generating SLSA provenance: %w", err)
 	}
@@ -75,12 +83,14 @@ func runProvenance(args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed formatting SLSA statement: %w", err)
 	}
+	fmt.Fprintln(os.Stderr, unsignedProvenanceWarning)
 
 	if *out != "" {
 		if err := writeCommandArtifact(ctx, *out, data, 0644); err != nil {
 			return fmt.Errorf("failed writing provenance to %s: %w", *out, err)
 		}
-		fmt.Printf("SLSA v1.0 Provenance written to %s\n", *out)
+		fmt.Printf("Unsigned SLSA v1.0 provenance statement written to %s (subject %s sha256:%s)\n",
+			*out, stmt.Subject[0].Name, stmt.Subject[0].Digest["sha256"])
 		return nil
 	}
 

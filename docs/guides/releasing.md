@@ -75,6 +75,41 @@ covers the whole binary set.
 `internal/forge/cosign_bundle_test.go` replays the flag shape against the real workflow and
 GoReleaser files, so a return to the removed v2 flags fails `go test` rather than a tag push.
 
+## SLSA provenance statements
+
+`praetorctl provenance` writes an in-toto v1 statement with an SLSA v1.0 provenance
+predicate for one artifact file. No release workflow calls it yet, and the statement it
+writes is **unsigned**: it becomes an attestation only once a signer wraps it in a DSSE
+envelope and a verifier checks that envelope's signature and signer identity.
+
+```bash
+praetorctl provenance --file dist/praetorctl_linux_amd64.tar.gz --out provenance.json
+```
+
+| Flag | Default | Effect |
+| :--- | :--- | :--- |
+| `--file` | required | Artifact whose bytes are streamed through SHA-256; the result is the subject digest |
+| `--artifact` | base name of `--file` | Subject name |
+| `--digest` | none | Expected SHA-256 (64 lowercase hex characters); the run fails unless `--file` hashes to it |
+| `--builder` | `ghcr.io/cordanallm/builder` | Builder ID recorded in the predicate |
+| `--out` | stdout | Output file |
+
+The subject digest always comes from the file's bytes, never from `--digest`, so a
+statement cannot name a digest nobody computed. The run is refused when:
+
+- `--file` is missing, including when `--digest` is given alone;
+- the file is empty, larger than 2 GiB (`supplychain.MaxArtifactBytes`), a symlink, not a
+  regular file, or changes while it is read;
+- `--digest` is malformed or differs from the computed digest. The error names the
+  computed digest.
+
+Every statement carries a `praetorEmission` extension field with `"signed": false`, and
+every run prints an `UNSIGNED` warning on stderr, so stdout stays parseable JSON. The
+in-toto v1 [parsing rules](https://github.com/in-toto/attestation/blob/main/spec/v1/README.md#parsing-rules)
+tell consumers to ignore fields they do not recognize, so the marker changes nothing for
+a verifier. `internal/supplychain/slsa_test.go` and
+`cmd/standardsctl/provenance_cli_test.go` cover these cases.
+
 ## Cutting a release
 
 The pull-request flow squash-merges into `main`, so the commit prepared on a branch is not

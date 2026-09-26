@@ -1,0 +1,3 @@
+type: fixed
+title: praetorctl provenance computes the SLSA subject digest from the artifact file (--file, required) instead of attesting a caller-supplied --digest, and marks the statement unsigned in its JSON and on stderr
+breaking: true

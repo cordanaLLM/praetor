@@ -164,7 +164,7 @@ func printFleetCommands() {
 	fmt.Println("  agent              Manage and dispatch autonomous Praetor agent helpers (list, run)")
 	fmt.Println("  serve              Run cloud-native container daemon with HTTP health probes")
 	fmt.Println("  sbom               Generate CycloneDX 1.5 Software Bill of Materials")
-	fmt.Println("  provenance         Generate SLSA v1.0 provenance attestation statement")
+	fmt.Println("  provenance         Generate an unsigned SLSA v1.0 provenance statement for an artifact file")
 	fmt.Println("  needs              Declare and report repository capabilities and demand to Golusoris")
 	fmt.Println("  issue              Reconcile cross-repo dependencies and unblock ready tasks")
 	fmt.Println("  wishes             Read and apply private repository wishes and polls")

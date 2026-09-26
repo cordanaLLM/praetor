@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -59,50 +58,6 @@ func TestGenerateCycloneDX_Positive_And_Negative(t *testing.T) {
 	_, nilErr := GenerateCycloneDX(absentContext, repoRoot, SBOMOptions{})
 	if nilErr == nil {
 		t.Error("expected error for nil context, got nil")
-	}
-}
-
-func TestGenerateSLSAProvenance_Positive_And_Boundary(t *testing.T) {
-	ctx := context.Background()
-	digest := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-
-	stmt, err := GenerateSLSAProvenance(ctx, "praetorctl", "ghcr.io/cordanallm/builder", digest)
-	if err != nil {
-		t.Fatalf("expected SLSA statement generation to succeed: %v", err)
-	}
-
-	if len(stmt.Subject) == 0 || stmt.Subject[0].Digest["sha256"] != digest {
-		t.Errorf("mismatched digest in subject: %+v", stmt.Subject)
-	}
-
-	// Negative: empty digest
-	_, emptyErr := GenerateSLSAProvenance(ctx, "praetorctl", "builder", "")
-	if emptyErr == nil {
-		t.Error("expected error on empty digest, got nil")
-	}
-
-	// Boundary: cancelled context
-	cancCtx, cancel := context.WithCancel(ctx)
-	cancel()
-	_, cancErr := GenerateSLSAProvenance(cancCtx, "praetorctl", "builder", digest)
-	if cancErr == nil {
-		t.Error("expected error on cancelled context, got nil")
-	}
-}
-
-func TestGenerateSLSAProvenance_Negative_MalformedDigests(t *testing.T) {
-	ctx := context.Background()
-	valid := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-
-	cases := map[string]string{
-		"63 characters (one short)": valid[:len(valid)-1],
-		"uppercase hex":             strings.ToUpper(valid),
-		"non-hex characters":        strings.Repeat("g", 64),
-	}
-	for name, digest := range cases {
-		if _, err := GenerateSLSAProvenance(ctx, "praetorctl", "builder", digest); err == nil {
-			t.Errorf("%s: expected digest %q to be rejected", name, digest)
-		}
 	}
 }
 
