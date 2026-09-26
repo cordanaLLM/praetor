@@ -27,7 +27,9 @@ func TestHarnessContractStatesTheInternalRegister(t *testing.T) {
 	if err := validateHarnessValues(h.OperatingContract); err != nil {
 		t.Fatalf("the extended contract must stay within the harness bounds: %v", err)
 	}
-	if rules := renderRules(h); strings.Count(rules, "- "+directive+"\n") != 1 {
+	// List items wrap at the Markdown line limit; joining the two-space continuation lines
+	// restores each item to the one line the directive is compared against.
+	if rules := renderRules(h); strings.Count(strings.ReplaceAll(rules, "\n  ", " "), "- "+directive+"\n") != 1 {
 		t.Fatalf("rendered rules must list the directive once:\n%s", rules)
 	}
 }

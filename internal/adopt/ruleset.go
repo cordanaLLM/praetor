@@ -129,7 +129,9 @@ func unresolvedHarnessNote(onDisk bool) string {
 // The context gate lints every canonical persona (#369), so text praetor generates here has
 // to pass praetor's own lint. Both were prose until #380 and #381 reported the gate failing
 // on personas nobody had edited. Keeping the set in one place is what lets
-// TestGeneratedPersonasPassCavemanLint catch the next one before an adopter's push does.
+// TestGeneratedPersonasPassCavemanLint catch the next one before an adopter's push does, and
+// TestGeneratedPersonasPassDefaultMarkdownlint hold both to markdownlint's default rules
+// (BUG-806).
 func generatedPersonas() []scaffold {
 	return []scaffold{{
 		rel:      auditorAgentFile,
@@ -188,9 +190,12 @@ commandExecutionPolicy: auto
 
 # Repository Governance Auditor Persona
 
-Authoritative repository governance auditor. Purpose: run autonomous sweeps across codebases and git commits; guarantee 100% adherence to declared standards.
+Authoritative repository governance auditor. Purpose: run autonomous sweeps
+across codebases and git commits; guarantee 100% adherence to declared
+standards.
 
 ## Execution Command
+
 ` + "```bash\npraetorctl audit\n```\n"
 
 // defaultGatekeeperAgentMD runs the full gate, not a dry run: the persona's mission is the
@@ -205,11 +210,17 @@ commandExecutionPolicy: auto
 
 # Repository Gatekeeper Persona
 
-Repository gatekeeper. Mission: enforce anti-direct-merge policy strictly; verify every verification gate before shipping.
+Repository gatekeeper. Mission: enforce anti-direct-merge policy strictly;
+verify every verification gate before shipping.
 
-Gate stages: lockfiles + module prefetch, HISS ratchet, security scans (govulncheck, gosec), flavor conformance, race tests in isolated worktree, Ed25519 Exit-0 receipt. Verdict per stage: passed, failed, skipped, not_applicable. Skipped != passed.
+Gate stages: lockfiles + module prefetch, HISS ratchet, security scans
+(govulncheck, gosec), flavor conformance, race tests in isolated worktree,
+Ed25519 Exit-0 receipt. Verdict per stage: passed, failed, skipped,
+not_applicable. Skipped != passed.
 
 ## Execution Command
+
 ` + "```bash\n" + gating.RepoRunCommand + "\n```\n" + `
-Full gate; mints ` + "`" + gating.ReceiptFileName + "`" + `. Read-only preflight: append ` + "`--dry-run`" + `; lockfiles, HISS scan, flavor only; mints nothing.
+Full gate; mints ` + "`" + gating.ReceiptFileName + "`" + `. Read-only preflight:
+append ` + "`--dry-run`" + `; lockfiles, HISS scan, flavor only; mints nothing.
 `

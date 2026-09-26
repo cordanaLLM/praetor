@@ -24,10 +24,18 @@ const (
 	codeFence = "```"
 )
 
+// harnessLintScopeEnd closes the harness's markdownlint scope. The harness carries a table
+// and rule lines no 80-column wrap can hold, so it disables MD013 at its first line and
+// enables it again here, before the repository's own instructions start; those follow a
+// second H1, so MD025 is disabled from here on and only there. A disable on the first line
+// alone used to silence both rules for everything the repository wrote below the harness
+// (BUG-806).
+const harnessLintScopeEnd = "<!-- markdownlint-enable MD013 -->\n<!-- markdownlint-disable MD025 -->\n"
+
 // agentHarnessTemplate opens the harness. It is agent-only text, so it is written in the
 // internal register and passes the caveman lint that compile-context --verify and audit run
 // over the whole AGENTS.md (TestHarnessPassesCavemanLint).
-const agentHarnessTemplate = `<!-- markdownlint-disable MD013 MD025 -->
+const agentHarnessTemplate = `<!-- markdownlint-disable MD013 -->
 # {{ .RepoName }} Agent Operating Harness
 
 Before concluding any turn:
@@ -71,7 +79,7 @@ func buildAgentHarness(repoName, arch string, plan *VerificationPlan) (string, e
 	if err != nil {
 		return "", err
 	}
-	return header + buildAgentHarnessDirectives() + register + footer + "\n" + harnessEndMarker + "\n", nil
+	return header + buildAgentHarnessDirectives() + register + footer + "\n" + harnessLintScopeEnd + harnessEndMarker + "\n", nil
 }
 
 // harnessRegisterSection renders the default text register section. Adoption needs neither
