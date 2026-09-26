@@ -224,14 +224,17 @@ func (r *rustSelfCalls) observe(l rustLine) {
 }
 
 // startBody decides, from the finished signature, which spellings reach the function. A
-// function in a trait impl gets none, so its calls are observed and never reported.
+// function in a trait impl gets none, so its calls are observed and never reported. Neither
+// does a function written in a macro_rules template, whose signature holds a $metavariable:
+// its body may be a fragment such as `$body` rather than a brace, so the brace the header
+// seems to open belongs to other code, and the template's expansion is not visible.
 func (r *rustSelfCalls) startBody() {
 	r.inSig = false
 	params := rustParams(r.sig)
 	name := r.calls.name
 	r.calls.excluded = isPathByte
 	switch {
-	case r.body == rustTraitImplBody:
+	case r.body == rustTraitImplBody || strings.Contains(r.sig, "$"):
 		r.calls.callees = nil
 	case rustHasReceiver(params):
 		r.calls.callees = []string{"self." + name, "Self::" + name}
