@@ -626,30 +626,33 @@ func TestGenerateWiki_Positive(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	manifest, err := GenerateWiki(ctx, "/path/to/my-repo", tempDir)
+	manifest, err := GenerateWiki(ctx, wikiRepoRoot(t, "my-repo", canonicalAgentsMD(t)), tempDir)
 	if err != nil {
 		t.Fatalf("unexpected error generating wiki: %v", err)
 	}
-	if len(manifest.Pages) != 4 {
-		t.Fatalf("expected 4 wiki pages, got %d", len(manifest.Pages))
+	if len(manifest.Pages) != 6 {
+		t.Fatalf("expected 6 wiki pages, got %d", len(manifest.Pages))
 	}
 
-	expectedFiles := []string{
-		"Home.md",
-		"HISS-16-Invariants.md",
-		"Architecture-Lattice.md",
-		"API-Reference.md",
+	// Every page but the moved stub carries a diagram.
+	expectedFiles := map[string]bool{
+		"Home.md":                 true,
+		"HISS-Invariants.md":      true,
+		"HISS-16-Invariants.md":   false,
+		"HISS-Matrix.md":          true,
+		"Architecture-Lattice.md": true,
+		"API-Reference.md":        true,
 	}
 
-	for _, ef := range expectedFiles {
+	for ef, diagram := range expectedFiles {
 		p := filepath.Join(tempDir, ef)
 		data, err := os.ReadFile(p)
 		if err != nil {
 			t.Errorf("missing expected wiki page %s: %v", ef, err)
 			continue
 		}
-		if !strings.Contains(string(data), "```mermaid") {
-			t.Errorf("expected wiki page %s to contain Mermaid diagram", ef)
+		if strings.Contains(string(data), "```mermaid") != diagram {
+			t.Errorf("wiki page %s: Mermaid diagram present = %v, want %v", ef, !diagram, diagram)
 		}
 	}
 }
@@ -916,7 +919,8 @@ func TestTranscribeDiscussionToADR_Boundary_NonLatinTitleAndOverwrite(t *testing
 func TestGenerateWiki_Boundary_RepoNameFromRelativeRoot(t *testing.T) {
 	ctx := context.Background()
 
-	manifest, err := GenerateWiki(ctx, "/path/to/my-repo", t.TempDir())
+	agents := canonicalAgentsMD(t)
+	manifest, err := GenerateWiki(ctx, wikiRepoRoot(t, "my-repo", agents), t.TempDir())
 	if err != nil {
 		t.Fatalf("unexpected error generating wiki: %v", err)
 	}
@@ -926,6 +930,7 @@ func TestGenerateWiki_Boundary_RepoNameFromRelativeRoot(t *testing.T) {
 
 	// "." is what the CLI passes; it must resolve to the working directory's name, not
 	// to a hard-coded placeholder.
+	t.Chdir(wikiRepoRoot(t, "relative-repo", agents))
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)

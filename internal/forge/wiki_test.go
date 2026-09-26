@@ -1,158 +1,260 @@
 package forge
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// canonicalTableRowPattern matches one row of AGENTS.md's "Core Directives & Invariants"
-// table: "| **HISS-01** control flow | recursion prohibited; call graph = DAG | build |
-// immediate build failure |". The fifth ("on fail") column has no analogue in the
-// generated wiki's table and is intentionally not captured.
-var canonicalTableRowPattern = regexp.MustCompile(
-	`^\|\s*\*\*(HISS-\d+)\*\*\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|$`)
-
-// wikiTableRowPattern matches one row of the generated wiki's table: "| **HISS-01** |
-// control flow | recursion prohibited; call graph = DAG | build |".
-var wikiTableRowPattern = regexp.MustCompile(
-	`^\|\s*\*\*(HISS-\d+)\*\*\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|$`)
-
-func parseCanonicalTable(t *testing.T, agentsMD string) map[string]hissInvariantRow {
+// canonicalAgentsMD reads the repository's own AGENTS.md, the table GenerateWiki copies.
+func canonicalAgentsMD(t *testing.T) string {
 	t.Helper()
-	rows := make(map[string]hissInvariantRow)
-	for _, line := range strings.Split(agentsMD, "\n") {
-		m := canonicalTableRowPattern.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		rows[m[1]] = hissInvariantRow{id: m[1], scope: m[2], rule: m[3], verification: m[4]}
+	data, err := os.ReadFile(filepath.Join("..", "..", "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
 	}
-	return rows
+	return string(data)
 }
 
-func parseWikiTable(t *testing.T, wikiMD string) map[string]hissInvariantRow {
+// wikiRepoRoot returns a fresh repository root named name whose AGENTS.md is agentsMD. The
+// wiki portal is named after the root's base name, so tests that compare against the
+// checked-in pages name it "praetor".
+func wikiRepoRoot(t *testing.T, name, agentsMD string) string {
 	t.Helper()
-	rows := make(map[string]hissInvariantRow)
-	for _, line := range strings.Split(wikiMD, "\n") {
-		m := wikiTableRowPattern.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		rows[m[1]] = hissInvariantRow{id: m[1], scope: m[2], rule: m[3], verification: m[4]}
+	root := filepath.Join(t.TempDir(), name)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	return rows
+	if err := os.WriteFile(filepath.Join(root, wikiCanonicalSource), []byte(agentsMD), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
 
-// compareInvariantTables reports every canonical id the wiki table omits and every id the
-// wiki table invents beyond the canonical set. Both the positive guard test below (against
-// the real files) and the negative test (against synthetic fixtures) call this, so the
-// comparison logic itself is under test, not just its verdict against today's content.
-func compareInvariantTables(canonical, wiki map[string]hissInvariantRow) (missing, invented []string) {
-	for id := range canonical {
-		if _, ok := wiki[id]; !ok {
+// generatedPages runs GenerateWiki over root and indexes the pages by file name.
+func generatedPages(t *testing.T, root string) map[string]WikiPage {
+	t.Helper()
+	manifest, err := GenerateWiki(t.Context(), root, t.TempDir())
+	if err != nil {
+		t.Fatalf("GenerateWiki: %v", err)
+	}
+	pages := make(map[string]WikiPage, len(manifest.Pages))
+	for _, page := range manifest.Pages {
+		pages[page.Name] = page
+	}
+	return pages
+}
+
+// invariantRowID matches the first cell of a generated HISS table row: "| **HISS-01** |".
+var invariantRowID = regexp.MustCompile(`(?m)^\| \*\*(HISS-\d+)\*\* \|`)
+
+// pageInvariantIDs returns the invariant IDs of every HISS table row on a generated page,
+// in page order.
+func pageInvariantIDs(content string) []string {
+	var ids []string
+	for _, m := range invariantRowID.FindAllStringSubmatch(content, -1) {
+		ids = append(ids, m[1])
+	}
+	return ids
+}
+
+// compareInvariantIDs reports every canonical ID a page omits and every ID a page carries
+// beyond the canonical set, a repeated row included. Both the positive guard tests (against
+// the real sources) and the negative test (against synthetic fixtures) call it, so the
+// comparison itself is under test, not just its verdict against today's content.
+func compareInvariantIDs(canonical, page []string) (missing, invented []string) {
+	for _, id := range canonical {
+		if !slices.Contains(page, id) {
 			missing = append(missing, id)
 		}
 	}
-	for id := range wiki {
-		if _, ok := canonical[id]; !ok {
+	seen := make(map[string]bool, len(page))
+	for _, id := range page {
+		if !slices.Contains(canonical, id) || seen[id] {
 			invented = append(invented, id)
 		}
+		seen[id] = true
 	}
 	sort.Strings(missing)
 	sort.Strings(invented)
 	return missing, invented
 }
 
-// TestHISSInvariantsWiki_MatchesCanonicalTable_Positive replays AGENTS.md's own invariant
-// table against the generated wiki page. BUG-378 was exactly this comparison failing
-// silently: HISS-03 and HISS-14 invented, HISS-17..HISS-21 omitted. A future edit to either
-// table that reintroduces that drift fails here instead of shipping.
-func TestHISSInvariantsWiki_MatchesCanonicalTable_Positive(t *testing.T) {
-	data, err := os.ReadFile("../../AGENTS.md")
+// TestHISSWiki_Positive_EveryCanonicalInvariantIsPublished replays both canonical sources
+// against the generated pages. The matrix must carry every catalog invariant, HISS-01
+// through HISS-21, with its title and its gated mark; the invariants page must carry every
+// row of AGENTS.md's table cell for cell. BUG-378 was this comparison failing silently
+// (HISS-03 and HISS-14 invented, HISS-17..HISS-21 omitted), and BUG-990 was the matrix
+// stopping at HISS-19 because it was copied by hand.
+func TestHISSWiki_Positive_EveryCanonicalInvariantIsPublished(t *testing.T) {
+	agents := canonicalAgentsMD(t)
+	gated, err := hisscatalog.ParseGatedInvariants(agents)
 	if err != nil {
-		t.Fatalf("read AGENTS.md: %v", err)
+		t.Fatalf("parse AGENTS.md: %v", err)
 	}
-	canonical := parseCanonicalTable(t, string(data))
-	if len(canonical) == 0 {
-		t.Fatal("parsed zero rows from AGENTS.md's invariant table; the parser or the table heading moved")
-	}
+	pages := generatedPages(t, wikiRepoRoot(t, "praetor", agents))
+	rules := hisscatalog.Rules()
 
-	page := generateHISSInvariantsWiki()
-	wiki := parseWikiTable(t, page.Content)
-
-	missing, invented := compareInvariantTables(canonical, wiki)
-	if len(missing) != 0 {
-		t.Errorf("canonical invariants missing from the generated wiki: %v", missing)
+	matrix := pages[hissMatrixPage+".md"].Content
+	if missing, invented := compareInvariantIDs(hisscatalog.RuleIDs(), pageInvariantIDs(matrix)); len(missing)+len(invented) != 0 {
+		t.Errorf("matrix: catalog invariants missing %v, invented %v", missing, invented)
 	}
-	if len(invented) != 0 {
-		t.Errorf("generated wiki invents invariants absent from AGENTS.md: %v", invented)
-	}
-
-	for id, canonicalRow := range canonical {
-		wikiRow, ok := wiki[id]
-		if !ok {
-			continue // already reported above
+	gatedIDs := make([]string, 0, len(gated))
+	for _, row := range gated {
+		gatedIDs = append(gatedIDs, row.ID)
+		want := "| **" + row.ID + "** | " + escapeTableCell(row.Scope) + " | " + escapeTableCell(row.Rule) + " | " +
+			escapeTableCell(row.Enforcement) + " | " + escapeTableCell(row.OnFail) + " |"
+		if !strings.Contains(pages[hissInvariantsPage+".md"].Content, want+"\n") {
+			t.Errorf("invariants page lacks AGENTS.md's %s row %q", row.ID, want)
 		}
-		if wikiRow.scope != canonicalRow.scope {
-			t.Errorf("%s: wiki scope %q does not match AGENTS.md scope %q", id, wikiRow.scope, canonicalRow.scope)
+	}
+	for _, rule := range rules {
+		mark := "no"
+		if slices.Contains(gatedIDs, rule.ID) {
+			mark = "yes"
+		}
+		if want := "| **" + rule.ID + "** | " + escapeTableCell(rule.Title) + " | " + mark + " | "; !strings.Contains(matrix, want) {
+			t.Errorf("matrix lacks row prefix %q", want)
+		}
+	}
+	invariants := pages[hissInvariantsPage+".md"].Content
+	if missing, invented := compareInvariantIDs(gatedIDs, pageInvariantIDs(invariants)); len(missing)+len(invented) != 0 {
+		t.Errorf("invariants page: gated invariants missing %v, invented %v", missing, invented)
+	}
+	if want := catalogRange(rules); !strings.Contains(invariants, want) || !strings.Contains(matrix, want) {
+		t.Errorf("HISS pages do not state the catalog range %q", want)
+	}
+}
+
+// TestHISSWiki_Negative_StandardIsNeverCalledHISS16 pins the naming fix: no generated page
+// titles the standard "HISS-16", and only the moved stub still carries the old page name.
+func TestHISSWiki_Negative_StandardIsNeverCalledHISS16(t *testing.T) {
+	pages := generatedPages(t, wikiRepoRoot(t, "praetor", canonicalAgentsMD(t)))
+	for name, page := range pages {
+		for _, line := range strings.Split(page.Content, "\n") {
+			if strings.HasPrefix(line, "# ") && strings.Contains(line, "HISS-16") && name != hissInvariantsMovedPage+".md" {
+				t.Errorf("%s titles the standard HISS-16: %q", name, line)
+			}
+		}
+		if name != hissInvariantsMovedPage+".md" && strings.Contains(page.Content, hissInvariantsMovedPage) {
+			t.Errorf("%s still links the old page name %s", name, hissInvariantsMovedPage)
 		}
 	}
 }
 
-// TestCompareInvariantTables_Negative_MissingAndInvented proves the comparison used above
-// actually catches both drift directions, using fixtures instead of waiting for AGENTS.md
-// or wiki.go to drift for real.
-func TestCompareInvariantTables_Negative_MissingAndInvented(t *testing.T) {
-	canonical := map[string]hissInvariantRow{
-		"HISS-01": {id: "HISS-01", scope: "control flow"},
-		"HISS-02": {id: "HISS-02", scope: "loops, I/O"},
+// TestGenerateWiki_Negative_UnreadableCanonicalTable proves the generator fails closed: a
+// repository without AGENTS.md, with no invariant table, or gating an invariant the catalog
+// does not define writes no page at all.
+func TestGenerateWiki_Negative_UnreadableCanonicalTable(t *testing.T) {
+	noTable := "# Harness\n\n## Operational Rules\n\n1. text\n"
+	invented := "# Harness\n\n" + hisscatalog.GatedInvariantsHeading + "\n\n| Invariant | Rule | Enforcement | On fail |\n" +
+		"| :--- | :--- | :--- | :--- |\n| **HISS-99** invented | a | b | c |\n"
+	cases := map[string]struct {
+		agents string
+		want   error
+	}{
+		"no table":          {noTable, hisscatalog.ErrNoGatedInvariants},
+		"unknown invariant": {invented, hisscatalog.ErrUnknownInvariant},
 	}
-	wiki := map[string]hissInvariantRow{
-		"HISS-01": {id: "HISS-01", scope: "control flow"},
-		"HISS-99": {id: "HISS-99", scope: "invented invariant"},
+	for name, tc := range cases {
+		out := t.TempDir()
+		if _, err := GenerateWiki(t.Context(), wikiRepoRoot(t, "repo", tc.agents), out); !errors.Is(err, tc.want) {
+			t.Errorf("%s: err = %v, want %v", name, err, tc.want)
+		}
+		requireEmptyDir(t, out)
 	}
 
-	missing, invented := compareInvariantTables(canonical, wiki)
+	missingRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(missingRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	if _, err := GenerateWiki(t.Context(), missingRoot, out); err == nil || !strings.Contains(err.Error(), wikiCanonicalSource) {
+		t.Errorf("a root without AGENTS.md: err = %v, want an error naming %s", err, wikiCanonicalSource)
+	}
+	requireEmptyDir(t, out)
+}
+
+// TestCompareInvariantIDs_Negative_MissingInventedAndRepeated proves the comparison used
+// above catches every drift direction, using fixtures instead of waiting for a source or
+// the generator to drift for real.
+func TestCompareInvariantIDs_Negative_MissingInventedAndRepeated(t *testing.T) {
+	missing, invented := compareInvariantIDs(
+		[]string{"HISS-01", "HISS-02"},
+		[]string{"HISS-01", "HISS-99", "HISS-01"},
+	)
 	if len(missing) != 1 || missing[0] != "HISS-02" {
 		t.Errorf("expected HISS-02 reported as an omitted canonical row, got %v", missing)
 	}
-	if len(invented) != 1 || invented[0] != "HISS-99" {
-		t.Errorf("expected HISS-99 reported as an invented row, got %v", invented)
+	if strings.Join(invented, ",") != "HISS-01,HISS-99" {
+		t.Errorf("expected the repeated HISS-01 and the invented HISS-99, got %v", invented)
 	}
 }
 
-// TestRenderHISSInvariantTable_Boundary_EmptyAndPipeEscaping covers the two edge shapes
-// the batch spec calls out: an empty invariant set still renders a valid table, and a cell
-// containing a literal pipe cannot be mistaken for an extra column.
-func TestRenderHISSInvariantTable_Boundary_EmptyAndPipeEscaping(t *testing.T) {
-	empty := renderHISSInvariantTable(nil)
-	if !strings.HasPrefix(empty, "| Invariant | Scope | Rule | Verification |\n| :--- | :--- | :--- | :--- |") {
-		t.Errorf("empty table missing header/separator: %q", empty)
+// TestHISSWiki_Boundary_SingleGatedRowAndMovedStub drives the smallest valid table: the
+// invariants page carries exactly that row, the matrix still lists the whole catalog with a
+// single gated mark, and the moved stub points at a page the generator really publishes.
+func TestHISSWiki_Boundary_SingleGatedRowAndMovedStub(t *testing.T) {
+	agents := "# Harness\n\n" + hisscatalog.GatedInvariantsHeading + "\n\n| Invariant | Rule | Enforcement | On fail |\n" +
+		"| :--- | :--- | :--- | :--- |\n| **HISS-16** context integrity | one source | pre-commit | blocker |\n"
+	pages := generatedPages(t, wikiRepoRoot(t, "repo", agents))
+
+	if ids := pageInvariantIDs(pages[hissInvariantsPage+".md"].Content); strings.Join(ids, ",") != "HISS-16" {
+		t.Errorf("invariants page rows = %v, want HISS-16 only", ids)
 	}
-	if strings.Count(empty, "\n") != 1 {
-		t.Errorf("expected header + separator only (one newline) for an empty table, got %q", empty)
+	matrix := pages[hissMatrixPage+".md"].Content
+	if got := len(pageInvariantIDs(matrix)); got != len(hisscatalog.Rules()) {
+		t.Errorf("matrix rows = %d, want %d", got, len(hisscatalog.Rules()))
+	}
+	if got := strings.Count(matrix, " | yes | "); got != 1 {
+		t.Errorf("matrix gated marks = %d, want 1", got)
 	}
 
-	rows := []hissInvariantRow{{id: "HISS-99", scope: "a | b", rule: "x", verification: "y"}}
-	rendered := renderHISSInvariantTable(rows)
-	if !strings.Contains(rendered, `a \| b`) {
-		t.Errorf("expected the pipe in scope to be escaped, got %q", rendered)
+	stub, ok := pages[hissInvariantsMovedPage+".md"]
+	if !ok {
+		t.Fatalf("no moved stub named %s.md", hissInvariantsMovedPage)
+	}
+	if !strings.Contains(stub.Content, "[["+hissInvariantsPage+"]]") {
+		t.Errorf("moved stub does not link [[%s]]: %q", hissInvariantsPage, stub.Content)
+	}
+	if _, ok := pages[hissInvariantsPage+".md"]; !ok {
+		t.Errorf("moved stub points at %s, which the generator does not publish", hissInvariantsPage)
+	}
+}
+
+// TestMarkdownTable_Boundary_EmptyPipeAndLineBreak covers the edge shapes of the table
+// renderer: no rows still renders a valid table, a literal pipe cannot become a column
+// boundary, and a line break cannot end the row early.
+func TestMarkdownTable_Boundary_EmptyPipeAndLineBreak(t *testing.T) {
+	empty := markdownTable([]string{"A", "B"}, nil)
+	if empty != "| A | B |\n| :--- | :--- |" {
+		t.Errorf("empty table = %q", empty)
 	}
 
-	lines := strings.Split(rendered, "\n")
-	rowLine := lines[len(lines)-1]
+	rendered := markdownTable([]string{"A", "B"}, [][]string{{"a | b", "line one\n  line two"}})
+	rowLine := strings.Split(rendered, "\n")[2]
+	if rowLine != `| a \| b | line one line two |` {
+		t.Errorf("row = %q", rowLine)
+	}
 	// An unescaped '|' inside a cell would add a phantom column boundary. Strip every
-	// escaped pipe first, then the remaining ones must be exactly the 5 real delimiters
-	// of a 4-column row ("| a | b | c | d |").
-	delimitersOnly := strings.ReplaceAll(rowLine, `\|`, "")
-	if got := strings.Count(delimitersOnly, "|"); got != 5 {
-		t.Errorf("expected 5 real column delimiters in %q, got %d", rowLine, got)
+	// escaped pipe first, then the remaining ones must be exactly the 3 real delimiters of a
+	// 2-column row.
+	if got := strings.Count(strings.ReplaceAll(rowLine, `\|`, ""), "|"); got != 3 {
+		t.Errorf("expected 3 real column delimiters in %q, got %d", rowLine, got)
+	}
+
+	for rules, want := range map[int]string{0: "no invariants", 1: "1 invariant, HISS-01", 21: "21 invariants, HISS-01 through HISS-21"} {
+		if got := catalogRange(hisscatalog.Rules()[:rules]); got != want {
+			t.Errorf("catalogRange(%d rules) = %q, want %q", rules, got, want)
+		}
 	}
 }
 
@@ -208,7 +310,7 @@ func compileContextFlowViolations(content string) []string {
 // AGENTS.md (its --source default) and writes the vendor files. The preset landing page
 // carried the same inverted diagram and is held to the same rule.
 func TestHomeWiki_Positive_CompileContextFlowsFromAGENTS(t *testing.T) {
-	if got := compileContextFlowViolations(generateHomeWiki("cordanaLLM/praetor").Content); len(got) != 0 {
+	if got := compileContextFlowViolations(generateHomeWiki("cordanaLLM/praetor", hisscatalog.Rules()).Content); len(got) != 0 {
 		t.Errorf("generated Home diagram: %v", got)
 	}
 	preset, err := os.ReadFile(filepath.Join("..", "..", "docs", "presets", "mkdocs", "docs", "index.md"))
@@ -238,26 +340,33 @@ func TestHomeWiki_Negative_RejectsManifestToAGENTSFlow(t *testing.T) {
 	}
 }
 
-// TestCheckedInWiki_Boundary_MatchesGenerator holds every generator-owned page under
-// docs/wiki byte-equal to GenerateWiki's output, so a generator fix cannot land without the
-// published copy (the Home.md diagram and the HISS-16 table both drifted that way). The
-// repository name comes from the root's base name, so the root is spelled ".../praetor".
-// HISS-Matrix.md is hand-written and not generated, so it is not compared.
+// TestCheckedInWiki_Boundary_MatchesGenerator holds docs/wiki byte-equal to GenerateWiki's
+// output over the repository's own AGENTS.md, so a generator or table change cannot land
+// without the published copy (the Home.md diagram, the invariant table and the hand-written
+// matrix all drifted that way). docs/wiki may carry no page the generator does not own: the
+// wiki sync publishes every file there. The repository name comes from the root's base
+// name, so the root is spelled ".../praetor".
 func TestCheckedInWiki_Boundary_MatchesGenerator(t *testing.T) {
-	manifest, err := GenerateWiki(t.Context(), filepath.Join(t.TempDir(), "praetor"), t.TempDir())
+	pages := generatedPages(t, wikiRepoRoot(t, "praetor", canonicalAgentsMD(t)))
+	if len(pages) == 0 {
+		t.Fatal("generator produced no pages")
+	}
+	for name, page := range pages {
+		data, err := os.ReadFile(filepath.Join("..", "..", "docs", "wiki", name))
+		if err != nil {
+			t.Fatalf("generated page %s has no checked-in copy: %v", name, err)
+		}
+		if got, _ := util.NormalizeLineEndings(string(data)); got != page.Content {
+			t.Errorf("docs/wiki/%s differs from GenerateWiki output; regenerate it with 'praetorctl forge sync-wiki' from a checkout named praetor", name)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join("..", "..", "docs", "wiki"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest.Pages) == 0 {
-		t.Fatal("generator produced no pages")
-	}
-	for _, page := range manifest.Pages {
-		data, err := os.ReadFile(filepath.Join("..", "..", "docs", "wiki", page.Name))
-		if err != nil {
-			t.Fatalf("generated page %s has no checked-in copy: %v", page.Name, err)
-		}
-		if got, _ := util.NormalizeLineEndings(string(data)); got != page.Content {
-			t.Errorf("docs/wiki/%s differs from GenerateWiki output; regenerate it", page.Name)
+	for _, entry := range entries {
+		if _, ok := pages[entry.Name()]; !ok {
+			t.Errorf("docs/wiki/%s is not generated by GenerateWiki; the wiki sync would publish it unchecked", entry.Name())
 		}
 	}
 }

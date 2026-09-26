@@ -1,0 +1,3 @@
+type: fixed
+title: Generate the wiki's HISS pages from the one HISS rule catalog and AGENTS.md's invariant table instead of hand-kept copies, rename HISS-16-Invariants to HISS-Invariants with a moved stub, and extend the HISS matrix from HISS-19 to all 21 invariants
+breaking: true

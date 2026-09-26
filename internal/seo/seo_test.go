@@ -14,7 +14,7 @@ func TestTechArticle_Positive(t *testing.T) {
 	raw := []byte(`{
 		"@context": "https://schema.org",
 		"@type": "TechArticle",
-		"headline": "Deterministic Fleet Governance with HISS-16",
+		"headline": "Deterministic Fleet Governance with HISS",
 		"description": "Comprehensive formal specification for software integrity.",
 		"author": {
 			"@type": "Organization",

@@ -17,6 +17,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -463,8 +464,8 @@ func TestServer_Positive_ExplainRuleCoversDocumentedInvariants(t *testing.T) {
 	}
 
 	schema := srv.tools["standards_explain_rule"].InputSchema.Properties["rule_id"]
-	if len(schema.Enum) != len(hissRuleExplanations) {
-		t.Errorf("schema enum lists %d rules, map has %d", len(schema.Enum), len(hissRuleExplanations))
+	if len(schema.Enum) != len(hisscatalog.Rules()) {
+		t.Errorf("schema enum lists %d rules, catalog has %d", len(schema.Enum), len(hisscatalog.Rules()))
 	}
 
 	res := callTool(t, srv, "standards_explain_rule", map[string]any{"rule_id": "UNKNOWN-99"})

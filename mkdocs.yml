@@ -170,7 +170,7 @@ nav:
       - Home: wiki/Home.md
       - API Reference: wiki/API-Reference.md
       - Architecture Lattice: wiki/Architecture-Lattice.md
-      - HISS-16 Invariants: wiki/HISS-16-Invariants.md
+      - HISS Invariants: wiki/HISS-Invariants.md
       - HISS Matrix: wiki/HISS-Matrix.md
   - Presets:
       - MkDocs Preset README: presets/mkdocs/README.md

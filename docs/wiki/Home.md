@@ -18,6 +18,7 @@ flowchart LR
 
 | Document | Description |
 | :--- | :--- |
-| [[HISS-16-Invariants]] | The invariants AGENTS.md gates, with the rule and verification for each. |
+| [[HISS-Invariants]] | The High-Integrity Systems Standard (HISS) and the invariants AGENTS.md gates, with the rule and verification for each. |
+| [[HISS-Matrix]] | The full HISS catalog of 21 invariants, HISS-01 through HISS-21, with the enforcement and failure action of each. |
 | [[Architecture-Lattice]] | Mathematical join-semilattice and Highest Standard Wins resolution. |
 | [[API-Reference]] | CLI commands, MCP tools, and multi-forge driver specifications. |

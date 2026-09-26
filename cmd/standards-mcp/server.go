@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 	"github.com/cordanaLLM/praetor/internal/needs"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -743,117 +743,19 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 
 // ---- HISS rule explanations ----------------------------------------------------------------
 
-var hissRuleExplanations = map[string]string{
-	"HISS-01": `Rule: HISS-01 (Control Flow - Acyclic DAG Control Flow)
-Formal Specification: Call graphs must form a Directed Acyclic Graph: G = (V, E), ∀v ∈ V, (v, v) ∉ E*
-Direct and mutual recursion are strictly prohibited in production runtimes.
-Enforcement: the internal/hiss scanner, which decides a different subset per language:
-  - Go: goto, direct recursion, and mutual or indirect recursion between plain functions (package call graph). A cycle through methods is not decided.
-  - Rust and Python: direct recursion only (a function calling itself by the name that resolves to it). Mutual and indirect recursion are not decided, and neither is a Rust self-call inside impl Trait for T, where self.f may reach an inherent method, or inside the input of a macro other than the standard expression macros (assert!, format!, vec!, ...), which may rewrite it into a call of something else.
-  - C and C++: goto only. Recursion is not decided.
-Each claim is replayed against its fixtures in .config/hiss/coverage.yaml by 'praetorctl hiss coverage --verify'.
-Failure Action: Immediate build failure.`,
-	"HISS-02": `Rule: HISS-02 (Loops & I/O - Bounded Loops & Mandatory I/O Timeouts)
-Formal Specification: Every loop construct must possess a statically verifiable scalar upper bound: iterations(L) <= N_max.
-Unbounded loops without counter termination are banned. All I/O operations must accept and enforce explicit context.Context deadlines.
-Enforcement: Semgrep rules and AST sweep.
-Failure Action: Pre-commit and CI blocker.`,
-	"HISS-03": `Rule: HISS-03 (Zero Frame Malloc)
-Formal Specification: Hot simulation and frame loops must maintain zero dynamic heap allocations: ΔHeapAlloc_tick = 0.
-Enforcement: Heap benchmark allocations gate.
-Failure Action: CI failure.`,
-	"HISS-04": `Rule: HISS-04 (Complexity Bounds & Modular Sizing)
-Formal Specification:
-  - McCabe Cyclomatic Complexity <= 10
-  - Cognitive Complexity <= 15
-  - Function Length <= 75 LOC
-  - Executable Statements <= 50
-Enforcement: gocyclo, gocognit and funlen via golangci-lint (.golangci.yml), plus the standards_inspect_symbols AST scanner.
-Failure Action: Build sweep blocker.`,
-	"HISS-07": `Rule: HISS-07 (Checked Errors & Zero Unwrap)
-Formal Specification: Zero .unwrap() and .expect() in non-test code. Total ban on unchecked Go error returns. All error flows must be handled or wrapped with context.
-Enforcement: golangci-lint, clippy.
-Failure Action: Compiler / linter error.`,
-	"HISS-08": `Rule: HISS-08 (Static Determinism & Banned Functions)
-Formal Specification: Total ban on eval(), exec(), and dynamic runtime code evaluation. Ban on insecure C runtime functions (gets, strcpy, sprintf).
-Enforcement: Semgrep rules.
-Failure Action: Admission rejection.`,
-	"HISS-09": `Rule: HISS-09 (Reference Safety & Mandatory Safety Proofs)
-Formal Specification: Any unsafe block must be preceded by an explanatory '// SAFETY:' comment proving invariants.
-Enforcement: AST check.
-Failure Action: Immediate AST check rejection.`,
-	"HISS-10": `Rule: HISS-10 (5-Layer Zero-Warnings Cascade)
-Formal Specification: Warnings are treated as fatal errors across IDE, Pre-Commit, Pre-Push, CI, and Pre-Apply layers.
-Enforcement: Compile and linter flags (-Werror, zero-warning tolerance).
-Failure Action: Exit code 1.`,
-	"HISS-11": `Rule: HISS-11 (Hermetic Supply Chain)
-Formal Specification: Pinned lockfiles mandatory. Zero floating tags. SLSA Level 3 provenance attestations and Sigstore Cosign signatures.
-Enforcement: CI attestation gate.
-Failure Action: Deployment rejection.`,
-	"HISS-14": `Rule: HISS-14 (Append-Only ABI & Migration Footers)
-Formal Specification: Public APIs are append-only. Breaking changes require conventional commit breaking indicator (!) and mandatory Migration: footer.
-Enforcement: Git log and API diff analyzer.
-Failure Action: PR blocker.`,
-	"HISS-15": `Rule: HISS-15 (3D Test Discipline)
-Formal Specification: Mandatory Positive, Negative, and Boundary tests for all public interfaces. Touched-file clean rule enforced.
-Enforcement: CI coverage gate (go test -race -coverprofile with a minimum statement-coverage floor enforced by 'go tool cover') and PR checklist validation of the 3D test attestation.
-Failure Action: Merge gate rejection.`,
-	"HISS-16": `Rule: HISS-16 (Canonical AGENTS.md & Server Gates)
-Formal Specification: Single source of agent instructions (AGENTS.md). Vendor targets compiled via praetorctl compile-context. Sandboxed verification.
-Enforcement: Pre-commit blocker, server-side admission.
-Failure Action: Merge blocker.`,
-	"HISS-17": `Rule: HISS-17 (State Ledger Discipline)
-Formal Specification: Every agent turn starts with 'praetorctl state status' and the open tasks in .workingdir/OPEN.md, never a read of the whole .workingdir/STATE.md; tasks are tracked via 'praetorctl state task'; every turn ends with 'praetorctl state sync .'.
-Enforcement: Pre-commit state-sync hook and the CI / pre-push state audit.
-Failure Action: Pre-commit / CI gate rejection.`,
-	"HISS-18": `Rule: HISS-18 (CI Efficiency)
-Formal Specification: Diff-aware change gating: heavy race and security gates are skipped on docs-only or state-only changes as classified by 'praetorctl ci filter'.
-Enforcement: CI filter step exporting run_* outputs that every heavy gate's condition consumes.
-Failure Action: CI optimization gate.`,
-	"HISS-05": `Rule: HISS-05 (Variable Scoping)
-Formal Specification: Identifiers are declared in the smallest lexical scope that serves them.
-Enforcement: NOT ENFORCED. No executable check exists in this repository; the matrix names a linter that is not configured for this rule.
-Failure Action: None today; the rule is advisory until a check is attached.`,
-	"HISS-06": `Rule: HISS-06 (Bounded Concurrency)
-Formal Specification: Worker pools and concurrent fan-out carry an explicit scalar upper bound.
-Enforcement: NOT ENFORCED for the axiom. The matrix names the race detector, which cannot observe an unbounded pool: a lock-order inversion or an unbounded but race-free fan-out produces no data race. 'go test -race' runs, but it does not decide this rule.
-Failure Action: None today; the rule is advisory until a check is attached.`,
-	"HISS-12": `Rule: HISS-12 (Secret Leak Prevention)
-Formal Specification: Zero credentials in Git history.
-Enforcement: 'make secrets' runs gitleaks over repository history inside verify-all.
-Failure Action: Verification gate rejection.`,
-	"HISS-13": `Rule: HISS-13 (Monotonic Debt Ratchet)
-Formal Specification: Total recorded infractions never grow against the committed baseline; an increase requires a deliberately recorded rationale.
-Enforcement: 'praetorctl baseline' and the gate's HISS stage, evaluated against .standards-baseline.json. The scan feeding it refuses to certify a scope it did not fully examine.
-Failure Action: PR status gate rejection.`,
-	"HISS-19": `Rule: HISS-19 (Reuse Before Writing)
-Formal Specification: One behavior has exactly one implementation. An existing function, loader, parser or command is extended or called rather than reimplemented, and configuration formats are held to the same rule: a second config system beside an existing loader is the same defect. Duplication that is genuinely unavoidable is justified in the commit body.
-Enforcement: 'praetorctl dedupe scan .' function-level clone and utility-sprawl detection, run by 'make dedupe' inside verify-all.
-Failure Action: Verification gate rejection.`,
-	"HISS-20": `Rule: HISS-20 (Replayable Enforcement Evidence)
-Formal Specification: Every rule carries fixtures replayed in both directions: a claim of enforcement must report each of its positive fixtures, and a claim of absence must leave its gap fixtures undetected. A coverage claim is reproducible, never asserted.
-Enforcement: 'praetorctl hiss coverage --verify', run inside verify-all against '.config/hiss/coverage.yaml'.
-Failure Action: Verification gate rejection.`,
-	"HISS-21": `Rule: HISS-21 (Platform Neutrality)
-Formal Specification: Gates, hooks and emitted templates run on Linux, macOS and Windows, or declare the platform they require and skip with a stated reason where it is absent. A gate that cannot run is not a passing gate.
-Enforcement: Platform Neutrality matrix in CI.
-Failure Action: Verification gate rejection.`,
-}
-
-// knownRuleIDs returns the explainable rule identifiers in ascending order.
+// knownRuleIDs returns the explainable rule identifiers in ascending order: every invariant
+// of the HISS catalog in internal/hiss, the same registry the generated wiki matrix renders.
 func knownRuleIDs() []string {
-	ids := make([]string, 0, len(hissRuleExplanations))
-	for id := range hissRuleExplanations {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
+	return hisscatalog.RuleIDs()
 }
 
-// lookupRuleExplanation returns authoritative HISS rule descriptions.
+// lookupRuleExplanation returns the authoritative HISS rule description.
 func lookupRuleExplanation(ruleID string) (string, bool) {
-	val, ok := hissRuleExplanations[ruleID]
-	return val, ok
+	rule, ok := hisscatalog.LookupRule(ruleID)
+	if !ok {
+		return "", false
+	}
+	return rule.Explanation(), true
 }
 
 // ---- JSON-RPC dispatch ----------------------------------------------------------------------

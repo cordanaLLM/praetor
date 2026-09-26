@@ -30,11 +30,12 @@ var (
 // (RemoveMarkdownSection, which internal/milestone drives over BACKLOG.md), the OPEN.md
 // task parser (internal/state/tasks.go), the BUGS.md table parser
 // (internal/state/bugs_document.go), the caveman line scanner (internal/caveman/scan.go),
-// the AGENTS.md vendor splitter (internal/agentcontext/render.go) and the PR checklist
-// and receipt readers (internal/forge/pr.go), which must neither count a box quoted in an
-// example nor take a receipt label quoted inside another fence. The ADR constraint block
-// reader (internal/adr/constraint.go) extracts one labelled block and stops, so it
-// matches its own label instead and carries no fence state.
+// the AGENTS.md vendor splitter (internal/agentcontext/render.go), the AGENTS.md
+// gated-invariant parser (internal/hisscatalog/catalog.go) and the PR checklist and receipt
+// readers (internal/forge/pr.go), which must neither count a box quoted in an example nor
+// take a receipt label quoted inside another fence. The ADR constraint block reader
+// (internal/adr/constraint.go) extracts one labelled block and stops, so it matches its own
+// label instead and carries no fence state.
 //
 // The zero value is a scan positioned outside any fence.
 type MarkdownFence struct {
