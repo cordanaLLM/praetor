@@ -55,17 +55,9 @@ func ApplyFlavor(ctx context.Context, repoPath string, targetFlavor string, forc
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if targetFlavor == "" || targetFlavor == "auto" {
-		detected, ok := Detect(repoPath)
-		if !ok {
-			return nil, fmt.Errorf("%w: %s", ErrNoFlavorMatched, repoPath)
-		}
-		targetFlavor = detected
-	}
-
-	flv, err := Get(targetFlavor)
+	flv, err := resolveApplyTarget(repoPath, targetFlavor)
 	if err != nil {
-		return nil, fmt.Errorf("apply flavor: %w", err)
+		return nil, err
 	}
 
 	owner, repoName, err := flavorIdentity(ctx, repoPath)
@@ -116,6 +108,23 @@ func flavorIdentity(ctx context.Context, repoPath string) (owner, repoName strin
 		return "", "", fmt.Errorf("resolve flavor repository path %q: %w", repoPath, absErr)
 	}
 	return "", filepath.Base(abs), nil
+}
+
+// resolveApplyTarget names the flavor an apply scaffolds: the explicit one, or the detected one
+// for "" and "auto". A repository nothing matches is refused, never given a guessed flavor.
+func resolveApplyTarget(repoPath, targetFlavor string) (Flavor, error) {
+	if targetFlavor == "" || targetFlavor == "auto" {
+		detected, ok := Detect(repoPath)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrNoFlavorMatched, repoPath)
+		}
+		targetFlavor = detected
+	}
+	flv, err := Get(targetFlavor)
+	if err != nil {
+		return nil, fmt.Errorf("apply flavor: %w", err)
+	}
+	return flv, nil
 }
 
 // forceProtected reports whether an existing file at rel survives --force.
