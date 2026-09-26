@@ -311,15 +311,15 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 		name := steps[i].name
 		if declined[name] {
 			s.report.recordSkipped(name, "Declined by adoption.decline in "+manifestFile)
-			s.report.recordStep(name, StepDeclined, len(s.report.Warnings))
+			s.report.recordStep(name, StepDeclined, s.report.mark())
 			continue
 		}
-		warnFrom := len(s.report.Warnings)
+		from := s.report.mark()
 		if err := steps[i].run(ctx, s); err != nil {
-			s.report.recordStep(name, StepFailed, warnFrom)
+			s.report.recordStep(name, StepFailed, from)
 			return err
 		}
-		s.report.recordStep(name, StepCompleted, warnFrom)
+		s.report.recordStep(name, StepCompleted, from)
 	}
 	return nil
 }

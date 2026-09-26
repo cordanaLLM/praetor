@@ -40,10 +40,13 @@ table tests behind this contract are in `internal/adopt/verification_makefile_ta
 row was measured against GNU Make 4.4.1.
 
 The report's `steps` array records each step of the adoption chain it reached
-(`completed`, `declined` or `failed`) with the warnings that step raised. The
+(`completed`, `declined` or `failed`) with the warnings and errors that step
+recorded. A step that records an error and carries on is `failed`, like one
+that stops the chain; `--force` on an `AGENTS.md` whose harness has no
+boundary line is one such case (`internal/adopt/harness.go`). The
 **Governance Pillars** lines that `praetorctl adopt` and the
 `standards_adopt` MCP tool print are derived from it: a pillar is `✓` only
-when its step completed without warnings, and otherwise names itself
+when its step completed without warnings or errors, and otherwise names itself
 `planned` (dry run), `warned`, `declined`, `failed` or `not-run`. A run
 that recorded an error is incomplete even when it was a dry run
 (`Outcome` and `Pillars` in `internal/adopt/report.go`, tested in

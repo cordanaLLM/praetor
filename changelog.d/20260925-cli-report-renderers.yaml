@@ -1,3 +1,3 @@
 type: fixed
-title: "adopt derives each governance pillar line from the step that produced it, so a warned, failed, declined or unreached step no longer prints a success mark, and a dry run with errors reads INCOMPLETE in the MCP result; standards_version_audit now lists GitHub Actions drift like bump audit"
+title: "adopt derives each governance pillar line from the step that produced it, so a warned, failed (including a step that recorded an error and carried on), declined or unreached step no longer prints a success mark, and a dry run with errors reads INCOMPLETE in the MCP result; standards_version_audit now lists GitHub Actions drift like bump audit"
 breaking: false

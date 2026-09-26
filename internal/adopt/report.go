@@ -10,25 +10,46 @@ const (
 	StepCompleted StepStatus = "completed"
 	// StepDeclined means adoption.decline in the manifest refused the step.
 	StepDeclined StepStatus = "declined"
-	// StepFailed means the step returned the error that stopped the chain.
+	// StepFailed means the step returned the error that stopped the chain, or recorded an
+	// error on the report and carried on (harness.go does so when --force cannot find the
+	// harness boundary).
 	StepFailed StepStatus = "failed"
 )
 
-// StepOutcome records one step of the adoption chain and the warnings it raised. A step the
-// chain never reached has no outcome.
+// StepOutcome records one step of the adoption chain and the warnings and errors it
+// recorded. A step the chain never reached has no outcome.
 type StepOutcome struct {
 	Name     string     `json:"name"`
 	Status   StepStatus `json:"status"`
 	Warnings []string   `json:"warnings,omitempty"`
+	Errors   []string   `json:"errors,omitempty"`
 }
 
-// recordStep appends the outcome of step name; warnings raised since warnFrom belong to it.
-func (r *AdoptReport) recordStep(name string, status StepStatus, warnFrom int) {
-	outcome := StepOutcome{Name: name, Status: status}
-	if warnFrom >= 0 && warnFrom < len(r.Warnings) {
-		outcome.Warnings = append([]string(nil), r.Warnings[warnFrom:]...)
+// stepMark is where one step's warnings and errors begin in the report.
+type stepMark struct{ warnings, errors int }
+
+// mark records the current end of the report's warnings and errors, before a step runs.
+func (r *AdoptReport) mark() stepMark {
+	return stepMark{warnings: len(r.Warnings), errors: len(r.Errors)}
+}
+
+// recordStep appends the outcome of step name; the warnings and errors recorded since from
+// belong to it. A step that recorded an error and still returned nil did not complete: it is
+// recorded as failed, so its pillars never earn a planned or success mark.
+func (r *AdoptReport) recordStep(name string, status StepStatus, from stepMark) {
+	outcome := StepOutcome{Name: name, Status: status, Warnings: since(r.Warnings, from.warnings), Errors: since(r.Errors, from.errors)}
+	if status == StepCompleted && len(outcome.Errors) > 0 {
+		outcome.Status = StepFailed
 	}
 	r.Steps = append(r.Steps, outcome)
+}
+
+// since copies list from offset from; an offset outside the list selects nothing.
+func since(list []string, from int) []string {
+	if from < 0 || from >= len(list) {
+		return nil
+	}
+	return append([]string(nil), list[from:]...)
 }
 
 // AdoptOutcome classifies a finished adoption run once, for every renderer.
@@ -75,6 +96,7 @@ type Pillar struct {
 	Step     string       `json:"step"`
 	Status   PillarStatus `json:"status"`
 	Warnings []string     `json:"warnings,omitempty"`
+	Errors   []string     `json:"errors,omitempty"`
 }
 
 // governancePillars names each pillar and the adoption step that produces it.
@@ -96,7 +118,7 @@ func (r *AdoptReport) Pillars() []Pillar {
 		for _, step := range r.Steps {
 			if step.Name == pillar.Step {
 				pillar.Status = pillarStatus(step, r.DryRun)
-				pillar.Warnings = step.Warnings
+				pillar.Warnings, pillar.Errors = step.Warnings, step.Errors
 			}
 		}
 		pillars = append(pillars, pillar)
@@ -106,7 +128,7 @@ func (r *AdoptReport) Pillars() []Pillar {
 
 func pillarStatus(step StepOutcome, dryRun bool) PillarStatus {
 	switch {
-	case step.Status == StepFailed:
+	case step.Status == StepFailed || len(step.Errors) > 0:
 		return PillarFailed
 	case step.Status == StepDeclined:
 		return PillarDeclined
@@ -132,6 +154,11 @@ func (p Pillar) Line() string {
 		return line
 	case PillarWarned:
 		return fmt.Sprintf("%s [warned: %d warning(s)]", line, len(p.Warnings))
+	case PillarFailed:
+		if len(p.Errors) > 0 {
+			return fmt.Sprintf("%s [failed: %d error(s)]", line, len(p.Errors))
+		}
+		return line + " [failed]"
 	default:
 		return line + " [" + string(p.Status) + "]"
 	}

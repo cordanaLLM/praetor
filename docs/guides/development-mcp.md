@@ -243,8 +243,9 @@ full outcome table shared with the CLI.
 governance pillar lines, both derived from the adoption report
 (`AdoptReport.Outcome` and `AdoptReport.Pillars` in `internal/adopt/report.go`).
 A dry run that recorded an error is reported `[INCOMPLETE]`, not
-`[SIMULATED (DRY RUN)]`, and a pillar whose step warned, failed, was declined or
-never ran names that status instead of a success mark. A dry run against a fresh
+`[SIMULATED (DRY RUN)]`, and a pillar whose step warned, failed (by returning an
+error or by recording one), was declined or never ran names that status instead
+of a success mark. A dry run against a fresh
 repository without `source_root` shows both: the DevContainer pillar reads
 `warned` and the result is `[INCOMPLETE]`.
 
