@@ -407,6 +407,10 @@ class ComplianceWiringTests(unittest.TestCase):
     #: The branches a commit may reach without a pull request, so a push to one of them is
     #: the only remaining chance to inspect its sign-off.
     PROTECTED_BRANCHES = ("- main", "- 'lts-*'")
+    #: A pull request run shares one group per pull request, so its next push supersedes it.
+    #: A push run's group is its own run id, so no later push cancels or replaces it.
+    EXPECTED_GROUP = ("${{ github.workflow }}-${{ github.event_name == 'pull_request'"
+                      " && github.ref || github.run_id }}")
     #: An `if:` is never the step's first key, so an unanchored search would only ever find
     #: one written above `env:`. Every line of the step is a candidate.
     STEP_CONDITION = re.compile(r"^\s+if:", re.MULTILINE)
@@ -453,6 +457,34 @@ class ComplianceWiringTests(unittest.TestCase):
         """An `if:` here is how #292 skipped every push run while reporting green."""
         self.assertNotRegex(self.step, self.STEP_CONDITION,
                             "the DCO step must run on every event")
+
+    def concurrency(self) -> str:
+        """Return the workflow-level `concurrency:` block, without the keys that follow it."""
+        document = WORKFLOW.read_text(encoding="utf-8")
+        block = re.search(r"^concurrency:\n((?:  .*\n)*)", document, flags=re.MULTILINE)
+        self.assertIsNotNone(block, "the workflow no longer declares a concurrency group")
+        return block.group(1)
+
+    def test_a_push_run_waits_in_a_concurrency_group_of_its_own(self) -> None:
+        """A push run sharing a group with the next push is cancelled or replaced by it.
+
+        The range a push run inspects starts at the previous push's tip, so the commits of a
+        run that never finishes are inspected by no run at all. Sharing the group loses them
+        both ways: `cancel-in-progress` cancels the running one, and a group holds a single
+        pending run, so a third push replaces the second while the first still runs.
+        """
+        self.assertIn(f"  group: {self.EXPECTED_GROUP}\n", self.concurrency())
+
+    def test_a_pull_request_run_is_still_superseded_by_its_next_push(self) -> None:
+        """Only the pull request leg shares a group, and there a newer head supersedes."""
+        self.assertIn("  cancel-in-progress: true\n", self.concurrency())
+
+    def test_no_second_concurrency_key_regroups_the_gate(self) -> None:
+        """A job-level group shared across pushes would reintroduce the skip under it."""
+        document = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertEqual(re.findall(r"^[ \t]*concurrency:", document, flags=re.MULTILINE),
+                         ["concurrency:"])
 
     def test_every_payload_value_is_passed_under_its_own_name(self) -> None:
         for name, expression in self.EXPECTED_ENV:

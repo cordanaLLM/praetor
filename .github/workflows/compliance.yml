@@ -10,8 +10,14 @@ on:
       - main
       - 'lts-*'
 
+# A push run inspects the commits since the previous push's tip, so a push run that never
+# finishes leaves its commits inspected by no run at all. Each push run therefore gets a
+# group of its own: a shared one would let the next push cancel it while running, or replace
+# it while pending, since a group holds one pending run. Pull request runs share one group per
+# pull request, and a newer head supersedes the run for the old one, which inspects the whole
+# pull request range anyway. scripts/test_dco_check.py pins this group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 permissions:
