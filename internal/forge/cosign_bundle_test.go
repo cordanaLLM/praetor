@@ -77,9 +77,16 @@ func withoutComments(text string) string {
 	return strings.Join(kept, "\n")
 }
 
+// signingInvocations counts the cosign commands in text that sign: sign-blob, and
+// attest-blob, which signs an in-toto statement. The verify commands are not counted.
+func signingInvocations(text string) int {
+	return strings.Count(text, "sign-blob") + strings.Count(text, "attest-blob")
+}
+
 // cosignBundleDefects reports every way one signing surface would fail under cosign v3:
-// a flag v3 no longer accepts, or a sign-blob invocation that writes no Sigstore bundle.
-// cosign v3 defaults --use-signing-config to true, and that mode requires --bundle.
+// a flag v3 no longer accepts, or a sign-blob or attest-blob invocation that writes no
+// Sigstore bundle. cosign v3 defaults --use-signing-config to true, and that mode requires
+// --bundle.
 func cosignBundleDefects(name, raw string) []string {
 	text := withoutComments(raw)
 	defects := make([]string, 0, maxSigningDefects)
@@ -88,21 +95,22 @@ func cosignBundleDefects(name, raw string) []string {
 			defects = append(defects, fmt.Sprintf("%s: %s was removed from cosign v3 sign-blob", name, cosignV2OnlyFlags[i]))
 		}
 	}
-	signings := strings.Count(text, "sign-blob")
+	signings := signingInvocations(text)
 	bundles := strings.Count(text, "--bundle")
 	if signings > bundles {
-		defects = append(defects, fmt.Sprintf("%s: %d sign-blob invocations but %d --bundle flags", name, signings, bundles))
+		defects = append(defects, fmt.Sprintf("%s: %d signing invocations but %d --bundle flags", name, signings, bundles))
 	}
 	return defects
 }
 
-// signingSurfaces returns the real files that invoke cosign sign-blob, keyed by path.
+// signingSurfaces returns the real files that invoke a cosign signing command, keyed by
+// path. The release workflow is the only workflow that signs: the source-tree SBOM workflow
+// sbom.yml was folded into it (#315).
 func signingSurfaces(t *testing.T) map[string]string {
 	t.Helper()
 	workflows, _ := engineWorkflows(t)
 	surfaces := map[string]string{
 		".github/workflows/release-binaries.yml": string(workflows["release-binaries.yml"]),
-		".github/workflows/sbom.yml":             string(workflows["sbom.yml"]),
 	}
 	data, err := os.ReadFile(filepath.Join(engineRoot, ".goreleaser.yaml"))
 	if err != nil {
@@ -113,15 +121,15 @@ func signingSurfaces(t *testing.T) map[string]string {
 }
 
 // Positive: every shipped signing surface is already on the bundle flags, and each one
-// really does invoke sign-blob, so the rule is not passing on empty files.
+// really does invoke a signing command, so the rule is not passing on empty files.
 func TestSigningSurfacesUseSigstoreBundles(t *testing.T) {
 	surfaces := signingSurfaces(t)
-	if len(surfaces) != 3 {
-		t.Fatalf("expected the three signing surfaces, read %d", len(surfaces))
+	if len(surfaces) != 2 {
+		t.Fatalf("expected the two signing surfaces, read %d", len(surfaces))
 	}
 	for name, text := range surfaces {
-		if strings.Count(withoutComments(text), "sign-blob") == 0 {
-			t.Errorf("%s: no sign-blob invocation; the signing step moved and this rule now checks nothing", name)
+		if signingInvocations(withoutComments(text)) == 0 {
+			t.Errorf("%s: no signing invocation; the signing step moved and this rule now checks nothing", name)
 		}
 		if defects := cosignBundleDefects(name, text); len(defects) != 0 {
 			t.Errorf("%s: %v", name, defects)
@@ -134,7 +142,7 @@ func TestSigningSurfacesUseSigstoreBundles(t *testing.T) {
 // reject --bundle-only invocations.
 func TestWorkflowsInstallCosignV3CapableInstaller(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
-	for _, name := range []string{"release-binaries.yml", "sbom.yml"} {
+	for _, name := range []string{"release-binaries.yml"} {
 		text := string(workflows[name])
 		if !cosignInstallerCapable(text) {
 			t.Errorf("%s: cosign-installer is not pinned at v4 or newer, so the runner would get cosign v2", name)
@@ -172,6 +180,9 @@ func TestCosignBundleDefectsBoundaries(t *testing.T) {
 		{"unrelated cosign command", "cosign verify-blob --bundle a.sigstore.json a.json", 0},
 		{"one signing one bundle", "cosign sign-blob --yes --bundle a.sigstore.json a.json", 0},
 		{"two signings one bundle", "cosign sign-blob --bundle a.sigstore.json a\ncosign sign-blob b", 1},
+		{"attestation with a bundle", "cosign attest-blob --yes --statement p.json --bundle p.sigstore.json", 0},
+		{"attestation without a bundle", "cosign attest-blob --yes --statement p.json", 1},
+		{"attestation verification", "cosign verify-blob-attestation --bundle p.sigstore.json a.tar.gz", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

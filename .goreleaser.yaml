@@ -119,6 +119,14 @@ signs:
 checksum:
   name_template: "checksums.txt"
 
+# The release stays a draft until .github/workflows/release-binaries.yml has attached the
+# signed provenance and verified both bundles; that job then publishes it. Publishing here
+# would lock the release on a repository with immutable releases before the provenance
+# could be uploaded (#43). A rerun replaces the earlier run's draft instead of adding one.
+release:
+  draft: true
+  replace_existing_draft: true
+
 snapshot:
   version_template: "{{ incpatch .Version }}-snapshot"
 

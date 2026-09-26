@@ -8,7 +8,7 @@ page covers what that tag sets off, how to cut one, and how the moving flavor ta
 
 | Consumer | Trigger | Result |
 | :--- | :--- | :--- |
-| `.github/workflows/release-binaries.yml` | `push` of a tag matching `v*` | GoReleaser (`.goreleaser.yaml`) builds `praetorctl`, `standardsctl`, `standards-mcp` and `standards-lsp` for Linux, macOS and Windows on amd64 and arm64, attaches Syft SBOMs, signs `checksums.txt` keyless with cosign into `checksums.txt.sigstore.json`, and publishes a GitHub release |
+| `.github/workflows/release-binaries.yml` | `push` of a tag matching `v*` | GoReleaser (`.goreleaser.yaml`) builds `praetorctl`, `standardsctl`, `standards-mcp` and `standards-lsp` for Linux, macOS and Windows on amd64 and arm64, writes a CycloneDX and an SPDX SBOM per archive, signs `checksums.txt` keyless with cosign into `checksums.txt.sigstore.json`, and uploads everything into a **draft** release; the job then signs SLSA v1.0 provenance over every checksummed file, verifies both bundles, attaches the provenance and publishes the release |
 | `go install github.com/cordanaLLM/praetor/cmd/standardsctl@latest` | any release version on the module proxy | `@latest` selects the highest release version; with no tag at all it falls back to a pseudo-version of `main` ([Go modules reference, version queries](https://go.dev/ref/mod#version-queries)) |
 | `.github/actions/praetor-adopt/action.yml` | `uses: cordanaLLM/praetor/.github/actions/praetor-adopt@<ref>` | the action builds `cmd/standardsctl` from its own checkout at that ref, so `@latest` runs the commit the moving `latest` tag points at; it never installs from the module proxy, and a local or copied action outside a praetor checkout fails instead ([docs/adoption.md](../adoption.md)) |
 | `.github/workflows/sync-flavors.yml` | next run after the tag exists | moves `latest` to the highest `v*` tag |
@@ -18,7 +18,7 @@ unreleased commits has to ask for them, for example `@main`.
 
 ### Signing and SBOM toolchain
 
-`release-binaries.yml` and `sbom.yml` install the tools the release assets depend on.
+`release-binaries.yml` installs the tools the release assets depend on.
 `internal/bump/scan_actions.go` records the same action pins as the baseline
 `praetorctl bump` compares workflows against, and `internal/bump/release_pins_test.go`
 fails when the workflows and that baseline disagree.
@@ -26,8 +26,37 @@ fails when the workflows and that baseline disagree.
 | Tool | Action pin | Installs | Why the pin reads the way it does |
 | :--- | :--- | :--- | :--- |
 | GoReleaser | `goreleaser/goreleaser-action@v7` | GoReleaser `~> v2`, from the step's `version` input | v7 moves the action runtime to node24 and adds only the optional `version-file` input, so the step's inputs are unchanged |
-| Syft | `anchore/sbom-action/download-syft@v0.24.2` | Syft `v1.51.1` | The invocations `syft dir:. -o cyclonedx-json=…` and the `.goreleaser.yaml` `sboms` args are unchanged, but a newer Syft catalogues more packages, so SBOM content differs from that of builds made with an older pin |
+| Syft | `anchore/sbom-action/download-syft@v0.24.2` | Syft `v1.51.1` | The `.goreleaser.yaml` `sboms` args are unchanged, but a newer Syft catalogues more packages, so SBOM content differs from that of builds made with an older pin |
 | cosign | `sigstore/cosign-installer@v4.1.2` | cosign `v3.0.6`, the installer's default | No `cosign-release` input: a version hold there is invisible to the `praetorctl bump` scanner, and `internal/forge/cosign_bundle_test.go` rejects one. The installer publishes no moving `v4` tag, so the pin is exact |
+
+### One flow, published last
+
+Every asset is uploaded while the release is still a draft, and publishing is the job's
+last step. A repository with GitHub immutable releases locks the release at publication,
+so an upload after it fails; the flow never makes one (#43).
+
+1. `goreleaser release --clean` builds the archives, runs Syft over each archive (the
+   `.goreleaser.yaml` `sboms` block), writes `checksums.txt` over the archives and SBOMs,
+   signs it, and uploads all of it into a draft release (`release.draft: true`).
+2. `cosign verify-blob` checks `checksums.txt.sigstore.json` against this workflow's
+   identity before anything else trusts it.
+3. `praetorctl provenance -checksums dist/checksums.txt` writes one in-toto SLSA v1.0
+   statement whose subjects are every line of `checksums.txt`, with the workflow identity
+   as the builder. Each subject digest is recomputed from the file in `dist/` and must
+   match its line (`internal/supplychain/slsa.go`).
+4. `cosign attest-blob --statement` signs that statement into
+   `provenance.intoto.json.sigstore.json`, and `cosign verify-blob-attestation` checks the
+   bundle against every file `checksums.txt` names.
+5. `gh release upload` attaches the statement and its bundle, and
+   `gh release edit --draft=false` publishes.
+
+`internal/forge/release_flow_test.go` fails `go test` when the release stops being a draft,
+publishing moves ahead of signing or verification, an upload follows publication, or a step
+catalogues the checkout with `syft dir:.` again.
+
+Build Level 3 is not claimed. The provenance is generated and signed in the same job as
+the build steps, and SLSA Build Level 3 requires signing that the build steps cannot reach.
+Measuring the declared `supply_chain.slsa_level` against the workflow is tracked in #330.
 
 ## Verifying a published release
 
@@ -46,31 +75,36 @@ Verification needs cosign v3 or newer (CI installs cosign `v3.0.6`, the default 
 
 ```bash
 TAG=v0.1.0
+SIGNER="https://github.com/cordanaLLM/praetor/.github/workflows/release-binaries.yml@refs/tags/$TAG"
 gh release download "$TAG" --repo cordanaLLM/praetor
 
 cosign verify-blob \
-  --certificate-identity "https://github.com/cordanaLLM/praetor/.github/workflows/release-binaries.yml@refs/tags/$TAG" \
+  --certificate-identity "$SIGNER" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --bundle checksums.txt.sigstore.json \
   checksums.txt
 
 sha256sum --check --ignore-missing checksums.txt
+
+cosign verify-blob-attestation \
+  --certificate-identity "$SIGNER" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --type slsaprovenance1 \
+  --bundle provenance.intoto.json.sigstore.json \
+  standards_${TAG#v}_linux_amd64.tar.gz
 ```
 
-`checksums.txt` covers every archive, so one bundle verification plus the checksum check
-covers the whole binary set.
+`checksums.txt` covers every archive and every per-archive SBOM, so one bundle
+verification plus the checksum check covers the whole set. The provenance names the same
+files as subjects, so `verify-blob-attestation` accepts any one of them.
 
 | Signed file | Bundle | Signed by |
 | :--- | :--- | :--- |
 | `checksums.txt` | `checksums.txt.sigstore.json` | `.github/workflows/release-binaries.yml` (via `.goreleaser.yaml` `signs.cosign-keyless`) |
-| `cordana-standards-cyclonedx.json` | `cordana-standards-cyclonedx.json.sigstore.json` | `.github/workflows/release-binaries.yml` |
-| `cordana-standards-spdx.json` | `cordana-standards-spdx.json.sigstore.json` | `.github/workflows/release-binaries.yml` |
-| `praetor-cyclonedx.json` | `praetor-cyclonedx.json.sigstore.json` | `.github/workflows/sbom.yml` |
-| `praetor-spdx.json` | `praetor-spdx.json.sigstore.json` | `.github/workflows/sbom.yml` |
+| `provenance.intoto.json` | `provenance.intoto.json.sigstore.json` | `.github/workflows/release-binaries.yml` (`cosign attest-blob`) |
 
-`--certificate-identity` names the workflow file that signed the artifact, so an SBOM from
-`sbom.yml` is verified with `.../sbom.yml@refs/tags/$TAG` rather than the
-`release-binaries.yml` identity above.
+Each archive's SBOMs, `<archive>.cyclonedx.json` and `<archive>.spdx.json`, carry no bundle
+of their own: `checksums.txt` lists them, so the checksums bundle covers them.
 
 `internal/forge/cosign_bundle_test.go` replays the flag shape against the real workflow and
 GoReleaser files, so a return to the removed v2 flags fails `go test` rather than a tag push.
@@ -78,17 +112,20 @@ GoReleaser files, so a return to the removed v2 flags fails `go test` rather tha
 ## SLSA provenance statements
 
 `praetorctl provenance` writes an in-toto v1 statement with an SLSA v1.0 provenance
-predicate for one artifact file. No release workflow calls it yet, and the statement it
-writes is **unsigned**: it becomes an attestation only once a signer wraps it in a DSSE
-envelope and a verifier checks that envelope's signature and signer identity.
+predicate for one artifact file, or for every file a sha256sum manifest lists. The
+statement it writes is **unsigned**: it becomes an attestation only once a signer wraps it
+in a DSSE envelope and a verifier checks that envelope's signature and signer identity,
+which the release flow above does with `cosign attest-blob`.
 
 ```bash
 praetorctl provenance --file dist/praetorctl_linux_amd64.tar.gz --out provenance.json
+praetorctl provenance --checksums dist/checksums.txt --out provenance.json
 ```
 
 | Flag | Default | Effect |
 | :--- | :--- | :--- |
-| `--file` | required | Artifact whose bytes are streamed through SHA-256; the result is the subject digest |
+| `--file` | required unless `--checksums` | Artifact whose bytes are streamed through SHA-256; the result is the subject digest |
+| `--checksums` | none | sha256sum manifest such as GoReleaser's `checksums.txt`; every listed file, resolved beside the manifest, becomes a subject digested from its bytes, and each line's digest is a cross-check like `--digest` |
 | `--artifact` | base name of `--file` | Subject name |
 | `--digest` | none | Expected SHA-256 (64 lowercase hex characters); the run fails unless `--file` hashes to it |
 | `--builder` | `ghcr.io/cordanallm/builder` | Builder ID recorded in the predicate |
@@ -97,9 +134,13 @@ praetorctl provenance --file dist/praetorctl_linux_amd64.tar.gz --out provenance
 The subject digest always comes from the file's bytes, never from `--digest`, so a
 statement cannot name a digest nobody computed. The run is refused when:
 
-- `--file` is missing, including when `--digest` is given alone;
-- the file is empty, larger than 2 GiB (`supplychain.MaxArtifactBytes`), a symlink, not a
-  regular file, or changes while it is read;
+- `--file` is missing, including when `--digest` is given alone, unless `--checksums`
+  names the subjects; `--checksums` beside `--file`, `--artifact` or `--digest`;
+- a `--checksums` line is not `<sha256>  <name>` or `<sha256> *<name>`, names a path
+  outside the manifest's directory, or lists a file that hashes to anything else;
+- the file, or any file the manifest lists, is empty, larger than 2 GiB
+  (`supplychain.MaxArtifactBytes`), a symlink, not a regular file, or changes while it is
+  read;
 - `--digest` is malformed or differs from the computed digest. The error names the
   computed digest.
 
@@ -107,7 +148,8 @@ Every statement carries a `praetorEmission` extension field with `"signed": fals
 every run prints an `UNSIGNED` warning on stderr, so stdout stays parseable JSON. The
 in-toto v1 [parsing rules](https://github.com/in-toto/attestation/blob/main/spec/v1/README.md#parsing-rules)
 tell consumers to ignore fields they do not recognize, so the marker changes nothing for
-a verifier. `internal/supplychain/slsa_test.go` and
+a verifier. `internal/supplychain/slsa_test.go`,
+`internal/supplychain/provenance_subjects_test.go` and
 `cmd/standardsctl/provenance_cli_test.go` cover these cases.
 
 ## Cutting a release

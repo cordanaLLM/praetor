@@ -13,6 +13,7 @@ import (
 
 	"bytes"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -425,8 +426,11 @@ func (s *Server) createPlanTool() (mcp.Tool, error) {
 		if err := writePlanHeader(&b, manifest, policy); err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to resolve plan policy: %v", err)), nil
 		}
-		missing, drift := planDrift(s.rootDir, policy)
-		writePlanStatus(&b, missing, drift)
+		missing, drift, err := adopt.PlanDrift(ctx, s.rootDir, policy)
+		if err != nil {
+			return mcp.ErrorResult(fmt.Sprintf("Failed to inspect plan drift: %v", err)), nil
+		}
+		b.WriteString(adopt.FormatPlanStatus(missing, drift))
 
 		return mcp.TextResult(b.String()), nil
 	}

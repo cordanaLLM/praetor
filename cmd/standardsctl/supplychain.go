@@ -54,27 +54,21 @@ func runSBOM(args []string) error {
 const unsignedProvenanceWarning = "warning: the SLSA provenance statement is UNSIGNED; it is not an attestation " +
 	"until it is wrapped in a signed DSSE envelope whose signature and signer identity are verified"
 
-func runProvenance(args []string) error {
-	fs := flag.NewFlagSet("provenance", flag.ContinueOnError)
-	file := fs.String("file", "", "Artifact file whose bytes the subject digest is computed from (required)")
-	artifact := fs.String("artifact", "", "Subject name (default: base name of -file)")
-	builder := fs.String("builder", "ghcr.io/cordanallm/builder", "Builder identifier")
-	digest := fs.String("digest", "", "Optional expected SHA-256 hex digest; the run fails unless -file hashes to it")
-	out := fs.String("out", "", "Output file path (default stdout)")
+// provenanceFlags are the provenance command's subject sources, builder and output.
+type provenanceFlags struct {
+	file, artifact, builder, digest, checksums, out string
+}
 
-	if err := fs.Parse(args); err != nil {
+func runProvenance(args []string) error {
+	flags, err := parseProvenanceFlags(args)
+	if err != nil {
 		return err
-	}
-	if *file == "" {
-		return fmt.Errorf("flag -file is required: the subject digest is computed from the artifact bytes, and -digest is only a cross-check against them")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDigestDuration+contextopt.MaxDuration)
 	defer cancel()
 
-	stmt, err := supplychain.GenerateSLSAProvenance(ctx, supplychain.ProvenanceRequest{
-		ArtifactPath: *file, ArtifactName: *artifact, BuilderID: *builder, ExpectedSHA256: *digest,
-	})
+	stmt, err := provenanceStatement(ctx, flags)
 	if err != nil {
 		return fmt.Errorf("failed generating SLSA provenance: %w", err)
 	}
@@ -85,17 +79,63 @@ func runProvenance(args []string) error {
 	}
 	fmt.Fprintln(os.Stderr, unsignedProvenanceWarning)
 
-	if *out != "" {
-		if err := writeCommandArtifact(ctx, *out, data, 0644); err != nil {
-			return fmt.Errorf("failed writing provenance to %s: %w", *out, err)
+	if flags.out != "" {
+		if err := writeCommandArtifact(ctx, flags.out, data, 0644); err != nil {
+			return fmt.Errorf("failed writing provenance to %s: %w", flags.out, err)
 		}
-		fmt.Printf("Unsigned SLSA v1.0 provenance statement written to %s (subject %s sha256:%s)\n",
-			*out, stmt.Subject[0].Name, stmt.Subject[0].Digest["sha256"])
+		fmt.Printf("Unsigned SLSA v1.0 provenance statement written to %s (%s)\n", flags.out, subjectSummary(stmt.Subject))
 		return nil
 	}
 
 	fmt.Println(string(data))
 	return nil
+}
+
+// parseProvenanceFlags reads the provenance flags and refuses a run with no subject source
+// or with -checksums beside the single-artifact flags it replaces.
+func parseProvenanceFlags(args []string) (provenanceFlags, error) {
+	var f provenanceFlags
+	fs := flag.NewFlagSet("provenance", flag.ContinueOnError)
+	fs.StringVar(&f.file, "file", "", "Artifact file whose bytes the subject digest is computed from (required unless -checksums)")
+	fs.StringVar(&f.artifact, "artifact", "", "Subject name (default: base name of -file)")
+	fs.StringVar(&f.builder, "builder", "ghcr.io/cordanallm/builder", "Builder identifier")
+	fs.StringVar(&f.digest, "digest", "", "Optional expected SHA-256 hex digest; the run fails unless -file hashes to it")
+	fs.StringVar(&f.checksums, "checksums", "",
+		"sha256sum manifest, such as GoReleaser's checksums.txt: every listed file beside it becomes a subject, "+
+			"digested from its bytes and cross-checked against its line (excludes -file, -artifact and -digest)")
+	fs.StringVar(&f.out, "out", "", "Output file path (default stdout)")
+	if err := fs.Parse(args); err != nil {
+		return f, err
+	}
+	switch {
+	case f.checksums != "" && (f.file != "" || f.artifact != "" || f.digest != ""):
+		return f, fmt.Errorf("flag -checksums names every subject itself and excludes -file, -artifact and -digest")
+	case f.checksums == "" && f.file == "":
+		return f, fmt.Errorf("flag -file is required (or -checksums for every file a sha256sum manifest lists): " +
+			"the subject digest is computed from the artifact bytes, and -digest is only a cross-check against them")
+	}
+	return f, nil
+}
+
+// provenanceStatement builds the statement from the one subject source f names.
+func provenanceStatement(ctx context.Context, f provenanceFlags) (*supplychain.SLSAStatement, error) {
+	if f.checksums != "" {
+		return supplychain.GenerateSLSAProvenanceFromChecksums(ctx, supplychain.ChecksumsRequest{
+			ManifestPath: f.checksums, BuilderID: f.builder,
+		})
+	}
+	return supplychain.GenerateSLSAProvenance(ctx, supplychain.ProvenanceRequest{
+		ArtifactPath: f.file, ArtifactName: f.artifact, BuilderID: f.builder, ExpectedSHA256: f.digest,
+	})
+}
+
+// subjectSummary names the one subject of a single-artifact statement, or counts the
+// subjects of a manifest statement.
+func subjectSummary(subjects []supplychain.Subject) string {
+	if len(subjects) == 1 {
+		return fmt.Sprintf("subject %s sha256:%s", subjects[0].Name, subjects[0].Digest["sha256"])
+	}
+	return fmt.Sprintf("%d subjects", len(subjects))
 }
 
 // writeCommandArtifact preserves explicit public/private output modes and rejects
