@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/nodemanifest"
@@ -48,31 +50,35 @@ func DiscoverNodePackages(repoPath string) ([]string, error) {
 	return dirs, nil
 }
 
-// ScanNodeDependencies inspects Node/pnpm packages in repoPath for upgrades.
+// ScanNodeDependencies returns the dependency inventory of every Node package in repoPath:
+// one entry per dependency a package.json declares, whether or not an upgrade exists for
+// it. An entry whose TargetVersion differs from its CurrentVersion is an upgrade
+// candidate; an up-to-date dependency carries TargetVersion == CurrentVersion.
 func ScanNodeDependencies(ctx context.Context, repoPath string, opts ScanOptions) ([]UpgradeCandidate, error) {
 	pkgDirs, err := DiscoverNodePackages(repoPath)
 	if err != nil {
 		return nil, err
 	}
-	if len(pkgDirs) == 0 {
-		return nil, nil
-	}
-
-	var allCandidates []UpgradeCandidate
+	var inventory []UpgradeCandidate
 	for _, dirRel := range pkgDirs {
-		dir := filepath.Join(repoPath, dirRel)
-		candidates, err := scanNodePackageDir(ctx, dir, dirRel, opts)
+		found, err := scanNodePackage(ctx, repoPath, dirRel, opts)
 		if err != nil {
-			var fbErr error
-			candidates, fbErr = scanPackageJSONStatic(ctx, repoPath, dirRel, opts)
-			if fbErr != nil {
-				return nil, fmt.Errorf("scan Node package %s: %w", dirRel, errors.Join(err, fbErr))
-			}
+			return nil, fmt.Errorf("scan Node package %s: %w", dirRel, err)
 		}
-		allCandidates = append(allCandidates, candidates...)
+		inventory = append(inventory, found...)
 	}
+	return inventory, nil
+}
 
-	return allCandidates, nil
+// scanNodePackage returns one package's inventory. The dependencies its package.json
+// declares are the inventory; `pnpm outdated` lists only outdated packages, so it can
+// supply upgrade targets but never the count of what was scanned.
+func scanNodePackage(ctx context.Context, repoPath, dirRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
+	return manifestInventory(ctx,
+		func() ([]UpgradeCandidate, error) { return scanPackageJSONStatic(ctx, repoPath, dirRel) },
+		func() ([]UpgradeCandidate, error) {
+			return scanNodePackageDir(ctx, filepath.Join(repoPath, dirRel), dirRel, opts)
+		})
 }
 
 // extractJSONObject returns the outermost JSON object embedded in combined command
@@ -104,19 +110,16 @@ func scanNodePackageDir(ctx context.Context, dir, dirRel string, opts ScanOption
 	if err := json.Unmarshal(raw, &outdated); err != nil {
 		return nil, fmt.Errorf("parse pnpm outdated report for %s: %w", dirRel, err)
 	}
-
-	var candidates []UpgradeCandidate
-	for pkg, item := range outdated {
-		cand, ok := nodeUpgradeCandidate(pkg, item, dirRel, opts)
-		if !ok {
-			continue
-		}
-		candidates = append(candidates, cand)
-		if opts.MaxCandidates > 0 && len(candidates) >= opts.MaxCandidates {
-			break
-		}
+	if len(outdated) > maxManifestDependencies {
+		return nil, fmt.Errorf("pnpm outdated report for %s exceeds %d entries", dirRel, maxManifestDependencies)
 	}
 
+	var candidates []UpgradeCandidate
+	for _, pkg := range slices.Sorted(maps.Keys(outdated)) {
+		if cand, ok := nodeUpgradeCandidate(pkg, outdated[pkg], dirRel, opts); ok {
+			candidates = append(candidates, cand)
+		}
+	}
 	return candidates, nil
 }
 
@@ -126,52 +129,56 @@ func nodeUpgradeCandidate(pkg string, item pnpmOutdatedItem, dirRel string, opts
 	if item.Latest == "" || item.Current == item.Latest {
 		return UpgradeCandidate{}, false
 	}
-	ch := ClassifyChannel(item.Latest)
-	if !opts.IncludePrerelease && ch != ChannelStable {
+	if !upgradeAllowed(item.Latest, opts) {
 		return UpgradeCandidate{}, false
 	}
 	return UpgradeCandidate{
 		Package:        pkg,
 		CurrentVersion: item.Current,
 		TargetVersion:  item.Latest,
-		Channel:        ch,
+		Channel:        ClassifyChannel(item.Latest),
 		ManifestType:   "package.json",
 		ModuleDir:      dirRel,
 	}, true
 }
 
-func scanPackageJSONStatic(ctx context.Context, repoPath, dirRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
-	data, err := readManifest(ctx, repoPath, filepath.Join(dirRel, "package.json"))
+// scanPackageJSONStatic returns the dependencies dirRel's package.json declares, in name
+// order, each with its declared version as both current and target. A package declared in
+// both dependencies and devDependencies is one dependency, counted once.
+func scanPackageJSONStatic(ctx context.Context, repoPath, dirRel string) ([]UpgradeCandidate, error) {
+	name := filepath.Join(dirRel, "package.json")
+	data, err := readManifest(ctx, repoPath, name)
 	if err != nil {
 		return nil, err
 	}
-
 	var pj packageJSONFormat
 	if err := json.Unmarshal(data, &pj); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse %s: %w", name, err)
 	}
-
-	var candidates []UpgradeCandidate
-	extractFromMap := func(deps map[string]string) {
-		for pkg, ver := range deps {
-			cleanVer := strings.TrimPrefix(ver, "^")
-			cleanVer = strings.TrimPrefix(cleanVer, "~")
-			ch := ClassifyChannel(cleanVer)
-			if !opts.IncludePrerelease && ch != ChannelStable {
-				continue
+	seen := make(map[string]bool)
+	var declared []UpgradeCandidate
+	for _, deps := range []map[string]string{pj.Dependencies, pj.DevDependencies} {
+		if len(deps) > maxManifestDependencies {
+			return nil, fmt.Errorf("%s declares more than %d dependencies in one section", name, maxManifestDependencies)
+		}
+		for _, pkg := range slices.Sorted(maps.Keys(deps)) {
+			if !seen[pkg] {
+				seen[pkg] = true
+				declared = append(declared, declaredNodeDependency(pkg, deps[pkg], dirRel))
 			}
-			candidates = append(candidates, UpgradeCandidate{
-				Package:        pkg,
-				CurrentVersion: cleanVer,
-				TargetVersion:  cleanVer,
-				Channel:        ch,
-				ManifestType:   "package.json",
-				ModuleDir:      dirRel,
-			})
 		}
 	}
+	return declared, nil
+}
 
-	extractFromMap(pj.Dependencies)
-	extractFromMap(pj.DevDependencies)
-	return candidates, nil
+func declaredNodeDependency(pkg, spec, dirRel string) UpgradeCandidate {
+	version := strings.TrimPrefix(strings.TrimPrefix(spec, "^"), "~")
+	return UpgradeCandidate{
+		Package:        pkg,
+		CurrentVersion: version,
+		TargetVersion:  version,
+		Channel:        ClassifyChannel(version),
+		ManifestType:   "package.json",
+		ModuleDir:      dirRel,
+	}
 }

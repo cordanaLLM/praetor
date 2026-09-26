@@ -87,24 +87,27 @@ func ReconcileCatalog(ctx context.Context, repoPath string) ([]UpgradeCandidate,
 // ReconcileCatalogReport compares the dependencies in repoPath with the FleetCatalog by SemVer
 // precedence and reports each differing dependency as an upgrade, ahead, or unranked.
 //
-// Its input is ScanDependencies' report. When go and pnpm run, that report lists only
-// dependencies with a newer upstream release, so a dependency already at upstream latest is
-// neither upgraded nor reported ahead; the static manifest scanners list every dependency.
+// Its input is the whole declared inventory (scanInventory), not only the dependencies with
+// an upstream upgrade: a dependency already at upstream latest can still be behind or ahead
+// of its pin, and the set compared is the same online and offline.
 func ReconcileCatalogReport(ctx context.Context, repoPath string) (*CatalogReport, error) {
-	candidates, err := ScanDependencies(ctx, repoPath, false)
+	if ctx == nil {
+		return nil, fmt.Errorf("reconcile catalog: context cannot be nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("reconcile catalog cancelled: %w", err)
+	}
+	discovered, err := scanInventory(ctx, repoPath, ScanOptions{})
 	if err != nil {
 		return nil, err
 	}
-	discovered := make([]UpgradeCandidate, 0, len(candidates.Stables)+len(candidates.Prereleases))
-	discovered = append(discovered, candidates.Stables...)
-	discovered = append(discovered, candidates.Prereleases...)
 	report := reconcileWithCatalog(discovered, FleetCatalog)
 	return &report, nil
 }
 
 // reconcileWithCatalog classifies each discovered dependency against catalog. The input is
-// already bounded by ScanDependencies (maxDependenciesLimit per ecosystem); the loop walks it
-// once.
+// already bounded by the scanners (maxManifestDependencies per package.json section,
+// MaxManifestLines per go.mod); the loop walks it once.
 func reconcileWithCatalog(discovered []UpgradeCandidate, catalog map[string]CatalogEntry) CatalogReport {
 	report := CatalogReport{Upgrades: []UpgradeCandidate{}, Ahead: []CatalogDrift{}, Unranked: []CatalogDrift{}}
 	for _, c := range discovered {

@@ -7,8 +7,10 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/needs"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -21,24 +23,21 @@ func AuditCodebaseVersions(ctx context.Context, repoPath string, includePrerelea
 		return nil, fmt.Errorf("bump audit cancelled: %w", err)
 	}
 
-	opts := ScanOptions{
-		IncludePrerelease: includePrerelease,
-		MaxCandidates:     1000,
-	}
-
-	pending, langScanned, err := scanLangDeps(ctx, repoPath, opts)
+	inventory, err := scanInventory(ctx, repoPath, ScanOptions{IncludePrerelease: includePrerelease})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("audit language dependencies: %w", err)
 	}
+	pending := pendingUpgrades(inventory)
 	actions, actionDeps, err := ScanWorkflowActions(ctx, repoPath)
 	if err != nil {
 		return nil, fmt.Errorf("audit workflow actions: %w", err)
 	}
 	toolDeps := auditToolchains(ctx)
+	unexamined := unexaminedManifests(repoPath)
 
-	deprecations := append(actionDeps, toolDeps...)
-	totalScanned := langScanned + len(actions)
-	upToDate, score := calculateAuditScore(totalScanned, len(pending), len(deprecations))
+	deprecations := slices.Concat(actionDeps, toolDeps, unexamined)
+	totalScanned := len(inventory) + len(actions)
+	upToDate, score := calculateAuditScore(totalScanned, len(pending), len(actionDeps)+len(toolDeps), len(unexamined))
 
 	return &VersionAuditReport{
 		TotalScanned:       totalScanned,
@@ -51,37 +50,40 @@ func AuditCodebaseVersions(ctx context.Context, repoPath string, includePrerelea
 	}, nil
 }
 
-func scanLangDeps(ctx context.Context, repoPath string, opts ScanOptions) ([]UpgradeCandidate, int, error) {
-	var pending []UpgradeCandidate
-	total := 0
-	for _, scan := range []func(context.Context, string, ScanOptions) ([]UpgradeCandidate, error){ScanGoDependencies, ScanNodeDependencies} {
-		candidates, err := scan(ctx, repoPath, opts)
-		if err != nil {
-			return nil, 0, fmt.Errorf("audit language dependencies: %w", err)
+// scannedLanguages are the needs analyzer languages whose declared dependencies
+// languageScanners examine.
+var scannedLanguages = map[string]bool{"go": true, "typescript": true}
+
+// unexaminedManifests reports each ecosystem the repository declares dependencies for
+// that bump has no scanner for. Its dependencies were not examined, so the audit must not
+// read as a full-coverage pass: each one is an unsupported-manifest deprecation, which
+// fails the audit and keeps the score below 100 percent.
+func unexaminedManifests(repoPath string) []DeprecationWarning {
+	var warnings []DeprecationWarning
+	for _, analyzer := range needs.DefaultRegistry().DetectAll(repoPath) {
+		if scannedLanguages[analyzer.Language()] {
+			continue
 		}
-		total += len(candidates)
-		for _, c := range candidates {
-			if c.CurrentVersion != c.TargetVersion {
-				pending = append(pending, c)
-			}
-		}
+		warnings = append(warnings, DeprecationWarning{
+			Component: analyzer.Language(),
+			Kind:      "unsupported-manifest",
+			Details:   fmt.Sprintf("%s dependencies are declared but were not examined: bump scans only Go and Node manifests", analyzer.Language()),
+		})
 	}
-	return pending, total, nil
+	return warnings
 }
 
-func calculateAuditScore(total, pending, deps int) (int, float64) {
-	upToDate := total - pending - deps
-	if upToDate < 0 {
-		upToDate = 0
+// calculateAuditScore scores the scanned components. deps is the count of deprecations
+// among or about them, which are not up to date; unexamined is the count of ecosystems
+// whose dependencies were never scanned. Each unexamined ecosystem joins the denominator
+// as one component that is not up to date, so a repository whose only manifests are
+// unexamined scores 0, not a vacuous 100.
+func calculateAuditScore(total, pending, deps, unexamined int) (int, float64) {
+	upToDate := max(total-pending-deps, 0)
+	if total+unexamined == 0 {
+		return upToDate, 100.0
 	}
-	score := 100.0
-	if total > 0 {
-		score = (float64(upToDate) / float64(total)) * 100.0
-		if score < 0 {
-			score = 0
-		}
-	}
-	return upToDate, score
+	return upToDate, float64(upToDate) / float64(total+unexamined) * 100.0
 }
 
 func auditToolchains(ctx context.Context) []DeprecationWarning {

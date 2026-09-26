@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/bump"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -41,7 +42,7 @@ func TestBumpApplyCLIRejectsMissingPatchBeforeUpdate(t *testing.T) {
 }
 
 func TestBumpTrainCLIDryRunDoesNotClaimPatchOrCertification(t *testing.T) {
-	useOfflineCanaryScanner(t)
+	useOutdatedFixtureScanner(t)
 	dir := t.TempDir()
 	writeFixtureFile(t, dir, "package.json", `{"dependencies":{"fixture-dep":"2.0.0-rc.1"}}`)
 	text, err := captureStdout(t, func() error {
@@ -53,7 +54,7 @@ func TestBumpTrainCLIDryRunDoesNotClaimPatchOrCertification(t *testing.T) {
 }
 
 func TestBumpTrainCLIPropagatesFailedCanary(t *testing.T) {
-	useOfflineCanaryScanner(t)
+	useOutdatedFixtureScanner(t)
 	dir := t.TempDir()
 	writeFixtureFile(t, dir, "package.json", `{"dependencies":{"fixture-dep":"2.0.0-rc.1"}}`)
 	writeFixtureFile(t, dir, ".gitignore", ".standards/\n.workingdir/\n")
@@ -84,11 +85,28 @@ func TestCanaryErrorLabelSeparatesCancellationFromFailure(t *testing.T) {
 	}
 }
 
-func useOfflineCanaryScanner(t *testing.T) {
+// outdatedFixturePnpm stands in for a pnpm that reports fixture-dep outdated and fails
+// every other command, so the train has exactly one real candidate whose canary test fails.
+const outdatedFixturePnpm = `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "outdated" {
+		fmt.Print("{\"fixture-dep\":{\"current\":\"2.0.0-rc.1\",\"latest\":\"2.0.0-rc.2\"}}")
+	}
+	os.Exit(1)
+}
+`
+
+// useOutdatedFixtureScanner puts outdatedFixturePnpm first on PATH. A scan whose pnpm
+// reports nothing yields no candidates: the train only runs on a reported upgrade.
+func useOutdatedFixtureScanner(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "pnpm"), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	testsupport.BuildExecutable(t, dir, "pnpm", outdatedFixturePnpm)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

@@ -1,0 +1,3 @@
+type: fixed
+title: Count every declared Go and Node dependency as scanned, whether or not it has an upgrade, so bump audit's total_scanned and modernization score no longer depend on network state; drop phantom upgrade candidates from bump scan, update --all and train; and fail the audit instead of scoring 100 percent when Cargo, Python or native manifests were not examined
+breaking: false

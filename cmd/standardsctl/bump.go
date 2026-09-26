@@ -70,7 +70,7 @@ func runBumpScan(ctx context.Context, args []string) error {
 		return fmt.Errorf("scan dependencies: %w", err)
 	}
 
-	fmt.Printf("=== Dependency Version Scan (%d candidates discovered) ===\n", rep.TotalCandidates)
+	fmt.Printf("=== Dependency Version Scan (%d dependencies scanned, %d candidates discovered) ===\n", rep.TotalScanned, rep.TotalCandidates)
 	if len(rep.Stables) > 0 {
 		fmt.Printf("\n[STABLE CHANNEL] (%d):\n", len(rep.Stables))
 		for _, s := range rep.Stables {

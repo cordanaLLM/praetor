@@ -156,7 +156,10 @@ func parseGoWork(ctx context.Context, path string) ([]string, error) {
 	return dirs, nil
 }
 
-// ScanGoDependencies inspects Go modules in repoPath for available upgrades.
+// ScanGoDependencies returns the dependency inventory of every Go module in repoPath: one
+// entry per requirement a go.mod declares, whether or not an upgrade exists for it. An
+// entry whose TargetVersion differs from its CurrentVersion is an upgrade candidate; an
+// up-to-date requirement carries TargetVersion == CurrentVersion.
 func ScanGoDependencies(ctx context.Context, repoPath string, opts ScanOptions) ([]UpgradeCandidate, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("scan Go dependencies requires context")
@@ -168,23 +171,24 @@ func ScanGoDependencies(ctx context.Context, repoPath string, opts ScanOptions) 
 	if err != nil {
 		return nil, err
 	}
-	var allCandidates []UpgradeCandidate
+	var inventory []UpgradeCandidate
 	for _, modRel := range modules {
-		modDir := filepath.Join(repoPath, modRel)
-		candidates, scanErr := scanGoModuleDir(ctx, modDir, modRel, opts)
-		if err := ctx.Err(); err != nil {
-			return nil, err
+		found, err := scanGoModule(ctx, filepath.Join(repoPath, modRel), modRel, opts)
+		if err != nil {
+			return nil, fmt.Errorf("scan module %s: %w", modRel, err)
 		}
-		if scanErr != nil || len(candidates) == 0 {
-			var fallbackErr error
-			candidates, fallbackErr = scanGoModFallback(ctx, modDir, modRel, opts)
-			if fallbackErr != nil {
-				return nil, fmt.Errorf("scan module %s: %w", modRel, errors.Join(scanErr, fallbackErr))
-			}
-		}
-		allCandidates = append(allCandidates, candidates...)
+		inventory = append(inventory, found...)
 	}
-	return allCandidates, nil
+	return inventory, nil
+}
+
+// scanGoModule returns one module's inventory. The requirements its go.mod declares are
+// the inventory; `go list -m -u` only supplies their selected versions and upgrade
+// targets, so the inventory never depends on network state.
+func scanGoModule(ctx context.Context, modDir, modRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
+	return manifestInventory(ctx,
+		func() ([]UpgradeCandidate, error) { return scanGoModStatic(ctx, modDir, modRel) },
+		func() ([]UpgradeCandidate, error) { return scanGoModuleDir(ctx, modDir, modRel, opts) })
 }
 
 func scanGoModuleDir(ctx context.Context, modDir, modRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
@@ -211,32 +215,27 @@ func decodeGoModules(output, modRel string, opts ScanOptions) ([]UpgradeCandidat
 			return nil, fmt.Errorf("go module report exceeds 10000 records")
 		}
 		candidate, ok := goUpgradeCandidate(mod, modRel, opts)
-		if !ok {
-			continue
-		}
-		candidates = append(candidates, candidate)
-		if opts.MaxCandidates > 0 && len(candidates) >= opts.MaxCandidates {
-			return candidates, nil
+		if ok {
+			candidates = append(candidates, candidate)
 		}
 	}
 	return nil, fmt.Errorf("go module decoder exhausted bound")
 }
 
+// goUpgradeCandidate converts one `go list -m -u` record into an inventory entry. Every
+// module except the main one is reported: an up-to-date module, or one whose only update
+// the channel policy refuses, carries its current version as its target.
 func goUpgradeCandidate(mod goModuleJSON, modRel string, opts ScanOptions) (UpgradeCandidate, bool) {
 	if mod.Main {
 		return UpgradeCandidate{}, false
 	}
 	targetVer := mod.Version
-	if mod.Update != nil {
+	if mod.Update != nil && upgradeAllowed(mod.Update.Version, opts) {
 		targetVer = mod.Update.Version
-	}
-	ch := ClassifyChannel(targetVer)
-	if (!opts.IncludePrerelease && ch != ChannelStable) || (mod.Update == nil && ch == ChannelStable) {
-		return UpgradeCandidate{}, false
 	}
 	return UpgradeCandidate{
 		Package: mod.Path, CurrentVersion: mod.Version, TargetVersion: targetVer,
-		Channel: ch, ManifestType: "go.mod", ModuleDir: modRel,
+		Channel: ClassifyChannel(targetVer), ManifestType: "go.mod", ModuleDir: modRel,
 	}, true
 }
 
@@ -331,7 +330,10 @@ func requiredModuleVersion(raw string, inRequire *bool, pkg string) (string, boo
 	return fields[1], true
 }
 
-func scanGoModFallback(ctx context.Context, modDir, modRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
+// scanGoModStatic returns the requirements modDir's go.mod declares, each with its
+// declared version as both current and target: the module's inventory before any
+// upstream report says which of them has an upgrade.
+func scanGoModStatic(ctx context.Context, modDir, modRel string) ([]UpgradeCandidate, error) {
 	data, err := readManifest(ctx, modDir, "go.mod")
 	if err != nil {
 		return nil, err
@@ -347,7 +349,7 @@ func scanGoModFallback(ctx context.Context, modDir, modRel string, opts ScanOpti
 		if !isRequirement {
 			continue
 		}
-		candidate, ok := fallbackGoCandidate(line, modRel, opts)
+		candidate, ok := fallbackGoCandidate(line, modRel)
 		if ok {
 			candidates = append(candidates, candidate)
 		}
@@ -358,18 +360,14 @@ func scanGoModFallback(ctx context.Context, modDir, modRel string, opts ScanOpti
 	return candidates, nil
 }
 
-func fallbackGoCandidate(line, modRel string, opts ScanOptions) (UpgradeCandidate, bool) {
+func fallbackGoCandidate(line, modRel string) (UpgradeCandidate, bool) {
 	matches := requireRegex.FindStringSubmatch(line)
 	if len(matches) != 3 {
 		return UpgradeCandidate{}, false
 	}
 	version := "v" + matches[2]
-	channel := ClassifyChannel(version)
-	if !opts.IncludePrerelease && channel != ChannelStable {
-		return UpgradeCandidate{}, false
-	}
 	return UpgradeCandidate{
 		Package: matches[1], CurrentVersion: version, TargetVersion: version,
-		Channel: channel, ManifestType: "go.mod", ModuleDir: modRel,
+		Channel: ClassifyChannel(version), ManifestType: "go.mod", ModuleDir: modRel,
 	}, true
 }

@@ -131,7 +131,7 @@ func TestStaticNodeScanUsesTheManifestReader(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(manifest), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		got, err := scanPackageJSONStatic(t.Context(), repo, ".", ScanOptions{})
+		got, err := scanPackageJSONStatic(t.Context(), repo, ".")
 		if err != nil {
 			t.Fatalf("ordinary package.json refused: %v", err)
 		}
@@ -147,7 +147,7 @@ func TestStaticNodeScanUsesTheManifestReader(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(manifest), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := scanPackageJSONStatic(t.Context(), repo, ".", ScanOptions{}); err == nil {
+		if got, err := scanPackageJSONStatic(t.Context(), repo, "."); err == nil {
 			t.Fatalf("oversized package.json accepted: %v", got)
 		}
 	})
@@ -161,7 +161,7 @@ func TestStaticNodeScanUsesTheManifestReader(t *testing.T) {
 		if err := os.Symlink(target, filepath.Join(repo, "package.json")); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
-		if got, err := scanPackageJSONStatic(t.Context(), repo, ".", ScanOptions{}); err == nil {
+		if got, err := scanPackageJSONStatic(t.Context(), repo, "."); err == nil {
 			t.Fatalf("symlinked package.json accepted: %v", got)
 		}
 	})
