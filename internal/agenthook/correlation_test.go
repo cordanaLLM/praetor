@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -281,20 +282,72 @@ func TestCorrelationStoreReclaimsStaleLock(t *testing.T) {
 	}
 }
 
-func TestCorrelationStoreRejectsUnboundedDirectory(t *testing.T) {
+// fillCorrelationDir writes count empty files named prefix-<n> into dir, aged by age.
+func fillCorrelationDir(t *testing.T, dir, prefix string, count int, age time.Duration) {
+	t.Helper()
+	stamp := time.Now().Add(-age)
+	for index := 0; index < count; index++ {
+		path := filepath.Join(dir, fmt.Sprintf("%s-%04d", prefix, index))
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestCorrelationStoreScanBoundIsNotTheRowCap: the sweep reads up to correlationScanLimit
+// entries, the lock included, and fails closed past it with the bound named. Exactly the
+// bound is read in full.
+func TestCorrelationStoreScanBoundIsNotTheRowCap(t *testing.T) {
+	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
+	atBound := t.TempDir()
+	fillCorrelationDir(t, atBound, "foreign", correlationScanLimit-1, 0)
+	store, err := newCorrelationStore(t.Context(), "", atBound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.reserve(t.Context(), "claude", "session", "tool", resolution); err != nil {
+		t.Fatalf("%d entries with the lock were refused: %v", correlationScanLimit, err)
+	}
+	pastBound := t.TempDir()
+	fillCorrelationDir(t, pastBound, "foreign", correlationScanLimit, 0)
+	if store, err = newCorrelationStore(t.Context(), "", pastBound); err != nil {
+		t.Fatal(err)
+	}
+	err = store.reserve(t.Context(), "claude", "session", "tool", resolution)
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("more than %d entries", correlationScanLimit)) {
+		t.Fatalf("%d entries with the lock: %v", correlationScanLimit+1, err)
+	}
+	requireStoreRows(t, pastBound, 0)
+}
+
+// TestCorrelationStoreFullOfRowsSurvivesDebris: a full store plus abandoned temporary files
+// and foreign entries, together far past the row cap, still takes a launch. The launch
+// evicts one row, the sweep removes the abandoned files, and the foreign ones stay.
+func TestCorrelationStoreFullOfRowsSurvivesDebris(t *testing.T) {
 	dir := t.TempDir()
 	store, err := newCorrelationStore(t.Context(), "", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for index := 0; index < MaxCorrelationEntries+correlationDirOverhead+1; index++ {
-		path := filepath.Join(dir, fmt.Sprintf("junk-%03d", index))
-		if err := os.WriteFile(path, nil, 0o600); err != nil {
-			t.Fatal(err)
+	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
+	for index := 0; index < MaxCorrelationEntries; index++ {
+		if err := store.reserve(t.Context(), "claude", "session", fmt.Sprintf("tool-%03d", index), resolution); err != nil {
+			t.Fatalf("reserve %d: %v", index, err)
 		}
 	}
-	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
-	if err := store.reserve(t.Context(), "claude", "session", "tool", resolution); err == nil {
-		t.Fatal("unbounded correlation directory was accepted")
+	fillCorrelationDir(t, dir, util.AtomicTempPrefix+"pending-abandoned.json", 16, correlationLockTTL+time.Minute)
+	fillCorrelationDir(t, dir, "foreign", 2*MaxCorrelationEntries, correlationActiveTTL+time.Hour)
+	if err := store.reserve(t.Context(), "claude", "session", "launch", resolution); err != nil {
+		t.Fatalf("launch refused by debris: %v", err)
+	}
+	requireStoreRows(t, dir, MaxCorrelationEntries)
+	if matches, err := filepath.Glob(filepath.Join(dir, util.AtomicTempPrefix+"*")); err != nil || len(matches) != 0 {
+		t.Fatalf("abandoned temporary files survived the sweep: %v, %v", matches, err)
+	}
+	if matches, err := filepath.Glob(filepath.Join(dir, "foreign-*")); err != nil || len(matches) != 2*MaxCorrelationEntries {
+		t.Fatalf("foreign entries = %d (%v), want all %d kept", len(matches), err, 2*MaxCorrelationEntries)
 	}
 }

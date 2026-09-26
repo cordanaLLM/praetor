@@ -28,8 +28,12 @@ const (
 	correlationPendingTTL   = 5 * time.Minute
 	correlationActiveTTL    = 24 * time.Hour
 	correlationDirRel       = "praetor/agenthook-correlations"
-	correlationDirOverhead  = 3
-	correlationDirLimit     = MaxCorrelationEntries + correlationDirOverhead
+	// correlationScanLimit bounds one sweep's directory read (HISS-02). Only live rows count
+	// against MaxCorrelationEntries, and eviction keeps them there; the rest of the bound is
+	// room for the lock, temporary files the sweep removes once stale, and entries Praetor
+	// did not write, which the sweep leaves alone. More entries than this fail closed with
+	// the bound named instead of being read in part.
+	correlationScanLimit = 1024
 )
 
 // errNoCorrelation reports an agent without a Praetor-owned dispatch binding: launched
@@ -370,16 +374,18 @@ const (
 )
 
 // cleanup removes expired rows and abandoned temporary files, and returns the live rows.
-// The directory read is bounded: more entries than the store can legitimately hold fail
-// closed instead of being listed.
+// The directory read is bounded by correlationScanLimit, not by the row cap: abandoned
+// temporary files and foreign entries never count against MaxCorrelationEntries, so they
+// cannot wedge the store below the scan bound, and the sweep removes the stale ones before
+// the caller evicts or reserves.
 func (s correlationStore) cleanup() ([]correlationFile, error) {
 	entries, err := s.list()
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	live := make([]correlationFile, 0, len(entries))
-	for index := 0; index < len(entries) && index < correlationDirLimit; index++ {
+	live := make([]correlationFile, 0, min(len(entries), MaxCorrelationEntries+1))
+	for index := 0; index < len(entries) && index < correlationScanLimit; index++ {
 		entry := entries[index]
 		switch correlationFileStateOf(entry, now) {
 		case correlationLive:
@@ -394,13 +400,13 @@ func (s correlationStore) cleanup() ([]correlationFile, error) {
 	return live, nil
 }
 
-// list reads at most correlationDirLimit entries of the store directory.
+// list reads at most correlationScanLimit entries of the store directory.
 func (s correlationStore) list() ([]os.FileInfo, error) {
 	dir, err := os.Open(s.dir)
 	if err != nil {
 		return nil, fmt.Errorf("open correlation store: %w", err)
 	}
-	entries, readErr := dir.Readdir(correlationDirLimit + 1)
+	entries, readErr := dir.Readdir(correlationScanLimit + 1)
 	closeErr := dir.Close()
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
 		return nil, errors.Join(fmt.Errorf("read correlation store: %w", readErr), closeErr)
@@ -408,8 +414,8 @@ func (s correlationStore) list() ([]os.FileInfo, error) {
 	if closeErr != nil {
 		return nil, fmt.Errorf("close correlation store: %w", closeErr)
 	}
-	if len(entries) > correlationDirLimit {
-		return nil, fmt.Errorf("correlation store exceeds %d directory entries", correlationDirLimit)
+	if len(entries) > correlationScanLimit {
+		return nil, fmt.Errorf("correlation store %s holds more than %d entries; remove what Praetor did not write there, or reset the store", s.dir, correlationScanLimit)
 	}
 	return entries, nil
 }

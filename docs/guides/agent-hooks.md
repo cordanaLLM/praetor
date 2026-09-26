@@ -6,20 +6,18 @@ contain that call and nothing else.
 The command reads the client's payload from stdin, takes the workspace from the payload,
 judges the call in process and answers in that client's dialect.
 
-This page describes what ships today. The legacy command and checkpoint rows still call
-the Python adapters under `.config/agent/hooks/`; moving those rows and Lefthook jobs to
-this entrypoint remains later work. The subagent text rows are tracked now.
-`.claude/settings.json`, `.codex/hooks.json` and `.gemini/settings.json` reach this
-entrypoint through the skew guard `.config/agent/hooks/praetor_hook.py`;
-`.agents/plugins/praetor/hooks.json` reaches it through the guard's copy in the plugin
-directory. The guard exists so that an engine older than a row can never block a client
-([Rollout](#rollout-engine-skew-never-blocks-a-client)).
+This page describes what ships today. The legacy command and checkpoint rows in
+`.claude/settings.json`, `.codex/hooks.json`, `.gemini/settings.json` and
+`.config/lefthook/praetor.yml` still call the Python adapters under `.config/agent/hooks/`
+and guard live sessions (see [Registrations in use today](#registrations-in-use-today)).
+They move to this entrypoint after both implementations have been replayed against the same
+payloads (see [Parity](#parity-with-the-python-guard)).
 
-The legacy rows in `.claude/settings.json`, `.codex/hooks.json`, `.gemini/settings.json`
-and `.config/lefthook/praetor.yml` still guard live sessions (see
-[Registrations in use today](#registrations-in-use-today)); they move to this entrypoint
-after both implementations have been replayed against the same payloads (see
-[Parity](#parity-with-the-python-guard)).
+The subagent text rows are tracked now. `.claude/settings.json`, `.codex/hooks.json` and
+`.gemini/settings.json` reach this entrypoint through the skew guard
+`.config/agent/hooks/praetor_hook.py`; `.agents/plugins/praetor/hooks.json` reaches it
+through the guard's copy in the plugin directory. The guard exists so that an engine older
+than a row can never block a client ([Rollout](#rollout-engine-skew-never-blocks-a-client)).
 
 ## Registrations in use today
 
@@ -234,10 +232,14 @@ The store holds at most 128 rows (`MaxCorrelationEntries`,
 written row instead of refusing, so bindings leaked by agents killed before `SubagentStop`
 never shut off later launches. An evicted agent is unowned, so its return is a stated skip.
 Each sweep also removes an atomic-write temporary file older than the two-minute lock lease,
-which a writer killed mid-write leaves behind. To reset the store by hand, delete the
-`praetor/agenthook-correlations` directory under the path `git rev-parse --git-common-dir`
-prints. Every bound agent then reports as unowned, and the next launch creates the directory
-again (`TestCorrelationStoreEvictsOldestAtCapacity`,
+which a writer killed mid-write leaves behind. Only rows count against the cap: temporary
+files and entries Praetor did not write do not, and the sweep leaves the latter alone. One
+sweep reads at most 1,024 directory entries (`correlationScanLimit`); a directory with more
+fails closed with that bound in the error rather than being read in part. To reset the store
+by hand, delete the `praetor/agenthook-correlations` directory under the path
+`git rev-parse --git-common-dir` prints. Every bound agent then reports as unowned, and the
+next launch creates the directory again (`TestCorrelationStoreEvictsOldestAtCapacity`,
+`TestCorrelationStoreFullOfRowsSurvivesDebris`, `TestCorrelationStoreScanBoundIsNotTheRowCap`,
 `TestClaudeDispatchSurvivesAFullStoreOfLeakedBindings`).
 
 Claude Code 2.1.271 and later can deliver an auto-mode report through the documented
