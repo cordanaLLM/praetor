@@ -262,7 +262,14 @@ func archetypeSources(ctx context.Context, rootDir string) (profiles, facets map
 
 // optionalArchetypeIndex returns a nil index only when the directory is absent; one that
 // exists but cannot be indexed, including a path that is not a directory, is an error.
+// A relative root resolves against the working directory, as normalizeEffectiveOptions
+// resolves CatalogRoot, because ConfinePath returns an absolute path and the index
+// relativizes every entry against root.
 func optionalArchetypeIndex(ctx context.Context, root, rel string) (map[string]string, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve archetype catalog root: %w", err)
+	}
 	path, err := util.ConfinePath(root, rel)
 	if err != nil {
 		return nil, err

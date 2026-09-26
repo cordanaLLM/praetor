@@ -209,6 +209,36 @@ func TestValidateLockfileRelativeRoot(t *testing.T) {
 	}
 }
 
+// A relative CatalogRoot resolves against the working directory, as EffectiveOptions
+// resolves its CatalogRoot, so both gates accept the same --catalog-root spelling.
+func TestValidateLockfileRelativeCatalogRoot(t *testing.T) {
+	root, manifest := writeConfigLockFixture(t, lockTestDocument())
+	catalog := t.TempDir()
+	writeLockTestCatalog(t, catalog, "framework.yaml", lockTestSource)
+	work := filepath.Join(filepath.Dir(catalog), "work")
+	if err := os.Mkdir(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(work)
+	for _, spelling := range []string{
+		filepath.Join("..", filepath.Base(catalog)),                              // positive: parent-relative
+		filepath.Join("..", "work", "..", filepath.Base(catalog)),                // boundary: uncleaned
+		filepath.Join("..", filepath.Base(catalog)) + string(filepath.Separator), // boundary: trailing separator
+	} {
+		opts := LockValidationOptions{Root: root, CatalogRoot: spelling, RequireSources: true}
+		result, err := ValidateLockfileWithOptions(context.Background(), opts, manifest)
+		if err != nil || !result.Verified() {
+			t.Fatalf("relative catalog %q must verify: %+v / %v", spelling, result, err)
+		}
+	}
+	// Negative: a relative catalog is still hashed, so tampering is a mismatch.
+	writeLockTestCatalog(t, catalog, "framework.yaml", lockTestSource+"changed: true\n")
+	opts := LockValidationOptions{Root: root, CatalogRoot: filepath.Join("..", filepath.Base(catalog)), RequireSources: true}
+	if _, err := ValidateLockfileWithOptions(context.Background(), opts, manifest); !errors.Is(err, ErrLockDigestMismatch) {
+		t.Fatalf("tampered relative catalog must fail: %v", err)
+	}
+}
+
 func TestValidateLockfileNegativePinsAndDigests(t *testing.T) {
 	for _, tc := range []struct {
 		name string

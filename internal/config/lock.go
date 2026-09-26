@@ -44,8 +44,9 @@ func (v *LockValidation) Verified() bool {
 type LockValidationOptions struct {
 	// Root holds .standards.lock; the lock read is confined to it.
 	Root string
-	// CatalogRoot holds the pinned .config/archetypes. Empty selects Root, as
-	// EffectiveOptions resolves its CatalogRoot; callers authorize an explicit path.
+	// CatalogRoot holds the pinned .config/archetypes. Empty selects Root and a relative
+	// path resolves against the working directory, as EffectiveOptions resolves its
+	// CatalogRoot; callers authorize an explicit path.
 	CatalogRoot string
 	// RequireSources fails with ErrLockUnverifiable instead of returning
 	// LockStatusUnverifiable. Gates that certify content digests set it.

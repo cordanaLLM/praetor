@@ -91,6 +91,31 @@ func TestAdoptExistingLockReportsVerificationOutcome(t *testing.T) {
 	}
 }
 
+// Rerunning adoption with the same relative --lock-source-root verifies the lock the
+// first run generated from it.
+func TestAdoptExistingLockRelativeSourceRoot(t *testing.T) {
+	s := lockAdoptSession(t)
+	source := newAdoptLockSource(t)
+	t.Chdir(filepath.Dir(source))
+	s.opts.LockSourceRoot = filepath.Join(".", filepath.Base(source))
+	mustWrite(t, filepath.Join(s.repoPath, manifestFile), "version: 1\nprofiles: [framework]\n")
+	if err := reconcileLockfile(context.Background(), s); err != nil {
+		t.Fatalf("first run must generate from a relative source: %v", err)
+	}
+	// Positive: the second run hashes the same relative source bundle.
+	if err := reconcileLockfile(context.Background(), s); err != nil {
+		t.Fatalf("rerun with a relative source must verify: %v", err)
+	}
+	if detail := lastLockDetail(t, s); detail != "Verified existing version pins and content digests" {
+		t.Fatalf("relative source must verify content: %q", detail)
+	}
+	// Negative: tampered content under the relative source is a mismatch.
+	mustWrite(t, filepath.Join(source, ".config", "archetypes", "framework.yaml"), "id: framework\nname: Changed\n")
+	if err := reconcileLockfile(context.Background(), s); !errors.Is(err, config.ErrLockDigestMismatch) {
+		t.Fatalf("tampered relative source must fail: %v", err)
+	}
+}
+
 func TestAdoptLockRejectsPlaceholderAndExplicitlyRepairsIt(t *testing.T) {
 	s := lockAdoptSession(t)
 	mustWrite(t, filepath.Join(s.repoPath, manifestFile), "version: 1\nprofiles: [framework]\n")
