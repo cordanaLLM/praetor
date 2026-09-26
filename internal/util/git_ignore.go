@@ -26,18 +26,11 @@ func GitIgnoredPaths(ctx context.Context, dir string, relPaths []string, noIndex
 	if len(relPaths) == 0 {
 		return nil, nil
 	}
-	if len(relPaths) > maxGitIgnoreQueryPaths {
-		return nil, fmt.Errorf("git check-ignore query exceeds %d paths", maxGitIgnoreQueryPaths)
+	input, err := checkIgnoreInput(relPaths)
+	if err != nil {
+		return nil, err
 	}
-	var input bytes.Buffer
-	for i := 0; i < len(relPaths) && i < maxGitIgnoreQueryPaths; i++ {
-		if relPaths[i] == "" || strings.ContainsRune(relPaths[i], 0) {
-			return nil, fmt.Errorf("git check-ignore path %q is empty or holds a NUL byte", relPaths[i])
-		}
-		input.WriteString(relPaths[i])
-		input.WriteByte(0)
-	}
-	stdinCtx, err := WithCommandStdin(ctx, input.Bytes())
+	stdinCtx, err := WithCommandStdin(ctx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -53,6 +46,23 @@ func GitIgnoredPaths(ctx context.Context, dir string, relPaths []string, noIndex
 		return nil, nil
 	}
 	return splitNUL(result.Stdout), nil
+}
+
+// checkIgnoreInput renders relPaths as the NUL-terminated records check-ignore --stdin -z
+// reads, refusing a query past the bound and a path that is empty or would split a record.
+func checkIgnoreInput(relPaths []string) ([]byte, error) {
+	if len(relPaths) > maxGitIgnoreQueryPaths {
+		return nil, fmt.Errorf("git check-ignore query exceeds %d paths", maxGitIgnoreQueryPaths)
+	}
+	var input bytes.Buffer
+	for i := 0; i < len(relPaths) && i < maxGitIgnoreQueryPaths; i++ {
+		if relPaths[i] == "" || strings.ContainsRune(relPaths[i], 0) {
+			return nil, fmt.Errorf("git check-ignore path %q is empty or holds a NUL byte", relPaths[i])
+		}
+		input.WriteString(relPaths[i])
+		input.WriteByte(0)
+	}
+	return input.Bytes(), nil
 }
 
 // splitNUL splits NUL-terminated records, dropping the empty tail.
