@@ -30,6 +30,29 @@ the same ledgerless directory at once; staged publication means each name is
 either absent or holds its whole template, never a zero-byte file an audit would
 read as a corrupt ledger.
 
+Both forms of `praetorctl state init` then make Git ignore the directory, unless
+the path is not a directory at all. Git is asked whether its own ignore rules
+exclude `.workingdir` itself; global excludes do not count, because every clone
+must inherit the rule. A directory excluded as a whole keeps every file under it
+private, whatever negations follow; a rule such as `.workingdir/*` followed by
+`!.workingdir/STATE.md` does not. The command acts on the answer:
+
+| Git's answer | What `state init` does |
+| :--- | :--- |
+| the directory is in no Git work tree | nothing; no commit can publish it |
+| the directory is already excluded, in any spelling | nothing; `.gitignore` stays byte for byte |
+| not excluded, and `adoption.decline` names `git-ignore` | prints a warning; `.gitignore` belongs to the operator |
+| not excluded | appends the private-artifact block `praetorctl adopt` maintains, reports it, and asks Git again |
+
+The block is written by the same function adoption uses, `writeManagedGitIgnore`
+in [`internal/adopt/gitignore.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/gitignore.go),
+so a later `praetorctl adopt` recognizes it as its own. A `.gitignore` that
+cannot be merged, such as one with an unterminated managed block, fails the
+command. The behaviour is covered by
+[`internal/adopt/private_ignore_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/private_ignore_test.go)
+and
+[`cmd/standardsctl/state_ignore_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/state_ignore_test.go).
+
 Bug mutations validate the entire `.workingdir/BUGS.md` before changing it. A
 malformed row, duplicate or noncanonical ID, invalid severity/status, unreadable
 file, symlink, or exceeded size limit returns an error. Audit, state sync and

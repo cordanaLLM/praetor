@@ -99,38 +99,54 @@ func (scan *gitIgnoreScan) consume(line string, index int) error {
 	return nil
 }
 
+// adoptGitIgnoreSeed is the file adoption starts a repository without .gitignore from: the
+// build artefacts every flavour produces, ahead of the managed block.
+const adoptGitIgnoreSeed = "bin/\n*.test\n*.out\n.DS_Store\n"
+
 // reconcileGitIgnore appends the managed rules that are absent after any older opt-ins,
 // preserving existing bytes. It never untracks or removes existing private files.
 func reconcileGitIgnore(ctx context.Context, s *adoptSession) error {
-	full, err := repoFile(s.repoPath, gitIgnoreFile)
-	if err != nil {
+	existed, changed, err := writeManagedGitIgnore(ctx, s.repoPath, adoptGitIgnoreSeed, s.opts.DryRun)
+	switch {
+	case err != nil:
 		return err
-	}
-	data, exists, err := contextopt.ObserveSnapshot(ctx, full)
-	if err != nil {
-		return err
-	}
-	text := string(data)
-	if !exists {
-		text = "bin/\n*.test\n*.out\n.DS_Store\n"
-	}
-	merged, err := mergeGitIgnore(text)
-	if err != nil {
-		return err
-	}
-	if merged == string(data) {
+	case !changed:
 		s.report.recordReconciled(gitIgnoreFile, "Private artifact ignore tail block already effective")
-		return nil
-	}
-	if !s.opts.DryRun {
-		if err := contextopt.ReplaceSnapshot(ctx, full, []byte(merged), contextopt.ReplaceOptions{Expected: data, Exists: exists, Mode: filePerm}); err != nil {
-			return err
-		}
-	}
-	if exists {
+	case existed:
 		s.report.recordReconciledAs(gitIgnoreFile, actionAppend, "Preserved existing rules and excluded private working directory, gate worktrees and the AGY workspace configuration")
-	} else {
+	default:
 		s.report.recordCreated(gitIgnoreFile, "Created ignore rules for build artifacts, private working directory, gate worktrees and the AGY workspace configuration")
 	}
 	return nil
+}
+
+// writeManagedGitIgnore is the one read, merge and publish of the managed tail block;
+// adoption and EnsurePrivateIgnore both go through it (HISS-19). seed is the content a
+// repository without .gitignore starts from. It reports whether .gitignore existed and
+// whether the merge changed it; a dry run reports the change without writing it.
+func writeManagedGitIgnore(ctx context.Context, repoPath, seed string, dryRun bool) (existed, changed bool, err error) {
+	full, err := repoFile(repoPath, gitIgnoreFile)
+	if err != nil {
+		return false, false, err
+	}
+	data, exists, err := contextopt.ObserveSnapshot(ctx, full)
+	if err != nil {
+		return false, false, err
+	}
+	text := string(data)
+	if !exists {
+		text = seed
+	}
+	merged, err := mergeGitIgnore(text)
+	if err != nil {
+		return exists, false, err
+	}
+	if exists && merged == string(data) {
+		return true, false, nil
+	}
+	if dryRun {
+		return exists, true, nil
+	}
+	options := contextopt.ReplaceOptions{Expected: data, Exists: exists, Mode: filePerm}
+	return exists, true, contextopt.ReplaceSnapshot(ctx, full, []byte(merged), options)
 }

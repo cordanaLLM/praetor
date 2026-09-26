@@ -4,10 +4,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -103,7 +105,7 @@ func runStateInit(args []string) error {
 		return fmt.Errorf("state init failed: %w", err)
 	}
 	fmt.Printf("Initialized %s/ in %s\n", state.WorkingDirName, dir)
-	return nil
+	return ignoreStateLedger(dir)
 }
 
 func bootstrapState(dir string) error {
@@ -112,6 +114,28 @@ func bootstrapState(dir string) error {
 		return fmt.Errorf("state bootstrap failed: %w", err)
 	}
 	fmt.Printf("%s; audit still required\n", bootstrapReport(outcome, dir))
+	if outcome == state.BootstrapUnseedable {
+		return nil
+	}
+	return ignoreStateLedger(dir)
+}
+
+// ignoreStateLedger makes Git exclude the ledger `state init` just wrote or kept, through
+// the same .gitignore writer adoption uses, and says so whenever it had to act. Standalone
+// initialization used to leave the private files unignored in every repository that had
+// not been adopted, so the next broad staging command would have published them.
+func ignoreStateLedger(dir string) error {
+	outcome, err := adopt.EnsurePrivateIgnore(context.Background(), dir)
+	if err != nil {
+		return fmt.Errorf("state init could not make Git ignore %s/: %w", state.WorkingDirName, err)
+	}
+	switch outcome {
+	case adopt.PrivateIgnoreWritten:
+		fmt.Printf("Added the Praetor private-artifact block to .gitignore in %s; Git now ignores %s/\n", dir, state.WorkingDirName)
+	case adopt.PrivateIgnoreDeclined:
+		fmt.Fprintf(os.Stderr, "Warning: Git does not ignore %s/ in %s and adoption.decline declines git-ignore; add /%s/ to the operator-owned .gitignore\n",
+			state.WorkingDirName, dir, state.WorkingDirName)
+	}
 	return nil
 }
 
