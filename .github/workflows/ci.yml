@@ -312,7 +312,7 @@ jobs:
   # the same resolution (HISS-21).
   docs-presets:
     name: Documentation Preset Builds
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
 
     steps:
