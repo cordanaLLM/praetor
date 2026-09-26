@@ -1,4 +1,0 @@
-type: changed
-title: Refuse an OPEN.md holding an unterminated code fence rather than silently dropping every row after it - state task list, complete, archive and add, and with them the state sync that gates every commit, now fail with the line the fence was opened on
-issue: "#286"
-breaking: true
