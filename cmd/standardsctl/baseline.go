@@ -5,10 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // baselineScanTimeout bounds the repository walk performed by --record (HISS-02).
@@ -55,6 +58,14 @@ func recordBaseline(path string, previous *baseline.Baseline, opts baseline.Reco
 
 	if scanRep.Truncated {
 		return fmt.Errorf("refusing to record an incomplete baseline: %w", hiss.ErrScanTruncated)
+	}
+
+	repoDir := filepath.Dir(path)
+	if manifest, err := config.LoadManifest(filepath.Join(repoDir, ".standards.yaml")); err == nil {
+		opts.Repository = manifest.Repository.Owner + "/" + manifest.Repository.Name
+	}
+	if out, err := util.RunGit(ctx, repoDir, "rev-parse", "HEAD"); err == nil {
+		opts.CommitSHA = strings.TrimSpace(out)
 	}
 
 	next, err := baseline.Record(previous, fingerprintViolations(scanRep.Violations), opts)

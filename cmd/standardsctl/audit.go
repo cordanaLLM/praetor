@@ -224,7 +224,7 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		return missingBaselineFailure(opts.baselinePath, len(current))
 	}
 	if !ratchet.Passed {
-		return fmt.Errorf("[FAIL] %s", ratchet.Describe())
+		return fmt.Errorf("[FAIL] %s", ratchet.Summary())
 	}
 	fmt.Printf("[PASS] HISS invariant scan verified: %d active violations within %d baselined limit (%d touched files clean) (skipped: %d ignored directories, %d symlinks, %d oversize files, %d non-regular files).\n",
 		ratchet.CurrentCount, base.TotalInfractions, len(touched), scanRep.Skips.DirCount,

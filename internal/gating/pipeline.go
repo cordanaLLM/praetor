@@ -381,7 +381,7 @@ func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
 		// The same rendering `praetorctl audit` prints, so the rejection names each new
 		// violation's file, line and rule rather than only how many there are (BUG-792).
 		return "", fmt.Errorf("hiss ratchet failed against a baseline of %d: %s",
-			base.TotalInfractions, ratchet.Describe())
+			base.TotalInfractions, ratchet.Summary())
 	}
 	msg := fmt.Sprintf("%d infractions within the %d baselined limit (function length limit %d)",
 		ratchet.CurrentCount, base.TotalInfractions, scanOpts.MaxFuncLOC)

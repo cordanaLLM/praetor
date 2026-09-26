@@ -46,6 +46,9 @@ func FuzzBaselineRatchet(f *testing.F) {
 		}
 		assertRatchetCountsAgree(t, base, current, res)
 		assertRatchetPartitionsViolations(t, base, touched, res)
+		if !res.Passed && len(res.NewViolations) == 0 && len(res.TouchedCleanViolations) == 0 && !res.CountRegressed {
+			t.Fatalf("!Passed implies a reason; res=%+v", res)
+		}
 	})
 }
 
