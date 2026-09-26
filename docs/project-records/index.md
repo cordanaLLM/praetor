@@ -1,7 +1,7 @@
 # Project records
 
 These are historical design records: plans and research written while features were being
-designed. Each page states its status and the date or commit it was reviewed against, and
+designed. Most pages state their status and the date or commit they were reviewed against, but
 none is maintained as current documentation. For how Praetor behaves today, read the
 [Guides](../guides/index.md), the [HISS specification](../standards/hiss-spec.md) and the
 [architecture decisions](../adr/README.md).

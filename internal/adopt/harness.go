@@ -119,18 +119,18 @@ func foreignInstructions(existing string) string {
 func buildAgentHarnessDirectives() string {
 	return `## Core Directives & Invariants (Modernized NASA JPL Power-of-10)
 
-| Invariant | Scope | NASA Rule | Enforcement Mechanism | Failure Action |
-| :--- | :--- | :--- | :--- | :--- |
-| **HISS-01** | Control Flow | Rule 1 | Recursion strictly prohibited; call graph must be DAG; zero ` + "`goto`" + `. | Immediate build failure |
-| **HISS-02** | Loops & I/O | Rule 2 | Scalar upper bound on all loops; explicit ` + "`context.Context`" + ` timeout on all I/O. | Semgrep / AST error |
-| **HISS-03** | Memory | Rule 3 | Zero dynamic heap allocation (` + "`malloc` / `free`" + `) in hot simulation/tick loops. | Allocation audit sweep |
-| **HISS-04** | Complexity | Rule 4 | Function length $\le 60$ LOC, McCabe Cyclomatic $\le 10$, Statements $\le 50$. | AST sweep blocker |
-| **HISS-07** | Error Handling | Rule 7 | Zero ` + "`.unwrap()` / `.expect()`" + `; all errors handled or wrapped with context. | Linter / Compiler error |
-| **HISS-08** | Determinism | Rule 8 | Zero dynamic execution (` + "`eval` / `exec`" + `); zero banned unsafe libc (` + "`gets` / `strcpy` / `sprintf`" + `). | AST / Linter error |
-| **HISS-09** | Reference Safety | Rule 9 | Mandatory ` + "`// SAFETY:`" + ` proofs for all pointer arithmetic and ` + "`unsafe`" + ` blocks. | AST check blocker |
-| **HISS-10** | Warning Hygiene | Rule 10 | Zero-warning tolerance across compiler, linter, and format sweeps. | Exit code 1 |
-| **HISS-15** | 3D Testing | Rule 5 | Positive, negative, and boundary tests mandatory for all public interfaces. | CI coverage gate |
-| **HISS-16** | Context Integrity | Fleet | Single canonical ` + "`AGENTS.md`" + `; vendor files compiled via ` + "`praetorctl compile-context`" + `. | Pre-commit blocker |
+| Invariant | Rule | Enforcement | On fail |
+| :--- | :--- | :--- | :--- |
+| **HISS-01** control flow | Recursion strictly prohibited; call graph must be DAG; zero ` + "`goto`" + `. | build | immediate build failure |
+| **HISS-02** loops, I/O | Scalar upper bound on all loops; explicit ` + "`context.Context`" + ` timeout on all I/O. | Semgrep / AST | error |
+| **HISS-03** memory | Zero dynamic heap allocation (` + "`malloc` / `free`" + `) in hot simulation/tick loops. | Allocation audit sweep | error |
+| **HISS-04** complexity | Function length $\le 60$ LOC, McCabe Cyclomatic $\le 10$, Statements $\le 50$. | AST sweep | blocker |
+| **HISS-07** error handling | Zero ` + "`.unwrap()` / `.expect()`" + `; all errors handled or wrapped with context. | Linter / Compiler | error |
+| **HISS-08** determinism | Zero dynamic execution (` + "`eval` / `exec`" + `); zero banned unsafe libc (` + "`gets` / `strcpy` / `sprintf`" + `). | AST / Linter | error |
+| **HISS-09** reference safety | Mandatory ` + "`// SAFETY:`" + ` proofs for all pointer arithmetic and ` + "`unsafe`" + ` blocks. | AST check | blocker |
+| **HISS-10** warnings | Zero-warning tolerance across compiler, linter, and format sweeps. | sweep | exit code 1 |
+| **HISS-15** 3D testing | Positive, negative, and boundary tests mandatory for all public interfaces. | CI coverage gate | blocker |
+| **HISS-16** context integrity | Single canonical ` + "`AGENTS.md`" + `; vendor files compiled via ` + "`praetorctl compile-context`" + `. | pre-commit | blocker |
 
 ## Operational Rules
 

@@ -1,4 +1,4 @@
-# Bug ledger integrity
+# State ledger integrity
 
 The entire `.workingdir/` directory is private, Git-ignored workstation state.
 Keep cluster connection guides, backend notes and raw evidence there; publish

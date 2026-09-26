@@ -744,7 +744,7 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 // ---- HISS rule explanations ----------------------------------------------------------------
 
 // knownRuleIDs returns the explainable rule identifiers in ascending order: every invariant
-// of the HISS catalog in internal/hiss, the same registry the generated wiki matrix renders.
+// of the HISS catalog in internal/hisscatalog, the same registry the generated wiki matrix renders.
 func knownRuleIDs() []string {
 	return hisscatalog.RuleIDs()
 }

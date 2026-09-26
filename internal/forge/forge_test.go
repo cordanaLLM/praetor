@@ -920,17 +920,20 @@ func TestGenerateWiki_Boundary_RepoNameFromRelativeRoot(t *testing.T) {
 	ctx := context.Background()
 
 	agents := canonicalAgentsMD(t)
-	manifest, err := GenerateWiki(ctx, wikiRepoRoot(t, "my-repo", agents), t.TempDir())
+	root := wikiRepoRoot(t, "my-repo", agents)
+	manifest, err := GenerateWiki(ctx, root, t.TempDir())
 	if err != nil {
 		t.Fatalf("unexpected error generating wiki: %v", err)
 	}
-	if !strings.Contains(manifest.Pages[0].Content, "cordanaLLM/my-repo Wiki Portal") {
+	wantMyRepo := filepath.Base(filepath.Dir(root)) + "/my-repo Wiki Portal"
+	if !strings.Contains(manifest.Pages[0].Content, wantMyRepo) {
 		t.Errorf("home page does not name the repository: %s", manifest.Pages[0].Content[:80])
 	}
 
 	// "." is what the CLI passes; it must resolve to the working directory's name, not
 	// to a hard-coded placeholder.
-	t.Chdir(wikiRepoRoot(t, "relative-repo", agents))
+	relRoot := wikiRepoRoot(t, "relative-repo", agents)
+	t.Chdir(relRoot)
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -939,9 +942,9 @@ func TestGenerateWiki_Boundary_RepoNameFromRelativeRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error generating wiki from '.': %v", err)
 	}
-	want := "cordanaLLM/" + filepath.Base(cwd) + " Wiki Portal"
+	want := filepath.Base(filepath.Dir(cwd)) + "/" + filepath.Base(cwd) + " Wiki Portal"
 	if !strings.Contains(relManifest.Pages[0].Content, want) {
-		t.Errorf("expected home page to contain %q", want)
+		t.Errorf("expected home page to contain %q, got %q", want, relManifest.Pages[0].Content[:80])
 	}
 }
 

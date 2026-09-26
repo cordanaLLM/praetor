@@ -1,7 +1,7 @@
 # The High-Integrity Systems Standard (HISS)
 
 HISS establishes formal engineering determinism across polyglot repositories. It defines
-21 invariants, HISS-01 through HISS-21; [[HISS-Matrix]] lists every one with its enforcement.
+21 invariants, HISS-01 through HISS-21; [HISS-Matrix](HISS-Matrix.md) lists every one with its enforcement.
 HISS-16 is one of them, the context-integrity invariant, not the name of the standard.
 
 ## Gated Invariants

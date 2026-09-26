@@ -4,10 +4,10 @@ These guides cover the private state Praetor keeps for a repository and the plan
 on it: the `.workingdir/` ledger, planning drafts, the wishes ledger, issue synchronization
 and the cleanup of released resources.
 
-Read [Bug ledger integrity](../state-ledger-integrity.md) first: every other page here reads
+Read [State ledger integrity](../state-ledger-integrity.md) first: every other page here reads
 or writes that ledger.
 
-- [Bug ledger integrity](../state-ledger-integrity.md): the private `.workingdir/` ledger,
+- [State ledger integrity](../state-ledger-integrity.md): the private `.workingdir/` ledger,
   its audit and the rules that keep it consistent.
 - [Detailed planning drafts](../planning-drafts.md): `praetorctl planning prepare` compiles
   a typed draft into linked proposal artifacts.

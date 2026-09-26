@@ -10,6 +10,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Invariant bounds adhering to HISS-02.
@@ -19,8 +20,6 @@ const (
 	wikiPageFilePerm = 0o644
 	// wikiDirPerm is the mode applied to the generated wiki output directory.
 	wikiDirPerm = 0o750
-	// wikiOwner is the organization the generated wiki portal belongs to.
-	wikiOwner = "cordanaLLM"
 	// wikiCanonicalSource is the file whose "Core Directives & Invariants" table the HISS
 	// pages copy: the AGENTS.md that compile-context reads as its --source default.
 	wikiCanonicalSource = "AGENTS.md"
@@ -60,7 +59,7 @@ func GenerateWiki(ctx context.Context, repoRoot, outputDir string) (*WikiManifes
 		return nil, errors.New("output directory cannot be empty")
 	}
 
-	repoName, err := resolveWikiRepoName(repoRoot)
+	repoName, err := resolveWikiRepoName(ctx, repoRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -105,20 +104,15 @@ func readGatedInvariants(ctx context.Context, repoRoot string) ([]hisscatalog.Ga
 }
 
 // resolveWikiRepoName derives the "<owner>/<repo>" name the wiki portal is generated for.
-//
-// The caller commonly passes ".", so the path is made absolute before its last element is
-// taken: filepath.Base(".") is "." and would otherwise select a hard-coded placeholder
-// name that is wrong for every real invocation.
-func resolveWikiRepoName(repoRoot string) (string, error) {
-	absRoot, err := filepath.Abs(strings.TrimSpace(repoRoot))
+func resolveWikiRepoName(ctx context.Context, repoRoot string) (string, error) {
+	owner, repo, err := util.ResolveRepoIdentity(ctx, repoRoot)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve repository root %q: %w", repoRoot, err)
+		return "", fmt.Errorf("cannot derive a repository name from %q: %w", repoRoot, err)
 	}
-	base := filepath.Base(filepath.Clean(absRoot))
-	if base == "." || base == ".." || base == string(filepath.Separator) || base == "" {
-		return "", fmt.Errorf("cannot derive a repository name from %q", repoRoot)
+	if owner == "" || repo == "" {
+		return "", fmt.Errorf("cannot derive a complete repository name from %q", repoRoot)
 	}
-	return wikiOwner + "/" + base, nil
+	return owner + "/" + repo, nil
 }
 
 func writeWikiPages(ctx context.Context, out generatedDir, pages []WikiPage) error {
@@ -163,11 +157,11 @@ flowchart LR
 
 | Document | Description |
 | :--- | :--- |
-| [[%s]] | The High-Integrity Systems Standard (HISS) and the invariants AGENTS.md gates, with the rule and verification for each. |
-| [[%s]] | The full HISS catalog of %s, with the enforcement and failure action of each. |
-| [[Architecture-Lattice]] | Mathematical join-semilattice and Highest Standard Wins resolution. |
-| [[API-Reference]] | CLI commands, MCP tools, and multi-forge driver specifications. |
-`, repoName, hissInvariantsPage, hissMatrixPage, catalogRange(rules))
+| [%s](%s.md) | The High-Integrity Systems Standard (HISS) and the invariants AGENTS.md gates, with the rule and verification for each. |
+| [%s](%s.md) | The full HISS catalog of %s, with the enforcement and failure action of each. |
+| [Architecture-Lattice](Architecture-Lattice.md) | Mathematical join-semilattice and Highest Standard Wins resolution. |
+| [API-Reference](API-Reference.md) | CLI commands, MCP tools, and multi-forge driver specifications. |
+`, repoName, hissInvariantsPage, hissInvariantsPage, hissMatrixPage, hissMatrixPage, catalogRange(rules))
 
 	return WikiPage{
 		Name:    "Home.md",
@@ -176,7 +170,7 @@ flowchart LR
 	}
 }
 
-// Wiki page names of the HISS pages, without the .md suffix, as [[links]] spell them. The
+// Wiki page names of the HISS pages, without the .md suffix, as [links](links.md) spell them. The
 // invariants page was published as HISS-16-Invariants until the page was named after the
 // standard; hissInvariantsMovedPage keeps that name resolving for existing links.
 const (
@@ -239,7 +233,7 @@ func generateHISSInvariantsWiki(rules []hisscatalog.Rule, gated []hisscatalog.Ga
 	content := `# The High-Integrity Systems Standard (HISS)
 
 HISS establishes formal engineering determinism across polyglot repositories. It defines
-` + catalogRange(rules) + `; [[` + hissMatrixPage + `]] lists every one with its enforcement.
+` + catalogRange(rules) + `; [` + hissMatrixPage + `](` + hissMatrixPage + `.md) lists every one with its enforcement.
 HISS-16 is one of them, the context-integrity invariant, not the name of the standard.
 
 ## Gated Invariants
@@ -268,13 +262,13 @@ flowchart TD
 
 // generateHISSInvariantsMovedWiki keeps the page's former name published as a pointer. The
 // wiki sync removes a page it published before once docs/wiki stops carrying it
-// (scripts/sync_github_wiki.sh), so without this stub every existing [[HISS-16-Invariants]]
+// (scripts/sync_github_wiki.sh), so without this stub every existing [HISS-16-Invariants](HISS-16-Invariants.md)
 // link and bookmark would break.
 func generateHISSInvariantsMovedWiki() WikiPage {
 	content := `# Moved: HISS Invariants
 
-This page is now [[` + hissInvariantsPage + `]]. The standard is named HISS; HISS-16 is only
-its context-integrity invariant. [[` + hissMatrixPage + `]] lists every invariant.
+This page is now [` + hissInvariantsPage + `](` + hissInvariantsPage + `.md). The standard is named HISS; HISS-16 is only
+its context-integrity invariant. [` + hissMatrixPage + `](` + hissMatrixPage + `.md) lists every invariant.
 `
 
 	return WikiPage{
@@ -302,21 +296,21 @@ func renderHISSMatrixTable(rules []hisscatalog.Rule, gated []hisscatalog.GatedIn
 	return markdownTable([]string{"Invariant", "Title", "Gated", "Enforcement", "Failure action"}, rows)
 }
 
-// hissMatrixAdmission is the matrix page's fixed tail: how a pull request is admitted and
-// the verification ladder behind it. It states behaviour of internal/forge/pr.go and
-// .github/workflows/ci.yml, not catalog data.
+// hissMatrixAdmission is the matrix page's fixed tail: how a pull request is admitted
+// and the verification ladder behind it. It states behaviour of generic adopter CI
+// rather than praetor's internal files.
 const hissMatrixAdmission = `---
 
 ## Pull Request Admission
 
-Every pull request is admitted by ` + "`standardsctl forge validate-pr`" + `, which requires all three
+Every pull request is admitted by the repository's configured automation, which requires all three
 of the following in the PR description:
 
 1. A checked HISS-16 context-integrity box.
 2. A checked HISS-15 3D-testing box.
 3. A fenced ` + "` ```receipt `" + ` block carrying the ` + "`.standards-receipt.json`" + ` envelope produced by
-   ` + "`praetorctl gate run`" + `. The block is parsed as JSON, its Ed25519 signature is verified
-   against ` + "`receipt.public_key`" + ` pinned in ` + "`.standards.yaml`" + `, its recorded output hash is
+   the local gate. The block is parsed as JSON, its Ed25519 signature is verified
+   against ` + "`receipt.public_key`" + ` pinned in the repository's configuration, its recorded output hash is
    checked against the gate output it carries, and its ` + "`commit_sha`" + ` must equal the pull
    request head. Prose, a bare code block, or the words "Exit-0 Receipt" satisfy nothing.
 
@@ -327,20 +321,19 @@ of the following in the PR description:
 ` + "```mermaid" + `
 flowchart TD
     subgraph Local["Local Workstation"]
-        LSP["1. IDE / standards-lsp"] --> HOOK["2. Pre-Commit / lefthook"]
+        LSP["1. IDE / LSP integration"] --> HOOK["2. Pre-Commit / git hooks"]
         HOOK --> AUDIT["3. Pre-Push / standardsctl audit"]
     end
     subgraph Remote["Remote CI & Admission"]
-        AUDIT --> CI["4. Ephemeral Isolated Sandbox"]
-        CI --> ADMIT["5. PR Admission / standardsctl forge validate-pr"]
+        AUDIT --> CI["4. Ephemeral Isolated Sandbox CI"]
+        CI --> ADMIT["5. PR Admission Automation"]
     end
 ` + "```" + `
 
-Layer 5 is the "Validate PR Governance Checklist & Exit-0 Receipts" step in
-` + "`.github/workflows/ci.yml`" + `, which runs ` + "`standardsctl forge validate-pr`" + ` as described under
-[Pull Request Admission](#pull-request-admission). No ` + "`cordana-standards[bot]`" + ` runs any check:
-` + "`.config/github-app/manifest.json`" + ` specifies that app but nothing provisions it, and
-` + "`internal/forge/pr.go`" + ` only requests it as a reviewer.
+Layer 5 is the PR admission check running in the repository's continuous integration
+pipeline. It validates the governance checklist and Exit-0 receipt as described under
+[Pull Request Admission](#pull-request-admission). The automation strictly enforces
+the HISS matrix requirements on every proposed change.
 `
 
 func generateHISSMatrixWiki(repoName string, rules []hisscatalog.Rule, gated []hisscatalog.GatedInvariant) WikiPage {
@@ -348,9 +341,8 @@ func generateHISSMatrixWiki(repoName string, rules []hisscatalog.Rule, gated []h
 
 The High-Integrity Systems Standard (HISS) defines ` + catalogRange(rules) + `. This matrix
 lists each one for ` + "`" + repoName + "`" + `: its enforcement, its failure action, and whether this
-repository's ` + "`AGENTS.md`" + ` gates it ([[` + hissInvariantsPage + `]] shows the gated rules). The rows
-come from the HISS rule catalog in ` + "`internal/hisscatalog/catalog.go`" + `, the registry the
-` + "`standards_explain_rule`" + ` MCP tool serves.
+repository's ` + "`AGENTS.md`" + ` gates it ([` + hissInvariantsPage + `](` + hissInvariantsPage + `.md) shows the gated rules). The rows
+come from the core HISS rule catalog, the registry the ` + "`standards_explain_rule`" + ` MCP tool serves.
 
 ` + renderHISSMatrixTable(rules, gated) + `
 
