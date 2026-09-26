@@ -21,7 +21,7 @@ client gets the form its own documentation or shipped source supports:
 
 | Client | Registration | How the client runs it | Why this form |
 | :-- | :-- | :-- | :-- |
-| Claude Code | `"command": "python3"`, `"args": ["-B", "${CLAUDE_PROJECT_DIR}/.config/agent/hooks/<script>.py"]` | Exec form: spawned directly, no shell, `${CLAUDE_PROJECT_DIR}` substituted into each element. The process runs in the session's current directory, which a Bash `cd` can move anywhere. | `${CLAUDE_PROJECT_DIR}` is "the project root where the session started" ([hooks reference](https://code.claude.com/docs/en/hooks)); the installed 2.1.259 build's hook schema has the `args` field and the substitution. |
+| Claude Code | `"command": "python3"`, `"args": ["-B", "${CLAUDE_PROJECT_DIR}/.config/agent/hooks/<script>.py"]` | Exec form: spawned directly, no shell, `${CLAUDE_PROJECT_DIR}` substituted into each element. The process runs in the session's current directory, which a Bash `cd` can move anywhere. | `${CLAUDE_PROJECT_DIR}` is "the project root where the session started" ([hooks reference](https://code.claude.com/docs/en/hooks)). Needs Claude Code 2.1.139 or later, the release that added the `args` field ([CHANGELOG](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)); the installed 2.1.259 build has it and the substitution. An older client ignores `args` and runs bare `python3`, which reads the payload as Python source, exits 1 and so blocks nothing. |
 | Gemini CLI | `python3 -B .config/agent/hooks/<script>.py` | `bash -c` on Linux and macOS, PowerShell on Windows, in the workspace root. | Gemini reads project settings only from `.gemini/settings.json` in the directory it starts in ([hooks guide](https://geminicli.com/docs/hooks/)) and spawns every hook with that directory as `cwd`, the value it also exports as `GEMINI_PROJECT_DIR` (`packages/core/src/hooks/hookRunner.ts`, checked against the installed 0.50.0 bundle). The relative path needs no quoting in either shell. |
 | Codex | `python3 -B "$(git rev-parse --show-toplevel)/.config/agent/hooks/<script>.py"` | `$SHELL -lc` (else `/bin/sh`) on Linux and macOS, `%COMSPEC% /C` on Windows, in the session cwd (`codex-rs/hooks/src/engine/command_runner.rs`). | Codex exports no project-root variable. Its [hooks docs](https://learn.chatgpt.com/docs/hooks) recommend resolving from the Git root, because a session may start in a subdirectory. |
 
@@ -42,12 +42,36 @@ What this means in practice:
   `checkpoint_scope.py` and `checkpoint.py` under `.config/agent/hooks/` run their Lefthook
   job in that worktree. That worktree's policy, ledger and dirty batch then decide the call.
   This holds in either direction, and for worktrees under `.claude/worktrees/` or anywhere
-  else. Any other cwd keeps the adapter's own repository. That covers no cwd, a path outside
-  every repository, a submodule and a foreign or nested repository. The due-state checks
-  below then still deny. `test_claude_hooks_judge_a_linked_worktree_session_by_that_worktree`,
-  `test_claude_hooks_started_in_a_worktree_judge_the_checkout_the_session_moved_to` and
-  `test_session_root_selects_only_a_linked_worktree_of_the_same_repository` in
+  else. A cwd Git places anywhere else keeps the adapter's own repository: no cwd, a path
+  outside every repository, a registered submodule, and a foreign or nested repository. The
+  due-state checks below then still deny. When Git cannot answer within the hook's time
+  budget, the call is refused rather than judged by a guessed checkout.
+  `test_claude_hooks_judge_a_linked_worktree_session_by_that_worktree`,
+  `test_claude_hooks_started_in_a_worktree_judge_the_checkout_the_session_moved_to`,
+  `test_session_root_selects_only_a_linked_worktree_of_the_same_repository` and
+  `test_session_root_refuses_to_guess_when_git_cannot_answer_in_time` in
   `scripts/test_checkpoint_hooks.py` cover each case.
+- **The session cwd picks the checkout, not the file a tool targets.** A worktree session
+  that edits a file in the start checkout is judged by the worktree's batch, and a
+  worktree's own uncommitted `lefthook.yml` and scripts judge the calls made from it. The
+  earlier registrations, which resolved `$(git rev-parse --show-toplevel)` from the session
+  cwd, behaved the same way.
+- **Every adapter answers before its client gives up.** Each client cancels a command hook
+  at its registered timeout and then lets the call through: Claude Code ("A timed-out
+  command ... hook doesn't block the tool call", hooks reference, "Timeouts"), Gemini CLI
+  (a timed-out hook resolves unsuccessful with no decision, `hookRunner.ts`) and Codex (a
+  timed-out run is an error, never a block, `codex-rs/hooks/src/events/pre_tool_use.rs`).
+  So each adapter draws every process it starts from one budget (`HookBudget` in
+  `common.py`): 10 s for the before-tool guards, registered at 15 s, and 42 s for
+  `checkpoint.py`, registered at 60 s. The checkout lookup takes at most 2 s per Git call
+  from that budget, and a step that overruns is stopped within a short grace. A backstop
+  timer (`refuse_after`) answers for the adapter at 12 s or 55 s, whatever it is still
+  blocked on, such as a child in uninterruptible sleep on a stalled file system. A guard
+  then exits 2; `checkpoint.py` blocks a stop and annotates a tool event.
+  `test_every_adapter_answers_before_its_client_gives_up` checks this arithmetic against
+  every registration, and
+  `test_registered_hooks_fail_closed_before_the_client_timeout_when_git_stalls` runs the
+  Claude registrations against a Git that never answers.
 - **Gemini and Codex keep a fixed session directory**, so no drift is possible there.
 - **Windows.** The Claude and Gemini registrations need no POSIX shell. The Codex one cannot
   run under `cmd.exe`, which has no `$( )`. Its `commandWindows` override stays unset rather

@@ -31,8 +31,13 @@ SNAPSHOT_GIT_CONFIG = ("-c", "core.autocrlf=false")
 # repositories and must not cross the isolated gate boundary.
 MAX_PROCESS_ENV_ENTRIES = 4096
 # One `git rev-parse` per checkout identity: two absolute paths, answered from local metadata.
-SESSION_GIT_TIMEOUT = 5
+# Both calls run inside a native hook's budget (see HookBudget), so each is capped low and
+# stopped with a short grace: nothing they start holds a lock that needs time to release.
+SESSION_GIT_TIMEOUT = 2
+SESSION_GIT_GRACE = 0.5
 SESSION_GIT_OUTPUT = 16 * 1024
+# Git exits 128 from die(): no repository it can open from that directory.
+GIT_FATAL = 128
 TRANSIENT_GIT_CONFIG_KEYS = ("GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
 TRANSIENT_GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
 MANAGED_PROCESS_ENV = {
@@ -43,7 +48,7 @@ MANAGED_PROCESS_ENV = {
 }
 
 
-def _kill_bounded(process, sig=signal.SIGTERM):
+def _kill_bounded(process, sig=signal.SIGTERM, grace=None):
     """Stop a bounded child and everything it started.
 
     ``run`` and ``run_bounded`` start children with ``start_new_session=True``, so on POSIX the
@@ -60,13 +65,15 @@ def _kill_bounded(process, sig=signal.SIGTERM):
     parent process id, which is the platform's own answer to the same question, and the direct
     kill stays as the floor for the case where it cannot run.
 
-    Both callers share this one function, so neither grows its own copy.
+    Both callers share this one function, so neither grows its own copy. ``grace`` bounds the
+    wait for the group, or for the tree killer, in place of ``STOP_GRACE`` and
+    ``KILL_TREE_TIMEOUT``.
     """
     try:
         if hasattr(os, "killpg"):
-            stop_process_group(process, sig)
+            stop_process_group(process, sig, grace)
         else:
-            _kill_process_tree(process)
+            _kill_process_tree(process, KILL_TREE_TIMEOUT if grace is None else grace)
     except (ProcessLookupError, PermissionError):
         pass  # The process or group already exited.
 
@@ -119,20 +126,25 @@ def _await_group_exit(process, grace):
     return False
 
 
-def _kill_process_tree(process):
+def _kill_process_tree(process, timeout=KILL_TREE_TIMEOUT):
     """Kill a child and its descendants where no process group exists to signal."""
     try:
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],
                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL, timeout=KILL_TREE_TIMEOUT, check=False)
+                       stderr=subprocess.DEVNULL, timeout=timeout, check=False)
     except (OSError, subprocess.SubprocessError):
         pass  # No tree killer on this host; the direct kill below is what remains.
     process.kill()
 
 
-def _stop_bounded(process):
-    _kill_bounded(process)
-    process.wait(timeout=5)
+def _stop_bounded(process, grace=None):
+    """Stop a bounded child and reap it; with ``grace``, each of the two waits takes at most that.
+
+    A stop therefore adds at most ``2 * grace`` seconds to the timeout that triggered it, which
+    is what a native hook's budget reserves for it.
+    """
+    _kill_bounded(process, grace=grace)
+    process.wait(timeout=5 if grace is None else grace)
 
 
 class _SharedBound:
@@ -233,8 +245,12 @@ def _bounded_output(process, timeout, maximum):
 
 
 def run_bounded(args, cwd=None, *, timeout=10, max_output=1024 * 1024,
-                env=None, allowed=(0,)):
-    """Bound both streams during capture; never copy credential-bearing diagnostics."""
+                env=None, allowed=(0,), grace=None):
+    """Bound both streams during capture; never copy credential-bearing diagnostics.
+
+    ``grace`` bounds the stop of a child that overran (see ``_stop_bounded``); by default the
+    child gets ``STOP_GRACE`` to release what it holds.
+    """
     if not 0 < timeout <= 60 or not 0 < max_output <= 1024 * 1024:
         raise HookError("invalid checkpoint process bounds")
     try:
@@ -244,7 +260,7 @@ def run_bounded(args, cwd=None, *, timeout=10, max_output=1024 * 1024,
             try:
                 stdout = _bounded_output(process, timeout, max_output)
             except BaseException:
-                _stop_bounded(process)
+                _stop_bounded(process, grace)
                 raise
             if process.returncode not in allowed:
                 raise HookError(f"{args[0]} exited {process.returncode}; checkpoint unverified")
@@ -300,41 +316,105 @@ def resolved_relative_to(path, root):
     return Path(path).resolve().relative_to(Path(root).resolve())
 
 
-def _checkout_identity(directory):
-    """Return the resolved toplevel and Git common directory of the checkout holding a path."""
+class HookBudget:
+    """One deadline every process a native hook starts takes its timeout from.
+
+    A client cancels a command hook at its registered timeout and then lets the call through:
+    Claude Code ("A timed-out command ... hook doesn't block the tool call", hooks reference,
+    "Timeouts"), Gemini CLI (a timed-out hook resolves unsuccessful with no decision,
+    ``HookRunner`` in packages/core/src/hooks/hookRunner.ts) and Codex (a timed-out run is an
+    error, never ``should_block``, codex-rs/hooks/src/events/pre_tool_use.rs). Timeouts that
+    each fit on their own can add up past that, so each step draws from one budget instead,
+    and a step that finds it spent refuses rather than starting.
+    """
+
+    def __init__(self, seconds):
+        self.expires = time.monotonic() + seconds
+
+    def timeout(self, cap):
+        """Seconds the next process may run: ``cap``, or what is left of the budget if less."""
+        left = self.expires - time.monotonic()
+        if left <= 0:
+            raise HookError("native hook budget spent before the check could run")
+        return min(cap, left)
+
+
+def refuse_after(seconds, refuse):
+    """Start a timer that ends this process with ``refuse()``'s exit code after ``seconds``.
+
+    A budget bounds each process a hook starts, not every wait the hook makes: a child in
+    uninterruptible sleep on a stalled file system outlives SIGKILL, and reaping it blocks, as
+    can a ``stat`` of the session directory. The timer thread answers for the hook meanwhile
+    and exits without unwinding the blocked thread, so a stalled host still fails closed.
+    ``refuse`` returns None when the hook has already answered; the hook then exits itself.
+    The caller cancels the timer once it has answered.
+    """
+    def expire():
+        code = refuse()
+        if code is not None:
+            os._exit(code)
+
+    timer = threading.Timer(seconds, expire)
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+def _checkout_identity(directory, budget):
+    """Return the resolved toplevel and Git common directory of the checkout holding a path.
+
+    None when Git exits fatally there: the directory is in no repository Git can open.
+    """
     raw = run_bounded(["git", "rev-parse", "--path-format=absolute", "--show-toplevel",
-                       "--git-common-dir"], cwd=directory, timeout=SESSION_GIT_TIMEOUT,
-                      max_output=SESSION_GIT_OUTPUT, env=clean_env())
+                       "--git-common-dir"], cwd=directory,
+                      timeout=budget.timeout(SESSION_GIT_TIMEOUT), max_output=SESSION_GIT_OUTPUT,
+                      env=clean_env(), allowed=(0, GIT_FATAL), grace=SESSION_GIT_GRACE)
     lines = os.fsdecode(raw).splitlines()
+    if not lines:
+        return None
     if len(lines) != 2 or not all(lines):
         raise HookError("git reported no checkout identity")
-    return Path(lines[0]).resolve(), Path(lines[1]).resolve()
+    try:
+        return Path(lines[0]).resolve(), Path(lines[1]).resolve()
+    except (OSError, RuntimeError) as error:
+        raise HookError(f"checkout identity does not resolve ({type(error).__name__})") from error
 
 
-def session_root(root, cwd):
+def _session_directory(root, cwd):
+    """The payload cwd as a directory worth asking Git about, or None to keep ``root``."""
+    if not isinstance(cwd, str) or not cwd or "\0" in cwd:
+        return None
+    directory = Path(cwd)
+    try:
+        if (not directory.is_absolute() or not directory.is_dir()
+                or directory.resolve() == Path(root).resolve()):
+            return None
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return directory
+
+
+def session_root(root, cwd, budget):
     """Return the checkout whose policy, ledger and batch judge a native call made from ``cwd``.
 
     Claude Code keeps ${CLAUDE_PROJECT_DIR} on the checkout a session started in after the
     session enters a linked worktree, while the payload's ``cwd`` follows it there (hooks
     reference, "Worktrees are different"). A linked worktree of the same repository shares
     ``root``'s Git common directory, and its own toplevel is the checkout the call works in.
-    Every other ``cwd`` -- missing, not an absolute directory, outside any repository, in a
-    submodule or another repository -- keeps ``root``, so the caller's own checks decide it.
+    A ``cwd`` Git proves is anything else -- missing, not an absolute directory, outside any
+    repository, in a submodule or another repository -- keeps ``root``, so the caller's own
+    checks decide it. When Git cannot answer inside ``budget`` (a timeout, a spent budget,
+    output that is no checkout identity) this raises ``HookError``, and the caller refuses the
+    call instead of guessing which checkout judges it.
     """
-    if not isinstance(cwd, str) or not cwd or "\0" in cwd:
+    directory = _session_directory(root, cwd)
+    if directory is None:
         return root
-    directory = Path(cwd)
-    try:
-        if (not directory.is_absolute() or not directory.is_dir()
-                or directory.resolve() == Path(root).resolve()):
-            return root
-        own_top, own_common = _checkout_identity(root)
-        top, common = _checkout_identity(directory)
-    except (HookError, OSError, RuntimeError, ValueError):
+    own = _checkout_identity(root, budget)
+    other = _checkout_identity(directory, budget)
+    if own is None or other is None or other[1] != own[1] or other[0] == own[0]:
         return root
-    if common != own_common or top == own_top:
-        return root
-    return top
+    return other[0]
 
 
 def paths(raw):

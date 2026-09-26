@@ -220,7 +220,7 @@ func evaluateStopCheckpoint(ctx context.Context, root string, canonical Canonica
 }
 
 // stopReason mirrors the wording split the adapter's blocked() made between a first Stop pass
-// and a second, StopActive one (`.config/agent/hooks/checkpoint.py:58-63`, deleted in H4): the
+// and a second, StopActive one (`.config/agent/hooks/checkpoint.py`, deleted in H4): the
 // first pass states the block reason as-is, a repeated pass makes explicit that the checkpoint
 // is still incomplete. Verdict carries one Reason string, so this collapses the adapter's two
 // JSON fields (stopReason, systemMessage) into the one a future per-dialect stop encoding
