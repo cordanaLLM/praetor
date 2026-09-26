@@ -59,7 +59,7 @@ func reconcileBranchRuleset(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.scaffoldFile(scaffold{
+	_, err = s.scaffoldFile(ctx, scaffold{
 		rel:      rulesetFile,
 		perm:     filePerm,
 		content:  []byte(content),
@@ -70,8 +70,8 @@ func reconcileBranchRuleset(ctx context.Context, s *adoptSession) error {
 	return err
 }
 
-func reconcileLabels(_ context.Context, s *adoptSession) error {
-	_, err := s.scaffoldFile(scaffold{
+func reconcileLabels(ctx context.Context, s *adoptSession) error {
+	_, err := s.scaffoldFile(ctx, scaffold{
 		rel:      labelsFile,
 		perm:     filePerm,
 		content:  []byte(buildDefaultLabelsYAML()),
@@ -148,7 +148,7 @@ func generatedPersonas() []scaffold {
 func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 	personas := generatedPersonas()
 	for i := 0; i < len(personas) && i < maxTranspileTargets; i++ {
-		if _, err := s.scaffoldFile(personas[i]); err != nil {
+		if _, err := s.scaffoldFile(ctx, personas[i]); err != nil {
 			return err
 		}
 	}

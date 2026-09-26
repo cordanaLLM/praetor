@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -140,8 +141,8 @@ func reconcileExistingVerificationMakefile(
 	return true, nil
 }
 
-func reconcileContributing(_ context.Context, s *adoptSession) error {
-	_, err := s.scaffoldFile(scaffold{
+func reconcileContributing(ctx context.Context, s *adoptSession) error {
+	_, err := s.scaffoldFile(ctx, scaffold{
 		rel:      contributingFile,
 		perm:     filePerm,
 		content:  []byte(buildContributingGuide(s.repoName)),
@@ -151,17 +152,19 @@ func reconcileContributing(_ context.Context, s *adoptSession) error {
 	return err
 }
 
-func reconcilePullRequestTemplate(_ context.Context, s *adoptSession) error {
+// reconcilePullRequestTemplate keeps whichever template name the repository already uses and
+// compares it with the scaffold like every other preserved file.
+func reconcilePullRequestTemplate(ctx context.Context, s *adoptSession) error {
 	upper, err := repoFile(s.repoPath, prTemplateUpper)
 	if err != nil {
 		return err
 	}
+	rel := prTemplateFile
 	if fileExists(upper) {
-		s.report.recordReconciled(prTemplateUpper, "Existing pull request template verified present")
-		return nil
+		rel = prTemplateUpper
 	}
-	_, err = s.scaffoldFile(scaffold{
-		rel:      prTemplateFile,
+	_, err = s.scaffoldFile(ctx, scaffold{
+		rel:      rel,
 		perm:     filePerm,
 		content:  []byte(buildPullRequestTemplate()),
 		created:  "Scaffolded pull request template with HISS verification checklist",
@@ -170,8 +173,8 @@ func reconcilePullRequestTemplate(_ context.Context, s *adoptSession) error {
 	return err
 }
 
-func reconcileSecurityPolicy(_ context.Context, s *adoptSession) error {
-	_, err := s.scaffoldFile(scaffold{
+func reconcileSecurityPolicy(ctx context.Context, s *adoptSession) error {
+	_, err := s.scaffoldFile(ctx, scaffold{
 		rel:      securityFile,
 		perm:     filePerm,
 		content:  []byte(buildSecurityPolicy()),
@@ -224,7 +227,7 @@ func reconcileReadme(ctx context.Context, s *adoptSession) error {
 	}
 	state, err := readmeGovernanceState(s, documentationEnabled)
 	if err != nil {
-		return err
+		return s.readmeStateError(err)
 	}
 	content, changed, err := readmegovernance.Reconcile(string(data), state)
 	if err != nil || !changed {
@@ -249,8 +252,26 @@ func readmeGovernanceState(s *adoptSession, documentationEnabled bool) (readmego
 		}
 		state.RepositoryOwner = s.policy.Manifest.Repository.Owner
 		state.RepositoryName = s.policy.Manifest.Repository.Name
+		if state.RepositoryOwner == "" || state.RepositoryName == "" {
+			return state, errReadmeIdentityUnset
+		}
 	}
 	return state, nil
+}
+
+// errReadmeIdentityUnset: the documentation badge links to the repository, and the manifest
+// names none. Adoption leaves the README alone rather than link to a guessed repository.
+var errReadmeIdentityUnset = errors.New("the documentation badge needs repository.owner and repository.name")
+
+// readmeStateError turns an unset identity into a recorded skip, so an adoption without a
+// resolvable identity completes and says what it left undone; any other error fails the step.
+func (s *adoptSession) readmeStateError(err error) error {
+	if !errors.Is(err, errReadmeIdentityUnset) {
+		return err
+	}
+	s.report.recordSkipped(readmeFile, "Governance block not reconciled: "+err.Error()+" in "+manifestFile+
+		"; set them, or the origin remote before a first adoption, and re-run")
+	return nil
 }
 
 func buildContributingGuide(repoName string) string {

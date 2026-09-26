@@ -37,7 +37,6 @@ const (
 	agentsFile       = "AGENTS.md"
 	devcontainerFile = ".devcontainer/devcontainer.json"
 	workingDirPath   = ".workingdir"
-	defaultOwner     = "cordanaLLM"
 )
 
 // RepositoryState describes the adoption state of a target codebase.
@@ -104,8 +103,12 @@ type AdoptReport struct {
 
 // adoptSession carries the resolved inputs of one adoption run through the step chain.
 type adoptSession struct {
-	repoPath     string
+	repoPath string
+	// repoName labels generated prose (the harness title, the contributor guide). It is the
+	// resolved repository name, else the checkout directory's name, and is never written into
+	// an identity field: those read identity, which stays empty when unresolved.
 	repoName     string
+	identity     repoIdentity
 	arch         string
 	facets       []string
 	opts         AdoptOptions
@@ -136,29 +139,26 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	report := newAdoptionReport(normPath, opts)
+	declared := declaredManifest(ctx, normPath)
+	decision := resolveArchetype(normPath, opts.Profile, manifestProfiles(declared))
+	report := newAdoptionReport(normPath, opts, decision)
 	verification, err := resolveVerificationPlanWithLimits(ctx, normPath, opts.VerificationLimits)
 	if err != nil {
 		report.Errors = append(report.Errors, err.Error())
 		return report, fmt.Errorf("resolve project verification: %w", err)
 	}
-
-	arch := resolveArchetype(normPath, opts.Profile)
-	if opts.Profile == "" && containsRuntime(verification, "dotnet") {
-		arch = "app-service"
-	}
-	report.Archetype = arch
+	report.Archetype = adoptionArchetype(decision, verification)
 	report.Verification = verification
 	s := &adoptSession{
 		repoPath:     normPath,
-		repoName:     resolveRepoName(ctx, normPath),
-		arch:         arch,
+		arch:         report.Archetype,
 		facets:       report.Facets,
 		opts:         opts,
 		report:       report,
 		verification: verification,
-		declined:     declaredDeclines(ctx, normPath),
+		declined:     manifestDeclines(declared),
 	}
+	s.resolveIdentity(ctx)
 	report.addWarning("%s", verification.notice())
 
 	if err := executeAdoptSteps(ctx, s); err != nil {
@@ -169,10 +169,10 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	return report, nil
 }
 
-func newAdoptionReport(path string, opts AdoptOptions) *AdoptReport {
-	return &AdoptReport{
+func newAdoptionReport(path string, opts AdoptOptions, decision classify.Result) *AdoptReport {
+	report := &AdoptReport{
 		State:           DetectState(path),
-		Archetype:       resolveArchetype(path, opts.Profile),
+		Archetype:       decision.Or(classify.FallbackArchetype),
 		Facets:          resolveFacets(opts.Facets),
 		CreatedFiles:    make([]string, 0),
 		ReconciledFiles: make([]string, 0),
@@ -183,6 +183,12 @@ func newAdoptionReport(path string, opts AdoptOptions) *AdoptReport {
 		Errors:          make([]string, 0),
 		Warnings:        make([]string, 0),
 	}
+	if explicit := strings.TrimSpace(opts.Profile); decision.Source == classify.SourceDeclared && explicit != "" &&
+		explicit != decision.Archetype {
+		report.addWarning("--profile %s ignored: %s declares %s, and adoption never rewrites a declared profile",
+			explicit, manifestFile, decision.Archetype)
+	}
+	return report
 }
 
 // resolveTargetPath normalises opts.Path and validates that it is an adoptable target.
@@ -223,35 +229,60 @@ func DetectState(repoPath string) RepositoryState {
 // resolveArchetype decides which profile a repository is adopted under.
 //
 // The marker table this used to carry now lives in internal/classify, because it was one of
-// three copies that disagreed with each other. What is left here is the precedence: an operator's
-// explicit profile beats detection, and where nothing matches the fallback is named rather than
-// returned as though it were a match.
-func resolveArchetype(repoPath, explicitProfile string) string {
-	decision := classify.Resolve(
+// three copies that disagreed with each other. What is left here is the precedence classify.Resolve
+// documents: the profile the repository's own manifest declares, then an operator's explicit
+// profile, then detection. The manifest is never rewritten, so adopting under any other profile
+// would scaffold for one archetype while the lock and audit enforce the declared one.
+func resolveArchetype(repoPath, explicitProfile string, declaredProfiles []string) classify.Result {
+	return classify.Resolve(
+		classify.FromDeclaration(declaredProfiles),
 		classify.Explicit(explicitProfile),
 		classify.ByMarkers(repoPath),
 	)
+}
+
+// adoptionArchetype names the archetype for a decision. A .NET runtime is served by
+// app-service when only markers (or nothing) decided; a declared or explicit profile stands.
+func adoptionArchetype(decision classify.Result, verification *VerificationPlan) string {
+	pinned := decision.Source == classify.SourceDeclared || decision.Source == classify.SourceExplicit
+	if !pinned && containsRuntime(verification, "dotnet") {
+		return "app-service"
+	}
 	return decision.Or(classify.FallbackArchetype)
 }
 
-// resolveOwner returns the owner from the origin remote or directory layout, falling
-// back to the fleet default. The lookup runs under the caller's context.
-func resolveOwner(ctx context.Context, repoPath string) string {
-	owner, _, err := util.ResolveRepoIdentity(ctx, repoPath)
-	if err != nil || owner == "" {
-		return defaultOwner
-	}
-	return owner
+// repoIdentity is the forge identity adoption records: owner and name from the origin remote,
+// or from the <owner>/<repo> shape of the checkout path (util.ResolveRepoIdentity). Both stay
+// empty when neither yields one; adoption substitutes no default owner and no guessed name.
+type repoIdentity struct {
+	owner string
+	name  string
 }
 
-// resolveRepoName returns the repository name from the origin remote or directory
-// layout, falling back to the directory basename.
-func resolveRepoName(ctx context.Context, repoPath string) string {
-	_, repo, err := util.ResolveRepoIdentity(ctx, repoPath)
-	if err != nil || repo == "" {
-		return filepath.Base(repoPath)
+func (id repoIdentity) resolved() bool {
+	return id.owner != "" && id.name != ""
+}
+
+// coordinate is the "owner/name" form, or "" when the identity is unresolved.
+func (id repoIdentity) coordinate() string {
+	if !id.resolved() {
+		return ""
 	}
-	return repo
+	return id.owner + "/" + id.name
+}
+
+// resolveIdentity fills the session's identity and prose label under the caller's context. An
+// unresolved identity is a warning, because every identity field adoption writes stays empty.
+func (s *adoptSession) resolveIdentity(ctx context.Context) {
+	owner, name, err := util.ResolveRepoIdentity(ctx, s.repoPath)
+	if err == nil && owner != "" && name != "" {
+		s.identity = repoIdentity{owner: owner, name: name}
+		s.repoName = name
+		return
+	}
+	s.repoName = filepath.Base(s.repoPath)
+	s.report.addWarning("repository identity unresolved (%v): the identity fields adoption writes stay empty and "+
+		"no checkpoint lifecycle is installed; set the origin remote and re-run", err)
 }
 
 func resolveFacets(input []string) []string {
@@ -345,10 +376,15 @@ func reconcileManifest(ctx context.Context, s *adoptSession) error {
 	// it from detected markers replaced a declared profile and facet set with guessed ones and
 	// still reported success, which is governance data loss dressed as adoption.
 	if fileExists(full) {
+		// An existing manifest is an input: one the config loader rejects fails adoption here
+		// and is never reported as verified present on existence alone (BUG-853).
+		if _, err := config.LoadManifest(full); err != nil {
+			return fmt.Errorf("existing %s: %w", manifestFile, err)
+		}
 		s.report.recordReconciled(manifestFile, forcedManifestNote(s.opts.Force))
 		return nil
 	}
-	manifest := newAdoptionManifest(ctx, s)
+	manifest := newAdoptionManifest(s)
 	data, err := yaml.Marshal(manifest)
 	if err != nil {
 		return fmt.Errorf("marshal manifest: %w", err)
@@ -356,7 +392,12 @@ func reconcileManifest(ctx context.Context, s *adoptSession) error {
 	if err := s.write(full, data, filePerm); err != nil {
 		return err
 	}
-	s.report.recordCreated(manifestFile, fmt.Sprintf("Scaffolded standards manifest (Owner: %s, Profile: %s)", manifest.Repository.Owner, s.arch))
+	repository := s.identity.coordinate()
+	if repository == "" {
+		repository = "unresolved"
+	}
+	s.report.recordCreated(manifestFile, fmt.Sprintf("Scaffolded standards manifest (Repository: %s, Profile: %s; "+
+		"visibility left unset, adoption cannot observe it)", repository, s.arch))
 	return nil
 }
 

@@ -11,7 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 // maxSnapshotEntries bounds the tree walk of snapshotTree (HISS-02).
@@ -571,7 +573,7 @@ func TestResolveArchetype_Markers(t *testing.T) {
 	for _, tc := range tests {
 		tmpDir := t.TempDir()
 		mustWrite(t, filepath.Join(tmpDir, tc.filename), "dummy")
-		if arch := resolveArchetype(tmpDir, ""); arch != tc.expected {
+		if arch := archetypeOf(tmpDir, "", nil); arch != tc.expected {
 			t.Errorf("for marker %s: expected %s, got %s", tc.filename, tc.expected, arch)
 		}
 	}
@@ -579,15 +581,257 @@ func TestResolveArchetype_Markers(t *testing.T) {
 	tmpDir := t.TempDir()
 	mustWrite(t, filepath.Join(tmpDir, "meson.build"), "project('vmafx')")
 	mustWrite(t, filepath.Join(tmpDir, "go.mod"), "module vmafx")
-	if arch := resolveArchetype(tmpDir, ""); arch != "native-gpu-systems" {
+	if arch := archetypeOf(tmpDir, "", nil); arch != "native-gpu-systems" {
 		t.Fatalf("expected native-gpu-systems for meson project, got: %s", arch)
 	}
-	if arch := resolveArchetype(tmpDir, "custom"); arch != "custom" {
+	if arch := archetypeOf(tmpDir, "custom", nil); arch != "custom" {
 		t.Fatalf("explicit profile must win, got %s", arch)
 	}
-	if arch := resolveArchetype(t.TempDir(), ""); arch != "template-seed" {
+	if arch := archetypeOf(t.TempDir(), "", nil); arch != "template-seed" {
 		t.Fatalf("no markers must yield template-seed, got %s", arch)
 	}
+}
+
+// archetypeOf is the archetype resolveArchetype names, fallback included.
+func archetypeOf(repoPath, explicit string, declared []string) string {
+	return resolveArchetype(repoPath, explicit, declared).Or(classify.FallbackArchetype)
+}
+
+// TestResolveArchetype_DeclaredProfileOutranksMarkers pins BUG-944: the manifest's declared
+// profile decides, ahead of the operator flag and every marker, and blank declarations fall
+// through instead of deciding.
+func TestResolveArchetype_DeclaredProfileOutranksMarkers(t *testing.T) {
+	repo := t.TempDir()
+	mustWrite(t, filepath.Join(repo, "go.mod"), "module imago")
+	// Positive: go.mod says framework, the repository says gitops-infra.
+	decision := resolveArchetype(repo, "", []string{"gitops-infra", "framework"})
+	if decision.Archetype != "gitops-infra" || decision.Source != classify.SourceDeclared {
+		t.Fatalf("declared profile lost to markers: %+v", decision)
+	}
+	if arch := archetypeOf(repo, "app-service", []string{"gitops-infra"}); arch != "gitops-infra" {
+		t.Fatalf("an explicit profile overrode the declared one: %s", arch)
+	}
+	// Boundary: blank declarations decide nothing, so markers still apply.
+	if arch := archetypeOf(repo, "", []string{"", "  "}); arch != "framework" {
+		t.Fatalf("blank declared profiles must fall through to markers, got %s", arch)
+	}
+	// Negative: a declared or explicit profile is never swapped for app-service on .NET.
+	dotnet := &VerificationPlan{Runtimes: []string{"dotnet"}}
+	if arch := adoptionArchetype(resolveArchetype(repo, "", []string{"gitops-infra"}), dotnet); arch != "gitops-infra" {
+		t.Fatalf("dotnet detection replaced the declared profile: %s", arch)
+	}
+	if arch := adoptionArchetype(resolveArchetype(repo, "", nil), dotnet); arch != "app-service" {
+		t.Fatalf("marker-only dotnet repository must adopt as app-service, got %s", arch)
+	}
+}
+
+// TestAdopt_DeclaredProfileGovernsAdoption runs the whole chain on a repository whose
+// manifest declares a profile its markers contradict.
+func TestAdopt_DeclaredProfileGovernsAdoption(t *testing.T) {
+	repo := newTestRepo(t, "declared-profile")
+	mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/declared\n\ngo 1.27\n")
+	mustWrite(t, filepath.Join(repo, manifestFile), "version: 1\nrepository:\n  owner: acme\n  name: declared-profile\n"+
+		"profiles:\n  - gitops-infra\nfacets:\n  - custom:facet\n")
+	report, err := Adopt(t.Context(), AdoptOptions{Path: repo, Profile: "app-service", DryRun: true, SkipGitValidation: true})
+	if err != nil {
+		t.Fatalf("adopt: %v", err)
+	}
+	if report.Archetype != "gitops-infra" {
+		t.Fatalf("adoption used %s instead of the declared gitops-infra", report.Archetype)
+	}
+	if !strings.Contains(strings.Join(report.Warnings, "\n"), "--profile app-service ignored") {
+		t.Fatalf("an overridden --profile was not reported: %v", report.Warnings)
+	}
+}
+
+// writeOriginRemote gives a test repository an origin remote in its own .git/config.
+func writeOriginRemote(t *testing.T, repo, url string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(repo, ".git", "config"),
+		"[core]\n\trepositoryformatversion = 0\n[remote \"origin\"]\n\turl = "+url+"\n")
+}
+
+// identitySession resolves identity for repo the way Adopt does.
+func identitySession(t *testing.T, repo string) *adoptSession {
+	t.Helper()
+	s := &adoptSession{repoPath: repo, arch: "framework", facets: resolveFacets(nil), report: &AdoptReport{}}
+	s.resolveIdentity(t.Context())
+	return s
+}
+
+// TestAdoptionManifest_IdentityFromRemote pins BUG-852 positive: owner and name come from the
+// origin remote even when the checkout directory is named differently, and visibility, which
+// adoption cannot observe, is left unset instead of declared public.
+func TestAdoptionManifest_IdentityFromRemote(t *testing.T) {
+	repo := newTestRepo(t, "checkout-dir")
+	writeOriginRemote(t, repo, "https://github.com/acme/widget.git")
+	s := identitySession(t, repo)
+	manifest := newAdoptionManifest(s)
+	got := manifest.Repository
+	if got.Owner != "acme" || got.Name != "widget" || got.Visibility != "" {
+		t.Fatalf("manifest identity = %+v, want acme/widget with visibility unset", got)
+	}
+	if s.repoName != "widget" || len(s.report.Warnings) != 0 {
+		t.Fatalf("resolved identity must label prose with its name and warn nothing: %q %v", s.repoName, s.report.Warnings)
+	}
+}
+
+// TestAdoptionManifest_UnresolvedIdentityStaysEmpty pins BUG-852 negative: with no remote and
+// no <owner>/<repo> layout, adoption writes no owner, name or visibility and says why.
+func TestAdoptionManifest_UnresolvedIdentityStaysEmpty(t *testing.T) {
+	requireGit(t)
+	repo := filepath.Join(t.TempDir(), "dev", "orphan")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initTestGit(t, repo)
+	s := identitySession(t, repo)
+	manifest := newAdoptionManifest(s)
+	if got := manifest.Repository; got.Owner != "" || got.Name != "" || got.Visibility != "" {
+		t.Fatalf("unresolved identity was invented: %+v", manifest.Repository)
+	}
+	if s.identity.coordinate() != "" || !strings.Contains(strings.Join(s.report.Warnings, "\n"), "repository identity unresolved") {
+		t.Fatalf("unresolved identity was not reported: %q %v", s.identity.coordinate(), s.report.Warnings)
+	}
+	data, err := yaml.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, invented := range []string{"owner: cordanaLLM", "visibility: public", "name: orphan"} {
+		if strings.Contains(string(data), invented) {
+			t.Fatalf("manifest carries invented %q:\n%s", invented, data)
+		}
+	}
+	// Boundary: the directory name still labels generated prose, and only prose.
+	if s.repoName != "orphan" {
+		t.Fatalf("prose label = %q, want the checkout directory name", s.repoName)
+	}
+}
+
+// TestAdopt_UnresolvedIdentityCompletesWithoutGuessing runs the chain on a repository with no
+// identity: it completes, writes an identity-free manifest and leaves the README's badge
+// unwritten instead of linking to a guessed repository.
+func TestAdopt_UnresolvedIdentityCompletesWithoutGuessing(t *testing.T) {
+	requireGit(t)
+	repo := filepath.Join(t.TempDir(), "dev", "orphan")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initTestGit(t, repo)
+	readme := "# Orphan\n"
+	mustWrite(t, filepath.Join(repo, readmeFile), readme)
+	report, err := Adopt(t.Context(), AdoptOptions{Path: repo, SkipGitValidation: true, SkipHookActivation: true,
+		LockSourceRoot: newAdoptLockSource(t)})
+	if err != nil {
+		t.Fatalf("adoption without an identity failed: %v", err)
+	}
+	manifest, err := config.LoadManifest(filepath.Join(repo, manifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := manifest.Repository; got.Owner != "" || got.Name != "" || got.Visibility != "" {
+		t.Fatalf("written manifest invents identity: %+v", got)
+	}
+	warnings := strings.Join(report.Warnings, "\n")
+	if mustRead(t, filepath.Join(repo, readmeFile)) != readme || !strings.Contains(warnings, "Governance block not reconciled") {
+		t.Fatalf("README was reconciled against no identity; warnings:\n%s", warnings)
+	}
+}
+
+// TestAdopt_UnparsableManifestFailsWithoutRewrite pins BUG-853 for the manifest: an existing
+// manifest the config loader rejects fails adoption and stays byte for byte.
+func TestAdopt_UnparsableManifestFailsWithoutRewrite(t *testing.T) {
+	repo := newTestRepo(t, "broken-manifest")
+	broken := "version: 1\nprofiles: [framework\nfacets: {\n"
+	mustWrite(t, filepath.Join(repo, manifestFile), broken)
+	report, err := Adopt(t.Context(), AdoptOptions{Path: repo, SkipGitValidation: true})
+	if err == nil {
+		t.Fatal("adoption accepted an unparsable manifest")
+	}
+	for _, detail := range report.ActionDetails {
+		if detail.Path == manifestFile {
+			t.Fatalf("unparsable manifest was reported as %s: %s", detail.Action, detail.Details)
+		}
+	}
+	if got := mustRead(t, filepath.Join(repo, manifestFile)); got != broken {
+		t.Fatalf("unparsable manifest was rewritten:\n%s", got)
+	}
+}
+
+// TestScaffoldFile_ReportsDriftInsteadOfVerified pins BUG-853 for scaffolds: an existing file
+// is verified only when it matches, drift is reported and preserved, and a CRLF checkout of
+// the same text is still a match.
+func TestScaffoldFile_ReportsDriftInsteadOfVerified(t *testing.T) {
+	repo := t.TempDir()
+	s := &adoptSession{repoPath: repo, report: &AdoptReport{}}
+	sc := scaffold{rel: evasionHookFile, perm: filePerm, content: []byte("import sys\nsys.exit(2)\n"), force: true,
+		created: "created", verified: "verified"}
+	path := filepath.Join(repo, filepath.FromSlash(evasionHookFile))
+	cases := []struct {
+		name, existing string
+		want           scaffoldState
+		detail         string
+	}{
+		{"identical", "import sys\nsys.exit(2)\n", scaffoldIdentical, "verified"},
+		{"crlf checkout", "import sys\r\nsys.exit(2)\r\n", scaffoldIdentical, "verified"},
+		{"no-op interceptor", "import sys\nsys.exit(0)\n", scaffoldDrifted, "differs from the scaffold"},
+		{"empty", "", scaffoldDrifted, "differs from the scaffold"},
+	}
+	for _, tc := range cases {
+		mustWrite(t, path, tc.existing)
+		s.report = &AdoptReport{}
+		state, err := s.scaffoldFile(t.Context(), sc)
+		if err != nil || state != tc.want {
+			t.Fatalf("%s: state=%v err=%v, want %v", tc.name, state, err, tc.want)
+		}
+		last := s.report.ActionDetails[len(s.report.ActionDetails)-1]
+		if !strings.Contains(last.Details, tc.detail) || mustRead(t, path) != tc.existing {
+			t.Fatalf("%s: detail %q or content changed", tc.name, last.Details)
+		}
+		if drifted := tc.want == scaffoldDrifted; drifted != (len(s.report.Warnings) == 1) {
+			t.Fatalf("%s: drift warning mismatch: %v", tc.name, s.report.Warnings)
+		}
+	}
+	// --force still regenerates a drifted scaffold that allows it.
+	s.opts.Force = true
+	if state, err := s.scaffoldFile(t.Context(), sc); err != nil || state != scaffoldWritten ||
+		mustRead(t, path) != string(sc.content) {
+		t.Fatalf("--force did not regenerate the drifted scaffold: %v %v", state, err)
+	}
+}
+
+// TestAdopt_DriftedLefthookIsNotVerified runs the chain over a repository whose lefthook.yml
+// and contributor guide were edited: both stay, and neither is reported as verified present.
+func TestAdopt_DriftedLefthookIsNotVerified(t *testing.T) {
+	repo := newTestRepo(t, "drifted-scaffolds")
+	custom := map[string]string{lefthookFile: "pre-commit:\n  jobs: []\n", contributingFile: "# Our own guide\n"}
+	for rel, body := range custom {
+		mustWrite(t, filepath.Join(repo, rel), body)
+	}
+	report, err := Adopt(t.Context(), AdoptOptions{Path: repo, DryRun: true, SkipGitValidation: true})
+	if err != nil {
+		t.Fatalf("adopt: %v", err)
+	}
+	for rel, body := range custom {
+		if mustRead(t, filepath.Join(repo, rel)) != body {
+			t.Fatalf("%s was rewritten", rel)
+		}
+		detail := findActionDetail(report.ActionDetails, rel)
+		if strings.Contains(detail, "verified present") || !strings.Contains(detail, "differs from the scaffold") {
+			t.Fatalf("%s reported as %q", rel, detail)
+		}
+	}
+}
+
+// findActionDetail returns the details of the last action recorded for path.
+func findActionDetail(details []ActionDetail, path string) string {
+	found := ""
+	for _, detail := range details {
+		if detail.Path == path {
+			found = detail.Details
+		}
+	}
+	return found
 }
 
 func TestAdopt_MultiLanguageLegacyDebt(t *testing.T) {

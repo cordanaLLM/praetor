@@ -39,16 +39,18 @@ func reconcileCheckpointBundle(ctx context.Context, s *adoptSession, vendored bo
 	if err != nil {
 		return false, err
 	}
-	for _, source := range sources {
-		if err := installCheckpointSource(s, source, vendored); err != nil {
-			return false, err
-		}
-	}
+	// The policy names the repository it publishes to, so it is resolved before anything is
+	// installed: an unresolved identity installs no half of the lifecycle.
 	policy, err := checkpointPolicyJSON(ctx, s)
 	if err != nil {
 		return false, err
 	}
-	_, err = s.scaffoldFile(scaffold{
+	for _, source := range sources {
+		if err := installCheckpointSource(ctx, s, source, vendored); err != nil {
+			return false, err
+		}
+	}
+	_, err = s.scaffoldFile(ctx, scaffold{
 		rel: checkpointPolicy, perm: filePerm, content: policy, force: false,
 		created:  "Created local-only checkpoint policy for adopted repository",
 		verified: "Existing checkpoint policy preserved",
@@ -59,25 +61,23 @@ func reconcileCheckpointBundle(ctx context.Context, s *adoptSession, vendored bo
 	return true, nil
 }
 
-func installCheckpointSource(s *adoptSession, source checkpointSource, vendored bool) error {
-	written, err := s.scaffoldFile(scaffold{
+// installCheckpointSource installs one evaluator file. An existing copy that differs from
+// the verified bundle, or cannot be compared with it, leaves the lifecycle unavailable. With
+// vendored set, an existing copy belongs to the vendored canonical bundle and stays as it is.
+func installCheckpointSource(ctx context.Context, s *adoptSession, source checkpointSource, vendored bool) error {
+	state, err := s.scaffoldFile(ctx, scaffold{
 		rel: source.path, perm: filePerm, content: source.data, force: !vendored,
 		created:  "Installed shared checkpoint evaluator from verified source bundle",
 		verified: "Existing shared checkpoint evaluator preserved",
 	})
-	if err != nil || written || s.opts.DryRun || vendored {
+	if err != nil || vendored {
 		return err
 	}
-	full, err := repoFile(s.repoPath, source.path)
-	if err != nil {
-		return err
-	}
-	actual, err := readRepoFile(full)
-	if err != nil {
-		return err
-	}
-	if string(actual) != string(source.data) {
+	switch state {
+	case scaffoldDrifted:
 		return fmt.Errorf("existing %s differs from the verified checkpoint evaluator", source.path)
+	case scaffoldUnverified:
+		return fmt.Errorf("existing %s could not be compared with the verified checkpoint evaluator", source.path)
 	}
 	return nil
 }
@@ -135,15 +135,17 @@ func readCheckpointSource(ctx context.Context, root, name string) (checkpointSou
 	return checkpointSource{path: name, data: data}, nil
 }
 
+// errCheckpointIdentity refuses a checkpoint policy for a repository whose identity adoption
+// could not resolve: the evaluator validates the named repository against the origin remote,
+// and a guessed name fails that check on every checkpoint.
+var errCheckpointIdentity = errors.New("repository identity unresolved; the checkpoint policy must name the repository it publishes to")
+
 func checkpointPolicyJSON(ctx context.Context, s *adoptSession) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	name := s.repoName
-	owner := defaultOwner
-	if filepath.Base(name) == name {
-		owner = resolveOwner(ctx, s.repoPath)
-		name = filepath.Base(s.repoPath)
+	if !s.identity.resolved() {
+		return nil, errCheckpointIdentity
 	}
 	policy := struct {
 		Version    int      `json:"version"`
@@ -157,7 +159,7 @@ func checkpointPolicyJSON(ctx context.Context, s *adoptSession) ([]byte, error) 
 		Repository string   `json:"repository"`
 		Prefixes   []string `json:"branch_prefixes"`
 		RequirePR  bool     `json:"require_pr"`
-	}{1, true, 30, 20, true, false, "origin", "main", owner + "/" + name, checkpointBranchPrefixes, false}
+	}{1, true, 30, 20, true, false, "origin", "main", s.identity.coordinate(), checkpointBranchPrefixes, false}
 	return json.MarshalIndent(policy, "", "  ")
 }
 

@@ -67,6 +67,12 @@ recorded debt baseline and preserves content outside it. The badge says
 debt, while only a commit-bound signed Exit-0 receipt proves that a particular
 verification run passed.
 
+With the `docs:seo-portal` facet the block also links a workflow badge to the
+repository named by `repository.owner` and `repository.name`. When the manifest
+names none, because adoption could not resolve an identity, adoption leaves the
+README unchanged and records a `Governance block not reconciled` warning instead
+of linking to a guessed repository (`TestAdopt_UnresolvedIdentityCompletesWithoutGuessing`).
+
 `praetorctl audit` renders the same expected block in memory and fails when the
 README block is missing, malformed, duplicated, or stale. Re-run
 `praetorctl adopt` to migrate the historical unmarked HISS-16 badge and

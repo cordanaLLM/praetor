@@ -204,14 +204,14 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	identity := classifyLefthookConfig(existing, current)
 	if identity.reason != "" {
 		s.report.recordSkipped(lefthookFile, identity.reason)
-		return reconcileEvasionHook(s, identity.canonical)
+		return reconcileEvasionHook(ctx, s, identity.canonical)
 	}
-	lefthookWritten, err := s.writeLefthookConfig(current, identity.prior)
+	lefthookWritten, err := s.writeLefthookConfig(ctx, current, identity.prior)
 	if err != nil {
 		return err
 	}
 	warnPreservedCheckpoint(s, checkpointReady, lefthookWritten)
-	if err := reconcileEvasionHook(s, false); err != nil {
+	if err := reconcileEvasionHook(ctx, s, false); err != nil {
 		return err
 	}
 	if s.opts.DryRun || s.opts.SkipHookActivation {
@@ -221,10 +221,11 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 }
 
 // writeLefthookConfig writes the current rendering over an earlier Praetor rendering, and
-// otherwise scaffolds it under the usual --force contract. It reports whether it wrote.
-func (s *adoptSession) writeLefthookConfig(current string, prior bool) (bool, error) {
+// otherwise scaffolds it under the usual --force contract. It reports whether it wrote; an
+// existing configuration that differs from the rendering is kept and reported as drift.
+func (s *adoptSession) writeLefthookConfig(ctx context.Context, current string, prior bool) (bool, error) {
 	if !prior {
-		return s.scaffoldFile(scaffold{
+		state, err := s.scaffoldFile(ctx, scaffold{
 			rel:      lefthookFile,
 			perm:     filePerm,
 			content:  []byte(current),
@@ -232,6 +233,7 @@ func (s *adoptSession) writeLefthookConfig(current string, prior bool) (bool, er
 			created:  "Scaffolded Lefthook configuration for local pre-commit and pre-push enforcement",
 			verified: "Existing Lefthook configuration verified present",
 		})
+		return state == scaffoldWritten, err
 	}
 	full, err := repoFile(s.repoPath, lefthookFile)
 	if err != nil {
@@ -276,8 +278,8 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // reconcileEvasionHook scaffolds the interceptor. With vendored set, the repository carries
 // the canonical hook policy, whose interceptor belongs to that vendored bundle, so --force
 // does not replace it with the generated one.
-func reconcileEvasionHook(s *adoptSession, vendored bool) error {
-	_, err := s.scaffoldFile(scaffold{
+func reconcileEvasionHook(ctx context.Context, s *adoptSession, vendored bool) error {
+	_, err := s.scaffoldFile(ctx, scaffold{
 		rel:      evasionHookFile,
 		perm:     execPerm,
 		content:  []byte(blockEvasionPY),

@@ -46,6 +46,23 @@ unset flag keeps the default. The flags apply to single-repository adoption; bat
 6. **Multi-IDE Configs**: Workspace settings for every supported editor, or only the ones `editors` in `.standards.yaml` names ([editor selection](guides/editor-capabilities.md#selecting-editors)).
 7. **Makefile & LeftHook**: Automated pre-commit hooks and standard verification targets (`make verify-all`).
 
+### What Adoption Reads Before It Writes
+
+- **Repository identity.** `repository.owner` and `repository.name` come from the
+  `origin` remote, or from an `<owner>/<repo>` checkout path. When neither yields one,
+  both stay empty, the report warns `repository identity unresolved`, the checkpoint
+  lifecycle is not installed, and the README badge block is skipped. `repository.visibility`
+  is always left unset because adoption cannot observe it offline
+  (`internal/adopt/adopt.go`, `TestAdoptionManifest_UnresolvedIdentityStaysEmpty`).
+- **Profile.** The profile an existing `.standards.yaml` declares outranks `--profile`,
+  which outranks file markers. A conflicting `--profile` is reported as ignored
+  (`TestAdopt_DeclaredProfileGovernsAdoption`).
+- **Existing files.** An existing manifest must parse, or adoption fails and leaves it
+  unchanged. Every other existing scaffold is compared with what adoption would write:
+  a match is reported as verified, a difference as `differs from the scaffold` with a
+  warning, and the file is kept. `--force` regenerates only the scaffolds it owns
+  (`TestScaffoldFile_ReportsDriftInsteadOfVerified`).
+
 ---
 
 ## 🤖 AI Agent Adoption via MCP (`standards_adopt`)

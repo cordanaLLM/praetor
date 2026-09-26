@@ -1,0 +1,3 @@
+type: fixed
+title: Stop adoption from inventing a repository owner, name or public visibility when its identity is unresolved, adopt under the profile the repository's manifest declares ahead of the --profile flag and file markers, and report existing scaffolds that differ from what adoption writes as drift instead of verified present
+breaking: true

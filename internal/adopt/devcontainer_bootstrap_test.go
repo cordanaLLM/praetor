@@ -43,7 +43,7 @@ func TestAdoptDevContainerBundleDryRunAndApply(t *testing.T) {
 	if err := reconcileDevContainer(t.Context(), applied); err != nil {
 		t.Fatal(err)
 	}
-	base, err := devcontainer.Synthesize(newAdoptionManifest(t.Context(), applied))
+	base, err := devcontainer.Synthesize(newAdoptionManifest(applied))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestAdoptDevContainerUnavailableAndCustomRemainExplicit(t *testing.T) {
 		t.Fatal("config-only source omitted unavailable bootstrap")
 	}
 	path := filepath.Join(session.repoPath, devcontainerFile)
-	base, err := devcontainer.Synthesize(newAdoptionManifest(t.Context(), session))
+	base, err := devcontainer.Synthesize(newAdoptionManifest(session))
 	if err != nil {
 		t.Fatal(err)
 	}

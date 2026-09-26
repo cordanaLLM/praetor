@@ -95,7 +95,8 @@ exceptions for line length, repeated sibling headings, front-matter titles, and
 the HTML used by the documentation site. Change the canonical configuration and
 lock together. Audit compares emitted assets as canonical text under the line
 ending policy above; adoption preserves existing files unless `--force`
-explicitly refreshes Praetor-owned assets.
+explicitly refreshes Praetor-owned assets, and reports a preserved asset that
+differs from the canonical text as drift with a warning rather than as verified.
 
 ## Private scratch links
 
@@ -163,7 +164,9 @@ Repositories declaring the `docs:seo-portal` facet receive the five canonical
 assets under `tools/markdownlint/`, a `docs-lint` prerequisite on `verify-all`,
 and `.github/workflows/praetor-docs.yml`. The marker-owned README block gains an
 exact **Documentation Governance** workflow badge and `make docs-lint` gate row,
-using the repository identity declared by the effective manifest. Adoption runs
+using the repository identity declared by the effective manifest. A manifest
+without `repository.owner` and `repository.name` leaves the README block
+unreconciled and records the skip as a warning. Adoption runs
 this workflow step before reconciling the branch ruleset, so the unconditional
 **Documentation Governance** job becomes a required status context. It also
 owns a canonical tail block in `.gitignore` for both private scratch directories

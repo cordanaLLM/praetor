@@ -85,11 +85,23 @@ func ArtifactDeclined(declared []string, artifact string) (bool, error) {
 // manifest records. A manifest without an adoption policy declines nothing; an invalid list
 // fails closed through ArtifactDeclined, so every auditor reads declines one way.
 func ManifestArtifactDeclined(manifest *config.Manifest, artifact string) (bool, error) {
-	var declines []string
-	if manifest != nil && manifest.Adoption != nil {
-		declines = manifest.Adoption.Decline
+	return ArtifactDeclined(manifestDeclines(manifest), artifact)
+}
+
+// manifestDeclines is the adoption.decline list a manifest records; nil declines nothing.
+func manifestDeclines(manifest *config.Manifest) []string {
+	if manifest == nil || manifest.Adoption == nil {
+		return nil
 	}
-	return ArtifactDeclined(declines, artifact)
+	return manifest.Adoption.Decline
+}
+
+// manifestProfiles is the profile list a manifest declares; nil declares none.
+func manifestProfiles(manifest *config.Manifest) []string {
+	if manifest == nil {
+		return nil
+	}
+	return manifest.Profiles
 }
 
 func sortedNames(names []string) []string {
@@ -99,11 +111,16 @@ func sortedNames(names []string) []string {
 }
 
 // declaredDeclines reads adoption.decline from a repository's existing manifest.
-//
-// It is read before the chain runs, from the manifest already on disk, so a repository's
-// recorded decision governs the run that follows it rather than the run after next. A
-// repository with no manifest yet declines nothing, which is what a first adoption means.
 func declaredDeclines(ctx context.Context, repoPath string) []string {
+	return manifestDeclines(declaredManifest(ctx, repoPath))
+}
+
+// declaredManifest reads the repository's existing manifest once, before the chain runs, so
+// its recorded decisions (adoption.decline, the declared profiles) govern the run that
+// follows rather than the run after next. It returns nil when there is no manifest yet, which
+// is what a first adoption means, and when the manifest cannot be read: the manifest step
+// parses it strictly and fails the run with the reason.
+func declaredManifest(ctx context.Context, repoPath string) *config.Manifest {
 	full, err := repoFile(repoPath, manifestFile)
 	if err != nil {
 		return nil
@@ -113,10 +130,10 @@ func declaredDeclines(ctx context.Context, repoPath string) []string {
 		return nil
 	}
 	var manifest config.Manifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil || manifest.Adoption == nil {
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
 		return nil
 	}
-	return manifest.Adoption.Decline
+	return &manifest
 }
 
 // adoptStepNames returns the name of every step in the adoption chain, so tests and error

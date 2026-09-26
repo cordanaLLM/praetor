@@ -95,26 +95,26 @@ func reconcileDocumentationGate(ctx context.Context, s *adoptSession) error {
 	return err
 }
 
-func reconcileDocumentationTextAsset(ctx context.Context, s *adoptSession, sc scaffold) (bool, error) {
+func reconcileDocumentationTextAsset(ctx context.Context, s *adoptSession, sc scaffold) (scaffoldState, error) {
 	full, err := repoFile(s.repoPath, sc.rel)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	actual, exists, err := contextopt.ObserveSnapshot(ctx, full)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	if exists {
 		equivalent, compareErr := util.CanonicalTextEquivalent(actual, sc.content)
 		if compareErr != nil {
-			return false, fmt.Errorf("%s has invalid line endings: %w", sc.rel, compareErr)
+			return 0, fmt.Errorf("%s has invalid line endings: %w", sc.rel, compareErr)
 		}
 		if equivalent {
 			s.report.recordReconciled(sc.rel, sc.verified)
-			return false, nil
+			return scaffoldIdentical, nil
 		}
 	}
-	return s.scaffoldFile(sc)
+	return s.scaffoldFile(ctx, sc)
 }
 
 // DocumentationAssetPaths returns every canonical text file owned only by the documentation facet.

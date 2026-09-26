@@ -3,6 +3,7 @@ package adopt
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,7 +27,37 @@ func checkpointSourceFixture(t *testing.T, complete bool) string {
 
 func checkpointSession(t *testing.T, source string) *adoptSession {
 	t.Helper()
-	return &adoptSession{repoPath: newTestRepo(t, "checkpoint-adoption"), repoName: "fixture", opts: AdoptOptions{LockSourceRoot: source}, report: &AdoptReport{}}
+	return &adoptSession{repoPath: newTestRepo(t, "checkpoint-adoption"), repoName: "fixture",
+		identity: repoIdentity{owner: "acme", name: "widget"}, opts: AdoptOptions{LockSourceRoot: source}, report: &AdoptReport{}}
+}
+
+// TestCheckpointPolicyNamesTheResolvedRepository pins BUG-852 for the checkpoint policy: the
+// repository is the resolved identity, never the checkout directory or a default owner, and
+// an unresolved identity installs no part of the lifecycle.
+func TestCheckpointPolicyNamesTheResolvedRepository(t *testing.T) {
+	session := checkpointSession(t, checkpointSourceFixture(t, true))
+	data, err := checkpointPolicyJSON(t.Context(), session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var policy struct {
+		Repository string `json:"repository"`
+	}
+	if err := json.Unmarshal(data, &policy); err != nil || policy.Repository != "acme/widget" {
+		t.Fatalf("policy repository = %q (err %v), want the resolved acme/widget, not the checkout directory",
+			policy.Repository, err)
+	}
+	unresolved := checkpointSession(t, checkpointSourceFixture(t, true))
+	unresolved.identity = repoIdentity{owner: "", name: "widget"}
+	ready, err := reconcileCheckpointBundle(t.Context(), unresolved, false)
+	if !errors.Is(err, errCheckpointIdentity) || ready {
+		t.Fatalf("unresolved identity must refuse the lifecycle: ready=%v err=%v", ready, err)
+	}
+	for _, name := range []string{checkpointScript, checkpointCommon, checkpointPolicy} {
+		if _, statErr := os.Stat(filepath.Join(unresolved.repoPath, filepath.FromSlash(name))); !os.IsNotExist(statErr) {
+			t.Fatalf("unresolved identity still installed %s: %v", name, statErr)
+		}
+	}
 }
 
 func TestAdoptCheckpointBundleAddsJobsAndLocalPolicy(t *testing.T) {
