@@ -51,7 +51,7 @@ record every source produced into the same snapshot.
 | source | how | kind | verified |
 | --- | --- | --- | --- |
 | `codex-local` | Parses `rate_limits.primary` from the newest `~/.codex/sessions/**/*.jsonl` line, read-only. | measured | Live against a real session log on 2026-09-18: `primary.used_percent=100`, `window_minutes=10080`, matching the field shape consumed by the parser. |
-| `litellm-gateway` | `GET <base>/v1/models` with a bearer token read from a file (never logged). | measured | Live against `https://litellm.ai.cauda.dev` on 2026-09-18: HTTP 200, 28 models including `cordana/auto`. `/model/info` returned 403 for the agent token, so gateway records carry no price/context data -- `Record.Absent` says so per record. |
+| `litellm-gateway` | `GET <base>/v1/models` with a bearer token read from a file (never logged). | measured | Live against a LiteLLM gateway on 2026-09-18: HTTP 200, 28 models. `/model/info` returned 403 for the agent token, so gateway records carry no price/context data -- `Record.Absent` says so per record. |
 | `ollama-local` | `GET <endpoint>/api/tags` for installed models, `GET <endpoint>/api/ps` to mark which are loaded. | measured | Live against `http://localhost:11434` on 2026-09-18: both endpoints HTTP 200. Duplicates `internal/router`'s Ollama calls on purpose -- `tribunus` cannot import praetor `internal` packages yet, and `internal/router` is expected to build on `tribunus/catalog` once Tribunus moves out. |
 | `public-catalog` | `GET` OpenRouter's public models API and LiteLLM's public price map. | declared | Both URLs and schemas were verified live on 2026-09-18 (HTTP 200, real bodies) before the parser was written. The two catalogs use incompatible model-id schemes (e.g. `openai/gpt-4` vs `gpt-4`); slice 1 does not reconcile them, so each sub-fetch tags its own records with `public-catalog:openrouter` or `public-catalog:litellm-prices` even though `sync` reports both under one `public-catalog` line. |
 
@@ -74,8 +74,8 @@ tribunusctl sync --sources=codex-local,ollama-local --out=/tmp/snapshot.json
 
 # litellm-gateway needs both flags or it reports a skip, not an error
 tribunusctl sync --sources=litellm-gateway \
-  --litellm-base=https://litellm.ai.cauda.dev \
-  --litellm-token-file="$HOME/.config/cordana/litellm/agent-token"
+  --litellm-base=https://litellm.example.com \
+  --litellm-token-file="$HOME/.config/<gateway>/agent-token"
 
 # render a snapshot as a table
 tribunusctl show --in=/tmp/snapshot.json
