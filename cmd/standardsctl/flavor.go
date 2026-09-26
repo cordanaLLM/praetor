@@ -183,7 +183,8 @@ func applyFlavor(ctx context.Context, dir, targetFlv string, force bool) error {
 	return nil
 }
 
-// printFlavorApplyReport prints what one flavor apply created, skipped and failed.
+// printFlavorApplyReport prints what one flavor apply created, skipped, deferred, held back
+// and failed.
 func printFlavorApplyReport(dir string, report *flavor.ApplyReport) {
 	fmt.Printf("=== Applied Flavor: %s to %s ===\n", report.Flavor, dir)
 	fmt.Printf("  Created Templates (%d): %s\n", len(report.CreatedTemplates), strings.Join(report.CreatedTemplates, ", "))
@@ -193,12 +194,20 @@ func printFlavorApplyReport(dir string, report *flavor.ApplyReport) {
 	if len(report.DeferredTemplates) > 0 {
 		fmt.Printf("  Left to Producer  (%d): %s\n", len(report.DeferredTemplates), strings.Join(report.DeferredTemplates, ", "))
 	}
+	// One per line: each entry names a path and what the repository lacks for its body.
+	printApplyEntries("Unmet Requirement", report.UnmetTemplates)
 	fmt.Printf("  WorkingDir State:     %v\n", report.WorkingDirCreated)
 
-	if len(report.Errors) > 0 {
-		fmt.Printf("  Errors (%d):\n", len(report.Errors))
-		for _, e := range report.Errors {
-			fmt.Printf("    - %s\n", e)
-		}
+	printApplyEntries("Errors", report.Errors)
+}
+
+// printApplyEntries prints a labelled count and one entry per line, and nothing when empty.
+func printApplyEntries(label string, entries []string) {
+	if len(entries) == 0 {
+		return
+	}
+	fmt.Printf("  %s (%d):\n", label, len(entries))
+	for _, entry := range entries {
+		fmt.Printf("    - %s\n", entry)
 	}
 }

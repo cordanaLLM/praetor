@@ -36,6 +36,23 @@ func adoptionChecksCases() []adoptionChecksCase {
 		},
 		wantChecks: true, wantTest: true,
 	}, {
+		// Negative: typescript-node is detected, but its CI job runs `npm ci` and `npm test`
+		// and this pnpm project has no package-lock.json, so the job is withheld and nothing
+		// is required. It used to be scaffolded and required, and could never pass.
+		name: "pnpm-project-without-workflows",
+		arrange: func(t *testing.T, dir string) {
+			writeFixtureFile(t, dir, "package.json", `{"name": "widgets", "scripts": {"test": "vitest run"}}`)
+			writeFixtureFile(t, dir, "pnpm-lock.yaml", "lockfileVersion: '9.0'\n")
+		},
+	}, {
+		// Positive: an npm project with a lockfile and a test script gets the job, required.
+		name: "npm-project-without-workflows",
+		arrange: func(t *testing.T, dir string) {
+			writeFixtureFile(t, dir, "package.json", `{"name": "widgets", "scripts": {"test": "node --test"}}`)
+			writeFixtureFile(t, dir, "package-lock.json", `{"name": "widgets", "lockfileVersion": 3, "requires": true, "packages": {"": {"name": "widgets"}}}`)
+		},
+		wantChecks: true, wantTest: true,
+	}, {
 		name:       "with-repository-workflows",
 		arrange:    copySyncWorkflowFixtures,
 		wantChecks: true,

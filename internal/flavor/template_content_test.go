@@ -59,7 +59,7 @@ func TestEveryRequiredTemplateStatesItsContent(t *testing.T) {
 func TestScaffoldTemplate_Negative_NoSourceWritesNothing(t *testing.T) {
 	repo := t.TempDir()
 	orphan := TemplateItem{Path: ".github/workflows/orphan.yml", Validator: validWorkflow}
-	outcome, err := scaffoldTemplate(t.Context(), repo, orphan, "widget", "acme", false)
+	outcome, _, err := scaffoldTemplate(t.Context(), repo, orphan, "widget", "acme", false)
 	if err == nil || !strings.Contains(err.Error(), "has no content source") {
 		t.Fatalf("want a no-content-source error, got outcome %d err %v", outcome, err)
 	}
@@ -77,9 +77,9 @@ func TestScaffoldTemplate_Boundary_ProducerOwnedIsDeferredUnderForce(t *testing.
 	repo := t.TempDir()
 	manifest := TemplateItem{Path: ".standards.yaml", Producer: producerAdopt, Validator: validYAMLMapping}
 	for _, force := range []bool{false, true} {
-		outcome, err := scaffoldTemplate(t.Context(), repo, manifest, "widget", "acme", force)
-		if err != nil || outcome != templateDeferred {
-			t.Fatalf("force=%v: want deferred, got outcome %d err %v", force, outcome, err)
+		outcome, note, err := scaffoldTemplate(t.Context(), repo, manifest, "widget", "acme", force)
+		if err != nil || outcome != templateDeferred || note != producerAdopt {
+			t.Fatalf("force=%v: want deferred to %q, got outcome %d note %q err %v", force, producerAdopt, outcome, note, err)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".standards.yaml")); !errors.Is(err, os.ErrNotExist) {

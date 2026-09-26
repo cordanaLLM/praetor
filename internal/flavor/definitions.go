@@ -494,7 +494,15 @@ func (f *TypeScriptNodeFlavor) RequiredTemplates() []TemplateItem {
 			Validator: carriesCode,
 		},
 		eslintTemplate("TypeScript / Node.js static analysis rules"),
-		{Path: ".github/workflows/ci.yml", Description: "Node.js CI test and build matrix", Source: "node/ci-node.yml.tmpl", Validator: validWorkflow},
+		{
+			Path:        ".github/workflows/ci.yml",
+			Description: "Node.js CI test and build matrix",
+			Source:      "node/ci-node.yml.tmpl",
+			// The body installs with `npm ci` and runs `npm test`; outside an npm project with a
+			// real test script that job fails on every run.
+			Requires:  npmCIRequirement,
+			Validator: validWorkflow,
+		},
 	}
 }
 
