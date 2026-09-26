@@ -47,7 +47,7 @@ Three outcomes are useful: adopt a standard-library improvement within existing 
 **Count definition:** `go list -mod=mod -deps -json <explicit packages>` ran under Go 1.27.1, Linux/amd64, `GOTOOLCHAIN=local`, `GOWORK=off`, `CGO_ENABLED=1`, in separate temporary modules pinned to one candidate version. “Extra modules” means unique non-stdlib `Package.Module.Path` values in that selected **package import closure**, excluding the candidate's own module. It is not `go list -m all`, not the full go.mod graph, not a deployed binary measurement, and not a vulnerability count. “Packages” includes the candidate's own non-stdlib packages. Package files were resolved, not linked into Praetor. No inference about binary size, latency, build time, OS coverage or transitive security follows from these counts.
 
 | Candidate | Verified latest stable/tag time | Go minimum | Project license | Extra modules / non-stdlib packages in selected import closure |
-|---|---|---:|---|---|
+| --- | --- | ---: | --- | --- |
 | goldmark | v1.8.6[^1], 2026-09-03 | 1.22 | MIT | **0 / 9**, root + extension |
 | jsonschema/v6 | v6.0.3[^2], 2026-06-28 | 1.21 | Apache-2.0 | **1 / 14**, root; extra x/text |
 | maintained yaml/v3 | v3.0.5[^3], 2026-07-26 | 1.16 | MIT and Apache-2.0 by file; not simply Apache | **0 / 1**, root |
@@ -161,7 +161,7 @@ Recommended order: (1) lossless state fix and read-error propagation; (2) stdlib
 Verified current source:
 
 | Seam | Exact local evidence | Consequence |
-|---|---|---|
+| --- | --- | --- |
 | Root dependency policy | `go.mod:5`; `docs/adr/0008-spec-driven-provider-integration.md:34-42`; `docs/adr/0009-structural-unification.md:44-48` | Root currently has only YAML. ADR-0008 is labeled Proposed but includes ratified owner decisions; ADR-0009 accepts one root module, explicit constructors and the isolated parser constraint. A runtime SDK must be an explicit policy change, not hidden behind a subprocess to evade the decision. |
 | Custom MCP | `cmd/standards-mcp/server.go:649` returns literal `2024-11-05`; `cmd/standards-mcp/transport.go` is approximately 650 lines; `internal/mcp/tool.go` and `bridge.go` own tool and remote bridge contracts | SDK can replace framing, negotiation and transport state; tool validation, authority, root confinement and Praetor handler behavior remain local. Existing tests that assert the literal version are insufficient compatibility tests. |
 | Custom forge transport | `internal/forge/github.go` approximately 749 lines; `internal/milestone/forge.go` approximately 329 lines | GitHub HTTP is real, but request/error/pagination behavior is duplicated. Preserve existing HTTP tests as an oracle before replacing either implementation. |
@@ -175,7 +175,7 @@ ADR-0008's opening historical claims about successful fake-token/Gitea behavior 
 Versions below were resolved on 2026-09-12 from maintainer releases or Go module distribution metadata, then inspected at that exact version. Dates mean release publication or module version time, not proof of production stability. GitHub repository-metadata refreshes returned unauthenticated API 403 rate-limit errors; archive status and latest commit activity are therefore not claimed verified. Release and pinned-source retrieval succeeded independently. Direct/indirect counts are declared `require` entries in the pinned module's `go.mod`; they include test/tool dependencies. **They are not a resolved transitive production graph, SBOM, binary-size estimate, or count of imported runtime packages.** In particular, LSP's large indirect declaration count is substantially tooling-related.
 
 | Candidate and exact module pin | Release/module date | Required Go | Declared direct / indirect | License inspected | Fit judgment |
-|---|---:|---:|---:|---|---|
+| --- | ---: | ---: | ---: | --- | --- |
 | `github.com/modelcontextprotocol/go-sdk v1.7.0` | 2026-07-28 | 1.25.0 | 8 / 3 | Transition from MIT to Apache-2.0; docs CC BY 4.0 | Preferred MCP migration candidate; root policy amendment needed |
 | `github.com/mark3labs/mcp-go v1.0.0` | 2026-09-02 | 1.25.5 | 7 / 6 | MIT | Credible alternate, protocol-version coverage differs |
 | `github.com/google/go-github/v91 v91.0.0` | 2026-09-03 | 1.26.0 | 2 / 0 | BSD-3-Clause | Strongest scoped GitHub typed client/oracle |
@@ -368,9 +368,7 @@ Estimated migration effort is qualitative: SDK adapters are a bounded protocol e
 | Temporal SDK | v1.48.0 release[^144] | go.mod[^145] | MIT[^146] |
 | Asynq | v0.26.0 release[^147] | go.mod[^148] | MIT[^149] |
 
-
 ## Git and filesystem boundaries
-
 
 Praetor should retain native Git behind its bounded execution adapter for the current worktree/repair paths. go-git is a maintained pure-Go implementation, and release v5.19.2 is current stable in the inspected release feed, with Apache-2.0 license. Its pinned compatibility document explicitly omits worktree management, apply, rebase and cherry-pick and restricts merge to fast-forward. Those omissions directly intersect internal/worktree, internal/operationalsync and internal/repairrun, making it unsuitable as a wholesale replacement. This is a workload-fit judgment, not a claim that the library is low quality. The v6 release stream is prerelease and was not selected as a production candidate. Release[^150], pinned compatibility[^151], license[^152].
 

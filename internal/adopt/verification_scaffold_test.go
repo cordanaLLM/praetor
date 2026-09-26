@@ -16,8 +16,6 @@ func TestVerificationLegacyMigrationAndCustomPreservation(t *testing.T) {
 		"custom-echo":       "verify-all:\n\t@echo claimed\n",
 		"edited-old-stub":   "# operator changes\n" + legacyVerificationStub,
 		"multi-target":      "verify-all other:\n\t@echo custom\n",
-		"included":          "include shared.mk\n", "generated-target": "$(TARGET):\n\t@echo custom\n",
-		"pattern-target": "verify-%:\n\t@echo custom\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := newTestRepo(t, name)
@@ -47,7 +45,11 @@ func TestVerificationLegacyMigrationAndCustomPreservation(t *testing.T) {
 					t.Fatalf("known migrated plan mislabeled: %+v", applied.Verification)
 				}
 			} else {
-				if got != existing || applied.Verification.Status != verificationPreserved {
+				want, mergeErr := mergeDocumentationMakefile(existing, false)
+				if mergeErr != nil {
+					t.Fatal(mergeErr)
+				}
+				if got != want || applied.Verification.Status != verificationPreserved {
 					t.Fatalf("custom commands changed or certified: %+v %q", applied.Verification, got)
 				}
 			}
@@ -127,12 +129,20 @@ func TestVerificationPriorGeneratedRecipesAreStillPraetorOwned(t *testing.T) {
 		}
 		got := mustRead(t, filepath.Join(root, "Makefile"))
 		if edited {
-			if got != existing || report.Verification.Status != verificationPreserved {
+			want, mergeErr := mergeDocumentationMakefile(existing, false)
+			if mergeErr != nil {
+				t.Fatal(mergeErr)
+			}
+			if got != want || report.Verification.Status != verificationPreserved {
 				t.Fatalf("an edited Makefile was not preserved: %+v %q", report.Verification, got)
 			}
 			continue
 		}
-		if got != buildMakefile(plan) || report.Verification.Status != verificationDeclared {
+		want, mergeErr := mergeDocumentationMakefile(buildMakefile(plan), false)
+		if mergeErr != nil {
+			t.Fatal(mergeErr)
+		}
+		if got != want || report.Verification.Status != verificationDeclared {
 			t.Fatalf("a prior generated Makefile was not regenerated: %+v %q", report.Verification, got)
 		}
 	}

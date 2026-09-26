@@ -8,7 +8,7 @@ This plan extends existing services; it does not introduce a second sync engine.
 ## Current seams and missing return paths
 
 | Surface | Verified implementation | Missing return contract |
-|---|---|---|
+| --- | --- | --- |
 | Instructions/editor/templates | Compiler projects canonical AGENTS and verifies bytes; adoption preserves existing editor files. | Parsed local changes, field ownership and loss/conflict proposals. Generated instructions remain projections. |
 | DevContainer | Typed synthesis and verification; custom adoption reports unverified execution. | Unknown-field preservation and explicit import capabilities. Typed equality alone is not lossless roundtrip proof. |
 | Client tools | JSON/YAML merge, same-name conflict refusal, snapshot/CAS and readback. | Native client discovery/import; export-only clients must continue reporting their limit. |

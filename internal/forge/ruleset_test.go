@@ -75,3 +75,33 @@ func TestRenderRepositoryRulesetContextBoundsAndInvalidSelections(t *testing.T) 
 		t.Fatal("negative approval count accepted")
 	}
 }
+
+func TestRulesetRequiresStatusContextStructuralAndBounded(t *testing.T) {
+	const target = "Documentation Governance"
+	positive := []byte(`{"metadata":{"example":"` + target +
+		`"},"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"` +
+		target + `"}]}}]}`)
+	required, err := RulesetRequiresStatusContext(positive, target)
+	if err != nil || !required {
+		t.Fatalf("structural required context missed: required=%v err=%v", required, err)
+	}
+	metadataOnly := []byte(`{"metadata":{"example":"` + target + `"},"rules":[]}`)
+	required, err = RulesetRequiresStatusContext(metadataOnly, target)
+	if err != nil || required {
+		t.Fatalf("metadata lookalike claimed: required=%v err=%v", required, err)
+	}
+	rules := make([]string, maxRulesetRules)
+	for index := 0; index < len(rules) && index < maxRulesetRules; index++ {
+		rules[index] = `{"type":"deletion"}`
+	}
+	exact := []byte(`{"rules":[` + strings.Join(rules, ",") + `]}`)
+	if _, err := RulesetRequiresStatusContext(exact, target); err != nil {
+		t.Fatalf("exact rule boundary rejected: %v", err)
+	}
+	rules = append(rules, `{"type":"deletion"}`)
+	if _, err := RulesetRequiresStatusContext(
+		[]byte(`{"rules":[`+strings.Join(rules, ",")+`]}`), target,
+	); err == nil {
+		t.Fatal("ruleset above structural scan bound accepted")
+	}
+}

@@ -252,6 +252,87 @@ func TestPortabilityFollowsTheRepositoryVariable(t *testing.T) {
 	}
 }
 
+const markdownGateSelfTest = "node tools/markdownlint/verify.mjs --self-test"
+
+// markdownGateSelfTestGap names why a job does not replay the Markdown gate self-test on
+// every leg, or returns "" when it does. A step skipped by an OS condition would restore
+// the silent Windows gap HISS-21 forbids, so only unconditional steps count.
+func markdownGateSelfTestGap(job workflowJob) string {
+	if advisoryJob(job.ContinueOnError) {
+		return "job is advisory"
+	}
+	setupNode := false
+	for i := 0; i < len(job.Steps) && i < maxStepsPerJob; i++ {
+		step := job.Steps[i]
+		if strings.HasPrefix(step.Uses, "actions/setup-node@") && runsOnEveryLeg(step) {
+			setupNode = true
+		}
+		if strings.TrimSpace(step.Run) != markdownGateSelfTest {
+			continue
+		}
+		switch {
+		case !setupNode:
+			return "self-test runs before an unconditional setup-node step"
+		case !runsOnEveryLeg(step):
+			return "self-test step is conditional: " + step.If
+		}
+		return ""
+	}
+	return "no step runs " + markdownGateSelfTest
+}
+
+// runsOnEveryLeg reports whether a step's condition cannot differ between matrix legs.
+func runsOnEveryLeg(step workflowStep) bool {
+	condition := strings.TrimSpace(step.If)
+	return condition == "" || condition == "${{ !cancelled() }}"
+}
+
+// The Markdown gate runner is emitted into adopters' verify-all, and only the portability
+// matrix runs it on Windows. Positive: the real harness job replays it on every leg.
+// Negative and boundary: a missing step, a step before Node exists, or an OS-guarded step.
+func TestPortabilityReplaysMarkdownGateSelfTestOnEveryLeg(t *testing.T) {
+	workflows, _ := engineWorkflows(t)
+	var spec workflowSpec
+	if err := yaml.Unmarshal(workflows["portability.yml"], &spec); err != nil {
+		t.Fatalf("parse portability.yml: %v", err)
+	}
+	harness := spec.Jobs["harness"]
+	if gap := markdownGateSelfTestGap(harness); gap != "" {
+		t.Fatalf("portability harness: %s", gap)
+	}
+	legs := make([]string, 0, len(harness.Strategy.Matrix.Include))
+	for i := 0; i < len(harness.Strategy.Matrix.Include) && i < maxMatrixLegs; i++ {
+		legs = append(legs, harness.Strategy.Matrix.Include[i]["os"])
+	}
+	if !strings.Contains(" "+strings.Join(legs, " ")+" ", " windows-latest ") {
+		t.Fatalf("portability harness legs = %v, want a windows-latest leg", legs)
+	}
+	node := workflowStep{Uses: "actions/setup-node@v4", If: "${{ !cancelled() }}"}
+	selfTest := workflowStep{Run: markdownGateSelfTest + "\n", If: "${{ !cancelled() }}"}
+	cases := []struct {
+		name string
+		job  workflowJob
+		want string
+	}{
+		{"positive", workflowJob{Steps: []workflowStep{node, selfTest}}, ""},
+		{"negative missing", workflowJob{Steps: []workflowStep{node}}, "no step runs"},
+		{"boundary order", workflowJob{Steps: []workflowStep{selfTest, node}}, "before an unconditional setup-node"},
+		{"boundary conditional node", workflowJob{Steps: []workflowStep{
+			{Uses: node.Uses, If: "runner.os != 'Windows'"}, selfTest}}, "before an unconditional setup-node"},
+		{"boundary os guard", workflowJob{Steps: []workflowStep{
+			node, {Run: markdownGateSelfTest, If: "runner.os != 'Windows'"}}}, "conditional"},
+		{"boundary advisory", workflowJob{ContinueOnError: "true", Steps: []workflowStep{node, selfTest}}, "advisory"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := markdownGateSelfTestGap(tc.job)
+			if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
+				t.Fatalf("gap = %q, want containing %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // The guards must not cost the canonical repository its required checks, and a fork must
 // not be told to require checks its own runs will never report.
 func TestRepositoryGuardKeepsRequiredContextsOnlyWhereItHolds(t *testing.T) {

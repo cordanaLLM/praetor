@@ -11,6 +11,11 @@ runtimes, status, and any reasons requiring review.
 | `unavailable` | A required build/test command is missing or ambiguous. Generated recipes fail explicitly. |
 | `preserved-unverified` | Existing custom Makefile ownership is preserved. Review and exercise its `verify-all` contract. |
 
+Repositories declaring `docs:seo-portal` also receive a locked Markdown gate,
+its dedicated required CI workflow, and private scratch-link protection. The
+[documentation governance guide](documentation-governance.md) describes its
+inventory, diagnostics, adoption behavior, and bounds.
+
 ## README governance is adoption evidence, not certification
 
 When `README.md` exists, adoption owns only the region between
@@ -51,7 +56,6 @@ authority path (`adopt.AuditBranchProtection`) to verify branch protection:
   `.github/rulesets/main.json` is missing or invalid.
 - An unknown decline item, malformed decline entry, or unreadable `.standards.yaml`
   fails closed, ensuring invalid configuration cannot produce a false pass.
-
 
 ### Stages that do not apply are skipped, not failed
 
@@ -120,7 +124,7 @@ reviewer reads.
 When the bound fires, the stage says so rather than reporting a test failure. These are different
 outcomes and used to print identically:
 
-```
+```text
 5. [FAIL] Race-Detector Tests  (3m0.024s)
    Reason: tests failed in .standards/worktrees/gate-2856-...: ok github.com/... 1.437s
 ```

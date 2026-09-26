@@ -315,7 +315,6 @@ replace `make verify-all` or certify the code themselves. See the
 bounded continuation and activation evidence. Current-session interception still
 requires a real native hook event; configuration alone does not establish it.
 
-
 Native bootstrap can also be inspected without a model request:
 
 ```bash
@@ -354,13 +353,13 @@ kernel and semgrep, and never the scope.
 A push is already a network operation, so asking costs nothing new. An unreachable remote falls
 back to the local symref rather than failing the push, and says so:
 
-```
+```text
 Push baseline: remote default unavailable; using local refs/remotes/origin/main
 ```
 
 Every push then prints what it is about to scan and the base that produced it:
 
-```
+```text
 Push scope: 3 file(s) versus 028dad44db90
 ```
 
@@ -410,7 +409,7 @@ per-worktree, so it does not arrive with a checkout.
 `go test -race` requires cgo and a host C toolchain. Where `CGO_ENABLED` is `0` — a Windows box
 without gcc, for instance — five self-test legs skip and **say why**:
 
-```
+```text
 skipped 'race detector unavailable (CGO_ENABLED=0); CI runs these legs on Linux with cgo'
 ```
 

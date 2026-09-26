@@ -7,6 +7,7 @@ Thank you for contributing to Praetor! As the core governance and standardizatio
 ## Code of Conduct & Standards
 
 All contributors are expected to uphold deterministic, high-integrity engineering practices:
+
 - Zero-warning tolerance across compiler, linter, and format checks.
 - 100% test coverage across public interface dimensions (Positive, Negative, Boundary).
 - All commits must include Developer Certificate of Origin (`Signed-off-by: Your Name <email>`).

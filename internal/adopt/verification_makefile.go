@@ -1,14 +1,197 @@
 package adopt
 
 import (
+	"context"
+	"fmt"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+const (
+	documentationMakefileBegin = "# BEGIN praetor documentation gate"
+	documentationMakefileEnd   = "# END praetor documentation gate"
+	maxMakefileLines           = 4096
+)
+
+// DocumentationMakefileBlock is the exact local-gate wiring audit requires.
+func DocumentationMakefileBlock() string {
+	return documentationMakefileBegin + "\n" +
+		".PHONY: docs-lint\n" +
+		"verify-all: docs-lint\n" +
+		"docs-lint:\n" +
+		"\t@node tools/markdownlint/verify.mjs\n" +
+		documentationMakefileEnd + "\n"
+}
+
+type documentationMarkerState struct {
+	lines                []string
+	begin, end           int
+	beginCount, endCount int
+}
+
+// DocumentationMakefileMarkersPresent reports whether a Makefile carries an
+// exact Praetor marker line. Prose merely mentioning a marker is operator data.
+func DocumentationMakefileMarkersPresent(data string) (bool, error) {
+	normalized, _, err := util.NormalizeLineEndingsStrict(data)
+	if err != nil {
+		return false, fmt.Errorf("makefile line endings are inconsistent: %w", err)
+	}
+	state, err := scanDocumentationMakefileMarkers(normalized)
+	if err != nil {
+		return false, err
+	}
+	return state.beginCount > 0 || state.endCount > 0, nil
+}
+
+func scanDocumentationMakefileMarkers(data string) (documentationMarkerState, error) {
+	state := documentationMarkerState{lines: strings.Split(data, "\n"), begin: -1, end: -1}
+	if len(state.lines) > maxMakefileLines {
+		return state, fmt.Errorf("makefile exceeds %d lines", maxMakefileLines)
+	}
+	for index := 0; index < len(state.lines) && index < maxMakefileLines; index++ {
+		switch state.lines[index] {
+		case documentationMakefileBegin:
+			state.begin, state.beginCount = index, state.beginCount+1
+		case documentationMakefileEnd:
+			state.end, state.endCount = index, state.endCount+1
+		}
+	}
+	return state, nil
+}
+
+func mergeDocumentationMakefile(existing string, force bool) (string, error) {
+	normalized, crlf, err := util.NormalizeLineEndingsStrict(existing)
+	if err != nil {
+		return "", fmt.Errorf("makefile line endings are inconsistent: %w", err)
+	}
+	merged, err := mergeDocumentationMakefileLF(normalized, force)
+	if err != nil {
+		return "", err
+	}
+	return util.RestoreLineEndings(merged, crlf), nil
+}
+
+func mergeDocumentationMakefileLF(existing string, force bool) (string, error) {
+	block := DocumentationMakefileBlock()
+	state, err := scanDocumentationMakefileMarkers(existing)
+	if err != nil {
+		return "", err
+	}
+	if documentationMakefileBlockExact(state, block) {
+		return existing, nil
+	}
+	if state.beginCount > 1 || state.endCount > 1 {
+		return "", fmt.Errorf("makefile contains duplicate Praetor documentation gate markers")
+	}
+	if state.beginCount == 1 || state.endCount == 1 {
+		return replaceDocumentationMakefileBlock(existing, block, force)
+	}
+	if mayDefineTarget(existing, "docs-lint") {
+		return "", fmt.Errorf("makefile may define target docs-lint outside the Praetor-managed block")
+	}
+	base := strings.TrimRight(existing, "\n")
+	if base == "" {
+		return block, nil
+	}
+	return base + "\n\n" + block, nil
+}
+
+func documentationMakefileBlockExact(state documentationMarkerState, block string) bool {
+	return state.beginCount == 1 && state.endCount == 1 && state.end >= state.begin &&
+		state.end < len(state.lines)-1 &&
+		strings.Join(state.lines[state.begin:state.end+1], "\n") == strings.TrimSuffix(block, "\n")
+}
+
+func replaceDocumentationMakefileBlock(existing, block string, force bool) (string, error) {
+	state, err := scanDocumentationMakefileMarkers(existing)
+	if err != nil {
+		return "", err
+	}
+	if state.beginCount != 1 || state.endCount != 1 || state.end < state.begin {
+		return "", fmt.Errorf("makefile contains an incomplete Praetor documentation gate block")
+	}
+	if !force {
+		return "", fmt.Errorf("makefile Praetor documentation gate block was edited; review it and rerun adopt --force")
+	}
+	replacement := strings.Split(strings.TrimSuffix(block, "\n"), "\n")
+	lines := make([]string, 0, len(state.lines)-(state.end-state.begin+1)+len(replacement))
+	lines = append(lines, state.lines[:state.begin]...)
+	lines = append(lines, replacement...)
+	lines = append(lines, state.lines[state.end+1:]...)
+	return strings.Join(lines, "\n"), nil
+}
+
+func removeDocumentationMakefileBlock(existing string) (string, bool, error) {
+	normalized, crlf, err := util.NormalizeLineEndingsStrict(existing)
+	if err != nil {
+		return "", false, fmt.Errorf("makefile line endings are inconsistent: %w", err)
+	}
+	cleaned, removed, err := removeDocumentationMakefileBlockLF(normalized)
+	if err != nil {
+		return "", false, err
+	}
+	return util.RestoreLineEndings(cleaned, crlf), removed, nil
+}
+
+func removeDocumentationMakefileBlockLF(existing string) (string, bool, error) {
+	state, err := scanDocumentationMakefileMarkers(existing)
+	if err != nil {
+		return "", false, err
+	}
+	if state.beginCount == 0 && state.endCount == 0 {
+		return existing, false, nil
+	}
+	block := DocumentationMakefileBlock()
+	if state.beginCount != 1 || state.endCount != 1 || state.end < state.begin || state.end >= len(state.lines)-1 ||
+		strings.Join(state.lines[state.begin:state.end+1], "\n") != strings.TrimSuffix(block, "\n") {
+		return "", false, fmt.Errorf("refusing to remove ambiguous or edited Praetor documentation gate block")
+	}
+	prefix := strings.TrimRight(strings.Join(state.lines[:state.begin], "\n"), "\n")
+	suffix := strings.TrimLeft(strings.Join(state.lines[state.end+1:], "\n"), "\n")
+	switch {
+	case prefix == "":
+		return suffix, true, nil
+	case suffix == "":
+		return prefix + "\n", true, nil
+	default:
+		return prefix + "\n" + suffix, true, nil
+	}
+}
+
+func reconcileDocumentationMakefile(ctx context.Context, s *adoptSession) error {
+	full, err := repoFile(s.repoPath, makefileName)
+	if err != nil {
+		return err
+	}
+	data, exists, err := contextopt.ObserveSnapshot(ctx, full)
+	if err != nil {
+		return err
+	}
+	merged, err := mergeDocumentationMakefile(string(data), s.opts.Force)
+	if err != nil {
+		return err
+	}
+	if merged == string(data) {
+		s.report.recordReconciled(makefileName, "Documentation gate already attached to verify-all")
+		return nil
+	}
+	if !s.opts.DryRun {
+		err = contextopt.ReplaceSnapshot(ctx, full, []byte(merged),
+			contextopt.ReplaceOptions{Expected: data, Exists: exists, Mode: filePerm})
+	}
+	if err != nil {
+		return err
+	}
+	s.report.recordReconciledAs(makefileName, actionAppend, "Attached locked documentation gate to verify-all")
+	return nil
+}
 
 // Only exact historical Praetor output is eligible for automatic replacement.
 // Arbitrary user recipes, including edited generated files, remain untouched.
 func isLegacyVerificationMakefile(data string) bool {
+	data = withoutDocumentationMakefileBlock(data)
 	if data == legacyVerificationStub || data == strings.TrimPrefix(legacyVerificationStub, "\n") {
 		return true
 	}
@@ -28,6 +211,7 @@ func isLegacyVerificationMakefile(data string) bool {
 // adopted earlier receive the corrected recipes; an edited copy is not exact and stays untouched.
 // Where both renderings coincide -- a plan with no runnable commands -- the file is already current.
 func isPriorGeneratedMakefile(data string, plan *VerificationPlan) bool {
+	data = withoutDocumentationMakefileBlock(data)
 	prior := buildMakefileWith(plan, priorVerificationRecipePrefix)
 	return data == prior && prior != buildMakefile(plan)
 }
@@ -49,7 +233,7 @@ func legacyVerificationMakefile(test, build string) string {
 }
 
 func preserveCustomVerification(plan *VerificationPlan, data []byte) {
-	text := string(data)
+	text := withoutDocumentationMakefileBlock(string(data))
 	if !mayDefineVerificationTarget(text) || isReplaceableVerificationMakefile(text, plan) || text == buildMakefile(plan) {
 		return
 	}
@@ -59,8 +243,18 @@ func preserveCustomVerification(plan *VerificationPlan, data []byte) {
 	plan.Test = [][]string{{"make", "verify-all"}}
 }
 
+func withoutDocumentationMakefileBlock(data string) string {
+	cleaned, removed, err := removeDocumentationMakefileBlock(data)
+	if err == nil && removed {
+		return cleaned
+	}
+	return data
+}
+
 func hasVerificationTarget(data, target string) bool {
-	for _, line := range strings.Split(data, "\n") {
+	lines := strings.Split(data, "\n")
+	for index := 0; index < len(lines) && index < maxMakefileLines; index++ {
+		line := lines[index]
 		if strings.HasPrefix(line, "\t") || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
@@ -76,50 +270,63 @@ func hasVerificationTarget(data, target string) bool {
 	return false
 }
 
-func appendVerificationTargets(existing string, plan *VerificationPlan) string {
+func appendVerificationTargets(existing string, plan *VerificationPlan) (string, error) {
+	normalized, crlf, err := util.NormalizeLineEndingsStrict(existing)
+	if err != nil {
+		return "", fmt.Errorf("makefile line endings are inconsistent: %w", err)
+	}
 	var result strings.Builder
-	result.WriteString(existing)
+	result.WriteString(normalized)
 	result.WriteString("\n# Praetor declared verification; existing project recipes remain unchanged.\n" +
 		util.MakefileCLIVariable + ".PHONY: verify-all\nverify-all:\n\t@$(PRAETORCTL) compile-context --verify\n\t@$(PRAETORCTL) audit\n")
 	result.WriteString(verificationRecipe(plan, plan.Build))
 	result.WriteString(verificationRecipe(plan, plan.Test))
 	for _, target := range []string{"compile-context", "audit"} {
-		if !hasVerificationTarget(existing, target) {
+		if !hasVerificationTarget(normalized, target) {
 			result.WriteString("\n" + target + ":\n\t@$(PRAETORCTL) " + target + "\n")
 		}
 	}
-	return result.String()
+	return util.RestoreLineEndings(result.String(), crlf), nil
 }
 
 // Includes, generated target names and pattern rules require Make evaluation.
 // Never append a potentially overriding recipe when ownership is ambiguous.
 func mayDefineVerificationTarget(data string) bool {
-	if hasVerificationTarget(data, "verify-all") {
+	return mayDefineTarget(data, "verify-all")
+}
+
+func mayDefineTarget(data, target string) bool {
+	if hasVerificationTarget(data, target) {
 		return true
 	}
-	for _, line := range strings.Split(data, "\n") {
-		if strings.HasPrefix(line, "\t") {
-			continue
-		}
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		switch fields[0] {
-		case "include", "-include", "sinclude", "define", "override":
-			return true
-		}
-		if strings.Contains(line, "$(eval") {
-			return true
-		}
-		left, _, ok := strings.Cut(line, ":")
-		if ok && strings.ContainsAny(left, "$%") {
+	lines := strings.Split(data, "\n")
+	if len(lines) > maxMakefileLines {
+		return true
+	}
+	for index := 0; index < len(lines) && index < maxMakefileLines; index++ {
+		if makefileLineHasAmbiguousOwnership(lines[index]) {
 			return true
 		}
 	}
 	return false
+}
+
+func makefileLineHasAmbiguousOwnership(line string) bool {
+	if strings.HasPrefix(line, "\t") {
+		return false
+	}
+	line = strings.TrimSpace(line)
+	fields := strings.Fields(line)
+	if len(fields) == 0 || strings.HasPrefix(line, "#") {
+		return false
+	}
+	switch fields[0] {
+	case "include", "-include", "sinclude", "define", "override":
+		return true
+	}
+	if strings.Contains(line, "$(eval") || strings.Contains(line, "${eval") {
+		return true
+	}
+	left, _, ok := strings.Cut(line, ":")
+	return ok && strings.ContainsAny(left, "$%")
 }

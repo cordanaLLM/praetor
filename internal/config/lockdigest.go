@@ -26,6 +26,10 @@ const (
 	emptyInputDigest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	// maxLockEntries bounds every lockfile loop (HISS-02).
 	maxLockEntries = 256
+	// MaxManifestEntriesPerKind is the validated profile/facet inventory bound.
+	// Consumers that inspect a manifest collection must use the same limit as
+	// lock validation so a valid final entry is never silently skipped.
+	MaxManifestEntriesPerKind = maxLockEntries
 	// maxArchetypeBytes bounds how much of an archetype file is hashed.
 	maxArchetypeBytes = 1 << 20
 )

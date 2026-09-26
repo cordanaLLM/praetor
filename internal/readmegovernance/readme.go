@@ -6,10 +6,12 @@ package readmegovernance
 import (
 	"errors"
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
+	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
 const (
@@ -62,18 +64,24 @@ and modernized NASA JPL Power-of-10 rules.
 // State is the durable evidence adoption can truthfully render. A baseline is a debt
 // anchor, not proof that the repository's full verification gate passed.
 type State struct {
-	BaselineKnown   bool
-	LegacyDebtCount int
+	BaselineKnown        bool
+	LegacyDebtCount      int
+	DocumentationEnabled bool
+	RepositoryOwner      string
+	RepositoryName       string
 }
 
 // Reconcile returns content with one current managed block. Human-authored content and
 // custom HISS badges remain outside the block and are preserved.
 func Reconcile(content string, state State) (string, bool, error) {
-	if state.LegacyDebtCount < 0 {
-		return "", false, fmt.Errorf("%w: negative legacy debt count", ErrInvalidState)
+	if err := validateState(state); err != nil {
+		return "", false, err
 	}
 	original := content
-	content, crlf := util.NormalizeLineEndings(content)
+	content, crlf, err := util.NormalizeLineEndingsStrict(content)
+	if err != nil {
+		return "", false, fmt.Errorf("README line endings are inconsistent: %w", err)
+	}
 	first, last, err := util.FindMarkedBlock(content, Start, End)
 	if err != nil {
 		return "", false, fmt.Errorf("README governance markers: %w", err)
@@ -100,7 +108,11 @@ func Reconcile(content string, state State) (string, bool, error) {
 
 // Verify accepts only the exact output Reconcile would produce for state.
 func Verify(content string, state State) error {
-	first, _, err := util.FindMarkedBlock(content, Start, End)
+	normalized, _, err := util.NormalizeLineEndingsStrict(content)
+	if err != nil {
+		return fmt.Errorf("README line endings are inconsistent: %w", err)
+	}
+	first, _, err := util.FindMarkedBlock(normalized, Start, End)
 	if err != nil {
 		return fmt.Errorf("README governance markers: %w", err)
 	}
@@ -149,7 +161,13 @@ func renderBlock(state State, customHISSBadge bool) string {
 	var lines []string
 	lines = append(lines, Start)
 	if !customHISSBadge {
-		lines = append(lines, renderBadge(state), "")
+		lines = append(lines, renderBadge(state))
+	}
+	if state.DocumentationEnabled {
+		lines = append(lines, renderDocumentationBadge(state))
+	}
+	if len(lines) > 1 {
+		lines = append(lines, "")
 	}
 	lines = append(lines,
 		"Praetor manages this repository's declared governance policy. This managed block records adoption state; it is not a verification certificate.",
@@ -159,10 +177,33 @@ func renderBlock(state State, customHISSBadge bool) string {
 		"| **Verification** | `make verify-all` | Runs the repository's configured verification cascade |",
 		"| **HISS Audit** | `praetorctl audit` | Enforces policy, generated-surface integrity, and the debt ratchet |",
 		"| **Context Sync** | `praetorctl compile-context --verify` | Verifies every generated agent context against `AGENTS.md` |",
-		fmt.Sprintf("| **Debt Baseline** | `.standards-baseline.json` | %s |", baselineDescription(state)),
-		End,
 	)
+	if state.DocumentationEnabled {
+		lines = append(lines,
+			"| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |")
+	}
+	lines = append(lines,
+		fmt.Sprintf("| **Debt Baseline** | `.standards-baseline.json` | %s |", baselineDescription(state)), End)
 	return strings.Join(lines, "\n")
+}
+
+func validateState(state State) error {
+	if state.LegacyDebtCount < 0 {
+		return fmt.Errorf("%w: negative legacy debt count", ErrInvalidState)
+	}
+	if state.DocumentationEnabled {
+		if err := util.ValidateGitHubRepositoryIdentity(state.RepositoryOwner, state.RepositoryName); err != nil {
+			return fmt.Errorf("%w: documentation badge identity: %w", ErrInvalidState, err)
+		}
+	}
+	return nil
+}
+
+func renderDocumentationBadge(state State) string {
+	workflow := path.Base(markdownassets.WorkflowFile)
+	workflowURL := fmt.Sprintf("https://github.com/%s/%s/actions/workflows/%s",
+		state.RepositoryOwner, state.RepositoryName, workflow)
+	return fmt.Sprintf("[![%s](%s/badge.svg)](%s)", markdownassets.StatusContext, workflowURL, workflowURL)
 }
 
 func renderBadge(state State) string {

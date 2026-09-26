@@ -47,6 +47,7 @@ type FilterDecision struct {
 	RunSecurity    bool       `json:"run_security"`
 	RunAudit       bool       `json:"run_audit"`
 	RunContextSync bool       `json:"run_context_sync"`
+	RunDocs        bool       `json:"run_docs"`
 	RunDocsOnly    bool       `json:"run_docs_only"`
 	SkipHeavyGates bool       `json:"skip_heavy_gates"`
 	Reason         string     `json:"reason"`
@@ -79,6 +80,7 @@ func AnalyzeChanges(ctx context.Context, opts FilterOptions) (*FilterDecision, e
 			RunSecurity:    true,
 			RunAudit:       true,
 			RunContextSync: true,
+			RunDocs:        true,
 			SkipHeavyGates: false,
 			Reason:         fmt.Sprintf("git diff unavailable (%v); running full verification", err),
 			ChangeSet:      cs,
@@ -200,7 +202,7 @@ func MakeDecision(cs *ChangeSet, forceAll bool) *FilterDecision {
 	}
 	if cs.StateOnly {
 		return &FilterDecision{
-			Reason:         "only .workingdir session state modified; skipping CI gates",
+			Reason:         "only private .workingdir/.workingdir2 session state modified; skipping CI gates",
 			SkipHeavyGates: true,
 			ChangeSet:      cs,
 		}
@@ -208,9 +210,10 @@ func MakeDecision(cs *ChangeSet, forceAll bool) *FilterDecision {
 	if cs.DocsOnly {
 		return &FilterDecision{
 			RunAudit:       true,
+			RunDocs:        true,
 			RunDocsOnly:    true,
 			SkipHeavyGates: true,
-			Reason:         "pure documentation change; running audit only and skipping heavy race tests",
+			Reason:         "pure documentation change; running audit and documentation governance; skipping heavy race and security gates",
 			ChangeSet:      cs,
 		}
 	}
@@ -224,6 +227,7 @@ func makeFullMatrixDecision(cs *ChangeSet, reason string) *FilterDecision {
 		RunSecurity:    true,
 		RunAudit:       true,
 		RunContextSync: true,
+		RunDocs:        true,
 		SkipHeavyGates: false,
 		Reason:         reason,
 		ChangeSet:      cs,
@@ -242,6 +246,7 @@ func makeTargetedDecision(cs *ChangeSet) *FilterDecision {
 		RunSecurity:    needsSecurity,
 		RunAudit:       true,
 		RunContextSync: needsContextSync,
+		RunDocs:        cs.DocsChanged || needsTests,
 		RunDocsOnly:    false,
 		SkipHeavyGates: !needsTests,
 		Reason:         "source code or configuration modified; running targeted CI matrix",
@@ -257,6 +262,7 @@ func (d *FilterDecision) ToEnvMap() map[string]string {
 		"RUN_SECURITY":     fmt.Sprintf("%t", d.RunSecurity),
 		"RUN_AUDIT":        fmt.Sprintf("%t", d.RunAudit),
 		"RUN_CONTEXT_SYNC": fmt.Sprintf("%t", d.RunContextSync),
+		"RUN_DOCS":         fmt.Sprintf("%t", d.RunDocs),
 		"DOCS_ONLY":        fmt.Sprintf("%t", d.RunDocsOnly),
 		"SKIP_HEAVY_GATES": fmt.Sprintf("%t", d.SkipHeavyGates),
 	}
@@ -278,19 +284,22 @@ func (d *FilterDecision) ToJSON() ([]byte, error) {
 
 func isDocumentation(p string) bool {
 	base := filepath.Base(p)
-	return strings.HasSuffix(p, ".md") ||
-		strings.HasPrefix(p, "docs/") ||
-		strings.HasSuffix(p, ".png") ||
-		strings.HasSuffix(p, ".svg") ||
-		strings.HasSuffix(p, ".jpg") ||
-		strings.EqualFold(base, "LICENSE") ||
-		strings.EqualFold(base, "NOTICE") ||
-		strings.HasSuffix(p, ".txt")
+	lower := strings.ToLower(p)
+	for _, suffix := range []string{
+		".md", ".markdown", ".mdx", ".md.tmpl", ".markdown.tmpl", ".mdx.tmpl",
+		".png", ".svg", ".jpg", ".txt",
+	} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return strings.HasPrefix(p, "docs/") || strings.EqualFold(base, "LICENSE") ||
+		strings.EqualFold(base, "NOTICE")
 }
 
 func isCode(p string) bool {
 	return slices.Contains([]string{
-		".go", ".c", ".cpp", ".h", ".cu", ".rs", ".ts", ".js", ".py", ".java", ".dart", ".proto",
+		".go", ".c", ".cpp", ".h", ".cu", ".rs", ".ts", ".js", ".mjs", ".cjs", ".py", ".java", ".dart", ".proto",
 	}, filepath.Ext(p))
 }
 
@@ -325,5 +334,5 @@ func isAgent(p string) bool {
 }
 
 func isState(p string) bool {
-	return strings.HasPrefix(p, ".workingdir/")
+	return strings.HasPrefix(p, ".workingdir/") || strings.HasPrefix(p, ".workingdir2/")
 }

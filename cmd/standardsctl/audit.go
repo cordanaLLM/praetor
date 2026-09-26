@@ -137,6 +137,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditLockDigestsContext(ctx, manifest, rootDir) },
 		func() error { return auditBaselineAndInvariants(ctx, opts) },
 		func() error { return auditReadmeGovernance(ctx, manifest, opts) },
+		func() error { return auditDocumentationGate(ctx, manifest, rootDir) },
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
 		func() error { return auditAgentProjections(rootDir) },
 		func() error { return auditCavemanAgentSurfaces(rootDir) },

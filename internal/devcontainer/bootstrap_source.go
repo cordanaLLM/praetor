@@ -15,6 +15,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
+	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
 const (
@@ -59,13 +60,15 @@ func captureBootstrapSource(ctx context.Context, root string) ([]bootstrapSource
 	return files, nil
 }
 
-// bootstrapSourcePathspec lists exactly what validateBootstrapSourceName accepts. It
+// bootstrapSourcePathspec, together with the declared Markdown gate assets that
+// bootstrapSourcePaths appends, lists exactly what validateBootstrapSourceName accepts. It
 // previously also globbed *.s, *.S, *.c, *.h and *.syso, which that validator rejects as
 // "non-Go build inputs", so the first native file committed anywhere in the tree --
 // including a scanner fixture under testdata -- failed the bootstrap. Asking git for files
 // the validator refuses is a contradiction that can only ever produce an error.
 //
-// The exclusions drop Go's test surface (util.IsGoNonTestSource): the recorded Dockerfile
+// The exclusions drop Go's test surface (util.IsGoTestSurface) from every pathspec, the
+// appended asset paths included: the recorded Dockerfile
 // only runs go build ./cmd/standardsctl, which never reads a _test.go file or a testdata
 // directory. Carrying them roughly doubled the compressed archive and pushed it to 96% of
 // the four-frame cap, so one added test failed every bootstrap (BUG-985). The glob magic
@@ -74,6 +77,7 @@ var bootstrapSourcePathspec = []string{"*.go", "go.mod", "go.sum", "LICENSE", ":
 
 func bootstrapSourcePaths(ctx context.Context, root string) ([]string, error) {
 	args := append([]string{"ls-files", "--cached", "--others", "--exclude-standard", "-z", "--"}, bootstrapSourcePathspec...)
+	args = append(args, markdownBootstrapAssetPaths()...)
 	data, err := runSourceGit(ctx, root, args...)
 	if err != nil {
 		return nil, err
@@ -125,16 +129,19 @@ func validateBootstrapSourceName(name string) error {
 	return validateBootstrapSourceKind(name)
 }
 
-// validateBootstrapSourceKind admits the module files and non-test Go source, the inputs
-// go build ./cmd/standardsctl reads; bootstrapSourcePathspec asks git for exactly these.
+// validateBootstrapSourceKind admits the module files, the declared Markdown gate assets
+// that tools/markdownlint embeds, and non-test Go source: the inputs go build
+// ./cmd/standardsctl reads. bootstrapSourcePathspec plus markdownBootstrapAssetPaths asks
+// git for exactly these. Go's test surface is refused first, so no asset allowance can admit
+// a _test.go file or a testdata member.
 func validateBootstrapSourceKind(name string) error {
 	switch {
-	case name == "go.mod", name == "go.sum", name == "LICENSE":
+	case util.IsGoTestSurface(name):
+		return fmt.Errorf("bootstrap source %s is test-only; go build never reads _test.go files or testdata directories", name)
+	case name == "go.mod", name == "go.sum", name == "LICENSE", isMarkdownBootstrapAsset(name):
 		return nil
 	case !strings.HasSuffix(name, ".go"):
 		return errors.New("unsupported bootstrap source file; non-Go build inputs require explicit capture support")
-	case !util.IsGoNonTestSource(name):
-		return fmt.Errorf("bootstrap source %s is test-only; go build never reads _test.go files or testdata directories", name)
 	}
 	return nil
 }
@@ -153,7 +160,9 @@ func validateBootstrapSourceFile(name string, data []byte) error {
 	for _, group := range parsed.Comments {
 		for _, comment := range group.List {
 			if strings.HasPrefix(comment.Text, "//go:embed ") || strings.HasPrefix(comment.Text, "//go:embed\t") {
-				return fmt.Errorf("bootstrap source %s embeds assets; explicit asset capture is required", name)
+				if name != markdownassets.Directory+"/assets.go" || comment.Text != markdownBootstrapEmbedDirective() {
+					return fmt.Errorf("bootstrap source %s embeds assets; explicit asset capture is required", name)
+				}
 			}
 		}
 	}
@@ -232,7 +241,36 @@ func validateBootstrapSourceSet(files []bootstrapSourceFile) error {
 			return errors.New("bootstrap archive must declare the Praetor module")
 		}
 	}
+	if containsBootstrapSource(files, markdownassets.Directory+"/assets.go") {
+		for _, asset := range markdownBootstrapAssetPaths() {
+			if !containsBootstrapSource(files, asset) {
+				return fmt.Errorf("bootstrap Markdown asset %s is missing", asset)
+			}
+		}
+	}
 	return nil
+}
+
+func markdownBootstrapAssetPaths() []string {
+	names := markdownassets.Names()
+	paths := make([]string, 0, len(names))
+	for index := 0; index < len(names) && index < markdownassets.MaxAssets; index++ {
+		paths = append(paths, markdownassets.Directory+"/"+names[index])
+	}
+	return paths
+}
+
+func isMarkdownBootstrapAsset(name string) bool {
+	for _, candidate := range markdownBootstrapAssetPaths() {
+		if name == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func markdownBootstrapEmbedDirective() string {
+	return "//go:embed " + strings.Join(markdownassets.Names(), " ")
 }
 
 func declaresPraetorModule(data []byte) bool {

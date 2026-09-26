@@ -230,3 +230,21 @@ jobs:
           # it. Raise it to each platform's real figure once the first green run reports one,
           # and never lower it to make a red run green.
           MIN_EXECUTED: '10'
+
+      # The Markdown gate runner is a Go-embedded asset that adoption emits into every
+      # docs:seo-portal repository's verify-all, so it is a generated template under this
+      # invariant, yet the documentation workflows run it on Linux only. Its self-test performs
+      # the real locked `npm ci` and replays the gate's fixtures. On Windows the runner cannot
+      # start the npm batch shim without a shell and runs the npm-cli.js shipped beside node.exe
+      # instead; this step is the leg that proves that path works on the platform it exists for.
+      - name: Setup Node Toolchain
+        if: ${{ !cancelled() }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: tools/markdownlint/package-lock.json
+
+      - name: Markdown Gate Self-Test
+        if: ${{ !cancelled() }}
+        run: node tools/markdownlint/verify.mjs --self-test

@@ -18,6 +18,7 @@ flowchart TD
 ```
 
 ## Highlights
+
 - **High-Integrity Systems Standard (HISS)**: Aerospace-derived software invariants.
 - **Composable Lattice Architecture**: Highest standard wins deterministic join-semilattice.
 - **SEO & Search Optimized**: Automated sitemaps, JSON-LD Schema.org metadata, and zero CLS styling.

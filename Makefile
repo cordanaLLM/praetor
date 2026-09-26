@@ -1,4 +1,4 @@
-.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec secrets nosec-justified hiss-coverage flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test verify-all clean hooks setup
+.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec secrets nosec-justified hiss-coverage flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test docs-lint docs-lint-test verify-all clean hooks setup
 
 BIN_DIR := bin
 # Windows cannot execute an extension-less PE, so the binary is named for the host rather than
@@ -126,7 +126,7 @@ hiss-coverage:
 topology-audit:
 	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
 
-verify-all: adr-verify semgrep-test docs-drift-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: adr-verify semgrep-test docs-drift-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
 
 .PHONY: docs-drift-test
@@ -142,6 +142,16 @@ semgrep-test:
 .PHONY: notebook-test
 docs-drift-test:
 	python3 -B scripts/test_docs_drift.py
+
+# BEGIN praetor documentation gate
+.PHONY: docs-lint
+verify-all: docs-lint
+docs-lint:
+	@node tools/markdownlint/verify.mjs
+# END praetor documentation gate
+
+docs-lint-test:
+	node tools/markdownlint/verify.mjs --self-test
 
 notebook-test:
 	python3 -B scripts/test_notebooklm_export.py

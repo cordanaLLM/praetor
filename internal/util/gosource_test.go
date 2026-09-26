@@ -44,3 +44,36 @@ func TestIsGoNonTestSourceDrawsGoTestBoundary(t *testing.T) {
 		})
 	}
 }
+
+func TestIsGoTestSurfaceClaimsTestFilesAndTestdataAtAnyExtension(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		// Positive: test files and testdata members, Go or not, at the root and nested.
+		{"test file", "internal/util/util_test.go", true},
+		{"root testdata Go", "testdata/fixture.go", true},
+		{"nested testdata asset", "tools/markdownlint/testdata/verify.mjs", true},
+		{"host separators", filepath.Join("a", "testdata", "b.json"), true},
+		{"bare suffix", "_test.go", true},
+		// Negative: build source and non-Go assets outside testdata.
+		{"source", "internal/util/util.go", false},
+		{"asset", "tools/markdownlint/package.json", false},
+		{"module file", "go.mod", false},
+		{"empty", "", false},
+		// Boundary: names that only resemble the test surface.
+		{"test helper", "internal/x/x_test_helper.go", false},
+		{"testdata file name", "internal/x/testdata.go", false},
+		{"testdata directory without members", "testdata", false},
+		{"testdata prefix directory", "internal/mytestdata/m.mjs", false},
+		{"non-Go test suffix", "tools/markdownlint/verify_test.mjs", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := util.IsGoTestSurface(tc.path); got != tc.want {
+				t.Errorf("IsGoTestSurface(%q) = %v, want %v", tc.path, got, tc.want)
+			}
+		})
+	}
+}

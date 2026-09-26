@@ -189,7 +189,7 @@ provenance before it reports retained execution state.
 `explain_rule` answers for every HISS identifier, including the ones with no executable check. Those
 answers say so explicitly:
 
-```
+```text
 Rule: HISS-05 (Variable Scoping)
 Enforcement: NOT ENFORCED. No executable check exists in this repository; the matrix names a
 linter that is not configured for this rule.

@@ -7,7 +7,7 @@ Extend the [package development pipeline](package-development-pipeline.md), whos
 ## Existing implementation and concrete gaps
 
 | Surface | Implemented behavior and source | Missing contribution contract |
-|---|---|---|
+| --- | --- | --- |
 | Forge transport | `internal/forge/forge.go:31-58` supplies common issue/PR creation; `github.go:455,547,581,666` performs GitHub HTTP creation, bounded issue listing, and issue labels/state updates. Explicit repository and endpoint injection exist. | PR requests have no draft field. There is no PR search/read/update/merge-status or fixed-release capability. Authentication checks a nonempty token, not remotely verified permissions. A local draft must not call ordinary PR creation. |
 | Other forges | `internal/forge/gitea.go:78-103`, `gitlab.go:76-101`, and `forge.go:61-74` return explicit unsupported errors for enforcement; Forgejo shares the Gitea driver. | Keep unsupported stages blocked. Configured credentials or recognized provider names must not imply working issue/PR support or silently select GitHub. |
 | Existing issue dedupe | `internal/forge/issues.go:119-165` indexes trimmed titles, then creates or updates. | The index ignores returned entries after 1,000; newly created items are not added to the index; duplicate remote titles are ambiguous; title identity is insufficient for a finding. `github.go:593-612` stops after 20 pages without marking a full last page incomplete. Listing also removes PRs. These paths cannot establish a complete duplicate search. |
@@ -46,7 +46,7 @@ Deduplicate one compatible upstream cause across consumers while retaining each 
 Extend the package policy's existing owner/org/forge/repository/stage inputs rather than introducing a new config store. Resolve once, preserve source provenance and pass the same immutable digest to planning, execution, CLI, MCP and future IDE/bot adapters.
 
 | Setting group | Required behavior |
-|---|---|
+| --- | --- |
 | Identity | Explicit upstream target, optional contributor fork/destination, package coordinate and policy owner. Public examples use `example/upstream` and `example-contributor/upstream`; operational settings supply actual bindings. Credentials remain private references. |
 | Stage admission | Independently enable read-only discovery, local reproduction, local patch preparation, publication, follow-up and downstream retirement. Governance constraints only tighten; operational destination precedence is documented. Missing explicitly selected config errors; unknown capability blocks its stage. |
 | Native execution | Exact source/toolchain pins, admitted commands, filesystem/network scope, time/output/attempt/cost limits, applicable hook adapter and coverage requirements. Keep upstream execution separate from public governance scanning. Use the shared executor and current router admission work; do not add a parallel dispatcher. |
@@ -68,7 +68,7 @@ Prefer small additive capability interfaces backed by the existing `internal/for
 ## Smallest implementation slices and acceptance
 
 | Slice | Deliverable using existing modules | Required proof |
-|---|---|---|
+| --- | --- | --- |
 | 0 Truthful prerequisites | Correct the issue listing/index/batch defects and canary evidence labels in their existing modules. This extends stage 0 of the package plan. | Red/green tests for full-page exhaustion, issue 1,001, same-batch duplicates, duplicate existing titles, dry-run certification and diagnostic-only patch output. Partial discovery cannot authorize creation. No disabled lint/security gates. |
 | 1 Shared local contribution plan | Add the contribution relation/policy slice to the shared package application service; bounded import and local sanitized draft projection through CLI/MCP. | The same finding from two consumers produces one contribution with two origins; conflicting causes remain separate. Source/policy/digest tampering, private data export and absent selected config fail. Repeated local preparation is idempotent; no forge mutation/provider dispatch occurs. |
 | 2 GitHub read-only observations | Add complete-or-explicitly-partial issue/PR/status capabilities to existing forge transport. | Hermetic HTTP contract tests for pagination, rate/auth errors, ambiguous matches, renamed repositories, closed-unmerged PRs and stale snapshots. Missing Gitea/GitLab/Forgejo capabilities fail visibly. Then a specifically selected live read-only target proves actual behavior. |

@@ -34,7 +34,7 @@ This audit does not adopt its requirements as a replacement standard.
 ## Refinement disposition
 
 | Proposal area | Targeted disposition |
-|---|---|
+| --- | --- |
 | Subsetting, strict types, schemas | Keep typed trust boundaries; schemas validate structure, not correctness of arbitrary generated code. Select actual language/toolchain profiles. |
 | Loops, async, circuit breakers | Retain bounds and deadlines; specify cancellation, retry/output budgets and process isolation for non-cancellable I/O. Circuit breakers depend on operation semantics. |
 | Allocation, GC, pointer/JIT tables | Measure allocations in declared hotpaths; scope engine internals and hardware controls to applicable runtimes. Do not mandate V8 mechanisms for Go services. |

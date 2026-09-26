@@ -1,0 +1,4 @@
+type: added
+title: Add a locked public Markdown gate, reject private scratch links across Markdown and HTML URL surfaces, and publish the required workflow badge and gate for documentation-enabled adopters
+issue: "#362"
+breaking: true

@@ -1,6 +1,10 @@
 # Default: let git handle text normally.
 * text=auto
 
+# This policy file carries exact LF-only rules below. Pin its own checkout bytes so
+# those rules remain machine-verifiable when core.autocrlf=true on Windows.
+.gitattributes text eol=lf
+
 # Go sources keep LF in the working tree on every platform. gofmt normalises line
 # endings as part of formatting, so a CRLF checkout makes it report every Go file as
 # unformatted -- 793 of them on Windows -- and makes the pre-commit gofmt rewrite files
@@ -45,6 +49,11 @@ CLAUDE.md text eol=lf
 # devcontainer.json alone left it still failing; the base64 parts carry no line terminators
 # so this is a no-op for them, but the whole directory is one bootstrap unit (#135).
 .devcontainer/* text eol=lf
+
+# tools/markdownlint assets are embedded into the adopter binary. Keep Praetor's source
+# checkout bytes stable so Go embedding and bootstrap fingerprints cannot vary by platform;
+# adopted copies may still use one consistent CRLF style, which audit normalizes.
+tools/markdownlint/* text eol=lf
 
 # Every staged .sh is shellchecked and every staged .yml/.yaml is yamllint --strict-ed
 # by .config/lefthook/scripts/checks.py, and both reject carriage returns outright:

@@ -17,7 +17,10 @@ import (
 
 func encodeBootstrapArchive(files []bootstrapSourceFile) ([]byte, error) {
 	var compressed bytes.Buffer
-	gzipWriter := gzip.NewWriter(&compressed)
+	gzipWriter, err := gzip.NewWriterLevel(&compressed, gzip.BestCompression)
+	if err != nil {
+		return nil, fmt.Errorf("initialize bootstrap compressor: %w", err)
+	}
 	writer := tar.NewWriter(gzipWriter)
 	for _, file := range files {
 		header := &tar.Header{Name: file.Name, Size: int64(len(file.Data)), Mode: 0644, ModTime: time.Unix(0, 0), Format: tar.FormatUSTAR}

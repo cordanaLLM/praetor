@@ -67,17 +67,47 @@ func TestIdentitySensitivePackagesPassUnderTheOwnerOverlay(t *testing.T) {
 	}
 }
 
-// copyTrackedTree copies repoRoot's Git-tracked working-tree files into dest, preserving their
-// relative paths. It reads the working tree rather than a committed blob so a guard run during
-// local development also covers uncommitted edits, exactly as `go test ./...` run directly
-// against repoRoot would see them.
+// TestCopyTrackedTreeIncludesNonIgnoredUntrackedFiles keeps the overlay guard equivalent to a
+// direct `go test ./...` from a dirty development checkout. A newly introduced package exists
+// before its first commit and must reach the copied tree; ignored private state must not.
+func TestCopyTrackedTreeIncludesNonIgnoredUntrackedFiles(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	g, err := newGit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := t.TempDir()
+	testGit(t, g, source, "init", "--quiet")
+	testWrite(t, source, ".gitignore", "/private/\n")
+	testWrite(t, source, "tracked.go", "package fixture\n")
+	testWrite(t, source, "new/package.go", "package added\n")
+	testWrite(t, source, "private/state.go", "package private\n")
+	testGit(t, g, source, "add", "--", ".gitignore", "tracked.go")
+
+	dest := t.TempDir()
+	copyTrackedTree(t, ctx, source, dest)
+	for _, rel := range []string{".gitignore", "tracked.go", "new/package.go"} {
+		if _, err := os.Stat(filepath.Join(dest, filepath.FromSlash(rel))); err != nil {
+			t.Fatalf("expected copied working-tree file %s: %v", rel, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dest, "private", "state.go")); !os.IsNotExist(err) {
+		t.Fatalf("ignored private file copied into overlay fixture: %v", err)
+	}
+}
+
+// copyTrackedTree copies repoRoot's Git-tracked and non-ignored untracked working-tree files into
+// dest, preserving their relative paths. It reads the working tree rather than a committed blob
+// so a guard run during local development also covers uncommitted packages, exactly as
+// `go test ./...` run directly against repoRoot would see them.
 func copyTrackedTree(t *testing.T, ctx context.Context, repoRoot, dest string) {
 	t.Helper()
 	g, err := newGit(ctx)
 	if err != nil {
 		t.Fatalf("locate git: %v", err)
 	}
-	out, err := g.run(ctx, repoRoot, "ls-files", "-z")
+	out, err := g.run(ctx, repoRoot, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
 	if err != nil {
 		t.Fatalf("list tracked files: %v", err)
 	}

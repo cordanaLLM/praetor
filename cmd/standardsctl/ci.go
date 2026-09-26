@@ -124,6 +124,7 @@ func printCIDecisionSummary(dec *cifilter.FilterDecision) {
 	fmt.Printf("Run Security:      %t\n", dec.RunSecurity)
 	fmt.Printf("Run Audit:         %t\n", dec.RunAudit)
 	fmt.Printf("Run Context Sync:  %t\n", dec.RunContextSync)
+	fmt.Printf("Run Docs:          %t\n", dec.RunDocs)
 	fmt.Printf("Docs Only:         %t\n", dec.RunDocsOnly)
 	fmt.Printf("Skip Heavy Gates:  %t\n", dec.SkipHeavyGates)
 }

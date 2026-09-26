@@ -100,6 +100,7 @@ nav:
       - Contributing Guide: guides/contributing.md
       - Archetype Authoring: guides/archetype-authoring.md
       - Adoption Verification: guides/adoption-verification.md
+      - Documentation Governance: guides/documentation-governance.md
       - Canary Evidence: guides/canary-evidence.md
       - Editor Capabilities: guides/editor-capabilities.md
       - CI Caching: guides/ci-caching.md

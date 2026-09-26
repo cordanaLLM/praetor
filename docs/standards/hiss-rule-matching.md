@@ -8,7 +8,7 @@ records what that means, because the difference is load-bearing.
 The non-Go matchers previously compared exact strings, so a single space defeated them. All of these
 passed a gate that claims to catch them:
 
-```
+```text
 while ( 1 )        for ( ;; )        loop{
 'outer: loop {     x. unwrap()       while True :
 ```

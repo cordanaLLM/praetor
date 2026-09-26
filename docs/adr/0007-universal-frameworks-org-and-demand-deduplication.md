@@ -1,13 +1,16 @@
 # ADR-0007: Universal Frameworks Org, Fleet Demand Deduplication & Cross-Repo Dependency Reconciliation
 
 ## Status
+
 Accepted
 
 ## Context
+
 As the fleet expanded across multiple programming languages (Go, Svelte/TypeScript, Python, Rust, Native C/GPU), disparate repositories independently adopted third-party dependencies, leading to duplicate libraries, inconsistent runtime hygiene, fractured agent context, and duplicated maintenance overhead.
 Furthermore, the `golusoris` GitHub organization was historically coupled solely to Go-specific libraries, lacking an official fleet-wide home for cross-language builder kits, while multi-repo pre-migration epics lacked automated dependency unblocking when upstream issues were resolved.
 
 ## Decision
+
 1. **Transition `golusoris` to the Universal Frameworks & Builder Kits Hub**:
    - `golusoris` is formally designated as the central organization hosting universal framework kits across all languages: Go (`golusoris`/`goenvoy`), Svelte (`sveltesentio`), Python (`pykit`), Rust (`rustkit`), and Native GPU (`template-native-gpu`).
 2. **Polyglot Demand Extraction & Upstream Deduplication**:
@@ -23,6 +26,7 @@ Furthermore, the `golusoris` GitHub organization was historically coupled solely
    - The asset compiler (`internal/compiler/framework_assets.go`) generates dual-surface docs (`llms.txt`, `llms-full.txt`), agent rules (`.agents/rules/`), and starter templates for non-Go kits.
 
 ## Consequences
+
 - **Positive**: Drastically cuts maintenance overhead by deduplicating third-party packages across the fleet into shared builder kits.
 - **Positive**: Provides fully automated cross-repo issue tracking and dependency unblocking for multi-repo migrations.
 - **Positive**: Unifies build toolchains and pre-build capability pruning across Go, Svelte, Python, Rust, and Native GPU.

@@ -73,6 +73,32 @@ func TestBootstrapSourceChangeDuringCaptureRejected(t *testing.T) {
 	}
 }
 
+func TestBootstrapCapturesDeclaredMarkdownAssets(t *testing.T) {
+	root := bootstrapSourceFixture(t)
+	assetSource := "package markdownlint\n\nimport \"embed\"\n\n" + markdownBootstrapEmbedDirective() +
+		"\nvar assets embed.FS\n"
+	writeBootstrapFile(t, root, "tools/markdownlint/assets.go", assetSource)
+	for _, asset := range markdownBootstrapAssetPaths() {
+		writeBootstrapFile(t, root, asset, "fixture\n")
+	}
+	files, err := captureBootstrapSource(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, asset := range markdownBootstrapAssetPaths() {
+		if !containsBootstrapSource(files, asset) {
+			t.Fatalf("declared embedded asset %s was omitted", asset)
+		}
+	}
+	missing := markdownBootstrapAssetPaths()[0]
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(missing))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureBootstrapSource(t.Context(), root); err == nil || !strings.Contains(err.Error(), missing) {
+		t.Fatalf("missing declared asset accepted: %v", err)
+	}
+}
+
 func TestBootstrapRejectsUnsupportedSource(t *testing.T) {
 	for name, change := range map[string]func(*testing.T, string){
 		"embedded-assets": func(t *testing.T, root string) {

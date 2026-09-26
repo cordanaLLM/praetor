@@ -34,6 +34,7 @@ Only what an adopter reads about before using it. The map in `SURFACE_MAP` is de
 | `internal/agenthook/*.go` (tests excluded), `cmd/standardsctl/hook.go` | `docs/guides/agent-hooks.md` |
 | `.github/workflows/portability.yml`, `scripts/portability_selftest.py` | `docs/standards/hiss-21-platform-neutrality.md` |
 | `internal/workstation/`, `cmd/standardsctl/workstation.go`, `scripts/dev_install.py` | `docs/guides/workstation-update.md` |
+| `tools/markdownlint/`, its adoption emitter, CI selector, and dedicated workflow | `docs/guides/documentation-governance.md` |
 | `scripts/docs_drift.py` | this document |
 
 Everything else is internal. A refactor that changes no listed surface is never accused, and that

@@ -1,6 +1,7 @@
 # MkDocs Material Preset (`docs/presets/mkdocs`)
 
 Documentation preset powered by [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) pre-configured with:
+
 - **Schema.org JSON-LD Structured Data**: Injected automatically into the HTML `<head>` via template overrides.
 - **Automated Sitemap Generation**: Configured with daily change frequency and priority mapping via `mkdocs-sitemap-plugin`.
 - **HTML/CSS/JS Minification**: Configured with `mkdocs-minify-plugin`.
