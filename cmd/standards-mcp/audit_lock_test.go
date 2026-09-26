@@ -24,7 +24,13 @@ func auditFixtureDigest(body string) string {
 // validAuditLock pins the fixture profile with a real source and aggregate hash.
 func validAuditLock(t *testing.T) string {
 	t.Helper()
-	digest := auditFixtureDigest(auditLockSource)
+	return auditLockFor(t, auditLockSource)
+}
+
+// auditLockFor pins the framework profile whose archetype file holds source.
+func auditLockFor(t *testing.T, source string) string {
+	t.Helper()
+	digest := auditFixtureDigest(source)
 	doc := map[string]any{
 		"version": 1, "pinned_version": "v1.0.0",
 		"digest":   auditFixtureDigest("profile:framework=" + digest + "\n"),

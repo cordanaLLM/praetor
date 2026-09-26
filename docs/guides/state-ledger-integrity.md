@@ -379,7 +379,11 @@ check and rename are separate operations. It is also not a transaction across
 BUGS, OPEN, BACKLOG, QUESTIONS and STATE. Task/question mutations, question parsing,
 STATE's unlocked append and Git-status error handling remain separate work.
 
-## Recovery verified on 2026-09-12
+## History: a 2026-09-12 recovery
+
+This section is a dated record of one past incident and its private-ledger
+counts at the time, not current guide content or a standing property of the
+ledger.
 
 All 712 surviving source mappings were checked against the retained 716-finding
 audit. F5, F392, F485 and F634 were recovered as BUG-713 through BUG-716. Their
@@ -388,13 +392,16 @@ preserved. Recovery changed none of the surviving rows. CreatedAt on recovered
 records is the recovery registration time; original timestamps are unknown.
 
 Only F392/BUG-714 and F389/BUG-190 were subsequently resolved against the parser
-and read-error regression evidence. The resulting ledger has 716 records: 713
-open and three resolved. These are ledger statuses, not a claim that all open
-findings have been freshly reproduced.
+and read-error regression evidence at that time, leaving that ledger snapshot at
+716 records: 713 open and three resolved. These were ledger statuses on that
+date, not a claim that every open finding had been freshly reproduced, and the
+counts have moved since.
 
-Acceptance covers full-field round trips, legacy/prose preservation, P0 blocking,
-malformed and unreadable inputs, failed-write preservation, goroutine and real CLI
-process contention, and fresh CLI audit/sync failures. The bounded fuzz run passed
-728,092 executions. Full repository verification still fails existing lint and
-security checks; the whole-workspace dedupe run also includes ignored Claude
-worktrees. No release receipt is implied by the passing ledger acceptance.
+The acceptance suite exercised that day covered full-field round trips,
+legacy/prose preservation, P0 blocking, malformed and unreadable inputs,
+failed-write preservation, goroutine and real CLI process contention, and fresh
+CLI audit/sync failures, plus a bounded fuzz run of 728,092 executions. It did
+not certify full-repository lint, security or dedupe cleanliness, and no release
+receipt was implied by the passing ledger acceptance. The whole-workspace dedupe
+run's `.claude/worktrees` exclusion (`internal/dedupe/dedupe.go`, via
+`util.IsScratchDir`) postdates this incident.

@@ -251,7 +251,7 @@ waive them. The operation is currently CLI-only and has no MCP mutation tool.
 
 ## Verify a receipt against a supplied key
 
-Added: `praetorctl gate verify` accepts `--public-key <hex>`, a hex-encoded
+`praetorctl gate verify` accepts `--public-key <hex>`, a hex-encoded
 Ed25519 public key that overrides the key pinned in `.standards.yaml`. This
 is how a fork workstation checks an Exit-0 receipt it reads from a Git note
 (`refs/notes/praetor/receipts`, section 8.3) rather than a file committed

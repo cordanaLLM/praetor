@@ -350,11 +350,20 @@ func (s *Server) createPlanTool() (mcp.Tool, error) {
 				Type:        "string",
 				Description: "Path to .standards.yaml manifest (default: .standards.yaml)",
 			},
+			"catalog_root": {
+				Type: "string", Description: "Root containing pinned .config/archetypes (default: server root)",
+			},
 		},
 	}
 
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
 		confPath, err := s.resolvePath(args, "config_path", ".standards.yaml")
+		if err != nil {
+			return mcp.ErrorResult(err.Error()), nil
+		}
+		// The same confined catalog selection standards_audit accepts, so a repository whose
+		// pinned catalog is not materialized can be previewed against the bundle it pins.
+		catalogRoot, err := s.resolveOptionalPath(args, "catalog_root")
 		if err != nil {
 			return mcp.ErrorResult(err.Error()), nil
 		}
@@ -366,10 +375,21 @@ func (s *Server) createPlanTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("plan cancelled: %v", err)), nil
 		}
 
-		policy := config.DefaultPolicy()
-		policy.ApplyOverrides(manifest.Overrides)
+		// The same resolution as the CLI plan, adopt and sync: the pinned profiles and facets
+		// joined with the repository overrides. Defaults plus overrides alone previewed a
+		// weaker ruleset than adopt writes for any repository pinned to a stricter profile.
+		policy, notice, err := config.ResolveRepositoryPolicyFromCatalog(ctx, confPath, catalogRoot, manifest)
+		if err != nil {
+			return mcp.ErrorResult(fmt.Sprintf("Failed to resolve plan policy: %v", err)), nil
+		}
+		if policy == nil {
+			return mcp.ErrorResult(fmt.Sprintf("no manifest to plan at %s", confPath)), nil
+		}
 
 		var b strings.Builder
+		if notice != "" {
+			fmt.Fprintf(&b, "[INFO] %s\n", notice)
+		}
 		if err := writePlanHeader(&b, manifest, policy); err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to resolve plan policy: %v", err)), nil
 		}

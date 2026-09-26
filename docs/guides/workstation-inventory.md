@@ -60,9 +60,13 @@ remote and privacy probes still run, with incomplete coverage explicitly reporte
 Use these observations to select a later, explicit dogfood run. The
 [configured suites](dogfood-suites.md) accept pinned public repositories and
 explicit transcript inputs; an inventory does not enroll or upload a local repo.
-`harvest fleet` displays static reference examples and does not establish live
-remote inventory. Live GitHub or Gitea coverage requires a configured remote
-inventory source and its own completion evidence.
+`harvest fleet` reads the operator-supplied `.config/fleet-topology.yaml` (see
+[operational configuration](operational-configuration.md)) and prints the
+configured orgs and archetype membership as a reference, not a live probe. The
+engine ships no fleet of its own: an engine checkout without that file prints
+`=== Fleet Topology: not configured ===` rather than a built-in example. Live
+GitHub or Gitea coverage requires a configured remote inventory source and its
+own completion evidence.
 
 ## Skill-root audit
 

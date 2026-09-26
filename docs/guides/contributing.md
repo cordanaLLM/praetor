@@ -9,7 +9,9 @@ Thank you for contributing to Praetor! As the core governance and standardizatio
 All contributors are expected to uphold deterministic, high-integrity engineering practices:
 
 - Zero-warning tolerance across compiler, linter, and format checks.
-- 100% test coverage across public interface dimensions (Positive, Negative, Boundary).
+- HISS-15 requires a positive, a negative, and a boundary test for every public interface;
+  CI additionally enforces a 65% total-statement-coverage floor
+  (`COVERAGE_FLOOR` in `.github/workflows/ci.yml`), not 100% coverage.
 - All commits must include Developer Certificate of Origin (`Signed-off-by: Your Name <email>`).
 
 ---
@@ -40,9 +42,15 @@ make verify-all
 2. **Deterministic Checks**:
    - `gofmt` code formatting.
    - `REUSE 3.3` licensing compliance.
-   - AST complexity limits (McCabe $\le 10$, cognitive $\le 15$, function LOC $\le 75$).
+   - AST complexity limits (McCabe $\le 10$, cognitive $\le 15$, function LOC $\le 60$
+     -- the audit-compatibility ceiling `config.AuditMaxFuncLOC` always tightens a looser
+     repository override, per `internal/hiss/hiss.go` and `internal/config/effective.go`).
 3. **Receipt Generation**:
    - Run `standardsctl gate run --path=.` to verify the ephemeral worktree and generate an Ed25519 Exit-0 receipt.
 4. **Pull Request Submission**:
    - Submit PR via GitHub. Direct pushes to `main` are declined by repository rules.
-   - Required status checks (`Standards & Invariant Verification Gate`, `DCO 1.1 & REUSE Compliance Gate`, `Go Vulnerability & AST Security Scan`) must pass before merge.
+   - All 8 required status checks in `.github/rulesets/main.json` must pass before merge:
+     `Release & Bot Configuration Validation`, `Standards & Invariant Verification Gate`,
+     `DCO 1.1 & REUSE Compliance Gate`, `Platform Neutrality (Linux)`,
+     `Platform Neutrality (macOS)`, `Platform Neutrality (Windows)`,
+     `Documentation Governance`, and `Go Vulnerability & AST Security Scan`.

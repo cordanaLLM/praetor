@@ -31,18 +31,19 @@ transcripts. Public cases require `allow_remote: true` explicitly.
     "task": "ci_debugging",
     "input_tokens": 8000,
     "output_tokens": 2000,
-    "max_cost": 0.1,
-    "register": "internal",
-    "register_source": "surfaces.agent",
-    "prompt_register": "internal",
-    "prompt_register_source": "surfaces.prompts"
+    "max_cost": 0.1
   }
 }
 ```
 
-The task and prompt register resolutions are mandatory. Use the exact values resolved
-from the repository manifest; `max_output_tokens` is optional when that task row has no
-budget. A missing, partial, or contradictory tuple fails status and run admission.
+The required `repair_policy` fields are `routing_config`, `task`, `input_tokens`,
+`output_tokens`, and `max_cost`. The register tuple (`register`, `register_source`,
+`prompt_register`, `prompt_register_source`, `max_output_tokens`,
+`register_manifest_sha256`) is resolved from the repository's canonical register
+manifest using `task` and is never taken from the caller: any values supplied for
+those fields are discarded and replaced with the manifest's resolution before the
+policy is validated or run, so status and admission use the canonical tuple
+regardless of what the config file contains for it.
 
 Inspect the configuration and run one bounded tick:
 

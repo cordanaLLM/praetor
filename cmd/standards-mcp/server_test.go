@@ -566,6 +566,109 @@ func TestServer_Negative_PlanDriftAndAuditFailures(t *testing.T) {
 	expectError(t, "audit escape", escaped, "outside the server root")
 }
 
+// strictPlanProfile is a pinned framework profile stricter than the built-in defaults on every
+// branch and supply-chain value the plan prints.
+const strictPlanProfile = "id: framework\nname: Framework\n" +
+	"branch_protection:\n  require_signed_commits: true\n  required_approving_reviewers: 2\n" +
+	"supply_chain:\n  slsa_level: 3\n  require_sbom: true\n"
+
+// pinStrictPlanProfile rewrites the fixture's framework profile and lock to strictPlanProfile.
+func pinStrictPlanProfile(t *testing.T, root string) {
+	t.Helper()
+	writeFixtureFile(t, root, ".config/archetypes/framework.yaml", strictPlanProfile)
+	writeFixtureFile(t, root, ".standards.lock", auditLockFor(t, strictPlanProfile))
+}
+
+// The MCP plan previews the joined policy adopt writes, not defaults plus overrides.
+func TestServer_Positive_PlanShowsThePinnedProfilePolicy(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	pinStrictPlanProfile(t, root)
+
+	plan := callTool(t, srv, "standards_plan", nil)
+	for _, want := range []string{
+		"Signed Commits Required:   true",
+		"Approving Reviewers:       2",
+		"Configured Reviewer Minimum: 2",
+		"SLSA Provenance Level:     3",
+		"SBOM Generation Required:  true",
+		".github/workflows/sbom.yml (SBOM & SLSA Level 3 workflow missing)",
+	} {
+		expectText(t, "joined plan", plan, want)
+	}
+	if strings.Contains(plan.Content[0].Text, "[INFO]") {
+		t.Errorf("a locked repository must not print the no-lock notice:\n%s", plan.Content[0].Text)
+	}
+
+	// Parity: the tool prints exactly what the shared resolver returns for this repository.
+	confPath := filepath.Join(root, ".standards.yaml")
+	policy, _, err := config.ResolveRepositoryPolicy(context.Background(), confPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := config.LoadManifest(confPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header strings.Builder
+	if err := writePlanHeader(&header, manifest, policy); err != nil {
+		t.Fatal(err)
+	}
+	expectText(t, "resolver parity", plan, header.String())
+}
+
+// A lock that no longer verifies fails the plan instead of silently previewing defaults.
+func TestServer_Negative_PlanRejectsAnUnverifiableLock(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	pinStrictPlanProfile(t, root)
+	writeFixtureFile(t, root, ".config/archetypes/framework.yaml", strictPlanProfile+"description: changed\n")
+
+	plan := callTool(t, srv, "standards_plan", nil)
+	expectError(t, "tampered profile", plan, "Failed to resolve plan policy")
+	if strings.Contains(plan.Content[0].Text, "Approving Reviewers") {
+		t.Errorf("a failed resolution still printed a policy:\n%s", plan.Content[0].Text)
+	}
+}
+
+// Overrides apply after the join: a looser one never loosens the profile, a stricter one wins,
+// and without a lock the plan says it shows defaults plus overrides only.
+func TestServer_Boundary_PlanOverridesAfterTheJoinAndWithoutALock(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	pinStrictPlanProfile(t, root)
+	manifest := "version: 1\nrepository:\n  owner: fixture\n  name: repo\nprofiles: [framework]\nfacets: []\n" +
+		"overrides:\n  branch_protection:\n    required_approving_reviewers: %d\n"
+
+	writeFixtureFile(t, root, ".standards.yaml", fmt.Sprintf(manifest, 1))
+	expectText(t, "looser override", callTool(t, srv, "standards_plan", nil), "Approving Reviewers:       2")
+	writeFixtureFile(t, root, ".standards.yaml", fmt.Sprintf(manifest, 3))
+	expectText(t, "stricter override", callTool(t, srv, "standards_plan", nil), "Approving Reviewers:       3")
+
+	if err := os.Remove(filepath.Join(root, ".standards.lock")); err != nil {
+		t.Fatal(err)
+	}
+	plan := callTool(t, srv, "standards_plan", nil)
+	expectText(t, "no-lock notice", plan, "[INFO] "+config.NoLockNotice)
+	expectText(t, "no-lock defaults", plan, "Signed Commits Required:   false")
+	expectText(t, "no-lock override", plan, "Approving Reviewers:       3")
+}
+
+// A pinned catalog that is not materialized previews only through catalog_root, the same
+// confined catalog selection standards_audit takes.
+func TestServer_Boundary_PlanResolvesThroughTheSelectedCatalog(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	pinStrictPlanProfile(t, root)
+	relocateCatalog(t, root, "catalog")
+	// Negative: the server root holds no catalog, and a blank catalog_root means the server root.
+	expectError(t, "default catalog", callTool(t, srv, "standards_plan", nil), "materialized profile")
+	expectError(t, "blank catalog", callTool(t, srv, "standards_plan", map[string]any{"catalog_root": "  "}), "materialized profile")
+	// Positive: the selected catalog resolves the joined policy.
+	plan := callTool(t, srv, "standards_plan", map[string]any{"catalog_root": "catalog"})
+	expectText(t, "selected catalog", plan, "Signed Commits Required:   true")
+	expectText(t, "selected catalog", plan, "Approving Reviewers:       2")
+	// Boundary: a catalog outside the server root is refused like any other confined path.
+	outside := callTool(t, srv, "standards_plan", map[string]any{"catalog_root": t.TempDir()})
+	expectError(t, "outside catalog", outside, ErrOutsideRoot.Error())
+}
+
 func TestServer_Boundary_AuditLockfileIsDirectory(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	if err := os.Remove(filepath.Join(root, ".standards.lock")); err != nil {

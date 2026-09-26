@@ -199,6 +199,10 @@ Each command handles `unverifiable` as follows:
 
 - `praetorctl audit` and the MCP `standards_audit` tool fail with `ErrLockUnverifiable`.
 - `praetorctl sync` prints `[UNVERIFIED]` and exits incomplete; `--catalog-root` selects a catalog.
+  The effective policy cannot resolve either, so sync neither checks nor writes
+  `.github/rulesets/main.json` and counts that one cause once.
+- `praetorctl plan` and the MCP `standards_plan` tool fail to resolve the policy and print none;
+  `--catalog-root` (MCP: `catalog_root`) selects a catalog.
 - `praetorctl adopt` records the outcome with a warning; `--lock-source-root` verifies against that bundle.
 - `praetorctl harvest onboard` completes with `lock_verified: false` and `lock_status: unverifiable`.
 - Lock generation refuses a source bundle without a catalog.

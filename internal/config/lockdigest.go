@@ -130,25 +130,6 @@ func confinedArchetypePath(root, dir, name string) (string, error) {
 	return path, nil
 }
 
-// parseArchetypeID uses the same bounded document parser for on-disk and planned
-// sources, defaulting a missing ID to the filename as before.
-func parseArchetypeID(ctx context.Context, path string, data []byte) (string, error) {
-	node, err := decodePolicyDocument(ctx, data)
-	if err != nil {
-		return "", fmt.Errorf("parse archetype %s: %w", path, err)
-	}
-	var doc struct {
-		ID string `yaml:"id"`
-	}
-	if err := node.Decode(&doc); err != nil {
-		return "", fmt.Errorf("parse archetype %s: %w", path, err)
-	}
-	if strings.TrimSpace(doc.ID) == "" {
-		return strings.TrimSuffix(filepath.Base(path), ".yaml"), nil
-	}
-	return doc.ID, nil
-}
-
 // canonicalLockDigest is the digest over all pinned entry digests, in a stable order.
 func canonicalLockDigest(lock *standardsLock) string {
 	lines := make([]string, 0, len(lock.Profiles)+len(lock.Facets))

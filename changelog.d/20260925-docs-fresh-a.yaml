@@ -1,0 +1,3 @@
+type: fixed
+title: Freshness-audit the first fourteen docs/guides pages against the current CLI, MCP tools, code and CI configuration; correct stale evidence found -- devcontainer-bootstrap.md's .gitattributes line reference, agent-hooks.md's operator command-policy deny list and ungoverned-scope description, adoption-verification.md's private bug-ledger citations, and contributing.md's function-LOC limit, coverage claim and required-check list
+breaking: false

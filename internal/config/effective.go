@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"unicode"
 
 	"github.com/cordanaLLM/praetor/internal/hiss"
 )
@@ -20,6 +19,8 @@ const (
 	AuditMaxFuncLOC    = hiss.DefaultMaxFuncLOC
 	maxPolicyLayers    = 2*maxLockEntries + 8
 	maxEvidenceSources = 16
+	// maxPolicyNames bounds each linter and DevContainer feature list, per layer and joined.
+	maxPolicyNames = maxPolicyLayers + 1
 )
 
 // ComplexityOverride distinguishes an omitted limit from an invalid explicit zero.
@@ -39,17 +40,21 @@ type PolicySource struct {
 }
 
 // PolicyLayer contributes complexity constraints; every explicit limit must be positive.
+// A pinned profile or facet also carries Controls, its other lattice dimensions.
 // External layers may also carry operator settings (clients, hooks, update).
 type PolicyLayer struct {
 	Source     PolicySource
 	Complexity ComplexityOverride
+	Controls   ArchetypeControls
 	Settings   []OperatorSetting
 }
 
 // EffectivePolicy is an independently owned snapshot, immutable by convention.
 // Fields records all sources imposing each effective complexity limit, including ties.
-// Complexity and the operator settings are layered. Other Policy fields retain defaults
-// and repository overrides; they do not claim fleet or profile policy support.
+// Every lattice dimension of Policy is the join of the defaults and every layer: pinned
+// profiles and facets contribute branch protection, supply chain, memory, error unwraps,
+// linters and DevContainer features besides complexity. Repository branch-protection and
+// supply-chain overrides then apply on top, monotonic except for the explicit review mode.
 // Operator is nil unless a layer carried a clients, hooks or update section; OperatorFields
 // then records the layers that set each concrete settings path.
 type EffectivePolicy struct {
@@ -167,16 +172,14 @@ func newEffectivePolicy() *EffectivePolicy {
 	return &EffectivePolicy{Policy: *defaults, Sources: []PolicySource{source}, Fields: fields}
 }
 
+// applyLayer validates one layer with the same source check digest verification uses,
+// records complexity provenance, then joins every dimension the layer contributes.
 func (p *EffectivePolicy) applyLayer(layer PolicyLayer, seen map[string]bool) error {
-	if layer.Source.ID == "" || len(layer.Source.ID) > 512 || seen[layer.Source.ID] || strings.ContainsFunc(layer.Source.ID, unicode.IsControl) {
-		return errors.New("policy source IDs must be nonempty, bounded and unique")
+	if err := verifyDigestSource(layer.Source, seen); err != nil {
+		return fmt.Errorf("policy source %q: %w", layer.Source.ID, err)
 	}
-	if len(layer.Source.SHA256) != 64 || len(layer.Source.Path) > 4096 {
-		return errors.New("policy source digest or path exceeds its bound")
-	}
-	digest, err := hex.DecodeString(layer.Source.SHA256)
-	if err != nil || len(digest) != sha256.Size {
-		return fmt.Errorf("policy source %q requires a SHA-256 digest", layer.Source.ID)
+	if err := layer.Controls.validate(); err != nil {
+		return fmt.Errorf("policy source %q: %w", layer.Source.ID, err)
 	}
 	values := layer.Complexity.values()
 	current := p.Policy.Complexity.pointers()
@@ -185,10 +188,20 @@ func (p *EffectivePolicy) applyLayer(layer PolicyLayer, seen map[string]bool) er
 			return err
 		}
 	}
-	p.Policy = *Join(&p.Policy, layer.Complexity.policy())
+	p.Policy = *Join(&p.Policy, layer.policy())
+	if err := p.Policy.validateJoined(); err != nil {
+		return fmt.Errorf("policy source %q: %w", layer.Source.ID, err)
+	}
 	p.Sources = append(p.Sources, layer.Source)
-	seen[layer.Source.ID] = true
 	return nil
+}
+
+// policy is the layer's contribution to the join. A zero contribution is Join's
+// identity, so a layer without catalog controls adds only its complexity limits.
+func (l PolicyLayer) policy() *ResolvedPolicy {
+	result := l.Complexity.policy()
+	l.Controls.contribution(result)
+	return result
 }
 
 func (p *EffectivePolicy) applyLimit(name, source string, current, override *int) error {

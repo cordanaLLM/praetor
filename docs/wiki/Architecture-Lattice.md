@@ -8,6 +8,7 @@ $$\mathcal{P}_{\text{resolved}} = \mathcal{P}_1 \sqcup \mathcal{P}_2 \sqcup \dot
 - **Complexity Limits**: Evaluated as the greatest lower bound ($\min$).
 - **Review Approvals & SLSA**: Evaluated as the least upper bound ($\max$).
 - **Linters & Features**: Cumulative deduplicated set union ($\cup$).
+- **Memory & Error Unwraps**: The stricter setting wins (ZeroFrameMalloc, StrictBan).
 
 ```mermaid
 flowchart TD

@@ -197,7 +197,7 @@ docs register, and a reply to a person is full prose.
 
 Register compliance on human-typed surfaces (issues, PR bodies, review comments, commit
 bodies, ADRs, docs pages, changelog titles) is advisory, by the operator's own decision
-(ADR-0010, "Alternatives considered"): nothing measures whether a pull-request body reads
+(ADR-0010, "Consequences"): nothing measures whether a pull-request body reads
 as social prose.
 
 Mechanical: the block in AGENTS.md must match the manifest; AGENTS.md, every canonical
@@ -296,8 +296,8 @@ The prose AGENTS.md that the caveman rewrite replaced,
 frozen as `internal/compiler/testdata/agents-floor.txt`, fails:
 
 ```text
-agents-floor.txt: FAIL prose_words=1035 articles=90 density=8.7/100 limit=2.0 off_regions=0 register_block_lines=13 tokens_est=2061 findings=2 contract=context mechanical_rules=none advisory_rules=1,2,3,4,5,6,7,8
-agents-floor.txt:0 C1 article-density: 8.7 articles per 100 prose words (90/1035), limit 2.0
+agents-floor.txt: FAIL prose_words=1254 articles=94 density=7.5/100 limit=2.0 off_regions=0 register_block_lines=13 tokens_est=2061 findings=2 contract=context mechanical_rules=none advisory_rules=1,2,3,4,5,6,7,8
+agents-floor.txt:0 C1 article-density: 7.5 articles per 100 prose words (94/1254), limit 2.0
 agents-floor.txt:76 C5 long-sentence: 39 words: your pull requests go stale when ...
 ```
 
@@ -307,7 +307,7 @@ The current AGENTS.md passes:
 AGENTS.md: PASS prose_words=917 articles=2 density=0.2/100 limit=2.0 off_regions=0 register_block_lines=13 tokens_est=1658 findings=0 contract=context mechanical_rules=none advisory_rules=1,2,3,4,5,6,7,8
 ```
 
-`praetorctl caveman estimate` puts the rewrite at 10,333 bytes and about 1,911 tokens,
+`praetorctl caveman estimate` puts the rewrite at 10,359 bytes and about 1,912 tokens,
 down from 12,308 bytes and about 2,315 tokens; CLAUDE.md went from 168 to 115 lines.
 
 `floor <before> <after>` runs the clarity floor on a rewrite: it exits non-zero when
@@ -372,10 +372,11 @@ CLI gate set"); they still only run `compiler.LintContext` over AGENTS.md and do
 call `LintAgentText`. Bringing them to parity is unclaimed follow-up work, not part of this
 change.
 
-600 words was chosen because it sits between the two skills that failed the lint at
-532-561 prose words (`caveman`, `social-text`) and the shortest passing skill in the
-directory at 185 words (`.workingdir/planning/register-gaps-20260919.md`): low enough to
-force a caveman rewrite, high enough not to force splitting a skill with real rule tables.
+600 words was chosen when the persona/skill gate was introduced: at the time it sat between
+two skills failing the lint at 532-561 prose words (`caveman`, `social-text`, since pared
+down and passing at 412 and 400 words) and the shortest passing skill in the directory at
+185 words -- low enough to force a caveman rewrite, high enough not to force splitting a
+skill with real rule tables.
 An illustrative "bad" prose sample inside a skill (`adhd-format/SKILL.md`'s anti-pattern
 block, `caveman/SKILL.md`'s before/after section) is not this file's own prose and is
 wrapped in `<!-- caveman:off -->`/`<!-- caveman:on -->`, the same mechanism the package doc
@@ -399,8 +400,8 @@ comment names for exactly this case.
 | `C12 runtime-evidence-pointer` | `CheckRuntime` only: an `evidence:` field carries pointer markers (`sha256`, `lines:`) but is not the complete canonical `evidence: <path> sha256:<12 hex> lines:<n>` form (`evidenceRe`, `internal/caveman/scan.go`) |
 | `C13 unclosed-fence` | a fenced code block is still open when the text ends; everything after its opening fence would otherwise count as code and escape every other rule. Only a bare delimiter at least as long as the opener closes it, so a template holding inner fences needs a longer outer fence. A backtick line whose info string holds a backtick (`` ```foo``` flag ``) is an inline code span under CommonMark and opens no fence; a tilde fence's info string may hold backticks |
 
-The 2.0 threshold is measured, not chosen: the prose AGENTS.md read 8.7 articles per 100
-prose words, its hand-written caveman rewrite reads 0.3. Source-document `Check` masks quoted
+The 2.0 threshold is measured, not chosen: the prose AGENTS.md read 7.5 articles per 100
+prose words, its hand-written caveman rewrite reads 0.2. Source-document `Check` masks quoted
 text so a rule that names a banned phrase does not trip itself; adversarial `CheckRuntime`
 keeps quoted text visible. C7 and C8 are opt-in, unlike C1-C6 and C13: a ceiling is a
 property of one surface (600 prose words for a persona or a skill; the evidence bound,

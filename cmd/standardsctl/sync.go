@@ -275,8 +275,6 @@ func runSync(args []string) error {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	policy := config.DefaultPolicy()
-	policy.ApplyOverrides(manifest.Overrides)
 	rootDir := filepath.Dir(flags.configPath)
 	contexts, err := forge.RequiredStatusContexts(ctx, rootDir)
 	if err != nil {
@@ -289,15 +287,12 @@ func runSync(args []string) error {
 	if err != nil {
 		return err
 	}
-	missing, err := verifySyncCompanions(ctx, rootDir, flags.catalogRoot, manifest)
+	policy, missing, err := verifySyncLocal(ctx, flags.configPath, flags.catalogRoot, manifest, contexts)
 	if err != nil {
 		return err
 	}
-	if err := reconcileRuleset(ctx, rootDir, policy.BranchProtection, contexts); err != nil {
-		return err
-	}
 	if missing > 0 {
-		return fmt.Errorf("local sync verification incomplete: %d companion checks missing or unverified; generated labels and ruleset retained", missing)
+		return fmt.Errorf("local sync verification incomplete: %d companion checks missing or unverified; generated files retained", missing)
 	}
 
 	if flags.remote {
@@ -311,6 +306,41 @@ func runSync(args []string) error {
 
 	fmt.Printf("Local sync checks finished: labels and ruleset verified; %d companion checks missing.\n", missing)
 	return nil
+}
+
+// verifySyncLocal verifies the companion files, then reconciles the ruleset against the
+// branch protection adopt renders, resolved through the resolver plan uses. It returns how
+// many checks are missing or unverified.
+//
+// A policy that does not resolve has no stand-in: the ruleset is then neither synthesized
+// nor validated, because a file checked against built-in defaults plus overrides would be
+// reported as matching the declared policy and rejected by the next sync that resolves it.
+// The cause is counted once: a lock the selected catalog cannot verify is also why its
+// policy does not resolve, so it is not counted again for the ruleset. A nil policy is only
+// returned with a positive count, so the caller never reaches the forge without one.
+func verifySyncLocal(ctx context.Context, configPath, catalogRoot string, manifest *config.Manifest, contexts []string) (*config.ResolvedPolicy, int, error) {
+	rootDir := filepath.Dir(configPath)
+	companions, err := verifySyncCompanions(ctx, rootDir, catalogRoot, manifest)
+	if err != nil {
+		return nil, 0, err
+	}
+	policy, _, cause := config.ResolveRepositoryPolicyFromCatalog(ctx, configPath, catalogRoot, manifest)
+	if cause == nil && policy != nil {
+		return policy, companions.incomplete, reconcileRuleset(ctx, rootDir, policy.BranchProtection, contexts)
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, 0, fmt.Errorf("resolve effective policy: %w", ctxErr)
+	}
+	if cause == nil {
+		cause = fmt.Errorf("%s no longer exists", configPath)
+	}
+	counted, note := 1, "verification incomplete"
+	if companions.lockUnverified {
+		// lockUnverified was counted in companions.incomplete, so the count stays positive.
+		counted, note = 0, "same cause as the lockfile above, counted once"
+	}
+	fmt.Printf("  [UNVERIFIED] Branch protection ruleset .github/rulesets/main.json neither checked nor synthesized: effective policy unresolved (%v); %s.\n", cause, note)
+	return nil, companions.incomplete + counted, nil
 }
 
 func synthesizeRuleset(targetPath string, bp config.BranchProtectionPolicy, contexts []string) error {

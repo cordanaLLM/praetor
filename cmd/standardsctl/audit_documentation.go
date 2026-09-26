@@ -80,7 +80,9 @@ func (declines documentationDeclines) summary() string {
 	return strings.Join(parts, ", ")
 }
 
-func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, rootDir string) error {
+// auditDocumentationGate verifies the locked documentation gate. branch is the effective
+// branch protection the audit resolved, the policy adopt rendered the ruleset from.
+func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, rootDir string, branch config.BranchProtectionPolicy) error {
 	documentationEnabled, err := adopt.DocumentationEnabled(manifest.Facets)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Resolve documentation facet: %w", err)
@@ -99,7 +101,7 @@ func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, root
 	if err := auditDocumentationLocalWiring(ctx, rootDir, declines); err != nil {
 		return err
 	}
-	if err := auditDocumentationHostedWiring(ctx, manifest, rootDir, declines.ruleset); err != nil {
+	if err := auditDocumentationHostedWiring(ctx, branch, rootDir, declines.ruleset); err != nil {
 		return err
 	}
 	fmt.Printf("[PASS] Locked documentation gate verified (%d assets, %s).\n", count, declines.summary())
@@ -286,7 +288,7 @@ func auditManagedGitIgnoreBlock(ctx context.Context, rootDir string) error {
 }
 
 func auditDocumentationHostedWiring(
-	ctx context.Context, manifest *config.Manifest, rootDir string, rulesetDeclined bool,
+	ctx context.Context, branch config.BranchProtectionPolicy, rootDir string, rulesetDeclined bool,
 ) error {
 	contexts, err := forge.RequiredStatusContexts(ctx, rootDir)
 	if err != nil {
@@ -303,9 +305,7 @@ func auditDocumentationHostedWiring(
 	if err != nil {
 		return fmt.Errorf("[FAIL] Read documentation branch ruleset: %w", err)
 	}
-	policy := config.DefaultPolicy()
-	policy.ApplyOverrides(manifest.Overrides)
-	if err := validateSyncRuleset(ruleset, policy.BranchProtection, contexts); err != nil {
+	if err := validateSyncRuleset(ruleset, branch, contexts); err != nil {
 		return fmt.Errorf("[FAIL] Documentation required status context is not reconciled in the branch ruleset: %w", err)
 	}
 	return nil

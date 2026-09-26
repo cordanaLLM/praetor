@@ -117,6 +117,8 @@ func validateProspectiveEntryCount(dir string, entries []os.DirEntry, snapshots 
 	return nil
 }
 
+// indexedArchetypeID decodes the whole archetype, not only its id, so on-disk and planned
+// catalogs reject an invalid file when it is indexed rather than when it is first selected.
 func indexedArchetypeID(ctx context.Context, path string, snapshots map[string][]byte) (string, error) {
 	data, ok := snapshots[path]
 	if !ok {
@@ -126,5 +128,9 @@ func indexedArchetypeID(ctx context.Context, path string, snapshots map[string][
 			return "", err
 		}
 	}
-	return parseArchetypeID(ctx, path, data)
+	archetype, err := decodeArchetype(ctx, path, data)
+	if err != nil {
+		return "", err
+	}
+	return archetype.ID, nil
 }

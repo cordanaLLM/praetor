@@ -67,6 +67,13 @@ func (c ComplexityPolicy) WithHISSDefaults() ComplexityPolicy {
 // applies. Leaving it unset would report the uncapped value and reproduce the same
 // disagreement one number further along.
 func ResolveRepositoryPolicy(ctx context.Context, configPath string, manifest *Manifest) (*ResolvedPolicy, string, error) {
+	return ResolveRepositoryPolicyFromCatalog(ctx, configPath, "", manifest)
+}
+
+// ResolveRepositoryPolicyFromCatalog is ResolveRepositoryPolicy with the pinned profiles and
+// facets read from catalogRoot, for commands that accept --catalog-root. An empty catalogRoot
+// is the repository root.
+func ResolveRepositoryPolicyFromCatalog(ctx context.Context, configPath, catalogRoot string, manifest *Manifest) (*ResolvedPolicy, string, error) {
 	if ctx == nil {
 		return nil, "", errors.New("resolving a repository policy requires a context")
 	}
@@ -97,6 +104,7 @@ func ResolveRepositoryPolicy(ctx context.Context, configPath string, manifest *M
 	effective, err := LoadEffectivePolicyContext(ctx, EffectiveOptions{
 		Root:         root,
 		ManifestPath: configPath,
+		CatalogRoot:  catalogRoot,
 		Audit:        true,
 	})
 	if err != nil {
