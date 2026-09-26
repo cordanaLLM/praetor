@@ -44,18 +44,19 @@ func pnpmFixture(t *testing.T) (string, UpgradeCandidate) {
 	return dir, UpgradeCandidate{Package: "typescript", CurrentVersion: "^5.0.0", TargetVersion: "^5.7.3", ManifestType: "package.json"}
 }
 
-// A pnpm that ran and refused falls back to editing the manifest, whichever stream it
-// reported on: RunCommand returns standard output only, so an empty output no longer means
-// pnpm never ran.
-func TestApplyUpdate_PnpmRefusalOnStandardErrorFallsBack(t *testing.T) {
+// A pnpm that ran and refused is reported with its reason, and package.json is not
+// edited behind its back: a rewritten manifest next to an unchanged pnpm-lock.yaml would
+// declare one version and resolve another.
+func TestApplyUpdate_PnpmRefusalIsReportedWithoutManifestEdit(t *testing.T) {
 	dir, candidate := pnpmFixture(t)
 	bin := t.TempDir()
 	testsupport.BuildExecutable(t, bin, "pnpm", refusingPnpm)
 	t.Setenv("PATH", bin)
-	if err := ApplyUpdate(t.Context(), dir, candidate); err != nil {
-		t.Fatalf("a refusing pnpm did not fall back to the manifest: %v", err)
+	err := ApplyUpdate(t.Context(), dir, candidate)
+	if err == nil || !strings.Contains(err.Error(), "ERR_PNPM_NO_MATCHING_VERSION") {
+		t.Fatalf("a refusing pnpm was not reported with its reason: %v", err)
 	}
-	assertPnpmManifest(t, dir, "^5.7.3")
+	assertPnpmManifest(t, dir, "^5.0.0")
 }
 
 // A pnpm that could not start reports why and leaves the manifest alone.

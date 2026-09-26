@@ -1,11 +1,11 @@
 package bump
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -186,59 +186,180 @@ func requirementVersionOffset(line, pkg string) int {
 	return len(line) - len(version)
 }
 
+// applyNodeUpdate raises a Node dependency. Under a pnpm lockfile the update is pnpm's:
+// its failure is returned, never followed by a manual package.json edit, because an edited
+// manifest next to an unchanged pnpm-lock.yaml resolves the old version while declaring
+// the new one. Without a lockfile the manifest is the whole record and is edited in place.
 func applyNodeUpdate(ctx context.Context, targetDir string, cand UpgradeCandidate) error {
-	// Try pnpm update first if pnpm lockfile exists or pnpm is used
 	pnpmLock := filepath.Join(targetDir, "pnpm-lock.yaml")
-	if util.FileExists(pnpmLock) || util.FileExists(filepath.Join(targetDir, "..", "pnpm-lock.yaml")) {
-		spec := fmt.Sprintf("%s@%s", cand.Package, cand.TargetVersion)
-		_, err := util.RunCommand(ctx, targetDir, "pnpm", "update", spec)
-		if err == nil {
-			return nil
-		}
-		// Only a pnpm that ran and refused the update falls back to editing the manifest; one
-		// that could not start, or was cut off, reports why. The returned text cannot tell the
-		// two apart: RunCommand returns standard output only, and the refusal may be on
-		// standard error.
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) || ctx.Err() != nil {
-			return err
-		}
+	if !util.FileExists(pnpmLock) && !util.FileExists(filepath.Join(targetDir, "..", "pnpm-lock.yaml")) {
+		return updatePackageManifest(ctx, targetDir, cand)
 	}
-
-	return updatePackageManifest(ctx, targetDir, cand)
+	spec := fmt.Sprintf("%s@%s", cand.Package, cand.TargetVersion)
+	if _, err := util.RunCommand(ctx, targetDir, "pnpm", "update", spec); err != nil {
+		return fmt.Errorf("pnpm update %s (package.json left unchanged to match pnpm-lock.yaml): %w", spec, err)
+	}
+	return nil
 }
 
+// dependencySections are the package.json sections a bump rewrites.
+var dependencySections = map[string]bool{"dependencies": true, "devDependencies": true}
+
+// updatePackageManifest raises cand.Package's range in targetDir's package.json to
+// cand.TargetVersion. Only the range strings change: key order, indentation and every other
+// byte of the file are kept. Each range keeps its own operator unless the target names one.
 func updatePackageManifest(ctx context.Context, targetDir string, cand UpgradeCandidate) error {
 	pkgFile := filepath.Join(targetDir, "package.json")
 	data, err := readManifest(ctx, targetDir, "package.json")
 	if err != nil {
 		return err
 	}
-
-	var raw map[string]interface{}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
+	ranges, err := dependencyRanges(data, cand.Package)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", pkgFile, err)
 	}
+	if len(ranges) == 0 {
+		return fmt.Errorf("package %s not found in %s", cand.Package, pkgFile)
+	}
+	edited, err := rewriteRanges(data, ranges, cand.TargetVersion)
+	if err != nil {
+		return fmt.Errorf("update %s in %s: %w", cand.Package, pkgFile, err)
+	}
+	return writeManifest(ctx, targetDir, "package.json", data, edited)
+}
 
-	updated := false
-	for _, sec := range []string{"dependencies", "devDependencies"} {
-		if deps, ok := raw[sec].(map[string]interface{}); ok {
-			if _, exists := deps[cand.Package]; exists {
-				deps[cand.Package] = "^" + strings.TrimPrefix(cand.TargetVersion, "^")
-				updated = true
+// dependencyRanges returns the range values that name pkg in the dependency sections of
+// the package.json document data, in document order.
+func dependencyRanges(data []byte, pkg string) ([]objectMember, error) {
+	if !json.Valid(data) {
+		return nil, errors.New("not valid JSON")
+	}
+	top, err := objectMembers(data, 0)
+	if err != nil {
+		return nil, err
+	}
+	var ranges []objectMember
+	for _, section := range top {
+		if !dependencySections[section.key] {
+			continue
+		}
+		members, err := objectMembers(section.value, section.start)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", section.key, err)
+		}
+		for _, member := range members {
+			if member.key == pkg {
+				ranges = append(ranges, member)
 			}
 		}
 	}
+	return ranges, nil
+}
 
-	if !updated {
-		return fmt.Errorf("package %s not found in %s", cand.Package, pkgFile)
-	}
+// objectMember is one member of a JSON object: its key, the exact bytes of its value, and
+// the offset of that value in the enclosing document.
+type objectMember struct {
+	key   string
+	value json.RawMessage
+	start int
+}
 
-	outData, err := json.MarshalIndent(raw, "", "  ")
+// objectMembers returns the members of the JSON object encoded in object, in document
+// order, at most maxManifestDependencies of them; base is object's offset in the document
+// member offsets are reported against. A value that is not an object has no members.
+func objectMembers(object []byte, base int) ([]objectMember, error) {
+	decoder := json.NewDecoder(bytes.NewReader(object))
+	open, err := decoder.Token()
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("read object: %w", err)
 	}
-	return writeManifest(ctx, targetDir, "package.json", data, append(outData, '\n'))
+	if open != json.Delim('{') {
+		return nil, nil
+	}
+	var members []objectMember
+	for i := 0; decoder.More(); i++ {
+		if i == maxManifestDependencies {
+			return nil, fmt.Errorf("object exceeds %d members", maxManifestDependencies)
+		}
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, fmt.Errorf("read key: %w", err)
+		}
+		key, isKey := token.(string)
+		if !isKey {
+			return nil, fmt.Errorf("object key %v is not a string", token)
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, fmt.Errorf("read value of %s: %w", key, err)
+		}
+		end := base + int(decoder.InputOffset())
+		members = append(members, objectMember{key: key, value: value, start: end - len(value)})
+	}
+	return members, nil
+}
+
+// rewriteRanges returns data with each range value replaced by target under that range's
+// operator. ranges are in document order and never overlap.
+func rewriteRanges(data []byte, ranges []objectMember, target string) ([]byte, error) {
+	var out bytes.Buffer
+	last := 0
+	for _, member := range ranges {
+		replacement, err := raisedRange(member.value, target)
+		if err != nil {
+			return nil, err
+		}
+		out.Write(data[last:member.start])
+		out.WriteString(replacement)
+		last = member.start + len(member.value)
+	}
+	out.Write(data[last:])
+	return out.Bytes(), nil
+}
+
+// raisedRange returns the JSON string literal for current raised to target. A target
+// that names its own operator (a fleet catalog pin such as "^5.7.3") sets it; otherwise
+// current's operator is kept. Operators and SemVer versions contain no character JSON
+// escapes, so the literal is the quoted text.
+func raisedRange(current json.RawMessage, target string) (string, error) {
+	var spec string
+	if err := json.Unmarshal(current, &spec); err != nil {
+		return "", fmt.Errorf("range %s is not a string: %w", current, err)
+	}
+	operator, _, ok := splitRangeOperator(spec)
+	if !ok {
+		return "", fmt.Errorf("range %q is not a single-version range; update it by hand", spec)
+	}
+	targetOperator, version, ok := splitRangeOperator(target)
+	if !ok {
+		return "", fmt.Errorf("target %q is not a SemVer version", target)
+	}
+	if targetOperator != "" {
+		operator = targetOperator
+	}
+	return `"` + operator + version + `"`, nil
+}
+
+// rangeOperators are the comparator prefixes a single-version npm range may carry, longest
+// first so ">=" is not read as ">".
+var rangeOperators = []string{">=", "<=", "^", "~", ">", "<", "="}
+
+// splitRangeOperator splits a single-version npm range such as "^1.2.3", "~1.2.3" or
+// ">=1.2.3" into its operator and SemVer version; a bare version has no operator. ok is false
+// for anything else: a compound or x-range, a tag such as "latest", a protocol spec such as
+// "workspace:^1.0.0" or "file:../x", or surrounding space.
+func splitRangeOperator(spec string) (operator, version string, ok bool) {
+	for _, candidate := range rangeOperators {
+		if strings.HasPrefix(spec, candidate) {
+			operator = candidate
+			break
+		}
+	}
+	version = strings.TrimPrefix(spec, operator)
+	if _, parsed := semver.Parse(version); !parsed || strings.TrimSpace(version) != version {
+		return "", "", false
+	}
+	return operator, version, true
 }
 
 // UpdateAll batches updates for all given candidates across repoPath.

@@ -1,0 +1,3 @@
+type: fixed
+title: Rewrite only the dependency range in package.json during a bump, keeping key order, indentation and each range's own operator, and report a failed pnpm update under a lockfile instead of editing package.json behind pnpm-lock.yaml
+breaking: false

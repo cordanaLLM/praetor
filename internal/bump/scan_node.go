@@ -171,8 +171,14 @@ func scanPackageJSONStatic(ctx context.Context, repoPath, dirRel string) ([]Upgr
 	return declared, nil
 }
 
+// declaredNodeDependency is one declared dependency with no known upgrade. A single-version
+// range contributes its version; any other spec (a workspace: or file: reference, a tag, a
+// compound range) is carried verbatim.
 func declaredNodeDependency(pkg, spec, dirRel string) UpgradeCandidate {
-	version := strings.TrimPrefix(strings.TrimPrefix(spec, "^"), "~")
+	version := spec
+	if _, bare, ok := splitRangeOperator(spec); ok {
+		version = bare
+	}
 	return UpgradeCandidate{
 		Package:        pkg,
 		CurrentVersion: version,
