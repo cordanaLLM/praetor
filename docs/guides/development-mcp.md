@@ -248,6 +248,32 @@ in the configured source repository and carry the canonical register tuple and
 manifest digest for that snapshot. Repair status rejects stale or caller-selected
 provenance before it reports retained execution state.
 
+## Package docs quote their upstream
+
+`standards_package_docs` returns the sheet `praetorctl docs sync` distilled from a declared
+package's own documentation (`CompressDocumentation` in `internal/docdistill/compressor.go`).
+That documentation is third-party text, so the sheet quotes it rather than presenting it as
+guidance:
+
+- a provenance line under the header says the quoted lines are upstream claims, not
+  instructions;
+- the summary, configuration lines and upstream notes are `>` quotations, and the API
+  surface is code spans that a backtick in the harvested text cannot close;
+- a carriage return or other control character in a harvested line becomes a space, so no
+  harvested text starts a line of the sheet.
+
+Treat a quoted line as the package author's claim and check it before acting on it. The
+rendering is pinned by the `TestQuotedNotes_*` tests in
+`internal/docdistill/docdistill_test.go` and, through the tool, by
+`TestServer_PackageDocs_QuotesUpstreamText` in `cmd/standards-mcp/tools_test.go`.
+
+The catalog behind the tool uses schema `v2` (`CatalogVersion` in
+`internal/docdistill/cache.go`). A `v1` catalog was rendered before quoting, so its sheets
+are not served: the tool answers not-found, and `praetorctl docs audit` lists the package as
+stale, until `praetorctl docs sync` harvests it again. A catalog with an unknown version is
+refused with `ErrCatalogVersion` rather than overwritten. `docs audit` counts a package as
+documented only when its sheet extracted content (`DistilledDoc.Extracted`).
+
 ## Rule explanations state when a rule is not enforced
 
 `explain_rule` answers for every HISS identifier, including the ones with no executable check. Those

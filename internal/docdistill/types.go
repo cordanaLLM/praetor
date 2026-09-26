@@ -43,6 +43,11 @@ type DistilledDoc struct {
 	TokenCount  int         `json:"token_count"`
 	UpdatedAt   time.Time   `json:"updated_at"`
 	RawMarkdown string      `json:"raw_markdown"`
+
+	// Extracted reports whether CompressDocumentation found documentation content in the
+	// harvested text. A sheet without it is a header only: TokenCount is never zero, so
+	// only this flag tells a documented package from an empty harvest (BUG-175).
+	Extracted bool `json:"extracted"`
 }
 
 // DocCatalog indexes all cached distilled documentation.
@@ -50,6 +55,11 @@ type DocCatalog struct {
 	Version      string                  `json:"version"`
 	LastSyncedAt time.Time               `json:"last_synced_at"`
 	Packages     map[string]DistilledDoc `json:"packages"`
+
+	// superseded maps each key LoadCatalog dropped from a catalog written under an older
+	// CatalogVersion to its package name. It is never persisted; the coverage audit reports
+	// those packages as stale until a sync harvests them again.
+	superseded map[string]string
 }
 
 // maxCatalogEntries bounds a single pass over the catalog (HISS-02).
@@ -128,6 +138,11 @@ func DefaultDistillOptions() DistillOptions {
 }
 
 // DocAuditResult summarizes documentation coverage across declared dependencies.
+//
+// Missing lists declared dependencies with no cached sheet, or whose sheet extracted no
+// documentation content. Stale lists those whose cached sheet is not current: written under
+// an older CatalogVersion, or cached only for another version of the package. Either fails
+// the audit; docs sync harvests both.
 type DocAuditResult struct {
 	TotalDeclared int          `json:"total_declared"`
 	Documented    int          `json:"documented"`
