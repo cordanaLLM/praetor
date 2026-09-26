@@ -163,6 +163,21 @@ func TestScanRepoGitScope_Negative_HostileFsmonitorNeverRuns(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Negative_FailsWithoutReport drives the exported ScanRepo wrapper, not only
+// ScanRepoContext: a missing root or an unparsable source must yield an error and no
+// report, never a clean score.
+func TestScanRepo_Negative_FailsWithoutReport(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	if report, err := dedupe.ScanRepo(missing); err == nil || report != nil {
+		t.Fatalf("missing root must fail: %+v, %v", report, err)
+	}
+	broken := t.TempDir()
+	writeFile(t, broken, "source.go", "package broken\nfunc (")
+	if report, err := dedupe.ScanRepo(broken); err == nil || report != nil {
+		t.Fatalf("unparsable source must fail: %+v, %v", report, err)
+	}
+}
+
 func TestScanRepo_Boundary_SmallFunctionsIgnored(t *testing.T) {
 	tmp := t.TempDir()
 	// Trivial 2-line functions should not trigger duplicate detection

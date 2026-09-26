@@ -1,0 +1,3 @@
+type: fixed
+title: Make the robots.txt validator strip trailing comments, report Allow/Disallow/Crawl-delay lines that precede every User-agent, report input past its line bound and over-long directives, make the sitemap validator require the sitemaps.org namespace and bound field lengths, and test the real 50,000-entry sitemap cap, the fuzz invariants and the ScanRepo failure path
+breaking: false

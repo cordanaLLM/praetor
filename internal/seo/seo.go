@@ -225,46 +225,73 @@ func ValidateSitemap(raw []byte) (*SitemapValidationResult, error) {
 
 func validateURLSet(u *URLSet) (*SitemapValidationResult, error) {
 	res := &SitemapValidationResult{Valid: true, IsIndex: false, URLCount: len(u.URLs)}
+	validateSitemapNamespace("urlset", u.XMLName.Space, res)
 	if len(u.URLs) > MaxURLLimit {
 		res.Errors = append(res.Errors, fmt.Sprintf("url count %d exceeds maximum limit of %d", len(u.URLs), MaxURLLimit))
 	}
 
 	for i := 0; i < len(u.URLs) && i < MaxURLLimit; i++ {
-		entry := u.URLs[i]
-		if !isValidAbsoluteURL(entry.Loc) {
-			res.Errors = append(res.Errors, fmt.Sprintf("url[%d]: invalid absolute loc: '%s'", i, entry.Loc))
-		}
-		if entry.ChangeFreq != "" {
-			if _, ok := validChangeFreqs[strings.ToLower(entry.ChangeFreq)]; !ok {
-				res.Errors = append(res.Errors, fmt.Sprintf("url[%d]: invalid changefreq '%s'", i, entry.ChangeFreq))
-			}
-		}
-		if entry.Priority != nil {
-			if *entry.Priority < 0.0 || *entry.Priority > 1.0 {
-				res.Errors = append(res.Errors, fmt.Sprintf("url[%d]: priority %0.2f out of bounds [0.0, 1.0]", i, *entry.Priority))
-			}
-		}
+		validateSitemapURL(i, u.URLs[i], res)
 	}
 
 	res.Valid = len(res.Errors) == 0
 	return res, nil
 }
 
+// validateSitemapURL checks one <url> entry of a urlset.
+func validateSitemapURL(i int, entry SitemapURL, res *SitemapValidationResult) {
+	label := fmt.Sprintf("url[%d]", i)
+	if withinFieldLimit(label, "loc", entry.Loc, res) && !isValidAbsoluteURL(entry.Loc) {
+		res.Errors = append(res.Errors, fmt.Sprintf("%s: invalid absolute loc: '%s'", label, entry.Loc))
+	}
+	withinFieldLimit(label, "lastmod", entry.LastMod, res)
+	if entry.ChangeFreq != "" && withinFieldLimit(label, "changefreq", entry.ChangeFreq, res) {
+		if _, ok := validChangeFreqs[strings.ToLower(entry.ChangeFreq)]; !ok {
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: invalid changefreq '%s'", label, entry.ChangeFreq))
+		}
+	}
+	if entry.Priority != nil && (*entry.Priority < 0.0 || *entry.Priority > 1.0) {
+		res.Errors = append(res.Errors, fmt.Sprintf("%s: priority %0.2f out of bounds [0.0, 1.0]", label, *entry.Priority))
+	}
+}
+
 func validateSitemapIndex(idx *SitemapIndex) (*SitemapValidationResult, error) {
 	res := &SitemapValidationResult{Valid: true, IsIndex: true, URLCount: len(idx.Sitemaps)}
+	validateSitemapNamespace("sitemapindex", idx.XMLName.Space, res)
 	if len(idx.Sitemaps) > MaxURLLimit {
 		res.Errors = append(res.Errors, fmt.Sprintf("sitemap count %d exceeds maximum limit of %d", len(idx.Sitemaps), MaxURLLimit))
 	}
 
 	for i := 0; i < len(idx.Sitemaps) && i < MaxURLLimit; i++ {
 		entry := idx.Sitemaps[i]
-		if !isValidAbsoluteURL(entry.Loc) {
-			res.Errors = append(res.Errors, fmt.Sprintf("sitemap[%d]: invalid absolute loc: '%s'", i, entry.Loc))
+		label := fmt.Sprintf("sitemap[%d]", i)
+		if withinFieldLimit(label, "loc", entry.Loc, res) && !isValidAbsoluteURL(entry.Loc) {
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: invalid absolute loc: '%s'", label, entry.Loc))
 		}
+		withinFieldLimit(label, "lastmod", entry.LastMod, res)
 	}
 
 	res.Valid = len(res.Errors) == 0
 	return res, nil
+}
+
+// validateSitemapNamespace requires the sitemaps.org namespace on the root element. space
+// is the resolved namespace (xml.Name.Space), so a prefixed declaration is accepted too;
+// crawlers ignore a sitemap declared in any other namespace, or in none.
+func validateSitemapNamespace(root, space string, res *SitemapValidationResult) {
+	if withinFieldLimit("<"+root+">", "namespace", space, res) && space != StandardSitemapNS {
+		res.Errors = append(res.Errors, fmt.Sprintf("<%s> namespace must be '%s', got '%s'", root, StandardSitemapNS, space))
+	}
+}
+
+// withinFieldLimit reports a sitemap field longer than MaxFieldLength bytes, without
+// echoing it, and returns false so the caller skips the checks that would quote it.
+func withinFieldLimit(label, field, value string, res *SitemapValidationResult) bool {
+	if len(value) <= MaxFieldLength {
+		return true
+	}
+	res.Errors = append(res.Errors, fmt.Sprintf("%s: %s is %d bytes, maximum %d", label, field, len(value), MaxFieldLength))
+	return false
 }
 
 // ValidateRobotsTxt parses and validates standard robots.txt format.
@@ -274,38 +301,59 @@ func ValidateRobotsTxt(content string) (*RobotsValidationResult, error) {
 		return &RobotsValidationResult{Valid: false, Errors: []string{"empty robots.txt"}}, errors.New("empty robots.txt")
 	}
 
-	lines := strings.Split(content, "\n")
+	lines := robotsLines(content)
 	res := &RobotsValidationResult{Valid: true}
 	var currentRule *RobotsRule
 
 	for i := 0; i < len(lines) && i < MaxRobotsLines; i++ {
-		line := strings.TrimSpace(lines[i])
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			res.Errors = append(res.Errors, fmt.Sprintf("line %d: malformed directive '%s'", i+1, line))
-			continue
-		}
-
-		key := strings.ToLower(strings.TrimSpace(parts[0]))
-		val := strings.TrimSpace(parts[1])
-
-		currentRule = processRobotsDirective(key, val, i+1, currentRule, res)
+		currentRule = processRobotsLine(lines[i], i+1, currentRule, res)
 	}
 
 	if currentRule != nil {
 		res.Rules = append(res.Rules, *currentRule)
 	}
 
+	// Lines past the bound were never inspected, so the file cannot be reported valid.
+	if len(lines) > MaxRobotsLines {
+		res.Errors = append(res.Errors, fmt.Sprintf("robots.txt has %d lines; only the first %d were validated", len(lines), MaxRobotsLines))
+	}
 	if len(res.UserAgents) == 0 {
 		res.Errors = append(res.Errors, "missing required User-agent directive")
 	}
 
 	res.Valid = len(res.Errors) == 0
 	return res, nil
+}
+
+// robotsLines splits content into lines; the newline that ends the last line does not
+// start another one.
+func robotsLines(content string) []string {
+	lines := strings.Split(content, "\n")
+	if n := len(lines); n > 1 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	return lines
+}
+
+// processRobotsLine parses one line. RFC 9309 section 2.2 ends every line with an optional
+// '#' comment (EOL = *WS [comment] NL) and path patterns cannot contain '#', so everything
+// from the first '#' is dropped before the directive is split.
+func processRobotsLine(raw string, lineNum int, current *RobotsRule, res *RobotsValidationResult) *RobotsRule {
+	line, _, _ := strings.Cut(raw, "#")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return current
+	}
+	if len(line) > MaxFieldLength {
+		res.Errors = append(res.Errors, fmt.Sprintf("line %d: directive is %d bytes, maximum %d", lineNum, len(line), MaxFieldLength))
+		return current
+	}
+	key, val, found := strings.Cut(line, ":")
+	if !found {
+		res.Errors = append(res.Errors, fmt.Sprintf("line %d: malformed directive '%s'", lineNum, line))
+		return current
+	}
+	return processRobotsDirective(strings.ToLower(strings.TrimSpace(key)), strings.TrimSpace(val), lineNum, current, res)
 }
 
 func processRobotsDirective(key, val string, lineNum int, current *RobotsRule, res *RobotsValidationResult) *RobotsRule {
@@ -316,14 +364,8 @@ func processRobotsDirective(key, val string, lineNum int, current *RobotsRule, r
 		}
 		res.UserAgents = append(res.UserAgents, val)
 		return &RobotsRule{UserAgent: val}
-	case "allow":
-		if current != nil {
-			current.Allows = append(current.Allows, val)
-		}
-	case "disallow":
-		if current != nil {
-			current.Disallows = append(current.Disallows, val)
-		}
+	case "allow", "disallow":
+		addRulePath(key, val, lineNum, current, res)
 	case "sitemap":
 		if !isValidAbsoluteURL(val) {
 			res.Errors = append(res.Errors, fmt.Sprintf("line %d: invalid sitemap url '%s'", lineNum, val))
@@ -339,8 +381,28 @@ func processRobotsDirective(key, val string, lineNum int, current *RobotsRule, r
 	return current
 }
 
+// addRulePath records an Allow or Disallow path on the current group.
+func addRulePath(key, val string, lineNum int, current *RobotsRule, res *RobotsValidationResult) {
+	if current == nil {
+		res.Errors = append(res.Errors, orphanDirective(key, lineNum))
+		return
+	}
+	if key == "allow" {
+		current.Allows = append(current.Allows, val)
+		return
+	}
+	current.Disallows = append(current.Disallows, val)
+}
+
+// orphanDirective reports a group directive that precedes every User-agent line. RFC 9309
+// section 2.2 tells crawlers to ignore such a rule, so the author's intent is silently lost.
+func orphanDirective(key string, lineNum int) string {
+	return fmt.Sprintf("line %d: %s directive appears before any User-agent line and applies to no group", lineNum, key)
+}
+
 func processCrawlDelay(val string, lineNum int, current *RobotsRule, res *RobotsValidationResult) {
 	if current == nil {
+		res.Errors = append(res.Errors, orphanDirective("crawl-delay", lineNum))
 		return
 	}
 	delay, err := strconv.ParseFloat(val, 64)
