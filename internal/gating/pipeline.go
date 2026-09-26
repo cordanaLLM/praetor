@@ -56,9 +56,6 @@ const (
 	ReceiptFilePerm os.FileMode = 0o644
 	// maxStages bounds the stage loop (HISS-02).
 	maxStages = 16
-	// GateOutputVersion heads the signed gate output. v2 records each stage's StageStatus
-	// where v1 recorded a passed bool that could not tell a skipped stage from a passed one.
-	GateOutputVersion = "praetor-gate-output/v2"
 )
 
 // ErrMissingScanner reports that a required security scanner is absent, which must fail
@@ -138,7 +135,7 @@ type PipelineReport struct {
 func (r *PipelineReport) StageOutput() []byte {
 	lines := make([]string, 0, len(r.Stages)+5)
 	lines = append(lines,
-		GateOutputVersion,
+		lockdown.GateOutputVersion,
 		fmt.Sprintf("repository\t%s", r.Repository),
 		fmt.Sprintf("commit_sha\t%s", r.CommitSHA),
 		fmt.Sprintf("worktree_clean\t%t", r.WorktreeClean),

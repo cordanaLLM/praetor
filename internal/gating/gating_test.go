@@ -625,8 +625,9 @@ func TestRunReceiptStage_Positive_SignsRealStageOutput(t *testing.T) {
 		t.Fatalf("LoadReceiptFile: %v", err)
 	}
 	// The receipt must verify against the pinned key and the real concatenated output,
-	// which is what makes it evidence rather than decoration.
-	if err := lockdown.VerifyPinnedReceipt(&rf.ExecutionReceipt, pub, []byte(rf.GateOutput)); err != nil {
+	// which is what makes it evidence rather than decoration, and it must pass the gate
+	// output version check `gate verify` and `forge validate-pr` apply.
+	if err := lockdown.VerifyReceiptFile(rf, pub); err != nil {
 		t.Fatalf("written receipt does not verify: %v", err)
 	}
 	if rf.GateOutput != string(cfg.rep.StageOutput()) {
@@ -715,7 +716,7 @@ func TestStageOutput_3D(t *testing.T) {
 
 	// Boundary: an empty report still renders a complete header, under the v2 version.
 	empty := (&PipelineReport{}).StageOutput()
-	if !strings.HasPrefix(string(empty), GateOutputVersion+"\n") || GateOutputVersion != "praetor-gate-output/v2" {
+	if !strings.HasPrefix(string(empty), lockdown.GateOutputVersion+"\n") || lockdown.GateOutputVersion != "praetor-gate-output/v2" {
 		t.Errorf("unexpected empty-report output: %q", string(empty))
 	}
 }

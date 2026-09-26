@@ -278,14 +278,20 @@ Implemented Phase 3 Pillar VII.
 `
 
 // signedReceiptBlock renders a genuine Ed25519 Exit-0 receipt as the fenced block a PR body
-// is expected to carry.
+// is expected to carry, certifying a current-version gate output whose body is output.
 func signedReceiptBlock(t *testing.T, priv ed25519.PrivateKey, commitSHA, output string) string {
 	t.Helper()
-	receipt, err := lockdown.CreateReceipt("praetorctl gate run", 0, []byte(output), commitSHA, "acme/widgets", priv)
+	return signedGateOutputBlock(t, priv, commitSHA, lockdown.GateOutputVersion+"\n"+output)
+}
+
+// signedGateOutputBlock signs gateOutput exactly as given, header included.
+func signedGateOutputBlock(t *testing.T, priv ed25519.PrivateKey, commitSHA, gateOutput string) string {
+	t.Helper()
+	receipt, err := lockdown.CreateReceipt("praetorctl gate run", 0, []byte(gateOutput), commitSHA, "acme/widgets", priv)
 	if err != nil {
 		t.Fatalf("failed creating receipt: %v", err)
 	}
-	data, err := json.MarshalIndent(lockdown.ReceiptFile{ExecutionReceipt: *receipt, GateOutput: output}, "", "  ")
+	data, err := json.MarshalIndent(lockdown.ReceiptFile{ExecutionReceipt: *receipt, GateOutput: gateOutput}, "", "  ")
 	if err != nil {
 		t.Fatalf("failed encoding receipt: %v", err)
 	}
@@ -370,6 +376,30 @@ func TestValidatePRChecklist_Negative_WrongKeyCommitOrPayload(t *testing.T) {
 	}
 	if res.HasReceipt {
 		t.Fatal("a receipt whose certified output was altered was accepted")
+	}
+}
+
+// Negative: a receipt genuinely signed by the pinned key over praetor-gate-output/v1 is
+// refused. Its stage lines recorded skipped stages as `true`, so admitting it would let a pull
+// request certify security scans that never ran.
+func TestValidatePRChecklist_Negative_V1GateOutput(t *testing.T) {
+	pub, priv, err := lockdown.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed generating keypair: %v", err)
+	}
+	head := "0f1e2d3c4b5a69788796a5b4c3d2e1f009182736"
+	v1 := "praetor-gate-output/v1\nstage\tSecurity & SCA Scan\ttrue\tdry run\n"
+	body := prChecklistBoxes + signedGateOutputBlock(t, priv, head, v1)
+
+	res, err := ValidatePRChecklistWithPolicy(body, ReceiptPolicy{PinnedKey: pub, HeadSHA: head})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.HasReceipt || res.Valid {
+		t.Fatalf("a v1 receipt was accepted: %+v", res)
+	}
+	if joined := strings.Join(res.Errors, "\n"); !strings.Contains(joined, "unsupported gate output version") {
+		t.Fatalf("the rejection must name the gate output version, got %v", res.Errors)
 	}
 }
 

@@ -243,3 +243,30 @@ func VerifyPinnedReceipt(receipt *ExecutionReceipt, pinned ed25519.PublicKey, ou
 	}
 	return VerifyReceiptWithOutput(receipt, output)
 }
+
+// VerifyReceiptFile verifies a gate receipt envelope as a whole: its signature, the SHA-256 of
+// the gate output it carries, and that output's format version. With a pinned key it applies
+// VerifyPinnedReceipt; with none it checks the signature against the key the receipt carries,
+// which proves the output was not altered but not who signed it. `gate verify` and
+// `forge validate-pr` both verify through it.
+//
+// The version check fails closed. A praetor-gate-output/v1 receipt still verifies
+// cryptographically, but its stage lines recorded a passed bool that read a skipped stage as
+// passed, so it can certify prefetches and security scans that never ran. It is re-minted
+// under GateOutputVersion, never accepted.
+func VerifyReceiptFile(rf *ReceiptFile, pinned ed25519.PublicKey) error {
+	if rf == nil {
+		return ErrNilReceipt
+	}
+	output := []byte(rf.GateOutput)
+	var err error
+	if len(pinned) > 0 {
+		err = VerifyPinnedReceipt(&rf.ExecutionReceipt, pinned, output)
+	} else {
+		err = VerifyReceiptWithOutput(&rf.ExecutionReceipt, output)
+	}
+	if err != nil {
+		return err
+	}
+	return checkGateOutputVersion(rf.GateOutput)
+}

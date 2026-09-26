@@ -429,3 +429,90 @@ func TestVerifyPinnedReceipt_3D(t *testing.T) {
 		t.Errorf("expected ErrInvalidPubKey, got %v", err)
 	}
 }
+
+// signedEnvelope mints a receipt envelope over gateOutput with priv.
+func signedEnvelope(t *testing.T, priv ed25519.PrivateKey, gateOutput string) *ReceiptFile {
+	t.Helper()
+	receipt, err := CreateReceipt("praetorctl gate run", 0, []byte(gateOutput), "deadbeef", "acme/widget", priv)
+	if err != nil {
+		t.Fatalf("CreateReceipt: %v", err)
+	}
+	return &ReceiptFile{ExecutionReceipt: *receipt, GateOutput: gateOutput}
+}
+
+// Positive: a v2 envelope verifies against the pinned key and, with no key pinned, against the
+// key it carries.
+func TestVerifyReceiptFile_Positive(t *testing.T) {
+	pub, priv, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+	rf := signedEnvelope(t, priv, GateOutputVersion+"\nstage\tPrefetch & Lockfiles\tpassed\t\n")
+	if err := VerifyReceiptFile(rf, pub); err != nil {
+		t.Fatalf("pinned: %v", err)
+	}
+	if err := VerifyReceiptFile(rf, nil); err != nil {
+		t.Fatalf("unpinned: %v", err)
+	}
+}
+
+// Negative: a genuinely signed v1 envelope is refused whether or not a key is pinned. Its
+// signature and hash hold, but its stage lines recorded skipped stages as `true`, so accepting
+// it would certify stages that never ran. A foreign key and an altered output still fail on
+// the signature check first.
+func TestVerifyReceiptFile_Negative(t *testing.T) {
+	pub, priv, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+	v1 := signedEnvelope(t, priv, "praetor-gate-output/v1\nstage\tSecurity & SCA Scan\ttrue\tdry run\n")
+	if err := VerifyPinnedReceipt(&v1.ExecutionReceipt, pub, []byte(v1.GateOutput)); err != nil {
+		t.Fatalf("the v1 fixture must be cryptographically valid: %v", err)
+	}
+	for _, pinned := range []ed25519.PublicKey{pub, nil} {
+		err := VerifyReceiptFile(v1, pinned)
+		if !errors.Is(err, ErrGateOutputVersion) || !strings.Contains(err.Error(), "praetor-gate-output/v1") {
+			t.Errorf("pinned=%v: want ErrGateOutputVersion naming v1, got %v", pinned != nil, err)
+		}
+	}
+
+	_, foreignPriv, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+	forged := signedEnvelope(t, foreignPriv, GateOutputVersion+"\n")
+	if err := VerifyReceiptFile(forged, pub); !errors.Is(err, ErrKeyNotPinned) {
+		t.Errorf("want ErrKeyNotPinned, got %v", err)
+	}
+	altered := signedEnvelope(t, priv, GateOutputVersion+"\nstage\tRace-Detector Tests\tskipped\t\n")
+	altered.GateOutput = strings.Replace(altered.GateOutput, "skipped", "passed", 1)
+	if err := VerifyReceiptFile(altered, pub); !errors.Is(err, ErrOutputMismatch) {
+		t.Errorf("want ErrOutputMismatch, got %v", err)
+	}
+}
+
+// Boundary: the header must be exactly GateOutputVersion on the first line. A header-only
+// output passes; an empty output, a lookalike version and a missing envelope fail; an
+// unterminated oversized header is echoed only up to maxVersionEcho characters.
+func TestVerifyReceiptFile_Boundary(t *testing.T) {
+	pub, priv, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+	if err := VerifyReceiptFile(signedEnvelope(t, priv, GateOutputVersion), pub); err != nil {
+		t.Errorf("header-only output: %v", err)
+	}
+	for _, output := range []string{"", GateOutputVersion + "0\n", " " + GateOutputVersion + "\n", "stage\tx\tpassed\t\n" + GateOutputVersion + "\n"} {
+		if err := VerifyReceiptFile(signedEnvelope(t, priv, output), pub); !errors.Is(err, ErrGateOutputVersion) {
+			t.Errorf("output %q: want ErrGateOutputVersion, got %v", output, err)
+		}
+	}
+	if err := VerifyReceiptFile(nil, pub); !errors.Is(err, ErrNilReceipt) {
+		t.Errorf("nil envelope: want ErrNilReceipt, got %v", err)
+	}
+	long := strings.Repeat("x", 10*maxVersionEcho)
+	err = VerifyReceiptFile(signedEnvelope(t, priv, long), pub)
+	if !errors.Is(err, ErrGateOutputVersion) || strings.Contains(err.Error(), strings.Repeat("x", maxVersionEcho+1)) {
+		t.Errorf("oversized header must be refused and truncated, got %v", err)
+	}
+}

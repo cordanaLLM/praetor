@@ -65,7 +65,7 @@ func newGateFixture(t *testing.T) *gateFixture {
 		env:    env,
 		pub:    pub,
 		priv:   priv,
-		output: []byte("praetor-gate-output/v1\nstage\tPrefetch & Lockfiles\ttrue\t\n"),
+		output: []byte(lockdown.GateOutputVersion + "\nstage\tPrefetch & Lockfiles\tpassed\t\n"),
 	}
 }
 
@@ -163,12 +163,22 @@ func TestRunGateVerify_Negative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadReceiptFile: %v", err)
 	}
-	rf.GateOutput += "stage\tRace-Detector Tests\ttrue\t\n"
+	rf.GateOutput += "stage\tRace-Detector Tests\tpassed\t\n"
 	if err := lockdown.SaveReceiptFile(receiptPath, rf, 0o644); err != nil {
 		t.Fatalf("SaveReceiptFile: %v", err)
 	}
 	if err := runGate([]string{"verify", "--path", tampered.dir}); !errors.Is(err, lockdown.ErrOutputMismatch) {
 		t.Errorf("expected ErrOutputMismatch for a tampered gate output, got %v", err)
+	}
+
+	// A genuinely signed receipt over praetor-gate-output/v1 must be rejected: its stage
+	// lines recorded skipped stages as `true`, so it can certify scans that never ran.
+	v1 := newGateFixture(t)
+	v1.output = []byte("praetor-gate-output/v1\nstage\tSecurity & SCA Scan\ttrue\tdry run\n")
+	v1.pin(t, v1.pub)
+	v1.mintReceipt(t, v1.priv, v1.head)
+	if err := runGate([]string{"verify", "--path", v1.dir}); !errors.Is(err, lockdown.ErrGateOutputVersion) {
+		t.Errorf("expected ErrGateOutputVersion for a v1 receipt, got %v", err)
 	}
 }
 
@@ -265,7 +275,7 @@ func TestRunGateVerify_PublicKeyFlag_Negative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadReceiptFile: %v", err)
 	}
-	rf.GateOutput += "stage\tRace-Detector Tests\ttrue\t\n"
+	rf.GateOutput += "stage\tRace-Detector Tests\tpassed\t\n"
 	if err := lockdown.SaveReceiptFile(receiptPath, rf, 0o644); err != nil {
 		t.Fatalf("SaveReceiptFile: %v", err)
 	}
