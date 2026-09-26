@@ -284,14 +284,17 @@ func TestServiceAccountCreateFalseFallsBackToDefault(t *testing.T) {
 }
 
 // Negative boundary: an explicit name is honoured even when the chart creates
-// no account, because the operator created it out of band.
+// no account, because the operator created it out of band. This is the
+// create=false migration path: the previous chart defaulted the name to
+// praetor-sa, so such a release keeps running as its out-of-band praetor-sa
+// account only by naming it; left empty, the pod moves to "default".
 func TestExplicitServiceAccountNameWinsWithoutCreation(t *testing.T) {
-	docs := render(t, "alpha", "--set", "serviceAccount.create=false", "--set", "serviceAccount.name=external-sa")
+	docs := render(t, "alpha", "--set", "serviceAccount.create=false", "--set", "serviceAccount.name=praetor-sa")
 	if accounts := ofKind(docs, "ServiceAccount"); len(accounts) != 0 {
 		t.Fatalf("expected no ServiceAccount, got %d", len(accounts))
 	}
-	if got := podSpec(t, docs)["serviceAccountName"]; got != "external-sa" {
-		t.Fatalf("serviceAccountName = %v, want external-sa", got)
+	if got := podSpec(t, docs)["serviceAccountName"]; got != "praetor-sa" {
+		t.Fatalf("serviceAccountName = %v, want praetor-sa", got)
 	}
 }
 

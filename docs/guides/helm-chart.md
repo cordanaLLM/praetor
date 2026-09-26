@@ -39,19 +39,36 @@ credential it cannot use.
 
 ### Upgrading a release installed before the rename
 
-Two renames can reach an existing release. Check both before you run `helm upgrade`.
+Two name changes can reach an existing release. Check both before you run `helm upgrade`.
 
-**The ServiceAccount moves on every release.** Earlier versions named the account `praetor-sa`
-outright, which is why two releases collided. The release-scoped default renames it, and a
-`ServiceAccount` rename means the old object is deleted and a new one created. To keep the
-existing account across the upgrade, name it:
+**The ServiceAccount moves wherever `serviceAccount.name` was left at its default.** Earlier
+versions defaulted the name to `praetor-sa` outright, which is why two releases collided. That
+default is now empty, and what an empty name renders depends on `serviceAccount.create`:
+
+- `create: true`: the account is renamed to `<release>-praetor`. Helm deletes the old
+  `praetor-sa` object and creates the new one.
+- `create: false`: the pod moves to the namespace's `default` account, and nothing warns you. The
+  previous chart pointed such a pod at `praetor-sa`. The ServiceAccount admission controller turns
+  away a pod whose account does not exist, so any install of this kind that ran had `praetor-sa`
+  created outside the chart. After the upgrade the pod no longer uses it. The account itself is
+  left in place, but the pod loses everything it got through that account: RBAC bindings,
+  SecurityContextConstraints and any other per-account grant. It also loses the account's image
+  pull secrets. The admission controller copies an account's pull secrets onto a pod that declares
+  none of its own, so unless `imagePullSecrets` is set in the chart values, a pull from a private
+  registry now fails.
+
+The remedy is the same for both: name the account.
 
 ```bash
 helm upgrade praetor deploy/helm/praetor --set serviceAccount.name=praetor-sa
 ```
 
-`TestServiceAccountCreateTrueHonoursExplicitName` in `internal/deploychart/chart_test.go` pins that
-path.
+`TestServiceAccountCreateTrueHonoursExplicitName` and
+`TestExplicitServiceAccountNameWinsWithoutCreation` in `internal/deploychart/chart_test.go` pin
+this upgrade for `create: true` and `create: false` respectively. A release that already set its
+own `serviceAccount.name` is not affected. The admission controller's behaviour is documented in
+the Kubernetes reference, [ServiceAccount admission
+controller](https://kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin/#serviceaccount-admission-controller).
 
 **The Deployment and Service move where an override is set.** `nameOverride` and
 `fullnameOverride` shipped in `values.yaml` but no template read them, so a release that set one
