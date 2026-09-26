@@ -14,6 +14,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/gating"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -146,6 +147,27 @@ func TestGeneratePreMigrationEpic_NoPlaceholderIssueRefs(t *testing.T) {
 		ref := fmt.Sprintf("%s#%d", epic.RepoName, n)
 		if strings.Contains(epic.ChecklistMarkdown, ref) {
 			t.Errorf("epic body cross-references placeholder issue %q", ref)
+		}
+	}
+}
+
+// TestGeneratePreMigrationEpic_GateTaskRunsTheGateCommand pins the verification task's
+// command to gating.RepoRunCommand, which cmd/standardsctl parses against the real `gate run`
+// flag set. The body used to say `gate run --target=.`, an undefined flag (BUG-298). Positive:
+// task 4 names the command. Negative: no task names --target. Boundary: only task 4 runs the gate.
+func TestGeneratePreMigrationEpic_GateTaskRunsTheGateCommand(t *testing.T) {
+	epic, err := GeneratePreMigrationEpic(context.Background(), writeEpicFixtureRepo(t), "")
+	if err != nil {
+		t.Fatalf("epic generation failed: %v", err)
+	}
+	want := "`" + gating.RepoRunCommand + "`"
+	for i, task := range epic.ChildIssues {
+		runsGate := strings.Contains(task.Body, want)
+		if runsGate != (i == 3) {
+			t.Errorf("task %d: runs %s = %v, want %v", i+1, want, runsGate, i == 3)
+		}
+		if strings.Contains(task.Body, "--target") {
+			t.Errorf("task %d names the undefined --target flag: %s", i+1, task.Body)
 		}
 	}
 }

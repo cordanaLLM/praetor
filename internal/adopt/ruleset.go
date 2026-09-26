@@ -8,6 +8,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
 )
 
@@ -199,4 +200,4 @@ commandExecutionPolicy: auto
 Repository gatekeeper. Mission: enforce anti-direct-merge policy strictly; verify every verification gate before shipping.
 
 ## Execution Command
-` + "```bash\npraetorctl gate run --target=. --dry-run\n```\n"
+` + "```bash\n" + gating.RepoRunCommand + " --dry-run\n```\n"

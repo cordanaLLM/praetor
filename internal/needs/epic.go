@@ -9,6 +9,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/topology"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -146,7 +147,7 @@ func createChildTasks(repoName string, plan *MigrationPlan, maxFuncLOC int) []fo
 
 	t4 := forge.IssueSpec{
 		Title:     fmt.Sprintf("[TASK 4/5] Gated Verification & Ed25519 Receipt: %s", repoName),
-		Body:      "## Scope\n- Run diff-aware CI verification via `praetorctl ci filter`.\n- Run `praetorctl gate run --target=.` in isolated worktree.\n- Verify all 5 gates (prefetch, SCA, HISS-16, tests, receipts).\n- Sign Ed25519 Exit-0 receipt and submit fast-forward PR.",
+		Body:      "## Scope\n- Run diff-aware CI verification via `praetorctl ci filter`.\n- Run `" + gating.RepoRunCommand + "` in isolated worktree.\n- Verify all 5 gates (prefetch, SCA, HISS-16, tests, receipts).\n- Sign Ed25519 Exit-0 receipt and submit fast-forward PR.",
 		State:     "open",
 		Labels:    []string{"task", "verification", "gating"},
 		DependsOn: []string{taskAnchor(3)},

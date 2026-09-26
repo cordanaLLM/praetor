@@ -190,6 +190,18 @@ fetch modules and query the vulnerability database, so a dry run that started th
 [`internal/gating/gating_test.go`](../../internal/gating/gating_test.go) runs a whole dry run
 through a recording command runner and fails if any command starts.
 
+The gatekeeper persona that adoption writes (`.agents/agents/repo-gatekeeper.md`) runs
+`praetorctl gate run --path=. --dry-run`, and the pre-migration epic's verification task runs
+`praetorctl gate run --path=.`. Both derive from `gating.RepoRunCommand`
+([`internal/gating/pipeline.go`](../../internal/gating/pipeline.go)). They, and praetor's own
+`praetor-gatekeeper` persona, previously passed `--target=.`, which `gate run` rejects as an
+undefined flag before any stage runs.
+[`cmd/standardsctl/gate_command_test.go`](../../cmd/standardsctl/gate_command_test.go) parses the
+constant and every `gate run` line in `.agents/agents/*.md` against the real flag set;
+[`internal/adopt/persona_command_test.go`](../../internal/adopt/persona_command_test.go) and
+`TestGeneratePreMigrationEpic_GateTaskRunsTheGateCommand` in
+[`internal/needs/epic_test.go`](../../internal/needs/epic_test.go) pin the generated text to it.
+
 ### A HISS rejection names the violations
 
 The gate's HISS stage rejects on the same ratchet as `praetorctl audit`, and both render the
