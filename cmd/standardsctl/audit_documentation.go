@@ -246,6 +246,10 @@ func auditDocumentationMakefileWiring(ctx context.Context, rootDir string) error
 // auditDocumentationScratchIgnores proves both private scratch roots are ignored. A declined
 // git-ignore step leaves the rules' wording to the operator, never the privacy invariant the
 // private-scratch link policy rests on, so the effective check runs either way.
+//
+// The answer comes from util.GitIgnoredPaths, which reads the repository's own ignore files
+// with the global and system configuration isolated: an operator's personal excludes file
+// hides scratch on one machine only, so it cannot prove the repository keeps it private.
 func auditDocumentationScratchIgnores(ctx context.Context, rootDir string, declined bool) error {
 	remedy := "run 'praetorctl adopt'"
 	if declined {
@@ -253,9 +257,14 @@ func auditDocumentationScratchIgnores(ctx context.Context, rootDir string, decli
 	} else if err := auditManagedGitIgnoreBlock(ctx, rootDir); err != nil {
 		return err
 	}
-	for _, probe := range []string{".workingdir/PRAETOR-AUDIT-PROBE", ".workingdir2/PRAETOR-AUDIT-PROBE"} {
-		if _, err := util.RunGit(ctx, rootDir, "check-ignore", "--no-index", "--", probe); err != nil {
-			return fmt.Errorf("[FAIL] .gitignore does not effectively exclude %s (%s): %w", probe, remedy, err)
+	probes := []string{".workingdir/PRAETOR-AUDIT-PROBE", ".workingdir2/PRAETOR-AUDIT-PROBE"}
+	ignored, err := util.GitIgnoredPaths(ctx, rootDir, probes, true)
+	if err != nil {
+		return fmt.Errorf("[FAIL] cannot prove .gitignore effectively excludes the private scratch roots (%s): %w", remedy, err)
+	}
+	for _, probe := range probes {
+		if !slices.Contains(ignored, probe) {
+			return fmt.Errorf("[FAIL] .gitignore does not effectively exclude %s (%s)", probe, remedy)
 		}
 	}
 	return nil

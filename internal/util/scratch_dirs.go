@@ -13,9 +13,9 @@ var scratchDirNames = map[string]struct{}{
 }
 
 // IsScratchDir reports whether a directory base name is one of the scratch directories a
-// repository walker skips. It is the one list the HISS scanner, adopt's verification planner
-// and dedupe's non-Git walker share (HISS-19), so the three cannot drift apart again. Matching
-// is exact; a caller that folds case lowers the name first.
+// repository walker skips. It is the one list the HISS scanner, adopt's verification planner,
+// dedupe's non-Git walker and the editor's language scan share (HISS-19), so they cannot drift
+// apart again. Matching is exact; a caller that folds case lowers the name first.
 func IsScratchDir(name string) bool {
 	_, ok := scratchDirNames[name]
 	return ok
