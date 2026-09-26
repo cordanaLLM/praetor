@@ -177,10 +177,15 @@ mcp: argument not declared by the tool input schema: "verifyonly" (declared: sou
 
 Every schema in `tools/list` publishes `"additionalProperties": false` to match.
 The check is `ToolInputSchema.CheckArguments` in `internal/mcp/tool.go`, called by
-`handleToolsCall` in `cmd/standards-mcp/server.go`. Tests:
+`runTool` in `cmd/standards-mcp/server.go`. The quoted keys are client input, so
+the refusal passes `mcp.SanitizeResult` like every handler result: a role
+delimiter or override phrase in a key is served neutralized. Tests:
 `TestServer_Negative_UndeclaredArgumentRefusedBeforeHandler` and
 `TestServer_Negative_MisspelledPreviewFlagWritesNothing` in
-`cmd/standards-mcp/server_test.go`.
+`cmd/standards-mcp/server_test.go`;
+`TestServer_Negative_InjectedUndeclaredKeyNeutralized` and
+`TestServer_Boundary_ManyInjectedUndeclaredKeysNeutralized` in
+`cmd/standards-mcp/served_sanitize_test.go`.
 
 Every transport reads a message as JSON-RPC 2.0 and answers it as follows:
 

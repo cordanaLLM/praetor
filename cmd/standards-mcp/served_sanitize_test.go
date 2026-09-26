@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -99,6 +100,10 @@ func TestServer_Positive_BenignResultServedUnchanged(t *testing.T) {
 	if got := callTool(t, srv, "stub_err_result", nil); !got.IsError || got.Content[0].Text != "path is required" {
 		t.Errorf("error result changed: %+v", got)
 	}
+	const refusal = `mcp: argument not declared by the tool input schema: "dryrun" (declared: none)`
+	if got := callTool(t, srv, "stub_ok", map[string]any{"dryrun": true}); !got.IsError || got.Content[0].Text != refusal {
+		t.Errorf("benign undeclared-key refusal changed: %+v", got)
+	}
 	for name, tool := range srv.tools {
 		if mcp.HasToolInjection(tool) {
 			t.Errorf("registered tool %s serves an injected descriptor", name)
@@ -161,5 +166,48 @@ func TestServer_Boundary_OversizedOrMissingResultFailsClosed(t *testing.T) {
 		if len(resp.Error.Message) > 1024 {
 			t.Errorf("%s: withheld output leaked into the error (%d bytes)", name, len(resp.Error.Message))
 		}
+	}
+}
+
+// TestServer_Negative_InjectedUndeclaredKeyNeutralized covers the strict-argument refusal:
+// it quotes client-supplied keys, so it passes the same neutralizer as handler results,
+// and the handler never runs.
+func TestServer_Negative_InjectedUndeclaredKeyNeutralized(t *testing.T) {
+	srv, _ := newBareServer(t)
+	calls := 0
+	registerStubTool(t, srv, "stub_strict", func(context.Context, map[string]any) (*mcp.ToolResult, error) {
+		calls++
+		return mcp.TextResult("ran"), nil
+	})
+	cases := map[string]map[string]any{
+		"stub_strict":            {servedInjection: true},
+		"standards_explain_rule": {"rule_id": "HISS-01", servedInjection: true},
+	}
+	for name, args := range cases {
+		res := callTool(t, srv, name, args)
+		expectError(t, name, res, "argument not declared by the tool input schema")
+		assertNeutralized(t, name+" undeclared-key refusal", res.Content[0].Text)
+	}
+	if calls != 0 {
+		t.Errorf("handler ran %d times for an undeclared argument", calls)
+	}
+}
+
+// TestServer_Boundary_ManyInjectedUndeclaredKeysNeutralized sends more injected keys than
+// one refusal names: every quoted key is neutralized and none is served raw.
+func TestServer_Boundary_ManyInjectedUndeclaredKeysNeutralized(t *testing.T) {
+	srv, _ := newBareServer(t)
+	registerStubTool(t, srv, "stub_strict", func(context.Context, map[string]any) (*mcp.ToolResult, error) {
+		return mcp.TextResult("ran"), nil
+	})
+	args := map[string]any{}
+	for i := 0; i < 20; i++ {
+		args[fmt.Sprintf("%02d%s", i, servedInjection)] = i
+	}
+	res := callTool(t, srv, "stub_strict", args)
+	expectError(t, "many injected keys", res, "more (declared: none)")
+	assertNeutralized(t, "many injected keys", res.Content[0].Text)
+	if strings.Contains(res.Content[0].Text, "<|im_start|>") {
+		t.Errorf("a quoted key kept its role delimiter:\n%s", res.Content[0].Text)
 	}
 }

@@ -927,17 +927,8 @@ func (s *Server) handleToolsCall(ctx context.Context, req JSONRPCRequest) *JSONR
 	if params.Arguments == nil {
 		params.Arguments = map[string]any{}
 	}
-	// One strict check in front of every handler: an undeclared key is refused before any
-	// side effect. MCP reports input validation as a tool execution error (isError) so the
-	// model can correct the call, not as a JSON-RPC protocol error.
-	if err := tool.InputSchema.CheckArguments(params.Arguments); err != nil {
-		return &JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: mcp.ErrorResult(err.Error())}
-	}
 
-	callCtx, cancel := context.WithTimeout(ctx, s.opts.ToolTimeout)
-	defer cancel()
-
-	res, err := tool.Handler(callCtx, params.Arguments)
+	res, err := s.runTool(ctx, tool, params.Arguments)
 	if err != nil {
 		return errorResponse(req.ID, codeInternalError, servedErrorText(err))
 	}
@@ -951,6 +942,20 @@ func (s *Server) handleToolsCall(ctx context.Context, req JSONRPCRequest) *JSONR
 		ID:      req.ID,
 		Result:  safe,
 	}
+}
+
+// runTool runs one tool under the per-call deadline (HISS-02). One strict check sits in
+// front of every handler: an undeclared key is refused before any side effect. MCP reports
+// input validation as a tool execution error (isError) so the model can correct the call,
+// not as a JSON-RPC protocol error. The refusal quotes client-supplied keys, so it is
+// returned as a result and passes the caller's single SanitizeResult path like any other.
+func (s *Server) runTool(ctx context.Context, tool mcp.Tool, args map[string]any) (*mcp.ToolResult, error) {
+	if err := tool.InputSchema.CheckArguments(args); err != nil {
+		return mcp.ErrorResult(err.Error()), nil
+	}
+	callCtx, cancel := context.WithTimeout(ctx, s.opts.ToolTimeout)
+	defer cancel()
+	return tool.Handler(callCtx, args)
 }
 
 // servedErrorText renders a handler error for the client. Errors quote paths, file
