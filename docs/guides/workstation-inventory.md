@@ -38,7 +38,13 @@ the report. The declared scope covers flat checkouts, one organization level and
 the recognized worktree containers. It excludes hidden and ignored development
 directories and does not claim a recursive inventory of every disk path. Failed
 Git probes and unsupported remote forms remain unknown rather than proving that a
-repository is local-only. Incomplete reports retain their observations. The CLI
+repository is local-only. A remote is recorded only when it is a network remote:
+an `https`, `http`, `ssh`, `git` or `git+ssh` URL, or the scp-like
+`[user@]host:path` form, which is recorded as `ssh://host/path`. User info, query
+and fragment are removed. Local paths, `file://` URLs, Windows drive paths and
+remote-helper addresses such as `ext::...` are rejected and mark the inventory
+incomplete. The inventory and `sync --remote` share this parser
+(`util.ParseGitRemoteURL`, `TestInventoryRemoteForms_SharedParser`). Incomplete reports retain their observations. The CLI
 returns nonzero and MCP sets `isError`; consumers should still read the report.
 
 Git probes use an isolated environment and disable filesystem monitors and hooks.

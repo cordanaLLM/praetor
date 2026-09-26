@@ -45,7 +45,7 @@ func printMilestoneUsage() {
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  list [--dir=.] [--state=all|open|closed]   List tracked milestones")
 	fmt.Println("  create --title=\"...\" [--due=YYYY-MM-DD]    Create a new milestone and render in BACKLOG.md")
-	fmt.Println("  close <number|title> [--dir=.]             Mark a milestone as closed")
+	fmt.Println("  close <number|title> [--dir=.] [--publish] Mark a milestone as closed; --publish also closes it on GitHub")
 	fmt.Println("  sync [--owner=...] [--repo=...] [--dir=.]  Synchronize milestones with GitHub")
 	fmt.Println("  status [--dir=.]                           Display progress summary across all milestones")
 }
@@ -79,6 +79,22 @@ func runMilestoneList(ctx context.Context, args []string) error {
 	return nil
 }
 
+// milestoneForge holds the forge flags shared by every milestone subcommand that talks to
+// GitHub, declared once so create, close and sync cannot drift apart.
+type milestoneForge struct {
+	owner, repo, token, endpoint *string
+}
+
+// addMilestoneForgeFlags registers the shared forge flags on fs.
+func addMilestoneForgeFlags(fs *flag.FlagSet) milestoneForge {
+	return milestoneForge{
+		owner:    fs.String("owner", "cordanaLLM", "GitHub organization owner"),
+		repo:     fs.String("repo", "praetor", "GitHub repository name"),
+		token:    fs.String("token", "", "GitHub access token"),
+		endpoint: fs.String("endpoint", "https://api.github.com", "GitHub API endpoint"),
+	}
+}
+
 func runMilestoneCreate(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("milestone create", flag.ContinueOnError)
 	title := fs.String("title", "", "Milestone title (required)")
@@ -86,10 +102,7 @@ func runMilestoneCreate(ctx context.Context, args []string) error {
 	dueStr := fs.String("due", "", "Due date in YYYY-MM-DD format")
 	dir := fs.String("dir", ".", "Repository root directory")
 	publish := fs.Bool("publish", false, "Publish immediately to GitHub remote")
-	owner := fs.String("owner", "cordanaLLM", "GitHub organization owner")
-	repo := fs.String("repo", "praetor", "GitHub repository name")
-	token := fs.String("token", "", "GitHub access token")
-	endpoint := fs.String("endpoint", "https://api.github.com", "GitHub API endpoint")
+	remote := addMilestoneForgeFlags(fs)
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -114,11 +127,11 @@ func runMilestoneCreate(ctx context.Context, args []string) error {
 	fmt.Printf("[PASS] Created milestone #%d: %s (State: %s)\n", m.Number, m.Title, m.State)
 
 	if *publish {
-		if err := milestone.PublishMilestone(ctx, *dir, *owner, *repo, *token, *endpoint, m); err != nil {
+		if err := milestone.PublishMilestone(ctx, *dir, *remote.owner, *remote.repo, *remote.token, *remote.endpoint, m); err != nil {
 			return fmt.Errorf("milestone published locally, but GitHub publish failed: %w", err)
 		}
 		fmt.Printf("[PASS] Published milestone #%d as remote milestone #%d: https://github.com/%s/%s/milestone/%d\n",
-			m.Number, m.RemoteNumber, *owner, *repo, m.RemoteNumber)
+			m.Number, m.RemoteNumber, *remote.owner, *remote.repo, m.RemoteNumber)
 	}
 	return nil
 }
@@ -126,12 +139,14 @@ func runMilestoneCreate(ctx context.Context, args []string) error {
 func runMilestoneClose(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("milestone close", flag.ContinueOnError)
 	dirFlag := fs.String("dir", ".", "Repository root directory")
+	publish := fs.Bool("publish", false, "Also close the bound milestone on GitHub and read it back")
+	remote := addMilestoneForgeFlags(fs)
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(positional) < 1 || len(positional) > 2 {
-		return fmt.Errorf("usage: praetorctl milestone close <number|title> [--dir=.]")
+		return fmt.Errorf("usage: praetorctl milestone close <number|title> [--dir=.] [--publish]")
 	}
 	selector := positional[0]
 	// Preserve the legacy second positional directory while parsing --dir correctly.
@@ -142,27 +157,50 @@ func runMilestoneClose(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Printf("[PASS] Milestone #%d closed: %s (Progress: 100%%)\n", m.Number, m.Title)
+	if !*publish {
+		if m.PendingRemoteClose && m.RemoteNumber > 0 {
+			fmt.Printf("[INFO] Closed locally only; remote milestone #%d stays open until `milestone close %d --publish`\n",
+				m.RemoteNumber, m.Number)
+		}
+		return nil
+	}
+	if err := milestone.PublishClose(ctx, dir, *remote.owner, *remote.repo, *remote.token, *remote.endpoint, m); err != nil {
+		return fmt.Errorf("milestone closed locally, but the GitHub close failed (sync reports it as pending): %w", err)
+	}
+	fmt.Printf("[PASS] Closed remote milestone #%d on https://github.com/%s/%s\n", m.RemoteNumber, *remote.owner, *remote.repo)
 	return nil
 }
 
 func runMilestoneSync(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("milestone sync", flag.ContinueOnError)
-	owner := fs.String("owner", "cordanaLLM", "GitHub organization owner")
-	repo := fs.String("repo", "praetor", "GitHub repository name")
 	dir := fs.String("dir", ".", "Repository root directory")
-	token := fs.String("token", "", "GitHub access token")
-	endpoint := fs.String("endpoint", "https://api.github.com", "GitHub API endpoint")
+	remote := addMilestoneForgeFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	synced, err := milestone.SyncWithGitHub(ctx, *dir, *owner, *repo, *token, *endpoint)
+	result, err := milestone.SyncWithGitHub(ctx, *dir, *remote.owner, *remote.repo, *remote.token, *remote.endpoint)
 	if err != nil {
 		return fmt.Errorf("milestone sync failed: %w", err)
 	}
 
-	fmt.Printf("[PASS] Synchronized %d milestones from https://github.com/%s/%s\n", len(synced), *owner, *repo)
+	fmt.Printf("[PASS] Synchronized %d milestones from https://github.com/%s/%s\n",
+		len(result.Milestones), *remote.owner, *remote.repo)
+	printMilestoneSyncDrift(result)
 	return nil
+}
+
+// printMilestoneSyncDrift reports every divergence the sync kept or repaired rather than
+// overwrote.
+func printMilestoneSyncDrift(result *milestone.SyncResult) {
+	for _, number := range result.PendingCloses {
+		fmt.Printf("[WARN] Milestone #%d is closed locally but open on GitHub; kept closed. Publish with `milestone close %d --publish`\n",
+			number, number)
+	}
+	for _, stale := range result.StaleBindings {
+		fmt.Printf("[WARN] Milestone #%d duplicated remote milestone #%d already bound to #%d; unbound and kept as a local-only milestone\n",
+			stale.Local, stale.Remote, stale.Kept)
+	}
 }
 
 func runMilestoneStatus(ctx context.Context, args []string) error {

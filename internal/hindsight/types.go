@@ -42,10 +42,13 @@ type HindsightDocument struct {
 }
 
 // DistillationReport summarizes atomic facts harvested across repository AST and state.
+// Warnings names every optional fact source that failed, so a report built from fewer
+// sources than DistillWorkspace runs is distinguishable from a complete one.
 type DistillationReport struct {
 	TotalFacts  int                  `json:"total_facts"`
 	Facts       []MemoryFact         `json:"facts"`
 	Categories  map[FactCategory]int `json:"categories"`
+	Warnings    []string             `json:"warnings,omitempty"`
 	DistilledAt time.Time            `json:"distilled_at"`
 }
 

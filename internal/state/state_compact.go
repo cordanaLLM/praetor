@@ -113,7 +113,7 @@ func stateBlocks(lines []string, report *CompactReport) (preamble []string, bloc
 		switch {
 		case stateMarkerLine.MatchString(line):
 			report.MarkersDropped++
-		case strings.HasPrefix(line, "### ["):
+		case isEntryHeading(line):
 			blocks = append(blocks, []string{line})
 		case len(blocks) == 0:
 			preamble = append(preamble, line)
@@ -122,6 +122,12 @@ func stateBlocks(lines []string, report *CompactReport) (preamble []string, bloc
 		}
 	}
 	return preamble, blocks
+}
+
+// isEntryHeading reports whether a STATE.md line opens a log entry. Compaction and history
+// rotation both split the log on it, so they always agree on where an entry starts.
+func isEntryHeading(line string) bool {
+	return strings.HasPrefix(line, "### [")
 }
 
 func trimBlankTail(lines []string) []string {

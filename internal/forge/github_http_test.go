@@ -261,14 +261,19 @@ func TestGitHubDriver_ListIssues_Boundary_SinglePartialPage(t *testing.T) {
 // ReconcileProtection
 // ============================================================================
 
-func TestGitHubDriver_ReconcileProtection_Positive_CreatesWithStatusChecks(t *testing.T) {
+// rulesetForge serves a rulesetServer's stateful rulesets API behind newFakeForge's
+// request recorder, so a test sees every request and the driver can read back its writes.
+func rulesetForge(t *testing.T, rs *rulesetServer) (*GitHubDriver, *fakeForgeServer) {
+	t.Helper()
+	var fake *fakeForgeServer
 	gh, fake := newFakeForge(t, func(w http.ResponseWriter, r *http.Request, index int) {
-		if r.Method == http.MethodGet {
-			writeJSON(t, w, http.StatusOK, []map[string]any{{"id": 3, "name": "other"}})
-			return
-		}
-		writeJSON(t, w, http.StatusCreated, map[string]any{"id": 9})
+		rs.serve(w, r.Method, r.URL.Path, fake.requests[index].Body)
 	})
+	return gh, fake
+}
+
+func TestGitHubDriver_ReconcileProtection_Positive_CreatesWithStatusChecks(t *testing.T) {
+	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{{"id": 3, "name": "other"}}})
 
 	policy := &config.BranchProtectionPolicy{
 		EnforceLinearHistory:       true,
@@ -279,8 +284,8 @@ func TestGitHubDriver_ReconcileProtection_Positive_CreatesWithStatusChecks(t *te
 	if err := gh.ReconcileProtection(context.Background(), "main", policy); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(fake.requests) != 2 {
-		t.Fatalf("expected a list then a create, got %d requests", len(fake.requests))
+	if len(fake.requests) != 3 || fake.requests[2].Path != "/repos/acme/widgets/rulesets/99" {
+		t.Fatalf("expected a list, a create and a readback, got %+v", fake.requests)
 	}
 	create := fake.requests[1]
 	if create.Method != http.MethodPost || create.Path != "/repos/acme/widgets/rulesets" {
@@ -298,19 +303,13 @@ func TestGitHubDriver_ReconcileProtection_Positive_CreatesWithStatusChecks(t *te
 }
 
 func TestGitHubDriver_ReconcileProtection_Positive_UpdatesExistingRuleset(t *testing.T) {
-	gh, fake := newFakeForge(t, func(w http.ResponseWriter, r *http.Request, index int) {
-		if r.Method == http.MethodGet {
-			writeJSON(t, w, http.StatusOK, []map[string]any{{"id": 42, "name": "main-branch-protection"}})
-			return
-		}
-		writeJSON(t, w, http.StatusOK, map[string]any{"id": 42})
-	})
+	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{{"id": 42, "name": "main-branch-protection"}}})
 
 	policy := &config.BranchProtectionPolicy{RequiredApprovingReviewers: 1}
 	if err := gh.ReconcileProtection(context.Background(), "main", policy); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	update := fake.requests[1]
+	update := fake.requests[2]
 	if update.Method != http.MethodPut || update.Path != "/repos/acme/widgets/rulesets/42" {
 		t.Fatalf("expected an in-place update, got %s %s", update.Method, update.Path)
 	}
@@ -321,13 +320,7 @@ func TestGitHubDriver_ReconcileProtection_Positive_UpdatesExistingRuleset(t *tes
 }
 
 func TestGitHubDriver_ReconcileProtection_Negative_StatusAndArguments(t *testing.T) {
-	gh, _ := newFakeForge(t, func(w http.ResponseWriter, r *http.Request, index int) {
-		if r.Method == http.MethodGet {
-			writeJSON(t, w, http.StatusOK, []map[string]any{})
-			return
-		}
-		writeJSON(t, w, http.StatusUnprocessableEntity, map[string]any{"message": "validation failed"})
-	})
+	gh, _ := rulesetForge(t, &rulesetServer{existing: []map[string]any{}, writeStatus: http.StatusUnprocessableEntity})
 
 	ctx := context.Background()
 	if err := gh.ReconcileProtection(ctx, "main", &config.BranchProtectionPolicy{}); err == nil {
@@ -342,13 +335,7 @@ func TestGitHubDriver_ReconcileProtection_Negative_StatusAndArguments(t *testing
 }
 
 func TestGitHubDriver_ReconcileProtection_Boundary_NoStatusChecksConfigured(t *testing.T) {
-	gh, fake := newFakeForge(t, func(w http.ResponseWriter, r *http.Request, index int) {
-		if r.Method == http.MethodGet {
-			writeJSON(t, w, http.StatusOK, []map[string]any{})
-			return
-		}
-		writeJSON(t, w, http.StatusCreated, map[string]any{"id": 1})
-	})
+	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{}})
 	gh.RequiredStatusChecks = nil
 	gh.RulesetName = "custom-name"
 
@@ -363,6 +350,164 @@ func TestGitHubDriver_ReconcileProtection_Boundary_NoStatusChecksConfigured(t *t
 	if !isString || name != "custom-name" {
 		t.Fatalf("expected the overridden ruleset name, got %q", name)
 	}
+	include := refIncludes(t, create.Body)
+	if len(include) != 1 || include[0] != "refs/heads/main" {
+		t.Fatalf("without ProtectedRefs the ruleset covers the branch alone, got %v", include)
+	}
+}
+
+// liveProtectionRuleset is a praetor ruleset as an operator may have extended it on GitHub:
+// an extra release-* ref, lts-* excluded, a bypass team, an extra rule, extra rule
+// parameters and an extra required check bound to an app.
+func liveProtectionRuleset() map[string]any {
+	return map[string]any{
+		"id": 42, "name": RepositoryRulesetName, "target": "branch", "enforcement": "active",
+		"source_type": "Repository", "node_id": "RRS_x",
+		"bypass_actors": []any{map[string]any{"actor_id": 5, "actor_type": "Team", "bypass_mode": "always"}},
+		"conditions": map[string]any{"ref_name": map[string]any{
+			"include": []any{"refs/heads/main", "refs/heads/release-*"},
+			"exclude": []any{"refs/heads/lts-*", "refs/heads/release-old"},
+		}},
+		"rules": []any{
+			map[string]any{"type": "code_scanning", "parameters": map[string]any{
+				"code_scanning_tools": []any{map[string]any{"tool": "CodeQL", "alerts_threshold": "errors"}},
+			}},
+			map[string]any{"type": "pull_request", "parameters": map[string]any{
+				"required_approving_review_count": 3, "allowed_merge_methods": []any{"squash"},
+			}},
+			map[string]any{"type": "required_status_checks", "parameters": map[string]any{
+				"strict_required_status_checks_policy": false,
+				"required_status_checks":               []any{map[string]any{"context": "external/app", "integration_id": 123}},
+			}},
+		},
+	}
+}
+
+// TestGitHubDriver_ReconcileProtection_Positive_MergesLiveRulesetWithoutNarrowing covers
+// BUG-761: the live ruleset is read, merged and read back; main and lts-* are both
+// protected and nothing the operator added is dropped.
+func TestGitHubDriver_ReconcileProtection_Positive_MergesLiveRulesetWithoutNarrowing(t *testing.T) {
+	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{liveProtectionRuleset()}})
+	gh.RulesetName = RepositoryRulesetName
+	gh.ProtectedRefs = RepositoryRulesetRefs()
+	gh.RequiredStatusChecks = []string{"CI"}
+
+	if err := gh.ReconcileProtection(context.Background(), "main", &config.BranchProtectionPolicy{RequiredApprovingReviewers: 1}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(fake.requests) != 4 || fake.requests[1].Method != http.MethodGet || fake.requests[3].Method != http.MethodGet {
+		t.Fatalf("expected list, live read, PUT and readback, got %+v", fake.requests)
+	}
+	put := fake.requests[2]
+	if put.Method != http.MethodPut || put.Path != "/repos/acme/widgets/rulesets/42" {
+		t.Fatalf("expected an in-place update, got %s %s", put.Method, put.Path)
+	}
+	include := refIncludes(t, put.Body)
+	for _, want := range []string{"refs/heads/main", "refs/heads/release-*", "refs/heads/lts-*"} {
+		if !containsString(include, want) {
+			t.Fatalf("merged ruleset lost or omitted %s: %v", want, include)
+		}
+	}
+	if !strings.Contains(put.Raw, `"exclude":["refs/heads/release-old"]`) {
+		t.Fatalf("a protected ref must leave the excludes, others stay: %s", put.Raw)
+	}
+	for _, want := range []string{`"bypass_actors":[{"actor_id":5`, `"code_scanning"`, `"allowed_merge_methods":["squash"]`,
+		`"required_approving_review_count":1`, `{"context":"external/app","integration_id":123}`, `{"context":"CI"}`,
+		`"strict_required_status_checks_policy":true`} {
+		if !strings.Contains(put.Raw, want) {
+			t.Fatalf("merged ruleset lacks %s: %s", want, put.Raw)
+		}
+	}
+	if strings.Contains(put.Raw, "node_id") || strings.Contains(put.Raw, "source_type") {
+		t.Fatalf("read-only fields must not be written back: %s", put.Raw)
+	}
+}
+
+func TestGitHubDriver_ReconcileProtection_Negative_ReadbackAndLiveRuleset(t *testing.T) {
+	policy := &config.BranchProtectionPolicy{}
+	// A forge that accepts the PUT but keeps the stale ruleset fails the readback.
+	stale := liveProtectionRuleset()
+	gh, _ := newFakeForge(t, func(w http.ResponseWriter, r *http.Request, index int) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/rulesets"):
+			writeJSON(t, w, http.StatusOK, []map[string]any{{"id": 42, "name": RepositoryRulesetName}})
+		case r.Method == http.MethodGet:
+			writeJSON(t, w, http.StatusOK, stale)
+		default:
+			writeJSON(t, w, http.StatusOK, map[string]any{"id": 42})
+		}
+	})
+	gh.RulesetName, gh.ProtectedRefs = RepositoryRulesetName, RepositoryRulesetRefs()
+	err := gh.ReconcileProtection(context.Background(), "main", policy)
+	if err == nil || !strings.Contains(err.Error(), "did not converge") || !strings.Contains(err.Error(), "refs/heads/lts-*") {
+		t.Fatalf("expected a non-converged readback naming lts-*, got %v", err)
+	}
+
+	// A malformed live ruleset is never overwritten.
+	broken := liveProtectionRuleset()
+	broken["rules"] = "not-a-list"
+	rs := &rulesetServer{existing: []map[string]any{broken}}
+	gh2, fake2 := rulesetForge(t, rs)
+	gh2.RulesetName = RepositoryRulesetName
+	if err := gh2.ReconcileProtection(context.Background(), "main", policy); err == nil || !strings.Contains(err.Error(), "merge live ruleset") {
+		t.Fatalf("expected a merge error, got %v", err)
+	}
+	for _, req := range fake2.requests {
+		if req.Method != http.MethodGet {
+			t.Fatalf("a malformed live ruleset must not be written, got %s %s", req.Method, req.Path)
+		}
+	}
+
+	// A create response without an id cannot be read back.
+	gh3, _ := newFakeForge(t, func(w http.ResponseWriter, r *http.Request, index int) {
+		if r.Method == http.MethodGet {
+			writeJSON(t, w, http.StatusOK, []map[string]any{})
+			return
+		}
+		writeJSON(t, w, http.StatusCreated, map[string]any{"name": "no-id"})
+	})
+	if err := gh3.ReconcileProtection(context.Background(), "main", policy); err == nil || !strings.Contains(err.Error(), "carries no id") {
+		t.Fatalf("expected a missing-id error, got %v", err)
+	}
+}
+
+func TestGitHubDriver_ReconcileProtection_Boundary_BareLiveRuleset(t *testing.T) {
+	// A live ruleset with no conditions and no rules merges to exactly the desired one.
+	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{{"id": 7, "name": RepositoryRulesetName}}})
+	gh.RulesetName, gh.ProtectedRefs = RepositoryRulesetName, RepositoryRulesetRefs()
+	if err := gh.ReconcileProtection(context.Background(), "main", &config.BranchProtectionPolicy{}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	put := fake.requests[2]
+	if include := refIncludes(t, put.Body); len(include) != 2 || include[1] != "refs/heads/lts-*" {
+		t.Fatalf("expected exactly main and lts-*, got %v", include)
+	}
+	if _, present := put.Body["bypass_actors"]; present {
+		t.Fatalf("no live bypass actors must not invent any: %s", put.Raw)
+	}
+}
+
+func refIncludes(t *testing.T, body map[string]any) []string {
+	t.Helper()
+	conditions, isObject := body["conditions"].(map[string]any)
+	if !isObject {
+		t.Fatalf("ruleset carries no conditions: %v", body)
+	}
+	ref, isObject := conditions["ref_name"].(map[string]any)
+	if !isObject {
+		t.Fatalf("ruleset carries no ref_name condition: %v", conditions)
+	}
+	raw, isList := ref["include"].([]any)
+	if !isList {
+		t.Fatalf("ruleset ref_name carries no include list: %v", ref)
+	}
+	include := make([]string, 0, len(raw))
+	for _, value := range raw {
+		if s, isString := value.(string); isString {
+			include = append(include, s)
+		}
+	}
+	return include
 }
 
 func ruleTypes(t *testing.T, rec recordedRequest) []string {

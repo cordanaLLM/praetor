@@ -28,9 +28,16 @@ type StateSnapshot struct {
 	PendingQs      int       `json:"pending_questions"`
 	LastUpdated    time.Time `json:"last_updated"`
 	StateHash      string    `json:"state_hash,omitempty"`
+	// ArchivedEntries counts the oldest STATE.md entries this sync rotated into
+	// HistoryArchive; zero when the log stayed within its rotation triggers.
+	ArchivedEntries int `json:"archived_entries,omitempty"`
+	// HistoryArchive names the working-directory file that received the rotated entries.
+	HistoryArchive string `json:"history_archive,omitempty"`
 }
 
-// SyncState captures git HEAD and updates STATE.md with a session activity entry.
+// SyncState captures git HEAD and updates STATE.md with a session activity entry. Once
+// the log crosses its rotation trigger, the oldest entries move verbatim into a new
+// STATE.history-*.md file beside it before the entry is appended.
 func SyncState(ctx context.Context, rootPath string, sessionSummary string) (*StateSnapshot, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("state sync requires a context")
@@ -148,7 +155,14 @@ func appendStateLog(ctx context.Context, rootPath string, snap *StateSnapshot, s
 	if err != nil {
 		return fmt.Errorf("read STATE.md before append: %w", err)
 	}
-	_, err = writeStateEntry(ctx, stateFile, content, supersededBase(content), snap, summary)
+	if size := len(entryFromSnapshot(snap, summary).render()); size > maxStateEntryBytes {
+		return fmt.Errorf("STATE.md entry is %d bytes, above the %d-byte bound for one entry; shorten the --log text", size, maxStateEntryBytes)
+	}
+	base, summary, err := rotateStateHistory(ctx, rootPath, supersededBase(content), snap, summary)
+	if err != nil {
+		return err
+	}
+	_, err = writeStateEntry(ctx, stateFile, content, base, snap, summary)
 	return err
 }
 

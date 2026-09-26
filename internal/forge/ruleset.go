@@ -75,10 +75,20 @@ func statusChecksContain(checks []struct {
 	return false, nil
 }
 
+// RepositoryRulesetName names the praetor branch protection ruleset, in
+// .github/rulesets/main.json and on the forge alike.
+const RepositoryRulesetName = "praetor-main-protection"
+
+// RepositoryRulesetRefs returns the refs the praetor ruleset protects: main and every
+// lts-* branch. The local file and a remote sync share it, so neither narrows the other.
+func RepositoryRulesetRefs() []string {
+	return []string{"refs/heads/main", "refs/heads/lts-*"}
+}
+
 // RenderRepositoryRuleset renders local branch protection from the selected policy
 // and actual required check contexts. An empty selection omits the status rule.
 func RenderRepositoryRuleset(policy config.BranchProtectionPolicy, contexts []string) ([]byte, error) {
-	doc, err := protectionRuleset("praetor-main-protection", []string{"refs/heads/main", "refs/heads/lts-*"}, policy, contexts, true)
+	doc, err := protectionRuleset(RepositoryRulesetName, RepositoryRulesetRefs(), policy, contexts, true)
 	if err != nil {
 		return nil, err
 	}

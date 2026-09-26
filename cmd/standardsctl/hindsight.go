@@ -81,6 +81,9 @@ func runHindsightDistill(ctx context.Context, args []string) error {
 	for _, cat := range hindsight.SortedCategories(report.Categories) {
 		fmt.Printf("    - %-20s: %d\n", cat, report.Categories[cat])
 	}
+	for _, warning := range report.Warnings {
+		fmt.Printf("  Warning: %s\n", warning)
+	}
 	fmt.Println("Facts cached into .workingdir/memory/distilled.json.")
 	return nil
 }

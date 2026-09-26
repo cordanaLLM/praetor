@@ -106,6 +106,177 @@ func TestCleanGitURLAndExtract(t *testing.T) {
 	}
 }
 
+func TestParseGitRemote_Positive_NetworkForms(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want GitRemote
+	}{
+		{"https://github.com/acme/widgets.git", GitRemote{Host: "github.com", Path: "acme/widgets", Owner: "acme", Repo: "widgets"}},
+		{"git@github.com:acme/widgets.git", GitRemote{Host: "github.com", Path: "acme/widgets", Owner: "acme", Repo: "widgets"}},
+		{"ssh://git@github.com:22/acme/widgets", GitRemote{Host: "github.com", Path: "acme/widgets", Owner: "acme", Repo: "widgets"}},
+		{"git+ssh://GitHub.COM./acme/widgets", GitRemote{Host: "github.com", Path: "acme/widgets", Owner: "acme", Repo: "widgets"}},
+		{"https://x-access-token:secret@github.com/acme/widgets", GitRemote{Host: "github.com", Path: "acme/widgets", Owner: "acme", Repo: "widgets"}},
+		{"git://ghe.example.com/acme/widgets", GitRemote{Host: "ghe.example.com", Path: "acme/widgets", Owner: "acme", Repo: "widgets"}},
+		{"https://gitlab.com/group/sub/widgets", GitRemote{Host: "gitlab.com", Path: "group/sub/widgets", Owner: "sub", Repo: "widgets"}},
+	}
+	for _, tt := range tests {
+		got, err := ParseGitRemote(tt.raw)
+		if err != nil {
+			t.Errorf("ParseGitRemote(%q): %v", tt.raw, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("ParseGitRemote(%q) = %+v, want %+v", tt.raw, got, tt.want)
+		}
+		// ExtractOwnerAndRepo delegates, so both views of a network remote agree.
+		if owner, repo := ExtractOwnerAndRepo(tt.raw); owner != got.Owner || repo != got.Repo {
+			t.Errorf("ExtractOwnerAndRepo(%q) = (%q, %q), ParseGitRemote says (%q, %q)", tt.raw, owner, repo, got.Owner, got.Repo)
+		}
+	}
+}
+
+func TestParseGitRemote_Negative_NotANetworkRemote(t *testing.T) {
+	for _, raw := range []string{
+		"/srv/git/acme/widgets",
+		"../acme/widgets",
+		"acme/widgets",
+		"file:///srv/git/acme/widgets",
+		"ext::ssh -o ProxyCommand=x github.com/acme/widgets",
+		"C:/repos/acme/widgets",
+		`C:\repos\acme\widgets`,
+		"https://github.com",
+		"https://github.com/widgets",
+		"git@github.com:widgets",
+		"https://github.com/acme\n/widgets",
+		"https://github.com/acme/wid\x00gets",
+		"[::1]:acme/widgets",
+	} {
+		got, err := ParseGitRemote(raw)
+		if !errors.Is(err, ErrGitRemoteNotNetwork) {
+			t.Errorf("ParseGitRemote(%q) = %+v, %v; want ErrGitRemoteNotNetwork", raw, got, err)
+		}
+	}
+}
+
+func TestParseGitRemote_Boundary(t *testing.T) {
+	// Surrounding whitespace, a trailing slash and ".git" are all cleaned first.
+	got, err := ParseGitRemote("  git@github.com:acme/widgets.git/\n")
+	if err != nil || got.Path != "acme/widgets" || got.Host != "github.com" {
+		t.Fatalf("ParseGitRemote with surrounding noise = %+v, %v", got, err)
+	}
+	// Empty input is rejected, not reported as an empty identity.
+	if _, err := ParseGitRemote(""); !errors.Is(err, ErrGitRemoteNotNetwork) {
+		t.Fatalf("empty remote: %v", err)
+	}
+	// A rejected URL never repeats its user info, and the excerpt stays bounded.
+	_, err = ParseGitRemote("file://user:ghp_secret@host/" + strings.Repeat("a", 4*maxRemoteExcerptBytes))
+	if err == nil || strings.Contains(err.Error(), "ghp_secret") {
+		t.Fatalf("rejection leaked user info: %v", err)
+	}
+	if len(err.Error()) > 3*maxRemoteExcerptBytes {
+		t.Fatalf("rejection excerpt is unbounded (%d bytes)", len(err.Error()))
+	}
+	// Two-letter scp hosts are hosts, one-letter ones are drive letters.
+	if got, err := ParseGitRemote("gh:acme/widgets"); err != nil || got.Host != "gh" {
+		t.Fatalf("two-letter scp host = %+v, %v", got, err)
+	}
+	// Local paths still resolve through ExtractOwnerAndRepo's fallback.
+	if owner, repo := ExtractOwnerAndRepo("/srv/git/acme/widgets"); owner != "acme" || repo != "widgets" {
+		t.Fatalf("local path fallback = (%q, %q)", owner, repo)
+	}
+}
+
+// TestParseGitRemote_Negative_ParseErrorsRedactUserInfo covers remotes that reach the URL
+// parser and fail there. net/url quotes the whole raw URL in its error, token included,
+// so ParseGitRemote must not pass that error on.
+func TestParseGitRemote_Negative_ParseErrorsRedactUserInfo(t *testing.T) {
+	const secret = "ghp_SECRET"
+	for _, raw := range []string{
+		"https://x-access-token:" + secret + "@github.com:badport/acme/widgets",
+		"https://x-access-token:" + secret + "@github.com/acme/wid%zzgets",
+		"https://x-access-token:" + secret + "@[::1/acme/widgets",
+		"ssh://git:" + secret + "@github.com:22:22/acme/widgets",
+		// A slash inside the password moves the parser's host boundary; the excerpt
+		// still drops everything up to the last @.
+		"https://x-access-token:" + secret + "/x@github.com:badport/acme/widgets",
+		// scp-like form with a password: git reads host "user", so this is no network
+		// remote, and the password stays out of the error.
+		"user:" + secret + "@github.com:acme/widgets",
+	} {
+		_, err := ParseGitRemote(raw)
+		if !errors.Is(err, ErrGitRemoteNotNetwork) {
+			t.Errorf("ParseGitRemote(%q) = %v; want ErrGitRemoteNotNetwork", raw, err)
+			continue
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("ParseGitRemote(%q) leaked user info: %v", raw, err)
+		}
+	}
+}
+
+func TestParseGitRemoteURL_Positive_RendersWithoutUserInfo(t *testing.T) {
+	tests := []struct{ raw, want string }{
+		// The path is kept as written, ".git" included, and the port survives.
+		{"https://x-access-token:secret@example.invalid:8443/org/repo.git", "https://example.invalid:8443/org/repo.git"},
+		{"git@example.invalid:org/repo.git", "ssh://example.invalid/org/repo.git"},
+		{"git@example.invalid:/org/repo", "ssh://example.invalid/org/repo"},
+		{"ssh://user:pw@example.invalid/org/repo?q=1#frag", "ssh://example.invalid/org/repo"},
+		{"git://example.invalid/org/repo", "git://example.invalid/org/repo"},
+		{"git+ssh://example.invalid/org/repo", "git+ssh://example.invalid/org/repo"},
+		// A single path segment is still a network remote; ParseGitRemote is the one
+		// that needs <owner>/<repo>.
+		{"https://example.invalid/repo", "https://example.invalid/repo"},
+	}
+	for _, tt := range tests {
+		got, err := ParseGitRemoteURL(tt.raw)
+		if err != nil {
+			t.Errorf("ParseGitRemoteURL(%q): %v", tt.raw, err)
+			continue
+		}
+		if got.String() != tt.want {
+			t.Errorf("ParseGitRemoteURL(%q) = %q, want %q", tt.raw, got.String(), tt.want)
+		}
+	}
+}
+
+func TestParseGitRemoteURL_Negative_NotANetworkRemote(t *testing.T) {
+	for _, raw := range []string{
+		"/srv/git/org/repo",
+		"file:///srv/git/org/repo",
+		"C:/repos/org/repo",
+		"ext::ssh-helper/org/repo",
+		"host:org/repo@evil",
+		"https://example.invalid",
+		"https://example.invalid/",
+		"mailto:someone@example.invalid",
+		"ftp://example.invalid/org/repo",
+	} {
+		if got, err := ParseGitRemoteURL(raw); !errors.Is(err, ErrGitRemoteNotNetwork) {
+			t.Errorf("ParseGitRemoteURL(%q) = %v, %v; want ErrGitRemoteNotNetwork", raw, got, err)
+		}
+	}
+}
+
+func TestParseGitRemoteURL_Boundary(t *testing.T) {
+	// A two-letter scp host is a host, a one-letter one is a Windows drive.
+	if got, err := ParseGitRemoteURL("gh:org/repo"); err != nil || got.Host != "gh" {
+		t.Fatalf("two-letter scp host = %v, %v", got, err)
+	}
+	if _, err := ParseGitRemoteURL("c:org/repo"); !errors.Is(err, ErrGitRemoteNotNetwork) {
+		t.Fatalf("one-letter scp host accepted: %v", err)
+	}
+	// Surrounding whitespace is trimmed; the host keeps its case for the caller to fold.
+	got, err := ParseGitRemoteURL("  https://Example.Invalid/org/repo \n")
+	if err != nil || got.String() != "https://Example.Invalid/org/repo" {
+		t.Fatalf("trimmed remote = %v, %v", got, err)
+	}
+	// The error excerpt is bounded.
+	_, err = ParseGitRemoteURL("ftp://example.invalid/" + strings.Repeat("a", 4*maxRemoteExcerptBytes))
+	if err == nil || len(err.Error()) > 3*maxRemoteExcerptBytes {
+		t.Fatalf("rejection excerpt is unbounded: %v", err)
+	}
+}
+
 func TestRunCommand(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

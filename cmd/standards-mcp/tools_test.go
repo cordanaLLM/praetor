@@ -460,6 +460,25 @@ func TestServer_MemoryRecallAndHindsightOptimize(t *testing.T) {
 	expectError(t, "optimize outside", outside, "outside the server root")
 }
 
+// A malformed doc catalog must surface as a named warning in a partial report, not as a
+// clean success that silently lacks the package-doc facts.
+func TestServer_HindsightOptimizeNamesFailedSources(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	clean := callTool(t, srv, "standards_hindsight_optimize", nil)
+	if strings.Contains(clean.Content[0].Text, "Warning:") {
+		t.Errorf("clean fixture reported warnings:\n%s", clean.Content[0].Text)
+	}
+
+	writeFixtureFile(t, root, ".workingdir/docs/catalog.json", "{not json")
+	partial := callTool(t, srv, "standards_hindsight_optimize", nil)
+	expectText(t, "partial optimize", partial, "Partially distilled")
+	expectText(t, "partial optimize", partial, "failed fact sources: 1")
+	expectText(t, "partial optimize", partial, "Warning: distill workspace package docs: load package doc catalog")
+	if strings.Contains(partial.Content[0].Text, "Successfully distilled") {
+		t.Errorf("partial report claimed success:\n%s", partial.Content[0].Text)
+	}
+}
+
 func TestServer_AdoptionStepErrorRetainsIncompleteReport(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	initial := "# Repository rules\n" + strings.Repeat("Preserve this instruction.\n", 400)

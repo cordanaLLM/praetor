@@ -67,9 +67,17 @@ and devices are not copied.
 Push remembers the file count, newest modification time and total size of each archive
 in `<user config dir>/praetor/devsync-state.json` and skips archives whose contents have
 not changed. Delete that file to upload everything again. The agent state bundle is
-uploaded on every push. It routinely holds credentials from agent configuration files
-(shell history is left out); it is encrypted like every other archive, and its local
-temporary copy is deleted after the upload.
+uploaded on every push. It is encrypted like every other archive, and its local
+temporary copy is deleted after the upload. Shell history is left out. Agent and MCP
+configuration JSON is redacted before it enters the bundle: the value of every
+credential-named key (`token`, `secret`, `password`, `apiKey`, `Authorization` and
+similar), every string in an `env` object, and every string carrying a bearer or basic
+credential is replaced with `"[REDACTED]"`, and every other byte is copied unchanged. A
+configuration JSON file that does not parse is skipped with a note rather than copied.
+Non-JSON configuration such as Codex's `config.toml` is still copied as written, so the
+bundle can still carry credentials; `praetorctl harvest bundle` prints the redaction
+count beside the credential-bearing categories it captured. The rules live in
+`internal/harvester/redact.go` and are pinned by `internal/harvester/redact_test.go`.
 
 An upload goes to `<archive>.partial` first and replaces the previous archive only when
 it is complete, so a failed push leaves the last good copy in place. Each archive prints

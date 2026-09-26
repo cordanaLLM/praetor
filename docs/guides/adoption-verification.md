@@ -85,6 +85,35 @@ authority path (`adopt.AuditBranchProtection`) to verify branch protection:
 - An unknown decline item, malformed decline entry, or unreadable `.standards.yaml`
   fails closed, ensuring invalid configuration cannot produce a false pass.
 
+### Writing the ruleset and labels to GitHub with `sync --remote`
+
+`standardsctl sync` verifies `.config/labels.yaml` and `.github/rulesets/main.json` locally.
+Only `--remote` writes to GitHub, with a token from `--token`, `GITHUB_TOKEN` or `GH_TOKEN`; the
+gh CLI session is never used.
+
+```bash
+standardsctl sync --remote                              # origin must be on github.com
+standardsctl sync --remote --forge-host=ghe.example.com \
+  --endpoint=https://ghe.example.com/api/v3             # GitHub Enterprise
+```
+
+- **Repository identity.** The `origin` remote must name `--forge-host` (default `github.com`)
+  and the path `<repository.owner>/<repository.name>` from `.standards.yaml`. Another host, a
+  local path or a `file://` URL is refused before any request (`util.ParseGitRemote`,
+  `TestSync_Remote_OriginHost`).
+- **Ruleset.** GitHub gets the ruleset `.github/rulesets/main.json` declares: the name
+  `praetor-main-protection` and the refs `refs/heads/main` and `refs/heads/lts-*`
+  (`forge.RepositoryRulesetRefs`). An existing ruleset is read, merged, updated and read back. The
+  merge sets every parameter praetor renders from policy and keeps everything else: extra refs,
+  bypass actors, other rules and parameters, and required checks praetor does not list. A
+  protected ref is removed from the excludes. The command fails unless the readback includes
+  everything written (`internal/forge/ruleset_merge.go`,
+  `TestGitHubDriver_ReconcileProtection_Positive_MergesLiveRulesetWithoutNarrowing`). Removing a
+  rule or ref from a live ruleset is a manual change on GitHub.
+- **Labels.** Every label in `.config/labels.yaml` is updated on GitHub, or created when GitHub
+  lacks it; labels the taxonomy does not name are left alone (`forge.ParseLabelTaxonomy`,
+  `TestSync_Remote_Labels`).
+
 ### Stages that do not apply are skipped, not failed
 
 `praetorctl gate run` reports a stage it cannot meaningfully run as skipped, with the reason, rather

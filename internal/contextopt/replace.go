@@ -44,12 +44,37 @@ func ReplaceSnapshot(ctx context.Context, path string, data []byte, options Repl
 		return err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
+	return replaceInRoot(ctx, root, filepath.Base(abs), data, options)
+}
+
+// ReplaceRootSnapshot is ReplaceSnapshot for a flat name inside an already pinned
+// directory. The caller owns how that directory was opened, so a writer that must stay
+// confined below a repository root can pin the directory through that root first and
+// still publish through the one locked compare-and-swap implementation.
+func ReplaceRootSnapshot(ctx context.Context, root *os.Root, name string, data []byte, options ReplaceOptions) error {
+	if root == nil || !filepath.IsLocal(name) || filepath.Base(name) != name || name == "." {
+		return errors.New("snapshot replacement requires a pinned directory and a flat filename")
+	}
+	if err := validatePath(name); err != nil {
+		return err
+	}
+	if err := validateReplacement(ctx, data, options); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, MaxDuration)
+	defer cancel()
+	return replaceInRoot(ctx, root, name, data, options)
+}
+
+// replaceInRoot is the locked compare-and-swap publish shared by ReplaceSnapshot and
+// ReplaceRootSnapshot: it serializes on root, re-checks the prior snapshot, stages the
+// replacement and publishes it.
+func replaceInRoot(ctx context.Context, root *os.Root, name string, data []byte, options ReplaceOptions) (err error) {
 	unlock, err := LockDirectory(ctx, root)
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, unlock()) }()
-	name := filepath.Base(abs)
 	mode, err := verifyReplacement(ctx, root, name, options)
 	if err != nil {
 		return err

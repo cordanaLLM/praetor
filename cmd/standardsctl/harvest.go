@@ -445,6 +445,8 @@ func printBundleWarnings(rep *harvester.WorkstationBundleReport) {
 	}
 	if len(sensitive) > 0 {
 		fmt.Printf("[WARNING] This bundle contains credential-bearing categories: %s\n", strings.Join(sensitive, ", "))
+		fmt.Printf("[WARNING] Redacted %d credential values from agent and MCP configuration JSON; non-JSON files such as config.toml and shell history are copied as written.\n",
+			rep.RedactedValues)
 		fmt.Println("[WARNING] The bundle is written owner-only (0700/0600). Review it before transferring it anywhere.")
 	}
 	if len(rep.Skipped) == 0 {

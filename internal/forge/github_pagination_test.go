@@ -36,28 +36,43 @@ func methodsOf(fake *fakeForgeServer) []string {
 // Ruleset listing pagination (BUG-843)
 // ============================================================================
 
-func TestGitHubDriver_Rulesets_Positive_SecondPageRulesetIsUpdatedNotDuplicated(t *testing.T) {
-	gh, fake := newFakeForge(t, func(w http.ResponseWriter, r *http.Request, _ int) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Query().Get("page") == "1":
-			writeJSON(t, w, http.StatusOK, namedPage("id", "name", 1, issuesPerPage, "other"))
-		case r.Method == http.MethodGet && r.URL.Query().Get("page") == "2":
-			writeJSON(t, w, http.StatusOK, []map[string]any{{"id": 777, "name": "main-branch-protection"}})
-		case r.Method == http.MethodPut:
-			writeJSON(t, w, http.StatusOK, map[string]any{"id": 777})
-		default:
-			t.Errorf("unexpected request %s %s", r.Method, r.URL.RequestURI())
-			writeJSON(t, w, http.StatusTeapot, nil)
+// pagedRulesetForge serves the ruleset listing from pages (page number -> entries; an
+// absent page is empty) and every call on one ruleset from rs, so the driver can read the
+// live ruleset it updates and read back what it wrote.
+func pagedRulesetForge(t *testing.T, pages map[string][]map[string]any, rs *rulesetServer) (*GitHubDriver, *fakeForgeServer) {
+	t.Helper()
+	var fake *fakeForgeServer
+	gh, fake := newFakeForge(t, func(w http.ResponseWriter, r *http.Request, index int) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/rulesets") {
+			entries := pages[r.URL.Query().Get("page")]
+			if entries == nil {
+				entries = []map[string]any{}
+			}
+			writeJSON(t, w, http.StatusOK, entries)
+			return
 		}
+		rs.serve(w, r.Method, r.URL.Path, fake.requests[index].Body)
 	})
+	return gh, fake
+}
+
+func TestGitHubDriver_Rulesets_Positive_SecondPageRulesetIsUpdatedNotDuplicated(t *testing.T) {
+	live := map[string]any{"id": 777, "name": "main-branch-protection"}
+	pages := map[string][]map[string]any{
+		"1": namedPage("id", "name", 1, issuesPerPage, "other"),
+		"2": {live},
+	}
+	gh, fake := pagedRulesetForge(t, pages, &rulesetServer{existing: []map[string]any{live}})
 	if err := gh.ReconcileProtection(context.Background(), "main", &config.BranchProtectionPolicy{}); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if got := strings.Join(methodsOf(fake), ","); got != "GET,GET,PUT" {
-		t.Fatalf("expected two listing pages then an in-place update, got %s", got)
+	if got := strings.Join(methodsOf(fake), ","); got != "GET,GET,GET,PUT,GET" {
+		t.Fatalf("expected two listing pages, the live read, an in-place update and a readback, got %s", got)
 	}
-	if fake.requests[2].Path != "/repos/acme/widgets/rulesets/777" {
-		t.Fatalf("update targeted the wrong ruleset: %s", fake.requests[2].Path)
+	for _, i := range []int{2, 3, 4} {
+		if fake.requests[i].Path != "/repos/acme/widgets/rulesets/777" {
+			t.Fatalf("request %d targeted the wrong ruleset: %s", i, fake.requests[i].Path)
+		}
 	}
 }
 
@@ -78,21 +93,16 @@ func TestGitHubDriver_Rulesets_Negative_PageCeilingFailsBeforeMutation(t *testin
 }
 
 func TestGitHubDriver_Rulesets_Boundary_FullFirstPageThenEmptyCreates(t *testing.T) {
-	gh, fake := newFakeForge(t, func(w http.ResponseWriter, r *http.Request, _ int) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Query().Get("page") == "1":
-			writeJSON(t, w, http.StatusOK, namedPage("id", "name", 1, issuesPerPage, "other"))
-		case r.Method == http.MethodGet:
-			writeJSON(t, w, http.StatusOK, []map[string]any{})
-		default:
-			writeJSON(t, w, http.StatusCreated, map[string]any{"id": 900})
-		}
-	})
+	pages := map[string][]map[string]any{"1": namedPage("id", "name", 1, issuesPerPage, "other")}
+	gh, fake := pagedRulesetForge(t, pages, &rulesetServer{})
 	if err := gh.ReconcileProtection(context.Background(), "main", &config.BranchProtectionPolicy{}); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if got := strings.Join(methodsOf(fake), ","); got != "GET,GET,POST" {
-		t.Fatalf("a full first page must be followed before creating, got %s", got)
+	if got := strings.Join(methodsOf(fake), ","); got != "GET,GET,POST,GET" {
+		t.Fatalf("a full first page must be followed before creating and reading back, got %s", got)
+	}
+	if got := fake.requests[3].Path; got != fmt.Sprintf("/repos/acme/widgets/rulesets/%d", createdRulesetID) {
+		t.Fatalf("readback targeted the wrong ruleset: %s", got)
 	}
 }
 

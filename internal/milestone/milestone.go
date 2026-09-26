@@ -3,13 +3,17 @@ package milestone
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -55,8 +59,13 @@ type Milestone struct {
 	OpenIssues   int        `json:"open_issues"`
 	ClosedIssues int        `json:"closed_issues"`
 	Progress     float64    `json:"progress"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	// PendingRemoteClose is true while a local close has not been confirmed by the forge.
+	// A remote sync keeps the local closed state instead of reverting it to the forge's
+	// open state and reports the divergence; `milestone close --publish` or a forge that
+	// reports the milestone closed clears it.
+	PendingRemoteClose bool      `json:"pending_remote_close,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // MilestoneStore holds the collection of tracked milestones.
@@ -100,20 +109,16 @@ func CreateMilestone(ctx context.Context, rootPath, title, description string, d
 		return nil, fmt.Errorf("milestone store holds the maximum of %d entries", MaxMilestonesLimit)
 	}
 
-	nextNum := 1
 	for i := 0; i < len(store.Milestones) && i < MaxMilestonesLimit; i++ {
 		existing := store.Milestones[i]
 		if strings.EqualFold(existing.Title, trimmedTitle) && existing.State == StateOpen {
 			return nil, fmt.Errorf("an open milestone with title '%s' already exists", trimmedTitle)
 		}
-		if existing.Number >= nextNum {
-			nextNum = existing.Number + 1
-		}
 	}
 
 	now := time.Now().UTC()
 	m := Milestone{
-		Number:      nextNum,
+		Number:      nextLocalNumber(store.Milestones),
 		Title:       trimmedTitle,
 		Description: strings.TrimSpace(description),
 		State:       StateOpen,
@@ -129,7 +134,10 @@ func CreateMilestone(ctx context.Context, rootPath, title, description string, d
 	return &m, nil
 }
 
-// CloseMilestone marks a milestone as closed by local number or by title substring.
+// CloseMilestone marks a milestone as closed by local number or by title substring. The
+// close is local: an open milestone it closes is flagged PendingRemoteClose, so a later
+// remote sync reports the forge's still-open state instead of silently reopening it.
+// PublishClose carries the close to the forge.
 //
 // A numeric selector is matched against the local number only: it never falls through to
 // a substring match, which would let "1" close a milestone titled "v1.0". A textual
@@ -151,6 +159,9 @@ func CloseMilestone(ctx context.Context, rootPath, selector string) (*Milestone,
 		return nil, err
 	}
 
+	if store.Milestones[foundIdx].State != StateClosed {
+		store.Milestones[foundIdx].PendingRemoteClose = true
+	}
 	store.Milestones[foundIdx].State = StateClosed
 	store.Milestones[foundIdx].Progress = 100.0
 	store.Milestones[foundIdx].UpdatedAt = time.Now().UTC()
@@ -196,36 +207,54 @@ func SyncToBacklog(ctx context.Context, rootPath string) error {
 	if err != nil {
 		return err
 	}
-	update, err := prepareBacklog(rootPath, store)
+	update, err := prepareBacklog(ctx, rootPath, store)
 	if err != nil {
 		return err
 	}
 	return writeBacklog(ctx, update)
 }
 
+// backlogUpdate is a rendered BACKLOG.md together with the snapshot it was rendered
+// from, so the write can refuse to replace a file another writer changed in between.
 type backlogUpdate struct {
-	root string
-	data []byte
+	root     string
+	data     []byte
+	expected []byte
+	exists   bool
 }
 
-func prepareBacklog(rootPath string, store *MilestoneStore) (*backlogUpdate, error) {
-	backlogPath, err := workingDirFile(rootPath, BacklogFile)
+func prepareBacklog(ctx context.Context, rootPath string, store *MilestoneStore) (*backlogUpdate, error) {
+	observed, exists, err := observeBacklog(ctx, rootPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read %s: %w", BacklogFile, err)
 	}
 	content := "# Project Backlog\n\n"
-	if util.PathExists(backlogPath) {
-		data, readErr := util.ReadFileNoFollow(backlogPath)
-		if readErr != nil {
-			return nil, fmt.Errorf("read %s: %w", BacklogFile, readErr)
-		}
-		content = string(data)
+	if exists {
+		content = string(observed)
 	}
 	rendered, err := renderBacklog(content, store.Milestones)
 	if err != nil {
 		return nil, err
 	}
-	return &backlogUpdate{root: rootPath, data: []byte(rendered)}, nil
+	return &backlogUpdate{root: rootPath, data: []byte(rendered), expected: observed, exists: exists}, nil
+}
+
+// observeBacklog reads BACKLOG.md through the same pinned working-directory handle
+// writeBacklog publishes through, so an in-repository .workingdir link resolves and an
+// escaping one is refused (BUG-826). A working directory that does not exist yet reads as
+// an absent BACKLOG.md; a file that vanishes once the directory is open is an error.
+func observeBacklog(ctx context.Context, rootPath string) (data []byte, exists bool, err error) {
+	opened := false
+	err = util.InConfinedDirectory(rootPath, state.WorkingDirName, func(dir *os.Root) error {
+		opened = true
+		var readErr error
+		data, exists, readErr = contextopt.ObserveRootSnapshot(ctx, dir, BacklogFile)
+		return readErr
+	})
+	if !opened && errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	return data, exists, err
 }
 
 func renderBacklog(content string, milestones []Milestone) (string, error) {
@@ -253,7 +282,7 @@ func renderBacklog(content string, milestones []Milestone) (string, error) {
 }
 
 func commitStoreAndBacklog(ctx context.Context, rootPath string, store *MilestoneStore) error {
-	update, err := prepareBacklog(rootPath, store)
+	update, err := prepareBacklog(ctx, rootPath, store)
 	if err != nil {
 		return fmt.Errorf("sync to backlog: %w", err)
 	}
@@ -261,16 +290,30 @@ func commitStoreAndBacklog(ctx context.Context, rootPath string, store *Mileston
 		return err
 	}
 	if err := writeBacklog(ctx, update); err != nil {
-		return fmt.Errorf("sync to backlog: %w", err)
+		return fmt.Errorf("sync to backlog (%s is saved; the next milestone command re-renders the block): %w", MilestonesFile, err)
 	}
 	return nil
 }
 
+// writeBacklog publishes the rendered BACKLOG.md through the same locked
+// compare-and-swap writer internal/state uses to append its task-discharge history
+// (state.appendCompletedTasks), so neither writer can overwrite the other's concurrent
+// update: a BACKLOG.md that changed since it was read fails the write instead. The
+// working directory is opened through a pinned handle on the repository root, as every
+// other ledger write here is, so a .workingdir swapped for an escaping link after
+// prepareBacklog checked it is refused rather than followed (BUG-826).
 func writeBacklog(ctx context.Context, update *backlogUpdate) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context cancelled before writing backlog: %w", err)
 	}
-	if err := writeWorkingDirFile(update.root, BacklogFile, update.data); err != nil {
+	if err := ensureWorkingDir(update.root); err != nil {
+		return err
+	}
+	options := contextopt.ReplaceOptions{Expected: update.expected, Exists: update.exists, Mode: ledgerFilePerm}
+	err := util.InConfinedDirectory(update.root, state.WorkingDirName, func(dir *os.Root) error {
+		return contextopt.ReplaceRootSnapshot(ctx, dir, BacklogFile, update.data, options)
+	})
+	if err != nil {
 		return fmt.Errorf("write %s: %w", BacklogFile, err)
 	}
 	return nil
@@ -351,10 +394,19 @@ func workingDirFile(rootPath, name string) (string, error) {
 // rootPath, so neither .workingdir nor the ledger can be redirected outside the repository,
 // not even by a link swapped in after a check (BUG-826).
 func writeWorkingDirFile(rootPath, name string, data []byte) error {
+	if err := ensureWorkingDir(rootPath); err != nil {
+		return err
+	}
+	return util.WriteFileConfined(rootPath, filepath.Join(state.WorkingDirName, name), data, ledgerFilePerm)
+}
+
+// ensureWorkingDir creates the working directory below rootPath when absent, resolving
+// every component through a pinned handle on rootPath (BUG-826).
+func ensureWorkingDir(rootPath string) error {
 	if err := util.MkdirConfined(rootPath, state.WorkingDirName, workingDirPerm); err != nil {
 		return fmt.Errorf("mkdir workingdir: %w", err)
 	}
-	return util.WriteFileConfined(rootPath, filepath.Join(state.WorkingDirName, name), data, ledgerFilePerm)
+	return nil
 }
 
 func loadStore(ctx context.Context, rootPath string) (*MilestoneStore, error) {

@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// TestHindsight_Positive verifies workspace distillation, page synthesis, and recall.
+// TestHindsight_Positive verifies workspace distillation of a clean repository and recall.
 func TestHindsight_Positive(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -23,10 +23,11 @@ func TestHindsight_Positive(t *testing.T) {
 	if err != nil || report == nil {
 		t.Fatalf("unexpected error distilling workspace: %v", err)
 	}
-
-	pages := SynthesizeKnowledgePages(tmpDir, report.Facts)
-	if len(pages) != 5 {
-		t.Errorf("expected 5 knowledge pages, got %d", len(pages))
+	if len(report.Warnings) != 0 {
+		t.Errorf("clean repository reported failed sources: %v", report.Warnings)
+	}
+	if report.Categories[CategoryFlavor] != 1 || report.Categories[CategoryCanonicalUtility] != 1 {
+		t.Errorf("clean repository must yield the flavor and dedupe facts, got %v", report.Categories)
 	}
 
 	facts := []MemoryFact{

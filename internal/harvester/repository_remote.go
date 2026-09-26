@@ -1,12 +1,11 @@
 package harvester
 
 import (
-	"errors"
 	"fmt"
-	"net/url"
 	"sort"
 	"strings"
-	"unicode"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func parseRemoteURLs(raw string, probeErrors *[]string) ([]string, bool) {
@@ -22,12 +21,15 @@ func parseRemoteURLs(raw string, probeErrors *[]string) ([]string, bool) {
 			}
 			continue
 		}
-		cleaned, err := sanitizeRemote(fields[1])
+		// util.ParseGitRemoteURL is the one network-remote parser; it drops user info,
+		// query and fragment, so no credential reaches the report.
+		parsed, err := util.ParseGitRemoteURL(fields[1])
 		if err != nil {
 			valid = false
 			*probeErrors = appendBoundedError(*probeErrors, "remote URL rejected")
 			continue
 		}
+		cleaned := parsed.String()
 		if _, exists := seen[cleaned]; exists {
 			continue
 		}
@@ -48,39 +50,4 @@ func inventoryRemoteFieldsValid(fields []string) bool {
 		return false
 	}
 	return len(fields) == 3 || (fields[2] == "(fetch)" && strings.HasPrefix(fields[3], "[") && strings.HasSuffix(fields[3], "]"))
-}
-
-func sanitizeRemote(raw string) (string, error) {
-	if strings.ContainsFunc(raw, unicode.IsControl) {
-		return "", errors.New("remote contains control characters")
-	}
-	if !strings.Contains(raw, "://") {
-		var err error
-		raw, err = inventorySCPURL(raw)
-		if err != nil {
-			return "", err
-		}
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Hostname() == "" || u.Opaque != "" || strings.Trim(u.Path, "/") == "" {
-		return "", errors.New("remote URL is invalid")
-	}
-	if u.Scheme != "https" && u.Scheme != "http" && u.Scheme != "ssh" {
-		return "", errors.New("remote scheme is unsupported")
-	}
-	u.User = nil
-	u.RawQuery, u.Fragment, u.RawFragment = "", "", ""
-	u.ForceQuery = false
-	return u.String(), nil
-}
-
-func inventorySCPURL(raw string) (string, error) {
-	host, path, found := strings.Cut(raw, ":")
-	if at := strings.LastIndexByte(host, '@'); at >= 0 {
-		host = host[at+1:]
-	}
-	if !found || host == "" || path == "" || strings.ContainsAny(host, "/?#\\ ") || strings.Contains(path, "@") {
-		return "", errors.New("remote scp path is unsupported")
-	}
-	return "ssh://" + host + "/" + strings.TrimPrefix(path, "/"), nil
 }

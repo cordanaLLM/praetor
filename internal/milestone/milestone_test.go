@@ -140,10 +140,11 @@ func TestMilestone_Positive_SyncWithGitHubPaginates(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	synced, err := SyncWithGitHub(ctx, dir, "cordanaLLM", "praetor", "test-token", srv.URL)
+	result, err := SyncWithGitHub(ctx, dir, "cordanaLLM", "praetor", "test-token", srv.URL)
 	if err != nil {
 		t.Fatalf("SyncWithGitHub failed: %v", err)
 	}
+	synced := result.Milestones
 	if pages != 2 {
 		t.Errorf("expected the Link-less pagination loop to request 2 pages, got %d", pages)
 	}
@@ -529,7 +530,7 @@ func TestMilestone_Boundary_MergeRemoteMilestones(t *testing.T) {
 		{Number: 2, Title: "local-only", State: StateOpen},
 	}}
 
-	if err := mergeRemoteMilestones(store, []RemoteMilestone{
+	if _, err := mergeRemoteMilestones(store, []RemoteMilestone{
 		{Number: 7, Title: "v1.0", State: StateClosed, ClosedIssues: 3, OpenIssues: 1},
 		{Number: 2, Title: "remote-only", State: StateOpen},
 	}); err != nil {
@@ -559,7 +560,7 @@ func TestMilestone_Boundary_MergeRemoteMilestones(t *testing.T) {
 
 	// Merging nothing changes nothing.
 	before := len(store.Milestones)
-	if err := mergeRemoteMilestones(store, nil); err != nil {
+	if _, err := mergeRemoteMilestones(store, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(store.Milestones) != before {
@@ -664,14 +665,14 @@ func TestMilestone_StoreLimitsRejectBeforePersistence(t *testing.T) {
 func TestMilestone_RemoteMergeLimitsPreserveLocalIDs(t *testing.T) {
 	store := milestoneLimitFixture(MaxMilestonesLimit - 1)
 	remotes := []RemoteMilestone{{Number: 73, Title: "last-milestone", State: StateOpen}}
-	if err := mergeRemoteMilestones(store, remotes); err != nil {
+	if _, err := mergeRemoteMilestones(store, remotes); err != nil {
 		t.Fatal(err)
 	}
 	last := store.Milestones[len(store.Milestones)-1]
 	if len(store.Milestones) != MaxMilestonesLimit || last.Number != MaxMilestonesLimit || last.RemoteNumber != 73 {
 		t.Fatalf("exact-limit merge lost local or remote IDs: %+v", last)
 	}
-	if err := mergeRemoteMilestones(store, remotes); err != nil || len(store.Milestones) != MaxMilestonesLimit {
+	if _, err := mergeRemoteMilestones(store, remotes); err != nil || len(store.Milestones) != MaxMilestonesLimit {
 		t.Fatalf("matching title must remain mergeable at capacity: %v", err)
 	}
 	before := storeJSON(t, store)
@@ -679,13 +680,13 @@ func TestMilestone_RemoteMergeLimitsPreserveLocalIDs(t *testing.T) {
 		{Number: 74, Title: "milestone-1", State: StateClosed},
 		{Number: 75, Title: "overflow", State: StateOpen},
 	}
-	if err := mergeRemoteMilestones(store, remotes); err == nil {
+	if _, err := mergeRemoteMilestones(store, remotes); err == nil {
 		t.Fatal("overflowing union must fail before mutating existing entries")
 	}
 	if string(storeJSON(t, store)) != string(before) {
 		t.Fatal("overflow changed local IDs or milestone fields")
 	}
-	if err := mergeRemoteMilestones(store, make([]RemoteMilestone, MaxMilestonesLimit+1)); err == nil {
+	if _, err := mergeRemoteMilestones(store, make([]RemoteMilestone, MaxMilestonesLimit+1)); err == nil {
 		t.Fatal("oversized remote input must fail")
 	}
 }
@@ -743,5 +744,41 @@ func TestMilestone_Boundary_LinkedWorkingDirStaysConfined(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
 		t.Errorf("expected nothing written outside the repository, got (%v, %v)", entries, err)
+	}
+}
+
+// TestWriteBacklog_Boundary_SwappedWorkingDirIsRefused pins the compare-and-swap BACKLOG.md
+// write (BUG-867) to the confined working directory (BUG-826): a .workingdir swapped for an
+// escaping link after prepareBacklog read it is refused with ErrPathEscapesRoot, and a
+// look-alike BACKLOG.md planted at the link target keeps its bytes.
+func TestWriteBacklog_Boundary_SwappedWorkingDirIsRefused(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	update, err := prepareBacklog(ctx, dir, &MilestoneStore{})
+	if err != nil {
+		t.Fatalf("prepareBacklog: %v", err)
+	}
+	outside := t.TempDir()
+	before := []byte(readBacklog(t, dir))
+	lookalike := filepath.Join(outside, BacklogFile)
+	if err := os.WriteFile(lookalike, before, 0o600); err != nil {
+		t.Fatalf("plant look-alike: %v", err)
+	}
+	wDir := filepath.Join(dir, state.WorkingDirName)
+	link, err := filepath.Rel(dir, outside)
+	if err != nil {
+		t.Fatalf("relate %s to %s: %v", outside, dir, err)
+	}
+	if err := os.Rename(wDir, wDir+".orig"); err != nil {
+		t.Fatalf("move workingdir aside: %v", err)
+	}
+	if err := os.Symlink(link, wDir); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+	if err := writeBacklog(ctx, update); !errors.Is(err, util.ErrPathEscapesRoot) {
+		t.Errorf("writeBacklog through a swapped workingdir = %v, want ErrPathEscapesRoot", err)
+	}
+	if data, err := os.ReadFile(lookalike); err != nil || string(data) != string(before) { // #nosec G304 -- test-local path from t.TempDir
+		t.Errorf("look-alike outside the repository = (%q, %v), want it untouched", data, err)
 	}
 }

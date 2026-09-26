@@ -110,7 +110,7 @@ func mergeRunnerConfig(ctx context.Context, path string, target *RunnerPolicy) e
 		return err
 	}
 	var config struct {
-		Runners RunnerPolicy `yaml:"runners"`
+		Runners runnerLayer `yaml:"runners"`
 	}
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return err
@@ -119,7 +119,19 @@ func mergeRunnerConfig(ctx context.Context, path string, target *RunnerPolicy) e
 	return nil
 }
 
-func mergePolicies(dst *RunnerPolicy, src *RunnerPolicy) {
+// runnerLayer is one tier's runners section as written. Routing values are pointers so a
+// YAML null (`linux/gpu: null`, `linux/gpu: ~` or a bare `linux/gpu:`) stays distinct from
+// a route: null removes the platform's route inherited from the built-in defaults or an
+// earlier tier. Leaving a platform out of the map keeps the inherited route, so without
+// the null a tier could only ever add or replace routes.
+type runnerLayer struct {
+	Default string                 `yaml:"default"`
+	Routing map[string]*RunnerSpec `yaml:"routing"`
+}
+
+// mergePolicies folds one tier into dst. A null route deletes the platform's entry, and
+// deleting a platform that has no entry is a no-op, so tiers may repeat a removal.
+func mergePolicies(dst *RunnerPolicy, src *runnerLayer) {
 	if src == nil {
 		return
 	}
@@ -129,7 +141,11 @@ func mergePolicies(dst *RunnerPolicy, src *RunnerPolicy) {
 	if dst.Routing == nil {
 		dst.Routing = make(map[string]RunnerSpec)
 	}
-	for k, v := range src.Routing {
-		dst.Routing[k] = v
+	for platform, spec := range src.Routing {
+		if spec == nil {
+			delete(dst.Routing, platform)
+			continue
+		}
+		dst.Routing[platform] = *spec
 	}
 }

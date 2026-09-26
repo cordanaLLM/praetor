@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -78,7 +77,7 @@ func TestSyncVerifiesExistingContentWithoutRewriting(t *testing.T) {
 }
 
 func TestSyncLabelValidationBoundaries(t *testing.T) {
-	for _, count := range []int{1, maxSyncLabels, maxSyncLabels + 1} {
+	for _, count := range []int{1, forge.MaxLabelsLimit, forge.MaxLabelsLimit + 1} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			f := newSyncValidationFixture(t)
 			labels := make([]forge.Label, count)
@@ -91,7 +90,7 @@ func TestSyncLabelValidationBoundaries(t *testing.T) {
 			}
 			writeFixtureFile(t, f.dir, ".config/labels.yaml", string(data))
 			out, err := runSyncCmd(t, "--config="+f.manifestPath)
-			if (err != nil) != (count > maxSyncLabels) {
+			if (err != nil) != (count > forge.MaxLabelsLimit) {
 				t.Fatalf("count=%d: err=%v\n%s", count, err, out)
 			}
 		})
@@ -128,7 +127,7 @@ func TestSyncMissingCompanionsRetainsScaffoldAndPreventsRemoteWrites(t *testing.
 					t.Fatal(err)
 				}
 			}
-			stub := &forgeStub{writeStatus: http.StatusCreated}
+			stub := &forgeStub{}
 			srv := httptest.NewServer(stub.handler())
 			t.Cleanup(srv.Close)
 			out, err := runSyncCmd(t, "--config="+f.manifestPath, "--remote", "--token=test-fixture", "--endpoint="+srv.URL)

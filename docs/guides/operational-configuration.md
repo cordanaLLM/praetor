@@ -88,6 +88,23 @@ runners:
 
 Fleet defaults merge first, then the organisation file for the organisation being resolved.
 
+Each tier starts from the routes before it: the built-in table (`DefaultRunnerPolicy`,
+`internal/config/hierarchy.go`), then the fleet file, the organisation file and `.standards.yaml`. A
+platform a tier leaves out keeps its inherited route. To drop a route, set the platform to null
+(`null`, `~` or an empty value):
+
+```yaml
+runners:
+  routing:
+    linux/gpu: null
+```
+
+A later tier can add the platform back. Removing a platform that has no route changes nothing. A target
+whose route was removed falls back to `default`, and `praetorctl audit` fails when that fallback breaks
+the platform constraint, for example a removed `darwin/*` route. The merge is pinned by the
+`TestCascadingRunnerConfig_*` cases in `internal/config/hierarchy_integrity_test.go`, the darwin fallback
+refusal by `internal/runner/constraint_test.go`.
+
 ## Related decisions
 
 - The boundary and its class list: decision Q-031 in the private questions ledger.

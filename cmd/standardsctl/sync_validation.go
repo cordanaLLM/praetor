@@ -1,16 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"path/filepath"
 	"reflect"
-	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -18,47 +14,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"gopkg.in/yaml.v3"
 )
-
-const maxSyncLabels = 1000
-
-func validateSyncLabels(data []byte) (int, error) {
-	var taxonomy struct {
-		Version int           `yaml:"version"`
-		Labels  []forge.Label `yaml:"labels"`
-	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&taxonomy); err != nil {
-		return 0, err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return 0, errors.New("label taxonomy requires exactly one document")
-	}
-	if taxonomy.Version != 1 || len(taxonomy.Labels) == 0 || len(taxonomy.Labels) > maxSyncLabels {
-		return 0, fmt.Errorf("label taxonomy requires version 1 and 1-%d labels", maxSyncLabels)
-	}
-	if err := validateSyncLabelEntries(taxonomy.Labels); err != nil {
-		return 0, err
-	}
-	return len(taxonomy.Labels), nil
-}
-
-func validateSyncLabelEntries(labels []forge.Label) error {
-	seen := make(map[string]bool, len(labels))
-	for i := 0; i < len(labels) && i < maxSyncLabels; i++ {
-		label := labels[i]
-		name := strings.TrimSpace(label.Name)
-		if name == "" || name != label.Name || seen[name] {
-			return errors.New("label names must be nonempty, trimmed and unique")
-		}
-		if color, err := hex.DecodeString(label.Color); err != nil || len(color) != 3 {
-			return errors.New("label colors must contain exactly six hexadecimal digits")
-		}
-		seen[name] = true
-	}
-	return nil
-}
 
 // Parse through YAML after requiring JSON syntax: yaml.v3 rejects duplicate keys,
 // including nested JSON objects. Comparing parsed documents ignores whitespace and

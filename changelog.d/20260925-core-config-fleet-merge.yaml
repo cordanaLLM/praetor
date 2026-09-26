@@ -1,0 +1,3 @@
+type: fixed
+title: Let a null runner route in fleet, organisation or repository configuration remove the inherited route instead of being merged as an empty runner
+breaking: false
