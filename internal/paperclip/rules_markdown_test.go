@@ -27,8 +27,18 @@ func TestRenderedRulesPassDefaultMarkdownlint(t *testing.T) {
 	if findings := testsupport.MarkdownFindings(string(data)); len(findings) != 0 {
 		t.Fatalf("rules.md breaks markdownlint defaults: %v\n%s", findings, data)
 	}
-	if strings.Contains(string(data), "markdownlint-disable") {
-		t.Fatalf("rules.md disables a lint rule it should satisfy:\n%s", data)
+	// An unwrappable command fence may carry an MD013 disable, but only one re-enabled right
+	// after that fence: a file-wide disable would also silence the adopter's own additions
+	// (BUG-806).
+	text := string(data)
+	if strings.Count(text, "markdownlint-disable") != strings.Count(text, "markdownlint-enable") {
+		t.Fatalf("rules.md leaves a markdownlint rule disabled past its fence:\n%s", data)
+	}
+	for _, block := range strings.Split(text, "<!-- markdownlint-disable MD013 -->")[1:] {
+		fenceEnd := strings.Index(block, "```\n\n<!-- markdownlint-enable MD013 -->")
+		if fenceEnd < 0 || strings.Count(block[:fenceEnd], "```") != 1 {
+			t.Fatalf("an MD013 disable must cover exactly one command fence:\n%s", data)
+		}
 	}
 }
 
