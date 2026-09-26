@@ -275,6 +275,9 @@ func runStateSync(args []string) error {
 	}
 	fmt.Printf("Synchronized state for %s (%s, %s, bugs: %d, questions: %d)\n",
 		filepath.Base(snap.RepoPath), snap.Branch, statusStr, snap.OpenBugs, snap.PendingQs)
+	if snap.ArchivedEntries > 0 {
+		fmt.Printf("Rotated %d oldest STATE.md entries into %s/%s\n", snap.ArchivedEntries, state.WorkingDirName, snap.HistoryArchive)
+	}
 	return nil
 }
 

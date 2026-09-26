@@ -246,7 +246,31 @@ commit and branch, then one line with the activity and the counts.
 
 The activity is the `--log` text collapsed to one line, so it cannot forge a heading
 or a marker. The engine's own texts shorten: no `--log` becomes `sync`, and the
-post-commit hook's text becomes `post-commit sync`.
+post-commit hook's text becomes `post-commit sync`. One rendered entry is bounded at
+16 KiB; a longer `--log` text is refused before anything is written.
+
+### History rotation
+
+`state sync` keeps `STATE.md` bounded without a manual step
+(`internal/state/state_rotate.go`). While the log holds at most 200 entries and at most
+256 KiB, sync only appends. Once either trigger is crossed, the same sync moves the
+oldest entries into a new file beside the ledger, `.workingdir/STATE.history-<UTC
+timestamp>.md`, and keeps the newest 100 entries (at most 128 KiB of them), then appends
+its own entry. That entry names the archive, for example
+`- sync; archived 101 entries to STATE.history-20260926T101500.123456789Z.md | …`, and
+`praetorctl state sync` prints the same.
+
+- Only whole entries move, oldest first, as one contiguous run copied byte for byte;
+  the preamble before the first entry stays. An entry larger than the 128 KiB keep bound
+  is archived whole, so a rotation always ends under the bounds.
+- Archive files are never replaced or deleted. Each name is claimed exclusively; an
+  existing name fails the sync with `STATE.md` untouched.
+- The archive is written before `STATE.md` is replaced. If the replacement fails, the
+  rotated entries are in both files, never in neither.
+- The sync marker covers the rewritten log, so `state sync --verify` passes after a
+  rotation exactly as after an append.
+
+The behaviour is covered by `internal/state/state_rotate_test.go`.
 
 The marker binds the Git state, the repository's own path, and the other ledgers
 (`OPEN.md`, `BACKLOG.md`, `BUGS.md`, `QUESTIONS.md`, and `bugs.meta.json` and

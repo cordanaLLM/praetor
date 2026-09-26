@@ -1,0 +1,3 @@
+type: fixed
+title: Rotate STATE.md history automatically on state sync past 200 entries or 256 KiB, moving the oldest entries verbatim into a never-replaced STATE.history-*.md archive and keeping the newest 100, and refuse a single entry above 16 KiB
+breaking: false
