@@ -69,10 +69,16 @@ type Manager struct {
 }
 
 // NewManager constructs a Manager instance rooted at the specified repository directory.
+//
+// The root is made absolute here. Git runs with the root as its working directory and is
+// handed the worktree path as an argument, so a relative root such as "repo" used to be
+// applied twice: git created repo/repo/.standards/worktrees/<id> while the returned Path
+// named repo/.standards/worktrees/<id>. An empty root means the current directory. Should
+// the current directory be unresolvable, the cleaned root is kept as given.
 func NewManager(rootDir string) *Manager {
 	clean := filepath.Clean(rootDir)
-	if clean == "" {
-		clean = "."
+	if abs, err := filepath.Abs(clean); err == nil {
+		clean = abs
 	}
 	return &Manager{
 		rootDir: clean,
@@ -130,9 +136,10 @@ func (m *Manager) Create(ctx context.Context, taskID, baseBranch string) (*Workt
 	}, nil
 }
 
-// Remove executes 'git worktree remove [--force] <path>'. When force is true, it
-// also deletes the managed branch with 'git branch -D'. Safe removal preserves
-// the branch so unpublished commits remain reachable.
+// Remove removes the task's worktree. Safe removal (force false) runs the released-removal
+// checks and 'git worktree remove <path>', and preserves the branch so unpublished commits
+// remain reachable. Forced removal runs 'git worktree remove --force --force <path>' and
+// deletes the managed branch with 'git branch -D'; see forceRemoveUnlocked.
 func (m *Manager) Remove(ctx context.Context, taskID string, force bool) error {
 	if m == nil {
 		return ErrNilManager
@@ -148,24 +155,32 @@ func (m *Manager) Remove(ctx context.Context, taskID string, force bool) error {
 	if !force {
 		return m.removeReleasedUnlocked(ctx, wtPath)
 	}
-	branch := BranchPrefix + taskID
+	return m.forceRemoveUnlocked(ctx, wtPath, BranchPrefix+taskID)
+}
 
-	removeArgs := []string{"worktree", "remove"}
-	if force {
-		removeArgs = append(removeArgs, "--force")
+// forceRemoveUnlocked discards a task's worktree and its managed branch.
+//
+// --force is given twice because git removes a locked worktree only then (git-worktree(1):
+// "To remove a locked worktree, specify --force twice"); a single --force refused exactly
+// the worktree the CLI help promises to remove.
+//
+// The branch is deleted even when the worktree removal fails. A worktree whose directory
+// and administrative entry are already gone fails 'git worktree remove', and returning at
+// that point left wt/<id> behind with nothing that would ever delete it. Deleting a branch
+// still checked out in a registered worktree is refused by git itself, so trying cannot
+// discard a worktree that survived. Both failures are reported.
+func (m *Manager) forceRemoveUnlocked(ctx context.Context, wtPath, branch string) error {
+	var removeErr error
+	if _, err := m.runGit(ctx, "worktree", "remove", "--force", "--force", wtPath); err != nil {
+		removeErr = fmt.Errorf("failed removing worktree at %s: %w", wtPath, err)
 	}
-	removeArgs = append(removeArgs, wtPath)
-
-	if _, err := m.runGit(ctx, removeArgs...); err != nil {
-		return fmt.Errorf("failed removing worktree at %s: %w", wtPath, err)
-	}
-
-	branchArgs := []string{"branch", "-D", branch}
-	if _, err := m.runGit(ctx, branchArgs...); err != nil {
+	if _, err := m.runGit(ctx, "branch", "-D", branch); err != nil {
+		if removeErr != nil {
+			return errors.Join(removeErr, fmt.Errorf("failed deleting branch %s: %w", branch, err))
+		}
 		return fmt.Errorf("worktree removed at %s, but failed deleting branch %s: %w", wtPath, branch, err)
 	}
-
-	return nil
+	return removeErr
 }
 
 // CheckRemoval verifies that path is a registered, clean linked worktree owned by
@@ -392,7 +407,15 @@ func canonicalPath(path string) (string, error) {
 	return filepath.EvalSymlinks(abs)
 }
 
-// Prune executes 'git worktree prune' to clean up stale worktree administrative files.
+// Prune executes 'git worktree prune' to clean up stale worktree administrative files, then
+// deletes managed wt/ branches that no worktree has checked out and whose commits HEAD
+// already contains.
+//
+// The sweep is what makes a removal that failed half-way converge: a wt/<id> branch left
+// behind by a worktree that is gone was otherwise kept forever. It deletes with 'git branch
+// -d' and only branches merged into HEAD, because safe removal preserves the branch on
+// purpose so unpublished commits stay reachable; a branch carrying commits HEAD lacks is
+// kept.
 func (m *Manager) Prune(ctx context.Context) error {
 	if m == nil {
 		return ErrNilManager
@@ -403,7 +426,71 @@ func (m *Manager) Prune(ctx context.Context) error {
 	if _, err := m.runGit(ctx, "worktree", "prune"); err != nil {
 		return fmt.Errorf("failed pruning worktrees: %w", err)
 	}
-	return nil
+	orphans, err := m.mergedOrphanBranchesUnlocked(ctx)
+	if err != nil {
+		return fmt.Errorf("failed finding orphaned worktree branches: %w", err)
+	}
+	var errs []error
+	for i := 0; i < len(orphans) && i < MaxPorcelainLines; i++ {
+		if _, err := m.runGit(ctx, "branch", "-d", orphans[i]); err != nil {
+			errs = append(errs, fmt.Errorf("failed deleting orphaned branch %s: %w", orphans[i], err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// managedRefPattern selects every managed branch: for-each-ref matches a literal pattern
+// that ends in a slash as a prefix.
+const managedRefPattern = "refs/heads/" + BranchPrefix
+
+// mergedOrphanBranchesUnlocked returns the short names of managed branches that no
+// registered worktree has checked out and that are merged into HEAD.
+func (m *Manager) mergedOrphanBranchesUnlocked(ctx context.Context) ([]string, error) {
+	// Listing first keeps a repository without managed branches off the --merged query,
+	// which fails outright while HEAD is unborn.
+	managed, err := m.refLines(ctx, "for-each-ref", "--format=%(refname)", managedRefPattern)
+	if err != nil || len(managed) == 0 {
+		return nil, err
+	}
+	merged, err := m.refLines(ctx, "for-each-ref", "--merged=HEAD", "--format=%(refname)", managedRefPattern)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := m.listUnlocked(ctx)
+	if err != nil {
+		return nil, err
+	}
+	checkedOut := make(map[string]bool, len(entries))
+	for i := 0; i < len(entries); i++ {
+		checkedOut[entries[i].Ref] = true
+	}
+	orphans := make([]string, 0, len(merged))
+	for i := 0; i < len(merged); i++ {
+		if !checkedOut[merged[i]] {
+			orphans = append(orphans, strings.TrimPrefix(merged[i], "refs/heads/"))
+		}
+	}
+	return orphans, nil
+}
+
+// refLines runs a git query printing one ref per line and returns the non-empty lines,
+// bounded by MaxPorcelainLines (HISS-02).
+func (m *Manager) refLines(ctx context.Context, args ...string) ([]string, error) {
+	out, err := m.runGit(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(string(out), "\n")
+	if len(lines) > MaxPorcelainLines {
+		return nil, fmt.Errorf("%w: line count %d > %d", ErrLimitExceeded, len(lines), MaxPorcelainLines)
+	}
+	refs := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		if ref := strings.TrimSpace(lines[i]); ref != "" {
+			refs = append(refs, ref)
+		}
+	}
+	return refs, nil
 }
 
 // runGit executes git through the audited util.RunCommand entry point (HISS-02: the
@@ -462,12 +549,22 @@ func validateTaskID(taskID string) error {
 	return nil
 }
 
+// validateBaseBranch checks the value exactly as it is handed to git, not a trimmed copy.
+//
+// util.ValidateExecArg refuses a leading '-' (git would read "--force" as an option and
+// create the worktree from HEAD), control bytes, backslashes and shell metacharacters. The
+// remaining checks are the ref-name characters git itself rejects; a space among them also
+// refuses a padded value such as " main". Control bytes are checked by value: a
+// "\x00-\x1f" span inside a ContainsAny set is three characters, not a range, and its
+// literal '-' rejected every hyphenated base branch such as release-1.0.
 func validateBaseBranch(baseBranch string) error {
-	trimmed := strings.TrimSpace(baseBranch)
-	if trimmed == "" {
+	if strings.TrimSpace(baseBranch) == "" {
 		return ErrEmptyBaseBranch
 	}
-	if strings.Contains(trimmed, "..") || strings.ContainsAny(trimmed, " ~^:?*[\x00-\x1f\\") {
+	if err := util.ValidateExecArg(baseBranch); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidBaseBranch, err)
+	}
+	if strings.Contains(baseBranch, "..") || strings.ContainsAny(baseBranch, " ~^:?*[") {
 		return fmt.Errorf("%w: %q", ErrInvalidBaseBranch, baseBranch)
 	}
 	return nil

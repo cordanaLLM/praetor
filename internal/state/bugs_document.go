@@ -22,14 +22,14 @@ type bugDocument struct {
 	seen                     map[string]bool
 	// meta is the sidecar index v2 rows read from. Writers update it in place;
 	// it is persisted with the document.
-	meta bugMetaIndex
+	meta ledgerMetaIndex
 }
 
 // parseBugDocument validates a whole ledger. index is the sidecar content, or
 // nil when there is none; a v2 row without an index entry is an error.
-func parseBugDocument(text string, index bugMetaIndex) (*bugDocument, error) {
-	if len(text) > maxBugLedgerBytes || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
-		return nil, fmt.Errorf("bug ledger must be UTF-8 without NUL, at most %d bytes", maxBugLedgerBytes)
+func parseBugDocument(text string, index ledgerMetaIndex) (*bugDocument, error) {
+	if len(text) > maxLedgerBytes || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
+		return nil, fmt.Errorf("bug ledger must be UTF-8 without NUL, at most %d bytes", maxLedgerBytes)
 	}
 	doc := &bugDocument{text: text, newline: "\n", seen: make(map[string]bool), meta: index}
 	if strings.Contains(text, "\r\n") {
@@ -91,27 +91,19 @@ func (doc *bugDocument) readLine(body string, start, end int) error {
 		return nil
 	}
 	if !doc.table {
-		if claimsBugRow(line) {
+		if claimsLedgerRow(line, bugIDPrefix) {
 			return fmt.Errorf("bug row outside ledger table")
 		}
 		return nil
 	}
 	if !strings.HasPrefix(line, "|") {
-		if claimsBugRow(line) {
+		if claimsLedgerRow(line, bugIDPrefix) {
 			return fmt.Errorf("malformed bug row outside table syntax")
 		}
 		doc.table = false
 		return nil
 	}
 	return doc.addRow(body, start, end)
-}
-
-func claimsBugRow(line string) bool {
-	if !strings.Contains(line, "|") {
-		return false
-	}
-	cell, _, _ := strings.Cut(strings.TrimPrefix(line, "|"), "|")
-	return strings.HasPrefix(strings.Trim(strings.TrimSpace(cell), "`"), "BUG-")
 }
 
 func (doc *bugDocument) addRow(body string, start, end int) error {
@@ -122,8 +114,8 @@ func (doc *bugDocument) addRow(body string, start, end int) error {
 	if doc.seen[bug.ID] {
 		return fmt.Errorf("duplicate bug ID %s", bug.ID)
 	}
-	if len(doc.rows) >= maxBugEntries {
-		return fmt.Errorf("bug count exceeds %d", maxBugEntries)
+	if len(doc.rows) >= maxLedgerEntries {
+		return fmt.Errorf("bug count exceeds %d", maxLedgerEntries)
 	}
 	doc.seen[bug.ID] = true
 	doc.rows = append(doc.rows, bugRow{bug, form, start, end})

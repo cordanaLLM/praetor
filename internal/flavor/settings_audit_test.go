@@ -11,7 +11,9 @@ import (
 )
 
 // conformingGoLibrary builds a repository carrying every go-library template and both of its
-// settings, so a case can change exactly one thing and read the effect off the score.
+// settings, so a case can change exactly one thing and read the effect off the score. It
+// carries no .workingdir/: the session ledger is git-ignored, so a fresh clone or linked
+// worktree of a conforming repository looks exactly like this.
 func conformingGoLibrary(t *testing.T, settings map[string]string) string {
 	t.Helper()
 	files := map[string]string{
@@ -19,26 +21,23 @@ func conformingGoLibrary(t *testing.T, settings map[string]string) string {
 		".standards.lock":            "version: 1\n",
 		".golangci.yml":              "version: \"2\"\n",
 		".github/workflows/ci.yml":   "name: ci\n",
-		".workingdir/STATE.md":       "# state\n",
-		".workingdir/BUGS.md":        "# bugs\n",
-		".workingdir/QUESTIONS.md":   "# questions\n",
 		"lefthook.yml":               "pre-commit:\n  commands:\n    gofmt:\n      run: gofmt -l .\n",
 		".github/rulesets/main.json": "{\"name\": \"main\", \"enforcement\": \"active\"}\n",
 	}
 	return repoWithFiles(t, withOverrides(files, settings))
 }
 
-// conformingPythonML is the same idea for the flavor with the fewest required items: 4
-// templates and 1 setting, so a single invalid setting lands the repository on exactly the
-// 80% bar rather than somewhere near it.
-func conformingPythonML(t *testing.T, settings map[string]string) string {
+// conformingNativeGPU is the same idea for a flavor with 5 required items: 3 templates and 2
+// settings, so a single invalid setting or a single missing template lands the repository on
+// exactly the 80% bar rather than somewhere near it.
+func conformingNativeGPU(t *testing.T, settings map[string]string) string {
 	t.Helper()
 	files := map[string]string{
-		"ruff.toml":                "line-length = 100\n",
-		".workingdir/STATE.md":     "# state\n",
-		".workingdir/BUGS.md":      "# bugs\n",
-		".workingdir/QUESTIONS.md": "# questions\n",
-		".vscode/settings.json":    "{\"python.defaultInterpreterPath\": \".venv/bin/python\"}\n",
+		".clang-tidy":                "Checks: '-*,bugprone-*'\n",
+		".clang-format":              "BasedOnStyle: LLVM\n",
+		".gitleaks.toml":             "title = \"leaks\"\n",
+		".vscode/settings.json":      "{\"C_Cpp.default.cppStandard\": \"c++20\"}\n",
+		".github/rulesets/main.json": "{\"name\": \"main\", \"enforcement\": \"active\"}\n",
 	}
 	return repoWithFiles(t, withOverrides(files, settings))
 }
@@ -61,8 +60,8 @@ func emptyPATH(t *testing.T) {
 }
 
 // TestAuditFlavor_Positive_ConformingRepositoryScoresExactlyFull pins the score the audit
-// used to leave unasserted. The repository carries all 7 go-library templates and both
-// settings; no toolchain is installed. The previous formula scored this 9/12 = 75.0% and
+// used to leave unasserted. The repository carries all 4 go-library templates and both
+// settings; no toolchain is installed. The previous formula scored this 6/9 = 66.7% and
 // failed it, because three of its terms were the auditing machine's PATH.
 func TestAuditFlavor_Positive_ConformingRepositoryScoresExactlyFull(t *testing.T) {
 	emptyPATH(t)
@@ -97,9 +96,9 @@ func TestAuditFlavor_Negative_MalformedSettingIsInvalidAndNamed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("audit: %v", err)
 	}
-	want := 8.0 / 9.0 * 100.0
-	if report.Score != want {
-		t.Fatalf("expected exactly %v for 8 of 9 required items, got %v", want, report.Score)
+	present, total := float64(5), float64(6)
+	if want := present / total * 100.0; report.Score != want {
+		t.Fatalf("expected exactly %v for 5 of 6 required items, got %v", want, report.Score)
 	}
 	if report.SettingsValid != 1 {
 		t.Fatalf("expected 1 of 2 settings valid, got %d", report.SettingsValid)
@@ -161,15 +160,15 @@ func TestAuditFlavor_Boundary_EmptyMappingConfiguresNothing(t *testing.T) {
 //
 // The bar is inclusive (`Score >= passingScore`) and nothing asserted it: every other Passed
 // assertion sits at 100.0 or 0.0, so turning `>=` into `>` left the suite green. The case is
-// reachable because of this batch -- python-ml declares 4 templates and 1 setting, so a
-// repository with all 4 templates and a present-but-unparsable .vscode/settings.json scores
-// exactly 80.0 with nothing missing, and the comparison alone decides whether its push is
-// blocked by the generated pre-push hook.
+// reachable because native-gpu-systems declares 3 templates and 2 settings, so a repository
+// with all 3 templates and a present-but-unparsable .vscode/settings.json scores exactly 80.0
+// with nothing missing, and the comparison alone decides whether its push is blocked by the
+// generated pre-push hook.
 func TestAuditFlavor_Boundary_ExactlyTheBarClearsIt(t *testing.T) {
 	emptyPATH(t)
-	repo := conformingPythonML(t, map[string]string{".vscode/settings.json": "not json at all"})
+	repo := conformingNativeGPU(t, map[string]string{".vscode/settings.json": "not json at all"})
 
-	report, err := flavor.AuditFlavor(repo, "python-ml")
+	report, err := flavor.AuditFlavor(repo, "native-gpu-systems")
 	if err != nil {
 		t.Fatalf("audit: %v", err)
 	}
@@ -198,12 +197,12 @@ func TestAuditFlavor_Boundary_JustBelowTheBarFails(t *testing.T) {
 	}
 	// Computed the way the audit computes it: a constant expression would be folded at
 	// arbitrary precision and miss the float64 result by one bit.
-	present, total := float64(7), float64(9)
+	present, total := float64(4), float64(6)
 	if want := present / total * 100.0; report.Score != want {
-		t.Fatalf("7 of 9 required items must score exactly %v, got %v", present/total*100.0, report.Score)
+		t.Fatalf("4 of 6 required items must score exactly %v, got %v", present/total*100.0, report.Score)
 	}
 	if report.Passed {
-		t.Fatalf("77.8%% is below the bar and must not pass, got %+v", report)
+		t.Fatalf("66.7%% is below the bar and must not pass, got %+v", report)
 	}
 }
 
@@ -211,12 +210,12 @@ func TestAuditFlavor_Boundary_JustBelowTheBarFails(t *testing.T) {
 // the score clears the bar and a missing template still fails the repository.
 func TestAuditFlavor_Boundary_AMissingTemplateFailsAtTheBar(t *testing.T) {
 	emptyPATH(t)
-	repo := conformingPythonML(t, nil)
-	if err := os.Remove(filepath.Join(repo, "ruff.toml")); err != nil {
+	repo := conformingNativeGPU(t, nil)
+	if err := os.Remove(filepath.Join(repo, ".clang-tidy")); err != nil {
 		t.Fatalf("remove a required template: %v", err)
 	}
 
-	report, err := flavor.AuditFlavor(repo, "python-ml")
+	report, err := flavor.AuditFlavor(repo, "native-gpu-systems")
 	if err != nil {
 		t.Fatalf("audit: %v", err)
 	}

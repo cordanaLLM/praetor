@@ -192,13 +192,14 @@ func auditTemplates(repoPath string, templates []TemplateItem, report *FlavorAud
 }
 
 // TemplateSatisfied reports whether the repository carries the template under its
-// canonical path or any accepted alternative.
+// canonical path or any accepted alternative. Every template is a file, so a directory
+// that happens to carry the name configures nothing and does not satisfy it.
 func TemplateSatisfied(repoPath string, t TemplateItem) bool {
-	if util.PathExists(filepath.Join(repoPath, t.Path)) {
+	if util.FileExists(filepath.Join(repoPath, t.Path)) {
 		return true
 	}
 	for _, alt := range t.AltPaths {
-		if util.PathExists(filepath.Join(repoPath, alt)) {
+		if util.FileExists(filepath.Join(repoPath, alt)) {
 			return true
 		}
 	}

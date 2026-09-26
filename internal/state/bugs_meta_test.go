@@ -52,7 +52,7 @@ func TestBugSidecarRejectsInvalidMetadata(t *testing.T) {
 		"nul in context":    `{"version":1,"bugs":{"BUG-001":{"context":"a\u0000b","created_at":"2026-09-12T10:00:00Z","resolved_at":"0001-01-01T00:00:00Z"}}}`,
 		"not json":          `version 1`,
 		"trailing garbage":  `{"version":1,"bugs":{}} x`,
-		"oversized sidecar": `{"version":1,"bugs":{}}` + strings.Repeat(" ", maxBugLedgerBytes),
+		"oversized sidecar": `{"version":1,"bugs":{}}` + strings.Repeat(" ", maxLedgerBytes),
 	}
 	for name, sidecar := range cases {
 		t.Run(name, func(t *testing.T) {

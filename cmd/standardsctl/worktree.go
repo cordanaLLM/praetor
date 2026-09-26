@@ -44,8 +44,8 @@ func printWorktreeUsage() {
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  create <task-id> [base-branch] [--path=.] Create isolated ephemeral git worktree")
 	fmt.Println("  list [--path=.]                 List all active git worktrees")
-	fmt.Println("  remove <task-id> [--force] [--path=.] Remove worktree (ordinary removal preserves branch; --force deletes it)")
-	fmt.Println("  prune [--path=.]                Prune orphaned worktree references")
+	fmt.Println("  remove <task-id> [--force] [--path=.] Remove worktree (ordinary removal preserves branch; --force also removes a locked worktree and deletes the branch)")
+	fmt.Println("  prune [--path=.]                Prune stale worktree references and wt/ branches with no worktree that HEAD already contains")
 }
 
 // worktreeManager parses the repository path shared by every worktree subcommand and
@@ -174,6 +174,6 @@ func handleWorktreePrune(ctx context.Context, subArgs []string) error {
 	if err := mgr.Prune(ctx); err != nil {
 		return fmt.Errorf("failed pruning worktrees: %w", err)
 	}
-	fmt.Println("[OK] Orphaned worktrees pruned successfully.")
+	fmt.Println("[OK] Stale worktrees and merged orphaned wt/ branches pruned.")
 	return nil
 }

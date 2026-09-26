@@ -38,7 +38,15 @@ Git configuration is checked conservatively: even unused global filter commands
 monitors currently protect the worktree. Removal uses
 Git without force and preserves the branch, including unpublished commits.
 `praetorctl worktree remove` has the same preservation behavior unless explicitly
-forced. Administrative `worktree prune` remains a separate operation.
+forced. `--force` passes `--force` to Git twice, which also removes a locked
+worktree, and deletes the `wt/<task-id>` branch even when the worktree itself is
+already gone. Administrative `praetorctl worktree prune` remains a separate
+operation: after `git worktree prune` it deletes `wt/` branches that no worktree
+has checked out and whose commits HEAD already contains, with `git branch -d`; a
+branch carrying unpublished commits is kept. Fixtures:
+[`internal/worktree/worktree_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/worktree/worktree_test.go)
+(`TestWorktree_Positive_PruneSweepsMergedOrphanBranches`,
+`TestWorktree_Negative_ForceRemovalOfVanishedWorktreeStillDeletesBranch`).
 
 `--clean-go-test-cache` explicitly requests clearing the shared Go test cache;
 it is off by default and only runs on an applying invocation. It does not widen

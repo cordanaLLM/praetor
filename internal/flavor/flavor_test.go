@@ -225,8 +225,10 @@ func TestListFlavors_CompleteRegistry(t *testing.T) {
 		if f.HISSProfile() == "" {
 			t.Errorf("flavor %s has empty HISS profile", f.Name())
 		}
-		if len(f.RequiredTemplates()) == 0 {
-			t.Errorf("flavor %s has no required templates", f.Name())
+		// A flavor may rest on settings alone (infra-k8s does), but one requiring no file
+		// at all would pass every repository and check nothing.
+		if len(f.RequiredTemplates())+len(f.RequiredSettings()) == 0 {
+			t.Errorf("flavor %s requires no template and no setting", f.Name())
 		}
 	}
 

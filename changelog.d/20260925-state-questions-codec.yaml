@@ -1,0 +1,3 @@
+type: fixed
+title: Store QUESTIONS.md with the BUGS.md ledger codec so pipes, line breaks and commas in questions, options and decisions survive, keep --context and timestamps in a questions.meta.json sidecar bound into state sync, allocate question IDs from the largest existing ID, and reject duplicate IDs, malformed rows and invalid text instead of dropping them
+breaking: false

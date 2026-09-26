@@ -97,7 +97,7 @@ func migrateBugDocument(doc *bugDocument, report *BugMigrationReport, encode fun
 
 // verifyBugRoundTrip re-reads the migrated ledger with its sidecar and
 // compares every record field by field, in order.
-func verifyBugRoundTrip(before []BugEntry, updated string, index bugMetaIndex) error {
+func verifyBugRoundTrip(before []BugEntry, updated string, index ledgerMetaIndex) error {
 	doc, err := parseBugDocument(updated, index)
 	if err != nil {
 		return fmt.Errorf("round trip: migrated ledger does not parse: %w", err)

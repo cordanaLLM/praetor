@@ -159,12 +159,12 @@ func TestMigrateBugMetadataBoundaries(t *testing.T) {
 
 func TestMigrateBugMetadataRefusesOversizedSidecar(t *testing.T) {
 	big := migrationBugs[0]
-	big.Context = strings.Repeat("x", maxBugFieldBytes)
+	big.Context = strings.Repeat("x", maxLedgerFieldBytes)
 	root, ledger := migrationLedger(t, []BugEntry{big})
 	// 63 records of 16 KiB stay under the 1 MiB sidecar bound; one more crosses it.
-	orphans := bugMetaIndex{}
+	orphans := ledgerMetaIndex{}
 	for i := 0; i < 63; i++ {
-		orphans[fmt.Sprintf("BUG-%03d", 900+i)] = bugMetadata{Context: strings.Repeat("o", maxBugFieldBytes)}
+		orphans[fmt.Sprintf("BUG-%03d", 900+i)] = ledgerMetadata{Context: strings.Repeat("o", maxLedgerFieldBytes)}
 	}
 	sidecar, err := encodeBugMeta(orphans)
 	if err != nil {

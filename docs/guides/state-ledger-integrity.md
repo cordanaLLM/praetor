@@ -55,6 +55,29 @@ not know. `make dev-install` refreshes this checkout's local binaries, retains
 rollback executables and records their source identity; see
 [development MCP](development-mcp.md).
 
+## Question ledger
+
+`.workingdir/QUESTIONS.md` uses the same cell codec, text limits and sidecar envelope
+as `BUGS.md` ([`internal/state/ledger_codec.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/ledger_codec.go),
+[`ledger_meta.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/ledger_meta.go)). The five visible columns stay
+ID, Question, Options, Status and Decision. A row ends in one of two forms:
+
+| Row ending | Written by | Cells | Context, CreatedAt, DecidedAt |
+| :--- | :--- | :--- | :--- |
+| nothing | writers before this format | read literally; options split on every comma | none |
+| `<!-- praetor-question:v2 -->` | `state question add` and `decide` today | pipes, line breaks, edge spaces and commas inside an option encoded | `.workingdir/questions.meta.json`, keyed by question ID |
+
+The sidecar is `{"version":1,"questions":{"Q-001":{"context":…,"created_at":…,"resolved_at":…}}}`,
+where `resolved_at` holds the decision time. It is checked as strictly as
+`bugs.meta.json`. Any write re-renders every row in the current form, so a legacy ledger
+upgrades on its first write. IDs continue from the greatest existing ID. A duplicate ID,
+a claimed question row that does not parse, a status other than `pending`, `decided` or
+`dismissed`, a blank question or option, more than 64 options, and a field holding NUL,
+invalid UTF-8 or more than 16 KiB are errors, never skipped rows
+([`internal/state/questions_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/questions_test.go)).
+`ListQuestionsContext` reads the table together with its sidecar;
+`ParseQuestionsMarkdownStrict` reads the table alone and returns no context or timestamps.
+
 ## STATE.md entries
 
 `praetorctl state sync` appends one entry per call: a `### [time]` heading with the
@@ -72,8 +95,8 @@ or a marker. The engine's own texts shorten: no `--log` becomes `sync`, and the
 post-commit hook's text becomes `post-commit sync`.
 
 The marker binds the Git state, the repository's own path, and the other ledgers
-(`OPEN.md`, `BACKLOG.md`, `BUGS.md`, `QUESTIONS.md`, and `bugs.meta.json` once it
-exists), so editing any of them stales it. Sync removes the previous marker before it
+(`OPEN.md`, `BACKLOG.md`, `BUGS.md`, `QUESTIONS.md`, and `bugs.meta.json` and
+`questions.meta.json` once each exists), so editing any of them stales it. Sync removes the previous marker before it
 appends its own.
 
 Git state is observed with `core.autocrlf=input`. The fixed input normalization keeps
