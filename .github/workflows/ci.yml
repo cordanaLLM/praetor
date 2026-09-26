@@ -86,8 +86,8 @@ jobs:
       # whatever the runner image ships: ubuntu-24.04 shipped 3.12 and ubuntu-26.04 ships
       # 3.14.4, so the OS bump alone changed all three. It also takes the mkdocs
       # `pip install` off a PEP-668 system interpreter. Unconditional because those three
-      # steps are gated on three different conditions.
-      # pages.yml and portability.yml pin the same version.
+      # steps are gated on three different conditions. Keep it equal to the setup-python
+      # version pages.yml and portability.yml pin.
       - name: Setup Python Toolchain
         id: python
         uses: actions/setup-python@v5

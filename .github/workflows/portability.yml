@@ -104,7 +104,7 @@ jobs:
         id: python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: '3.13'
 
       # Build before test: a compile error on one OS is the cheapest portability defect to
       # find and the one most likely to be a build-constraint or path-separator mistake.
