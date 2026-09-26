@@ -1,8 +1,11 @@
 <%- /*
-Scaffolded by typescript-node only where every step below can pass: the root holds
-package-lock.json, package.json names npm or no packageManager, and its test script is real
-(npmCIRequirement, internal/flavor/node_ci.go). Adoption makes the test job a required check,
-so a step this body adds must be one that requirement guarantees; TestNodeCIJobIsScaffoldedOnlyWhereItRunsAsWritten
+Scaffolded by typescript-node only where CI's checkout supplies what each step below needs
+(npmCIRequirement, internal/flavor/node_ci.go): Git tracks package-lock.json at the root or would
+commit it (one that is untracked and git-ignored does not count, and outside a Git work tree the
+job is withheld), package.json names npm or no packageManager, and its test script is neither
+missing, blank nor the npm init placeholder. Whether the scripts themselves pass is the
+repository's own code. Adoption makes the test job a required check, so a step this body adds
+must need only what that requirement checks; TestNodeCIJobIsScaffoldedOnlyWhereItRunsAsWritten
 fails on any command it does not model.
 */ -%>
 name: CI

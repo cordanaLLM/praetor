@@ -93,13 +93,23 @@ wherever it lives; with none or several, `docker build` stops and names them, an
 A body that only works in some repositories declares `Requires`. The Node CI job runs `npm ci` and
 `npm test`, and `typescript-node` detects any `package.json` — a pnpm, Yarn or Bun project, or a Go
 repository whose `package.json` only holds commit tooling. So `flavor apply` writes the job only when
-the root holds `package-lock.json` (npm 12 reads no `npm-shrinkwrap.json`), `packageManager` names npm
-or nothing, and the `test` script is neither missing, blank nor the placeholder `npm init` writes
-(`internal/flavor/node_ci.go`). Elsewhere adoption requires no Node check, and you write the CI job
-your package manager needs. The package-manager and test-script decisions are the ones adoption's
-verification plan makes (`internal/nodemanifest/scripts.go`).
+all of these hold (`internal/flavor/node_ci.go`):
+
+- CI's checkout will hold `package-lock.json` at the root (npm 12 reads no `npm-shrinkwrap.json`).
+  The file on disk is not enough: a library that lists `package-lock.json` in `.gitignore` still gets
+  one from a local `npm install`, and CI never sees it. Git must track the lockfile, or would commit
+  it because no ignore rule excludes it. A lockfile force-added past such a rule counts, because it
+  is tracked. Outside a Git work tree, or without `git`, nothing shows what CI checks out, so the job
+  is withheld.
+- `packageManager` names npm or nothing.
+- The `test` script is neither missing, blank nor the placeholder `npm init` writes.
+
+These checks cover what the steps need, not whether your scripts pass. Elsewhere adoption requires no
+Node check, and you write the CI job your package manager needs. The package-manager and test-script
+decisions are the ones adoption's verification plan makes (`internal/nodemanifest/scripts.go`).
 `TestNodeCIJobIsScaffoldedOnlyWhereItRunsAsWritten` (`internal/flavor/node_ci_test.go`) checks every
-action, lockfile and script the scaffolded body names against each fixture.
+action, lockfile and script the scaffolded body names against the files `git add -A` stages in each
+fixture, which is what CI's checkout carries.
 
 **Adoption scaffolds a detected flavor only.** `praetorctl adopt` applies the flavor detection names,
 before it derives the branch ruleset, so the scaffolded CI job is a required check from the first run.

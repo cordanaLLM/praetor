@@ -27,7 +27,7 @@ import (
 var digestPinned = regexp.MustCompile(`^FROM \S+:[^@\s]+@sha256:[0-9a-f]{64}(?: AS \S+)?$`)
 
 // npmProject is the smallest repository the scaffolded Node CI job passes in: npm installs
-// from package-lock.json and `npm test` has a script to run.
+// from package-lock.json, which Git commits, and `npm test` has a script to run.
 var npmProject = map[string]string{
 	"package.json":      "{\"name\": \"widget\", \"scripts\": {\"test\": \"node --test\"}}\n",
 	"package-lock.json": "{\"name\": \"widget\", \"lockfileVersion\": 3, \"requires\": true, \"packages\": {\"\": {\"name\": \"widget\"}}}\n",
@@ -38,10 +38,16 @@ var npmProject = map[string]string{
 // into an empty repository.
 var flavorPrerequisites = map[string]map[string]string{"typescript-node": npmProject}
 
-// flavorRepo returns a fresh repository holding the flavor's prerequisites.
+// flavorRepo returns a fresh repository holding the flavor's prerequisites. A requirement
+// may ask Git what the repository commits (npmCIRequirement does), so a flavor with
+// prerequisites gets a Git work tree.
 func flavorRepo(t *testing.T, flavorName string) string {
 	t.Helper()
-	return repoWithFiles(t, flavorPrerequisites[flavorName])
+	files, ok := flavorPrerequisites[flavorName]
+	if !ok {
+		return repoWithFiles(t, nil)
+	}
+	return gitRepoWithFiles(t, files)
 }
 
 // scaffoldInto applies a flavor to a repository holding only its prerequisites and returns

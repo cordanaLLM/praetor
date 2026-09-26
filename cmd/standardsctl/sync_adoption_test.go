@@ -53,6 +53,15 @@ func adoptionChecksCases() []adoptionChecksCase {
 		},
 		wantChecks: true, wantTest: true,
 	}, {
+		// Negative: a library that git-ignores its lockfile while a local `npm install` wrote
+		// one. CI's checkout has no lockfile, so the job is withheld and nothing is required.
+		name: "npm-library-ignoring-its-lockfile",
+		arrange: func(t *testing.T, dir string) {
+			writeFixtureFile(t, dir, "package.json", `{"name": "widgets", "scripts": {"test": "node --test"}}`)
+			writeFixtureFile(t, dir, "package-lock.json", `{"name": "widgets", "lockfileVersion": 3, "requires": true, "packages": {"": {"name": "widgets"}}}`)
+			writeFixtureFile(t, dir, ".gitignore", "node_modules/\npackage-lock.json\n")
+		},
+	}, {
 		name:       "with-repository-workflows",
 		arrange:    copySyncWorkflowFixtures,
 		wantChecks: true,
