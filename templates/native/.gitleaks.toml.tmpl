@@ -1,0 +1,16 @@
+<%- /*
+Scaffolded as .gitleaks.toml by native-gpu-systems (internal/flavor/definitions.go).
+
+gitleaks loads a repository-local .gitleaks.toml in place of its built-in configuration,
+not on top of it, so a file that neither extends the defaults nor declares rules of its own
+scans with zero rules and exits 0 on every secret (#410). [extend] useDefault = true keeps
+every built-in rule; internal/flavor's validGitleaksConfig refuses a file that loads none.
+*/ -%>
+# gitleaks configuration for <% .Owner %>/<% .RepoName %>.
+#
+# Extends the upstream default rules; nothing is disabled. Add [[allowlists]] entries
+# below for paths that hold deliberately fake secrets, never a blanket exclusion.
+title = "gitleaks configuration for <% .Owner %>/<% .RepoName %>"
+
+[extend]
+useDefault = true

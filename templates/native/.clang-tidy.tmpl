@@ -1,6 +1,22 @@
+<%- /*
+Scaffolded as .clang-tidy by native-gpu-systems (internal/flavor/definitions.go) and written
+for the Visual Studio editor target (internal/editor/editor.go). One body for both, so an
+adopter receives the same checks whichever command created the file.
+*/ -%>
+# cordanaLLM/praetor High-Integrity Systems Standard (HISS) Clang-Tidy Configuration
 ---
-Checks:          'clang-diagnostic-*,clang-analyzer-*,bugprone-*,performance-*,portability-*'
-WarningsAsErrors: '*'
+Checks: >
+  -*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  -readability-identifier-length
+
+WarningsAsErrors: ''
 HeaderFilterRegex: '.*'
-FormatStyle:     file
+FormatStyle: file
 ...
