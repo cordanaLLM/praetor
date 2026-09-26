@@ -156,9 +156,8 @@ not by a figure of its own. `run_full_gate` in
 resolves `PRAETOR_TEST_STAGE_TIMEOUT` through the pipeline's parser: the race-stage bound, clamped
 to its 30-minute ceiling, plus the allowance for the other stages. It then adds a two-minute
 launch margin (`GATE_LAUNCH_MARGIN`) for `go run` to rebuild the CLI. With the variable unset that
-is 8 + 2 = 10 minutes, the value the hook used to hard-code; at the ceiling it is 37 minutes. The
-hook previously stopped the gate at a fixed 600 seconds, below the documented ceiling, so a raised
-bound could never take effect on a push (#314). A deadline report the hook cannot use fails the
+is 8 + 2 = 10 minutes; at the ceiling it is 37 minutes, so a raised bound takes effect on a push
+(#314). A deadline report the hook cannot use fails the
 push rather than running the gate under a guessed bound. The deadline itself is described in
 [adoption verification](adoption-verification.md#the-whole-runs-deadline).
 
@@ -323,7 +322,7 @@ The adapter's subprocess tests establish its behavior; activation additionally
 requires a native Codex hook event after trust. A checked-in hook file alone is
 not evidence that the current session is enforcing it.
 
-The repository now configures PostToolUse and Stop checkpoint hooks. They share
+The repository configures PostToolUse and Stop checkpoint hooks. They share
 Lefthook's checkpoint evaluator and require reviewed public changes to reach a
 commit, gated push and draft PR according to the configured policy. They do not
 replace `make verify-all` or certify the code themselves. See the
@@ -417,8 +416,8 @@ naming it, not a Python traceback.
 
 ## Running the gate on Windows
 
-Four platform assumptions previously made `git commit` impossible on a Windows checkout. Each one
-was only reachable after the previous was fixed, so they behaved as a single blocker.
+A Windows checkout depends on four platform behaviours. Each one blocks `git commit` if it is
+missing, so all four must hold.
 
 - The binary is built as `praetorctl.exe` on Windows. `Makefile` derives the suffix from `$(OS)`,
   so every target names the binary for the host rather than for the developer's platform.
@@ -483,4 +482,4 @@ One `prepare-commit-msg` defect surfaced with them and was never Windows-specifi
 instructional comment was added only when the message *source* was empty. Git omits that argument
 entirely for a plain editor commit, and Lefthook then renders `{2}` as the literal string `2`, so
 the commit that most needs the comment never received it on any platform. Only the sources git
-documents — `message`, `template`, `merge`, `squash`, `commit` — now count as a source.
+documents — `message`, `template`, `merge`, `squash`, `commit` — count as a source.

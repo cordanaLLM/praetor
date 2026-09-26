@@ -9,7 +9,7 @@ policy digest, applied limit and baseline evidence.
 
 The first migration covers audit function length. Cyclomatic complexity, cognitive
 complexity and statement limits are resolved and retained in the typed policy;
-this change does not inject them into separate linters or the LSP.
+they are not injected into separate linters or the LSP.
 Routing, budgets, credentials and deployment activation are separate consumers.
 
 Pinned profiles and facets contribute every lattice dimension, not only
@@ -74,10 +74,8 @@ limit; in an audit it only joins `builtin:defaults-v1` as a tied contributor.
 ### What `plan` reports
 
 `praetorctl plan` resolves this same policy, with the audit compatibility constraint applied, so a
-dry run previews what the audit will enforce. It previously reported the built-in defaults with only
-the repository's own overrides applied, which meant it never read the pinned profiles: one
-repository's archetype declared `max_func_loc: 75`, `plan` printed `100` and `audit` enforced `60`.
-Like `sync` and `audit`, `plan --catalog-root` (MCP `standards_plan`: `catalog_root`) reads the
+dry run previews what the audit will enforce, pinned profiles included: `plan` and `audit` report the
+same limits. Like `sync` and `audit`, `plan --catalog-root` (MCP `standards_plan`: `catalog_root`) reads the
 pinned profiles from a catalog outside the repository; without it a lock whose catalog is not
 materialized fails the preview (`TestPlanEffectivePolicy_Boundary_CatalogRootSelectsThePinnedCatalog`).
 
@@ -328,15 +326,14 @@ repair anchor retained before those dimensions existed still verifies
 (`TestResolvedPolicyOmitsUnsetDimensionsFromItsEncoding`); a freshly resolved
 policy carries both, so its digest differs from the one an older release reported.
 
-The built-in function length changed from 100 to 60 (BUG-309). The
-`builtin:defaults-v1` source hash encodes the default values, so every effective
-digest changed with it, and unless a layer tightens function length below 60, an
-audit now lists `builtin:defaults-v1` beside `builtin:audit-compat-v1` as a
-`max_func_loc` contributor. Public-loop plans and
-repair anchors recorded before that change fail with `public verification policy
-differs from the planned policy` (`internal/dogfood/repair_validate.go`); rerun
-the dry run to record a new anchor. Enforced limits did not change for audits,
-which already capped function length at 60.
+The built-in function length is 60 lines (BUG-309), the same cap the audit
+enforces. The `builtin:defaults-v1` source hash encodes the default values, so a
+changed default changes every effective digest. Unless a layer tightens function
+length below 60, an audit lists `builtin:defaults-v1` beside
+`builtin:audit-compat-v1` as a `max_func_loc` contributor. Public-loop plans and
+repair anchors recorded under a different default fail with `public verification
+policy differs from the planned policy` (`internal/dogfood/repair_validate.go`);
+rerun the dry run to record a new anchor.
 
 Existing repositories with lock pins but no local archetypes must either select a
 matching source bundle with `--catalog-root` or materialize the pinned catalog
@@ -362,5 +359,5 @@ any unavailable policy verification.
 
 `LoadEffectivePolicyContext` and `ResolvePolicy` are additive APIs. Existing
 manifest parsing and runner hierarchy APIs remain available. The audit requires
-materialized pinned sources by default; callers that previously relied on
-unverified defaults handle the error or supply `--lock-source-root`.
+materialized pinned sources by default and returns an error without them;
+`--catalog-root` selects a matching source bundle.

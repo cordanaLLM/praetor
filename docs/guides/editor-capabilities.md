@@ -2,8 +2,8 @@
 
 `praetorctl editors generate --path PATH` and `praetorctl editors verify --path PATH`
 resolve the same repository capabilities before generating or checking editor
-files. A repository without Go sources or a selected Go profile no longer receives
-unconditional Go settings, Go inspections or a Go problem matcher.
+files. A repository without Go sources or a selected Go profile receives no Go
+settings, Go inspections or Go problem matcher.
 
 ## Selecting editors
 

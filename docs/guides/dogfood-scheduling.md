@@ -88,8 +88,9 @@ explicit capacity observation. `routing_config`, `task`, `input_tokens`,
 `output_tokens` and `max_cost` are required; an empty or partial object is
 rejected. `register`, `register_source`, `max_output_tokens`, `prompt_register`,
 `prompt_register_source` and `register_manifest_sha256` are accepted but ignored:
-`ScheduleStatus` and `ScheduleRun` replace the whole register tuple from the
-current task and prompt resolutions in the manifest `routing_config` points at —
+`RunSchedule` and `ScheduleStatus` replace the whole register tuple from the
+current task and prompt resolutions in the captured source manifest
+(`source_root/.standards.yaml`) —
 the same canonicalization `dogfood repairs` applies (`CanonicalRepairPolicy` in
 `internal/dogfood/repair.go`; `TestScheduleCanonicalizesCallerRepairRegisterPolicy`
 in `internal/dogfood/schedule_test.go`). There are no register values to copy from

@@ -26,25 +26,22 @@ issues. Transport errors retain their existing wrapped context.
 
 `praetorctl issue reconcile` accepts at most 256 comma-separated repository entries;
 larger selections fail before authentication or network reads instead of being
-truncated. It loads every selected repository before reconciling or applying transitions. Any listing failure now returns an error naming that
+truncated. It loads every selected repository before reconciling or applying transitions. Any listing failure returns an error naming that
 repository, including in dry-run mode. It cannot report a successful fleet
 reconciliation from partially fetched input. Complete inventories retain normal
 dry-run and apply behavior.
 
-## Migration
+## Limits
 
 Duplicate planned titles are rejected. If an intended existing title is
 ambiguous, resolve that ambiguity before syncing it. Large or incomplete
 inventories require a separately reviewed lookup strategy; increasing a local
 bound or treating a partial result as empty does not establish completeness.
 
-`issue reconcile` returns a nonzero exit and names the failing repository when
-any selected repository's listing fails, including in dry-run mode. Complete
-selected inputs are required before retrying. Partial inventories and partial
-success summaries are not evidence of a complete reconciliation; rerun affected
-checks after obtaining complete inputs.
+Partial inventories and partial success summaries are not evidence of a
+complete reconciliation; rerun affected checks after obtaining complete inputs.
 
 Preflight failures cause no mutations. Later provider failures can still leave an
 explicitly reported partial batch, and simultaneous independent sync processes are
-not serialized. No new forge provider, publication workflow, distributed
-idempotency mechanism or MCP mutation tool is introduced.
+not serialized. There is no distributed idempotency mechanism and no MCP
+mutation tool for sync.

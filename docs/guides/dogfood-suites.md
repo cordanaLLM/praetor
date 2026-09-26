@@ -216,6 +216,6 @@ The artifact parent must already exist. A shorter MCP/client timeout can stop a
 suite before its 15-minute library ceiling. For private sources, select an
 explicit server root containing the config, sources and evidence, or use the CLI.
 
-This stage provides one-shot execution for a future scheduler. It does not
-install timers, dispatch models, apply agent-generated fixes, publish upstream
+This stage provides one-shot execution; scheduled runs are described in
+[dogfood scheduling](dogfood-scheduling.md). A suite run does not install timers, dispatch models, apply agent-generated fixes, publish upstream
 changes, or advance repository rollout stages automatically.

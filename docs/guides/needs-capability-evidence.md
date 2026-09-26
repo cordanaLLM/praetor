@@ -142,7 +142,7 @@ shares (`resolveDevRootDir` in `cmd/standardsctl/devroot.go`): `PRAETOR_DEV_ROOT
 otherwise the earlier `PRAETOR_DEV_DIR`, otherwise `$HOME/dev`; `needs aggregate`
 and `needs requests` scan the same root unless `--dev-dir` is given. With none of
 them set and no usable home directory the command errors and names the flag to
-pass. If the selected path is absent it now errors. Use an explicitly empty
+pass. If the selected path is absent, the command errors. Use an explicitly empty
 `--framework=""` for a declared-catalog estimate. MCP keeps its existing default
 of a declared catalog when `framework` is omitted; explicit paths remain confined
 to the server root under the existing server policy.
@@ -243,7 +243,7 @@ fields and inspect the evidence basis rather than matching the old label.
 
 ## Migration candidates and epics
 
-`needs migrate` and `needs epic` now share one selected framework analysis with
+`needs migrate` and `needs epic` share one selected framework analysis with
 `ScanRepoWithFramework`. Their availability, basis, gaps and proposed import paths
 come from the same reconciled inputs. An observed fork uses its root module name;
 a header-only replacement package produces no replacement candidate. Epic
@@ -313,17 +313,16 @@ in `internal/needs/discovery_test.go`).
 `TestRegenerateFleetEpics_ReportsSkippedDirectories` in
 `internal/needs/epic_test.go` pin publishing and skip reporting.
 
-### Breaking migration: application requires evidence
+### Application requires evidence
 
-`ApplyMigration`, `ApplyMigrationWithOptions`, and `needs migrate --apply` now
+`ApplyMigration`, `ApplyMigrationWithOptions`, and `needs migrate --apply`
 return `*needs.UnverifiedMigrationError` (matching `needs.ErrUnverifiedMigration`
 through `errors.Is`) before invoking Git, modifying files, or running module
 commands. `Runner`, `SkipTidy`, and caller-supplied plan status/version fields do
 not bypass admission. Nil plans and canceled contexts retain explicit errors.
 
-Previously these paths could rewrite imports and claim success from catalog
-mappings and an invented `v0.8.0`; `go mod tidy` alone did not prove that the
-consumer compiled. Use candidate generation to review the actual proposed
+Catalog mappings are not evidence, and `go mod tidy` alone does not prove that
+the consumer compiles. Use candidate generation to review the actual proposed
 changes. Stop automation that treats a dry-run proposal or successful source
 inspection as permission to apply it. Handle the typed admission error, and
 retain the original dependency until a reviewed replacement has real evidence.
