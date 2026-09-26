@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -51,9 +52,10 @@ func ReadDispositionContext(ctx context.Context, path string) (*Disposition, err
 }
 
 // VerifyRun asserts that a Paperclip agent run satisfies Rule 0 and contract invariants. An
-// in_review run must leave a clean working tree and a HEAD that a remote-tracking ref already
-// contains. An attached receipt must verify against opts.PinnedKey and attest the commit
-// checked out in repoPath, so a receipt signed for an earlier commit cannot be replayed.
+// in_review run must leave a clean working tree (its disposition file and the gate receipt
+// aside) and a HEAD that a remote-tracking ref already contains. An attached receipt must
+// verify against opts.PinnedKey and attest the commit checked out in repoPath, so a receipt
+// signed for an earlier commit cannot be replayed.
 func VerifyRun(ctx context.Context, repoPath string, d *Disposition, opts VerifyOptions) error {
 	if ctx == nil {
 		return fmt.Errorf("verify: context cannot be nil")
@@ -102,11 +104,15 @@ func verifyRepositoryState(ctx context.Context, repoPath string, d *Disposition,
 }
 
 // verifyCleanWorktree fails when the working tree has uncommitted changes other than the
-// disposition file itself.
+// disposition file itself and the gate's Exit-0 receipt at repoPath/gating.ReceiptFileName.
+// `praetorctl gate run` writes that receipt for the checked-out commit, so the documented order
+// (commit, push, mint the receipt, write the disposition) leaves it untracked, or modified where
+// a repository tracks it. It is gate output, not unpushed work, and committing it would move HEAD
+// off the commit the receipt attests.
 func verifyCleanWorktree(ctx context.Context, repoPath, dispositionPath string) error {
-	args := []string{"status", "--porcelain"}
+	args := []string{"status", "--porcelain", "--", ":(top)", literalExclude(gating.ReceiptFileName)}
 	if exclude, ok := dispositionPathspec(repoPath, dispositionPath); ok {
-		args = append(args, "--", ":(top)", exclude)
+		args = append(args, exclude)
 	}
 	uncommitted, err := util.RunGit(ctx, repoPath, args...)
 	if err != nil {
@@ -136,7 +142,13 @@ func dispositionPathspec(repoPath, dispositionPath string) (string, bool) {
 	if err != nil || rel == "." || !filepath.IsLocal(rel) {
 		return "", false
 	}
-	return ":(exclude,literal)" + filepath.ToSlash(rel), true
+	return literalExclude(filepath.ToSlash(rel)), true
+}
+
+// literalExclude returns a pathspec that excludes rel, a slash-separated path relative to git's
+// working directory, matched literally rather than as a glob.
+func literalExclude(rel string) string {
+	return ":(exclude,literal)" + rel
 }
 
 // verifyPushed fails unless a remote-tracking ref contains HEAD. It reads only local refs: a

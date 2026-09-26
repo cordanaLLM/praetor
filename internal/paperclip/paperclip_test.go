@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -658,6 +659,74 @@ func TestVerifyRun_DispositionFileExcluded(t *testing.T) {
 	}
 	if err := VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{DispositionPath: dispositionPath}); err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
 		t.Fatalf("other untracked files beside the disposition must still fail, got %v", err)
+	}
+}
+
+// TestVerifyRun_GateReceiptFileExcluded covers the documented in_review order with a receipt:
+// commit, push, mint the receipt with `praetorctl gate run` (written to the repository root),
+// then write the disposition. The receipt file on disk is gate output, not unpushed work.
+func TestVerifyRun_GateReceiptFileExcluded(t *testing.T) {
+	repo := newPushedRepo(t)
+	pub, priv := keyPair(t)
+	envelope := signedEnvelopeFor(t, priv, repo.head(t))
+	disposition, err := CreateDisposition("ISSUE-1", "in_review", "review", "PR proof", "", "actor", envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispositionPath := filepath.Join(repo.dir, ".paperclip", "disposition.json")
+	data, err := disposition.FormatJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dispositionPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := filepath.Join(repo.dir, gating.ReceiptFileName)
+	if err := lockdown.SaveReceiptFile(receiptPath, envelope, gating.ReceiptFilePerm); err != nil {
+		t.Fatal(err)
+	}
+	opts := VerifyOptions{PinnedKey: pub, DispositionPath: dispositionPath}
+	verify := func() error { return VerifyRun(repo.ctx, repo.dir, disposition, opts) }
+
+	// Positive: the untracked receipt the gate just wrote beside the disposition.
+	if err := verify(); err != nil {
+		t.Fatalf("the untracked gate receipt must not count as uncommitted work: %v", err)
+	}
+	// Boundary: a repository that tracks its receipt sees it modified by the next gate run.
+	repo.git(t, "add", gating.ReceiptFileName)
+	repo.git(t, "commit", "--quiet", "-m", "track receipt")
+	repo.runPushProtocol(t, "ISSUE-1", 2)
+	envelope = signedEnvelopeFor(t, priv, repo.head(t))
+	disposition.Receipt = envelope
+	if err := lockdown.SaveReceiptFile(receiptPath, envelope, gating.ReceiptFilePerm); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := util.RunGit(repo.ctx, repo.dir, "status", "--porcelain", "--", gating.ReceiptFileName); err != nil || !strings.HasPrefix(status, "M") {
+		t.Fatalf("fixture receipt must be tracked and modified, got %q (%v)", status, err)
+	}
+	if err := verify(); err != nil {
+		t.Fatalf("a modified tracked gate receipt must not count as uncommitted work: %v", err)
+	}
+	// Negative: only the root receipt is exempt; a same-named file elsewhere or a near-miss
+	// name at the root is ordinary untracked work.
+	for _, rel := range []string{filepath.Join("sub", gating.ReceiptFileName), gating.ReceiptFileName + ".bak"} {
+		t.Run(rel, func(t *testing.T) {
+			stray := filepath.Join(repo.dir, rel)
+			if err := os.MkdirAll(filepath.Dir(stray), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(stray, []byte("{}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := os.Remove(stray); err != nil {
+					t.Errorf("remove %s: %v", rel, err)
+				}
+			})
+			if err := verify(); err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
+				t.Fatalf("%s must still fail the clean-tree check, got %v", rel, err)
+			}
+		})
 	}
 }
 

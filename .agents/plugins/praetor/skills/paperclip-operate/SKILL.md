@@ -75,8 +75,8 @@ Generate cryptographically verifiable terminal disposition record:
   ```bash
   praetorctl paperclip verify --path=.
   ```
-  - `in_review` fails unless: working tree clean (disposition file itself exempt); some ref under `refs/remotes/` contains HEAD. Local refs only, no network. Step 3 second push satisfies it on any branch or detached HEAD; upstream config not needed.
+  - `in_review` fails unless: working tree clean (disposition file + root `.standards-receipt.json` exempt); some ref under `refs/remotes/` contains HEAD. Local refs only, no network. Step 3 second push satisfies it on any branch or detached HEAD; upstream config not needed.
   - AGit `refs/for/*` push alone records no local ref -> fails. No branch-push permission -> fetch forge review head into `refs/remotes/` instead, e.g. forges exposing `refs/pull/<n>/head`: `git fetch origin +refs/pull/<n>/head:refs/remotes/origin/pull/<n>`.
   - Status: whitespace + case ignored, `done` -> `in_review`. Whitespace-only issue, note, proof, recovery owner rejected.
   - Attached `receipt` = envelope carrying `gate_output`; verified against `receipt.public_key` pinned in `.standards.yaml` (`--config=<path>` names another manifest), never key embedded in receipt. Receipt without pin fails.
-  - Receipt `commit_sha` must equal HEAD, any status (same binding as `praetorctl gate verify`) -> receipt signed for earlier commit cannot be replayed. Mint receipt after final commit.
+  - Receipt `commit_sha` must equal HEAD, any status (same binding as `praetorctl gate verify`) -> receipt signed for earlier commit cannot be replayed. Mint receipt after final commit; leave `.standards-receipt.json` uncommitted (committing it moves HEAD off attested commit).

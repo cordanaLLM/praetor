@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
 )
@@ -44,7 +45,18 @@ func (f *gateFixture) writeReceiptDispositionFor(t *testing.T, priv ed25519.Priv
 		}
 		envelope = &lockdown.ReceiptFile{ExecutionReceipt: *receipt, GateOutput: string(f.output)}
 	}
-	disposition, err := paperclip.CreateDisposition("ISSUE-7", "blocked", "waiting on credentials", "", "ops", "agent", envelope)
+	f.writeDisposition(t, "blocked", envelope)
+}
+
+// writeDisposition writes a disposition with status and the optional receipt envelope to the
+// default path. A blocked disposition names a recovery owner, an in_review one a proof.
+func (f *gateFixture) writeDisposition(t *testing.T, status string, envelope *lockdown.ReceiptFile) {
+	t.Helper()
+	proof := ""
+	if status == "in_review" {
+		proof = "https://example.invalid/pull/7"
+	}
+	disposition, err := paperclip.CreateDisposition("ISSUE-7", status, "waiting on credentials", proof, "ops", "agent", envelope)
 	if err != nil {
 		t.Fatalf("CreateDisposition: %v", err)
 	}
@@ -118,20 +130,7 @@ func TestPaperclipVerify_PinnedReceipt(t *testing.T) {
 func TestPaperclipVerify_InReviewDefaultDispositionPath(t *testing.T) {
 	f := newGateFixture(t)
 	writePaperclipFixtureHarness(t, f.dir)
-	remote := t.TempDir()
-	if out, err := runFixtureGit(t, remote, f.env, "init", "-q", "--bare"); err != nil {
-		t.Skipf("git init --bare failed in sandbox: %v (%s)", err, out)
-	}
-	for _, args := range [][]string{
-		{"add", ".paperclip"},
-		{"commit", "-q", "-m", "harness"},
-		{"remote", "add", "origin", remote},
-		{"push", "-q", "-u", "origin", "HEAD"},
-	} {
-		if out, err := runFixtureGit(t, f.dir, f.env, args...); err != nil {
-			t.Fatalf("git %v: %v (%s)", args, err, out)
-		}
-	}
+	f.commitAndPush(t, ".paperclip")
 	disposition := []string{
 		"disposition", "--issue=ISSUE-8", "--status=in_review", "--note=done and pushed",
 		"--proof=https://example.invalid/pull/8",
@@ -156,5 +155,67 @@ func TestPaperclipVerify_InReviewDefaultDispositionPath(t *testing.T) {
 	}
 	if err := runPaperclip(verify); err == nil || !strings.Contains(err.Error(), "not pushed") {
 		t.Fatalf("unpushed HEAD must fail verification, got %v", err)
+	}
+}
+
+// commitAndPush commits paths, pushes HEAD to a fresh bare origin so a remote-tracking ref
+// contains it, and records the new HEAD in f.head.
+func (f *gateFixture) commitAndPush(t *testing.T, paths ...string) {
+	t.Helper()
+	remote := t.TempDir()
+	if out, err := runFixtureGit(t, remote, f.env, "init", "-q", "--bare"); err != nil {
+		t.Skipf("git init --bare failed in sandbox: %v (%s)", err, out)
+	}
+	for _, args := range [][]string{
+		append([]string{"add", "--"}, paths...),
+		{"commit", "-q", "-m", "harness"},
+		{"remote", "add", "origin", remote},
+		{"push", "-q", "-u", "origin", "HEAD"},
+	} {
+		if out, err := runFixtureGit(t, f.dir, f.env, args...); err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+	}
+	head, err := runFixtureGit(t, f.dir, f.env, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD: %v (%s)", err, head)
+	}
+	f.head = strings.TrimSpace(head)
+}
+
+// TestPaperclipVerify_InReviewReceiptOnDisk runs the documented in_review order with a receipt:
+// commit and push, mint the receipt at the repository root the way `praetorctl gate run` does,
+// attach that receipt to the disposition, then verify. The receipt file left untracked must not
+// fail the clean-tree check.
+func TestPaperclipVerify_InReviewReceiptOnDisk(t *testing.T) {
+	f := newGateFixture(t)
+	writePaperclipFixtureHarness(t, f.dir)
+	f.pin(t, f.pub)
+	f.commitAndPush(t, ".paperclip", ".standards.yaml")
+	f.mintReceipt(t, f.priv, f.head)
+	envelope, err := lockdown.LoadReceiptFile(filepath.Join(f.dir, gating.ReceiptFileName))
+	if err != nil {
+		t.Fatalf("LoadReceiptFile: %v", err)
+	}
+	f.writeDisposition(t, "in_review", envelope)
+	verify := []string{"verify", "--path=" + f.dir}
+
+	// Positive: the receipt stays on disk, untracked, beside the disposition.
+	if err := runPaperclip(verify); err != nil {
+		t.Fatalf("in_review disposition with its untracked gate receipt rejected: %v", err)
+	}
+
+	// Negative: committing the receipt moves HEAD off the commit it attests.
+	for _, args := range [][]string{
+		{"add", gating.ReceiptFileName},
+		{"commit", "-q", "-m", "receipt"},
+		{"push", "-q"},
+	} {
+		if out, err := runFixtureGit(t, f.dir, f.env, args...); err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+	}
+	if err := runPaperclip(verify); !errors.Is(err, lockdown.ErrCommitMismatch) {
+		t.Fatalf("a committed receipt attests the parent, not HEAD; want ErrCommitMismatch, got %v", err)
 	}
 }
