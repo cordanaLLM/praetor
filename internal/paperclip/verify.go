@@ -11,11 +11,12 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// remoteTrackingPrefix is the ref namespace an upstream must live in to count as pushed; a
-// local branch configured as upstream proves nothing left the machine.
+// remoteTrackingPrefix is the ref namespace that records what a remote holds. Only a ref here
+// can show HEAD left the machine; a local branch containing HEAD proves nothing.
 const remoteTrackingPrefix = "refs/remotes/"
 
 // VerifyOptions carries the trust inputs VerifyRun cannot derive from the disposition itself.
@@ -50,8 +51,9 @@ func ReadDispositionContext(ctx context.Context, path string) (*Disposition, err
 }
 
 // VerifyRun asserts that a Paperclip agent run satisfies Rule 0 and contract invariants. An
-// in_review run must leave a clean working tree and a HEAD already pushed to its
-// remote-tracking upstream; an attached receipt must verify against opts.PinnedKey.
+// in_review run must leave a clean working tree and a HEAD that a remote-tracking ref already
+// contains. An attached receipt must verify against opts.PinnedKey and attest the commit
+// checked out in repoPath, so a receipt signed for an earlier commit cannot be replayed.
 func VerifyRun(ctx context.Context, repoPath string, d *Disposition, opts VerifyOptions) error {
 	if ctx == nil {
 		return fmt.Errorf("verify: context cannot be nil")
@@ -64,15 +66,8 @@ func VerifyRun(ctx context.Context, repoPath string, d *Disposition, opts Verify
 	if err != nil {
 		return fmt.Errorf("disposition invalid: %w", err)
 	}
-
-	// Invariant: Pushing is NOT shipping, but an in_review run must at least have pushed.
-	if status == StatusInReview {
-		if err := verifyCleanWorktree(ctx, repoPath, opts.DispositionPath); err != nil {
-			return err
-		}
-		if err := verifyPushed(ctx, repoPath); err != nil {
-			return err
-		}
+	if err := verifyRepositoryState(ctx, repoPath, d, status, opts); err != nil {
+		return err
 	}
 
 	// A file's presence cannot establish a valid configured harness.
@@ -85,6 +80,25 @@ func VerifyRun(ctx context.Context, repoPath string, d *Disposition, opts Verify
 	}
 
 	return nil
+}
+
+// verifyRepositoryState checks the claims a validated disposition makes about repoPath: an
+// attached receipt attests the checked-out commit, and an in_review run left a clean, pushed
+// tree.
+func verifyRepositoryState(ctx context.Context, repoPath string, d *Disposition, status DispositionStatus, opts VerifyOptions) error {
+	if d.Receipt != nil {
+		if err := lockdown.VerifyReceiptCommit(ctx, repoPath, d.Receipt.CommitSHA); err != nil {
+			return fmt.Errorf("disposition receipt: %w", err)
+		}
+	}
+	// Invariant: Pushing is NOT shipping, but an in_review run must at least have pushed.
+	if status != StatusInReview {
+		return nil
+	}
+	if err := verifyCleanWorktree(ctx, repoPath, opts.DispositionPath); err != nil {
+		return err
+	}
+	return verifyPushed(ctx, repoPath)
 }
 
 // verifyCleanWorktree fails when the working tree has uncommitted changes other than the
@@ -125,23 +139,19 @@ func dispositionPathspec(repoPath, dispositionPath string) (string, bool) {
 	return ":(exclude,literal)" + filepath.ToSlash(rel), true
 }
 
-// verifyPushed fails unless HEAD's branch tracks a remote-tracking upstream that already
-// contains every local commit. The check reads only local refs: the tracking ref records the
-// last push or fetch, and no network call is made.
+// verifyPushed fails unless a remote-tracking ref contains HEAD. It reads only local refs: a
+// remote-tracking ref records the last push to or fetch from its remote, and no network call is
+// made. Any remote-tracking ref counts, so the review branch the harness push protocol pushes
+// and a forge review ref fetched into refs/remotes/ both satisfy it, on a branch or detached.
 func verifyPushed(ctx context.Context, repoPath string) error {
-	upstream, err := util.RunGit(ctx, repoPath, "rev-parse", "--symbolic-full-name", "@{upstream}")
+	containing, err := util.RunGit(ctx, repoPath, "for-each-ref", "--count=1", "--contains=HEAD",
+		"--format=%(refname)", remoteTrackingPrefix)
 	if err != nil {
-		return fmt.Errorf("contract violation: HEAD has no upstream branch; push it with 'git push -u' before disposition: %w", err)
+		return fmt.Errorf("verify HEAD is pushed: %w", err)
 	}
-	if !strings.HasPrefix(upstream, remoteTrackingPrefix) {
-		return fmt.Errorf("contract violation: upstream %q is not a remote-tracking branch; push the branch before disposition", upstream)
-	}
-	ahead, err := util.RunGit(ctx, repoPath, "rev-list", "--count", upstream+"..HEAD")
-	if err != nil {
-		return fmt.Errorf("verify HEAD is pushed to %s: %w", upstream, err)
-	}
-	if ahead != "0" {
-		return fmt.Errorf("contract violation: %s local commit(s) not pushed to %s; push branch before disposition", ahead, upstream)
+	if containing == "" {
+		return fmt.Errorf("contract violation: HEAD is not pushed: no ref under %s contains it; "+
+			"run the push protocol in .paperclip/rules.md before disposition", remoteTrackingPrefix)
 	}
 	return nil
 }

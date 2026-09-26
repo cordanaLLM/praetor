@@ -1,6 +1,7 @@
 package lockdown
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -24,6 +25,8 @@ var (
 	ErrInvalidSig      = errors.New("invalid Ed25519 signature in receipt")
 	ErrSigVerification = errors.New("receipt Ed25519 signature verification failed")
 	ErrOutputMismatch  = errors.New("execution output hash does not match receipt output hash")
+	// ErrCommitMismatch is returned when a receipt attests a commit other than the checked-out HEAD.
+	ErrCommitMismatch = errors.New("receipt commit does not match HEAD")
 )
 
 // ExecutionReceipt represents an Ed25519-signed verification receipt certifying an Exit-0 run.
@@ -181,5 +184,21 @@ func VerifyReceiptWithOutput(receipt *ExecutionReceipt, output []byte) error {
 		return fmt.Errorf("%w: expected %s, got %s", ErrOutputMismatch, receipt.OutputHash, expectedHash)
 	}
 
+	return nil
+}
+
+// VerifyReceiptCommit binds a receipt to the commit checked out in repoPath. A signature proves
+// who minted a receipt, not where it applies: without this binding any receipt the pinned key
+// ever signed would verify against any later HEAD. It runs one local git query under ctx and
+// makes no network call. An empty receiptSHA never matches, so a receipt minted without a
+// commit fails closed.
+func VerifyReceiptCommit(ctx context.Context, repoPath, receiptSHA string) error {
+	head, err := util.RunGit(ctx, repoPath, "rev-parse", "HEAD")
+	if err != nil {
+		return fmt.Errorf("cannot resolve HEAD in %s: %w", repoPath, err)
+	}
+	if head != receiptSHA {
+		return fmt.Errorf("%w: receipt attests commit %s but HEAD is %s", ErrCommitMismatch, receiptSHA, head)
+	}
 	return nil
 }

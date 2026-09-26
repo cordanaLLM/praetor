@@ -77,7 +77,8 @@ func CreateDisposition(issueID, statusStr, note, proof, recoveryOwner, actor str
 // be signed by pinned, the Ed25519 key pinned in the repository manifest (see
 // lockdown.PinnedPublicKey), and must certify the envelope's gate output; the key embedded in
 // the receipt is never a trust anchor on its own. pinned may be nil only when no receipt is
-// attached.
+// attached. Validate has no repository to compare against, so it does not bind the receipt to a
+// commit; VerifyRun does, and a caller that trusts a receipt must go through VerifyRun.
 func (d *Disposition) Validate(ctx context.Context, pinned ed25519.PublicKey) error {
 	_, err := d.validate(ctx, pinned)
 	return err

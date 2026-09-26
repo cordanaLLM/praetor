@@ -9,7 +9,7 @@
     "Timeout Resilience: timeout is not failure; re-check open PRs before retrying to prevent duplicate PRs.",
     "Text register internal: `caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict."
   ],
-  "agit_push_format": "git push origin HEAD:refs/for/main -o topic=\u003cissue-id\u003e",
+  "agit_push_format": "git push origin HEAD:refs/for/main -o topic=\u003cissue-id\u003e \u0026\u0026 git push origin HEAD:refs/heads/paperclip/\u003cissue-id\u003e",
   "invariants": [
     "HISS-01: Acyclic DAG control flow (no recursion)",
     "HISS-02: Scalar upper bounds on all loops; context timeout on all I/O",

@@ -27,12 +27,18 @@ func writePaperclipFixtureHarness(t *testing.T, dir string) {
 }
 
 // writeReceiptDisposition writes a blocked disposition to the default path, carrying a
-// receipt envelope signed by priv when priv is non-nil.
+// receipt envelope for HEAD signed by priv when priv is non-nil.
 func (f *gateFixture) writeReceiptDisposition(t *testing.T, priv ed25519.PrivateKey) {
+	t.Helper()
+	f.writeReceiptDispositionFor(t, priv, f.head)
+}
+
+// writeReceiptDispositionFor is writeReceiptDisposition with a receipt attesting commit.
+func (f *gateFixture) writeReceiptDispositionFor(t *testing.T, priv ed25519.PrivateKey, commit string) {
 	t.Helper()
 	var envelope *lockdown.ReceiptFile
 	if priv != nil {
-		receipt, err := lockdown.CreateReceipt("make verify-all", 0, f.output, f.head, "acme/widget", priv)
+		receipt, err := lockdown.CreateReceipt("make verify-all", 0, f.output, commit, "acme/widget", priv)
 		if err != nil {
 			t.Fatalf("CreateReceipt: %v", err)
 		}
@@ -73,6 +79,12 @@ func TestPaperclipVerify_PinnedReceipt(t *testing.T) {
 	f.writeReceiptDisposition(t, foreignPriv)
 	if err := runPaperclip(verify); !errors.Is(err, lockdown.ErrKeyNotPinned) {
 		t.Fatalf("foreign-key receipt must fail with ErrKeyNotPinned, got %v", err)
+	}
+
+	// Negative: a receipt the pinned key signed for another commit cannot be replayed.
+	f.writeReceiptDispositionFor(t, f.priv, strings.Repeat("0", len(f.head)))
+	if err := runPaperclip(verify); !errors.Is(err, lockdown.ErrCommitMismatch) {
+		t.Fatalf("receipt for another commit must fail with ErrCommitMismatch, got %v", err)
 	}
 
 	// Negative: a receipt in a repository that pins no key.

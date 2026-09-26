@@ -21,7 +21,13 @@ const receiptOutput = "praetor-gate-output/v1\nok\n"
 // signedEnvelope returns a receipt envelope signed by priv that certifies receiptOutput.
 func signedEnvelope(t *testing.T, priv ed25519.PrivateKey) *lockdown.ReceiptFile {
 	t.Helper()
-	receipt, err := lockdown.CreateReceipt("make verify-all", 0, []byte(receiptOutput), "commit1", "repo1", priv)
+	return signedEnvelopeFor(t, priv, "commit1")
+}
+
+// signedEnvelopeFor returns a receipt envelope signed by priv that attests commit.
+func signedEnvelopeFor(t *testing.T, priv ed25519.PrivateKey, commit string) *lockdown.ReceiptFile {
+	t.Helper()
+	receipt, err := lockdown.CreateReceipt("make verify-all", 0, []byte(receiptOutput), commit, "repo1", priv)
 	if err != nil {
 		t.Fatalf("create receipt failed: %v", err)
 	}
@@ -41,8 +47,9 @@ func keyPair(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
 // fixtureRepo is a hermetic git repository with a committed harness. Its branch tracks a
 // bare remote on the local file system, so push checks run without a network.
 type fixtureRepo struct {
-	ctx context.Context
-	dir string
+	ctx    context.Context
+	dir    string
+	remote string
 }
 
 // newPushedRepo builds a fixtureRepo whose HEAD is pushed to its origin upstream. Its git
@@ -57,7 +64,7 @@ func newPushedRepo(t *testing.T) fixtureRepo {
 	if err != nil {
 		t.Fatalf("hermetic fixture environment: %v", err)
 	}
-	repo := fixtureRepo{ctx: ctx, dir: t.TempDir()}
+	repo := fixtureRepo{ctx: ctx, dir: t.TempDir(), remote: t.TempDir()}
 	harness, err := SynthesizeHarness(ctx, repo.dir)
 	if err != nil {
 		t.Fatal(err)
@@ -65,16 +72,47 @@ func newPushedRepo(t *testing.T) fixtureRepo {
 	if err := WriteHarness(harness, repo.dir); err != nil {
 		t.Fatal(err)
 	}
-	remote := t.TempDir()
-	if out, err := util.RunGit(ctx, remote, "init", "--quiet", "--bare"); err != nil {
+	if out, err := util.RunGit(ctx, repo.remote, "init", "--quiet", "--bare"); err != nil {
 		t.Skipf("git init --bare failed in sandbox: %v: %s", err, out)
+	}
+	// The AGit push of the harness protocol carries a push option, which a bare remote only
+	// accepts when it advertises them.
+	if out, err := util.RunGit(ctx, repo.remote, "config", "receive.advertisePushOptions", "true"); err != nil {
+		t.Fatalf("enable push options on fixture remote: %v: %s", err, out)
 	}
 	repo.git(t, "init", "--quiet", "-b", "work")
 	repo.git(t, "add", ".paperclip")
 	repo.git(t, "commit", "--quiet", "-m", "test harness")
-	repo.git(t, "remote", "add", "origin", remote)
+	repo.git(t, "remote", "add", "origin", repo.remote)
 	repo.git(t, "push", "--quiet", "-u", "origin", "HEAD")
 	return repo
+}
+
+// head returns the fixture's HEAD commit.
+func (r fixtureRepo) head(t *testing.T) string {
+	t.Helper()
+	out, err := util.RunGit(r.ctx, r.dir, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD: %v: %s", err, out)
+	}
+	return out
+}
+
+// runPushProtocol runs the harness push protocol for issueID, one git command per step, and
+// stops after steps commands so a test can run only the AGit push.
+func (r fixtureRepo) runPushProtocol(t *testing.T, issueID string, steps int) {
+	t.Helper()
+	commands := strings.Split(agitPushFormat, " && ")
+	if steps > len(commands) {
+		t.Fatalf("push protocol has %d steps, asked for %d", len(commands), steps)
+	}
+	for _, command := range commands[:steps] {
+		fields := strings.Fields(strings.ReplaceAll(command, "<issue-id>", issueID))
+		if len(fields) < 2 || fields[0] != "git" {
+			t.Fatalf("push protocol step %q is not a git command", command)
+		}
+		r.git(t, fields[1:]...)
+	}
 }
 
 // git runs one fixture git command and fails the test on error.
@@ -479,50 +517,58 @@ func TestVerifyRunInReviewWorkingTree(t *testing.T) {
 }
 
 // TestVerifyRun_InReviewRequiresPushedHead covers "pushing is not shipping": an in_review
-// run must at least have pushed HEAD to a remote-tracking upstream.
+// run must at least have pushed HEAD, which a remote-tracking ref containing it proves locally.
 func TestVerifyRun_InReviewRequiresPushedHead(t *testing.T) {
 	disposition := inReviewDisposition(t)
+	notPushed := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), "HEAD is not pushed") {
+			t.Fatalf("unpushed HEAD must fail, got %v", err)
+		}
+	}
 
 	t.Run("unpushed commit", func(t *testing.T) {
 		repo := newPushedRepo(t)
 		repo.commitLocal(t)
-		if err := VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}); err == nil || !strings.Contains(err.Error(), "1 local commit(s) not pushed") {
-			t.Fatalf("unpushed HEAD must fail, got %v", err)
-		}
+		notPushed(t, VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}))
 		repo.git(t, "push", "--quiet")
 		if err := VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}); err != nil {
 			t.Fatalf("HEAD pushed after the commit must pass: %v", err)
 		}
 	})
-	t.Run("no upstream", func(t *testing.T) {
+	t.Run("only local refs contain HEAD", func(t *testing.T) {
+		repo := newPushedRepo(t)
+		repo.commitLocal(t)
+		repo.git(t, "branch", "local-copy")
+		repo.git(t, "branch", "--set-upstream-to=local-copy")
+		notPushed(t, VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}))
+	})
+	t.Run("no remote-tracking refs", func(t *testing.T) {
+		repo := newPushedRepo(t)
+		repo.git(t, "remote", "remove", "origin")
+		notPushed(t, VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}))
+	})
+	t.Run("pushed without upstream config", func(t *testing.T) {
 		repo := newPushedRepo(t)
 		repo.git(t, "branch", "--unset-upstream")
-		if err := VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}); err == nil || !strings.Contains(err.Error(), "no upstream") {
-			t.Fatalf("branch without upstream must fail, got %v", err)
-		}
-	})
-	t.Run("local upstream", func(t *testing.T) {
-		repo := newPushedRepo(t)
-		repo.git(t, "branch", "local-base")
-		repo.git(t, "branch", "--set-upstream-to=local-base")
-		if err := VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}); err == nil || !strings.Contains(err.Error(), "not a remote-tracking branch") {
-			t.Fatalf("local-branch upstream must fail, got %v", err)
+		if err := VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}); err != nil {
+			t.Fatalf("a pushed HEAD needs no upstream configuration: %v", err)
 		}
 	})
 	t.Run("detached head", func(t *testing.T) {
 		repo := newPushedRepo(t)
 		repo.git(t, "checkout", "--quiet", "--detach")
-		if err := VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}); err == nil || !strings.Contains(err.Error(), "no upstream") {
-			t.Fatalf("detached HEAD must fail, got %v", err)
+		if err := VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}); err != nil {
+			t.Fatalf("a detached HEAD on a pushed commit must pass: %v", err)
 		}
+		repo.commitLocal(t)
+		notPushed(t, VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}))
 	})
 	t.Run("mixed-case status still checked", func(t *testing.T) {
 		repo := newPushedRepo(t)
 		repo.commitLocal(t)
 		direct := &Disposition{IssueID: "I-1", Status: "IN_REVIEW", Note: "n", Proof: "p"}
-		if err := VerifyRun(repo.ctx, repo.dir, direct, VerifyOptions{}); err == nil || !strings.Contains(err.Error(), "not pushed") {
-			t.Fatalf("a case variant of in_review must not skip the push check, got %v", err)
-		}
+		notPushed(t, VerifyRun(repo.ctx, repo.dir, direct, VerifyOptions{}))
 	})
 	t.Run("blocked skips push", func(t *testing.T) {
 		repo := newPushedRepo(t)
@@ -533,6 +579,52 @@ func TestVerifyRun_InReviewRequiresPushedHead(t *testing.T) {
 		}
 		if err := VerifyRun(repo.ctx, repo.dir, blocked, VerifyOptions{}); err != nil {
 			t.Fatalf("blocked disposition must not require a push: %v", err)
+		}
+	})
+}
+
+// TestVerifyRun_HarnessPushProtocolSatisfiesVerify runs the push protocol the synthesized
+// harness prescribes and checks VerifyRun accepts its result, so harness, rules.md and verify
+// cannot drift apart again.
+func TestVerifyRun_HarnessPushProtocolSatisfiesVerify(t *testing.T) {
+	disposition := inReviewDisposition(t)
+
+	t.Run("full protocol", func(t *testing.T) {
+		repo := newPushedRepo(t)
+		repo.commitLocal(t)
+		repo.runPushProtocol(t, "ISSUE-1", 2)
+		if err := VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}); err != nil {
+			t.Fatalf("the harness push protocol must satisfy verify: %v", err)
+		}
+	})
+	t.Run("from local main", func(t *testing.T) {
+		repo := newPushedRepo(t)
+		repo.git(t, "checkout", "--quiet", "-b", "main")
+		repo.commitLocal(t)
+		repo.runPushProtocol(t, "ISSUE-2", 2)
+		if err := VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}); err != nil {
+			t.Fatalf("the harness push protocol must satisfy verify from main: %v", err)
+		}
+		if out, err := util.RunGit(repo.ctx, repo.remote, "rev-parse", "--verify", "--quiet", "refs/heads/main"); err == nil {
+			t.Fatalf("the push protocol must never push to the remote main, found %s", out)
+		}
+	})
+	t.Run("AGit push alone", func(t *testing.T) {
+		repo := newPushedRepo(t)
+		repo.commitLocal(t)
+		repo.runPushProtocol(t, "ISSUE-3", 1)
+		if err := VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}); err == nil || !strings.Contains(err.Error(), "HEAD is not pushed") {
+			t.Fatalf("an AGit push records no local ref and must not count as pushed, got %v", err)
+		}
+	})
+	t.Run("fetched review ref", func(t *testing.T) {
+		repo := newPushedRepo(t)
+		repo.commitLocal(t)
+		// Stands in for the head ref a forge creates for the review opened by the AGit push.
+		repo.git(t, "push", "--quiet", "origin", "HEAD:refs/pull/1/head")
+		repo.git(t, "fetch", "--quiet", "origin", "+refs/pull/1/head:refs/remotes/origin/pull/1")
+		if err := VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}); err != nil {
+			t.Fatalf("a fetched review ref must count as pushed: %v", err)
 		}
 	})
 }
@@ -589,15 +681,8 @@ func TestDispositionPathspec_3D(t *testing.T) {
 // TestVerifyRun_PinnedKeyThreaded checks that VerifyRun verifies an attached receipt against
 // opts.PinnedKey rather than the key embedded in the receipt.
 func TestVerifyRun_PinnedKeyThreaded(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	harness, err := SynthesizeHarness(ctx, root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := WriteHarness(harness, root); err != nil {
-		t.Fatal(err)
-	}
+	repo := newPushedRepo(t)
+	head := repo.head(t)
 	pub, priv := keyPair(t)
 	_, foreignPriv := keyPair(t)
 	for name, tc := range map[string]struct {
@@ -610,11 +695,11 @@ func TestVerifyRun_PinnedKeyThreaded(t *testing.T) {
 		"unpinned": {priv: priv, want: lockdown.ErrNoPinnedKey},
 	} {
 		t.Run(name, func(t *testing.T) {
-			disposition, err := CreateDisposition("ISSUE-1", "blocked", "stuck", "", "ops", "actor", signedEnvelope(t, tc.priv))
+			disposition, err := CreateDisposition("ISSUE-1", "blocked", "stuck", "", "ops", "actor", signedEnvelopeFor(t, tc.priv, head))
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = VerifyRun(ctx, root, disposition, VerifyOptions{PinnedKey: tc.pin})
+			err = VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{PinnedKey: tc.pin})
 			if tc.want == nil && err != nil {
 				t.Fatalf("pinned receipt rejected: %v", err)
 			}
@@ -622,5 +707,52 @@ func TestVerifyRun_PinnedKeyThreaded(t *testing.T) {
 				t.Fatalf("expected %v, got %v", tc.want, err)
 			}
 		})
+	}
+}
+
+// TestVerifyRun_ReceiptBoundToHead checks that a receipt signed by the pinned key only verifies
+// for the commit it attests, so an older receipt cannot be replayed on a later disposition.
+func TestVerifyRun_ReceiptBoundToHead(t *testing.T) {
+	repo := newPushedRepo(t)
+	pub, priv := keyPair(t)
+	earlier := repo.head(t)
+	repo.commitLocal(t)
+	repo.git(t, "push", "--quiet")
+	head := repo.head(t)
+	opts := VerifyOptions{PinnedKey: pub}
+	verify := func(t *testing.T, status, commit string) error {
+		t.Helper()
+		disposition, err := CreateDisposition("ISSUE-1", status, "note", "PR proof", "ops", "actor", signedEnvelopeFor(t, priv, commit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return VerifyRun(repo.ctx, repo.dir, disposition, opts)
+	}
+
+	// Positive: the receipt attests HEAD, for either status.
+	for _, status := range []string{"in_review", "blocked"} {
+		if err := verify(t, status, head); err != nil {
+			t.Fatalf("%s receipt for HEAD rejected: %v", status, err)
+		}
+	}
+	// Negative: a validly signed receipt for an earlier commit, for either status.
+	for _, status := range []string{"in_review", "blocked"} {
+		if err := verify(t, status, earlier); !errors.Is(err, lockdown.ErrCommitMismatch) {
+			t.Fatalf("%s receipt for an earlier commit must fail with ErrCommitMismatch, got %v", status, err)
+		}
+	}
+	// Boundary: a receipt minted without a commit, and an abbreviated HEAD, never match.
+	for name, commit := range map[string]string{"empty": "", "abbreviated": head[:12]} {
+		if err := verify(t, "blocked", commit); !errors.Is(err, lockdown.ErrCommitMismatch) {
+			t.Fatalf("%s receipt commit must fail with ErrCommitMismatch, got %v", name, err)
+		}
+	}
+	// Negative: outside a repository there is no HEAD to bind to.
+	disposition, err := CreateDisposition("ISSUE-1", "blocked", "note", "", "ops", "actor", signedEnvelopeFor(t, priv, head))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyRun(repo.ctx, t.TempDir(), disposition, opts); err == nil || !strings.Contains(err.Error(), "cannot resolve HEAD") {
+		t.Fatalf("a receipt outside a repository must fail to bind, got %v", err)
 	}
 }
