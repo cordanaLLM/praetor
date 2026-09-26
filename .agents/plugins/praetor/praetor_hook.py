@@ -45,9 +45,12 @@ ARGUMENT = re.compile(r"[a-z-]+")
 SUFFIX = ".exe" if os.name == "nt" else ""
 PROBE_TIMEOUT = 5
 PROBE_LIMIT = 64 * 1024
-# The longest registration timeout of a launcher row. Every engine budget ends earlier, and
-# the client's own timeout ends a shorter row first.
-RUN_TIMEOUT = 60
+# How long the launcher waits for the engine's verdict. It outwaits every engine budget of a
+# launcher row (budgetFor in internal/agenthook/evaluate.go: 10 s for the dispatch and handback
+# rows, 30 s for post-return), so a slow engine still gives its own verdict. Both probes plus
+# this wait end before the longest launcher row (60 s) gives up; a shorter row's client timeout
+# ends that row first. TestLauncherTimeoutsOutwaitEngineBudgets pins both bounds.
+RUN_TIMEOUT = 45
 # The engine reads at most 1 MiB + 1 byte of payload (agenthook.MaxInputBytes).
 DRAIN_LIMIT = 1024 * 1024 + 1
 DRAIN_CHUNK = 64 * 1024

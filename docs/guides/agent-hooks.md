@@ -387,9 +387,15 @@ event without a known answer is a malformed argument. The drain reads the payloa
 descriptor 0 in a daemon thread and gives up after two seconds, so a client that keeps stdin
 open still gets exit 0.
 
-An engine that starts but gives no verdict within 60 seconds, or cannot start after its
+An engine that starts but gives no verdict within 45 seconds, or cannot start after its
 probe, is exit 1 for the native clients, which Claude Code and Gemini CLI document as a
-reported, non-blocking error; AGY gets its allow answer and exit 0 instead. Malformed guard
+reported, non-blocking error; AGY gets its allow answer and exit 0 instead. The 45 seconds
+(`RUN_TIMEOUT`) outwait every engine budget of a guarded row, 10 s for the dispatch and
+handback rows and 30 s for `post-return`, so a slow engine still gives its own verdict and a
+late deny stays a deny. Both 5 s probes plus that wait end before the 60 s `post-return`
+rows give up (`TestLauncherTimeoutsOutwaitEngineBudgets`). On a shorter row the client's own
+timeout comes first: 15 s for the dispatch and handback rows, and 30 s for AGY, which
+documents nothing about a timed-out hook. Malformed guard
 arguments keep exit 2, as the engine does for malformed arguments; the tracked strings are
 pinned, so that only happens on a broken edit. A host without `python3` gets the shell's
 command-not-found status, which blocks nothing in Claude Code or Gemini CLI and is

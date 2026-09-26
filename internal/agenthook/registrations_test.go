@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -349,6 +350,96 @@ func TestPluginLauncherIsTheTrackedLauncher(t *testing.T) {
 	}
 	if len(canonical) == 0 || !bytes.Equal(plugin, canonical) {
 		t.Fatalf("%s differs from %s: copy the canonical launcher over it", pluginLauncher, launcherScript)
+	}
+}
+
+// launcherTimingMargin is the room the launcher timing checks leave for process start-up and
+// for writing the answer.
+const launcherTimingMargin = 2 * time.Second
+
+// launcherCandidates is the most engines the launcher probes before it runs one (candidates in
+// praetor_hook.py: the checkout's bin/praetorctl, then praetorctl from PATH).
+const launcherCandidates = 2
+
+// launcherSeconds reads one integer seconds constant of the tracked launcher.
+func launcherSeconds(t *testing.T, name string) time.Duration {
+	t.Helper()
+	source, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(launcherScript)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := regexp.MustCompile(`(?m)^` + name + ` = (\d+)$`).FindSubmatch(source)
+	if match == nil {
+		t.Fatalf("%s: no %s = <seconds> line", launcherScript, name)
+	}
+	seconds, err := strconv.Atoi(string(match[1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// launcherTimeoutProblems lists how the launcher's run and probe timeouts break the timing of
+// the rows it fronts. The run timeout must outwait each row's engine budget, or the launcher
+// kills an engine that would still have answered and the verdict fails open (exit 1 for the
+// native clients, allow for AGY). Both probes plus the run must also end before the longest
+// launcher row gives up, so its stated fallback lands before the client's own timeout.
+func launcherTimeoutProblems(run, probe time.Duration) []string {
+	var problems []string
+	for _, row := range launcherRows() {
+		if budget := budgetFor(row.Event); budget+launcherTimingMargin > run {
+			problems = append(problems, fmt.Sprintf("%s %s: run timeout %s cuts the %s engine budget short", row.Client, row.Event, run, budget))
+		}
+	}
+	if worst, longest := launcherCandidates*probe+run+launcherTimingMargin, longestLauncherRow(); worst > longest {
+		problems = append(problems, fmt.Sprintf("probes plus run take up to %s, past the longest launcher row's %s", worst, longest))
+	}
+	return problems
+}
+
+// launcherRows are the engine rows the tracked client files reach through praetor_hook.py.
+func launcherRows() []Registration {
+	var rows []Registration
+	for _, row := range registrationTable {
+		if agentTrafficEvent(row.Event) && strings.Contains(trackedCommand(row), "praetor_hook.py") {
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func longestLauncherRow() time.Duration {
+	var longest time.Duration
+	for _, row := range launcherRows() {
+		longest = max(longest, row.Timeout)
+	}
+	return longest
+}
+
+// TestLauncherTimeoutsOutwaitEngineBudgets pins praetor_hook.py's RUN_TIMEOUT between the
+// longest engine budget of a launcher row (post-return, 30 s) and the longest launcher row's
+// timeout (60 s). A run timeout of 10 s killed post-return evaluation at 10 s and beat the
+// 10 s dispatch budget, so a late deny failed open.
+func TestLauncherTimeoutsOutwaitEngineBudgets(t *testing.T) {
+	run, probe := launcherSeconds(t, "RUN_TIMEOUT"), launcherSeconds(t, "PROBE_TIMEOUT")
+	if problems := launcherTimeoutProblems(run, probe); len(problems) != 0 {
+		t.Fatalf("%s timing: %q", launcherScript, problems)
+	}
+	shortest := returnBudget + launcherTimingMargin
+	longest := longestLauncherRow() - launcherCandidates*probe - launcherTimingMargin
+	if len(launcherRows()) == 0 || longestLauncherRow() != 60*time.Second {
+		t.Fatalf("launcher rows %+v: want the 60 s post-return rows among them", launcherRows())
+	}
+	for _, tc := range []struct {
+		run  time.Duration
+		pass bool
+	}{
+		{shortest, true}, {shortest - time.Second, false}, {longest, true}, {longest + time.Second, false},
+		{10 * time.Second, false}, {60 * time.Second, false},
+	} {
+		if problems := launcherTimeoutProblems(tc.run, probe); (len(problems) == 0) != tc.pass {
+			t.Errorf("run timeout %s: problems %q, want pass=%t", tc.run, problems, tc.pass)
+		}
 	}
 }
 
