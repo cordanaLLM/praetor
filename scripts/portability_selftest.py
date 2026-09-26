@@ -32,6 +32,7 @@ SUITES = (
     Path(".config/lefthook/scripts/test_hooks.py"),
     Path(".config/lefthook/scripts/test_checkpoint.py"),
     Path("scripts/test_checkpoint_hooks.py"),
+    Path("scripts/test_praetor_hook.py"),
 )
 
 # unittest's summary line, e.g. "Ran 66 tests in 41.2s" and "OK (skipped=5)".
