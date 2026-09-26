@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -165,15 +164,6 @@ func scanRepositoryPins(ctx context.Context, root string) ([]imagePin, error) {
 		pins = append(pins, collectImagePins(filepath.ToSlash(rel), string(content))...)
 	}
 	return pins, nil
-}
-
-// requireGit skips with a stated reason where git is absent (HISS-21): this scan's scope is a
-// git listing, and a gate that cannot run is not a gate that passed.
-func requireGit(t *testing.T) {
-	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skipf("git unavailable, and the image pin scope is a git listing: %v", err)
-	}
 }
 
 func TestRepositoryPinsOneDigestPerImageTag(t *testing.T) {
