@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -23,7 +24,7 @@ from checks import (go_packages, source_checks, governance_commands, context_cha
                     audit_scope, local_package_patterns, checkpoint_checks,
                     semgrep_commands, is_fixture, is_chart_template, file_checks,
                     run_full_gate, gate_timeout, FIXTURE_DIRECTORY, GATE_LAUNCH_MARGIN,
-                    GATE_QUERY_TIMEOUT)
+                    GATE_QUERY_TIMEOUT, SEMGREP_LANGUAGE_EXTENSIONS, SEMGREP_SUFFIXES)
 import hooks
 from hooks import push_updates, new_branch_base, pre_push, push_check_mode, prepare_message
 from privacy import check_private_history, check_private_index
@@ -1240,6 +1241,98 @@ class ScopeAndGuard(unittest.TestCase):
         self.assertTrue(is_fixture("a\\testdata\\b.go"))
         self.assertFalse(is_fixture("internal/testdatafile.go"))
         self.assertFalse(is_fixture("mytestdata/a.go"))
+
+    def test_semgrep_scans_every_suffix_its_rule_languages_cover(self):
+        # Positive: headers, C++ and JSX/TSX sources reach semgrep; the c/cpp and
+        # javascript/typescript rules target them, and the old suffix set dropped them.
+        names = ["native/a.h", "native/b.hpp", "native/c.cc", "native/d.hh", "web/e.tsx",
+                 "web/f.jsx", "web/g.mjs", "tools/h.pyi"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rules = self.semgrep_tree(root, *names, "docs/guide.md", "notes.txt")
+            commands = semgrep_commands(root, [*names, "docs/guide.md"])
+            # Negative: a documentation-only change starts no semgrep scan.
+            docs_only = semgrep_commands(root, ["docs/guide.md", "notes.txt"])
+        self.assertEqual(commands, [["semgrep", "scan", "--error", "--config", rules, *names]])
+        self.assertEqual(docs_only, [])
+        # Boundary: suffixes are case-sensitive, as they are to semgrep: .C is C++, .S is not
+        # a semgrep language.
+        self.assertIn(".C", SEMGREP_SUFFIXES)
+        self.assertNotIn(".S", SEMGREP_SUFFIXES)
+
+    def test_semgrep_suffixes_cover_every_rule_language(self):
+        # Every language the shipped rules target has its extensions in the hook's table, so a
+        # rule added for a new language cannot silently skip that language's files.
+        text = (ROOT / ".config/semgrep/hiss-invariants.yml").read_text(encoding="utf-8")
+        declared = re.findall(r"(?m)^\s*languages:\s*(.*)$", text)
+        self.assertTrue(declared)
+        languages = set()
+        for value in declared:
+            flow = re.fullmatch(r"\[([^\]]*)\]\s*", value)
+            self.assertIsNotNone(flow, f"languages must be a flow list: {value!r}")
+            languages.update(item.strip() for item in flow.group(1).split(","))
+        self.assertEqual(languages - set(SEMGREP_LANGUAGE_EXTENSIONS), set())
+
+    def test_context_changed_covers_every_compile_context_path(self):
+        # Positive: every file compile-context reads or writes -- AGENTS.md, .agents/ personas,
+        # skills and plugin copies, the six vendor files and the vendor persona directories --
+        # triggers compile-context --verify. The real command produces the list, so a target
+        # it gains fails here instead of going unverified by the pre-commit hook.
+        with tempfile.TemporaryDirectory(prefix="praetor-context-") as temp:
+            root = Path(temp)
+            persona = "---\nname: demo\ndescription: demo\n---\n\nRun tests.\n"
+            for name, text in {"AGENTS.md": "# Demo\n\nRun tests before commit.\n",
+                               ".agents/agents/demo.md": persona,
+                               ".agents/skills/demo/SKILL.md": persona,
+                               ".agents/plugins/praetor/plugin.json": '{"name": "praetor"}\n'}.items():
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text(text, encoding="utf-8")
+            run(["go", "run", "./cmd/standardsctl", "compile-context", "--source",
+                 str(root / "AGENTS.md"), "--target-dir", str(root)],
+                cwd=ROOT, env=clean_env(), timeout=600)
+            written = sorted(path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file())
+        for vendor in (".claude/agents/demo.md", ".codex/agents/demo.md", ".gemini/agents/demo.md",
+                       ".github/agents/demo.md", ".agents/plugins/praetor/skills/demo/SKILL.md"):
+            self.assertIn(vendor, written)
+        self.assertEqual([name for name in written if not context_changed([name])], [])
+
+    def test_context_changed_ignores_paths_compile_context_does_not_touch(self):
+        # Negative and boundary: documentation, vendor settings beside the persona directories,
+        # workflows and lookalike prefixes do not start compile-context --verify.
+        for name in ("README.md", "docs/guides/onboarding.md", ".claude/settings.json",
+                     ".codex/config.toml", ".gemini/settings.json", ".github/workflows/ci.yml",
+                     ".agentsrc", "docs/.agents/x.md", ".claude/agents.md"):
+            with self.subTest(name=name):
+                self.assertFalse(context_changed([name]))
+        self.assertFalse(context_changed([]))
+
+    def test_go_packages_selects_cgo_and_assembler_inputs(self):
+        # Positive: every suffix go/build compiles into a package selects that package, not
+        # only .go, .c, .h, .cc and .cpp.
+        with tempfile.TemporaryDirectory(prefix="praetor-cgo-scope-") as temp:
+            root = Path(temp)
+            (root / "go.mod").write_text("module example.test/cgoscope\n\ngo 1.27\n")
+            (root / "native").mkdir()
+            (root / "native/native.go").write_text("package native\n")
+            for name in ("native/b.hpp", "native/c.hh", "native/d.cxx", "native/e.S", "native/f.sx",
+                         "native/g.m", "native/h.swig", "native/i.f90"):
+                with self.subTest(name=name):
+                    self.assertEqual(go_packages(root, [name]), ["example.test/cgoscope/native"])
+            # Negative: a documentation file beside the package selects nothing.
+            self.assertEqual(go_packages(root, ["native/README.md"]), [])
+
+    def test_go_packages_rejects_a_package_outside_the_snapshot(self):
+        # Boundary: a package `go list` reports outside the snapshot (a symlinked checkout that
+        # resolves elsewhere) is a HookError naming it, as in local_package_patterns, not an
+        # uncaught ValueError traceback.
+        with tempfile.TemporaryDirectory(prefix="praetor-outside-") as temp, \
+                tempfile.TemporaryDirectory(prefix="praetor-elsewhere-") as elsewhere:
+            root = Path(temp)
+            (root / "go.mod").write_text("module example.test/outside\n\ngo 1.27\n")
+            listing = json.dumps({"Dir": elsewhere, "ImportPath": "example.test/outside"}).encode()
+            with mock.patch("checks.run", return_value=listing), \
+                    self.assertRaisesRegex(HookError, "outside the checked snapshot"):
+                go_packages(root, ["a.go"])
 
     def chart_tree(self, root):
         """A chart, an ordinary templates/ directory and a lookalike file, as one tree.

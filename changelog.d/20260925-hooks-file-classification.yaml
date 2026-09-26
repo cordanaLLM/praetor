@@ -1,0 +1,3 @@
+type: fixed
+title: Run compile-context --verify in the pre-commit hook for changes under .agents/ and the vendor persona directories, select Go packages for every cgo, assembler, Fortran, SWIG and .syso input go/build compiles, send headers, C++ and JSX/TSX sources to the semgrep rules that target their languages, and report a Go package outside the hook snapshot as a hook error instead of a traceback
+breaking: false
