@@ -39,8 +39,11 @@ type ActionCandidate struct {
 	Action         string `json:"action"`
 	CurrentVersion string `json:"current_version"`
 	LatestVersion  string `json:"latest_version"`
-	Deprecated     bool   `json:"deprecated"`
-	Warning        string `json:"warning,omitempty"`
+	// UpToDate is ActionPinCurrent(CurrentVersion, LatestVersion): the pin compared by
+	// SemVer at its own precision, never by raw string equality.
+	UpToDate   bool   `json:"up_to_date"`
+	Deprecated bool   `json:"deprecated"`
+	Warning    string `json:"warning,omitempty"`
 }
 
 // DeprecationWarning details runtime or ecosystem deprecations.

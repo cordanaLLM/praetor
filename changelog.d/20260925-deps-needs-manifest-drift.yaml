@@ -1,0 +1,3 @@
+type: fixed
+title: The committed .needs.yaml is regenerated with the current schema (languages, builder_kits, per-dependency ecosystem, readiness.basis), and praetorctl needs scan --check, run by make verify-all, fails when it falls behind a fresh scan again, ignoring updated_at
+breaking: false

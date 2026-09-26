@@ -11,7 +11,7 @@ func ActionDriftStatus(a ActionCandidate) string {
 	switch {
 	case a.Deprecated:
 		return "[DEPRECATED]"
-	case a.CurrentVersion != a.LatestVersion:
+	case !a.UpToDate:
 		return "[DRIFT]"
 	default:
 		return "[UP-TO-DATE]"

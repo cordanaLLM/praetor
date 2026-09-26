@@ -37,9 +37,6 @@ func TestGenerateSLSAProvenance_Positive_DigestFromArtifactBytes(t *testing.T) {
 	if stmt.Subject[0].Name != "praetorctl-linux-amd64" {
 		t.Errorf("subject name should default to the file's base name, got %q", stmt.Subject[0].Name)
 	}
-	if stmt.Emission != UnsignedEmission() || stmt.Emission.Signed || stmt.Emission.Notice == "" {
-		t.Errorf("statement must carry the unsigned emission marker, got %+v", stmt.Emission)
-	}
 
 	named, err := GenerateSLSAProvenance(t.Context(), ProvenanceRequest{ArtifactPath: path, ArtifactName: "praetorctl", BuilderID: "b", ExpectedSHA256: want})
 	if err != nil {
@@ -50,7 +47,11 @@ func TestGenerateSLSAProvenance_Positive_DigestFromArtifactBytes(t *testing.T) {
 	}
 }
 
-func TestGenerateSLSAProvenance_Positive_JSONMarksStatementUnsigned(t *testing.T) {
+// Positive: the encoded statement holds exactly the four in-toto v1 Statement fields and each
+// subject exactly name and digest. sigstore-go decodes a signed payload with protojson, which
+// rejects any other field, so the praetorEmission extension this test replaced made every
+// release's cosign verify-blob-attestation step fail.
+func TestGenerateSLSAProvenance_Positive_JSONIsStrictInTotoStatement(t *testing.T) {
 	path, _ := writeArtifact(t, "artifact.tar.gz", []byte{0x1f, 0x8b, 0x08})
 	stmt, err := GenerateSLSAProvenance(t.Context(), ProvenanceRequest{ArtifactPath: path, BuilderID: "b"})
 	if err != nil {
@@ -64,15 +65,18 @@ func TestGenerateSLSAProvenance_Positive_JSONMarksStatementUnsigned(t *testing.T
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	var emission Emission
-	if err := json.Unmarshal(decoded["praetorEmission"], &emission); err != nil {
-		t.Fatalf("praetorEmission missing or malformed in %s: %v", data, err)
+	if got := fieldNames(decoded); got != "_type,predicate,predicateType,subject" {
+		t.Errorf("top-level fields = %s, want exactly the in-toto v1 Statement fields", got)
 	}
-	if emission.Signed || emission.SubjectDigest != "computed-from-artifact-bytes" || !strings.Contains(emission.Notice, "unsigned") {
-		t.Errorf("JSON does not mark the statement unsigned: %+v", emission)
+	var subjects []map[string]json.RawMessage
+	if err := json.Unmarshal(decoded["subject"], &subjects); err != nil || len(subjects) != 1 || fieldNames(subjects[0]) != "digest,name" {
+		t.Errorf("subject fields = %v (%v), want exactly digest,name", subjects, err)
 	}
 	if string(decoded["_type"]) != `"https://in-toto.io/Statement/v1"` {
 		t.Errorf("in-toto statement type changed: %s", decoded["_type"])
+	}
+	if err := CheckInTotoStatement(data); err != nil {
+		t.Errorf("generated statement fails the strict in-toto check: %v", err)
 	}
 }
 

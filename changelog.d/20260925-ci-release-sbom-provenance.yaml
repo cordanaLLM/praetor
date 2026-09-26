@@ -1,0 +1,3 @@
+type: fixed
+title: Releases are built into a draft, carry per-archive SBOMs and signed SLSA v1.0 provenance over every checksummed file, verify both bundles and publish last, so immutable releases accept every asset; the racing source-tree sbom.yml workflow and the unsupported SLSA Level 3 claims are gone, praetorctl provenance takes -checksums, digests every listed file from its bytes and writes only the four in-toto v1 Statement fields (the praetorEmission field made cosign verify-blob-attestation reject every signed statement), and plan accepts an SBOM step in the release workflow instead of requiring a file named sbom.yml
+breaking: false

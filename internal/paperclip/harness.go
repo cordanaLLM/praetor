@@ -23,6 +23,12 @@ const (
 	filePerm os.FileMode = 0o644
 	// dirPerm is the mode of the .paperclip directory.
 	dirPerm os.FileMode = 0o755
+	// maxHarnessValues bounds the contract and invariant lines of one harness.
+	maxHarnessValues = 64
+	// maxHarnessValueBytes bounds the length of one harness value.
+	maxHarnessValueBytes = 4096
+	// markdownLineLimit is markdownlint's default MD013 line length.
+	markdownLineLimit = 80
 )
 
 // agitPushFormat is the push protocol every synthesized harness prescribes. The AGit push opens
@@ -161,16 +167,93 @@ func WriteHarness(h *Harness, repoPath string) error {
 }
 
 // renderRules renders the human-readable operating rules of a harness.
+//
+// The file is Markdown an adopter's own lint reads, so it is written to pass markdownlint's
+// default configuration: every heading, list and fence stands between blank lines (MD022,
+// MD031, MD032), and list items are wrapped within markdownLineLimit (MD013) instead of
+// running to the full length a contract line may have. A push command too long to wrap
+// gets a disable scoped to its fence, never one covering the file (BUG-806).
 func renderRules(h *Harness) string {
-	md := fmt.Sprintf("# Paperclip Operating Rules (%s)\n\n## Operating Contract\n", h.Platform)
-	for _, c := range h.OperatingContract {
-		md += fmt.Sprintf("- %s\n", c)
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Paperclip Operating Rules (%s)\n\n## Operating Contract\n\n", h.Platform)
+	writeListItems(&b, h.OperatingContract)
+	b.WriteString("\n## AGit Push Protocol\n\n")
+	writeCommandFence(&b, h.AGitPushFormat)
+	b.WriteString("\n## High-Integrity Invariants\n\n")
+	writeListItems(&b, h.Invariants)
+	return b.String()
+}
+
+// writeListItems writes each value as one wrapped list item.
+func writeListItems(b *strings.Builder, values []string) {
+	for i := 0; i < len(values) && i < maxHarnessValues; i++ {
+		b.WriteString(wrapListItem(values[i]))
 	}
-	md += fmt.Sprintf("\n## AGit Push Protocol\n```bash\n%s\n```\n\n## High-Integrity Invariants\n", h.AGitPushFormat)
-	for _, inv := range h.Invariants {
-		md += fmt.Sprintf("- %s\n", inv)
+}
+
+// writeCommandFence writes command as a bash fence. A command line cannot be wrapped
+// without changing it, so a line over markdownLineLimit gets an MD013 disable scoped to the
+// fence alone.
+func writeCommandFence(b *strings.Builder, command string) {
+	long := false
+	lines := strings.Split(command, "\n")
+	for i := 0; i < len(lines) && i < maxHarnessValueBytes; i++ {
+		long = long || len(lines[i]) > markdownLineLimit
 	}
-	return md
+	if long {
+		b.WriteString("<!-- markdownlint-disable MD013 -->\n\n")
+	}
+	fmt.Fprintf(b, "```bash\n%s\n```\n", command)
+	if long {
+		b.WriteString("\n<!-- markdownlint-enable MD013 -->\n")
+	}
+}
+
+// wrapListItem renders text as one "- " list item whose lines stay within
+// markdownLineLimit, breaking at spaces; continuation lines are indented two spaces so they
+// stay inside the item. A word longer than the limit keeps a line of its own, which
+// markdownlint allows because no whitespace follows the limit.
+func wrapListItem(text string) string {
+	chunks := unbreakableChunks(strings.Fields(text))
+	var b strings.Builder
+	line, count := "-", 0
+	for i := 0; i < len(chunks) && i < maxHarnessValueBytes; i++ {
+		if count > 0 && len(line)+1+len(chunks[i]) > markdownLineLimit {
+			b.WriteString(line + "\n")
+			line, count = " ", 0
+		}
+		line += " " + chunks[i]
+		count++
+	}
+	b.WriteString(line + "\n")
+	return b.String()
+}
+
+// unbreakableChunks joins every word Markdown could read as a heading, list marker or
+// quote at the start of a line onto the word before it, so wrapping never starts a
+// continuation line with one and cannot turn part of an item into a new block.
+func unbreakableChunks(words []string) []string {
+	chunks := make([]string, 0, len(words))
+	for i := 0; i < len(words) && i < maxHarnessValueBytes; i++ {
+		if len(chunks) > 0 && !safeLineStart(words[i]) {
+			chunks[len(chunks)-1] += " " + words[i]
+			continue
+		}
+		chunks = append(chunks, words[i])
+	}
+	return chunks
+}
+
+// safeLineStart reports whether a continuation line may begin with word without Markdown
+// reading it as a heading (ATX, or a setext underline of "=" alone), a bullet or ordered
+// list marker, a block quote, a code fence or an HTML block.
+func safeLineStart(word string) bool {
+	if strings.ContainsAny(word[:1], "#>-+*<") || strings.Trim(word, "=") == "" ||
+		strings.HasPrefix(word, "```") || strings.HasPrefix(word, "~~~") {
+		return false
+	}
+	rest := strings.TrimLeft(word, "0123456789")
+	return rest == word || (rest != "." && rest != ")")
 }
 
 // LoadHarness reads and validates a Paperclip harness configuration.
@@ -208,12 +291,12 @@ func LoadHarnessContext(ctx context.Context, path string) (*Harness, error) {
 }
 
 func validateHarnessValues(values []string) error {
-	if len(values) == 0 || len(values) > 64 {
-		return fmt.Errorf("expected 1..64 values")
+	if len(values) == 0 || len(values) > maxHarnessValues {
+		return fmt.Errorf("expected 1..%d values", maxHarnessValues)
 	}
 	for _, value := range values {
-		if strings.TrimSpace(value) == "" || len(value) > 4096 {
-			return fmt.Errorf("values must be nonempty and at most 4096 bytes")
+		if strings.TrimSpace(value) == "" || len(value) > maxHarnessValueBytes {
+			return fmt.Errorf("values must be nonempty and at most %d bytes", maxHarnessValueBytes)
 		}
 	}
 	return nil

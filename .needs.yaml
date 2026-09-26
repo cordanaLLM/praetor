@@ -1,11 +1,66 @@
 version: 1
 repository: github.com/cordanaLLM/praetor
 language: go
+languages:
+    - go
+    - python
+    - typescript
+    - svelte
 go_version: "1.27"
 framework: github.com/golusoris/golusoris
+builder_kits:
+    - golusoris/golusoris
+    - golusoris/goenvoy
+    - golusoris/pykit
+    - golusoris/sveltesentio
 capabilities:
     required:
         - config.yaml
+        - python.external.mkdocs
+        - python.external.mkdocs_material
+        - python.external.mkdocs_minify_plugin
+        - python.external.pymdown_extensions
+        - ui.external.astrojs_sitemap
+        - ui.external.astrojs_starlight
+        - ui.external.astro
+        - ui.external.sharp
+        - ui.external.typescript
+        - ui.external.types_node
+        - ui.external.types_vscode
+        - ui.external.vscode_languageclient
+        - ui.external.markdownlint_cli2
+        - ui.external.micromark
+        - ui.external.micromark_extension_mdxjs
+        - ui.external.parse5
+        - python.external.babel
+        - python.external.backrefs
+        - python.external.certifi
+        - python.external.charset_normalizer
+        - clikit
+        - python.external.colorama
+        - python.external.csscompressor
+        - python.external.ghp_import
+        - python.external.htmlmin2
+        - python.external.idna
+        - python.external.jinja2
+        - python.external.jsmin
+        - python.external.markdown
+        - python.external.markupsafe
+        - python.external.mergedeep
+        - python.external.mkdocs_get_deps
+        - python.external.mkdocs_material_extensions
+        - python.external.packaging
+        - python.external.paginate
+        - python.external.pathspec
+        - python.external.platformdirs
+        - python.external.pygments
+        - python.external.python_dateutil
+        - python.external.pyyaml
+        - python.external.pyyaml_env_tag
+        - http.client
+        - python.external.six
+        - python.external.urllib3
+        - python.external.watchdog
     optional:
         - clikit.cli
         - mcp.server
@@ -16,13 +71,378 @@ capabilities:
 dependencies:
     - package: gopkg.in/yaml.v3
       version: v3.0.1
+      language: go
+      ecosystem: go
       capability: config.yaml
+      status: covered
+      golusoris_replacement: github.com/golusoris/golusoris/core/codec/yaml
+      notes: YAML parser and serializer; Golusoris core/codec/yaml is the framework's single YAML codec
+    - package: babel
+      version: 2.18.0 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.babel
       status: gap
-      golusoris_replacement: github.com/golusoris/golusoris/config
-      notes: YAML parser and serializer; use Golusoris config or await zero-dependency codec
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: backrefs
+      version: 8.0 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.backrefs
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: certifi
+      version: 2026.7.22 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.certifi
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: charset-normalizer
+      version: 3.5.1 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.charset_normalizer
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: click
+      version: 8.5.0 \
+      language: python
+      ecosystem: pypi
+      capability: clikit
+      status: covered
+      golusoris_replacement: github.com/golusoris/pykit/cli
+      target_builder_kit: golusoris/pykit
+      notes: Composable command line interface kit
+    - package: colorama
+      version: 0.4.6 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.colorama
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: csscompressor
+      version: 0.9.5 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.csscompressor
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: ghp-import
+      version: 2.1.0 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.ghp_import
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: htmlmin2
+      version: 0.1.13 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.htmlmin2
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: idna
+      version: 3.20 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.idna
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: jinja2
+      version: 3.1.6 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.jinja2
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: jsmin
+      version: 3.0.1 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.jsmin
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: markdown
+      version: "3.11"
+      language: python
+      ecosystem: pypi
+      capability: python.external.markdown
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: markupsafe
+      version: 3.0.3 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.markupsafe
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: mergedeep
+      version: 1.3.4 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.mergedeep
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: mkdocs
+      version: 1.6.1 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.mkdocs
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: mkdocs-get-deps
+      version: 0.2.2 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.mkdocs_get_deps
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: mkdocs-material
+      version: 9.7.7 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.mkdocs_material
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: mkdocs-material-extensions
+      version: 1.3.1 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.mkdocs_material_extensions
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: mkdocs-minify-plugin
+      version: 0.8.0 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.mkdocs_minify_plugin
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: packaging
+      version: 26.3 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.packaging
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: paginate
+      version: 0.5.7 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.paginate
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: pathspec
+      version: 1.1.1 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.pathspec
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: platformdirs
+      version: 4.11.15 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.platformdirs
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: pygments
+      version: 2.21.0 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.pygments
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: pymdown-extensions
+      version: 12.1 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.pymdown_extensions
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: python-dateutil
+      version: 2.9.0.post0 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.python_dateutil
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: pyyaml
+      version: 6.0.3 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.pyyaml
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: pyyaml-env-tag
+      version: 1.1 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.pyyaml_env_tag
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: requests
+      version: 2.34.2 \
+      language: python
+      ecosystem: pypi
+      capability: http.client
+      status: covered
+      golusoris_replacement: github.com/golusoris/pykit/client
+      target_builder_kit: golusoris/pykit
+      notes: HTTP library; migrate to PyKit async client
+    - package: six
+      version: 1.17.0 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.six
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: urllib3
+      version: 2.8.0 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.urllib3
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: watchdog
+      version: 6.0.0 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.watchdog
+      status: gap
+      target_builder_kit: golusoris/pykit
+      notes: External PyPI dependency requiring PyKit adapter or evaluation
+    - package: '@astrojs/sitemap'
+      version: 3.7.4
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.astrojs_sitemap
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: '@astrojs/starlight'
+      version: 0.32.6
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.astrojs_starlight
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: astro
+      version: 5.18.2
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.astro
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: sharp
+      version: 0.34.5
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.sharp
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: typescript
+      version: 5.9.3
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.typescript
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: '@types/node'
+      version: 20.19.43
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.types_node
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: '@types/vscode'
+      version: 1.90.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.types_vscode
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: vscode-languageclient
+      version: 9.0.1
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.vscode_languageclient
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: markdownlint-cli2
+      version: 0.23.2
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.markdownlint_cli2
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: micromark
+      version: 4.0.2
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.micromark
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: micromark-extension-mdxjs
+      version: 3.0.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.micromark_extension_mdxjs
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
+    - package: parse5
+      version: 8.0.1
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.parse5
+      status: gap
+      target_builder_kit: golusoris/sveltesentio
+      notes: External npm dependency requiring SvelteSentio adapter or evaluation
 readiness:
-    score: 0
-    total_third_party_deps: 1
-    covered_deps: 0
-    gap_deps: 1
-updated_at: 2026-09-11T00:47:27.837318013Z
+    basis: catalog-declared
+    score: 6.521739130434782
+    total_third_party_deps: 46
+    covered_deps: 3
+    gap_deps: 43
+updated_at: 2026-09-26T20:00:03.831077002Z

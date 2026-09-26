@@ -1,0 +1,3 @@
+type: fixed
+title: Generated Markdown passes markdownlint's default rules — Paperclip rules.md separates headings, lists and its push fence with blank lines and wraps contract lines at 80 columns, the scaffolded CONTRIBUTING, pull request template, security policy and ADR files wrap instead of opening with a file-wide MD013 disable, the adopted AGENTS.md harness scopes its MD013 disable to the harness and disables MD025 only for the repository's own instructions, and the generated auditor and gatekeeper personas separate their command fence from its heading
+breaking: false

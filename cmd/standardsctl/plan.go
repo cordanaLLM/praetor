@@ -5,10 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"path/filepath"
-	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/config"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func printPlanHeader(manifest *config.Manifest, policy *config.ResolvedPolicy) error {
@@ -36,29 +35,6 @@ func printPlanHeader(manifest *config.Manifest, policy *config.ResolvedPolicy) e
 	fmt.Printf("  - Cosign Attestation:        %t\n", policy.SupplyChain.EnforceCosign)
 	fmt.Printf("  - SBOM Generation Required:  %t\n", policy.SupplyChain.RequireSBOM)
 	return nil
-}
-
-// checkPlanDrift inspects the companion files next to the manifest, never the cwd.
-func checkPlanDrift(policy *config.ResolvedPolicy, rootDir string) ([]string, []string) {
-	var missing []string
-	var drift []string
-
-	for _, rel := range []string{".standards.lock", "AGENTS.md", ".config/labels.yaml"} {
-		if !util.FileExists(filepath.Join(rootDir, filepath.FromSlash(rel))) {
-			missing = append(missing, rel)
-		}
-	}
-
-	if policy.BranchProtection.EnforceLinearHistory || policy.BranchProtection.RequireSignedCommits {
-		if !util.FileExists(filepath.Join(rootDir, ".github", "rulesets", "main.json")) {
-			drift = append(drift, ".github/rulesets/main.json (Branch protection ruleset missing)")
-		}
-	}
-	if policy.SupplyChain.RequireSBOM && !util.FileExists(filepath.Join(rootDir, ".github", "workflows", "sbom.yml")) {
-		drift = append(drift, ".github/workflows/sbom.yml (SBOM & SLSA Level 3 workflow missing)")
-	}
-
-	return missing, drift
 }
 
 // planEffectivePolicy resolves the same policy the audit will enforce.
@@ -112,22 +88,11 @@ func runPlan(args []string) error {
 	if err := printPlanHeader(manifest, policy); err != nil {
 		return err
 	}
-	missing, drift := checkPlanDrift(policy, filepath.Dir(*configPath))
-
-	if len(missing) > 0 || len(drift) > 0 {
-		if len(missing) > 0 {
-			fmt.Printf("\n[DRIFT] Missing baseline files: %s\n", strings.Join(missing, ", "))
-		}
-		if len(drift) > 0 {
-			fmt.Printf("\n[DRIFT] Policy drift detected:\n")
-			for _, d := range drift {
-				fmt.Printf("  - %s\n", d)
-			}
-		}
-		fmt.Println("\nAction: Run 'praetorctl sync' to reconcile repository configuration.")
-	} else {
-		fmt.Println("\nStatus: Local state matches declared policy. No changes required.")
+	// The companion files are inspected next to the manifest, never the cwd.
+	missing, drift, err := adopt.PlanDrift(context.Background(), filepath.Dir(*configPath), policy)
+	if err != nil {
+		return err
 	}
-
+	fmt.Println(adopt.FormatPlanStatus(missing, drift))
 	return nil
 }

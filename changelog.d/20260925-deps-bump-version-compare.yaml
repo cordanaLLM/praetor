@@ -1,0 +1,3 @@
+type: fixed
+title: praetorctl bump classifies every SemVer prerelease (-next, -canary, -pre, -snapshot, Go pseudo-versions) off the stable channel, compares workflow action pins by SemVer at the tag's precision so an exact v4.1.2 is no longer drift against a v4 baseline, and skips commented-out uses lines
+breaking: false

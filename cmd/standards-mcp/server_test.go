@@ -640,7 +640,7 @@ func TestServer_Positive_PlanShowsThePinnedProfilePolicy(t *testing.T) {
 		"Configured Reviewer Minimum: 2",
 		"SLSA Provenance Level:     3",
 		"SBOM Generation Required:  true",
-		".github/workflows/sbom.yml (SBOM & SLSA Level 3 workflow missing)",
+		".github/workflows (no workflow generates an SBOM",
 	} {
 		expectText(t, "joined plan", plan, want)
 	}

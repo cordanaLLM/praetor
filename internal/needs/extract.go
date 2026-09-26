@@ -14,7 +14,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/topology"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
 )
 
 // maxPathSegments bounds the per-path segment loop in shouldSkipDir (HISS-02).
@@ -434,10 +433,10 @@ func WriteNeedsManifest(repoPath string, repoNeeds *RepoNeeds) error {
 	if repoNeeds == nil {
 		return fmt.Errorf("needs: cannot write a nil manifest for %q", repoPath)
 	}
-	targetFile := filepath.Join(repoPath, ".needs.yaml")
-	data, err := yaml.Marshal(repoNeeds)
+	targetFile := filepath.Join(repoPath, NeedsManifestName)
+	data, err := marshalNeedsManifest(repoNeeds)
 	if err != nil {
-		return fmt.Errorf("failed to marshal needs manifest: %w", err)
+		return err
 	}
 	if err := util.WriteFileSecure(targetFile, data, util.SecureFilePerm); err != nil {
 		return fmt.Errorf("failed to write %s: %w", targetFile, err)

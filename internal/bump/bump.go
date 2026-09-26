@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/semver"
 )
 
 const (
@@ -15,21 +17,56 @@ const (
 	maxManifestDependencies = 1000
 )
 
-// ClassifyChannel determines the release channel from a SemVer string.
+// channelMarkers maps prerelease markers to their channel, most specific first. Every
+// marker not listed as rc, beta or alpha is a nightly-grade build.
+var channelMarkers = [...]struct {
+	marker  string
+	channel ReleaseChannel
+}{
+	{"rc", ChannelRC},
+	{"beta", ChannelBeta},
+	{"alpha", ChannelAlpha},
+	{"nightly", ChannelNightly},
+	{"dev", ChannelNightly},
+	{"preview", ChannelNightly},
+	{"next", ChannelNightly},
+	{"canary", ChannelNightly},
+	{"snapshot", ChannelNightly},
+	{"pre", ChannelNightly},
+}
+
+// ClassifyChannel determines the release channel of a version string.
+//
+// A SemVer version is stable only without a prerelease component: "1.2.3-next.1",
+// "-canary", "-pre", "-snapshot" and Go pseudo-versions are prereleases whatever their
+// marker says, so none of them reaches the stable channel and slips past
+// IncludePrerelease (BUG-421). A known leading marker picks rc, beta or alpha; any other
+// prerelease is nightly. A string that is not SemVer falls back to the marker table,
+// matched as "-<marker>", and is stable when none matches.
 func ClassifyChannel(version string) ReleaseChannel {
-	vLower := strings.ToLower(version)
-	switch {
-	case strings.Contains(vLower, "-rc"):
-		return ChannelRC
-	case strings.Contains(vLower, "-beta"):
-		return ChannelBeta
-	case strings.Contains(vLower, "-alpha"):
-		return ChannelAlpha
-	case strings.Contains(vLower, "-nightly") || strings.Contains(vLower, "-dev") || strings.Contains(vLower, "-preview"):
-		return ChannelNightly
-	default:
-		return ChannelStable
+	if v, ok := semver.Parse(version); ok {
+		if !v.IsPrerelease() {
+			return ChannelStable
+		}
+		return prereleaseChannel(strings.ToLower(v.Prerelease))
 	}
+	vLower := strings.ToLower(version)
+	for i := 0; i < len(channelMarkers); i++ {
+		if strings.Contains(vLower, "-"+channelMarkers[i].marker) {
+			return channelMarkers[i].channel
+		}
+	}
+	return ChannelStable
+}
+
+// prereleaseChannel classifies a SemVer prerelease component by its leading marker.
+func prereleaseChannel(prerelease string) ReleaseChannel {
+	for i := 0; i < len(channelMarkers); i++ {
+		if strings.HasPrefix(prerelease, channelMarkers[i].marker) {
+			return channelMarkers[i].channel
+		}
+	}
+	return ChannelNightly
 }
 
 // upgradeAllowed reports whether the channel policy in opts admits target as an upgrade.
