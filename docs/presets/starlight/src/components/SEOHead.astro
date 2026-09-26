@@ -7,10 +7,21 @@
 // URL differ on every page.
 //
 // Starlight 0.32+ passes route data through Astro.locals.starlightRoute, not Astro.props.
+//
+// dateModified is required (`praetorctl seo audit dist` fails a TechArticle without it).
+// Starlight fills lastUpdated only when its `lastUpdated` option is on or the page's
+// frontmatter sets one; otherwise the build time stands in, the same fallback the MkDocs
+// preset uses (page.update_date).
+//
+// author is the site title from astro.config.mjs (`siteTitle`, localized per page), since
+// Starlight has no author option: the site that renders this component names itself, and
+// the component names no project of its own. Schema.org accepts a text string where it
+// expects a Person or Organization (https://schema.org/docs/datamodel.html), and so does the
+// `praetorctl seo audit` author check.
 import Default from '@astrojs/starlight/components/Head.astro';
 import config from 'virtual:starlight/user-config';
 
-const { entry, lang, lastUpdated } = Astro.locals.starlightRoute;
+const { entry, lang, lastUpdated, siteTitle } = Astro.locals.starlightRoute;
 const { data } = entry;
 const canonical = Astro.site ? new URL(Astro.url.pathname, Astro.site).href : undefined;
 
@@ -20,16 +31,10 @@ const techArticle = {
   headline: data.title,
   description: data.description || config.description,
   ...(canonical ? { url: canonical } : {}),
-  ...(lastUpdated ? { dateModified: lastUpdated.toISOString() } : {}),
+  dateModified: (lastUpdated ?? new Date()).toISOString(),
   inLanguage: lang,
   proficiencyLevel: 'Expert',
-  author: {
-    '@type': 'Organization',
-    name: 'cordanaLLM',
-    // Astro.site is operator configuration (DOCS_SITE_URL in astro.config.mjs); unset, the
-    // author carries no URL rather than a guessed one.
-    ...(Astro.site ? { url: Astro.site.href } : {}),
-  },
+  author: siteTitle,
 };
 ---
 

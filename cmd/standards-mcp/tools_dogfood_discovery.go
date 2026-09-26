@@ -64,7 +64,7 @@ func discoveryToolSummary(report *dogfood.DiscoveryReport, runErr error) map[str
 
 func (s *Server) discoveryArguments(args map[string]any) (dogfood.DiscoveryOptions, error) {
 	opts := dogfood.DiscoveryOptions{Stage: "plan", Concurrency: 4, AllowRemote: s.opts.AllowRemoteBenchmarks}
-	if err := validateDiscoveryArguments(args); err != nil {
+	if err := requireStringArguments(args); err != nil {
 		return opts, err
 	}
 	paths := []struct {
@@ -92,19 +92,4 @@ func (s *Server) discoveryArguments(args map[string]any) (dogfood.DiscoveryOptio
 		opts.Stage = stage
 	}
 	return opts, nil
-}
-
-func validateDiscoveryArguments(args map[string]any) error {
-	if len(args) > 5 {
-		return fmt.Errorf("discovery accepts at most five arguments")
-	}
-	for key, value := range args {
-		if key != "path" && key != "config_path" && key != "policy_path" && key != "artifact_dir" && key != "stage" {
-			return fmt.Errorf("unsupported discovery argument %q", key)
-		}
-		if _, ok := value.(string); !ok {
-			return fmt.Errorf("discovery argument %s must be a string", key)
-		}
-	}
-	return nil
 }

@@ -44,14 +44,6 @@ func (s *Server) analyzeContext(ctx context.Context, args map[string]any) (*mcp.
 }
 
 func contextSourceArguments(args map[string]any) ([]string, error) {
-	if len(args) > 2 {
-		return nil, fmt.Errorf("only root and sources arguments are accepted")
-	}
-	for key := range args {
-		if key != "root" && key != "sources" {
-			return nil, fmt.Errorf("only root and sources arguments are accepted; this tool never writes candidates")
-		}
-	}
 	raw, ok := args["sources"].([]any)
 	if !ok || len(raw) == 0 || len(raw) > contextopt.MaxSources {
 		return nil, fmt.Errorf("sources must be an array of 1..%d file paths", contextopt.MaxSources)

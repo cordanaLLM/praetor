@@ -43,7 +43,7 @@ func (s *Server) runDogfoodSuite(ctx context.Context, args map[string]any) (*mcp
 
 func (s *Server) dogfoodSuiteArguments(args map[string]any) (dogfood.SuiteOptions, error) {
 	var opts dogfood.SuiteOptions
-	if err := checkSuiteArguments(args); err != nil {
+	if err := requireStringArguments(args); err != nil {
 		return opts, err
 	}
 	paths := []struct {
@@ -81,19 +81,4 @@ func (s *Server) dogfoodSuiteArguments(args map[string]any) (dogfood.SuiteOption
 		opts.InputRoot = s.rootDir
 	}
 	return opts, nil
-}
-
-func checkSuiteArguments(args map[string]any) error {
-	if len(args) > 4 {
-		return fmt.Errorf("suite accepts at most four arguments")
-	}
-	for key, value := range args {
-		if key != "config_path" && key != "artifact_dir" && key != "source_root" && key != "stage" {
-			return fmt.Errorf("unsupported suite argument %q", key)
-		}
-		if _, ok := value.(string); !ok {
-			return fmt.Errorf("suite argument %s must be a string", key)
-		}
-	}
-	return nil
 }

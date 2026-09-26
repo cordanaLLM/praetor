@@ -8,6 +8,8 @@ on:
       - 'docs/**'
       - 'mkdocs.yml'
       - 'scripts/docs_mermaid.py'
+      - 'internal/seo/**'
+      - 'cmd/standardsctl/seo.go'
       - '.github/workflows/pages.yml'
   pull_request:
     branches:
@@ -16,6 +18,8 @@ on:
       - 'docs/**'
       - 'mkdocs.yml'
       - 'scripts/docs_mermaid.py'
+      - 'internal/seo/**'
+      - 'cmd/standardsctl/seo.go'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -67,6 +71,21 @@ jobs:
       # the artifact is uploaded when a ```mermaid block is not a <pre class="mermaid">.
       - name: Verify Mermaid Diagrams Render
         run: python3 -B scripts/docs_mermaid.py --config mkdocs.yml --docs docs --site site
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+          cache: false
+
+      - name: Restore Go Module And Build Caches
+        uses: ./.github/actions/go-cache
+        with:
+          job: pages-build
+          go-version: '1.27'
+
+      - name: SEO Integrity Audit
+        run: go run ./cmd/standardsctl seo audit site
 
       - name: Upload Pages Artifact
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

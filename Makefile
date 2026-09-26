@@ -173,6 +173,13 @@ verify-all: docs-mermaid-test
 docs-mermaid-test:
 	python3 -B scripts/test_docs_mermaid.py
 
+# The presets' JSON-LD must read identity from the site's config, never name this project:
+# a source check always, and rendered MkDocs builds when mkdocs-material is installed.
+.PHONY: docs-seo-presets-test
+verify-all: docs-seo-presets-test
+docs-seo-presets-test:
+	python3 -B scripts/test_docs_seo_presets.py
+
 notebook-test:
 	python3 -B scripts/test_notebooklm_export.py
 	python3 -B scripts/test_planning_import.py

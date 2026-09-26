@@ -171,9 +171,9 @@ func (s *Server) dispatchStdioLine(ctx context.Context, line stdioLine, out io.W
 		return
 	}
 
-	var req JSONRPCRequest
-	if err := json.Unmarshal(line.data, &req); err != nil {
-		writeStdioResponse(out, parseErrorResponse("Parse error: invalid JSON-RPC payload"))
+	req, failure := decodeRequest(line.data)
+	if failure != nil {
+		writeStdioResponse(out, failure)
 		return
 	}
 
@@ -182,12 +182,71 @@ func (s *Server) dispatchStdioLine(ctx context.Context, line stdioLine, out io.W
 	}
 }
 
-// parseErrorResponse builds the id-less -32700 response.
+// parseErrorResponse builds the -32700 response; its id is null because an unparsable
+// message has no readable id.
 func parseErrorResponse(message string) *JSONRPCResponse {
-	return &JSONRPCResponse{
-		JSONRPC: "2.0",
-		Error:   &JSONRPCError{Code: -32700, Message: message},
+	return errorResponse(nil, codeParseError, message)
+}
+
+// decodeRequest parses one JSON-RPC message for every transport. Text that is not JSON is
+// a parse error (-32700). JSON that is not a request object is an Invalid Request
+// (-32600): an array (batching is not part of MCP 2024-11-05), a scalar, a member of the
+// wrong type, or an id that is null (MCP forbids it) or neither string nor number. An
+// error carries the id when it was readable and null otherwise. A numeric id is kept as
+// json.Number so the response echoes it exactly, beyond float64 precision. Members are
+// read by exact name: JSON-RPC member names are case-sensitive, while encoding/json
+// matches struct fields case-insensitively and would serve {"JSONRPC":"2.0","Method":...}.
+func decodeRequest(data []byte) (JSONRPCRequest, *JSONRPCResponse) {
+	if !json.Valid(data) {
+		return JSONRPCRequest{}, parseErrorResponse("Parse error: invalid JSON")
 	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil || members == nil {
+		return JSONRPCRequest{}, errorResponse(nil, codeInvalidRequest, "Invalid Request: expected a JSON-RPC request object")
+	}
+	id, err := decodeRequestID(members["id"])
+	if err != nil {
+		return JSONRPCRequest{}, errorResponse(nil, codeInvalidRequest, "Invalid Request: "+err.Error())
+	}
+	req := JSONRPCRequest{ID: id, Params: members["params"]}
+	for _, member := range []struct {
+		name   string
+		target *string
+	}{{"jsonrpc", &req.JSONRPC}, {"method", &req.Method}} {
+		raw, present := members[member.name]
+		if !present {
+			continue
+		}
+		if err := json.Unmarshal(raw, member.target); err != nil {
+			return JSONRPCRequest{}, errorResponse(id, codeInvalidRequest, fmt.Sprintf("Invalid Request: %s must be a string", member.name))
+		}
+	}
+	return req, nil
+}
+
+// decodeRequestID reads a present id member; an absent one (nil raw) marks a notification.
+func decodeRequestID(raw json.RawMessage) (any, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var id any
+	if err := dec.Decode(&id); err != nil {
+		return nil, fmt.Errorf("decode id: %w", err)
+	}
+	switch id.(type) {
+	case string, json.Number:
+		return id, nil
+	default:
+		return nil, errors.New("id must be a string or a number")
+	}
+}
+
+// envelopeRejected reports a response that refuses the message itself (parse error or
+// invalid request) rather than answering a well-formed request.
+func envelopeRejected(resp *JSONRPCResponse) bool {
+	return resp.Error != nil && (resp.Error.Code == codeParseError || resp.Error.Code == codeInvalidRequest)
 }
 
 // writeStdioResponse serializes a JSON-RPC response as one line on out.
@@ -245,7 +304,16 @@ func (s *Server) handleJSONRPC(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
+	writeRPCResponse(w, resp)
+}
+
+// writeRPCResponse writes a JSON-RPC response body: 400 Bad Request when the response
+// refuses the message itself (parse error, invalid request), 200 otherwise.
+func writeRPCResponse(w http.ResponseWriter, resp *JSONRPCResponse) {
 	w.Header().Set("Content-Type", "application/json")
+	if envelopeRejected(resp) {
+		w.WriteHeader(http.StatusBadRequest)
+	}
 	writeJSON(w, resp)
 }
 
@@ -258,11 +326,9 @@ func readJSONRPCBody(w http.ResponseWriter, r *http.Request) (JSONRPCRequest, bo
 		return JSONRPCRequest{}, false
 	}
 
-	var req JSONRPCRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, parseErrorResponse("Parse error"))
+	req, failure := decodeRequest(body)
+	if failure != nil {
+		writeRPCResponse(w, failure)
 		return JSONRPCRequest{}, false
 	}
 	return req, true

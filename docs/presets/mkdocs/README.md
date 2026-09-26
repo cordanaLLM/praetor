@@ -2,7 +2,8 @@
 
 Documentation preset powered by [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) pre-configured with:
 
-- **Schema.org JSON-LD Structured Data**: Injected automatically into the HTML `<head>` via template overrides.
+- **Schema.org JSON-LD Structured Data**: `overrides/main.html` adds a per-page `TechArticle` (title, description, canonical URL, author, `dateModified`) and a site-wide `SoftwareSourceCode` block to every page `<head>`. `dateModified` is `page.update_date`, the build date MkDocs also writes as the page's sitemap `<lastmod>`. This repository's own `mkdocs.yml` points `theme.custom_dir` at the same directory, so the live site renders this template rather than a copy.
+- **Identity from your `mkdocs.yml`**: the template names no project of its own. The `TechArticle` author is `site_author`, or `site_name` when that is unset. The `SoftwareSourceCode` block needs a repository (`extra.source_code.repository`, else `repo_url`) and `extra.source_code.programming_language`; `extra.source_code.name` (default `site_name`), `license` and `runtime_platform` are optional. Without a language the block is left out, and `404.html`, which has no page and therefore no `TechArticle`, then carries no JSON-LD. The shipped `mkdocs.yml` holds placeholders (`example-org/example-repo`, `PlaceholderLang`): replace them with your project's values. `scripts/test_docs_seo_presets.py` builds the template against sample configs.
 - **Automated Sitemap Generation**: `site/sitemap.xml` and `site/sitemap.xml.gz` are written by MkDocs core from the `nav` tree, so no sitemap plugin is installed or configured. Entries need `DOCS_SITE_URL` (see [Site URL](#site-url)).
 - **HTML/CSS/JS Minification**: Configured with `mkdocs-minify-plugin`.
 - **Mermaid Diagrams & PyMdown SuperFences**: Native diagrams rendered directly in documentation markdown.
@@ -24,7 +25,16 @@ mkdocs serve
 ```bash
 DOCS_SITE_URL=https://<owner>.github.io/<repo>/ mkdocs build --strict
 # Built artifacts in site/ with sitemap.xml and minified HTML
+praetorctl seo audit site
 ```
+
+`praetorctl seo audit` (`cmd/standardsctl/seo.go`) reads the built `site/`: every page head must carry
+valid JSON-LD, and every root `sitemap*.xml` and any `robots.txt` must validate. It exits non-zero on
+any finding; `--json` prints the full report and `--require-robots` fails a site without `robots.txt`.
+A page head (title, meta tags, JSON-LD) that still carries a preset placeholder
+(`example-org/example-repo` or `PlaceholderLang`) is a finding too; body text may name them.
+`--allow-placeholders` skips that check, which is how CI audits the unedited preset.
+The rules are the `internal/seo` validators, tested in `internal/seo/site_test.go`.
 
 ## Site URL
 

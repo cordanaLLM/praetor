@@ -1,0 +1,3 @@
+type: added
+title: Add `praetorctl seo audit [site-dir]`, which audits a built documentation site's page-head JSON-LD, root sitemaps and robots.txt through internal/seo and exits non-zero on any finding; ValidateTechArticle now requires author and dateModified, both presets emit dateModified, and the live mkdocs.yml renders the preset's JSON-LD head through theme.custom_dir; both presets' JSON-LD now reads author and repository from the site's own config (site_author/site_name and extra.source_code in mkdocs.yml, the site title and the sourceCode constant in astro.config.mjs) instead of hard-coding this project
+breaking: false

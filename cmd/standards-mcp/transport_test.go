@@ -537,3 +537,107 @@ func TestSSE_Boundary_RegistryLimitsAndDelivery(t *testing.T) {
 		t.Error("delivery into a full undrained queue succeeded")
 	}
 }
+
+// ---- JSON-RPC 2.0 framing -------------------------------------------------------------------
+
+// stdioLines runs input through runStdio and returns the raw response lines.
+func stdioLines(t *testing.T, input string) []string {
+	t.Helper()
+	srv, _ := newFixtureServer(t)
+	out, err := runStdioWith(t, srv, input)
+	if err != nil {
+		t.Fatalf("runStdio: %v", err)
+	}
+	if strings.TrimSpace(out) == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimSpace(out), "\n")
+}
+
+func TestStdio_Negative_InvalidMessagesCarryNullOrReadableID(t *testing.T) {
+	cases := []struct {
+		line string
+		code int
+		id   string
+	}{
+		{"not json", codeParseError, `"id":null`},
+		{`[{"jsonrpc":"2.0","id":1,"method":"ping"}]`, codeInvalidRequest, `"id":null`},
+		{`"a scalar"`, codeInvalidRequest, `"id":null`},
+		{`null`, codeInvalidRequest, `"id":null`},
+		{`{"jsonrpc":"2.0","id":null,"method":"ping"}`, codeInvalidRequest, `"id":null`},
+		{`{"jsonrpc":"2.0","id":{"a":1},"method":"ping"}`, codeInvalidRequest, `"id":null`},
+		{`{"id":5,"method":"ping"}`, codeInvalidRequest, `"id":5`},
+		{`{"jsonrpc":"2.0","id":6}`, codeInvalidRequest, `"id":6`},
+		{`{"JSONRPC":"2.0","id":7,"Method":"ping"}`, codeInvalidRequest, `"id":7`},
+		{`{"jsonrpc":"2.0","id":8,"method":42}`, codeInvalidRequest, `"id":8`},
+		{`{"jsonrpc":2,"id":9,"method":"ping"}`, codeInvalidRequest, `"id":9`},
+	}
+	input := make([]string, 0, len(cases))
+	for _, tc := range cases {
+		input = append(input, tc.line)
+	}
+	lines := stdioLines(t, strings.Join(input, "\n")+"\n")
+	if len(lines) != len(cases) {
+		t.Fatalf("got %d responses for %d invalid messages:\n%s", len(lines), len(cases), strings.Join(lines, "\n"))
+	}
+	for i, tc := range cases {
+		responses := decodeLines(t, lines[i])
+		if responses[0].Error == nil || responses[0].Error.Code != tc.code || !strings.Contains(lines[i], tc.id) {
+			t.Errorf("%s -> %s, want code %d and %s", tc.line, lines[i], tc.code, tc.id)
+		}
+	}
+}
+
+func TestStdio_Boundary_NotificationsSilentAndIDsEchoedExactly(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}`,
+		`{"jsonrpc":"2.0","method":"unknown/notification"}`,
+		`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"standards_explain_rule","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":12345678901234567890,"method":"ping"}`,
+		`{"jsonrpc":"2.0","id":"req-a","method":"ping"}`,
+		`{"jsonrpc":"2.0","id":0,"method":"ping"}`,
+	}, "\n") + "\n"
+	lines := stdioLines(t, input)
+	want := []string{
+		`{"jsonrpc":"2.0","id":12345678901234567890,"result":{}}`,
+		`{"jsonrpc":"2.0","id":"req-a","result":{}}`,
+		`{"jsonrpc":"2.0","id":0,"result":{}}`,
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("notifications must get no reply; got %d lines:\n%s", len(lines), strings.Join(lines, "\n"))
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("response %d = %s, want %s", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestHTTP_Negative_InvalidEnvelopeAndNotification(t *testing.T) {
+	srv, _ := newFixtureServer(t)
+	ts := httptest.NewServer(srv.httpHandler())
+	defer ts.Close()
+	client := ts.Client()
+
+	cases := []struct {
+		body, want string
+		status     int
+	}{
+		{`{"id":1,"method":"ping"}`, `{"jsonrpc":"2.0","id":1,"error":{"code":-32600,`, http.StatusBadRequest},
+		{"{", `{"jsonrpc":"2.0","id":null,"error":{"code":-32700,`, http.StatusBadRequest},
+		{`{"jsonrpc":"2.0","method":"unknown/notification"}`, "", http.StatusAccepted},
+		{`{"jsonrpc":"2.0","id":2,"method":"nope"}`, `{"jsonrpc":"2.0","id":2,"error":{"code":-32601,`, http.StatusOK},
+	}
+	for _, tc := range cases {
+		resp := doJSON(t, client, ts.URL+"/", tc.body, nil)
+		body, err := io.ReadAll(resp.Body)
+		closeBody(t, resp)
+		if err != nil {
+			t.Fatalf("%s: read body: %v", tc.body, err)
+		}
+		got := strings.TrimSpace(string(body))
+		if resp.StatusCode != tc.status || !strings.HasPrefix(got, tc.want) || (tc.want == "" && got != "") {
+			t.Errorf("%s: status %d body %q, want %d with prefix %q", tc.body, resp.StatusCode, got, tc.status, tc.want)
+		}
+	}
+}

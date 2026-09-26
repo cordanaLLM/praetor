@@ -276,6 +276,15 @@ The mapping from a page to its HTML file assumes the default
 fixtures in `scripts/test_docs_mermaid.py` and asserts that both configuration
 files declare the fence, so removing it fails without a site build.
 
+Both sites share one JSON-LD template, `docs/presets/mkdocs/overrides/main.html`,
+which reads the author and repository from the rendering site's `mkdocs.yml`
+(see the [MkDocs preset README](../presets/mkdocs/README.md)).
+`make docs-seo-presets-test` (part of `make verify-all`) runs
+`scripts/test_docs_seo_presets.py`: neither preset template may name a project
+of its own, and when `mkdocs-material` is installed, one-page builds check what
+the template renders for sample configurations. Without it those builds are
+skipped with that reason.
+
 Links from a page to a repository file outside `docs/` use the file's GitHub
 URL. MkDocs cannot resolve a relative link that leaves `docs/`, and strict
 mode turns that warning into a failed build.
