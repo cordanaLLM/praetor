@@ -2,7 +2,6 @@ package adopt
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -30,23 +29,46 @@ func newAdoptionManifest(ctx context.Context, s *adoptSession) (*config.Manifest
 }
 
 func adoptionRegisterSources(ctx context.Context, s *adoptSession) (*config.RegisterSources, error) {
-	harness, err := paperclip.SynthesizeHarness(ctx, s.repoPath)
+	data, err := adoptionHarnessDocument(ctx, s)
 	if err != nil {
-		return nil, fmt.Errorf("synthesize source coverage harness: %w", err)
-	}
-	data, err := json.Marshal(harness)
-	if err != nil {
-		return nil, fmt.Errorf("marshal source coverage harness: %w", err)
+		return nil, err
 	}
 	inputs := []config.RegisterSourceInput{
 		{Path: paperclipFile, Surface: config.SurfacePrompts, Kind: "message", Format: config.SourceFormatJSON, Selector: "operating_contract.*"},
 		{Path: paperclipFile, Surface: config.SurfacePrompts, Kind: "message", Format: config.SourceFormatJSON, Selector: "invariants.*"},
 	}
-	coverage, err := cavemansource.CoverageFromDocuments(inputs, map[string][]byte{paperclipFile: data})
+	coverage, err := cavemansource.CoverageFromDocuments(ctx, inputs, map[string][]byte{paperclipFile: data})
 	if err != nil {
 		return nil, fmt.Errorf("compute source coverage harness: %w", err)
 	}
-	return &config.RegisterSources{Expected: len(coverage.Sources), SHA256: coverage.SHA256, Inputs: inputs}, nil
+	return &config.RegisterSources{Expected: coverage.Applicable, NotApplicable: coverage.NotApplicable,
+		SHA256: coverage.SHA256, Inputs: inputs}, nil
+}
+
+func adoptionHarnessDocument(ctx context.Context, s *adoptSession) ([]byte, error) {
+	path, err := repoFile(s.repoPath, paperclipFile)
+	if err != nil {
+		return nil, err
+	}
+	if fileExists(path) && !s.opts.Force {
+		if _, err := paperclip.LoadHarnessContext(ctx, path); err != nil {
+			return nil, fmt.Errorf("validate existing source coverage harness: %w", err)
+		}
+		data, err := contextopt.ReadSnapshot(ctx, path)
+		if err != nil {
+			return nil, fmt.Errorf("read existing source coverage harness: %w", err)
+		}
+		return data, nil
+	}
+	harness, err := paperclip.SynthesizeHarness(ctx, s.repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("synthesize source coverage harness: %w", err)
+	}
+	data, err := paperclip.MarshalHarness(harness)
+	if err != nil {
+		return nil, fmt.Errorf("marshal source coverage harness: %w", err)
+	}
+	return data, nil
 }
 
 func planPolicyCatalog(ctx context.Context, s *adoptSession) error {
@@ -103,7 +125,12 @@ func plannedManifestBytes(ctx context.Context, s *adoptSession) ([]byte, error) 
 		return nil, err
 	}
 	if exists && !s.opts.Force {
-		return data, nil
+		sources, err := adoptionRegisterSources(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		planned, _, err := addManifestSources(ctx, data, sources)
+		return planned, err
 	}
 	manifest, err := newAdoptionManifest(ctx, s)
 	if err != nil {

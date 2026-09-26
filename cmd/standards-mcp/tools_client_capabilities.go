@@ -21,11 +21,11 @@ func (s *Server) clientCapabilities(ctx context.Context, args map[string]any) (*
 	}
 	report, err := clientsetup.Capabilities(ctx)
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	data, err := json.Marshal(report)
 	if err != nil {
 		return nil, fmt.Errorf("encode client capabilities: %w", err)
 	}
-	return mcp.TextResult(string(data)), nil
+	return mcpTextResult(string(data), mcpTextStructuredJSON), nil
 }

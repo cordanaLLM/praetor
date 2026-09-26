@@ -55,7 +55,7 @@ def record_and_evaluate(diff_content: str, error_category: str) -> bool:
         if all(h == state_hash for h in recent):
             sys.stderr.write(
                 f"\n[LOOP INTERCEPTOR ACTIVATED - EXIT CODE 42]\n"
-                f"Agent detected in a repeated failure loop ({MAX_REPEATS} identical cycles).\n"
+                f"loop: repeated failure; identical_cycles: {MAX_REPEATS}.\n"
                 f"Error Category: {error_category}\n"
                 f"Halting tool execution to prevent context exhaustion and hallucination.\n"
                 f"Action Required: Revisit architectural assumptions, read authoritative documentation, or escalate to operator.\n\n"
@@ -86,4 +86,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

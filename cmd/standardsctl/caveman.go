@@ -66,7 +66,7 @@ func cavemanCommand(ctx context.Context, args []string, stdin io.Reader, out io.
 // cavemanCheck prints one summary line per input and its findings, and fails when any
 // input breaks a rule. --kind defaults to runtime message grammar; brief and return add
 // schemas, while context selects the policy-document profile. With --surface it first
-// resolves the register from --root and skips when the surface is not internal. --max-words
+// resolves the register from --root and errors when the surface is not internal. --max-words
 // and --max-tokens are opt-in ceilings (0 means none).
 func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Writer) error {
 	fset := flag.NewFlagSet("caveman check", flag.ContinueOnError)
@@ -82,13 +82,19 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	if err := fset.Parse(args); err != nil {
 		return err
 	}
+	explicit := visitedFlags(fset)
+	if *surface == string(config.SurfaceHooks) && !explicit["ext"] {
+		// Naming the hooks surface is the explicit opt-in requested by the hook-directory
+		// contract. Ordinary directory checks retain the historical Markdown-only default.
+		*extensions = ".sh,.py"
+	}
 	kind := caveman.MessageKind(*kindName)
 	if !kind.Valid() {
 		return fmt.Errorf("caveman check: unsupported kind %q (want message, brief, return, or context)", *kindName)
 	}
 	inputs, err := prepareCavemanCheckInputs(ctx, stdin, cavemanCheckRequest{
 		root: *root, surface: *surface, kind: kind, extensions: *extensions,
-		selectors: selectors, configured: *configured, args: fset.Args(), explicit: visitedFlags(fset),
+		selectors: selectors, configured: *configured, args: fset.Args(), explicit: explicit,
 	})
 	if err != nil {
 		return err
@@ -180,6 +186,9 @@ func filterCavemanSources(ctx context.Context, root string, declared []cavemanso
 	decisions := make(map[config.RegisterSurface]bool)
 	inputs := make([]cavemanInput, 0, len(declared))
 	for _, source := range declared {
+		if source.NotApplicable != "" {
+			continue
+		}
 		if _, ok := decisions[source.Surface]; !ok {
 			decisions[source.Surface], err = policy.LintEnforced(source.Surface)
 			if err != nil {
@@ -267,14 +276,14 @@ func validateAdHocSourceRequest(request cavemanCheckRequest, sourcePath string) 
 
 func adHocSourceSelectors(base config.RegisterSourceInput, selectors []string, sourcePath string) ([]config.RegisterSourceInput, error) {
 	format := base.Format
-	structured := format == config.SourceFormatJSON || format == config.SourceFormatYAML
-	if structured && len(selectors) == 0 {
+	selected := format == config.SourceFormatGo || format == config.SourceFormatJSON || format == config.SourceFormatYAML
+	if selected && len(selectors) == 0 {
 		return nil, fmt.Errorf("caveman check: %s requires at least one --selector", sourcePath)
 	}
-	if !structured && len(selectors) > 0 {
-		return nil, fmt.Errorf("caveman check: --selector applies only to JSON/YAML, not %s", sourcePath)
+	if !selected && len(selectors) > 0 {
+		return nil, fmt.Errorf("caveman check: --selector applies only to Go/JSON/YAML, not %s", sourcePath)
 	}
-	if !structured {
+	if !selected {
 		return []config.RegisterSourceInput{base}, nil
 	}
 	inputs := make([]config.RegisterSourceInput, len(selectors))
@@ -307,6 +316,8 @@ func sourceFormatForExtension(extension string) (config.RegisterSourceFormat, er
 		return config.SourceFormatShell, nil
 	case ".py":
 		return config.SourceFormatPython, nil
+	case ".go":
+		return config.SourceFormatGo, nil
 	case ".json":
 		return config.SourceFormatJSON, nil
 	case ".yaml", ".yml":

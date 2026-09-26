@@ -79,10 +79,12 @@ register:
     inline_max_lines: 58
     inline_max_tokens: 1500
   # Non-Markdown agent text coverage. Expected count + aggregate digest bind the
-  # complete selected inventory; deleting one value or selector fails the gate.
+  # complete prompt, hook-diagnostic, and MCP runtime inventory selected below;
+  # deleting one value or selector fails the gate.
   sources:
-    expected: 13
-    sha256: "sha256:379ed75c80c3964903e035547305942986288277feec676ff1796832464dbbdb"
+    expected: 249
+    not_applicable: 114
+    sha256: "sha256:e36aa3ecf2d777f6a9b69d292becb0fcdf6e855e6abd1dfcbe2f8520c28eb8e6"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts
@@ -94,6 +96,29 @@ register:
         kind: message
         format: json
         selector: "invariants.*"
+      - path: ".config/semgrep/hiss-invariants.yml"
+        surface: hooks
+        kind: message
+        format: yaml
+        selector: "rules.*.message"
+      - path: ".config/agent/hooks"
+        surface: hooks
+        kind: message
+        format: python
+      - path: ".config/lefthook/scripts"
+        surface: hooks
+        kind: message
+        format: python
+      - path: "cmd/standards-mcp"
+        surface: mcp
+        kind: message
+        format: go
+        selector: "mcp.descriptions"
+      - path: "cmd/standards-mcp"
+        surface: mcp
+        kind: message
+        format: go
+        selector: "mcp.outputs"
 
 # Framework capability demand declarations towards upstream Golusoris
 needs:

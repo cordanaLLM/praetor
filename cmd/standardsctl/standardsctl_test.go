@@ -487,6 +487,7 @@ func TestDispatchCommand_AdoptPlanSyncInitHelp(t *testing.T) {
 
 func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 	tmpDir := newAuditFixture(t).dir
+	paperclipDir := t.TempDir()
 
 	// Paperclip help
 	if err := dispatchCommand("paperclip", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
@@ -504,8 +505,10 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 		t.Fatalf("paperclip harness without an identity wrote .paperclip: %v", statErr)
 	}
 
-	// Paperclip harness synthesis for the identity the fixture manifest declares
-	if err := dispatchCommand("paperclip", []string{"harness", "--path=" + tmpDir}); err != nil {
+	// Paperclip harness synthesis for a declared identity, outside the audit fixture so its
+	// register.sources contract keeps binding the fixture's own harness.
+	writeFixtureFile(t, paperclipDir, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n")
+	if err := dispatchCommand("paperclip", []string{"harness", "--path=" + paperclipDir}); err != nil {
 		t.Fatalf("paperclip harness failed: %v", err)
 	}
 
@@ -514,7 +517,7 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 		"disposition",
 		"--issue=ISS-42",
 		"--status=in_review",
-		"--output=" + filepath.Join(tmpDir, "disposition.json"),
+		"--output=" + filepath.Join(paperclipDir, "disposition.json"),
 		"--note=Completed task",
 		"--proof=receipt:ed25519:abcdef1234567890",
 	}

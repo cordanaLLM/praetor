@@ -256,7 +256,7 @@ func writeStdioResponse(out io.Writer, resp *JSONRPCResponse) {
 		fmt.Fprintf(os.Stderr, "failed to marshal response: %v\n", err)
 		return
 	}
-	if _, err := fmt.Fprintf(out, "%s\n", data); err != nil {
+	if _, err := fmt.Fprintf(out, mcpClassifiedText("%s\n", mcpTextProtocol), data); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to write response: %v\n", err)
 	}
 }
@@ -281,14 +281,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if _, err := fmt.Fprintf(w, `{"status":"ok","server":"standards-mcp","version":%q}`, s.version); err != nil {
+	if _, err := fmt.Fprintf(w, mcpClassifiedText(`{"status":"ok","server":"standards-mcp","version":%q}`, mcpTextProtocol), s.version); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to write health response: %v\n", err)
 	}
 }
 
 func (s *Server) handleJSONRPC(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		http.Error(w, mcpClassifiedText("Method Not Allowed", mcpTextProtocol), http.StatusMethodNotAllowed)
 		return
 	}
 	if !s.admit(w, r, true) {
@@ -322,7 +322,7 @@ func writeRPCResponse(w http.ResponseWriter, resp *JSONRPCResponse) {
 func readJSONRPCBody(w http.ResponseWriter, r *http.Request) (JSONRPCRequest, bool) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxScannerBuffer))
 	if err != nil {
-		http.Error(w, "Payload Too Large", http.StatusRequestEntityTooLarge)
+		http.Error(w, mcpClassifiedText("Payload Too Large", mcpTextProtocol), http.StatusRequestEntityTooLarge)
 		return JSONRPCRequest{}, false
 	}
 
@@ -350,20 +350,20 @@ func writeJSON(w http.ResponseWriter, payload any) {
 // preflight-free "simple" cross-site POSTs).
 func (s *Server) admit(w http.ResponseWriter, r *http.Request, jsonBody bool) bool {
 	if !s.hostAllowed(r.Host) {
-		http.Error(w, "Forbidden: unexpected Host header", http.StatusForbidden)
+		http.Error(w, mcpClassifiedText("Forbidden: unexpected Host header", mcpTextProtocol), http.StatusForbidden)
 		return false
 	}
 	if origin := r.Header.Get("Origin"); origin != "" && !s.originAllowed(origin) {
-		http.Error(w, "Forbidden: origin not allowed", http.StatusForbidden)
+		http.Error(w, mcpClassifiedText("Forbidden: origin not allowed", mcpTextProtocol), http.StatusForbidden)
 		return false
 	}
 	if !s.authorized(r) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="standards-mcp"`)
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(w, mcpClassifiedText("Unauthorized", mcpTextProtocol), http.StatusUnauthorized)
 		return false
 	}
 	if jsonBody && !isJSONContentType(r.Header.Get("Content-Type")) {
-		http.Error(w, "Unsupported Media Type: application/json required", http.StatusUnsupportedMediaType)
+		http.Error(w, mcpClassifiedText("Unsupported Media Type: application/json required", mcpTextProtocol), http.StatusUnsupportedMediaType)
 		return false
 	}
 	return true
@@ -580,7 +580,7 @@ func (s *Server) sseHandler(ctx context.Context) http.Handler {
 func (s *Server) handleSSEEndpoint(ctx context.Context) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			http.Error(w, mcpClassifiedText("Method Not Allowed", mcpTextProtocol), http.StatusMethodNotAllowed)
 			return
 		}
 		if !s.admit(w, r, false) {
@@ -588,12 +588,12 @@ func (s *Server) handleSSEEndpoint(ctx context.Context) http.HandlerFunc {
 		}
 		flusher, ok := w.(http.Flusher)
 		if !ok {
-			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+			http.Error(w, mcpClassifiedText("Streaming unsupported", mcpTextProtocol), http.StatusInternalServerError)
 			return
 		}
 		session, err := s.sessions.open()
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			http.Error(w, mcpClassifiedText(err.Error(), mcpTextUntrusted), http.StatusServiceUnavailable)
 			return
 		}
 		defer s.sessions.close(session.id)
@@ -648,7 +648,7 @@ func streamSSE(ctx, reqCtx context.Context, w http.ResponseWriter, flusher http.
 
 // writeSSEEvent writes one event frame and flushes it; false means the peer is gone.
 func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, event, data string) bool {
-	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data); err != nil {
+	if _, err := fmt.Fprintf(w, mcpClassifiedText("event: %s\ndata: %s\n\n", mcpTextProtocol), event, data); err != nil {
 		return false
 	}
 	flusher.Flush()
@@ -657,7 +657,7 @@ func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, event, data stri
 
 // writeSSEComment writes a keep-alive comment frame.
 func writeSSEComment(w http.ResponseWriter, flusher http.Flusher) bool {
-	if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+	if _, err := io.WriteString(w, mcpClassifiedText(": keepalive\n\n", mcpTextProtocol)); err != nil {
 		return false
 	}
 	flusher.Flush()
@@ -668,7 +668,7 @@ func writeSSEComment(w http.ResponseWriter, flusher http.Flusher) bool {
 // response onto that session's stream, answering the POST itself with 202 Accepted.
 func (s *Server) handleSSEMessages(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		http.Error(w, mcpClassifiedText("Method Not Allowed", mcpTextProtocol), http.StatusMethodNotAllowed)
 		return
 	}
 	if !s.admit(w, r, true) {
@@ -676,12 +676,12 @@ func (s *Server) handleSSEMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionID := r.URL.Query().Get("sessionId")
 	if sessionID == "" {
-		http.Error(w, "Bad Request: sessionId query parameter is required", http.StatusBadRequest)
+		http.Error(w, mcpClassifiedText("Bad Request: sessionId query parameter is required", mcpTextProtocol), http.StatusBadRequest)
 		return
 	}
 	session, ok := s.sessions.lookup(sessionID)
 	if !ok {
-		http.Error(w, "Not Found: unknown or expired session", http.StatusNotFound)
+		http.Error(w, mcpClassifiedText("Not Found: unknown or expired session", mcpTextProtocol), http.StatusNotFound)
 		return
 	}
 	req, ok := readJSONRPCBody(w, r)
@@ -692,11 +692,11 @@ func (s *Server) handleSSEMessages(w http.ResponseWriter, r *http.Request) {
 	if resp := s.HandleRequest(r.Context(), req); resp != nil {
 		data, err := json.Marshal(resp)
 		if err != nil {
-			http.Error(w, "Internal Server Error: encode response", http.StatusInternalServerError)
+			http.Error(w, mcpClassifiedText("Internal Server Error: encode response", mcpTextProtocol), http.StatusInternalServerError)
 			return
 		}
 		if !deliverSSE(session, data, sseDeliverTimeout) {
-			http.Error(w, "Service Unavailable: session stream is not draining", http.StatusServiceUnavailable)
+			http.Error(w, mcpClassifiedText("Service Unavailable: session stream is not draining", mcpTextProtocol), http.StatusServiceUnavailable)
 			return
 		}
 	}

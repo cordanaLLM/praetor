@@ -682,7 +682,7 @@ print("fixture hook self-tests passed")
         protocol = f"refs/heads/incoming {head} refs/heads/main {'f' * 40}\n".encode()
         result = self.hook("pre-push", "origin", data=protocol)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(b"checking the full tree", result.stdout + result.stderr)
+        self.assertIn(b"scope: full tree", result.stdout + result.stderr)
         self.assertIn(b"Private .workingdir content must stay untracked", result.stdout + result.stderr)
 
     def test_private_symlink_and_ancestor_rejected_without_reading_target(self):
@@ -974,7 +974,7 @@ print("fixture hook self-tests passed")
         missing = protocol.replace(b"0" * 40, b"f" * 40)
         result = self.hook("pre-push", "origin", data=missing)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(b"checking the full tree", result.stdout + result.stderr)
+        self.assertIn(b"scope: full tree", result.stdout + result.stderr)
         self.assertNotEqual(self.hook("pre-push", "origin", data=b"broken\n").returncode, 0)
 
     def test_push_passes_actual_base_to_snapshot_audit(self):

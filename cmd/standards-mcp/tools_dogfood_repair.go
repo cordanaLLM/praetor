@@ -26,21 +26,21 @@ func (s *Server) runDogfoodRepairStatus(ctx context.Context, args map[string]any
 	}
 	config, err := s.confinePath(config)
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	reportPath, err = s.confinePath(reportPath)
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	report, err := repairrun.StatusWithinRoot(ctx, config, reportPath, s.rootDir)
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	data, err := json.Marshal(report)
 	if err != nil {
 		return nil, fmt.Errorf("encode repair status: %w", err)
 	}
-	return mcp.TextResult(string(data)), nil
+	return mcpTextResult(string(data), mcpTextStructuredJSON), nil
 }

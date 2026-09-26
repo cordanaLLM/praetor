@@ -76,8 +76,8 @@ register:
 | `tasks.<label>.max_tokens` | none | 256..8192 when written | `register max_tokens for "<k>" must be 256..8192` |
 | `evidence.inline_max_lines` | 58 | 1..58, tighten only | `register evidence bound must be 1..58` |
 | `evidence.inline_max_tokens` | 1500 | 1..1500, tighten only | `register evidence bound must be 1..1500` |
-| `sources.expected` / `sources.sha256` | none | 1..256 decoded values; full lowercase SHA-256 | coverage count or digest mismatch |
-| `sources.inputs[]` | none | 1..64 tracked shell, Python, JSON, or YAML scopes | strict field, path, parser, selector, surface, and kind errors |
+| `sources.expected` / `sources.not_applicable` / `sources.sha256` | none | 1..256 applicable values; 0..256 explicitly classified exclusions; full lowercase SHA-256 | applicable count, exclusion count, or digest mismatch |
+| `sources.inputs[]` | none | 1..64 tracked shell, Python, Go, JSON, or YAML scopes | strict field, path, parser, selector, surface, and kind errors |
 
 No default row carries `max_tokens`, and the rendered block prints no token numbers for
 tasks. A budget is a dispatch parameter: set one after repair reports show what a task
@@ -260,14 +260,22 @@ evidence pointer suppresses nothing unless the complete line has the canonical p
 12-hex digest and line-count form. Initial validation and terminal replay call this same
 profile.
 
-Still not mechanically checked: computed MCP tool descriptions and results; computed hook
-and gate diagnostics; notebook prompts; Paperclip synthesis (#321); `.workingdir` ledger
-free text; popup question text; and native-client chats or hooks (#415). No `internal`
-label may imply coverage of those surfaces. Static shell/Python output strings and selected
-JSON/YAML values are checked through `register.sources`, described under
-[Tracked runtime sources](#tracked-runtime-sources); a green source gate proves the declared
-roots and selectors plus their expected inventory, not computed text. A green repository
-gate proves tracked context text. Repair terminal readback additionally
+Tracked shell and Python output templates, selected JSON/YAML values, and MCP
+descriptions and result callsites are checked through `register.sources`,
+described under [Tracked runtime sources](#tracked-runtime-sources). Dynamic
+template fields are normalized to placeholders so the agent-owned surrounding
+text is linted. Entirely runtime-owned values and wire formats require a narrow,
+explicit classification; they remain in the count and digest as
+`not_applicable` instead of disappearing. A green source gate therefore proves
+the declared roots, semantic selectors, full applicable inventory, and full
+classified-exclusion inventory. It does not prove the runtime value substituted
+into a placeholder; that still needs producer validation.
+
+Still not mechanically checked: runtime values substituted into MCP and hook
+templates; notebook prompts; Paperclip synthesis (#321); `.workingdir` ledger free
+text; popup question text; and native-client chats or hooks (#415). No `internal`
+label may imply coverage of those surfaces. A green repository gate proves tracked
+context text. Repair terminal readback additionally
 reconstructs deterministic owned text, rereads the retained proposal summary and replays
 the current checker. It rejects missing records, changed bytes, stale checker contracts,
 forged digests and mismatched register provenance; it does not make unlisted runtime
@@ -490,7 +498,8 @@ total.
 
 `--surface=<name>` makes `check` resolve that surface from the repository at `--root`
 (default `.`) through the same loader `compile-context` uses. When the surface resolves to
-`docs` or `social`, the command prints which row decided it and skips the lint:
+`docs` or `social`, the command returns an error naming the deciding row; a surface without
+a Caveman verdict never produces a green skip:
 
 ```bash
 praetorctl caveman check --surface=mcp descriptions.md
@@ -507,16 +516,19 @@ The decision is recorded in [ADR-0010](../adr/0010-text-register-per-task.md) (d
 
 The canonical declaration sits beside `register.surfaces` in
 `.standards.yaml`; there is no second source-manifest format. Every selected
-file must be Git-tracked below `--root`. `expected` and the aggregate `sha256`
-bind the sorted extraction inventory, including path, selector, line, surface,
-kind, parser, and decoded-text digest. Removing a selector or matched value is
-therefore a gate failure, not an invisible reduction in coverage.
+file must be Git-tracked below `--root`. `expected`, `not_applicable`, and the
+aggregate `sha256` bind the sorted extraction inventory, including path,
+semantic selector, surface, kind, parser, decoded-text digest, and exclusion
+class. The reported physical line is diagnostic only, so inserting comments
+does not churn the digest. Removing a selector, matched value, or classified
+exclusion is therefore a gate failure, not an invisible reduction in coverage.
 
 ```yaml
 register:
   sources:
-    expected: 13
-    sha256: "sha256:379ed75c80c3964903e035547305942986288277feec676ff1796832464dbbdb"
+    expected: 249
+    not_applicable: 114
+    sha256: "sha256:e36aa3ecf2d777f6a9b69d292becb0fcdf6e855e6abd1dfcbe2f8520c28eb8e6"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts
@@ -528,40 +540,84 @@ register:
         kind: message
         format: json
         selector: "invariants.*"
+      - path: ".config/semgrep/hiss-invariants.yml"
+        surface: hooks
+        kind: message
+        format: yaml
+        selector: "rules.*.message"
+      - path: ".config/agent/hooks"
+        surface: hooks
+        kind: message
+        format: python
+      - path: ".config/lefthook/scripts"
+        surface: hooks
+        kind: message
+        format: python
+      - path: "cmd/standards-mcp"
+        surface: mcp
+        kind: message
+        format: go
+        selector: "mcp.descriptions"
+      - path: "cmd/standards-mcp"
+        surface: mcp
+        kind: message
+        format: go
+        selector: "mcp.outputs"
 ```
 
 `praetorctl caveman check --configured-sources --root=.` verifies coverage,
 then lints every decoded value. `make caveman-sources`, `make verify-all`, CI,
 and `praetorctl audit` run that contract for Praetor. New adoption writes the
 same contract for its generated Paperclip harness and adds the source target to
-the generated Makefile. A legacy manifest with no `register` section is reported
-as explicitly unverified by `audit`; once `register` is declared, omitting
-`register.sources` fails. The dedicated command fails either omission.
+the generated Makefile. Existing manifests gain that contract without replacing
+operator fields; existing valid Paperclip harness bytes remain unchanged and the
+contract binds their actual decoded values. Both `audit` and the dedicated command
+fail closed when `register.sources` is absent.
 
-`shell` extracts static quoted `echo`, bounded `%s` `printf`, and here-document
-output. `python` extracts a single static string argument to `print()` and
-decodes Python escapes. Interpolation, f-strings, concatenation, multiple or
-keyword Python arguments, shell expansion, and interpolated here-documents fail
-as unverified instead of disappearing. `json` and `yaml` use dotted selectors;
-`*` selects every mapping value or sequence element, and a numeric segment
-selects one sequence index. Structured escapes are decoded before linting, so
-the checked text matches the runtime string.
+`shell` extracts static quoted `echo`, bounded `%s` `printf`, here-document
+output, and exact trailing `>&2` or `1>&2` redirection. Shell expansion and
+interpolated here-documents fail as unverified instead of disappearing.
 
-For an ad-hoc directory check, `--ext` selects parsers while the historical
-default remains `.md`:
+`python` recognizes `print`, `agent_message`, `sys.stderr.write`,
+`sys.stdout.write`, `sys.stdout.buffer.write`, and `stream.write`. It decodes
+Python escapes, joins adjacent or `+`-concatenated text, and replaces f-string
+expressions and dynamic concatenation terms with `{value}`. A template must
+contain agent-owned static text. An entirely computed value requires one exact
+adjacent classification comment: `structured-protocol`,
+`untrusted-passthrough`, or `protocol-marker`; unsupported arguments and broad
+classifications fail closed.
+
+Generic `go` extraction selects one named static `[]string` or `[...]string`
+table through `table.*` or `table.<index>`. The `mcp.descriptions` selector
+censuses tool and property descriptions. `mcp.outputs` censuses tool results,
+governed builders, `http.Error`, and transport writer output. Static templates
+are linted; governed composition and the fixed `structured-json`,
+`untrusted-passthrough`, and `protocol` classes are count- and digest-bound as
+not applicable. Dynamic text without one of those narrow wrappers, raw builder
+storage access, and helper implementations that differ from the fixed contract
+fail closed.
+
+`json` and `yaml` use dotted selectors; `*` selects every mapping value or
+sequence element, and a numeric segment selects one sequence index. Escapes are
+decoded before linting, so checked static text matches the runtime string.
+
+For an ad-hoc directory check, exact `--surface=hooks` selects `.sh,.py` unless
+`--ext` is explicit. Checks without that surface retain the historical `.md`
+default:
 
 ```bash
-praetorctl caveman check --root=. --surface=hooks --ext=.sh,.py scripts
+praetorctl caveman check --root=. --surface=hooks scripts
 praetorctl caveman check --root=. --surface=prompts \
   --selector='agent.*.prompt' config/agents.json
 ```
 
 A directory matching no requested files, an extractor producing no values, or
 a non-internal surface returns an error rather than a green no-op. One contract
-is bounded to 64 inputs, 64 discovered files, and 256 decoded values. Each file
-is at most 1 MiB, each value at most 64 KiB and at most 1,024 logical lines;
-all selected text is at most 1 MiB. Positive, negative, exact-limit, and +1
-fixtures live in `internal/cavemansource` and
+is bounded to 64 inputs, 64 discovered files, 256 applicable values, and 256
+explicitly classified exclusions. Each file is at most 1 MiB, each value at
+most 64 KiB and at most 1,024 logical lines; all selected text is at most 1
+MiB. Positive, negative, exact-limit, and +1 fixtures live in
+`internal/cavemansource` and
 `cmd/standardsctl/caveman_source_test.go`.
 
 ### Ceilings
@@ -580,6 +636,6 @@ moment its text is a file, including decoded runtime sources and a return or a b
 dispatch path writes out before sending it, and the evidence-pointer bound
 (`register.evidence`, default 1500 tokens) the same way. Repair planning and execution call
 the shared checker directly on their owned runtime fields, without first writing them to a
-file. Computed MCP and hook text, notebook and Paperclip prompts, ledger text, popup
-questions and native-client traffic still need their own producer or capture wiring and
-remain unverified; see "What is not enforced".
+file. Runtime values substituted into MCP and hook templates, notebook and Paperclip
+prompts, ledger text, popup questions and native-client traffic still need their own
+producer or capture wiring and remain unverified; see "What is not enforced".

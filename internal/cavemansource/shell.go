@@ -21,6 +21,7 @@ func extractShell(item discoveredInput, text string) ([]Source, error) {
 			return nil, err
 		}
 		if source != nil {
+			source.Selector = fmt.Sprintf("shell-output:%03d", len(sources))
 			sources = append(sources, *source)
 		}
 		index = end
@@ -142,6 +143,7 @@ func shellOperatorIndex(line, operator string) int {
 }
 
 func extractShellCommand(command, args string) (string, error) {
+	args = stripShellStderrRedirection(args)
 	words, err := parseShellWords(args)
 	if err != nil {
 		return "", err
@@ -150,6 +152,18 @@ func extractShellCommand(command, args string) (string, error) {
 		return renderEcho(words)
 	}
 	return renderPrintf(words)
+}
+
+// stripShellStderrRedirection removes only the two static stdout-to-stderr forms used by
+// hook messages. Other shell operators remain in the argument parser and fail closed.
+func stripShellStderrRedirection(args string) string {
+	trimmed := strings.TrimSpace(args)
+	for _, redirect := range []string{"1>&2", ">&2"} {
+		if strings.HasSuffix(trimmed, redirect) {
+			return strings.TrimSpace(strings.TrimSuffix(trimmed, redirect))
+		}
+	}
+	return trimmed
 }
 
 func renderEcho(words []shellWord) (string, error) {

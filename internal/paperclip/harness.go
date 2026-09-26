@@ -73,7 +73,7 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 
 	invariants := []string{
 		"HISS-01: Acyclic DAG control flow (no recursion)",
-		"HISS-02: Scalar upper bounds on all loops; context timeout on all I/O",
+		"HISS-02: Scalar upper bounds on all loops; context timeout on all input and output",
 		"HISS-04: McCabe Cyclomatic <= 10, Cognitive <= 15, Func LOC <= 75",
 		"HISS-07: Zero .unwrap() / .expect(); all errors handled or wrapped",
 		"HISS-10: Zero-warning tolerance across compiler, linters, and formatters",
@@ -130,11 +130,25 @@ func manifestPlatform(ctx context.Context, repoPath string) (string, bool, error
 	return fmt.Sprintf("%s/%s", m.Repository.Owner, m.Repository.Name), true, nil
 }
 
+// MarshalHarness renders the canonical bytes written to .paperclip/harness.json. Coverage
+// digests and the writer share this serializer so line-bound provenance cannot drift.
+func MarshalHarness(h *Harness) ([]byte, error) {
+	if h == nil {
+		return nil, fmt.Errorf("paperclip: harness cannot be nil")
+	}
+	data, err := json.MarshalIndent(h, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal harness: %w", err)
+	}
+	return append(data, '\n'), nil
+}
+
 // WriteHarness writes .paperclip/harness.json and .paperclip/rules.md into repoPath.
 // Both targets are confined to repoPath so a symlinked .paperclip cannot redirect them.
 func WriteHarness(h *Harness, repoPath string) error {
-	if h == nil {
-		return fmt.Errorf("paperclip: harness cannot be nil")
+	data, err := MarshalHarness(h)
+	if err != nil {
+		return err
 	}
 	dir, err := util.ConfinePath(repoPath, paperclipDir)
 	if err != nil {
@@ -144,15 +158,11 @@ func WriteHarness(h *Harness, repoPath string) error {
 		return fmt.Errorf("create %s dir: %w", paperclipDir, err)
 	}
 
-	data, err := json.MarshalIndent(h, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal harness: %w", err)
-	}
 	jsonPath, err := util.ConfinePath(repoPath, filepath.Join(paperclipDir, harnessFile))
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", harnessFile, err)
 	}
-	if err := util.WriteFileSecure(jsonPath, append(data, '\n'), filePerm); err != nil {
+	if err := util.WriteFileSecure(jsonPath, data, filePerm); err != nil {
 		return fmt.Errorf("write %s: %w", jsonPath, err)
 	}
 

@@ -30,6 +30,27 @@ func transcriptMCPReport(t *testing.T, result *mcp.ToolResult) harvester.Transcr
 	return envelope.Report
 }
 
+func TestTranscriptMCPPublishesGovernedRuntimeText(t *testing.T) {
+	srv, _ := newFixtureServer(t)
+	tool := srv.tools["standards_transcript_ingest"]
+	if got, want := tool.Description, "action: ingest bounded transcript page into private local storage. return: metadata + continuation. never upload or execute content."; got != want {
+		t.Fatalf("description = %q, want %q", got, want)
+	}
+	wants := map[string]string{
+		"format":          "format: antigravity-jsonl-v1 (default) | claude-code-jsonl-v1.",
+		"source_path":     "source_path: explicit local JSONL. prefer: Antigravity full counterpart.",
+		"cache_dir":       "cache_dir: explicit private local event destination.",
+		"cursor":          "cursor: opaque resume value from prior page.",
+		"expected_sha256": "expected_sha256: optional required SHA256 for selected full source.",
+		"max_records":     "max_records: page record limit 1..10000 (default 1000).",
+	}
+	for name, want := range wants {
+		if got := tool.InputSchema.Properties[name].Description; got != want {
+			t.Errorf("property %s description = %q, want %q", name, got, want)
+		}
+	}
+}
+
 func TestTranscriptMCPPagesAndReplaysActualCache(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	source := filepath.Join(root, "transcript_full.jsonl")

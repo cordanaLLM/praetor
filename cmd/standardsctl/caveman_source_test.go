@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/config"
 )
@@ -29,10 +33,21 @@ func TestCavemanSourceExtensionsPositive(t *testing.T) {
 	}
 }
 
+func TestCavemanHookSurfaceDirectorySelectsHookExtensions(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureFile(t, root, ".standards.yaml", "version: 1\n")
+	writeFixtureFile(t, root, "hooks/check.sh", "echo \"result: pass.\" >&2\n")
+	writeFixtureFile(t, root, "hooks/check.py", "print(\"next: stop.\", file=sys.stderr)\n")
+	out, err := runCavemanCLI(t, "", "check", "--root="+root, "--surface=hooks", filepath.Join(root, "hooks"))
+	if err != nil || strings.Count(out, ": PASS ") != 2 {
+		t.Fatalf("hook surface directory: err=%v\n%s", err, out)
+	}
+}
+
 func TestCavemanSourceExtensionsNegative(t *testing.T) {
 	root := t.TempDir()
 	writeFixtureFile(t, root, ".standards.yaml", "version: 1\n")
-	computed := writeFixtureFile(t, root, "hooks/computed.py", `print(f"block: {reason}")`+"\n")
+	computed := writeFixtureFile(t, root, "hooks/computed.py", "print(render(reason))\n")
 	if _, err := runCavemanCLI(t, "", "check", "--root="+root, "--surface=hooks", computed); err == nil || !strings.Contains(err.Error(), "output unverified") {
 		t.Fatalf("computed Python output accepted: %v", err)
 	}
@@ -73,13 +88,46 @@ func TestCavemanConfiguredSourcesCoverage(t *testing.T) {
 	}
 
 	writeConfiguredSourceManifest(t, root, coverage, "messages.0", "")
-	if _, err = runCavemanCLI(t, "", "check", "--root="+root, "--configured-sources"); err == nil || !strings.Contains(err.Error(), "expected 2 values, extracted 1") {
+	if _, err = runCavemanCLI(t, "", "check", "--root="+root, "--configured-sources"); err == nil || !strings.Contains(err.Error(), "expected 2 applicable values, extracted 1") {
 		t.Fatalf("omitted declared value accepted: %v", err)
 	}
 
 	writeConfiguredSourceManifest(t, root, coverage, "messages.*", "        unknown: true\n")
 	if _, err = runCavemanCLI(t, "", "check", "--root="+root, "--configured-sources"); err == nil || !strings.Contains(err.Error(), "unknown") {
 		t.Fatalf("unknown source schema field accepted: %v", err)
+	}
+}
+
+func TestCavemanConfiguredSourcesPassAfterRealAdoption(t *testing.T) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+	stubDir := t.TempDir()
+	stub := writeFixtureFile(t, stubDir, "lefthook", "#!/bin/sh\nexit 1\n")
+	if err := os.Chmod(stub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+filepath.Dir(gitPath))
+
+	repo := t.TempDir()
+	writeFixtureFile(t, repo, "go.mod", "module example.invalid/adopted\n")
+	env := initGitFixture(t, repo)
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve source checkout")
+	}
+	sourceRoot := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", ".."))
+	if _, err := adopt.Adopt(t.Context(), adopt.AdoptOptions{Path: repo, Profile: "framework",
+		LockSourceRoot: sourceRoot, RecordBaseline: true}); err != nil {
+		t.Fatalf("adopt fixture: %v", err)
+	}
+	if output, err := runFixtureGit(t, repo, env, "add", "-A"); err != nil {
+		t.Fatalf("stage adopted source contract: %v (%s)", err, output)
+	}
+	out, err := runCavemanCLI(t, "", "check", "--root="+repo, "--configured-sources")
+	if err != nil || strings.Count(out, ": PASS ") != 13 {
+		t.Fatalf("post-adopt configured gate: err=%v\n%s", err, out)
 	}
 }
 
@@ -116,15 +164,40 @@ func TestAuditCavemanConfiguredSources(t *testing.T) {
 	}
 }
 
+func TestAuditCavemanConfiguredSourcesSkipsClassifiedExclusions(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureFile(t, root, "hooks/check.py", "print(\"result: pass.\")\n"+
+		"print(render(a, the_value))  # caveman:not-applicable untrusted-passthrough\n")
+	input := config.RegisterSourceInput{Path: "hooks/check.py", Surface: config.SurfacePrompts,
+		Kind: "message", Format: config.SourceFormatPython}
+	coverage, err := cavemansource.ExtractInputs(context.Background(), root, []config.RegisterSourceInput{input})
+	if err != nil || coverage.Applicable != 1 || coverage.NotApplicable != 1 {
+		t.Fatalf("fixture coverage: %+v err=%v", coverage, err)
+	}
+	initGitFixture(t, root)
+	manifest := &config.Manifest{Version: 1, Register: &config.RegisterPolicy{Sources: &config.RegisterSources{
+		Expected: coverage.Applicable, NotApplicable: coverage.NotApplicable, SHA256: coverage.SHA256,
+		Inputs: []config.RegisterSourceInput{input},
+	}}}
+	if err := auditCavemanConfiguredSources(context.Background(), manifest, root); err != nil {
+		t.Fatalf("audit linted a classified exclusion: %v", err)
+	}
+	manifest.Register.Sources.NotApplicable++
+	if err := auditCavemanConfiguredSources(context.Background(), manifest, root); err == nil {
+		t.Fatal("audit accepted a classified-exclusion count mismatch")
+	}
+}
+
 func TestAuditCavemanConfiguredSourcesDeclarationBoundary(t *testing.T) {
 	root := t.TempDir()
 	manifest := &config.Manifest{Version: 1}
-	if err := auditCavemanConfiguredSources(context.Background(), manifest, root); err != nil {
-		t.Fatalf("absent register section rejected as configured policy: %v", err)
+	if err := auditCavemanConfiguredSources(context.Background(), manifest, root); err == nil ||
+		!strings.Contains(err.Error(), "requires register.sources") {
+		t.Fatalf("absent register section passed source coverage audit: %v", err)
 	}
 	manifest.Register = &config.RegisterPolicy{}
 	err := auditCavemanConfiguredSources(context.Background(), manifest, root)
-	if err == nil || !strings.Contains(err.Error(), "declared register requires register.sources") {
+	if err == nil || !strings.Contains(err.Error(), "audit requires register.sources") {
 		t.Fatalf("declared register omitted source contract: %v", err)
 	}
 

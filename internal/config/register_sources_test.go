@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -11,6 +12,7 @@ func TestRegisterSourcesPositive(t *testing.T) {
 	m, err := loadRegisterManifest(t, `register:
   sources:
     expected: 3
+    not_applicable: 2
     sha256: `+testSourceDigest+`
     inputs:
       - path: .config/hooks
@@ -26,7 +28,8 @@ func TestRegisterSourcesPositive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Register == nil || m.Register.Sources == nil || m.Register.Sources.Expected != 3 {
+	if m.Register == nil || m.Register.Sources == nil || m.Register.Sources.Expected != 3 ||
+		m.Register.Sources.NotApplicable != 2 {
 		t.Fatalf("register sources dropped: %+v", m.Register)
 	}
 }
@@ -58,5 +61,40 @@ func TestRegisterSourcesBoundary(t *testing.T) {
 	body = strings.Replace(body, testSourceDigest, strings.ToUpper(testSourceDigest), 1)
 	if _, err := LoadManifest(writeManifest(t, body)); err == nil || !strings.Contains(err.Error(), "lowercase") {
 		t.Fatalf("non-canonical digest accepted: %v", err)
+	}
+}
+
+func TestRegisterSourcesCountBoundaries(t *testing.T) {
+	input := RegisterSourceInput{Path: "hooks/a.py", Surface: SurfaceHooks, Kind: "message", Format: SourceFormatPython}
+	exactOutputs := &RegisterSources{Expected: MaxRegisterSourceOutputs, SHA256: testSourceDigest, Inputs: []RegisterSourceInput{input}}
+	if err := exactOutputs.validate(); err != nil {
+		t.Fatalf("exact %d expected outputs rejected: %v", MaxRegisterSourceOutputs, err)
+	}
+	aboveOutputs := *exactOutputs
+	aboveOutputs.Expected++
+	if err := aboveOutputs.validate(); err == nil || !strings.Contains(err.Error(), "1..256") {
+		t.Fatalf("%d expected outputs accepted: %v", MaxRegisterSourceOutputs+1, err)
+	}
+	aboveClassified := *exactOutputs
+	aboveClassified.NotApplicable = MaxRegisterSourceOutputs + 1
+	if err := aboveClassified.validate(); err == nil || !strings.Contains(err.Error(), "not_applicable must be 0..256") {
+		t.Fatalf("%d classified outputs accepted: %v", MaxRegisterSourceOutputs+1, err)
+	}
+
+	inputs := make([]RegisterSourceInput, MaxRegisterSourceInputs)
+	for index := range inputs {
+		inputs[index] = input
+		inputs[index].Path = fmt.Sprintf("hooks/check-%02d.py", index)
+	}
+	exactInputs := &RegisterSources{Expected: 1, SHA256: testSourceDigest, Inputs: inputs}
+	if err := exactInputs.validate(); err != nil {
+		t.Fatalf("exact %d inputs rejected: %v", MaxRegisterSourceInputs, err)
+	}
+	aboveInputs := *exactInputs
+	aboveInputs.Inputs = append(append([]RegisterSourceInput(nil), inputs...), RegisterSourceInput{
+		Path: "hooks/check-64.py", Surface: SurfaceHooks, Kind: "message", Format: SourceFormatPython,
+	})
+	if err := aboveInputs.validate(); err == nil || !strings.Contains(err.Error(), "1..64 rows") {
+		t.Fatalf("%d inputs accepted: %v", MaxRegisterSourceInputs+1, err)
 	}
 }

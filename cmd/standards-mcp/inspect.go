@@ -68,37 +68,37 @@ func (s *Server) inspectableFile(path string) (string, error) {
 }
 
 // inspectSymbolsAtPath inspects Go files at path without recursion.
-func (s *Server) inspectSymbolsAtPath(ctx context.Context, path string) (string, error) {
+func (s *Server) inspectSymbolsAtPath(ctx context.Context, path string) (mcpGovernedText, error) {
+	var b mcpTextBuilder
 	files, err := s.inspectionFiles(path)
 	if err != nil {
-		return "", err
+		return b.Text(), err
 	}
 	if len(files) == 0 {
-		return "No Go source files found for symbol inspection.", nil
+		return mcpTextf("result: no Go source files found for symbol inspection."), nil
 	}
 	// A policy that exists but does not resolve yet reports against the HISS-04 ceiling and
 	// says so, as the editor projections do; only an interrupted resolution fails the tool.
 	bounds, warning, err := config.ResolveRepositoryComplexity(ctx, s.rootDir)
 	if err != nil {
-		return "", fmt.Errorf("resolve complexity policy for %s: %w", s.rootDir, err)
+		return b.Text(), fmt.Errorf("resolve complexity policy for %s: %w", s.rootDir, err)
 	}
 	fset := token.NewFileSet()
-	var b strings.Builder
-	b.WriteString("=== Go AST Symbol & HISS-04 Complexity Inspection ===\n\n")
+	b.Template("=== Go AST Symbol & HISS-04 Complexity Inspection ===\n\n")
 	if warning != "" {
-		fmt.Fprintf(&b, "[WARN] %s\n\n", warning)
+		b.Template("[WARN] %s\n\n", warning)
 	}
 	for _, file := range files {
 		s.inspectSingleFile(fset, file, bounds, &b)
 	}
-	return b.String(), nil
+	return b.Text(), nil
 }
 
 // inspectSingleFile parses a single Go file and prints its top-level declarations.
-func (s *Server) inspectSingleFile(fset *token.FileSet, filePath string, bounds config.ComplexityPolicy, b *strings.Builder) {
+func (s *Server) inspectSingleFile(fset *token.FileSet, filePath string, bounds config.ComplexityPolicy, b *mcpTextBuilder) {
 	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
 	if err != nil {
-		fmt.Fprintf(b, "File: %s (Parse error: %v)\n\n", filepath.Base(filePath), err)
+		b.Template("File: %s (Parse error: %v)\n\n", filepath.Base(filePath), err)
 		return
 	}
 
@@ -106,7 +106,7 @@ func (s *Server) inspectSingleFile(fset *token.FileSet, filePath string, bounds 
 	if err != nil {
 		rel = filePath
 	}
-	fmt.Fprintf(b, "File: %s (Package: %s)\n", rel, node.Name.Name)
+	b.Template("File: %s (Package: %s)\n", rel, node.Name.Name)
 
 	declLimit := len(node.Decls)
 	for d := 0; d < declLimit; d++ {
@@ -117,20 +117,21 @@ func (s *Server) inspectSingleFile(fset *token.FileSet, filePath string, bounds 
 			writeFuncReport(fset, rel, unit, bounds, b)
 		}
 	}
-	b.WriteString("\n")
+	b.Template("\n")
 }
 
 // writeFuncReport prints one function's HISS-04 metrics and verdict. Function length is the
 // bound the audit enforces and warns; the complexity values are measured with the scanner's
 // own visitor and printed as the same report-only lines every scan entry point prints.
-func writeFuncReport(fset *token.FileSet, rel string, unit hiss.FuncUnit, bounds config.ComplexityPolicy, b *strings.Builder) {
+func writeFuncReport(fset *token.FileSet, rel string, unit hiss.FuncUnit, bounds config.ComplexityPolicy, b *mcpTextBuilder) {
 	m := unit.Metrics
 	measured := unit.Measurements(fset, rel, bounds.Limits())
-	fmt.Fprintf(b, "  - %s: %s | LOC: %d (<=%d) | Stmts: %d (<=%d) | Cyclo: %d (<=%d) | Cognitive: %d (<=%d) [%s]\n",
+	b.Template("  - %s: %s | LOC: %d (<=%d) | Stmts: %d (<=%d) | Cyclo: %d (<=%d) | Cognitive: %d (<=%d) [%s]\n",
 		funcLabel(unit), unit.Name, m.LOC, bounds.MaxFuncLOC, m.Statements, bounds.MaxStatements,
 		m.Cyclomatic, bounds.MaxCyclomatic, m.Cognitive, bounds.MaxCognitive, funcStatus(m.LOC > bounds.MaxFuncLOC, measured))
 	for _, over := range measured {
-		fmt.Fprintf(b, "      %s\n", over)
+		// internal/hiss renders the [REPORT] line once for every scan entry point; bound by count and digest.
+		b.External("      "+over.String()+"\n", mcpTextUntrusted)
 	}
 }
 
@@ -168,13 +169,13 @@ func funcStatus(overLength bool, measured []hiss.Measurement) string {
 }
 
 // writeTypeReport prints the type names declared by a type declaration group.
-func writeTypeReport(decl *ast.GenDecl, b *strings.Builder) {
+func writeTypeReport(decl *ast.GenDecl, b *mcpTextBuilder) {
 	if decl.Tok != token.TYPE {
 		return
 	}
 	for _, spec := range decl.Specs {
 		if ts, ok := spec.(*ast.TypeSpec); ok {
-			fmt.Fprintf(b, "  - Type: %s\n", ts.Name.Name)
+			b.Template("  - Type: %s\n", ts.Name.Name)
 		}
 	}
 }

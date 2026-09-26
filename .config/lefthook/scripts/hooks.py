@@ -156,7 +156,7 @@ def pre_push(remote):
         if base:
             kind = run(["git", "cat-file", "--batch-check=%(objecttype)"], data=(base + "\n").encode())
             if kind.strip().endswith(b" missing"):
-                print(f"Push baseline {base[:12]} unavailable locally; checking the full tree")
+                print(f"push baseline: {base[:12]}; local status: unavailable; scope: full tree.")
                 base = None
         key = (head, base, mode)
         if key in checked:
@@ -227,7 +227,7 @@ def verify_live_state():
     """Check private workstation state outside the exported Git snapshot."""
     audit_live_state()
     run([praetorctl_path(), "state", "sync", "--verify", "."], capture=False, timeout=30)
-    print('PRAETOR_STATE_RESULT={"schema_version":1,"verified":true}', flush=True)
+    print('PRAETOR_STATE_RESULT={"schema_version":1,"verified":true}', flush=True)  # caveman:not-applicable protocol-marker
 
 
 def audit_live_state():
@@ -244,7 +244,7 @@ def refresh(names):
     if context_changed(names):
         cli(["compile-context", "--verify"])
     if ".standards.yaml" in names:
-        print("Governance configuration changed: run make audit before the next push.")
+        print("governance configuration: changed. next: run make audit before next push.")
 
 
 def post_stage(stage, args):
@@ -304,7 +304,7 @@ def main(argv):
         names = changed(base, head)
         with snapshot(head) as directory:
             if gate == "packages":
-                print("\n".join(go_packages(directory, names, reverse=True)))
+                print("\n".join(go_packages(directory, names, reverse=True)))  # caveman:not-applicable structured-protocol
             else:
                 source_checks(directory, names, gate, base=base)
     elif stage in {"post-commit", "post-checkout", "post-merge", "post-rewrite"}:

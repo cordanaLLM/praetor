@@ -105,16 +105,16 @@ def check(payload):
     # repository passes, and a session whose cwd drifted out of the checkout keeps its file
     # tools. Once due, both are bound to this repository and anything else fails closed.
     if not report["enabled"] or not report["due"] or not report["enforce_batch_scope"]:
-        print(PASSED)
+        print(PASSED)  # caveman:not-applicable protocol-marker
         return 0
     relative = rooted_path(bound_cwd(cwd), value)
     if relative == ".workingdir" or relative.startswith(".workingdir/"):
-        print(PASSED)
+        print(PASSED)  # caveman:not-applicable protocol-marker
         return 0
     if relative not in set(report["public_paths"]):
-        sys.stderr.write("Praetor: checkpoint batch scope rejects a new public file path.\n")
+        sys.stderr.write("Praetor: checkpoint batch scope rejects new public file path.\n")
         return 2
-    print(PASSED)
+    print(PASSED)  # caveman:not-applicable protocol-marker
     return 0
 
 

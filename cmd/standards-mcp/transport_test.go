@@ -313,6 +313,53 @@ func TestHTTP_Negative_TransportGuards(t *testing.T) {
 	}
 }
 
+func TestTransportWireClassificationsPreserveExactBytes(t *testing.T) {
+	srv, _ := newFixtureServer(t)
+
+	var stdio bytes.Buffer
+	writeStdioResponse(&stdio, &JSONRPCResponse{JSONRPC: "2.0", ID: 1, Result: map[string]any{"ok": true}})
+	if got, want := stdio.String(), "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n"; got != want {
+		t.Errorf("stdio wire bytes = %q, want %q", got, want)
+	}
+
+	health := httptest.NewRecorder()
+	srv.handleHealth(health, httptest.NewRequest(http.MethodGet, "http://localhost/health", nil))
+	if got, want := health.Body.String(), `{"status":"ok","server":"standards-mcp","version":"v1.0.0-test"}`; got != want {
+		t.Errorf("health wire bytes = %q, want %q", got, want)
+	}
+
+	event := httptest.NewRecorder()
+	if !writeSSEEvent(event, event, "message", `{"ok":true}`) {
+		t.Fatal("write SSE event failed")
+	}
+	if got, want := event.Body.String(), "event: message\ndata: {\"ok\":true}\n\n"; got != want {
+		t.Errorf("SSE event bytes = %q, want %q", got, want)
+	}
+	comment := httptest.NewRecorder()
+	if !writeSSEComment(comment, comment) {
+		t.Fatal("write SSE comment failed")
+	}
+	if got, want := comment.Body.String(), ": keepalive\n\n"; got != want {
+		t.Errorf("SSE comment bytes = %q, want %q", got, want)
+	}
+
+	method := httptest.NewRecorder()
+	srv.httpHandler().ServeHTTP(method, httptest.NewRequest(http.MethodGet, "http://localhost/", nil))
+	if got, want := method.Body.String(), "Method Not Allowed\n"; got != want {
+		t.Errorf("static HTTP error bytes = %q, want %q", got, want)
+	}
+	for index := 0; index < maxSSESessions; index++ {
+		if _, err := srv.sessions.open(); err != nil {
+			t.Fatalf("fill SSE registry %d: %v", index, err)
+		}
+	}
+	dynamic := httptest.NewRecorder()
+	srv.handleSSEEndpoint(t.Context())(dynamic, httptest.NewRequest(http.MethodGet, "http://localhost/sse", nil))
+	if got, want := dynamic.Body.String(), ErrSSESessionLimit.Error()+"\n"; got != want {
+		t.Errorf("dynamic HTTP error bytes = %q, want %q", got, want)
+	}
+}
+
 func TestHTTP_Negative_BearerTokenAndOrigins(t *testing.T) {
 	root := newFixtureRepo(t)
 	srv, err := NewServerWithOptions(ServerOptions{RootDir: root, Version: "v", AuthToken: "s3cret", AllowedOrigins: []string{"https://ide.example"}})

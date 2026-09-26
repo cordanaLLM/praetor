@@ -136,7 +136,7 @@ def answer(result):
     """Print the adapter's one response; False when the backstop already printed it."""
     if not ANSWERED.acquire(blocking=False):
         return False
-    print(json.dumps(result), flush=True)
+    print(json.dumps(result), flush=True)  # caveman:not-applicable structured-protocol
     return True
 
 

@@ -24,7 +24,7 @@ func (s *Server) runDogfoodScheduleStatus(ctx context.Context, args map[string]a
 	}
 	path, err := s.confinePath(value)
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -35,11 +35,11 @@ func (s *Server) runDogfoodScheduleStatus(ctx context.Context, args map[string]a
 		report, err = dogfood.ScheduleStatusWithinRoot(ctx, path, s.rootDir)
 	}
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	data, err := json.Marshal(report)
 	if err != nil {
 		return nil, fmt.Errorf("encode schedule status: %w", err)
 	}
-	return mcp.TextResult(string(data)), nil
+	return mcpTextResult(string(data), mcpTextStructuredJSON), nil
 }

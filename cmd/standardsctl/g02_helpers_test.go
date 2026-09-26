@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
@@ -123,7 +125,10 @@ type auditFixture struct {
 	dir          string
 	manifestPath string
 	baselinePath string
+	gitEnv       []string
 }
+
+const fixtureHarnessJSON = `{"version":1,"platform":"acme/widgets","operating_contract":["Rule 0: terminal disposition required."],"agit_push_format":"reviewed fixture push","invariants":["fixture invariant"]}` + "\n"
 
 // fixtureManifest renders a .standards.yaml for owner/name; signed adds the
 // require_signed_commits override.
@@ -133,7 +138,22 @@ func fixtureManifest(owner, name string, signed bool) string {
 	if signed {
 		m += "overrides:\n  branch_protection:\n    require_signed_commits: true\n"
 	}
-	return m
+	return m + fixtureRegisterSources()
+}
+
+func fixtureRegisterSources() string {
+	inputs := []config.RegisterSourceInput{
+		{Path: ".paperclip/harness.json", Surface: config.SurfacePrompts, Kind: "message", Format: config.SourceFormatJSON, Selector: "operating_contract.*"},
+		{Path: ".paperclip/harness.json", Surface: config.SurfacePrompts, Kind: "message", Format: config.SourceFormatJSON, Selector: "invariants.*"},
+	}
+	coverage, err := cavemansource.CoverageFromDocuments(context.Background(), inputs, map[string][]byte{".paperclip/harness.json": []byte(fixtureHarnessJSON)})
+	if err != nil {
+		panic(err)
+	}
+	return fmt.Sprintf("register:\n  sources:\n    expected: %d\n    sha256: %q\n    inputs:\n"+
+		"      - {path: .paperclip/harness.json, surface: prompts, kind: message, format: json, selector: 'operating_contract.*'}\n"+
+		"      - {path: .paperclip/harness.json, surface: prompts, kind: message, format: json, selector: 'invariants.*'}\n",
+		coverage.Applicable, coverage.SHA256)
 }
 
 // newAuditFixture builds the fixture: pinned lockfile, zero-debt baseline, compiled agent
@@ -168,8 +188,12 @@ func newAuditFixture(t *testing.T) *auditFixture {
 
 	writeFixtureFile(t, dir, ".config/labels.yaml", "version: 1\nlabels: []\n")
 	writeDeclaredRuleset(t, dir, config.DefaultPolicy().BranchProtection)
-	writeFixtureFile(t, dir, ".paperclip/harness.json",
-		`{"version":1,"platform":"acme/widgets","operating_contract":["Rule 0: end with a disposition."],"agit_push_format":"reviewed fixture push","invariants":["fixture invariant"]}`+"\n")
+	writeFixtureFile(t, dir, ".paperclip/harness.json", fixtureHarnessJSON)
+	f.gitEnv = initGitFixture(t, dir)
+	hook := writeFixtureFile(t, dir, ".git/hooks/pre-commit", "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(hook, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	return f
 }
 

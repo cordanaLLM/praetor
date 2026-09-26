@@ -61,7 +61,7 @@ def parallel(commands, directory):
             try:
                 output = future.result()
                 if output:
-                    print(output.decode(errors="replace"), end="")
+                    print(output.decode(errors="replace"), end="")  # caveman:not-applicable untrusted-passthrough
             except HookError as error:
                 failures.append(str(error))
     if failures:
@@ -370,8 +370,8 @@ def audit_scope(directory, names, base):
     else:
         touched = paths(run(["git", "ls-tree", "-r", "--name-only", "-z", "HEAD"],
                             cwd=directory, env=clean_env()))
-        print("Audit: no trusted prior commit; every tracked path is touched. "
-              "Historical baseline growth cannot be compared.")
+        print("audit: trusted prior commit absent; scope: every tracked path. "
+              "historical baseline growth comparison unavailable.")
     # The current G02 CLI accepts CSV and at most 10,000 trimmed entries. Refuse
     # inputs it cannot represent instead of silently auditing a smaller set.
     if len(touched) > 10000 or any(not name or name != name.strip() or

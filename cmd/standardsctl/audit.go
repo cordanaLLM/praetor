@@ -146,11 +146,11 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
 		func() error { return auditAgentProjections(ctx, rootDir) },
 		func() error { return auditCavemanAgentSurfaces(ctx, rootDir) },
-		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },
 		func() error {
 			return auditBranchProtectionAndSupplyChain(ctx, manifest, rootDir, &opts.effective.Policy)
 		},
 		func() error { return auditPaperclipHarness(ctx, manifest, rootDir) },
+		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
 		func() error { return auditPreMigrationTracking(rootDir) },
 		func() error { return auditAgentDefinitions(rootDir) },
@@ -342,15 +342,10 @@ func auditCavemanAgentSurfaces(ctx context.Context, rootDir string) error {
 }
 
 // auditCavemanConfiguredSources enforces the omission-resistant register.sources inventory.
-// Legacy manifests without any register section stay explicitly unverified. A declared
-// text policy must carry this contract; --configured-sources fails either omission.
+// An omitted register or sources contract is zero verified work and fails closed.
 func auditCavemanConfiguredSources(ctx context.Context, manifest *config.Manifest, rootDir string) error {
-	if manifest == nil || manifest.Register == nil {
-		fmt.Println("[WARN] Caveman non-Markdown source coverage unconfigured; verdict unverified.")
-		return nil
-	}
-	if manifest.Register.Sources == nil {
-		return errors.New("[FAIL] Caveman non-Markdown source coverage: declared register requires register.sources")
+	if manifest == nil || manifest.Register == nil || manifest.Register.Sources == nil {
+		return errors.New("[FAIL] Caveman non-Markdown source coverage: audit requires register.sources")
 	}
 	result, err := cavemansource.ExtractDeclared(ctx, rootDir, manifest.Register.Sources)
 	if err != nil {
@@ -367,6 +362,11 @@ func auditCavemanConfiguredSources(ctx context.Context, manifest *config.Manifes
 			resolution := policy.Resolve(source.Surface, "")
 			return fmt.Errorf("[FAIL] Caveman non-Markdown source coverage: %s = %s has no Caveman verdict",
 				resolution.Source, resolution.Register)
+		}
+		if source.NotApplicable != "" {
+			// A classified exclusion is bound by count and digest, never linted: its text is
+			// the runtime expression, not agent-owned prose (same rule as caveman check).
+			continue
 		}
 		report := caveman.Check(source.Text, caveman.Options{Kind: source.Kind})
 		if !report.Passed() {

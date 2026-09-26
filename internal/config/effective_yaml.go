@@ -29,7 +29,7 @@ func decodePolicyDocument(ctx context.Context, data []byte) (*yaml.Node, error) 
 	if len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
 		return nil, errors.New("policy must be a mapping")
 	}
-	if err := validatePolicyNodes(ctx, &document); err != nil {
+	if err := ValidateYAMLNodes(ctx, &document); err != nil {
 		return nil, err
 	}
 	return document.Content[0], nil
@@ -40,7 +40,10 @@ type policyNode struct {
 	depth int
 }
 
-func validatePolicyNodes(ctx context.Context, root *yaml.Node) error {
+// ValidateYAMLNodes rejects ambiguous keys, aliases, anchors, excessive depth, and
+// excessive node counts in a decoded YAML document. Callers share this validator instead
+// of relying on yaml.v3's destination-dependent duplicate-key behaviour.
+func ValidateYAMLNodes(ctx context.Context, root *yaml.Node) error {
 	queue := []policyNode{{root, 0}}
 	for i := 0; i < len(queue) && i < maxPolicyNodes; i++ {
 		if err := ctx.Err(); err != nil {

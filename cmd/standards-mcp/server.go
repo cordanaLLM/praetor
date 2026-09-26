@@ -331,7 +331,7 @@ func (s *Server) createAuditTool() (mcp.Tool, error) {
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
 		p, err := s.resolveAuditPaths(args)
 		if err != nil {
-			return mcp.ErrorResult(err.Error()), nil
+			return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 		}
 		return s.runAuditGates(ctx, p), nil
 	}
@@ -393,9 +393,9 @@ func (s *Server) createPlanTool() (mcp.Tool, error) {
 			return failure, nil
 		}
 
-		var b strings.Builder
+		var b mcpTextBuilder
 		if notice != "" {
-			fmt.Fprintf(&b, "[INFO] %s\n", notice)
+			b.Template("[INFO] %s\n", notice)
 		}
 		if err := writePlanHeader(&b, manifest, policy); err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to resolve plan policy: %v", err)), nil
@@ -404,9 +404,10 @@ func (s *Server) createPlanTool() (mcp.Tool, error) {
 		if err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to inspect plan drift: %v", err)), nil
 		}
-		b.WriteString(adopt.FormatPlanStatus(missing, drift))
+		// The plan verdict internal/adopt renders for this tool and the CLI plan.
+		b.External(adopt.FormatPlanStatus(missing, drift), mcpTextUntrusted)
 
-		return mcp.TextResult(b.String()), nil
+		return mcpComposedTextResult(b.Text()), nil
 	}
 
 	return mcp.NewReadOnlyTool("standards_plan", "Plan standards enforcement and policy reconciliation", schema, handler)
@@ -417,13 +418,13 @@ func (s *Server) createPlanTool() (mcp.Tool, error) {
 func (s *Server) resolvePlanInputs(ctx context.Context, args map[string]any) (*config.Manifest, *config.ResolvedPolicy, string, *mcp.ToolResult) {
 	confPath, err := s.resolvePath(args, "config_path", ".standards.yaml")
 	if err != nil {
-		return nil, nil, "", mcp.ErrorResult(err.Error())
+		return nil, nil, "", mcpErrorResult(err.Error(), mcpTextUntrusted)
 	}
 	// The same confined catalog selection standards_audit accepts, so a repository whose
 	// pinned catalog is not materialized can be previewed against the bundle it pins.
 	catalogRoot, err := s.resolveOptionalPath(args, "catalog_root")
 	if err != nil {
-		return nil, nil, "", mcp.ErrorResult(err.Error())
+		return nil, nil, "", mcpErrorResult(err.Error(), mcpTextUntrusted)
 	}
 	manifest, err := config.LoadManifest(confPath)
 	if err != nil {
@@ -446,26 +447,20 @@ func (s *Server) resolvePlanInputs(ctx context.Context, args map[string]any) (*c
 }
 
 // writePlanHeader prints the resolved policy values of a reconcile plan.
-func writePlanHeader(b *strings.Builder, manifest *config.Manifest, policy *config.ResolvedPolicy) error {
+func writePlanHeader(b *mcpTextBuilder, manifest *config.Manifest, policy *config.ResolvedPolicy) error {
 	reviewCount, _, err := policy.BranchProtection.EffectiveReviewRequirements()
 	if err != nil {
 		return fmt.Errorf("resolve branch protection reviews: %w", err)
 	}
 	// Repository-neutral heading; the manifest-backed identity follows on the next line.
 	// This used to name this product's own repository in every adopted repository (#361).
-	b.WriteString("=== Praetor Reconcile Plan (Dry Run) ===\n")
-	fmt.Fprintf(b, "Repository: %s/%s\n", manifest.Repository.Owner, manifest.Repository.Name)
-	fmt.Fprintf(b, "Profiles:   %v\nFacets:     %v\n\nTarget Invariants:\n", manifest.Profiles, manifest.Facets)
-	fmt.Fprintf(b, "  - Max Cyclomatic Complexity: <= %d\n", policy.Complexity.MaxCyclomatic)
-	fmt.Fprintf(b, "  - Max Function LOC:          <= %d\n", policy.Complexity.MaxFuncLOC)
-	fmt.Fprintf(b, "  - Linear History Required:    %t\n", policy.BranchProtection.EnforceLinearHistory)
-	fmt.Fprintf(b, "  - Signed Commits Required:   %t\n", policy.BranchProtection.RequireSignedCommits)
-	fmt.Fprintf(b, "  - Approving Reviewers:       %d\n", reviewCount)
-	fmt.Fprintf(b, "  - Configured Reviewer Minimum: %d\n", policy.BranchProtection.RequiredApprovingReviewers)
-	fmt.Fprintf(b, "  - Review Mode:               %s\n", policy.BranchProtection.ReviewMode)
-	fmt.Fprintf(b, "  - SLSA Provenance Level:     %d\n", policy.SupplyChain.SLSALevel)
-	fmt.Fprintf(b, "  - Cosign Attestation:        %t\n", policy.SupplyChain.EnforceCosign)
-	fmt.Fprintf(b, "  - SBOM Generation Required:  %t\n", policy.SupplyChain.RequireSBOM)
+	b.Template("=== Praetor Reconcile Plan (Dry Run) ===\nRepository: %s/%s\nprofiles: %v.\nfacets: %v.\ninvariants:\n- max_cyclomatic: %d.\n- max_function_loc: %d.\n- linear_history: %t.\n- signed_commits: %t.\n- approving_reviewers: %d.\n- configured_reviewer_minimum: %d.\n- review_mode: %s.\n- slsa_level: %d.\n- cosign_attestation: %t.\n- sbom_generation: %t.\n",
+		manifest.Repository.Owner, manifest.Repository.Name, manifest.Profiles, manifest.Facets,
+		policy.Complexity.MaxCyclomatic, policy.Complexity.MaxFuncLOC,
+		policy.BranchProtection.EnforceLinearHistory, policy.BranchProtection.RequireSignedCommits,
+		reviewCount, policy.BranchProtection.RequiredApprovingReviewers,
+		policy.BranchProtection.ReviewMode, policy.SupplyChain.SLSALevel,
+		policy.SupplyChain.EnforceCosign, policy.SupplyChain.RequireSBOM)
 	return nil
 }
 
@@ -492,15 +487,15 @@ func (s *Server) createCompileContextTool() (mcp.Tool, error) {
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
 		source, err := s.resolvePath(args, "source", "AGENTS.md")
 		if err != nil {
-			return mcp.ErrorResult(err.Error()), nil
+			return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 		}
 		targetDir, err := s.resolvePath(args, "target_dir", s.rootDir)
 		if err != nil {
-			return mcp.ErrorResult(err.Error()), nil
+			return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 		}
 		verifyOnly, err := argBool(args, "verify_only", false)
 		if err != nil {
-			return mcp.ErrorResult(err.Error()), nil
+			return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 		}
 		return s.compileContext(ctx, source, targetDir, verifyOnly), nil
 	}
@@ -526,7 +521,8 @@ func (s *Server) compileContext(ctx context.Context, source, targetDir string, v
 		if err := compiler.VerifyCompiledContext(ctx, &b, tr, source, targetDir); err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
 		}
-		return mcp.TextResult(b.String())
+		// The compiler's shared report, the same text the CLI prints; bound by count and digest.
+		return mcpTextResult(b.String(), mcpTextUntrusted)
 	}
 	if err := ctx.Err(); err != nil {
 		return mcp.ErrorResult(fmt.Sprintf("compile-context cancelled before writing: %v", err))
@@ -534,7 +530,8 @@ func (s *Server) compileContext(ctx context.Context, source, targetDir string, v
 	if err := compiler.CompileContextProjections(ctx, &b, tr, source, targetDir); err != nil {
 		return mcp.ErrorResult(fmt.Sprintf("Context compilation failed: %v", err))
 	}
-	return mcp.TextResult(b.String())
+	// The compiler's shared report, the same text the CLI prints; bound by count and digest.
+	return mcpTextResult(b.String(), mcpTextUntrusted)
 }
 
 func (s *Server) resolveContextPath(ctx context.Context, path string) (string, error) {
@@ -567,7 +564,7 @@ func (s *Server) createExplainRuleTool() (mcp.Tool, error) {
 		Properties: map[string]mcp.PropertySchema{
 			"rule_id": {
 				Type:        "string",
-				Description: "The HISS rule identifier to explain (one of: " + ruleList + ")",
+				Description: "input: HISS rule identifier. allowed: schema enum.",
 				Enum:        knownRuleIDs(),
 			},
 		},
@@ -577,7 +574,7 @@ func (s *Server) createExplainRuleTool() (mcp.Tool, error) {
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
 		ruleID, err := argString(args, "rule_id")
 		if err != nil {
-			return mcp.ErrorResult(err.Error()), nil
+			return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 		}
 		ruleID = strings.ToUpper(strings.TrimSpace(ruleID))
 
@@ -586,10 +583,10 @@ func (s *Server) createExplainRuleTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("Unknown rule %q. Valid rules: %s", ruleID, ruleList)), nil
 		}
 
-		return mcp.TextResult(explanation), nil
+		return mcpTextResult(explanation, mcpTextUntrusted), nil
 	}
 
-	return mcp.NewReadOnlyTool("standards_explain_rule", "Explain a specific HISS invariant rule and its formal verification mechanism", schema, handler)
+	return mcp.NewReadOnlyTool("standards_explain_rule", "Explain specific HISS invariant rule plus formal verification mechanism", schema, handler)
 }
 
 // createInspectSymbolsTool builds the read-only standards_inspect_symbols tool.
@@ -599,7 +596,7 @@ func (s *Server) createInspectSymbolsTool() (mcp.Tool, error) {
 		Properties: map[string]mcp.PropertySchema{
 			"path": {
 				Type:        "string",
-				Description: "File or directory path (relative to the server root) to inspect Go AST symbols",
+				Description: "Go AST symbol inspection path; file or directory; server-root relative",
 			},
 		},
 		Required: []string{"path"},
@@ -608,21 +605,22 @@ func (s *Server) createInspectSymbolsTool() (mcp.Tool, error) {
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
 		targetPath, err := s.resolveOptionalPath(args, "path")
 		if err != nil {
-			return mcp.ErrorResult(err.Error()), nil
+			return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 		}
 		if targetPath == "" {
-			return mcp.ErrorResult("path parameter is required"), nil
+			return mcp.ErrorResult("block: path parameter required."), nil
 		}
 		if err := ctx.Err(); err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("inspection cancelled: %v", err)), nil
 		}
 
-		report, err := s.inspectSymbolsAtPath(ctx, targetPath)
+		var report mcpGovernedText
+		report, err = s.inspectSymbolsAtPath(ctx, targetPath)
 		if err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Inspection failed: %v", err)), nil
 		}
 
-		return mcp.TextResult(report), nil
+		return mcpComposedTextResult(report), nil
 	}
 
 	return mcp.NewReadOnlyTool("standards_inspect_symbols", "Inspect Go AST symbols and analyze HISS-04 complexity bounds (LOC, statements, cyclomatic, cognitive)", schema, handler)
@@ -639,8 +637,8 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 			},
 			"framework": {
 				Type: "string",
-				Description: "Path to a local checkout of the go target framework (default: $PRAETOR_FRAMEWORK_DIR, else " +
-					"framework.targets.go.checkout, else the declared contract or catalog; \"\" selects the declaration)",
+				Description: "Go target framework local checkout path; default: $PRAETOR_FRAMEWORK_DIR, else " +
+					"framework.targets.go.checkout, else declared contract or catalog; \"\" selects declaration",
 			},
 		},
 	}
@@ -648,11 +646,11 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
 		targetPath, err := s.resolvePath(args, "path", s.rootDir)
 		if err != nil {
-			return mcp.ErrorResult(err.Error()), nil
+			return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 		}
 		fwPath, err := s.resolveOptionalPath(args, "framework")
 		if err != nil {
-			return mcp.ErrorResult(err.Error()), nil
+			return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 		}
 		registry, err := loadNeedsRegistry(ctx)
 		if err != nil {
@@ -673,7 +671,12 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to scan repository: %v", err)), nil
 		}
 
-		return mcp.TextResult(needs.FormatReportHeader(rep, fwIndex) + needs.FormatLibraryRelationships(rep)), nil
+		var b mcpTextBuilder
+		// internal/needs renders header and table once for this tool and the CLI needs report.
+		b.External(needs.FormatReportHeader(rep, fwIndex), mcpTextUntrusted)
+		b.External(needs.FormatLibraryRelationships(rep), mcpTextUntrusted)
+
+		return mcpComposedTextResult(b.Text()), nil
 	}
 
 	return mcp.NewReadOnlyTool("standards_needs_report", "Evaluate repository needs and target framework migration compatibility", schema, handler)

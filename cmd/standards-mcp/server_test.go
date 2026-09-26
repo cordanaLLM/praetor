@@ -520,15 +520,15 @@ func TestServer_Positive_PlanAndAuditOnSyncedRepo(t *testing.T) {
 
 	plan := callTool(t, srv, "standards_plan", nil)
 	expectText(t, "plan", plan, "No changes required")
-	expectText(t, "plan default effective reviews", plan, "Approving Reviewers:       1")
-	expectText(t, "plan default configured reviews", plan, "Configured Reviewer Minimum: 1")
-	expectText(t, "plan default review mode", plan, "Review Mode:               independent")
+	expectText(t, "plan default effective reviews", plan, "- approving_reviewers: 1.")
+	expectText(t, "plan default configured reviews", plan, "- configured_reviewer_minimum: 1.")
+	expectText(t, "plan default review mode", plan, "- review_mode: independent.")
 
 	writeFixtureFile(t, root, ".standards.yaml", "version: 1\nrepository:\n  owner: fixture\n  name: repo\nprofiles: [framework]\nfacets: []\noverrides:\n  branch_protection:\n    review_mode: single_maintainer\n")
 	plan = callTool(t, srv, "standards_plan", nil)
-	expectText(t, "plan single-maintainer effective reviews", plan, "Approving Reviewers:       0")
-	expectText(t, "plan single-maintainer configured reviews", plan, "Configured Reviewer Minimum: 1")
-	expectText(t, "plan single-maintainer review mode", plan, "Review Mode:               single_maintainer")
+	expectText(t, "plan single-maintainer effective reviews", plan, "- approving_reviewers: 0.")
+	expectText(t, "plan single-maintainer configured reviews", plan, "- configured_reviewer_minimum: 1.")
+	expectText(t, "plan single-maintainer review mode", plan, "- review_mode: single_maintainer.")
 
 	// The audit compares the committed ruleset with the one the policy renders, so the
 	// single-maintainer policy needs its own ruleset (zero approvals, no code-owner review).
@@ -543,22 +543,23 @@ func TestServer_Positive_PlanAndAuditOnSyncedRepo(t *testing.T) {
 	audit := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "audit", audit, "[PASS] Technical debt baseline verified")
 	expectText(t, "audit", audit, "[PASS] Cross-agent context targets verified in sync")
-	expectText(t, "audit", audit, "7/7 MCP audit gates passed")
+	expectText(t, "audit", audit, "passed: 7/7")
 }
 
 // The heading names the tool, never a repository; the manifest identity follows it (#361).
 func TestWritePlanHeader_NamesTheManifestRepository(t *testing.T) {
 	for _, repo := range []config.RepositoryMetadata{{Owner: "golusoris", Name: "golusoris"}, {}} {
-		var b strings.Builder
+		var b mcpTextBuilder
 		if err := writePlanHeader(&b, &config.Manifest{Repository: repo}, config.DefaultPolicy()); err != nil {
 			t.Fatal(err)
 		}
-		lines := strings.SplitN(b.String(), "\n", 3)
+		text := string(b.Text())
+		lines := strings.SplitN(text, "\n", 3)
 		if lines[0] != "=== Praetor Reconcile Plan (Dry Run) ===" || lines[1] != "Repository: "+repo.Owner+"/"+repo.Name {
 			t.Errorf("header for %+v = %q", repo, lines[:2])
 		}
-		if strings.Contains(b.String(), "cordanaLLM/praetor") {
-			t.Errorf("header names this product's repository:\n%s", b.String())
+		if strings.Contains(text, "cordanaLLM/praetor") {
+			t.Errorf("header names this product's repository:\n%s", text)
 		}
 	}
 }
@@ -566,7 +567,7 @@ func TestWritePlanHeader_NamesTheManifestRepository(t *testing.T) {
 func TestWritePlanHeaderRejectsInvalidReviewMode(t *testing.T) {
 	policy := config.DefaultPolicy()
 	policy.BranchProtection.ReviewMode = "unreviewed"
-	var b strings.Builder
+	var b mcpTextBuilder
 	if err := writePlanHeader(&b, &config.Manifest{}, policy); err == nil || !strings.Contains(err.Error(), "unsupported branch protection review mode") {
 		t.Fatalf("invalid review mode was not propagated: %v", err)
 	}
@@ -654,11 +655,11 @@ func TestServer_Positive_PlanShowsThePinnedProfilePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var header strings.Builder
+	var header mcpTextBuilder
 	if err := writePlanHeader(&header, manifest, policy); err != nil {
 		t.Fatal(err)
 	}
-	expectText(t, "resolver parity", plan, header.String())
+	expectText(t, "resolver parity", plan, string(header.Text()))
 }
 
 // A lock that no longer verifies fails the plan instead of silently previewing defaults.
@@ -826,7 +827,7 @@ func TestServer_Negative_InspectSymbols(t *testing.T) {
 	res := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "does-not-exist.go"})
 	expectError(t, "missing path", res, "Inspection failed")
 	res = callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": ""})
-	expectError(t, "empty path", res, "path parameter is required")
+	expectError(t, "empty path", res, "path parameter required")
 	res = callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "../"})
 	expectError(t, "escaping path", res, "outside the server root")
 
@@ -838,7 +839,7 @@ func TestServer_Negative_InspectSymbols(t *testing.T) {
 		t.Fatal(err)
 	}
 	res = callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "empty"})
-	expectText(t, "no go files", res, "No Go source files")
+	expectText(t, "no go files", res, "no Go source files")
 }
 
 // inspect_symbols measures with the scanner's own visitor: every value it prints is the one

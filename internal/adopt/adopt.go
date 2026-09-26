@@ -13,6 +13,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/editor"
 	"github.com/cordanaLLM/praetor/internal/flavor"
@@ -429,14 +430,12 @@ func reconcileManifest(ctx context.Context, s *adoptSession) error {
 	// it from detected markers replaced a declared profile and facet set with guessed ones and
 	// still reported success, which is governance data loss dressed as adoption.
 	if fileExists(full) {
-		// An existing manifest is an input: one the config loader rejects fails adoption here
-		// and is never reported as verified present on existence alone (BUG-853).
-		if _, err := config.LoadManifest(full); err != nil {
-			return fmt.Errorf("existing %s: %w", manifestFile, err)
-		}
-		s.report.recordReconciled(manifestFile, forcedManifestNote(s.opts.Force))
-		return nil
+		return reconcileExistingManifest(ctx, s, full)
 	}
+	return createAdoptionManifest(ctx, s, full)
+}
+
+func createAdoptionManifest(ctx context.Context, s *adoptSession, full string) error {
 	manifest, err := newAdoptionManifest(ctx, s)
 	if err != nil {
 		return err
@@ -454,6 +453,43 @@ func reconcileManifest(ctx context.Context, s *adoptSession) error {
 	}
 	s.report.recordCreated(manifestFile, fmt.Sprintf("Scaffolded standards manifest (Repository: %s, Profile: %s; "+
 		"visibility left unset, adoption cannot observe it)", repository, s.arch))
+	return nil
+}
+
+func reconcileExistingManifest(ctx context.Context, s *adoptSession, full string) error {
+	// An existing manifest is an input: one the config loader rejects fails adoption here
+	// and is never reported as verified present on existence alone (BUG-853).
+	manifest, err := config.LoadManifest(full)
+	if err != nil {
+		return fmt.Errorf("existing %s: %w", manifestFile, err)
+	}
+	data, _, err := contextopt.ObserveSnapshot(ctx, full)
+	if err != nil {
+		return err
+	}
+	desired, err := adoptionRegisterSources(ctx, s)
+	if err != nil {
+		return err
+	}
+	if err := verifyExistingRegisterSources(ctx, s.repoPath, manifest, desired, s.opts.Force); err != nil {
+		return err
+	}
+	replacement, changed, err := addManifestSources(ctx, data, desired)
+	if err != nil {
+		return err
+	}
+	if changed && !s.opts.DryRun {
+		err = contextopt.ReplaceSnapshot(ctx, full, replacement,
+			contextopt.ReplaceOptions{Expected: data, Exists: true, Mode: filePerm})
+	}
+	if err != nil {
+		return err
+	}
+	note := forcedManifestNote(s.opts.Force)
+	if changed {
+		note = "Added omission-resistant register.sources coverage; preserved existing declarations"
+	}
+	s.report.recordReconciled(manifestFile, note)
 	return nil
 }
 

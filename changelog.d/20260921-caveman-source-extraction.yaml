@@ -1,4 +1,4 @@
 type: added
-title: Enforce tracked hook, MCP, and prompt runtime text through canonical register sources
-breaking: false
+title: Enforce tracked hook, MCP, and prompt runtime text through canonical register sources, and fail audit when register.sources is absent
+breaking: true
 issue: "#364"

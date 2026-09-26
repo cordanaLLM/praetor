@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/caveman"
@@ -33,6 +32,9 @@ type Source struct {
 	Selector string
 	Line     int
 	SHA256   string
+	// NotApplicable records a mechanically classified protocol or pass-through callsite.
+	// The coverage contract binds it, while Caveman prose lint skips its non-agent-owned text.
+	NotApplicable string
 }
 
 // Provenance renders the parser, selector and digest which produced a Source.
@@ -41,14 +43,20 @@ func (s Source) Provenance() string {
 	if selector == "" {
 		selector = fmt.Sprintf("line:%d", s.Line)
 	}
-	return fmt.Sprintf("source_selector=%s source_sha256=%s extraction=%s surface=%s",
-		selector, s.SHA256, s.Format, s.Surface)
+	applicability := "applicable"
+	if s.NotApplicable != "" {
+		applicability = "not_applicable:" + s.NotApplicable
+	}
+	return fmt.Sprintf("source_selector=%s source_sha256=%s extraction=%s surface=%s applicability=%s",
+		selector, s.SHA256, s.Format, s.Surface, applicability)
 }
 
 // Result carries the complete sorted inventory and its aggregate coverage digest.
 type Result struct {
-	Sources []Source
-	SHA256  string
+	Sources       []Source
+	Applicable    int
+	NotApplicable int
+	SHA256        string
 }
 
 // ExtractDeclared extracts and verifies the canonical register.sources contract.
@@ -63,8 +71,30 @@ func ExtractDeclared(ctx context.Context, root string, declared *config.Register
 	if err := requireTracked(ctx, root, files); err != nil {
 		return Result{}, err
 	}
-	if len(result.Sources) != declared.Expected {
-		return Result{}, fmt.Errorf("register.sources expected %d values, extracted %d", declared.Expected, len(result.Sources))
+	return verifyDeclaredResult(result, declared)
+}
+
+// ExtractDeclaredContent verifies declared coverage against current source bytes without
+// requiring those bytes in Git. Adoption uses this during the pre-commit rerun window;
+// repository gates use ExtractDeclared and retain tracked-source enforcement.
+func ExtractDeclaredContent(ctx context.Context, root string, declared *config.RegisterSources) (Result, error) {
+	if declared == nil {
+		return Result{}, errors.New("register.sources is not configured")
+	}
+	result, _, err := extractInputs(ctx, root, declared.Inputs)
+	if err != nil {
+		return Result{}, err
+	}
+	return verifyDeclaredResult(result, declared)
+}
+
+func verifyDeclaredResult(result Result, declared *config.RegisterSources) (Result, error) {
+	if result.Applicable != declared.Expected {
+		return Result{}, fmt.Errorf("register.sources expected %d applicable values, extracted %d", declared.Expected, result.Applicable)
+	}
+	if result.NotApplicable != declared.NotApplicable {
+		return Result{}, fmt.Errorf("register.sources expected %d not-applicable values, extracted %d",
+			declared.NotApplicable, result.NotApplicable)
 	}
 	if result.SHA256 != declared.SHA256 {
 		return Result{}, fmt.Errorf("register.sources sha256 mismatch: declared %s, actual %s", declared.SHA256, result.SHA256)
@@ -81,11 +111,16 @@ func ExtractInputs(ctx context.Context, root string, inputs []config.RegisterSou
 
 // CoverageFromDocuments computes the same structured-source inventory from in-memory
 // documents. Adoption uses it before the generated harness exists on disk.
-func CoverageFromDocuments(inputs []config.RegisterSourceInput, documents map[string][]byte) (Result, error) {
-	accumulator := sourceAccumulator{}
+func CoverageFromDocuments(ctx context.Context, inputs []config.RegisterSourceInput, documents map[string][]byte) (Result, error) {
+	if ctx == nil {
+		return Result{}, errors.New("caveman source extraction requires context")
+	}
+	accumulator := sourceAccumulator{inventory: make([]string, 0, len(inputs))}
 	budget := documentBudget{seen: make(map[string]bool, len(documents))}
 	for index := range inputs {
-		extracted, err := extractDocumentInput(inputs[index], documents, &budget)
+		accumulator.inventory = append(accumulator.inventory,
+			inventoryRecord(discoveredInput{input: inputs[index], path: inputs[index].Path}))
+		extracted, err := extractDocumentInput(ctx, inputs[index], documents, &budget)
 		if err != nil {
 			return Result{}, err
 		}
@@ -105,13 +140,17 @@ func extractInputs(ctx context.Context, root string, inputs []config.RegisterSou
 		return Result{}, nil, err
 	}
 	reader := sourceReader{ctx: ctx, root: root, cache: make(map[string][]byte, len(files))}
-	accumulator := sourceAccumulator{sources: make([]Source, 0, len(items))}
+	packageGoverned, err := collectMCPGovernedFunctions(items, &reader)
+	if err != nil {
+		return Result{}, nil, err
+	}
+	accumulator := sourceAccumulator{sources: make([]Source, 0, len(items)), inventory: sourceInventory(items)}
 	for index := range items {
 		data, err := reader.read(items[index].path)
 		if err != nil {
 			return Result{}, nil, err
 		}
-		extracted, extractErr := extractItem(items[index], data)
+		extracted, extractErr := extractItem(ctx, items[index], data, packageGoverned)
 		if extractErr != nil {
 			return Result{}, nil, extractErr
 		}
@@ -140,7 +179,7 @@ func (b *documentBudget) observe(path string, data []byte) error {
 	return nil
 }
 
-func extractDocumentInput(input config.RegisterSourceInput, documents map[string][]byte, budget *documentBudget) ([]Source, error) {
+func extractDocumentInput(ctx context.Context, input config.RegisterSourceInput, documents map[string][]byte, budget *documentBudget) ([]Source, error) {
 	if err := input.Validate(); err != nil {
 		return nil, err
 	}
@@ -154,7 +193,7 @@ func extractDocumentInput(input config.RegisterSourceInput, documents map[string
 	if err := budget.observe(input.Path, data); err != nil {
 		return nil, err
 	}
-	return extractStructured(discoveredInput{input: input, path: input.Path}, data)
+	return extractStructured(ctx, discoveredInput{input: input, path: input.Path}, data)
 }
 
 type sourceReader struct {
@@ -185,8 +224,11 @@ func (r *sourceReader) read(path string) ([]byte, error) {
 }
 
 type sourceAccumulator struct {
-	sources []Source
-	total   int
+	sources       []Source
+	inventory     []string
+	total         int
+	applicable    int
+	notApplicable int
 }
 
 func (a *sourceAccumulator) add(extracted []Source) error {
@@ -199,8 +241,16 @@ func (a *sourceAccumulator) add(extracted []Source) error {
 			return fmt.Errorf("caveman source selections exceed %d bytes", contextopt.MaxSourceBytes)
 		}
 		a.sources = append(a.sources, extracted[index])
-		if len(a.sources) > config.MaxRegisterSourceOutputs {
-			return fmt.Errorf("caveman sources exceed %d extracted values", config.MaxRegisterSourceOutputs)
+		if extracted[index].NotApplicable == "" {
+			a.applicable++
+			if a.applicable > config.MaxRegisterSourceOutputs {
+				return fmt.Errorf("caveman sources exceed %d applicable values", config.MaxRegisterSourceOutputs)
+			}
+		} else {
+			a.notApplicable++
+			if a.notApplicable > config.MaxRegisterSourceOutputs {
+				return fmt.Errorf("caveman sources exceed %d not-applicable values", config.MaxRegisterSourceOutputs)
+			}
 		}
 	}
 	return nil
@@ -211,7 +261,8 @@ func (a *sourceAccumulator) result() (Result, error) {
 		return Result{}, errors.New("caveman source extraction checked zero runtime text values")
 	}
 	sort.Slice(a.sources, func(i, j int) bool { return sourceKey(a.sources[i]) < sourceKey(a.sources[j]) })
-	return Result{Sources: a.sources, SHA256: CoverageDigest(a.sources)}, nil
+	return Result{Sources: a.sources, Applicable: a.applicable, NotApplicable: a.notApplicable,
+		SHA256: coverageDigest(a.sources, a.inventory)}, nil
 }
 
 func validateSource(source *Source) error {
@@ -234,30 +285,55 @@ func logicalLines(value string) int {
 }
 
 func sourceKey(source Source) string {
-	return fmt.Sprintf("%s\x00%s\x00%09d\x00%s\x00%s", source.Path, source.Selector,
-		source.Line, source.Surface, source.Kind)
+	return fmt.Sprintf("%s\x00%s\x00%s\x00%s", source.Path, source.Selector,
+		source.Surface, source.Kind)
 }
 
-// CoverageDigest binds every extracted value and its provenance in deterministic order.
-func CoverageDigest(sources []Source) string {
-	records := make([]string, len(sources))
-	for index := range sources {
-		records[index] = strings.Join([]string{sources[index].Path, sources[index].Selector,
-			strconv.Itoa(sources[index].Line), string(sources[index].Surface), string(sources[index].Kind),
-			string(sources[index].Format), sources[index].SHA256}, "\x00")
+// coverageDigest binds every selected file identity plus every extracted value and its provenance.
+func coverageDigest(sources []Source, inventory []string) string {
+	records := make([]string, 0, len(inventory)+len(sources))
+	for _, item := range inventory {
+		records = append(records, "input\x00"+item)
 	}
+	for index := range sources {
+		records = append(records, "source\x00"+strings.Join([]string{sources[index].Path, sources[index].Selector,
+			string(sources[index].Surface), string(sources[index].Kind),
+			string(sources[index].Format), sources[index].SHA256, sources[index].NotApplicable}, "\x00"))
+	}
+	sort.Strings(records)
 	digest := sha256.Sum256([]byte(strings.Join(records, "\n") + "\n"))
 	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
-func extractItem(item discoveredInput, data []byte) ([]Source, error) {
+func sourceInventory(items []discoveredInput) []string {
+	records := make([]string, len(items))
+	for index := range items {
+		records[index] = inventoryRecord(items[index])
+	}
+	return records
+}
+
+func inventoryRecord(item discoveredInput) string {
+	return strings.Join([]string{filepath.ToSlash(item.path), item.input.Selector,
+		string(item.input.Surface), item.input.Kind, string(item.input.Format)}, "\x00")
+}
+
+func sourceNotApplicable(item discoveredInput, text, selector string, line int, reason string) Source {
+	source := sourceFrom(item, text, selector, line)
+	source.NotApplicable = reason
+	return source
+}
+
+func extractItem(ctx context.Context, item discoveredInput, data []byte, packageGoverned map[string]bool) ([]Source, error) {
 	switch item.input.Format {
 	case config.SourceFormatShell:
 		return extractShell(item, string(data))
 	case config.SourceFormatPython:
 		return extractPython(item, string(data))
+	case config.SourceFormatGo:
+		return extractGo(item, data, packageGoverned)
 	case config.SourceFormatJSON, config.SourceFormatYAML:
-		return extractStructured(item, data)
+		return extractStructured(ctx, item, data)
 	default:
 		return nil, fmt.Errorf("caveman source %s: unsupported format %q", item.path, item.input.Format)
 	}

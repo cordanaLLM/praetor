@@ -501,6 +501,17 @@ otherwise print `no go.mod at the repository root, skipping <tool>`, matching th
 stages above. A module kept in a subdirectory is not scanned by these jobs. Tests:
 `internal/adopt/lefthook_identity_test.go`, `internal/adopt/checkpoint_test.go`,
 `internal/adopt/hooks_gomod_test.go`, `internal/adopt/cli_name_test.go`.
+Generated Makefiles run `caveman-sources` (`praetorctl caveman check
+--configured-sources`) inside `verify-all`, and `praetorctl audit` fails when
+`.standards.yaml` has no `register.sources`. Re-running adoption on a repository
+with an existing manifest adds the contract for its Paperclip harness without
+replacing operator fields, and binds a valid existing harness byte for byte
+(`TestAdoptExistingManifestAddsSourceContractWithoutDroppingContent` and
+`TestAdoptCustomHarnessPreservesBytesAndBindsActualCoverage` in
+`internal/adopt/adopt_test.go`). An existing `register.sources` that fails its own
+gate stops adoption (`TestAdoptRejectsStaleExistingSourceContract`). The
+[text-register guide](text-register.md#tracked-runtime-sources) describes the
+contract.
 
 Run the resulting commands under the intended toolchain and retain actual results
 before claiming application verification. Public dogfood governance verification,

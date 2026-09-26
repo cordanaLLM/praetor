@@ -187,6 +187,7 @@ func TestAudit_TouchedFileCleanRule(t *testing.T) {
 
 	// Baselined debt in an untouched file passes.
 	f.writeBaseline(t, []baseline.Infraction{inf}, "")
+	gitCommitAll(t, f.dir, f.gitEnv, "baseline legacy fixture")
 	out, err := f.audit(t)
 	if err != nil {
 		t.Fatalf("baselined debt must pass: %v\n%s", err, out)
@@ -214,7 +215,8 @@ func TestAudit_GitChangeSetAndGrowthGuard(t *testing.T) {
 	f := newAuditFixture(t)
 	inf := f.addViolation(t)
 	f.writeBaseline(t, []baseline.Infraction{inf}, "")
-	env := initGitFixture(t, f.dir)
+	gitCommitAll(t, f.dir, f.gitEnv, "baseline growth fixture")
+	env := f.gitEnv
 
 	// Clean tree: nothing is touched and the committed baseline did not grow.
 	out, err := f.audit(t, "--base=main")
@@ -262,13 +264,18 @@ func TestAudit_GitChangeSetAndGrowthGuard(t *testing.T) {
 	_, err = f.audit(t, "--base=main;rm")
 	mustErrContain(t, err, "invalid --base")
 	plain := newAuditFixture(t)
+	if err := os.RemoveAll(filepath.Join(plain.dir, ".git")); err != nil {
+		t.Fatal(err)
+	}
 	_, err = plain.audit(t, "--base=main")
 	mustErrContain(t, err, "requires a git repository")
 }
 
 func TestAudit_Boundary_HooksGate(t *testing.T) {
 	f := newAuditFixture(t)
-	initGitFixture(t, f.dir)
+	if err := os.Remove(filepath.Join(f.dir, ".git", "hooks", "pre-commit")); err != nil {
+		t.Fatal(err)
+	}
 
 	// CI skips local hook verification.
 	t.Setenv("CI", "true")

@@ -2,6 +2,7 @@ package cavemansource
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -20,14 +21,14 @@ type nodeMatch struct {
 	path string
 }
 
-func extractStructured(item discoveredInput, data []byte) ([]Source, error) {
+func extractStructured(ctx context.Context, item discoveredInput, data []byte) ([]Source, error) {
 	if item.input.Format == config.SourceFormatJSON {
 		var value any
 		if err := notebook.Decode(data, &value); err != nil {
 			return nil, fmt.Errorf("caveman source %s: %w", item.path, err)
 		}
 	}
-	root, err := decodeYAMLNode(data)
+	root, err := decodeYAMLNode(ctx, data)
 	if err != nil {
 		return nil, fmt.Errorf("caveman source %s: %w", item.path, err)
 	}
@@ -46,7 +47,7 @@ func extractStructured(item discoveredInput, data []byte) ([]Source, error) {
 	return sources, nil
 }
 
-func decodeYAMLNode(data []byte) (*yaml.Node, error) {
+func decodeYAMLNode(ctx context.Context, data []byte) (*yaml.Node, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	var document yaml.Node
 	if err := decoder.Decode(&document); err != nil {
@@ -58,6 +59,9 @@ func decodeYAMLNode(data []byte) (*yaml.Node, error) {
 	}
 	if len(document.Content) != 1 {
 		return nil, errors.New("structured source requires one root value")
+	}
+	if err := config.ValidateYAMLNodes(ctx, &document); err != nil {
+		return nil, fmt.Errorf("validate structured YAML: %w", err)
 	}
 	return document.Content[0], nil
 }

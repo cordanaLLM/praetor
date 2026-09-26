@@ -24,7 +24,7 @@ git push origin HEAD:refs/for/main -o topic=<issue-id> && git push origin HEAD:r
 ## High-Integrity Invariants
 
 - HISS-01: Acyclic DAG control flow (no recursion)
-- HISS-02: Scalar upper bounds on all loops; context timeout on all I/O
+- HISS-02: Scalar upper bounds on all loops; context timeout on all input and output
 - HISS-04: McCabe Cyclomatic <= 10, Cognitive <= 15, Func LOC <= 75
 - HISS-07: Zero .unwrap() / .expect(); all errors handled or wrapped
 - HISS-10: Zero-warning tolerance across compiler, linters, and formatters
