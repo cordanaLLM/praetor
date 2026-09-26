@@ -55,12 +55,12 @@ func helmChart(t *testing.T) string {
 	return ""
 }
 
-// render templates the chart for one release and decodes the manifest stream.
-func render(t *testing.T, release string, args ...string) []document {
+// helm runs one helm command under renderTimeout and returns its stdout, failing
+// the test with helm's stderr when the command fails.
+func helm(t *testing.T, argv ...string) []byte {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), renderTimeout)
 	defer cancel()
-	argv := append([]string{"template", release, helmChart(t)}, args...)
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "helm", argv...)
 	cmd.Stderr = &stderr
@@ -68,7 +68,19 @@ func render(t *testing.T, release string, args ...string) []document {
 	if err != nil {
 		t.Fatalf("helm %v failed: %v: %s", argv, err, stderr.String())
 	}
-	return decode(t, out)
+	return out
+}
+
+// render templates the chart for one release and decodes the manifest stream.
+func render(t *testing.T, release string, args ...string) []document {
+	t.Helper()
+	return renderChart(t, helmChart(t), release, args...)
+}
+
+// renderChart templates the chart at chart, a directory or a packaged archive.
+func renderChart(t *testing.T, chart, release string, args ...string) []document {
+	t.Helper()
+	return decode(t, helm(t, append([]string{"template", release, chart}, args...)...))
 }
 
 // decodeDocuments decodes a manifest stream under a scalar bound (HISS-02). The
@@ -223,8 +235,9 @@ func standardLabels(t *testing.T) map[string]string {
 	}
 }
 
-// containerName reads the single container name of the rendered pod spec.
-func containerName(t *testing.T, docs []document) string {
+// containerField reads one string field of the single container in the rendered
+// pod spec.
+func containerField(t *testing.T, docs []document, field string) string {
 	t.Helper()
 	containers, ok := podSpec(t, docs)["containers"].([]any)
 	if !ok || len(containers) != 1 {
@@ -234,11 +247,45 @@ func containerName(t *testing.T, docs []document) string {
 	if !ok {
 		t.Fatalf("containers[0] = %v, want a mapping", containers[0])
 	}
-	value, ok := entry["name"].(string)
+	value, ok := entry[field].(string)
 	if !ok {
-		t.Fatalf("containers[0].name = %v, want a string", entry["name"])
+		t.Fatalf("containers[0].%s = %v, want a string", field, entry[field])
 	}
 	return value
+}
+
+// containerName reads the single container name of the rendered pod spec.
+func containerName(t *testing.T, docs []document) string {
+	t.Helper()
+	return containerField(t, docs, "name")
+}
+
+// containerImage reads the single container image of the rendered pod spec.
+func containerImage(t *testing.T, docs []document) string {
+	t.Helper()
+	return containerField(t, docs, "image")
+}
+
+// imageRepository is the repository the shipped values.yaml pulls from. The forge
+// guard test holds it equal to the image the release workflow pushes.
+func imageRepository(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(helmChart(t), "values.yaml"))
+	if err != nil {
+		t.Fatalf("read values.yaml: %v", err)
+	}
+	var values struct {
+		Image struct {
+			Repository string `yaml:"repository"`
+		} `yaml:"image"`
+	}
+	if err := yaml.Unmarshal(raw, &values); err != nil {
+		t.Fatalf("decode values.yaml: %v", err)
+	}
+	if values.Image.Repository == "" {
+		t.Fatal("values.yaml names no image.repository")
+	}
+	return values.Image.Repository
 }
 
 func names(docs []document) map[string]bool {
@@ -425,6 +472,50 @@ func TestImagePullSecretsReachThePodSpec(t *testing.T) {
 	entry, ok := secrets[0].(document)
 	if !ok || entry["name"] != "ghcr-credentials" {
 		t.Fatalf("imagePullSecrets[0] = %v, want name ghcr-credentials", secrets[0])
+	}
+}
+
+// Positive: the release workflow lints the chart before it pushes anything, so a
+// chart helm lint rejects would stop a release; the same check runs here first.
+func TestChartPassesHelmLint(t *testing.T) {
+	out := helm(t, "lint", helmChart(t))
+	if !strings.Contains(string(out), "0 chart(s) failed") {
+		t.Fatalf("helm lint did not report a clean chart: %s", out)
+	}
+}
+
+// Positive: with no image.tag the pod pulls the image tagged with the chart's
+// appVersion. values.yaml used to pin v1.0.0, a tag nothing had pushed, so every
+// install ended in ImagePullBackOff.
+func TestDefaultImageTagIsTheChartAppVersion(t *testing.T) {
+	want := fmt.Sprintf("%s:%v", imageRepository(t), chartMetadata(t)["appVersion"])
+	if got := containerImage(t, render(t, "alpha")); got != want {
+		t.Fatalf("image = %q, want %q", got, want)
+	}
+}
+
+// Negative: an explicit image.tag wins over the appVersion, for an image built or
+// mirrored outside the release.
+func TestExplicitImageTagWinsOverTheAppVersion(t *testing.T) {
+	want := imageRepository(t) + ":9.9.9-local"
+	if got := containerImage(t, render(t, "alpha", "--set", "image.tag=9.9.9-local")); got != want {
+		t.Fatalf("image = %q, want %q", got, want)
+	}
+}
+
+// Boundary: the path the release workflow takes. It packages the chart with
+// --app-version set to the version it pushed the image under; installing that
+// archive must pull exactly that tag, whatever the in-tree appVersion says. A tag
+// pinned in values.yaml fails here even when it happens to equal the in-tree
+// appVersion.
+func TestPackagedAppVersionDrivesTheImageTag(t *testing.T) {
+	const version = "0.4.2"
+	dir := t.TempDir()
+	helm(t, "package", helmChart(t), "--version", version, "--app-version", version, "--destination", dir)
+	archive := filepath.Join(dir, "praetor-"+version+".tgz")
+	want := imageRepository(t) + ":" + version
+	if got := containerImage(t, renderChart(t, archive, "alpha")); got != want {
+		t.Fatalf("packaged chart image = %q, want %q", got, want)
 	}
 }
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-09-26. Supersedes ADR-0001, ADR-0003, ADR-0004, ADR-0005 and ADR-0006.
+Accepted — 2026-09-26. Supersedes ADR-0001, ADR-0003, ADR-0004, ADR-0005 and ADR-0006. Decision 4 superseded by [ADR-0013](0013-container-image-and-helm-chart-delivery.md).
 
 ## Context
 

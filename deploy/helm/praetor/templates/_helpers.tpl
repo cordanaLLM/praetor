@@ -52,3 +52,14 @@ account that does not exist.
 {{- default "default" .Values.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Container image reference. An empty image.tag means the chart's appVersion. The
+release workflow packages the chart with --app-version set to the version it
+pushed the image under, so a published chart pulls the image released with it
+and no pinned tag can fall behind the chart. A set image.tag wins, for an image
+built or mirrored outside the release (docs/guides/helm-chart.md).
+*/}}
+{{- define "praetor.image" -}}
+{{- printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) -}}
+{{- end -}}

@@ -87,7 +87,6 @@ func TestPinnedImagesMatchTheDockerfilesThatUseThem(t *testing.T) {
 		name, path, pin string
 	}{
 		{"development image builder", filepath.Join(root, "docker", "dev", "Dockerfile"), DefaultBuilderImage},
-		{"release image builder", filepath.Join(root, "build", "package", "Dockerfile"), DefaultBuilderImage},
 		{"recorded bootstrap builder", filepath.Join(root, ".devcontainer", "Dockerfile.praetor"), DefaultBuilderImage},
 		{"recorded bootstrap base", filepath.Join(root, ".devcontainer", "Dockerfile.praetor"), DefaultBaseImage},
 	} {
