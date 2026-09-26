@@ -316,6 +316,44 @@ def resolved_relative_to(path, root):
     return Path(path).resolve().relative_to(Path(root).resolve())
 
 
+def unresolved_relative_to(path, root):
+    """Return absolute ``path`` relative to ``root``, keeping the part below ``root`` as spelled.
+
+    ``resolved_relative_to`` follows every symlink in ``path``. A caller that must still see
+    each component under ``root`` cannot use it: checkpoint_scope.py refuses a file-tool path
+    that traverses a symlink inside the checkout, and a resolved path has no symlink left to
+    find. Comparing the two spellings instead fails whenever the part *above* ``root`` is
+    spelled differently on each side, which is the normal case off Linux: macOS reaches every
+    temp root through /var -> /private/var, Windows hands out 8.3 short names
+    (C:\\Users\\RUNNER~1) beside the long form ``Path.resolve()`` returns, and the drive
+    letter's case is not fixed. Both broke the macOS and Windows legs of the Platform
+    Neutrality matrix once ``ROOT`` came from ``Path(__file__).resolve()`` and the path from a
+    client payload.
+
+    So ``root`` is matched by filesystem identity (``os.path.samestat``) against the outermost
+    ancestor of ``path`` that is that directory, the Python counterpart of
+    ``internal/util.SameDirectory``, and the remainder below it is returned unresolved. Raises
+    ``ValueError`` (as ``Path.relative_to`` does) when ``path`` is relative, contains a parent
+    traversal whose meaning depends on symlinks, or has no ancestor that is ``root``.
+    """
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        raise ValueError(f"{os.fspath(path)!r} is not an absolute path")
+    if os.pardir in candidate.parts:
+        raise ValueError(f"{os.fspath(path)!r} contains a parent traversal")
+    try:
+        target = os.stat(root)
+    except OSError as error:
+        raise ValueError(f"{os.fspath(root)!r} cannot be inspected") from error
+    for ancestor in (*reversed(candidate.parents), candidate):
+        try:
+            if os.path.samestat(os.stat(ancestor), target):
+                return candidate.relative_to(ancestor)
+        except OSError:
+            continue
+    raise ValueError(f"{os.fspath(path)!r} is not below {os.fspath(root)!r}")
+
+
 class HookBudget:
     """One deadline every process a native hook starts takes its timeout from.
 

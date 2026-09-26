@@ -9,7 +9,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / ".config/lefthook/scripts"))
 from checkpoint import CheckpointError, _git, inspect_checkpoint
-from common import resolved_relative_to
+from common import resolved_relative_to, unresolved_relative_to
 
 LIMIT = 1024 * 1024
 PASSED = "PRAETOR_CHECKPOINT_SCOPE_OK"
@@ -46,20 +46,18 @@ def rooted_path(cwd, value):
         raise ValueError("file-tool path must not contain parent traversal")
     if not candidate.is_absolute():
         candidate = cwd / candidate
-    normalized = os.path.normpath(os.fspath(candidate))
-    root_name = os.path.normpath(os.fspath(ROOT))
+    # ROOT is resolved and a client's absolute path usually is not: match the checkout by
+    # identity, never by spelling, and keep what lies below it unresolved for the walk below.
     try:
-        relative = os.path.relpath(normalized, root_name)
+        relative = unresolved_relative_to(candidate, ROOT)
     except ValueError as error:
         raise ValueError("file-tool path is outside the repository") from error
-    if relative == os.pardir or relative.startswith(os.pardir + os.sep):
-        raise ValueError("file-tool path is outside the repository")
     current = ROOT
-    for part in Path(relative).parts:
+    for part in relative.parts:
         current /= part
         if current.is_symlink():
             raise ValueError("file-tool path must not traverse a symlink")
-    return relative.replace(os.sep, "/")
+    return relative.as_posix()
 
 
 def native_input(payload):
