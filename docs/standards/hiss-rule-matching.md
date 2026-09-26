@@ -168,6 +168,12 @@ rest of `rustExpressionMacros`) is therefore not decided. The cost is a real sel
 user-defined wrapper macro, such as `ok!(self.parse_expr())`, which
 `HISS-01/rust/gap/user-macro-self-call.rs` records.
 
+A function written in a `macro_rules!` template, whose signature holds a `$` metavariable, is not
+decided either. Its body may be a fragment such as `$body`, so the brace its header seems to open
+belongs to other code, and the template's expansion is not visible.
+`HISS-01/rust/negative/macro-template.rs` and `HISS-01/rust/gap/macro-template-self-call.rs`
+record both sides.
+
 `TestPythonSelfRecursionScopesBindings`, `TestRustSelfRecursionShadowsLexically` and
 `TestRustMacroInputIsUndecided` in `internal/hiss/recursion_test.go` pin these rules. The fixtures
 `HISS-01/python/positive/nested-scope-binding.py`, `HISS-01/rust/positive/binding-after-call.rs`,

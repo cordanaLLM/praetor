@@ -315,6 +315,12 @@ func TestRustMacroInputIsUndecided(t *testing.T) {
 	assertSelfCalls(t, "src/ne.rs", "fn f(n: u32) -> bool {\n    n != 0 && !f(n - 1)\n}\n", 2)
 	assertSelfCalls(t, "src/close.rs", "fn f(n: u32) -> u32 {\n    wrap!(n); f(n - 1)\n}\n", 2)
 	assertSelfCalls(t, "src/std.rs", "fn f(n: u32) -> u32 {\n    std::assert_eq!(f(n - 1), 0);\n    0\n}\n", 2)
+	// A function written in a macro_rules template is not decided: its body may be a $body
+	// fragment, so the brace after its header opens other code. A function after the template
+	// is decided again.
+	assertSelfCalls(t, "src/tpl.rs", "macro_rules! m {\n    ($b:block) => {\n        unsafe fn fn_impl() -> u32 $b\n        unsafe {\n            fn_impl()\n        }\n    };\n}\n")
+	assertSelfCalls(t, "src/tplrec.rs", "macro_rules! m {\n    ($t:ty) => {\n        fn f(n: $t) -> $t {\n            f(n - 1)\n        }\n    };\n}\n")
+	assertSelfCalls(t, "src/after.rs", "macro_rules! m {\n    () => {};\n}\nfn f(n: u32) -> u32 {\n    f(n - 1)\n}\n", 5)
 }
 
 // TestRustTraitImplHeaderForms covers impl and trait headers of a trait impl: an attribute on
