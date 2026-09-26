@@ -9,13 +9,17 @@ described this project. The template now reads every identity value from mkdocs.
 
 The source check runs everywhere. The rendered checks build a one-page site with MkDocs and
 Material for MkDocs, and skip with the reason when either is not installed
-(`pip install -r docs/presets/mkdocs/requirements.txt` provides both).
+(`pip install -r docs/presets/mkdocs/requirements.txt` provides both). The end-to-end
+`seo audit` check also builds praetorctl from this checkout into a temporary directory, so it
+never runs a stale bin/praetorctl, and skips when no Go toolchain is on PATH.
 """
 
 import importlib.util
 import json
 from pathlib import Path
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -29,6 +33,13 @@ TEMPLATES = (OVERRIDES / "main.html",
 IDENTITY_MARKERS = ("cordana", "github.com", "spdx.org")
 JSONLD = re.compile(r'<script type="?application/ld\+json"?>(.*?)</script>', re.S)
 BUILD_TIMEOUT = 180
+# Compiling the whole CLI from a cold build cache takes longer than one MkDocs build.
+GO_BUILD_TIMEOUT = 600
+GO = shutil.which("go")
+PLACEHOLDER_CONFIG = ("extra:\n  source_code:\n"
+                      "    repository: https://git.example.org/acme/docs\n"
+                      "    programming_language: PlaceholderLang\n")
+PLACEHOLDER_PAGE = "---\ndescription: Placeholder page\n---\n# Welcome to example-org/example-repo\n"
 HAS_MKDOCS = all(importlib.util.find_spec(name) is not None for name in ("mkdocs", "material"))
 BASE_CONFIG = f"""\
 site_name: Example Docs
@@ -39,19 +50,25 @@ theme:
 """
 
 
+def render(root, extra_config, index_md="# Welcome\n"):
+    """Build a one-page site below `root` with `extra_config` appended; return its site dir."""
+    (root / "docs").mkdir()
+    (root / "docs" / "index.md").write_text(index_md, encoding="utf-8")
+    (root / "mkdocs.yml").write_text(BASE_CONFIG + extra_config, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-m", "mkdocs", "build", "--strict", "--quiet",
+         "-f", str(root / "mkdocs.yml"), "-d", str(root / "site")],
+        capture_output=True, text=True, timeout=BUILD_TIMEOUT, check=False)
+    if result.returncode != 0:
+        raise AssertionError(f"mkdocs build failed:\n{result.stdout}\n{result.stderr}")
+    return root / "site"
+
+
 def build(extra_config):
     """Build a one-page site with `extra_config` appended; return {page: [JSON-LD objects]}."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        (root / "docs").mkdir()
-        (root / "docs" / "index.md").write_text("# Welcome\n", encoding="utf-8")
-        (root / "mkdocs.yml").write_text(BASE_CONFIG + extra_config, encoding="utf-8")
-        result = subprocess.run(
-            [sys.executable, "-m", "mkdocs", "build", "--strict", "--quiet",
-             "-f", str(root / "mkdocs.yml"), "-d", str(root / "site")],
-            capture_output=True, text=True, timeout=BUILD_TIMEOUT, check=False)
-        if result.returncode != 0:
-            raise AssertionError(f"mkdocs build failed:\n{result.stdout}\n{result.stderr}")
+        render(root, extra_config)
         pages = {}
         for name in ("index.html", "404.html"):
             html = (root / "site" / name).read_text(encoding="utf-8")
@@ -129,32 +146,49 @@ class RenderedMkDocsTemplate(unittest.TestCase):
         }])
         self.assert_no_foreign_identity(pages)
 
-    def test_praetorctl_seo_audit_validates_placeholders_end_to_end(self):
-        """The CLI fails on PlaceholderLang/example-org unless --allow-placeholders is set."""
+@unittest.skipUnless(HAS_MKDOCS and GO, "needs mkdocs, mkdocs-material and a Go toolchain on PATH; "
+                     "pip install -r docs/presets/mkdocs/requirements.txt")
+class PraetorctlSEOAudit(unittest.TestCase):
+    """`praetorctl seo audit` fails on unedited preset placeholders unless allowed."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        exe = ".exe" if os.name == "nt" else ""
+        cls.praetorctl = Path(cls.tmp.name) / f"praetorctl{exe}"
+        result = subprocess.run(
+            [GO, "build", "-o", str(cls.praetorctl), "./cmd/standardsctl"],
+            cwd=ROOT, capture_output=True, text=True, timeout=GO_BUILD_TIMEOUT, check=False)
+        if result.returncode != 0:
+            cls.tmp.cleanup()
+            raise AssertionError(f"go build failed:\n{result.stdout}\n{result.stderr}")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def audit(self, *args):
+        return subprocess.run([str(self.praetorctl), "seo", "audit", *args],
+                              capture_output=True, text=True, timeout=BUILD_TIMEOUT, check=False)
+
+    def test_placeholders_fail_unless_allowed(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "docs").mkdir()
-            (root / "docs" / "index.md").write_text("---\ndescription: test desc\n---\n# Welcome to example-org/example-repo", encoding="utf-8")
-            # Build with PlaceholderLang to ensure it's in the output.
-            (root / "mkdocs.yml").write_text(BASE_CONFIG + "extra:\n  source_code:\n    repository: https://git.example.org/acme/docs\n    programming_language: PlaceholderLang\n", encoding="utf-8")
+            site = render(Path(tmp), PLACEHOLDER_CONFIG, PLACEHOLDER_PAGE)
+            self.assertTrue((site / "sitemap.xml").is_file(), "mkdocs wrote no sitemap.xml")
+            strict = self.audit(str(site))
+            self.assertNotEqual(strict.returncode, 0, strict.stdout + strict.stderr)
+            self.assertIn("unedited PlaceholderLang placeholder", strict.stderr)
+            self.assertIn("unedited example-org/example-repo placeholder", strict.stderr)
+            lax = self.audit("--allow-placeholders", str(site))
+            self.assertEqual(lax.returncode, 0, lax.stdout + lax.stderr)
 
-            subprocess.run([sys.executable, "-m", "mkdocs", "build", "--strict", "--quiet",
-                            "-f", str(root / "mkdocs.yml"), "-d", str(root / "site")], check=True)
-
-            # The test preset does not generate a sitemap by default (mkdocs needs a real URL or plugin sometimes, or it just generates one).
-            # We'll just provide a dummy one if it doesn't exist so audit passes the sitemap check.
-            if not (root / "site" / "sitemap.xml").exists():
-                (root / "site" / "sitemap.xml").write_text('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://docs.example.org/</loc></url></urlset>', encoding="utf-8")
-
-            praetorctl = ROOT / "bin" / "praetorctl"
-            result = subprocess.run([str(praetorctl), "seo", "audit", str(root / "site")], capture_output=True, text=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("PlaceholderLang", result.stderr)
-            self.assertIn("example-org/example-repo", result.stderr)
-
-            result_lax = subprocess.run([str(praetorctl), "seo", "audit", "--allow-placeholders", str(root / "site")], capture_output=True, text=True)
-            self.assertEqual(result_lax.returncode, 0)
-
+    def test_edited_site_passes_without_the_flag(self):
+        """Boundary: the same site with real values needs no --allow-placeholders."""
+        config = PLACEHOLDER_CONFIG.replace("PlaceholderLang", "Rust")
+        page = PLACEHOLDER_PAGE.replace("example-org/example-repo", "acme/docs")
+        with tempfile.TemporaryDirectory() as tmp:
+            clean = self.audit(str(render(Path(tmp), config, page)))
+            self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
 
 if __name__ == "__main__":
     unittest.main()

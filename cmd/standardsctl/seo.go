@@ -24,7 +24,9 @@ func runSEO(args []string) error {
 	if len(args) > 0 && isHelpToken(args[0]) {
 		fmt.Println("Usage: praetorctl seo audit [--json] [--require-robots] [--allow-placeholders] [site-dir]")
 		fmt.Println("  Audits a built site (default: site): JSON-LD in every HTML page head, every")
-		fmt.Println("  sitemap*.xml at the root, and robots.txt. Exits non-zero on any finding.")
+		fmt.Println("  sitemap*.xml at the root, and robots.txt. Exits non-zero on any finding;")
+		fmt.Println("  unedited preset placeholders (example-org/example-repo, PlaceholderLang)")
+		fmt.Println("  are findings unless --allow-placeholders is set.")
 		return nil
 	}
 	parsed, err := parseSEOAuditArgs(args)
@@ -55,8 +57,8 @@ type seoAuditArgs struct {
 	options seo.SiteAuditOptions
 }
 
-// parseSEOAuditArgs parses `audit [--json] [--require-robots] [site-dir]`; site-dir
-// defaults to site, the MkDocs output directory.
+// parseSEOAuditArgs parses `audit [--json] [--require-robots] [--allow-placeholders]
+// [site-dir]`; site-dir defaults to site, the MkDocs output directory.
 func parseSEOAuditArgs(args []string) (seoAuditArgs, error) {
 	if len(args) == 0 || args[0] != "audit" {
 		return seoAuditArgs{}, errors.New(seoUsage)

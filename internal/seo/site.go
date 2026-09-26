@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -434,65 +435,78 @@ func lowerASCII(b []byte) []byte {
 	return out
 }
 
-// maskHTMLComments replaces <!-- ... --> with spaces when found in the HTML data state.
+// rawTextElements are the elements whose content the HTML tokenizer reads as text up to
+// the matching end tag (raw text and RCDATA), so a "<!--" inside one is not a comment.
+var rawTextElements = []string{"script", "style", "textarea", "title"}
+
+// maskHTMLComments blanks every <!-- ... --> comment in the HTML data state, so a
+// commented-out tag is never read as markup. Tags are skipped whole, because a quoted
+// attribute value may hold "<!--", and so is the content of every raw-text element.
 func maskHTMLComments(lower []byte) {
-	state := 0 // 0:data, 1:tag, 2:dq, 3:sq, 4:rawText, 5:comment
-	var end []byte
-	for i := 0; i < len(lower); i++ {
-		c := lower[i]
-		switch state {
-		case 0:
-			if c == '<' {
-				state, end, i = enterTag(lower, i)
-			}
-		case 1:
-			if c == '>' {
-				if end != nil {
-					state = 4
-				} else {
-					state = 0
-				}
-			} else if c == '"' {
-				state = 2
-			} else if c == '\'' {
-				state = 3
-			}
-		case 2:
-			if c == '"' {
-				state = 1
-			}
-		case 3:
-			if c == '\'' {
-				state = 1
-			}
-		case 4:
-			if c == '<' && bytes.HasPrefix(lower[i:], end) {
-				state = 1
-				end = nil
-				i += len(end) - 1
-			}
-		case 5:
-			if c == '-' && bytes.HasPrefix(lower[i:], []byte("-->")) {
-				lower[i], lower[i+1], lower[i+2] = ' ', ' ', ' '
-				state = 0
-				i += 2
-			} else {
-				lower[i] = ' '
-			}
+	i := 0
+	for n := 0; n < len(lower) && i < len(lower); n++ {
+		lt := bytes.IndexByte(lower[i:], '<')
+		if lt < 0 {
+			return
 		}
+		i = skipMarkup(lower, i+lt)
 	}
 }
 
-func enterTag(lower []byte, i int) (int, []byte, int) {
-	if bytes.HasPrefix(lower[i:], []byte("<!--")) {
-		lower[i], lower[i+1], lower[i+2], lower[i+3] = ' ', ' ', ' ', ' '
-		return 5, nil, i + 3
+// skipMarkup returns the index after the markup that starts with the '<' at i, blanking it
+// when it is a comment. It always advances. A '<' that opens no tag is text, as in "1 < 2".
+func skipMarkup(lower []byte, i int) int {
+	switch {
+	case bytes.HasPrefix(lower[i:], []byte("<!--")):
+		return maskComment(lower, i)
+	case i+1 == len(lower) || !isTagOpen(lower[i+1]):
+		return i + 1
 	}
-	if bytes.HasPrefix(lower[i:], []byte("<script")) && (i+7 == len(lower) || isTagNameEnd(lower[i+7])) {
-		return 1, []byte("</script"), i + 6
+	end := tagEnd(lower, i)
+	if end < 0 {
+		return len(lower)
 	}
-	if bytes.HasPrefix(lower[i:], []byte("<style")) && (i+6 == len(lower) || isTagNameEnd(lower[i+6])) {
-		return 1, []byte("</style"), i + 5
+	closing := rawTextClose(lower[i:end])
+	if closing == nil {
+		return end
 	}
-	return 1, nil, i
+	if j := bytes.Index(lower[end:], closing); j >= 0 {
+		return end + j
+	}
+	return len(lower)
+}
+
+// maskComment blanks the comment that starts at i through its "-->", or through the end of
+// the page when it never closes, and returns the index after it. The search for "-->"
+// starts inside the "<!--" opener, so the abruptly closed empty comments "<!-->" and
+// "<!--->" end where the HTML tokenizer ends them.
+func maskComment(lower []byte, i int) int {
+	end := len(lower)
+	if j := bytes.Index(lower[i+2:], []byte("-->")); j >= 0 {
+		end = i + 2 + j + len("-->")
+	}
+	for k := i; k < end; k++ {
+		lower[k] = ' '
+	}
+	return end
+}
+
+// isTagOpen reports whether c, following '<' in lowercased HTML, opens a tag, an end tag,
+// a markup declaration or a processing instruction rather than leaving the '<' as text.
+func isTagOpen(c byte) bool {
+	return c == '!' || c == '/' || c == '?' || (c >= 'a' && c <= 'z')
+}
+
+// rawTextClose returns the end-tag prefix that closes the raw-text element tag opens, or
+// nil when tag opens no such element. An end tag has an empty name here, so it opens none.
+func rawTextClose(tag []byte) []byte {
+	end := 1
+	for end < len(tag) && !isTagNameEnd(tag[end]) {
+		end++
+	}
+	name := string(tag[1:end])
+	if slices.Contains(rawTextElements, name) {
+		return []byte("</" + name)
+	}
+	return nil
 }

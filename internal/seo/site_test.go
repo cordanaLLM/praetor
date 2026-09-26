@@ -182,8 +182,6 @@ func TestAuditSite_Boundary_HeadDetection(t *testing.T) {
 		// A '>' inside a quoted attribute does not close the start tag.
 		"quoted.html":        page(`<script data-x="a>b" type="application/ld+json">` + siteCode + `</script>`),
 		"unterm.html":        "<html><head>" + `<script type="application/ld+json">` + siteCode,
-		"scriptcomment.html": page(`<script>var x = "<!--";</script>` + jsonLD(siteCode)),
-		"jsoncomment.html":   page(jsonLD(strings.Replace(siteCode, `"author": {`, `"name": "x <!-- y", "author": {`, 1))),
 		"emptyld.html":       page(jsonLD("   ")),
 		"commenthead.html":   "<html><!-- <head> --> <head>" + jsonLD(siteCode) + "</head></html>",
 		"commentscript.html": page("<!-- " + jsonLD(`{"@type":`) + " -->" + jsonLD(siteCode)),
@@ -193,7 +191,7 @@ func TestAuditSite_Boundary_HeadDetection(t *testing.T) {
 	requireFinding(t, report, "nohead.html", "no <head> element")
 	requireFinding(t, report, "unterm.html", "unterminated <script> element in <head>")
 	requireFinding(t, report, "emptyld.html", "empty payload")
-	for _, clean := range []string{"implicit.html", "rawtext.html", "quoted.html", "commenthead.html", "commentscript.html", "scriptcomment.html", "jsoncomment.html"} {
+	for _, clean := range []string{"implicit.html", "rawtext.html", "quoted.html", "commenthead.html", "commentscript.html"} {
 		for _, f := range report.Findings {
 			if f.File == clean {
 				t.Errorf("%s: unexpected finding %q", clean, f.Message)
@@ -202,6 +200,32 @@ func TestAuditSite_Boundary_HeadDetection(t *testing.T) {
 	}
 	if len(report.Findings) != 3 {
 		t.Fatalf("expected three findings, got %+v", report.Findings)
+	}
+}
+
+// TestAuditSite_Boundary_CommentState pins where "<!--" opens a comment: only in the HTML
+// data state, never inside raw text, RCDATA, a JSON-LD string or after a '<' that opens no
+// tag, and the empty comments "<!-->" and "<!--->" close at once.
+func TestAuditSite_Boundary_CommentState(t *testing.T) {
+	jsonComment := strings.Replace(siteCode, `"name":"praetor"`, `"name":"x <!-- y"`, 1)
+	if jsonComment == siteCode {
+		t.Fatal("jsoncomment fixture: siteCode no longer carries the replaced name")
+	}
+	tail := "</head><body><!-- x --></body></html>"
+	root := writeSite(t, map[string]string{
+		"scriptcomment.html": page(`<script>var x = "<!--";</script>` + jsonLD(siteCode)),
+		"jsoncomment.html":   page(jsonLD(jsonComment)),
+		"attrcomment.html":   page(`<meta content="<!--">` + jsonLD(siteCode)),
+		"titlecomment.html":  "<html><head><title>a <!-- b</title>" + jsonLD(siteCode) + tail,
+		"emptycomment.html":  "<html><head><!-->" + jsonLD(siteCode) + "<!--->" + tail,
+		"textlt.html":        "<html>1 < 2 <!-- <head></head> --><head>" + jsonLD(siteCode) + tail,
+		"unclosed.html":      "<html><head><!-- " + jsonLD(siteCode) + "</head><body></body></html>",
+		"sitemap.xml":        siteSitemap,
+	})
+	report := auditSite(t, root, SiteAuditOptions{})
+	requireFinding(t, report, "unclosed.html", "no application/ld+json script in <head>")
+	if len(report.Findings) != 1 {
+		t.Fatalf("expected only the unclosed-comment finding, got %+v", report.Findings)
 	}
 }
 
