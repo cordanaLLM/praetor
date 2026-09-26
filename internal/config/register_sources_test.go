@@ -65,6 +65,11 @@ func TestRegisterSourcesBoundary(t *testing.T) {
 }
 
 func TestRegisterSourcesCountBoundaries(t *testing.T) {
+	// The aggregate is one full table per declared input, not one table for the whole
+	// repository: a 256 total left Praetor's own 249-value contract seven values of room.
+	if MaxRegisterSourceOutputs != 16384 || MaxRegisterSourceTableValues != 256 {
+		t.Fatalf("aggregate/table caps = %d/%d, want 16384/256", MaxRegisterSourceOutputs, MaxRegisterSourceTableValues)
+	}
 	input := RegisterSourceInput{Path: "hooks/a.py", Surface: SurfaceHooks, Kind: "message", Format: SourceFormatPython}
 	exactOutputs := &RegisterSources{Expected: MaxRegisterSourceOutputs, SHA256: testSourceDigest, Inputs: []RegisterSourceInput{input}}
 	if err := exactOutputs.validate(); err != nil {
@@ -72,12 +77,12 @@ func TestRegisterSourcesCountBoundaries(t *testing.T) {
 	}
 	aboveOutputs := *exactOutputs
 	aboveOutputs.Expected++
-	if err := aboveOutputs.validate(); err == nil || !strings.Contains(err.Error(), "1..256") {
+	if err := aboveOutputs.validate(); err == nil || !strings.Contains(err.Error(), "1..16384") {
 		t.Fatalf("%d expected outputs accepted: %v", MaxRegisterSourceOutputs+1, err)
 	}
 	aboveClassified := *exactOutputs
 	aboveClassified.NotApplicable = MaxRegisterSourceOutputs + 1
-	if err := aboveClassified.validate(); err == nil || !strings.Contains(err.Error(), "not_applicable must be 0..256") {
+	if err := aboveClassified.validate(); err == nil || !strings.Contains(err.Error(), "not_applicable must be 0..16384") {
 		t.Fatalf("%d classified outputs accepted: %v", MaxRegisterSourceOutputs+1, err)
 	}
 

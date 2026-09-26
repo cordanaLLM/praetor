@@ -1382,21 +1382,39 @@ func TestTrackedSourceIndexModesAndBounds(t *testing.T) {
 	}
 }
 
-func TestExtractOutputCountBoundary(t *testing.T) {
+func TestExtractTableValueBoundary(t *testing.T) {
 	root := t.TempDir()
-	values := make([]string, config.MaxRegisterSourceOutputs)
+	values := make([]string, config.MaxRegisterSourceTableValues)
 	for index := range values {
 		values[index] = "result: pass."
 	}
 	writeJSONSource(t, root, "prompts/messages.json", map[string]any{"messages": values})
 	input := sourceInput("prompts/messages.json", config.SourceFormatJSON, "messages.*")
 	result, err := ExtractInputs(t.Context(), root, []config.RegisterSourceInput{input})
-	if err != nil || len(result.Sources) != config.MaxRegisterSourceOutputs {
-		t.Fatalf("exact %d outputs: values=%d err=%v", config.MaxRegisterSourceOutputs, len(result.Sources), err)
+	if err != nil || len(result.Sources) != config.MaxRegisterSourceTableValues {
+		t.Fatalf("exact %d table values: values=%d err=%v", config.MaxRegisterSourceTableValues, len(result.Sources), err)
 	}
 	values = append(values, "next: stop.")
 	writeJSONSource(t, root, "prompts/messages.json", map[string]any{"messages": values})
 	if _, err = ExtractInputs(t.Context(), root, []config.RegisterSourceInput{input}); err == nil || !strings.Contains(err.Error(), "exceeds 256") {
+		t.Fatalf("%d table values accepted: %v", config.MaxRegisterSourceTableValues+1, err)
+	}
+}
+
+// TestExtractOutputCountBoundary pins the repository aggregate separately from the table
+// bound: one shell hook may emit more values than one table holds, up to the aggregate.
+func TestExtractOutputCountBoundary(t *testing.T) {
+	root := t.TempDir()
+	line := "echo \"result: pass.\"\n"
+	input := sourceInput("hooks/emit.sh", config.SourceFormatShell, "")
+	writeSourceFile(t, root, "hooks/emit.sh", strings.Repeat(line, config.MaxRegisterSourceOutputs))
+	result, err := ExtractInputs(t.Context(), root, []config.RegisterSourceInput{input})
+	if err != nil || result.Applicable != config.MaxRegisterSourceOutputs {
+		t.Fatalf("exact %d outputs: values=%d err=%v", config.MaxRegisterSourceOutputs, result.Applicable, err)
+	}
+	writeSourceFile(t, root, "hooks/emit.sh", strings.Repeat(line, config.MaxRegisterSourceOutputs+1))
+	if _, err = ExtractInputs(t.Context(), root, []config.RegisterSourceInput{input}); err == nil ||
+		!strings.Contains(err.Error(), "exceed 16384 applicable values") {
 		t.Fatalf("%d outputs accepted: %v", config.MaxRegisterSourceOutputs+1, err)
 	}
 }

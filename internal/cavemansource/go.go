@@ -40,7 +40,7 @@ func extractGo(item discoveredInput, data []byte, packageGoverned map[string]boo
 		return nil, fmt.Errorf("caveman source %s selector %s: %w", item.path, item.input.Selector, err)
 	}
 	sources := make([]Source, 0, len(indexes))
-	for sourceIndex := 0; sourceIndex < len(indexes) && sourceIndex < config.MaxRegisterSourceOutputs; sourceIndex++ {
+	for sourceIndex := 0; sourceIndex < len(indexes) && sourceIndex < config.MaxRegisterSourceTableValues; sourceIndex++ {
 		index := indexes[sourceIndex]
 		selector := fmt.Sprintf("$.%s.%d", segments[0], index)
 		sources = append(sources, sourceFrom(item, literals[index].text, selector, literals[index].line))
@@ -87,29 +87,46 @@ func goValueSpecNames(spec *ast.ValueSpec, name string) bool {
 }
 
 func decodeGoStringTable(files *token.FileSet, spec *ast.ValueSpec) ([]goStringLiteral, error) {
+	composite, err := goStringTableLiteral(spec)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]goStringLiteral, len(composite.Elts))
+	for index := 0; index < len(composite.Elts) && index < config.MaxRegisterSourceTableValues; index++ {
+		values[index], err = decodeGoStringElement(files, spec.Names[0].Name, index, composite.Elts[index])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return values, nil
+}
+
+// goStringTableLiteral returns the single static []string composite literal a table declares.
+func goStringTableLiteral(spec *ast.ValueSpec) (*ast.CompositeLit, error) {
+	name := spec.Names[0].Name
 	if len(spec.Values) != 1 {
-		return nil, fmt.Errorf("go string table %q requires one static composite literal", spec.Names[0].Name)
+		return nil, fmt.Errorf("go string table %q requires one static composite literal", name)
 	}
 	composite, ok := spec.Values[0].(*ast.CompositeLit)
 	if !ok || !goStringArrayType(composite.Type) {
-		return nil, fmt.Errorf("go string table %q requires [...]string or []string", spec.Names[0].Name)
+		return nil, fmt.Errorf("go string table %q requires [...]string or []string", name)
 	}
-	if len(composite.Elts) == 0 || len(composite.Elts) > config.MaxRegisterSourceOutputs {
-		return nil, fmt.Errorf("go string table %q requires 1..%d values", spec.Names[0].Name, config.MaxRegisterSourceOutputs)
+	if len(composite.Elts) == 0 || len(composite.Elts) > config.MaxRegisterSourceTableValues {
+		return nil, fmt.Errorf("go string table %q requires 1..%d values", name, config.MaxRegisterSourceTableValues)
 	}
-	values := make([]goStringLiteral, len(composite.Elts))
-	for index := 0; index < len(composite.Elts) && index < config.MaxRegisterSourceOutputs; index++ {
-		literal, ok := composite.Elts[index].(*ast.BasicLit)
-		if !ok || literal.Kind != token.STRING {
-			return nil, fmt.Errorf("go string table %q value %d requires a static string literal", spec.Names[0].Name, index)
-		}
-		text, err := strconv.Unquote(literal.Value)
-		if err != nil {
-			return nil, fmt.Errorf("go string table %q value %d: %w", spec.Names[0].Name, index, err)
-		}
-		values[index] = goStringLiteral{text: text, line: files.Position(literal.Pos()).Line}
+	return composite, nil
+}
+
+func decodeGoStringElement(files *token.FileSet, name string, index int, element ast.Expr) (goStringLiteral, error) {
+	literal, ok := element.(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return goStringLiteral{}, fmt.Errorf("go string table %q value %d requires a static string literal", name, index)
 	}
-	return values, nil
+	text, err := strconv.Unquote(literal.Value)
+	if err != nil {
+		return goStringLiteral{}, fmt.Errorf("go string table %q value %d: %w", name, index, err)
+	}
+	return goStringLiteral{text: text, line: files.Position(literal.Pos()).Line}, nil
 }
 
 func goStringArrayType(expression ast.Expr) bool {
@@ -134,7 +151,7 @@ func selectGoStringIndexes(segment string, length int) ([]int, error) {
 
 func allGoStringIndexes(length int) []int {
 	indexes := make([]int, length)
-	for index := 0; index < len(indexes) && index < config.MaxRegisterSourceOutputs; index++ {
+	for index := 0; index < len(indexes) && index < config.MaxRegisterSourceTableValues; index++ {
 		indexes[index] = index
 	}
 	return indexes

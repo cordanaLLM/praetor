@@ -11,8 +11,13 @@ import (
 const (
 	// MaxRegisterSourceInputs bounds declared non-Markdown source scopes.
 	MaxRegisterSourceInputs = 64
-	// MaxRegisterSourceOutputs bounds runtime text values extracted from those scopes.
-	MaxRegisterSourceOutputs = 256
+	// MaxRegisterSourceTableValues bounds the values one selector match set or one Go string
+	// table yields. It is a per-construct bound, not a repository total.
+	MaxRegisterSourceTableValues = 256
+	// MaxRegisterSourceOutputs bounds the applicable and, separately, the not-applicable
+	// values a whole contract extracts: every declared input may contribute one full table.
+	// The selected-byte bound in cavemansource stays the tighter aggregate limit.
+	MaxRegisterSourceOutputs = MaxRegisterSourceInputs * MaxRegisterSourceTableValues
 	maxRegisterSourcePath    = 256
 )
 

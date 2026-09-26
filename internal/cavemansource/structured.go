@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const maxStructuredMatches = config.MaxRegisterSourceOutputs
+const maxStructuredMatches = config.MaxRegisterSourceTableValues
 
 type nodeMatch struct {
 	node *yaml.Node

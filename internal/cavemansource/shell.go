@@ -77,31 +77,36 @@ func shellOutputCommand(line string) (string, string, bool) {
 
 func shellOutputToken(line string) string {
 	for index := 0; index < len(line); {
-		if line[index] == '#' {
+		next, word, done := shellScanStep(line, index)
+		if done {
 			return ""
 		}
-		if line[index] == '\'' || line[index] == '"' {
-			index = skipShellQuoted(line, index)
-			continue
+		if word == "echo" || word == "printf" {
+			return word
 		}
-		if line[index] == '\\' {
-			index += 2
-			continue
-		}
-		if !shellNameByte(line[index]) {
-			index++
-			continue
-		}
-		end := index + 1
-		for end < len(line) && shellNameByte(line[end]) {
-			end++
-		}
-		if token := line[index:end]; token == "echo" || token == "printf" {
-			return token
-		}
-		index = end
+		index = next
 	}
 	return ""
+}
+
+// shellScanStep advances past one lexical unit starting at index. A comment ends the scan,
+// quoted text, escapes and separators are skipped, and a shell name is returned as word.
+func shellScanStep(line string, index int) (next int, word string, done bool) {
+	switch {
+	case line[index] == '#':
+		return len(line), "", true
+	case line[index] == '\'' || line[index] == '"':
+		return skipShellQuoted(line, index), "", false
+	case line[index] == '\\':
+		return index + 2, "", false
+	case !shellNameByte(line[index]):
+		return index + 1, "", false
+	}
+	end := index + 1
+	for end < len(line) && shellNameByte(line[end]) {
+		end++
+	}
+	return end, line[index:end], false
 }
 
 func shellNameByte(value byte) bool {

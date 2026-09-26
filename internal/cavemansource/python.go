@@ -30,19 +30,24 @@ func extractPython(item discoveredInput, text string) ([]Source, error) {
 }
 
 func scanPythonSource(item discoveredInput, text string, starts []int, index int) (int, *Source, error) {
-	if text[index] == '#' {
+	switch {
+	case text[index] == '#':
 		return skipToNextLine(text, index), nil, nil
-	}
-	if text[index] == '\'' || text[index] == '"' {
+	case text[index] == '\'' || text[index] == '"':
 		_, end, err := parsePythonString(text, index)
 		if err != nil {
 			return 0, nil, fmt.Errorf("caveman source %s line %d: %w", item.path, lineNumber(starts, index), err)
 		}
 		return end, nil, nil
-	}
-	if !pythonIdentifierStart(text[index]) {
+	case !pythonIdentifierStart(text[index]):
 		return index + 1, nil, nil
 	}
+	return scanPythonCall(item, text, starts, index)
+}
+
+// scanPythonCall reads the identifier at index and, when it names an output call, decodes
+// the call's text into a Source.
+func scanPythonCall(item discoveredInput, text string, starts []int, index int) (int, *Source, error) {
 	end := scanPythonIdentifier(text, index)
 	name, callNameEnd := pythonOutputCallName(text, index, end)
 	if name == "" {
@@ -57,11 +62,10 @@ func scanPythonSource(item discoveredInput, text string, starts []int, index int
 	if err != nil {
 		return 0, nil, fmt.Errorf("caveman source %s line %d: %s output unverified: %w", item.path, line, name, err)
 	}
-	if classification != "" {
-		source := sourceNotApplicable(item, value, name, line, classification)
-		return callEnd, &source, nil
-	}
 	source := sourceFrom(item, value, name, line)
+	if classification != "" {
+		source = sourceNotApplicable(item, value, name, line, classification)
+	}
 	return callEnd, &source, nil
 }
 
@@ -319,6 +323,9 @@ func parsePythonString(text string, start int) (string, int, error) {
 	return decoded, bodyEnd + width, err
 }
 
+// supportedPythonStringPrefixes are the lower-cased prefixes whose literal decodes to text.
+var supportedPythonStringPrefixes = map[string]bool{"": true, "r": true, "u": true, "f": true, "fr": true, "rf": true}
+
 func scanPythonStringPrefix(text string, start int) (string, int, error) {
 	index := start
 	for index < len(text) && index-start < 3 && pythonPrefix(text[index]) {
@@ -328,7 +335,7 @@ func scanPythonStringPrefix(text string, start int) (string, int, error) {
 	if strings.Contains(prefix, "b") {
 		return "", 0, errors.New("byte strings are unsupported")
 	}
-	if prefix != "" && prefix != "r" && prefix != "u" && prefix != "f" && prefix != "fr" && prefix != "rf" {
+	if !supportedPythonStringPrefixes[prefix] {
 		return "", 0, errors.New("unsupported Python string prefix")
 	}
 	return prefix, index, nil
