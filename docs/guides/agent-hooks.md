@@ -143,7 +143,11 @@ only in this change: nothing yet writes them into a `hooks.json` file (that is C
    absolute. The repository root comes from the isolated Git probe
    (`git rev-parse --show-toplevel` without inherited Git variables), so an ambient
    `GIT_DIR` cannot redirect the answer.
-6. **Governed.** The root holds `.standards.yaml`. Anything else is skipped with a reason.
+6. **Governed.** The root holds `.standards.yaml`. Anything else is skipped with a reason,
+   unless `hooks.scope` is set to `all`: that setting makes the command policy run in an
+   ungoverned workspace too, instead of skipping it
+   (`agenthook.AppliesEverywhere`, `internal/agenthook/evaluate.go`). The default,
+   `governed`, is the behavior described in the rest of this step.
 7. **Judge.** The process environment first, then the command policy.
 8. **Encode.** The verdict in the client's dialect.
 
@@ -157,7 +161,8 @@ only in this change: nothing yet writes them into a `hooks.json` file (that is C
 | command tool without a command string | exit 2 | exit 1 |
 | workspace relative, missing, or Git cannot answer | exit 2 | exit 1 |
 | no repository | exit 0, `praetor hook: no repository, skipped` on stderr | same, and no marker |
-| repository without `.standards.yaml` | exit 0, `praetor hook: workspace not governed, skipped` on stderr | same, and no marker |
+| repository without `.standards.yaml`, `hooks.scope: governed` (default) | exit 0, `praetor hook: workspace not governed, skipped` on stderr | same, and no marker |
+| repository without `.standards.yaml`, `hooks.scope: all` | policy still evaluated (see below) | same |
 | environment check fails | exit 2 | exit 1 |
 | command matches a policy rule | exit 2, `[BLOCKED BY <rule>] …` on stderr | exit 1, same text |
 | allowed | exit 0, both streams empty | exit 0, `PRAETOR_COMMAND_POLICY_OK` on stdout for `pre-tool`, nothing for `environment` |
@@ -187,8 +192,13 @@ with a Lefthook exclusion or skip list. It runs for `environment` and before eve
 
 Organisation container names are operator data, not engine data. The policy accepts a
 bounded operator deny list (RE2, at most 64 patterns of at most 512 bytes; an empty,
-oversized or non-compiling pattern fails the whole list). Loading that list from the
-operator settings is a later change; until then the command runs the built-in rules only.
+oversized or non-compiling pattern fails the whole list). `hooks.command_policy.deny`
+is read from the operator settings and merged into the built-in rules before every hook
+call: `runHook` resolves the section with `loadHookSettings`, then builds the policy with
+`agenthook.BuildPolicy(settings.Hooks)` (`cmd/standardsctl/hook.go`,
+`internal/agenthook/settings.go`). See [checkpoint evaluators](#checkpoint-evaluators)
+below for the layering `hooks.command_policy.deny` shares with `hooks.scope` and
+`hooks.python`.
 
 ## Record mode
 
