@@ -27,12 +27,15 @@ implementation of one behaviour.
    removed. GoReleaser's `dockers_v2` block builds the image in the release job from the
    `praetorctl` binaries the same run compiled, so the image carries the binary the release
    archives carry. The runtime stays the digest-pinned `gcr.io/distroless/static-debian13:nonroot`,
-   running as `65532:65532` with `praetorctl serve -addr=:8080`.
+   running as `65532:65532` with `praetorctl serve -addr=:8080`. The OCI metadata (title, source,
+   licenses, version, revision) is written once in the `dockers_v2` block, which applies it as
+   image labels and as manifest-list annotations; the `Dockerfile` carries no second copy.
 2. **Image publication.** buildx pushes a `linux/amd64` and `linux/arm64` manifest list to
    `ghcr.io/cordanallm/praetor:<version>`, where `<version>` is the release tag without its `v`,
    with an SBOM attestation and buildx's provenance attestation. The `docker_signs` block signs the
    pushed digest keyless with cosign. The release job reads that digest from
-   `dist/artifacts.json` and verifies the signature on it against the workflow identity.
+   `dist/artifacts.json`, verifies the signature on it against the workflow identity, and fails
+   when a platform the digest holds lacks the SBOM or the provenance attestation.
 3. **Chart publication.** The release job runs `helm lint` before anything is pushed, packages the
    chart with `--version` and `--app-version` set to the release version, pushes it to
    `oci://ghcr.io/cordanallm/charts`, signs the digest `helm push` reports and verifies that
@@ -40,7 +43,8 @@ implementation of one behaviour.
    leaves the release a draft.
 4. **Default image tag.** An empty `image.tag` means the chart's `appVersion`
    (`praetor.image` in `deploy/helm/praetor/templates/_helpers.tpl`), so a published chart pulls
-   the image released with it. A set `image.tag` wins.
+   the image released with it. A set `image.tag` wins. An empty `image.repository` fails the
+   render rather than producing an image reference the cluster rejects at pull time.
 5. **Names.** GHCR accepts lowercase names only, so the image and chart repositories are the
    lowercased `.standards.yaml` identity. `.goreleaser.yaml`, `deploy/helm/praetor/values.yaml` and
    the release job's `IMAGE` and `CHART_REPOSITORY` each write it down.
@@ -69,8 +73,9 @@ the operational fork.
 - The in-tree chart keeps placeholder versions (`deploy/helm/praetor/Chart.yaml`), so an install from
   the directory needs `--set image.tag=<released version>` until a release of its `appVersion`
   exists.
-- Keyless signing and verification of the image and chart on GHCR run for the first time on a real
-  tag push; no local run reaches GHCR with the workflow's identity.
+- Keyless signing and verification of the image and chart, and the attestation read, run against
+  GHCR for the first time on a real tag push; no local run reaches GHCR with the workflow's
+  identity.
 
 ### Neutral
 
@@ -80,13 +85,15 @@ the operational fork.
 ## Verification & Compliance
 
 - `internal/deploychart/chart_test.go`: `TestChartPassesHelmLint`,
-  `TestDefaultImageTagIsTheChartAppVersion`, `TestExplicitImageTagWinsOverTheAppVersion` and
-  `TestPackagedAppVersionDrivesTheImageTag`, which packages the chart the way the release job does.
+  `TestDefaultImageTagIsTheChartAppVersion`, `TestExplicitImageTagWinsOverTheAppVersion`,
+  `TestEmptyImageRepositoryFailsTheRender` and `TestPackagedAppVersionDrivesTheImageTag`, which
+  packages the chart the way the release job does.
 - `internal/forge/workflow_guard_test.go`: `TestContainerReferencesFollowTheManifestIdentity`,
   `TestContainerReferencesFailForAnotherIdentity` and `TestContainerReferenceViolationsBoundaries`
   hold decision 5.
 - `internal/forge/release_flow_test.go`: `TestEngineReleaseFlowVerifiesImageAndChartBeforePublishing`
-  and `TestContainerFlowViolationsSyntheticShapes` hold the order in decisions 2 and 3.
+  and `TestContainerFlowViolationsSyntheticShapes` hold the order in decisions 2 and 3, the
+  attestation check included.
 - The release job runs `goreleaser check` before it builds, so an invalid `dockers_v2` or
   `docker_signs` block fails before anything is pushed.
 

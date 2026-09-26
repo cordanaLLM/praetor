@@ -13,11 +13,9 @@ FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55
 
 ARG TARGETPLATFORM
 
-LABEL org.opencontainers.image.title="praetor" \
-      org.opencontainers.image.description="Autonomous Fleet Governance & Workstation Sentinel Engine" \
-      org.opencontainers.image.vendor="cordanaLLM" \
-      org.opencontainers.image.licenses="EUPL-1.2" \
-      org.opencontainers.image.source="https://github.com/cordanaLLM/praetor"
+# The OCI labels (title, source, licenses, version, revision) come from the dockers_v2
+# block, which writes them once for both the image labels and the manifest-list
+# annotations.
 
 WORKDIR /workspace
 

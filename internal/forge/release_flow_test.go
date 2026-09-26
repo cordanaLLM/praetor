@@ -44,12 +44,14 @@ var releaseFlowOrder = [...]flowMarker{
 
 // containerFlowOrder is the order the image and chart markers must appear in, between the
 // GoReleaser release that pushes and signs the image and publication (ADR-0013): the image
-// signature verified on its pushed digest, the chart pushed and signed on the digest helm
-// push reports, in one step so nothing else is signed, and that signature verified. A
-// failure in any of them must leave the release a draft.
+// signature verified on its pushed digest, the SBOM and provenance attestations of that
+// digest checked, the chart pushed and signed on the digest helm push reports, in one step
+// so nothing else is signed, and that signature verified. A failure in any of them must
+// leave the release a draft.
 var containerFlowOrder = [...]flowMarker{
 	releaseMarker,
 	{"image-verify", containsAll("cosign verify ", "\"$IMAGE@")},
+	{"image-attestations", containsAll("imagetools inspect \"$IMAGE@", "json .SBOM", "json .Provenance")},
 	{"chart-sign", containsAll("helm push", "cosign sign ", "$CHART_REPOSITORY")},
 	{"chart-verify", containsAll("cosign verify ", "CHART_REPOSITORY#oci://}/praetor@")},
 	publishMarker,
@@ -217,8 +219,9 @@ func TestReleaseFlowViolationsSyntheticShapes(t *testing.T) {
 	}
 }
 
-// Positive: the shipped release job verifies the image signature on its pushed digest, then
-// pushes, signs and verifies the chart, all before it publishes.
+// Positive: the shipped release job verifies the image signature on its pushed digest,
+// checks that digest's SBOM and provenance attestations, then pushes, signs and verifies the
+// chart, all before it publishes.
 func TestEngineReleaseFlowVerifiesImageAndChartBeforePublishing(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
 	violations, err := containerFlowViolations(workflows["release-binaries.yml"])
@@ -227,8 +230,9 @@ func TestEngineReleaseFlowVerifiesImageAndChartBeforePublishing(t *testing.T) {
 	}
 }
 
-// Negative and boundary: an image verified by tag rather than digest, a chart signed in a
-// step apart from its push and a publish before the chart signature is verified each fail;
+// Negative and boundary: an image verified by tag rather than digest, attestations never
+// checked, only the SBOM checked, or checked in the signature step itself, a chart signed in
+// a step apart from its push and a publish before the chart signature is verified each fail;
 // a workflow without a release step has no order to check.
 func TestContainerFlowViolationsSyntheticShapes(t *testing.T) {
 	step := func(run string) string { return "      - run: '" + run + "'\n" }
@@ -237,6 +241,7 @@ func TestContainerFlowViolationsSyntheticShapes(t *testing.T) {
 	}
 	release := step("goreleaser release --clean")
 	imageVerify := step(`cosign verify --certificate-identity s "$IMAGE@$digest"`)
+	attestations := step(`docker buildx imagetools inspect "$IMAGE@$d" --format "{{ json .SBOM }}" && docker buildx imagetools inspect "$IMAGE@$d" --format "{{ json .Provenance }}"`)
 	chartSign := step(`helm push c.tgz "$CHART_REPOSITORY" && cosign sign --yes "${CHART_REPOSITORY#oci://}/praetor@$d"`)
 	chartVerify := step(`cosign verify --certificate-identity s "${CHART_REPOSITORY#oci://}/praetor@$CHART_DIGEST"`)
 	publish := step("gh release edit v1 --draft=false")
@@ -245,11 +250,17 @@ func TestContainerFlowViolationsSyntheticShapes(t *testing.T) {
 		workflow []byte
 		want     int
 	}{
-		{"shipped order", job(release, imageVerify, chartSign, chartVerify, publish), 0},
-		{"image verified by tag", job(release, step(`cosign verify "$IMAGE:$version"`), chartSign, chartVerify, publish), 1},
-		{"chart signed apart from its push", job(release, imageVerify, step(`helm push c.tgz "$CHART_REPOSITORY"`),
+		{"shipped order", job(release, imageVerify, attestations, chartSign, chartVerify, publish), 0},
+		{"image verified by tag", job(release, step(`cosign verify "$IMAGE:$version"`), attestations, chartSign, chartVerify, publish), 1},
+		{"attestations never checked", job(release, imageVerify, chartSign, chartVerify, publish), 1},
+		{"only the SBOM checked", job(release, imageVerify, step(`docker buildx imagetools inspect "$IMAGE@$d" --format "{{ json .SBOM }}"`),
+			chartSign, chartVerify, publish), 1},
+		{"attestations checked in the signature step", job(release,
+			step(`cosign verify s "$IMAGE@$d" && docker buildx imagetools inspect "$IMAGE@$d" --format "{{ json .SBOM }} {{ json .Provenance }}"`),
+			chartSign, chartVerify, publish), 1},
+		{"chart signed apart from its push", job(release, imageVerify, attestations, step(`helm push c.tgz "$CHART_REPOSITORY"`),
 			step(`cosign sign --yes "${CHART_REPOSITORY#oci://}/praetor@$d"`), chartVerify, publish), 1},
-		{"publish before chart verification", job(release, imageVerify, chartSign, publish, chartVerify), 1},
+		{"publish before chart verification", job(release, imageVerify, attestations, chartSign, publish, chartVerify), 1},
 		{"no release step", job(step("echo nothing")), 0},
 	}
 	for _, tc := range cases {

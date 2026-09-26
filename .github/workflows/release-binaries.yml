@@ -42,6 +42,9 @@ jobs:
       # the repository the chart's values.yaml pulls.
       IMAGE: ghcr.io/cordanallm/praetor
       CHART_REPOSITORY: oci://ghcr.io/cordanallm/charts
+      # The keyless certificate identity every cosign signature this job makes carries, and
+      # the builder its SLSA provenance names. Each verify step checks against this value.
+      SIGNER: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/release-binaries.yml@${{ github.ref }}
 
     steps:
       - name: Checkout Source Code
@@ -68,11 +71,12 @@ jobs:
         uses: anchore/sbom-action/download-syft@v0.24.2
 
       # Pinned rather than latest so a new Helm release cannot change the packaged chart
-      # between two tags; v4.1.3 is the version internal/deploychart's render tests ran on.
+      # between two tags. internal/deploychart's render, lint and package tests pass on this
+      # version, and its helm push prints the "Digest:" line the chart step reads.
       - name: Install Helm
         uses: azure/setup-helm@v5
         with:
-          version: v4.1.3
+          version: v4.3.0
 
       # dockers_v2 builds a multi-platform manifest list with buildx, which needs a
       # docker-container builder. The Dockerfile only copies prebuilt binaries and runs
@@ -114,8 +118,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify The Checksums Bundle Against This Workflow
-        env:
-          SIGNER: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/release-binaries.yml@${{ github.ref }}
         run: |
           cosign verify-blob \
             --certificate-identity "$SIGNER" \
@@ -124,8 +126,6 @@ jobs:
             dist/checksums.txt
 
       - name: Generate SLSA Provenance Over Every Checksummed File
-        env:
-          SIGNER: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/release-binaries.yml@${{ github.ref }}
         run: |
           go run ./cmd/standardsctl provenance \
             -checksums dist/checksums.txt \
@@ -139,8 +139,6 @@ jobs:
             --bundle dist/provenance.intoto.json.sigstore.json
 
       - name: Verify The Provenance For Every Released File
-        env:
-          SIGNER: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/release-binaries.yml@${{ github.ref }}
         run: |
           while read -r _ name; do
             cosign verify-blob-attestation \
@@ -151,17 +149,17 @@ jobs:
               "dist/${name#\*}"
           done < dist/checksums.txt
 
-      # GoReleaser records the manifest-list digest it pushed in dist/artifacts.json. The
-      # signature is checked on that digest, not on the tag, so a tag moved after the push
-      # cannot pass this step with somebody else's image.
+      # GoReleaser records the manifest-list digest it pushed, and the platforms in it, in
+      # dist/artifacts.json. The signature is checked on that digest, not on the tag, so a tag
+      # moved after the push cannot pass this step with somebody else's image.
       - name: Verify The Image Signature On The Pushed Digest
-        env:
-          SIGNER: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/release-binaries.yml@${{ github.ref }}
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           version=$(jq -r .version dist/metadata.json)
-          digest=$(jq -r --arg ref "$IMAGE:$version" \
-            'first(.[] | select(.type == "Docker Image" and .name == $ref) | .extra.Digest) // empty' \
+          image=$(jq -c --arg ref "$IMAGE:$version" \
+            'first(.[] | select(.type == "Docker Image" and .name == $ref)) // empty' \
             dist/artifacts.json)
+          digest=$(jq -r '.extra.Digest // empty' <<< "${image:-null}")
           if [ -z "$digest" ]; then
             echo "dist/artifacts.json records no pushed digest for $IMAGE:$version" >&2
             exit 1
@@ -170,6 +168,31 @@ jobs:
             --certificate-identity "$SIGNER" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "$IMAGE@$digest"
+          echo "IMAGE_DIGEST=$digest" >> "$GITHUB_ENV"
+          echo "IMAGE_PLATFORMS=$(jq -r '.extra.Platforms | join(" ")' <<< "$image")" >> "$GITHUB_ENV"
+
+      # dockers_v2 requests an SBOM attestation (its sbom setting defaults to true) and buildx
+      # adds a min-mode provenance attestation to every build it pushes. Neither is signed by
+      # the step above, and a builder without attestation support drops both silently, so
+      # each platform the digest holds must carry both. buildx keys the inspect output by
+      # platform for a multi-platform image and prints {} when an attestation is absent.
+      - name: Verify The Image SBOM And Provenance Attestations
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if [ -z "$IMAGE_PLATFORMS" ]; then
+            echo "dist/artifacts.json records no platforms for $IMAGE@$IMAGE_DIGEST" >&2
+            exit 1
+          fi
+          docker buildx imagetools inspect "$IMAGE@$IMAGE_DIGEST" --format '{{ json .SBOM }}' > dist/image-sbom.json
+          docker buildx imagetools inspect "$IMAGE@$IMAGE_DIGEST" --format '{{ json .Provenance }}' > dist/image-provenance.json
+          for platform in $IMAGE_PLATFORMS; do
+            for kind in sbom provenance; do
+              if ! jq -e --arg p "$platform" '(.[$p] // {}) | length > 0' "dist/image-$kind.json" > /dev/null; then
+                echo "$IMAGE@$IMAGE_DIGEST carries no $kind attestation for $platform" >&2
+                exit 1
+              fi
+            done
+          done
 
       # The chart's version and appVersion become the release version, which is the only
       # tag the image above carries, so the chart's default image tag names that image.
@@ -202,8 +225,6 @@ jobs:
 
       - name: Verify The Chart Signature On The Pushed Digest
         if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          SIGNER: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/release-binaries.yml@${{ github.ref }}
         run: |
           cosign verify \
             --certificate-identity "$SIGNER" \

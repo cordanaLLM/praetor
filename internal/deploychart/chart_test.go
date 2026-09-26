@@ -55,18 +55,26 @@ func helmChart(t *testing.T) string {
 	return ""
 }
 
-// helm runs one helm command under renderTimeout and returns its stdout, failing
-// the test with helm's stderr when the command fails.
-func helm(t *testing.T, argv ...string) []byte {
+// runHelm runs one helm command under renderTimeout and returns its stdout and
+// stderr with the command's error.
+func runHelm(t *testing.T, argv ...string) (stdout, stderr []byte, err error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), renderTimeout)
 	defer cancel()
-	var stderr bytes.Buffer
+	var errOut bytes.Buffer
 	cmd := exec.CommandContext(ctx, "helm", argv...)
-	cmd.Stderr = &stderr
+	cmd.Stderr = &errOut
 	out, err := cmd.Output()
+	return out, errOut.Bytes(), err
+}
+
+// helm runs one helm command and returns its stdout, failing the test with
+// helm's stderr when the command fails.
+func helm(t *testing.T, argv ...string) []byte {
+	t.Helper()
+	out, stderr, err := runHelm(t, argv...)
 	if err != nil {
-		t.Fatalf("helm %v failed: %v: %s", argv, err, stderr.String())
+		t.Fatalf("helm %v failed: %v: %s", argv, err, stderr)
 	}
 	return out
 }
@@ -266,26 +274,19 @@ func containerImage(t *testing.T, docs []document) string {
 	return containerField(t, docs, "image")
 }
 
-// imageRepository is the repository the shipped values.yaml pulls from. The forge
-// guard test holds it equal to the image the release workflow pushes.
-func imageRepository(t *testing.T) string {
+// imageTag reads the tag of the single container image in the rendered pod spec:
+// the part after the last colon that follows the last slash, so a registry port
+// is never taken for a tag. internal/forge/workflow_guard_test.go holds the
+// repository the shipped values.yaml names equal to the image the release
+// pushes, so these tests check only the tag.
+func imageTag(t *testing.T, docs []document) string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(helmChart(t), "values.yaml"))
-	if err != nil {
-		t.Fatalf("read values.yaml: %v", err)
+	image := containerImage(t, docs)
+	colon := strings.LastIndex(image, ":")
+	if colon < 0 || colon < strings.LastIndex(image, "/") {
+		t.Fatalf("image %q carries no tag", image)
 	}
-	var values struct {
-		Image struct {
-			Repository string `yaml:"repository"`
-		} `yaml:"image"`
-	}
-	if err := yaml.Unmarshal(raw, &values); err != nil {
-		t.Fatalf("decode values.yaml: %v", err)
-	}
-	if values.Image.Repository == "" {
-		t.Fatal("values.yaml names no image.repository")
-	}
-	return values.Image.Repository
+	return image[colon+1:]
 }
 
 func names(docs []document) map[string]bool {
@@ -488,18 +489,33 @@ func TestChartPassesHelmLint(t *testing.T) {
 // appVersion. values.yaml used to pin v1.0.0, a tag nothing had pushed, so every
 // install ended in ImagePullBackOff.
 func TestDefaultImageTagIsTheChartAppVersion(t *testing.T) {
-	want := fmt.Sprintf("%s:%v", imageRepository(t), chartMetadata(t)["appVersion"])
-	if got := containerImage(t, render(t, "alpha")); got != want {
+	want := fmt.Sprint(chartMetadata(t)["appVersion"])
+	if got := imageTag(t, render(t, "alpha")); got != want {
+		t.Fatalf("image tag = %q, want the appVersion %q", got, want)
+	}
+}
+
+// Positive: an explicit repository and image.tag win over the defaults, for an
+// image built or mirrored outside the release; a registry port stays part of the
+// repository.
+func TestExplicitImageTagWinsOverTheAppVersion(t *testing.T) {
+	const mirror = "registry.example.test:5000/mirror/praetor"
+	docs := render(t, "alpha", "--set", "image.repository="+mirror, "--set", "image.tag=9.9.9-local")
+	if got, want := containerImage(t, docs), mirror+":9.9.9-local"; got != want {
 		t.Fatalf("image = %q, want %q", got, want)
 	}
 }
 
-// Negative: an explicit image.tag wins over the appVersion, for an image built or
-// mirrored outside the release.
-func TestExplicitImageTagWinsOverTheAppVersion(t *testing.T) {
-	want := imageRepository(t) + ":9.9.9-local"
-	if got := containerImage(t, render(t, "alpha", "--set", "image.tag=9.9.9-local")); got != want {
-		t.Fatalf("image = %q, want %q", got, want)
+// Negative: an empty image.repository fails the render with a message naming the
+// value, instead of rendering ":<tag>", which the cluster rejects only at pull
+// time.
+func TestEmptyImageRepositoryFailsTheRender(t *testing.T) {
+	out, stderr, err := runHelm(t, "template", "alpha", helmChart(t), "--set", "image.repository=")
+	if err == nil {
+		t.Fatalf("empty image.repository rendered:\n%s", out)
+	}
+	if !strings.Contains(string(stderr), "image.repository must name the image to pull") {
+		t.Fatalf("render failed without naming image.repository: %v: %s", err, stderr)
 	}
 }
 
@@ -513,9 +529,8 @@ func TestPackagedAppVersionDrivesTheImageTag(t *testing.T) {
 	dir := t.TempDir()
 	helm(t, "package", helmChart(t), "--version", version, "--app-version", version, "--destination", dir)
 	archive := filepath.Join(dir, "praetor-"+version+".tgz")
-	want := imageRepository(t) + ":" + version
-	if got := containerImage(t, renderChart(t, archive, "alpha")); got != want {
-		t.Fatalf("packaged chart image = %q, want %q", got, want)
+	if got := imageTag(t, renderChart(t, archive, "alpha")); got != version {
+		t.Fatalf("packaged chart image tag = %q, want %q", got, version)
 	}
 }
 

@@ -35,7 +35,7 @@ equals the baseline. Commented-out `uses:` lines are not scanned. Tests:
 | GoReleaser | `goreleaser/goreleaser-action@v7` | GoReleaser `~> v2`, from the step's `version` input | v7 moves the action runtime to node24 and adds only the optional `version-file` input, so the step's inputs are unchanged |
 | Syft | `anchore/sbom-action/download-syft@v0.24.2` | Syft `v1.51.1` | The `.goreleaser.yaml` `sboms` args are unchanged, but a newer Syft catalogues more packages, so SBOM content differs from that of builds made with an older pin |
 | cosign | `sigstore/cosign-installer@v4.1.2` | cosign `v3.0.6`, the installer's default | No `cosign-release` input: a version hold there is invisible to the `praetorctl bump` scanner, and `internal/forge/cosign_bundle_test.go` rejects one. The installer publishes no moving `v4` tag, so the pin is exact |
-| Helm | `azure/setup-helm@v5` | Helm `v4.1.3`, from the step's `version` input | Pinned rather than the action's `latest` default, so a Helm release cannot change the packaged chart between two tags |
+| Helm | `azure/setup-helm@v5` | Helm `v4.3.0`, from the step's `version` input | Pinned rather than the action's `latest` default, so a Helm release cannot change the packaged chart between two tags. `praetorctl bump` does not read the `version` input, so a newer Helm is picked up by hand |
 | buildx | `docker/setup-buildx-action@v4` | A `docker-container` builder | GoReleaser's `dockers_v2` pushes a multi-platform manifest list, which needs that driver. The Dockerfile only copies prebuilt binaries, so no QEMU step is needed |
 | GHCR login | `docker/login-action@v4` | Registry credentials for the job token | buildx and cosign push with the `packages: write` token through this login; `helm` logs in on its own with `helm registry login` |
 
@@ -62,7 +62,10 @@ so an upload after it fails; the flow never makes one (#43).
    `provenance.intoto.json.sigstore.json`, and `cosign verify-blob-attestation` checks the
    bundle against every file `checksums.txt` names.
 6. `cosign verify` checks the image signature on the digest GoReleaser recorded in
-   `dist/artifacts.json`, never on the tag.
+   `dist/artifacts.json`, never on the tag. `docker buildx imagetools inspect` then reads
+   the SBOM and provenance attestations of that digest and fails the job when a platform
+   that `dist/artifacts.json` lists lacks either one; a builder without attestation support
+   would otherwise drop both without an error.
 7. `helm package --version <version> --app-version <version>` packages the chart,
    `helm push` pushes it to `oci://ghcr.io/cordanallm/charts`, and cosign signs and then
    verifies the digest `helm push` reports. The chart's default image tag is its
@@ -72,11 +75,11 @@ so an upload after it fails; the flow never makes one (#43).
 
 `internal/forge/release_flow_test.go` fails `go test` when the release stops being a draft,
 publishing moves ahead of signing or verification, an upload follows publication, a step
-catalogues the checkout with `syft dir:.` again, or publication moves ahead of the image and
-chart verification. `internal/forge/workflow_guard_test.go` fails when the image name in
-`.goreleaser.yaml`, `deploy/helm/praetor/values.yaml` or the job's `IMAGE` and
-`CHART_REPOSITORY` stops being the lowercased `.standards.yaml` identity; GHCR accepts
-lowercase names only. ADR-0013 records the design.
+catalogues the checkout with `syft dir:.` again, or publication moves ahead of the image
+signature, image attestation and chart verification. `internal/forge/workflow_guard_test.go`
+fails when the image name in `.goreleaser.yaml`, `deploy/helm/praetor/values.yaml` or the
+job's `IMAGE` and `CHART_REPOSITORY` stops being the lowercased `.standards.yaml` identity;
+GHCR accepts lowercase names only. ADR-0013 records the design.
 
 A failure in steps 3 to 7 leaves the release a draft, but the image, and after step 7 the
 chart, are already on GHCR. A rerun of the job pushes over the same tags.

@@ -32,16 +32,18 @@ The same command with `ghcr.io/cordanallm/praetor:$VERSION` checks the image.
 
 ## Image
 
-| `image.tag` | Pod image |
-| :--- | :--- |
-| empty (default) | `<image.repository>:<appVersion>` |
-| set | `<image.repository>:<image.tag>` |
+| `image.repository` | `image.tag` | Pod image |
+| :--- | :--- | :--- |
+| set (default) | empty (default) | `<image.repository>:<appVersion>` |
+| set | set | `<image.repository>:<image.tag>` |
+| empty | any | render fails: `image.repository must name the image to pull` |
 
 The release workflow packages the chart with `--app-version` set to the version it pushed the image
 under, so a published chart pulls the image released with it. The helper is `praetor.image` in
 `deploy/helm/praetor/templates/_helpers.tpl`; `TestDefaultImageTagIsTheChartAppVersion`,
-`TestExplicitImageTagWinsOverTheAppVersion` and `TestPackagedAppVersionDrivesTheImageTag` pin the
-three cases.
+`TestExplicitImageTagWinsOverTheAppVersion`, `TestEmptyImageRepositoryFailsTheRender` and
+`TestPackagedAppVersionDrivesTheImageTag` in `internal/deploychart/chart_test.go` pin the four
+cases.
 
 Installing from a checkout (`helm install praetor deploy/helm/praetor`) uses the placeholder
 `appVersion` in `Chart.yaml`, which no release may have pushed yet. Name a released image instead:
