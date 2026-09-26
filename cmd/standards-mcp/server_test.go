@@ -857,3 +857,137 @@ func findFunc(file *ast.File, name string) *ast.FuncDecl {
 	}
 	return nil
 }
+
+// ---- argument strictness and JSON-RPC framing ----------------------------------------------
+
+// registerSpyTool adds a mutating tool declaring only dry_run and returns a pointer to the
+// number of times its handler ran. HandleRequest runs handlers synchronously.
+func registerSpyTool(t *testing.T, srv *Server) *int {
+	t.Helper()
+	calls := 0
+	schema := mcp.ToolInputSchema{Properties: map[string]mcp.PropertySchema{
+		"dry_run": {Type: "boolean", Description: "Preview without writing."},
+	}}
+	tool, err := mcp.NewMutatingTool("spy_tool", "records its calls", schema, func(_ context.Context, args map[string]any) (*mcp.ToolResult, error) {
+		calls++
+		return mcp.TextResult(fmt.Sprintf("dry_run=%v", args["dry_run"])), nil
+	}, true, true)
+	if err != nil {
+		t.Fatalf("spy tool: %v", err)
+	}
+	srv.tools[tool.Name] = tool
+	return &calls
+}
+
+// rpc sends one in-process request under a bounded context.
+func rpc(t *testing.T, srv *Server, req JSONRPCRequest) *JSONRPCResponse {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return srv.HandleRequest(ctx, req)
+}
+
+// wantRPCError asserts a JSON-RPC error response with code and id.
+func wantRPCError(t *testing.T, label string, resp *JSONRPCResponse, code int, id any) {
+	t.Helper()
+	if resp == nil || resp.Error == nil || resp.Error.Code != code || resp.ID != id {
+		t.Errorf("%s: got %+v, want error %d with id %v", label, resp, code, id)
+	}
+}
+
+func TestServer_Positive_DeclaredArgumentsDispatch(t *testing.T) {
+	srv, _ := newFixtureServer(t)
+	calls := registerSpyTool(t, srv)
+	expectText(t, "spy declared", callTool(t, srv, "spy_tool", map[string]any{"dry_run": true}), "dry_run=true")
+	expectText(t, "spy no args", callTool(t, srv, "spy_tool", nil), "dry_run=<nil>")
+	if *calls != 2 {
+		t.Errorf("handler ran %d times, want 2", *calls)
+	}
+	// Every advertised schema states the strictness the server enforces.
+	list := rpc(t, srv, JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: "tools/list"})
+	data, err := json.Marshal(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want, got := len(srv.order), strings.Count(string(data), `"additionalProperties":false`); got != want {
+		t.Errorf("tools/list publishes additionalProperties false on %d of %d tools", got, want)
+	}
+}
+
+func TestServer_Negative_UndeclaredArgumentRefusedBeforeHandler(t *testing.T) {
+	srv, _ := newFixtureServer(t)
+	calls := registerSpyTool(t, srv)
+	res := callTool(t, srv, "spy_tool", map[string]any{"dryrun": true})
+	expectError(t, "spy misspelled", res, `argument not declared by the tool input schema: "dryrun" (declared: dry_run)`)
+	if *calls != 0 {
+		t.Fatalf("handler ran %d times for an undeclared argument", *calls)
+	}
+}
+
+func TestServer_Negative_MisspelledPreviewFlagWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	writeFixtureFile(t, dir, "AGENTS.md", fixtureAgentsMD)
+	fresh, err := NewServer(dir, "v")
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	expectError(t, "compile misspelled verify_only", callTool(t, fresh, "standards_compile_context", map[string]any{"verifyonly": true}), `"verifyonly"`)
+	expectError(t, "adopt misspelled dry_run", callTool(t, fresh, "standards_adopt", map[string]any{"dryrun": true}), `"dryrun"`)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if len(names) != 2 || names[0] != ".git" || names[1] != "AGENTS.md" {
+		t.Errorf("refused calls wrote into the root: %v", names)
+	}
+}
+
+func TestServer_Negative_EnvelopeValidation(t *testing.T) {
+	srv, _ := newFixtureServer(t)
+	cases := []struct {
+		label string
+		req   JSONRPCRequest
+		id    any
+	}{
+		{"missing jsonrpc", JSONRPCRequest{ID: 1, Method: "ping"}, 1},
+		{"jsonrpc 1.0", JSONRPCRequest{JSONRPC: "1.0", ID: 2, Method: "ping"}, 2},
+		{"missing method", JSONRPCRequest{JSONRPC: "2.0", ID: 3}, 3},
+		{"missing method without id", JSONRPCRequest{JSONRPC: "2.0"}, nil},
+		{"object id", JSONRPCRequest{JSONRPC: "2.0", ID: map[string]any{"x": 1}, Method: "ping"}, nil},
+		{"bool id", JSONRPCRequest{JSONRPC: "2.0", ID: true, Method: "ping"}, nil},
+	}
+	for _, tc := range cases {
+		wantRPCError(t, tc.label, rpc(t, srv, tc.req), codeInvalidRequest, tc.id)
+	}
+}
+
+func TestServer_Boundary_NotificationsGetNoReplyAndRunNothing(t *testing.T) {
+	srv, _ := newFixtureServer(t)
+	calls := registerSpyTool(t, srv)
+	params, err := json.Marshal(map[string]any{"name": "spy_tool", "arguments": map[string]any{"dry_run": false}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"notifications/initialized", "notifications/cancelled", "unknown/method", "ping", "tools/call"} {
+		if resp := rpc(t, srv, JSONRPCRequest{JSONRPC: "2.0", Method: method, Params: params}); resp != nil {
+			t.Errorf("notification %s answered: %+v", method, resp)
+		}
+	}
+	if *calls != 0 {
+		t.Errorf("a tools/call notification ran the handler %d times", *calls)
+	}
+	// The same call with an id is a request: answered, and the handler runs once.
+	if resp := rpc(t, srv, JSONRPCRequest{JSONRPC: "2.0", ID: "req-1", Method: "tools/call", Params: params}); resp == nil || resp.Error != nil || resp.ID != "req-1" || *calls != 1 {
+		t.Errorf("request with string id: %+v, handler calls %d", resp, *calls)
+	}
+	// An error response always carries the id member, null when it was unreadable.
+	data, err := json.Marshal(errorResponse(nil, codeParseError, "Parse error"))
+	if err != nil || !strings.Contains(string(data), `"id":null`) {
+		t.Errorf("error without a readable id must encode \"id\":null: %s (%v)", data, err)
+	}
+}

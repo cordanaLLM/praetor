@@ -157,6 +157,52 @@ affected tool. Report placeholder results, missing operations, and blocked
 connections explicitly; the smoke probe does not establish correctness of every
 tool. Run the relevant code tests and `make verify-all` after implementing the fix.
 
+### Tool arguments and message framing are strict
+
+`tools/call` refuses every argument key the tool's input schema does not declare,
+before the handler runs, so a refused call writes nothing. A misspelled preview
+flag is an error, not a real run with the flag at its default:
+
+```bash
+python3 scripts/dev_mcp.py call --root "$(mktemp -d)" standards_compile_context \
+  '{"verifyonly": true}'
+```
+
+The refusal is a tool result with `isError: true` that names the undeclared keys
+and the declared ones, and the command exits nonzero:
+
+```text
+mcp: argument not declared by the tool input schema: "verifyonly" (declared: source, target_dir, verify_only)
+```
+
+Every schema in `tools/list` publishes `"additionalProperties": false` to match.
+The check is `ToolInputSchema.CheckArguments` in `internal/mcp/tool.go`, called by
+`handleToolsCall` in `cmd/standards-mcp/server.go`. Tests:
+`TestServer_Negative_UndeclaredArgumentRefusedBeforeHandler` and
+`TestServer_Negative_MisspelledPreviewFlagWritesNothing` in
+`cmd/standards-mcp/server_test.go`.
+
+Every transport reads a message as JSON-RPC 2.0 and answers it as follows:
+
+| Message | Answer |
+| :--- | :--- |
+| Not JSON | `-32700`, `"id": null` |
+| JSON but not one request object: a batch array, a scalar, `null` | `-32600`, `"id": null` |
+| `id` that is `null` or neither a string nor a number | `-32600`, `"id": null` |
+| `jsonrpc` missing or not `"2.0"`, `method` missing or not a string | `-32600` with the message's `id` |
+| No `id`: a notification | nothing, and the method does not run; plain HTTP answers `202 Accepted` |
+| Unknown method with an `id` | `-32601` |
+
+Member names are case-sensitive, so `{"JSONRPC": "2.0", ...}` has no `jsonrpc`
+member. A numeric `id` is echoed exactly, `12345678901234567890` included. Plain
+HTTP answers a `-32700` or `-32600` with status 400. The code is `decodeRequest`
+in `cmd/standards-mcp/transport.go` and `validateEnvelope` in `server.go`. Tests:
+`TestServer_Negative_EnvelopeValidation`,
+`TestServer_Boundary_NotificationsGetNoReplyAndRunNothing`,
+`TestStdio_Negative_InvalidMessagesCarryNullOrReadableID`,
+`TestStdio_Boundary_NotificationsSilentAndIDsEchoedExactly` and
+`TestHTTP_Negative_InvalidEnvelopeAndNotification`.
+
 ### Symbol inspection judges against the repository's ceilings
 
 `standards_inspect_symbols` prints each Go function's lines, statements,

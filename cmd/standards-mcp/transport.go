@@ -193,26 +193,34 @@ func parseErrorResponse(message string) *JSONRPCResponse {
 // (-32600): an array (batching is not part of MCP 2024-11-05), a scalar, a member of the
 // wrong type, or an id that is null (MCP forbids it) or neither string nor number. An
 // error carries the id when it was readable and null otherwise. A numeric id is kept as
-// json.Number so the response echoes it exactly, beyond float64 precision.
+// json.Number so the response echoes it exactly, beyond float64 precision. Members are
+// read by exact name: JSON-RPC member names are case-sensitive, while encoding/json
+// matches struct fields case-insensitively and would serve {"JSONRPC":"2.0","Method":...}.
 func decodeRequest(data []byte) (JSONRPCRequest, *JSONRPCResponse) {
 	if !json.Valid(data) {
 		return JSONRPCRequest{}, parseErrorResponse("Parse error: invalid JSON")
 	}
-	var envelope struct {
-		ID json.RawMessage `json:"id"`
-	}
-	if err := json.Unmarshal(data, &envelope); err != nil {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil || members == nil {
 		return JSONRPCRequest{}, errorResponse(nil, codeInvalidRequest, "Invalid Request: expected a JSON-RPC request object")
 	}
-	id, err := decodeRequestID(envelope.ID)
+	id, err := decodeRequestID(members["id"])
 	if err != nil {
 		return JSONRPCRequest{}, errorResponse(nil, codeInvalidRequest, "Invalid Request: "+err.Error())
 	}
-	var req JSONRPCRequest
-	if err := json.Unmarshal(data, &req); err != nil {
-		return JSONRPCRequest{}, errorResponse(id, codeInvalidRequest, fmt.Sprintf("Invalid Request: %v", err))
+	req := JSONRPCRequest{ID: id, Params: members["params"]}
+	for _, member := range []struct {
+		name   string
+		target *string
+	}{{"jsonrpc", &req.JSONRPC}, {"method", &req.Method}} {
+		raw, present := members[member.name]
+		if !present {
+			continue
+		}
+		if err := json.Unmarshal(raw, member.target); err != nil {
+			return JSONRPCRequest{}, errorResponse(id, codeInvalidRequest, fmt.Sprintf("Invalid Request: %s must be a string", member.name))
+		}
 	}
-	req.ID = id
 	return req, nil
 }
 
