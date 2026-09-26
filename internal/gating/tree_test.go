@@ -126,6 +126,64 @@ func TestRunGatedPipeline_Negative_IgnoredSubtractiveInputIsRefused(t *testing.T
 	}
 }
 
+// TestRunGatedPipeline_Negative_SymlinkedSubtractiveInputIsRefused: a tracked symlink reads as
+// clean and not ignored, yet the stages follow it to content HEAD does not carry -- an ignored
+// file or one outside the repository -- so a subtractive input must be a regular file (BUG-788).
+func TestRunGatedPipeline_Negative_SymlinkedSubtractiveInputIsRefused(t *testing.T) {
+	for _, input := range subtractiveInputs {
+		t.Run(input+" to an ignored target", func(t *testing.T) {
+			dir := newHermeticGitRepo(t)
+			commitFile(t, dir, ".gitignore", "local/\n")
+			if err := os.Mkdir(filepath.Join(dir, "local"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(dir, "local", "relaxed.json"), `{"total_infractions": 999}`+"\n")
+			commitSymlink(t, dir, input, filepath.Join("local", "relaxed.json"))
+			if tree := inspectTree(t.Context(), dir); !strings.Contains(tree.problem, input+" is a symbolic link") {
+				t.Fatalf("a tracked symlink to an ignored target must be refused, problem = %q", tree.problem)
+			}
+			refusedRun(t, dir, input+" is a symbolic link")
+		})
+		t.Run(input+" outside the repository", func(t *testing.T) {
+			dir := newHermeticGitRepo(t)
+			outside := filepath.Join(t.TempDir(), "relaxed.json")
+			writeFile(t, outside, "{}\n")
+			commitSymlink(t, dir, input, outside)
+			refusedRun(t, dir, input+" is a symbolic link")
+		})
+	}
+}
+
+// TestPresentSubtractiveInputs_Boundary_OnlyRegularFilesCount: an absent input is skipped, a
+// regular file is listed, and anything else at the path -- here a directory -- is refused.
+func TestPresentSubtractiveInputs_Boundary_OnlyRegularFilesCount(t *testing.T) {
+	dir := t.TempDir()
+	if present, problem := presentSubtractiveInputs(dir); len(present) != 0 || problem != "" {
+		t.Fatalf("no inputs: present = %v, problem = %q", present, problem)
+	}
+	writeFile(t, filepath.Join(dir, BaselineFile), "{}\n")
+	if present, problem := presentSubtractiveInputs(dir); problem != "" || len(present) != 1 || present[0] != BaselineFile {
+		t.Fatalf("a regular baseline: present = %v, problem = %q", present, problem)
+	}
+	if err := os.Mkdir(filepath.Join(dir, GosecConfigFile), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, problem := presentSubtractiveInputs(dir); !strings.Contains(problem, GosecConfigFile+" is not a regular file") {
+		t.Fatalf("a directory at %s must be refused, problem = %q", GosecConfigFile, problem)
+	}
+}
+
+// commitSymlink commits rel in dir as a symbolic link to target, skipping where the platform or
+// account cannot create one (Windows without developer mode).
+func commitSymlink(t *testing.T, dir, rel, target string) {
+	t.Helper()
+	if err := os.Symlink(target, filepath.Join(dir, rel)); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	treeGit(t, dir, "add", "-f", "--", rel)
+	treeGit(t, dir, "commit", "-q", "-m", "link "+rel)
+}
+
 // TestRunGatedPipeline_Boundary_DryRunReportsButDoesNotRefuse: a dry run mints nothing, so an
 // unclean tree is reported and the stages still run.
 func TestRunGatedPipeline_Boundary_DryRunReportsButDoesNotRefuse(t *testing.T) {

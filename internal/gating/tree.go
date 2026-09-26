@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,8 @@ var ErrUncleanTree = errors.New("the gate certifies only a working tree that mat
 
 // subtractiveInputs are the files that relax what the gate enforces: the debt baseline raises
 // the HISS limit and the gosec configuration selects the scanner's rules. git status does not
-// list an ignored file, so each is also checked against the repository's ignore rules.
+// list an ignored file, so each is also checked against the repository's ignore rules, and it
+// does not look behind a symbolic link, so each must be a regular file.
 var subtractiveInputs = [...]string{BaselineFile, GosecConfigFile}
 
 // treeState is what one inspection saw of the tree the scan stages read.
@@ -67,14 +69,12 @@ func describeChanges(changes []string) string {
 	return summary
 }
 
-// untrackedInputProblem names a subtractive input that exists in the working tree while the
-// repository ignores it, so HEAD does not carry the file the stages would read.
+// untrackedInputProblem names a subtractive input the stages would read from somewhere other
+// than HEAD: one that is not a regular file, or one the repository ignores.
 func untrackedInputProblem(ctx context.Context, repoDir string) string {
-	present := make([]string, 0, len(subtractiveInputs))
-	for i := 0; i < len(subtractiveInputs); i++ {
-		if _, err := os.Lstat(filepath.Join(repoDir, subtractiveInputs[i])); err == nil {
-			present = append(present, subtractiveInputs[i])
-		}
+	present, problem := presentSubtractiveInputs(repoDir)
+	if problem != "" {
+		return problem
 	}
 	ignored, err := util.GitIgnoredPaths(ctx, repoDir, present, false)
 	if err != nil {
@@ -85,6 +85,35 @@ func untrackedInputProblem(ctx context.Context, repoDir string) string {
 			"the gate reads it to relax its checks and refuses one that is not committed", strings.Join(ignored, " and "))
 	}
 	return ""
+}
+
+// presentSubtractiveInputs lists the subtractive inputs that exist in repoDir, or names why one
+// cannot be trusted. Each must be a regular file: git status compares a tracked symlink by its
+// target path, never by the content behind it, while the stages follow the link, so a clean,
+// unignored link could hand them an ignored file or one outside the repository. The link is
+// refused rather than resolved, whatever it points at.
+func presentSubtractiveInputs(repoDir string) ([]string, string) {
+	present := make([]string, 0, len(subtractiveInputs))
+	for i := 0; i < len(subtractiveInputs); i++ {
+		name := subtractiveInputs[i]
+		info, err := os.Lstat(filepath.Join(repoDir, name))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Sprintf("%s could not be inspected: %v", name, err)
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return nil, fmt.Sprintf("%s is a symbolic link; the gate reads it to relax its checks and "+
+				"trusts only a regular file whose content HEAD carries", name)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Sprintf("%s is not a regular file (mode %s); the gate reads it to relax its checks and "+
+				"trusts only a regular file whose content HEAD carries", name, info.Mode().Type())
+		}
+		present = append(present, name)
+	}
+	return present, ""
 }
 
 // requireCleanTree refuses a run that could mint a receipt when the tree does not match HEAD,
