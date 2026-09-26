@@ -28,7 +28,7 @@ func prepareBumpPatch(ctx context.Context, repoPath, patchPath string) (snapshot
 		}
 	}()
 	// Syntax-only preflight preserves patches targeting the post-update manifest.
-	if _, err := util.RunCommandBytes(ctx, repoPath, "git", maxCanaryOutput, "apply", "--numstat", "--", snapshot); err != nil {
+	if _, err := util.RunGitBytes(ctx, repoPath, maxCanaryOutput, "apply", "--numstat", "--", snapshot); err != nil {
 		return snapshot, fmt.Errorf("%w: patch syntax: %w", ErrInvalidPatch, err)
 	}
 	return snapshot, nil

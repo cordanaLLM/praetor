@@ -23,7 +23,7 @@ func RunGitProbe(ctx context.Context, dir string, maxBytes int, args ...string) 
 	probeCtx, cancel := context.WithTimeout(probeCtx, 5*time.Second)
 	defer cancel()
 	argv := append([]string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}, args...)
-	return RunCommandBytes(probeCtx, dir, "git", maxBytes, argv...)
+	return RunGitBytes(probeCtx, dir, maxBytes, argv...)
 }
 
 // RunGitProbeStatus runs RunGitProbe and accepts both of git's answering statuses: 0 for a

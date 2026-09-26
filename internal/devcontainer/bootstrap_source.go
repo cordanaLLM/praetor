@@ -106,7 +106,7 @@ func bootstrapSourcePaths(ctx context.Context, root string) ([]string, error) {
 func runSourceGit(ctx context.Context, root string, args ...string) (string, error) {
 	// Disable repository-configured filesystem monitor hooks for read-only inventory.
 	command := append([]string{"-c", "core.fsmonitor=false"}, args...)
-	result, err := util.RunCommandBytes(ctx, root, "git", contextopt.MaxSourceBytes, command...)
+	result, err := util.RunGitBytes(ctx, root, contextopt.MaxSourceBytes, command...)
 	if err != nil {
 		return "", fmt.Errorf("bootstrap source inventory: %w", err)
 	}
