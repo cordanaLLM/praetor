@@ -1,0 +1,3 @@
+type: fixed
+title: HISS-01 now reports direct recursion in Rust and Python by the spelling that resolves to the function (bare name, self./Self::, cls., Owner.), the Python scanner no longer ends a function at a continuation line that starts in an open bracket or triple-quoted string, and standards_explain_rule states per language which recursion shapes are decided instead of claiming a universal call-graph analyzer
+breaking: false

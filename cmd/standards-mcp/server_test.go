@@ -478,6 +478,25 @@ func TestServer_Positive_ExplainRuleCoversDocumentedInvariants(t *testing.T) {
 	expectError(t, "typed rule id", res, "must be a string")
 }
 
+// HISS-01 used to claim a universal "AST call-graph analyzer". Only Go builds a call graph;
+// the explanation must state what each language actually decides, and name what it does not.
+func TestServer_ExplainRuleHISS01ScopesEnforcementPerLanguage(t *testing.T) {
+	srv, _ := newFixtureServer(t)
+	res := callTool(t, srv, "standards_explain_rule", map[string]any{"rule_id": "HISS-01"})
+	for _, want := range []string{
+		"Go: goto, direct recursion, and mutual or indirect recursion",
+		"cycle through methods is not decided",
+		"Rust and Python: direct recursion only",
+		"C and C++: goto only",
+		".config/hiss/coverage.yaml",
+	} {
+		expectText(t, "HISS-01 scope", res, want)
+	}
+	if strings.Contains(res.Content[0].Text, "AST call-graph analyzer") {
+		t.Errorf("HISS-01 must not claim a universal call-graph analyzer:\n%s", res.Content[0].Text)
+	}
+}
+
 // ---- plan and audit ------------------------------------------------------------------------------
 
 func TestServer_Positive_PlanAndAuditOnSyncedRepo(t *testing.T) {

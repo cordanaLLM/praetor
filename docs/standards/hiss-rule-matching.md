@@ -31,9 +31,11 @@ cannot normalise away the bytes they exist to carry.
 
 ## What a text matcher cannot do
 
-It cannot resolve a name, follow a call, or know a type. A rule whose axiom needs any of those
-cannot be decided this way, and the coverage catalog records such a rule as `unsupported` with its
-gap fixtures rather than claiming an enforcement that does not exist.
+It cannot follow a call into another function or know a type, and it resolves a name only as far
+as one function's own text allows (see the Rust and Python section below). A rule whose axiom needs
+more than that cannot be decided this way, and the coverage catalog records such a rule as
+`unsupported` or `partial` with its gap fixtures rather than claiming an enforcement that does not
+exist.
 
 ## Rust: scopes follow braces
 
@@ -106,6 +108,36 @@ The check is verified by planting cycles rather than by watching it pass — the
 100% cleanliness having read no files. The approach is backported from
 [golusoris/sveltesentio#252](https://github.com/golusoris/sveltesentio/pull/252), which built the
 equivalent import-graph check for TypeScript.
+
+## Rust and Python: a function calling itself
+
+Without a parser, the Rust and Python scanners decide the one HISS-01 shape a single function's
+text shows: its body calling it by a name that actually resolves to it. Matching the name anywhere
+would report every delegation, so `internal/hiss/selfcall.go` follows each language's resolution
+rule:
+
+| Function | Reported spelling | Not reported |
+| :--- | :--- | :--- |
+| Python plain function | `f()`, including from a nested def | a parameter, assignment, loop target, `as` target, import or nested def named `f` |
+| Python method | `self.f()`, `cls.f()`, `Owner.f()` | bare `f()` (reaches the module-level `f`), `self.inner.f()`, `super().f()` |
+| Rust free function | `f()`, including from a closure | `other::f()`, a `let`, closure parameter, match binding or nested `fn` named `f` |
+| Rust method or associated function | `self.f()`, `Self::f()` | bare `f()` inside the `impl` or `trait` body (reaches a free function) |
+
+A finding is decided when the function closes rather than at the call, because a Python binding
+later in the body makes the name local for all of it.
+
+The Python scanner also treats a line that starts inside an open bracket or a triple-quoted
+string as a continuation of the statement above it. Reading its indentation as a dedent ended a
+black-formatted function at its `) -> T:` line, and a function holding a column-0 string at that
+string, so neither body was measured for HISS-04 or scanned for recursion.
+`TestPythonContinuationLinesStayInTheirFunction` in `internal/hiss/recursion_test.go` pins it.
+
+Mutual and indirect recursion need a call graph across functions and stay undecided for both
+languages, as do nested-fn recursion, turbofish or path-qualified self-calls in Rust, and lambda
+recursion in Python. `HISS-01/rust/gap/` and `HISS-01/python/gap/` record each one. So does
+`HISS-01/rust/gap/unrecognised-header.rs`: a function behind a header the Rust scanner does not
+recognise yet (`pub(super)`, `const`, `unsafe` or `extern fn`) is never opened, so its self-call
+goes unseen.
 
 ## HISS-20: claims are replayed
 
