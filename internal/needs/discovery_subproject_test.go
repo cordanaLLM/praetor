@@ -58,11 +58,11 @@ func TestFailedSubprojectKeepsRepositoryRow(t *testing.T) {
 		t.Errorf("scan output does not report the failed sub-project:\n%s", text)
 	}
 
-	single, err := ScanRepo(ctx, repo)
+	single, err := ScanRepo(ctx, repo, nil)
 	if err != nil || !slices.Equal(failedDirs(single.FailedSubprojects), []string{"examples/tmpl"}) {
 		t.Fatalf("ScanRepo = %+v, %v; want the row with examples/tmpl failed", single, err)
 	}
-	epic, err := GeneratePreMigrationEpic(ctx, repo, "")
+	epic, err := GeneratePreMigrationEpic(ctx, repo, legacySource(""), nil)
 	if err != nil {
 		t.Fatalf("GeneratePreMigrationEpic() error = %v", err)
 	}
@@ -84,10 +84,10 @@ func TestFailedRootProjectFailsRepository(t *testing.T) {
 	writeRepoFile(t, filepath.Join(repo, "package.json"), malformedPackageJSON)
 	writeRepoFile(t, filepath.Join(repo, "core", "meson.build"), "dep = dependency('zlib')\n")
 
-	if _, err := ScanRepo(context.Background(), repo); err == nil {
+	if _, err := ScanRepo(context.Background(), repo, nil); err == nil {
 		t.Fatal("ScanRepo() succeeded on a malformed root manifest")
 	}
-	report, err := AggregateFleet(context.Background(), root, "")
+	report, err := AggregateFleet(context.Background(), root, legacySource(""), nil)
 	if !errors.Is(err, ErrNoRepositoryScanned) || report.FailedRepositories != 1 {
 		t.Fatalf("AggregateFleet() failed=%d err=%v, want the root failure counted", report.FailedRepositories, err)
 	}
@@ -102,7 +102,7 @@ func TestFailedSubprojectsUnderNonProjectRoot(t *testing.T) {
 	writeRepoFile(t, filepath.Join(repo, "a", "package.json"), malformedPackageJSON)
 	writeRepoFile(t, filepath.Join(repo, "b", "meson.build"), "dep = dependency('zlib')\n")
 
-	row, err := ScanRepo(context.Background(), repo)
+	row, err := ScanRepo(context.Background(), repo, nil)
 	if err != nil {
 		t.Fatalf("ScanRepo() error = %v", err)
 	}
@@ -112,7 +112,7 @@ func TestFailedSubprojectsUnderNonProjectRoot(t *testing.T) {
 	}
 
 	writeRepoFile(t, filepath.Join(repo, "b", "package.json"), malformedPackageJSON)
-	_, err = ScanRepo(context.Background(), repo)
+	_, err = ScanRepo(context.Background(), repo, nil)
 	if err == nil || errors.Is(err, ErrNoAnalyzer) || !strings.Contains(err.Error(), "a") {
 		t.Fatalf("ScanRepo() error = %v, want a failure naming the sub-projects, not a skip", err)
 	}
@@ -126,7 +126,7 @@ func TestFailedSubprojectCancellationIsNotRecorded(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	fleet := &fleetRepo{root: repo, subprojects: []string{filepath.Join(repo, "a")}}
-	if _, err := scanRepository(ctx, fleet); !errors.Is(err, context.Canceled) {
+	if _, err := scanRepository(ctx, fleet, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("scanRepository() error = %v, want context.Canceled", err)
 	}
 }

@@ -55,7 +55,7 @@ func TestCodifyHarvestedInventoryMarksUnknownLanguageUnsupported(t *testing.T) {
 	writeFixture(t, harvest, filepath.Join("dev-patches", "plain-service.patch"),
 		"--- a/notes.txt\n+++ b/notes.txt\n@@ -1,1 +1,2 @@\n+todo\n")
 
-	results, err := CodifyHarvestedInventory(t.Context(), harvest)
+	results, err := CodifyHarvestedInventory(t.Context(), harvest, nil)
 	if err != nil {
 		t.Fatalf("CodifyHarvestedInventory() error = %v", err)
 	}
@@ -139,7 +139,7 @@ func TestCodifyHarvestedInventoryHarvestsGroupedImports(t *testing.T) {
 	writeFixture(t, harvest, filepath.Join("dev-patches", "svc.patch"),
 		"--- a/main.go\n+++ b/main.go\n@@ -1,1 +1,4 @@\n+import (\n+\t\"github.com/gin-gonic/gin\"\n+)\n")
 
-	results, err := CodifyHarvestedInventory(t.Context(), harvest)
+	results, err := CodifyHarvestedInventory(t.Context(), harvest, nil)
 	if err != nil {
 		t.Fatalf("harvest codification failed: %v", err)
 	}

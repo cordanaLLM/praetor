@@ -25,8 +25,9 @@ type HarvestRepoItem struct {
 	StatusDetails []string `json:"StatusDetails"`
 }
 
-// CodifyHarvestedInventory reads a harvest bundle and produces codified RepoNeeds manifests.
-func CodifyHarvestedInventory(ctx context.Context, harvestPath string) ([]RepoNeeds, error) {
+// CodifyHarvestedInventory reads a harvest bundle and produces codified RepoNeeds manifests,
+// each scored against the target of its inferred language (Targets.For).
+func CodifyHarvestedInventory(ctx context.Context, harvestPath string, targets Targets) ([]RepoNeeds, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -43,12 +44,13 @@ func CodifyHarvestedInventory(ctx context.Context, harvestPath string) ([]RepoNe
 
 	results := make([]RepoNeeds, 0, len(items))
 	patchesDir := filepath.Join(harvestPath, "dev-patches")
+	resolved := targets.resolved()
 
 	for _, item := range items {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		repoNeeds, codifyErr := codifySingleHarvestRepo(item, patchesDir)
+		repoNeeds, codifyErr := codifySingleHarvestRepo(item, patchesDir, resolved)
 		if codifyErr != nil {
 			return nil, fmt.Errorf("failed to codify harvested repo %q: %w", item.Name, codifyErr)
 		}
@@ -73,7 +75,7 @@ func loadInventoryItems(path string) ([]HarvestRepoItem, error) {
 	return items, nil
 }
 
-func codifySingleHarvestRepo(item HarvestRepoItem, patchesDir string) (RepoNeeds, error) {
+func codifySingleHarvestRepo(item HarvestRepoItem, patchesDir string, targets Targets) (RepoNeeds, error) {
 	repoIdentifier := item.Remote
 	if repoIdentifier == "" {
 		repoIdentifier = item.Name
@@ -88,23 +90,23 @@ func codifySingleHarvestRepo(item HarvestRepoItem, patchesDir string) (RepoNeeds
 	if lang == LanguageUnsupported {
 		return unsupportedHarvestRepo(repoIdentifier), nil
 	}
+	target := targets[lang]
 	repoNeeds := RepoNeeds{
 		Version:      1,
 		Repository:   repoIdentifier,
 		Language:     lang,
 		Languages:    []string{lang},
-		Framework:    determineDefaultFramework(lang),
-		BuilderKits:  determineDefaultBuilderKits(lang),
 		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
 		Dependencies: make([]DependencyDemand, 0),
 		UpdatedAt:    time.Now().UTC(),
 	}
 
 	for _, depPkg := range patchDeps {
-		demand := mapInferredDependency(depPkg, lang)
+		demand := mapInferredDependency(depPkg, lang, target.RoutingKit())
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
 	}
+	target.applyTo(&repoNeeds)
 
 	calculateReadiness(&repoNeeds)
 	return repoNeeds, nil
@@ -180,36 +182,6 @@ func inferLanguageFromDeps(deps []string) string {
 		}
 	}
 	return ""
-}
-
-func determineDefaultFramework(lang string) string {
-	switch lang {
-	case "typescript":
-		return "github.com/golusoris/sveltesentio"
-	case "python":
-		return "github.com/golusoris/pykit"
-	case "rust":
-		return "github.com/golusoris/rustkit"
-	case "native":
-		return "github.com/golusoris/template-native-gpu"
-	default:
-		return "github.com/golusoris/golusoris"
-	}
-}
-
-func determineDefaultBuilderKits(lang string) []string {
-	switch lang {
-	case "typescript":
-		return []string{"golusoris/sveltesentio"}
-	case "python":
-		return []string{"golusoris/pykit"}
-	case "rust":
-		return []string{"golusoris/rustkit"}
-	case "native":
-		return []string{"golusoris/template-native-gpu"}
-	default:
-		return []string{"golusoris/golusoris", "golusoris/goenvoy"}
-	}
 }
 
 func extractPatchDependencies(repoName, patchesDir string) ([]string, error) {
@@ -360,23 +332,25 @@ func pythonImportModule(trimmed string) []string {
 	return []string{spec}
 }
 
-func mapInferredDependency(pkg, lang string) DependencyDemand {
+// mapInferredDependency maps a harvested package of lang onto the catalog; kit is the
+// language target's routing kit.
+func mapInferredDependency(pkg, lang, kit string) DependencyDemand {
 	switch lang {
 	case "typescript":
-		return mapNodeDependency(pkg, "latest")
+		return mapNodeDependency(pkg, "latest", kit)
 	case "python":
-		return mapPythonDependency(pkg, "latest")
+		return mapPythonDependency(pkg, "latest", kit)
 	case "rust":
-		return mapRustDependency(pkg, "latest")
+		return mapRustDependency(pkg, "latest", kit)
 	case "native":
-		return mapNativeDependency(pkg, "latest")
+		return mapNativeDependency(pkg, "latest", kit)
 	default:
-		return mapHarvestedGoDependency(pkg)
+		return mapHarvestedGoDependency(pkg, kit)
 	}
 }
 
 // mapHarvestedGoDependency resolves a harvested Go import path against the catalog.
-func mapHarvestedGoDependency(pkg string) DependencyDemand {
+func mapHarvestedGoDependency(pkg, kit string) DependencyDemand {
 	matched, found := MatchPackage(pkg)
 	if found {
 		return DependencyDemand{
@@ -385,8 +359,8 @@ func mapHarvestedGoDependency(pkg string) DependencyDemand {
 			Ecosystem:            "go",
 			Capability:           matched.Capability,
 			Status:               matched.Status,
-			GolusorisReplacement: matched.GolusorisReplacement,
-			TargetBuilderKit:     "golusoris/golusoris",
+			FrameworkReplacement: matched.FrameworkReplacement,
+			TargetBuilderKit:     kit,
 			Notes:                matched.Notes,
 		}
 	}
@@ -396,7 +370,7 @@ func mapHarvestedGoDependency(pkg string) DependencyDemand {
 		Ecosystem:        "go",
 		Capability:       CapabilityKey("go.external." + cleanDepKey(pkg)),
 		Status:           StatusGap,
-		TargetBuilderKit: "golusoris/golusoris",
+		TargetBuilderKit: kit,
 		Notes:            "Harvested external dependency from patch diff",
 	}
 }

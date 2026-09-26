@@ -58,7 +58,7 @@ func discoveredRoots(t *testing.T, root string) []string {
 // aggregateRows runs AggregateFleet and indexes the leaderboard by row path.
 func aggregateRows(t *testing.T, root string) (*FleetDemandReport, map[string]RepoNeeds) {
 	t.Helper()
-	report, err := AggregateFleet(context.Background(), root, "")
+	report, err := AggregateFleet(context.Background(), root, legacySource(""), nil)
 	if err != nil {
 		t.Fatalf("AggregateFleet(%s) error = %v", root, err)
 	}
@@ -229,7 +229,7 @@ func TestDiscoverFleetDeepOnlyRepositoryIsSkippedWithReason(t *testing.T) {
 	makeCheckout(t, repo)
 	writeRepoFile(t, filepath.Join(repo, "a", "b", "c", "d", "e", "f", "go.mod"), "module example.com/deep\n")
 
-	_, err := ScanRepo(context.Background(), repo)
+	_, err := ScanRepo(context.Background(), repo, nil)
 	if !errors.Is(err, ErrNoAnalyzer) || !strings.Contains(err.Error(), "a/b/c/d/e/f") {
 		t.Fatalf("ScanRepo error = %v, want ErrNoAnalyzer naming the deep manifest", err)
 	}
@@ -349,7 +349,7 @@ func TestScanRepoFoldsSubprojectsUnderNonProjectRoot(t *testing.T) {
 	makeCheckout(t, nested)
 	writeRepoFile(t, filepath.Join(nested, "meson.build"), "dep = dependency('libpng')\n")
 
-	row, err := ScanRepo(context.Background(), repo)
+	row, err := ScanRepo(context.Background(), repo, nil)
 	if err != nil {
 		t.Fatalf("ScanRepo() error = %v", err)
 	}
@@ -388,7 +388,7 @@ func TestDemandIdentityNormalisesPyPINames(t *testing.T) {
 	writeRepoFile(t, filepath.Join(repo, "requirements.txt"), "Typing.Extensions==4.12\n")
 	writeRepoFile(t, filepath.Join(repo, "py", "requirements.txt"), "typing_extensions==4.12\n")
 
-	row, err := ScanRepo(context.Background(), repo)
+	row, err := ScanRepo(context.Background(), repo, nil)
 	if err != nil {
 		t.Fatalf("ScanRepo() error = %v", err)
 	}
@@ -470,11 +470,11 @@ func TestFleetEpicsScoreLikeAggregate(t *testing.T) {
 	if len(rows) != 1 || !ok {
 		t.Fatalf("aggregate rows = %v, want the one repository", rows)
 	}
-	epics, _, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{DryRun: true})
+	epics, _, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{Framework: legacySource(""), DryRun: true})
 	if err != nil || len(epics) != 1 {
 		t.Fatalf("fleet epics = %d, err = %v", len(epics), err)
 	}
-	single, err := GeneratePreMigrationEpic(ctx, repo, "")
+	single, err := GeneratePreMigrationEpic(ctx, repo, legacySource(""), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

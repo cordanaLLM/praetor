@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -637,8 +638,9 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 				Description: "Path to repository to scan (default: server root)",
 			},
 			"framework": {
-				Type:        "string",
-				Description: "Path to a local checkout of the target framework (default: built-in capability index)",
+				Type: "string",
+				Description: "Path to a local checkout of the go target framework (default: $PRAETOR_FRAMEWORK_DIR, else " +
+					"framework.targets.go.checkout, else the declared contract or catalog; \"\" selects the declaration)",
 			},
 		},
 	}
@@ -652,27 +654,49 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 		if err != nil {
 			return mcp.ErrorResult(err.Error()), nil
 		}
+		registry, err := loadNeedsRegistry(ctx)
+		if err != nil {
+			return mcp.ErrorResult(fmt.Sprintf("Failed to load operator settings: %v", err)), nil
+		}
+		_, explicit := args["framework"]
+		source := needs.SelectFrameworkSource(needs.FrameworkSelection{
+			Explicit: fwPath, ExplicitSet: explicit, Getenv: os.Getenv, Targets: registry.Targets(),
+		})
 
-		fwIndex, err := needs.InspectFramework(ctx, fwPath)
+		fwIndex, err := needs.InspectFramework(ctx, source)
 		if err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to inspect framework: %v", err)), nil
 		}
 
-		rep, err := needs.ScanRepoWithFramework(ctx, targetPath, fwIndex)
+		rep, err := needs.ScanRepoWithFramework(ctx, targetPath, fwIndex, registry)
 		if err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to scan repository: %v", err)), nil
 		}
 
-		var b strings.Builder
-		fmt.Fprintf(&b, "=== Golusoris Migration Report: %s ===\n", rep.Repository)
-		fmt.Fprintf(&b, "Framework: %s (%s) | Mapping availability: %.1f%%\n\n", fwIndex.Name, fwIndex.Version, rep.Readiness.Score)
-		fmt.Fprintf(&b, "Coverage basis: %s; builds and tests not run\n\n", fwIndex.Basis)
-		b.WriteString(needs.FormatLibraryRelationships(rep))
-
-		return mcp.TextResult(b.String()), nil
+		return mcp.TextResult(needs.FormatReportHeader(rep, fwIndex) + needs.FormatLibraryRelationships(rep)), nil
 	}
 
-	return mcp.NewReadOnlyTool("standards_needs_report", "Evaluate repository needs and Golusoris migration compatibility", schema, handler)
+	return mcp.NewReadOnlyTool("standards_needs_report", "Evaluate repository needs and target framework migration compatibility", schema, handler)
+}
+
+// installManifestPath locates the install manifest that records the host's settings
+// documents. Tests replace it so no test reads the operator's own manifest.
+var installManifestPath = config.DefaultInstallManifestPath
+
+// loadNeedsRegistry selects the operator settings at call time the way hook does
+// (PRAETOR_FLEET_CONFIG / PRAETOR_WORKSTATION_CONFIG, then the install manifest) and prepares
+// the needs engine for their framework targets (needs.RegistryFromPolicy). A host with no
+// per-user configuration directory selects no manifest.
+func loadNeedsRegistry(ctx context.Context) (*needs.AnalyzerRegistry, error) {
+	manifest, err := installManifestPath()
+	if err != nil {
+		manifest = ""
+	}
+	policy, err := config.SelectOperatorPolicy(ctx, config.SettingsRequest{Getenv: os.Getenv, ManifestPath: manifest})
+	if err != nil {
+		return nil, fmt.Errorf("select operator settings: %w", err)
+	}
+	return needs.RegistryFromPolicy(ctx, policy)
 }
 
 // ---- HISS rule explanations ----------------------------------------------------------------

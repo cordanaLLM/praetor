@@ -51,11 +51,12 @@ func TestNeedsLibraryRelationshipsUseSharedFormatter(t *testing.T) {
 	for _, name := range []string{"config", "log", "ogenkit"} {
 		writeFixtureFile(t, framework, name+"/adapter.go", "package adapter\ntype Available struct{}\n")
 	}
-	index, err := needs.InspectFramework(t.Context(), framework)
+	source := needs.SelectFrameworkSource(needs.FrameworkSelection{Explicit: framework, ExplicitSet: true})
+	index, err := needs.InspectFramework(t.Context(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, err := needs.ScanRepoWithFramework(t.Context(), repo, index)
+	report, err := needs.ScanRepoWithFramework(t.Context(), repo, index, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

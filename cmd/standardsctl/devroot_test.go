@@ -1,11 +1,11 @@
 package main
 
 import (
-	"flag"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/needs"
 )
 
 // isolateDevRootEnv clears both dev-root variables and PRAETOR_FRAMEWORK_DIR and points
@@ -72,62 +72,56 @@ func TestResolveDevRootDir_3D(t *testing.T) {
 	}
 }
 
-func frameworkFlagSet(t *testing.T, args ...string) (*flag.FlagSet, string) {
-	t.Helper()
-	fs := flag.NewFlagSet("needs test", flag.ContinueOnError)
-	value := fs.String("framework", "", "")
-	if err := fs.Parse(args); err != nil {
-		t.Fatal(err)
-	}
-	return fs, *value
+// frameworkSelection returns a needs selection whose only configured target is go with the
+// given checkout, as a workstation document would configure it.
+func frameworkSelection(checkout string) *needsSelection {
+	targets := needs.Targets{"go": {Module: "example.com/acme/kit", Contract: "/srv/kit.capabilities.yaml", Checkout: checkout}}
+	return &needsSelection{targets: targets}
 }
 
-func TestSelectFrameworkDir_3D(t *testing.T) {
+func TestNeedsFrameworkSource_3D(t *testing.T) {
 	home := isolateDevRootEnv(t)
-	root := filepath.Join(home, "fleet")
-	t.Setenv(devRootEnv, root)
+	t.Setenv(devRootEnv, filepath.Join(home, "fleet"))
+	configured := filepath.Join(home, "kit")
 
-	// Positive: the default checkout lives under the resolved dev root.
-	fs, value := frameworkFlagSet(t)
-	if got, err := selectFrameworkDir(fs, value); err != nil || got != filepath.Join(root, "golusoris", "golusoris") {
-		t.Fatalf("dev-root default = %q, %v", got, err)
+	// Positive: framework.targets.go.checkout is the default, carrying the go target's
+	// module and contract.
+	source := frameworkSelection(configured).frameworkSource("", false)
+	if source.Checkout != configured || source.Module != "example.com/acme/kit" || source.Contract != "/srv/kit.capabilities.yaml" {
+		t.Fatalf("configured checkout = %+v", source)
 	}
 
-	// Positive: PRAETOR_FRAMEWORK_DIR wins over the dev root.
+	// Positive: PRAETOR_FRAMEWORK_DIR wins over the configured checkout, --framework over both.
 	t.Setenv(frameworkDirEnv, "/srv/framework")
-	if got, err := selectFrameworkDir(fs, value); err != nil || got != "/srv/framework" {
-		t.Fatalf("PRAETOR_FRAMEWORK_DIR = %q, %v", got, err)
+	if got := frameworkSelection(configured).frameworkSource("", false); got.Checkout != "/srv/framework" {
+		t.Fatalf("PRAETOR_FRAMEWORK_DIR = %+v", got)
+	}
+	if got := frameworkSelection(configured).frameworkSource("/srv/explicit", true); got.Checkout != "/srv/explicit" {
+		t.Fatalf("explicit --framework = %+v", got)
 	}
 
-	// Boundary: an explicit --framework="" keeps selecting the declared catalog.
-	fs, value = frameworkFlagSet(t, "--framework=")
-	if got, err := selectFrameworkDir(fs, value); err != nil || got != "" {
-		t.Fatalf("explicit empty framework = %q, %v; want the declared catalog", got, err)
+	// Boundary: an explicit --framework="" selects the declaration (the contract) even with
+	// a checkout configured and PRAETOR_FRAMEWORK_DIR set.
+	if got := frameworkSelection(configured).frameworkSource("", true); got.Checkout != "" || got.Contract == "" {
+		t.Fatalf("explicit empty framework = %+v; want the declared contract", got)
 	}
 
-	// Negative: nothing resolves the default without a home directory.
+	// Negative: nothing selected never falls back to a checkout under the dev root, and
+	// needs no home directory either.
 	t.Setenv(frameworkDirEnv, "")
-	t.Setenv(devRootEnv, "")
 	clearHomeDir(t)
-	fs, value = frameworkFlagSet(t)
-	if got, err := selectFrameworkDir(fs, value); err == nil || !strings.Contains(err.Error(), "--framework") {
-		t.Fatalf("unusable home = %q, %v; want an error naming --framework", got, err)
+	if got := frameworkSelection("").frameworkSource("", false); got.Checkout != "" {
+		t.Fatalf("unselected framework = %+v; want no checkout", got)
 	}
 }
 
-// newDevRootFleet builds a dev root holding one Go repository and the framework
-// checkout at its default location <root>/golusoris/golusoris.
+// newDevRootFleet builds a dev root holding one Go repository.
 func newDevRootFleet(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	repo := filepath.Join(root, "acme", "widgets")
 	writeFixtureFile(t, repo, ".git/HEAD", "ref: refs/heads/main\n")
 	writeFixtureFile(t, repo, "go.mod", "module example.com/widgets\n\ngo 1.27\n\nrequire github.com/spf13/cobra v1.8.0\n")
-	for _, domain := range []string{"config", "clikit"} {
-		if err := os.MkdirAll(filepath.Join(root, "golusoris", "golusoris", domain), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
 	return root
 }
 
@@ -135,7 +129,7 @@ func TestNeedsAggregate_HonoursDevRootEnv(t *testing.T) {
 	isolateDevRootEnv(t)
 	root := newDevRootFleet(t)
 
-	// Positive: PRAETOR_DEV_ROOT selects both the fleet and the default framework.
+	// Positive: PRAETOR_DEV_ROOT selects the fleet.
 	t.Setenv(devRootEnv, root)
 	out, err := captureStdout(t, func() error { return dispatchCommand("needs", []string{"aggregate"}) })
 	if err != nil {
@@ -143,14 +137,17 @@ func TestNeedsAggregate_HonoursDevRootEnv(t *testing.T) {
 	}
 	mustContain(t, out, "**Repositories Scanned**: 1 / 1")
 
-	// Boundary: the default framework path follows PRAETOR_DEV_ROOT even when that root
-	// holds no framework checkout; the absent selected path is reported.
-	emptyRoot := t.TempDir()
-	t.Setenv(devRootEnv, emptyRoot)
-	err = dispatchCommand("needs", []string{"report", "--path=" + filepath.Join(root, "acme", "widgets")})
-	if err == nil || !strings.Contains(err.Error(), filepath.Join(emptyRoot, "golusoris")) {
-		t.Fatalf("needs report framework default = %v; want the path under PRAETOR_DEV_ROOT", err)
+	// Boundary: the dev root no longer selects a framework checkout. Without --framework,
+	// PRAETOR_FRAMEWORK_DIR or framework.targets.go.checkout, report scores against the
+	// declaration instead of failing over a missing path under the dev root.
+	t.Setenv(devRootEnv, t.TempDir())
+	out, err = captureStdout(t, func() error {
+		return dispatchCommand("needs", []string{"report", "--path=" + filepath.Join(root, "acme", "widgets")})
+	})
+	if err != nil {
+		t.Fatalf("needs report without a selected framework: %v\n%s", err, out)
 	}
+	mustContain(t, out, "Coverage basis: catalog-declared; builds and tests not run")
 
 	// Negative: no dev root and no home directory fails before scanning anything.
 	t.Setenv(devRootEnv, "")

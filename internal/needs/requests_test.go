@@ -50,7 +50,7 @@ func TestSynthesizeDemands_Positive(t *testing.T) {
 		},
 	}
 
-	requests := SynthesizeDemands(report)
+	requests := SynthesizeDemands(report, nil)
 	if len(requests) != 2 {
 		t.Fatalf("expected 2 demand requests, got %d", len(requests))
 	}
@@ -77,13 +77,13 @@ func TestSynthesizeDemands_Positive(t *testing.T) {
 }
 
 func TestSynthesizeDemands_Empty(t *testing.T) {
-	requests := SynthesizeDemands(nil)
+	requests := SynthesizeDemands(nil, nil)
 	if len(requests) != 0 {
 		t.Errorf("expected 0 requests for nil report, got %d", len(requests))
 	}
 
 	emptyReport := &FleetDemandReport{Gaps: []GapDetail{}}
-	requests = SynthesizeDemands(emptyReport)
+	requests = SynthesizeDemands(emptyReport, nil)
 	if len(requests) != 0 {
 		t.Errorf("expected 0 requests for empty gaps, got %d", len(requests))
 	}
@@ -192,6 +192,48 @@ func TestRenderRequestMarkdown_StatesHISSCeiling(t *testing.T) {
 	} {
 		if body := renderRequestMarkdown("REQ-X", "title", gap, "golusoris/golusoris", "roi"); !strings.Contains(body, want) {
 			t.Errorf("%s: request = %s, want %q", name, body, want)
+		}
+	}
+}
+
+// Requests route to the first builder kit of the target serving each capability's language;
+// the owner of that kit is the target org, and a capability whose language has no target
+// stays unrouted with both empty.
+func TestSynthesizeDemandsRoutesThroughTargets_3D(t *testing.T) {
+	report := &FleetDemandReport{Gaps: []GapDetail{
+		{Capability: "db.postgres", ConsumerCount: 3, Consumers: []string{"a", "b", "c"}},
+		{Capability: "ui.forms", ConsumerCount: 2, Consumers: []string{"a", "b"}},
+		{Capability: "gpu.cuda", ConsumerCount: 1, Consumers: []string{"a"}},
+	}}
+	requests := SynthesizeDemands(report, acmeTargets())
+	byCapability := map[CapabilityKey]FrameworkDemandRequest{}
+	for _, request := range requests {
+		byCapability[request.Capability] = request
+	}
+	// Positive: go and typescript capabilities reach their targets' first kits.
+	if db := byCapability["db.postgres"]; db.TargetBuilderKit != "acme/kit" || db.TargetOrg != "acme" ||
+		!strings.Contains(db.SpecificationMarkdown, "- **Target Builder Kit**: `acme/kit`") {
+		t.Errorf("go capability = %+v", db)
+	}
+	if ui := byCapability["ui.forms"]; ui.TargetBuilderKit != "acme/ui" || ui.TargetOrg != "acme" {
+		t.Errorf("typescript capability = %+v", ui)
+	}
+	// Negative: no native target leaves the request unrouted, saying which key to set.
+	gpu := byCapability["gpu.cuda"]
+	if gpu.TargetBuilderKit != "" || gpu.TargetOrg != "" ||
+		!strings.Contains(gpu.SpecificationMarkdown, "unrouted (framework.targets.native.builder_kits not set)") {
+		t.Errorf("unrouted capability = %+v", gpu)
+	}
+	// Boundary: every capability prefix routes to its language; the built-in targets keep
+	// their kits when none is configured.
+	for prefix, language := range map[string]string{"ui.": "typescript", "python.": "python", "ai.": "python", "rust.": "rust",
+		"native.": "native", "media.": "native", "gpu.": "native", "db.": "go", "": "go"} {
+		if got := capabilityLanguage(prefix + "x"); got != language {
+			t.Errorf("capabilityLanguage(%sx) = %s, want %s", prefix, got, language)
+		}
+		legacy := createDemandRequest(GapDetail{Capability: CapabilityKey(prefix + "x")}, legacyTargets())
+		if legacy.TargetBuilderKit != legacyTargets()[language].RoutingKit() || legacy.TargetOrg != kitOwner(legacy.TargetBuilderKit) {
+			t.Errorf("built-in routing of %sx = %+v", prefix, legacy)
 		}
 	}
 }

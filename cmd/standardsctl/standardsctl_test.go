@@ -112,25 +112,54 @@ func TestDispatchCommand_NeedsSubcommands(t *testing.T) {
 	}
 
 	repo := newNeedsRepo(t)
+	writeFixtureFile(t, repo, "go.mod", "module example.com/fixture\n\ngo 1.27\n\nrequire (\n\tgithub.com/spf13/cobra v1.8.0\n\tgithub.com/jackc/pgx/v5 v5.7.2\n)\n")
 	framework := newFrameworkFixture(t)
+	// The operator's workstation document configures the go target: example.com/acme/kit,
+	// declared by a contract that replaces pgx with the kit's db package.
+	t.Setenv(config.WorkstationConfigEnv, acmeWorkstation(t))
 
-	// Positive: scan a fixture repository
+	// Positive: scan maps the fixture's demands onto the configured target.
 	out, err := captureStdout(t, func() error { return dispatchCommand("needs", []string{"scan", "--path=" + repo}) })
 	if err != nil {
 		t.Fatalf("needs scan failed: %v", err)
 	}
-	mustContain(t, out, "=== Framework Needs Scan:", "github.com/spf13/cobra")
+	mustContain(t, out, "=== Framework Needs Scan:", "Target Framework: example.com/acme/kit", "github.com/spf13/cobra",
+		"replacement candidate: example.com/acme/kit/db")
 
-	// Positive: report against a real framework checkout and against the built-in index,
-	// so both InspectFramework branches are exercised deterministically.
-	for _, fw := range []string{framework, ""} {
+	// Positive: report against a framework checkout and against the declared contract, so
+	// both InspectFramework branches are exercised with the configured target.
+	for fw, want := range map[string]string{
+		framework: "Framework: example.com/acme/kit (unverified)",
+		"":        "Framework: example.com/acme/kit (declared)",
+	} {
 		out, err := captureStdout(t, func() error {
 			return dispatchCommand("needs", []string{"report", "--path=" + repo, "--framework=" + fw})
 		})
 		if err != nil {
 			t.Fatalf("needs report (framework=%s) failed: %v", fw, err)
 		}
-		mustContain(t, out, "=== Golusoris Migration Report:", "Framework: github.com/golusoris/golusoris", "Library relationships and migration candidates:", "github.com/spf13/cobra")
+		mustContain(t, out, "=== Framework Migration Report:", want, "Library relationships and migration candidates:", "github.com/spf13/cobra")
+		if strings.Contains(out, "golusoris") {
+			t.Fatalf("a configured target reported built-in framework data (framework=%q):\n%s", fw, out)
+		}
+	}
+	out, err = captureStdout(t, func() error { return dispatchCommand("needs", []string{"report", "--path=" + repo, "--framework="}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "Capability contract: kit.capabilities.yaml (declared packages, not source-observed)",
+		"replacement candidate: example.com/acme/kit/db")
+	for _, command := range []string{"scan", "migrate"} {
+		out, err := captureStdout(t, func() error { return dispatchCommand("needs", []string{command, "--path=" + repo}) })
+		if err != nil {
+			t.Fatalf("needs %s: %v", command, err)
+		}
+		if strings.Contains(out, "golusoris") {
+			t.Fatalf("needs %s reported built-in framework data for a configured target:\n%s", command, out)
+		}
+		if command == "migrate" {
+			mustContain(t, out, "Migration branch: refactor/acme-adoption", "example.com/acme/kit")
+		}
 	}
 
 	// Negative: a directory that is not a repository, and an unknown subcommand
@@ -1200,8 +1229,8 @@ func TestResolveRepoCoordinates_RejectsRepositoryNames(t *testing.T) {
 	ctx := context.Background()
 
 	// Negative: a bare repository name is not a path and must not be guessed into
-	// forge coordinates.
-	if _, _, err := resolveRepoCoordinates(ctx, "vmafx"); err == nil {
+	// forge coordinates, even with a default owner configured.
+	if _, _, err := resolveRepoCoordinates(ctx, "widget", "acme"); err == nil {
 		t.Fatal("expected a bare repository name to be rejected")
 	}
 
@@ -1211,7 +1240,7 @@ func TestResolveRepoCoordinates_RejectsRepositoryNames(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".standards.yaml"), []byte(manifest), 0o600); err != nil {
 		t.Fatalf("failed writing manifest: %v", err)
 	}
-	owner, name, err := resolveRepoCoordinates(ctx, repo)
+	owner, name, err := resolveRepoCoordinates(ctx, repo, "")
 	if err != nil {
 		t.Fatalf("resolveRepoCoordinates failed: %v", err)
 	}
@@ -1219,13 +1248,25 @@ func TestResolveRepoCoordinates_RejectsRepositoryNames(t *testing.T) {
 		t.Errorf("expected acme/widget, got %s/%s", owner, name)
 	}
 
-	// Boundary: a directory with neither a manifest nor an origin remote nor an
-	// <owner>/<repo> shaped path resolves to nothing rather than to a guessed owner.
-	unresolvable := filepath.Join(t.TempDir(), "dev", "widget")
+	// Positive: forge.default_owner completes a manifest that names only the repository.
+	named := t.TempDir()
+	if err := os.WriteFile(filepath.Join(named, ".standards.yaml"), []byte("version: 1\nrepository:\n  name: widget\n"), 0o600); err != nil {
+		t.Fatalf("failed writing manifest: %v", err)
+	}
+	if owner, name, err := resolveRepoCoordinates(ctx, named, "acme-labs"); err != nil || owner != "acme-labs" || name != "widget" {
+		t.Fatalf("default owner = %s/%s, %v; want acme-labs/widget", owner, name, err)
+	}
+	if _, _, err := resolveRepoCoordinates(ctx, named, ""); !errors.Is(err, config.ErrOwnerUnknown) {
+		t.Fatalf("no owner source = %v; want config.ErrOwnerUnknown", err)
+	}
+
+	// Boundary: a directory with neither a manifest nor an origin remote resolves to nothing,
+	// even when its path is <owner>/<repo> shaped: the checkout path never names the owner.
+	unresolvable := filepath.Join(t.TempDir(), "acme", "widget")
 	if err := os.MkdirAll(unresolvable, 0o755); err != nil {
 		t.Fatalf("failed creating fixture: %v", err)
 	}
-	if _, _, err := resolveRepoCoordinates(ctx, unresolvable); err == nil {
+	if _, _, err := resolveRepoCoordinates(ctx, unresolvable, ""); err == nil {
 		t.Error("expected an unresolvable directory to produce an error")
 	}
 }

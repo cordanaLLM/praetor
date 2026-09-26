@@ -52,11 +52,12 @@ func TestNeedsMCPReportMatchesMigrationCandidateEvidence(t *testing.T) {
 		writeFixtureFile(t, root, "framework/db/pgx/doc.go", tc.source)
 		result := callTool(t, srv, "standards_needs_report", map[string]any{"framework": "framework"})
 		expectText(t, "same mapping score", result, fmt.Sprintf("Mapping availability: %.1f%%", tc.score))
-		plan, err := needs.PlanMigration(t.Context(), root, framework)
+		source := needs.SelectFrameworkSource(needs.FrameworkSelection{Explicit: framework, ExplicitSet: true})
+		plan, err := needs.PlanMigration(t.Context(), root, source, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		epic, err := needs.GeneratePreMigrationEpic(t.Context(), root, framework)
+		epic, err := needs.GeneratePreMigrationEpic(t.Context(), root, source, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -75,11 +76,12 @@ func TestNeedsMCPLibraryRelationshipsUseSharedFormatter(t *testing.T) {
 	for _, name := range []string{"config", "log", "ogenkit"} {
 		writeFixtureFile(t, root, "framework/"+name+"/adapter.go", "package adapter\ntype Available struct{}\n")
 	}
-	index, err := needs.InspectFramework(t.Context(), filepath.Join(root, "framework"))
+	source := needs.SelectFrameworkSource(needs.FrameworkSelection{Explicit: filepath.Join(root, "framework"), ExplicitSet: true})
+	index, err := needs.InspectFramework(t.Context(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, err := needs.ScanRepoWithFramework(t.Context(), root, index)
+	report, err := needs.ScanRepoWithFramework(t.Context(), root, index, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

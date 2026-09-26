@@ -35,7 +35,7 @@ func TestNodeAnalyzer(t *testing.T) {
 		t.Fatal("expected NodeAnalyzer to detect package.json")
 	}
 
-	needs, err := analyzer.Analyze(ctx, tempDir)
+	needs, err := analyzer.Analyze(ctx, tempDir, legacyTargets()[analyzer.Language()])
 	if err != nil {
 		t.Fatalf("node analysis failed: %v", err)
 	}
@@ -79,7 +79,7 @@ unknown-ml-lib==1.0.0
 		t.Fatal("expected PythonAnalyzer to detect requirements.txt")
 	}
 
-	needs, err := analyzer.Analyze(ctx, tempDir)
+	needs, err := analyzer.Analyze(ctx, tempDir, legacyTargets()[analyzer.Language()])
 	if err != nil {
 		t.Fatalf("python analysis failed: %v", err)
 	}
@@ -124,7 +124,7 @@ custom-crate = "0.2"
 		t.Fatal("expected RustAnalyzer to detect Cargo.toml")
 	}
 
-	needs, err := analyzer.Analyze(ctx, tempDir)
+	needs, err := analyzer.Analyze(ctx, tempDir, legacyTargets()[analyzer.Language()])
 	if err != nil {
 		t.Fatalf("rust analysis failed: %v", err)
 	}
@@ -166,7 +166,7 @@ dep_custom = dependency('custom_dsp')
 		t.Fatal("expected NativeAnalyzer to detect meson.build")
 	}
 
-	needs, err := analyzer.Analyze(ctx, tempDir)
+	needs, err := analyzer.Analyze(ctx, tempDir, legacyTargets()[analyzer.Language()])
 	if err != nil {
 		t.Fatalf("native analysis failed: %v", err)
 	}

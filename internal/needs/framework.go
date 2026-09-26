@@ -7,15 +7,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
 	FrameworkCatalogDeclared = "catalog-declared"
 	FrameworkSourceObserved  = "source-observed"
-	defaultFrameworkModule   = "github.com/golusoris/golusoris"
-	// defaultFrameworkVersion is a legacy catalog label, not a verified release pin.
+	// FrameworkNotConfigured is the basis of an index for which no framework is selected:
+	// no checkout, no contract and no module.
+	FrameworkNotConfigured = "not-configured"
+	// defaultFrameworkVersion is the legacy go target's catalog label, not a verified
+	// release pin (TRANSITION, see defaultFrameworkModule).
 	defaultFrameworkVersion = "v0.8.0"
+	// declaredFrameworkVersion is the version of an index a contract declares.
+	declaredFrameworkVersion = "declared"
 	// FrameworkContractFile is the capability contract a framework checkout may publish
 	// at its root; when present it is the package inventory, not directory heuristics.
 	FrameworkContractFile = "capabilities.yaml"
@@ -24,8 +30,10 @@ const (
 	FrameworkNativeCapability CapabilityKey = "fleet.framework"
 )
 
-// KnownDomainCapabilities maps Golusoris package directories to standard capabilities.
-// Since golusoris v0.9.0 the lean core packages live in the nested core/ module.
+// KnownDomainCapabilities maps the legacy go target's package directories to standard
+// capabilities; the lean core packages live in its nested core/ module. It is built-in
+// framework data (TRANSITION, see defaultFrameworkModule) and declares packages only for
+// that module.
 var KnownDomainCapabilities = map[string][]CapabilityKey{
 	"db":              {"db.postgres", "db.orm", "db.clickhouse", "db.timescale", "db.cdc"},
 	"cache":           {"cache.redis", "cache.inmemory", "cache.twotier"},
@@ -73,26 +81,18 @@ func ResolveFrameworkModule(frameworkPath string) string {
 		}
 		return modulePath
 	}
-	if isModulePathShaped(value) {
+	if config.IsModulePathShaped(value) {
 		return value
 	}
 	return defaultFrameworkModule
 }
 
-// isModulePathShaped reports whether value looks like a Go module path rather than a
-// filesystem location: it must not be absolute or relative-prefixed, and its first
-// segment must be a host, i.e. contain a dot.
-func isModulePathShaped(value string) bool {
-	if filepath.IsAbs(value) || strings.HasPrefix(value, ".") || strings.HasPrefix(value, "~") {
-		return false
-	}
-	first, _, ok := strings.Cut(value, "/")
-	return ok && strings.Contains(first, ".")
-}
-
-// InspectFramework resolves declared catalog mappings or observes exact local
-// replacement packages. It does not run builds or establish tested correctness.
-func InspectFramework(ctx context.Context, frameworkPath string) (*FrameworkIndex, error) {
+// InspectFramework builds the index of the framework source selects. A checkout is
+// observed from source; a contract declares packages without observing them; the legacy go
+// target's module alone declares the built-in catalog (TRANSITION); any other module alone
+// names the framework without declaring a package; nothing selected is not configured. It
+// does not run builds or establish tested correctness.
+func InspectFramework(ctx context.Context, source FrameworkSource) (*FrameworkIndex, error) {
 	if ctx == nil {
 		return nil, errors.New("framework inspection requires a context")
 	}
@@ -102,23 +102,41 @@ func InspectFramework(ctx context.Context, frameworkPath string) (*FrameworkInde
 		return nil, err
 	}
 	index := &FrameworkIndex{
-		Name: defaultFrameworkModule, RootPath: frameworkPath,
-		Version: defaultFrameworkVersion, Basis: FrameworkCatalogDeclared,
+		Name: source.Module, RootPath: source.Checkout, CatalogModule: source.Module,
+		Version: declaredFrameworkVersion, Basis: FrameworkCatalogDeclared,
 		Packages:     make(map[string]FrameworkPackage),
 		Capabilities: make(map[CapabilityKey][]string),
 	}
-	if frameworkPath == "" {
-		populateDefaultFrameworkIndex(index)
-		return index, nil
-	}
-	index.Basis, index.Version = FrameworkSourceObserved, "unverified"
-	if err := observeFramework(ctx, index); err != nil {
-		return nil, err
+	switch {
+	case source.Checkout != "":
+		index.Basis, index.Version = FrameworkSourceObserved, "unverified"
+		if err := observeFramework(ctx, index); err != nil {
+			return nil, err
+		}
+	case source.Contract != "":
+		if err := declareContractFramework(ctx, index, source.Contract); err != nil {
+			return nil, err
+		}
+	default:
+		declareModuleFramework(index)
 	}
 	return index, nil
 }
 
-// populateDefaultFrameworkIndex supplies static baseline index when offline.
+// declareModuleFramework fills an index selected by its module alone.
+func declareModuleFramework(index *FrameworkIndex) {
+	switch index.Name {
+	case "":
+		index.Basis, index.Version = FrameworkNotConfigured, ""
+	case defaultFrameworkModule:
+		index.Version = defaultFrameworkVersion
+		populateDefaultFrameworkIndex(index)
+	default:
+		index.Basis, index.Version = FrameworkIdentityDeclared, "unverified"
+	}
+}
+
+// populateDefaultFrameworkIndex declares the legacy go target's built-in catalog.
 func populateDefaultFrameworkIndex(index *FrameworkIndex) {
 	for domain, caps := range KnownDomainCapabilities {
 		pkgPath := index.Name + "/" + domain
@@ -136,11 +154,20 @@ func populateDefaultFrameworkIndex(index *FrameworkIndex) {
 		if entry.Relationship == nil || entry.Relationship.FrameworkPackage == "" {
 			continue
 		}
-		relative, ok := strings.CutPrefix(entry.Relationship.FrameworkPackage, defaultFrameworkModule+"/")
-		if ok {
+		if relative, ok := index.catalogRelative(entry.Relationship.FrameworkPackage); ok {
 			addObservedPackage(index, relative, []CapabilityKey{entry.Capability})
 		}
 	}
+}
+
+// catalogRelative returns the path of a built-in catalog package relative to the module the
+// catalog resolves against (CatalogModule). A package outside that module, or any package
+// when no module is selected, belongs to no package of this framework.
+func (idx *FrameworkIndex) catalogRelative(catalogPath string) (string, bool) {
+	if idx.CatalogModule == "" {
+		return "", false
+	}
+	return strings.CutPrefix(catalogPath, idx.CatalogModule+"/")
 }
 
 // IsCapabilityCovered reports whether the index lists at least one framework package

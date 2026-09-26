@@ -29,7 +29,8 @@ var ErrGoModMissing = errors.New("needs: go.mod not found")
 // single-repository scan and a fleet aggregation score a repository identically. A
 // repository that no registered language analyzer recognises is an error: silently
 // falling back to a Go manifest would report an unanalysed repository as fully ready.
-func ScanRepo(ctx context.Context, repoPath string) (*RepoNeeds, error) {
+// registry supplies the analyzers and the framework targets; nil selects DefaultRegistry.
+func ScanRepo(ctx context.Context, repoPath string, registry *AnalyzerRegistry) (*RepoNeeds, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -37,15 +38,15 @@ func ScanRepo(ctx context.Context, repoPath string) (*RepoNeeds, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover the projects of repository %q: %w", repoPath, err)
 	}
-	return scanRepository(ctx, repo)
+	return scanRepository(ctx, repo, registry)
 }
 
-// scanProjectDir runs every analyzer that detects a project in dir itself.
-func scanProjectDir(ctx context.Context, dir string) (*RepoNeeds, error) {
+// scanProjectDir runs every analyzer of registry that detects a project in dir itself.
+func scanProjectDir(ctx context.Context, dir string, registry *AnalyzerRegistry) (*RepoNeeds, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	repoNeeds, err := DefaultRegistry().AnalyzePolyglot(ctx, dir)
+	repoNeeds, err := registryOrDefault(registry).AnalyzePolyglot(ctx, dir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze project %q: %w", dir, err)
 	}
@@ -54,15 +55,15 @@ func scanProjectDir(ctx context.Context, dir string) (*RepoNeeds, error) {
 
 // ScanRepoWithFramework reconciles catalog demands against the selected framework.
 // It reports available mappings, never runtime compatibility or passing tests.
-func ScanRepoWithFramework(ctx context.Context, repoPath string, framework *FrameworkIndex) (*RepoNeeds, error) {
+func ScanRepoWithFramework(ctx context.Context, repoPath string, framework *FrameworkIndex, registry *AnalyzerRegistry) (*RepoNeeds, error) {
 	if ctx == nil || framework == nil {
 		return nil, errors.New("context and framework index are required")
 	}
-	report, err := ScanRepo(ctx, repoPath)
+	report, err := ScanRepo(ctx, repoPath, registry)
 	if err != nil {
 		return nil, err
 	}
-	applyFrameworkCoverage(framework, report)
+	applyFrameworkCoverage(framework, report, registry)
 	return report, nil
 }
 
@@ -242,7 +243,8 @@ func isThirdPartyImport(importPath, modulePath string) bool {
 
 // loadExistingDeclarations merges capabilities declared in an existing .needs.yaml or
 // .standards.yaml into the freshly computed set. Declared entries are additive: replacing
-// the computed set would freeze Capabilities.Required at its first written value.
+// the computed set would freeze Capabilities.Required at its first written value. A
+// .needs.yaml read through a deprecated key passes its deprecation on to the new row.
 func loadExistingDeclarations(ctx context.Context, repoPath string, repoNeeds *RepoNeeds) error {
 	needsPath := filepath.Join(repoPath, ".needs.yaml")
 	if util.FileExists(needsPath) {
@@ -251,6 +253,9 @@ func loadExistingDeclarations(ctx context.Context, repoPath string, repoNeeds *R
 			return err
 		}
 		mergeCapabilities(repoNeeds, existing.Capabilities)
+		for _, deprecation := range existing.Deprecations {
+			repoNeeds.Deprecations = appendUniqueStr(repoNeeds.Deprecations, deprecation)
+		}
 		return nil
 	}
 
@@ -285,7 +290,7 @@ func mergeCapabilities(repoNeeds *RepoNeeds, declared CapabilityDeclaration) {
 	}
 }
 
-// buildDependencyDemands maps discovered packages to capabilities and Golusoris
+// buildDependencyDemands maps discovered packages to capabilities and built-in catalog
 // replacements. AST imports are collapsed onto the module that owns them so that
 // importing several packages of one module counts as a single dependency.
 func buildDependencyDemands(directDeps map[string]string, astImports map[string]struct{}, repoNeeds *RepoNeeds) {
@@ -336,14 +341,14 @@ func buildGoDemand(pkg, ver string) DependencyDemand {
 	if found {
 		demand.Capability = entry.Capability
 		demand.Status = entry.Status
-		demand.GolusorisReplacement = entry.GolusorisReplacement
+		demand.FrameworkReplacement = entry.FrameworkReplacement
 		demand.Notes = entry.Notes
 		demand.Relationship = cloneRelationship(entry.Relationship)
 		return demand
 	}
 	demand.Capability = CapabilityKey("custom." + cleanDepKey(pkg))
 	demand.Status = StatusGap
-	demand.Notes = "Third-party package without native Golusoris equivalent"
+	demand.Notes = "Third-party package without a target framework equivalent"
 	return demand
 }
 

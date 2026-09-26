@@ -12,6 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -23,30 +24,65 @@ const (
 	maxContractModules    = 64
 	maxContractKeys       = 32
 	maxContractReplaces   = 64
+	// maxContractFoundations bounds the contract's top-level foundations list.
+	maxContractFoundations = 64
+	// maxContractNameBytes bounds one third-party name (npm's own limit).
+	maxContractNameBytes = 214
+	// contractEcosystemGo is the ecosystem of a contract that names none.
+	contractEcosystemGo = "go"
 )
 
 // contractKeyPattern is the capability key grammar shared with the framework's contract
 // package: `domain.name[.sub]`, lowercase; later elements may start with a digit.
 var contractKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(\.[a-z0-9][a-z0-9_]*)+$`)
 
-// frameworkContract mirrors the version-1 capabilities.yaml a framework checkout publishes
-// at its root (golusoris core/capabilities): every importable package, the Go module that
-// contains it, the capability keys it satisfies and the third-party modules it replaces.
-// Unknown fields are ignored so a newer contract stays readable; unknown versions fail.
+// contractNameGrammars checks the third-party names of every ecosystem but go, whose names
+// are module paths (config.IsModulePathShaped).
+var contractNameGrammars = map[string]*regexp.Regexp{
+	"npm":    regexp.MustCompile(`^(@[a-z0-9~][a-z0-9._~-]*/)?[a-z0-9~][a-z0-9._~-]*$`),
+	"pypi":   regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`),
+	"cargo":  regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`),
+	"system": regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`),
+}
+
+// goStandardImport is the shape of a Go standard-library import path, which a go contract
+// may retain as a foundation.
+var goStandardImport = regexp.MustCompile(`^[a-z0-9]+(/[a-z0-9_]+)*$`)
+
+// frameworkContract mirrors the version-1 capabilities.yaml a framework publishes: every
+// importable package, the module that contains it, the capability keys it satisfies and
+// the third-party names it replaces, adapts, wraps or is tooling for, plus the third-party
+// names the framework retains as foundations. Ecosystem (go, npm, pypi, cargo or system;
+// go when empty) selects the grammar those names are checked against. Every field after
+// the version-1 core is optional, and unknown fields are ignored, so a newer contract stays
+// readable; unknown versions fail.
 type frameworkContract struct {
-	Version   int               `yaml:"version"`
-	Framework string            `yaml:"framework"`
-	Modules   []string          `yaml:"modules"`
-	Packages  []contractPackage `yaml:"packages"`
+	Version     int               `yaml:"version"`
+	Framework   string            `yaml:"framework"`
+	Ecosystem   string            `yaml:"ecosystem,omitempty"`
+	Modules     []string          `yaml:"modules,omitempty"`
+	Foundations []string          `yaml:"foundations,omitempty"`
+	Packages    []contractPackage `yaml:"packages"`
 }
 
 type contractPackage struct {
 	Import       string   `yaml:"import"`
-	Module       string   `yaml:"module"`
-	Domain       string   `yaml:"domain"`
+	Module       string   `yaml:"module,omitempty"`
+	Domain       string   `yaml:"domain,omitempty"`
 	Capabilities []string `yaml:"capabilities"`
-	Description  string   `yaml:"description"`
-	Replaces     []string `yaml:"replaces"`
+	Description  string   `yaml:"description,omitempty"`
+	Replaces     []string `yaml:"replaces,omitempty"`
+	Adapts       []string `yaml:"adapts,omitempty"`
+	Wraps        []string `yaml:"wraps,omitempty"`
+	ToolingFor   []string `yaml:"tooling_for,omitempty"`
+}
+
+// ecosystem returns the contract's ecosystem, go when it names none.
+func (c *frameworkContract) ecosystem() string {
+	if c.Ecosystem == "" {
+		return contractEcosystemGo
+	}
+	return c.Ecosystem
 }
 
 // loadFrameworkContract reads the contract at the checkout root. A missing file is not an
@@ -67,6 +103,8 @@ func loadFrameworkContract(ctx context.Context, root *os.Root, module string) (c
 	return contract, true, nil
 }
 
+// parseFrameworkContract parses and validates a contract. module is the identity the
+// contract must declare; empty accepts the framework the contract names.
 func parseFrameworkContract(raw []byte, module string) (*frameworkContract, error) {
 	if len(raw) > maxContractBytes {
 		return nil, errors.New("framework contract exceeds 1 MiB")
@@ -74,6 +112,9 @@ func parseFrameworkContract(raw []byte, module string) (*frameworkContract, erro
 	var contract frameworkContract
 	if err := yaml.Unmarshal(raw, &contract); err != nil {
 		return nil, fmt.Errorf("parse framework contract: %w", err)
+	}
+	if module == "" {
+		module = contract.Framework
 	}
 	if err := contract.validate(module); err != nil {
 		return nil, fmt.Errorf("framework contract: %w", err)
@@ -86,25 +127,49 @@ func (c *frameworkContract) validate(module string) error {
 		return fmt.Errorf("unsupported schema version %d (want %d)", c.Version, contractSchemaVersion)
 	}
 	if c.Framework == "" || c.Framework != module {
-		return fmt.Errorf("framework %q does not match the checkout module %q", c.Framework, module)
+		return fmt.Errorf("framework %q does not match the selected module %q", c.Framework, module)
 	}
 	if len(c.Modules) > maxContractModules || len(c.Packages) > maxFrameworkPackages {
 		return fmt.Errorf("exceeds %d modules or %d packages", maxContractModules, maxFrameworkPackages)
 	}
-	modules := map[string]bool{c.Framework: true}
-	for _, nested := range c.Modules {
-		if !isNestedModule(nested, c.Framework) {
-			return fmt.Errorf("module %q is outside %s", nested, c.Framework)
-		}
-		modules[nested] = true
+	if err := c.validateEcosystem(); err != nil {
+		return err
+	}
+	modules, err := c.declaredModules()
+	if err != nil {
+		return err
 	}
 	seen := make(map[string]bool, len(c.Packages))
 	for i := range c.Packages {
 		if err := c.Packages[i].validate(c.Framework, modules, seen); err != nil {
 			return err
 		}
+		if err := c.Packages[i].validateNames(c.ecosystem()); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// validateEcosystem checks the ecosystem and the top-level foundations against it.
+func (c *frameworkContract) validateEcosystem() error {
+	if _, known := contractNameGrammars[c.ecosystem()]; !known && c.ecosystem() != contractEcosystemGo {
+		return fmt.Errorf("unknown ecosystem %q (want go, npm, pypi, cargo or system)", c.Ecosystem)
+	}
+	return validateContractNames(c.ecosystem(), "foundations", c.Foundations, maxContractFoundations, true)
+}
+
+// declaredModules returns the framework module and every nested module the contract
+// declares, refusing a module outside the framework.
+func (c *frameworkContract) declaredModules() (map[string]bool, error) {
+	modules := map[string]bool{c.Framework: true}
+	for _, nested := range c.Modules {
+		if !isNestedModule(nested, c.Framework) {
+			return nil, fmt.Errorf("module %q is outside %s", nested, c.Framework)
+		}
+		modules[nested] = true
+	}
+	return modules, nil
 }
 
 func (p *contractPackage) validate(framework string, modules, seen map[string]bool) error {
@@ -125,20 +190,73 @@ func (p *contractPackage) validate(framework string, modules, seen map[string]bo
 }
 
 func (p *contractPackage) validateKeys() error {
-	if len(p.Capabilities) == 0 || len(p.Capabilities) > maxContractKeys || len(p.Replaces) > maxContractReplaces {
-		return fmt.Errorf("package %q needs 1..%d capabilities and at most %d replaces", p.Import, maxContractKeys, maxContractReplaces)
+	if len(p.Capabilities) == 0 || len(p.Capabilities) > maxContractKeys {
+		return fmt.Errorf("package %q needs 1..%d capabilities", p.Import, maxContractKeys)
 	}
 	for _, key := range p.Capabilities {
 		if !contractKeyPattern.MatchString(key) {
 			return fmt.Errorf("package %q declares invalid capability key %q", p.Import, key)
 		}
 	}
-	for _, replaced := range p.Replaces {
-		if !isModulePathShaped(replaced) {
-			return fmt.Errorf("package %q replaces invalid module path %q", p.Import, replaced)
+	return nil
+}
+
+// validateNames checks every third-party name list of the package against the ecosystem.
+func (p *contractPackage) validateNames(ecosystem string) error {
+	for _, list := range p.nameLists() {
+		if err := validateContractNames(ecosystem, list.field, list.names, maxContractReplaces, false); err != nil {
+			return fmt.Errorf("package %q: %w", p.Import, err)
 		}
 	}
 	return nil
+}
+
+// contractNameList is one named third-party list of a contract package.
+type contractNameList struct {
+	field string
+	names []string
+}
+
+func (p *contractPackage) nameLists() [4]contractNameList {
+	return [4]contractNameList{{"replaces", p.Replaces}, {"adapts", p.Adapts}, {"wraps", p.Wraps}, {"tooling_for", p.ToolingFor}}
+}
+
+// validateContractNames bounds a third-party name list and checks each name against the
+// ecosystem's grammar. A go name is a module path; a go foundation may also be a standard
+// library import path.
+func validateContractNames(ecosystem, field string, names []string, limit int, foundation bool) error {
+	if len(names) > limit {
+		return fmt.Errorf("%s exceeds %d entries", field, limit)
+	}
+	for _, name := range names {
+		if !validContractName(ecosystem, name, foundation) {
+			return fmt.Errorf("%s lists %q, which is not a valid %s name", field, name, ecosystem)
+		}
+	}
+	return nil
+}
+
+func validContractName(ecosystem, name string, foundation bool) bool {
+	if name == "" || len(name) > maxContractNameBytes {
+		return false
+	}
+	if ecosystem != contractEcosystemGo {
+		return contractNameGrammars[ecosystem].MatchString(name)
+	}
+	return config.IsModulePathShaped(name) || foundation && goStandardImport.MatchString(name)
+}
+
+// contractNameKey keys a third-party name in the index maps: a go module path without its
+// major-version suffix, a PyPI name normalised per PEP 503, any other name lower-cased.
+func contractNameKey(ecosystem, name string) string {
+	switch ecosystem {
+	case "", contractEcosystemGo:
+		return stripMajorSuffix(name)
+	case "pypi":
+		return normalizePyPIName(name)
+	default:
+		return strings.ToLower(name)
+	}
 }
 
 // isNestedModule reports whether path lies strictly below parent on a path boundary.
@@ -171,10 +289,7 @@ func stripMajorSuffix(modulePath string) string {
 // alone never establishes availability, and declared nested modules are honoured instead
 // of being rejected as foreign modules.
 func observeContractFramework(ctx context.Context, index *FrameworkIndex, contract *frameworkContract) error {
-	packages := slices.Clone(contract.Packages)
-	slices.SortFunc(packages, func(a, b contractPackage) int { return strings.Compare(a.Import, b.Import) })
-	index.Contract = FrameworkContractFile
-	index.Replacements = make(map[string][]string)
+	packages := beginContractIndex(index, contract, FrameworkContractFile)
 	total := 0
 	for i := range packages {
 		present, err := observeContractPackage(ctx, index, &packages[i], &total)
@@ -247,9 +362,44 @@ func joinRelative(prefix, part string) string {
 	return prefix + "/" + part
 }
 
-// addContractPackage records an observed contract package, its capabilities and the
-// third-party modules it replaces. Packages are visited in import order, so claimant
-// lists are deterministic.
+// beginContractIndex prepares index for a contract's inventory and returns the contract's
+// packages in import order. name labels the contract in notes; it is a file name, never a
+// local path, because notes reach published issue bodies.
+func beginContractIndex(index *FrameworkIndex, contract *frameworkContract, name string) []contractPackage {
+	index.Contract, index.Ecosystem = name, contract.ecosystem()
+	index.Replacements = make(map[string][]string)
+	index.Adaptations = make(map[string][]string)
+	index.Wrappers = make(map[string][]string)
+	index.Tooling = make(map[string][]string)
+	index.Foundations = slices.Clone(contract.Foundations)
+	packages := slices.Clone(contract.Packages)
+	slices.SortFunc(packages, func(a, b contractPackage) int { return strings.Compare(a.Import, b.Import) })
+	return packages
+}
+
+// declareContractFramework builds the index from the contract at path without observing
+// source: every package is declared, and the basis says so. The contract must name the
+// selected module when one is selected, and names the framework otherwise.
+func declareContractFramework(ctx context.Context, index *FrameworkIndex, path string) error {
+	raw, err := contextopt.ReadSnapshot(ctx, path)
+	if err != nil {
+		return fmt.Errorf("read framework contract %s: %w", path, err)
+	}
+	contract, err := parseFrameworkContract(raw, index.Name)
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	index.Name, index.RootPath = contract.Framework, ""
+	packages := beginContractIndex(index, contract, filepath.Base(path))
+	for i := range packages {
+		addContractPackage(index, &packages[i])
+	}
+	return ctx.Err()
+}
+
+// addContractPackage records a contract package, its capabilities and the third-party names
+// it replaces, adapts, wraps or is tooling for. Packages are visited in import order, so
+// claimant lists are deterministic.
 func addContractPackage(index *FrameworkIndex, pkg *contractPackage) {
 	entry := FrameworkPackage{ImportPath: pkg.Import, Module: pkg.Module, Domain: pkg.Domain, Description: pkg.Description}
 	if entry.Domain == "" {
@@ -261,40 +411,58 @@ func addContractPackage(index *FrameworkIndex, pkg *contractPackage) {
 		index.Capabilities[capability] = appendUniqueStr(index.Capabilities[capability], pkg.Import)
 	}
 	index.Packages[pkg.Import] = entry
-	for _, replaced := range pkg.Replaces {
-		key := stripMajorSuffix(replaced)
-		index.Replacements[key] = appendUniqueStr(index.Replacements[key], pkg.Import)
+	for _, list := range [...]struct {
+		claims map[string][]string
+		names  []string
+	}{{index.Replacements, pkg.Replaces}, {index.Adaptations, pkg.Adapts}, {index.Wrappers, pkg.Wraps}, {index.Tooling, pkg.ToolingFor}} {
+		for _, name := range list.names {
+			key := contractNameKey(index.Ecosystem, name)
+			list.claims[key] = appendUniqueStr(list.claims[key], pkg.Import)
+		}
 	}
 }
 
-// contractReplacement resolves a demand through the contract. Among the packages whose
-// entries replace the module, one declaring the demanded capability wins, then the first
-// claimant in import order; with no claimant, any observed package declaring the
-// capability. All of them are observed packages; none proves API compatibility.
-func contractReplacement(idx *FrameworkIndex, dep *DependencyDemand) (string, bool) {
-	if idx.Contract == "" {
-		return "", false
-	}
-	claimants := idx.Replacements[stripMajorSuffix(dep.Package)]
+// preferredClaimant returns the claimant declaring capability, else the first in import
+// order, else "".
+func preferredClaimant(idx *FrameworkIndex, claimants []string, capability CapabilityKey) string {
 	for _, path := range claimants {
-		if slices.Contains(idx.Packages[path].Capabilities, dep.Capability) {
-			return path, true
+		if slices.Contains(idx.Packages[path].Capabilities, capability) {
+			return path
 		}
 	}
 	if len(claimants) > 0 {
-		return claimants[0], true
+		return claimants[0]
 	}
-	if paths := idx.Capabilities[dep.Capability]; len(paths) > 0 {
-		return paths[0], true
-	}
-	return "", false
+	return ""
 }
 
-// reconcileContractDemand marks a demand covered by its contract replacement. A demand the
-// catalog did not know adopts the replacement package's first declared capability so it
-// stops counting as a custom gap.
+// contractReplacement resolves a demand through the contract and returns the package and
+// the status it earns. Among the packages whose entries replace the name, one declaring the
+// demanded capability wins, then the first claimant in import order (covered); then the
+// packages that adapt it (adapter available); with no claimant, any package declaring the
+// capability (covered). None of them proves API compatibility.
+func contractReplacement(idx *FrameworkIndex, dep *DependencyDemand) (string, CapabilityStatus, bool) {
+	if idx.Contract == "" {
+		return "", "", false
+	}
+	key := contractNameKey(idx.Ecosystem, dep.Package)
+	if path := preferredClaimant(idx, idx.Replacements[key], dep.Capability); path != "" {
+		return path, StatusCovered, true
+	}
+	if path := preferredClaimant(idx, idx.Adaptations[key], dep.Capability); path != "" {
+		return path, StatusAdapterAvailable, true
+	}
+	if paths := idx.Capabilities[dep.Capability]; len(paths) > 0 {
+		return paths[0], StatusCovered, true
+	}
+	return "", "", false
+}
+
+// reconcileContractDemand marks a demand covered, or adapter-available, by its contract
+// replacement. A demand the catalog did not know adopts the replacement package's first
+// declared capability so it stops counting as a custom gap.
 func reconcileContractDemand(idx *FrameworkIndex, dep *DependencyDemand) bool {
-	path, ok := contractReplacement(idx, dep)
+	path, status, ok := contractReplacement(idx, dep)
 	if !ok {
 		return false
 	}
@@ -302,11 +470,45 @@ func reconcileContractDemand(idx *FrameworkIndex, dep *DependencyDemand) bool {
 	if !slices.Contains(pkg.Capabilities, dep.Capability) && len(pkg.Capabilities) > 0 {
 		dep.Capability = pkg.Capabilities[0]
 	}
-	if dep.Status != StatusCovered {
+	if dep.Status != status {
 		dep.Notes = fmt.Sprintf("%s declares %s for %s", idx.Contract, path, dep.Capability)
 	}
-	dep.Status, dep.GolusorisReplacement = StatusCovered, path
+	dep.Status, dep.FrameworkReplacement = status, path
 	return true
+}
+
+// applyContractRelationship applies the relationship the selected contract declares for a
+// demand: a foundation it retains, or the package that wraps the library or is tooling for
+// it. The library stays either way; it reports false when the contract declares neither.
+func applyContractRelationship(idx *FrameworkIndex, dep *DependencyDemand) bool {
+	if idx.Contract == "" {
+		return false
+	}
+	key := contractNameKey(idx.Ecosystem, dep.Package)
+	if slices.ContainsFunc(idx.Foundations, func(name string) bool { return contractNameKey(idx.Ecosystem, name) == key }) {
+		dep.Relationship = &LibraryRelationship{Kind: RelationshipFoundation, Basis: FrameworkCatalogDeclared}
+		dep.Status, dep.FrameworkReplacement = StatusNative, ""
+		dep.Notes = fmt.Sprintf("%s retains %s as a foundation", idx.Contract, dep.Package)
+		return true
+	}
+	for _, role := range [...]struct {
+		kind   LibraryRelationshipKind
+		claims map[string][]string
+	}{{RelationshipWrappedBy, idx.Wrappers}, {RelationshipTooling, idx.Tooling}} {
+		path := preferredClaimant(idx, role.claims[key], dep.Capability)
+		if path == "" {
+			continue
+		}
+		pkg := idx.Packages[path]
+		if !slices.Contains(pkg.Capabilities, dep.Capability) && len(pkg.Capabilities) > 0 {
+			dep.Capability = pkg.Capabilities[0]
+		}
+		dep.Relationship = &LibraryRelationship{Kind: role.kind, FrameworkPackage: path, Basis: idx.Basis}
+		dep.Status, dep.FrameworkReplacement = StatusCovered, ""
+		dep.Notes = fmt.Sprintf("%s: %s is %s %s; retain the library", idx.Contract, dep.Package, role.kind, path)
+		return true
+	}
+	return false
 }
 
 // isFrameworkModule reports whether pkg is the selected framework module or one of its
@@ -316,7 +518,7 @@ func isFrameworkModule(idx *FrameworkIndex, pkg string) bool {
 }
 
 func markFrameworkNative(idx *FrameworkIndex, dep *DependencyDemand) {
-	dep.Capability, dep.Status, dep.GolusorisReplacement = FrameworkNativeCapability, StatusNative, ""
+	dep.Capability, dep.Status, dep.FrameworkReplacement = FrameworkNativeCapability, StatusNative, ""
 	dep.Relationship = nil
 	dep.Notes = fmt.Sprintf("Module of the selected framework %s; retained", idx.Name)
 }

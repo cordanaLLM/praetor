@@ -30,8 +30,9 @@ func (a *RustAnalyzer) Detect(repoPath string) bool {
 	return util.FileExists(filepath.Join(repoPath, "Cargo.toml"))
 }
 
-// Analyze extracts dependencies from Cargo.toml and maps to rustkit capabilities.
-func (a *RustAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds, error) {
+// Analyze extracts dependencies from Cargo.toml and maps them to capabilities of the rust
+// target framework.
+func (a *RustAnalyzer) Analyze(ctx context.Context, repoPath string, target Target) (*RepoNeeds, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -42,8 +43,6 @@ func (a *RustAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds
 		Repository:   repoName,
 		Language:     "rust",
 		Languages:    []string{"rust"},
-		Framework:    "github.com/golusoris/rustkit",
-		BuilderKits:  []string{"golusoris/rustkit"},
 		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
 		Dependencies: make([]DependencyDemand, 0),
 		UpdatedAt:    time.Now().UTC(),
@@ -54,10 +53,11 @@ func (a *RustAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds
 		return nil, fmt.Errorf("failed to parse Cargo.toml in %q: %w", repoPath, err)
 	}
 	for _, pkg := range slices.Sorted(maps.Keys(deps)) {
-		demand := mapRustDependency(pkg, deps[pkg])
+		demand := mapRustDependency(pkg, deps[pkg], target.RoutingKit())
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
 	}
+	target.applyTo(repoNeeds)
 
 	if declErr := loadExistingDeclarations(ctx, repoPath, repoNeeds); declErr != nil {
 		return nil, fmt.Errorf("failed to load existing declarations: %w", declErr)
@@ -183,7 +183,8 @@ func splitTOMLScalar(field string) (string, string, bool) {
 	return name, value, true
 }
 
-func mapRustDependency(pkg, ver string) DependencyDemand {
+// mapRustDependency maps one crate onto the catalog; kit is the target's routing kit.
+func mapRustDependency(pkg, ver, kit string) DependencyDemand {
 	mapping, found := lookupRustCatalog(strings.ToLower(pkg))
 	if found {
 		return DependencyDemand{
@@ -193,8 +194,8 @@ func mapRustDependency(pkg, ver string) DependencyDemand {
 			Ecosystem:            "cargo",
 			Capability:           mapping.Capability,
 			Status:               mapping.Status,
-			GolusorisReplacement: mapping.Replacement,
-			TargetBuilderKit:     "golusoris/rustkit",
+			FrameworkReplacement: mapping.Replacement,
+			TargetBuilderKit:     kit,
 			Notes:                mapping.Notes,
 		}
 	}
@@ -205,7 +206,7 @@ func mapRustDependency(pkg, ver string) DependencyDemand {
 		Ecosystem:        "cargo",
 		Capability:       CapabilityKey("rust.external." + cleanDepKey(pkg)),
 		Status:           StatusGap,
-		TargetBuilderKit: "golusoris/rustkit",
-		Notes:            "External Cargo crate requiring RustKit adapter or evaluation",
+		TargetBuilderKit: kit,
+		Notes:            "External Cargo crate requiring a target framework adapter or evaluation",
 	}
 }

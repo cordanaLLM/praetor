@@ -311,12 +311,12 @@ func isDeclarationFile(name string) bool {
 // fails only when its root project fails or no sub-project scans. A repository without a
 // sub-project within maxSubprojectDepth fails with ErrNoAnalyzer, naming any deeper
 // manifest it did not scan. Fleet aggregation, fleet epics and the single-repository scan
-// all score through this function.
-func scanRepository(ctx context.Context, repo *fleetRepo) (*RepoNeeds, error) {
+// all score through this function, with the analyzers and targets of registry.
+func scanRepository(ctx context.Context, repo *fleetRepo, registry *AnalyzerRegistry) (*RepoNeeds, error) {
 	if len(repo.subprojects) == 0 {
 		return nil, noProjectError(repo)
 	}
-	scan, err := mergeSubprojectScans(ctx, repo)
+	scan, err := mergeSubprojectScans(ctx, repo, registry)
 	if err != nil {
 		return nil, err
 	}
@@ -338,12 +338,12 @@ func scanRepository(ctx context.Context, repo *fleetRepo) (*RepoNeeds, error) {
 }
 
 // scanRepositoryWithFramework scores one repository against the selected framework.
-func scanRepositoryWithFramework(ctx context.Context, repo *fleetRepo, framework *FrameworkIndex) (*RepoNeeds, error) {
-	report, err := scanRepository(ctx, repo)
+func scanRepositoryWithFramework(ctx context.Context, repo *fleetRepo, framework *FrameworkIndex, registry *AnalyzerRegistry) (*RepoNeeds, error) {
+	report, err := scanRepository(ctx, repo, registry)
 	if err != nil {
 		return nil, err
 	}
-	applyFrameworkCoverage(framework, report)
+	applyFrameworkCoverage(framework, report, registry)
 	return report, nil
 }
 
@@ -371,10 +371,10 @@ type subprojectScan struct {
 // root project, cancellation, or a repository in which no sub-project scans is an error;
 // the last is never ErrNoAnalyzer, so a repository whose manifests all fail to parse is
 // counted as failed, not skipped.
-func mergeSubprojectScans(ctx context.Context, repo *fleetRepo) (*subprojectScan, error) {
+func mergeSubprojectScans(ctx context.Context, repo *fleetRepo, registry *AnalyzerRegistry) (*subprojectScan, error) {
 	scan := &subprojectScan{}
 	for _, dir := range repo.subprojects {
-		sub, err := scanProjectDir(ctx, dir)
+		sub, err := scanProjectDir(ctx, dir, registry)
 		if err != nil {
 			if dir == repo.root || isContextError(err) {
 				return nil, err

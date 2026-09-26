@@ -38,8 +38,9 @@ func (a *NativeAnalyzer) Detect(repoPath string) bool {
 		util.FileExists(filepath.Join(repoPath, "CMakeLists.txt"))
 }
 
-// Analyze extracts native C/C++ and GPU library dependencies.
-func (a *NativeAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds, error) {
+// Analyze extracts native C/C++ and GPU library dependencies and maps them to capabilities
+// of the native target framework.
+func (a *NativeAnalyzer) Analyze(ctx context.Context, repoPath string, target Target) (*RepoNeeds, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -50,8 +51,6 @@ func (a *NativeAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNee
 		Repository:   repoName,
 		Language:     "native",
 		Languages:    []string{"c", "cpp", "cuda"},
-		Framework:    "github.com/golusoris/template-native-gpu",
-		BuilderKits:  []string{"golusoris/template-native-gpu"},
 		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
 		Dependencies: make([]DependencyDemand, 0),
 		UpdatedAt:    time.Now().UTC(),
@@ -68,10 +67,11 @@ func (a *NativeAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNee
 	sort.Strings(keys)
 
 	for _, key := range keys {
-		demand := mapNativeDependency(deps[key].name, deps[key].version)
+		demand := mapNativeDependency(deps[key].name, deps[key].version, target.RoutingKit())
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
 	}
+	target.applyTo(repoNeeds)
 
 	if declErr := loadExistingDeclarations(ctx, repoPath, repoNeeds); declErr != nil {
 		return nil, fmt.Errorf("failed to load existing declarations: %w", declErr)
@@ -156,8 +156,8 @@ func extractQuotedString(line string) string {
 
 // mapNativeDependency resolves a native library against the catalog. The lookup is
 // case-insensitive: CMake's canonical module names are capitalised (CUDA, Vulkan,
-// OpenCL) while the catalog is keyed in lower case.
-func mapNativeDependency(pkg, ver string) DependencyDemand {
+// OpenCL) while the catalog is keyed in lower case. kit is the target's routing kit.
+func mapNativeDependency(pkg, ver, kit string) DependencyDemand {
 	mapping, found := lookupNativeCatalog(strings.ToLower(pkg))
 	if found {
 		return DependencyDemand{
@@ -167,8 +167,8 @@ func mapNativeDependency(pkg, ver string) DependencyDemand {
 			Ecosystem:            "system",
 			Capability:           mapping.Capability,
 			Status:               mapping.Status,
-			GolusorisReplacement: mapping.Replacement,
-			TargetBuilderKit:     "golusoris/template-native-gpu",
+			FrameworkReplacement: mapping.Replacement,
+			TargetBuilderKit:     kit,
 			Notes:                mapping.Notes,
 		}
 	}
@@ -179,7 +179,7 @@ func mapNativeDependency(pkg, ver string) DependencyDemand {
 		Ecosystem:        "system",
 		Capability:       CapabilityKey("native.external." + cleanDepKey(strings.ToLower(pkg))),
 		Status:           StatusGap,
-		TargetBuilderKit: "golusoris/template-native-gpu",
-		Notes:            "Native C/C++/GPU system library requiring Native-GPU template binding",
+		TargetBuilderKit: kit,
+		Notes:            "Native C/C++/GPU system library requiring a target framework binding",
 	}
 }

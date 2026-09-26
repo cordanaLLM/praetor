@@ -76,7 +76,7 @@ func TestLibraryRelationshipCatalogBoundaries(t *testing.T) {
 					wantTarget = defaultFrameworkModule + tc.target
 				}
 				want := LibraryRelationship{Kind: tc.kind, FrameworkPackage: wantTarget, Basis: FrameworkCatalogDeclared}
-				if *entry.Relationship != want || entry.GolusorisReplacement != "" {
+				if *entry.Relationship != want || entry.FrameworkReplacement != "" {
 					t.Fatalf("relationship must not be a replacement: %+v", entry)
 				}
 			}
@@ -89,11 +89,11 @@ func TestLibraryRelationshipCatalogBoundaries(t *testing.T) {
 
 func TestLibraryRelationshipsKeepThirdPartyAccounting(t *testing.T) {
 	repo := libraryRelationshipFixture(t)
-	index, err := InspectFramework(t.Context(), "")
+	index, err := InspectFramework(t.Context(), legacySource(""))
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, err := ScanRepoWithFramework(t.Context(), repo, index)
+	report, err := ScanRepoWithFramework(t.Context(), repo, index, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,11 +104,11 @@ func TestLibraryRelationshipsKeepThirdPartyAccounting(t *testing.T) {
 		t.Fatalf("slog must be deduplicated separately from third-party modules: %+v", report.StandardLibraryImports)
 	}
 	slog := report.StandardLibraryImports[0]
-	if slog.Package != "log/slog" || slog.Status != StatusNative || slog.Capability != "telemetry.logging" || slog.GolusorisReplacement != "" || slog.Relationship == nil || slog.Relationship.Kind != RelationshipFoundation {
+	if slog.Package != "log/slog" || slog.Status != StatusNative || slog.Capability != "telemetry.logging" || slog.FrameworkReplacement != "" || slog.Relationship == nil || slog.Relationship.Kind != RelationshipFoundation {
 		t.Fatalf("stdlib slog must remain a native foundation: %+v", slog)
 	}
 	fx := relationshipDemand(t, report, "go.uber.org/fx")
-	if fx.Status != StatusNative || fx.Capability != "runtime.di" || fx.GolusorisReplacement != "" {
+	if fx.Status != StatusNative || fx.Capability != "runtime.di" || fx.FrameworkReplacement != "" {
 		t.Fatalf("fx is a foundation, not a CLI replacement: %+v", fx)
 	}
 	if dep := relationshipDemand(t, report, "github.com/jackc/pgx/v5"); dep.Version != "v5.7.2" {
@@ -133,11 +133,11 @@ func TestLibraryRelationshipTargetsRequireObservedPackages(t *testing.T) {
 					writeFixture(t, framework, target+"/adapter.go", tc.source)
 				}
 			}
-			index, err := InspectFramework(t.Context(), framework)
+			index, err := InspectFramework(t.Context(), legacySource(framework))
 			if err != nil {
 				t.Fatal(err)
 			}
-			report, err := ScanRepoWithFramework(t.Context(), libraryRelationshipFixture(t), index)
+			report, err := ScanRepoWithFramework(t.Context(), libraryRelationshipFixture(t), index, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -154,7 +154,7 @@ func checkObservedRelationships(t *testing.T, report *RepoNeeds, status Capabili
 		"github.com/ogen-go/ogen":   "/ogenkit",
 	} {
 		dep := relationshipDemand(t, report, pkg)
-		if dep.Status != status || dep.Relationship == nil || dep.GolusorisReplacement != "" {
+		if dep.Status != status || dep.Relationship == nil || dep.FrameworkReplacement != "" {
 			t.Fatalf("incorrect observed adapter state: %+v", dep)
 		}
 		if status == StatusCovered && (dep.Relationship.FrameworkPackage != "example.com/selected"+target || dep.Relationship.Basis != FrameworkSourceObserved) {
@@ -174,11 +174,11 @@ func TestLibraryRelationshipScansDoNotContaminateCatalog(t *testing.T) {
 	repo := libraryRelationshipFixture(t)
 	framework := setupFrameworkCheckout(t, "example.com/first", "core/config")
 	writeFixture(t, framework, "core/config/adapter.go", "package config\ntype Available struct{}\n")
-	index, err := InspectFramework(t.Context(), framework)
+	index, err := InspectFramework(t.Context(), legacySource(framework))
 	if err != nil {
 		t.Fatal(err)
 	}
-	observed, err := ScanRepoWithFramework(t.Context(), repo, index)
+	observed, err := ScanRepoWithFramework(t.Context(), repo, index, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestLibraryRelationshipScansDoNotContaminateCatalog(t *testing.T) {
 		t.Fatal("observed relationship missing")
 	}
 	dep.Relationship.FrameworkPackage = "example.com/caller-edited"
-	declared, err := ScanRepo(t.Context(), repo)
+	declared, err := ScanRepo(t.Context(), repo, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestLibraryRelationshipsNeverBecomeMigrationActions(t *testing.T) {
 	for _, target := range []string{"config", "log", "ogenkit", "db/pgx"} {
 		writeFixture(t, framework, target+"/adapter.go", "package adapter\ntype Available struct{}\n")
 	}
-	analysis, err := analyzeMigration(t.Context(), repo, framework)
+	analysis, err := analyzeMigration(t.Context(), repo, legacySource(framework), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestLibraryRelationshipsNeverBecomeMigrationActions(t *testing.T) {
 		dep := &analysis.report.Dependencies[i]
 		if dep.Relationship != nil {
 			dep.Status = StatusCovered
-			dep.GolusorisReplacement = "example.com/selected/unsafe"
+			dep.FrameworkReplacement = "example.com/selected/unsafe"
 		}
 	}
 	plan, err := planMigrationFromAnalysis(t.Context(), repo, analysis)
@@ -231,7 +231,7 @@ func TestLibraryRelationshipsNeverBecomeMigrationActions(t *testing.T) {
 }
 
 func TestLibraryRelationshipSerializationIsAdditive(t *testing.T) {
-	report, err := ScanRepo(t.Context(), libraryRelationshipFixture(t))
+	report, err := ScanRepo(t.Context(), libraryRelationshipFixture(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,18 +267,18 @@ func TestLibraryRelationshipSerializationIsAdditive(t *testing.T) {
 }
 
 func TestLibraryRelationshipUnknownFoundationCannotClaimRetention(t *testing.T) {
-	index, err := InspectFramework(t.Context(), "")
+	index, err := InspectFramework(t.Context(), legacySource(""))
 	if err != nil {
 		t.Fatal(err)
 	}
 	report := &RepoNeeds{Dependencies: []DependencyDemand{{
 		Package: "example.com/unrecognized", Capability: "runtime.di", Status: StatusNative,
-		GolusorisReplacement: "example.com/unverified/replacement",
+		FrameworkReplacement: "example.com/unverified/replacement",
 		Relationship:         &LibraryRelationship{Kind: RelationshipFoundation, Basis: FrameworkSourceObserved},
 	}}}
-	applyFrameworkCoverage(index, report)
+	applyFrameworkCoverage(index, report, nil)
 	dep := report.Dependencies[0]
-	if dep.Status != StatusGap || dep.Relationship == nil || dep.Relationship.Basis != "unverified" || dep.GolusorisReplacement != "" {
+	if dep.Status != StatusGap || dep.Relationship == nil || dep.Relationship.Basis != "unverified" || dep.FrameworkReplacement != "" {
 		t.Fatalf("caller-supplied relationship bypassed catalog reconciliation: %+v", dep)
 	}
 	output := FormatLibraryRelationships(report)

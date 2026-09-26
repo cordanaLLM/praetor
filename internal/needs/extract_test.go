@@ -96,7 +96,7 @@ func TestScanRepoScansNestedCachePackage(t *testing.T) {
 	writeFixture(t, dir, filepath.Join("scratch", "try.go"),
 		"package scratch\n\nimport \"github.com/gin-gonic/gin\"\n\nvar _ = gin.Default\n")
 
-	repoNeeds, err := ScanRepo(context.Background(), dir)
+	repoNeeds, err := ScanRepo(context.Background(), dir, nil)
 	if err != nil {
 		t.Fatalf("ScanRepo() error = %v", err)
 	}
@@ -116,7 +116,7 @@ func TestScanRepoFromRelativeDotPath(t *testing.T) {
 		"package main\n\nimport \"github.com/gin-gonic/gin\"\n\nvar _ = gin.Default\n")
 
 	t.Chdir(dir)
-	repoNeeds, err := ScanRepo(context.Background(), ".")
+	repoNeeds, err := ScanRepo(context.Background(), ".", nil)
 	if err != nil {
 		t.Fatalf("scan from \".\" failed: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestScanRepoCollapsesSubpackageImports(t *testing.T) {
 	writeFixture(t, dir, "main.go", "package main\n\nimport (\n\t\"github.com/jackc/pgx/v5/pgxpool\"\n"+
 		"\t\"github.com/jackc/pgx/v5/pgconn\"\n)\n\nvar _, _ = pgxpool.New, pgconn.Config{}\n")
 
-	repoNeeds, err := ScanRepo(context.Background(), dir)
+	repoNeeds, err := ScanRepo(context.Background(), dir, nil)
 	if err != nil {
 		t.Fatalf("scan failed: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestScanRepoNegativeUnanalyzableRepo(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, ".standards.yaml", "repository:\n  name: docs\n  owner: acme\n")
 
-	_, err := ScanRepo(context.Background(), dir)
+	_, err := ScanRepo(context.Background(), dir, nil)
 	if err == nil {
 		t.Fatal("expected an error for a repository no analyzer recognises")
 	}
@@ -232,7 +232,7 @@ func TestScanRepoNegativeBrokenPackageJSON(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "package.json", "{ this is not json ")
 
-	repoNeeds, err := ScanRepo(context.Background(), dir)
+	repoNeeds, err := ScanRepo(context.Background(), dir, nil)
 	if err == nil {
 		t.Fatalf("expected an error, got a fabricated manifest: %+v", repoNeeds)
 	}

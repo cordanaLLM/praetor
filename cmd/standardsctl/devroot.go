@@ -1,19 +1,20 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
+
+	"github.com/cordanaLLM/praetor/internal/needs"
 )
 
 // Workstation dev-root environment names. PRAETOR_DEV_ROOT is the canonical name used by
 // AGENTS.md and scripts/adopt_priority_repos.sh; PRAETOR_DEV_DIR is the earlier name, kept
 // as a fallback so an operator environment that still sets it keeps selecting the same tree.
+// frameworkDirEnv names the go framework checkout (needs.SelectFrameworkSource).
 const (
 	devRootEnv       = "PRAETOR_DEV_ROOT"
 	legacyDevRootEnv = "PRAETOR_DEV_DIR"
-	frameworkDirEnv  = "PRAETOR_FRAMEWORK_DIR"
+	frameworkDirEnv  = needs.FrameworkDirEnv
 )
 
 // devRootUsageDefault is the default clause every dev-root flag prints in its usage line.
@@ -40,22 +41,5 @@ func resolveDevRootDir(explicit, flagName string) (string, error) {
 }
 
 // frameworkUsageDefault is the default clause of every needs --framework flag.
-const frameworkUsageDefault = "(default: $" + frameworkDirEnv + ", else <dev root>/golusoris/golusoris; \"\" selects the declared catalog)"
-
-// selectFrameworkDir returns the Golusoris checkout a needs command inspects: the
-// --framework value when the flag was given (an explicit "" selects the declared catalog),
-// else $PRAETOR_FRAMEWORK_DIR, else <dev root>/golusoris/golusoris. The needs engine
-// reports a selected path that does not exist.
-func selectFrameworkDir(fs *flag.FlagSet, value string) (string, error) {
-	if flagWasSet(fs, "framework") {
-		return value, nil
-	}
-	if dir := os.Getenv(frameworkDirEnv); dir != "" {
-		return dir, nil
-	}
-	root, err := resolveDevRootDir("", "--framework")
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(root, "golusoris", "golusoris"), nil
-}
+const frameworkUsageDefault = "(default: $" + frameworkDirEnv + ", else framework.targets.go.checkout, " +
+	"else framework.targets.go.contract or the go target's declared catalog; \"\" selects the declaration)"

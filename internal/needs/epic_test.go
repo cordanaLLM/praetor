@@ -85,7 +85,7 @@ func TestGeneratePreMigrationEpic_Positive(t *testing.T) {
 	ctx := context.Background()
 	tempDir := writeEpicFixtureRepo(t)
 
-	epic, err := GeneratePreMigrationEpic(ctx, tempDir, "")
+	epic, err := GeneratePreMigrationEpic(ctx, tempDir, legacySource(""), nil)
 	if err != nil {
 		t.Fatalf("epic generation failed: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestGeneratePreMigrationEpic_FrameworkIsHonoured(t *testing.T) {
 	ctx := context.Background()
 	tempDir := writeEpicFixtureRepo(t)
 
-	epic, err := GeneratePreMigrationEpic(ctx, tempDir, "github.com/acme/otherkit")
+	epic, err := GeneratePreMigrationEpic(ctx, tempDir, legacySource("github.com/acme/otherkit"), nil)
 	if err != nil {
 		t.Fatalf("epic generation failed: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestGeneratePreMigrationEpic_FrameworkIsHonoured(t *testing.T) {
 	}
 
 	localPath := filepath.Join(t.TempDir(), "not-a-checkout")
-	if _, err = GeneratePreMigrationEpic(ctx, tempDir, localPath); !errors.Is(err, os.ErrNotExist) {
+	if _, err = GeneratePreMigrationEpic(ctx, tempDir, legacySource(localPath), nil); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing selected source must fail without public fallback: %v", err)
 	}
 }
@@ -139,7 +139,7 @@ func TestGeneratePreMigrationEpic_FrameworkIsHonoured(t *testing.T) {
 // carries no "<repo>#<n>" reference, which a forge would auto-link to unrelated issues.
 func TestGeneratePreMigrationEpic_NoPlaceholderIssueRefs(t *testing.T) {
 	ctx := context.Background()
-	epic, err := GeneratePreMigrationEpic(ctx, writeEpicFixtureRepo(t), "")
+	epic, err := GeneratePreMigrationEpic(ctx, writeEpicFixtureRepo(t), legacySource(""), nil)
 	if err != nil {
 		t.Fatalf("epic generation failed: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestGeneratePreMigrationEpic_NoPlaceholderIssueRefs(t *testing.T) {
 // flag set. The body used to say `gate run --target=.`, an undefined flag (BUG-298). Positive:
 // task 4 names the command. Negative: no task names --target. Boundary: only task 4 runs the gate.
 func TestGeneratePreMigrationEpic_GateTaskRunsTheGateCommand(t *testing.T) {
-	epic, err := GeneratePreMigrationEpic(context.Background(), writeEpicFixtureRepo(t), "")
+	epic, err := GeneratePreMigrationEpic(context.Background(), writeEpicFixtureRepo(t), legacySource(""), nil)
 	if err != nil {
 		t.Fatalf("epic generation failed: %v", err)
 	}
@@ -179,13 +179,13 @@ func TestGeneratePreMigrationEpic_GateTaskRunsTheGateCommand(t *testing.T) {
 
 func TestGeneratePreMigrationEpic_Negative(t *testing.T) {
 	ctx := context.Background()
-	if _, err := GeneratePreMigrationEpic(ctx, "/nonexistent/invalid/repo", "github.com/golusoris/golusoris"); err == nil {
+	if _, err := GeneratePreMigrationEpic(ctx, "/nonexistent/invalid/repo", legacySource("github.com/golusoris/golusoris"), nil); err == nil {
 		t.Fatal("expected error for nonexistent repository")
 	}
 
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := GeneratePreMigrationEpic(cancelled, t.TempDir(), ""); err == nil {
+	if _, err := GeneratePreMigrationEpic(cancelled, t.TempDir(), legacySource(""), nil); err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
 }
@@ -499,7 +499,7 @@ func TestRegenerateFleetEpics_Positive(t *testing.T) {
 	ctx := context.Background()
 	root := setupFleetEpicRoot(t)
 
-	epics, _, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{FrameworkPath: "github.com/acme/otherkit"})
+	epics, _, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{Framework: legacySource("github.com/acme/otherkit")})
 	if err != nil {
 		t.Fatalf("regenerate fleet epics failed: %v", err)
 	}
@@ -803,7 +803,7 @@ func TestPublishPreMigrationEpic_HTTP(t *testing.T) {
 // epicHygieneBody generates the epic for repo and returns task 1's scope body.
 func epicHygieneBody(t *testing.T, repo string) string {
 	t.Helper()
-	epic, err := GeneratePreMigrationEpic(t.Context(), repo, "")
+	epic, err := GeneratePreMigrationEpic(t.Context(), repo, legacySource(""), nil)
 	if err != nil {
 		t.Fatalf("epic generation failed: %v", err)
 	}

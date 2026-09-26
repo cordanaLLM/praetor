@@ -85,7 +85,7 @@ func TestMigrationRewritePrimitivesWithRealGit(t *testing.T) {
 	ctx := context.Background()
 	dir := setupMigrationRepo(t)
 	initGitFixture(t, dir)
-	plan, err := PlanMigration(ctx, dir, "")
+	plan, err := PlanMigration(ctx, dir, legacySource(""), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestMigrationRewritePrimitivesWithRealGit(t *testing.T) {
 		t.Fatalf("expected a successful migration: result=%+v err=%v", result, err)
 	}
 	branch, err := util.RunCommand(ctx, dir, "git", "branch", "--show-current")
-	if err != nil || strings.TrimSpace(branch) != migrationBranch {
+	if err != nil || strings.TrimSpace(branch) != defaultMigrationBranch {
 		t.Fatalf("expected new migration branch, got %q: %v", branch, err)
 	}
 	assertMigratedGoMod(t, filepath.Join(dir, "go.mod"))
@@ -115,7 +115,7 @@ func TestMigrationRewritePrimitivesWithRealGit(t *testing.T) {
 func TestMigrationRewriteTidyFailureRetainsPartialResult(t *testing.T) {
 	ctx := context.Background()
 	dir := setupMigrationRepo(t)
-	plan, err := PlanMigration(ctx, dir, "")
+	plan, err := PlanMigration(ctx, dir, legacySource(""), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestPlanMigrationDropsOnlyGoEcosystemDependencies(t *testing.T) {
 		"module github.com/acme/redis-proxy\n\ngo 1.24\n\nrequire github.com/gin-gonic/gin v1.10.0\n")
 	writeFixture(t, dir, "requirements.txt", "redis==5.0.1\nclick==8.1.7\n")
 
-	plan, err := PlanMigration(context.Background(), dir, "")
+	plan, err := PlanMigration(context.Background(), dir, legacySource(""), nil)
 	if err != nil {
 		t.Fatalf("plan migration failed: %v", err)
 	}
@@ -292,8 +292,8 @@ func rewriteMigrationFixture(ctx context.Context, repoPath string, plan *Migrati
 	if run == nil {
 		run = util.RunCommand
 	}
-	result := &MigrationResult{Repository: plan.Repository, Branch: migrationBranch}
-	if err := createAdoptionBranch(ctx, repoPath, migrationBranch, run); err != nil {
+	result := &MigrationResult{Repository: plan.Repository, Branch: defaultMigrationBranch}
+	if err := createAdoptionBranch(ctx, repoPath, defaultMigrationBranch, run); err != nil {
 		return failedMigration(result, err)
 	}
 	changed, err := applyPlannedRewrites(ctx, repoPath, plan, run, opts.SkipTidy)
@@ -303,4 +303,27 @@ func rewriteMigrationFixture(ctx context.Context, repoPath string, plan *Migrati
 	}
 	result.Success = true
 	return result, nil
+}
+
+func TestMigrationBranch_3D(t *testing.T) {
+	// Positive: a configured branch is used as written.
+	if got := MigrationBranch("refactor/acme-adoption"); got != "refactor/acme-adoption" {
+		t.Fatalf("configured branch = %q", got)
+	}
+	// Boundary: nothing configured selects the neutral built-in name.
+	if got := MigrationBranch(""); got != "refactor/framework-adoption" {
+		t.Fatalf("default branch = %q", got)
+	}
+	// Negative: an existing branch under the configured name is refused, never reset, so an
+	// operator with an open branch under a former name keeps it by configuring that name.
+	ctx := context.Background()
+	repo := setupMigrationRepo(t)
+	initGitFixture(t, repo)
+	configured := MigrationBranch("refactor/legacy-adoption")
+	if out, err := util.RunCommand(ctx, repo, "git", "branch", configured); err != nil {
+		t.Fatalf("create the open branch: %v (%s)", err, out)
+	}
+	if err := createAdoptionBranch(ctx, repo, configured, util.RunCommand); !errors.Is(err, ErrBranchExists) {
+		t.Fatalf("existing configured branch = %v; want ErrBranchExists", err)
+	}
 }

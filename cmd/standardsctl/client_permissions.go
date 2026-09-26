@@ -24,7 +24,8 @@ const (
 )
 
 type clientPermissionOptions struct {
-	action, client, fleet, workstation, manifest, home, target, output string
+	action, client, home, target, output string
+	settings                             *operatorSettingsFlags
 }
 
 type clientPermissionReport struct {
@@ -74,14 +75,9 @@ func parseClientPermissionOptions(args []string) (clientPermissionOptions, error
 	if !permissionAction(opts.action) {
 		return clientPermissionOptions{}, permissionUsage()
 	}
-	if path, err := config.DefaultInstallManifestPath(); err == nil {
-		opts.manifest = path
-	}
 	flags := flag.NewFlagSet("clients permissions "+opts.action, flag.ContinueOnError)
 	flags.StringVar(&opts.client, "client", opts.client, "Client identifier; currently agy")
-	flags.StringVar(&opts.fleet, "fleet-config", "", "Fleet operator settings document")
-	flags.StringVar(&opts.workstation, "workstation-config", "", "Workstation operator settings document")
-	flags.StringVar(&opts.manifest, "manifest", opts.manifest, "Installed settings-selection manifest")
+	opts.settings = registerOperatorSettingsFlags(flags)
 	flags.StringVar(&opts.home, "home", "", "Home directory used for the default AGY settings location")
 	flags.StringVar(&opts.target, "target", "", "Exact AGY settings destination")
 	flags.StringVar(&opts.output, "out", "", "New private plan and backup directory")
@@ -116,14 +112,7 @@ func permissionUsage() error {
 }
 
 func loadClientPermissions(ctx context.Context, opts clientPermissionOptions) (config.ClientPermissions, error) {
-	selection, err := config.SelectOperatorSettings(ctx, config.SettingsRequest{
-		FleetFlag: opts.fleet, WorkstationFlag: opts.workstation,
-		Getenv: os.Getenv, ManifestPath: opts.manifest,
-	})
-	if err != nil {
-		return config.ClientPermissions{}, err
-	}
-	settings, err := config.LoadOperatorSettings(ctx, selection)
+	settings, err := opts.settings.load(ctx)
 	if err != nil {
 		return config.ClientPermissions{}, err
 	}
