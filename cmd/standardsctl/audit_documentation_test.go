@@ -310,7 +310,7 @@ func TestAuditDocumentationGateIgnoresOperatorGlobalExcludes(t *testing.T) {
 	root := documentationAuditFixture(t)
 	writeFixtureFile(t, root, ".gitignore", "/.workingdir/\n")
 	manifest := declinedDocumentationManifest([]string{"git-ignore"}, "docs:seo-portal")
-	err := auditDocumentationGate(t.Context(), manifest, root)
+	err := docGate(t.Context(), manifest, root)
 	if err == nil || !strings.Contains(err.Error(), ".workingdir2/PRAETOR-AUDIT-PROBE") {
 		t.Fatalf("a personal excludes file proved repository scratch privacy: %v", err)
 	}
