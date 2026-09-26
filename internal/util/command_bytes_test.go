@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -116,6 +117,8 @@ func TestCommandBytesHelper(t *testing.T) {
 		}
 	case "delay":
 		time.Sleep(3 * time.Second)
+	case "warn", "loudfailure", "atcap", "overcap", "environ":
+		os.Exit(runCommandHelper(mode))
 	case "echo":
 		if _, err := io.Copy(os.Stdout, os.Stdin); err != nil {
 			os.Exit(7)
@@ -127,6 +130,37 @@ func TestCommandBytesHelper(t *testing.T) {
 		t.Fatal("unexpected helper mode")
 	}
 	os.Exit(0)
+}
+
+// runCommandHelper serves the RunCommand modes of TestCommandBytesHelper and returns the
+// exit code: 0 on success, 7 when writing failed, 8 for a deliberate failure.
+func runCommandHelper(mode string) int {
+	var err error
+	code := 0
+	switch mode {
+	case "warn":
+		_, err = fmt.Fprint(os.Stdout, "value\n")
+		err = errors.Join(err, writeString(os.Stderr, "warning: not data\n"))
+	case "loudfailure":
+		_, err = fmt.Fprint(os.Stdout, "partial")
+		err = errors.Join(err, writeString(os.Stderr, strings.Repeat("e", maxCommandDiagnosticBytes+1024)))
+		code = 8
+	case "atcap":
+		err = writeString(os.Stdout, strings.Repeat("o", MaxCommandOutputBytes))
+	case "overcap":
+		err = writeString(os.Stdout, strings.Repeat("o", MaxCommandOutputBytes+1))
+	case "environ":
+		err = writeString(os.Stdout, strings.Join(os.Environ(), "\n"))
+	}
+	if err != nil {
+		return 7
+	}
+	return code
+}
+
+func writeString(w io.Writer, s string) error {
+	_, err := io.WriteString(w, s)
+	return err
 }
 
 func TestRunCommandBytesCleansDescendants(t *testing.T) {

@@ -3,20 +3,60 @@
 import contextlib
 import io
 import os
+from pathlib import Path
+import signal
 import sys
+import tempfile
 import time
 import unittest
+from unittest import mock
 
+import dev_process
 from dev_mcp_rpc import MAX_REQUESTS, MAX_STDERR_BYTES, PROTOCOL_VERSION, RPCClient, RPCError
 
+
+# A command the way git runs one: it holds a lock, removes it on SIGTERM and leaves `cleaned`
+# as evidence, and reports its pid in `command-ready`.
+LOCK_HOLDING_COMMAND = r'''
+import os, signal, sys, time
+from pathlib import Path
+root = Path(sys.argv[1])
+def cleanup(number, _frame):
+    (root / "lock").unlink(missing_ok=True)
+    (root / "cleaned").touch()
+    raise SystemExit(128 + number)
+signal.signal(signal.SIGTERM, cleanup)
+(root / "lock").touch()
+(root / "command-ready.tmp").write_text(str(os.getpid()))
+(root / "command-ready.tmp").rename(root / "command-ready")
+time.sleep(30)
+'''
 
 FAKE_SERVER = r'''
 import json
 import os
+import signal
+import subprocess
 import sys
 import time
 
 mode = sys.argv[1]
+if mode == "ignore-term":
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+if mode == "forwarding":
+    # praetor's shape: the command runs in a process group of its own, and the signal that
+    # stops the server is forwarded to that group before the server exits.
+    root = sys.argv[2]
+    command = subprocess.Popen([sys.executable, "-c", sys.argv[3], root], start_new_session=True)
+    def forward(number, _frame):
+        os.killpg(command.pid, number)
+        command.wait(timeout=5)
+        os._exit(128 + number)
+    signal.signal(signal.SIGTERM, forward)
+    for _ in range(400):
+        if os.path.exists(os.path.join(root, "command-ready")):
+            break
+        time.sleep(0.025)
 request = json.loads(sys.stdin.buffer.readline())
 assert request["method"] == "initialize"
 assert request["params"]["protocolVersion"] == "2024-11-05"
@@ -36,6 +76,8 @@ if mode == "boolean-id":
 print(json.dumps(response), flush=True)
 notification = json.loads(sys.stdin.buffer.readline())
 assert notification == {"jsonrpc": "2.0", "method": "notifications/initialized"}
+if mode == "exit":
+    sys.exit(0)
 for _ in range(200):
     line = sys.stdin.buffer.readline()
     if not line:
@@ -77,8 +119,8 @@ for _ in range(200):
 '''
 
 
-def fake_client(mode="normal", timeout=3):
-    return RPCClient([sys.executable, "-u", "-c", FAKE_SERVER, mode], timeout=timeout)
+def fake_client(mode="normal", timeout=3, *args):
+    return RPCClient([sys.executable, "-u", "-c", FAKE_SERVER, mode, *args], timeout=timeout)
 
 
 class RPCClientTests(unittest.TestCase):
@@ -187,6 +229,40 @@ class RPCClientTests(unittest.TestCase):
             with self.assertRaisesRegex(RPCError, "request count exceeds"):
                 rpc.request("one-too-many")
             self.assert_reaped(client)
+
+    def test_close_lets_the_server_stop_its_commands(self):
+        # praetor's server runs git and go commands in process groups of their own. SIGKILL on
+        # the server's group ended the server and left those commands running, locks held.
+        with tempfile.TemporaryDirectory(prefix="praetor-rpc-stop-") as temp:
+            root = Path(temp)
+            client = fake_client("forwarding", 3, temp, LOCK_HOLDING_COMMAND)
+            with client:
+                command = int((root / "command-ready").read_text())
+            self.assert_reaped(client)
+            try:
+                self.assertTrue((root / "cleaned").exists(), "the command never got the signal")
+                self.assertFalse((root / "lock").exists())
+            finally:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(command, signal.SIGKILL)
+                    self.fail("the command outlived the server")
+            self.assertEqual(client._process.returncode, 128 + signal.SIGTERM)
+
+    def test_close_kills_a_server_that_ignores_sigterm(self):
+        with mock.patch.object(dev_process, "STOP_GRACE", 0.3):
+            client = fake_client("ignore-term")
+            with client:
+                started = time.monotonic()
+            self.assertGreaterEqual(time.monotonic() - started, 0.3)
+        self.assert_reaped(client)
+        self.assertEqual(client._process.returncode, -signal.SIGKILL)
+
+    def test_close_after_the_server_exited(self):
+        client = fake_client("exit")
+        with client:
+            client._process.wait(timeout=5)
+        self.assert_reaped(client)
+        self.assertEqual(client._process.returncode, 0)
 
     def test_invalid_configuration_does_not_start_process(self):
         for command, timeout in (([], 1), ("python -c pass", 1), (["python"], 0),

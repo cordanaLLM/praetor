@@ -1,6 +1,7 @@
 """Bounded process execution and isolated Git snapshots for local checks."""
 
 import contextlib
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -16,6 +17,12 @@ class HookError(Exception):
 
 
 KILL_TREE_TIMEOUT = 10
+# The praetor CLI runs each git or go command in a process group of its own. Asked to stop by a
+# catchable signal, it forwards that signal to each command's group, waits up to its
+# util.CommandWaitDelay (5 s) for them, and kills the rest (internal/util/command_interrupt_unix.go).
+# STOP_GRACE outlasts that before the whole group is killed.
+STOP_GRACE = 10
+STOP_POLL = 0.05
 SNAPSHOT_GIT_CONFIG = ("-c", "core.autocrlf=false")
 # The operating system already bounds a process environment, but the hook applies a lower
 # deterministic ceiling before scanning it. Git propagates command-line `-c` values to hooks
@@ -33,11 +40,12 @@ MANAGED_PROCESS_ENV = {
 }
 
 
-def _kill_bounded(process):
-    """Kill a bounded child and everything it started.
+def _kill_bounded(process, sig=signal.SIGTERM):
+    """Stop a bounded child and everything it started.
 
     ``run`` and ``run_bounded`` start children with ``start_new_session=True``, so on POSIX the
-    whole process group is killed -- a bounded command that forks must not leave orphans behind.
+    whole process group is stopped -- a bounded command that forks must not leave orphans behind.
+    ``stop_process_group`` asks it with ``sig`` first and kills it only after ``STOP_GRACE``.
     That call is POSIX-only: on Windows ``os.killpg`` does not exist, and the timeout path
     raised ``AttributeError`` instead of reporting that a process had exceeded its bound. The
     failure therefore appeared only when a gate was already failing, which is the worst time to
@@ -53,11 +61,59 @@ def _kill_bounded(process):
     """
     try:
         if hasattr(os, "killpg"):
-            os.killpg(process.pid, signal.SIGKILL)
+            stop_process_group(process, sig)
         else:
             _kill_process_tree(process)
     except (ProcessLookupError, PermissionError):
         pass  # The process or group already exited.
+
+
+def stop_process_group(process, sig=signal.SIGTERM, grace=None):
+    """Ask the process group ``process`` leads to stop with ``sig``; kill it after ``grace``.
+
+    SIGKILL on the group of a praetor CLI ends the CLI, which cannot catch it, and misses the
+    commands it runs in process groups of their own: they run on, with git's index lock held. A
+    catchable signal lets the CLI forward it, so git removes its locks and the CLI waits for its
+    commands before it exits. The group is killed once ``process`` and every other member have
+    not exited within ``grace``, or at once when the wait itself is interrupted (a second
+    Ctrl-C). ``grace`` defaults to ``STOP_GRACE``. POSIX-only.
+    """
+    if not _signal_group(process.pid, sig):
+        return
+    try:
+        stopped = _await_group_exit(process, STOP_GRACE if grace is None else grace)
+    except BaseException:
+        _signal_group(process.pid, signal.SIGKILL)
+        raise
+    if not stopped:
+        _signal_group(process.pid, signal.SIGKILL)
+
+
+def _signal_group(pgid, sig):
+    """Send ``sig`` to group ``pgid``; False once no process of ours is left in it."""
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def _await_group_exit(process, grace):
+    """Wait up to ``grace`` seconds for ``process`` and the rest of its group to exit.
+
+    The group outlives ``process`` when ``process`` is ``go run`` and the CLI it started is
+    still stopping its commands. ``process`` is reaped here; other members are reaped by the
+    process they are reparented to.
+    """
+    deadline = time.monotonic() + grace
+    for _ in range(math.ceil(grace / STOP_POLL) + 1):
+        if process.poll() is not None and not _signal_group(process.pid, 0):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(STOP_POLL, remaining))
+    return False
 
 
 def _kill_process_tree(process):
@@ -205,8 +261,11 @@ def run(args, cwd=None, *, data=None, timeout=180, capture=True, env=None, allow
                               stderr=subprocess.PIPE if capture else None) as process:
             try:
                 stdout, stderr = process.communicate(input=data, timeout=timeout)
-            except (subprocess.TimeoutExpired, KeyboardInterrupt):
-                _kill_bounded(process)
+            except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
+                # Ctrl-C reached only this process: the child leads a session of its own. It
+                # gets the signal the terminal would have sent it.
+                interrupted = isinstance(error, KeyboardInterrupt)
+                _kill_bounded(process, signal.SIGINT if interrupted else signal.SIGTERM)
                 process.communicate(timeout=5)
                 raise
     except (OSError, subprocess.TimeoutExpired) as error:

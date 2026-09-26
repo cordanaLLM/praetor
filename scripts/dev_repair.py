@@ -7,7 +7,6 @@ import json
 import os
 from pathlib import Path
 import re
-import signal
 import stat
 import subprocess
 import sys
@@ -15,6 +14,7 @@ import tempfile
 import time
 
 sys.dont_write_bytecode = True
+from dev_process import stop_process_group
 import dev_schedule as schedule
 
 MAX_ENTRIES = 256
@@ -110,7 +110,9 @@ def call_runner(config, action, report, timeout):
         try:
             code = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
+            # SIGTERM first: the runner forwards it to the commands it runs in process groups
+            # of their own, which SIGKILL on its group would miss.
+            stop_process_group(process)
             process.wait(timeout=5)
             raise RuntimeError("Repair command deadline exceeded") from None
         output.seek(0)
@@ -211,7 +213,7 @@ def install(name, config, activate):
 
 def snapshot_scripts(backups):
     parent = Path(__file__).absolute().parent
-    files = {name: schedule.read_file(parent / name) for name in ("dev_repair.py", "dev_schedule.py")}
+    files = {name: schedule.read_file(parent / name) for name in ("dev_repair.py", "dev_schedule.py", "dev_process.py")}
     digest = hashlib.sha256(b"".join(name.encode() + b"\0" + data for name, data in files.items())).hexdigest()
     destination = schedule.checked_path(backups / ("repair-runner-" + digest))
     if destination.exists():

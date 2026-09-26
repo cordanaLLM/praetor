@@ -59,8 +59,9 @@ func BuildExecutable(t testing.TB, dir, name, source string) string {
 	defer cancel()
 	// Building a single file needs no go.mod, so the shim never inherits a go directive or a
 	// toolchain requirement from the module under test.
-	if combined, err := util.RunCommand(ctx, src, goCommand, "build", "-o", output, mainFile); err != nil {
-		t.Fatalf("testsupport: build %s: %v\n%s", name, err, combined)
+	// The compiler's diagnostics are on standard error, which RunCommand carries in err.
+	if _, err := util.RunCommand(ctx, src, goCommand, "build", "-o", output, mainFile); err != nil {
+		t.Fatalf("testsupport: build %s: %v", name, err)
 	}
 	return output
 }

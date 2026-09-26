@@ -33,12 +33,16 @@ func (b *commandBuffer) Write(p []byte) (int, error) {
 // commandStdinKey scopes child standard input to one operation tree.
 type commandStdinKey struct{}
 
-// MaxCommandStdinBytes bounds the input WithCommandStdin accepts: the cap of an output stream.
-const MaxCommandStdinBytes = 16 << 20
+// MaxCommandOutputBytes is the largest per-stream cap a bounded command accepts, and the cap
+// RunCommand applies to each of standard output and standard error.
+const MaxCommandOutputBytes = 16 << 20
 
-// WithCommandStdin makes RunCommandBytes feed exactly input to the child's standard input.
-// It copies the input. Without it the child reads an empty stream, as before. RunCommandStream
-// ignores it: its caller already supplies an explicit stdin reader.
+// MaxCommandStdinBytes bounds the input WithCommandStdin accepts: the cap of an output stream.
+const MaxCommandStdinBytes = MaxCommandOutputBytes
+
+// WithCommandStdin makes RunCommandBytes and RunCommand feed exactly input to the child's
+// standard input. It copies the input. Without it the child reads an empty stream, as before.
+// RunCommandStream ignores it: its caller already supplies an explicit stdin reader.
 func WithCommandStdin(ctx context.Context, input []byte) (context.Context, error) {
 	if ctx == nil {
 		return nil, errors.New("command stdin requires a context")
@@ -59,7 +63,8 @@ type commandStreams struct {
 
 // RunCommandBytes executes fixed argv with a deadline and a 1..16 MiB cap per stream.
 // It respects WithCommandEnvironment and WithCommandStdin, cancels on overflow, and
-// preserves whitespace.
+// preserves whitespace. Without WithCommandEnvironment the child inherits the ambient
+// environment minus the variables that bind git to a repository (commandEnvironment).
 func RunCommandBytes(ctx context.Context, dir, name string, maxBytes int, args ...string) (CommandBytes, error) {
 	return runBoundedCommand(ctx, dir, name, maxBytes, commandStreams{}, args)
 }
@@ -80,8 +85,8 @@ func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, stre
 	if ctx == nil {
 		return CommandBytes{}, errors.New("command bytes requires a context")
 	}
-	if maxBytes < 1 || maxBytes > 16<<20 {
-		return CommandBytes{}, errors.New("command byte cap must be 1..16777216")
+	if maxBytes < 1 || maxBytes > MaxCommandOutputBytes {
+		return CommandBytes{}, fmt.Errorf("command byte cap must be 1..%d", MaxCommandOutputBytes)
 	}
 	ctx, deadlineCancel := ensureDeadline(ctx, DefaultCommandTimeout)
 	defer deadlineCancel()
@@ -91,16 +96,14 @@ func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, stre
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.WaitDelay = CommandWaitDelay
-	if environment, ok := ctx.Value(commandEnvironmentKey{}).([]string); ok {
-		cmd.Env = append([]string{}, environment...)
-	}
+	cmd.Env = commandEnvironment(ctx, cmd)
 	cmd.Stdin = streams.stdin
 	if cmd.Stdin == nil {
 		if input, ok := ctx.Value(commandStdinKey{}).([]byte); ok {
 			cmd.Stdin = bytes.NewReader(input)
 		}
 	}
-	cleanup := commandBytesCleanup(cmd)
+	start, cleanup := commandBytesCleanup(cmd)
 	defer func() { resultErr = errors.Join(resultErr, cleanup()) }()
 	out := commandBuffer{limit: maxBytes, cancel: cancel}
 	diagnostic := commandBuffer{limit: maxBytes, cancel: cancel}
@@ -108,7 +111,10 @@ func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, stre
 	if streams.stdout != nil {
 		cmd.Stdout = streams.stdout
 	}
-	err := cmd.Run()
+	err := start()
+	if err == nil {
+		err = cmd.Wait()
+	}
 	if out.overflow || diagnostic.overflow {
 		err = errors.Join(err, fmt.Errorf("command output exceeds %d bytes per stream", maxBytes))
 	}

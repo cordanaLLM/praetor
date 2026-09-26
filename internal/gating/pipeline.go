@@ -98,8 +98,11 @@ func (r *PipelineReport) StageOutput() []byte {
 	return []byte(strings.Join(lines, "\n") + "\n")
 }
 
-// commandRunner executes an external command. util.RunCommand is the production
-// implementation; tests substitute a fake to exercise stage logic hermetically.
+// commandRunner executes an external command and returns its standard output; a failure's
+// standard error travels in the error. util.RunCommand is the production implementation,
+// which also keeps an ambient GIT_DIR or GIT_INDEX_FILE -- set whenever the gate runs from a
+// git hook -- away from the go-test stage and the git fixtures its tests create. Tests
+// substitute a fake to exercise stage logic hermetically.
 type commandRunner func(ctx context.Context, dir, name string, args ...string) (string, error)
 
 // stageConfig carries the inputs and the injectable seams shared by all stages.
@@ -290,7 +293,9 @@ func runSecurityStage(ctx context.Context, cfg *stageConfig) (string, error) {
 		return "", err
 	}
 	if out, err := cfg.run(ctx, cfg.repoDir, "govulncheck", "./..."); err != nil {
-		return "", fmt.Errorf("govulncheck found vulnerabilities: %s", out)
+		// The findings are on standard output; why govulncheck could not scan at all is on
+		// standard error, which the runner carries in err.
+		return "", fmt.Errorf("govulncheck found vulnerabilities: %w: %s", err, out)
 	}
 
 	if err := requireScanner(cfg, "gosec", "go install github.com/securego/gosec/v2/cmd/gosec@latest"); err != nil {
@@ -414,7 +419,10 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 		// every reader to diagnose a change that was never the cause. The context is the
 		// authoritative witness: the child dies of a signal and reports nothing useful. Its
 		// cause also says which deadline fired, the stage's own bound or the whole run's.
-		if cutErr := cutError(tCtx, "race-detector tests", bound, wt.Path, out); cutErr != nil {
+		// util.RunCommand returns standard output only; build errors and anything else the
+		// go command printed on standard error travel in testErr.
+		if cutErr := cutError(tCtx, "race-detector tests", bound, wt.Path,
+			fmt.Sprintf("%s [%v]", out, testErr)); cutErr != nil {
 			return "", cutErr
 		}
 		return "", fmt.Errorf("tests failed in %s: %s (%w)", wt.Path, out, testErr)

@@ -524,16 +524,14 @@ func (m *Manager) runGit(ctx context.Context, args ...string) ([]byte, error) {
 	return []byte(out), nil
 }
 
+// sanitizedGitEnvironment is stricter than util.RunCommand's default scrub: worktree
+// mutations drop every inherited GIT_* variable except the global and system config
+// selectors, not only the ones that bind git to a repository.
 func sanitizedGitEnvironment() []string {
-	environment := os.Environ()
-	filtered := make([]string, 0, len(environment))
-	for _, entry := range environment {
-		key, _, _ := strings.Cut(entry, "=")
-		if !strings.HasPrefix(key, "GIT_") || key == "GIT_CONFIG_GLOBAL" || key == "GIT_CONFIG_SYSTEM" || key == "GIT_CONFIG_NOSYSTEM" {
-			filtered = append(filtered, entry)
-		}
-	}
-	return filtered
+	return util.FilterEnvironment(os.Environ(), func(name string) bool {
+		return strings.HasPrefix(name, "GIT_") && name != "GIT_CONFIG_GLOBAL" &&
+			name != "GIT_CONFIG_SYSTEM" && name != "GIT_CONFIG_NOSYSTEM"
+	})
 }
 
 func validateTaskID(taskID string) error {

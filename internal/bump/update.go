@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -190,11 +191,16 @@ func applyNodeUpdate(ctx context.Context, targetDir string, cand UpgradeCandidat
 	pnpmLock := filepath.Join(targetDir, "pnpm-lock.yaml")
 	if util.FileExists(pnpmLock) || util.FileExists(filepath.Join(targetDir, "..", "pnpm-lock.yaml")) {
 		spec := fmt.Sprintf("%s@%s", cand.Package, cand.TargetVersion)
-		cmdOut, err := util.RunCommand(ctx, targetDir, "pnpm", "update", spec)
+		_, err := util.RunCommand(ctx, targetDir, "pnpm", "update", spec)
 		if err == nil {
 			return nil
 		}
-		if len(cmdOut) == 0 || ctx.Err() != nil {
+		// Only a pnpm that ran and refused the update falls back to editing the manifest; one
+		// that could not start, or was cut off, reports why. The returned text cannot tell the
+		// two apart: RunCommand returns standard output only, and the refusal may be on
+		// standard error.
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || ctx.Err() != nil {
 			return err
 		}
 	}

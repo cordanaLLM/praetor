@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -15,8 +16,9 @@ import time
 import unittest
 from unittest import mock
 
+import common
 from common import (HookError, MANAGED_PROCESS_ENV, MAX_PROCESS_ENV_ENTRIES,
-                    clean_env, run, snapshot)
+                    clean_env, run, snapshot, stop_process_group)
 from checks import (go_packages, source_checks, governance_commands, context_changed,
                     audit_scope, local_package_patterns, checkpoint_checks,
                     semgrep_commands, is_fixture, run_full_gate, gate_timeout,
@@ -49,6 +51,83 @@ LOCALE_ENV = {"LC_ALL": "C", "LANGUAGE": "C"}
 NO_AUTOCRLF_ENV = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.autocrlf",
                    "GIT_CONFIG_VALUE_0": "false"}
 AUTOCRLF_ENV = {**NO_AUTOCRLF_ENV, "GIT_CONFIG_VALUE_0": "true"}
+
+
+# A command the way git runs one: it holds a lock and removes it on a terminating signal,
+# leaving `cleaned` as evidence. Its marker `survived` appears only if nothing stopped it.
+LOCK_HOLDING_COMMAND = r"""
+import signal, sys, time
+from pathlib import Path
+root = Path(sys.argv[1])
+def cleanup(number, _frame):
+    (root / "lock").unlink(missing_ok=True)
+    (root / "cleaned").touch()
+    raise SystemExit(128 + number)
+signal.signal(signal.SIGTERM, cleanup)
+signal.signal(signal.SIGINT, cleanup)
+(root / "lock").touch()
+(root / "command-ready").touch()
+time.sleep(30)
+(root / "survived").touch()
+"""
+
+# The praetor CLI's shape (internal/util/command_bytes_unix.go): it runs the command in a
+# process group of its own, and forwards the signal that stops it to that group before it
+# exits. It reports the command's pid in `ready` once both handlers are installed.
+FORWARDING_CLI = r"""
+import os, signal, subprocess, sys, time
+from pathlib import Path
+root = Path(sys.argv[1])
+command = subprocess.Popen([sys.executable, "-c", sys.argv[2], str(root)], start_new_session=True)
+received = []
+def forward(number, _frame):
+    received.append(number)
+    os.killpg(command.pid, number)
+signal.signal(signal.SIGTERM, forward)
+signal.signal(signal.SIGINT, forward)
+for _ in range(400):
+    if (root / "command-ready").exists():
+        break
+    time.sleep(0.025)
+(root / "ready.tmp").write_text(str(command.pid))
+(root / "ready.tmp").rename(root / "ready")
+command.wait()
+raise SystemExit(128 + received[0] if received else 0)
+"""
+
+# A CLI that ignores the catchable signals, so only SIGKILL stops it.
+STUBBORN_CLI = r"""
+import signal, sys, time
+from pathlib import Path
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+Path(sys.argv[1], "ready").write_text("")
+time.sleep(30)
+"""
+
+
+def start_cli(test, root, script, *args):
+    """Start ``script`` the way ``run`` starts a child and return it once it reported ready."""
+    process = subprocess.Popen([sys.executable, "-c", script, str(root), *args],
+                               start_new_session=True)
+    test.addCleanup(lambda: process.poll() is not None or (process.kill(), process.wait()))
+    for _ in range(400):
+        if (root / "ready").exists():
+            return process
+        time.sleep(0.025)
+    test.fail("the child never reported ready")
+
+
+def reap_command_group(root):
+    """Kill the command's group if a failing assertion left it running, and report whether it was."""
+    raw = (root / "ready").read_text()
+    if not raw:
+        return False
+    try:
+        os.killpg(int(raw), signal.SIGKILL)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 class _WithoutProcessGroup:
@@ -1645,6 +1724,65 @@ class ScopeAndGuard(unittest.TestCase):
             with self.assertRaises(HookError):
                 run(["python3", "-c", "import time; time.sleep(10)"], timeout=0.05)
         self.assertEqual(tree.call_args.args[0][:3], ["taskkill", "/F", "/T"])
+
+    @unittest.skipUnless(hasattr(os, "killpg"), "Windows has no process group; _kill_bounded "
+                         "asks taskkill for the tree there, as the case above proves")
+    def test_stop_lets_the_cli_stop_the_commands_in_their_own_groups(self):
+        """SIGKILL on the CLI's group ended the CLI and missed its commands.
+
+        The praetor CLI runs each git or go command in a process group of its own, so the old
+        SIGKILL left the command running with its lock held. The catchable signal first lets the
+        CLI forward it: the command removes its lock, and nothing of it is left running.
+        """
+        with tempfile.TemporaryDirectory(prefix="praetor-stop-") as temp:
+            root = Path(temp)
+            process = start_cli(self, root, FORWARDING_CLI, LOCK_HOLDING_COMMAND)
+            try:
+                common._kill_bounded(process)
+                process.wait(timeout=5)
+                self.assertTrue((root / "cleaned").exists(), "the command never got the signal")
+                self.assertFalse((root / "lock").exists())
+            finally:
+                self.assertFalse(reap_command_group(root), "the command outlived its CLI")
+            self.assertEqual(process.returncode, 128 + signal.SIGTERM)
+
+    @unittest.skipUnless(hasattr(os, "killpg"), "Windows has no process group to signal")
+    def test_stop_kills_a_group_that_outlasts_the_grace(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-stop-") as temp, \
+                mock.patch.object(common, "STOP_GRACE", 0.3):
+            process = start_cli(self, Path(temp), STUBBORN_CLI)
+            started = time.monotonic()
+            common._kill_bounded(process)
+            self.assertEqual(process.wait(timeout=5), -signal.SIGKILL)
+            self.assertGreaterEqual(time.monotonic() - started, 0.3)
+
+    @unittest.skipUnless(hasattr(os, "killpg"), "Windows has no process group to signal")
+    def test_stop_boundaries(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-stop-") as temp:
+            # A second Ctrl-C during the grace kills the group at once and is not swallowed.
+            process = start_cli(self, Path(temp), STUBBORN_CLI)
+            with mock.patch.object(common.time, "sleep", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    stop_process_group(process, signal.SIGINT)
+            self.assertEqual(process.wait(timeout=5), -signal.SIGKILL)
+            # A group already gone is not an error.
+            stop_process_group(process)
+        # Ctrl-C reaches the child as SIGINT, a timeout as SIGTERM.
+        with mock.patch("common._kill_bounded", wraps=common._kill_bounded) as stop:
+            with self.assertRaises(HookError):
+                run(["python3", "-c", "import time; time.sleep(10)"], timeout=0.05)
+            self.assertEqual(stop.call_args.args[1], signal.SIGTERM)
+            real = subprocess.Popen.communicate
+            calls = []
+            def interrupted(process, *args, **kwargs):
+                calls.append(process)
+                if len(calls) == 1:
+                    raise KeyboardInterrupt
+                return real(process, *args, **kwargs)
+            with mock.patch.object(subprocess.Popen, "communicate", interrupted):
+                with self.assertRaises(KeyboardInterrupt):
+                    run(["python3", "-c", "import time; time.sleep(10)"])
+            self.assertEqual(stop.call_args.args[1], signal.SIGINT)
 
     def test_sandbox_failure_removes_only_owned_container(self):
         calls = []
