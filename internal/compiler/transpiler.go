@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const MaxLineBudget = agentcontext.MaxLineBudget
@@ -102,10 +104,8 @@ func (t *Transpiler) WriteOutputsContext(ctx context.Context, result *CompileRes
 	if result == nil || len(result.Files) > MaxAgentFiles {
 		return errors.New("invalid or oversized compiled outputs")
 	}
-	for _, file := range result.Files {
-		if _, err := projectionPath(targetDir, file.RelativePath); err != nil {
-			return err
-		}
+	if err := checkOutputPaths(targetDir, result); err != nil {
+		return err
 	}
 	for _, file := range result.Files {
 		path, err := projectionPath(targetDir, file.RelativePath)
@@ -114,6 +114,23 @@ func (t *Transpiler) WriteOutputsContext(ctx context.Context, result *CompileRes
 		}
 		if err := writeVendorAgent(ctx, path, file.Content); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func checkOutputPaths(targetDir string, result *CompileResult) error {
+	for _, file := range result.Files {
+		path, err := projectionPath(targetDir, file.RelativePath)
+		if err != nil {
+			return err
+		}
+		if _, err := util.ConfinePath(targetDir, file.RelativePath); err != nil {
+			return err
+		}
+		info, err := os.Lstat(path)
+		if err == nil && !info.Mode().IsRegular() {
+			return fmt.Errorf("%s must be a regular file, not a symlink or directory", path)
 		}
 	}
 	return nil

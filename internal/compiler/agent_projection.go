@@ -74,7 +74,10 @@ func listCanonicalAgents(rootDir string) ([]string, error) {
 		return nil, fmt.Errorf("%s holds more than %d files", dir, maxAgentProjections)
 	}
 	for i := 0; i < len(entries); i++ {
-		if entries[i].Type().IsRegular() && strings.HasSuffix(entries[i].Name(), ".md") {
+		if strings.HasSuffix(entries[i].Name(), ".md") {
+			if !entries[i].Type().IsRegular() {
+				return nil, fmt.Errorf("%s must be a regular file, not a symlink or directory", filepath.Join(dir, entries[i].Name()))
+			}
 			names = append(names, entries[i].Name())
 		}
 	}
@@ -182,7 +185,10 @@ func listProjectedAgents(rootDir, dir string) (_ []string, err error) {
 	}
 	var names []string
 	for i := 0; i < len(entries); i++ {
-		if entries[i].Type().IsRegular() && strings.HasSuffix(entries[i].Name(), ".md") {
+		if strings.HasSuffix(entries[i].Name(), ".md") {
+			if !entries[i].Type().IsRegular() {
+				return nil, fmt.Errorf("%s must be a regular file, not a symlink or directory", filepath.Join(path, entries[i].Name()))
+			}
 			names = append(names, entries[i].Name())
 		}
 	}
@@ -213,7 +219,7 @@ func verifyProjection(rootDir, rel string, want []byte) error {
 
 // projectPluginAgents copies the canonical personas into the plugin agents directory when
 // the repository ships the praetor plugin. It returns the number of files written.
-func ProjectPluginAgents(rootDir string) (int, error) {
+func ProjectPluginAgents(ctx context.Context, rootDir string) (int, error) {
 	if !util.FileExists(filepath.Join(rootDir, filepath.FromSlash(PluginManifestRel))) {
 		return 0, nil
 	}
@@ -234,7 +240,7 @@ func ProjectPluginAgents(rootDir string) (int, error) {
 		if err != nil {
 			return written, err
 		}
-		if err := util.WriteFileSecure(filepath.Join(targetDir, names[i]), data, projectedFilePerm); err != nil {
+		if err := writeVendorAgent(ctx, filepath.Join(targetDir, names[i]), string(data)); err != nil {
 			return written, fmt.Errorf("write plugin persona %s: %w", names[i], err)
 		}
 		written++

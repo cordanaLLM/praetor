@@ -81,10 +81,11 @@ func TestCompileContextRejectsEscapingOutputDescendants(t *testing.T) {
 					t.Fatal(err)
 				}
 				res := callTool(t, srv, "standards_compile_context", map[string]any{"target_dir": "out", "verify_only": verify})
-				if !res.IsError || !strings.Contains(res.Content[0].Text, "directory component must not be a symlink") && !strings.Contains(res.Content[0].Text, "source must be regular") && !strings.Contains(res.Content[0].Text, "Context verification failed") {
+				if !res.IsError || !strings.Contains(res.Content[0].Text, "directory component must not be a symlink") && !strings.Contains(res.Content[0].Text, "source must be regular") && !strings.Contains(res.Content[0].Text, "Context verification failed") && !strings.Contains(res.Content[0].Text, "must be a regular file") && !strings.Contains(res.Content[0].Text, "escapes the confinement root") {
 					t.Errorf("escaping output must fail confinement, got %+v", res)
 				}
 				assertPathFixture(t, marker, "protected\n")
+				assertPathFixture(t, firstOutput, "first output unchanged\n")
 			})
 		}
 	}

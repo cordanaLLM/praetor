@@ -150,14 +150,14 @@ func CompileContextProjections(ctx context.Context, w io.Writer, tr *Transpiler,
 	if err := printNotApplicablePersonaDirs(ctx, w, targetDir); err != nil {
 		return fmt.Errorf("agent projection failed: %w", err)
 	}
-	pluginFiles, err := ProjectPluginAgents(targetDir)
+	pluginFiles, err := ProjectPluginAgents(ctx, targetDir)
 	if err != nil {
 		return fmt.Errorf("plugin agent projection failed: %w", err)
 	}
 	if pluginFiles > 0 {
 		sw.printf("  [COMPILED] %d plugin agent projections (%s).\n", pluginFiles, PluginAgentsRel)
 	}
-	pluginSkills, err := ProjectPluginSkills(targetDir)
+	pluginSkills, err := ProjectPluginSkills(ctx, targetDir)
 	if err != nil {
 		return fmt.Errorf("plugin skill projection failed: %w", err)
 	}

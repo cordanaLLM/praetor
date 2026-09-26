@@ -374,12 +374,10 @@ turn off. A pass prints:
 6 personas and 13 skills passed the caveman lint (<= 600 prose words each).
 ```
 
-The MCP mirrors (`standards_compile_context`, `standards_audit`, `cmd/standards-mcp`) are a
-separate, smaller implementation that already did not verify persona/skill projection sync
-before this change (`standards_audit`'s own comment: "Run 'praetorctl audit' for the full
-CLI gate set"); they still only run `compiler.LintContext` over AGENTS.md and do not yet
-call `LintAgentText`. Bringing them to parity is unclaimed follow-up work, not part of this
-change.
+The MCP mirrors (`standards_compile_context`, `standards_audit`, `cmd/standards-mcp`) share the
+same implementation (`internal/compiler`) and verify persona/skill projection sync identically to
+the CLI, including calling `LintAgentText`. This parity ensures the agent and human developers
+face the same invariant gate.
 
 600 words was chosen when the persona/skill gate was introduced: at the time it sat between
 two skills failing the lint at 532-561 prose words (`caveman`, `social-text`, since pared

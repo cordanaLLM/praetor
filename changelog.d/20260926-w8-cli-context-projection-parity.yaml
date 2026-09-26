@@ -1,0 +1,3 @@
+type: fixed
+title: Enforce context projection parity in MCP and CLI by moving context compilation, agent projection and skill projection into internal/compiler (refusing symlinks via native Lstat no-follow, trimming whitespace on canonical projection comparisons, returning explicit errors over silent truncation, and removing duplicate verification from MCP server)
+breaking: false

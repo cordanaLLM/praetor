@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -76,7 +77,7 @@ func readCanonicalSkill(rootDir, name string) ([]byte, error) {
 
 // projectPluginSkills writes every canonical skill into the plugin, so installing the plugin
 // delivers the skills the repository declares rather than the personas alone.
-func ProjectPluginSkills(rootDir string) (int, error) {
+func ProjectPluginSkills(ctx context.Context, rootDir string) (int, error) {
 	if !util.FileExists(filepath.Join(rootDir, filepath.FromSlash(PluginManifestRel))) {
 		return 0, nil
 	}
@@ -97,7 +98,7 @@ func ProjectPluginSkills(rootDir string) (int, error) {
 		if err := util.MkdirSecure(dir, projectedDirPerm); err != nil {
 			return written, err
 		}
-		if err := util.WriteFileSecure(filepath.Join(dir, SkillEntryName), data, projectedFilePerm); err != nil {
+		if err := writeVendorAgent(ctx, filepath.Join(dir, SkillEntryName), string(data)); err != nil {
 			return written, fmt.Errorf("write plugin skill %s: %w", names[i], err)
 		}
 		written++
