@@ -157,7 +157,7 @@ An existing taxonomy is the repository's configuration: `adopt --force` keeps it
 ### Stages that do not apply are skipped, not failed
 
 `praetorctl gate run` records one of four verdicts per stage (`StageStatus` in
-[`internal/gating/pipeline.go`](../../internal/gating/pipeline.go)), and a stage that ran nothing is
+[`internal/gating/pipeline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/pipeline.go)), and a stage that ran nothing is
 never recorded as passed:
 
 | Verdict | Report tag | Meaning |
@@ -175,7 +175,7 @@ security scans and prefetches that had never executed.
 `praetorctl gate verify`, `praetorctl forge validate-pr` and `praetorctl paperclip verify` refuse a
 receipt whose gate output does not open with `praetor-gate-output/v2`, after checking its signature
 and output hash (`lockdown.VerifyPinnedReceiptFile` and `lockdown.VerifyUnpinnedReceiptFile` in
-[`internal/lockdown/keys.go`](../../internal/lockdown/keys.go)). A
+[`internal/lockdown/keys.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/lockdown/keys.go)). A
 v1 receipt still carries a valid signature, but its stage lines cannot tell a skipped stage from a
 passed one, so it is rejected with `receipt certifies an unsupported gate output version`. Re-mint
 it with `praetorctl gate run` on the current release. `TestVerifyPinnedReceiptFile_Negative`,
@@ -214,7 +214,7 @@ A skipped or not-applicable stage names its reason and does not fail the reposit
 A skipped stage prints its reason. That distinction matters: a skipped stage that reads as a pass is
 how a gate comes to certify what it never examined. The verdicts are pinned by
 `TestExecuteStage_SkipVerdicts` and `TestStageOutput_3D` in
-[`internal/gating/gating_test.go`](../../internal/gating/gating_test.go).
+[`internal/gating/gating_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/gating_test.go).
 
 ### A dry run changes nothing
 
@@ -224,23 +224,23 @@ the security scanners (`go list`, govulncheck, gosec), the race-detector tests a
 **skipped**, and mints no receipt. `go mod download` writes the module cache and the scanners can
 fetch modules and query the vulnerability database, so a dry run that started them was not one.
 `TestExecuteStages_DryRunInvokesNoCommand` in
-[`internal/gating/gating_test.go`](../../internal/gating/gating_test.go) runs a whole dry run
+[`internal/gating/gating_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/gating_test.go) runs a whole dry run
 through a recording command runner and fails if any command starts through the stage runner.
 
 The gatekeeper persona that adoption writes (`.agents/agents/repo-gatekeeper.md`) and the
 pre-migration epic's verification task both run the full gate, `praetorctl gate run --path=.`,
 derived from `gating.RepoRunCommand`
-([`internal/gating/pipeline.go`](../../internal/gating/pipeline.go)). The persona names `--dry-run`
+([`internal/gating/pipeline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/pipeline.go)). The persona names `--dry-run`
 only as a read-only preflight: its mission is the prefetch, security scans and receipt that a dry
 run skips. Praetor's own `praetor-gatekeeper` persona runs the same full gate that
 `praetorctl agent run praetor-gatekeeper` runs, then `gate verify`, and lists the dry run as a
 preflight. All three previously passed `--target=.`, which `gate run` rejects as an undefined flag
 before any stage runs.
-[`cmd/standardsctl/gate_command_test.go`](../../cmd/standardsctl/gate_command_test.go) parses the
+[`cmd/standardsctl/gate_command_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/gate_command_test.go) parses the
 constant and every `gate run` line in `.agents/agents/*.md` against the real flag set;
-[`internal/adopt/persona_command_test.go`](../../internal/adopt/persona_command_test.go) and
+[`internal/adopt/persona_command_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/persona_command_test.go) and
 `TestGeneratePreMigrationEpic_GateTaskRunsTheGateCommand` in
-[`internal/needs/epic_test.go`](../../internal/needs/epic_test.go) pin the generated text to it.
+[`internal/needs/epic_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/needs/epic_test.go) pin the generated text to it.
 
 ### A receipt certifies only a working tree that matches HEAD
 
@@ -258,7 +258,7 @@ differs from HEAD:
   ignore rule, your global excludes file included. Both relax what the gate enforces -- the
   baseline raises the HISS limit, the gosec configuration selects the rules -- and `git status`
   does not list an ignored file, so each present one must be tracked in the index
-  (`util.GitUntrackedPaths` in [`internal/util/git_ignore.go`](../../internal/util/git_ignore.go));
+  (`util.GitUntrackedPaths` in [`internal/util/git_ignore.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/util/git_ignore.go));
   a committed one stays trusted even when an ignore pattern also matches it;
 - a `.standards-baseline.json` or `.gosec.json` that is a symbolic link or any other non-regular
   file. `git status` compares a tracked link by its target path, not the content behind it, while
@@ -283,9 +283,9 @@ certify a commit whose scan had read uncommitted files (BUG-787) or an untracked
 Verification enforces the same rule on the receipt side: `gate verify`, `forge validate-pr` and a
 paperclip disposition carrying a receipt all reject one whose signed gate output does not record
 `worktree_clean true` exactly once in its header. The check (`lockdown.RequireCleanWorktree` in
-[`internal/lockdown/receipts.go`](../../internal/lockdown/receipts.go)) runs inside
+[`internal/lockdown/receipts.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/lockdown/receipts.go)) runs inside
 `lockdown.VerifyPinnedReceiptFile` and `lockdown.VerifyUnpinnedReceiptFile`
-([`internal/lockdown/keys.go`](../../internal/lockdown/keys.go)), right after the format-version
+([`internal/lockdown/keys.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/lockdown/keys.go)), right after the format-version
 check, so all three callers get it from the verifier they already share.
 
 `praetorctl paperclip verify` still leaves the gate receipt and the disposition file out of its
@@ -293,23 +293,23 @@ own clean-tree check, so the documented order -- commit, push, mint the receipt,
 disposition -- verifies unchanged.
 
 Cleanliness is read through `util.GitWorkingTreeChanges`
-([`internal/util/git_status.go`](../../internal/util/git_status.go)), which the gate,
+([`internal/util/git_status.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/util/git_status.go)), which the gate,
 `praetorctl paperclip verify` and release preparation share. It overrides the repository settings
 that could hide a change (`status.showUntrackedFiles`, submodule ignore settings, `core.fsmonitor`,
 hooks), takes no optional index locks, and refuses a repository whose own configuration names a
 clean or process filter rather than executing it during a read-only probe. Each caller bounds the
 whole walk: the gate with `gating.GitQueryTimeout`, paperclip verify and release preparation with
 `util.GitTreeProbeTimeout`; a probe that runs out of time is a refusal, never a clean answer. The
-cases are replayed in [`internal/util/git_status_test.go`](../../internal/util/git_status_test.go) and
-[`internal/gating/tree_test.go`](../../internal/gating/tree_test.go); the receipt-side checks in
-[`internal/lockdown/keys_test.go`](../../internal/lockdown/keys_test.go) and
-[`internal/paperclip/paperclip_test.go`](../../internal/paperclip/paperclip_test.go).
+cases are replayed in [`internal/util/git_status_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/util/git_status_test.go) and
+[`internal/gating/tree_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/tree_test.go); the receipt-side checks in
+[`internal/lockdown/keys_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/lockdown/keys_test.go) and
+[`internal/paperclip/paperclip_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/paperclip/paperclip_test.go).
 
 ### A HISS rejection names the violations
 
 The gate's HISS stage rejects on the same ratchet as `praetorctl audit`, and both render the
 rejection with `baseline.RatchetResult.Describe`
-([`internal/baseline/baseline.go`](../../internal/baseline/baseline.go)): the counts, then up to
+([`internal/baseline/baseline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/baseline.go)): the counts, then up to
 three new and three touched-file violations as `[rule] file:line - message`. The stage previously
 reported only `hiss ratchet failed: N infractions (M new, baseline B)`, so a blocked push named no
 file to open.
