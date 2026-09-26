@@ -49,11 +49,22 @@ unset flag keeps the default. The flags apply to single-repository adoption; bat
 ### What Adoption Reads Before It Writes
 
 - **Repository identity.** `repository.owner` and `repository.name` come from the
-  `origin` remote, or from an `<owner>/<repo>` checkout path. When neither yields one,
-  both stay empty, the report warns `repository identity unresolved`, the checkpoint
-  lifecycle is not installed, and the README badge block is skipped. `repository.visibility`
-  is always left unset because adoption cannot observe it offline
-  (`internal/adopt/adopt.go`, `TestAdoptionManifest_UnresolvedIdentityStaysEmpty`).
+  `origin` remote only (`util.ResolveRemoteIdentity`). The checkout path is never read
+  as identity, because its parent directory names where the checkout sits, not who owns
+  the repository (`TestAdoptionManifest_CheckoutLayoutIsNotIdentity`). Without a remote
+  naming `<owner>/<repo>`, both stay empty, the report warns `repository identity
+  unresolved`, the checkpoint lifecycle is not installed, and the README badge block is
+  skipped. `repository.visibility` is always left unset because adoption cannot observe
+  it offline (`TestAdoptionManifest_UnresolvedIdentityStaysEmpty`).
+- **Recovering an unresolved identity.** Until both fields are set, `praetorctl audit`
+  fails with `Manifest repository owner and name must not be empty`
+  (`cmd/standardsctl/audit.go`), so the audit pre-commit hook blocks commits. Adoption
+  never rewrites an existing manifest, so set `repository.owner` and `repository.name`
+  in `.standards.yaml` by hand. Add the `origin` remote too and re-run `praetorctl adopt`:
+  the re-run installs the checkpoint policy and evaluator, which need that remote, and
+  reconciles the README block from the fields you set. A re-run that finds the remote
+  while the manifest still names no identity installs the checkpoint lifecycle but
+  leaves the manifest and the README as they are (`TestAdopt_RerunCompletesOnceIdentityIsSet`).
 - **Profile.** The profile an existing `.standards.yaml` declares outranks `--profile`,
   which outranks file markers. A conflicting `--profile` is reported as ignored
   (`TestAdopt_DeclaredProfileGovernsAdoption`).

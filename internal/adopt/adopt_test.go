@@ -64,8 +64,11 @@ func writeStub(t *testing.T, dir, name, body string) {
 	}
 }
 
-// newTestRepo creates a hermetic leaf repository under a fresh temp dir. lefthook is
-// stubbed to fail so that the deterministic fallback hook path is exercised.
+// newTestRepo creates a hermetic leaf checkout named name under a fresh temp dir, whose
+// origin remote names acme/<name> as a clone's does. Adoption reads identity from that
+// remote alone, so a fixture without one exercises the unresolved-identity path instead of
+// the adoption under test. lefthook is stubbed to fail so that the deterministic fallback
+// hook path is exercised.
 func newTestRepo(t *testing.T, name string) string {
 	t.Helper()
 	stubDir := t.TempDir()
@@ -76,6 +79,7 @@ func newTestRepo(t *testing.T, name string) string {
 		t.Fatalf("mkdir repo: %v", err)
 	}
 	initTestGit(t, repoPath)
+	writeOriginRemote(t, repoPath, "https://github.com/acme/"+name+".git")
 	return repoPath
 }
 
@@ -735,6 +739,84 @@ func TestAdopt_UnresolvedIdentityCompletesWithoutGuessing(t *testing.T) {
 	warnings := strings.Join(report.Warnings, "\n")
 	if mustRead(t, filepath.Join(repo, readmeFile)) != readme || !strings.Contains(warnings, "Governance block not reconciled") {
 		t.Fatalf("README was reconciled against no identity; warnings:\n%s", warnings)
+	}
+}
+
+// TestAdoptionManifest_CheckoutLayoutIsNotIdentity pins BUG-852 for the checkout path: a
+// repository at <parent>/<name> with no origin remote is unresolved. util.ResolveRepoIdentity
+// would name it parent/name, which is where the checkout sits, not who owns the repository.
+func TestAdoptionManifest_CheckoutLayoutIsNotIdentity(t *testing.T) {
+	requireGit(t)
+	repo := filepath.Join(t.TempDir(), "acme", "widget")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initTestGit(t, repo)
+	s := identitySession(t, repo)
+	manifest := newAdoptionManifest(s)
+	if got := manifest.Repository; got.Owner != "" || got.Name != "" || s.identity.resolved() {
+		t.Fatalf("checkout layout became identity: manifest %+v, session %+v", got, s.identity)
+	}
+	warnings := strings.Join(s.report.Warnings, "\n")
+	for _, want := range []string{"repository identity unresolved", "praetorctl audit fails", "add an origin remote"} {
+		if !strings.Contains(warnings, want) {
+			t.Fatalf("unresolved-identity warning lacks %q:\n%s", want, warnings)
+		}
+	}
+}
+
+// TestAdopt_RerunCompletesOnceIdentityIsSet pins the recovery the unresolved-identity warning
+// names. Boundary: a re-run that finds the origin remote installs the checkpoint lifecycle,
+// which reads that remote, but never rewrites the empty identity in the existing manifest,
+// so the README block stays unreconciled. Positive: once the operator sets both fields, the
+// re-run reconciles the README block from them and warns nothing about identity.
+func TestAdopt_RerunCompletesOnceIdentityIsSet(t *testing.T) {
+	requireGit(t)
+	repo := filepath.Join(t.TempDir(), "dev", "orphan")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initTestGit(t, repo)
+	readme := "# Orphan\n"
+	mustWrite(t, filepath.Join(repo, readmeFile), readme)
+	source := newAdoptLockSource(t)
+	mustWrite(t, filepath.Join(source, filepath.FromSlash(checkpointScript)), "#!/usr/bin/env python3\nprint('shared')\n")
+	mustWrite(t, filepath.Join(source, filepath.FromSlash(checkpointCommon)), "class HookError(Exception):\n    pass\n")
+	opts := AdoptOptions{Path: repo, SkipGitValidation: true, SkipHookActivation: true, LockSourceRoot: source}
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatalf("first adoption failed: %v", err)
+	}
+	manifestPath := filepath.Join(repo, manifestFile)
+	firstManifest := mustRead(t, manifestPath)
+	writeOriginRemote(t, repo, "git@github.com:acme/orphan.git")
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatalf("re-run with a remote failed: %v", err)
+	}
+	if got := mustRead(t, manifestPath); got != firstManifest {
+		t.Fatalf("re-run rewrote the existing manifest:\n%s", got)
+	}
+	policy := mustRead(t, filepath.Join(repo, filepath.FromSlash(checkpointPolicy)))
+	if !strings.Contains(policy, `"repository": "acme/orphan"`) {
+		t.Fatalf("re-run checkpoint policy does not name the remote identity:\n%s", policy)
+	}
+	if mustRead(t, filepath.Join(repo, readmeFile)) != readme {
+		t.Fatal("README block was reconciled against a manifest that names no identity")
+	}
+	handSet := strings.NewReplacer(`owner: ""`, "owner: acme", `name: ""`, "name: orphan").Replace(firstManifest)
+	mustWrite(t, manifestPath, handSet)
+	manifest, err := config.LoadManifest(manifestPath)
+	if err != nil || manifest.Repository.Owner != "acme" || manifest.Repository.Name != "orphan" {
+		t.Fatalf("hand-set identity fixture did not parse as acme/orphan: %+v %v", manifest, err)
+	}
+	report, err := Adopt(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("re-run with a hand-set identity failed: %v", err)
+	}
+	if strings.Contains(strings.Join(report.Warnings, "\n"), "repository identity unresolved") {
+		t.Fatalf("resolved re-run still warns: %v", report.Warnings)
+	}
+	if !strings.Contains(mustRead(t, filepath.Join(repo, readmeFile)), "praetor:readme-governance:start") {
+		t.Fatal("re-run left the README governance block unreconciled after the identity was set")
 	}
 }
 

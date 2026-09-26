@@ -395,6 +395,41 @@ func TestResolveRepoIdentity_Negative_NeverGuessesOwner(t *testing.T) {
 	}
 }
 
+func TestResolveRemoteIdentity_Positive_ReadsOriginRemote(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	owner, repo, err := ResolveRemoteIdentity(ctx, newHermeticGitRepo(t, "https://github.com/acme/widget.git"))
+	if err != nil || owner != "acme" || repo != "widget" {
+		t.Fatalf("got %q/%q (err %v), want acme/widget", owner, repo, err)
+	}
+}
+
+// The checkout layout that ResolveRepoIdentity falls back to is not a remote identity.
+func TestResolveRemoteIdentity_Negative_IgnoresCheckoutLayout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	nested := filepath.Join(t.TempDir(), "acme-org", "widget-lib")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if o, r, err := ResolveRepoIdentity(ctx, nested); err != nil || o != "acme-org" || r != "widget-lib" {
+		t.Fatalf("layout fallback changed: %q/%q %v", o, r, err)
+	}
+	if o, r, err := ResolveRemoteIdentity(ctx, nested); !errors.Is(err, ErrRepoIdentityUnresolved) || o != "" || r != "" {
+		t.Fatalf("remote identity read the checkout layout: %q/%q %v", o, r, err)
+	}
+}
+
+// Boundary: a remote that names a repository but no owner is still unresolved.
+func TestResolveRemoteIdentity_Boundary_RemoteWithoutOwner(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	o, r, err := ResolveRemoteIdentity(ctx, newHermeticGitRepo(t, "git@github.com:widget.git"))
+	if !errors.Is(err, ErrRepoIdentityUnresolved) || o != "" || r != "" {
+		t.Fatalf("owner-less remote resolved to %q/%q (err %v)", o, r, err)
+	}
+}
+
 func TestResolveRepoIdentity_Boundary_RootAndRelativeDot(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

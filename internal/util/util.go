@@ -28,7 +28,8 @@ const (
 )
 
 // ErrRepoIdentityUnresolved is returned by ResolveRepoIdentity when neither the git
-// origin remote nor the directory layout identifies an owner and repository.
+// origin remote nor the directory layout identifies an owner and repository, and by
+// ResolveRemoteIdentity when the origin remote does not.
 var ErrRepoIdentityUnresolved = errors.New("util: unable to resolve repository owner and name")
 
 // ErrSymlinkDestination is returned by WriteFileNoFollow when the destination exists and
@@ -524,19 +525,32 @@ func RunGitBytes(ctx context.Context, dir string, maxBytes int, args ...string) 
 	return RunCommandBytes(ctx, dir, "git", maxBytes, args...)
 }
 
+// ResolveRemoteIdentity extracts the owner and repository name from the configured origin
+// remote alone. It returns ErrRepoIdentityUnresolved when there is no origin remote or it
+// names no <owner>/<repo>. Unlike ResolveRepoIdentity it never reads the checkout path, so
+// a caller that records identity as fact gets only what the repository itself declares.
+func ResolveRemoteIdentity(ctx context.Context, repoPath string) (owner, repo string, err error) {
+	out, gitErr := RunGit(ctx, repoPath, "config", "--get", "remote.origin.url")
+	if gitErr != nil {
+		return "", "", fmt.Errorf("%w: no origin remote in %q: %w", ErrRepoIdentityUnresolved, repoPath, gitErr)
+	}
+	owner, repo = ExtractOwnerAndRepo(out)
+	if owner == "" || repo == "" {
+		return "", "", fmt.Errorf("%w: the origin remote in %q names no <owner>/<repo>", ErrRepoIdentityUnresolved, repoPath)
+	}
+	return owner, repo, nil
+}
+
 // ResolveRepoIdentity extracts the owner and repository name from the configured origin
-// remote, falling back to the <owner>/<repo> shape of the absolute directory path.
+// remote (ResolveRemoteIdentity), falling back to the <owner>/<repo> shape of the absolute
+// directory path.
 //
 // It never invents an owner: when neither the remote nor the directory layout yields
 // one, it returns ErrRepoIdentityUnresolved so that callers writing to a forge refuse to
 // publish into a guessed repository.
 func ResolveRepoIdentity(ctx context.Context, repoPath string) (owner, repo string, err error) {
-	out, gitErr := RunGit(ctx, repoPath, "config", "--get", "remote.origin.url")
-	if gitErr == nil && out != "" {
-		o, r := ExtractOwnerAndRepo(out)
-		if o != "" && r != "" {
-			return o, r, nil
-		}
+	if owner, repo, err = ResolveRemoteIdentity(ctx, repoPath); err == nil {
+		return owner, repo, nil
 	}
 
 	absPath, absErr := filepath.Abs(repoPath)

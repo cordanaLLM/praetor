@@ -72,6 +72,9 @@ repository named by `repository.owner` and `repository.name`. When the manifest
 names none, because adoption could not resolve an identity, adoption leaves the
 README unchanged and records a `Governance block not reconciled` warning instead
 of linking to a guessed repository (`TestAdopt_UnresolvedIdentityCompletesWithoutGuessing`).
+Set both fields in `.standards.yaml` and re-run `praetorctl adopt` to reconcile
+the block; adoption never rewrites an existing manifest, so adding an `origin`
+remote alone does not fill them (`TestAdopt_RerunCompletesOnceIdentityIsSet`).
 
 `praetorctl audit` renders the same expected block in memory and fails when the
 README block is missing, malformed, duplicated, or stale. Re-run

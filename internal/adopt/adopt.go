@@ -251,9 +251,10 @@ func adoptionArchetype(decision classify.Result, verification *VerificationPlan)
 	return decision.Or(classify.FallbackArchetype)
 }
 
-// repoIdentity is the forge identity adoption records: owner and name from the origin remote,
-// or from the <owner>/<repo> shape of the checkout path (util.ResolveRepoIdentity). Both stay
-// empty when neither yields one; adoption substitutes no default owner and no guessed name.
+// repoIdentity is the forge identity adoption records: owner and name from the origin remote
+// (util.ResolveRemoteIdentity). Both stay empty without one; adoption substitutes no default
+// owner and never reads identity from the checkout path, whose parent directory names
+// wherever the checkout happens to sit rather than the repository's owner.
 type repoIdentity struct {
 	owner string
 	name  string
@@ -273,16 +274,20 @@ func (id repoIdentity) coordinate() string {
 
 // resolveIdentity fills the session's identity and prose label under the caller's context. An
 // unresolved identity is a warning, because every identity field adoption writes stays empty.
+// The origin remote is the only source: the checkpoint evaluator checks the policy's repository
+// against that remote, so no other source could name a repository it accepts.
 func (s *adoptSession) resolveIdentity(ctx context.Context) {
-	owner, name, err := util.ResolveRepoIdentity(ctx, s.repoPath)
-	if err == nil && owner != "" && name != "" {
+	owner, name, err := util.ResolveRemoteIdentity(ctx, s.repoPath)
+	if err == nil {
 		s.identity = repoIdentity{owner: owner, name: name}
 		s.repoName = name
 		return
 	}
 	s.repoName = filepath.Base(s.repoPath)
-	s.report.addWarning("repository identity unresolved (%v): the identity fields adoption writes stay empty and "+
-		"no checkpoint lifecycle is installed; set the origin remote and re-run", err)
+	s.report.addWarning("repository identity unresolved (%v): adoption writes no repository.owner or repository.name "+
+		"and installs no checkpoint lifecycle. praetorctl audit fails until %s names both: set them by hand, since "+
+		"adoption never rewrites an existing manifest, and add an origin remote naming <owner>/<repo> before "+
+		"re-running adoption to install the checkpoint lifecycle", err, manifestFile)
 }
 
 func resolveFacets(input []string) []string {
