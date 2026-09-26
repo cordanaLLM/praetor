@@ -53,8 +53,8 @@ type OrgConfig struct {
 // availability evidence this change was handed, which stopped at macos-15-intel;
 // it is cited here so the next reader does not have to re-derive it.
 //
-// ADR-0006 still records the previous pair and is Accepted, so it is not edited
-// here; a superseding ADR is the vehicle for restating the tier.
+// ADR-0012 decision 5 restates this tier. ADR-0006, which it supersedes, still
+// records the previous pair in its frozen body.
 func DefaultRunnerPolicy() RunnerPolicy {
 	return RunnerPolicy{
 		Default: "arc-runner-set-linux-amd64",

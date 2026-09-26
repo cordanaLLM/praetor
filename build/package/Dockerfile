@@ -26,11 +26,9 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 
 # Stage 2: Distroless minimal runtime (< 30MB, zero shell, non-root)
 #
-# ADR-0005 decision 2 still reads `gcr.io/distroless/static-debian12:nonroot`; the line
-# below supersedes it. The ADR is Accepted and therefore frozen, so the contradiction is
-# recorded here rather than edited there; a reader of ADR-0005 alone would otherwise have
-# nothing telling them it is stale. Only the Debian release moved. Decision 1 already
-# derives the builder's Go version from go.mod, so the builder above is not a conflict.
+# ADR-0012 decision 4 records this runtime. It supersedes ADR-0005, whose frozen body still
+# reads `gcr.io/distroless/static-debian12:nonroot`; only the Debian release moved. Both
+# records take the builder's Go version from go.mod, so the builder above is not a conflict.
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
 
 LABEL org.opencontainers.image.title="praetor" \

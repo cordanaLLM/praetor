@@ -11,19 +11,20 @@ immutable (`.agents/skills/adr-scaffold/SKILL.md`, "Immutability"), so the only 
 is a superseding record. This record restates each decision as the code implements it. The five
 older records keep their text; only their Status line changes, to `Superseded by ADR-0012`.
 
-Measured at `1b9257b8` plus the fixes on the same branch as this record (the gating stage's
-function-length resolution and the pre-commit context classification). The operational fork was
-read at `lusoris/praetor` `main` `88a39dd9`.
+Measured at `eed57331` (#352, the Ubuntu 26.04 runner and image baseline) plus the fixes on the
+same branch as this record (the gating stage's function-length resolution and the pre-commit
+context classification). The operational fork was read at `lusoris/praetor` `main` `88a39dd9`.
 
 | Record | Claim | Measured | Evidence |
 | :-- | :-- | :-- | :-- |
 | ADR-0001 | Aider is one of the covered vendors | `compile-context` writes six vendor files, none of them for Aider; the Codex target the record omits is one of the six | `internal/agentcontext/render.go:47-54` |
-| ADR-0003 | the engine keeps "100% test coverage" and a "100% zero-debt baseline" | CI enforces a 65% total statement-coverage floor; existing debt is recorded in `.standards-baseline.json` and only new or touched-file debt fails | `.github/workflows/ci.yml:196`, `internal/gating/pipeline.go` (`runHissStage`), `cmd/standardsctl/audit.go` (`auditBaselineAndInvariants`) |
+| ADR-0003 | the engine keeps "100% test coverage" and a "100% zero-debt baseline" | CI enforces a 65% total statement-coverage floor; existing debt is recorded in `.standards-baseline.json` and only new or touched-file debt fails | `.github/workflows/ci.yml:217`, `internal/gating/pipeline.go` (`runHissStage`), `cmd/standardsctl/audit.go` (`auditBaselineAndInvariants`) |
 | ADR-0003 | verified releases and signed tags flow downstream | no `v*` tag exists, so the tag-triggered release workflow has never produced a release (#205) | `git tag -l 'v*'` is empty; `.github/workflows/release-binaries.yml:3-7` |
 | ADR-0004 | a 4-stage pipeline scanning HISS-01 through HISS-16 at <= 60 lines per function | six stages; the HISS scan emits HISS-01, 02, 04, 07, 08 and 09; the function-length limit comes from the repository's resolved policy | `internal/gating/pipeline.go` (`executeStages`, `hissScanOptions`), `internal/hiss/rules.go`, `internal/hiss/go_ast.go` |
 | ADR-0005 | GitOps delivery through ArgoCD at `deploy/k8s/application.yaml` | `deploy/` in this repository holds only the Helm chart; the ArgoCD Application is in the operational fork; no workflow builds or publishes an image | `git ls-files deploy`, `lusoris/praetor:deploy/k8s/application.yaml`, `.github/workflows/*.yml`, `.goreleaser.yaml` (no `dockers` section) |
-| ADR-0005 | Praetor's own image builds from `docker/dev/Dockerfile` | that file is the development container; the production image is `build/package/Dockerfile` | `docker/dev/Dockerfile`, `build/package/Dockerfile:3,28,43` |
-| ADR-0006 | Linux jobs run on ARC scale sets for amd64, arm64 and GPU | the routing policy still resolves those names, but no workflow routes through it: CI runs on GitHub-hosted `ubuntu-latest`, with a `ubuntu`/`macos`/`windows-latest` portability matrix; the operational fork defines `arc-runner-set-linux-amd64` and `arc-runner-set-gpu-xpu` and no arm64 set | `internal/config/hierarchy.go:38-49`, `.github/workflows/*.yml` (`runs-on`), `lusoris/praetor:deploy/arc/runner-scale-set.yaml` |
+| ADR-0005 | Praetor's own image builds from `docker/dev/Dockerfile` | that file is the development container; the production image is `build/package/Dockerfile` | `docker/dev/Dockerfile`, `build/package/Dockerfile:3,32,47` |
+| ADR-0006 | Linux jobs run on ARC scale sets for amd64, arm64 and GPU | the routing policy still resolves those names, but no workflow routes through it: CI runs on GitHub-hosted `ubuntu-26.04`, with an `ubuntu-26.04`/`macos-26`/`windows-2025` portability matrix, and a guard test rejects any `-latest` runner alias; the operational fork defines `arc-runner-set-linux-amd64` and `arc-runner-set-gpu-xpu` and no arm64 set | `internal/config/hierarchy.go:58-69`, `.github/workflows/*.yml` (`runs-on`), `.github/workflows/portability.yml` (`matrix.include`), `internal/forge/runner_label_guard_test.go`, `lusoris/praetor:deploy/arc/runner-scale-set.yaml` |
+| ADR-0006 | Darwin targets route to GitHub-hosted `macos-14` and `macos-13` | the defaults are `macos-26` for `darwin/arm64` and `macos-26-intel` for `darwin/amd64`; `macos-14` carries a deprecated badge in actions/runner-images and `macos-13` is no longer published | `internal/config/hierarchy.go:39-69` (the comment cites the runner-images table) |
 
 ## Decision
 
@@ -52,7 +53,7 @@ each of them.
 
 Engine changes pass the gating pipeline (decision 3) and the debt ratchet: debt recorded in
 `.standards-baseline.json` is tolerated, new debt and debt in a touched file fail. CI enforces a
-total statement-coverage floor of 65% (`.github/workflows/ci.yml:196`), raised as coverage grows and
+total statement-coverage floor of 65% (`.github/workflows/ci.yml:217`), raised as coverage grows and
 never lowered. Releases are cut by pushing a `v*` tag, which runs
 `.github/workflows/release-binaries.yml`; none has been cut yet (#205), so nothing flows downstream
 as a release today.
@@ -86,9 +87,9 @@ request body.
 
 ### 4. Container delivery (supersedes ADR-0005)
 
-The production image is defined by `build/package/Dockerfile`: a `golang:` builder at the `go.mod`
-toolchain version compiling with `CGO_ENABLED=0`, and a `gcr.io/distroless/static-debian12:nonroot`
-runtime running as `65532:65532`. The Helm chart `deploy/helm/praetor` sets
+The production image is defined by `build/package/Dockerfile`: a digest-pinned `golang:` builder at
+the `go.mod` toolchain version compiling with `CGO_ENABLED=0`, and a digest-pinned
+`gcr.io/distroless/static-debian13:nonroot` runtime running as `65532:65532`. The Helm chart `deploy/helm/praetor` sets
 `readOnlyRootFilesystem: true`, a memory-backed `emptyDir` for scratch space and probes on
 `/livez` and `/readyz`; `praetorctl serve` answers `/healthz`, `/livez` and `/readyz` on `:8080`.
 
@@ -101,11 +102,29 @@ wiring such as an ArgoCD Application is operator data and lives in the operation
 ### 5. Runner routing (supersedes ADR-0006)
 
 Runner routing is policy resolution, not CI configuration. `config.LoadCascadingRunnerConfigContext`
-starts from `DefaultRunnerPolicy` (`internal/config/hierarchy.go:38-49`) and applies, in order,
+starts from `DefaultRunnerPolicy` (`internal/config/hierarchy.go:58-69`) and applies, in order,
 `.config/fleet.yaml`, `.config/orgs/<org>.yaml` and the `runners:` key of `.standards.yaml`.
 `runner.ResolveRunner` maps a target to a runner and rejects Darwin on a self-hosted ARC runner, and
 `praetorctl audit` checks that five targets resolve (`auditRunnerMatrix`). No workflow in this
-repository consumes the result: CI runs on GitHub-hosted runners.
+repository consumes the result: CI runs on GitHub-hosted `ubuntu-26.04`, and the portability
+matrix on `ubuntu-26.04`, `macos-26` and `windows-2025`.
+
+The default policy routes each target as follows; every route is ephemeral:
+
+| Target | Runner type | Label |
+| :-- | :-- | :-- |
+| `darwin/arm64` | GitHub-hosted | `macos-26` |
+| `darwin/amd64` | GitHub-hosted | `macos-26-intel` |
+| `linux/amd64`, and any target without a route (`Default`) | self-hosted ARC | `arc-runner-set-linux-amd64` |
+| `linux/arm64` | self-hosted ARC | `arc-runner-set-linux-arm64` |
+| `linux/gpu` | self-hosted ARC | `arc-runner-set-gpu-xpu` |
+
+The Darwin labels name an explicit macOS 26 image rather than `macos-latest`, which would move the
+whole Darwin tier the day GitHub promotes the next image; `internal/config/hierarchy.go` cites the
+actions/runner-images table this rests on. ADR-0006's `macos-14` and `macos-13` no longer apply:
+the first carries a deprecated badge there and the second is no longer published. The same rule
+holds for this repository's workflows, where `internal/forge/runner_label_guard_test.go` fails on
+any `ubuntu`, `macos` or `windows` `-latest` alias.
 
 ARC scale sets are operator data (`deploy/arc/` is an owner-only prefix). The operational fork
 defines `arc-runner-set-linux-amd64` and `arc-runner-set-gpu-xpu`. The default policy's
