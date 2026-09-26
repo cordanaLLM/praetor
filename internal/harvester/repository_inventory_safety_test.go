@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestInventoryRelativePathAndSymlinkMetadata(t *testing.T) {
@@ -84,10 +86,13 @@ func TestInventoryRemotePrivacyAndMalformedState(t *testing.T) {
 		"git@example.invalid:org/repo#private-fragment",
 		"git@example.invalid:org/repo?private-query#private-fragment",
 		"ssh://user:private-password@example.invalid/org/repo?private-query#private-fragment",
+		"https://user:private-password@example.invalid:badport/org/repo",
+		"user:private-password@example.invalid:org/repo",
 	} {
-		got, err := sanitizeRemote(input)
-		if err == nil && strings.Contains(got, "private-") {
-			t.Errorf("remote secret retained: %q", got)
+		var failures []string
+		got, _ := parseRemoteURLs("origin\t"+input+" (fetch)", &failures)
+		if strings.Contains(strings.Join(got, " "), "private-") || strings.Contains(strings.Join(failures, " "), "private-") {
+			t.Errorf("remote secret retained: urls=%q errors=%q", got, failures)
 		}
 	}
 	var failures []string
@@ -102,5 +107,58 @@ func TestInventoryPartialCloneRemoteAnnotation(t *testing.T) {
 	urls, valid := parseRemoteURLs("origin\thttps://example.invalid/org/repo.git (fetch) [blob:none]\norigin\thttps://example.invalid/org/repo.git (push)", &failures)
 	if !valid || len(failures) != 0 || len(urls) != 1 || urls[0] != "https://example.invalid/org/repo.git" {
 		t.Fatalf("partial clone annotation changed remote identity: urls=%v valid=%t failures=%v", urls, valid, failures)
+	}
+}
+
+// TestInventoryRemoteForms_SharedParser pins the inventory to util.ParseGitRemoteURL, the
+// one network-remote parser: every accepted remote is recorded exactly as that parser
+// renders it, and every remote it rejects marks the inventory incomplete.
+func TestInventoryRemoteForms_SharedParser(t *testing.T) {
+	for _, tt := range []struct{ input, want string }{
+		{"https://token@example.invalid/org/repo.git", "https://example.invalid/org/repo.git"},
+		{"git@example.invalid:org/repo.git", "ssh://example.invalid/org/repo.git"},
+		{"ssh://git@example.invalid:2222/org/repo", "ssh://example.invalid:2222/org/repo"},
+		// git:// and git+ssh:// are network transports git itself speaks.
+		{"git://example.invalid/org/repo", "git://example.invalid/org/repo"},
+		{"git+ssh://example.invalid/org/repo", "git+ssh://example.invalid/org/repo"},
+	} {
+		var failures []string
+		urls, valid := parseRemoteURLs("origin\t"+tt.input+" (fetch)", &failures)
+		if !valid || len(urls) != 1 || urls[0] != tt.want {
+			t.Errorf("remote %q: urls=%v valid=%t errors=%v, want %q", tt.input, urls, valid, failures, tt.want)
+			continue
+		}
+		parsed, err := util.ParseGitRemoteURL(tt.input)
+		if err != nil || parsed.String() != urls[0] {
+			t.Errorf("remote %q: inventory recorded %q, util.ParseGitRemoteURL says %v, %v", tt.input, urls[0], parsed, err)
+		}
+	}
+}
+
+func TestInventoryRemoteForms_Negative_LocalAndHelperRemotes(t *testing.T) {
+	for _, input := range []string{
+		"/srv/git/org/repo",
+		"file:///srv/git/org/repo",
+		// A Windows drive path is local, not an ssh host named "C".
+		"C:/repos/org/repo",
+		"ext::ssh-helper/org/repo",
+		"ftp://example.invalid/org/repo",
+	} {
+		var failures []string
+		urls, valid := parseRemoteURLs("origin\t"+input+" (fetch)", &failures)
+		if valid || len(urls) != 0 || len(failures) == 0 {
+			t.Errorf("remote %q: urls=%v valid=%t errors=%v; want rejected", input, urls, valid, failures)
+		}
+	}
+}
+
+func TestInventoryRemoteForms_Boundary(t *testing.T) {
+	// One accepted and one rejected remote: the good one is kept, the inventory is
+	// marked incomplete, and the same remote twice is recorded once.
+	var failures []string
+	urls, valid := parseRemoteURLs("origin\tgit@example.invalid:org/repo (fetch)\n"+
+		"origin\tgit@example.invalid:org/repo (push)\nlocal\tC:/repos/org/repo (fetch)", &failures)
+	if valid || len(urls) != 1 || urls[0] != "ssh://example.invalid/org/repo" || len(failures) != 1 {
+		t.Fatalf("mixed remotes: urls=%v valid=%t errors=%v", urls, valid, failures)
 	}
 }

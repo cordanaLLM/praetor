@@ -186,6 +186,97 @@ func TestParseGitRemote_Boundary(t *testing.T) {
 	}
 }
 
+// TestParseGitRemote_Negative_ParseErrorsRedactUserInfo covers remotes that reach the URL
+// parser and fail there. net/url quotes the whole raw URL in its error, token included,
+// so ParseGitRemote must not pass that error on.
+func TestParseGitRemote_Negative_ParseErrorsRedactUserInfo(t *testing.T) {
+	const secret = "ghp_SECRET"
+	for _, raw := range []string{
+		"https://x-access-token:" + secret + "@github.com:badport/acme/widgets",
+		"https://x-access-token:" + secret + "@github.com/acme/wid%zzgets",
+		"https://x-access-token:" + secret + "@[::1/acme/widgets",
+		"ssh://git:" + secret + "@github.com:22:22/acme/widgets",
+		// A slash inside the password moves the parser's host boundary; the excerpt
+		// still drops everything up to the last @.
+		"https://x-access-token:" + secret + "/x@github.com:badport/acme/widgets",
+		// scp-like form with a password: git reads host "user", so this is no network
+		// remote, and the password stays out of the error.
+		"user:" + secret + "@github.com:acme/widgets",
+	} {
+		_, err := ParseGitRemote(raw)
+		if !errors.Is(err, ErrGitRemoteNotNetwork) {
+			t.Errorf("ParseGitRemote(%q) = %v; want ErrGitRemoteNotNetwork", raw, err)
+			continue
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("ParseGitRemote(%q) leaked user info: %v", raw, err)
+		}
+	}
+}
+
+func TestParseGitRemoteURL_Positive_RendersWithoutUserInfo(t *testing.T) {
+	tests := []struct{ raw, want string }{
+		// The path is kept as written, ".git" included, and the port survives.
+		{"https://x-access-token:secret@example.invalid:8443/org/repo.git", "https://example.invalid:8443/org/repo.git"},
+		{"git@example.invalid:org/repo.git", "ssh://example.invalid/org/repo.git"},
+		{"git@example.invalid:/org/repo", "ssh://example.invalid/org/repo"},
+		{"ssh://user:pw@example.invalid/org/repo?q=1#frag", "ssh://example.invalid/org/repo"},
+		{"git://example.invalid/org/repo", "git://example.invalid/org/repo"},
+		{"git+ssh://example.invalid/org/repo", "git+ssh://example.invalid/org/repo"},
+		// A single path segment is still a network remote; ParseGitRemote is the one
+		// that needs <owner>/<repo>.
+		{"https://example.invalid/repo", "https://example.invalid/repo"},
+	}
+	for _, tt := range tests {
+		got, err := ParseGitRemoteURL(tt.raw)
+		if err != nil {
+			t.Errorf("ParseGitRemoteURL(%q): %v", tt.raw, err)
+			continue
+		}
+		if got.String() != tt.want {
+			t.Errorf("ParseGitRemoteURL(%q) = %q, want %q", tt.raw, got.String(), tt.want)
+		}
+	}
+}
+
+func TestParseGitRemoteURL_Negative_NotANetworkRemote(t *testing.T) {
+	for _, raw := range []string{
+		"/srv/git/org/repo",
+		"file:///srv/git/org/repo",
+		"C:/repos/org/repo",
+		"ext::ssh-helper/org/repo",
+		"host:org/repo@evil",
+		"https://example.invalid",
+		"https://example.invalid/",
+		"mailto:someone@example.invalid",
+		"ftp://example.invalid/org/repo",
+	} {
+		if got, err := ParseGitRemoteURL(raw); !errors.Is(err, ErrGitRemoteNotNetwork) {
+			t.Errorf("ParseGitRemoteURL(%q) = %v, %v; want ErrGitRemoteNotNetwork", raw, got, err)
+		}
+	}
+}
+
+func TestParseGitRemoteURL_Boundary(t *testing.T) {
+	// A two-letter scp host is a host, a one-letter one is a Windows drive.
+	if got, err := ParseGitRemoteURL("gh:org/repo"); err != nil || got.Host != "gh" {
+		t.Fatalf("two-letter scp host = %v, %v", got, err)
+	}
+	if _, err := ParseGitRemoteURL("c:org/repo"); !errors.Is(err, ErrGitRemoteNotNetwork) {
+		t.Fatalf("one-letter scp host accepted: %v", err)
+	}
+	// Surrounding whitespace is trimmed; the host keeps its case for the caller to fold.
+	got, err := ParseGitRemoteURL("  https://Example.Invalid/org/repo \n")
+	if err != nil || got.String() != "https://Example.Invalid/org/repo" {
+		t.Fatalf("trimmed remote = %v, %v", got, err)
+	}
+	// The error excerpt is bounded.
+	_, err = ParseGitRemoteURL("ftp://example.invalid/" + strings.Repeat("a", 4*maxRemoteExcerptBytes))
+	if err == nil || len(err.Error()) > 3*maxRemoteExcerptBytes {
+		t.Fatalf("rejection excerpt is unbounded: %v", err)
+	}
+}
+
 func TestRunCommand(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
