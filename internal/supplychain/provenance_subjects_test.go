@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,7 +57,7 @@ func releaseManifest(t *testing.T, names []string) (string, map[string]string) {
 }
 
 // Positive: the statement built from a manifest names every listed file, with the digest
-// computed from the file beside the manifest, and is marked unsigned.
+// computed from the file beside the manifest, and encodes as a strict in-toto v1 Statement.
 func TestGenerateSLSAProvenanceFromChecksumsNamesEveryFile(t *testing.T) {
 	names := []string{"standards_1.0.0_linux_amd64.tar.gz", "sboms/standards_1.0.0_linux_amd64.tar.gz.cyclonedx.json"}
 	manifest, digests := releaseManifest(t, names)
@@ -64,13 +65,20 @@ func TestGenerateSLSAProvenanceFromChecksumsNamesEveryFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateSLSAProvenanceFromChecksums: %v", err)
 	}
-	if len(stmt.Subject) != 2 || stmt.PredicateType != "https://slsa.dev/provenance/v1" || stmt.Emission.Signed {
+	if len(stmt.Subject) != 2 || stmt.PredicateType != "https://slsa.dev/provenance/v1" {
 		t.Fatalf("statement = %+v", stmt)
 	}
 	for i, name := range names {
 		if stmt.Subject[i].Name != name || stmt.Subject[i].Digest["sha256"] != digests[name] {
 			t.Errorf("subject %d = %+v, want %s sha256 %s", i, stmt.Subject[i], name, digests[name])
 		}
+	}
+	data, err := json.Marshal(stmt)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := CheckInTotoStatement(data); err != nil {
+		t.Errorf("manifest statement fails the strict in-toto check: %v", err)
 	}
 }
 

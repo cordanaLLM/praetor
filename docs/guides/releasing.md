@@ -151,13 +151,18 @@ statement cannot name a digest nobody computed. The run is refused when:
 - `--digest` is malformed or differs from the computed digest. The error names the
   computed digest.
 
-Every statement carries a `praetorEmission` extension field with `"signed": false`, and
-every run prints an `UNSIGNED` warning on stderr, so stdout stays parseable JSON. The
-in-toto v1 [parsing rules](https://github.com/in-toto/attestation/blob/main/spec/v1/README.md#parsing-rules)
-tell consumers to ignore fields they do not recognize, so the marker changes nothing for
-a verifier. `internal/supplychain/slsa_test.go`,
-`internal/supplychain/provenance_subjects_test.go` and
-`cmd/standardsctl/provenance_cli_test.go` cover these cases.
+Every run prints an `UNSIGNED` warning on stderr, so stdout stays parseable JSON, and the
+`--out` summary line calls the statement unsigned. The statement itself holds exactly the
+four in-toto v1 [Statement](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md)
+fields, `_type`, `subject`, `predicateType` and `predicate`, and each subject only `name`
+and `digest`. It carries no unsigned marker of its own, because the in-toto v1 parsing
+rules do not bind every verifier: sigstore-go, which `cosign verify-blob-attestation` uses,
+decodes the signed payload with `protojson` and fails with `unable to extract statement from
+envelope` on any field the Statement does not define. `supplychain.CheckInTotoStatement`
+(`internal/supplychain/intoto.go`) checks that shape before the command writes anything
+and refuses a statement that does not fit it. `internal/supplychain/slsa_test.go`,
+`internal/supplychain/intoto_test.go`, `internal/supplychain/provenance_subjects_test.go`
+and `cmd/standardsctl/provenance_cli_test.go` cover these cases.
 
 ## Cutting a release
 

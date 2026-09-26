@@ -22,36 +22,18 @@ var sha256HexPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // release archive and binary this repository builds with room to spare.
 const MaxArtifactBytes int64 = 2 << 30
 
-// emissionNotice is the human-readable half of the UnsignedEmission extension field.
-const emissionNotice = "praetorctl emitted this in-toto statement unsigned. It is not an attestation on its own: " +
-	"trust it only inside a signed DSSE envelope whose signature and signer identity you verify."
-
-// SLSAStatement represents an in-toto v1 statement embedding SLSA v1.0 provenance.
+// SLSAStatement represents an in-toto v1 statement embedding SLSA v1.0 provenance. It holds
+// exactly the four fields the in-toto v1 Statement defines
+// (https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md) and nothing else:
+// sigstore-go, which cosign verify-blob-attestation uses, decodes a DSSE payload with
+// protojson and rejects any field the Statement message does not declare, so a single extra
+// top-level field makes a signed statement unverifiable. CheckInTotoStatement enforces the
+// shape on the encoded JSON.
 type SLSAStatement struct {
 	Type          string        `json:"_type"`
 	Subject       []Subject     `json:"subject"`
-	Emission      Emission      `json:"praetorEmission"`
 	PredicateType string        `json:"predicateType"`
 	Predicate     SLSAPredicate `json:"predicate"`
-}
-
-// Emission is an in-toto extension field that records how praetorctl produced the
-// statement. The in-toto v1 parsing rules require consumers to ignore unrecognized fields
-// (https://github.com/in-toto/attestation/blob/main/spec/v1/README.md#parsing-rules), so it
-// never changes the meaning of the subject or predicate; it exists so that a reader of the
-// bare JSON cannot mistake it for a verified attestation.
-type Emission struct {
-	// Signed is false: praetorctl has no signing step.
-	Signed bool `json:"signed"`
-	// SubjectDigest names where the subject digest came from.
-	SubjectDigest string `json:"subjectDigest"`
-	// Notice states what a consumer must do before trusting the statement.
-	Notice string `json:"notice"`
-}
-
-// UnsignedEmission is the Emission every statement from GenerateSLSAProvenance carries.
-func UnsignedEmission() Emission {
-	return Emission{Signed: false, SubjectDigest: "computed-from-artifact-bytes", Notice: emissionNotice}
 }
 
 // Subject describes the artifact being attested.
@@ -110,8 +92,8 @@ type ProvenanceRequest struct {
 
 // GenerateSLSAProvenance constructs an unsigned in-toto SLSA v1.0 provenance statement
 // whose subject digest is the SHA-256 of the artifact file's bytes. It does not sign the
-// statement: the returned value carries the UnsignedEmission extension field, and it is not
-// an attestation until a signer wraps it in a DSSE envelope that a verifier checks.
+// statement: a bare statement is never an attestation, and it becomes one only when a signer
+// wraps it in a DSSE envelope that a verifier checks.
 func GenerateSLSAProvenance(ctx context.Context, req ProvenanceRequest) (*SLSAStatement, error) {
 	if err := checkProvenanceContext(ctx); err != nil {
 		return nil, err
@@ -140,8 +122,8 @@ type ChecksumsRequest struct {
 // each digest is computed from the listed file's bytes, and the manifest's digest is only
 // the cross-check ProvenanceRequest.ExpectedSHA256 is, so a manifest line that no longer
 // matches its file refuses the whole statement instead of attesting either value. The
-// statement carries UnsignedEmission; the release workflow signs it with
-// `cosign attest-blob --statement` (.github/workflows/release-binaries.yml).
+// release workflow signs the statement with `cosign attest-blob --statement`
+// (.github/workflows/release-binaries.yml).
 func GenerateSLSAProvenanceFromChecksums(ctx context.Context, req ChecksumsRequest) (*SLSAStatement, error) {
 	if err := checkProvenanceContext(ctx); err != nil {
 		return nil, err
@@ -201,9 +183,8 @@ func checkProvenanceContext(ctx context.Context) error {
 func newStatement(subjects []Subject, builderID string) *SLSAStatement {
 	now := time.Now().UTC().Format(time.RFC3339)
 	return &SLSAStatement{
-		Type:          "https://in-toto.io/Statement/v1",
+		Type:          inTotoStatementType,
 		Subject:       subjects,
-		Emission:      UnsignedEmission(),
 		PredicateType: "https://slsa.dev/provenance/v1",
 		Predicate: SLSAPredicate{
 			BuildDefinition: BuildDefinition{

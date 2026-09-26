@@ -77,6 +77,9 @@ func runProvenance(args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed formatting SLSA statement: %w", err)
 	}
+	if err := supplychain.CheckInTotoStatement(data); err != nil {
+		return fmt.Errorf("refusing a statement cosign verify-blob-attestation would reject: %w", err)
+	}
 	fmt.Fprintln(os.Stderr, unsignedProvenanceWarning)
 
 	if flags.out != "" {

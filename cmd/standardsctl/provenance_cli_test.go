@@ -34,8 +34,8 @@ func TestRunProvenance_Positive_SubjectDigestFromFile(t *testing.T) {
 	if stmt.Subject[0].Digest["sha256"] != want || stmt.Subject[0].Name != "praetorctl" {
 		t.Errorf("subject = %+v, want praetorctl sha256 %s", stmt.Subject, want)
 	}
-	if stmt.Emission.Signed {
-		t.Error("statement claims to be signed")
+	if err := supplychain.CheckInTotoStatement([]byte(stdout)); err != nil {
+		t.Errorf("stdout is not a strict in-toto v1 statement: %v", err)
 	}
 
 	out := filepath.Join(t.TempDir(), "provenance.json")
@@ -49,8 +49,11 @@ func TestRunProvenance_Positive_SubjectDigestFromFile(t *testing.T) {
 		t.Errorf("summary does not name the statement unsigned with its digest: %q", stdout)
 	}
 	data, err := os.ReadFile(out)
-	if err != nil || !strings.Contains(string(data), `"praetorEmission"`) || !strings.Contains(string(data), `"praetorctl-v1"`) {
-		t.Errorf("written statement lacks the unsigned marker or subject name: %v\n%s", err, data)
+	if err != nil || !strings.Contains(string(data), `"praetorctl-v1"`) {
+		t.Errorf("written statement lacks the subject name: %v\n%s", err, data)
+	}
+	if err := supplychain.CheckInTotoStatement(data); err != nil || strings.Contains(string(data), "praetorEmission") {
+		t.Errorf("written statement is not a strict in-toto v1 statement cosign can verify: %v\n%s", err, data)
 	}
 }
 
@@ -122,8 +125,11 @@ func TestRunProvenance_Positive_ChecksumsCoverEveryArchive(t *testing.T) {
 	if len(stmt.Subject) != 2 || stmt.Subject[1].Name != order[1] || stmt.Subject[1].Digest["sha256"] != digests[order[1]] {
 		t.Fatalf("subjects = %+v", stmt.Subject)
 	}
-	if stmt.Predicate.RunDetails.Builder.ID != builder || stmt.Emission.Signed {
-		t.Fatalf("builder = %q, emission = %+v", stmt.Predicate.RunDetails.Builder.ID, stmt.Emission)
+	if stmt.Predicate.RunDetails.Builder.ID != builder {
+		t.Fatalf("builder = %q, want %q", stmt.Predicate.RunDetails.Builder.ID, builder)
+	}
+	if err := supplychain.CheckInTotoStatement(data); err != nil {
+		t.Errorf("written statement is not a strict in-toto v1 statement: %v", err)
 	}
 }
 
