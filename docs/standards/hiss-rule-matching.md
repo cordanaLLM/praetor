@@ -205,9 +205,9 @@ the lines up to that statement, not every function below it.
 Mutual and indirect recursion need a call graph across functions and stay undecided for both
 languages, as do nested-fn recursion, recursion inside a trait impl, turbofish or path-qualified
 self-calls in Rust, and lambda recursion in Python. `HISS-01/rust/gap/` and `HISS-01/python/gap/`
-record each one. So does `HISS-01/rust/gap/unrecognised-header.rs`: a function behind a header the
-Rust scanner does not recognise yet (`pub(super)`, `const`, `unsafe` or `extern fn`) is never
-opened, so its self-call goes unseen.
+record each one. A Rust function behind any header form that "Rust: scopes follow braces" lists
+(`pub(super)`, `const`, `unsafe`, `extern "C"`) is decided like a plain `fn`
+(`HISS-01/rust/positive/qualified-header.rs`).
 
 ## HISS-20: claims are replayed
 
