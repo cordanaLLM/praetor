@@ -1,5 +1,8 @@
-// Package templates is the single source of every file body praetor scaffolds into an
-// adopting repository, and of the renderer that turns a body into a file.
+// Package templates holds the file bodies flavor apply scaffolds into a repository
+// (TemplateItem.Source in internal/flavor) and the renderer that turns a body into a file.
+// Adoption's own artefacts -- the Makefile, CONTRIBUTING, labels, the pull request and ADR
+// templates, SECURITY and the agent harness -- are still Go constants in internal/adopt,
+// rendered through Render rather than kept here.
 //
 // Each shipped body is a file below this directory, compiled into the binary with go:embed,
 // so the file a reviewer reads here is byte for byte the file an adopter receives. Before

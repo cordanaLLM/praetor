@@ -69,6 +69,28 @@ reader. Each validator checks what its format makes checkable and no more:
 | `validYAMLMapping`, `validJSONObject` | a non-empty mapping or object, as for settings |
 | `carriesCode` | a line that is not a comment, for JavaScript, TypeScript and `tsconfig.json`, which is JSON with comments |
 
+`flavor apply` asks a narrower question than the audit. It writes nothing under the canonical name
+while any `AltPaths` file exists, even one the audit rejects (a comment-only `tsconfig.base.json`, or a
+link to a config outside the repository): that file is the one the toolchain reads, and a scaffolded
+rival beside it would contradict it. The audit keeps reporting the template missing until the
+alternative's content passes.
+
+**Scaffolded workflows and images must run as written.** A workflow step may call only what the job
+installs: the Go CI job runs `go vet ./...` and `go test -race ./...`, not `make verify-all`, whose
+recipes call `praetorctl`, which no step installs. Praetor's own gates run from the git hooks adoption
+writes. `TestScaffoldedWorkflowsRunWithoutAPraetorBinary` (`internal/flavor/emitted_content_test.go`)
+fails on a step naming the praetor binary. The Go `Dockerfile` builds the module's only main package,
+wherever it lives; with none or several, `docker build` stops and names them, and
+`--build-arg MAIN_PACKAGE=./cmd/<name>` picks one. `TestScaffoldedDockerfileBuilderCompilesTheModulesMainPackage`
+(`internal/flavor/dockerfile_build_test.go`) executes the builder instruction against each layout.
+
+**Adoption scaffolds a detected flavor only.** `praetorctl adopt` applies the flavor detection names,
+before it derives the branch ruleset, so the scaffolded CI job is a required check from the first run.
+A repository no flavor detects gets no flavor templates and a warning naming
+`praetorctl flavor apply --flavor=<name>`. Adoption used to apply `go-library` there, and its CI job
+(`setup-go` against a `go.mod` the repository lacks) became a required check no pull request could
+pass. `flavor audit` already refused such a repository instead of guessing a flavor.
+
 When you add a template, give it a `Source` (add the body under `templates/<ecosystem>/`) or a
 `Producer`, and a `Validator`. `TestEveryRequiredTemplateStatesItsContent`
 (`internal/flavor/template_content_test.go`) fails otherwise, and also fails when the scaffolded body
