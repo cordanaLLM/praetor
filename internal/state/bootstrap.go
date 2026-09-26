@@ -121,6 +121,39 @@ func existingWorkingDirOutcome(working *os.Root) (BootstrapOutcome, error) {
 	return BootstrapSeeded, nil
 }
 
+// LedgerPresent reports whether rootPath's private working directory holds any
+// ledger file, by the same test InitWorkingDirIfAbsentContext seeds on. An absent
+// working directory holds none, and so does a path under that name that is a
+// symlink or a regular file, which no state command writes through. A command
+// that may create the ledger as a side effect probes before and after it runs to
+// learn whether it did.
+func LedgerPresent(ctx context.Context, rootPath string) (present bool, err error) {
+	if ctx == nil {
+		return false, errors.New("ledger inspection requires a context")
+	}
+	project, err := contextopt.OpenDirectory(ctx, rootPath)
+	if err != nil {
+		return false, fmt.Errorf("open project to inspect its ledger: %w", err)
+	}
+	defer func() { err = errors.Join(err, project.Close()) }()
+	info, err := project.Lstat(WorkingDirName)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("inspect private working directory: %w", err)
+	case !info.IsDir():
+		return false, nil
+	}
+	working, err := project.OpenRoot(WorkingDirName)
+	if err != nil {
+		return false, fmt.Errorf("open private working directory: %w", err)
+	}
+	defer func() { err = errors.Join(err, working.Close()) }()
+	ledgerless, err := workingDirLedgerless(working)
+	return err == nil && !ledgerless, err
+}
+
 // workingDirLedgerless reports whether the working directory holds none of the
 // ledger files an initialized one carries. Any existing path under one of those
 // names, regular file or not, counts as present: the audit judges it, not this.

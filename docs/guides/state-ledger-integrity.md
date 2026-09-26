@@ -40,13 +40,22 @@ either absent or holds its whole template, never a zero-byte file an audit would
 read as a corrupt ledger.
 
 Both forms of `praetorctl state init` then make Git ignore the directory, unless
-the path is not a directory at all. Git is asked whether its own ignore rules
-exclude `.workingdir` itself; global excludes do not count, because every clone
-must inherit the rule. A directory excluded as a whole keeps every file under it
-private, whatever negations follow; a rule such as `.workingdir/*` followed by
-`!.workingdir/STATE.md` does not. The command acts on the answer:
+the path is not a directory at all. Every other command that seeds a missing
+ledger as a side effect does the same, but only when that run created the ledger:
+`state sync`, `state task add`, `state bug add`, `state bug resolve` (which seeds
+the ledger before it reports an unknown ID), `state question add` and
+`praetorctl flavor apply`. A ledger that existed before the command ran is left
+to `state init`. `state sync` takes this step before it records the working tree,
+so the snapshot it writes already includes the new `.gitignore` and the
+commit-msg hook's `state sync --verify` accepts it.
 
-| Git's answer | What `state init` does |
+Git is asked whether its own ignore rules exclude `.workingdir` itself; global
+excludes do not count, because every clone must inherit the rule. A directory
+excluded as a whole keeps every file under it private, whatever negations
+follow; a rule such as `.workingdir/*` followed by `!.workingdir/STATE.md` does
+not. The command acts on the answer:
+
+| Git's answer | What the command does |
 | :--- | :--- |
 | the directory is in no Git work tree | nothing; no commit can publish it |
 | the directory is already excluded, in any spelling | nothing; `.gitignore` stays byte for byte |
@@ -58,7 +67,8 @@ in [`internal/adopt/gitignore.go`](https://github.com/cordanaLLM/praetor/blob/ma
 so a later `praetorctl adopt` recognizes it as its own. A `.gitignore` that
 cannot be merged, such as one with an unterminated managed block, fails the
 command. The behaviour is covered by
-[`internal/adopt/private_ignore_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/private_ignore_test.go)
+[`internal/adopt/private_ignore_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/private_ignore_test.go),
+[`internal/state/ledger_present_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/ledger_present_test.go)
 and
 [`cmd/standardsctl/state_ignore_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/state_ignore_test.go).
 

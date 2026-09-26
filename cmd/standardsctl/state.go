@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -105,11 +106,12 @@ func runStateInit(args []string) error {
 		return fmt.Errorf("state init failed: %w", err)
 	}
 	fmt.Printf("Initialized %s/ in %s\n", state.WorkingDirName, dir)
-	return ignoreStateLedger(dir)
+	return ignoreStateLedger(context.Background(), dir)
 }
 
 func bootstrapState(dir string) error {
-	outcome, err := state.InitWorkingDirIfAbsentContext(context.Background(), dir)
+	ctx := context.Background()
+	outcome, err := state.InitWorkingDirIfAbsentContext(ctx, dir)
 	if err != nil {
 		return fmt.Errorf("state bootstrap failed: %w", err)
 	}
@@ -117,17 +119,17 @@ func bootstrapState(dir string) error {
 	if outcome == state.BootstrapUnseedable || outcome == state.BootstrapNestedRepository {
 		return nil
 	}
-	return ignoreStateLedger(dir)
+	return ignoreStateLedger(ctx, dir)
 }
 
-// ignoreStateLedger makes Git exclude the ledger `state init` just wrote or kept, through
+// ignoreStateLedger makes Git exclude the ledger a command wrote or kept, through
 // the same .gitignore writer adoption uses, and says so whenever it had to act. Standalone
 // initialization used to leave the private files unignored in every repository that had
 // not been adopted, so the next broad staging command would have published them.
-func ignoreStateLedger(dir string) error {
-	outcome, err := adopt.EnsurePrivateIgnore(context.Background(), dir)
+func ignoreStateLedger(ctx context.Context, dir string) error {
+	outcome, err := adopt.EnsurePrivateIgnore(ctx, dir)
 	if err != nil {
-		return fmt.Errorf("state init could not make Git ignore %s/: %w", state.WorkingDirName, err)
+		return fmt.Errorf("could not make Git ignore %s/ in %s: %w", state.WorkingDirName, dir, err)
 	}
 	switch outcome {
 	case adopt.PrivateIgnoreWritten:
@@ -137,6 +139,54 @@ func ignoreStateLedger(dir string) error {
 			state.WorkingDirName, dir, state.WorkingDirName)
 	}
 	return nil
+}
+
+// withLedgerIgnore runs a command that may create the private ledger as a side effect
+// and, when the ledger was absent before it ran and is present after, makes Git ignore
+// it through ignoreStateLedger. `state sync`, `task add`, `bug add`, `bug resolve`,
+// `question add` and `flavor apply` all seed the ledger on first use, while only
+// `state init` followed that with the ignore step, so the first sync in an unadopted
+// repository left .workingdir/ one `git add .` away from publication.
+//
+// The second probe runs whatever the command returned: `bug resolve` of an unknown ID
+// seeds the ledger before it fails. A ledger that already existed is not this command's
+// doing and stays as it is; `state init` reconciles it explicitly. When the first probe
+// fails the ledger is treated as absent, so the ignore step is attempted rather than
+// skipped. When the second probe fails too, the command's own error names the cause.
+func withLedgerIgnore(ctx context.Context, dir string, run func() error) error {
+	existed, probeErr := ledgerPresent(ctx, dir)
+	runErr := run()
+	if probeErr == nil && existed {
+		return runErr
+	}
+	created, err := ledgerPresent(ctx, dir)
+	switch {
+	case err != nil && runErr != nil:
+		return runErr
+	case err != nil:
+		return fmt.Errorf("could not tell whether Git must ignore the %s/ ledger in %s: %w", state.WorkingDirName, dir, err)
+	case !created:
+		return runErr
+	}
+	return errors.Join(runErr, ignoreStateLedger(ctx, dir))
+}
+
+// seedIgnoredLedger seeds a missing ledger the way SyncState would and makes Git ignore
+// it before the sync records the working tree. The ignore step may write .gitignore, and a
+// snapshot recorded ahead of that write is stale the moment the command returns, so the
+// commit-msg hook's `state sync --verify` would refuse the very next commit.
+func seedIgnoredLedger(ctx context.Context, dir string) error {
+	return withLedgerIgnore(ctx, dir, func() error {
+		_, err := state.InitWorkingDirIfAbsentContext(ctx, dir)
+		return err
+	})
+}
+
+// ledgerPresent bounds one state.LedgerPresent probe (HISS-02).
+func ledgerPresent(ctx context.Context, dir string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return state.LedgerPresent(ctx, dir)
 }
 
 // bootstrapReport states what the bootstrap actually did. Three of the five
@@ -180,6 +230,9 @@ func runStateSync(args []string) error {
 		return state.VerifyStateSync(ctx, dir)
 	}
 
+	if err := seedIgnoredLedger(ctx, dir); err != nil {
+		return fmt.Errorf("state sync failed: %w", err)
+	}
 	snap, err := state.SyncState(ctx, dir, *logMsg)
 	if err != nil {
 		return fmt.Errorf("state sync failed: %w", err)
@@ -339,18 +392,20 @@ func runStateBugAdd(args []string) error {
 		return fmt.Errorf("--title is required")
 	}
 
-	entry, err := state.AddBug(*dir, state.BugEntry{
-		Title:    *title,
-		Severity: *sev,
-		Location: *loc,
-		Context:  *ctxStr,
-		Status:   "open",
+	return withLedgerIgnore(context.Background(), *dir, func() error {
+		entry, err := state.AddBug(*dir, state.BugEntry{
+			Title:    *title,
+			Severity: *sev,
+			Location: *loc,
+			Context:  *ctxStr,
+			Status:   "open",
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Added bug [%s] %s (%s, %s)\n", entry.ID, entry.Title, entry.Severity, entry.Location)
+		return nil
 	})
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Added bug [%s] %s (%s, %s)\n", entry.ID, entry.Title, entry.Severity, entry.Location)
-	return nil
 }
 
 func runStateBugList(dir string) error {
@@ -380,11 +435,13 @@ func runStateBugResolve(args []string) error {
 	id := rest[0]
 	res := rest[1]
 	dir := stateDir(dirFlag, rest, 2)
-	if err := state.ResolveBug(dir, id, res); err != nil {
-		return err
-	}
-	fmt.Printf("Resolved bug %s: %s\n", id, res)
-	return nil
+	return withLedgerIgnore(context.Background(), dir, func() error {
+		if err := state.ResolveBug(dir, id, res); err != nil {
+			return err
+		}
+		fmt.Printf("Resolved bug %s: %s\n", id, res)
+		return nil
+	})
 }
 
 func runStateQuestion(args []string) error {
@@ -430,17 +487,19 @@ func runStateQuestionAdd(args []string) error {
 		}
 	}
 
-	entry, err := state.AddQuestion(*dir, state.QuestionEntry{
-		Question: *prompt,
-		Options:  optList,
-		Context:  *ctxStr,
-		Status:   "pending",
+	return withLedgerIgnore(context.Background(), *dir, func() error {
+		entry, err := state.AddQuestion(*dir, state.QuestionEntry{
+			Question: *prompt,
+			Options:  optList,
+			Context:  *ctxStr,
+			Status:   "pending",
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Added question [%s] %s\n", entry.ID, entry.Question)
+		return nil
 	})
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Added question [%s] %s\n", entry.ID, entry.Question)
-	return nil
 }
 
 func runStateQuestionList(dir string) error {
@@ -527,11 +586,13 @@ func runTaskAdd(args []string) error {
 	}
 	desc := rest[0]
 	dir := stateDir(dirFlag, rest, 1)
-	if err := state.AddTask(dir, desc); err != nil {
-		return err
-	}
-	fmt.Printf("[PASS] Task added to %s: %s\n", filepath.Join(dir, state.WorkingDirName, "OPEN.md"), desc)
-	return nil
+	return withLedgerIgnore(context.Background(), dir, func() error {
+		if err := state.AddTask(dir, desc); err != nil {
+			return err
+		}
+		fmt.Printf("[PASS] Task added to %s: %s\n", filepath.Join(dir, state.WorkingDirName, "OPEN.md"), desc)
+		return nil
+	})
 }
 
 func runTaskComplete(args []string) error {
