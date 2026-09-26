@@ -4,10 +4,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // MaxToolProperties bounds the number of schema properties a tool may declare.
 const MaxToolProperties = 500
+
+const (
+	// maxReportedArguments bounds how many undeclared keys one rejection names.
+	maxReportedArguments = 8
+	// maxReportedKeyBytes bounds each echoed key: keys are untrusted client input.
+	maxReportedKeyBytes = 64
+)
+
+// ErrUndeclaredArgument reports a tools/call argument key that the tool's input schema
+// does not declare in its properties.
+var ErrUndeclaredArgument = errors.New("mcp: argument not declared by the tool input schema")
 
 // ErrTooManyProperties reports a tool schema that exceeds MaxToolProperties.
 var ErrTooManyProperties = errors.New("mcp: tool schema exceeds maximum property count")
@@ -38,6 +53,57 @@ type ToolInputSchema struct {
 	Type       string                    `json:"type"`
 	Properties map[string]PropertySchema `json:"properties"`
 	Required   []string                  `json:"required,omitempty"`
+	// AdditionalProperties is the JSON Schema keyword of the same name. Nil leaves it
+	// unstated on the wire, which keeps spec-only descriptors unchanged; the executable
+	// tool constructors set it to false because CheckArguments rejects undeclared keys
+	// unless it is explicitly true, and the published schema must say so.
+	AdditionalProperties *bool `json:"additionalProperties,omitempty"`
+}
+
+// CheckArguments rejects every argument key absent from Properties unless
+// AdditionalProperties is explicitly true. Handlers read optional arguments by exact
+// name and fall back to a default when the key is absent, so without this check a
+// misspelled flag such as "dryrun" silently selects the default of "dry_run" and runs
+// the mutating path. The error names the undeclared keys (sorted, at most
+// maxReportedArguments, each truncated) and the declared ones, so a model can correct
+// the call.
+func (s ToolInputSchema) CheckArguments(args map[string]any) error {
+	if s.AdditionalProperties != nil && *s.AdditionalProperties {
+		return nil
+	}
+	var undeclared []string
+	for key := range args {
+		if _, declared := s.Properties[key]; !declared {
+			undeclared = append(undeclared, key)
+		}
+	}
+	if len(undeclared) == 0 {
+		return nil
+	}
+	return undeclaredArgumentsError(undeclared, s.Properties)
+}
+
+// undeclaredArgumentsError formats the bounded CheckArguments rejection.
+func undeclaredArgumentsError(undeclared []string, properties map[string]PropertySchema) error {
+	sort.Strings(undeclared)
+	shown := min(len(undeclared), maxReportedArguments)
+	names := make([]string, 0, shown+1)
+	for i := 0; i < shown; i++ {
+		names = append(names, fmt.Sprintf("%q", util.TruncateExcerpt(undeclared[i], maxReportedKeyBytes)))
+	}
+	if extra := len(undeclared) - shown; extra > 0 {
+		names = append(names, fmt.Sprintf("and %d more", extra))
+	}
+	declared := make([]string, 0, len(properties))
+	for key := range properties {
+		declared = append(declared, key)
+	}
+	sort.Strings(declared)
+	accepted := "none"
+	if len(declared) > 0 {
+		accepted = strings.Join(declared, ", ")
+	}
+	return fmt.Errorf("%w: %s (declared: %s)", ErrUndeclaredArgument, strings.Join(names, ", "), accepted)
 }
 
 // ContentItem represents a typed content payload in an MCP tool execution result.
@@ -97,6 +163,10 @@ func newTool(kind, name, description string, schema ToolInputSchema, handler Too
 	}
 	if schema.Type == "" {
 		schema.Type = "object"
+	}
+	if schema.AdditionalProperties == nil {
+		strict := false
+		schema.AdditionalProperties = &strict
 	}
 	tool := Tool{
 		Name:        name,
