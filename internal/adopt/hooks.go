@@ -8,8 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -112,14 +114,26 @@ func buildLefthookYAMLFor(checkpoint bool) string {
 		"    gate:\n      run: " + governed("gate run --path=.") + "\n"
 }
 
-// blockEvasionPY is the agent PreToolUse interceptor. It is not a git hook: git skips
-// hooks entirely on --no-verify, so only the agent harness can observe the command.
-const blockEvasionPY = `#!/usr/bin/env python3
-"""Agent PreToolUse evasion interceptor (HISS).
+// blockEvasionTemplate is the agent PreToolUse interceptor adoption writes. It is not a git
+// hook: git skips hooks entirely on --no-verify, so only the agent harness can observe the
+// command. buildBlockEvasionPY fills the placeholders from internal/agenthook.
+//
+// It used to carry its own copy of the rules, older and weaker than the engine's, and it
+// allowed what it could not read: an empty or non-JSON stdin, a payload without
+// tool_input.command, and it crashed with exit 1 (not blocking) on a JSON array. It now reads
+// a bounded stdin and refuses, with the blocking exit 2, any input that is not one JSON object
+// carrying a nonempty tool_input.command. Native payloads of other clients are agenthook's
+// dialects, reached through `praetorctl hook`; this script does not guess at them.
+const blockEvasionTemplate = `#!/usr/bin/env python3
+"""Agent PreToolUse evasion interceptor (HISS), written by praetorctl adopt.
 
-Wire this script as a PreToolUse hook of the agent harness. The harness passes the
-pending tool call as JSON on stdin (the shell command lives at tool_input.command) or
-as argv. Exit code 2 blocks the call and returns the reason to the agent.
+Wire this script as a PreToolUse hook of the agent harness's shell tool. The harness passes
+the pending tool call as one JSON object on stdin with the shell command at
+tool_input.command; a command may instead be passed as arguments. Exit code 2 blocks the
+call and returns the reason to the agent. Input of any other shape is refused, not allowed.
+
+The rules are the engine's built-in command policy (internal/agenthook), rendered at
+adoption; operator rules belong in hooks.command_policy.deny of .standards.yaml.
 
 A git hook cannot observe --no-verify because git skips hooks entirely, so this script
 is deliberately not part of lefthook.yml.
@@ -129,50 +143,90 @@ import os
 import re
 import sys
 
-BLOCKED_PATTERNS = [
-    r"--no-verify\b",
-    r"\bgit\s+commit\b.*\s-n\b",
-    r"LEFTHOOK=0\b",
-    r"SKIP=.*git",
-    r"core\.hooksPath\s*=\s*/dev/null",
-    r"rm\s+(-rf?\s+)?\.git/hooks",
-]
-
+MAX_INPUT_BYTES = {{MAX_INPUT_BYTES}}
 BLOCK_EXIT = 2
+
+RULES = [
+{{RULES}}]
+
+LEFTHOOK_DISABLED = {{LEFTHOOK_DISABLED}}
+LEFTHOOK_NARROWING = {{LEFTHOOK_NARROWING}}
+
+
+def block(invariant, reason):
+    sys.stderr.write("[BLOCKED BY " + invariant + "] " + reason + "\n")
+    raise SystemExit(BLOCK_EXIT)
+
+
+def read_payload_command(stream):
+    raw = stream.read(MAX_INPUT_BYTES + 1)
+    if len(raw) > MAX_INPUT_BYTES:
+        raise ValueError("hook input exceeds 1 MiB")
+    payload = json.loads(raw.decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("hook input must be one JSON object")
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        raise ValueError("tool_input must be an object")
+    command = tool_input.get("command")
+    if not isinstance(command, str) or not command.strip():
+        raise ValueError("tool_input.command must be nonempty text")
+    return command
 
 
 def pending_command():
-    """Return the command under review from argv or the JSON hook payload."""
     if len(sys.argv) > 1:
         return " ".join(sys.argv[1:])
     if sys.stdin.isatty():
-        return ""
-    raw = sys.stdin.read()
-    if not raw.strip():
-        return ""
+        block("HISS", "expected PreToolUse JSON on stdin or a command as arguments")
     try:
-        payload = json.loads(raw)
-    except ValueError:
-        return raw
-    tool_input = payload.get("tool_input") or {}
-    return str(tool_input.get("command", ""))
+        return read_payload_command(sys.stdin.buffer)
+    except (ValueError, OSError, RecursionError) as error:
+        block("HISS", "invalid hook input: " + str(error))
 
 
 def main():
-    if os.environ.get("LEFTHOOK") == "0":
-        sys.stderr.write("[BLOCKED BY HISS] LEFTHOOK=0 detected in environment.\n")
-        sys.exit(BLOCK_EXIT)
-    cmd = pending_command()
-    for pattern in BLOCKED_PATTERNS:
-        if re.search(pattern, cmd):
-            sys.stderr.write(f"[BLOCKED BY HISS] Verification evasion prohibited: {pattern}\n")
-            sys.exit(BLOCK_EXIT)
+    value = os.environ.get("LEFTHOOK")
+    if value in LEFTHOOK_DISABLED:
+        block("HISS", "LEFTHOOK=" + value + " detected in environment. Evasion prohibited.")
+    for name in LEFTHOOK_NARROWING:
+        if os.environ.get(name):
+            block("HISS", "Hook exclusions are prohibited.")
+    command = pending_command()
+    for pattern, invariant in RULES:
+        if re.search(pattern, command):
+            block(invariant, "Verification evasion prohibited: " + pattern)
     sys.exit(0)
 
 
 if __name__ == "__main__":
     main()
 `
+
+// buildBlockEvasionPY renders the interceptor from the engine's command policy: the built-in
+// rules (agenthook.BuiltinRules), the Lefthook environment checks and the input bound. It
+// never includes operator rules; those are repository configuration (ADR-0011).
+func buildBlockEvasionPY() string {
+	var rules strings.Builder
+	for _, rule := range agenthook.BuiltinRules() {
+		rules.WriteString(`    (r"` + rule.Source + `", "` + rule.Invariant + "\"),\n")
+	}
+	return strings.NewReplacer(
+		"{{MAX_INPUT_BYTES}}", strconv.Itoa(agenthook.MaxInputBytes),
+		"{{RULES}}", rules.String(),
+		"{{LEFTHOOK_DISABLED}}", pythonStringTuple(agenthook.LefthookDisableValues()),
+		"{{LEFTHOOK_NARROWING}}", pythonStringTuple(agenthook.LefthookNarrowingVariables()),
+	).Replace(blockEvasionTemplate)
+}
+
+// pythonStringTuple renders plain ASCII names as a Python tuple literal of strings.
+func pythonStringTuple(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, `"`+value+`"`)
+	}
+	return "(" + strings.Join(quoted, ", ") + ",)"
+}
 
 // buildFallbackPreCommitScript renders the hook installed when lefthook is unavailable.
 // It only runs binaries found on PATH and fails closed when none is installed.
@@ -282,7 +336,7 @@ func reconcileEvasionHook(ctx context.Context, s *adoptSession, vendored bool) e
 	_, err := s.scaffoldFile(ctx, scaffold{
 		rel:      evasionHookFile,
 		perm:     execPerm,
-		content:  []byte(blockEvasionPY),
+		content:  []byte(buildBlockEvasionPY()),
 		force:    !vendored,
 		created:  "Scaffolded agent PreToolUse anti-evasion interceptor (wire it into the agent harness hooks)",
 		verified: "Existing agent anti-evasion interceptor verified present",

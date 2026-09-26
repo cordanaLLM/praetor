@@ -18,6 +18,12 @@ func TestPolicyCommandBuiltinRules(t *testing.T) {
 		{"SKIP=all git commit", "HISS"},
 		{"git config core.hooksPath=/dev/null", "HISS"},
 		{"rm -r .git/hooks", "HISS"},
+		{"git commit -an -m x", "HISS"},
+		{"git -C sub commit -n", "HISS"},
+		{"env LEFTHOOK=false git push", "HISS"},
+		{"git config core.hooksPath hooks-off", "HISS"},
+		{"chmod 000 .git/hooks", "HISS"},
+		{"lefthook uninstall --aggressive", "HISS"},
 		{"standardsctl conform /srv/dev", "DEV-01"},
 		{"praetorctl needs  epic dev/", "DEV-01"},
 	} {
@@ -32,6 +38,7 @@ func TestPolicyCommandBuiltinRules(t *testing.T) {
 	for _, command := range []string{
 		"git commit -s -m 'docs: explain the no-verify rule'", "git commit --name-only", "LEFTHOOK=1 git commit",
 		"rm -rf build/hooks", "praetorctl adopt ~/dev/org/repo", "praetorctl audit ~/dev", "ls /dev/null",
+		"git config core.hooksPath", "git log -n 3 --grep commit", "grep -rn hooks .git/hooks", "lefthook run pre-commit",
 	} {
 		if verdict := builtin.Command(command); verdict.Outcome != Allow || verdict.Reason != "" {
 			t.Errorf("%q denied: %+v", command, verdict)
@@ -54,6 +61,38 @@ func TestPolicyWordBoundaryIsTheStricterOne(t *testing.T) {
 		if strings.Contains(compiled, "["+pythonSpace) {
 			t.Errorf("rule %q uses the class inside a bracket expression", rule.source)
 		}
+	}
+}
+
+// TestBuiltinRules pins the exported list adoption renders into its interceptor: every
+// built-in rule in evaluation order, each embeddable in a Python raw string, and a fresh
+// slice per call so a caller cannot change the policy.
+func TestBuiltinRules(t *testing.T) {
+	rules := BuiltinRules()
+	if len(rules) != len(builtinEvasion)+1 || rules[len(rules)-1] != (BuiltinRule{builtinDevRoot, "DEV-01"}) {
+		t.Fatalf("unexpected rule list: %+v", rules)
+	}
+	for index, rule := range rules[:len(builtinEvasion)] {
+		if rule != (BuiltinRule{builtinEvasion[index], "HISS"}) {
+			t.Errorf("rule %d: %+v", index, rule)
+		}
+	}
+	for _, rule := range rules {
+		if strings.ContainsAny(rule.Source, "\"\n") || strings.HasSuffix(rule.Source, `\`) {
+			t.Errorf("rule %q cannot be written as a Python raw string", rule.Source)
+		}
+		if _, ok := builtinMessages[rule.Invariant]; !ok {
+			t.Errorf("rule %q has no message for %s", rule.Source, rule.Invariant)
+		}
+	}
+	rules[0].Source = "changed"
+	if BuiltinRules()[0].Source == "changed" {
+		t.Error("BuiltinRules must return a fresh slice")
+	}
+	values, names := LefthookDisableValues(), LefthookNarrowingVariables()
+	values[0], names[0] = "changed", "changed"
+	if LefthookDisableValues()[0] == "changed" || LefthookNarrowingVariables()[0] == "changed" {
+		t.Error("the environment lists must be returned as copies")
 	}
 }
 
@@ -110,7 +149,8 @@ func TestEnvironment(t *testing.T) {
 		key, value string
 		outcome    Outcome
 	}{
-		{"LEFTHOOK", "0", Deny}, {"LEFTHOOK", "1", Allow}, {"LEFTHOOK", "00", Allow}, {"LEFTHOOK", "false", Allow},
+		{"LEFTHOOK", "0", Deny}, {"LEFTHOOK", "1", Allow}, {"LEFTHOOK", "00", Allow}, {"LEFTHOOK", "false", Deny},
+		{"LEFTHOOK", "False", Allow}, {"LEFTHOOK", "true", Allow},
 		{"LEFTHOOK_EXCLUDE", "lint", Deny}, {"LEFTHOOK_SKIP", "pre-push", Deny}, {"LEFTHOOK_VERBOSE", "1", Allow},
 	} {
 		values = map[string]string{tc.key: tc.value}

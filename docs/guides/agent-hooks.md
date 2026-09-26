@@ -449,17 +449,42 @@ The rules are the ones of the Python guard, ported one to one. They judge the co
 text. A command is denied when it
 
 - passes the Git option that skips the commit or push hooks, in its long form anywhere or
-  in its short form on a commit;
-- disables Lefthook inline for one command, or sets the skip variable in front of a Git
-  call;
-- points the Git hooks path at the null device, or removes the repository's hooks
-  directory;
+  in its short form on a commit: alone, inside a bundle of argument-free flags (`-an`,
+  `-sn`, `-name`; gitcli(7) bundles short options), and after Git's global options
+  (`git -C dir commit`, `git -c key=value commit`);
+- disables Lefthook inline for one command (`0` or `false`, the two values Lefthook
+  honours), or sets the skip variable in front of a Git call;
+- sets `core.hooksPath` to anything, with `=` or a space-separated value, per command or
+  in config (reading it stays allowed);
+- removes, moves, copies over, rewrites in place, re-permissions or redirects into the
+  repository's hooks directory, in either path separator, or runs `lefthook uninstall`
+  (listing, printing or searching the directory stays allowed);
 - runs `adopt`, `conform`, `bootstrap` or a `needs` scan, report, migration or epic
   against the workstation dev root instead of a leaf repository (DEV-01).
 
-The environment check denies when the hook process itself runs with Lefthook disabled or
-with a Lefthook exclusion or skip list. It runs for `environment` and before every
-`pre-tool` judgement.
+The sources live in `internal/agenthook/policy.go` (`builtinEvasion`, `builtinDevRoot`).
+`.config/agent/hooks/block_evasion.py` carries the evasion list byte for byte
+(`TestPythonGuardCarriesTheBuiltinEvasionList`), and `praetorctl adopt` renders the
+interceptor it writes from `agenthook.BuiltinRules` (see
+[The adopted interceptor](#the-adopted-interceptor)). The allow and deny cases, including
+the false-positive ones, are in `internal/agenthook/testdata/pre-tool/cases.json`.
+
+The environment check denies when the hook process itself runs with Lefthook disabled
+(`LEFTHOOK=0` or `LEFTHOOK=false`, compared exactly, as lefthook v2.1.14 does in
+`internal/command/run.go`) or with a Lefthook exclusion or skip list. It runs for
+`environment` and before every `pre-tool` judgement.
+
+### The adopted interceptor
+
+`praetorctl adopt` writes `.config/agent/hooks/block_evasion.py` into the adopted
+repository for direct wiring as a shell-tool `PreToolUse` hook. It is rendered from the
+engine's built-in rules and environment lists (`buildBlockEvasionPY`,
+`internal/adopt/hooks.go`) and never carries operator rules such as organisation
+containers; those belong in `hooks.command_policy.deny`. It reads at most 1 MiB of stdin
+and blocks with exit 2 on any input that is not one JSON object with a nonempty
+`tool_input.command`, including empty stdin, a JSON array and other clients' native shapes,
+which are the dialects `praetorctl hook` owns. `internal/adopt/evasion_hook_test.go` replays
+the corpus above against the rendered script.
 
 Organisation container names are operator data, not engine data. The policy accepts a
 bounded operator deny list (RE2, at most 64 patterns of at most 512 bytes; an empty,

@@ -3,6 +3,7 @@ package agenthook
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -32,21 +33,65 @@ const (
 	operatorMessage = "command matches the operator command policy"
 )
 
-// builtinEvasion are the engine's evasion patterns, ported one to one from the Python
-// guard (`.config/agent/hooks/block_evasion.py`). They judge the command text; judging
-// the act instead is tracked separately and happens on this implementation only.
+// hooksDir matches the repository hooks directory in either path separator.
+const hooksDir = `\.git[/\\]hooks`
+
+// builtinEvasion are the engine's evasion patterns. praetor's own Python guard
+// (`.config/agent/hooks/block_evasion.py`) carries the same list byte for byte
+// (TestPythonGuardCarriesTheBuiltinEvasionList), and adoption renders the interceptor it
+// writes from BuiltinRules, so the three enforce one rule set. They judge the command text;
+// judging the act instead is tracked separately and happens on this implementation only.
+//
+// Every source is valid in both RE2 and Python's re, names quotes as \x22 and \x27 so it
+// embeds in a Python raw string, and uses `\s` outside bracket expressions only.
+//
+//   - A short skip flag counts inside a bundle of flags that take no argument (`-an`,
+//     `-sn`; gitcli(7) bundles short options), and after Git's global options
+//     (`git -C dir commit -n`). A bundle whose skip letter follows an argument option
+//     (`-mn`) is a message, not a skip.
+//   - Lefthook is disabled by LEFTHOOK=0 and by LEFTHOOK=false (lefthook v2.1.14,
+//     internal/command/run.go).
+//   - core.hooksPath is refused in any assignment form: `=`, a space-separated value, any
+//     path. Reading it (no value) stays allowed.
+//   - The hooks directory is refused as the operand of a command that removes, moves,
+//     rewrites or re-permissions it, as a redirect target, and `lefthook uninstall` is
+//     refused outright. Reading it (ls, cat, sed -n, find without an action) stays allowed.
 var builtinEvasion = []string{
 	`--no-verify\b`,
-	`\bgit\s+commit\b[^\n]*\s-n\b`,
-	`LEFTHOOK=0\b`,
+	`\bgit(\s+-[Cc]\s+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n]+)|\s+--?[A-Za-z][-A-Za-z]*(=[^ \t\n]+)?)*\s+commit\b[^\n]*\s-[aeiopqsvz]*n`,
+	`LEFTHOOK=[\x22\x27]?(0|false)\b`,
 	`SKIP=.*git`,
-	`core\.hooksPath\s*=\s*/dev/null`,
-	`rm\s+(-rf?\s+)?\.git/hooks`,
+	`(?i:core\.hookspath)(\s*=|\s+[\x22\x27]?[/~.$A-Za-z_\\])`,
+	`\b(rm|rmdir|unlink|mv|cp|ln|chmod|chown|chattr|truncate|shred|tee)\b[^\n]*` + hooksDir,
+	`\b(sed|perl)\b[^\n]*\s(-[A-Za-z]*i|--in-place)[^\n]*` + hooksDir,
+	`\bfind\b[^\n]*` + hooksDir + `[^\n]*\s-(delete|exec|execdir|ok)\b`,
+	`>\s*[\x22\x27]?[^ \t\n\x22\x27]*` + hooksDir,
+	`\blefthook\s+uninstall\b`,
 }
 
 // builtinDevRoot is the generic half of the topology rule: it names no organisation.
 // Organisation containers are operator data and arrive through the operator deny list.
 const builtinDevRoot = `(?i)(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|report|migrate|epic))\b.*\bdev/?(\s|$)`
+
+// BuiltinRule is one built-in command rule as source text: the Python-compatible pattern
+// the policy compiles and the invariant a match reports.
+type BuiltinRule struct {
+	Source    string
+	Invariant string
+}
+
+// BuiltinRules returns the engine's built-in command rules in evaluation order, evasion
+// first and the dev-root rule last. It is a fresh slice on every call.
+func BuiltinRules() []BuiltinRule {
+	rules := make([]BuiltinRule, 0, len(builtinEvasion)+1)
+	for _, source := range builtinEvasion {
+		rules = append(rules, BuiltinRule{Source: source, Invariant: "HISS"})
+	}
+	return append(rules, BuiltinRule{Source: builtinDevRoot, Invariant: "DEV-01"})
+}
+
+// builtinMessages words a built-in rule's denial by the invariant it enforces.
+var builtinMessages = map[string]string{"HISS": evasionMessage, "DEV-01": topologyMessage}
 
 // Policy is the compiled command policy: built-in rules first, operator rules after.
 type Policy struct {
@@ -61,11 +106,11 @@ func NewPolicy(operatorDeny []string) (*Policy, error) {
 	if err := config.ValidateCommandPolicyDeny(operatorDeny); err != nil {
 		return nil, err
 	}
-	rules := make([]denyRule, 0, len(builtinEvasion)+1+len(operatorDeny))
-	for _, source := range builtinEvasion {
-		rules = append(rules, builtinRule(source, "HISS", evasionMessage))
+	builtins := BuiltinRules()
+	rules := make([]denyRule, 0, len(builtins)+len(operatorDeny))
+	for _, rule := range builtins {
+		rules = append(rules, builtinRule(rule.Source, rule.Invariant, builtinMessages[rule.Invariant]))
 	}
-	rules = append(rules, builtinRule(builtinDevRoot, "DEV-01", topologyMessage))
 	for index, source := range operatorDeny {
 		compiled, err := regexp.Compile(source)
 		if err != nil {
@@ -89,6 +134,20 @@ func (p *Policy) Command(command string) Verdict {
 	return Verdict{Outcome: Allow}
 }
 
+// lefthookDisableValues are the LEFTHOOK values that make Lefthook skip every hook. Lefthook
+// compares exactly "0" and "false" (lefthook v2.1.14, internal/command/run.go); only "0" was
+// checked before, so LEFTHOOK=false passed.
+var lefthookDisableValues = []string{"0", "false"}
+
+// lefthookNarrowingVariables narrow a Lefthook run to fewer jobs when set to anything.
+var lefthookNarrowingVariables = []string{"LEFTHOOK_EXCLUDE", "LEFTHOOK_SKIP"}
+
+// LefthookDisableValues returns the LEFTHOOK values the environment check denies.
+func LefthookDisableValues() []string { return slices.Clone(lefthookDisableValues) }
+
+// LefthookNarrowingVariables returns the variables whose presence the environment check denies.
+func LefthookNarrowingVariables() []string { return slices.Clone(lefthookNarrowingVariables) }
+
 // Environment judges the hook process environment: a disabled or narrowed Lefthook run
 // is an evasion whatever the command is. getenv is injected so the check never reads or
 // changes process state in tests.
@@ -96,11 +155,13 @@ func Environment(getenv func(string) string) Verdict {
 	if getenv == nil {
 		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no environment to inspect"}
 	}
-	if getenv("LEFTHOOK") == "0" {
-		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] LEFTHOOK=0 detected in environment. Evasion prohibited."}
+	if value := getenv("LEFTHOOK"); slices.Contains(lefthookDisableValues, value) {
+		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] LEFTHOOK=" + value + " detected in environment. Evasion prohibited."}
 	}
-	if getenv("LEFTHOOK_EXCLUDE") != "" || getenv("LEFTHOOK_SKIP") != "" {
-		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] Hook exclusions are prohibited."}
+	for _, name := range lefthookNarrowingVariables {
+		if getenv(name) != "" {
+			return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] Hook exclusions are prohibited."}
+		}
 	}
 	return Verdict{Outcome: Allow}
 }

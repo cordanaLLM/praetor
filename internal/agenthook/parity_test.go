@@ -7,6 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,10 +99,47 @@ func TestParityWithThePythonGuardOnTheSuitePayloads(t *testing.T) {
 	}
 }
 
+// pythonRawString matches one r"..." entry of a Python list literal.
+var pythonRawString = regexp.MustCompile(`(?m)^\s*r"([^"\n]*)",\s*$`)
+
+// pythonPatternList returns the r"..." entries of the named list in the Python guard.
+func pythonPatternList(t *testing.T, name string) []string {
+	t.Helper()
+	data, err := os.ReadFile(pythonGuard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A Windows checkout under core.autocrlf writes CRLF; the committed blob is LF.
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	_, rest, found := strings.Cut(text, "\n"+name+" = [\n")
+	body, _, closed := strings.Cut(rest, "\n]\n")
+	if !found || !closed {
+		t.Fatalf("%s has no %s list", pythonGuard, name)
+	}
+	var sources []string
+	for _, match := range pythonRawString.FindAllStringSubmatch(body+"\n", -1) {
+		sources = append(sources, match[1])
+	}
+	return sources
+}
+
+// TestPythonGuardCarriesTheBuiltinEvasionList holds praetor's own Python guard to the
+// engine's evasion list byte for byte. The behavioural replay above only covers the corpus;
+// this is what keeps a rule added on one side from being missing on the other.
+func TestPythonGuardCarriesTheBuiltinEvasionList(t *testing.T) {
+	got := pythonPatternList(t, "BLOCKED_PATTERNS")
+	if !slices.Equal(got, builtinEvasion) {
+		t.Errorf("BLOCKED_PATTERNS in %s differs from builtinEvasion:\npython %q\ngo     %q", pythonGuard, got, builtinEvasion)
+	}
+	if len(got) < 10 {
+		t.Errorf("the evasion list lost rules: %d", len(got))
+	}
+}
+
 func TestParityWithThePythonGuardOnTheEnvironment(t *testing.T) {
 	interpreter := pythonInterpreter(t)
 	root := repository(t, true)
-	for _, variable := range []string{"", "LEFTHOOK=0", "LEFTHOOK=1", "LEFTHOOK_EXCLUDE=lint", "LEFTHOOK_SKIP=pre-push"} {
+	for _, variable := range []string{"", "LEFTHOOK=0", "LEFTHOOK=false", "LEFTHOOK=False", "LEFTHOOK=1", "LEFTHOOK_EXCLUDE=lint", "LEFTHOOK_SKIP=pre-push"} {
 		var extra []string
 		values := map[string]string{}
 		if variable != "" {

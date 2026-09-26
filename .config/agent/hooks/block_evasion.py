@@ -10,14 +10,24 @@ import json
 
 MAX_INPUT_BYTES = 1 << 20
 
+# The engine's built-in evasion rules (internal/agenthook/policy.go, builtinEvasion), byte
+# for byte; TestPythonGuardCarriesTheBuiltinEvasionList fails when the two lists differ.
 BLOCKED_PATTERNS = [
     r"--no-verify\b",
-    r"\bgit\s+commit\b[^\n]*\s-n\b",
-    r"LEFTHOOK=0\b",
+    r"\bgit(\s+-[Cc]\s+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n]+)|\s+--?[A-Za-z][-A-Za-z]*(=[^ \t\n]+)?)*\s+commit\b[^\n]*\s-[aeiopqsvz]*n",
+    r"LEFTHOOK=[\x22\x27]?(0|false)\b",
     r"SKIP=.*git",
-    r"core\.hooksPath\s*=\s*/dev/null",
-    r"rm\s+(-rf?\s+)?\.git/hooks",
+    r"(?i:core\.hookspath)(\s*=|\s+[\x22\x27]?[/~.$A-Za-z_\\])",
+    r"\b(rm|rmdir|unlink|mv|cp|ln|chmod|chown|chattr|truncate|shred|tee)\b[^\n]*\.git[/\\]hooks",
+    r"\b(sed|perl)\b[^\n]*\s(-[A-Za-z]*i|--in-place)[^\n]*\.git[/\\]hooks",
+    r"\bfind\b[^\n]*\.git[/\\]hooks[^\n]*\s-(delete|exec|execdir|ok)\b",
+    r">\s*[\x22\x27]?[^ \t\n\x22\x27]*\.git[/\\]hooks",
+    r"\blefthook\s+uninstall\b",
 ]
+
+# Lefthook skips every hook for exactly these LEFTHOOK values (lefthook v2.1.14,
+# internal/command/run.go); agenthook's lefthookDisableValues holds the same pair.
+LEFTHOOK_DISABLED = ("0", "false")
 
 TOPOLOGY_PATTERNS = [
     r"(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|report|migrate|epic))\b.*(\bdev/?(\s|$)|/dev/(cordanaLLM|lusoris|vmafx|golusoris|upstream|local|stacks|worktrees|scratch)/?(\s|$))",
@@ -46,8 +56,9 @@ def audit_command(command_str: str) -> bool:
     return True
 
 def audit_environment() -> bool:
-    if os.environ.get("LEFTHOOK") == "0":
-        sys.stderr.write("[BLOCKED BY HISS] LEFTHOOK=0 detected in environment. Evasion prohibited.\n")
+    value = os.environ.get("LEFTHOOK")
+    if value in LEFTHOOK_DISABLED:
+        sys.stderr.write(f"[BLOCKED BY HISS] LEFTHOOK={value} detected in environment. Evasion prohibited.\n")
         return False
     if os.environ.get("LEFTHOOK_EXCLUDE") or os.environ.get("LEFTHOOK_SKIP"):
         sys.stderr.write("[BLOCKED BY HISS] Hook exclusions are prohibited.\n")

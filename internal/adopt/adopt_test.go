@@ -1447,46 +1447,6 @@ func TestBuildLefthookYAML_FailsClosed(t *testing.T) {
 	}
 }
 
-func TestBlockEvasion_PreToolUseContract(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("python3 required")
-	}
-	script := filepath.Join(t.TempDir(), "block_evasion.py")
-	mustWrite(t, script, blockEvasionPY)
-
-	cases := []struct {
-		name  string
-		stdin string
-		args  []string
-		want  int
-	}{
-		{"json-no-verify", `{"tool_name":"Bash","tool_input":{"command":"git commit --no-verify -m x"}}`, nil, 2},
-		{"json-hookspath", `{"tool_input":{"command":"git config core.hooksPath=/dev/null"}}`, nil, 2},
-		{"json-benign", `{"tool_input":{"command":"go test ./..."}}`, nil, 0},
-		{"argv-blocked", "", []string{"rm", "-rf", ".git/hooks"}, 2},
-		{"argv-benign", "", []string{"git", "status"}, 0},
-		{"empty-stdin", "", nil, 0},
-		{"raw-text", "LEFTHOOK=0 git commit", nil, 2},
-	}
-	for _, tc := range cases {
-		cmd := exec.CommandContext(context.Background(), python, append([]string{script}, tc.args...)...) //nolint:gosec // test fixture with fixed interpreter and script paths
-		cmd.Stdin = strings.NewReader(tc.stdin)
-		cmd.Env = append(os.Environ(), "LEFTHOOK=")
-		err := cmd.Run()
-		got := 0
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			got = exitErr.ExitCode()
-		} else if err != nil {
-			t.Fatalf("%s: run: %v", tc.name, err)
-		}
-		if got != tc.want {
-			t.Errorf("%s: exit %d, want %d", tc.name, got, tc.want)
-		}
-	}
-}
-
 func TestBuildRulesetJSON_Boundary(t *testing.T) {
 	empty, err := buildRulesetJSON(config.DefaultPolicy().BranchProtection, nil)
 	if err != nil {

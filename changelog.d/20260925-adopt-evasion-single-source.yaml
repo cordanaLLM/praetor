@@ -1,0 +1,3 @@
+type: fixed
+title: The evasion rules now also deny LEFTHOOK=false, core.hooksPath set with a space or to any path, bundled short skip flags such as -an, git -C dir commit -n, lefthook uninstall and chmod, mv, cp, tee, sed -i, find -delete or redirects on the hooks directory; the interceptor adopt writes is rendered from the engine's rules instead of an older copy, and it blocks with exit 2 on empty, non-object, oversized or unrecognised input instead of allowing it or crashing
+breaking: false
