@@ -152,6 +152,31 @@ func TestLoadManifestRepositoryManifestParses(t *testing.T) {
 	assertRepositorySourceShape(t, m)
 }
 
+// BUG-575: the manifest's header named a JSON schema URL that was never published and that
+// nothing validated against, so it promised a check that does not exist. The schema is the
+// Manifest type decoded with unknown fields rejected; the header now says so. The homepage
+// is operator data and stays.
+func TestRepositoryManifestNamesOnlyItsRealSchema(t *testing.T) {
+	path := filepath.Join("..", "..", ".standards.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("this repository's manifest is not present at %s: %v", path, err)
+	}
+	if strings.Contains(string(data), "schemas/v1") {
+		t.Error("the manifest still names the unpublished schemas/v1 URL")
+	}
+	if !strings.Contains(string(data), "internal/config/config.go") {
+		t.Error("the manifest header must point at the Manifest type it is decoded into")
+	}
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Repository.Homepage == "" {
+		t.Error("repository.homepage is operator data and must stay configured")
+	}
+}
+
 // assertRepositorySourceShape checks the two shapes the live manifest legitimately has:
 // no repository.source (canonical, or a fork checkout before the first overlay commit), where
 // owner/name is the public identity; or a well-formed "<owner>/<name>" source that differs
