@@ -103,8 +103,8 @@ jobs:
           PUSH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git config user.name "cordana-standards[bot]"
-          git config user.email "standards-bot@cordana.ai"
+          git config user.name "${{ vars.PRAETOR_BOT_NAME || 'github-actions[bot]' }}"
+          git config user.email "${{ vars.PRAETOR_BOT_EMAIL || '41898282+github-actions[bot]@users.noreply.github.com' }}"
           git add -A
           if git diff-index --quiet --cached HEAD; then
             echo "adopt: the adoption changed nothing; nothing to commit"

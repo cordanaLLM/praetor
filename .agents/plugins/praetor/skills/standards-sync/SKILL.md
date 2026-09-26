@@ -1,6 +1,6 @@
 ---
 name: standards-sync
-description: Synchronize and reconcile local repository configurations, DevContainers, and universal agent harnesses with upstream cordanaLLM fleet governance lattice.
+description: Synchronize and reconcile local repository configurations, DevContainers, and universal agent harnesses with the governed repositories governance lattice.
 ---
 
 # Standards Synchronization & Fleet Reconciliation (`standards-sync`)
