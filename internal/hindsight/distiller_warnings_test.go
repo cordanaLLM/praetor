@@ -17,8 +17,8 @@ import (
 // flavor source still contributes its fact.
 func TestDistillWorkspace_Negative_FailingSourcesBecomeWarnings(t *testing.T) {
 	root := t.TempDir()
-	writeDistillerFile(t, root, "broken.go", "package broken\n\nfunc (\n")
-	writeDistillerFile(t, root, filepath.Join(".workingdir", "docs", "catalog.json"), "{not json")
+	writeDistillerTestFile(t, root, "broken.go", "package broken\n\nfunc (\n")
+	writeDistillerTestFile(t, root, filepath.Join(".workingdir", "docs", "catalog.json"), "{not json")
 
 	report, err := DistillWorkspace(context.Background(), root)
 	if err != nil || report == nil {
@@ -118,7 +118,7 @@ func factSource(name string, required bool, facts ...MemoryFact) distillSource {
 	}}
 }
 
-func writeDistillerFile(t *testing.T, root, rel, content string) {
+func writeDistillerTestFile(t *testing.T, root, rel, content string) {
 	t.Helper()
 	full := filepath.Join(root, rel)
 	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {

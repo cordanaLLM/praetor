@@ -443,8 +443,42 @@ def audit_fixture(root):
         ".standards.yaml": 'version: 1\nrepository:\n  owner: fixture\n  name: repo\nprofiles: [framework]\n',
         ".standards.lock": json.dumps(lock),
         ".config/archetypes/framework.yaml": source,
-        ".config/labels.yaml": "labels: []\n",
-        ".github/rulesets/main.json": "{}\n",
+        ".config/labels.yaml": "version: 1\nlabels:\n  - name: test\n    color: '000000'\n",
+        ".github/rulesets/main.json": json.dumps({
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": [
+        "refs/heads/main",
+        "refs/heads/lts-*"
+      ]
+    }
+  },
+  "enforcement": "active",
+  "name": "praetor-main-protection",
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "required_linear_history"
+    },
+    {
+      "parameters": {
+        "dismiss_stale_reviews_on_push": True,
+        "require_code_owner_review": True,
+        "require_last_push_approval": False,
+        "required_approving_review_count": 1,
+        "required_review_thread_resolution": True
+      },
+      "type": "pull_request"
+    }
+  ],
+  "target": "branch"
+}) + "\n",
         ".standards-baseline.json": '{"version":1,"total_infractions":0,"infractions":[]}\n',
     }
     for relative, content in files.items():
@@ -487,7 +521,41 @@ def audit_checks(client, root):
     require("declined by adoption.decline" in declined_res.lower(),
             "audit did not honor accepted branch-ruleset decline")
     manifest_path.write_text(orig_manifest)
-    ruleset.write_text("{}\n")
+    ruleset.write_text(json.dumps({
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": [
+        "refs/heads/main",
+        "refs/heads/lts-*"
+      ]
+    }
+  },
+  "enforcement": "active",
+  "name": "praetor-main-protection",
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "required_linear_history"
+    },
+    {
+      "parameters": {
+        "dismiss_stale_reviews_on_push": True,
+        "require_code_owner_review": True,
+        "require_last_push_approval": False,
+        "required_approving_review_count": 1,
+        "required_review_thread_resolution": True
+      },
+      "type": "pull_request"
+    }
+  ],
+  "target": "branch"
+}) + "\n")
     return ["valid fixture audit", "changed pinned content rejected",
             "invariant violation rejected", "incomplete scan rejected without baseline writes",
             "branch ruleset decline accepted and verified"]

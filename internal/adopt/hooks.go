@@ -153,9 +153,11 @@ LEFTHOOK_DISABLED = {{LEFTHOOK_DISABLED}}
 LEFTHOOK_NARROWING = {{LEFTHOOK_NARROWING}}
 
 
+class Blocked(Exception):
+    pass
+
 def block(invariant, reason):
-    sys.stderr.write("[BLOCKED BY " + invariant + "] " + reason + "\n")
-    raise SystemExit(BLOCK_EXIT)
+    raise Blocked("[BLOCKED BY " + invariant + "] " + reason + "\n")
 
 
 def read_payload_command(stream):
@@ -186,17 +188,21 @@ def pending_command():
 
 
 def main():
-    value = os.environ.get("LEFTHOOK")
-    if value in LEFTHOOK_DISABLED:
-        block("HISS", "LEFTHOOK=" + value + " detected in environment. Evasion prohibited.")
-    for name in LEFTHOOK_NARROWING:
-        if os.environ.get(name):
-            block("HISS", "Hook exclusions are prohibited.")
-    command = pending_command()
-    for pattern, invariant in RULES:
-        if re.search(pattern, command):
-            block(invariant, "Verification evasion prohibited: " + pattern)
-    sys.exit(0)
+    try:
+        value = os.environ.get("LEFTHOOK")
+        if value in LEFTHOOK_DISABLED:
+            block("HISS", "LEFTHOOK=" + value + " detected in environment. Evasion prohibited.")
+        for name in LEFTHOOK_NARROWING:
+            if os.environ.get(name):
+                block("HISS", "Hook exclusions are prohibited.")
+        command = pending_command()
+        for pattern, invariant in RULES:
+            if re.search(pattern, command):
+                block(invariant, "Verification evasion prohibited: " + pattern)
+        sys.exit(0)
+    except Blocked as e:
+        sys.stderr.write(str(e))
+        sys.exit(BLOCK_EXIT)
 
 
 if __name__ == "__main__":

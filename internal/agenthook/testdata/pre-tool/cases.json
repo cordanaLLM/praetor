@@ -140,4 +140,5 @@
   {"name": "invalid-command-empty", "allow": false, "payload": {"tool_input": {"command": ""}}},
   {"name": "invalid-command-whitespace", "allow": false, "payload": {"tool_input": {"command": " \t\r\n"}}},
   {"name": "invalid-command-information-separators", "allow": false, "payload": {"tool_input": {"command": "\u001c\u001f\u00a0"}}}
+  ,{"name": "deny-git-commit-exponential-backtracking", "allow": false, "payload": {"tool_input": {"command": "git -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c commit -n"}}}
 ]

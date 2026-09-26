@@ -5,6 +5,7 @@ package hindsight
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -44,7 +45,7 @@ func TestDistillBugLedgerIntegrity(t *testing.T) {
 func writeDistillerLedger(t *testing.T, content string) string {
 	t.Helper()
 	root := t.TempDir()
-	writeDistillerFile(t, root, filepath.Join(".workingdir", "BUGS.md"), content)
+	writeDistillerFile(t, filepath.Join(root, ".workingdir", "BUGS.md"), content)
 	return root
 }
 

@@ -86,7 +86,11 @@ func TestParityWithThePythonGuardOnTheSuitePayloads(t *testing.T) {
 		payloads = append(payloads, rawCase{fixture.Name, fixture.Payload, fixture.Allow})
 	}
 	for _, tc := range payloads {
+		start := time.Now()
 		pythonExit, pythonMarker := runPythonGuard(t, interpreter, tc.payload, nil, guardEnvironment())
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Errorf("%s: python guard took %v, exceeding the 5s timing bound (pathological backtracking check)", tc.name, elapsed)
+		}
 		response := Run(context.Background(), Invocation{
 			Client: "lefthook", Event: "pre-tool", Stdin: bytes.NewReader(tc.payload),
 			Getenv: noEnvironment, WorkDir: root, Policy: withOperator,

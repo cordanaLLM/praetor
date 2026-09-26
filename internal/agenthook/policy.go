@@ -58,7 +58,7 @@ const hooksDir = `\.git[/\\]hooks`
 //     refused outright. Reading it (ls, cat, sed -n, find without an action) stays allowed.
 var builtinEvasion = []string{
 	`--no-verify\b`,
-	`\bgit(\s+-[Cc]\s+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n]+)|\s+--?[A-Za-z][-A-Za-z]*(=[^ \t\n]+)?)*\s+commit\b[^\n]*\s-[aeiopqsvz]*n`,
+	`\bgit(\s+-[Cc]\s+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n\x22\x27][^ \t\n]*)|\s+(--[A-Za-z][-A-Za-z]*|-[A-Za-bd-z][-A-Za-z]*|-[Cc][A-Za-z]+)(=[^ \t\n]+)?)*\s+commit\b[^\n]*\s-[aeiopqsvz]*n`,
 	`LEFTHOOK=[\x22\x27]?(0|false)\b`,
 	`SKIP=.*git`,
 	`(?i:core\.hookspath)(\s*=|\s+[\x22\x27]?[/~.$A-Za-z_\\])`,

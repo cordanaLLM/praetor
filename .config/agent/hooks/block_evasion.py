@@ -14,7 +14,7 @@ MAX_INPUT_BYTES = 1 << 20
 # for byte; TestPythonGuardCarriesTheBuiltinEvasionList fails when the two lists differ.
 BLOCKED_PATTERNS = [
     r"--no-verify\b",
-    r"\bgit(\s+-[Cc]\s+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n]+)|\s+--?[A-Za-z][-A-Za-z]*(=[^ \t\n]+)?)*\s+commit\b[^\n]*\s-[aeiopqsvz]*n",
+    r"\bgit(\s+-[Cc]\s+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n\x22\x27][^ \t\n]*)|\s+(--[A-Za-z][-A-Za-z]*|-[A-Za-bd-z][-A-Za-z]*|-[Cc][A-Za-z]+)(=[^ \t\n]+)?)*\s+commit\b[^\n]*\s-[aeiopqsvz]*n",
     r"LEFTHOOK=[\x22\x27]?(0|false)\b",
     r"SKIP=.*git",
     r"(?i:core\.hookspath)(\s*=|\s+[\x22\x27]?[/~.$A-Za-z_\\])",
