@@ -38,9 +38,21 @@ type OrgConfig struct {
 //
 // The Darwin labels name macOS 26 explicitly rather than macos-latest, because
 // a floating label silently retargets a repository's whole Darwin tier the day
-// GitHub promotes the next image. actions/runner-images lists macos-26 for
-// arm64 and macos-26-intel for x64; macos-13 is no longer published at all and
-// macos-14 is marked deprecated, so neither is a resolvable default.
+// GitHub promotes the next image.
+//
+// Evidence, actions/runner-images README (main, read 2026-09-19), the same table
+// GitHub's own runner documentation mirrors:
+//
+//	macOS 26        x64    macos-latest-large, macos-26-intel, macos-26-large
+//	macOS 26 Arm64  arm64  macos-latest, macos-26, macos-26-xlarge
+//	macOS 14        both   carries a deprecated badge
+//	macOS 13        -      absent from the table entirely
+//
+// Corroborated by actionlint v1.7.12, whose built-in label table accepts macos-26
+// and macos-26-intel and rejects nothing about them. The pair was not in the
+// availability evidence this change was handed, which stopped at macos-15-intel;
+// it is cited here so the next reader does not have to re-derive it.
+//
 // ADR-0006 still records the previous pair and is Accepted, so it is not edited
 // here; a superseding ADR is the vehicle for restating the tier.
 func DefaultRunnerPolicy() RunnerPolicy {

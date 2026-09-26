@@ -14,6 +14,18 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// distrolessRuntimeImage is the runtime stage every scaffolded Dockerfile receives.
+//
+// It names static-debian13 and a digest rather than the gcr.io/distroless/static
+// alias. The alias resolves to this same digest today, which is exactly the trap:
+// it is bound to whichever Debian release distroless currently promotes, so an
+// adopter's Dockerfile silently retargets on the next promotion. HISS-11 reads
+// "zero floating tags in container deployments", and .devcontainer/Dockerfile.praetor
+// already uses the tag-plus-digest form this repository treats as the standard.
+//
+// Measured 2026-09-19: crane digest gcr.io/distroless/static-debian13:nonroot.
+const distrolessRuntimeImage = "gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3"
+
 // ApplyReport contains the outcome of applying a flavor scaffold to a repository.
 type ApplyReport struct {
 	Flavor            string   `json:"flavor"`
@@ -138,7 +150,15 @@ func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem
 func defaultTemplateContent(path, repoName, owner string) string {
 	switch filepath.Base(path) {
 	case ".golangci.yml":
-		// golangci-lint v2 schema; the enabled set mirrors praetor's own HISS-10 gate.
+		// golangci-lint v2 schema. The enabled set is the correctness subset of
+		// praetor's own gate, not a mirror of it: the repository's .golangci.yml
+		// also enables gocyclo, gocognit and funlen (the three linters that carry
+		// the HISS-04 caps) plus nolintlint, forbidigo, contextcheck, wastedassign,
+		// copyloopvar and gochecknoinits. An adopter therefore receives HISS-07 and
+		// HISS-10 enforcement here and not the HISS-04 caps: only the function-LOC
+		// cap reaches them, through praetor's own scanner (internal/hiss/rules.go),
+		// and the cyclomatic and cognitive caps have no scanner outside this lint
+		// configuration at all.
 		return "version: \"2\"\nrun:\n  timeout: 10m\nlinters:\n  default: none\n  enable:\n" +
 			"    - govet\n    - staticcheck\n    - errcheck\n    - errorlint\n    - nilerr\n" +
 			"    - unused\n    - ineffassign\n    - bodyclose\n    - noctx\n" +
@@ -148,7 +168,7 @@ func defaultTemplateContent(path, repoName, owner string) string {
 		// "#nosec Gxxx -- <reason>" justification.
 		return "{\n  \"global\": {\n    \"exclude\": \"\"\n  }\n}\n"
 	case "Dockerfile":
-		return "FROM gcr.io/distroless/static:nonroot\nWORKDIR /\nCOPY " + repoName + " /\nUSER 65532:65532\nENTRYPOINT [\"/" + repoName + "\"]\n"
+		return "FROM " + distrolessRuntimeImage + "\nWORKDIR /\nCOPY " + repoName + " /\nUSER 65532:65532\nENTRYPOINT [\"/" + repoName + "\"]\n"
 	case "rustfmt.toml":
 		return "edition = \"2024\"\nmax_width = 100\nnewline_style = \"Unix\"\nuse_small_heuristics = \"Default\"\n"
 	case "clippy.toml":

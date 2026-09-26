@@ -1,12 +1,20 @@
-# The enabled set and settings below must stay equal to the ".golangci.yml"
-# case of defaultTemplateContent in internal/flavor/scaffold.go. Both scaffold
-# the same file into an adopter, so a difference between the two is drift, not
-# a variant (HISS-19).
+# NOTHING READS THIS FILE. No go:embed and no non-test Go reference names
+# templates/; the only consumers are internal/forge/go_cache_checks_test.go,
+# which lints the directory, and docs/guides/ci-caching.md. Every file an
+# adopter receives comes from defaultTemplateContent in
+# internal/flavor/scaffold.go, so editing this file changes nothing for
+# anybody. That is issue #336, which owns the decision to embed templates/ or
+# delete it; do not treat this header as a claim that the decision was made.
+#
+# Until it is made, the body below is held equal to the ".golangci.yml" case of
+# defaultTemplateContent by reading only. praetorctl dedupe scan compares Go
+# functions and cannot see a YAML/Go-string pair, so no gate enforces the
+# equality this comment asks for.
 #
 # The "version" key is mandatory from golangci-lint v2 on. A configuration
 # without it is rejected with "unsupported version of the configuration"
-# before any linter runs, so the v1 form this file used to carry left the
-# adopter with a lint gate that could not start.
+# before any linter runs. scaffold.go has emitted version "2" since before this
+# branch, so no adopter ever received the v1 form this file used to carry.
 version: "2"
 run:
   timeout: 10m
