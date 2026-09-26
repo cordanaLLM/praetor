@@ -80,7 +80,7 @@ flowchart LR
 | **HISS Lattice Engine** | Composable archetypes resolved via Join-Semilattice supremum ("Highest Standard Wins"). | `internal/config` |
 | **Hermetic Devcontainers** | Reproducible multi-architecture dev environments pre-wiring toolchains and Editor setups. | `praetorctl devcontainer` |
 | **Monotonic Debt Ratcheting** | Baselined legacy debt with non-increasing debt invariants and touched-file clean rules. | `praetorctl baseline` |
-| **Supply Chain Provenance** | SLSA Level 3 attestations, Syft SBOMs, and Sigstore Cosign keyless signatures. | GoReleaser + Actions OIDC |
+| **Supply Chain Provenance** | Syft SBOMs (CycloneDX + SPDX) and Sigstore Cosign keyless signatures over them via OIDC; `praetorctl provenance` separately emits an unsigned SLSA v1.0 statement for a given artifact file, on demand. | GoReleaser + Cosign + Syft |
 | **Dual-Surface Documentation** | Material-for-MkDocs human UI paired with a concise `/llms.txt` index and source-bound `/llms-full.txt` compatibility map. | `make docs-lint` catalog parity |
 
 ---
