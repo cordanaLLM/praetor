@@ -1,8 +1,8 @@
 package supplychain
 
 // Every container image this repository pins is written down more than once: the
-// distroless runtime appears in Dockerfile, build/package/Dockerfile,
-// templates/go/Dockerfile.distroless.tmpl and internal/flavor/scaffold.go; the Go builder
+// distroless runtime appears in Dockerfile, build/package/Dockerfile and
+// templates/go/Dockerfile.distroless.tmpl (the body internal/flavor scaffolds); the Go builder
 // in docker/dev/Dockerfile, .devcontainer/Dockerfile.praetor, build/package/Dockerfile,
 // .devcontainer/devcontainer.json and internal/devcontainer/bootstrap.go. Nothing held the
 // copies equal, so a digest refresh that missed one left two digests behind one tag and

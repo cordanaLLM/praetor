@@ -30,6 +30,50 @@ implementing them — `app-service`, `framework`, `native-gpu-systems`, `contain
 `os-image`. For the other nine, `flavor audit` reports **not applicable** rather than measuring the
 repository against an inferred language flavor.
 
+### Flavor templates: one embedded body, checked content
+
+Every template a flavor requires states where its content comes from, in
+`internal/flavor/definitions.go`, exactly one way:
+
+| Field | Meaning | Example |
+| :--- | :--- | :--- |
+| `Source` | a body under `templates/`, compiled into the binary and rendered by `praetorctl flavor apply` | `go/ci-go.yml.tmpl` for `.github/workflows/ci.yml` |
+| `Producer` | the command that writes the file; `flavor apply` never writes it, `--force` included, and lists it under *Left to Producer* | `praetorctl adopt` for `.standards.yaml`, `praetorctl compile-context` for `CLAUDE.md` |
+
+A template with neither is an apply error, not a placeholder. `flavor apply` used to write a one-line
+`# <file> configuration for <owner>/<repo>` comment for every template it had no body for, which
+disabled every built-in gitleaks rule (#410) and scaffolded workflows that ran nothing.
+`praetorctl flavor inspect <flavor>` prints the producer beside each producer-owned template.
+
+**The body is the file.** `templates/embed.go` embeds `templates/*/*.tmpl`, so the file under
+`templates/` is byte for byte what an adopter receives. Actions use `<%` and `%>` rather than `{{ }}`,
+because the workflows carry GitHub expressions such as `${{ runner.os }}`; a maintainer note goes in a
+template comment, `<%- /* note */ -%>`, which renders to nothing. The context a body can name is
+`templates.Context`; a body naming anything else fails `TestEveryShippedTemplateRenders`
+(`templates/embed_test.go`). `.clang-tidy` is shared with the Visual Studio editor target
+(`internal/editor/editor.go`), so both commands write one configuration.
+
+**The audit reads the content.** `flavor audit` counts a template only when it is a regular file —
+not a directory, and a symbolic link only when it resolves inside the repository — whose content
+passes the template's `Validator` (`internal/flavor/template_validators.go`). Settings share the same
+reader. Each validator checks what its format makes checkable and no more:
+
+| Validator | Accepts |
+| :--- | :--- |
+| `validWorkflow` | a workflow with a non-empty `jobs` mapping |
+| `validDockerfile` | at least one `FROM` instruction |
+| `validGitleaksConfig` | a config that loads rules: `[extend] useDefault = true`, an `[extend] path`, or `[[rules]]` |
+| `assignsTOMLKey` | TOML assigning at least one key |
+| `validXMLDocument` | well-formed XML with an element |
+| `validMarkdownDocument` | text beyond headings and HTML comments |
+| `validYAMLMapping`, `validJSONObject` | a non-empty mapping or object, as for settings |
+| `carriesCode` | a line that is not a comment, for JavaScript, TypeScript and `tsconfig.json`, which is JSON with comments |
+
+When you add a template, give it a `Source` (add the body under `templates/<ecosystem>/`) or a
+`Producer`, and a `Validator`. `TestEveryRequiredTemplateStatesItsContent`
+(`internal/flavor/template_content_test.go`) fails otherwise, and also fails when the scaffolded body
+does not pass its own validator or the old comment placeholder does.
+
 ### The `os-image` flavor: a forge is what it builds
 
 `os-image` is the first profile whose flavor is not a language stack. It requires `packer`,
@@ -72,7 +116,8 @@ repositories are known by their output rather than their source language.
 - **What counts as configured.** Any file ESLint already loads: `eslint.config.{js,mjs,cjs,ts,mts,cts}`,
   or a legacy `.eslintrc`, `.eslintrc.{js,cjs,json,yaml,yml}`. A repository carrying one conforms, and
   `flavor apply` writes nothing beside it unless `--force` is passed.
-- **What gets scaffolded.** Only for a repository with none of those: `eslint.config.mjs`, holding
+- **What gets scaffolded.** Only for a repository with none of those: `eslint.config.mjs`
+  (`templates/node/eslint.config.mjs.tmpl`), holding
   ESLint's recommended JavaScript rules in the form the `@eslint/js` README documents. It is `.mjs`
   because a `.js` file is ESM or CommonJS depending on `package.json` `"type"`, and `.mjs` loads in
   both kinds of repository.
@@ -80,9 +125,9 @@ repositories are known by their output rather than their source language.
   shipped catalog already refuses to name them (`internal/config/shipped_catalog_test.go`).
 
 Two guards in `internal/flavor/eslint_guard_test.go` hold every flavor to this. One fails if any flavor
-requires a legacy eslintrc file. The other fails if any JavaScript or TypeScript template has no content
-of its own and falls through to the `# ... configuration` default, because `#` is a syntax error in
-those languages. `frontend-svelte`'s `playwright.config.ts` now carries the configuration the
+requires a legacy eslintrc file. The other fails if any JavaScript or TypeScript template has no body
+of its own or renders one starting with `#`, which is a syntax error in those languages.
+`frontend-svelte`'s `playwright.config.ts` (`templates/svelte/playwright.config.ts.tmpl`) carries the configuration the
 `@playwright/test` documentation shows, without a `baseURL` or `webServer`, since those depend on an
 application server the flavor cannot know about.
 
