@@ -1,0 +1,3 @@
+type: fixed
+title: Correct stale coverage claims in the docs-drift surface map and the local repair timer guide
+breaking: false
