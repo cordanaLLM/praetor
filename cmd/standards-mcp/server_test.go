@@ -651,6 +651,24 @@ func TestServer_Boundary_PlanOverridesAfterTheJoinAndWithoutALock(t *testing.T) 
 	expectText(t, "no-lock override", plan, "Approving Reviewers:       3")
 }
 
+// A pinned catalog that is not materialized previews only through catalog_root, the same
+// confined catalog selection standards_audit takes.
+func TestServer_Boundary_PlanResolvesThroughTheSelectedCatalog(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	pinStrictPlanProfile(t, root)
+	relocateCatalog(t, root, "catalog")
+	// Negative: the server root holds no catalog, and a blank catalog_root means the server root.
+	expectError(t, "default catalog", callTool(t, srv, "standards_plan", nil), "materialized profile")
+	expectError(t, "blank catalog", callTool(t, srv, "standards_plan", map[string]any{"catalog_root": "  "}), "materialized profile")
+	// Positive: the selected catalog resolves the joined policy.
+	plan := callTool(t, srv, "standards_plan", map[string]any{"catalog_root": "catalog"})
+	expectText(t, "selected catalog", plan, "Signed Commits Required:   true")
+	expectText(t, "selected catalog", plan, "Approving Reviewers:       2")
+	// Boundary: a catalog outside the server root is refused like any other confined path.
+	outside := callTool(t, srv, "standards_plan", map[string]any{"catalog_root": t.TempDir()})
+	expectError(t, "outside catalog", outside, ErrOutsideRoot.Error())
+}
+
 func TestServer_Boundary_AuditLockfileIsDirectory(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	if err := os.Remove(filepath.Join(root, ".standards.lock")); err != nil {

@@ -27,7 +27,7 @@ func TestPlanEffectivePolicy_Positive_MatchesWhatAuditEnforces(t *testing.T) {
 	if err != nil {
 		t.Skipf("repository manifest unavailable: %v", err)
 	}
-	planned, notice, err := planEffectivePolicy(repoManifestPath, manifest)
+	planned, notice, err := planEffectivePolicy(repoManifestPath, "", manifest)
 	if err != nil {
 		t.Fatalf("plan policy: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestPlanEffectivePolicy_Boundary_NoLockFallsBackAndSaysSo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load manifest: %v", err)
 	}
-	policy, notice, err := planEffectivePolicy(path, manifest)
+	policy, notice, err := planEffectivePolicy(path, "", manifest)
 	if err != nil {
 		t.Fatalf("an unadopted repository must still plan: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestPlanEffectivePolicy_Negative_CorruptLockIsNotSwallowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load manifest: %v", err)
 	}
-	if policy, notice, err := planEffectivePolicy(path, manifest); err == nil {
+	if policy, notice, err := planEffectivePolicy(path, "", manifest); err == nil {
 		t.Errorf("a corrupt lock must fail, got policy=%+v notice=%q", policy.Complexity, notice)
 	}
 }
@@ -112,7 +112,40 @@ func TestPlanEffectivePolicy_Negative_CorruptLockIsNotSwallowed(t *testing.T) {
 // A manifest that vanished between load and resolution is an error, never a nil policy.
 func TestPlanEffectivePolicy_Negative_MissingManifest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".standards.yaml")
-	if policy, _, err := planEffectivePolicy(path, &config.Manifest{}); err == nil || policy != nil {
+	if policy, _, err := planEffectivePolicy(path, "", &config.Manifest{}); err == nil || policy != nil {
 		t.Fatalf("missing manifest = %+v, %v", policy, err)
 	}
+}
+
+// A pinned catalog that is not materialized plans only through --catalog-root, the catalog
+// selection sync and audit already take, instead of failing where they can resolve it.
+func TestPlanEffectivePolicy_Boundary_CatalogRootSelectsThePinnedCatalog(t *testing.T) {
+	f := strictSyncFixture(t)
+	catalog := detachCatalog(t, f.dir)
+	manifest, err := config.LoadManifest(f.manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Negative: the planned root holds no catalog, so the lock does not resolve.
+	if policy, _, err := planEffectivePolicy(f.manifestPath, "", manifest); err == nil {
+		t.Fatalf("unmaterialized catalog planned %+v", policy.BranchProtection)
+	}
+	// Positive: the selected catalog resolves the pinned profile's branch protection.
+	policy, notice, err := planEffectivePolicy(f.manifestPath, catalog, manifest)
+	if err != nil || notice != "" {
+		t.Fatalf("selected catalog: notice %q, err %v", notice, err)
+	}
+	if bp := policy.BranchProtection; !bp.RequireSignedCommits || bp.RequiredApprovingReviewers != 2 {
+		t.Fatalf("selected catalog planned %+v, want signed commits and 2 reviewers", bp)
+	}
+	// Boundary: the flag reaches the resolver, and a relative spelling resolves against the
+	// working directory, as it does for sync.
+	t.Chdir(filepath.Dir(catalog))
+	out, err := captureStdout(t, func() error {
+		return runPlan([]string{"--config=" + f.manifestPath, "--catalog-root=" + filepath.Base(catalog)})
+	})
+	if err != nil {
+		t.Fatalf("relative --catalog-root: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Signed Commits Required:   true", "Approving Reviewers:       2")
 }

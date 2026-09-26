@@ -77,6 +77,9 @@ limit; in an audit it only joins `builtin:defaults-v1` as a tied contributor.
 dry run previews what the audit will enforce. It previously reported the built-in defaults with only
 the repository's own overrides applied, which meant it never read the pinned profiles: one
 repository's archetype declared `max_func_loc: 75`, `plan` printed `100` and `audit` enforced `60`.
+Like `sync` and `audit`, `plan --catalog-root` (MCP `standards_plan`: `catalog_root`) reads the
+pinned profiles from a catalog outside the repository; without it a lock whose catalog is not
+materialized fails the preview (`TestPlanEffectivePolicy_Boundary_CatalogRootSelectsThePinnedCatalog`).
 
 Resolving the policy needs a lockfile. In a repository that has not been adopted there are no pinned
 profiles, so defaults plus the repository's overrides is the whole policy, and `plan` says so:

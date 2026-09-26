@@ -104,13 +104,7 @@ func TestServerAuditUsesSelectedCatalog(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	before := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "original catalog", before, "max_func_loc=60")
-	catalog := filepath.Join(root, "catalog")
-	if err := os.MkdirAll(filepath.Join(catalog, ".config"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(filepath.Join(root, ".config", "archetypes"), filepath.Join(catalog, ".config", "archetypes")); err != nil {
-		t.Fatal(err)
-	}
+	relocateCatalog(t, root, "catalog")
 	expectError(t, "missing default catalog", callTool(t, srv, "standards_audit", nil), "materialized profile")
 	after := callTool(t, srv, "standards_audit", map[string]any{"catalog_root": "catalog"})
 	expectText(t, "selected catalog", after, "7/7 MCP audit gates passed")
@@ -119,6 +113,19 @@ func TestServerAuditUsesSelectedCatalog(t *testing.T) {
 	afterLine := strings.Split(after.Content[0].Text, "\n")[2]
 	if beforeLine != afterLine {
 		t.Fatalf("moving catalog changed policy identity: %s != %s", beforeLine, afterLine)
+	}
+}
+
+// relocateCatalog moves root's pinned .config/archetypes under root/rel, so the lock stays
+// valid while the default catalog is no longer materialized.
+func relocateCatalog(t *testing.T, root, rel string) {
+	t.Helper()
+	catalog := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Join(catalog, ".config"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, ".config", "archetypes"), filepath.Join(catalog, ".config", "archetypes")); err != nil {
+		t.Fatal(err)
 	}
 }
 

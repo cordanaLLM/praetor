@@ -72,8 +72,9 @@ func checkPlanDrift(policy *config.ResolvedPolicy, rootDir string) ([]string, []
 // The resolution itself is config.ResolveRepositoryPolicy, shared with the editor projections
 // and the language server so those cannot disagree with this preview either (issue #360). The
 // no-lock notice is printed here, as it always was, and also returned for callers that test it.
-func planEffectivePolicy(configPath string, manifest *config.Manifest) (*config.ResolvedPolicy, string, error) {
-	policy, notice, err := config.ResolveRepositoryPolicy(context.Background(), configPath, manifest)
+// catalogRoot selects the pinned catalog as sync's --catalog-root does; empty is the planned root.
+func planEffectivePolicy(configPath, catalogRoot string, manifest *config.Manifest) (*config.ResolvedPolicy, string, error) {
+	policy, notice, err := config.ResolveRepositoryPolicyFromCatalog(context.Background(), configPath, catalogRoot, manifest)
 	if err != nil {
 		return nil, "", err
 	}
@@ -89,6 +90,7 @@ func planEffectivePolicy(configPath string, manifest *config.Manifest) (*config.
 func runPlan(args []string) error {
 	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
 	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml; its directory is the planned root")
+	catalogRoot := fs.String("catalog-root", "", "Root containing pinned .config/archetypes (default: planned root)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -102,7 +104,7 @@ func runPlan(args []string) error {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	policy, _, err := planEffectivePolicy(*configPath, manifest)
+	policy, _, err := planEffectivePolicy(*configPath, *catalogRoot, manifest)
 	if err != nil {
 		return err
 	}

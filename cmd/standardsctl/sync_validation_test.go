@@ -62,18 +62,26 @@ func strictSyncFixture(t *testing.T) *auditFixture {
 	return f
 }
 
+// detachCatalog moves dir's pinned .config/archetypes into a fresh catalog root, so the lock
+// stays valid but its catalog is no longer materialized, and returns that root.
+func detachCatalog(t *testing.T, dir string) string {
+	t.Helper()
+	catalog := t.TempDir()
+	if err := os.Mkdir(filepath.Join(catalog, ".config"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(dir, ".config", "archetypes"), filepath.Join(catalog, ".config", "archetypes")); err != nil {
+		t.Fatal(err)
+	}
+	return catalog
+}
+
 // A valid lock whose catalog is not materialized leaves the policy unresolved. sync then
 // neither verifies the retained ruleset nor synthesizes one from a stand-in policy, counts
 // the single cause once and never reaches the forge; --catalog-root resolves it.
 func TestSyncLeavesTheRulesetUncheckedWhileThePolicyIsUnresolved(t *testing.T) {
 	f := strictSyncFixture(t)
-	catalog := t.TempDir()
-	if err := os.Mkdir(filepath.Join(catalog, ".config"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(filepath.Join(f.dir, ".config", "archetypes"), filepath.Join(catalog, ".config", "archetypes")); err != nil {
-		t.Fatal(err)
-	}
+	catalog := detachCatalog(t, f.dir)
 	rulesetPath := filepath.Join(f.dir, ".github/rulesets/main.json")
 	weaker := readFixtureFile(t, f.dir, ".github/rulesets/main.json")
 	stub := &forgeStub{writeStatus: http.StatusCreated}

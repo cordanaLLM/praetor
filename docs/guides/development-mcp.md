@@ -193,7 +193,7 @@ lock-less case differs from `praetorctl plan`. Tests:
 `standards_plan` opens with `=== Praetor Reconcile Plan (Dry Run) ===` and takes
 the `Repository: <owner>/<name>` line from the manifest's `repository` block
 (`TestWritePlanHeader_NamesTheManifestRepository`). Its target invariants come from
-`config.ResolveRepositoryPolicy`, the resolver `praetorctl plan` uses
+`config.ResolveRepositoryPolicyFromCatalog`, the resolver `praetorctl plan` uses
 (`createPlanTool` in `cmd/standards-mcp/server.go`):
 
 - A locked repository shows the pinned profiles and facets joined with the
@@ -208,6 +208,10 @@ the `Repository: <owner>/<name>` line from the manifest's `repository` block
 - A lock that does not resolve, for example a profile edited after it was pinned,
   fails the tool with `Failed to resolve plan policy: ...` and prints no policy
   (`TestServer_Negative_PlanRejectsAnUnverifiableLock`).
+- A pinned catalog that is not materialized under the server root resolves through
+  the optional `catalog_root` argument, the confined catalog selection
+  `standards_audit` takes; a blank value means the server root and a path outside
+  it is refused (`TestServer_Boundary_PlanResolvesThroughTheSelectedCatalog`).
 
 ### Shared audit authority and parity
 
