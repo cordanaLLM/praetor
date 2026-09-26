@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400" role="img" aria-labelledby="praetor-mark-title">
+  <title id="praetor-mark-title">praetor mark</title>
+  <rect x="40" y="40" width="320" height="320" rx="48" fill="#3730a3"/>
+  <path d="M200 88 312 136v76c0 64-48 104-112 124-64-20-112-60-112-124v-76z" fill="none" stroke="#e0e7ff" stroke-width="20" stroke-linejoin="round"/>
+  <path d="m150 206 36 36 68-76" fill="none" stroke="#e0e7ff" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -15,43 +15,15 @@ export default defineConfig({
       customCss: [
         './src/styles/custom.css',
       ],
+      components: {
+        // Wraps Starlight's default Head and adds a per-page TechArticle JSON-LD block.
+        Head: './src/components/SEOHead.astro',
+      },
       head: [
-        // Core Web Vitals font optimization
-        {
-          tag: 'link',
-          attrs: {
-            rel: 'preconnect',
-            href: 'https://fonts.googleapis.com',
-          },
-        },
-        {
-          tag: 'link',
-          attrs: {
-            rel: 'preconnect',
-            href: 'https://fonts.gstatic.com',
-            crossorigin: '',
-          },
-        },
-        // Pre-wired Schema.org JSON-LD structured data
-        {
-          tag: 'script',
-          attrs: {
-            type: 'application/ld+json',
-          },
-          content: JSON.stringify({
-            '@context': 'https://schema.org',
-            '@type': 'TechArticle',
-            'headline': 'cordanaLLM/praetor Documentation & Architecture',
-            'description': 'Universal High-Integrity Repository Governance and Autonomous Agent Harnesses.',
-            'author': {
-              '@type': 'Organization',
-              'name': 'cordanaLLM',
-              'url': 'https://standards.cordana.ai'
-            },
-            'inLanguage': 'en',
-            'proficiencyLevel': 'Expert'
-          }),
-        },
+        // Site-wide Schema.org JSON-LD. The per-page TechArticle comes from SEOHead.astro
+        // because its headline and URL change on every page. No font preconnect hints: the
+        // preset renders with the system font stack (src/styles/custom.css) and fetches no
+        // remote font, so a preconnect would open a connection nothing uses.
         {
           tag: 'script',
           attrs: {
