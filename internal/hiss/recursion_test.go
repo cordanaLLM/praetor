@@ -179,6 +179,186 @@ func TestRustSelfRecursionIsReported(t *testing.T) {
 	assertSelfCalls(t, "src/w.rs", "impl N {\n    pub fn walk(\n        &self,\n        n: u32,\n    ) -> u32 {\n        Self::walk(self, n)\n    }\n}\n", 6)
 }
 
+// TestRustSelfRecursionShadowsLexically is the positive dimension of Rust shadowing: a local
+// of the function's name hides it only inside its lexical scope, so a call before a let, in
+// its own initializer, or after the block, loop, arm or closure that bound the name still
+// re-enters the function. A name followed by a parenthesis is a call, not a pattern.
+func TestRustSelfRecursionShadowsLexically(t *testing.T) {
+	for name, tc := range map[string]struct {
+		src  string
+		want []int
+	}{
+		"call before let":      {"fn f(n: u32) {\n    if n > 0 {\n        f(n - 1);\n    }\n    let f = 1;\n}\n", []int{3}},
+		"one-line body":        {"fn f(n: u32) -> u32 { if n > 0 { return f(n - 1); } let f = 3; f }\n", []int{1}},
+		"let initializer":      {"fn f(n: u32) -> u32 {\n    let f = f(n - 1);\n    f\n}\n", []int{2}},
+		"after closure param":  {"fn f(n: u32) -> u32 {\n    let g = |f: u32| f + 1;\n    f(n - 1)\n}\n", []int{3}},
+		"after closure block":  {"fn f(n: u32) -> u32 {\n    let g = |f: u32| {\n        f + 1\n    };\n    f(n - 1)\n}\n", []int{5}},
+		"after inner block":    {"fn f(n: u32) -> u32 {\n    {\n        let f = 1;\n    }\n    f(n - 1)\n}\n", []int{5}},
+		"after match arm":      {"fn f(n: u32) -> u32 {\n    match n {\n        f => f + 1,\n    };\n    f(n - 1)\n}\n", []int{5}},
+		"after for loop":       {"fn f(n: u32) -> u32 {\n    for f in 0..n {\n        let _ = f;\n    }\n    f(n - 1)\n}\n", []int{5}},
+		"after if let":         {"fn f(n: u32) -> u32 {\n    if let Some(f) = g(n) {\n        return f;\n    }\n    f(n - 1)\n}\n", []int{5}},
+		"else of if let":       {"fn f(o: Option<u32>) -> u32 {\n    if let Some(f) = o {\n        f\n    } else {\n        f(None)\n    }\n}\n", []int{5}},
+		"for iterator":         {"fn f(n: u32) -> u32 {\n    for f in f(n - 1) {\n    }\n    0\n}\n", []int{2}},
+		"match scrutinee":      {"fn f(n: u32) -> u32 {\n    let r = match f(n - 1) { 0 => 1, _ => 2 };\n    r\n}\n", []int{2}},
+		"between pipes":        {"fn f(n: u32) -> u32 {\n    1 | f(n - 1) | 2\n}\n", []int{2}},
+		"closure then call":    {"fn f(n: u32) {\n    f(n - 1);\n    let f = |x: u32| x;\n    f(n);\n}\n", []int{2}},
+		"guard and arm body":   {"fn f(t: &T) -> bool {\n    match t {\n        T::A(x) if f(x) => true,\n        T::B(x) => f(x),\n        _ => false,\n    }\n}\n", []int{3, 4}},
+		"std expression macro": {"fn f(n: u32) -> u32 {\n    assert!(f(n - 1) > 0);\n    println!(\"{}\", f(n - 2));\n    vec![f(n - 3)].len() as u32\n}\n", []int{2, 3, 4}},
+		"after macro input":    {"fn f(n: u32) -> u32 {\n    let r = check!(n);\n    r + f(n - 1)\n}\n", []int{3}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertSelfCalls(t, "src/lib.rs", tc.src, tc.want...)
+		})
+	}
+}
+
+// TestRustScopedBindingsShadow is the negative dimension: while a local of the name is in
+// scope, a bare call reaches the local. A use covers the whole body, including a call above
+// it, and a closure or arm pattern that binds the name inside brackets still shadows it.
+func TestRustScopedBindingsShadow(t *testing.T) {
+	for name, src := range map[string]string{
+		"use above":         "fn f() {\n    f();\n    use other::f;\n}\n",
+		"let closure":       "fn f(n: u32) -> u32 {\n    let f = |x: u32| x;\n    f(n)\n}\n",
+		"let tuple":         "fn f(p: (u32, fn(u32) -> u32)) -> u32 {\n    let (n, f) = p;\n    f(n)\n}\n",
+		"let array length":  "fn f(n: u32) -> u32 {\n    let [f, _] = [g; 2];\n    f(n)\n}\n",
+		"closure tuple":     "fn f(v: &[(u32, fn(u32) -> u32)]) -> u32 {\n    v.iter().map(|(n, f)| f(*n)).sum()\n}\n",
+		"closure block":     "fn f(v: &[fn()]) {\n    v.iter().for_each(|f| {\n        f();\n    });\n}\n",
+		"for body":          "fn f(fs: &[fn()]) {\n    for f in fs {\n        f();\n    }\n}\n",
+		"if let body":       "fn f(o: Option<fn()>) {\n    if let Some(f) = o {\n        f();\n    }\n}\n",
+		"while let body":    "fn f(v: &mut Vec<fn()>) {\n    while let Some(f) = v.pop() {\n        f();\n    }\n}\n",
+		"let chain":         "fn f(a: bool, o: Option<fn()>) {\n    if a && let Some(f) = o {\n        f();\n    }\n}\n",
+		"arm block":         "fn f(o: Option<fn()>) {\n    match o {\n        Some(f) => {\n            f();\n        }\n        None => {}\n    }\n}\n",
+		"arm on its line":   "fn f(o: Option<fn() -> u8>) -> u8 {\n    match o { Some(f) => f(), None => 0 }\n}\n",
+		"let else":          "fn f(o: Option<fn()>) {\n    let Some(f) = o else { return; };\n    f();\n}\n",
+		"shadow until end":  "fn f(n: u32) -> u32 {\n    let f = |x: u32| x;\n    {\n        f(n);\n    }\n    f(n)\n}\n",
+		"iterator closure":  "fn f(fs: &[fn()]) {\n    for f in fs.iter().map(|x| { x }) {\n        f();\n    }\n}\n",
+		"arm pattern macro": "fn recv() {\n    select! {\n        recv(r) -> v => assert_eq!(v, Ok(7)),\n    }\n}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertSelfCalls(t, "src/lib.rs", src)
+		})
+	}
+}
+
+// TestRustMacroInputIsUndecided pins the macro rule: a macro may rewrite its input, so a call
+// written inside the input of any macro but a standard expression macro is not decided. The
+// input ends at the delimiter matching the one that opened it, across lines.
+func TestRustMacroInputIsUndecided(t *testing.T) {
+	for name, src := range map[string]string{
+		"syscall":           "pub fn recv(fd: i32) -> i32 {\n    syscall!(recv(fd, 0))\n}\n",
+		"wrapped syscall":   "pub fn send(fd: i32) -> i32 {\n    let r = syscall!(\n        send(\n            fd,\n        )\n    );\n    r\n}\n",
+		"path macro":        "fn debug(d: &D) {\n    tracing::debug!(x = debug(&d));\n}\n",
+		"bracket macro":     "fn f(n: u32) -> u32 {\n    wrap![f(n - 1)]\n}\n",
+		"brace macro":       "fn f(n: u32) -> u32 {\n    wrap! {\n        f(n - 1)\n    }\n}\n",
+		"method in macro":   "impl S {\n    fn m(&self) -> u8 {\n        ok!(self.m())\n    }\n}\n",
+		"nested std inside": "fn f(n: u32) -> u32 {\n    wrap!(vec![f(n - 1)])\n}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertSelfCalls(t, "src/lib.rs", src)
+		})
+	}
+	// Boundaries: a comparison or negation is not a macro, and a call after the input closes
+	// on the same line is decided again.
+	assertSelfCalls(t, "src/ne.rs", "fn f(n: u32) -> bool {\n    n != 0 && !f(n - 1)\n}\n", 2)
+	assertSelfCalls(t, "src/close.rs", "fn f(n: u32) -> u32 {\n    wrap!(n); f(n - 1)\n}\n", 2)
+	assertSelfCalls(t, "src/std.rs", "fn f(n: u32) -> u32 {\n    std::assert_eq!(f(n - 1), 0);\n    0\n}\n", 2)
+}
+
+// TestRustTraitImplHeaderForms covers impl and trait headers the line-anchored match used to
+// misread: an attribute on the header's line, a brace in a const generic argument, a
+// semicolon in an array type, and a trait alias that ends in a semicolon and opens no body.
+func TestRustTraitImplHeaderForms(t *testing.T) {
+	for name, src := range map[string]string{
+		"attribute":       "#[allow(unused)] impl Ones for W {\n    fn count(&self) -> u32 {\n        self.count()\n    }\n}\n",
+		"const generic":   "impl Ones for W<{ N + 1 }> {\n    fn count(&self) -> u32 {\n        self.count()\n    }\n}\n",
+		"array type":      "impl<const N: usize> Ones for [u8; N] {\n    fn count(&self) -> u32 {\n        self.count()\n    }\n}\n",
+		"after alias":     "trait Alias = Foo + Bar;\nimpl Display for W {\n    fn fmt(&self) -> u32 {\n        self.fmt()\n    }\n}\n",
+		"wrapped generic": "impl Ones\n    for W<{ N }>\n{\n    fn count(&self) -> u32 {\n        self.count()\n    }\n}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertSelfCalls(t, "src/lib.rs", src)
+		})
+	}
+	// An inherent impl with the same forms stays decided, and so does the free function after
+	// an alias.
+	assertSelfCalls(t, "src/inherent.rs", "#[allow(unused)] impl W<{ N + 1 }> {\n    fn count(&self) -> u32 {\n        self.count()\n    }\n}\n", 3)
+	assertSelfCalls(t, "src/alias.rs", "trait Alias = Foo;\nfn walk(n: u32) {\n    walk(n)\n}\n", 3)
+}
+
+// TestRustBindingAt pins how each occurrence of the name is classified, and which keyword its
+// scope is measured from.
+func TestRustBindingAt(t *testing.T) {
+	for code, want := range map[string]struct {
+		kind    rustBindKind
+		keyword int
+	}{
+		"let f = 1;":              {rustLetBinding, 0},
+		"let a = 1; let f = 2;":   {rustLetBinding, 11},
+		"if let Some(f) = o {":    {rustHeadBinding, 3},
+		"while let Some(f) = o {": {rustHeadBinding, 6},
+		"a && let Some(f) = o {":  {rustHeadBinding, 5},
+		"for (i, f) in v {":       {rustHeadBinding, 0},
+		"let g = |a, f| a;":       {rustClosureBinding, -1},
+		"Some(f) => 1,":           {rustArmBinding, -1},
+		"x = f(1);":               {rustNoBinding, -1},
+		"let r = match f(n) {":    {rustNoBinding, -1},
+		"f!(x) => 1,":             {rustNoBinding, -1},
+		"f::g() => 1,":            {rustNoBinding, -1},
+		"a => f,":                 {rustNoBinding, -1},
+		"return f;":               {rustNoBinding, -1},
+		"let x = y; f":            {rustNoBinding, -1},
+		"for x in v { f }":        {rustNoBinding, -1},
+		"let g = |a| a; f":        {rustNoBinding, -1},
+		"deliver(f) if f.ok() =>": {rustArmBinding, -1},
+	} {
+		at := nextIdent(code, "f", 0)
+		kind, keyword := rustBindingAt(code, at)
+		if kind != want.kind || keyword != want.keyword {
+			t.Errorf("rustBindingAt(%q) = %d, %d; want %d, %d", code, kind, keyword, want.kind, want.keyword)
+		}
+	}
+}
+
+// TestRustWalkBounds pins the walk's bounds: pending bindings stop at maxRustPendingBindings,
+// and a closure binding whose pipe was on an earlier line is dropped.
+func TestRustWalkBounds(t *testing.T) {
+	var w rustWalk
+	for i := 0; i < maxRustPendingBindings+4; i++ {
+		w.bind("let f = 1;", 4, rustLetBinding, 0)
+	}
+	if len(w.pending) != maxRustPendingBindings {
+		t.Fatalf("pending bindings must be bounded at %d, got %d", maxRustPendingBindings, len(w.pending))
+	}
+	w = rustWalk{}
+	w.bind("|f| f", 1, rustClosureBinding, -1)
+	w.bind("let f", 4, rustNoBinding, -1)
+	if len(w.pending) != 1 || w.pending[0].pipe != 2 {
+		t.Fatalf("a closure binding must wait for its closing pipe, got %+v", w.pending)
+	}
+	w.startLine()
+	if len(w.pending) != 0 {
+		t.Fatalf("a closure binding must not outlive its line, got %+v", w.pending)
+	}
+}
+
+// TestRustCallTextDropsArmPatterns pins which part of a line may hold a call.
+func TestRustCallTextDropsArmPatterns(t *testing.T) {
+	for code, want := range map[string]string{
+		"recv(r) -> v => go(v),":         "=> go(v),",
+		"A(x) if f(x) => 1,":             "if f(x) => 1,",
+		"let r = match f(n) { 0 => 1 };": "let r = match f(n) { 0 => 1 };",
+		"match f(n) { A => 1, _ => 2 }":  "match f(n) { A => 1, _ => 2 }",
+		"x = f(n); y => z":               "x = f(n); y => z",
+		"S { a, .. } => f(a),":           "S { a, .. } => f(a),",
+		"f(n)":                           "f(n)",
+		"":                               "",
+	} {
+		if got := rustCallText(code); got != want {
+			t.Errorf("rustCallText(%q) = %q, want %q", code, got, want)
+		}
+	}
+}
+
 // TestRustSelfRecursionFollowsResolution is the negative dimension: every one of these calls
 // the function's name without reaching the function, so reporting it would punish delegation.
 func TestRustSelfRecursionFollowsResolution(t *testing.T) {
@@ -300,6 +480,39 @@ func TestPythonSelfRecursionBoundaries(t *testing.T) {
 	assertSelfCalls(t, "own.py", "class Outer:\n    class Inner:\n        @staticmethod\n        def g():\n            return Outer.g()\n        @staticmethod\n        def h():\n            return Inner.h()\n", 8)
 }
 
+// TestPythonSelfRecursionScopesBindings pins Python's scope rule across nested defs: a
+// parameter, assignment or def in a nested def is that def's local, so it shadows the name for
+// the nested def's calls and never for the enclosing function's own. A class body binds in
+// its namespace, which no function reads, and a method's receiver call is not a bare name.
+func TestPythonSelfRecursionScopesBindings(t *testing.T) {
+	assertSelfCalls(t, "param.py", "def f(n):\n    def g(f):\n        return f(1)\n    return f(n - 1)\n", 4)
+	assertSelfCalls(t, "assign.py", "def f(n):\n    def g():\n        f = 1\n        return f()\n    return f(n - 1)\n", 5)
+	assertSelfCalls(t, "inner.py", "def f(n):\n    def g():\n        def f():\n            return 1\n        return f()\n    return f(n - 1)\n", 6)
+	assertSelfCalls(t, "late.py", "def f(n):\n    def g():\n        return f()\n        f = 2\n    return g\n")
+	assertSelfCalls(t, "deep.py", "def f(n):\n    def g():\n        def h():\n            return f(n)\n        return h\n    return g\n", 4)
+	assertSelfCalls(t, "between.py", "def f(n):\n    def g(f):\n        def h():\n            return f(n)\n        return h\n    return g\n")
+	assertSelfCalls(t, "method.py", "def f():\n    class C:\n        def m(self):\n            return f()\n    return C\n", 4)
+	assertSelfCalls(t, "classbody.py", "def f(n):\n    class C:\n        f = 1\n    return f(n)\n", 4)
+	assertSelfCalls(t, "receiver.py", "class K:\n    def m(self):\n        def g(m):\n            return self.m()\n        return g\n", 4)
+}
+
+// TestPythonRelayedCallsAreBounded pins the relay of nested-scope calls at its bound.
+func TestPythonRelayedCallsAreBounded(t *testing.T) {
+	var src strings.Builder
+	src.WriteString("def f(n):\n    def g():\n")
+	for i := 0; i < maxRelayedCalls+8; i++ {
+		src.WriteString("        f(n)\n")
+	}
+	src.WriteString("    return g\n")
+	got, _ := selfCallLines(t, "relay.py", src.String())
+	if len(got) != maxSelfCallSites {
+		t.Fatalf("relayed call sites must be bounded at %d, got %d", maxSelfCallSites, len(got))
+	}
+	if relayed := appendRelayed(make([]relayedCall, maxRelayedCalls), relayedCall{}); len(relayed) != maxRelayedCalls {
+		t.Fatalf("a full relay must not grow past %d, got %d", maxRelayedCalls, len(relayed))
+	}
+}
+
 // TestPythonStringAndBracketRecovery covers the edges of continuation tracking: an escaped
 // quote does not close a triple-quoted string, a def resets a misread bracket depth, and a
 // line that an expression may legitimately start with (for, async for) is not a reset.
@@ -380,6 +593,29 @@ func TestPythonContinuationLinesStayInTheirFunction(t *testing.T) {
 	writeFixture(t, root, "c.py", src)
 	rep := scanFixture(t, root, ScanOptions{MaxFuncLOC: 60})
 	assertViolations(t, rep, []expectedViolation{{"HISS-04", "c.py", 1}})
+}
+
+// TestIdentifierHelpersBoundaries pins the position-level helpers the Rust walk places calls
+// and bindings with: a call at an exact byte, a whole identifier at a byte, the last and
+// trailing identifier, and a word ending a text.
+func TestIdentifierHelpersBoundaries(t *testing.T) {
+	for at, want := range map[int]bool{0: true, 5: false, 11: false, 16: false, 17: true} {
+		if got := callAt("f(1) ff(2) f_x() f (3)", at, "f", isPathByte); got != want {
+			t.Errorf("callAt(%d) = %v, want %v", at, got, want)
+		}
+	}
+	if callAt("a::f()", 3, "f", isPathByte) || !callAt("a::f()", 3, "f", isSelectorByte) {
+		t.Error("callAt must honour the excluded preceding byte")
+	}
+	if identAt("abc", 0, "") || !identAt("f", 0, "f") || identAt("xf", 1, "f") || identAt("fx", 0, "f") {
+		t.Error("identAt must require a whole identifier")
+	}
+	if endsWithWord("elif", "if") || !endsWithWord("} else if", "if") || endsWithWord("", "if") {
+		t.Error("endsWithWord must require a whole trailing word")
+	}
+	if lastIdent("let a; let b", "let") != 7 || lastIdent("outlet", "let") != -1 || trailingIdent("a::b_c") != "b_c" || trailingIdent("") != "" {
+		t.Error("lastIdent and trailingIdent disagree with their contract")
+	}
 }
 
 // TestCallSiteHelpersBoundaries pins the shared matcher at its edges, since the banned-call
