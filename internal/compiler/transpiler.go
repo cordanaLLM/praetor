@@ -53,13 +53,23 @@ func (t *Transpiler) forRepository(ctx context.Context, root string) (*Transpile
 	if t.Clients != nil {
 		return t, nil
 	}
+	clients, err := declaredAgentClients(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	selected := *t
+	selected.Clients = clients
+	return &selected, nil
+}
+
+// declaredAgentClients reads agent_clients from the manifest at root; nil means the key is
+// absent and every client applies.
+func declaredAgentClients(ctx context.Context, root string) ([]string, error) {
 	selection, err := config.LoadDeclaredTooling(ctx, root)
 	if err != nil {
 		return nil, fmt.Errorf("agent client selection: %w", err)
 	}
-	selected := *t
-	selected.Clients = selection.AgentClients
-	return &selected, nil
+	return selection.AgentClients, nil
 }
 
 // CompileContent delegates pure rendering to the shared leaf renderer.

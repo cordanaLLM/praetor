@@ -81,3 +81,43 @@ func TestCompileContent_Boundary_ClientSelectionAbsentEmptyOversized(t *testing.
 		t.Fatalf("selection at the bound: err=%v", err)
 	}
 }
+
+// Positive: PersonaDirs keeps the selected clients' persona directories in registry order and
+// names the other clients' directories as left out.
+func TestPersonaDirs_Positive_SelectionSplitsDirectories(t *testing.T) {
+	selected, excluded, err := PersonaDirs([]string{"Codex ", "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{".claude/agents", ".codex/agents"}; !reflect.DeepEqual(selected, want) {
+		t.Fatalf("selected = %v, want %v", selected, want)
+	}
+	if want := []string{".github/agents", ".gemini/agents"}; !reflect.DeepEqual(excluded, want) {
+		t.Fatalf("excluded = %v, want %v", excluded, want)
+	}
+}
+
+// Negative: an unknown id fails the persona selection the same way it fails the context files.
+func TestPersonaDirs_Negative_UnknownClientRejected(t *testing.T) {
+	selected, excluded, err := PersonaDirs([]string{"gemini", "vim"})
+	if err == nil || selected != nil || excluded != nil || !strings.Contains(err.Error(), "vim") {
+		t.Fatalf("PersonaDirs = %v, %v, %v; want an error naming vim", selected, excluded, err)
+	}
+}
+
+// Boundary: nil keeps all four directories, an empty list keeps none, and clients that read no
+// personas (Cursor, Windsurf) add nothing to either list.
+func TestPersonaDirs_Boundary_AbsentEmptyAndPersonalessClients(t *testing.T) {
+	all, none, err := PersonaDirs(nil)
+	if err != nil || len(all) != 4 || none != nil {
+		t.Fatalf("nil selection = %v, %v, %v", all, none, err)
+	}
+	kept, left, err := PersonaDirs([]string{})
+	if err != nil || kept != nil || !reflect.DeepEqual(left, all) {
+		t.Fatalf("empty selection = %v, %v, %v", kept, left, err)
+	}
+	kept, left, err = PersonaDirs([]string{"cursor", "windsurf"})
+	if err != nil || kept != nil || !reflect.DeepEqual(left, all) {
+		t.Fatalf("personaless selection = %v, %v, %v", kept, left, err)
+	}
+}

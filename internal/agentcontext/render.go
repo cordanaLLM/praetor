@@ -50,21 +50,49 @@ func NewTranspiler() *Transpiler {
 // vendorTarget pairs a compiled file with the agent client that reads it and the AGENTS.md
 // `## <Vendor>` heading that belongs to that file alone. Every line outside such a section is
 // shared by all targets. Client ids reuse internal/clientid where the client is known there;
-// Cursor, Copilot and Windsurf have a projection but no client setup adapter.
+// Cursor, Copilot and Windsurf have a projection but no client setup adapter. personaDir is
+// the directory the client reads agent personas from (compiler.CompileAgents copies
+// .agents/agents there); Cursor and Windsurf read none.
 type vendorTarget struct {
-	client  string
-	path    string
-	section string
-	prefix  string
+	client     string
+	path       string
+	section    string
+	prefix     string
+	personaDir string
 }
 
 var vendorTargets = [6]vendorTarget{
-	{client: string(clientid.Claude), path: "CLAUDE.md", section: "Claude Code"},
+	{client: string(clientid.Claude), path: "CLAUDE.md", section: "Claude Code", personaDir: ".claude/agents"},
 	{client: "cursor", path: ".cursor/rules/hiss-invariants.mdc", section: "Cursor", prefix: cursorFrontmatter},
-	{client: "copilot", path: ".github/copilot-instructions.md", section: "GitHub Copilot"},
+	{client: "copilot", path: ".github/copilot-instructions.md", section: "GitHub Copilot", personaDir: ".github/agents"},
 	{client: "windsurf", path: ".windsurfrules", section: "Windsurf"},
-	{client: string(clientid.Gemini), path: ".gemini/GEMINI.md", section: "Gemini"},
-	{client: string(clientid.Codex), path: ".codex/rules.md", section: "Codex"},
+	{client: string(clientid.Gemini), path: ".gemini/GEMINI.md", section: "Gemini", personaDir: ".gemini/agents"},
+	{client: string(clientid.Codex), path: ".codex/rules.md", section: "Codex", personaDir: ".codex/agents"},
+}
+
+// PersonaDirs resolves a client selection to the persona directories it keeps and the ones it
+// leaves out, both in registry order, under the same rules as the context files: nil keeps
+// every directory, an empty list keeps none, and an unknown id fails. A client that reads no
+// personas appears in neither list.
+func PersonaDirs(clients []string) (selected, excluded []string, err error) {
+	targets, _, err := selectTargets(clients)
+	if err != nil {
+		return nil, nil, err
+	}
+	chosen := make(map[string]bool, len(targets))
+	for _, target := range targets {
+		chosen[target.client] = true
+	}
+	for _, target := range vendorTargets {
+		switch {
+		case target.personaDir == "":
+		case chosen[target.client]:
+			selected = append(selected, target.personaDir)
+		default:
+			excluded = append(excluded, target.personaDir)
+		}
+	}
+	return selected, excluded, nil
 }
 
 // maxSelectedClients bounds a declared client list (HISS-02). A list longer than this cannot

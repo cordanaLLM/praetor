@@ -45,34 +45,41 @@ Tests: `internal/editor/selection_test.go`,
 ## Selecting agent clients
 
 `agent_clients` selects the vendor context files `praetorctl compile-context` compiles
-from `AGENTS.md`, with the same absent, list and empty rules as `editors`:
+from `AGENTS.md` and the persona directories it copies `.agents/agents/*.md` into, with
+the same absent, list and empty rules as `editors`:
 
 ```yaml
 agent_clients: [claude, codex]
 ```
 
-| Id | Projection |
-| :--- | :--- |
-| `claude` | `CLAUDE.md` |
-| `cursor` | `.cursor/rules/hiss-invariants.mdc` |
-| `copilot` | `.github/copilot-instructions.md` |
-| `windsurf` | `.windsurfrules` |
-| `gemini` | `.gemini/GEMINI.md` |
-| `codex` | `.codex/rules.md` |
+| Id | Context file | Persona directory |
+| :--- | :--- | :--- |
+| `claude` | `CLAUDE.md` | `.claude/agents` |
+| `cursor` | `.cursor/rules/hiss-invariants.mdc` | none |
+| `copilot` | `.github/copilot-instructions.md` | `.github/agents` |
+| `windsurf` | `.windsurfrules` | none |
+| `gemini` | `.gemini/GEMINI.md` | `.gemini/agents` |
+| `codex` | `.codex/rules.md` | `.codex/agents` |
 
 The registry is `vendorTargets` in `internal/agentcontext/render.go`. The compiler
 reads the key from the manifest beside `AGENTS.md`, the one that already governs the
 [text register](text-register.md) block, so `compile-context`, `compile-context
 --verify`, `praetorctl audit`, adoption, onboarding and the MCP
-`standards_compile_context` tool agree on which projections exist. Unselected
-projections print as `[NOT_APPLICABLE]` and are neither written nor verified. An
-unknown id fails with `unknown agent client id(s): <ids>; supported: <ids>`.
+`standards_compile_context` tool agree on which projections exist. Persona copies are
+resolved by `compiler.SelectPersonaDirs` from the manifest at the root the personas are
+projected into, which is the same file when `AGENTS.md` sits at that root. Unselected
+context files and persona directories print as `[NOT_APPLICABLE]` and are neither
+written, verified nor removed, so a directory the repository deletes stays deleted and
+one it keeps for its own use is left alone. An unknown id fails with
+`unknown agent client id(s): <ids>; supported: <ids>`.
 
-The selection covers these six files only. Persona projections under
-`.claude/agents`, `.codex/agents`, `.github/agents` and `.gemini/agents` are still
-written for every client. Tests: `internal/agentcontext/render_selection_test.go`,
+The plugin copy under `.agents/plugins/praetor/agents` belongs to no client and is kept
+whenever `.agents/plugins/praetor/plugin.json` exists. Tests:
+`internal/agentcontext/render_selection_test.go`,
 `internal/compiler/transpiler_selection_test.go`,
-`cmd/standardsctl/compile_context_clients_test.go`.
+`internal/compiler/agents_selection_test.go`,
+`cmd/standardsctl/compile_context_clients_test.go`,
+`internal/adopt/client_selection_test.go`.
 
 ## Antigravity IDE
 

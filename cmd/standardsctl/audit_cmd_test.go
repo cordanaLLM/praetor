@@ -67,7 +67,7 @@ func auditGateFailureCases() []auditGateCase {
 		{"persona projection drift", func(t *testing.T, f *auditFixture) {
 			persona := "# Gatekeeper\n\nNever merge without a receipt.\n"
 			writeFixtureFile(t, f.dir, ".agents/agents/gatekeeper.md", persona)
-			for _, dir := range vendorAgentDirs() {
+			for _, dir := range allPersonaDirs(t) {
 				writeFixtureFile(t, f.dir, dir+"/gatekeeper.md", persona)
 			}
 			writeFixtureFile(t, f.dir, ".github/agents/gatekeeper.md", "# Gatekeeper\n\nReceipts are optional.\n")

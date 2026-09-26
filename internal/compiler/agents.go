@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"io"
 	"os"
@@ -27,13 +28,19 @@ type AgentFile struct {
 	Content      string
 }
 
-// CompileAgents scans canonical .agents/agents/*.md and projects them to vendor agent directories.
+// CompileAgents scans canonical .agents/agents/*.md and projects them to the persona directory
+// of every agent client agent_clients in the manifest at targetDir selects (SelectPersonaDirs).
+// A directory the selection leaves out is neither written nor removed.
 func CompileAgents(ctx context.Context, agentsSrcDir, targetDir string) ([]AgentFile, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("compile-agents: context cannot be nil")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("compile-agents cancelled: %w", err)
+	}
+	dirs, _, err := SelectPersonaDirs(ctx, targetDir)
+	if err != nil {
+		return nil, fmt.Errorf("compile-agents: %w", err)
 	}
 
 	entries, err := readAgentDirectory(ctx, agentsSrcDir)
@@ -57,7 +64,7 @@ func CompileAgents(ctx context.Context, agentsSrcDir, targetDir string) ([]Agent
 		}
 
 		srcPath := filepath.Join(agentsSrcDir, entry.Name())
-		agentFiles, pErr := projectAgentToVendors(ctx, srcPath, entry.Name(), targetDir)
+		agentFiles, pErr := projectAgentToVendors(ctx, srcPath, entry.Name(), targetDir, dirs)
 		if pErr != nil {
 			return nil, pErr
 		}
@@ -67,7 +74,20 @@ func CompileAgents(ctx context.Context, agentsSrcDir, targetDir string) ([]Agent
 	return results, nil
 }
 
-func projectAgentToVendors(ctx context.Context, srcPath, filename, targetDir string) ([]AgentFile, error) {
+// SelectPersonaDirs returns the persona directories agent_clients in the manifest at root keeps
+// and the ones it leaves out, in registry order (agentcontext.PersonaDirs). A root without a
+// manifest, or a manifest without the key, keeps every directory. compile-context, its
+// --verify, the audit and adoption all resolve the selection here, so they agree on which
+// persona copies exist.
+func SelectPersonaDirs(ctx context.Context, root string) (selected, excluded []string, err error) {
+	clients, err := declaredAgentClients(ctx, root)
+	if err != nil {
+		return nil, nil, err
+	}
+	return agentcontext.PersonaDirs(clients)
+}
+
+func projectAgentToVendors(ctx context.Context, srcPath, filename, targetDir string, dirs []string) ([]AgentFile, error) {
 	data, err := contextopt.ReadSnapshot(ctx, srcPath)
 	if err != nil {
 		return nil, fmt.Errorf("read agent file %s: %w", srcPath, err)
@@ -81,25 +101,17 @@ func projectAgentToVendors(ctx context.Context, srcPath, filename, targetDir str
 	// ".github\agents\x.md" on Windows, which surfaced in drift errors and only passed
 	// projectionPath by accident. The disk write below joins it onto targetDir with
 	// filepath.Join, which normalises the separator for the host.
-	targets := []struct {
-		vendorRel string
-	}{
-		{".claude/agents/" + filename},
-		{".codex/agents/" + filename},
-		{".github/agents/" + filename},
-		{".gemini/agents/" + filename},
-	}
-
-	files := make([]AgentFile, 0, len(targets))
-	for _, t := range targets {
-		dstPath := filepath.Join(targetDir, t.vendorRel)
+	files := make([]AgentFile, 0, len(dirs))
+	for _, dir := range dirs {
+		vendorRel := dir + "/" + filename
+		dstPath := filepath.Join(targetDir, filepath.FromSlash(vendorRel))
 		if err := writeVendorAgent(ctx, dstPath, content); err != nil {
 			return nil, err
 		}
 		files = append(files, AgentFile{
 			Name:         agentName,
 			SourcePath:   srcPath,
-			VendorTarget: t.vendorRel,
+			VendorTarget: vendorRel,
 			Content:      content,
 		})
 	}

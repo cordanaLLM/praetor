@@ -139,7 +139,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditReadmeGovernance(ctx, manifest, opts) },
 		func() error { return auditDocumentationGate(ctx, manifest, rootDir) },
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
-		func() error { return auditAgentProjections(rootDir) },
+		func() error { return auditAgentProjections(ctx, rootDir) },
 		func() error { return auditCavemanAgentSurfaces(rootDir) },
 		func() error { return auditBranchProtectionAndSupplyChain(manifest, rootDir) },
 		func() error { return auditPaperclipHarness(ctx, manifest, rootDir) },
@@ -303,9 +303,10 @@ func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Mani
 
 // auditAgentProjections fails when any vendor or plugin copy of a persona under
 // .agents/agents differs from its canonical source, so a loosened persona copy can no
-// longer pass the audit unnoticed.
-func auditAgentProjections(rootDir string) error {
-	verified, err := verifyAgentProjections(rootDir)
+// longer pass the audit unnoticed. Persona directories agent_clients leaves out are not
+// checked, as compile-context --verify does not check them.
+func auditAgentProjections(ctx context.Context, rootDir string) error {
+	verified, err := verifyAgentProjections(ctx, rootDir)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Agent persona projections out of sync: %w", err)
 	}

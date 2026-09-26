@@ -35,15 +35,19 @@ func TestAdopt_Positive_ManifestSelectsEditorsAndAgentClients(t *testing.T) {
 		t.Fatalf("Adopt: %v", err)
 	}
 	assertNoIssues(t, rep)
-	for _, rel := range []string{".vscode/settings.json", "CLAUDE.md"} {
+	for _, rel := range []string{".vscode/settings.json", "CLAUDE.md", ".claude/agents/repo-auditor.md"} {
 		if !fileExists(filepath.Join(repoPath, filepath.FromSlash(rel))) {
 			t.Errorf("selected surface %s not written", rel)
 		}
 	}
-	for _, rel := range []string{".editorconfig", ".helix/config.toml", ".nvim.lua", ".windsurfrules", ".gemini/GEMINI.md", ".codex/rules.md"} {
+	for _, rel := range []string{".editorconfig", ".helix/config.toml", ".nvim.lua", ".windsurfrules", ".gemini/GEMINI.md", ".codex/rules.md",
+		".codex/agents", ".gemini/agents", ".github/agents"} {
 		if fileExists(filepath.Join(repoPath, filepath.FromSlash(rel))) {
 			t.Errorf("unselected surface %s written", rel)
 		}
+	}
+	if notApplicableDetail(rep, ".codex/agents") == "" {
+		t.Errorf("unselected persona directory not reported: %v", rep.ActionDetails)
 	}
 	if details := notApplicableDetail(rep, "editors"); !strings.Contains(details, "universal") || strings.Contains(details, "vscode") {
 		t.Errorf("editors not-applicable detail = %q", details)
@@ -57,8 +61,8 @@ func TestAdopt_Positive_ManifestSelectsEditorsAndAgentClients(t *testing.T) {
 		}
 	}
 
-	for _, rel := range []string{".vscode/settings.json", "CLAUDE.md"} {
-		if err := os.Remove(filepath.Join(repoPath, filepath.FromSlash(rel))); err != nil {
+	for _, rel := range []string{".vscode/settings.json", "CLAUDE.md", ".claude/agents"} {
+		if err := os.RemoveAll(filepath.Join(repoPath, filepath.FromSlash(rel))); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -68,7 +72,7 @@ func TestAdopt_Positive_ManifestSelectsEditorsAndAgentClients(t *testing.T) {
 		t.Fatalf("second Adopt: %v", err)
 	}
 	assertNoIssues(t, rep)
-	for _, rel := range []string{".vscode/settings.json", "CLAUDE.md"} {
+	for _, rel := range []string{".vscode/settings.json", "CLAUDE.md", ".claude/agents"} {
 		if fileExists(filepath.Join(repoPath, filepath.FromSlash(rel))) {
 			t.Errorf("deleted surface %s recreated although no longer selected", rel)
 		}
@@ -103,12 +107,14 @@ func TestAdopt_Boundary_AbsentSelectionKeepsEverySurface(t *testing.T) {
 		t.Fatalf("Adopt: %v", err)
 	}
 	assertNoIssues(t, rep)
-	for _, rel := range []string{".vscode/settings.json", ".helix/config.toml", "CLAUDE.md", ".windsurfrules", ".codex/rules.md"} {
+	for _, rel := range []string{".vscode/settings.json", ".helix/config.toml", "CLAUDE.md", ".windsurfrules", ".codex/rules.md",
+		".claude/agents/repo-auditor.md", ".codex/agents/repo-auditor.md", ".github/agents/repo-auditor.md", ".gemini/agents/repo-auditor.md"} {
 		if !fileExists(filepath.Join(repoPath, filepath.FromSlash(rel))) {
 			t.Errorf("default surface %s missing", rel)
 		}
 	}
-	if notApplicableDetail(rep, "editors") != "" || notApplicableDetail(rep, ".windsurfrules") != "" {
+	if notApplicableDetail(rep, "editors") != "" || notApplicableDetail(rep, ".windsurfrules") != "" ||
+		notApplicableDetail(rep, ".codex/agents") != "" {
 		t.Errorf("absent keys reported surfaces not applicable: %v", rep.ActionDetails)
 	}
 }

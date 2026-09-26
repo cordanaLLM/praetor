@@ -63,8 +63,11 @@ func verifyCompiledContext(ctx context.Context, tr *compiler.Transpiler, source,
 	}
 	fmt.Printf("  %d personas and %d skills passed the caveman lint (<= %d prose words each).\n",
 		personasLinted, skillsLinted, compiler.AgentTextCeiling)
-	verified, err := verifyAgentProjections(targetDir)
+	verified, err := verifyAgentProjections(ctx, targetDir)
 	if err != nil {
+		return fmt.Errorf("agent persona verification failed: %w", err)
+	}
+	if err := printNotApplicablePersonaDirs(ctx, targetDir); err != nil {
 		return fmt.Errorf("agent persona verification failed: %w", err)
 	}
 	skills, err := verifyPluginSkills(targetDir)
@@ -107,7 +110,22 @@ func compileVendorTargets(ctx context.Context, tr *compiler.Transpiler, source, 
 // printNotApplicableTargets names the projections agent_clients leaves out. They are neither
 // written nor verified, so one the repository deleted stays deleted.
 func printNotApplicableTargets(res *compiler.CompileResult) {
-	for _, rel := range res.NotApplicable {
+	printNotApplicable(res.NotApplicable)
+}
+
+// printNotApplicablePersonaDirs names the persona directories agent_clients leaves out, on the
+// same terms as printNotApplicableTargets.
+func printNotApplicablePersonaDirs(ctx context.Context, targetDir string) error {
+	dirs, err := notApplicablePersonaDirs(ctx, targetDir)
+	if err != nil {
+		return err
+	}
+	printNotApplicable(dirs)
+	return nil
+}
+
+func printNotApplicable(rels []string) {
+	for _, rel := range rels {
 		fmt.Printf("  [NOT_APPLICABLE] %-35s (not selected by agent_clients)\n", rel)
 	}
 }
@@ -127,6 +145,9 @@ func compileContext(ctx context.Context, tr *compiler.Transpiler, source, target
 	}
 	if len(agentFiles) > 0 {
 		fmt.Printf("  [COMPILED] %d autonomous agent vendor projections.\n", len(agentFiles))
+	}
+	if err := printNotApplicablePersonaDirs(ctx, targetDir); err != nil {
+		return fmt.Errorf("agent projection failed: %w", err)
 	}
 	pluginFiles, err := projectPluginAgents(targetDir)
 	if err != nil {
