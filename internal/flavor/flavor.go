@@ -11,9 +11,30 @@ import (
 )
 
 // TemplateItem defines a template file required by a flavor.
+//
+// Every template states where its content comes from, exactly one way: Source names an
+// embedded body flavor apply renders, Producer names the command that writes the file
+// instead, and ContentFunc is the hook a flavor registered from outside this package may
+// supply. A template with none of the three has no content behind it, and flavor apply
+// reports it as an error rather than writing a placeholder (#336).
 type TemplateItem struct {
-	Path        string                                     `json:"path"`
-	Description string                                     `json:"description"`
+	Path        string `json:"path"`
+	Description string `json:"description"`
+
+	// Source is the body scaffolded at Path: a path below the repository's templates/
+	// directory, such as "go/ci-go.yml.tmpl", rendered by templates.RenderFile. It used to
+	// be a switch on the file's base name with a one-line "# <file> configuration" comment
+	// as its default, so a workflow, a gitleaks config or a harness was scaffolded as a
+	// comment and then scored present (BUG-028, BUG-029).
+	Source string `json:"source,omitempty"`
+
+	// Producer names the command that owns the file when flavor apply must not write it:
+	// .standards.yaml is written by adoption from the operator's declared profile, and
+	// CLAUDE.md is compiled from AGENTS.md. A second, flavor-side generator for either
+	// would be a second implementation of one artifact (HISS-19), so flavor apply defers
+	// these to their producer and the audit still requires them.
+	Producer string `json:"producer,omitempty"`
+
 	ContentFunc func(repoName string, owner string) string `json:"-"`
 
 	// AltPaths lists equally valid alternatives to Path. A repository satisfies the
@@ -24,6 +45,12 @@ type TemplateItem struct {
 	// name makes a conforming repository fail, and scaffolding it writes a second,
 	// contradictory config that the toolchain then ignores.
 	AltPaths []string `json:"alt_paths,omitempty"`
+
+	// Validator decides whether a file at Path or an AltPath satisfies the template, the
+	// way SettingItem.Validator does for settings. A template with no validator is
+	// satisfied by a regular file alone. Presence used to be the whole check, so the
+	// comment-only placeholder the scaffolder wrote scored the template compliant.
+	Validator func(content []byte) bool `json:"-"`
 }
 
 // SettingItem defines a configuration setting required by a flavor.

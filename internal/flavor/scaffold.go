@@ -13,19 +13,8 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/templates"
 )
-
-// distrolessRuntimeImage is the runtime stage every scaffolded Dockerfile receives.
-//
-// It names static-debian13 and a digest rather than the gcr.io/distroless/static
-// alias. The alias resolves to this same digest today, which is exactly the trap:
-// it is bound to whichever Debian release distroless currently promotes, so an
-// adopter's Dockerfile silently retargets on the next promotion. HISS-11 reads
-// "zero floating tags in container deployments", and .devcontainer/Dockerfile.praetor
-// already uses the tag-plus-digest form this repository treats as the standard.
-//
-// Measured 2026-09-19: crane digest gcr.io/distroless/static-debian13:nonroot.
-const distrolessRuntimeImage = "gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3"
 
 // ErrApplyIncomplete reports an apply that recorded at least one template failure.
 //
@@ -37,9 +26,13 @@ var ErrApplyIncomplete = errors.New("flavor apply: one or more templates failed"
 
 // ApplyReport contains the outcome of applying a flavor scaffold to a repository.
 type ApplyReport struct {
-	Flavor            string   `json:"flavor"`
-	CreatedTemplates  []string `json:"created_templates"`
-	SkippedTemplates  []string `json:"skipped_templates"`
+	Flavor           string   `json:"flavor"`
+	CreatedTemplates []string `json:"created_templates"`
+	SkippedTemplates []string `json:"skipped_templates"`
+	// DeferredTemplates names each required template flavor apply does not write because
+	// another command produces it, as "<path> (<producer>)". The flavor audit still
+	// requires these files, so a deferred template is work left for the named command.
+	DeferredTemplates []string `json:"deferred_templates,omitempty"`
 	WorkingDirCreated bool     `json:"working_dir_created"`
 	Errors            []string `json:"errors,omitempty"`
 }
@@ -90,7 +83,7 @@ func ApplyFlavor(ctx context.Context, repoPath string, targetFlavor string, forc
 // flavorIdentity returns the owner and name templates render. Both come from the origin
 // remote (util.ResolveRemoteIdentity), never from the checkout path: a parent directory names
 // wherever the checkout sits, not its owner. Without a remote the owner stays empty and the
-// name is the checkout directory's, which labels a binary or a stub comment and is never
+// name is the checkout directory's, which a template body may use as a label and is never
 // written into an identity field. A remote read git did not answer is an error.
 func flavorIdentity(ctx context.Context, repoPath string) (owner, repoName string, err error) {
 	owner, repoName, err = util.ResolveRemoteIdentity(ctx, repoPath)
@@ -127,9 +120,11 @@ func resolveApplyTarget(repoPath, targetFlavor string) (Flavor, error) {
 // forceProtected reports whether an existing file at rel survives --force.
 //
 // The ledger holds session history, and the manifest and lock hold the declared profile and
-// pinned digests. A flavor carries only a one-line placeholder for each (defaultTemplateContent),
-// so a forced refresh replaced operator data with a stub. --force refreshes scaffolds; it never
-// rewrites what the repository declared.
+// pinned digests. A flavor has no body for any of them: the manifest and lock are deferred to
+// their producer (TemplateItem.Producer), and a forced refresh used to replace operator data
+// with a one-line stub. This guard holds even for a flavor registered from outside this
+// package that lists one of these paths with a ContentFunc. --force refreshes scaffolds; it
+// never rewrites what the repository declared.
 func forceProtected(rel string) bool {
 	return strings.HasPrefix(rel, state.WorkingDirName+"/") || rel == config.ManifestFileName || rel == config.LockFileName
 }
@@ -152,99 +147,97 @@ func templateDisposition(repoPath string, tmpl TemplateItem, force bool) (skip b
 	return false, nil
 }
 
-// templateContent resolves a template's body from its generator, falling back to the
-// built-in default for that filename.
-func templateContent(tmpl TemplateItem, repoName, owner string) string {
+// templateContent resolves a template's body from its generator or its embedded source.
+//
+// A template with neither has no content behind it, and that is an error. This used to
+// fall back to a one-line "# <file> configuration for <owner>/<repo>" comment, which
+// disabled every gitleaks rule (#410), scaffolded workflows that ran nothing, and was then
+// scored by the audit as the file it stood in for (BUG-028, BUG-029).
+func templateContent(tmpl TemplateItem, repoName, owner string) (string, error) {
 	if tmpl.ContentFunc != nil {
-		return tmpl.ContentFunc(repoName, owner)
+		return tmpl.ContentFunc(repoName, owner), nil
 	}
-	return defaultTemplateContent(tmpl.Path, repoName, owner)
+	if tmpl.Source == "" {
+		return "", fmt.Errorf("template %s has no content source", tmpl.Path)
+	}
+	body, err := templates.RenderFile(tmpl.Source, templates.Context{RepoName: repoName, Owner: owner})
+	if err != nil {
+		return "", fmt.Errorf("render template %s: %w", tmpl.Path, err)
+	}
+	return body, nil
 }
 
+// templateOutcome is what applying one template did.
+type templateOutcome int
+
+const (
+	templateCreated templateOutcome = iota
+	templateSkipped
+	templateDeferred
+)
+
 func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool, report *ApplyReport) {
-	skip, dispErr := templateDisposition(repoPath, tmpl, force)
-	if dispErr != nil {
-		report.Errors = append(report.Errors, dispErr.Error())
-		return
-	}
-	if skip {
+	outcome, err := scaffoldTemplate(ctx, repoPath, tmpl, repoName, owner, force)
+	switch {
+	case err != nil:
+		report.Errors = append(report.Errors, err.Error())
+	case outcome == templateSkipped:
 		report.SkippedTemplates = append(report.SkippedTemplates, tmpl.Path)
-		return
+	case outcome == templateDeferred:
+		report.DeferredTemplates = append(report.DeferredTemplates, fmt.Sprintf("%s (%s)", tmpl.Path, tmpl.Producer))
+	default:
+		report.CreatedTemplates = append(report.CreatedTemplates, tmpl.Path)
+	}
+}
+
+// scaffoldTemplate writes one template unless it is covered, owned by another command, or
+// already present without --force. A producer-owned template is never written, --force
+// included: flavor apply has no body for it, only a placeholder to lose the real file to.
+func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool) (templateOutcome, error) {
+	skip, err := templateDisposition(repoPath, tmpl, force)
+	if err != nil || skip {
+		return templateSkipped, err
+	}
+	if tmpl.Producer != "" {
+		return templateDeferred, nil
 	}
 	destPath := filepath.Join(repoPath, tmpl.Path)
+	target, err := readTemplateTarget(ctx, destPath, tmpl.Path, force)
+	if err != nil || target.keep {
+		return templateSkipped, err
+	}
+	content, err := templateContent(tmpl, repoName, owner)
+	if err != nil {
+		return templateSkipped, err
+	}
+	if err := contextopt.EnsureDirectory(ctx, filepath.Dir(destPath), 0o755); err != nil {
+		return templateSkipped, fmt.Errorf("mkdir %s: %w", tmpl.Path, err)
+	}
+	options := contextopt.ReplaceOptions{Expected: target.before, Exists: target.exists, Mode: 0o644}
+	if err := contextopt.ReplaceSnapshot(ctx, destPath, []byte(content), options); err != nil {
+		return templateSkipped, fmt.Errorf("write %s: %w", tmpl.Path, err)
+	}
+	return templateCreated, nil
+}
+
+// templateTarget is the file already at a template's destination.
+type templateTarget struct {
+	before []byte
+	exists bool
+	// keep reports that the existing file stays: present without --force, or a file
+	// forceProtected names (the session ledger, the manifest, the lock), which --force
+	// never replaces.
+	keep bool
+}
+
+// readTemplateTarget snapshots a template's destination, so the later write replaces
+// exactly the bytes that were read.
+func readTemplateTarget(ctx context.Context, destPath, rel string, force bool) (templateTarget, error) {
 	before, err := contextopt.ReadSnapshot(ctx, destPath)
 	exists := !errors.Is(err, os.ErrNotExist)
 	if err != nil && exists {
-		report.Errors = append(report.Errors, fmt.Sprintf("read %s: %v", tmpl.Path, err))
-		return
+		return templateTarget{}, fmt.Errorf("read %s: %w", rel, err)
 	}
-	if exists && (!force || forceProtected(tmpl.Path)) {
-		report.SkippedTemplates = append(report.SkippedTemplates, tmpl.Path)
-		return
-	}
-
-	content := templateContent(tmpl, repoName, owner)
-
-	if err := contextopt.EnsureDirectory(ctx, filepath.Dir(destPath), 0o755); err != nil {
-		report.Errors = append(report.Errors, fmt.Sprintf("mkdir %s: %v", tmpl.Path, err))
-		return
-	}
-
-	if err := contextopt.ReplaceSnapshot(ctx, destPath, []byte(content), contextopt.ReplaceOptions{Expected: before, Exists: exists, Mode: 0o644}); err != nil {
-		report.Errors = append(report.Errors, fmt.Sprintf("write %s: %v", tmpl.Path, err))
-		return
-	}
-
-	report.CreatedTemplates = append(report.CreatedTemplates, tmpl.Path)
-}
-
-func defaultTemplateContent(path, repoName, owner string) string {
-	switch filepath.Base(path) {
-	case ".golangci.yml":
-		// golangci-lint v2 schema. The enabled set is the correctness subset of
-		// praetor's own gate, not a mirror of it: the repository's .golangci.yml
-		// also enables gocyclo, gocognit and funlen (the three linters that carry
-		// the HISS-04 caps) plus nolintlint, forbidigo, contextcheck, wastedassign,
-		// copyloopvar and gochecknoinits. An adopter therefore receives HISS-07 and
-		// HISS-10 enforcement here and not the HISS-04 caps: only the function-LOC
-		// cap reaches them, through praetor's own scanner (internal/hiss/rules.go),
-		// and the cyclomatic and cognitive caps have no scanner outside this lint
-		// configuration at all.
-		return "version: \"2\"\nrun:\n  timeout: 10m\nlinters:\n  default: none\n  enable:\n" +
-			"    - govet\n    - staticcheck\n    - errcheck\n    - errorlint\n    - nilerr\n" +
-			"    - unused\n    - ineffassign\n    - bodyclose\n    - noctx\n" +
-			"  settings:\n    errcheck:\n      check-type-assertions: true\n      check-blank: true\n"
-	case ".gosec.json":
-		// Zero exclusions: every finding is fixed or carries a per-line
-		// "#nosec Gxxx -- <reason>" justification.
-		return "{\n  \"global\": {\n    \"exclude\": \"\"\n  }\n}\n"
-	case "Dockerfile":
-		return "FROM " + distrolessRuntimeImage + "\nWORKDIR /\nCOPY " + repoName + " /\nUSER 65532:65532\nENTRYPOINT [\"/" + repoName + "\"]\n"
-	case "rustfmt.toml":
-		return "edition = \"2024\"\nmax_width = 100\nnewline_style = \"Unix\"\nuse_small_heuristics = \"Default\"\n"
-	case "clippy.toml":
-		return "# Clippy linting configuration\navoid-breaking-exported-api = true\n"
-	case "tsconfig.json":
-		return "{\n  \"compilerOptions\": {\n    \"target\": \"es2022\",\n    \"module\": \"commonjs\",\n    \"strict\": true,\n    \"esModuleInterop\": true,\n    \"skipLibCheck\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"outDir\": \"./dist\"\n  },\n  \"include\": [\"src/**/*\"]\n}\n"
-	case eslintConfigPath:
-		return eslintFlatConfig
-	case "playwright.config.ts":
-		return playwrightConfig
-	case "checkstyle.xml":
-		return "<?xml version=\"1.0\"?>\n<!DOCTYPE module PUBLIC\n  \"-//Checkstyle//DTD Checkstyle Configuration 1.3//EN\"\n  \"https://checkstyle.org/dtds/configuration_1_3.dtd\">\n<module name=\"Checker\">\n  <module name=\"TreeWalker\">\n    <module name=\"AvoidStarImport\"/>\n    <module name=\"NeedBraces\"/>\n  </module>\n</module>\n"
-	case "analysis_options.yaml":
-		return "include: package:lints/recommended.yaml\n\nlinter:\n  rules:\n    - prefer_const_constructors\n    - prefer_final_fields\n    - unawaited_futures\n"
-	default:
-		return defaultStubContent(path, repoName, owner)
-	}
-}
-
-// defaultStubContent is the one-line comment a template with no body degrades to (#336). It
-// names owner/repo only when the origin remote supplied an owner, and the bare name otherwise.
-func defaultStubContent(path, repoName, owner string) string {
-	subject := repoName
-	if owner != "" {
-		subject = owner + "/" + repoName
-	}
-	return fmt.Sprintf("# %s configuration for %s\n", filepath.Base(path), subject)
+	keep := exists && (!force || forceProtected(rel))
+	return templateTarget{before: before, exists: exists, keep: keep}, nil
 }
