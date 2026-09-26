@@ -139,7 +139,7 @@ func writeWikiPages(ctx context.Context, out generatedDir, pages []WikiPage) err
 func generateHomeWiki(repoName string, rules []hisscatalog.Rule) WikiPage {
 	content := fmt.Sprintf(`# %s Wiki Portal
 
-Welcome to the official repository governance wiki for cordanaLLM.
+Welcome to the official repository governance wiki for %s.
 
 ## Governance Lifecycle Architecture
 
@@ -161,7 +161,7 @@ flowchart LR
 | [%s](%s.md) | The full HISS catalog of %s, with the enforcement and failure action of each. |
 | [Architecture-Lattice](Architecture-Lattice.md) | Mathematical join-semilattice and Highest Standard Wins resolution. |
 | [API-Reference](API-Reference.md) | CLI commands, MCP tools, and multi-forge driver specifications. |
-`, repoName, hissInvariantsPage, hissInvariantsPage, hissMatrixPage, hissMatrixPage, catalogRange(rules))
+`, repoName, repoName, hissInvariantsPage, hissInvariantsPage, hissMatrixPage, hissMatrixPage, catalogRange(rules))
 
 	return WikiPage{
 		Name:    "Home.md",

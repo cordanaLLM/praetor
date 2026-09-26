@@ -1,6 +1,6 @@
 # cordanaLLM/praetor Wiki Portal
 
-Welcome to the official repository governance wiki for cordanaLLM.
+Welcome to the official repository governance wiki for cordanaLLM/praetor.
 
 ## Governance Lifecycle Architecture
 
