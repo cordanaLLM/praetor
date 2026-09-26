@@ -111,7 +111,7 @@ func TestFallbackScanReportsLineAndScannerBounds(t *testing.T) {
 	for _, body := range []string{strings.Repeat("// filler\n", MaxManifestLines+1), strings.Repeat("x", 70000)} {
 		repo := t.TempDir()
 		writeGoMod(t, repo, body)
-		if got, err := scanGoModFallback(t.Context(), repo, ".", ScanOptions{}); err == nil || len(got) != 0 {
+		if got, err := scanGoModStatic(t.Context(), repo, "."); err == nil || len(got) != 0 {
 			t.Fatalf("truncated fallback accepted %d records: %v", len(got), err)
 		}
 	}

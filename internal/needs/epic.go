@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/topology"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -65,17 +66,24 @@ func epicFromAnalysis(ctx context.Context, repoPath string, analysis *migrationA
 	if err != nil {
 		return nil, fmt.Errorf("plan pre-migration epic: %w", err)
 	}
-	return buildEpicStructure(repoPath, analysis.report, migrationPlan)
+	// The hygiene task restates the function-length limit the repository's audit enforces.
+	// An unresolvable policy falls back to the HISS ceiling, which is never looser than that
+	// audit; its notice is not part of the epic.
+	complexity, _, err := config.ResolveRepositoryComplexity(ctx, repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve pre-migration epic complexity: %w", err)
+	}
+	return buildEpicStructure(repoPath, analysis.report, migrationPlan, complexity.MaxFuncLOC)
 }
 
-func buildEpicStructure(repoPath string, repoNeeds *RepoNeeds, plan *MigrationPlan) (*PreMigrationEpic, error) {
+func buildEpicStructure(repoPath string, repoNeeds *RepoNeeds, plan *MigrationPlan, maxFuncLOC int) (*PreMigrationEpic, error) {
 	repoName := repoNeeds.Repository
 	if repoName == "" || repoName == "unknown" {
 		repoName = filepath.Base(filepath.Clean(repoPath))
 	}
 	repoName = strings.TrimPrefix(repoName, "github.com/")
 
-	tasks := createChildTasks(repoName, plan)
+	tasks := createChildTasks(repoName, plan, maxFuncLOC)
 	checklistMD := renderEpicChecklistMarkdown(repoName, repoNeeds, plan, tasks)
 
 	parentEpic := forge.IssueSpec{
@@ -110,10 +118,12 @@ func taskAnchor(n int) string {
 	return fmt.Sprintf("Task %d/%d", n, totalEpicTasks)
 }
 
-func createChildTasks(repoName string, plan *MigrationPlan) []forge.IssueSpec {
+// createChildTasks decomposes the epic into its five tasks. maxFuncLOC is the function
+// length limit the repository's resolved policy imposes; task 1 states it.
+func createChildTasks(repoName string, plan *MigrationPlan, maxFuncLOC int) []forge.IssueSpec {
 	t1 := forge.IssueSpec{
 		Title:  fmt.Sprintf("[TASK 1/5] Invariant & Complexity Hygiene: %s", repoName),
-		Body:   "## Scope\n- Enforce NASA JPL Rule 4: refactor all functions to <= 60 LOC.\n- Eliminate unhandled panics, unwrap(), and raw fatal exits.\n- Add 3D unit tests (positive, negative, boundary) with race detector.",
+		Body:   fmt.Sprintf("## Scope\n- Enforce NASA JPL Rule 4: refactor all functions to <= %d LOC.\n- Eliminate unhandled panics, unwrap(), and raw fatal exits.\n- Add 3D unit tests (positive, negative, boundary) with race detector.", maxFuncLOC),
 		State:  "open",
 		Labels: []string{"task", "hiss", "hygiene"},
 	}

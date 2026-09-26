@@ -1,0 +1,3 @@
+type: fixed
+title: State the function-length limit the repository's resolved policy imposes in the pre-migration epic's hygiene task, and the HISS ceiling in framework demand requests, instead of a hardcoded 60 LOC
+breaking: false

@@ -75,11 +75,13 @@ func TestApplyBumpRejectsInvalidPatchBeforeUpdate(t *testing.T) {
 func TestApplyBumpAllowsPostUpdateManifestPatch(t *testing.T) {
 	dir, candidate := canaryFixture(t)
 	patch := filepath.Join(dir, "post-update.patch")
-	writeCanaryFile(t, patch, "diff --git a/package.json b/package.json\n--- a/package.json\n+++ b/package.json\n@@ -1,5 +1,6 @@\n {\n+  \"adapted\": true,\n   \"dependencies\": {\n     \"fixture-dep\": \"^2.0.0\"\n   }\n }\n")
+	// The update rewrites only the range, so the patch is written against the fixture's
+	// own single-line layout.
+	writeCanaryFile(t, patch, "diff --git a/package.json b/package.json\n--- a/package.json\n+++ b/package.json\n@@ -1 +1,2 @@\n-{\"dependencies\":{\"fixture-dep\":\"^2.0.0\"}}\n+{\"adapted\":true,\n+\"dependencies\":{\"fixture-dep\":\"^2.0.0\"}}\n")
 	if err := ApplyBump(t.Context(), dir, candidate, patch); err != nil {
 		t.Fatal(err)
 	}
-	assertCanaryFile(t, filepath.Join(dir, "package.json"), "{\n  \"adapted\": true,\n  \"dependencies\": {\n    \"fixture-dep\": \"^2.0.0\"\n  }\n}\n")
+	assertCanaryFile(t, filepath.Join(dir, "package.json"), "{\"adapted\":true,\n\"dependencies\":{\"fixture-dep\":\"^2.0.0\"}}\n")
 }
 
 func TestApplyBumpUsesRetainedPatchBytes(t *testing.T) {

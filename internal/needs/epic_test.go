@@ -171,7 +171,7 @@ func TestWriteEpicMarkdown_Boundary(t *testing.T) {
 		TargetFramework:   "github.com/golusoris/golusoris",
 		ReadinessScore:    75.0,
 		ChecklistMarkdown: "# Sample Epic Checklist",
-		ChildIssues:       createChildTasks("sample-repo", &MigrationPlan{Framework: "github.com/golusoris/golusoris"}),
+		ChildIssues:       createChildTasks("sample-repo", &MigrationPlan{Framework: "github.com/golusoris/golusoris"}, config.HISSComplexityCeiling().MaxFuncLOC),
 	}
 
 	if err := WriteEpicMarkdown(context.Background(), epic, tempFile); err != nil {
@@ -770,5 +770,77 @@ func TestPublishPreMigrationEpic_HTTP(t *testing.T) {
 	}
 	if again.Number != 1 || again.Outcome != forge.IssueUnchanged || len(againChildren) != 2 || againChildren[1].Number != 3 {
 		t.Fatalf("republish did not resolve the existing issues: %+v %+v", again, againChildren)
+	}
+}
+
+// epicHygieneBody generates the epic for repo and returns task 1's scope body.
+func epicHygieneBody(t *testing.T, repo string) string {
+	t.Helper()
+	epic, err := GeneratePreMigrationEpic(t.Context(), repo, "")
+	if err != nil {
+		t.Fatalf("epic generation failed: %v", err)
+	}
+	return epic.ChildIssues[0].Body
+}
+
+// writeEpicManifest gives repo an unlocked manifest overriding the function-length limit.
+func writeEpicManifest(t *testing.T, repo string, maxFuncLOC int) {
+	t.Helper()
+	manifest := fmt.Sprintf("version: 1\nrepository:\n  owner: example\n  name: demo\noverrides:\n  complexity:\n    max_func_loc: %d\n", maxFuncLOC)
+	if err := os.WriteFile(filepath.Join(repo, config.ManifestFileName), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Task 1 states the function-length limit the repository's policy resolves to, not a
+// literal: a repository limit tighter than the HISS ceiling is the one rendered.
+func TestGeneratePreMigrationEpic_Positive_HygieneTaskStatesRepositoryLimit(t *testing.T) {
+	repo := writeEpicFixtureRepo(t)
+	writeEpicManifest(t, repo, 45)
+	if body := epicHygieneBody(t, repo); !strings.Contains(body, "refactor all functions to <= 45 LOC") {
+		t.Fatalf("task 1 does not state the repository limit: %s", body)
+	}
+}
+
+// An unadopted repository, with no manifest, is held to the HISS ceiling.
+func TestGeneratePreMigrationEpic_Negative_NoManifestStatesHISSCeiling(t *testing.T) {
+	want := fmt.Sprintf("refactor all functions to <= %d LOC", config.HISSComplexityCeiling().MaxFuncLOC)
+	if body := epicHygieneBody(t, writeEpicFixtureRepo(t)); !strings.Contains(body, want) {
+		t.Fatalf("task 1 = %s, want %q", body, want)
+	}
+}
+
+// A manifest cannot loosen the limit past the ceiling the audit enforces: a declared 75
+// renders the ceiling, while the tightest limit a repository declares always wins.
+func TestGeneratePreMigrationEpic_Boundary_ManifestOnlyTightens(t *testing.T) {
+	ceiling := config.HISSComplexityCeiling().MaxFuncLOC
+	for declared, want := range map[int]int{ceiling + 15: ceiling, ceiling: ceiling, ceiling - 1: ceiling - 1, 1: 1} {
+		repo := writeEpicFixtureRepo(t)
+		writeEpicManifest(t, repo, declared)
+		if body := epicHygieneBody(t, repo); !strings.Contains(body, fmt.Sprintf("<= %d LOC", want)) {
+			t.Errorf("declared %d: task 1 = %s, want <= %d LOC", declared, body, want)
+		}
+	}
+}
+
+// Fleet regeneration builds every epic through the same path as a single repository, so
+// each hygiene task states its own repository's resolved limit, not a fleet-wide value.
+func TestRegenerateFleetEpics_HygieneTaskStatesEachRepositoryLimit(t *testing.T) {
+	root := setupFleetEpicRoot(t)
+	repo2 := filepath.Join(root, "org2", "repo2")
+	writeEpicManifest(t, repo2, 45)
+	epics, _, err := RegenerateFleetEpics(t.Context(), root, FleetEpicOptions{DryRun: true})
+	if err != nil || len(epics) != 2 {
+		t.Fatalf("regeneration = %d epics, %v; want 2", len(epics), err)
+	}
+	ceiling := config.HISSComplexityCeiling().MaxFuncLOC
+	for _, ep := range epics {
+		want := ceiling
+		if strings.HasPrefix(ep.OutputPath, repo2+string(filepath.Separator)) {
+			want = 45
+		}
+		if body := ep.ChildIssues[0].Body; !strings.Contains(body, fmt.Sprintf("<= %d LOC", want)) {
+			t.Errorf("%s: task 1 = %s, want <= %d LOC", ep.OutputPath, body, want)
+		}
 	}
 }

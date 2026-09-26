@@ -51,19 +51,16 @@ require (
 		t.Fatal(err)
 	}
 
+	// Without a go command no upstream report exists: every requirement is scanned and
+	// none is an upgrade candidate.
+	t.Setenv("PATH", t.TempDir())
 	report, err := ScanDependencies(ctx, tmpDir, true)
 	if err != nil {
 		t.Fatalf("ScanDependencies failed: %v", err)
 	}
 
-	if report.TotalCandidates != 3 {
-		t.Fatalf("expected 3 candidates, got: %d", report.TotalCandidates)
-	}
-	if len(report.Stables) != 1 {
-		t.Fatalf("expected 1 stable candidate, got: %d", len(report.Stables))
-	}
-	if len(report.Prereleases) != 2 {
-		t.Fatalf("expected 2 prerelease candidates, got: %d", len(report.Prereleases))
+	if report.TotalScanned != 3 || report.TotalCandidates != 0 {
+		t.Fatalf("expected 3 scanned and 0 candidates, got: %d scanned, %d candidates", report.TotalScanned, report.TotalCandidates)
 	}
 }
 
@@ -83,16 +80,14 @@ func TestScanDependencies_Positive_PackageJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	t.Setenv("PATH", t.TempDir())
 	report, err := ScanDependencies(ctx, tmpDir, true)
 	if err != nil {
 		t.Fatalf("ScanDependencies failed: %v", err)
 	}
 
-	if report.TotalCandidates != 2 {
-		t.Fatalf("expected 2 candidates, got: %d", report.TotalCandidates)
-	}
-	if len(report.Prereleases) != 1 || report.Prereleases[0].Package != "react" {
-		t.Fatalf("expected react in prereleases, got: %v", report.Prereleases)
+	if report.TotalScanned != 2 || report.TotalCandidates != 0 {
+		t.Fatalf("expected 2 scanned and 0 candidates, got: %d scanned, %d candidates", report.TotalScanned, report.TotalCandidates)
 	}
 }
 

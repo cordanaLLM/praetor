@@ -347,8 +347,32 @@ func makeDocKey(pkgName, version string) string {
 	return fmt.Sprintf("%s@%s", pkgName, version)
 }
 
+// sanitizeDocFilename names the distilled file for one package version. Both the name and
+// the version come from manifests the repository controls: a package.json version such as
+// "file:../../x" or ">=1.0.0" is as untrusted as the package name, so both pass through
+// sanitizeDocComponent and the result is always one file directly inside the distilled
+// directory.
 func sanitizeDocFilename(pkgName, version string) string {
-	clean := strings.ReplaceAll(pkgName, "/", "_")
-	clean = strings.ReplaceAll(clean, ":", "_")
-	return fmt.Sprintf("%s@%s.md", clean, version)
+	return fmt.Sprintf("%s@%s.md", sanitizeDocComponent(pkgName), sanitizeDocComponent(version))
+}
+
+// docNameReserved are the characters that separate paths or that Windows refuses in a file
+// name.
+const docNameReserved = `/\:*?"<>|`
+
+// sanitizeDocComponent makes s safe as part of a single file name on every platform: path
+// separators, Windows-reserved characters and control characters become '_', and so does a
+// leading '-', which command-line tools read as an option. With no separator left, the
+// component cannot reach a parent or sibling directory.
+func sanitizeDocComponent(s string) string {
+	clean := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || strings.ContainsRune(docNameReserved, r) {
+			return '_'
+		}
+		return r
+	}, s)
+	if strings.HasPrefix(clean, "-") {
+		clean = "_" + clean[1:]
+	}
+	return clean
 }

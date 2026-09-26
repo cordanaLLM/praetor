@@ -23,8 +23,11 @@ type UpgradeCandidate struct {
 	ModuleDir      string         `json:"module_dir"`    // Relative path to module directory (for go.work / workspaces)
 }
 
-// BumpReport aggregates discovered upgrade candidates across channels.
+// BumpReport aggregates discovered upgrade candidates across channels. TotalScanned counts
+// every declared dependency examined, up-to-date ones included; TotalCandidates counts only
+// the dependencies with an admitted upgrade target.
 type BumpReport struct {
+	TotalScanned    int                `json:"total_scanned"`
 	TotalCandidates int                `json:"total_candidates"`
 	Prereleases     []UpgradeCandidate `json:"prereleases"`
 	Stables         []UpgradeCandidate `json:"stables"`
@@ -48,6 +51,10 @@ type DeprecationWarning struct {
 }
 
 // VersionAuditReport aggregates health and modernization status across all dependencies.
+// TotalScanned counts every declared dependency and workflow action examined, up-to-date
+// ones included, whether or not the upstream report was reachable. ModernizationScore and
+// PendingUpgrades reflect only the upgrades that report named: offline no upgrade target is
+// known, so an outdated dependency counts as up to date.
 type VersionAuditReport struct {
 	TotalScanned       int                  `json:"total_scanned"`
 	UpToDate           int                  `json:"up_to_date"`
@@ -58,13 +65,15 @@ type VersionAuditReport struct {
 	Passed             bool                 `json:"passed"`
 }
 
-// ScanOptions configures dependency discovery.
+// ScanOptions configures dependency discovery. IncludePrerelease admits prerelease upgrade
+// targets; it never removes a dependency from the scanned inventory.
 type ScanOptions struct {
 	IncludePrerelease bool
-	MaxCandidates     int
 }
 
-// DependencyScanner defines the interface for language-specific dependency inspectors.
+// DependencyScanner defines the interface for language-specific dependency inspectors. Scan
+// returns the declared-dependency inventory; entries whose target differs from their
+// current version are the upgrade candidates.
 type DependencyScanner interface {
 	Scan(ctx context.Context, repoPath string, opts ScanOptions) ([]UpgradeCandidate, error)
 }
