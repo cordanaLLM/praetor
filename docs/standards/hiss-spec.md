@@ -183,6 +183,8 @@ One behavior has exactly one implementation:
 - Before writing a function, config loader, parser or command, the repository is searched for the capability first; an existing implementation is extended or called rather than reimplemented.
 - Configuration formats are held to the same rule: a second config system beside an existing loader is the same defect, because the two silently drift apart.
 - `praetorctl dedupe scan .` enforces this with function-level clone and utility-sprawl detection, run by `make dedupe` inside `verify-all`. Any clone *or* sprawl finding fails the scan: a finding the verdict does not carry is a finding nobody resolves.
+- The clone key renames a function's parameters, receiver, results and locals by first use before hashing (`cloneKey` in `internal/dedupe/dedupe.go`), so a copy whose locals were renamed still matches, while a body that reads a different local or field does not. Bodies under three statements or five printed lines are not hashed.
+- `praetorctl dedupe cadence` makes a sweep due after 20 commits, or once 1,000 Go production lines or 10 Go production files have been added since the recorded sweep, whichever comes first (`--threshold`, `--added-lines`, `--added-files`; `CheckCadence` in `internal/dedupe/cadence.go`).
 - Duplication that is genuinely unavoidable is justified in the commit body, not left silent.
 
 ### HISS-20: Replayable Enforcement Evidence

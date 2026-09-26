@@ -11,6 +11,7 @@ import (
 	"go/token"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -121,23 +122,18 @@ func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, 
 
 	for _, decl := range node.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Body == nil || len(fn.Body.List) < 3 {
+		if !ok || fn.Body == nil || len(fn.Body.List) < minCloneStatements {
 			continue
 		}
 		report.TotalFuncsScanned++
 
-		var buf strings.Builder
-		if err := printer.Fprint(&buf, fset, fn.Body); err != nil {
+		hashKey, lines, err := cloneKey(fset, fn)
+		if err != nil {
 			return fmt.Errorf("print dedupe source %s: %w", relPath, err)
 		}
-		bodyStr := strings.TrimSpace(buf.String())
-		lines := strings.Count(bodyStr, "\n") + 1
-		if lines < 5 {
+		if lines < minCloneLines {
 			continue
 		}
-
-		h := sha256.Sum256([]byte(bodyStr))
-		hashKey := hex.EncodeToString(h[:8])
 		pos := fset.Position(fn.Pos())
 
 		hashMap[hashKey] = append(hashMap[hashKey], FileLocation{
@@ -148,6 +144,136 @@ func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, 
 		locMap[hashKey] = lines
 	}
 	return nil
+}
+
+const (
+	// minCloneStatements and minCloneLines are the smallest function body the clone detector
+	// hashes, so a trivial accessor never becomes a finding. A four-line helper copied into
+	// several packages is still below them. Lowering them to two statements and four lines
+	// was measured on this repository with local renaming in place: 13 further clone groups,
+	// among them eight forge-driver stubs that differ only by receiver type. The scan gates
+	// verify-all, so the floor moves in its own change with those findings resolved.
+	minCloneStatements = 3
+	minCloneLines      = 5
+)
+
+// cloneKey hashes a function body with its locals renamed canonically, returning the key and
+// the printed body's line count.
+//
+// The key used to be the printed body text, so renaming one local variable in a copied
+// function produced a different hash and the pair stopped being a clone group: the cheapest
+// possible evasion of the rule. Parameters, results, the receiver and every local are now
+// renamed before printing, numbered in the order the body first uses them, so two bodies that
+// differ only in what their locals are called print identically, while a body that uses a
+// different local in the same place still differs. Numbering by use rather than declaration
+// keeps an unused receiver or parameter from shifting every later name. The renamed body is
+// only hashed, never shown.
+func cloneKey(fset *token.FileSet, fn *ast.FuncDecl) (string, int, error) {
+	renameLocals(fn.Body, localNames(fn))
+	var buf strings.Builder
+	if err := printer.Fprint(&buf, fset, fn.Body); err != nil {
+		return "", 0, err
+	}
+	body := strings.TrimSpace(buf.String())
+	h := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(h[:8]), strings.Count(body, "\n") + 1, nil
+}
+
+// localNames returns the names the function declares for itself.
+func localNames(fn *ast.FuncDecl) map[string]bool {
+	c := localCollector{names: make(map[string]bool)}
+	c.fields(fn.Recv)
+	c.fields(fn.Type.Params)
+	c.fields(fn.Type.Results)
+	ast.Inspect(fn.Body, c.visit)
+	return c.names
+}
+
+type localCollector struct {
+	names map[string]bool
+}
+
+func (c *localCollector) add(expr ast.Expr) {
+	if ident, ok := expr.(*ast.Ident); ok && ident != nil && ident.Name != "_" {
+		c.names[ident.Name] = true
+	}
+}
+
+func (c *localCollector) fields(list *ast.FieldList) {
+	if list == nil {
+		return
+	}
+	for _, field := range list.List {
+		for _, name := range field.Names {
+			c.add(name)
+		}
+	}
+}
+
+// visit records the declarations a body can make: short variable declarations, var and const
+// specs, range variables, closure parameters and labels.
+func (c *localCollector) visit(n ast.Node) bool {
+	switch node := n.(type) {
+	case *ast.AssignStmt:
+		if node.Tok == token.DEFINE {
+			for _, lhs := range node.Lhs {
+				c.add(lhs)
+			}
+		}
+	case *ast.ValueSpec:
+		for _, name := range node.Names {
+			c.add(name)
+		}
+	case *ast.RangeStmt:
+		if node.Tok == token.DEFINE {
+			c.add(node.Key)
+			c.add(node.Value)
+		}
+	case *ast.FuncLit:
+		c.fields(node.Type.Params)
+		c.fields(node.Type.Results)
+	case *ast.LabeledStmt:
+		c.add(node.Label)
+	}
+	return true
+}
+
+// renameLocals rewrites every use of a local in body to a placeholder numbered by first use.
+// The placeholder is not a valid Go identifier, so it cannot collide with a package-level name
+// the body also uses. A selector's member and a composite literal's key name a field rather
+// than a local, so they keep their names: renaming them would merge two bodies that read
+// different fields.
+func renameLocals(body *ast.BlockStmt, locals map[string]bool) {
+	if len(locals) == 0 {
+		return
+	}
+	members := make(map[*ast.Ident]bool)
+	placeholders := make(map[string]string, len(locals))
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.SelectorExpr:
+			members[node.Sel] = true
+		case *ast.KeyValueExpr:
+			if key, ok := node.Key.(*ast.Ident); ok {
+				members[key] = true
+			}
+		case *ast.Ident:
+			if locals[node.Name] && !members[node] {
+				node.Name = placeholder(placeholders, node.Name)
+			}
+		}
+		return true
+	})
+}
+
+// placeholder returns the placeholder already given to name, or the next free one.
+func placeholder(assigned map[string]string, name string) string {
+	if canonical, ok := assigned[name]; ok {
+		return canonical
+	}
+	canonical := "$" + strconv.Itoa(len(assigned))
+	assigned[name] = canonical
+	return canonical
 }
 
 func checkUtilitySprawl(fset *token.FileSet, node *ast.File, relPath string, report *DedupeReport) {

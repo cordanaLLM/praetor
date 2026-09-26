@@ -3,6 +3,9 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/dedupe"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const dedupeSprawlSource = `package sample
@@ -72,5 +75,61 @@ func TestRunDedupeScan_Boundary_NoGoSourcesIsNotAVerdict(t *testing.T) {
 
 	if err := runDedupeScan([]string{dir}); err != nil {
 		t.Fatalf("a repository with no Go sources must not be reported as failing: %v", err)
+	}
+}
+
+// cadenceFixture returns a repository whose last dedupe sweep is recorded at its first commit
+// and whose second commit adds twelve lines of Go production source.
+func cadenceFixture(t *testing.T) string {
+	t.Helper()
+	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := util.RunGit(t.Context(), dir, args...); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	commit := []string{"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-q", "-m"}
+	git("init", "-q")
+	git("add", "-A", ".")
+	git(append(commit, "init")...)
+	if err := dedupe.RecordCadence(t.Context(), dir, 20); err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, dir, "grow.go", "package sample\n"+strings.Repeat("var _ = 1\n", 11))
+	git("add", "-A", ".")
+	git(append(commit, "grow")...)
+	return dir
+}
+
+// The cadence command used to decide on commits alone; the growth thresholds are flags, and
+// the trigger it fires on is named in its output.
+func TestRunDedupeCadence_Positive_GrowthTriggersTheSweep(t *testing.T) {
+	dir := cadenceFixture(t)
+	out, err := captureStdout(t, func() error { return runDedupeCadence([]string{"--added-lines=10", dir}) })
+	if err != nil {
+		t.Fatalf("cadence: %v\n%s", err, out)
+	}
+	for _, want := range []string{"12 Go source lines", "trigger: true", "Triggering periodic codebase deduplication audit: 12 Go source lines added"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunDedupeCadence_Negative_RejectsMalformedThreshold(t *testing.T) {
+	if err := runDedupeCadence([]string{"--added-lines=many", t.TempDir()}); err == nil {
+		t.Fatal("a non-numeric growth threshold must be refused")
+	}
+}
+
+func TestRunDedupeCadence_Boundary_GrowthBelowThresholdStaysQuiet(t *testing.T) {
+	dir := cadenceFixture(t)
+	out, err := captureStdout(t, func() error { return runDedupeCadence([]string{"--added-lines=13", dir}) })
+	if err != nil {
+		t.Fatalf("cadence: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "trigger: false") || strings.Contains(out, "Triggering") {
+		t.Fatalf("12 added lines against a 13-line threshold must not trigger a sweep:\n%s", out)
 	}
 }
