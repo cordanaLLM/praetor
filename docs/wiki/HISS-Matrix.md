@@ -1,28 +1,35 @@
-# High-Integrity Systems Standard (HISS-16) Compliance Matrix
+# HISS Compliance Matrix
 
-The formal specification matrix across the 19 deterministic engineering invariants in `cordanaLLM/praetor`.
+The High-Integrity Systems Standard (HISS) defines 21 invariants, HISS-01 through HISS-21. This matrix
+lists each one for `cordanaLLM/praetor`: its enforcement, its failure action, and whether this
+repository's `AGENTS.md` gates it ([HISS-Invariants](HISS-Invariants.md) shows the gated rules). The rows
+come from the core HISS rule catalog, the registry the `standards_explain_rule` MCP tool serves.
+The Enforcement column describes the checks praetor's own repository runs; an adopted repository
+runs the checks its adoption generates.
 
-| Invariant | Title | Domain | Mathematical Axiom / Threshold | Enforcement Layer | Failure Action |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **HISS-01** | Acyclic Control Flow | Control Flow | $G=(V,E), \forall v, (v,v) \notin E^*$ (DAG) | AST Check / Compiler | Build failure |
-| **HISS-02** | Bounded Loops & I/O Timeouts | Execution | $\forall L, \exists N_{\max} \text{ s.t. } \text{iter}(L) \le N_{\max}$ | Semgrep / Static Lint | AST rejection |
-| **HISS-03** | Zero Frame Malloc | Memory | $\Delta \text{HeapAlloc}_{\text{tick}} = 0$ | Heap Alloc Sweep | Unit test failure |
-| **HISS-04** | Complexity Bounds | Complexity | Cyclomatic $\le 10$, LOC $\le 75$, Stmt $\le 50$ | `gocyclo` / `gocognit` | Pre-push blocker |
-| **HISS-05** | Variable Scoping | Memory | Minimum lexical scope | Linter | Compiler warning |
-| **HISS-06** | Bounded Concurrency | Concurrency | Explicit worker pool upper bounds | Race detector | CI gate |
-| **HISS-07** | Checked Errors | Error Handling | Zero `.unwrap()`, zero unchecked `_ = err` | Static Analyzer | Pre-commit blocker |
-| **HISS-08** | Static Determinism | Safety | Ban `eval()`, dynamic code loading, unsafe C | Semgrep | Admission blocker |
-| **HISS-09** | Reference Safety | Memory | Mandatory `// SAFETY:` proofs for `unsafe` | AST Scanner | Review blocker |
-| **HISS-10** | Zero-Warning Cascade | Hygiene | Zero compiler / linter warning tolerance | `go vet` + `golangci-lint run` (CI) | Exit code 1 |
-| **HISS-11** | Hermetic Supply Chain | Security | Cryptographic pinning, SLSA Level 3, Cosign | Attestation Verifier | Deployment rejection |
-| **HISS-12** | Secret Leak Prevention | Security | Zero credentials in Git history | `gitleaks` | Push hook failure |
-| **HISS-13** | Monotonic Debt Ratchet | Governance | $V_{\text{total}}(t_1) \le V_{\text{total}}(t_0)$ | `standardsctl baseline` | PR status gate |
-| **HISS-14** | Append-Only ABI | Architecture | Append-only public contracts; `Migration:` footer | `standardsctl forge check-commits` (CI) | PR merge blocker |
-| **HISS-15** | 3D Test Discipline | Quality | Positive + Negative + Boundary tests required | `go test -race` | Coverage gate |
-| **HISS-16** | Context Integrity | Agentic Fleet | Single `AGENTS.md` source in the internal register; compiled $< 300$ LOC | `compile-context --verify` (caveman lint included) | Pre-commit blocker |
-| **HISS-17** | State Ledger Discipline | Agentic Fleet | Turn starts on `state status` and `OPEN.md` (never all of `STATE.md`), ends on `state sync .` | `praetorctl state sync --verify` | Pre-commit / CI gate |
-| **HISS-18** | CI Efficiency | Governance | Docs-only and state-only diffs skip heavy race and security gates | `praetorctl ci filter` | CI optimization gate |
-| **HISS-19** | Reuse Before Writing | Maintainability | One behavior, one implementation; configuration formats included | `praetorctl dedupe scan` | Verification gate rejection |
+| Invariant | Title | Gated | Enforcement | Failure action |
+| :--- | :--- | :--- | :--- | :--- |
+| **HISS-01** | Control Flow - Acyclic DAG Control Flow | yes | The internal/hiss scanner, deciding a subset per language. Go: goto, direct recursion, and mutual or indirect recursion between plain functions (a cycle through methods is not decided). Rust and Python: direct recursion only. C and C++: goto only. Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'. | Immediate build failure. |
+| **HISS-02** | Loops & I/O - Bounded Loops & Mandatory I/O Timeouts | yes | Semgrep rules and AST sweep. | Pre-commit and CI blocker. |
+| **HISS-03** | Zero Frame Malloc | no | NOT ENFORCED. No allocation benchmark gate exists in this repository. | None today; the rule is advisory until a check is attached. |
+| **HISS-04** | Complexity Bounds & Modular Sizing | yes | gocyclo, gocognit and funlen via golangci-lint (.golangci.yml), plus the standards_inspect_symbols AST scanner. | Build sweep blocker. |
+| **HISS-05** | Variable Scoping | no | NOT ENFORCED. No executable check exists in this repository, and no configured linter decides this rule. | None today; the rule is advisory until a check is attached. |
+| **HISS-06** | Bounded Concurrency | no | NOT ENFORCED for the axiom. The race detector cannot observe an unbounded pool: a lock-order inversion or an unbounded but race-free fan-out produces no data race. 'go test -race' runs, but it does not decide this rule. | None today; the rule is advisory until a check is attached. |
+| **HISS-07** | Checked Errors & Zero Unwrap | yes | golangci-lint (errcheck and wrapping rules) in make lint. | Compiler / linter error. |
+| **HISS-08** | Static Determinism & Banned Functions | no | Semgrep rules. | Admission rejection. |
+| **HISS-09** | Reference Safety & Mandatory Safety Proofs | no | AST check. | Immediate AST check rejection. |
+| **HISS-10** | 5-Layer Zero-Warnings Cascade | yes | go vet and golangci-lint in make lint; any finding fails the run. | Exit code 1. |
+| **HISS-11** | Hermetic Supply Chain | no | CI attestation gate. | Deployment rejection. |
+| **HISS-12** | Secret Leak Prevention | no | 'make secrets' runs gitleaks over repository history inside verify-all. | Verification gate rejection. |
+| **HISS-13** | Monotonic Debt Ratchet | no | 'praetorctl baseline' and the gate's HISS stage, evaluated against .standards-baseline.json. The scan feeding it refuses to certify a scope it did not fully examine. | PR status gate rejection. |
+| **HISS-14** | Append-Only ABI & Migration Footers | no | praetorctl forge check-commits in CI (breaking-change marker and Migration: footer). | PR blocker. |
+| **HISS-15** | 3D Test Discipline | yes | CI coverage gate (go test -race -coverprofile with a minimum statement-coverage floor enforced by 'go tool cover') and PR checklist validation of the 3D test attestation. | Merge gate rejection. |
+| **HISS-16** | Canonical AGENTS.md & Server Gates | yes | Pre-commit blocker, server-side admission. | Merge blocker. |
+| **HISS-17** | State Ledger Discipline | yes | Pre-commit state-sync hook and the CI / pre-push state audit. | Pre-commit / CI gate rejection. |
+| **HISS-18** | CI Efficiency | yes | CI filter step exporting run_* outputs that every heavy gate's condition consumes. | CI optimization gate. |
+| **HISS-19** | Reuse Before Writing | yes | 'praetorctl dedupe scan .' function-level clone and utility-sprawl detection, run by 'make dedupe' inside verify-all. | Verification gate rejection. |
+| **HISS-20** | Replayable Enforcement Evidence | yes | 'praetorctl hiss coverage --verify', run inside verify-all against '.config/hiss/coverage.yaml'. | Verification gate rejection. |
+| **HISS-21** | Platform Neutrality | yes | Platform Neutrality matrix in CI. | Verification gate rejection. |
 
 ---
 

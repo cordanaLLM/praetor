@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
 // goOnlyTools names linters and generators that only read Go source. A facet is a
@@ -21,10 +23,6 @@ var goOnlyTools = map[string]bool{
 	"golangci-lint": true, "gosec": true, "govet": true, "oapi-codegen": true,
 	"revive": true, "staticcheck": true,
 }
-
-// canonicalHISSRow matches one invariant row of AGENTS.md's "Core Directives & Invariants"
-// table, the set the repository gates.
-var canonicalHISSRow = regexp.MustCompile(`(?m)^\| \*\*(HISS-\d{2})\*\*`)
 
 var hissCitation = regexp.MustCompile(`HISS-\d{2}`)
 
@@ -116,9 +114,15 @@ func TestShippedFacets_Negative_UngatedHISSCitesTheExtendedSpec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gated := make(map[string]bool)
-	for _, match := range canonicalHISSRow.FindAllStringSubmatch(string(agents), -1) {
-		gated[match[1]] = true
+	// The gated set is read by the one parser of AGENTS.md's "Core Directives & Invariants"
+	// table, the same one the generated wiki uses (HISS-19).
+	rows, err := hisscatalog.ParseGatedInvariants(string(agents))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gated := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		gated[row.ID] = true
 	}
 	if len(gated) == 0 || gated["HISS-03"] || gated["HISS-14"] {
 		t.Fatalf("AGENTS.md invariant table parsed as %v; the fixture assumption is stale", gated)

@@ -1,0 +1,2 @@
+type: fixed
+title: README's HISS invariant summary stopped at HISS-16, its HISS-04 caps were stale, and its Supply Chain Provenance row claimed unshipped SLSA Level 3 attestations; the adoption guide's default verification-discovery file bound did not match the CLI default and falsely claimed the `/adopt` action commits its scaffolding; the HISS-21 doc cited a stale AGENTS.md rule number and the wrong pinned Python version

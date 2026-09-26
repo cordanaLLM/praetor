@@ -78,7 +78,7 @@ Linux only. Its Windows-specific path is described in
 up, or given a condition that could skip it on some legs.
 
 The matrix pins the tools it installs, not only the platforms it runs on. The legs share one
-`actions/setup-python` version (3.14) and install `yamllint==1.38.0` through the interpreter path
+`actions/setup-python` version (3.13) and install `yamllint==1.38.0` through the interpreter path
 that action reports, rather than by name. Both pins serve this invariant directly: the job's only
 output is whether a result differs across platforms, so a tool free to resolve to a different
 version on a different leg makes an upstream release indistinguishable from the portability defect
@@ -237,8 +237,8 @@ with an OS axis, so a fixture asserting cross-platform behaviour is replayed on 
 rather than assumed, is the strongest available form of both. That was already the plan for
 BUG-932 before any of the defects above surfaced.
 
-Per rule 12 of `AGENTS.md`, a new invariant earns its row in the directives table when it has a
-gate, not when it has a rationale. HISS-21's gate is the workflow above.
+A new invariant earns its row in the directives table when it has a gate, not when it has a
+rationale. HISS-21's gate is the workflow above.
 
 ## What the macOS and Windows legs cover after #135
 

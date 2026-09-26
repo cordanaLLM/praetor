@@ -382,10 +382,14 @@ answers say so explicitly:
 
 ```text
 Rule: HISS-05 (Variable Scoping)
-Enforcement: NOT ENFORCED. No executable check exists in this repository; the matrix names a
-linter that is not configured for this rule.
+Enforcement: NOT ENFORCED. No executable check exists in this repository, and no configured
+linter decides this rule.
 Failure Action: None today; the rule is advisory until a check is attached.
 ```
+
+The answers come from the HISS rule catalog in `internal/hisscatalog/catalog.go`. The generated
+wiki's HISS Matrix (`docs/wiki/HISS-Matrix.md`) renders the same catalog, so the tool and the
+wiki cannot disagree about which invariants exist.
 
 An agent asking about a rule needs to know whether anything will stop it. Returning a formal
 specification with no enforcement note reads as a gate that exists, which is the defect the HISS-20

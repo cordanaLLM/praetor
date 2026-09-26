@@ -26,6 +26,21 @@ title: Praetor - Fleet Governance Engine
 
 ---
 
+## Start here
+
+Pick the path that matches why you are here:
+
+| You want to | Read first | Then |
+| :--- | :--- | :--- |
+| **Adopt** Praetor in a repository | [Fast adoption](adoption.md) | [Adoption and onboarding](guides/adopt/index.md), then the [HISS specification](standards/hiss-spec.md) your repository is held to |
+| **Contribute** to Praetor itself | [Contributing to Praetor](guides/contributing.md) | [Contributing, hooks and CI](guides/contributor-workflow/index.md), then the [architecture decisions](adr/README.md) |
+| **Operate** Praetor on workstations or a cluster | [Workstation install and status](guides/workstation-update.md) | [Workstations, devcontainers and operations](guides/workstations-and-operations/index.md) and [Build, release and deployment](guides/build-and-release/index.md) |
+
+Every guide is grouped under [Guides](guides/index.md). Command and MCP tool reference is in
+the [API & CLI reference](wiki/API-Reference.md).
+
+---
+
 ## 🏛️ Core Capabilities
 
 | Pillar | Subsystem | Responsibility |

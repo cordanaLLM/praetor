@@ -22,7 +22,7 @@ praetorctl adopt --force --record-baseline --lock-source-root=/path/to/praetor
 ### Large repositories
 
 Adoption discovers verification inputs (Makefiles, manifests, scripts) through a bounded
-walk of the target: 4096 directory entries, 512 files and a fixed depth by default. A
+walk of the target: 4096 directory entries, 128 files and 32 levels of depth by default. A
 repository above those bounds fails with `verification discovery exceeds 4096 entries`.
 Raise a bound explicitly instead of trimming the tree:
 

@@ -44,7 +44,7 @@ func requireEmptyDir(t *testing.T, dir string) {
 }
 
 func TestGeneratedDir_Positive_RelativeOutputsLandInsideTheRepository(t *testing.T) {
-	root := t.TempDir()
+	root := wikiRepoRoot(t, "repo", canonicalAgentsMD(t))
 	if err := os.MkdirAll(filepath.Join(root, "site"), 0o700); err != nil {
 		t.Fatalf("mkdir site: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestGeneratedDir_Positive_RelativeOutputsLandInsideTheRepository(t *testing
 // repository shipping docs/wiki or docs/adr as a link to a directory outside it used to get
 // the pages written there, because the root-less writers follow every ancestor.
 func TestGeneratedDir_Negative_EscapingLinkIsRefused(t *testing.T) {
-	root := t.TempDir()
+	root := wikiRepoRoot(t, "repo", canonicalAgentsMD(t))
 	outside := t.TempDir()
 	linkOrSkip(t, outside, filepath.Join(root, "docs", "wiki"))
 	linkOrSkip(t, outside, filepath.Join(root, "docs", "adr"))
@@ -101,7 +101,7 @@ func TestGeneratedDir_Negative_EscapingLinkIsRefused(t *testing.T) {
 // while an absolute output naming the same outside directory is the operator's explicit
 // choice and is written as given.
 func TestGeneratedDir_Boundary_AncestorLinkAndAbsoluteChoice(t *testing.T) {
-	root := t.TempDir()
+	root := wikiRepoRoot(t, "repo", canonicalAgentsMD(t))
 	outside := t.TempDir()
 	linkOrSkip(t, outside, filepath.Join(root, "docs"))
 
