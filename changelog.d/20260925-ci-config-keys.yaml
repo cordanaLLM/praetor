@@ -1,0 +1,3 @@
+type: changed
+title: Adopt the goreleaser and Renovate configuration keys the current tools accept, and validate both in CI
+breaking: false

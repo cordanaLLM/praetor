@@ -44,6 +44,15 @@ jobs:
       - name: Install Syft
         uses: anchore/sbom-action/download-syft@v0.24.2
 
+      # A deprecated key still builds, but only until the next major of goreleaser drops
+      # it, at which point the release breaks with no earlier warning. check fails on it.
+      - name: Check GoReleaser Configuration
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: check
+
       - name: Run GoReleaser (Multi-Arch Binaries & Syft SBOMs)
         uses: goreleaser/goreleaser-action@v7
         with:
