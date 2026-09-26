@@ -203,6 +203,73 @@ func TestScanRepo_Boundary_SmallFunctionsIgnored(t *testing.T) {
 	}
 }
 
+// scanSources writes each source into a fresh directory and scans it.
+func scanSources(t *testing.T, sources map[string]string) *dedupe.DedupeReport {
+	t.Helper()
+	dir := t.TempDir()
+	for name, src := range sources {
+		writeFile(t, dir, name, src)
+	}
+	report, err := dedupe.ScanRepoContext(t.Context(), dir)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	return report
+}
+
+// Renaming the locals of a copied function used to produce a different hash, so the cheapest
+// possible copy escaped the rule. Parameters, receivers, results, short declarations, range
+// variables and closure parameters are all renamed before hashing.
+func TestScanRepo_Positive_RenamedLocalsStillMatch(t *testing.T) {
+	report := scanSources(t, map[string]string{
+		"a.go": "package p\n\nfunc Sum(items []int, scale int) (total int) {\n\tfor _, item := range items {\n\t\ttotal += item * scale\n\t}\n\tdouble := func(v int) int { return v * 2 }\n\ttotal = double(total)\n\treturn total\n}\n",
+		"b.go": "package p\n\ntype T struct{}\n\nfunc (t T) Add(values []int, factor int) (acc int) {\n\tfor _, value := range values {\n\t\tacc += value * factor\n\t}\n\ttwice := func(n int) int { return n * 2 }\n\tacc = twice(acc)\n\treturn acc\n}\n",
+	})
+	if len(report.Duplicates) != 1 || len(report.Duplicates[0].Locations) != 2 {
+		t.Fatalf("copies differing only in local names must form one clone group, got %+v", report.Duplicates)
+	}
+	if report.Passed {
+		t.Error("a clone group must fail the scan")
+	}
+}
+
+// Renaming is by first use, so a body that reads a different local in the same place,
+// a different field, or a different package-level name is still distinct.
+func TestScanRepo_Negative_DistinctBodiesStayDistinct(t *testing.T) {
+	base := "package p\n\nfunc F(x S) int {\n\ta := x.count\n\tb := x.total\n\tc := a + b\n\treturn %s\n}\n"
+	for name, variant := range map[string]string{
+		"other local":   strings.Replace(base, "%s", "b", 1),
+		"other field":   strings.Replace(strings.Replace(base, "x.count", "x.size", 1), "%s", "a", 1),
+		"package names": strings.Replace(base, "%s", "Limit", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			report := scanSources(t, map[string]string{"a.go": strings.Replace(base, "%s", "a", 1), "b.go": strings.Replace(variant, "func F", "func G", 1)})
+			if len(report.Duplicates) != 0 {
+				t.Fatalf("distinct bodies were merged into a clone group: %+v", report.Duplicates)
+			}
+		})
+	}
+}
+
+// The size floor is unchanged: a two-statement copy stays below it even after renaming, and a
+// three-statement copy at the floor is hashed.
+func TestScanRepo_Boundary_CloneFloorAfterRenaming(t *testing.T) {
+	two := scanSources(t, map[string]string{
+		"a.go": "package p\n\nfunc A(x int) int {\n\ty := x + 1\n\treturn y\n}\n",
+		"b.go": "package p\n\nfunc B(v int) int {\n\tw := v + 1\n\treturn w\n}\n",
+	})
+	if len(two.Duplicates) != 0 {
+		t.Fatalf("a two-statement copy is below the floor, got %+v", two.Duplicates)
+	}
+	three := scanSources(t, map[string]string{
+		"a.go": "package p\n\nfunc A(x int) int {\n\ty := x + 1\n\ty *= 2\n\treturn y\n}\n",
+		"b.go": "package p\n\nfunc B(v int) int {\n\tw := v + 1\n\tw *= 2\n\treturn w\n}\n",
+	})
+	if len(three.Duplicates) != 1 {
+		t.Fatalf("a three-statement renamed copy is at the floor and must match, got %+v", three.Duplicates)
+	}
+}
+
 func TestCadence_PositiveAndBoundary(t *testing.T) {
 	tmp := t.TempDir()
 	ctx := context.Background()
@@ -221,12 +288,12 @@ func TestCadence_PositiveAndBoundary(t *testing.T) {
 	runGit(t, tmp, "commit", "-m", "init")
 
 	// 1. Initial check: should run because never recorded
-	shouldRun, delta, err := dedupe.CheckCadence(ctx, tmp, 5)
+	status, err := dedupe.CheckCadence(ctx, tmp, dedupe.CadenceLimits{Commits: 5})
 	if err != nil {
 		t.Fatalf("check cadence failed: %v", err)
 	}
-	if !shouldRun || delta != 1 {
-		t.Fatalf("expected shouldRun=true, delta=1, got shouldRun=%v, delta=%d", shouldRun, delta)
+	if !status.Due || status.CommitsSince != 1 {
+		t.Fatalf("expected due with delta=1, got %+v", status)
 	}
 
 	// 2. Record cadence
@@ -234,25 +301,144 @@ func TestCadence_PositiveAndBoundary(t *testing.T) {
 		t.Fatalf("record cadence failed: %v", err)
 	}
 
-	// 3. Check again immediately: delta should be 0, shouldRun=false
-	shouldRun2, delta2, err := dedupe.CheckCadence(ctx, tmp, 5)
+	// 3. Check again immediately: delta should be 0, not due
+	status, err = dedupe.CheckCadence(ctx, tmp, dedupe.CadenceLimits{Commits: 5})
 	if err != nil {
 		t.Fatalf("check cadence failed: %v", err)
 	}
-	if shouldRun2 || delta2 != 0 {
-		t.Fatalf("expected shouldRun=false, delta=0, got shouldRun=%v, delta=%d", shouldRun2, delta2)
+	if status.Due || status.CommitsSince != 0 || status.Reason != "" {
+		t.Fatalf("expected not due with delta=0, got %+v", status)
 	}
 }
 
 func TestCadence_Negative_NonGitDir(t *testing.T) {
 	tmp := t.TempDir()
 	ctx := context.Background()
-	shouldRun, delta, err := dedupe.CheckCadence(ctx, tmp, 10)
+	status, err := dedupe.CheckCadence(ctx, tmp, dedupe.CadenceLimits{Commits: 10})
 	if err == nil {
 		t.Fatal("expected error for non-git dir")
 	}
-	if shouldRun || delta != 0 {
-		t.Fatalf("expected shouldRun=false, delta=0, got %v, %d", shouldRun, delta)
+	if status.Due || status.CommitsSince != 0 {
+		t.Fatalf("expected zero status on error, got %+v", status)
+	}
+}
+
+// cadenceRepo returns a repository with one recorded sweep, ready for growth to be committed.
+func cadenceRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	runGit(t, dir, "init")
+	writeFile(t, dir, "main.go", "package main\n")
+	commitAll(t, dir, "init")
+	if err := dedupe.RecordCadence(t.Context(), dir, 20); err != nil {
+		t.Fatalf("record cadence: %v", err)
+	}
+	return dir
+}
+
+func commitAll(t *testing.T, dir, message string) {
+	t.Helper()
+	runGit(t, dir, "add", "-A", ".")
+	runGit(t, dir, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-q", "-m", message)
+}
+
+func goLines(n int) string {
+	return "package p\n" + strings.Repeat("var _ = 1\n", n-1)
+}
+
+// A branch that adds a large amount of source in few commits used to leave the sweep undue,
+// because the commit delta was the only input.
+func TestCadence_Positive_SourceGrowthMakesSweepDue(t *testing.T) {
+	dir := cadenceRepo(t)
+	writeFile(t, dir, "big.go", goLines(12))
+	commitAll(t, dir, "grow")
+
+	status, err := dedupe.CheckCadence(t.Context(), dir, dedupe.CadenceLimits{Commits: 20, AddedLines: 10, AddedFiles: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Due || status.CommitsSince != 1 || status.AddedLines != 12 || status.AddedFiles != 1 {
+		t.Fatalf("12 added lines against a 10-line threshold must make the sweep due, got %+v", status)
+	}
+	if !strings.Contains(status.Reason, "12 Go source lines") {
+		t.Errorf("the reason must name the growth trigger, got %q", status.Reason)
+	}
+
+	writeFile(t, dir, "b.go", "package p\n")
+	commitAll(t, dir, "second file")
+	status, err = dedupe.CheckCadence(t.Context(), dir, dedupe.CadenceLimits{Commits: 20, AddedLines: 500, AddedFiles: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Due || status.AddedFiles != 2 || !strings.Contains(status.Reason, "2 Go source files") {
+		t.Fatalf("two added files against a two-file threshold must make the sweep due, got %+v", status)
+	}
+}
+
+// Growth outside the clone detector's scope never makes a sweep due: tests, testdata and
+// non-Go files are not what it reads.
+func TestCadence_Negative_GrowthOutsideScopeIsIgnored(t *testing.T) {
+	dir := cadenceRepo(t)
+	writeFile(t, dir, "big_test.go", goLines(40))
+	writeFile(t, dir, "testdata/fixture.go", goLines(40))
+	writeFile(t, dir, "notes.md", strings.Repeat("line\n", 40))
+	commitAll(t, dir, "out of scope")
+
+	status, err := dedupe.CheckCadence(t.Context(), dir, dedupe.CadenceLimits{Commits: 20, AddedLines: 10, AddedFiles: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Due || status.AddedLines != 0 || status.AddedFiles != 0 {
+		t.Fatalf("growth outside Go production sources must not count, got %+v", status)
+	}
+}
+
+// The thresholds are inclusive, one line below stays quiet, and a state file written before
+// growth existed loads unchanged.
+func TestCadence_Boundary_ThresholdsAndLegacyState(t *testing.T) {
+	dir := cadenceRepo(t)
+	writeFile(t, dir, "ten.go", goLines(10))
+	commitAll(t, dir, "ten lines")
+
+	for limit, due := range map[int]bool{10: true, 11: false} {
+		status, err := dedupe.CheckCadence(t.Context(), dir, dedupe.CadenceLimits{Commits: 20, AddedLines: limit, AddedFiles: 50})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.Due != due {
+			t.Errorf("10 added lines against %d: due = %v, want %v (%+v)", limit, status.Due, due, status)
+		}
+	}
+
+	head := strings.TrimSpace(gitOutput(t, dir, "rev-parse", "HEAD"))
+	count := strings.TrimSpace(gitOutput(t, dir, "rev-list", "--count", "HEAD"))
+	writeFile(t, dir, ".workingdir/cadence.json", `{"last_commit_sha":"`+head+`","last_commit_count":`+count+`,"last_run_at":"2026-01-01T00:00:00Z","threshold":20}`)
+	status, err := dedupe.CheckCadence(t.Context(), dir, dedupe.CadenceLimits{})
+	if err != nil {
+		t.Fatalf("a state file in the original format must load: %v", err)
+	}
+	if status.Due || status.Unmeasured {
+		t.Fatalf("a legacy state at HEAD is not due, got %+v", status)
+	}
+}
+
+// A recorded commit that does not resolve to a commit in the repository cannot anchor a growth
+// measurement, so the sweep is due rather than silently skipped. A value shaped like an option is refused as a
+// revision, never parsed as a diff option.
+func TestCadence_Negative_UnresolvableRecordedCommit(t *testing.T) {
+	dir := cadenceRepo(t)
+	for _, sha := range []string{strings.Repeat("0", 40), "--output=" + filepath.Join(dir, "leak"), ""} {
+		writeFile(t, dir, ".workingdir/cadence.json", `{"last_commit_sha":"`+strings.ReplaceAll(sha, `\`, `\\`)+`","last_commit_count":1,"threshold":20}`)
+		status, err := dedupe.CheckCadence(t.Context(), dir, dedupe.CadenceLimits{})
+		if err != nil {
+			t.Fatalf("recorded commit %q: %v", sha, err)
+		}
+		if !status.Due || !status.Unmeasured || !strings.Contains(status.Reason, "does not resolve to a commit in this repository") {
+			t.Fatalf("recorded commit %q must make the sweep due as unmeasured, got %+v", sha, status)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "leak")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an option-shaped recorded commit reached git as an option: %v", err)
 	}
 }
 
@@ -278,9 +464,16 @@ func writeFile(t *testing.T, dir, path, content string) {
 
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	if output, err := util.RunGit(t.Context(), dir, args...); err != nil {
+	gitOutput(t, dir, args...)
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	output, err := util.RunGit(t.Context(), dir, args...)
+	if err != nil {
 		t.Fatalf("git %v: %v: %s", args, err, output)
 	}
+	return output
 }
 
 func TestScanRepoGitScope(t *testing.T) {
@@ -344,7 +537,7 @@ func TestCadenceCorruptStateFails(t *testing.T) {
 	runGit(t, dir, "init")
 	runGit(t, dir, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "fixture")
 	writeFile(t, dir, ".workingdir/cadence.json", "{")
-	if _, _, err := dedupe.CheckCadence(t.Context(), dir, 5); err == nil {
+	if _, err := dedupe.CheckCadence(t.Context(), dir, dedupe.CadenceLimits{Commits: 5}); err == nil {
 		t.Fatal("corrupt cadence must not be treated as absent")
 	}
 }

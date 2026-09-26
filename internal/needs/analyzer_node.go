@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -64,7 +66,7 @@ func (a *NodeAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds
 	}
 
 	allDeps := mergeDependencies(pkgData.Dependencies, pkgData.DevDependencies)
-	for _, pkg := range sortedKeys(allDeps) {
+	for _, pkg := range slices.Sorted(maps.Keys(allDeps)) {
 		demand := mapNodeDependency(pkg, allDeps[pkg])
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)

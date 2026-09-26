@@ -697,7 +697,11 @@ var hissRuleExplanations = map[string]string{
 	"HISS-01": `Rule: HISS-01 (Control Flow - Acyclic DAG Control Flow)
 Formal Specification: Call graphs must form a Directed Acyclic Graph: G = (V, E), ∀v ∈ V, (v, v) ∉ E*
 Direct and mutual recursion are strictly prohibited in production runtimes.
-Enforcement: AST call-graph analyzer and static linter checks.
+Enforcement: the internal/hiss scanner, which decides a different subset per language:
+  - Go: goto, direct recursion, and mutual or indirect recursion between plain functions (package call graph). A cycle through methods is not decided.
+  - Rust and Python: direct recursion only (a function calling itself by the name that resolves to it). Mutual and indirect recursion are not decided, and neither is a Rust self-call inside impl Trait for T, where self.f may reach an inherent method, or inside the input of a macro other than the standard expression macros (assert!, format!, vec!, ...), which may rewrite it into a call of something else.
+  - C and C++: goto only. Recursion is not decided.
+Each claim is replayed against its fixtures in .config/hiss/coverage.yaml by 'praetorctl hiss coverage --verify'.
 Failure Action: Immediate build failure.`,
 	"HISS-02": `Rule: HISS-02 (Loops & I/O - Bounded Loops & Mandatory I/O Timeouts)
 Formal Specification: Every loop construct must possess a statically verifiable scalar upper bound: iterations(L) <= N_max.

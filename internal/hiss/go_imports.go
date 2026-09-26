@@ -5,6 +5,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // maxGoImports bounds the import specs read from one file (HISS-02).
@@ -62,26 +64,13 @@ func FileImports(file *ast.File) GoImports {
 // which only type information can read.
 func DefaultImportName(importPath string) string {
 	name := path.Base(importPath)
-	if isMajorVersion(name) && strings.Contains(importPath, "/") {
+	if util.IsGoMajorVersionElement(name) && strings.Contains(importPath, "/") {
 		name = path.Base(path.Dir(importPath))
 	}
-	if cut := strings.LastIndex(name, ".v"); cut > 0 && isMajorVersion(name[cut+1:]) {
+	if cut := strings.LastIndex(name, ".v"); cut > 0 && util.IsGoMajorVersionElement(name[cut+1:]) {
 		name = name[:cut]
 	}
 	return name
-}
-
-// isMajorVersion reports whether s is a major-version element such as v2 or v10.
-func isMajorVersion(s string) bool {
-	if len(s) < 2 || s[0] != 'v' {
-		return false
-	}
-	for i := 1; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // Path returns the import path name is bound to, and whether it is bound at all.

@@ -258,6 +258,13 @@ specification with no enforcement note reads as a gate that exists, which is the
 coverage catalog was built to remove — a declared mechanism nothing implements. The same honesty
 applies here: the tool reports the rule *and* whether it bites.
 
+A rule enforced for some languages and not others names the split rather than one mechanism for
+all of them. HISS-01 answers per language: Go decides goto, direct recursion and cycles between
+plain functions; Rust and Python decide direct recursion only; C and C++ decide goto only. Each
+line matches a claim in `.config/hiss/coverage.yaml`, and
+`TestServer_ExplainRuleHISS01ScopesEnforcementPerLanguage` in `cmd/standards-mcp/server_test.go`
+fails if the answer drifts back to a universal claim.
+
 ## Package docs answer the same way twice
 
 `standards_package_docs` resolves a package name through one selection rule, shared with

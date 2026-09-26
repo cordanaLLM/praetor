@@ -178,7 +178,16 @@ def command(repo, *args, data=None, ok=True, maintain_state=True):
     # tests opt out and execute the same real hooks against stale/missing state.
     if (maintain_state and args[:2] in (("git", "commit"), ("git", "push"))
             and (repo / PRAETORCTL).is_file()):
-        command(repo, cli_path(repo), "state", "sync", ".", ok=ok)
+        run_command(repo, (cli_path(repo), "state", "sync", "."), None, ok)
+    return run_command(repo, args, data, ok)
+
+
+def run_command(repo, args, data, ok):
+    """Run one fixture command; command() adds the state sync a commit or push obliges.
+
+    Kept apart from command() so the sync runs through the same environment without the
+    helper calling itself (HISS-01).
+    """
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", **LOCALE_ENV, **NO_AUTOCRLF_ENV)
     for key in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
         env.pop(key, None)
