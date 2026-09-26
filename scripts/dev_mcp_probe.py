@@ -521,6 +521,12 @@ def audit_checks(client, root):
     require("declined by adoption.decline" in declined_res.lower(),
             "audit did not honor accepted branch-ruleset decline")
     manifest_path.write_text(orig_manifest)
+    setup_branch_ruleset(ruleset)
+    return ["valid fixture audit", "changed pinned content rejected",
+            "invariant violation rejected", "incomplete scan rejected without baseline writes",
+            "branch ruleset decline accepted and verified"]
+
+def setup_branch_ruleset(ruleset):
     ruleset.write_text(json.dumps({
   "conditions": {
     "ref_name": {
@@ -555,7 +561,7 @@ def audit_checks(client, root):
     }
   ],
   "target": "branch"
-}) + "\n")
+}) + "\\n")
     return ["valid fixture audit", "changed pinned content rejected",
             "invariant violation rejected", "incomplete scan rejected without baseline writes",
             "branch ruleset decline accepted and verified"]
