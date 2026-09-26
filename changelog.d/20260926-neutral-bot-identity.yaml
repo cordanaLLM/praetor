@@ -1,0 +1,3 @@
+type: changed
+title: "chore!: neutralize bot identities and GitHub App manifests. Migration: The label definitions rendered by standardsctl sync and the AGENTS.md context transpiler have shifted text to be organization-neutral. praetorctl compile-context and standardsctl sync will overwrite existing configurations. No manual intervention is required, but any downstream drift alerts for these artifacts are expected and should be merged."
+breaking: true
