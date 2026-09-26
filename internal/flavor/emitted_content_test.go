@@ -19,6 +19,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/templates"
+	"gopkg.in/yaml.v3"
 )
 
 // digestPinned matches a FROM line carrying tag plus an explicit sha256 digest, optionally
@@ -83,7 +84,8 @@ func TestScaffoldedDockerfileBuildsFromSourceOnADigestPinnedDebian13Runtime(t *t
 	if !strings.Contains(froms[1], "gcr.io/distroless/static-debian13:nonroot") {
 		t.Errorf("runtime stage is not the Debian 13 distroless image: %q", froms[1])
 	}
-	for _, want := range []string{"RUN CGO_ENABLED=0", "COPY --from=builder ", "USER 65532:65532"} {
+	// That the builder stage actually compiles is TestScaffoldedDockerfileBuilderCompilesTheModulesMainPackage.
+	for _, want := range []string{"ARG MAIN_PACKAGE=\n", "CGO_ENABLED=0 GOOS=linux go build", "COPY --from=builder /bin/app ", "USER 65532:65532"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("emitted Dockerfile lacks %q:\n%s", want, body)
 		}
@@ -180,6 +182,92 @@ func TestScaffoldedWorkflowsCarryJobsAndGitHubExpressions(t *testing.T) {
 		body := scaffoldInto(t, name, ".github/workflows/ci.yml")[".github/workflows/ci.yml"]
 		if !strings.Contains(body, "\njobs:\n") || !strings.Contains(body, "runs-on: ubuntu-26.04") {
 			t.Errorf("%s scaffolds a CI workflow without a pinned job: %q", name, body)
+		}
+	}
+}
+
+// praetorBinaryCommands are what a scaffolded workflow step must not run: praetorctl under
+// either name, and the targets of the Makefile adoption generates that call it
+// (internal/adopt/governance.go, buildMakefileWith). No scaffolded workflow installs praetorctl,
+// so such a step exits 127 on every run, and adoption makes the job a required check.
+var praetorBinaryCommands = []string{"praetorctl", "standardsctl", "$(PRAETORCTL)", "make verify-all", "make audit", "make compile-context"}
+
+// maxWorkflowSteps bounds the step scan per workflow (HISS-02).
+const maxWorkflowSteps = 64
+
+// workflowRunSteps returns the run: body of every step of every job in a workflow.
+func workflowRunSteps(t *testing.T, body string) []string {
+	t.Helper()
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Run string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(body), &workflow); err != nil {
+		t.Fatalf("parse workflow: %v\n%s", err, body)
+	}
+	var runs []string
+	for _, job := range workflow.Jobs {
+		for i := 0; i < len(job.Steps) && i < maxWorkflowSteps; i++ {
+			if job.Steps[i].Run != "" {
+				runs = append(runs, job.Steps[i].Run)
+			}
+		}
+	}
+	return runs
+}
+
+// praetorStep returns the first run: body that needs the praetor binary.
+func praetorStep(t *testing.T, body string) (string, bool) {
+	t.Helper()
+	for _, run := range workflowRunSteps(t, body) {
+		for _, command := range praetorBinaryCommands {
+			if strings.Contains(run, command) {
+				return run, true
+			}
+		}
+	}
+	return "", false
+}
+
+// The Go CI job ran `make verify-all`, whose recipes call praetorctl, on a runner where no
+// step installed it: the required check failed on every pull request of every Go adopter.
+func TestScaffoldedWorkflowsRunWithoutAPraetorBinary(t *testing.T) {
+	// Negative: the step the Go CI template carried is caught.
+	if _, found := praetorStep(t, "jobs:\n  test:\n    steps:\n      - name: Verify All Gates\n        run: make verify-all\n"); !found {
+		t.Fatal("the check misses the former Go CI step")
+	}
+	// Boundary: a comment naming the target is not a step.
+	if run, found := praetorStep(t, "jobs:\n  test:\n    steps:\n      # make verify-all runs in the hooks\n      - run: go test ./...\n"); found {
+		t.Fatalf("a comment was read as a step: %q", run)
+	}
+	checked := 0
+	for _, flv := range flavor.List() {
+		for _, tmpl := range flv.RequiredTemplates() {
+			if tmpl.Source == "" || !strings.HasPrefix(tmpl.Path, ".github/workflows/") {
+				continue
+			}
+			checked++
+			body, err := templates.RenderFile(tmpl.Source, templates.Context{RepoName: "widget", Owner: "acme"})
+			if err != nil {
+				t.Fatalf("render %s: %v", tmpl.Source, err)
+			}
+			if run, found := praetorStep(t, body); found {
+				t.Errorf("%s %s: step needs a praetor binary no step installs: %q", flv.Name(), tmpl.Path, run)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no scaffolded workflow was checked")
+	}
+	// Positive: the Go CI job runs the Go gates itself.
+	body := scaffoldInto(t, "go-library", ".github/workflows/ci.yml")[".github/workflows/ci.yml"]
+	runs := strings.Join(workflowRunSteps(t, body), "\n")
+	for _, want := range []string{"go vet ./...", "go test -race ./..."} {
+		if !strings.Contains(runs, want) {
+			t.Errorf("the Go CI job does not run %q:\n%s", want, runs)
 		}
 	}
 }
