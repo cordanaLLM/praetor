@@ -107,10 +107,12 @@ func TruncateExcerpt(s string, limit int) string {
 // resolve against that handle (WriteFileAtomic's implementation). A crash or a failed write
 // leaves the previous ledger intact instead of truncated; an ancestor swapped for a
 // symbolic link after the directory is opened cannot move the write; and a link planted at
-// path after the inspection is replaced by the rename, never written through. Ancestors
-// above path's directory are resolved when the directory is opened, so a caller holding an
-// untrusted relative path confines it with ConfinePath first, which returns it with every
-// existing ancestor already resolved inside the root.
+// path after the inspection is replaced by the rename, never written through.
+//
+// path's directory is opened as given: its ancestors, symbolic links included, are
+// followed, because without a root there is nothing for a link to escape. A caller writing
+// an untrusted relative path below a root (a tracked ledger path inside a repository) uses
+// WriteFileConfined, which keeps every ancestor confined to the root up to the write.
 //
 // perm keeps WriteFileSecure's ceiling: a zero perm selects SecureFilePerm, world-writable
 // or non-permission bits are refused, a new file is created with perm under the process
@@ -124,12 +126,54 @@ func WriteFileNoFollow(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	return inParentDirectory(path, func(dir *os.Root, name string) error {
-		mode, err := noFollowPermission(dir, name, path, perm)
-		if err != nil {
-			return err
-		}
-		return replaceAtomically(dir, name, data, mode)
+		return replaceNoFollow(dir, name, path, data, perm)
 	})
+}
+
+// WriteFileConfined is WriteFileNoFollow for rel below root, confined through the whole
+// write (BUG-826). rel first passes ConfinePath's check; its directory is then opened
+// through a pinned handle on root (os.Root), which follows a link only while it stays
+// inside root, and WriteFileNoFollow's inspection, atomic replace and permission ceiling
+// run against that directory. An ancestor swapped for an escaping link after the check is
+// refused instead of followed, which a ConfinePath result handed to WriteFileNoFollow
+// cannot guarantee.
+//
+// rel's directory must exist; MkdirConfined creates it. root's own path is resolved when
+// it is opened (it is the caller's chosen boundary, and macOS ships /var and /tmp as
+// links). A rel naming root itself is refused, and so is an in-root link with an absolute
+// target, since os.Root follows only relative links.
+func WriteFileConfined(root, rel string, data []byte, perm os.FileMode) error {
+	perm, err := effectivePerm(perm, SecureFilePerm)
+	if err != nil {
+		return err
+	}
+	absRoot, inside, err := confineBelow(root, rel)
+	if err != nil {
+		return err
+	}
+	return writeConfined(absRoot, inside, data, perm)
+}
+
+// writeConfined is WriteFileConfined after the check: inside's directory resolves through
+// the pinned handle on absRoot.
+func writeConfined(absRoot, inside string, data []byte, perm os.FileMode) error {
+	if inside == "." {
+		return fmt.Errorf("%w: %q is the root itself, not a file below it", ErrSymlinkDestination, absRoot)
+	}
+	return inRoot(absRoot, filepath.Dir(inside), func(dir *os.Root) error {
+		return replaceNoFollow(dir, filepath.Base(inside), filepath.Join(absRoot, inside), data, perm)
+	})
+}
+
+// replaceNoFollow is the no-follow write shared by WriteFileNoFollow and WriteFileConfined:
+// it refuses a destination that is a link or not a regular file and replaces name in dir
+// atomically under the permission ceiling. path only labels errors.
+func replaceNoFollow(dir *os.Root, name, path string, data []byte, perm os.FileMode) error {
+	mode, err := noFollowPermission(dir, name, path, perm)
+	if err != nil {
+		return err
+	}
+	return replaceAtomically(dir, name, data, mode)
 }
 
 // noFollowPermission refuses a destination that exists but is a symbolic link or not a

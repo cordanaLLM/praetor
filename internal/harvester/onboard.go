@@ -195,19 +195,18 @@ func writeOnboardEditors(ctx context.Context, repoPath string) error {
 	return ctx.Err()
 }
 
-// writeOnboardFile checks cancellation and output confinement before each mutation.
+// writeOnboardFile checks cancellation before each mutation, then creates rel's directory
+// and replaces rel atomically, both confined to root through a pinned handle on it, so no
+// output can be redirected outside the repository, not even by a link swapped in after a
+// check (BUG-826).
 func writeOnboardFile(ctx context.Context, root, rel string, data []byte) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("onboarding cancelled before writing %s: %w", rel, err)
 	}
-	path, err := util.ConfinePath(root, rel)
-	if err != nil {
-		return fmt.Errorf("confine onboarding output %s: %w", rel, err)
+	if err := util.MkdirConfined(root, filepath.Dir(rel), 0o700); err != nil {
+		return fmt.Errorf("create onboarding output directory for %s: %w", rel, err)
 	}
-	if err := util.MkdirSecure(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create onboarding output directory: %w", err)
-	}
-	if err := util.WriteFileNoFollow(path, data, onboardFilePerm); err != nil {
+	if err := util.WriteFileConfined(root, rel, data, onboardFilePerm); err != nil {
 		return fmt.Errorf("write onboarding output %s: %w", rel, err)
 	}
 	return nil

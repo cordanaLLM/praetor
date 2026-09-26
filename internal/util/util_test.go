@@ -651,3 +651,90 @@ func TestWriteFileNoFollow_Boundary_ReplaceNeverWidensExisting(t *testing.T) {
 		t.Errorf("expected only %s in %s, got %v", filepath.Base(ledger), dir, entries)
 	}
 }
+
+func TestWriteFileConfined_Positive(t *testing.T) {
+	root, _ := confinedFixture(t)
+	rel := filepath.Join("alias", "milestones.json")
+	if err := WriteFileConfined(root, rel, []byte("first"), 0o600); err != nil {
+		t.Fatalf("WriteFileConfined through an in-root link: %v", err)
+	}
+	if err := WriteFileConfined(root, rel, []byte("second"), 0o600); err != nil {
+		t.Fatalf("WriteFileConfined replacing the ledger: %v", err)
+	}
+	if data, err := ReadFileNoFollow(filepath.Join(root, "inner", "milestones.json")); err != nil || string(data) != "second" {
+		t.Errorf("ledger = (%q, %v), want the replaced contents at the link target", data, err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "inner"))
+	if err != nil || len(entries) != 1 {
+		t.Errorf("expected only the ledger in inner, got (%v, %v)", entries, err)
+	}
+}
+
+func TestWriteFileConfined_Negative(t *testing.T) {
+	root, outside := confinedFixture(t)
+	victim := filepath.Join(root, "inner", "victim.txt")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("seed victim: %v", err)
+	}
+	if err := os.Symlink("victim.txt", filepath.Join(root, "inner", "ledger.json")); err != nil {
+		t.Fatalf("symlink ledger: %v", err)
+	}
+	cases := []struct {
+		rel  string
+		perm os.FileMode
+		want error
+	}{
+		{filepath.Join("inner", "ledger.json"), 0o600, ErrSymlinkDestination},
+		{filepath.Join("out", "planted.json"), 0o600, ErrPathEscapesRoot},
+		{filepath.Join("..", "sibling.json"), 0o600, ErrPathEscapesRoot},
+		{filepath.Join(outside, "abs.json"), 0o600, ErrAbsoluteRelPath},
+		{"ok.json", 0o666, ErrInsecurePerm},
+	}
+	for _, tc := range cases {
+		if err := WriteFileConfined(root, tc.rel, []byte("clobber"), tc.perm); !errors.Is(err, tc.want) {
+			t.Errorf("WriteFileConfined(%q, %#o) = %v, want %v", tc.rel, tc.perm, err, tc.want)
+		}
+	}
+	if data, err := os.ReadFile(victim); err != nil || string(data) != "keep" { // #nosec G304 -- test-local path from t.TempDir
+		t.Errorf("victim = (%q, %v), want it untouched", data, err)
+	}
+	assertEmptyDir(t, outside)
+	if err := WriteFileConfined(root, filepath.Join("missing", "ledger.json"), []byte("x"), 0o600); err == nil {
+		t.Errorf("expected a write below a missing directory to fail")
+	}
+}
+
+// TestWriteFileConfined_Boundary_SwapAfterCheck pins BUG-826's window: a ledger directory
+// swapped for an escaping link after ConfinePath's check. The pinned write refuses it; the
+// old composition (ConfinePath, then WriteFileNoFollow on the checked path) follows the
+// link and lands outside the root, which is why the ledger writers moved to
+// WriteFileConfined.
+func TestWriteFileConfined_Boundary_SwapAfterCheck(t *testing.T) {
+	root, outside := confinedFixture(t)
+	if err := WriteFileConfined(root, ".", []byte("x"), 0o600); !errors.Is(err, ErrSymlinkDestination) {
+		t.Errorf(`WriteFileConfined(root, ".") = %v, want ErrSymlinkDestination`, err)
+	}
+	if err := os.Symlink(filepath.Join(root, "inner"), filepath.Join(root, "absolute")); err != nil {
+		t.Fatalf("symlink absolute: %v", err)
+	}
+	if err := WriteFileConfined(root, filepath.Join("absolute", "ledger.json"), []byte("x"), 0o600); err == nil {
+		t.Errorf("expected an in-root link with an absolute target to be refused by the pinned open")
+	}
+
+	absRoot, inside, err := confineBelow(root, filepath.Join("inner", "milestones.json"))
+	if err != nil {
+		t.Fatalf("confineBelow: %v", err)
+	}
+	swapForLink(t, filepath.Join(root, "inner"), outside)
+	if err := writeConfined(absRoot, inside, []byte("ledger"), 0o600); err == nil {
+		t.Errorf("expected a directory swapped for an escaping link to be refused")
+	}
+	assertEmptyDir(t, outside)
+
+	if err := WriteFileNoFollow(filepath.Join(absRoot, inside), []byte("ledger"), 0o600); err != nil {
+		t.Fatalf("WriteFileNoFollow on the checked path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "milestones.json")); err != nil {
+		t.Errorf("expected the root-less write to follow the swapped link (documented contract), stat err = %v", err)
+	}
+}

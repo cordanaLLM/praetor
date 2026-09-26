@@ -107,38 +107,63 @@ func ReadConfinedLimited(root, rel string, limit int64) (data []byte, resultErr 
 // ConfinePath joins rel onto root and returns the cleaned, absolute result, guaranteeing
 // that the result cannot leave root either lexically (via "..") or through a symbolic
 // link. Paths that do not exist yet are still confined: the check resolves the deepest
-// existing ancestor and re-attaches the remaining segments.
+// existing ancestor and re-attaches the remaining segments. Both the resolved parent
+// directory and, when the final element exists, its resolved target must lie inside the
+// resolved root: a create or rename lands in the parent, so a final element that links
+// back into the root cannot vouch for a parent directory that lives outside it (BUG-826).
+// A root of "/" (or a Windows volume root) confines every path on that volume (BUG-825).
 //
-// The returned path is the location that was checked, not the lexical join (BUG-826):
-// every existing directory between root and the final element is replaced by its real
-// location inside the root, so a caller that opens, creates or renames below the result
-// never traverses an in-root symlinked directory again after the check. The root itself
-// is returned as given (absolute and cleaned): the caller chose it, and callers relate
-// their results back to it. The final element is returned unresolved, so a caller that
-// must refuse a symbolic-link destination (WriteFileNoFollow, ReadFileNoFollow) still
-// sees the link. Both the resolved parent directory and, when the final element exists,
-// its resolved target must lie inside the resolved root: a create or rename lands in the
-// parent, so a final element that links back into the root cannot vouch for a parent
-// directory that lives outside it. A root of "/" (or a Windows volume root) confines
-// every path on that volume (BUG-825).
+// The result is the lexical join, never a resolved location. Callers relate results to
+// each other and to root (privatePlanningOutput in cmd/standards-mcp takes the Rel of two
+// of them), and a no-follow caller must still see a link at the final element. A resolved
+// string would not close the window between this check and the caller's own open anyway:
+// any in-root directory can be swapped for a link after the check just as a link can be
+// retargeted. A writer that must stay confined through that window uses WriteFileConfined
+// and MkdirConfined, which resolve every component through a pinned os.Root at use time.
 //
 // gosec: this is the canonical sanitizer for G304 (file inclusion via variable) and
 // G305 (file traversal when extracting an archive). Pass user-, config- or
 // archive-supplied relative paths through ConfinePath before handing them to os.Open,
 // os.ReadFile, WriteFileSecure or MkdirSecure.
 func ConfinePath(root, rel string) (string, error) {
-	absRoot, candidate, err := lexicalConfine(root, rel)
+	_, candidate, err := confine(root, rel)
 	if err != nil {
 		return "", err
+	}
+	return candidate, nil
+}
+
+// confine is ConfinePath's check. It returns the absolute root and the cleaned lexical
+// join once both have passed the lexical and the resolved confinement checks.
+func confine(root, rel string) (absRoot, candidate string, err error) {
+	absRoot, candidate, err = lexicalConfine(root, rel)
+	if err != nil {
+		return "", "", err
 	}
 	resolvedRoot, err := resolveExistingAncestor(absRoot)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	if candidate == absRoot {
-		return absRoot, nil
+	if candidate != absRoot {
+		if err := checkResolvedConfinement(candidate, resolvedRoot); err != nil {
+			return "", "", err
+		}
 	}
-	return resolveConfined(candidate, absRoot, resolvedRoot)
+	return absRoot, candidate, nil
+}
+
+// confineBelow runs ConfinePath's check and returns the absolute root together with rel's
+// cleaned position inside it ("." for the root itself), the form os.Root methods take.
+func confineBelow(root, rel string) (absRoot, inside string, err error) {
+	absRoot, candidate, err := confine(root, rel)
+	if err != nil {
+		return "", "", err
+	}
+	inside, err = filepath.Rel(absRoot, candidate)
+	if err != nil {
+		return "", "", fmt.Errorf("util: relate %q to the confinement root %q: %w", candidate, absRoot, err)
+	}
+	return absRoot, inside, nil
 }
 
 // lexicalConfine validates root and rel and returns the absolute root together with the
@@ -161,29 +186,24 @@ func lexicalConfine(root, rel string) (absRoot, candidate string, err error) {
 	return absRoot, candidate, nil
 }
 
-// resolveConfined resolves candidate's parent directory and candidate itself, requires
-// both to stay inside resolvedRoot, and returns absRoot joined with the parent's resolved
-// position inside the root and candidate's unresolved final element.
-func resolveConfined(candidate, absRoot, resolvedRoot string) (string, error) {
+// checkResolvedConfinement resolves candidate's parent directory and candidate itself and
+// requires both to stay inside resolvedRoot.
+func checkResolvedConfinement(candidate, resolvedRoot string) error {
 	parent, err := resolveExistingAncestor(filepath.Dir(candidate))
 	if err != nil {
-		return "", err
+		return err
 	}
 	target, err := resolveExistingAncestor(candidate)
 	if err != nil {
-		return "", err
+		return err
 	}
 	for _, resolved := range [...]string{parent, target} {
 		if !withinRoot(resolvedRoot, resolved) {
-			return "", fmt.Errorf("%w: %q resolves to %q, outside %q",
+			return fmt.Errorf("%w: %q resolves to %q, outside %q",
 				ErrPathEscapesRoot, candidate, resolved, resolvedRoot)
 		}
 	}
-	inside, err := filepath.Rel(resolvedRoot, parent)
-	if err != nil {
-		return "", fmt.Errorf("util: relate %q to the confinement root %q: %w", parent, resolvedRoot, err)
-	}
-	return filepath.Join(absRoot, inside, filepath.Base(candidate)), nil
+	return nil
 }
 
 // withinRoot reports whether p is root itself or a descendant of root. Both arguments
@@ -270,12 +290,19 @@ func tightenFilePermissions(file *os.File, perm os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("util: stat %q: %w", file.Name(), err)
 	}
+	return tightenMode(file.Name(), info, perm, file.Chmod)
+}
+
+// tightenMode is the one permission-ceiling decision behind WriteFileSecure, MkdirSecure
+// and MkdirConfined: it clears every bit of info's mode that perm does not grant, through
+// chmod, and never sets a bit. name only labels the error.
+func tightenMode(name string, info os.FileInfo, perm os.FileMode, chmod func(os.FileMode) error) error {
 	target := info.Mode().Perm() & perm
 	if target == info.Mode().Perm() {
 		return nil
 	}
-	if err := file.Chmod(target); err != nil {
-		return fmt.Errorf("util: chmod %q to %#o: %w", file.Name(), target, err)
+	if err := chmod(target); err != nil {
+		return fmt.Errorf("util: chmod %q to %#o: %w", name, target, err)
 	}
 	return nil
 }
@@ -333,18 +360,40 @@ func (p filePermission) apply(file *os.File) error {
 
 // inParentDirectory opens path's directory as a pinned os.Root, runs fn with that handle
 // and path's final element, and closes the handle.
-func inParentDirectory(path string, fn func(dir *os.Root, name string) error) (err error) {
+func inParentDirectory(path string, fn func(dir *os.Root, name string) error) error {
 	clean := filepath.Clean(path)
-	dir, err := os.OpenRoot(filepath.Dir(clean))
+	return inRoot(filepath.Dir(clean), ".", func(dir *os.Root) error {
+		return fn(dir, filepath.Base(clean))
+	})
+}
+
+// inRoot opens dir as a pinned os.Root, opens sub below it through that handle ("." is
+// dir itself), runs fn with the handle on sub, and closes every handle it opened. Opening
+// sub through the handle follows a link only while it stays inside dir, so a component of
+// sub swapped for an escaping link at any point before the open is refused, not followed.
+func inRoot(dir, sub string, fn func(pinned *os.Root) error) (err error) {
+	base, err := os.OpenRoot(dir)
 	if err != nil {
-		return fmt.Errorf("util: open the directory of %q: %w", path, err)
+		return fmt.Errorf("util: open directory %q: %w", dir, err)
 	}
-	defer func() {
-		if cerr := dir.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("util: close the directory of %q: %w", path, cerr)
-		}
-	}()
-	return fn(dir, filepath.Base(clean))
+	defer closePinned(base, &err)
+	if sub == "." {
+		return fn(base)
+	}
+	pinned, err := base.OpenRoot(sub)
+	if err != nil {
+		return fmt.Errorf("util: open directory %q below %q: %w", sub, dir, err)
+	}
+	defer closePinned(pinned, &err)
+	return fn(pinned)
+}
+
+// closePinned closes a handle opened by inRoot and reports a close failure through err
+// unless an earlier error is already being returned.
+func closePinned(pinned *os.Root, err *error) {
+	if cerr := pinned.Close(); cerr != nil && *err == nil {
+		*err = fmt.Errorf("util: close directory %q: %w", pinned.Name(), cerr)
+	}
 }
 
 // replaceAtomically is the one atomic-replace implementation behind WriteFileAtomic and
@@ -414,6 +463,10 @@ func writeAndSyncTemp(tmp *os.File, data []byte, perm filePermission) (err error
 // is a permission ceiling on the leaf: a pre-existing or newly created directory is
 // only tightened, never widened. Existing ancestors retain their permissions.
 //
+// path is used as given: every existing ancestor, symbolic links included, is followed,
+// because without a root there is nothing for a link to escape. A caller creating an
+// untrusted relative path below a root uses MkdirConfined instead.
+//
 // gosec: addresses G301 (directory created with permissions above 0750). Call sites pass
 // an explicit perm; perm == 0 selects SecureDirPerm.
 func MkdirSecure(path string, perm os.FileMode) error {
@@ -428,13 +481,52 @@ func MkdirSecure(path string, perm os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("util: stat directory %q: %w", path, err)
 	}
-	target := info.Mode().Perm() & perm
-	if target != info.Mode().Perm() {
-		if err := os.Chmod(path, target); err != nil {
-			return fmt.Errorf("util: chmod directory %q to %#o: %w", path, target, err)
-		}
+	return tightenMode(path, info, perm, func(mode os.FileMode) error { return os.Chmod(path, mode) })
+}
+
+// MkdirConfined is MkdirSecure for rel below root, confined through the whole operation
+// (BUG-826). rel first passes ConfinePath's check; the directories are then created, and
+// the leaf tightened, through a pinned handle on root (os.Root), which follows a link only
+// while it stays inside root. A component swapped for an escaping link after the check is
+// refused instead of followed. perm is the same ceiling MkdirSecure applies to the leaf.
+//
+// root must exist. Its own path is resolved when it is opened (it is the caller's chosen
+// boundary, and macOS ships /var and /tmp as links), and a rel naming root itself creates
+// nothing and changes no mode. An in-root link with an absolute target is refused, since
+// os.Root follows only relative links.
+func MkdirConfined(root, rel string, perm os.FileMode) error {
+	perm, err := effectivePerm(perm, SecureDirPerm)
+	if err != nil {
+		return err
 	}
-	return nil
+	absRoot, inside, err := confineBelow(root, rel)
+	if err != nil {
+		return err
+	}
+	return mkdirConfined(absRoot, inside, perm)
+}
+
+// mkdirConfined is MkdirConfined after the check: every component of inside resolves
+// through the pinned handle on absRoot.
+func mkdirConfined(absRoot, inside string, perm os.FileMode) error {
+	return inRoot(absRoot, ".", func(base *os.Root) error {
+		if inside == "." {
+			return nil
+		}
+		if err := base.MkdirAll(inside, perm); err != nil {
+			return fmt.Errorf("util: create directory %q below %q: %w", inside, absRoot, err)
+		}
+		info, err := base.Stat(inside)
+		if err != nil {
+			return fmt.Errorf("util: stat directory %q below %q: %w", inside, absRoot, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("util: %q below %q is not a directory", inside, absRoot)
+		}
+		return tightenMode(filepath.Join(absRoot, inside), info, perm, func(mode os.FileMode) error {
+			return base.Chmod(inside, mode)
+		})
+	})
 }
 
 // effectivePerm substitutes def for a zero perm and refuses what checkPerm refuses.

@@ -162,10 +162,11 @@ func TestWithinRoot_Boundary_SeparatorTerminatedRoot(t *testing.T) {
 	}
 }
 
-// TestConfinePath_Negative_SymlinkedAncestor pins BUG-826: ConfinePath resolved every
-// symlink to check the path but then returned the lexical join, so the caller's own open
-// traversed the in-root link again, and a final element linking back into the root
-// vouched for a parent directory outside it.
+// TestConfinePath_Negative_SymlinkedAncestor pins BUG-826's check: a final element linking
+// back into the root used to vouch for a parent directory outside it. It also pins the
+// lexical result: callers relate two results (privatePlanningOutput takes the Rel of
+// ConfinePath(root, ".workingdir") and an output directory below it), so a result must
+// never be rewritten to the link's target.
 func TestConfinePath_Negative_SymlinkedAncestor(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
@@ -177,13 +178,20 @@ func TestConfinePath_Negative_SymlinkedAncestor(t *testing.T) {
 		t.Skipf("symlinks unsupported on this platform: %v", err)
 	}
 
-	// The in-root symlinked ancestor is replaced by its real location; the root stays as given.
+	// A path through an in-root link is accepted and returned as the lexical join.
 	got, err := ConfinePath(root, filepath.Join("alias", "sub", "ledger.json"))
 	if err != nil {
 		t.Fatalf("ConfinePath through an in-root link: %v", err)
 	}
-	if want := filepath.Join(root, "inner", "sub", "ledger.json"); got != want {
-		t.Errorf("ConfinePath through an in-root link = %q, want the resolved %q", got, want)
+	if want := filepath.Join(root, "alias", "sub", "ledger.json"); got != want {
+		t.Errorf("ConfinePath through an in-root link = %q, want the lexical %q", got, want)
+	}
+	private, err := ConfinePath(root, "alias")
+	if err != nil {
+		t.Fatalf("ConfinePath(root, alias): %v", err)
+	}
+	if rel, err := filepath.Rel(private, got); err != nil || rel != filepath.Join("sub", "ledger.json") {
+		t.Errorf("Rel(%q, %q) = (%q, %v), want the results to share the alias prefix", private, got, rel, err)
 	}
 
 	// A final element that is itself a link stays visible to no-follow callers.
@@ -215,6 +223,149 @@ func TestConfinePath_Negative_SymlinkedAncestor(t *testing.T) {
 	if data, err := os.ReadFile(victim); err != nil || string(data) != "keep" { // #nosec G304 -- test-local path from t.TempDir
 		t.Errorf("victim = (%q, %v), want it untouched", data, err)
 	}
+}
+
+// confinedFixture returns a root holding a real directory "inner", a relative in-root link
+// "alias" to it and a link "out" to a directory outside the root, plus that outside
+// directory. It skips where the platform cannot create symbolic links.
+func confinedFixture(t *testing.T) (root, outside string) {
+	t.Helper()
+	root = t.TempDir()
+	outside = t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "inner"), 0o700); err != nil {
+		t.Fatalf("mkdir inner: %v", err)
+	}
+	if err := os.Symlink("inner", filepath.Join(root, "alias")); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "out")); err != nil {
+		t.Fatalf("symlink out: %v", err)
+	}
+	return root, outside
+}
+
+// assertEmptyDir fails when dir holds any entry: nothing may have been created there.
+func assertEmptyDir(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir %s: %v", dir, err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected nothing created in %s, got %v", dir, entries)
+	}
+}
+
+// swapForLink replaces the directory at path with a relative symbolic link to target, the
+// swap a hostile repository makes between a confinement check and the write that follows
+// it. The link is relative so that only its escape, not an absolute target, gets it
+// refused.
+func swapForLink(t *testing.T, path, target string) {
+	t.Helper()
+	link, err := filepath.Rel(filepath.Dir(path), target)
+	if err != nil {
+		t.Fatalf("relate %s to %s: %v", target, path, err)
+	}
+	if err := os.Rename(path, path+".orig"); err != nil {
+		t.Fatalf("move %s aside: %v", path, err)
+	}
+	if err := os.Symlink(link, path); err != nil {
+		t.Fatalf("symlink %s: %v", path, err)
+	}
+}
+
+func TestMkdirConfined_Positive(t *testing.T) {
+	root, _ := confinedFixture(t)
+	if err := MkdirConfined(root, filepath.Join("alias", "new", "leaf"), 0o700); err != nil {
+		t.Fatalf("MkdirConfined through an in-root link: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(root, "inner", "new", "leaf"))
+	if err != nil || !info.IsDir() {
+		t.Fatalf("leaf missing at the link target: %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		return // POSIX permission bits are not available on Windows.
+	}
+	if info.Mode().Perm()&^0o700 != 0 {
+		t.Errorf("new leaf mode = %#o, want within 0700", info.Mode().Perm())
+	}
+	existing := filepath.Join(root, "inner", "open")
+	if err := os.Mkdir(existing, 0o700); err != nil {
+		t.Fatalf("mkdir existing: %v", err)
+	}
+	if err := os.Chmod(existing, 0o755); err != nil {
+		t.Fatalf("chmod existing: %v", err)
+	}
+	if err := MkdirConfined(root, filepath.Join("inner", "open"), 0o750); err != nil {
+		t.Fatalf("MkdirConfined on an existing leaf: %v", err)
+	}
+	info, err = os.Stat(existing)
+	if err != nil {
+		t.Fatalf("stat existing: %v", err)
+	}
+	if info.Mode().Perm() != 0o750 {
+		t.Errorf("existing leaf mode = %v, want tightened to 0750", info.Mode())
+	}
+}
+
+func TestMkdirConfined_Negative(t *testing.T) {
+	root, outside := confinedFixture(t)
+	cases := []struct {
+		rel  string
+		perm os.FileMode
+		want error
+	}{
+		{filepath.Join("out", "planted"), 0o700, ErrPathEscapesRoot},
+		{filepath.Join("..", "sibling"), 0o700, ErrPathEscapesRoot},
+		{filepath.Join(outside, "abs"), 0o700, ErrAbsoluteRelPath},
+		{"ok", 0o777, ErrInsecurePerm},
+	}
+	for _, tc := range cases {
+		if err := MkdirConfined(root, tc.rel, tc.perm); !errors.Is(err, tc.want) {
+			t.Errorf("MkdirConfined(%q, %#o) = %v, want %v", tc.rel, tc.perm, err, tc.want)
+		}
+	}
+	assertEmptyDir(t, outside)
+	if err := MkdirConfined(filepath.Join(root, "missing-root"), "sub", 0o700); err == nil {
+		t.Errorf("expected a missing root to be refused")
+	}
+}
+
+// TestMkdirConfined_Boundary_RootAndSwapAfterCheck pins the two edges of the confined
+// create: a rel naming the root changes nothing, and a directory swapped for an escaping
+// link after ConfinePath's check is refused by the pinned handle instead of followed,
+// which MkdirSecure on the checked path does not do (BUG-826).
+func TestMkdirConfined_Boundary_RootAndSwapAfterCheck(t *testing.T) {
+	root, outside := confinedFixture(t)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(root, 0o755); err != nil {
+			t.Fatalf("chmod root: %v", err)
+		}
+	}
+	before, err := os.Stat(root)
+	if err != nil {
+		t.Fatalf("stat root: %v", err)
+	}
+	if err := MkdirConfined(root, ".", 0o700); err != nil {
+		t.Fatalf(`MkdirConfined(root, "."): %v`, err)
+	}
+	after, err := os.Stat(root)
+	if err != nil {
+		t.Fatalf("stat root: %v", err)
+	}
+	if after.Mode() != before.Mode() {
+		t.Errorf("root mode changed: before %v, after %v", before.Mode(), after.Mode())
+	}
+
+	absRoot, inside, err := confineBelow(root, filepath.Join("inner", "ledgers"))
+	if err != nil {
+		t.Fatalf("confineBelow: %v", err)
+	}
+	swapForLink(t, filepath.Join(root, "inner"), outside)
+	if err := mkdirConfined(absRoot, inside, 0o700); err == nil {
+		t.Errorf("expected a directory swapped for an escaping link to be refused")
+	}
+	assertEmptyDir(t, outside)
 }
 
 func TestWriteFileSecure_Positive(t *testing.T) {

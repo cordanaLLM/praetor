@@ -452,12 +452,11 @@ func (pm *ProjectManager) loadCache(rootPath string) ([]ProjectV2, error) {
 	return store.Projects, nil
 }
 
+// saveCache replaces the project cache atomically. The working directory and the cache
+// file are resolved through a pinned handle on rootPath, so neither can be redirected
+// outside the repository, not even by a link swapped in after a check (BUG-826).
 func (pm *ProjectManager) saveCache(rootPath string, projects []ProjectV2) error {
-	filePath, err := projectCachePath(rootPath)
-	if err != nil {
-		return fmt.Errorf("resolve project cache path: %w", err)
-	}
-	if err := util.MkdirSecure(filepath.Dir(filePath), projectCacheDirPerm); err != nil {
+	if err := util.MkdirConfined(rootPath, state.WorkingDirName, projectCacheDirPerm); err != nil {
 		return fmt.Errorf("create project cache directory: %w", err)
 	}
 
@@ -470,7 +469,7 @@ func (pm *ProjectManager) saveCache(rootPath string, projects []ProjectV2) error
 		return fmt.Errorf("marshal project cache: %w", err)
 	}
 
-	if err := util.WriteFileNoFollow(filePath, data, projectCacheFilePerm); err != nil {
+	if err := util.WriteFileConfined(rootPath, filepath.Join(state.WorkingDirName, ProjectCacheFile), data, projectCacheFilePerm); err != nil {
 		return fmt.Errorf("write project cache: %w", err)
 	}
 	return nil

@@ -204,7 +204,7 @@ func SyncToBacklog(ctx context.Context, rootPath string) error {
 }
 
 type backlogUpdate struct {
-	path string
+	root string
 	data []byte
 }
 
@@ -225,7 +225,7 @@ func prepareBacklog(rootPath string, store *MilestoneStore) (*backlogUpdate, err
 	if err != nil {
 		return nil, err
 	}
-	return &backlogUpdate{path: backlogPath, data: []byte(rendered)}, nil
+	return &backlogUpdate{root: rootPath, data: []byte(rendered)}, nil
 }
 
 func renderBacklog(content string, milestones []Milestone) (string, error) {
@@ -270,10 +270,7 @@ func writeBacklog(ctx context.Context, update *backlogUpdate) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context cancelled before writing backlog: %w", err)
 	}
-	if err := util.MkdirSecure(filepath.Dir(update.path), workingDirPerm); err != nil {
-		return fmt.Errorf("mkdir workingdir: %w", err)
-	}
-	if err := util.WriteFileNoFollow(update.path, update.data, ledgerFilePerm); err != nil {
+	if err := writeWorkingDirFile(update.root, BacklogFile, update.data); err != nil {
 		return fmt.Errorf("write %s: %w", BacklogFile, err)
 	}
 	return nil
@@ -349,6 +346,17 @@ func workingDirFile(rootPath, name string) (string, error) {
 	return path, nil
 }
 
+// writeWorkingDirFile creates the working directory when absent and replaces one ledger
+// file in it atomically. Both steps resolve every path component through a pinned handle on
+// rootPath, so neither .workingdir nor the ledger can be redirected outside the repository,
+// not even by a link swapped in after a check (BUG-826).
+func writeWorkingDirFile(rootPath, name string, data []byte) error {
+	if err := util.MkdirConfined(rootPath, state.WorkingDirName, workingDirPerm); err != nil {
+		return fmt.Errorf("mkdir workingdir: %w", err)
+	}
+	return util.WriteFileConfined(rootPath, filepath.Join(state.WorkingDirName, name), data, ledgerFilePerm)
+}
+
 func loadStore(ctx context.Context, rootPath string) (*MilestoneStore, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context cancelled before reading the milestone store: %w", err)
@@ -385,20 +393,12 @@ func saveStore(ctx context.Context, rootPath string, store *MilestoneStore) erro
 		return fmt.Errorf("milestone store exceeds maximum of %d entries", MaxMilestonesLimit)
 	}
 
-	filePath, err := workingDirFile(rootPath, MilestonesFile)
-	if err != nil {
-		return err
-	}
-	if err := util.MkdirSecure(filepath.Dir(filePath), workingDirPerm); err != nil {
-		return fmt.Errorf("mkdir workingdir: %w", err)
-	}
-
 	data, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal milestones: %w", err)
 	}
 
-	if err := util.WriteFileNoFollow(filePath, data, ledgerFilePerm); err != nil {
+	if err := writeWorkingDirFile(rootPath, MilestonesFile, data); err != nil {
 		return fmt.Errorf("write milestones store: %w", err)
 	}
 	return nil

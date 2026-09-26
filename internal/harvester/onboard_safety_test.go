@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -167,5 +168,41 @@ func TestOnboardRepositoryReportsInvalidExistingLock(t *testing.T) {
 	after, err := os.ReadFile(path)
 	if err != nil || string(after) != invalid {
 		t.Fatalf("invalid caller lock was replaced: %v", err)
+	}
+}
+
+// TestWriteOnboardFileLeavesRepositoryRootMode pins the confined onboarding write: a
+// top-level output used to run MkdirSecure on the repository root itself, narrowing its
+// mode to 0700; the root is the confinement boundary and keeps its mode, while a nested
+// output directory is still created owner-only.
+func TestWriteOnboardFileLeavesRepositoryRootMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not available on Windows")
+	}
+	repo := t.TempDir()
+	if err := os.Chmod(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := writeOnboardFile(ctx, repo, ".editorconfig", []byte("root = true\n")); err != nil {
+		t.Fatalf("top-level output: %v", err)
+	}
+	if err := writeOnboardFile(ctx, repo, filepath.Join(".vscode", "settings.json"), []byte("{}\n")); err != nil {
+		t.Fatalf("nested output: %v", err)
+	}
+	for dir, check := range map[string]func(os.FileMode) bool{
+		repo:                           func(mode os.FileMode) bool { return mode == 0o755 },
+		filepath.Join(repo, ".vscode"): func(mode os.FileMode) bool { return mode&^0o700 == 0 },
+	} {
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !check(info.Mode().Perm()) {
+			t.Errorf("%s mode = %v: the root must keep 0755, the nested output directory must be owner-only", dir, info.Mode())
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(repo, ".editorconfig")); err != nil || string(data) != "root = true\n" {
+		t.Errorf("top-level output = (%q, %v)", data, err)
 	}
 }

@@ -130,6 +130,31 @@ func TestPlanningMCPRejectsUnsafeArgumentsPathsAndCollisions(t *testing.T) {
 	}
 }
 
+// TestPlanningMCPPrepareBelowSymlinkedPrivateRoot pins the ConfinePath contract that
+// privatePlanningOutput depends on: it relates two ConfinePath results (.workingdir and the
+// requested output directory), so both must stay lexical. A .workingdir that is a link to
+// another directory inside the root is a valid private root, and a new output directory
+// below it must be accepted.
+func TestPlanningMCPPrepareBelowSymlinkedPrivateRoot(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	writeFixtureFile(t, root, "draft.json", string(planningMCPFixture(t)))
+	if err := os.MkdirAll(filepath.Join(root, ".state", "plan"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(".state", filepath.Join(root, ".workingdir")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	result := callTool(t, srv, "standards_planning_prepare", map[string]any{
+		"input_path": "draft.json", "output_dir": ".workingdir/plan/candidate",
+	})
+	if result.IsError {
+		t.Fatalf("output below an in-root symlinked .workingdir refused: %+v", result)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, ".state", "plan", "candidate", "plan.json")); err != nil || len(data) == 0 {
+		t.Fatalf("plan.json missing at the link target: %v", err)
+	}
+}
+
 func TestPlanningMCPInputByteBoundary(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	fixture := planningMCPFixture(t)
