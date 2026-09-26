@@ -8,9 +8,28 @@ import sitemap from '@astrojs/sitemap';
 // integration skips generation instead of emitting URLs for a host nobody configured.
 const site = process.env.DOCS_SITE_URL || undefined;
 
+// A project page is served below a path (https://<owner>.github.io/<repo>/). Astro builds the
+// page routes, asset URLs, Starlight's canonical link and the sitemap entries from `base`, and
+// never from the path inside `site`, so without `base` they all name the host root and drop
+// /<repo>/. Deriving `base` from the same URL keeps one setting; a root host yields '/'.
+function basePath(url) {
+  if (!url) {
+    return undefined;
+  }
+  try {
+    return new URL(url).pathname;
+  } catch (err) {
+    throw new Error(
+      `DOCS_SITE_URL must be an absolute URL such as https://<owner>.github.io/<repo>/, got ${JSON.stringify(url)}`,
+      { cause: err },
+    );
+  }
+}
+
 // https://astro.build/config
 export default defineConfig({
   site,
+  base: basePath(site),
   integrations: [
     starlight({
       title: 'cordanaLLM/praetor Documentation',

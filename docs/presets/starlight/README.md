@@ -32,6 +32,14 @@ Set it to the URL the site is served from. Without it the build still passes, bu
 links carry no URL, the `TechArticle` JSON-LD from `src/components/SEOHead.astro` has no `url`
 fields, and `@astrojs/sitemap` skips generation with a warning, so `dist/` has no sitemap.
 
+A URL with a path, such as a GitHub project page (`https://<owner>.github.io/<repo>/`), also
+sets Astro's `base` to that path (`/<repo>/`). Astro and Starlight then prefix it to page routes,
+asset URLs, sidebar links, canonical links, the `TechArticle` URLs and the sitemap entries. A
+root host sets `base` to `/`. Links you write inside page content get no prefix: use a relative
+link, as the hero action in `src/content/docs/index.mdx` does (`guides/onboarding/`), not one
+starting with `/`. The `docs-presets` job in `.github/workflows/ci.yml` builds the preset under
+a path and fails when any of those URLs leaves it.
+
 ## Pinned Dependencies
 
 `package.json` pins each dependency to an exact version and `package-lock.json` locks the whole
