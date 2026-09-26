@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,6 +25,19 @@ func privateIgnoreRepo(t *testing.T, name, existing string, absent bool) (root, 
 		mustWrite(t, ignorePath, existing)
 	}
 	return root, ignorePath
+}
+
+// readOptional returns the file's content, or "<absent>" when it does not exist.
+func readOptional(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "<absent>"
+	}
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
 }
 
 func assertLedgerIgnored(t *testing.T, root string) {
@@ -53,7 +67,7 @@ func TestEnsurePrivateIgnoreWritesTheBlockOnce(t *testing.T) {
 			if name == "absent" && got != ManagedGitIgnoreBlock() {
 				t.Fatalf("a fresh .gitignore must hold only the managed block, got %q", got)
 			}
-			for _, line := range strings.Split(existing, "\n") {
+			for line := range strings.SplitSeq(existing, "\n") {
 				if line != "" && !slices.Contains(managedIgnoreRules, line) && !strings.Contains(got, line) {
 					t.Fatalf("operator line %q lost: %q", line, got)
 				}
@@ -130,11 +144,11 @@ func TestEnsurePrivateIgnoreNegative(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			root, path := privateIgnoreRepo(t, name, "", true)
 			setup(t, root)
-			before, _ := os.ReadFile(path)
+			before := readOptional(t, path)
 			if outcome, err := EnsurePrivateIgnore(t.Context(), root); err == nil || outcome != PrivateIgnoreUnknown {
 				t.Fatalf("outcome = %q, err = %v; want an error", outcome, err)
 			}
-			if after, _ := os.ReadFile(path); string(after) != string(before) {
+			if after := readOptional(t, path); after != before {
 				t.Fatalf("refused call changed .gitignore: %q -> %q", before, after)
 			}
 		})

@@ -143,6 +143,7 @@ A refused selector writes nothing, so `OPEN.md` stays byte-identical. The
 fence tracker is `util.MarkdownFence` in `internal/util/marked_block.go`, the one
 implementation every scanner that follows fences across a whole document drives
 (HISS-19): the task parser, the bug-ledger parser, the marked-block finder, the
+`BACKLOG.md` milestone section remover (`RemoveMarkdownSection`), the
 caveman line scanner (`internal/caveman/scan.go`) and the `AGENTS.md` vendor
 splitter (`internal/agentcontext/render.go`). Readers that extract a single
 labelled block, such as the PR receipt fence, match their own label and keep no

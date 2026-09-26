@@ -59,7 +59,7 @@ func TestStateInitIgnoresTheLedgerItWrites(t *testing.T) {
 			if err != nil || strings.Contains(out, "Added the Praetor") {
 				t.Fatalf("second run: %q, %v; want no ignore write", out, err)
 			}
-			if again, _ := os.ReadFile(ignore); string(again) != string(got) {
+			if again := readFixtureFile(t, dir, ".gitignore"); again != string(got) {
 				t.Fatalf("second run rewrote .gitignore: %q", again)
 			}
 		})
@@ -77,7 +77,7 @@ func TestStateInitRefusesAnUnmergeableGitIgnore(t *testing.T) {
 			if _, err := runStateInitMode(t, mode, dir); err == nil || !strings.Contains(err.Error(), "could not make Git ignore") {
 				t.Fatalf("unmergeable .gitignore accepted: %v", err)
 			}
-			if got, _ := os.ReadFile(filepath.Join(dir, ".gitignore")); string(got) != broken {
+			if got := readFixtureFile(t, dir, ".gitignore"); got != broken {
 				t.Fatalf("refused run changed .gitignore: %q", got)
 			}
 		})
@@ -106,7 +106,7 @@ func TestStateInitIgnoreBoundaries(t *testing.T) {
 			if out, err := runStateInitMode(t, mode, dir); err != nil || strings.Contains(out, "Added the Praetor") {
 				t.Fatalf("effective rule not recognised: %q, %v", out, err)
 			}
-			if got, _ := os.ReadFile(filepath.Join(dir, ".gitignore")); string(got) != "/.workingdir/\n" {
+			if got := readFixtureFile(t, dir, ".gitignore"); got != "/.workingdir/\n" {
 				t.Fatalf("effective .gitignore rewritten: %q", got)
 			}
 		})
