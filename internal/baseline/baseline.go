@@ -220,17 +220,8 @@ func Record(previous *Baseline, infractions []Infraction, opts RecordOptions) (*
 	next.Infractions = append(next.Infractions, infractions...)
 
 	// Avoid commit_sha churn: if infractions didn't change at all, retain the old SHA.
-	if len(previous.Infractions) == len(next.Infractions) && previous.CommitSHA != "" {
-		same := true
-		for i := range next.Infractions {
-			if previous.Infractions[i] != next.Infractions[i] {
-				same = false
-				break
-			}
-		}
-		if same {
-			next.CommitSHA = previous.CommitSHA
-		}
+	if previous.CommitSHA != "" && sameInfractions(previous.Infractions, next.Infractions) {
+		next.CommitSHA = previous.CommitSHA
 	}
 
 	if err := CheckMonotonic(previous, next); err != nil {
@@ -244,6 +235,18 @@ func Record(previous *Baseline, infractions []Infraction, opts RecordOptions) (*
 		next.IncreaseRationale = rationale
 	}
 	return next, nil
+}
+
+func sameInfractions(a, b []Infraction) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // NormalizePath renders a repository-relative path with forward slashes.
@@ -316,8 +319,9 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 		}
 	}
 
-	passed := len(newViolations) == 0 && len(touchedCleanViolations) == 0 && len(currentViolations) <= b.TotalInfractions
-	countRegressed := len(newViolations) == 0 && len(touchedCleanViolations) == 0 && len(currentViolations) > b.TotalInfractions
+	noNew := len(newViolations) == 0 && len(touchedCleanViolations) == 0
+	passed := noNew && len(currentViolations) <= b.TotalInfractions
+	countRegressed := noNew && !passed
 
 	return &RatchetResult{
 		PreviousCount:          b.TotalInfractions,

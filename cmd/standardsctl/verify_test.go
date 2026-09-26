@@ -19,7 +19,9 @@ func TestVerifyAll_Positive_PreservesTree(t *testing.T) {
 	}
 
 	// Create a .workingdir with no uncommitted changes
-	os.Mkdir(filepath.Join(dir, ".workingdir"), 0755)
+	if err := os.Mkdir(filepath.Join(dir, ".workingdir"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	t.Setenv("CI", "true")
 	out, err := captureStdout(t, func() error {
@@ -40,10 +42,18 @@ func TestVerifyAll_Negative_AbortsOnUncommittedState(t *testing.T) {
 	}
 
 	// Create tracked file, commit it, then modify it to make tree dirty for git diff --quiet
-	os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("foo"), 0644)
-	util.RunGit(context.Background(), dir, "add", "tracked.txt")
-	util.RunGit(context.Background(), dir, "commit", "-m", "add tracked")
-	os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("bar"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("foo"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := util.RunGit(context.Background(), dir, "add", "tracked.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := util.RunGit(context.Background(), dir, "commit", "-m", "add tracked"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("bar"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	t.Setenv("CI", "true")
 	_, err := captureStdout(t, func() error {

@@ -1462,9 +1462,11 @@ func TestDispatchCommand_StateTaskArchive_Positive(t *testing.T) {
 	if _, err := util.RunGit(context.Background(), dir, "commit", "--allow-empty", "-m", "init"); err != nil {
 		t.Fatal(err)
 	}
-	outSha, _ := util.RunGit(context.Background(), dir, "rev-parse", "HEAD")
+	outSha, err := util.RunGit(context.Background(), dir, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
 	sha := strings.TrimSpace(outSha)
-
 	workingdir := filepath.Join(dir, ".workingdir")
 	if err := os.Mkdir(workingdir, 0755); err != nil {
 		t.Fatal(err)
@@ -1483,15 +1485,22 @@ func TestDispatchCommand_StateTaskArchive_Positive(t *testing.T) {
 	mustContain(t, out, "[PASS] Archived 1 completed tasks from OPEN.md to BACKLOG.md")
 
 	backlogFile := filepath.Join(workingdir, "BACKLOG.md")
-	b, _ := os.ReadFile(backlogFile)
+	b, err := os.ReadFile(backlogFile)
+	if err != nil {
+		t.Fatal(err)
+	}
 	mustContain(t, string(b), fmt.Sprintf("commit `%s`", sha), "done task 1")
 }
 
 func TestDispatchCommand_StateTaskArchive_Negative(t *testing.T) {
 	// bad selector
 	dir := t.TempDir()
-	os.Mkdir(dir+"/.workingdir", 0755)
-	os.WriteFile(dir+"/.workingdir/OPEN.md", []byte("- [ ] some task\n"), 0644)
+	if err := os.Mkdir(dir+"/.workingdir", 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/.workingdir/OPEN.md", []byte("- [ ] some task\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	_, err := captureStdout(t, func() error {
 		return dispatchCommand("state", []string{"task", "complete", "bad-selector", "--dir=" + dir})
 	})
@@ -1547,6 +1556,9 @@ func TestDispatchCommand_StateTaskArchive_Boundary(t *testing.T) {
 	mustContain(t, out, "[PASS] Archived 1 completed tasks")
 
 	backlogFile := filepath.Join(workingdir, "BACKLOG.md")
-	b, _ := os.ReadFile(backlogFile)
+	b, err := os.ReadFile(backlogFile)
+	if err != nil {
+		t.Fatal(err)
+	}
 	mustContain(t, string(b), "commit `local`", "done task 2")
 }
