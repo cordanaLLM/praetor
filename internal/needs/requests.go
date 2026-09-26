@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
@@ -114,7 +115,9 @@ func renderRequestMarkdown(reqID, title string, gap GapDetail, kit, roi string) 
 	}
 	sb.WriteString("\n## Acceptance Criteria\n\n")
 	sb.WriteString("1. Zero-dependency implementation adhering to HISS-01..16 invariants.\n")
-	sb.WriteString("2. NASA JPL Rule 4 compliance: all functions bounded to <= 60 LOC.\n")
+	// The request is built in the builder kit's repository, not the consumer's, so it states
+	// the HISS ceiling rather than any one consumer's resolved policy.
+	writef(&sb, "2. NASA JPL Rule 4 compliance: all functions bounded to <= %d LOC.\n", config.HISSComplexityCeiling().MaxFuncLOC)
 	sb.WriteString("3. 3D unit tests covering positive, negative, and boundary conditions.\n")
 	return sb.String()
 }

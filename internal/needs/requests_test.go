@@ -2,10 +2,13 @@ package needs
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -176,5 +179,19 @@ func TestEmitDemandRequests_Boundary(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Name() != "FRAMEWORK_DEMAND.yaml" {
 		t.Fatalf("expected only the manifest, got %d entries", len(entries))
+	}
+}
+
+// A demand request is built in the builder kit's repository, so its acceptance criteria
+// state the HISS ceiling, including for a gap with no consumers or packages listed.
+func TestRenderRequestMarkdown_StatesHISSCeiling(t *testing.T) {
+	want := fmt.Sprintf("all functions bounded to <= %d LOC", config.HISSComplexityCeiling().MaxFuncLOC)
+	for name, gap := range map[string]GapDetail{
+		"consumers": {Capability: "storage.s3", ConsumerCount: 2, Consumers: []string{"a", "b"}, PackagesUsed: []string{"boto3"}},
+		"empty":     {},
+	} {
+		if body := renderRequestMarkdown("REQ-X", "title", gap, "golusoris/golusoris", "roi"); !strings.Contains(body, want) {
+			t.Errorf("%s: request = %s, want %q", name, body, want)
+		}
 	}
 }
