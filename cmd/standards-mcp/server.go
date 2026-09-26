@@ -522,7 +522,7 @@ func (s *Server) compileContext(ctx context.Context, source, targetDir string, v
 			return mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
 		}
 		// The compiler's shared report, the same text the CLI prints; bound by count and digest.
-		return mcpTextResult(b.String(), mcpTextUntrusted)
+		return mcpTextResult(b.String(), mcpTextShared)
 	}
 	if err := ctx.Err(); err != nil {
 		return mcp.ErrorResult(fmt.Sprintf("compile-context cancelled before writing: %v", err))
@@ -531,7 +531,7 @@ func (s *Server) compileContext(ctx context.Context, source, targetDir string, v
 		return mcp.ErrorResult(fmt.Sprintf("Context compilation failed: %v", err))
 	}
 	// The compiler's shared report, the same text the CLI prints; bound by count and digest.
-	return mcpTextResult(b.String(), mcpTextUntrusted)
+	return mcpTextResult(b.String(), mcpTextShared)
 }
 
 func (s *Server) resolveContextPath(ctx context.Context, path string) (string, error) {
@@ -583,7 +583,8 @@ func (s *Server) createExplainRuleTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("Unknown rule %q. Valid rules: %s", ruleID, ruleList)), nil
 		}
 
-		return mcpTextResult(explanation, mcpTextUntrusted), nil
+		// The catalog text internal/hisscatalog authors once for this tool and the generated wiki.
+		return mcpTextResult(explanation, mcpTextShared), nil
 	}
 
 	return mcp.NewReadOnlyTool("standards_explain_rule", "Explain specific HISS invariant rule plus formal verification mechanism", schema, handler)

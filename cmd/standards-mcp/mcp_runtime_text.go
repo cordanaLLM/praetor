@@ -18,6 +18,9 @@ const (
 	mcpTextStructuredJSON mcpTextClassification = iota + 1
 	mcpTextUntrusted
 	mcpTextProtocol
+	// mcpTextShared marks text another praetor package authors and also prints elsewhere
+	// (CLI line, wiki page); the owning package stays its one source (HISS-19).
+	mcpTextShared
 )
 
 func mcpTextResult(text string, _ mcpTextClassification) *mcp.ToolResult {

@@ -2132,6 +2132,8 @@ func mcpTextClass(expression ast.Expr) (string, bool) {
 		return "untrusted-passthrough", true
 	case "mcpTextProtocol":
 		return "protocol", true
+	case "mcpTextShared":
+		return "shared-source", true
 	}
 	return "", false
 }

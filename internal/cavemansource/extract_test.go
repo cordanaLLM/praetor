@@ -1029,6 +1029,56 @@ func transport() {
 	}
 }
 
+// sharedTextFixture binds one catalog text through a classified result and one shared line
+// through the governed builder, both under the given class identifier.
+func sharedTextFixture(class string) string {
+	return goBuilderFixture("", `type mcpTextClassification uint8
+const ( mcpTextStructuredJSON mcpTextClassification = iota + 1; mcpTextUntrusted; mcpTextProtocol; mcpTextShared )
+func (b *mcpTextBuilder) External(text string, _ mcpTextClassification) { b.value.WriteString(text) }`,
+		`func exercise(rule catalogRule, line string) {
+	mcpTextResult(rule.Explanation(), `+class+`)
+	var b mcpTextBuilder
+	b.External(line+"\n", `+class+`)
+}`)
+}
+
+func extractSharedTextFixture(t *testing.T, source string) (Result, error) {
+	t.Helper()
+	root := t.TempDir()
+	writeSourceFile(t, root, "mcp/shared.go", source)
+	input := sourceInput("mcp/shared.go", config.SourceFormatGo, "mcp.outputs")
+	input.Surface = config.SurfaceMCP
+	return ExtractInputs(t.Context(), root, []config.RegisterSourceInput{input})
+}
+
+func TestExtractGoMCPRuntimeClassifiesSharedSourceText(t *testing.T) {
+	result, err := extractSharedTextFixture(t, sharedTextFixture("mcpTextShared"))
+	if err != nil || result.Applicable != 0 || result.NotApplicable != 2 || len(result.Sources) != 2 {
+		t.Fatalf("shared text classification: result=%+v err=%v", result, err)
+	}
+	for _, source := range result.Sources {
+		if source.NotApplicable != "shared-source" {
+			t.Errorf("shared text bound under %q, want shared-source: %+v", source.NotApplicable, source)
+		}
+	}
+	// Boundary: a near-miss class identifier is not the shared class and fails closed.
+	if _, err := extractSharedTextFixture(t, sharedTextFixture("mcpTextSharedSource")); err == nil ||
+		!strings.Contains(err.Error(), "explicit supported text class") {
+		t.Fatalf("near-miss shared class accepted: %v", err)
+	}
+	// Negative: transport errors stay protocol or untrusted; shared text is no HTTP status body.
+	root := t.TempDir()
+	writeSourceFile(t, root, "mcp/transport.go", `package main
+func transport() { http.Error(w, mcpClassifiedText(line, mcpTextShared), 500) }
+`)
+	input := sourceInput("mcp/transport.go", config.SourceFormatGo, "mcp.outputs")
+	input.Surface = config.SurfaceMCP
+	if _, err := ExtractInputs(t.Context(), root, []config.RegisterSourceInput{input}); err == nil ||
+		!strings.Contains(err.Error(), "explicit protocol or untrusted classification") {
+		t.Fatalf("shared text accepted as an HTTP error body: %v", err)
+	}
+}
+
 func TestExtractGoMCPRuntimeRejectsTransportBypasses(t *testing.T) {
 	fixtures := map[string]string{
 		"http static":     `http.Error(w, "Bad Request", 400)`,

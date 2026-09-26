@@ -172,7 +172,7 @@ func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) mcpGovernedText {
 	sb.Template("Governance Pillars:\n")
 	for _, pillar := range outcomeReport.Pillars() {
 		// The adopt package's shared pillar line, the same one the CLI prints.
-		sb.External("  "+pillar.Line()+"\n", mcpTextUntrusted)
+		sb.External("  "+pillar.Line()+"\n", mcpTextShared)
 	}
 	for _, failure := range r.Errors {
 		sb.Template("[ERROR] %s\n", failure)

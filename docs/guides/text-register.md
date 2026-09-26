@@ -528,7 +528,7 @@ register:
   sources:
     expected: 259
     not_applicable: 121
-    sha256: "sha256:5d247d7f98a7aa666c3ad37297f01285cfdc9b3ea91ae879d0bb92847edceeee"
+    sha256: "sha256:5a8019fecb63beec0f965d2a41fef986acf360d6b7b906736fc5f032116e2808"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts
@@ -644,10 +644,17 @@ table through `table.*` or `table.<index>`. The `mcp.descriptions` selector
 censuses tool and property descriptions. `mcp.outputs` censuses tool results,
 governed builders, `http.Error`, and transport writer output. Static templates
 are linted; governed composition and the fixed `structured-json`,
-`untrusted-passthrough`, and `protocol` classes are count- and digest-bound as
-not applicable. Dynamic text without one of those narrow wrappers, raw builder
-storage access, and helper implementations that differ from the fixed contract
-fail closed.
+`untrusted-passthrough`, `protocol`, and `shared-source` classes are count- and
+digest-bound as not applicable. `shared-source` (`mcpTextShared`) is text
+another praetor package authors once and also prints elsewhere: the
+`standards_explain_rule` explanation that `internal/hisscatalog` also renders
+into the wiki, the `standards_compile_context` report that `internal/compiler`
+writes for the CLI too, and the adopt pillar line the CLI prints. The owning package stays the text's one source (HISS-19),
+and `http.Error` accepts only `protocol` or `untrusted-passthrough`
+(`TestExtractGoMCPRuntimeClassifiesSharedSourceText` in
+`internal/cavemansource/extract_test.go`). Dynamic text without one of those
+narrow wrappers, raw builder storage access, and helper implementations that
+differ from the fixed contract fail closed.
 
 `json` and `yaml` use dotted selectors; `*` selects every mapping value or
 sequence element, and a numeric segment selects one sequence index. Escapes are
