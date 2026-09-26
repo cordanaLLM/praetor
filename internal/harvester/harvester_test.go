@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -90,6 +91,78 @@ func TestScanLocalWorkstation_Boundary_FreshWorktreeIsNotStale(t *testing.T) {
 	}
 	if len(rep.StaleWorktrees) != 0 {
 		t.Fatalf("a worktree created seconds ago must not be reported stale, got: %v", rep.StaleWorktrees)
+	}
+}
+
+// ageWorktree back-dates every entry of a worktree fixture, deepest first, so that writing
+// a child never refreshes an already aged parent.
+func ageWorktree(t *testing.T, paths ...string) {
+	t.Helper()
+	for i := len(paths) - 1; i >= 0; i-- {
+		mustAge(t, paths[i], DefaultStaleWorktreeAge+time.Hour)
+	}
+}
+
+// TestScanWorktreeDir_NestedEditKeepsWorktreeFresh pins BUG-875: a worktree whose directory is
+// old but whose nested file was just edited is live work, not stale, and a fully aged tree
+// is stale.
+func TestScanWorktreeDir_NestedEditKeepsWorktreeFresh(t *testing.T) {
+	devDir := t.TempDir()
+	container := filepath.Join(devDir, "praetor-worktrees")
+	live := filepath.Join(container, "live")
+	liveFile := filepath.Join(live, "src", "main.go")
+	mustWriteFile(t, liveFile, "package main")
+	ageWorktree(t, live, filepath.Join(live, "src"))
+	idle := filepath.Join(container, "idle")
+	idleFile := filepath.Join(idle, "src", "main.go")
+	mustWriteFile(t, idleFile, "package main")
+	ageWorktree(t, idle, filepath.Join(idle, "src"), idleFile)
+
+	rep, err := ScanLocalWorkstation(context.Background(), devDir)
+	if err != nil {
+		t.Fatalf("ScanLocalWorkstation failed: %v", err)
+	}
+	want := filepath.Join("praetor-worktrees", "idle")
+	if len(rep.StaleWorktrees) != 1 || rep.StaleWorktrees[0] != want {
+		t.Fatalf("stale worktrees = %v, want only %s", rep.StaleWorktrees, want)
+	}
+	if !rep.RepositoryInventoryComplete {
+		t.Fatalf("measurable worktrees must leave the inventory complete: %v", rep.RepositoryInventoryErrors)
+	}
+}
+
+// TestScanWorktreeDir_UnmeasurableWorktreeIsRecorded pins the BUG-875 error half: a worktree
+// whose contents cannot be read is an inventory error, never silently skipped or guessed.
+func TestScanWorktreeDir_UnmeasurableWorktreeIsRecorded(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are required to make a directory unreadable")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-000 directory, so the fixture cannot fail")
+	}
+	devDir := t.TempDir()
+	locked := filepath.Join(devDir, "praetor-worktrees", "locked", "private")
+	mustMkdirAll(t, locked)
+	// Everything is aged, so no fresh entry can settle the answer before the locked directory.
+	ageWorktree(t, filepath.Dir(locked), locked)
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if chmodErr := os.Chmod(locked, 0o755); chmodErr != nil {
+			t.Errorf("restore %s so the temp dir can be removed: %v", locked, chmodErr)
+		}
+	})
+
+	rep, err := ScanLocalWorkstation(context.Background(), devDir)
+	if err != nil {
+		t.Fatalf("ScanLocalWorkstation failed: %v", err)
+	}
+	if len(rep.StaleWorktrees) != 0 || rep.RepositoryInventoryComplete {
+		t.Fatalf("an unmeasurable worktree was classified: stale=%v complete=%v", rep.StaleWorktrees, rep.RepositoryInventoryComplete)
+	}
+	if !strings.Contains(strings.Join(rep.RepositoryInventoryErrors, "\n"), filepath.Join("praetor-worktrees", "locked")) {
+		t.Fatalf("the unreadable worktree was not recorded: %v", rep.RepositoryInventoryErrors)
 	}
 }
 

@@ -44,20 +44,68 @@ func readEntries(ctx context.Context, root *os.Root, path string, limit int) ([]
 	return entries, nil
 }
 
+// walkRules selects what a bounded tree walk does besides measuring.
+type walkRules struct {
+	// collect records a removal snapshot and refuses what collection must not delete:
+	// symlinks, special files, bare repositories and nested Git metadata.
+	collect bool
+	// allowGitFile admits a .git file at the walk root, a linked worktree's gitfile.
+	allowGitFile bool
+	// cutoff, when set, stops the walk at the first entry modified at or after it.
+	cutoff time.Time
+}
+
+// reached reports whether newest already settles the walk's cutoff question.
+func (r walkRules) reached(newest time.Time) bool {
+	return !r.cutoff.IsZero() && !newest.Before(r.cutoff)
+}
+
 // scanTree is iterative, context-aware and bounded. Incomplete traversal,
 // symlinks and special files are errors, never successful partial inventories.
 func scanTree(ctx context.Context, root *os.Root, path string, isWorktree bool) (dirStats, []treeEntry, error) {
+	return walkTree(ctx, root, path, walkRules{collect: true, allowGitFile: isWorktree})
+}
+
+// NewestModification reports the newest modification time anywhere in the tree at dir, the
+// age gc's retention compares against, measured by the walk collection itself uses (HISS-19:
+// the workstation harvester calls this rather than judge a worktree by its top-level stat).
+// It measures rather than collects: symlinks and special files count by their own timestamps
+// without being followed, and nested Git metadata is walked instead of refused. A non-zero
+// cutoff stops the walk at the first entry modified at or after it, because that entry alone
+// settles that the tree is not older than cutoff. Exceeding a bound or failing to stat an
+// entry is an error, never a partial answer.
+func NewestModification(ctx context.Context, dir string, cutoff time.Time) (time.Time, error) {
+	if ctx == nil {
+		return time.Time{}, errors.New("gc: context cannot be nil")
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("open %s: %w", dir, err)
+	}
+	stats, _, err := walkTree(ctx, root, ".", walkRules{cutoff: cutoff})
+	if err = errors.Join(err, root.Close()); err != nil {
+		return time.Time{}, err
+	}
+	return stats.NewestMod, nil
+}
+
+func walkTree(ctx context.Context, root *os.Root, path string, rules walkRules) (dirStats, []treeEntry, error) {
 	var stats dirStats
 	var snapshot []treeEntry
 	queue := []string{path}
 	dirs := 0
 	for i := 0; i < len(queue) && i < MaxFileScanLimit; i++ {
 		current := queue[i]
-		info, err := scanEntry(ctx, root, current, &stats)
+		info, err := scanEntry(ctx, root, current, &stats, rules.collect)
 		if err != nil {
 			return stats, nil, err
 		}
-		snapshot = append(snapshot, treeEntry{current, info})
+		if rules.collect {
+			snapshot = append(snapshot, treeEntry{current, info})
+		}
+		if rules.reached(stats.NewestMod) {
+			return stats, snapshot, nil
+		}
 		if !info.IsDir() {
 			continue
 		}
@@ -65,7 +113,7 @@ func scanTree(ctx context.Context, root *os.Root, path string, isWorktree bool) 
 		if dirs > MaxDirectoryTraversal {
 			return stats, nil, errors.New("directory traversal limit exceeded")
 		}
-		children, err := scanChildren(ctx, root, current, MaxFileScanLimit-len(queue), isWorktree && current == path)
+		children, err := scanChildren(ctx, root, current, MaxFileScanLimit-len(queue), rules, current == path)
 		if err != nil {
 			return stats, nil, err
 		}
@@ -74,25 +122,40 @@ func scanTree(ctx context.Context, root *os.Root, path string, isWorktree bool) 
 	return stats, snapshot, nil
 }
 
-func scanChildren(ctx context.Context, root *os.Root, path string, limit int, allowGitFile bool) ([]string, error) {
+func scanChildren(ctx context.Context, root *os.Root, path string, limit int, rules walkRules, atRoot bool) ([]string, error) {
 	entries, err := readEntries(ctx, root, path, limit)
 	if err != nil {
 		return nil, err
 	}
-	if looksLikeBareRepository(entries) {
-		return nil, fmt.Errorf("bare Git repository protected at %s", path)
+	if rules.collect {
+		if err := refuseRepositoryMetadata(path, entries, rules.allowGitFile && atRoot); err != nil {
+			return nil, err
+		}
 	}
 	children := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.Name() == ".git" && (!allowGitFile || entry.IsDir()) {
-			return nil, fmt.Errorf("nested Git metadata protected at %s", path)
-		}
 		children = append(children, filepath.Join(path, entry.Name()))
 	}
 	return children, nil
 }
 
-func scanEntry(ctx context.Context, root *os.Root, path string, stats *dirStats) (os.FileInfo, error) {
+// refuseRepositoryMetadata protects Git state from collection: a bare repository, or nested
+// .git metadata other than the linked-worktree gitfile at the resource root.
+func refuseRepositoryMetadata(path string, entries []os.DirEntry, gitFileAllowed bool) error {
+	if looksLikeBareRepository(entries) {
+		return fmt.Errorf("bare Git repository protected at %s", path)
+	}
+	for _, entry := range entries {
+		if entry.Name() == ".git" && (!gitFileAllowed || entry.IsDir()) {
+			return fmt.Errorf("nested Git metadata protected at %s", path)
+		}
+	}
+	return nil
+}
+
+// scanEntry measures one entry. Under collect a symlink or special file is an error; a
+// measuring walk counts its own timestamp and never follows it (it is not a directory).
+func scanEntry(ctx context.Context, root *os.Root, path string, stats *dirStats, collect bool) (os.FileInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -100,14 +163,14 @@ func scanEntry(ctx context.Context, root *os.Root, path string, stats *dirStats)
 	if err != nil {
 		return nil, fmt.Errorf("stat %s: %w", path, err)
 	}
-	if !info.IsDir() && !info.Mode().IsRegular() {
+	if collect && !info.IsDir() && !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("symlink or special file protected: %s", path)
 	}
 	stats.Entries++
 	if info.ModTime().After(stats.NewestMod) {
 		stats.NewestMod = info.ModTime()
 	}
-	if !info.IsDir() {
+	if info.Mode().IsRegular() {
 		stats.TotalSize += info.Size()
 	}
 	return info, nil

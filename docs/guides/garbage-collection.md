@@ -22,6 +22,15 @@ inside the repository root. The Go API also accepts `EphemeralDir`. Root-level
 and `bin/` files are not swept by filename. Git metadata and nested repositories
 cannot be collected as artifacts.
 
+A pool you configure with `--worktrees-dir` (or `EphemeralDir`) must exist: a
+missing one, such as a mistyped path, stops collection with a nonzero exit and a
+`configured collection pool ... does not exist` error. A default pool the
+repository never created is not an error; the report lists it under
+`missing_pools` and the text output prints it as a missing default pool, so an
+empty plan is never mistaken for an examined, empty pool
+(`internal/gc/gc_test.go`, `TestCollect_Negative_MistypedWorktreesDirIsAnError`,
+`TestCollect_Boundary_AbsentDefaultPoolsAreListed`).
+
 Both `--max-age` (worktrees) and `--artifact-max-age` default to 24 hours. The
 newest modification time in the complete resource determines retention. Scans
 are bounded to 2,000 direct entries per pool and 50,000 entries / 10,000

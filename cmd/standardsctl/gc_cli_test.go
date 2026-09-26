@@ -56,6 +56,39 @@ func TestGCCLIRepeatedReleaseAndJSONReport(t *testing.T) {
 	}
 }
 
+// TestGCCLIMistypedWorktreesDirFails pins BUG-959 at the command line: a --worktrees-dir that
+// does not exist exits non-zero and prints the reason, where it used to print a clean report.
+func TestGCCLIMistypedWorktreesDirFails(t *testing.T) {
+	root := t.TempDir()
+	out, err := captureStdout(t, func() error {
+		return runGC([]string{"--path", root, "--worktrees-dir", "wortrees"})
+	})
+	if err == nil || !strings.Contains(out, "configured collection pool wortrees does not exist") {
+		t.Fatalf("mistyped --worktrees-dir: err=%v output:\n%s", err, out)
+	}
+}
+
+// TestGCCLIPrintsMissingDefaultPools: absent default pools are named, and a report without
+// any prints no such section.
+func TestGCCLIPrintsMissingDefaultPools(t *testing.T) {
+	report := &gc.GCReport{DryRun: true, Complete: true, MissingPools: []string{".standards/worktrees"}}
+	out, err := captureStdout(t, func() error {
+		printGCReport(report, false, nil)
+		return nil
+	})
+	if err != nil || !strings.Contains(out, "Missing Default Pools:     1") || !strings.Contains(out, "missing pool: .standards/worktrees") {
+		t.Fatalf("missing pools not printed: %v\n%s", err, out)
+	}
+	report.MissingPools = nil
+	out, err = captureStdout(t, func() error {
+		printGCReport(report, false, nil)
+		return nil
+	})
+	if err != nil || strings.Contains(out, "Missing Default Pools") {
+		t.Fatalf("an empty missing-pool list printed a section: %v\n%s", err, out)
+	}
+}
+
 func TestWorktreeStatusUsesRegisteredLabel(t *testing.T) {
 	if got := worktreeStatus(worktree.WorktreeInfo{}); got != "registered" {
 		t.Fatalf("worktree status = %q, want registered", got)

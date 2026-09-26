@@ -1,0 +1,3 @@
+type: fixed
+title: Fail garbage collection on a configured pool that does not exist and list absent default pools as missing_pools, and measure workstation worktree staleness by the newest modification anywhere in the worktree through gc's own bounded walk, recording unreadable worktrees as inventory errors instead of skipping them
+breaking: true

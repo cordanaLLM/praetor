@@ -44,6 +44,42 @@ func TestCollect_OverLimitReleasedArtifactFailsClosed(t *testing.T) {
 	}
 }
 
+// poolWithEntries fills the default ephemeral pool with count empty files.
+func poolWithEntries(t *testing.T, count int) string {
+	t.Helper()
+	root := t.TempDir()
+	pool := filepath.Join(root, ".standards", "ephemeral")
+	if err := os.MkdirAll(pool, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < count; i++ {
+		if err := os.WriteFile(filepath.Join(pool, "e-"+strconv.Itoa(i)), nil, 0o600); err != nil {
+			t.Fatalf("write pool fixture: %v", err)
+		}
+	}
+	return root
+}
+
+// TestCollect_PoolEntryBound pins BUG-232: a pool holding MaxEntriesLimit direct entries is
+// scanned in full, and one more fails collection with the bound named in report.Errors
+// instead of planning from a truncated listing.
+func TestCollect_PoolEntryBound(t *testing.T) {
+	atLimit, err := Collect(context.Background(), Options{RootDir: poolWithEntries(t, MaxEntriesLimit), DryRun: true})
+	if err != nil || !atLimit.Complete {
+		t.Fatalf("a pool at the %d-entry bound must scan: %v", MaxEntriesLimit, err)
+	}
+	if got := len(atLimit.SkippedArtifacts); got != MaxEntriesLimit {
+		t.Fatalf("every entry of a pool at the bound must be accounted for, got %d", got)
+	}
+	over, err := Collect(context.Background(), Options{RootDir: poolWithEntries(t, MaxEntriesLimit+1), DryRun: true})
+	if err == nil || !strings.Contains(err.Error(), "scan entry limit exceeded") {
+		t.Fatalf("a pool over the bound must fail closed, got %v", err)
+	}
+	if over.Complete || len(over.Errors) != 1 || !strings.Contains(over.Errors[0], "scan entry limit exceeded") {
+		t.Fatalf("the bound must be reported in report.Errors: %+v", over)
+	}
+}
+
 func TestCollect_NestedSymlinkInReleasedArtifactFailsClosed(t *testing.T) {
 	root := t.TempDir()
 	eph := filepath.Join(root, ".standards", "ephemeral", "linked")
