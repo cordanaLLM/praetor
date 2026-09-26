@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -160,6 +161,7 @@ func TestTasks_Boundary_MultipleAndNumeric(t *testing.T) {
 }
 
 func TestTasks_PreservesFileMode(t *testing.T) {
+	testsupport.SkipIfFileModeUnenforced(t)
 	dir := t.TempDir()
 	workingdir := filepath.Join(dir, ".workingdir")
 	if err := os.Mkdir(workingdir, util.PrivateDirMode); err != nil {

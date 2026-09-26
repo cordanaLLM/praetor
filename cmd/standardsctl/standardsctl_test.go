@@ -21,6 +21,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/harvester"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -1457,13 +1458,15 @@ func TestDispatchCommand_HarvestFleetOutput(t *testing.T) {
 
 func TestDispatchCommand_StateTaskArchive_Positive(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := util.RunGit(context.Background(), dir, "init"); err != nil {
+	testsupport.InitGitRepoWithOrigin(t, dir, "")
+	gitCtx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatalf("fixture git environment: %v", err)
+	}
+	if _, err := util.RunGit(gitCtx, dir, "commit", "--allow-empty", "-m", "init"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := util.RunGit(context.Background(), dir, "commit", "--allow-empty", "-m", "init"); err != nil {
-		t.Fatal(err)
-	}
-	outSha, err := util.RunGit(context.Background(), dir, "rev-parse", "HEAD")
+	outSha, err := util.RunGit(gitCtx, dir, "rev-parse", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}
