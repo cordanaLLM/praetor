@@ -52,12 +52,15 @@ rules:
         mechanism: internal/hiss selfcall.go rustSelfCalls, driven by scanRustLines
         rationale: >-
           Direct recursion is reported by the spelling that resolves to the function: a free
-          function calling its bare name, a method calling self.f or Self::f, and an associated
-          function calling Self::f. A bare call inside an impl or trait body resolves to a free
-          function, a path such as other::f names a different item, and a let, closure
-          parameter, match binding or nested fn of the same name shadows it, so none of those
-          are reported. Mutual recursion, recursion inside a nested fn, a turbofish or
-          path-qualified self-call, and any function whose header the scanner does not
+          function calling its bare name, and, in an inherent impl or a trait body, a method
+          calling self.f or Self::f and an associated function calling Self::f. A bare call
+          inside an impl or trait body resolves to a free function, a path such as other::f
+          names a different item, and a let, closure parameter, match binding or nested fn of
+          the same name shadows it, so none of those are reported. Inside impl Trait for T,
+          self.f and Self::f reach an inherent T::f first, which may sit in any file of the
+          crate, and Self::f picks among T's impls by argument type, so no function there is
+          decided. Mutual recursion, recursion inside a nested fn or a trait impl, a turbofish
+          or path-qualified self-call, and any function whose header the scanner does not
           recognise (pub(super), const, unsafe or extern fn) are held as gaps.
       - language: python
         state: partial
@@ -114,10 +117,12 @@ rules:
         mechanism: internal/hiss rules.go python indentation tracker
         rationale: >-
           Function length is decided by indentation. A line that starts inside an open bracket
-          or a triple-quoted string continues the statement above it and never ends the
-          function, so a column-0 list element or multi-line string is measured with its
-          body. The other three caps have no Python check, and Python test files carry no
-          length exemption.
+          or a string (triple-quoted, or carried by a trailing backslash) continues the
+          statement above it and never ends the function, so a column-0 list element or
+          multi-line string is measured with its body. A bracket depth the scanner misreads
+          resets at the next line starting with a statement-only keyword such as def, class or
+          return, which no bracket can hold. The other three caps have no Python check, and
+          Python test files carry no length exemption.
       - language: c
         state: partial
         mechanism: internal/hiss rules.go braceTracker
