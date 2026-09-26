@@ -482,6 +482,12 @@ func (s *Server) compileContext(ctx context.Context, source, targetDir string, v
 		return mcp.ErrorResult(fmt.Sprintf("Failed writing outputs: %v", err))
 	}
 
+	return mcp.TextResult(compiledContextText(res))
+}
+
+// compiledContextText lists the projections a write compiled and the ones agent_clients left
+// out, which were neither written nor verified.
+func compiledContextText(res *compiler.CompileResult) string {
 	var b strings.Builder
 	b.WriteString("Cross-agent context transpilation completed successfully:\n")
 	for _, f := range res.Files {
@@ -490,7 +496,7 @@ func (s *Server) compileContext(ctx context.Context, source, targetDir string, v
 	for _, rel := range res.NotApplicable {
 		fmt.Fprintf(&b, "  [NOT_APPLICABLE] %-35s (not selected by agent_clients)\n", rel)
 	}
-	return mcp.TextResult(b.String())
+	return b.String()
 }
 
 // prepareContextSource confines the canonical source and reconciles its text register

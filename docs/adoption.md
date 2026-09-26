@@ -41,9 +41,9 @@ unset flag keeps the default. The flags apply to single-repository adoption; bat
 1. **`.standards.yaml`**: Declarative repository manifest containing profile, facets, tool versions, and policy locks.
 2. **`.standards.lock`**: Cryptographic SemVer lockfile binding your repo to exact governance standard releases.
 3. **`.standards-baseline.json`**: Technical debt ratcheting baseline. Existing infractions (e.g. legacy loop bounds, unwrapped errors) are recorded so legacy code compiles while new code is strictly gated.
-4. **`AGENTS.md` + 6 Vendor Targets**: Canonical agent operating harness transpiled to `CLAUDE.md`, `.cursor/rules/*.mdc`, `.windsurfrules`, and `.github/copilot-instructions.md`.
+4. **`AGENTS.md` + 6 Vendor Targets**: Canonical agent operating harness transpiled to `CLAUDE.md`, `.cursor/rules/*.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md` and `.codex/rules.md`. `agent_clients` in `.standards.yaml` limits these to the clients the repository uses ([agent client selection](guides/editor-capabilities.md#selecting-agent-clients)).
 5. **`.devcontainer/devcontainer.json`**: Multi-architecture container configuration pinned to verified base images.
-6. **Multi-IDE Configs**: Workspace settings for VSCode, Cursor, JetBrains, and Neovim.
+6. **Multi-IDE Configs**: Workspace settings for every supported editor, or only the ones `editors` in `.standards.yaml` names ([editor selection](guides/editor-capabilities.md#selecting-editors)).
 7. **Makefile & LeftHook**: Automated pre-commit hooks and standard verification targets (`make verify-all`).
 
 ---
