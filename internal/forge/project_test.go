@@ -82,8 +82,9 @@ func TestProject_Positive_RemoteMergePreservesCachedItems(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if _, werr := w.Write([]byte(`{"data":{"organization":{"projectsV2":{"nodes":[
-			{"id":"PVT_1","number":1,"title":"Governance","url":"https://example.test/1","closed":false}]}}}}`)); werr != nil {
+		if _, werr := w.Write([]byte(`{"data":{"repositoryOwner":{"projectsV2":{"nodes":[
+			{"id":"PVT_1","number":1,"title":"Governance","url":"https://example.test/1","closed":false,
+			 "items":{"totalCount":0}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}`)); werr != nil {
 			t.Errorf("write fake response: %v", werr)
 		}
 	}))
@@ -102,6 +103,8 @@ func TestProject_Positive_RemoteMergePreservesCachedItems(t *testing.T) {
 	if projects[0].Title != "Governance" {
 		t.Errorf("expected remote metadata to win, got %+v", projects[0])
 	}
+	// The board itself is empty; the one local-only item never reached it and is counted
+	// on top of the remote total.
 	if len(projects[0].Items) != 1 || projects[0].TotalItems != 1 {
 		t.Fatalf("remote refresh wiped the locally tracked items: %+v", projects[0])
 	}
@@ -197,17 +200,17 @@ func TestProject_Negative_RemoteFailuresAreReported(t *testing.T) {
 	if !strings.Contains(err.Error(), "HTTP 502") {
 		t.Errorf("unexpected error: %v", err)
 	}
-	if len(err.Error()) > maxErrorBodyBytes+4096 {
+	if len(err.Error()) > 1024 {
 		t.Errorf("error body was not bounded: %d bytes", len(err.Error()))
 	}
 }
 
-func TestProject_Negative_GraphQLErrorsAndGhFailure(t *testing.T) {
+func TestProject_Negative_GraphQLErrorsSurface(t *testing.T) {
 	dir := setupTestProjectDir(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if _, werr := w.Write([]byte(`{"data":{"organization":{"projectsV2":{"nodes":[]}}},` +
+		if _, werr := w.Write([]byte(`{"data":{"repositoryOwner":null},` +
 			`"errors":[{"message":"Resource not accessible by integration"}]}`)); werr != nil {
 			t.Errorf("write fake response: %v", werr)
 		}
@@ -216,15 +219,15 @@ func TestProject_Negative_GraphQLErrorsAndGhFailure(t *testing.T) {
 
 	pm := newTestProjectManager(t, "test-token", srv.URL)
 	pm.HTTPClient = srv.Client()
-	if _, err := pm.ListProjects(context.Background(), dir); err == nil {
-		t.Fatalf("expected a GraphQL errors array to surface, got nil")
+	if _, err := pm.ListProjects(context.Background(), dir); err == nil || !strings.Contains(err.Error(), "not accessible") {
+		t.Fatalf("expected a GraphQL errors array to surface, got %v", err)
 	}
 
-	// With credentials present, a failing `gh project item-add` must be reported and must
-	// not fabricate a local success record.
+	// With credentials present, a failing remote add must be reported and must not
+	// fabricate a local success record. No gh binary is reachable: the add never shells out.
 	isolatePATH(t)
 	if _, err := pm.AddItem(context.Background(), dir, 1, "https://github.com/cordanaLLM/praetor/issues/42"); err == nil {
-		t.Fatalf("expected the failing gh invocation to be reported, got nil")
+		t.Fatalf("expected the failing remote add to be reported, got nil")
 	}
 	if _, err := os.Stat(filepath.Join(dir, state.WorkingDirName, ProjectCacheFile)); !os.IsNotExist(err) {
 		t.Errorf("a failed remote add wrote a cache record: %v", err)
@@ -283,17 +286,19 @@ func TestProject_Boundary_MultipleItemsAndEmpty(t *testing.T) {
 
 func TestProject_Boundary_MergeKeepsBoardsMissingRemotely(t *testing.T) {
 	cached := []ProjectV2{
-		{Number: 1, Title: "Local Only", TotalItems: 2, Items: []ProjectItem{{ID: "a"}, {ID: "b"}}},
+		{Number: 1, Title: "Local Only", TotalItems: 2, Items: []ProjectItem{{ID: "a"}, {ID: "b", LocalOnly: true}}},
 		{Number: 2, Title: "Stale", TotalItems: 1, Items: []ProjectItem{{ID: "c"}}},
 	}
-	remote := []ProjectV2{{Number: 1, Title: "Governance"}}
+	remote := []ProjectV2{{Number: 1, Title: "Governance", TotalItems: 40}}
 
 	merged := mergeProjects(cached, remote)
 	if len(merged) != 2 {
 		t.Fatalf("expected 2 merged boards, got %d", len(merged))
 	}
-	if merged[0].Title != "Governance" || merged[0].TotalItems != 2 || len(merged[0].Items) != 2 {
-		t.Errorf("merge lost cached items: %+v", merged[0])
+	// The remote count wins over the stale cached one; the single local-only item is
+	// counted on top because it never reached the board.
+	if merged[0].Title != "Governance" || merged[0].TotalItems != 41 || len(merged[0].Items) != 2 {
+		t.Errorf("merge lost cached items or the remote count: %+v", merged[0])
 	}
 	if merged[1].Number != 2 || merged[1].TotalItems != 1 {
 		t.Errorf("merge dropped a board the remote does not report: %+v", merged[1])

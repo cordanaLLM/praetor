@@ -1,0 +1,3 @@
+type: fixed
+title: List Projects v2 boards through GraphQL variables with real item counts, cursor paging and user as well as organization owners, and add items with the addProjectV2ItemById mutation on the command's own token and endpoint instead of shelling out to gh
+breaking: false

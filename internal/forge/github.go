@@ -20,9 +20,6 @@ import (
 const (
 	defaultHTTPTimeout  = 15 * time.Second
 	maxHTTPResponseBody = 16 * 1024 * 1024 // 16 MB read bound (HISS-02)
-	// maxErrorBodyBytes bounds project API error excerpts read from gh output; forge
-	// response bodies go through util.BodyPreview and its smaller, control-sanitized bound.
-	maxErrorBodyBytes = util.MaxErrorBodyBytes
 	// issuesPerPage is the maximum page size the GitHub REST API accepts; every paginated
 	// listing (issues, milestones, rulesets) requests it.
 	issuesPerPage = 100
