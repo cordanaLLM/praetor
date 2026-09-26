@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 const (
@@ -304,43 +306,18 @@ func processFuncDecl(fset *token.FileSet, d *ast.FuncDecl, src string, p *Parsed
 	p.DeclOrder = append(p.DeclOrder, key)
 }
 
-// receiverIndexDepth bounds how many generic-instantiation layers a receiver expression's
-// base is unwrapped through. Go receivers only ever nest one deep (Set[T]), but the bound
-// keeps the loop's upper limit explicit and scalar per HISS-02.
-const receiverIndexDepth = 8
-
-// receiverBaseName resolves the declared type name at the root of a receiver expression,
-// unwrapping a generic instantiation (Set[T], Map[K, V]) down to the bare type name. It is
-// an iterative bounded loop rather than recursion, matching the precedent already set by
-// internal/difftest's formatTypeExpr for the same HISS-01 reason.
-func receiverBaseName(expr ast.Expr) (string, bool) {
-	for i := 0; i < receiverIndexDepth; i++ {
-		switch t := expr.(type) {
-		case *ast.Ident:
-			return t.Name, true
-		case *ast.IndexExpr:
-			expr = t.X
-		case *ast.IndexListExpr:
-			expr = t.X
-		default:
-			return "", false
-		}
-	}
-	return "", false
-}
-
 // extractReceiverName returns the merge key's receiver component. Before this fix a
 // generic receiver (*Set[T]) fell through to the literal string "*unknown" because its
 // inner expression is an *ast.IndexExpr, not an *ast.Ident; every generic receiver then
 // collided on the same key and a clean merge could silently drop one of them (BUG-819).
 func extractReceiverName(expr ast.Expr) string {
 	if star, ok := expr.(*ast.StarExpr); ok {
-		if name, ok := receiverBaseName(star.X); ok {
+		if name, ok := hiss.ReceiverTypeName(star.X); ok {
 			return "*" + name
 		}
 		return "*unknown"
 	}
-	if name, ok := receiverBaseName(expr); ok {
+	if name, ok := hiss.ReceiverTypeName(expr); ok {
 		return name
 	}
 	return "unknown"

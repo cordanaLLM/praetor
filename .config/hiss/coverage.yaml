@@ -155,10 +155,16 @@ rules:
           not. Whether the proof is truthful is not decided by any check.
       - language: go
         state: partial
-        mechanism: internal/hiss go_ast.go checkUnsafe with a preceding SAFETY proof
+        mechanism: >-
+          internal/hiss go_ast.go checkUnsafe and checkDotUnsafeCall, resolved through the
+          file's imports (go_imports.go), with a preceding SAFETY proof (isSafetyProof)
         rationale: >-
-          An unsafe selector without a SAFETY proof is reported, and a local that shadows the
-          package name is not. Whether a proof is truthful is not decided.
+          An unsafe selector reached through any import name, or a call to a dot-imported unsafe
+          function, without a SAFETY proof is reported; a local that shadows the package name and
+          another package imported as unsafe are not. A proof is a comment line that opens with
+          SAFETY: followed by a justification; a bare marker, a TODO placeholder or the marker
+          named mid-sentence is not one. A dot-imported unsafe name outside call position is not
+          checked (gap fixture). Whether a proof is truthful is not decided.
       - language: c
         state: unsupported
         mechanism: none

@@ -12,14 +12,13 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 const (
 	maxFunctionsToSynthesize = 100
 	defaultDiffTimeout       = 5 * time.Second
-	// maxTypeExprDepth bounds how many pointer or slice layers a rendered type may carry
-	// before it degrades to "any" (HISS-02).
-	maxTypeExprDepth = 64
 )
 
 // Options configures test synthesis behavior.
@@ -37,7 +36,13 @@ type FuncTestSuite struct {
 	PositiveTest string `json:"positive_test"`
 	NegativeTest string `json:"negative_test"`
 	BoundaryTest string `json:"boundary_test"`
-	CheckCount   int    `json:"check_count"`
+	// CheckCount is the number of assertions the three tests make, counted as they are
+	// emitted rather than asserted as a constant.
+	CheckCount int `json:"check_count"`
+	// SkipReason says why no tests were synthesized for the function, such as a type
+	// parameter constraint no single type argument is known to satisfy. The test fields
+	// are empty when it is set.
+	SkipReason string `json:"skip_reason,omitempty"`
 }
 
 // DiffTestResult contains all synthesized test suites and the formatted Go test file.
@@ -47,20 +52,6 @@ type DiffTestResult struct {
 	GeneratedCode string          `json:"generated_code"`
 	TargetFuncs   []string        `json:"target_funcs"`
 	Suites        []FuncTestSuite `json:"suites"`
-}
-
-type funcMetadata struct {
-	Name        string
-	Receiver    string
-	RecvType    string
-	HasContext  bool
-	HasString   bool
-	HasInt      bool
-	HasSlice    bool
-	HasError    bool
-	HasReturn   bool
-	ParamNames  []string
-	ReturnTypes []string
 }
 
 // Synthesize inspects Go functions and generates HISS-15 compliant 3D tests.
@@ -93,7 +84,7 @@ func Synthesize(opts Options) (*DiffTestResult, error) {
 		targetPkg = pkgName
 	}
 
-	funcs := extractFunctions(file)
+	funcs := extractFunctions(newSourceInfo(fset, file), file)
 	selectedFuncs := filterFunctions(funcs, opts.ChangedFuncs)
 	if len(selectedFuncs) == 0 {
 		return nil, errors.New("no matching functions found for synthesis")
@@ -136,7 +127,7 @@ func readFileWithContext(ctx context.Context, path string) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
-func extractFunctions(file *ast.File) []funcMetadata {
+func extractFunctions(info *sourceInfo, file *ast.File) []funcMetadata {
 	var result []funcMetadata
 	total := len(file.Decls)
 
@@ -145,103 +136,19 @@ func extractFunctions(file *ast.File) []funcMetadata {
 		if !ok || fn.Body == nil {
 			continue
 		}
-
-		meta := inspectFunction(fn)
-		result = append(result, meta)
+		result = append(result, inspectFunction(info, fn))
 	}
 	return result
 }
 
-func inspectFunction(fn *ast.FuncDecl) funcMetadata {
-	meta := funcMetadata{
-		Name: fn.Name.Name,
-	}
-
-	if fn.Recv != nil && len(fn.Recv.List) > 0 {
-		meta.Receiver = extractReceiverTypeName(fn.Recv.List[0].Type)
-		meta.RecvType = meta.Receiver
-	}
-
-	inspectParameters(fn.Type.Params, &meta)
-
-	if fn.Type.Results != nil {
-		meta.HasReturn = len(fn.Type.Results.List) > 0
-		for _, r := range fn.Type.Results.List {
-			retType := formatTypeExpr(r.Type)
-			meta.ReturnTypes = append(meta.ReturnTypes, retType)
-			if retType == "error" {
-				meta.HasError = true
-			}
-		}
-	}
-
-	return meta
-}
-
-func inspectParameters(params *ast.FieldList, meta *funcMetadata) {
-	if params == nil {
-		return
-	}
-	for _, p := range params.List {
-		typeStr := formatTypeExpr(p.Type)
-		if typeStr == "context.Context" {
-			meta.HasContext = true
-		} else if strings.Contains(typeStr, "string") {
-			meta.HasString = true
-		} else if strings.Contains(typeStr, "int") {
-			meta.HasInt = true
-		} else if strings.HasPrefix(typeStr, "[]") {
-			meta.HasSlice = true
-		}
-		for _, name := range p.Names {
-			meta.ParamNames = append(meta.ParamNames, name.Name)
-		}
-	}
-}
-
+// extractReceiverTypeName returns the receiver's declared type name, "" when the
+// receiver expression names no type.
 func extractReceiverTypeName(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.StarExpr:
-		if ident, ok := t.X.(*ast.Ident); ok {
-			return ident.Name
-		}
-		return "Receiver"
-	default:
-		return "Receiver"
+	name, ok := hiss.ReceiverTypeName(expr)
+	if !ok {
+		return ""
 	}
-}
-
-// formatTypeExpr renders a type expression for a synthesized signature.
-//
-// Pointer and slice types are peeled in a bounded loop rather than by recursion: HISS-01
-// requires the call graph to form a DAG, and this function was a direct-recursion
-// violation that the scanner did not report because HISS-01 only ever matched `goto`.
-// Behaviour is unchanged for every shape the previous implementation handled; a type
-// nested deeper than the bound degrades to "any" rather than spinning (HISS-02).
-func formatTypeExpr(expr ast.Expr) string {
-	var prefix strings.Builder
-	for i := 0; i < maxTypeExprDepth; i++ {
-		switch t := expr.(type) {
-		case *ast.StarExpr:
-			prefix.WriteString("*")
-			expr = t.X
-		case *ast.ArrayType:
-			prefix.WriteString("[]")
-			expr = t.Elt
-		case *ast.Ident:
-			return prefix.String() + t.Name
-		case *ast.SelectorExpr:
-			if x, ok := t.X.(*ast.Ident); ok {
-				return prefix.String() + x.Name + "." + t.Sel.Name
-			}
-			return prefix.String() + t.Sel.Name
-		default:
-			return prefix.String() + "any"
-		}
-	}
-	return prefix.String() + "any"
+	return name
 }
 
 // funcMetadataKey returns the identifier used to correlate a function across the base and
@@ -332,181 +239,4 @@ func renderNode(fset *token.FileSet, node ast.Node) string {
 		return ""
 	}
 	return buf.String()
-}
-
-func generateSuites(pkgName, targetPkg string, funcs []funcMetadata) (*DiffTestResult, error) {
-	suites := make([]FuncTestSuite, 0, len(funcs))
-	targetNames := make([]string, 0, len(funcs))
-
-	var codeBuilder strings.Builder
-	fmt.Fprintf(&codeBuilder, "package %s\n\n", targetPkg)
-	codeBuilder.WriteString("import (\n\t\"context\"\n\t\"strings\"\n\t\"testing\"\n)\n\n")
-
-	limit := len(funcs)
-	for i := 0; i < limit; i++ {
-		fn := funcs[i]
-		suite := buildSuiteForFunc(fn)
-		suites = append(suites, suite)
-		targetNames = append(targetNames, fn.Name)
-
-		codeBuilder.WriteString(suite.PositiveTest)
-		codeBuilder.WriteString("\n\n")
-		codeBuilder.WriteString(suite.NegativeTest)
-		codeBuilder.WriteString("\n\n")
-		codeBuilder.WriteString(suite.BoundaryTest)
-		codeBuilder.WriteString("\n\n")
-	}
-
-	formatted, err := format.Source([]byte(codeBuilder.String()))
-	if err != nil {
-		return nil, fmt.Errorf("failed formatting generated tests: %w", err)
-	}
-
-	return &DiffTestResult{
-		PackageName:   pkgName,
-		TargetPackage: targetPkg,
-		GeneratedCode: string(formatted),
-		TargetFuncs:   targetNames,
-		Suites:        suites,
-	}, nil
-}
-
-func buildSuiteForFunc(fn funcMetadata) FuncTestSuite {
-	pos := generatePositiveTest(fn)
-	neg := generateNegativeTest(fn)
-	bnd := generateBoundaryTest(fn)
-
-	return FuncTestSuite{
-		FuncName:     fn.Name,
-		Receiver:     fn.Receiver,
-		PositiveTest: pos,
-		NegativeTest: neg,
-		BoundaryTest: bnd,
-		CheckCount:   6, // 2 checks per test dimension * 3 = 6
-	}
-}
-
-func generatePositiveTest(fn funcMetadata) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "func Test%s_Positive(t *testing.T) {\n", fn.Name)
-
-	invocation := buildInvocation(fn, "ctx", `"test-positive"`, "42", "[]string{\"a\", \"b\"}")
-
-	if fn.HasContext {
-		b.WriteString("\tctx := context.Background()\n")
-	}
-
-	if fn.Receiver != "" {
-		fmt.Fprintf(&b, "\tobj := &%s{}\n", fn.Receiver)
-	}
-
-	if fn.HasError && fn.HasReturn {
-		fmt.Fprintf(&b, "\tres, err := %s\n", invocation)
-		b.WriteString("\t// Check 1: Positive execution must return zero error\n")
-		b.WriteString("\tif err != nil {\n\t\tt.Fatalf(\"unexpected error in positive test: %v\", err)\n\t}\n")
-		b.WriteString("\t// Check 2: Returned value must be non-zero\n")
-		b.WriteString("\tif res == nil && fmt.Sprintf(\"%v\", res) == \"\" {\n\t\tt.Errorf(\"unexpected empty result on positive path\")\n\t}\n")
-	} else if fn.HasError {
-		fmt.Fprintf(&b, "\terr := %s\n", invocation)
-		b.WriteString("\t// Check 1: Error must be nil\n")
-		b.WriteString("\tif err != nil {\n\t\tt.Fatalf(\"unexpected error in positive execution: %v\", err)\n\t}\n")
-		b.WriteString("\t// Check 2: Confirm positive pass state\n")
-		b.WriteString("\tif t.Failed() {\n\t\tt.Errorf(\"positive test failed state assertions\")\n\t}\n")
-	} else if fn.HasReturn {
-		fmt.Fprintf(&b, "\tres := %s\n", invocation)
-		b.WriteString("\t// Check 1: Return value must be valid\n")
-		b.WriteString("\tif res == nil && fmt.Sprintf(\"%v\", res) == \"\" {\n\t\tt.Fatalf(\"unexpected nil result on positive execution\")\n\t}\n")
-		b.WriteString("\t// Check 2: Confirm positive execution passed\n")
-		b.WriteString("\tif t.Failed() {\n\t\tt.Errorf(\"positive test invariant failed\")\n\t}\n")
-	} else {
-		fmt.Fprintf(&b, "\t%s\n", invocation)
-		b.WriteString("\t// Check 1: Confirm clean execution\n")
-		b.WriteString("\tif t.Failed() {\n\t\tt.Fatalf(\"positive execution failed\")\n\t}\n")
-		b.WriteString("\t// Check 2: Invariant check\n")
-		b.WriteString("\tif false {\n\t\tt.Errorf(\"unreachable invariant breach\")\n\t}\n")
-	}
-
-	b.WriteString("}")
-	return b.String()
-}
-
-func generateNegativeTest(fn funcMetadata) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "func Test%s_Negative(t *testing.T) {\n", fn.Name)
-
-	if fn.HasContext {
-		b.WriteString("\tctx, cancel := context.WithCancel(context.Background())\n")
-		b.WriteString("\tcancel() // canceled context to induce error\n")
-	}
-
-	if fn.Receiver != "" {
-		fmt.Fprintf(&b, "\tobj := &%s{}\n", fn.Receiver)
-	}
-
-	invocation := buildInvocation(fn, "ctx", `""`, "-1", "nil")
-
-	if fn.HasError {
-		fmt.Fprintf(&b, "\t_, err := %s\n", invocation)
-		b.WriteString("\t// Check 1: Expect error under invalid / canceled context input\n")
-		b.WriteString("\tif err == nil {\n\t\tt.Fatalf(\"expected error for negative input scenario, got nil\")\n\t}\n")
-		b.WriteString("\t// Check 2: Error must be descriptive\n")
-		b.WriteString("\tif len(err.Error()) == 0 {\n\t\tt.Errorf(\"expected non-empty error message string\")\n\t}\n")
-	} else {
-		fmt.Fprintf(&b, "\tres := %s\n", invocation)
-		b.WriteString("\t// Check 1: Verify boundary fault tolerance\n")
-		b.WriteString("\tif t.Failed() {\n\t\tt.Fatalf(\"negative execution panicked or failed\")\n\t}\n")
-		b.WriteString("\t// Check 2: Ensure result handles negative input safely\n")
-		b.WriteString("\tif res == nil && false {\n\t\tt.Errorf(\"negative input unhandled\")\n\t}\n")
-	}
-
-	b.WriteString("}")
-	return b.String()
-}
-
-func generateBoundaryTest(fn funcMetadata) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "func Test%s_Boundary(t *testing.T) {\n", fn.Name)
-
-	if fn.HasContext {
-		b.WriteString("\tctx := context.Background()\n")
-	}
-	if fn.Receiver != "" {
-		fmt.Fprintf(&b, "\tobj := &%s{}\n", fn.Receiver)
-	}
-
-	invLower := buildInvocation(fn, "ctx", `""`, "0", "nil")
-	invUpper := buildInvocation(fn, "ctx", `strings.Repeat("A", 1024)`, "100000", "make([]string, 100)")
-
-	assignPrefix := "_" + " = "
-	fmt.Fprintf(&b, "\t// Check 1: Lower boundary (zero / empty)\n\t%s%s\n", assignPrefix, invLower)
-	b.WriteString("\tif t.Failed() {\n\t\tt.Fatalf(\"failed handling lower boundary inputs\")\n\t}\n")
-
-	fmt.Fprintf(&b, "\t// Check 2: Upper boundary (extreme scale)\n\t%s%s\n", assignPrefix, invUpper)
-	b.WriteString("\tif t.Failed() {\n\t\tt.Errorf(\"failed handling upper boundary inputs\")\n\t}\n")
-
-	b.WriteString("}")
-	return b.String()
-}
-
-func buildInvocation(fn funcMetadata, ctxArg, strArg, intArg, sliceArg string) string {
-	var args []string
-
-	if fn.HasContext {
-		args = append(args, ctxArg)
-	}
-	if fn.HasString {
-		args = append(args, strArg)
-	}
-	if fn.HasInt {
-		args = append(args, intArg)
-	}
-	if fn.HasSlice {
-		args = append(args, sliceArg)
-	}
-
-	joinedArgs := strings.Join(args, ", ")
-	if fn.Receiver != "" {
-		return fmt.Sprintf("obj.%s(%s)", fn.Name, joinedArgs)
-	}
-	return fmt.Sprintf("%s(%s)", fn.Name, joinedArgs)
 }

@@ -2,8 +2,6 @@ package difftest
 
 import (
 	"fmt"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,11 +45,8 @@ func ProcessItem(ctx context.Context, key string) (string, error) {
 	suite := res.Suites[0]
 	verifySuiteDimensions(t, suite)
 
-	// Verify generated code parses as 100% valid Go
-	fset := token.NewFileSet()
-	if _, err := parser.ParseFile(fset, "worker_test.go", res.GeneratedCode, parser.AllErrors); err != nil {
-		t.Fatalf("generated code failed Go parser: %v\nCode:\n%s", err, res.GeneratedCode)
-	}
+	// The generated file must compile against the source, not merely parse.
+	assertTypeChecks(t, src, res)
 }
 
 func verifySuiteDimensions(t *testing.T, suite FuncTestSuite) {
@@ -65,18 +60,20 @@ func verifySuiteDimensions(t *testing.T, suite FuncTestSuite) {
 		t.Errorf("missing boundary test function")
 	}
 
-	posChecks := strings.Count(suite.PositiveTest, "t.Fatalf") + strings.Count(suite.PositiveTest, "t.Errorf")
-	negChecks := strings.Count(suite.NegativeTest, "t.Fatalf") + strings.Count(suite.NegativeTest, "t.Errorf")
-	bndChecks := strings.Count(suite.BoundaryTest, "t.Fatalf") + strings.Count(suite.BoundaryTest, "t.Errorf")
-
-	if posChecks < 2 {
-		t.Errorf("positive test has %d checks, expected >= 2", posChecks)
+	// ProcessItem returns an error: the positive test checks for a panic and a nil error,
+	// the negative test for a panic and an empty error message, the boundary test for a
+	// panic at each bound.
+	if suite.CheckCount != 6 {
+		t.Errorf("expected 6 counted checks, got %d", suite.CheckCount)
 	}
-	if negChecks < 2 {
-		t.Errorf("negative test has %d checks, expected >= 2", negChecks)
+	if !strings.Contains(suite.PositiveTest, "t.Fatalf") {
+		t.Errorf("positive test must fail on an unexpected error:\n%s", suite.PositiveTest)
 	}
-	if bndChecks < 2 {
-		t.Errorf("boundary test has %d checks, expected >= 2", bndChecks)
+	if strings.Contains(suite.NegativeTest, "t.Fatalf") {
+		t.Errorf("negative test must not require an error the target never promised:\n%s", suite.NegativeTest)
+	}
+	if strings.Count(suite.BoundaryTest, "difftestNoPanic(") != 2 {
+		t.Errorf("boundary test must guard both bounds:\n%s", suite.BoundaryTest)
 	}
 }
 
@@ -102,7 +99,7 @@ func (s *Service) CallEndpoint(key string) (int, error) {
 	if suite.Receiver != "Service" {
 		t.Errorf("expected receiver Service, got: %q", suite.Receiver)
 	}
-	if !strings.Contains(suite.PositiveTest, "obj := &Service{}") {
+	if !strings.Contains(suite.PositiveTest, "obj := new(Service)") {
 		t.Errorf("expected receiver instantiation in positive test")
 	}
 	if !strings.Contains(suite.PositiveTest, "obj.CallEndpoint(") {
@@ -224,11 +221,7 @@ func Ping() {}
 		t.Errorf("missing Ping() invocation")
 	}
 
-	// Verify code parses cleanly
-	fset := token.NewFileSet()
-	if _, err := parser.ParseFile(fset, "test.go", res.GeneratedCode, parser.AllErrors); err != nil {
-		t.Fatalf("generated code failed parsing: %v", err)
-	}
+	assertTypeChecks(t, src, res)
 }
 
 func TestDiffTest_Boundary_DiffWithNoChanges(t *testing.T) {
@@ -268,10 +261,7 @@ func ExecuteComplex(ctx context.Context, tag string, count int, items []string) 
 		t.Errorf("missing ctx in positive invocation: %s", suite.PositiveTest)
 	}
 
-	fset := token.NewFileSet()
-	if _, err := parser.ParseFile(fset, "complex_test.go", res.GeneratedCode, parser.AllErrors); err != nil {
-		t.Fatalf("complex test code failed parsing: %v\nCode:\n%s", err, res.GeneratedCode)
-	}
+	assertTypeChecks(t, src, res)
 }
 
 // =========================================================================

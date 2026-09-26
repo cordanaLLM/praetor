@@ -1,0 +1,3 @@
+type: fixed
+title: "difftest: synthesize tests that type-check against the real signature (one argument per parameter, one value per result, imports only when used), keep generic receivers distinct, and drop negative-test error demands and checks that could never fail"
+breaking: false

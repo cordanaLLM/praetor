@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"strings"
+	"unicode"
 )
 
 // maxNodeStack bounds the AST ancestor stack kept while walking a Go file (HISS-02).
@@ -35,24 +36,26 @@ func scanGoSource(data []byte, rel string, rep *ScanReport, opts ScanOptions) {
 		return
 	}
 	g := &goScanner{
-		fset:   fset,
-		rel:    rel,
-		rep:    rep,
-		maxLOC: opts.MaxFuncLOC,
-		isTest: strings.HasSuffix(rel, "_test.go"),
-		safety: safetyCommentLines(fset, file),
+		fset:    fset,
+		rel:     rel,
+		rep:     rep,
+		maxLOC:  opts.MaxFuncLOC,
+		isTest:  strings.HasSuffix(rel, "_test.go"),
+		safety:  safetyCommentLines(fset, file),
+		imports: FileImports(file),
 	}
 	g.walk(file)
 }
 
 type goScanner struct {
-	fset   *token.FileSet
-	rel    string
-	rep    *ScanReport
-	maxLOC int
-	isTest bool
-	safety map[int]struct{}
-	stack  []ast.Node
+	fset    *token.FileSet
+	rel     string
+	rep     *ScanReport
+	maxLOC  int
+	isTest  bool
+	safety  map[int]struct{}
+	imports GoImports
+	stack   []ast.Node
 }
 
 // walk visits every node once with an explicit ancestor stack; the traversal itself is
@@ -82,6 +85,36 @@ func ReceiverName(fn *ast.FuncDecl) string {
 		return ""
 	}
 	return fn.Recv.List[0].Names[0].Name
+}
+
+// maxReceiverTypeDepth bounds the pointer, parenthesis and instantiation layers
+// ReceiverTypeName unwraps (HISS-02). A valid receiver nests at most a few deep.
+const maxReceiverTypeDepth = 8
+
+// ReceiverTypeName returns the declared type name at the root of a method receiver's type
+// expression, unwrapping a pointer, parentheses and a generic instantiation: *Set[T],
+// (Pair[K, V]) and T all name their base type. It reports false for any other shape.
+//
+// Matching only *ast.Ident and *ast.StarExpr collapsed every generic receiver to one
+// placeholder, so same-named methods on different generic types collided.
+func ReceiverTypeName(expr ast.Expr) (string, bool) {
+	for i := 0; i < maxReceiverTypeDepth; i++ {
+		switch t := expr.(type) {
+		case *ast.Ident:
+			return t.Name, true
+		case *ast.StarExpr:
+			expr = t.X
+		case *ast.ParenExpr:
+			expr = t.X
+		case *ast.IndexExpr:
+			expr = t.X
+		case *ast.IndexListExpr:
+			expr = t.X
+		default:
+			return "", false
+		}
+	}
+	return "", false
 }
 
 // CallTargetsEnclosing reports whether a call targets the enclosing function itself: a bare
@@ -213,6 +246,7 @@ func (g *goScanner) inspect(n ast.Node) {
 	case *ast.CallExpr:
 		g.checkPanic(node)
 		g.checkSelfRecursion(node)
+		g.checkDotUnsafeCall(node)
 	case *ast.AssignStmt:
 		g.checkBlankAssign(node)
 	case *ast.IfStmt:
@@ -315,26 +349,58 @@ func isErrNotNil(cond ast.Expr) bool {
 	return strings.HasSuffix(strings.ToLower(lhs.Name), "err") && rhs.Name == "nil"
 }
 
-// checkUnsafe flags a use of package unsafe that is not covered by a SAFETY: comment
-// on the enclosing statement (HISS-09).
+// unsafeExports lists the names package unsafe exports, which a dot import binds as bare
+// identifiers in the file block.
+var unsafeExports = map[string]struct{}{
+	"Add": {}, "Alignof": {}, "Offsetof": {}, "Pointer": {}, "Sizeof": {},
+	"Slice": {}, "SliceData": {}, "String": {}, "StringData": {},
+}
+
+// checkUnsafe flags a selector on package unsafe that is not covered by a SAFETY proof
+// on the enclosing statement (HISS-09). The selector's package identifier is resolved
+// through the file's imports, so `import u "unsafe"; u.Pointer(p)` is the same use as
+// unsafe.Pointer(p), and a local or a different package spelled unsafe is not.
 func (g *goScanner) checkUnsafe(sel *ast.SelectorExpr) {
 	pkg, ok := sel.X.(*ast.Ident)
-	if !ok || pkg.Name != "unsafe" {
+	if !ok || !g.imports.Binds(pkg.Name, "unsafe") {
 		return
 	}
-	// A local named unsafe shadows the package, so the selector reaches that value and no
-	// unsafe operation occurs. The rule matched the identifier spelling rather than what it
-	// resolved to, so `var unsafe shim; return unsafe.Pointer` was reported as needing a
-	// SAFETY proof for reading a plain struct field.
-	if fn := g.enclosingFunc(); fn != nil && declaresLocal(fn.Body, "unsafe") {
+	g.checkUnsafeUse(pkg.Name, sel.Pos(), "unsafe."+sel.Sel.Name)
+}
+
+// checkDotUnsafeCall flags a call to a dot-imported unsafe function or conversion, such
+// as Pointer(&b[0]) under `import . "unsafe"`. The call is a bare identifier, so the
+// selector check never sees it. A dot-imported name in a type position without a
+// conversion, such as a parameter of type Pointer, is not reported.
+func (g *goScanner) checkDotUnsafeCall(call *ast.CallExpr) {
+	if !g.imports.DotImports("unsafe") {
 		return
 	}
-	useLine := g.line(sel.Pos())
+	ident, ok := ast.Unparen(call.Fun).(*ast.Ident)
+	if !ok {
+		return
+	}
+	if _, exported := unsafeExports[ident.Name]; !exported {
+		return
+	}
+	g.checkUnsafeUse(ident.Name, call.Pos(), "unsafe."+ident.Name)
+}
+
+// checkUnsafeUse records an unsafe use at pos unless local, the identifier that reached
+// package unsafe, is shadowed in the enclosing function or a SAFETY proof covers it.
+func (g *goScanner) checkUnsafeUse(local string, pos token.Pos, what string) {
+	// A local of the same name shadows the package, so the expression reaches that value
+	// and no unsafe operation occurs: `var unsafe shim; return unsafe.Pointer` reads a
+	// plain struct field.
+	if fn := g.enclosingFunc(); fn != nil && declaresLocal(fn.Body, local) {
+		return
+	}
+	useLine := g.line(pos)
 	stmtLine := g.enclosingStatementLine(useLine)
 	if g.hasSafety(stmtLine, useLine) {
 		return
 	}
-	g.record("HISS-09", sel.Pos(), "", "unsafe."+sel.Sel.Name+" without a preceding // SAFETY: proof comment")
+	g.record("HISS-09", pos, "", what+" without a preceding // SAFETY: proof comment")
 }
 
 // enclosingStatementLine returns the start line of the innermost statement or
@@ -366,17 +432,69 @@ func (g *goScanner) hasSafety(stmtLine, useLine int) bool {
 	return false
 }
 
-// safetyCommentLines maps the last line of every comment group containing a SAFETY:
-// proof, so a proof immediately above a statement (or inside it) exempts the statement.
+// safetyCommentLines maps the last line of every comment group stating a SAFETY proof,
+// so a proof immediately above a statement (or inside it) exempts the statement.
 func safetyCommentLines(fset *token.FileSet, file *ast.File) map[int]struct{} {
 	lines := make(map[int]struct{})
 	for _, group := range file.Comments {
 		text, valid := validatedCommentGroupText(group)
-		if valid && strings.Contains(text, "SAFETY:") {
+		if valid && isSafetyProof(text) {
 			lines[fset.Position(group.End()).Line] = struct{}{}
 		}
 	}
 	return lines
+}
+
+// safetyMarker opens a SAFETY proof comment line.
+const safetyMarker = "SAFETY:"
+
+// safetyPlaceholders are first words that defer a proof instead of stating one.
+var safetyPlaceholders = map[string]struct{}{"TODO": {}, "FIXME": {}, "XXX": {}, "TBD": {}}
+
+// isSafetyProof reports whether comment text states a SAFETY proof: a line that opens
+// with the marker, followed by a justification on that line or the lines after it in the
+// same comment group.
+//
+// Matching the marker as a substring made the proof vacuous: a bare `// SAFETY:`, a
+// deferred `// SAFETY: TODO`, and prose that merely names the marker mid-sentence each
+// exempted the unsafe use beneath them. Whether the justification is truthful is still
+// not decided here.
+func isSafetyProof(text string) bool {
+	lines := strings.Split(text, "\n")
+	for i := 0; i < len(lines); i++ {
+		rest, marked := strings.CutPrefix(strings.TrimSpace(lines[i]), safetyMarker)
+		if !marked {
+			continue
+		}
+		justification := strings.Fields(rest + " " + strings.Join(lines[i+1:], " "))
+		if isJustification(justification) {
+			return true
+		}
+	}
+	return false
+}
+
+// isJustification reports whether the words after a SAFETY marker carry content: at least
+// one letter or digit, and a first word that is not a placeholder.
+func isJustification(words []string) bool {
+	if len(words) == 0 {
+		return false
+	}
+	first := strings.ToUpper(strings.TrimFunc(words[0], isProofPunct))
+	if _, placeholder := safetyPlaceholders[first]; placeholder {
+		return false
+	}
+	return strings.IndexFunc(strings.Join(words, " "), isProofWordRune) >= 0
+}
+
+// isProofPunct reports whether r is neither a letter nor a digit.
+func isProofPunct(r rune) bool {
+	return !isProofWordRune(r)
+}
+
+// isProofWordRune reports whether r can carry the content of a justification.
+func isProofWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
 // validatedCommentGroupText checks the delimiter invariant required by
