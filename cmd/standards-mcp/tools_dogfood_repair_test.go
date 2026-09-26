@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	standardsconfig "github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 	"github.com/cordanaLLM/praetor/internal/repairrun"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func writeRepairExecutionMCPFixture(t *testing.T, srv *Server, root string) repairrun.Config {
@@ -28,10 +30,30 @@ func writeRepairExecutionMCPFixture(t *testing.T, srv *Server, root string) repa
 	if err := os.WriteFile(routing, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	config := repairrun.Config{Version: 1, SourceRoot: root, SourceSHA: strings.Repeat("a", 40), StateDir: filepath.Join(root, "repair-state"),
+	initGitRepo(t, root)
+	for _, args := range [][]string{{"add", "-A"}, {"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "fixture"}} {
+		if output, err := util.RunGit(t.Context(), root, args...); err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, output)
+		}
+	}
+	sha, err := util.RunGit(t.Context(), root, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := repairrun.Config{Version: 1, SourceRoot: root, SourceSHA: sha, StateDir: filepath.Join(root, "repair-state"),
 		AllowedFiles: []string{"internal/util/fixture.go"}, TestPackages: []string{"./internal/util"}, TimeoutSeconds: 30, MaxPatchBytes: 1024,
-		RepairPolicy: dogfood.RepairPolicy{RoutingConfig: routing, Task: "ci_debugging", InputTokens: 1000, OutputTokens: 500, MaxCost: 0.1},
-		Provider:     repairrun.ProviderConfig{BaseURL: "https://provider.example/v1", TokenCommand: filepath.Join(root, "nonexistent-helper"), TokenCommandSHA256: strings.Repeat("b", 64), Model: "cheap", MaxInputBytes: 65536, MaxOutputTokens: 256}}
+		RepairPolicy: dogfood.RepairPolicy{RoutingConfig: routing, Task: "ci_debugging", InputTokens: 1000,
+			OutputTokens: 500, MaxCost: 0.1, Register: "internal", RegisterSource: "surfaces.agent",
+			PromptRegister: "internal", PromptRegisterSource: "surfaces.prompts"},
+		Provider: repairrun.ProviderConfig{BaseURL: "https://provider.example/v1", TokenCommand: filepath.Join(root, "nonexistent-helper"), TokenCommandSHA256: strings.Repeat("b", 64), Model: "cheap", MaxInputBytes: 65536, MaxOutputTokens: 256}}
+	authority, err := standardsconfig.LoadRegisterAuthority(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.RepairPolicy, err = dogfood.CanonicalRepairPolicy(config.RepairPolicy, authority)
+	if err != nil {
+		t.Fatal(err)
+	}
 	saveRepairMCPConfig(t, root, config)
 	return config
 }
@@ -163,7 +185,7 @@ func TestRepairStatusMCPConsumesTerminalWithoutOptionalCost(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(terminal.AttemptDir, "started.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	terminal.Status, terminal.Consumed = "agent_failed", true
+	terminal.Status, terminal.Consumed = "not_reproduced", true
 	terminal.Usage = &repairrun.Usage{InputTokens: 1000, OutputTokens: 100}
 	data, err = json.Marshal(terminal)
 	if err != nil {
@@ -181,7 +203,7 @@ func TestRepairStatusMCPConsumesTerminalWithoutOptionalCost(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.Content[0].Text), &status); err != nil {
 		t.Fatal(err)
 	}
-	if status.Status != "consumed" || !status.Consumed || len(status.Jobs) != 1 || status.Jobs[0].Status != "agent_failed" {
+	if status.Status != "consumed" || !status.Consumed || len(status.Jobs) != 1 || status.Jobs[0].Status != "not_reproduced" {
 		t.Fatalf("terminal outcome lost: %+v", status)
 	}
 	after, err := os.ReadFile(resultPath)

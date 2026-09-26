@@ -69,7 +69,7 @@ func TestValidTaskLabel(t *testing.T) {
 	if !ValidTaskLabel("ci_debugging") {
 		t.Fatal("a declared label shape must be valid")
 	}
-	for _, bad := range []string{"", " padded", "tab\tinside", "line\nbreak", strings.Repeat("x", maxRoutingNameBytes+1)} {
+	for _, bad := range []string{"", " padded", "tab\tinside", "line\nbreak", "escape\x1b[31m", "vertical\vtab", strings.Repeat("x", maxRoutingNameBytes+1)} {
 		if ValidTaskLabel(bad) {
 			t.Fatalf("label %q must be rejected", bad)
 		}

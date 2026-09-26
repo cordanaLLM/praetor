@@ -40,6 +40,9 @@ func TestCheckPositive(t *testing.T) {
 	}{
 		"ansi escape":    {"build \x1b[31mred\x1b[0m output", []string{RuleTerminalNoise}},
 		"ansi in fence":  {"```\n\x1b[1mbold log\x1b[m\n```", []string{RuleTerminalNoise}},
+		"CGJ":            {"w\u034fe", []string{RuleTerminalNoise}},
+		"CGJ in fence":   {"```\nw\u034fe\n```", []string{RuleTerminalNoise}},
+		"text variation": {"ready\ufe0e", []string{RuleTerminalNoise}},
 		"emoji":          {"done 🎉", []string{RuleTerminalNoise}},
 		"filler please":  {"Please rerun sync.", []string{RuleFiller}},
 		"in order to":    {"rerun sync in order to push", []string{RuleFiller}},
@@ -74,6 +77,7 @@ func TestCheckNegative(t *testing.T) {
 		"link target article":  "see [ledger](docs/the/a/an/state.md)",
 		"off region":           OffMarker + "\nI think the gate probably failed.\n" + OnMarker,
 		"multi-line comment":   "<!--\nNote that the comment is probably prose.\n-->",
+		"visible combining":    "cafe\u0301",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if report := Check(text, Options{}); !report.Passed() {

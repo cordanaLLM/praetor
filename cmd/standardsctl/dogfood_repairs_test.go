@@ -36,7 +36,7 @@ func repairCLIFixture(t *testing.T) []string {
 		t.Fatal("failed suite fixture did not fail")
 	}
 	routing := filepath.Join(root, "routing.yaml")
-	body := "version: 1\ntiers:\n  debug:\n    target_tasks: [ci_debugging]\n    models:\n      - id: cheap\n        family: openai\n        cost_per_m_in: 1\n        cost_per_m_out: 1\ngovernance:\n  exhaustion_threshold_percent: 80\n"
+	body := "version: 1\ntiers:\n  debug:\n    target_tasks: [ci_debugging, architecture_synthesis, function_docstrings, commit_message_synthesis, waiver_signoff]\n    models:\n      - id: cheap\n        family: openai\n        cost_per_m_in: 1\n        cost_per_m_out: 1\ngovernance:\n  exhaustion_threshold_percent: 80\n"
 	if err := os.WriteFile(routing, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +51,27 @@ func TestDogfoodRepairCLIActualFailedSuite(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(args[len(args)-1], "plan.json"))
 	if err != nil || !strings.Contains(string(data), `"review_required"`) {
 		t.Fatalf("readback %v", err)
+	}
+	var plan dogfood.RepairPlan
+	if err := json.Unmarshal(data, &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Policy.Register != "internal" || plan.Policy.RegisterSource != "surfaces.agent" ||
+		plan.Policy.PromptRegister != "internal" || plan.Policy.PromptRegisterSource != "surfaces.prompts" ||
+		len(plan.Policy.RegisterManifestSHA256) != 64 {
+		t.Fatalf("repair plan lost exact register resolutions: %+v", plan.Policy)
+	}
+	if len(plan.Jobs) != 1 || plan.Jobs[0].RegisterSource != plan.Policy.RegisterSource ||
+		plan.Jobs[0].PromptRegister != plan.Policy.PromptRegister ||
+		plan.Jobs[0].PromptRegisterSource != plan.Policy.PromptRegisterSource ||
+		plan.Jobs[0].RegisterManifestSHA256 != plan.Policy.RegisterManifestSHA256 {
+		t.Fatalf("repair job lost register resolution provenance: %+v", plan.Jobs)
+	}
+	_, explicit, err := loadRepairInputs(context.Background(), args[1], dogfood.RepairPolicy{Task: "architecture_synthesis"})
+	if err != nil || explicit.Register != "docs" || explicit.RegisterSource != "tasks.architecture_synthesis" ||
+		explicit.PromptRegister != "internal" || explicit.PromptRegisterSource != "surfaces.prompts" ||
+		explicit.RegisterManifestSHA256 != plan.Policy.RegisterManifestSHA256 {
+		t.Fatalf("task and prompt surfaces were not resolved independently: policy=%+v err=%v", explicit, err)
 	}
 	if err := runDogfoodRepairs(context.Background(), args); err == nil {
 		t.Fatal("existing output overwritten")

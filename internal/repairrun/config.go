@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 )
 
@@ -34,8 +36,9 @@ type Config struct {
 }
 
 type configuration struct {
-	config Config
-	digest string
+	config            Config
+	digest            string
+	registerAuthority config.RegisterAuthority
 }
 
 func loadConfig(ctx context.Context, path, boundary string) (*configuration, error) {
@@ -60,7 +63,42 @@ func loadConfig(ctx context.Context, path, boundary string) (*configuration, err
 			}
 		}
 	}
-	return &configuration{config: cfg, digest: bytesSHA(data)}, nil
+	authority, err := loadPinnedRegisterAuthority(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	cfg.RepairPolicy, err = dogfood.VerifyRepairPolicyAuthority(cfg.RepairPolicy, authority)
+	if err != nil {
+		return nil, err
+	}
+	if err := dogfood.ValidateRepairPolicy(ctx, cfg.RepairPolicy); err != nil {
+		return nil, err
+	}
+	return &configuration{config: cfg, digest: bytesSHA(data), registerAuthority: authority}, nil
+}
+
+func loadPinnedRegisterAuthority(ctx context.Context, cfg Config) (config.RegisterAuthority, error) {
+	kind, err := runGit(ctx, cfg.SourceRoot, 128, "cat-file", "-t", cfg.SourceSHA)
+	if err != nil || string(kind) != "commit\n" {
+		return config.RegisterAuthority{}, errors.New("source_sha must identify an immutable commit")
+	}
+	entry, err := runGit(ctx, cfg.SourceRoot, 512, "ls-tree", "-z", cfg.SourceSHA, "--", ".standards.yaml")
+	if err != nil {
+		return config.RegisterAuthority{}, errors.New("pinned register manifest lookup failed")
+	}
+	if len(entry) == 0 {
+		return config.AbsentRegisterAuthority(), nil
+	}
+	header, name, ok := strings.Cut(strings.TrimSuffix(string(entry), "\x00"), "\t")
+	fields := strings.Fields(header)
+	if !ok || name != ".standards.yaml" || !validBlobHeader(fields) || strings.ContainsRune(name, '\x00') {
+		return config.RegisterAuthority{}, errors.New("pinned register manifest is not a regular file")
+	}
+	data, err := runGit(ctx, cfg.SourceRoot, contextopt.MaxSourceBytes, "cat-file", "blob", fields[2])
+	if err != nil {
+		return config.RegisterAuthority{}, errors.New("pinned register manifest read failed")
+	}
+	return config.ParseRegisterAuthority(data, cfg.SourceSHA+":.standards.yaml")
 }
 
 func validateConfig(c Config) error {

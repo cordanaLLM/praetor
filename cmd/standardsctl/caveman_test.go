@@ -101,6 +101,211 @@ func TestCavemanCheckMessageKinds(t *testing.T) {
 	}
 }
 
+func TestCavemanCheckRejectsDefaultIgnorableCombiningText(t *testing.T) {
+	hidden := "verdict: pass\nchanged: none\nran: w\u034fe a\u034fre ready\nevidence: none\nopen: none\n"
+	out, err := runCavemanCLI(t, hidden, "check", "--kind=return", "-")
+	if err == nil || !strings.Contains(out, "U+034F") {
+		t.Fatalf("default-ignorable grammar must fail: err=%v\n%s", err, out)
+	}
+	visible := "verdict: pass\nchanged: none\nran: cafe\u0301 check\nevidence: none\nopen: none\n"
+	if out, err = runCavemanCLI(t, visible, "check", "--kind=return", "-"); err != nil || !strings.Contains(out, ": PASS") {
+		t.Fatalf("visible combining text must pass: err=%v\n%s", err, out)
+	}
+}
+
+func TestCavemanCheckRejectsASCIIPunctuationGrammar(t *testing.T) {
+	hidden := "verdict: pass\nchanged: none\nran: w.e w:e w_e w-e w+e w=e w#e w|e w~e w,e\n" +
+		"evidence: none\nopen: none\n"
+	out, err := runCavemanCLI(t, hidden, "check", "--kind=return", "-")
+	if err == nil || !strings.Contains(out, `C9 grammar: pronoun "we"`) {
+		t.Fatalf("ASCII punctuation grammar must fail: err=%v\n%s", err, out)
+	}
+	literal := "verdict: pass\nchanged: none\nran: HTTPS://example.test/we/is\nevidence: none\nopen: none\n"
+	if out, err = runCavemanCLI(t, literal, "check", "--kind=return", "-"); err != nil || !strings.Contains(out, ": PASS") {
+		t.Fatalf("mixed-case URL literal must pass: err=%v\n%s", err, out)
+	}
+}
+
+func TestCavemanCheckRejectsUnicodePunctuationGrammar(t *testing.T) {
+	hidden := "verdict: pass\nchanged: none\nran: w\uFF0Ee w\u00B7e w\u2014e w\uFF0Fe w\u2215e w\u2024e\n" +
+		"evidence: none\nopen: none\n"
+	out, err := runCavemanCLI(t, hidden, "check", "--kind=return", "-")
+	if err == nil || !strings.Contains(out, `C9 grammar: pronoun "we"`) {
+		t.Fatalf("Unicode punctuation grammar must fail: err=%v\n%s", err, out)
+	}
+}
+
+func TestCavemanCheckRejectsUnsafeControls(t *testing.T) {
+	hidden := "verdict: pass\nchanged: none\nran: w\x00e w\x08e w\x7fe\nevidence: none\nopen: none\n"
+	out, err := runCavemanCLI(t, hidden, "check", "--kind=return", "-")
+	if err == nil || !strings.Contains(out, "C4 terminal-noise: U+0000 control") {
+		t.Fatalf("unsafe controls must fail: err=%v\n%s", err, out)
+	}
+	safeWhitespace := "verdict:\tpass\r\nchanged: none\r\nran: w\te check\r\nevidence: none\r\nopen: none\r\n"
+	if out, err = runCavemanCLI(t, safeWhitespace, "check", "--kind=return", "-"); err != nil || !strings.Contains(out, ": PASS") {
+		t.Fatalf("tab and CRLF boundaries must pass: err=%v\n%s", err, out)
+	}
+}
+
+func TestCavemanCheckPreservesCompleteURLAndPathLiterals(t *testing.T) {
+	text := "verdict: pass\n" +
+		"changed: C:/work/we/is/value.go internal/we/is/value.go:42 /work/we/is/value.go:42:7 " +
+		"C:\\work\\we\\is\\value.go:42 C:/work/we/is/value.go:42\n" +
+		"ran: https://example.test/log_(we)/is (HTTPS://example.test/log_(we)/is)\n" +
+		"evidence: none\nopen: none\n"
+	out, err := runCavemanCLI(t, text, "check", "--kind=return", "-")
+	if err != nil || !strings.Contains(out, ": PASS") {
+		t.Fatalf("complete URL and path literals must pass: err=%v\n%s", err, out)
+	}
+}
+
+func TestCavemanCheckRejectsAdversarialGrammarAndPhrases(t *testing.T) {
+	cases := map[string]struct {
+		value string
+		want  string
+	}{
+		"visible combining grammar": {"w\u0301e ready", `C9 grammar: pronoun "we"`},
+		"segmented flags":           {"--we. --w.e --w-e --w_e", `C9 grammar: pronoun "we"`},
+		"segmented hedge":           {"prob.ably", "C3 hedge: probably"},
+		"segmented fillers":         {"note.that in.order.to as.requested", "C2 filler:"},
+		"wrapped filler":            {"note\nthat", "C2 filler: note that"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			text := "verdict: pass\nchanged: none\nran: " + tc.value + "\nevidence: none\nopen: none\n"
+			out, err := runCavemanCLI(t, text, "check", "--kind=return", "-")
+			if err == nil || !strings.Contains(out, tc.want) {
+				t.Fatalf("adversarial CLI input must fail with %q: err=%v\n%s", tc.want, err, out)
+			}
+		})
+	}
+}
+
+func TestCavemanCheckPreservesAdversarialBoundaries(t *testing.T) {
+	text := "verdict: pass\n" +
+		"changed: internal/(we)/is/value.go\n" +
+		"ran: notify we@example.com. cafe\u0301 --max-words=3 --write-output --run=TestValue\n" +
+		"evidence: none\nopen: none\n"
+	out, err := runCavemanCLI(t, text, "check", "--kind=return", "-")
+	if err != nil || !strings.Contains(out, ": PASS") {
+		t.Fatalf("literal and technical boundaries must pass: err=%v\n%s", err, out)
+	}
+}
+
+func TestCavemanCheckRejectsCompatibilityAndUnicodeSeparators(t *testing.T) {
+	cases := map[string]struct {
+		value string
+		want  string
+	}{
+		"line separator":      {"value\u2028check", "C4 terminal-noise: U+2028 line separator"},
+		"paragraph separator": {"value\u2029check", "C4 terminal-noise: U+2029 line separator"},
+		"modifier apostrophe": {"we\u02bcre ready", `C9 grammar: pronoun "we're"`},
+		"modifier hedge":      {"prob\u02bcably", "C3 hedge: probably"},
+		"fullwidth grammar":   {"\uff57\uff45 ready", `C9 grammar: pronoun "we"`},
+		"circled grammar":     {"ⓦⓔ ready", `C9 grammar: pronoun "we"`},
+		"bold grammar":        {"𝐰𝐞 ready", `C9 grammar: pronoun "we"`},
+		"double grammar":      {"𝕨𝕖 ready", `C9 grammar: pronoun "we"`},
+		"modifier grammar":    {"ʷᵉ ready", `C9 grammar: pronoun "we"`},
+		"pseudo path":         {"we／are／value．go", `C9 grammar: pronoun "we"`},
+		"pseudo mail":         {"we＠example．com", `C9 grammar: pronoun "we"`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			text := "verdict: pass\nchanged: none\nran: " + tc.value + "\nevidence: none\nopen: none\n"
+			out, err := runCavemanCLI(t, text, "check", "--kind=return", "-")
+			if err == nil || !strings.Contains(out, tc.want) {
+				t.Fatalf("CLI escape must fail with %q: err=%v\n%s", tc.want, err, out)
+			}
+		})
+	}
+}
+
+func TestCavemanCheckRejectsResidualUnicodeConfusables(t *testing.T) {
+	cases := map[string]string{
+		"turned comma":          "(we\u02BBre),",
+		"prime":                 "(we\u02B9re),",
+		"acute accent":          "(we\u02CAre),",
+		"grave accent":          "(we\u02CBre),",
+		"small letter saltillo": "(we\uA78Cre),",
+		"legacy script":         "(𝓌ℯ),",
+		"parenthesized Latin":   "(⒲⒠),",
+		"small capitals":        "(ᴡᴇ),",
+		"modifier subscript":    "(ʷₑ),",
+	}
+	for name, value := range cases {
+		t.Run(name, func(t *testing.T) {
+			text := "verdict: pass\nchanged: none\nran: " + value + " ready\nevidence: none\nopen: none\n"
+			out, err := runCavemanCLI(t, text, "check", "--kind=return", "-")
+			if err == nil || !strings.Contains(out, "-:3 C9 grammar: pronoun") {
+				t.Fatalf("CLI confusable must fail at exact source line: err=%v\n%s", err, out)
+			}
+		})
+	}
+}
+
+func TestCavemanCheckPreservesMSVCDefineFlags(t *testing.T) {
+	valid := "verdict: pass\nchanged: none\nran: clang-cl /DDEBUG /DDEBUG=1 /Dwe /Dwe=are (/Dwe=are), source.c\nevidence: none\nopen: none\n"
+	out, err := runCavemanCLI(t, valid, "check", "--kind=return", "-")
+	if err != nil || !strings.Contains(out, ": PASS") {
+		t.Fatalf("valid /Dmacro[=value] flags must pass CLI: err=%v\n%s", err, out)
+	}
+	invalid := "verdict: pass\nchanged: none\nran: /D-we /D=we /D.we\nevidence: none\nopen: none\n"
+	out, err = runCavemanCLI(t, invalid, "check", "--kind=return", "-")
+	if err == nil || !strings.Contains(out, `-:3 C9 grammar: pronoun "we"`) {
+		t.Fatalf("invalid /D lookalikes must remain lintable: err=%v\n%s", err, out)
+	}
+}
+
+func TestCavemanCheckPreservesWrappedPlatformLiteralsAndShortFlags(t *testing.T) {
+	text := "verdict: pass\n" +
+		"changed: (internal/(we)/is/value.go). internal/(we)/is/ internal\\(we)\\is\\ " +
+		"internal/(we)/is/value.go:42). (C:\\café\\(we)\\is\\value.go:42). " +
+		"C:\\café\\(we)\\is\\value.go:42). (\\\\sérver\\share\\(we)\\is\\value.go). " +
+		"\\\\sérver\\share\\(we)\\is\\value.go:42).\n" +
+		"ran: notify (we@example.com). -I -i -a /I clang -I/usr/include source.c " +
+		"clang -I=/usr/include source.c rock\u02bcn\n" +
+		"evidence: none\nopen: none\n"
+	out, err := runCavemanCLI(t, text, "check", "--kind=return", "-")
+	if err != nil || !strings.Contains(out, ": PASS") {
+		t.Fatalf("platform literals and short flags must pass: err=%v\n%s", err, out)
+	}
+}
+
+func TestCavemanCheckLiteralWrapperBoundary(t *testing.T) {
+	base := "internal/(we)/is/value.go:42"
+	makeReturn := func(value string) string {
+		return "verdict: pass\nchanged: " + value + "\nran: none\nevidence: none\nopen: none\n"
+	}
+	at := base + strings.Repeat(")", 4)
+	out, err := runCavemanCLI(t, makeReturn(at), "check", "--kind=return", "-")
+	if err != nil || !strings.Contains(out, ": PASS") {
+		t.Fatalf("four wrapper layers must pass: err=%v\n%s", err, out)
+	}
+	over := base + strings.Repeat(")", 5)
+	out, err = runCavemanCLI(t, makeReturn(over), "check", "--kind=return", "-")
+	if err == nil || !strings.Contains(out, `C9 grammar: pronoun "we"`) {
+		t.Fatalf("fifth wrapper layer must remain visible: err=%v\n%s", err, out)
+	}
+}
+
+func TestCavemanCheckPhraseFindingLineIsExactAndUnique(t *testing.T) {
+	cases := map[string]struct {
+		text string
+		line string
+	}{
+		"same line": {"verdict: pass\nchanged: none\nran: alpha\nnote that\nevidence: none\nopen: none", "-:4 C2 filler: note that"},
+		"wrapped":   {"verdict: pass\nchanged: none\nran: note\nthat\nevidence: none\nopen: none", "-:3 C2 filler: note that"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := runCavemanCLI(t, tc.text, "check", "--kind=return", "-")
+			if err == nil || strings.Count(out, "C2 filler: note that") != 1 || !strings.Contains(out, tc.line) {
+				t.Fatalf("CLI phrase attribution mismatch: err=%v\n%s", err, out)
+			}
+		})
+	}
+}
+
 func TestCavemanCheckBoundary(t *testing.T) {
 	dir := t.TempDir()
 	prose := writeFixtureFile(t, dir, "prose.md", cavemanProse)

@@ -166,7 +166,8 @@ func TestModelsRouteCLIReportsTheTaskRegister(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Register != "social" || report.RegisterSource != "tasks.summarize" || report.MaxTokens != 512 {
+	if report.Register != "social" || report.RegisterSource != "tasks.summarize" || report.MaxTokens != 512 ||
+		len(report.RegisterManifestSHA256) != 64 {
 		t.Fatalf("register = %q from %q with %d tokens", report.Register, report.RegisterSource, report.MaxTokens)
 	}
 	if report.Request.OutputTokens != 512 || !strings.Contains(report.Limitations, "seeded from the 512-token budget of tasks.summarize") {
@@ -179,13 +180,17 @@ func TestModelsRouteCLIReportsTheTaskRegister(t *testing.T) {
 	if explicit.Tier != report.Tier || explicit.Model.ID != report.Model.ID {
 		t.Fatal("the register must never change the selected tier or model")
 	}
+	if explicit.RegisterManifestSHA256 != report.RegisterManifestSHA256 {
+		t.Fatal("one manifest snapshot produced two register digests")
+	}
 
 	// Boundary: a routing label without a row falls back to surfaces.agent, no budget.
 	fallback, err := routeReport(t, "--config="+path, "--task=implement", "--input-tokens=100")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fallback.Register != "internal" || fallback.RegisterSource != "surfaces.agent" || fallback.MaxTokens != 0 {
+	if fallback.Register != "internal" || fallback.RegisterSource != "surfaces.agent" || fallback.MaxTokens != 0 ||
+		fallback.RegisterManifestSHA256 != report.RegisterManifestSHA256 {
 		t.Fatalf("fallback register = %q from %q with %d tokens", fallback.Register, fallback.RegisterSource, fallback.MaxTokens)
 	}
 }

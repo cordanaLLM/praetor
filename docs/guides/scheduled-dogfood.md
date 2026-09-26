@@ -31,10 +31,18 @@ transcripts. Public cases require `allow_remote: true` explicitly.
     "task": "ci_debugging",
     "input_tokens": 8000,
     "output_tokens": 2000,
-    "max_cost": 0.1
+    "max_cost": 0.1,
+    "register": "internal",
+    "register_source": "surfaces.agent",
+    "prompt_register": "internal",
+    "prompt_register_source": "surfaces.prompts"
   }
 }
 ```
+
+The task and prompt register resolutions are mandatory. Use the exact values resolved
+from the repository manifest; `max_output_tokens` is optional when that task row has no
+budget. A missing, partial, or contradictory tuple fails status and run admission.
 
 Inspect the configuration and run one bounded tick:
 

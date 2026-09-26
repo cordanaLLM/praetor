@@ -10,12 +10,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 const repairRoutingFixture = `version: 1
 tiers:
   debug:
-    target_tasks: [ci_debugging]
+    target_tasks: [ci_debugging, architecture_synthesis, function_docstrings, commit_message_synthesis, waiver_signoff]
     models:
       - id: costly
         family: openai
@@ -41,7 +43,14 @@ func repairTestFile(t *testing.T, body string) string {
 
 func repairTestPolicy(t *testing.T) RepairPolicy {
 	t.Helper()
-	return RepairPolicy{RoutingConfig: repairTestFile(t, repairRoutingFixture), Task: "ci_debugging", InputTokens: 1000, OutputTokens: 500, MaxCost: 0.01}
+	policy := RepairPolicy{RoutingConfig: repairTestFile(t, repairRoutingFixture), Task: "ci_debugging",
+		InputTokens: 1000, OutputTokens: 500, MaxCost: 0.01, Register: "internal",
+		RegisterSource: "surfaces.agent", PromptRegister: "internal", PromptRegisterSource: "surfaces.prompts"}
+	policy, err := CanonicalRepairPolicy(policy, config.AbsentRegisterAuthority())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return policy
 }
 
 func repairTestReport(t *testing.T, count int) *SuiteReport {

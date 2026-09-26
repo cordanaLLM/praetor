@@ -19,7 +19,7 @@ func TestRunRealBubblewrapRepairAndReadback(t *testing.T) {
 		if strings.Contains(prompt, "/private/not-readable") {
 			t.Fatal("private report path leaked into prompt")
 		}
-		return &Proposal{Summary: "repair fixture", ActualModel: "fixture-model", Edits: []Edit{{Path: "internal/fixture/value.go", OriginalSHA256: bytesSHA([]byte(originalFixture)), Content: repairedFixture}}, Usage: Usage{InputTokens: 20, OutputTokens: 10}}, nil
+		return &Proposal{Summary: validInternalRepairSummary, ActualModel: "fixture-model", Edits: []Edit{{Path: "internal/fixture/value.go", OriginalSHA256: bytesSHA([]byte(originalFixture)), Content: repairedFixture}}, Usage: Usage{InputTokens: 20, OutputTokens: 10}}, nil
 	}
 	result, err := run(t.Context(), f.configPath, f.reportPath, generate, verifyWorkspace)
 	if err != nil || !result.CandidateVerified || result.Status != "scoped_test_verified" || calls != 1 {
@@ -48,7 +48,7 @@ func TestRunRejectsInitExitZeroAsVerification(t *testing.T) {
 	requireVerificationRuntime(t)
 	f := newRunFixture(t, 1)
 	generate := func(context.Context, ProviderConfig, string) (*Proposal, error) {
-		return &Proposal{Edits: []Edit{{Path: "internal/fixture/value.go", OriginalSHA256: bytesSHA([]byte(originalFixture)), Content: "package fixture\nimport \"os\"\nfunc init(){ os.Exit(0) }\nfunc Value() int { return 2 }\n"}}}, nil
+		return &Proposal{Summary: validInternalRepairSummary, Edits: []Edit{{Path: "internal/fixture/value.go", OriginalSHA256: bytesSHA([]byte(originalFixture)), Content: "package fixture\nimport \"os\"\nfunc init(){ os.Exit(0) }\nfunc Value() int { return 2 }\n"}}}, nil
 	}
 	result, err := run(t.Context(), f.configPath, f.reportPath, generate, verifyWorkspace)
 	if err == nil || result == nil || result.CandidateVerified || result.Status != "change_rejected" {
@@ -146,7 +146,7 @@ func TestRunRejectsWrongEditsWithoutVerification(t *testing.T) {
 			f := newRunFixture(t, 1)
 			calls := 0
 			generate := func(context.Context, ProviderConfig, string) (*Proposal, error) {
-				return &Proposal{Edits: []Edit{edit}}, nil
+				return &Proposal{Summary: validInternalRepairSummary, Edits: []Edit{edit}}, nil
 			}
 			verify := func(ctx context.Context, cfg Config, path string) (*TestResult, []byte, error) {
 				calls++

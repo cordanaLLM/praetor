@@ -26,11 +26,14 @@ func loadRepairInputs(ctx context.Context, reportPath string, policy dogfood.Rep
 	if err != nil {
 		return nil, policy, err
 	}
-	resolution, err := resolveTaskRegister(ctx, policy.Task)
+	authority, err := loadRegisterAuthority(ctx)
 	if err != nil {
 		return nil, policy, err
 	}
-	policy.Register, policy.MaxOutputTokens = string(resolution.Register), resolution.MaxTokens
+	policy, err = dogfood.CanonicalRepairPolicy(policy, authority)
+	if err != nil {
+		return nil, policy, fmt.Errorf("text register: %w", err)
+	}
 	return report, policy, nil
 }
 

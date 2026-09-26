@@ -113,11 +113,13 @@ The report gains `register`, `register_source` and, when the row has one, `max_t
 When `--output-tokens` is absent and the row has a budget, the budget becomes the output
 estimate and `limitations` says so.
 
-`praetorctl dogfood repairs --task <label>` resolves the same row. Each planned job carries
-`register` and `max_output_tokens`, and its instructions end with one register sentence. A
-`dogfood repairs run` applies the budget as the provider's `max_output_tokens` and records
-the register beside provider usage in its report. The budget can only lower the limit of
-the run configuration; it never raises it.
+`praetorctl dogfood repairs --task <label>` resolves that task row and the independent
+`prompts` surface. Each planned job carries `register`, `register_source`,
+`max_output_tokens`, `prompt_register` and `prompt_register_source`; its task instructions
+end with one register sentence. A `dogfood repairs run` uses the prompt row for its static
+prompt and Responses API instructions, uses the task row for the job brief and proposal
+summary, and records both resolutions beside provider usage. The task budget can only
+lower the limit of the run configuration; it never raises it.
 
 Only the rows a manifest writes are checked against the label set. The default rows are
 not, so a repository with its own labels is never failed by rows it did not write.
@@ -208,14 +210,54 @@ and `--kind=return` add their documented schema, while `--kind=context` selects 
 gate's compatibility profile. Every result identifies which numbered skill rules remained
 advisory.
 
-Not mechanically checkable, because the text is composed at conversation time rather than
-read from a repository file: an agent-to-agent return or brief, MCP tool and property
-descriptions and results, hook and gate messages, provider/repair/notebook/harness prompt
-bodies, `.workingdir` ledger free text (gitignored, so a tracked-file gate cannot see it
-either), and popup question text. `internal/caveman` exists so each producer can validate a
-value before sending it; producer wiring remains separate work (#414). Static extraction
-from non-Markdown source remains #364. A green repository gate therefore proves tracked
-context text, not runtime chat or prompt compliance.
+Repair planning and execution call `config.ValidateEmission` before dispatch or source
+mutation. The planner records its task-brief verdict. The executor rechecks that brief,
+checks its own prompt scaffold against `surfaces.prompts`, records the separate Responses
+API instructions as a prompt-surface message, and checks the proposal summary against the
+task row as a return. Internal failures stop before the next boundary; `social` and `docs`
+record `not_applicable`. Each record names the exact resolved register, token ceiling,
+surface, kind, typed source and manifest SHA-256, plus the checker contract version and
+SHA-256 of the exact text; a positive task ceiling is enforced for internal task text and
+provider output.
+
+Runtime emission text is adversarial input, not a trusted Markdown source. Its strict
+profile rejects off regions, comments, fences, headings, tables and ledger rows; quoted and
+inline-code prose remains visible to grammar checks. Unsafe Unicode control characters on a
+line, format controls, `Other_Default_Ignorable_Code_Point` values such as U+034F COMBINING
+GRAPHEME JOINER, and variation selectors are rejected. Tabs and normalized LF/CRLF line
+boundaries remain valid, as do ordinary visible combining marks. HTML entities/tags,
+Markdown links and malformed punctuation cannot split or hide banned grammar. Literal
+recognition is narrow: complete HTTP(S) URLs, rooted or extension-bearing slash paths,
+forward- or backslash-drive paths, UNC paths, `:line[:column]` diagnostics, domain-qualified
+mail tokens and syntactically valid non-grammar flags retain source spelling. One-letter
+technical flags and path-valued attached forms such as `-I/usr/include` and
+`-I=/usr/include` are literals. MSVC and clang-cl attached macro definitions matching
+`/Dmacro[=value]` are literals; other slash-prefixed prose remains lintable. URL schemes are
+ASCII case-insensitive; parentheses within complete URLs remain part of the literal, and
+recognition removes at most four terminal
+layers of sentence punctuation, balanced wrappers or unmatched closing wrappers. Commands
+and field-like diagnostics remain usable.
+
+Grammar matching applies a bounded compatibility fold to fullwidth ASCII, circled and
+parenthesized Latin, mathematical Latin ranges and legacy symbols, small-capital, modifier
+and subscript Latin letters, ideographic space and an explicit apostrophe-confusable set.
+Literal recognition always examines the original spelling first: compatibility
+punctuation such as the slash, full stop or at sign cannot manufacture a protected path or
+mail token. Every other Unicode punctuation or symbol separator is joined and split for
+grammar matching. An
+evidence pointer suppresses nothing unless the complete line has the canonical path,
+12-hex digest and line-count form. Initial validation and terminal replay call this same
+profile.
+
+Still not mechanically checked: dynamic MCP tool descriptions and results; hook and gate
+diagnostics; notebook prompts; Paperclip synthesis (#321); `.workingdir` ledger free text;
+popup question text; and native-client chats or hooks (#415). No `internal` label may imply
+coverage of those surfaces. Static extraction from non-Markdown source remains #364. A
+green repository gate proves tracked context text. Repair terminal readback additionally
+reconstructs deterministic owned text, rereads the retained proposal summary and replays
+the current checker. It rejects missing records, changed bytes, stale checker contracts,
+forged digests and mismatched register provenance; it does not make unlisted runtime
+surfaces verified.
 
 ## Surfaces without a register row
 
@@ -346,7 +388,7 @@ comment names for exactly this case.
 | `C1 article-density` | more than 2.0 `a`/`an`/`the` per 100 prose words, judged once the text holds 40 prose words |
 | `C2 filler` | "based on", "I think", "note that", "it is important", "it looks like", "in order to", "as requested", "let me", "please" |
 | `C3 hedge` | "probably", "seems", "might", "basically", "simply", "just", "really", "actually" |
-| `C4 terminal-noise` | an ANSI escape anywhere; box drawing (U+2500-257F) or emoji outside code |
+| `C4 terminal-noise` | an ANSI escape, unsafe control character other than tab or Unicode default-ignorable anywhere; box drawing (U+2500-257F) or emoji outside code |
 | `C5 long-sentence` | a sentence over 30 prose words without a `;`, `->` or `:` break |
 | `C6 unclosed-off-region` | `<!-- caveman:off -->` without a later `<!-- caveman:on -->` |
 | `C7 word-ceiling` | `Options.MaxProseWords` is set (opt-in, 0 means no ceiling) and `Report.ProseWords` exceeds it |
@@ -355,9 +397,10 @@ comment names for exactly this case.
 | `C10 message-shape` | a brief lacks `goal`/`inputs`/`return`/`evidence`/`task`, a return lacks `verdict`/`changed`/`ran`/`evidence`/`open`, the answer field is not first, or known fields share a line |
 
 The 2.0 threshold is measured, not chosen: the prose AGENTS.md read 8.7 articles per 100
-prose words, its hand-written caveman rewrite reads 0.3. C2, C3 and C9 ignore quoted text,
-so a rule that names a banned phrase in quotes does not trip itself. C7 and C8 are opt-in,
-unlike C1-C6: a ceiling is a property of one surface (600 prose words for a persona or a skill; the evidence bound,
+prose words, its hand-written caveman rewrite reads 0.3. Source-document `Check` masks quoted
+text so a rule that names a banned phrase does not trip itself; adversarial `CheckRuntime`
+keeps quoted text visible. C7 and C8 are opt-in, unlike C1-C6: a ceiling is a property of one
+surface (600 prose words for a persona or a skill; the evidence bound,
 1500 tokens, for anything checked against it), not of caveman prose everywhere, so
 `AgentTextCeiling` is passed explicitly by the persona/skill gate rather than living in
 `Check`'s defaults. `Options.Kind` has a zero-value `context` profile for source
@@ -377,13 +420,17 @@ The summary's rule numbers refer to the eight numbered rules in the Caveman skil
 | 7. Return shape | mechanical for `return`; advisory for other kinds | C10 requires all return fields |
 | 8. Evidence bound | advisory | C8 enforces a supplied token ceiling; line count, artifact placement and producer metadata remain external |
 
-Not prose, and never linted as prose: fenced code (C4 still reports ANSI there), inline
+Not prose, and never linted as prose: fenced code (C4 still reports ANSI, unsafe controls and
+default-ignorable Unicode there), inline
 code, link targets, URLs, headings, HTML comments, ledger field rows such as
 `- **Tasks**: 3 open | **Open Bugs**: 0`, hook protocol lines (`PRAETOR_*`), evidence
 pointers, and anything between `<!-- caveman:off -->` and `<!-- caveman:on -->`. The
 summary line counts the off regions, so an escape stays visible. Markdown table delimiters
 stay structured, but each cell is prose and receives the same phrase, density, sentence and
-strict-grammar checks. Bare paths and URLs stay protected from C9. Straight-single,
+strict-grammar checks. Lexically complete paths, URLs, flags and diagnostic tokens stay
+protected from C9; URL schemes are ASCII case-insensitive. Every other Unicode punctuation
+or symbol separator is joined and split during grammar matching, so punctuation alone does
+not create a literal. Straight-single,
 curly-single, straight-double and curly-double quoted error text stays protected from C2,
 C3 and C9; apostrophes inside contractions remain lintable.
 
@@ -445,7 +492,7 @@ The persona/skill gate calls the same `caveman.Options.MaxProseWords` field prog
 (`compiler.AgentTextCeiling`, 600); the flags exist so any other surface can be capped the
 moment its text is a file, including a return or a brief a dispatch path writes out before
 sending it, and the evidence-pointer bound (`register.evidence`, default 1500 tokens) the
-same way. Nothing in the engine writes agent-to-agent returns, MCP text, hook messages or
-prompt bodies to a file today, so wiring one of those producers to this flag is future work,
-not something this guide can point at yet; see "What is not enforced" above for the current
-list.
+same way. Repair planning and execution call the shared checker directly on their owned
+runtime fields, without first writing them to a file. Dynamic MCP and hook text, notebook
+and Paperclip prompts, ledger text, popup questions and native-client traffic still need
+their own producer or capture wiring and remain unverified; see "What is not enforced".

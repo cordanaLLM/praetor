@@ -1,0 +1,4 @@
+type: fixed
+title: Require resolved repair registers and validate exact brief, prompt, request, and proposal-summary bytes before dispatch, mutation, or terminal reuse
+issue: "#414"
+breaking: true
