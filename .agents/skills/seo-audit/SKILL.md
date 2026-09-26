@@ -20,6 +20,7 @@ Audit documentation sites and web applications for technical search engine optim
 - Required fields (enforced by `internal/seo`):
   - **TechArticle**: `@context: "https://schema.org"`, `@type: "TechArticle"`, `headline`, `description`, `author` (name, object with `name`, or list of them), `dateModified` (RFC 3339 or `YYYY-MM-DD`).
   - **SoftwareSourceCode**: `@type: "SoftwareSourceCode"`, `name`, `programmingLanguage`, `codeRepository` (absolute `http(s)` URL).
+- Unedited preset placeholder (`example-org/example-repo`, `PlaceholderLang`) in any page head = finding; body text may name them. `--allow-placeholders` skips check; use only on unedited preset build.
 - `go test ./internal/seo/...` re-runs validator's own fixtures only; audits no site.
 
 ### 2. XML Sitemap Audit (`sitemap*.xml`)

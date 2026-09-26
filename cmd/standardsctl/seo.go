@@ -25,8 +25,8 @@ func runSEO(args []string) error {
 		fmt.Println("Usage: praetorctl seo audit [--json] [--require-robots] [--allow-placeholders] [site-dir]")
 		fmt.Println("  Audits a built site (default: site): JSON-LD in every HTML page head, every")
 		fmt.Println("  sitemap*.xml at the root, and robots.txt. Exits non-zero on any finding;")
-		fmt.Println("  unedited preset placeholders (example-org/example-repo, PlaceholderLang)")
-		fmt.Println("  are findings unless --allow-placeholders is set.")
+		fmt.Println("  an unedited preset placeholder (example-org/example-repo, PlaceholderLang)")
+		fmt.Println("  in a page head is a finding unless --allow-placeholders is set.")
 		return nil
 	}
 	parsed, err := parseSEOAuditArgs(args)
@@ -68,7 +68,7 @@ func parseSEOAuditArgs(args []string) (seoAuditArgs, error) {
 	requireRobots := fs.Bool("require-robots", false,
 		"Fail when the site root has no robots.txt (crawlers read it only at a host root, so a project site under a path cannot serve one)")
 	allowPlaceholders := fs.Bool("allow-placeholders", false,
-		"Permit example-org/example-repo and PlaceholderLang strings in the site's pages")
+		"Permit the preset placeholders example-org/example-repo and PlaceholderLang in page heads")
 	if err := fs.Parse(args[1:]); err != nil {
 		return seoAuditArgs{}, err
 	}

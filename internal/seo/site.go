@@ -44,8 +44,9 @@ type SiteAuditOptions struct {
 	// robots.txt only at a host root (RFC 9309 section 2.3), so a project site served under
 	// a path cannot publish one and the default treats it as optional.
 	RequireRobots bool
-	// AllowPlaceholders permits the presence of example-org/example-repo and PlaceholderLang
-	// in the site's pages, which the preset test build emits natively.
+	// AllowPlaceholders permits example-org/example-repo and PlaceholderLang in page heads.
+	// The documentation presets ship them for an adopter to replace, so only an audit of an
+	// unedited preset build sets it.
 	AllowPlaceholders bool
 }
 
@@ -167,19 +168,12 @@ func (a *siteAudit) auditPage(rel string) {
 		a.add(rel, err.Error())
 		return
 	}
-	if !a.options.AllowPlaceholders {
-		if bytes.Contains(data, []byte("example-org/example-repo")) {
-			a.add(rel, "carries unedited example-org/example-repo placeholder")
-		}
-		if bytes.Contains(data, []byte("PlaceholderLang")) {
-			a.add(rel, "carries unedited PlaceholderLang placeholder")
-		}
-	}
-	blocks, err := headJSONLD(data)
+	blocks, head, err := headJSONLD(data)
 	if err != nil {
 		a.add(rel, err.Error())
 		return
 	}
+	a.auditPlaceholders(rel, head)
 	if len(blocks) == 0 {
 		a.add(rel, "no application/ld+json script in <head>")
 		return
@@ -237,39 +231,62 @@ func (a *siteAudit) add(file, message string) {
 	a.report.Findings = append(a.report.Findings, SiteFinding{File: file, Message: message})
 }
 
+// placeholders are the identity values the documentation presets ship for an adopter to
+// replace: each needle, lowercased as headJSONLD returns the head, and its display name.
+var placeholders = [...]struct{ needle, name string }{
+	{"example-org/example-repo", "example-org/example-repo"},
+	{"placeholderlang", "PlaceholderLang"},
+}
+
+// auditPlaceholders records every preset placeholder left in a page head, unless the audit
+// allows them. Only the head is read: a site's identity lives in its title, meta tags and
+// JSON-LD, while body text may name the placeholders on purpose, as the preset READMEs do.
+func (a *siteAudit) auditPlaceholders(rel string, head []byte) {
+	if a.options.AllowPlaceholders {
+		return
+	}
+	for _, p := range placeholders {
+		if bytes.Contains(head, []byte(p.needle)) {
+			a.add(rel, "carries unedited "+p.name+" placeholder")
+		}
+	}
+}
+
 // headJSONLD returns the trimmed body of every application/ld+json script in the page's
-// <head>. The head ends at </head>, or at <body> when the optional end tag is omitted.
-// Script bodies are skipped as raw text, so a "</head>" inside one does not end the head.
-func headJSONLD(page []byte) ([][]byte, error) {
+// <head>, and the head itself lowercased with its comments blanked. The head ends at
+// </head>, or at <body> when the optional end tag is omitted. Script bodies are skipped as
+// raw text, so a "</head>" inside one does not end the head.
+func headJSONLD(page []byte) ([][]byte, []byte, error) {
 	lower := lowerASCII(page)
 	maskHTMLComments(lower)
 	start := findTag(lower, 0, "head")
 	if start < 0 {
-		return nil, errors.New("no <head> element")
+		return nil, nil, errors.New("no <head> element")
 	}
 	pos := tagEnd(lower, start)
 	if pos < 0 {
-		return nil, errors.New("unterminated <head> tag")
+		return nil, nil, errors.New("unterminated <head> tag")
 	}
 	var blocks [][]byte
 	for n := 0; n < MaxHeadScripts; n++ {
+		end := headEnd(lower, pos)
 		script := findTag(lower, pos, "script")
-		if script < 0 || script > headEnd(lower, pos) {
-			return blocks, nil
+		if script < 0 || script > end {
+			return blocks, lower[start:end], nil
 		}
 		body, next, err := scriptBody(page, lower, script)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if body != nil {
 			if len(blocks) == MaxJSONLDBlocks {
-				return nil, fmt.Errorf("<head> carries more than %d JSON-LD blocks", MaxJSONLDBlocks)
+				return nil, nil, fmt.Errorf("<head> carries more than %d JSON-LD blocks", MaxJSONLDBlocks)
 			}
 			blocks = append(blocks, body)
 		}
 		pos = next
 	}
-	return nil, fmt.Errorf("<head> carries more than %d scripts", MaxHeadScripts)
+	return nil, nil, fmt.Errorf("<head> carries more than %d scripts", MaxHeadScripts)
 }
 
 // headEnd returns where the head closes at or after pos: the first </head> or <body>, or

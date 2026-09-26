@@ -1,3 +1,3 @@
 type: fixed
-title: Enforce generic placeholder identities in documentation presets and skip HTML comments in SEO JSON-LD extraction
+title: Enforce generic placeholder identities in documentation presets, fail `praetorctl seo audit` on a placeholder left in a page head unless --allow-placeholders is set, audit both preset builds in CI, and skip HTML comments in SEO JSON-LD extraction only in the HTML data state
 breaking: false

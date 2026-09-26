@@ -293,10 +293,14 @@ jobs:
   # where the output must name no site URL (the URL is operator configuration, never a shipped
   # domain); with a root host; and with a URL that has a path, as a GitHub project page does,
   # where every site URL and every root-absolute link must keep that path.
+  # Both builds with a site URL then go through `praetorctl seo audit`, the check an adopter
+  # runs on their own build, so a template change that breaks the JSON-LD or a sitemap fails
+  # here; a change to the audit itself (internal/seo, cmd/standardsctl/seo.go) re-runs it.
   # Linux-only: the builds are pure Python and Node, and the platform-specific inputs are
   # the locks, which already record every platform (uv --universal markers; npm lock
   # entries for each OS's optional binaries), so a macOS or Windows runner would repeat
-  # the same resolution (HISS-21).
+  # the same resolution; the audit is platform-neutral Go whose tests run in the verify
+  # job (HISS-21).
   docs-presets:
     name: Documentation Preset Builds
     runs-on: ubuntu-26.04
@@ -317,7 +321,7 @@ jobs:
         id: changed
         uses: ./.github/actions/changed-paths
         with:
-          paths: "docs/presets .github/workflows/ci.yml"
+          paths: "docs/presets .github/workflows/ci.yml internal/seo cmd/standardsctl/seo.go"
 
       - name: Setup Python Toolchain
         if: steps.changed.outputs.run == 'true'
@@ -381,6 +385,31 @@ jobs:
           mv dist "$RUNNER_TEMP/preset-starlight-root"
           DOCS_SITE_URL="$PRESET_SUBPATH_URL" npm run build
           mv dist "$RUNNER_TEMP/preset-starlight-subpath"
+
+      - name: Setup Go Toolchain
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+          cache: false
+
+      - name: Restore Go Module And Build Caches
+        if: steps.changed.outputs.run == 'true'
+        uses: ./.github/actions/go-cache
+        with:
+          job: docs-presets
+          go-version: '1.27'
+
+      # The presets ship placeholder identities (example-org/example-repo, PlaceholderLang)
+      # for an adopter to replace, so --allow-placeholders; every other finding fails. The
+      # builds without DOCS_SITE_URL have no sitemap entries, so they are not audited.
+      - name: Audit Preset SEO
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          go build -o "$RUNNER_TEMP/praetorctl" ./cmd/standardsctl
+          for build in mkdocs-root mkdocs-subpath starlight-root starlight-subpath; do
+            "$RUNNER_TEMP/praetorctl" seo audit --allow-placeholders "$RUNNER_TEMP/preset-$build"
+          done
 
       # One check over all six builds. A site URL is a canonical link, an og:url, a JSON-LD
       # "url" or a sitemap entry; MkDocs minifies its HTML, so attributes may be unquoted.

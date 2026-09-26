@@ -229,22 +229,29 @@ func TestAuditSite_Boundary_CommentState(t *testing.T) {
 	}
 }
 
+// TestAuditSite_Placeholders pins where a preset placeholder is a finding: anywhere in the
+// page head (title, meta, JSON-LD), but not in body text, which may name the placeholders
+// on purpose, and not inside a head comment.
 func TestAuditSite_Placeholders(t *testing.T) {
+	placeholderCode := strings.Replace(siteCode, `"programmingLanguage":"Go"`, `"programmingLanguage":"PlaceholderLang"`, 1)
+	if placeholderCode == siteCode {
+		t.Fatal("jsonld fixture: siteCode no longer carries the replaced programmingLanguage")
+	}
 	root := writeSite(t, map[string]string{
-		"head.html":   "<html><head><title>example-org/example-repo</title>" + jsonLD(siteCode) + "</head><body></body></html>",
-		"body.html":   "<html><head>" + jsonLD(siteCode) + "</head><body>PlaceholderLang</body></html>",
-		"clean.html":  page(jsonLD(siteCode)),
-		"sitemap.xml": siteSitemap,
+		"head.html":    "<html><head><title>example-org/example-repo</title>" + jsonLD(siteCode) + "</head><body></body></html>",
+		"jsonld.html":  page(jsonLD(placeholderCode)),
+		"body.html":    page(jsonLD(siteCode)) + "<p>Replace example-org/example-repo and PlaceholderLang.</p>",
+		"comment.html": page("<!-- example-org/example-repo PlaceholderLang -->" + jsonLD(siteCode)),
+		"clean.html":   page(jsonLD(siteCode)),
+		"sitemap.xml":  siteSitemap,
 	})
 
-	// With AllowPlaceholders false (the default), the placeholders surface as findings.
+	// With AllowPlaceholders false (the default), a placeholder in a head is a finding.
 	strict := auditSite(t, root, SiteAuditOptions{AllowPlaceholders: false})
 	requireFinding(t, strict, "head.html", "carries unedited example-org/example-repo placeholder")
-	requireFinding(t, strict, "body.html", "carries unedited PlaceholderLang placeholder")
-	for _, f := range strict.Findings {
-		if f.File == "clean.html" {
-			t.Errorf("clean.html: unexpected finding %q", f.Message)
-		}
+	requireFinding(t, strict, "jsonld.html", "carries unedited PlaceholderLang placeholder")
+	if len(strict.Findings) != 2 {
+		t.Fatalf("expected only the head.html and jsonld.html findings, got %+v", strict.Findings)
 	}
 
 	// With AllowPlaceholders true, the placeholders are ignored.
