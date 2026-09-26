@@ -230,6 +230,51 @@ func TestBootstrapSeedsADirectoryAnotherWriterCreated(t *testing.T) {
 	}
 }
 
+// TestBootstrapLeavesANestedRepositoryUntouched covers a ledgerless .workingdir that
+// is another repository's working tree: a clone (".git" directory) or a linked
+// worktree or submodule (".git" file). Seeding it dirtied that repository, which
+// made Lefthook fail to stash a staged private gitlink before the commit hook's
+// privacy check could report it. Nothing is written, and SyncState still fails closed
+// on the missing ledger instead of treating the directory as initialized.
+func TestBootstrapLeavesANestedRepositoryUntouched(t *testing.T) {
+	for name, makeGit := range map[string]func(string) error{
+		"clone":    func(path string) error { return os.Mkdir(path, 0o700) },
+		"gitfile":  func(path string) error { return os.WriteFile(path, []byte("gitdir: ../.git/modules/x\n"), 0o600) },
+		"with-own": func(path string) error { return os.Mkdir(path, 0o700) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			working := filepath.Join(dir, WorkingDirName)
+			if err := os.Mkdir(working, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := makeGit(filepath.Join(working, ".git")); err != nil {
+				t.Fatal(err)
+			}
+			want := BootstrapNestedRepository
+			if name == "with-own" {
+				// Boundary: a repository that already holds a ledger file is kept, as any
+				// other directory holding one is.
+				writeIntegrityFile(t, filepath.Join(working, "STATE.md"), "own private history")
+				want = BootstrapKept
+			}
+			outcome, err := InitWorkingDirIfAbsentContext(t.Context(), dir)
+			if err != nil || outcome != want {
+				t.Fatalf("outcome=%v, %v; want %v", outcome, err, want)
+			}
+			for _, ledger := range ledgerFileNames() {
+				_, statErr := os.Stat(filepath.Join(working, ledger))
+				if name != "with-own" && !os.IsNotExist(statErr) {
+					t.Fatalf("bootstrap wrote %s into a nested repository: %v", ledger, statErr)
+				}
+			}
+			if _, err := SyncState(t.Context(), dir, "nested"); err == nil {
+				t.Fatal("state sync accepted a nested repository without a complete ledger")
+			}
+		})
+	}
+}
+
 func TestBootstrapLeavesAPartialLedgerForTheAudit(t *testing.T) {
 	dir := t.TempDir()
 	if err := InitWorkingDir(dir); err != nil {

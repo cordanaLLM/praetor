@@ -56,6 +56,14 @@ func TestStateInitIfAbsentReportsWhatItDid(t *testing.T) {
 		t.Fatalf("partial ledger reported as %q", line)
 	}
 
+	nested := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(nested, ".workingdir", ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if line := bootstrapLine(t, nested); !strings.Contains(line, "is another Git repository's working tree and holds no ledger; nothing was written") {
+		t.Fatalf("nested repository reported as %q", line)
+	}
+
 	linked := t.TempDir()
 	if err := os.Symlink(t.TempDir(), filepath.Join(linked, ".workingdir")); err != nil {
 		t.Skipf("symlinks unavailable on this platform: %v", err)

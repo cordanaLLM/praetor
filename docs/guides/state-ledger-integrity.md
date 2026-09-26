@@ -12,7 +12,7 @@ removed or corrupted — and is left exactly as it stands, so the audit and
 `state sync` still fail on it and it requires explicit repair. Initialization
 never imports another workstation's private state.
 
-`praetorctl state init --if-absent` reports which of four things it did, because
+`praetorctl state init --if-absent` reports which of five things it did, because
 three of them write nothing and an operator told a ledger was seeded stops
 looking:
 
@@ -21,7 +21,16 @@ looking:
 | `Initialized private .workingdir/ in <dir>` | the directory was absent; this call made it and wrote the five ledger files |
 | `Seeded a ledger into the existing .workingdir/ in <dir>` | the directory existed and held no ledger file; this call wrote the five |
 | `Existing .workingdir/ in <dir> already holds ledger files and was left untouched` | a complete or partial ledger; nothing was written, and a partial one needs explicit repair |
+| `Existing .workingdir/ in <dir> is another Git repository's working tree and holds no ledger` | the directory holds its own `.git` and no ledger file; nothing was written, so that repository stays clean; run `state init` to seed it deliberately |
 | `.workingdir in <dir> is not a directory; nothing was written` | the path is a symlink or a regular file; remove it before initializing |
+
+The nested-repository refusal keeps a clone staged as a private gitlink
+unchanged until the commit hook's privacy check reports it
+(`test_private_gitlinks_block_commit_before_snapshot_export` in
+[`.config/lefthook/scripts/test_hooks.py`](https://github.com/cordanaLLM/praetor/blob/main/.config/lefthook/scripts/test_hooks.py));
+`TestBootstrapLeavesANestedRepositoryUntouched` in
+[`internal/state/bootstrap_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/bootstrap_test.go)
+pins the outcome.
 
 Every ledger file is published atomically: its content is staged under a private
 `.praetor-*.pending` name, synced there, and linked into place. Seeding is no

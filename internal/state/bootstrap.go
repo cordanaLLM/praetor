@@ -11,7 +11,7 @@ import (
 )
 
 // BootstrapOutcome names what a bootstrap call did to .workingdir. Three of the
-// four outcomes write nothing, so a caller that reports one fixed sentence for
+// five outcomes write nothing, so a caller that reports one fixed sentence for
 // every non-creating return tells the operator a ledger was repaired when none
 // was. The zero value is BootstrapUnknown: the call did not complete and nothing
 // may be claimed about the directory.
@@ -31,6 +31,12 @@ const (
 	// BootstrapUnseedable: .workingdir exists as a symlink or a regular file.
 	// Nothing was written and nothing can be until the operator removes it.
 	BootstrapUnseedable BootstrapOutcome = "unseedable"
+	// BootstrapNestedRepository: .workingdir is a directory holding no ledger
+	// file but its own .git, so it is the working tree of another repository.
+	// Nothing was written: seeding would dirty that repository, and a clone
+	// staged as a gitlink must reach the commit hook's privacy check unchanged.
+	// An operator who keeps the ledger in its own repository runs `state init`.
+	BootstrapNestedRepository BootstrapOutcome = "nested-repository"
 )
 
 // InitWorkingDirIfAbsentContext initializes a private ledger that does not yet
@@ -39,9 +45,10 @@ const (
 // hindsight) routinely creates .workingdir first, and keying on the directory
 // left that ledger empty and every later state command failing. A directory
 // that already holds ledger files is left exactly as it stands, partial ones
-// included, as is an existing non-directory path.
+// included, as are an existing non-directory path and a ledgerless directory
+// that is another repository's working tree.
 //
-// outcome reports which of those four cases this call hit, so the caller can
+// outcome reports which of those five cases this call hit, so the caller can
 // state what happened rather than guess. Check err first: a returned outcome
 // describes the intent of a call that may still have failed part way.
 //
@@ -86,14 +93,32 @@ func seedLedgerlessWorkingDir(ctx context.Context, project *os.Root, created boo
 	if created {
 		return BootstrapCreated, initializeWorkingFiles(ctx, working)
 	}
-	ledgerless, checkErr := workingDirLedgerless(working)
-	if checkErr != nil {
-		return BootstrapUnknown, checkErr
-	}
-	if !ledgerless {
-		return BootstrapKept, nil
+	outcome, err = existingWorkingDirOutcome(working)
+	if err != nil || outcome != BootstrapSeeded {
+		return outcome, err
 	}
 	return BootstrapSeeded, initializeWorkingFiles(ctx, working)
+}
+
+// existingWorkingDirOutcome decides what bootstrap may do to a directory it did
+// not create: keep one that holds ledger files, refuse one that is another
+// repository's working tree, and seed the rest.
+func existingWorkingDirOutcome(working *os.Root) (BootstrapOutcome, error) {
+	ledgerless, err := workingDirLedgerless(working)
+	switch {
+	case err != nil:
+		return BootstrapUnknown, err
+	case !ledgerless:
+		return BootstrapKept, nil
+	}
+	_, err = working.Lstat(".git")
+	switch {
+	case err == nil:
+		return BootstrapNestedRepository, nil
+	case !errors.Is(err, os.ErrNotExist):
+		return BootstrapUnknown, fmt.Errorf("inspect %s/.git: %w", WorkingDirName, err)
+	}
+	return BootstrapSeeded, nil
 }
 
 // workingDirLedgerless reports whether the working directory holds none of the

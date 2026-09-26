@@ -114,7 +114,7 @@ func bootstrapState(dir string) error {
 		return fmt.Errorf("state bootstrap failed: %w", err)
 	}
 	fmt.Printf("%s; audit still required\n", bootstrapReport(outcome, dir))
-	if outcome == state.BootstrapUnseedable {
+	if outcome == state.BootstrapUnseedable || outcome == state.BootstrapNestedRepository {
 		return nil
 	}
 	return ignoreStateLedger(dir)
@@ -139,7 +139,7 @@ func ignoreStateLedger(dir string) error {
 	return nil
 }
 
-// bootstrapReport states what the bootstrap actually did. Three of the four
+// bootstrapReport states what the bootstrap actually did. Three of the five
 // outcomes write nothing, so one fixed sentence for every non-creating return
 // told the operator a ledger had been seeded when none was - and in the partial
 // ledger case claimed the very repair the bootstrap deliberately refuses.
@@ -153,6 +153,8 @@ func bootstrapReport(outcome state.BootstrapOutcome, dir string) string {
 		return fmt.Sprintf("Existing %s/ in %s already holds ledger files and was left untouched; repair a partial ledger explicitly", state.WorkingDirName, dir)
 	case state.BootstrapUnseedable:
 		return fmt.Sprintf("%s in %s is not a directory; nothing was written", state.WorkingDirName, dir)
+	case state.BootstrapNestedRepository:
+		return fmt.Sprintf("Existing %s/ in %s is another Git repository's working tree and holds no ledger; nothing was written, run state init to seed it deliberately", state.WorkingDirName, dir)
 	}
 	return fmt.Sprintf("Bootstrap of %s/ in %s reported no outcome", state.WorkingDirName, dir)
 }
