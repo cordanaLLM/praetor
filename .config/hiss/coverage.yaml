@@ -219,7 +219,7 @@ rules:
         mechanism: >-
           tsc -p ./ with editors/vscode/tsconfig.json (strict: true), reached through make vscode-test
           -> npm test -> npm run compile. No ESLint runs anywhere in this repository; the only tracked
-          eslint config is templates/svelte/.eslintrc.cjs.tmpl, a template scaffolded into adopters.
+          eslint config is templates/node/eslint.config.mjs.tmpl, a template scaffolded into adopters.
         rationale: >-
           Measured with tsc 5.9.3 and the repository's compilerOptions verbatim. 2/2 positives
           reported: TS7006 'Parameter name implicitly has an any type' and TS18048 'label is possibly
@@ -277,9 +277,9 @@ rules:
           positive/ is empty because no mechanism reports any Svelte warning. All 3 gap fixtures
           compiled with the real Svelte 5 compiler (installed into a temp dir) and each returned
           exactly one warning: css_unused_selector, a11y_missing_attribute,
-          element_invalid_self_closing_tag. The engine ships a usable adopter template
-          (templates/svelte/.eslintrc.cjs.tmpl extending plugin:svelte/recommended) but never applies
-          or runs it
+          element_invalid_self_closing_tag. The engine ships no Svelte lint configuration: the
+          flat config it scaffolds into adopters (templates/node/eslint.config.mjs.tmpl) lints
+          JavaScript only, and nothing here runs it
   - id: HISS-11
     title: Hermetic Supply Chain
     coverage:

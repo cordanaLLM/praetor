@@ -73,6 +73,7 @@ func TestVerificationMissingAndAmbiguousGatesFail(t *testing.T) {
 		"node-no-scripts":        {"package.json": "{}"},
 		"node-no-test":           {"package.json": `{"scripts":{"build":"true"}}`},
 		"node-empty-test":        {"package.json": `{"scripts":{"build":"true","test":"  "}}`},
+		"node-npm-init-test":     {"package.json": `{"scripts":{"build":"true","test":"echo \"Error: no test specified\" && exit 1"}}`},
 		"node-no-build":          {"package.json": `{"scripts":{"test":"true"}}`},
 		"node-other-manager":     {"package.json": `{"packageManager":"pnpm@10.0.0","scripts":{"build":"true","test":"true"}}`},
 		"python-unknown-runner":  {"pyproject.toml": "[project]\n"},

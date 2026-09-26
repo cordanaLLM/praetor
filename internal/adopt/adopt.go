@@ -278,11 +278,15 @@ func adoptSteps() []namedStep {
 		{"security-policy", reconcileSecurityPolicy},
 		{"adr", reconcileADR},
 		{"readme", reconcileReadme},
+		// Ahead of branch-ruleset: the flavor scaffolds CI workflows, and the ruleset's
+		// required status checks are derived from the workflows present. Run after it, the
+		// first adoption certified a ruleset missing the scaffolded jobs and the next run
+		// rewrote it.
+		{"working-dir-and-flavor", reconcileWorkingDirAndFlavor},
 		{"branch-ruleset", reconcileBranchRuleset},
 		{"labels", reconcileLabels},
 		{"paperclip", reconcilePaperclip},
 		{"agent-definitions", reconcileAgentDefinitions},
-		{"working-dir-and-flavor", reconcileWorkingDirAndFlavor},
 		{"git-hooks", reconcileGitHooks},
 	}
 }
@@ -559,10 +563,7 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 		if err := state.InitWorkingDirContext(ctx, s.repoPath); err != nil {
 			s.report.addError("workingdir init: %v", err)
 		}
-		detectedFlv := flavor.DetectFlavor(s.repoPath)
-		if _, err := flavor.ApplyFlavor(ctx, s.repoPath, detectedFlv, false); err != nil {
-			s.report.addError("apply flavor %s: %v", detectedFlv, err)
-		}
+		applyDetectedFlavor(ctx, s)
 	}
 	s.report.ActionDetails = append(s.report.ActionDetails, ActionDetail{
 		Path:    workingDirPath,
@@ -570,6 +571,41 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 		Details: "Initialized canonical session state ledger and bug/question journals",
 	})
 	return nil
+}
+
+// applyDetectedFlavor scaffolds the flavor detection names, and nothing when detection names
+// none.
+//
+// It used to apply flavor.FallbackFlavor (go-library) there. That flavor's CI workflow runs
+// setup-go against a go.mod the repository does not have, and branch-ruleset, which runs after
+// this step, makes every job of a scaffolded workflow a required check: a docs or shell
+// repository was left with a required check no pull request could pass. flavor audit refuses
+// the same repository (ErrNoFlavorMatched) instead of auditing it as go-library, so the two
+// now agree that no flavor applies.
+//
+// A detected flavor can still hold back a template whose body cannot work in this repository
+// (flavor.ApplyReport.UnmetTemplates), such as typescript-node's npm CI job in a pnpm project.
+// Each is a warning: the ruleset derived next requires no check for it, and the operator learns
+// what the flavor audit will report missing. A template ApplyFlavor failed to write (a mkdir,
+// render or write error it records in ApplyReport.Errors and does not return) is an adoption
+// error, not a silent gap.
+func applyDetectedFlavor(ctx context.Context, s *adoptSession) {
+	detected, ok := flavor.Detect(s.repoPath)
+	if !ok {
+		s.report.addWarning("no flavor matched %s; flavor templates not scaffolded (run praetorctl flavor apply --flavor=<name> to choose one)", s.repoPath)
+		return
+	}
+	applied, err := flavor.ApplyFlavor(ctx, s.repoPath, detected, false)
+	if err != nil {
+		s.report.addError("apply flavor %s: %v", detected, err)
+		return
+	}
+	for _, failure := range applied.Errors {
+		s.report.addError("apply flavor %s: %s", detected, failure)
+	}
+	for _, unmet := range applied.UnmetTemplates {
+		s.report.addWarning("flavor %s did not scaffold %s", detected, unmet)
+	}
 }
 
 // lowerFirst lower-cases the first byte of an ASCII detail string.

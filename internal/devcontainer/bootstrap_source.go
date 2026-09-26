@@ -15,6 +15,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/templates"
 	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
@@ -76,8 +77,14 @@ func captureBootstrapSource(ctx context.Context, root string) ([]bootstrapSource
 var bootstrapSourcePathspec = []string{"*.go", "go.mod", "go.sum", "LICENSE", ":(exclude)*_test.go", ":(exclude,glob)**/testdata/**"}
 
 func bootstrapSourcePaths(ctx context.Context, root string) ([]string, error) {
+	families, err := bootstrapAssetFamilies()
+	if err != nil {
+		return nil, err
+	}
 	args := append([]string{"ls-files", "--cached", "--others", "--exclude-standard", "-z", "--"}, bootstrapSourcePathspec...)
-	args = append(args, markdownBootstrapAssetPaths()...)
+	for _, family := range families {
+		args = append(args, family.assets...)
+	}
 	data, err := runSourceGit(ctx, root, args...)
 	if err != nil {
 		return nil, err
@@ -129,18 +136,23 @@ func validateBootstrapSourceName(name string) error {
 	return validateBootstrapSourceKind(name)
 }
 
-// validateBootstrapSourceKind admits the module files, the declared Markdown gate assets
-// that tools/markdownlint embeds, and non-test Go source: the inputs go build
-// ./cmd/standardsctl reads. bootstrapSourcePathspec plus markdownBootstrapAssetPaths asks
-// git for exactly these. Go's test surface is refused first, so no asset allowance can admit
-// a _test.go file or a testdata member.
+// validateBootstrapSourceKind admits the module files, the assets of every declared go:embed
+// family (bootstrapAssetFamilies), and non-test Go source: the inputs go build
+// ./cmd/standardsctl reads. bootstrapSourcePathspec plus the family assets asks git for
+// exactly these. Go's test surface is refused first, so no asset allowance can admit a
+// _test.go file or a testdata member.
 func validateBootstrapSourceKind(name string) error {
 	switch {
 	case util.IsGoTestSurface(name):
 		return fmt.Errorf("bootstrap source %s is test-only; go build never reads _test.go files or testdata directories", name)
-	case name == "go.mod", name == "go.sum", name == "LICENSE", isMarkdownBootstrapAsset(name):
+	case name == "go.mod", name == "go.sum", name == "LICENSE", strings.HasSuffix(name, ".go"):
 		return nil
-	case !strings.HasSuffix(name, ".go"):
+	}
+	asset, err := isBootstrapAsset(name)
+	if err != nil {
+		return err
+	}
+	if !asset {
 		return errors.New("unsupported bootstrap source file; non-Go build inputs require explicit capture support")
 	}
 	return nil
@@ -159,14 +171,31 @@ func validateBootstrapSourceFile(name string, data []byte) error {
 	}
 	for _, group := range parsed.Comments {
 		for _, comment := range group.List {
-			if strings.HasPrefix(comment.Text, "//go:embed ") || strings.HasPrefix(comment.Text, "//go:embed\t") {
-				if name != markdownassets.Directory+"/assets.go" || comment.Text != markdownBootstrapEmbedDirective() {
-					return fmt.Errorf("bootstrap source %s embeds assets; explicit asset capture is required", name)
-				}
+			if err := validateEmbedDirective(name, comment.Text); err != nil {
+				return err
 			}
 		}
 	}
 	return nil
+}
+
+// validateEmbedDirective refuses a go:embed directive unless it is exactly the directive of
+// a declared asset family, in that family's source file: any other one would build a binary
+// missing the files it embeds, since the archive carries only the declared assets.
+func validateEmbedDirective(name, text string) error {
+	if !strings.HasPrefix(text, "//go:embed ") && !strings.HasPrefix(text, "//go:embed\t") {
+		return nil
+	}
+	families, err := bootstrapAssetFamilies()
+	if err != nil {
+		return err
+	}
+	for _, family := range families {
+		if name == family.source && text == family.directive {
+			return nil
+		}
+	}
+	return fmt.Errorf("bootstrap source %s embeds assets; explicit asset capture is required", name)
 }
 
 func bootstrapSourceDigest(files []bootstrapSourceFile) string {
@@ -241,14 +270,80 @@ func validateBootstrapSourceSet(files []bootstrapSourceFile) error {
 			return errors.New("bootstrap archive must declare the Praetor module")
 		}
 	}
-	if containsBootstrapSource(files, markdownassets.Directory+"/assets.go") {
-		for _, asset := range markdownBootstrapAssetPaths() {
+	return requireFamilyAssets(files)
+}
+
+// requireFamilyAssets holds a set carrying a family's embedding source to every asset that
+// source embeds, so an archive never builds a binary whose go:embed has nothing to embed.
+func requireFamilyAssets(files []bootstrapSourceFile) error {
+	families, err := bootstrapAssetFamilies()
+	if err != nil {
+		return err
+	}
+	for _, family := range families {
+		if !containsBootstrapSource(files, family.source) {
+			continue
+		}
+		for _, asset := range family.assets {
 			if !containsBootstrapSource(files, asset) {
-				return fmt.Errorf("bootstrap Markdown asset %s is missing", asset)
+				return fmt.Errorf("bootstrap %s asset %s is missing", family.name, asset)
 			}
 		}
 	}
 	return nil
+}
+
+// bootstrapAssetFamily is one go:embed directive whose assets the bootstrap captures beside
+// the Go source: the file carrying the directive, its exact text, and the repository-relative
+// paths it embeds. A directive not declared here is refused.
+type bootstrapAssetFamily struct {
+	name      string
+	source    string
+	directive string
+	assets    []string
+}
+
+// bootstrapAssetFamilies declares the two embedded asset sets go build ./cmd/standardsctl
+// needs: the documentation gate that adoption emits, and the template bodies flavor apply
+// scaffolds.
+func bootstrapAssetFamilies() ([]bootstrapAssetFamily, error) {
+	templateAssets, err := templateBootstrapAssetPaths()
+	if err != nil {
+		return nil, err
+	}
+	return []bootstrapAssetFamily{
+		{name: "Markdown", source: markdownassets.Directory + "/assets.go", directive: markdownBootstrapEmbedDirective(), assets: markdownBootstrapAssetPaths()},
+		{name: "template", source: templates.SourceFile, directive: "//go:embed " + templates.Pattern, assets: templateAssets},
+	}, nil
+}
+
+// templateBootstrapAssetPaths names every embedded template body as a repository path.
+func templateBootstrapAssetPaths() ([]string, error) {
+	names, err := templates.Names()
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap template assets: %w", err)
+	}
+	paths := make([]string, 0, len(names))
+	for index := 0; index < len(names) && index < maxBootstrapFiles; index++ {
+		paths = append(paths, templates.Directory+"/"+names[index])
+	}
+	return paths, nil
+}
+
+// isBootstrapAsset reports whether name is an asset of a declared family.
+func isBootstrapAsset(name string) (bool, error) {
+	families, err := bootstrapAssetFamilies()
+	if err != nil {
+		return false, err
+	}
+	for _, family := range families {
+		for _, candidate := range family.assets {
+			if name == candidate {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func markdownBootstrapAssetPaths() []string {
@@ -258,15 +353,6 @@ func markdownBootstrapAssetPaths() []string {
 		paths = append(paths, markdownassets.Directory+"/"+names[index])
 	}
 	return paths
-}
-
-func isMarkdownBootstrapAsset(name string) bool {
-	for _, candidate := range markdownBootstrapAssetPaths() {
-		if name == candidate {
-			return true
-		}
-	}
-	return false
 }
 
 func markdownBootstrapEmbedDirective() string {

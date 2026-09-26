@@ -30,6 +30,99 @@ implementing them — `app-service`, `framework`, `native-gpu-systems`, `contain
 `os-image`. For the other nine, `flavor audit` reports **not applicable** rather than measuring the
 repository against an inferred language flavor.
 
+### Flavor templates: one embedded body, checked content
+
+Every template a flavor requires states where its content comes from, in
+`internal/flavor/definitions.go`, exactly one way:
+
+| Field | Meaning | Example |
+| :--- | :--- | :--- |
+| `Source` | a body under `templates/`, compiled into the binary and rendered by `praetorctl flavor apply` | `go/ci-go.yml.tmpl` for `.github/workflows/ci.yml` |
+| `Producer` | the command that writes the file; `flavor apply` never writes it, `--force` included, and lists it under *Left to Producer* | `praetorctl adopt` for `.standards.yaml`, `praetorctl compile-context` for `CLAUDE.md` |
+
+A `Source` template may also carry `Requires`, a check of what the repository must hold for the body
+to work as written. Where it reports something missing, `flavor apply` writes nothing, `--force`
+included, and lists the path and what is missing under *Unmet Requirement*; `praetorctl adopt` turns
+each into a warning. The audit still requires the file.
+
+A template with neither is an apply error, not a placeholder. `flavor apply` used to write a one-line
+`# <file> configuration for <owner>/<repo>` comment for every template it had no body for, which
+disabled every built-in gitleaks rule (#410) and scaffolded workflows that ran nothing.
+`praetorctl flavor inspect <flavor>` prints the producer beside each producer-owned template.
+
+**The body is the file.** `templates/embed.go` embeds `templates/*/*.tmpl`, so the file under
+`templates/` is byte for byte what an adopter receives. Actions use `<%` and `%>` rather than `{{ }}`,
+because the workflows carry GitHub expressions such as `${{ runner.os }}`; a maintainer note goes in a
+template comment, `<%- /* note */ -%>`, which renders to nothing. The context a body can name is
+`templates.Context`; a body naming anything else fails `TestEveryShippedTemplateRenders`
+(`templates/embed_test.go`). `.clang-tidy` is shared with the Visual Studio editor target
+(`internal/editor/editor.go`), so both commands write one configuration.
+
+**The audit reads the content.** `flavor audit` counts a template only when it is a regular file —
+not a directory, and a symbolic link only when it resolves inside the repository — whose content
+passes the template's `Validator` (`internal/flavor/template_validators.go`). Settings share the same
+reader. Each validator checks what its format makes checkable and no more:
+
+| Validator | Accepts |
+| :--- | :--- |
+| `validWorkflow` | a workflow with a non-empty `jobs` mapping |
+| `validDockerfile` | at least one `FROM` instruction |
+| `validGitleaksConfig` | a config that loads rules: `[extend] useDefault = true`, an `[extend] path`, or `[[rules]]` |
+| `assignsTOMLKey` | TOML assigning at least one key |
+| `validXMLDocument` | well-formed XML with an element |
+| `validMarkdownDocument` | text beyond headings and HTML comments |
+| `validYAMLMapping`, `validJSONObject` | a non-empty mapping or object, as for settings |
+| `carriesCode` | a line that is not a comment, for JavaScript, TypeScript and `tsconfig.json`, which is JSON with comments |
+
+`flavor apply` asks a narrower question than the audit. It writes nothing under the canonical name
+while any `AltPaths` file exists, even one the audit rejects (a comment-only `tsconfig.base.json`, or a
+link to a config outside the repository): that file is the one the toolchain reads, and a scaffolded
+rival beside it would contradict it. The audit keeps reporting the template missing until the
+alternative's content passes. `--force` is the exception: it writes the canonical file beside the
+alternative, so use it only when you mean to replace the alternative, and then delete the old file.
+
+**Scaffolded workflows and images must run as written.** A workflow step may call only what the job
+installs: the Go CI job runs `go vet ./...` and `go test -race ./...`, not `make verify-all`, whose
+recipes call `praetorctl`, which no step installs. Praetor's own gates run from the git hooks adoption
+writes. `TestScaffoldedWorkflowsRunWithoutAPraetorBinary` (`internal/flavor/emitted_content_test.go`)
+fails on a step naming the praetor binary. The Go `Dockerfile` builds the module's only main package,
+wherever it lives; with none or several, `docker build` stops and names them, and
+`--build-arg MAIN_PACKAGE=./cmd/<name>` picks one. `TestScaffoldedDockerfileBuilderCompilesTheModulesMainPackage`
+(`internal/flavor/dockerfile_build_test.go`) executes the builder instruction against each layout.
+
+A body that only works in some repositories declares `Requires`. The Node CI job runs `npm ci` and
+`npm test`, and `typescript-node` detects any `package.json` — a pnpm, Yarn or Bun project, or a Go
+repository whose `package.json` only holds commit tooling. So `flavor apply` writes the job only when
+all of these hold (`internal/flavor/node_ci.go`):
+
+- CI's checkout will hold `package-lock.json` at the root (npm 12 reads no `npm-shrinkwrap.json`).
+  The file on disk is not enough: a library that lists `package-lock.json` in `.gitignore` still gets
+  one from a local `npm install`, and CI never sees it. Git must track the lockfile, or would commit
+  it because no ignore rule excludes it. A lockfile force-added past such a rule counts, because it
+  is tracked. Outside a Git work tree, or without `git`, nothing shows what CI checks out, so the job
+  is withheld.
+- `packageManager` names npm or nothing.
+- The `test` script is neither missing, blank nor the placeholder `npm init` writes.
+
+These checks cover what the steps need, not whether your scripts pass. Elsewhere adoption requires no
+Node check, and you write the CI job your package manager needs. The package-manager and test-script
+decisions are the ones adoption's verification plan makes (`internal/nodemanifest/scripts.go`).
+`TestNodeCIJobIsScaffoldedOnlyWhereItRunsAsWritten` (`internal/flavor/node_ci_test.go`) checks every
+action, lockfile and script the scaffolded body names against the files `git add -A` stages in each
+fixture, which is what CI's checkout carries.
+
+**Adoption scaffolds a detected flavor only.** `praetorctl adopt` applies the flavor detection names,
+before it derives the branch ruleset, so the scaffolded CI job is a required check from the first run.
+A repository no flavor detects gets no flavor templates and a warning naming
+`praetorctl flavor apply --flavor=<name>`. Adoption used to apply `go-library` there, and its CI job
+(`setup-go` against a `go.mod` the repository lacks) became a required check no pull request could
+pass. `flavor audit` already refused such a repository instead of guessing a flavor.
+
+When you add a template, give it a `Source` (add the body under `templates/<ecosystem>/`) or a
+`Producer`, and a `Validator`. `TestEveryRequiredTemplateStatesItsContent`
+(`internal/flavor/template_content_test.go`) fails otherwise, and also fails when the scaffolded body
+does not pass its own validator or the old comment placeholder does.
+
 ### The `os-image` flavor: a forge is what it builds
 
 `os-image` is the first profile whose flavor is not a language stack. It requires `packer`,
@@ -72,7 +165,8 @@ repositories are known by their output rather than their source language.
 - **What counts as configured.** Any file ESLint already loads: `eslint.config.{js,mjs,cjs,ts,mts,cts}`,
   or a legacy `.eslintrc`, `.eslintrc.{js,cjs,json,yaml,yml}`. A repository carrying one conforms, and
   `flavor apply` writes nothing beside it unless `--force` is passed.
-- **What gets scaffolded.** Only for a repository with none of those: `eslint.config.mjs`, holding
+- **What gets scaffolded.** Only for a repository with none of those: `eslint.config.mjs`
+  (`templates/node/eslint.config.mjs.tmpl`), holding
   ESLint's recommended JavaScript rules in the form the `@eslint/js` README documents. It is `.mjs`
   because a `.js` file is ESM or CommonJS depending on `package.json` `"type"`, and `.mjs` loads in
   both kinds of repository.
@@ -80,9 +174,9 @@ repositories are known by their output rather than their source language.
   shipped catalog already refuses to name them (`internal/config/shipped_catalog_test.go`).
 
 Two guards in `internal/flavor/eslint_guard_test.go` hold every flavor to this. One fails if any flavor
-requires a legacy eslintrc file. The other fails if any JavaScript or TypeScript template has no content
-of its own and falls through to the `# ... configuration` default, because `#` is a syntax error in
-those languages. `frontend-svelte`'s `playwright.config.ts` now carries the configuration the
+requires a legacy eslintrc file. The other fails if any JavaScript or TypeScript template has no body
+of its own or renders one starting with `#`, which is a syntax error in those languages.
+`frontend-svelte`'s `playwright.config.ts` (`templates/svelte/playwright.config.ts.tmpl`) carries the configuration the
 `@playwright/test` documentation shows, without a `baseURL` or `webServer`, since those depend on an
 application server the flavor cannot know about.
 

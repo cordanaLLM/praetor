@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestDetectFlavor_Positive(t *testing.T) {
@@ -285,6 +287,32 @@ func repoWithFiles(t *testing.T, files map[string]string) string {
 		}
 	}
 	return dir
+}
+
+// gitProbeLimit bounds each output stream of a fixture's git command.
+const gitProbeLimit = 1 << 20
+
+// gitRepoWithFiles is repoWithFiles in a fresh Git work tree, for a check that asks Git what
+// the repository commits. The fixture's git runs through util.RunGitProbe, so no global or
+// system configuration of the host reaches it.
+func gitRepoWithFiles(t *testing.T, files map[string]string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed; the fixture needs a Git work tree")
+	}
+	dir := repoWithFiles(t, files)
+	runFixtureGit(t, dir, "init", "-q")
+	return dir
+}
+
+// runFixtureGit runs one git command in a test fixture and returns its standard output.
+func runFixtureGit(t *testing.T, dir string, args ...string) []byte {
+	t.Helper()
+	result, err := util.RunGitProbe(t.Context(), dir, gitProbeLimit, args...)
+	if err != nil {
+		t.Fatalf("git %v in fixture: %v (%s)", args, err, result.Stderr)
+	}
+	return result.Stdout
 }
 
 // TestDetect_Positive_PythonMLRequiresAnMLDependency pins the corrected predicate. python-ml

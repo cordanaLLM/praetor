@@ -30,29 +30,43 @@ func TestFlavors_Negative_NoFlavorScaffoldsLegacyESLintConfig(t *testing.T) {
 	}
 }
 
-// Negative, and the broader defect found alongside #137: a template with no content case falls
-// through to a "# ... configuration" default. For a JavaScript or TypeScript file that is not a
-// comment but a syntax error -- frontend-svelte scaffolded exactly that as .eslintrc.cjs.
+// Negative, and the broader defect found alongside #137: a template with no content of its own
+// used to fall through to a "# ... configuration" default. For a JavaScript or TypeScript file
+// that is not a comment but a syntax error -- frontend-svelte scaffolded exactly that as
+// .eslintrc.cjs. The default is gone; this still holds every script body to it.
 func TestFlavors_Negative_NoJavaScriptTemplateFallsThroughToACommentDefault(t *testing.T) {
 	scripts := map[string]bool{".js": true, ".mjs": true, ".cjs": true, ".ts": true, ".mts": true, ".cts": true}
+	checked := 0
 	for _, f := range List() {
 		for _, tmpl := range f.RequiredTemplates() {
 			if !scripts[filepath.Ext(tmpl.Path)] || tmpl.ContentFunc != nil {
 				continue
 			}
-			body := templateContent(tmpl, "repo", "owner")
+			body, err := templateContent(tmpl, "repo", "owner")
+			if err != nil {
+				t.Errorf("flavor %s has no body for %s: %v", f.Name(), tmpl.Path, err)
+				continue
+			}
+			checked++
 			if strings.HasPrefix(strings.TrimSpace(body), "#") {
 				t.Errorf("flavor %s scaffolds %s starting with '#', which is a JavaScript syntax error", f.Name(), tmpl.Path)
 			}
 		}
+	}
+	if checked == 0 {
+		t.Fatal("no JavaScript or TypeScript template was checked; the guard would pass vacuously")
 	}
 }
 
 // Positive: the scaffolded flat config is what @eslint/js documents. plugins must name js or
 // extends: ["js/recommended"] resolves to nothing, so both are asserted, not just the import.
 func TestESLintFlatConfig_Positive_ResolvesTheRecommendedConfig(t *testing.T) {
+	body, err := templateContent(eslintTemplate("eslint"), "repo", "owner")
+	if err != nil {
+		t.Fatalf("render the scaffolded flat config: %v", err)
+	}
 	for _, want := range []string{`import js from "@eslint/js"`, `plugins: { js }`, `extends: ["js/recommended"]`, "export default"} {
-		if !strings.Contains(eslintFlatConfig, want) {
+		if !strings.Contains(body, want) {
 			t.Errorf("scaffolded flat config lacks %q", want)
 		}
 	}

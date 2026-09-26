@@ -1,23 +1,15 @@
-# NOTHING READS THIS FILE. No go:embed names templates/, and the one non-test
-# reader, forge.AuditGoToolchain (internal/forge/toolchain_checks.go), opens
-# only the Dockerfile templates to check their Go pins against go.mod. The other
-# consumers are internal/forge/go_cache_checks_test.go, which lints the
-# directory, and docs/guides/ci-caching.md. Every file an
-# adopter receives comes from defaultTemplateContent in
-# internal/flavor/scaffold.go, so editing this file changes nothing for
-# anybody. That is issue #336, which owns the decision to embed templates/ or
-# delete it; do not treat this header as a claim that the decision was made.
-#
-# Until it is made, the body below must stay equal to the ".golangci.yml" case of
-# defaultTemplateContent. praetorctl dedupe scan compares Go functions and cannot
-# see a YAML/Go-string pair, so the equality is enforced instead by
-# internal/flavor's TestScaffoldedGolangciConfigEqualsTheShippedTemplate, which
-# byte-compares everything below this header block against the scaffolded file.
-#
-# The "version" key is mandatory from golangci-lint v2 on. A configuration
-# without it is rejected with "unsupported version of the configuration"
-# before any linter runs. scaffold.go has emitted version "2" since before this
-# branch, so no adopter ever received the v1 form this file used to carry.
+<%- /*
+Scaffolded as .golangci.yml by go-service and go-library (internal/flavor/definitions.go).
+
+golangci-lint v2 schema: the leading version key is mandatory from v2 on, and a file
+without it is rejected with "unsupported version of the configuration" before any linter
+runs. The enabled set is the correctness subset of praetor's own gate, not a mirror of it:
+the repository's .golangci.yml also enables gocyclo, gocognit and funlen (the linters that
+carry the HISS-04 caps) plus nolintlint, forbidigo, contextcheck, wastedassign,
+copyloopvar and gochecknoinits. An adopter therefore receives HISS-07 and HISS-10
+enforcement here and not the HISS-04 caps: only the function-LOC cap reaches them, through
+praetor's own scanner (internal/hiss/rules.go).
+*/ -%>
 version: "2"
 run:
   timeout: 10m
