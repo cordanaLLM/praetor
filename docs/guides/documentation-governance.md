@@ -233,6 +233,38 @@ race and security suites; state-only changes under the ignored private ledgers
 select no documentation work. Source/configuration changes reach the same gate
 through `make verify-all`.
 
+## Site build and Mermaid diagrams
+
+The published site is built from the root `mkdocs.yml` by
+`.github/workflows/pages.yml`, and the adopter preset from
+`docs/presets/mkdocs/mkdocs.yml` by the CI **Documentation Integrity Audit**
+step. Both run `mkdocs build --strict`. A strict build still passes when a
+`mermaid` fence ships as a highlighted code listing, so each build is followed
+by the diagram check:
+
+```bash
+mkdocs build --strict -d /tmp/site
+python3 -B scripts/docs_mermaid.py --config mkdocs.yml --docs docs --site /tmp/site
+```
+
+Material for MkDocs draws a diagram only from a `<pre class="mermaid">`
+element, which `pymdownx.superfences` emits only when the configuration
+declares the mermaid custom fence (`name: mermaid`, `class: mermaid`,
+`format: !!python/name:pymdownx.superfences.fence_code_format`). The check
+fails when either `mkdocs.yml` lacks that entry, or when a built page holds
+fewer mermaid `<pre>` elements than its source has `mermaid` fences. A fence
+nested inside a longer fence is source text and is not expected to render.
+The mapping from a page to its HTML file assumes the default
+`use_directory_urls: true`.
+
+`make docs-mermaid-test` (part of `make verify-all`) replays the check's
+fixtures in `scripts/test_docs_mermaid.py` and asserts that both configuration
+files declare the fence, so removing it fails without a site build.
+
+Links from a page to a repository file outside `docs/` use the file's GitHub
+URL. MkDocs cannot resolve a relative link that leaves `docs/`, and strict
+mode turns that warning into a failed build.
+
 ## Praetor machine-documentation catalog
 
 Praetor itself adds one repository-owned check to the adopted Markdown gate.
