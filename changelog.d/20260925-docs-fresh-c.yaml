@@ -1,0 +1,3 @@
+type: fixed
+title: Correct stale command output, citation and measurement claims in the operational-sync and text-register guides after a docs freshness audit
+breaking: false

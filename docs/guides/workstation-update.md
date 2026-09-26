@@ -36,7 +36,7 @@ praetorctl workstation install --source PATH [--bin-dir PATH] [--manifest PATH]
 | `--source` | Checkout to build the three binaries from. Required; there is no default. |
 | `--bin-dir` | Destination directory. Default: the loaded `update.bin_dir` setting, else the per-OS default. |
 | `--manifest` | Install manifest path. Default: the per-user configuration directory (below). |
-| `--fleet-config`, `--workstation-config` | Layered settings documents (`docs/guides/workstation-settings.md`). Loading one requires `--source` to be a governed checkout (it carries the `.standards.yaml` the loader reads). Neither is required: a plain `install --source .` never touches a settings document. |
+| `--fleet-config`, `--workstation-config` | Layered settings documents (see [effective policy](effective-policy.md#which-documents-the-hook-client-and-workstation-commands-use)). Loading one requires `--source` to be a governed checkout (it carries the `.standards.yaml` the loader reads). Neither is required: a plain `install --source .` never touches a settings document. |
 
 Steps, in order (`internal/workstation/install.go`):
 
