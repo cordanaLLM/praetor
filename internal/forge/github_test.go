@@ -120,7 +120,7 @@ func TestReconcileProtection_Positive_CreateThenUpdate(t *testing.T) {
 	if len(reqs) != 2 {
 		t.Fatalf("expected GET + POST, got %+v", reqs)
 	}
-	if reqs[0].Method != http.MethodGet || reqs[0].Path != "/repos/acme/widgets/rulesets?per_page=100" {
+	if reqs[0].Method != http.MethodGet || reqs[0].Path != "/repos/acme/widgets/rulesets?per_page=100&page=1" {
 		t.Fatalf("unexpected listing request: %+v", reqs[0])
 	}
 	if reqs[1].Method != http.MethodPost || reqs[1].Path != "/repos/acme/widgets/rulesets" {
@@ -259,13 +259,13 @@ func TestReconcileProtectionTokensDoNotBypassRequests(t *testing.T) {
 }
 
 func TestReconcileProtectionRejectsRulesetsAboveBound(t *testing.T) {
-	existing := make([]map[string]any, maxRulesetsPerPage+1)
+	existing := make([]map[string]any, issuesPerPage+1)
 	for i := range existing {
 		existing[i] = map[string]any{"id": i + 1, "name": "other"}
 	}
 	// The desired ruleset lies beyond the bound: silently truncating the response
 	// would incorrectly create another ruleset instead of reporting incomplete data.
-	existing[maxRulesetsPerPage]["name"] = "main-branch-protection"
+	existing[issuesPerPage]["name"] = "main-branch-protection"
 	rs := newRulesetServer(t, existing, 0)
 	gh := NewGitHubDriver("ordinary-token", rs.srv.URL)
 	gh.SetRepository("acme", "widgets")

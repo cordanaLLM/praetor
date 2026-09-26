@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // maxReconciledRepos and maxUnblockTransitions are the scalar upper bounds (HISS-02) on
@@ -171,9 +172,11 @@ func loadFleetIssues(ctx context.Context, token, endpoint string, repos []string
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		owner, name, ok := strings.Cut(repos[i], "/")
-		if !ok {
-			continue
+		// A malformed coordinate is refused, not skipped: skipping reported a clean
+		// reconciliation for a repository that was never read.
+		owner, name, err := util.SplitGitHubRepository(repos[i])
+		if err != nil {
+			return fmt.Errorf("reconcile %s: %w", repos[i], err)
 		}
 		ghDriver := forge.NewGitHubDriver(token, endpoint)
 		ghDriver.SetRepository(owner, name)
@@ -204,8 +207,9 @@ func applyUnblockTransitions(ctx context.Context, token, endpoint string,
 			fmt.Printf("[WARN] Aborting transitions: %v\n", ctx.Err())
 			return applied, failed + (len(unblocked) - i)
 		}
-		owner, name, ok := strings.Cut(u.Repo, "/")
-		if !ok || owner == "" || name == "" {
+		owner, name, err := util.SplitGitHubRepository(u.Repo)
+		if err != nil {
+			fmt.Printf("[WARN] Skipping %s#%d: %v\n", u.Repo, u.IssueNumber, err)
 			failed++
 			continue
 		}

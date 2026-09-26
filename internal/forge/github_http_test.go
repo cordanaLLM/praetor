@@ -657,22 +657,6 @@ func TestGitHubDriver_CreatePullRequestAndStatusCheck_3D(t *testing.T) {
 // Helpers
 // ============================================================================
 
-func TestBodyPreview_3D(t *testing.T) {
-	if got := bodyPreview([]byte("plain message")); got != "plain message" {
-		t.Fatalf("unexpected preview: %q", got)
-	}
-	if got := bodyPreview([]byte("a\x1b[31mb\nc")); strings.Contains(got, "\x1b") || !strings.Contains(got, ".") {
-		t.Fatalf("control characters survived the preview: %q", got)
-	}
-	long := bodyPreview([]byte(strings.Repeat("x", maxErrorBodyPreview*4)))
-	if len(long) > maxErrorBodyPreview+32 {
-		t.Fatalf("preview is not bounded: %d bytes", len(long))
-	}
-	if got := bodyPreview(nil); got != "" {
-		t.Fatalf("expected an empty preview for an empty body, got %q", got)
-	}
-}
-
 func TestParseGitHubIssues_3D(t *testing.T) {
 	raw := []byte(`[
 	  {"number":1,"title":"a","body":"Depends-On: #9","state":"open","labels":[{"name":"governance"}]},

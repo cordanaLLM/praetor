@@ -12,7 +12,6 @@ import (
 	"os"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -21,23 +20,26 @@ import (
 const (
 	defaultHTTPTimeout  = 15 * time.Second
 	maxHTTPResponseBody = 16 * 1024 * 1024 // 16 MB read bound (HISS-02)
-	// maxErrorBodyPreview bounds how much of a forge response body may be embedded in an
-	// error string that ends up on a terminal or inside a receipt.
-	maxErrorBodyPreview = 256
-	// maxErrorBodyBytes bounds project API error excerpts; GitHub REST previews
-	// retain their smaller, control-sanitized maxErrorBodyPreview bound.
+	// maxErrorBodyBytes bounds project API error excerpts read from gh output; forge
+	// response bodies go through util.BodyPreview and its smaller, control-sanitized bound.
 	maxErrorBodyBytes = util.MaxErrorBodyBytes
-	// issuesPerPage is the maximum page size the GitHub REST API accepts.
+	// issuesPerPage is the maximum page size the GitHub REST API accepts; every paginated
+	// listing (issues, milestones, rulesets) requests it.
 	issuesPerPage = 100
 	// maxIssuePages bounds issue pagination (HISS-02): at most 2000 issues per listing.
 	maxIssuePages = MaxListedIssuesLimit / issuesPerPage
-	// maxMilestonePages bounds milestone pagination (HISS-02).
-	maxMilestonePages = 5
-	// maxRulesetsPerPage bounds a ruleset listing response.
-	maxRulesetsPerPage = 100
+	// maxMilestonePages bounds milestone pagination (HISS-02): at most 5000 milestones,
+	// the same bound the milestone package applies to its own listing.
+	maxMilestonePages = 50
+	// maxRulesetPages bounds ruleset pagination (HISS-02): at most 1000 rulesets.
+	maxRulesetPages = 10
 	// MaxLabelsLimit bounds a single label reconciliation batch (HISS-02).
 	MaxLabelsLimit = 500
 )
+
+// errPageCeiling marks a listing that still returned full pages at its page bound: the
+// listing is incomplete, so an entry missing from it proves nothing.
+var errPageCeiling = errors.New("listing exceeds its page bound")
 
 // ErrRepositoryUnresolved is returned when no repository coordinates are available. The
 // driver never falls back to a hard-coded repository: a mutating call against the wrong
@@ -72,14 +74,12 @@ type GitHubDriver struct {
 	StrictStatusChecks bool
 }
 
-// NewGitHubDriver initializes a GitHub driver.
+// NewGitHubDriver initializes a GitHub driver. util.GitHubAPIBase normalizes the endpoint:
+// an empty endpoint or the github.com web origin selects https://api.github.com.
 func NewGitHubDriver(token string, endpoint string) *GitHubDriver {
-	if endpoint == "" {
-		endpoint = "https://api.github.com"
-	}
 	return &GitHubDriver{
 		Token:    token,
-		Endpoint: strings.TrimRight(endpoint, "/"),
+		Endpoint: util.GitHubAPIBase(endpoint),
 		HTTPClient: &http.Client{
 			Timeout: defaultHTTPTimeout,
 		},
@@ -95,19 +95,23 @@ func (g *GitHubDriver) SetRepository(owner, repo string) {
 }
 
 // resolveRepository returns the target owner and repository, falling back to the
-// GITHUB_REPOSITORY environment variable used by GitHub Actions. It fails closed.
+// GITHUB_REPOSITORY environment variable used by GitHub Actions. It fails closed: an
+// incomplete coordinate is ErrRepositoryUnresolved, and an owner or name that
+// util.ValidateGitHubRepositoryIdentity rejects ("..", "/", URL delimiters) is an error
+// before it can reach an API path.
 func (g *GitHubDriver) resolveRepository() (string, string, error) {
 	owner, repo := g.Owner, g.Repo
 	if owner == "" || repo == "" {
-		if envRepo := os.Getenv("GITHUB_REPOSITORY"); envRepo != "" {
-			parts := strings.SplitN(envRepo, "/", 2)
-			if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
-				owner, repo = parts[0], parts[1]
-			}
+		envOwner, envRepo, ok := strings.Cut(os.Getenv("GITHUB_REPOSITORY"), "/")
+		if ok && envOwner != "" && envRepo != "" {
+			owner, repo = envOwner, envRepo
 		}
 	}
 	if owner == "" || repo == "" {
 		return "", "", ErrRepositoryUnresolved
+	}
+	if err := util.ValidateGitHubRepositoryIdentity(owner, repo); err != nil {
+		return "", "", fmt.Errorf("github repository: %w", err)
 	}
 	return owner, repo, nil
 }
@@ -142,32 +146,6 @@ func (g *GitHubDriver) Authenticate(ctx context.Context) error {
 		return errors.New("github authentication failed: token is empty")
 	}
 	return nil
-}
-
-// bodyPreview renders a bounded, control-character-free excerpt of a response body so that
-// a hostile or misconfigured endpoint cannot flood a terminal or inject escape sequences.
-func bodyPreview(body []byte) string {
-	truncated := false
-	if len(body) > maxErrorBodyPreview {
-		body = body[:maxErrorBodyPreview]
-		truncated = true
-	}
-	var sb strings.Builder
-	for _, r := range string(body) {
-		switch {
-		case r == '\n' || r == '\t' || r == '\r':
-			sb.WriteByte(' ')
-		case unicode.IsControl(r) || r == unicode.ReplacementChar:
-			sb.WriteByte('.')
-		default:
-			sb.WriteRune(r)
-		}
-	}
-	out := strings.TrimSpace(sb.String())
-	if truncated {
-		out += "... (truncated)"
-	}
-	return out
 }
 
 // sendRequest handles authenticated HTTP communication with GitHub REST API.
@@ -236,28 +214,61 @@ type ghRulesetRaw struct {
 	Name string `json:"name"`
 }
 
-// findRulesetID returns the id of the repository ruleset named name, or 0 when absent.
-func (g *GitHubDriver) findRulesetID(ctx context.Context, listPath, name string) (int, error) {
-	body, status, err := g.sendRequest(ctx, http.MethodGet, listPath+"?per_page="+fmt.Sprint(maxRulesetsPerPage), nil)
-	if err != nil {
-		return 0, fmt.Errorf("failed listing repository rulesets: %w", err)
-	}
-	if status != http.StatusOK {
-		return 0, fmt.Errorf("unexpected status %d listing repository rulesets: %s", status, bodyPreview(body))
-	}
-	var rulesets []ghRulesetRaw
-	if err := json.Unmarshal(body, &rulesets); err != nil {
-		return 0, fmt.Errorf("failed parsing repository rulesets (raw: %q): %w", bodyPreview(body), err)
-	}
-	if len(rulesets) > maxRulesetsPerPage {
-		return 0, fmt.Errorf("ruleset response exceeds %d entries", maxRulesetsPerPage)
-	}
-	for i := 0; i < len(rulesets); i++ {
-		if rulesets[i].Name == name {
-			return rulesets[i].ID, nil
+// pageVisitor consumes one page of a GitHub REST listing. It returns the number of raw
+// entries on the page and whether the walk may stop because the caller found its entry.
+type pageVisitor func(body []byte) (rawCount int, done bool, err error)
+
+// walkPages follows a GitHub REST listing page by page, requesting issuesPerPage entries
+// per page, up to maxPages pages (HISS-02). A page shorter than issuesPerPage ends the
+// listing. A listing that still returns full pages at the bound yields errPageCeiling, so
+// no caller mistakes a truncated listing for a complete one. query holds extra
+// "key=value&" parameters and may be empty; what names the listing in errors.
+func (g *GitHubDriver) walkPages(ctx context.Context, base, query, what string, maxPages int, visit pageVisitor) error {
+	for page := 1; page <= maxPages; page++ {
+		path := fmt.Sprintf("%s?%sper_page=%d&page=%d", base, query, issuesPerPage, page)
+		body, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			return fmt.Errorf("failed listing %s: %w", what, err)
+		}
+		if status != http.StatusOK {
+			return fmt.Errorf("unexpected status %d listing %s: %s", status, what, util.BodyPreview(body))
+		}
+		rawCount, done, err := visit(body)
+		if err != nil {
+			return err
+		}
+		if done || rawCount < issuesPerPage {
+			return nil
 		}
 	}
-	return 0, nil
+	return fmt.Errorf("%w: %s beyond %d pages of %d entries", errPageCeiling, what, maxPages, issuesPerPage)
+}
+
+// findRulesetID returns the id of the repository ruleset named name, or 0 when absent. It
+// reads every page of the listing: a ruleset past the first page must be updated in place,
+// never duplicated by a second POST.
+func (g *GitHubDriver) findRulesetID(ctx context.Context, listPath, name string) (int, error) {
+	id := 0
+	err := g.walkPages(ctx, listPath, "", "repository rulesets", maxRulesetPages, func(body []byte) (int, bool, error) {
+		var rulesets []ghRulesetRaw
+		if err := json.Unmarshal(body, &rulesets); err != nil {
+			return 0, false, fmt.Errorf("failed parsing repository rulesets (raw: %q): %w", util.BodyPreview(body), err)
+		}
+		if len(rulesets) > issuesPerPage {
+			return 0, false, fmt.Errorf("ruleset response exceeds %d entries", issuesPerPage)
+		}
+		for i := 0; i < len(rulesets); i++ {
+			if rulesets[i].Name == name {
+				id = rulesets[i].ID
+				return len(rulesets), true, nil
+			}
+		}
+		return len(rulesets), false, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // ReconcileProtection converges the remote branch ruleset onto the resolved policy. It is a
@@ -297,7 +308,7 @@ func (g *GitHubDriver) ReconcileProtection(ctx context.Context, branch string, p
 		return fmt.Errorf("reconcile branch protection failed for %s: %w", branch, err)
 	}
 	if status != http.StatusOK && status != http.StatusCreated {
-		return fmt.Errorf("unexpected status %d while reconciling ruleset %q: %s", status, name, bodyPreview(body))
+		return fmt.Errorf("unexpected status %d while reconciling ruleset %q: %s", status, name, util.BodyPreview(body))
 	}
 	return nil
 }
@@ -344,7 +355,7 @@ func (g *GitHubDriver) reconcileLabel(ctx context.Context, l Label) error {
 		return nil
 	}
 	if status != http.StatusNotFound {
-		return fmt.Errorf("unexpected status %d updating label %s: %s", status, l.Name, bodyPreview(body))
+		return fmt.Errorf("unexpected status %d updating label %s: %s", status, l.Name, util.BodyPreview(body))
 	}
 	return g.createLabel(ctx, l.Name, payload)
 }
@@ -359,7 +370,7 @@ func (g *GitHubDriver) createLabel(ctx context.Context, name string, payload map
 		return fmt.Errorf("failed creating label %s: %w", name, err)
 	}
 	if status != http.StatusCreated {
-		return fmt.Errorf("unexpected status %d creating label %s: %s", status, name, bodyPreview(body))
+		return fmt.Errorf("unexpected status %d creating label %s: %s", status, name, util.BodyPreview(body))
 	}
 	return nil
 }
@@ -396,7 +407,7 @@ func (g *GitHubDriver) PostStatusCheck(ctx context.Context, commitSHA string, ch
 		return fmt.Errorf("failed posting commit status check to %s: %w", commitSHA, err)
 	}
 	if status != http.StatusCreated && status != http.StatusOK {
-		return fmt.Errorf("unexpected status %d posting commit status for %s: %s", status, commitSHA, bodyPreview(body))
+		return fmt.Errorf("unexpected status %d posting commit status for %s: %s", status, commitSHA, util.BodyPreview(body))
 	}
 	return nil
 }
@@ -425,12 +436,12 @@ func (g *GitHubDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*P
 		return nil, fmt.Errorf("failed creating pull request: %w", err)
 	}
 	if status != http.StatusCreated {
-		return nil, fmt.Errorf("unexpected status %d creating pull request: %s", status, bodyPreview(respBody))
+		return nil, fmt.Errorf("unexpected status %d creating pull request: %s", status, util.BodyPreview(respBody))
 	}
 
 	var res PRResponse
 	if err := json.Unmarshal(respBody, &res); err != nil {
-		return nil, fmt.Errorf("failed parsing pull request response (raw: %q): %w", bodyPreview(respBody), err)
+		return nil, fmt.Errorf("failed parsing pull request response (raw: %q): %w", util.BodyPreview(respBody), err)
 	}
 	return &res, nil
 }
@@ -463,33 +474,39 @@ type ghMilestoneRaw struct {
 	Title  string `json:"title"`
 }
 
-// resolveMilestone maps a milestone title to its repository-scoped number.
+// resolveMilestone maps a milestone title to its repository-scoped number. It reads every
+// page of the listing. An exact title wins; otherwise the first title equal under Unicode
+// case folding is used, the same key the milestone store merges titles by. A listing cut
+// off at maxMilestonePages is an error, never "does not exist".
 func (g *GitHubDriver) resolveMilestone(ctx context.Context, title string) (int, error) {
 	base, err := g.repoPath("milestones")
 	if err != nil {
 		return 0, fmt.Errorf("resolve milestone %q: %w", title, err)
 	}
-	for page := 1; page <= maxMilestonePages; page++ {
-		path := fmt.Sprintf("%s?state=all&per_page=%d&page=%d", base, issuesPerPage, page)
-		body, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
-		if err != nil {
-			return 0, fmt.Errorf("failed listing milestones: %w", err)
-		}
-		if status != http.StatusOK {
-			return 0, fmt.Errorf("unexpected status %d listing milestones: %s", status, bodyPreview(body))
-		}
+	exact, folded := 0, 0
+	err = g.walkPages(ctx, base, "state=all&", "milestones", maxMilestonePages, func(body []byte) (int, bool, error) {
 		var raw []ghMilestoneRaw
 		if err := json.Unmarshal(body, &raw); err != nil {
-			return 0, fmt.Errorf("failed parsing milestones (raw: %q): %w", bodyPreview(body), err)
+			return 0, false, fmt.Errorf("failed parsing milestones (raw: %q): %w", util.BodyPreview(body), err)
 		}
 		for i := 0; i < len(raw); i++ {
 			if raw[i].Title == title {
-				return raw[i].Number, nil
+				exact = raw[i].Number
+				return len(raw), true, nil
+			}
+			if folded == 0 && strings.EqualFold(raw[i].Title, title) {
+				folded = raw[i].Number
 			}
 		}
-		if len(raw) < issuesPerPage {
-			break
-		}
+		return len(raw), false, nil
+	})
+	switch {
+	case err != nil:
+		return 0, fmt.Errorf("resolve milestone %q: %w", title, err)
+	case exact > 0:
+		return exact, nil
+	case folded > 0:
+		return folded, nil
 	}
 	return 0, fmt.Errorf("milestone %q does not exist in the target repository", title)
 }
@@ -515,12 +532,12 @@ func (g *GitHubDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueR
 		return nil, fmt.Errorf("failed creating issue: %w", err)
 	}
 	if status != http.StatusCreated {
-		return nil, fmt.Errorf("unexpected status %d creating issue: %s", status, bodyPreview(respBody))
+		return nil, fmt.Errorf("unexpected status %d creating issue: %s", status, util.BodyPreview(respBody))
 	}
 
 	var res IssueResponse
 	if err := json.Unmarshal(respBody, &res); err != nil {
-		return nil, fmt.Errorf("failed parsing issue response (raw: %q): %w", bodyPreview(respBody), err)
+		return nil, fmt.Errorf("failed parsing issue response (raw: %q): %w", util.BodyPreview(respBody), err)
 	}
 	return &res, nil
 }
@@ -541,25 +558,22 @@ func (g *GitHubDriver) ListIssues(ctx context.Context, state string) ([]IssueSpe
 	}
 
 	all := make([]IssueSpec, 0, issuesPerPage)
-	for page := 1; page <= maxIssuePages; page++ {
-		path := fmt.Sprintf("%s?state=%s&per_page=%d&page=%d", base, url.QueryEscape(state), issuesPerPage, page)
-		respBody, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
+	query := "state=" + url.QueryEscape(state) + "&"
+	err = g.walkPages(ctx, base, query, "issues", maxIssuePages, func(body []byte) (int, bool, error) {
+		specs, rawCount, err := parseGitHubIssues(body)
 		if err != nil {
-			return nil, fmt.Errorf("failed listing issues: %w", err)
-		}
-		if status != http.StatusOK {
-			return nil, fmt.Errorf("unexpected status %d listing issues: %s", status, bodyPreview(respBody))
-		}
-		specs, rawCount, err := parseGitHubIssues(respBody)
-		if err != nil {
-			return nil, err
+			return 0, false, err
 		}
 		all = append(all, specs...)
-		if rawCount < issuesPerPage {
-			return all, nil
-		}
+		return rawCount, false, nil
+	})
+	if errors.Is(err, errPageCeiling) {
+		return nil, &IssueListIncompleteError{Limit: MaxListedIssuesLimit}
 	}
-	return nil, &IssueListIncompleteError{Limit: MaxListedIssuesLimit}
+	if err != nil {
+		return nil, err
+	}
+	return all, nil
 }
 
 type ghIssueRaw struct {
@@ -582,7 +596,7 @@ type ghIssueRaw struct {
 func parseGitHubIssues(body []byte) ([]IssueSpec, int, error) {
 	var raw []ghIssueRaw
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, 0, fmt.Errorf("failed parsing issues list (len %d, raw: %q): %w", len(body), bodyPreview(body), err)
+		return nil, 0, fmt.Errorf("failed parsing issues list (len %d, raw: %q): %w", len(body), util.BodyPreview(body), err)
 	}
 	if raw == nil {
 		return nil, 0, errors.New("GitHub issue listing must be an array, not null")
@@ -648,7 +662,7 @@ func (g *GitHubDriver) UpdateIssue(ctx context.Context, number int, labels []str
 		return fmt.Errorf("failed updating issue #%d: %w", number, err)
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("unexpected status %d updating issue #%d: %s", status, number, bodyPreview(body))
+		return fmt.Errorf("unexpected status %d updating issue #%d: %s", status, number, util.BodyPreview(body))
 	}
 	return nil
 }
@@ -674,7 +688,7 @@ func (g *GitHubDriver) AddLabels(ctx context.Context, number int, labels []strin
 		return fmt.Errorf("failed adding labels to issue #%d: %w", number, err)
 	}
 	if status != http.StatusOK && status != http.StatusCreated {
-		return fmt.Errorf("unexpected status %d adding labels to issue #%d: %s", status, number, bodyPreview(body))
+		return fmt.Errorf("unexpected status %d adding labels to issue #%d: %s", status, number, util.BodyPreview(body))
 	}
 	return nil
 }
@@ -702,7 +716,7 @@ func (g *GitHubDriver) RemoveLabel(ctx context.Context, number int, label string
 	}
 	if status != http.StatusOK && status != http.StatusNoContent && status != http.StatusNotFound {
 		return fmt.Errorf("unexpected status %d removing label %s from issue #%d: %s",
-			status, label, number, bodyPreview(body))
+			status, label, number, util.BodyPreview(body))
 	}
 	return nil
 }
