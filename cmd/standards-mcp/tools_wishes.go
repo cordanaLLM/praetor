@@ -31,23 +31,8 @@ func (s *Server) createWishesUpdateTool() (mcp.Tool, error) {
 		schema, s.updateWishes, true, false)
 }
 
-func wishesToolArguments(args map[string]any, update bool) error {
-	if len(args) > 2 {
-		return fmt.Errorf("only store and request_json arguments are accepted")
-	}
-	for key, value := range args {
-		if key != "store" && (!update || key != "request_json") {
-			return fmt.Errorf("unsupported wish tool argument %q", key)
-		}
-		if _, ok := value.(string); !ok {
-			return fmt.Errorf("%s must be a string", key)
-		}
-	}
-	return nil
-}
-
 func (s *Server) readWishes(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
-	if err := wishesToolArguments(args, false); err != nil {
+	if err := requireStringArguments(args); err != nil {
 		return mcp.ErrorResult(err.Error()), nil
 	}
 	path, err := s.resolvePath(args, "store", ".workingdir/wishes.json")
@@ -59,7 +44,7 @@ func (s *Server) readWishes(ctx context.Context, args map[string]any) (*mcp.Tool
 }
 
 func (s *Server) updateWishes(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
-	if err := wishesToolArguments(args, true); err != nil {
+	if err := requireStringArguments(args); err != nil {
 		return mcp.ErrorResult(err.Error()), nil
 	}
 	path, err := s.resolvePath(args, "store", ".workingdir/wishes.json")

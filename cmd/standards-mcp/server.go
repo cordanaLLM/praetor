@@ -29,6 +29,15 @@ const (
 	defaultToolTimeout = 5 * time.Minute
 )
 
+// JSON-RPC 2.0 error codes (https://www.jsonrpc.org/specification#error_object).
+const (
+	codeParseError     = -32700
+	codeInvalidRequest = -32600
+	codeMethodNotFound = -32601
+	codeInvalidParams  = -32602
+	codeInternalError  = -32603
+)
+
 var (
 	// ErrOutsideRoot is returned for path arguments that resolve outside -root.
 	ErrOutsideRoot = errors.New("path resolves outside the server root; start standards-mcp with -allow-outside-root to permit it")
@@ -39,7 +48,8 @@ var (
 	ErrRemoteBenchmarksDisabled = errors.New("remote benchmark clones are disabled; start standards-mcp with -allow-remote-benchmarks to permit them")
 )
 
-// JSONRPCRequest represents a JSON-RPC 2.0 request payload.
+// JSONRPCRequest represents a JSON-RPC 2.0 request payload. A nil ID marks a
+// notification; decodeRequest rejects an explicit null id, which MCP forbids.
 type JSONRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      any             `json:"id,omitempty"`
@@ -47,10 +57,12 @@ type JSONRPCRequest struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
-// JSONRPCResponse represents a JSON-RPC 2.0 response payload.
+// JSONRPCResponse represents a JSON-RPC 2.0 response payload. ID is always encoded: a
+// response to a message whose id could not be read (parse error, invalid request)
+// carries "id": null, as JSON-RPC 2.0 section 5 requires, never an absent member.
 type JSONRPCResponse struct {
 	JSONRPC string        `json:"jsonrpc"`
-	ID      any           `json:"id,omitempty"`
+	ID      any           `json:"id"`
 	Result  any           `json:"result,omitempty"`
 	Error   *JSONRPCError `json:"error,omitempty"`
 }
@@ -205,6 +217,24 @@ func argString(args map[string]any, key string) (string, error) {
 		return "", fmt.Errorf("%w: %s must be a string, got %T", ErrArgType, key, raw)
 	}
 	return str, nil
+}
+
+// requireStringArguments rejects every supplied argument that is not a JSON string,
+// explicit null included, for tools whose arguments are all strings; argString alone reads
+// null as absent. Undeclared keys never reach a handler: handleToolsCall refuses them
+// first through the tool's input schema.
+func requireStringArguments(args map[string]any) error {
+	keys := make([]string, 0, len(args))
+	for key := range args {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if _, isString := args[key].(string); !isString {
+			return fmt.Errorf("%w: %s must be a string, got %T", ErrArgType, key, args[key])
+		}
+	}
+	return nil
 }
 
 // resolvePath resolves a path argument against the server root. An absent or empty
@@ -884,18 +914,24 @@ func (s *Server) handleToolsCall(ctx context.Context, req JSONRPCRequest) *JSONR
 		Arguments map[string]any `json:"arguments"`
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errorResponse(req.ID, -32602, fmt.Sprintf("Invalid params for tools/call: %v", err))
+		return errorResponse(req.ID, codeInvalidParams, fmt.Sprintf("Invalid params for tools/call: %v", err))
 	}
 
 	tool, exists := s.tools[params.Name]
 	if !exists {
-		return errorResponse(req.ID, -32601, fmt.Sprintf("Tool not found: %s", params.Name))
+		return errorResponse(req.ID, codeMethodNotFound, fmt.Sprintf("Tool not found: %s", params.Name))
 	}
 	if tool.Handler == nil {
-		return errorResponse(req.ID, -32603, fmt.Sprintf("Tool %s has no handler", params.Name))
+		return errorResponse(req.ID, codeInternalError, fmt.Sprintf("Tool %s has no handler", params.Name))
 	}
 	if params.Arguments == nil {
 		params.Arguments = map[string]any{}
+	}
+	// One strict check in front of every handler: an undeclared key is refused before any
+	// side effect. MCP reports input validation as a tool execution error (isError) so the
+	// model can correct the call, not as a JSON-RPC protocol error.
+	if err := tool.InputSchema.CheckArguments(params.Arguments); err != nil {
+		return &JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: mcp.ErrorResult(err.Error())}
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, s.opts.ToolTimeout)
@@ -903,11 +939,11 @@ func (s *Server) handleToolsCall(ctx context.Context, req JSONRPCRequest) *JSONR
 
 	res, err := tool.Handler(callCtx, params.Arguments)
 	if err != nil {
-		return errorResponse(req.ID, -32603, servedErrorText(err))
+		return errorResponse(req.ID, codeInternalError, servedErrorText(err))
 	}
 	safe, err := mcp.SanitizeResult(res)
 	if err != nil {
-		return errorResponse(req.ID, -32603, fmt.Sprintf("Tool %s result withheld: %v", params.Name, err))
+		return errorResponse(req.ID, codeInternalError, fmt.Sprintf("Tool %s result withheld: %v", params.Name, err))
 	}
 
 	return &JSONRPCResponse{
@@ -928,14 +964,53 @@ func servedErrorText(err error) string {
 	return "Internal tool execution error: " + text
 }
 
-// HandleRequest processes an incoming JSON-RPC 2.0 request and produces a response.
+// validRequestID reports whether id is a JSON-RPC string or number. decodeRequest keeps
+// numbers as json.Number; in-process callers may pass Go integers or floats.
+func validRequestID(id any) bool {
+	switch id.(type) {
+	case string, json.Number, float64, float32, int, int32, int64, uint, uint32, uint64:
+		return true
+	default:
+		return false
+	}
+}
+
+// validateEnvelope answers a message that is not a valid JSON-RPC 2.0 request object
+// with -32600 Invalid Request, or returns nil. Such a message is answered even without an
+// id, because the server cannot tell whether it was meant as a notification.
+func validateEnvelope(req JSONRPCRequest) *JSONRPCResponse {
+	if req.ID != nil && !validRequestID(req.ID) {
+		return errorResponse(nil, codeInvalidRequest, "Invalid Request: id must be a string or a number")
+	}
+	if req.JSONRPC != "2.0" {
+		return errorResponse(req.ID, codeInvalidRequest, `Invalid Request: jsonrpc must be exactly "2.0"`)
+	}
+	if req.Method == "" {
+		return errorResponse(req.ID, codeInvalidRequest, "Invalid Request: method is required")
+	}
+	return nil
+}
+
+// HandleRequest processes one JSON-RPC 2.0 message. A request (a message with an id)
+// gets exactly one response. A notification (no id) never gets one, whatever its method,
+// and is never dispatched: every method this server implements is a request, so a
+// notification such as notifications/initialized has nothing to execute, and a request
+// method sent without an id must not run a tool whose outcome nobody can receive.
 func (s *Server) HandleRequest(ctx context.Context, req JSONRPCRequest) *JSONRPCResponse {
+	if resp := validateEnvelope(req); resp != nil {
+		return resp
+	}
+	if req.ID == nil {
+		return nil
+	}
+	return s.dispatch(ctx, req)
+}
+
+// dispatch routes a validated request to its method handler.
+func (s *Server) dispatch(ctx context.Context, req JSONRPCRequest) *JSONRPCResponse {
 	switch req.Method {
 	case "initialize":
 		return s.handleInitialize(req)
-
-	case "notifications/initialized":
-		return nil
 
 	case "ping":
 		return &JSONRPCResponse{
@@ -951,6 +1026,6 @@ func (s *Server) HandleRequest(ctx context.Context, req JSONRPCRequest) *JSONRPC
 		return s.handleToolsCall(ctx, req)
 
 	default:
-		return errorResponse(req.ID, -32601, fmt.Sprintf("Method not found: %s", req.Method))
+		return errorResponse(req.ID, codeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
 	}
 }

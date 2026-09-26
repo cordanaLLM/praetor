@@ -1,0 +1,3 @@
+type: fixed
+title: standards-mcp refuses tool arguments the tool's input schema does not declare, so a misspelled dry_run or verify_only can no longer run the mutating path, and follows JSON-RPC 2.0 framing (id null on parse and invalid-request errors, no reply to notifications, -32600 for a missing jsonrpc or method)
+breaking: true
