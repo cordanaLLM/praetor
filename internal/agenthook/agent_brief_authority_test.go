@@ -63,7 +63,7 @@ func digestOf(data string) string {
 func TestValidateAgentBriefBindsTheManifestDigest(t *testing.T) {
 	ctx := context.Background()
 	governed := repository(t, true)
-	resolution, err := validateAgentBrief(ctx, governed, validBrief)
+	resolution, err := validateBriefAt(t, ctx, governed, validBrief)
 	if err != nil {
 		t.Fatalf("documented brief refused: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestValidateAgentBriefBindsTheManifestDigest(t *testing.T) {
 	}
 
 	ungoverned := repository(t, false)
-	resolution, err = validateAgentBrief(ctx, ungoverned, validBrief)
+	resolution, err = validateBriefAt(t, ctx, ungoverned, validBrief)
 	if err != nil || resolution.ManifestSHA256 != digestOf("") {
 		t.Fatalf("absent manifest must bind SHA-256(empty): %+v, %v", resolution, err)
 	}
@@ -82,7 +82,7 @@ func TestValidateAgentBriefBindsTheManifestDigest(t *testing.T) {
 	manifest := "version: 1\nregister:\n  tasks:\n    deploy_prod: {register: internal, max_tokens: 512}\n"
 	writeBriefRouting(t, custom, "deploy_prod")
 	writeBriefFixture(t, custom, manifestName, manifest)
-	resolution, err = validateAgentBrief(ctx, custom, briefFor("deploy_prod", "internal/agenthook"))
+	resolution, err = validateBriefAt(t, ctx, custom, briefFor("deploy_prod", "internal/agenthook"))
 	want = config.Resolution{Register: config.TextRegisterInternal, MaxTokens: 512, Source: "tasks.deploy_prod", ManifestSHA256: digestOf(manifest)}
 	if err != nil || resolution != want {
 		t.Fatalf("task row resolution = %+v, %v; want %+v", resolution, err, want)
@@ -140,7 +140,7 @@ func TestValidateAgentBriefRefusesUndocumentedBriefs(t *testing.T) {
 			if tc.setup != nil {
 				tc.setup(t, root)
 			}
-			resolution, err := validateAgentBrief(t.Context(), root, tc.brief)
+			resolution, err := validateBriefAt(t, t.Context(), root, tc.brief)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
@@ -171,11 +171,11 @@ func TestValidateAgentBriefLabelBoundary(t *testing.T) {
 	longest := strings.Repeat("x", router.MaxTaskLabelBytes)
 	root := repository(t, true)
 	writeBriefRouting(t, root, longest)
-	if _, err := validateAgentBrief(ctx, root, briefFor(longest, "internal/agenthook")); err != nil {
+	if _, err := validateBriefAt(t, ctx, root, briefFor(longest, "internal/agenthook")); err != nil {
 		t.Fatalf("%d-byte declared label refused: %v", len(longest), err)
 	}
 	tooLong := longest + "x"
-	if _, err := validateAgentBrief(ctx, root, briefFor(tooLong, "internal/agenthook")); err == nil ||
+	if _, err := validateBriefAt(t, ctx, root, briefFor(tooLong, "internal/agenthook")); err == nil ||
 		!strings.Contains(err.Error(), "invalid task label") {
 		t.Fatalf("%d-byte label accepted: %v", len(tooLong), err)
 	}
@@ -200,13 +200,50 @@ func TestValidateAgentBriefTokenBoundary(t *testing.T) {
 	if caveman.EstimateTokens(under) > 256 || caveman.EstimateTokens(over) <= 256 {
 		t.Fatalf("fixture misses the boundary: under=%d over=%d", caveman.EstimateTokens(under), caveman.EstimateTokens(over))
 	}
-	if _, err := validateAgentBrief(ctx, root, under); err != nil {
+	if _, err := validateBriefAt(t, ctx, root, under); err != nil {
 		t.Fatalf("brief at the %d-token ceiling refused: %v", caveman.EstimateTokens(under), err)
 	}
 	if count == 0 {
 		t.Fatal("fixture never added an input line")
 	}
-	if _, err := validateAgentBrief(ctx, root, over); err == nil || !strings.Contains(err.Error(), caveman.RuleTokenCeiling) {
+	if _, err := validateBriefAt(t, ctx, root, over); err == nil || !strings.Contains(err.Error(), caveman.RuleTokenCeiling) {
 		t.Fatalf("brief over the ceiling accepted: %v", err)
 	}
+}
+
+// TestBriefAuthorityIsOneSnapshotPerDispatch: a dispatch loads the register authority once,
+// so a manifest rewritten between two of its briefs cannot bind them to two digests. A
+// fresh load, as the next dispatch makes, sees the new manifest.
+func TestBriefAuthorityIsOneSnapshotPerDispatch(t *testing.T) {
+	ctx := context.Background()
+	root := repository(t, true)
+	authority, err := loadBriefAuthority(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := validateAgentBrief(authority, validBrief)
+	if err != nil {
+		t.Fatalf("first brief refused: %v", err)
+	}
+	rewritten := "version: 1\nregister:\n  tasks:\n    feature_implementation: {register: internal, max_tokens: 512}\n"
+	writeBriefFixture(t, root, manifestName, rewritten)
+	second, err := validateAgentBrief(authority, validBrief)
+	if err != nil || second != first {
+		t.Fatalf("second brief of one dispatch = %+v, %v; want the first brief's %+v", second, err, first)
+	}
+	next, err := validateBriefAt(t, ctx, root, validBrief)
+	if err != nil || next.ManifestSHA256 != digestOf(rewritten) || next.ManifestSHA256 == first.ManifestSHA256 {
+		t.Fatalf("next dispatch = %+v, %v; want the rewritten manifest's digest", next, err)
+	}
+}
+
+// validateBriefAt loads root's brief authority the way one dispatch does and validates text
+// against it; a load failure is returned as the dispatch would report it.
+func validateBriefAt(t *testing.T, ctx context.Context, root, text string) (config.Resolution, error) {
+	t.Helper()
+	authority, err := loadBriefAuthority(ctx, root)
+	if err != nil {
+		return config.Resolution{}, err
+	}
+	return validateAgentBrief(authority, text)
 }

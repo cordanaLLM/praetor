@@ -105,9 +105,13 @@ func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canoni
 	if len(canonical.Briefs) == 0 || len(canonical.Briefs) > MaxDispatchBriefs {
 		return trafficDenied(fmt.Errorf("dispatch must carry 1..%d briefs", MaxDispatchBriefs))
 	}
+	authority, err := loadBriefAuthority(ctx, root)
+	if err != nil {
+		return trafficDenied(err)
+	}
 	var resolution config.Resolution
 	for index := 0; index < len(canonical.Briefs) && index < MaxDispatchBriefs; index++ {
-		resolved, err := validateAgentBrief(ctx, root, canonical.Briefs[index])
+		resolved, err := validateAgentBrief(authority, canonical.Briefs[index])
 		if err != nil {
 			return trafficDenied(fmt.Errorf("brief %d: %w", index, err))
 		}
@@ -199,11 +203,27 @@ func returnNotJudged(err error) Verdict {
 	return Verdict{Outcome: Skip, Reason: "subagent return not judged: " + err.Error()}
 }
 
+// briefAuthority is the digest-bound register authority and the routing task vocabulary of
+// one governed root, loaded once per dispatch: every brief of a dispatch is judged by the
+// same manifest, and the files are read once however many briefs it carries.
+type briefAuthority struct {
+	register config.RegisterAuthority
+	labels   []string
+}
+
+func loadBriefAuthority(ctx context.Context, root string) (briefAuthority, error) {
+	register, labels, err := compiler.LoadRegisterTaskAuthority(ctx, root)
+	if err != nil {
+		return briefAuthority{}, fmt.Errorf("load register policy: %w", err)
+	}
+	return briefAuthority{register: register, labels: labels}, nil
+}
+
 // validateAgentBrief resolves the brief's task through the digest-bound register
 // authority, so the resolution carries the manifest SHA-256 that ValidateEmission and the
 // stored return contract require. The label must be declared by the routing vocabulary
 // that governs root; compile-context validates manifest task rows against the same set.
-func validateAgentBrief(ctx context.Context, root, text string) (config.Resolution, error) {
+func validateAgentBrief(authority briefAuthority, text string) (config.Resolution, error) {
 	task, err := caveman.ExtractBriefTask(text)
 	if err != nil {
 		return config.Resolution{}, err
@@ -211,14 +231,10 @@ func validateAgentBrief(ctx context.Context, root, text string) (config.Resoluti
 	if !router.ValidTaskLabel(task) {
 		return config.Resolution{}, fmt.Errorf("invalid task label %q", task)
 	}
-	authority, labels, err := compiler.LoadRegisterTaskAuthority(ctx, root)
-	if err != nil {
-		return config.Resolution{}, fmt.Errorf("load register policy: %w", err)
-	}
-	if !slices.Contains(labels, task) {
+	if !slices.Contains(authority.labels, task) {
 		return config.Resolution{}, fmt.Errorf("task %q is not declared by routing", task)
 	}
-	resolution, err := authority.Resolve(config.SurfaceAgent, task)
+	resolution, err := authority.register.Resolve(config.SurfaceAgent, task)
 	if err != nil {
 		return config.Resolution{}, fmt.Errorf("resolve register: %w", err)
 	}
