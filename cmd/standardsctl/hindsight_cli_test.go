@@ -37,6 +37,10 @@ func TestHindsightDistillCLI_Positive_CleanRepositoryPrintsNoWarnings(t *testing
 
 func TestHindsightDistillCLI_Negative_FailedSourcesArePrinted(t *testing.T) {
 	root := t.TempDir()
+	writeFixtureFile(t, root, "go.mod", "module fixture\n\ngo 1.23\n")
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	writeFixtureFile(t, root, "broken.go", "package broken\n\nfunc (\n")
 	writeFixtureFile(t, root, ".workingdir/docs/catalog.json", "{not json")
 	out, err := runDistillCLI(t, root)

@@ -95,16 +95,19 @@ func distillSources(ctx context.Context, repoPath string, sources []distillSourc
 
 func distillFlavorFacts(ctx context.Context, repoPath string) ([]MemoryFact, error) {
 	var facts []MemoryFact
-	detected := flavor.DetectFlavor(repoPath)
-	if detected != "" {
-		flv, err := flavor.Get(detected)
-		if err != nil {
-			return nil, fmt.Errorf("resolve detected flavor %q: %w", detected, err)
-		}
-		stmt := fmt.Sprintf("Repository is governed under archetype %s (Profile: %s). Description: %s.",
-			flv.Name(), flv.HISSProfile(), flv.Description())
-		facts = append(facts, createFact(CategoryFlavor, flv.Name(), stmt, "internal/flavor", []string{"flavor", flv.Name()}))
+	// A repository no flavor matches yields no flavor fact. Detection used to substitute
+	// go-library there, and the distiller stored that guess as a governance fact.
+	detected, ok := flavor.Detect(repoPath)
+	if !ok {
+		return facts, nil
 	}
+	flv, err := flavor.Get(detected)
+	if err != nil {
+		return nil, fmt.Errorf("resolve detected flavor %q: %w", detected, err)
+	}
+	stmt := fmt.Sprintf("Repository is governed under archetype %s (Profile: %s). Description: %s.",
+		flv.Name(), flv.HISSProfile(), flv.Description())
+	facts = append(facts, createFact(CategoryFlavor, flv.Name(), stmt, "internal/flavor", []string{"flavor", flv.Name()}))
 	return facts, nil
 }
 

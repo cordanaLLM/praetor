@@ -35,10 +35,9 @@ var digestPinned = regexp.MustCompile(`^FROM \S+:[^@\s]+@sha256:[0-9a-f]{64}$`)
 
 // scaffoldInto applies a flavor to an empty repository and returns the file bodies.
 //
-// The report is read, not discarded: ApplyFlavor returns (report, nil) even when
-// applySingleTemplate recorded a mkdir or write failure in report.Errors, so a helper that
-// drops it reports a write failure as "this flavor scaffolds no such file" and hides the
-// recorded cause.
+// The report is read, not discarded: a recorded mkdir or write failure now fails the apply
+// with flavor.ErrApplyIncomplete, and checking report.Errors as well keeps the recorded
+// cause in the failure message instead of "this flavor scaffolds no such file".
 func scaffoldInto(t *testing.T, flavorName string, want ...string) map[string]string {
 	t.Helper()
 	root := t.TempDir()

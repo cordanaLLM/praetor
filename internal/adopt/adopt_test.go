@@ -345,15 +345,20 @@ func TestAdopt_Positive_ExplicitFacetsAndSkipGitValidation(t *testing.T) {
 func TestAdopt_Positive_ForceRegeneratesScaffolds(t *testing.T) {
 	repoPath := newTestRepo(t, "force-repo")
 	mustWrite(t, filepath.Join(repoPath, "lefthook.yml"), "pre-commit:\n  commands:\n    custom:\n      run: echo custom\n")
-	mustWrite(t, filepath.Join(repoPath, ".config", "labels.yaml"), "version: 0\n")
+	// The label taxonomy is repository configuration, not a scaffold: --force keeps it (BUG-287).
+	const labels = "version: 0\n"
+	mustWrite(t, filepath.Join(repoPath, ".config", "labels.yaml"), labels)
 
 	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Force: true})
 	if err != nil {
 		t.Fatalf("Adopt --force failed: %v", err)
 	}
 	assertNoIssues(t, rep)
-	if !contains(rep.CreatedFiles, "lefthook.yml") || !contains(rep.CreatedFiles, ".config/labels.yaml") {
+	if !contains(rep.CreatedFiles, "lefthook.yml") {
 		t.Fatalf("--force must regenerate scaffolds, got created=%v", rep.CreatedFiles)
+	}
+	if contains(rep.CreatedFiles, ".config/labels.yaml") || mustRead(t, filepath.Join(repoPath, ".config", "labels.yaml")) != labels {
+		t.Errorf("--force must keep the existing label taxonomy, got created=%v", rep.CreatedFiles)
 	}
 	if mustRead(t, filepath.Join(repoPath, "lefthook.yml")) != buildLefthookYAML() {
 		t.Error("--force must replace lefthook.yml with the praetor configuration")
@@ -1439,46 +1444,6 @@ func TestBuildLefthookYAML_FailsClosed(t *testing.T) {
 	}
 	if strings.Contains(optionalToolCommand("govulncheck", "./..."), "exit 1") {
 		t.Fatal("optional tools skip when absent")
-	}
-}
-
-func TestBlockEvasion_PreToolUseContract(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("python3 required")
-	}
-	script := filepath.Join(t.TempDir(), "block_evasion.py")
-	mustWrite(t, script, blockEvasionPY)
-
-	cases := []struct {
-		name  string
-		stdin string
-		args  []string
-		want  int
-	}{
-		{"json-no-verify", `{"tool_name":"Bash","tool_input":{"command":"git commit --no-verify -m x"}}`, nil, 2},
-		{"json-hookspath", `{"tool_input":{"command":"git config core.hooksPath=/dev/null"}}`, nil, 2},
-		{"json-benign", `{"tool_input":{"command":"go test ./..."}}`, nil, 0},
-		{"argv-blocked", "", []string{"rm", "-rf", ".git/hooks"}, 2},
-		{"argv-benign", "", []string{"git", "status"}, 0},
-		{"empty-stdin", "", nil, 0},
-		{"raw-text", "LEFTHOOK=0 git commit", nil, 2},
-	}
-	for _, tc := range cases {
-		cmd := exec.CommandContext(context.Background(), python, append([]string{script}, tc.args...)...) //nolint:gosec // test fixture with fixed interpreter and script paths
-		cmd.Stdin = strings.NewReader(tc.stdin)
-		cmd.Env = append(os.Environ(), "LEFTHOOK=")
-		err := cmd.Run()
-		got := 0
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			got = exitErr.ExitCode()
-		} else if err != nil {
-			t.Fatalf("%s: run: %v", tc.name, err)
-		}
-		if got != tc.want {
-			t.Errorf("%s: exit %d, want %d", tc.name, got, tc.want)
-		}
 	}
 }
 

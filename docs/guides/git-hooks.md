@@ -282,7 +282,13 @@ configuration remain blocking failures; the sandbox gate does not bypass them.
 
 The command guard accepts actual PreToolUse JSON or command arguments; Git calls
 its explicit environment mode. It rejects verification-evasion commands and
-hook exclusions. A hook cannot intercept a Git invocation that disables all
+hook exclusions. It also refuses, without scanning, a command over 65,536
+characters or with a line over 2,048 characters: Python's `re` backtracks, and a
+longer line could hold the guard past the client's hook timeout (see
+[Agent hooks](agent-hooks.md#the-adopted-interceptor);
+`test_guard_refuses_commands_over_the_scan_bound_without_scanning` in
+`.config/lefthook/scripts/test_hooks.py`). Split such a command, or write the long
+content to a file first. A hook cannot intercept a Git invocation that disables all
 hooks: repository protections and CI remain authoritative. Local configuration
 must not disable required gates.
 

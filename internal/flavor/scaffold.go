@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -25,6 +26,14 @@ import (
 //
 // Measured 2026-09-19: crane digest gcr.io/distroless/static-debian13:nonroot.
 const distrolessRuntimeImage = "gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3"
+
+// ErrApplyIncomplete reports an apply that recorded at least one template failure.
+//
+// ApplyFlavor used to return (report, nil) whatever report.Errors held, so a caller that
+// checked only the error treated a scaffold in which every write failed as a success. Adoption
+// was that caller. The report still comes back beside this error, so a caller can say what was
+// written before the failure.
+var ErrApplyIncomplete = errors.New("flavor apply: one or more templates failed")
 
 // ApplyReport contains the outcome of applying a flavor scaffold to a repository.
 type ApplyReport struct {
@@ -43,17 +52,9 @@ func ApplyFlavor(ctx context.Context, repoPath string, targetFlavor string, forc
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if targetFlavor == "" || targetFlavor == "auto" {
-		detected, ok := Detect(repoPath)
-		if !ok {
-			return nil, fmt.Errorf("%w: %s", ErrNoFlavorMatched, repoPath)
-		}
-		targetFlavor = detected
-	}
-
-	flv, err := Get(targetFlavor)
+	flv, err := resolveApplyTarget(repoPath, targetFlavor)
 	if err != nil {
-		return nil, fmt.Errorf("apply flavor: %w", err)
+		return nil, err
 	}
 
 	owner, repoName, err := flavorIdentity(ctx, repoPath)
@@ -80,6 +81,9 @@ func ApplyFlavor(ctx context.Context, repoPath string, targetFlavor string, forc
 		applySingleTemplate(ctx, repoPath, tmpl, repoName, owner, force, report)
 	}
 
+	if len(report.Errors) > 0 {
+		return report, fmt.Errorf("%w: %d error(s): %s", ErrApplyIncomplete, len(report.Errors), strings.Join(report.Errors, "; "))
+	}
 	return report, nil
 }
 
@@ -101,6 +105,33 @@ func flavorIdentity(ctx context.Context, repoPath string) (owner, repoName strin
 		return "", "", fmt.Errorf("resolve flavor repository path %q: %w", repoPath, absErr)
 	}
 	return "", filepath.Base(abs), nil
+}
+
+// resolveApplyTarget names the flavor an apply scaffolds: the explicit one, or the detected one
+// for "" and "auto". A repository nothing matches is refused, never given a guessed flavor.
+func resolveApplyTarget(repoPath, targetFlavor string) (Flavor, error) {
+	if targetFlavor == "" || targetFlavor == "auto" {
+		detected, ok := Detect(repoPath)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrNoFlavorMatched, repoPath)
+		}
+		targetFlavor = detected
+	}
+	flv, err := Get(targetFlavor)
+	if err != nil {
+		return nil, fmt.Errorf("apply flavor: %w", err)
+	}
+	return flv, nil
+}
+
+// forceProtected reports whether an existing file at rel survives --force.
+//
+// The ledger holds session history, and the manifest and lock hold the declared profile and
+// pinned digests. A flavor carries only a one-line placeholder for each (defaultTemplateContent),
+// so a forced refresh replaced operator data with a stub. --force refreshes scaffolds; it never
+// rewrites what the repository declared.
+func forceProtected(rel string) bool {
+	return strings.HasPrefix(rel, state.WorkingDirName+"/") || rel == config.ManifestFileName || rel == config.LockFileName
 }
 
 // templateDisposition decides, before any filesystem mutation, whether a template is
@@ -147,7 +178,7 @@ func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem
 		report.Errors = append(report.Errors, fmt.Sprintf("read %s: %v", tmpl.Path, err))
 		return
 	}
-	if exists && (!force || strings.HasPrefix(tmpl.Path, state.WorkingDirName+"/")) {
+	if exists && (!force || forceProtected(tmpl.Path)) {
 		report.SkippedTemplates = append(report.SkippedTemplates, tmpl.Path)
 		return
 	}

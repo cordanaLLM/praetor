@@ -54,6 +54,7 @@ func rawCases() []rawCase {
 	valid := []byte(`{"tool_input":{"command":"git status"}}`)
 	boundary := append(bytes.Clone(valid), bytes.Repeat([]byte(" "), MaxInputBytes-len(valid))...)
 	nested := append(bytes.Repeat([]byte("["), 2000), bytes.Repeat([]byte("]"), 2000)...)
+
 	return []rawCase{
 		{"empty", nil, false},
 		{"not-json", []byte("not json"), false},

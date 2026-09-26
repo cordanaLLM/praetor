@@ -305,7 +305,7 @@ func auditDocumentationHostedWiring(
 	if err != nil {
 		return fmt.Errorf("[FAIL] Read documentation branch ruleset: %w", err)
 	}
-	if err := validateSyncRuleset(ruleset, branch, contexts); err != nil {
+	if err := forge.ValidateRepositoryRuleset(ruleset, branch, contexts); err != nil {
 		return fmt.Errorf("[FAIL] Documentation required status context is not reconciled in the branch ruleset: %w", err)
 	}
 	return nil

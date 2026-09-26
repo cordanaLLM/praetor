@@ -16,6 +16,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/mcp"
@@ -123,6 +124,24 @@ func initGitRepo(t *testing.T, dir string) {
 	}
 }
 
+// renderFixtureRuleset renders the ruleset policy declares for a fixture without workflows.
+func renderFixtureRuleset(t *testing.T, policy config.BranchProtectionPolicy) string {
+	t.Helper()
+	data, err := forge.RenderRepositoryRuleset(policy, nil)
+	if err != nil {
+		t.Fatalf("render fixture ruleset: %v", err)
+	}
+	return string(data)
+}
+
+// fixtureRuleset is the ruleset the default branch protection policy renders for a repository
+// with no workflows, which is what the fixture is. The audit compares ruleset content, so a
+// "{}" placeholder no longer passes it.
+func fixtureRuleset(t *testing.T) string {
+	t.Helper()
+	return renderFixtureRuleset(t, config.DefaultPolicy().BranchProtection)
+}
+
 // newFixtureRepo builds a governed repository in a temporary directory: manifest,
 // lockfile, baseline, labels, ruleset, hook config, a clean Go module and AGENTS.md
 // with its compiled vendor targets in sync.
@@ -138,7 +157,7 @@ func newFixtureRepo(t *testing.T) string {
 		".config/archetypes/framework.yaml": auditLockSource,
 		".standards-baseline.json":          `{"version":1,"generated_at":"2026-01-01T00:00:00Z","repository":"fixture/repo","commit_sha":"","total_infractions":0,"infractions":[]}` + "\n",
 		".config/labels.yaml":               "labels: []\n",
-		".github/rulesets/main.json":        "{}\n",
+		".github/rulesets/main.json":        fixtureRuleset(t),
 		"lefthook.yml":                      "pre-commit:\n  commands: {}\n",
 		"go.mod":                            "module fixture\n\ngo 1.27\n",
 		"main.go":                           fixtureMainGo,
@@ -515,6 +534,16 @@ func TestServer_Positive_PlanAndAuditOnSyncedRepo(t *testing.T) {
 	expectText(t, "plan single-maintainer configured reviews", plan, "Configured Reviewer Minimum: 1")
 	expectText(t, "plan single-maintainer review mode", plan, "Review Mode:               single_maintainer")
 
+	// The audit compares the committed ruleset with the one the policy renders, so the
+	// single-maintainer policy needs its own ruleset (zero approvals, no code-owner review).
+	single := config.DefaultPolicy().BranchProtection
+	single.ReviewMode = config.BranchReviewModeSingleMaintainer
+	ruleset, err := forge.RenderRepositoryRuleset(single, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, root, ".github/rulesets/main.json", string(ruleset))
+
 	audit := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "audit", audit, "[PASS] Technical debt baseline verified")
 	expectText(t, "audit", audit, "[PASS] Cross-agent context targets verified in sync")
@@ -560,7 +589,7 @@ func TestServer_Negative_PlanDriftAndAuditFailures(t *testing.T) {
 	}
 	audit := callTool(t, srv, "standards_audit", nil)
 	expectError(t, "audit ruleset", audit, "[FAIL] Branch protection ruleset")
-	writeFixtureFile(t, root, ".github/rulesets/main.json", "{}\n")
+	writeFixtureFile(t, root, ".github/rulesets/main.json", fixtureRuleset(t))
 
 	// A new HISS-02 violation must trip the ratchet even though the baseline is empty.
 	writeFixtureFile(t, root, "bad.go", "package main\n\nfunc spin() {\n\tfor {\n\t}\n}\n")

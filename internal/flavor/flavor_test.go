@@ -10,7 +10,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/flavor"
 )
 
-func TestDetectFlavor_Positive(t *testing.T) {
+func TestDetect_Positive(t *testing.T) {
 	tmp := t.TempDir()
 
 	// 1. Go service detection
@@ -20,7 +20,7 @@ func TestDetectFlavor_Positive(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmp, "cmd", "svc"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	detected := flavor.DetectFlavor(tmp)
+	detected, _ := flavor.Detect(tmp)
 	if detected != "go-service" {
 		t.Fatalf("expected go-service, got %s", detected)
 	}
@@ -33,7 +33,7 @@ func TestDetectFlavor_Positive(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpSvelte, "svelte.config.js"), []byte("// config"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	detectedSvelte := flavor.DetectFlavor(tmpSvelte)
+	detectedSvelte, _ := flavor.Detect(tmpSvelte)
 	if detectedSvelte != "frontend-svelte" {
 		t.Fatalf("expected frontend-svelte, got %s", detectedSvelte)
 	}
@@ -156,13 +156,13 @@ func TestAuditFlavor_Boundary_EmptyDir(t *testing.T) {
 	}
 }
 
-func TestDetectFlavor_ExpandedArchetypes(t *testing.T) {
+func TestDetect_ExpandedArchetypes(t *testing.T) {
 	// 1. Rust systems detection
 	tmpRust := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmpRust, "Cargo.toml"), []byte("[package]\nname = \"rg\"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got := flavor.DetectFlavor(tmpRust); got != "rust-systems" {
+	if got, _ := flavor.Detect(tmpRust); got != "rust-systems" {
 		t.Fatalf("expected rust-systems, got %s", got)
 	}
 
@@ -174,7 +174,7 @@ func TestDetectFlavor_ExpandedArchetypes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpTS, "tsconfig.json"), []byte("{}"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got := flavor.DetectFlavor(tmpTS); got != "typescript-node" {
+	if got, _ := flavor.Detect(tmpTS); got != "typescript-node" {
 		t.Fatalf("expected typescript-node, got %s", got)
 	}
 
@@ -183,7 +183,7 @@ func TestDetectFlavor_ExpandedArchetypes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpJVM, "pom.xml"), []byte("<project></project>"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got := flavor.DetectFlavor(tmpJVM); got != "jvm-service" {
+	if got, _ := flavor.Detect(tmpJVM); got != "jvm-service" {
 		t.Fatalf("expected jvm-service, got %s", got)
 	}
 
@@ -192,7 +192,7 @@ func TestDetectFlavor_ExpandedArchetypes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpFlutter, "pubspec.yaml"), []byte("name: app\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got := flavor.DetectFlavor(tmpFlutter); got != "mobile-flutter" {
+	if got, _ := flavor.Detect(tmpFlutter); got != "mobile-flutter" {
 		t.Fatalf("expected mobile-flutter, got %s", got)
 	}
 }
@@ -343,11 +343,6 @@ func TestDetect_Boundary_NoMatchIsDistinguishableFromGoLibrary(t *testing.T) {
 	real := repoWithFiles(t, map[string]string{"go.mod": "module x\n", "internal/doc.go": "package internal\n"})
 	if got, ok := flavor.Detect(real); !ok || got != "go-library" {
 		t.Errorf("a genuine Go library must still detect, got %q ok=%v", got, ok)
-	}
-	// DetectFlavor keeps the old shape for callers that must name something, but the
-	// substitution is now named rather than hidden.
-	if got := flavor.DetectFlavor(repoWithFiles(t, map[string]string{"Rakefile": "x\n"})); got != flavor.FallbackFlavor {
-		t.Errorf("DetectFlavor must substitute the named fallback, got %q", got)
 	}
 }
 

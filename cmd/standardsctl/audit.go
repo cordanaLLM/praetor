@@ -143,7 +143,9 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
 		func() error { return auditAgentProjections(ctx, rootDir) },
 		func() error { return auditCavemanAgentSurfaces(rootDir) },
-		func() error { return auditBranchProtectionAndSupplyChain(manifest, rootDir) },
+		func() error {
+			return auditBranchProtectionAndSupplyChain(ctx, manifest, rootDir, &opts.effective.Policy)
+		},
 		func() error { return auditPaperclipHarness(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
 		func() error { return auditPreMigrationTracking(rootDir) },
@@ -321,8 +323,10 @@ func auditCavemanAgentSurfaces(rootDir string) error {
 	return nil
 }
 
-func auditBranchProtectionAndSupplyChain(manifest *config.Manifest, rootDir string) error {
-	summary, err := adopt.AuditBranchProtection(manifest, rootDir)
+// auditBranchProtectionAndSupplyChain checks the committed ruleset against policy, the
+// effective policy the audit resolved and adopt rendered the ruleset from.
+func auditBranchProtectionAndSupplyChain(ctx context.Context, manifest *config.Manifest, rootDir string, policy *config.ResolvedPolicy) error {
+	summary, err := adopt.AuditBranchProtectionWithPolicy(ctx, manifest, rootDir, policy)
 	if err != nil {
 		return err
 	}

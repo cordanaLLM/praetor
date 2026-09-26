@@ -17,6 +17,10 @@ import (
 // flavor source still contributes its fact.
 func TestDistillWorkspace_Negative_FailingSourcesBecomeWarnings(t *testing.T) {
 	root := t.TempDir()
+	writeDistillerFile(t, root, "go.mod", "module fixture\n\ngo 1.23\n")
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	writeDistillerFile(t, root, "broken.go", "package broken\n\nfunc (\n")
 	writeDistillerFile(t, root, filepath.Join(".workingdir", "docs", "catalog.json"), "{not json")
 

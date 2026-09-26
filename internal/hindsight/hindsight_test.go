@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,6 +20,10 @@ import (
 // TestHindsight_Positive verifies workspace distillation of a clean repository and recall.
 func TestHindsight_Positive(t *testing.T) {
 	tmpDir := t.TempDir()
+	writeDistillerFile(t, tmpDir, "go.mod", "module fixture\n\ngo 1.23\n")
+	if err := os.MkdirAll(filepath.Join(tmpDir, "internal"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	report, err := DistillWorkspace(context.Background(), tmpDir)
 	if err != nil || report == nil {

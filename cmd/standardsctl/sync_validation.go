@@ -2,43 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
-	"reflect"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"github.com/cordanaLLM/praetor/internal/forge"
-	"gopkg.in/yaml.v3"
 )
-
-// Parse through YAML after requiring JSON syntax: yaml.v3 rejects duplicate keys,
-// including nested JSON objects. Comparing parsed documents ignores whitespace and
-// object key order while preserving every declared rule, parameter and condition.
-func validateSyncRuleset(data []byte, policy config.BranchProtectionPolicy, contexts []string) error {
-	if !json.Valid(data) {
-		return errors.New("ruleset must be a single valid JSON document")
-	}
-	var observed map[string]any
-	if err := yaml.Unmarshal(data, &observed); err != nil {
-		return err
-	}
-	expectedBytes, err := forge.RenderRepositoryRuleset(policy, contexts)
-	if err != nil {
-		return err
-	}
-	var expected map[string]any
-	if err := yaml.Unmarshal(expectedBytes, &expected); err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(observed, expected) {
-		return errors.New("ruleset differs from declared branch protection policy; review the existing file before reconciliation")
-	}
-	return nil
-}
 
 // syncCompanions is what verifySyncCompanions found: how many companion checks are missing
 // or unverified, and whether the lockfile is present but unverifiable against the catalog.

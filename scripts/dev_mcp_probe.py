@@ -433,6 +433,48 @@ def discovery_checks(client, root):
     return ["discovery plan stayed unverified and read back", "local observation retained candidate evidence",
             "changed extension replay removed the candidate"]
 
+
+# The ruleset forge.RenderRepositoryRuleset renders for the default branch protection and a
+# repository without workflows, which the audit fixture is: the audit compares content, so a
+# placeholder no longer passes it. audit_checks restores the fixture's own bytes after
+# removing the file, so this literal exists once.
+FIXTURE_RULESET = {
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": [
+        "refs/heads/main",
+        "refs/heads/lts-*"
+      ]
+    }
+  },
+  "enforcement": "active",
+  "name": "praetor-main-protection",
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "required_linear_history"
+    },
+    {
+      "parameters": {
+        "dismiss_stale_reviews_on_push": True,
+        "require_code_owner_review": True,
+        "require_last_push_approval": False,
+        "required_approving_review_count": 1,
+        "required_review_thread_resolution": True
+      },
+      "type": "pull_request"
+    }
+  ],
+  "target": "branch"
+}
+
+
 def audit_fixture(root):
     source = "id: framework\nname: Framework\n"
     digest = "sha256:" + hashlib.sha256(source.encode()).hexdigest()
@@ -443,8 +485,8 @@ def audit_fixture(root):
         ".standards.yaml": 'version: 1\nrepository:\n  owner: fixture\n  name: repo\nprofiles: [framework]\n',
         ".standards.lock": json.dumps(lock),
         ".config/archetypes/framework.yaml": source,
-        ".config/labels.yaml": "labels: []\n",
-        ".github/rulesets/main.json": "{}\n",
+        ".config/labels.yaml": "version: 1\nlabels:\n  - name: test\n    color: '000000'\n",
+        ".github/rulesets/main.json": json.dumps(FIXTURE_RULESET, indent=2) + "\n",
         ".standards-baseline.json": '{"version":1,"total_infractions":0,"infractions":[]}\n',
     }
     for relative, content in files.items():
@@ -476,6 +518,7 @@ def audit_checks(client, root):
     require(baseline.read_bytes() == recorded, "audit changed the recorded baseline")
     violation.unlink()
     ruleset = root / ".github/rulesets/main.json"
+    recorded_ruleset = ruleset.read_bytes()
     ruleset.unlink()
     missing_res = tool_text(client.call("standards_audit", {}), error=True)
     require("branch protection ruleset" in missing_res.lower() and "missing" in missing_res.lower(),
@@ -487,10 +530,12 @@ def audit_checks(client, root):
     require("declined by adoption.decline" in declined_res.lower(),
             "audit did not honor accepted branch-ruleset decline")
     manifest_path.write_text(orig_manifest)
-    ruleset.write_text("{}\n")
+    ruleset.write_bytes(recorded_ruleset)
+    restored_res = tool_text(client.call("standards_audit", {}))
+    require("[PASS] Branch protection & merge ruleset" in restored_res, "restored branch ruleset did not verify")
     return ["valid fixture audit", "changed pinned content rejected",
             "invariant violation rejected", "incomplete scan rejected without baseline writes",
-            "branch ruleset decline accepted and verified"]
+            "branch ruleset decline accepted and verified", "restored branch ruleset verified"]
 
 
 def probe(binary, root, metadata):

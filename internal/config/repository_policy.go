@@ -13,6 +13,9 @@ import (
 // ManifestFileName is the repository manifest a workspace root is resolved through.
 const ManifestFileName = ".standards.yaml"
 
+// LockFileName is the repository lockfile that pins the manifest's profiles and facets.
+const LockFileName = ".standards.lock"
+
 // NoLockNotice is returned by ResolveRepositoryPolicy for a repository that carries a
 // manifest but no .standards.lock: there are no pinned profiles to resolve, so the result is
 // built-in defaults plus the repository's own overrides rather than a degraded stand-in.

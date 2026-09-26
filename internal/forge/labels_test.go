@@ -1,7 +1,10 @@
 package forge
 
 import (
+	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -78,5 +81,54 @@ func TestParseLabelTaxonomy_Boundary(t *testing.T) {
 		} else if name == "one over the limit" && !strings.Contains(err.Error(), fmt.Sprint(MaxLabelsLimit)) {
 			t.Errorf("%s: error does not name the bound: %v", name, err)
 		}
+	}
+}
+
+func parseTaxonomy(t *testing.T, data []byte) []Label {
+	t.Helper()
+	labels, err := ParseLabelTaxonomy(data)
+	if err != nil {
+		t.Fatalf("taxonomy must parse: %v", err)
+	}
+	return labels
+}
+
+// TestDefaultLabelTaxonomy_Positive pins the single taxonomy: eight unique labels, carried byte
+// for byte by praetor's own .config/labels.yaml, so the shipped default and the dogfooded file
+// cannot drift apart again.
+func TestDefaultLabelTaxonomy_Positive(t *testing.T) {
+	labels := parseTaxonomy(t, DefaultLabelTaxonomy())
+	if len(labels) != 8 {
+		t.Fatalf("expected 8 labels, got %d", len(labels))
+	}
+	own, err := os.ReadFile(filepath.Join("..", "..", ".config", "labels.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A Windows checkout under core.autocrlf writes CRLF; the committed blob is LF.
+	own = bytes.ReplaceAll(own, []byte("\r\n"), []byte("\n"))
+	if !bytes.Equal(own, DefaultLabelTaxonomy()) {
+		t.Error(".config/labels.yaml and forge.DefaultLabelTaxonomy have drifted apart")
+	}
+}
+
+// TestDefaultLabelTaxonomy_Negative asserts no label is duplicated or missing a color.
+func TestDefaultLabelTaxonomy_Negative(t *testing.T) {
+	seen := map[string]bool{}
+	for _, label := range parseTaxonomy(t, DefaultLabelTaxonomy()) {
+		if label.Name == "" || seen[label.Name] || len(label.Color) != 6 {
+			t.Errorf("invalid or duplicate label %+v", label)
+		}
+		seen[label.Name] = true
+	}
+}
+
+// TestDefaultLabelTaxonomy_Boundary asserts every call returns an independent copy, so a
+// caller that mutates the bytes cannot change what the next caller writes.
+func TestDefaultLabelTaxonomy_Boundary(t *testing.T) {
+	first := DefaultLabelTaxonomy()
+	first[0] = 'X'
+	if DefaultLabelTaxonomy()[0] == 'X' {
+		t.Fatal("DefaultLabelTaxonomy must return a fresh copy")
 	}
 }

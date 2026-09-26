@@ -60,6 +60,18 @@ func TestServerAuditBranchRuleset_MCP_Negative_MissingRulesetFailsClosed(t *test
 	expectError(t, "missing ruleset", result, "[FAIL] Branch protection ruleset .github/rulesets/main.json is missing")
 }
 
+// TestServerAuditBranchRuleset_MCP_Negative_PlaceholderRulesetFails pins BUG-267 for MCP: the
+// audit reported "{}" verified because it checked only that the file existed.
+func TestServerAuditBranchRuleset_MCP_Negative_PlaceholderRulesetFails(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	writeFixtureFile(t, root, ".github/rulesets/main.json", "{}\n")
+	result := callTool(t, srv, "standards_audit", nil)
+	expectError(t, "placeholder ruleset", result, "does not match the declared policy")
+	if strings.Contains(result.Content[0].Text, "[PASS] Branch protection") {
+		t.Fatalf("placeholder ruleset produced pass evidence: %s", result.Content[0].Text)
+	}
+}
+
 func TestServerAuditBranchRuleset_MCP_Negative_MalformedDeclineFailsClosed(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	malformedManifest := `version: 1
@@ -97,7 +109,7 @@ func TestServerAuditBranchRuleset_MCP_Boundary_PolicyNotRequired(t *testing.T) {
 			RequireSignedCommits: false,
 		},
 	}
-	out, err := adopt.AuditBranchProtectionWithPolicy(manifest, root, policy)
+	out, err := adopt.AuditBranchProtectionWithPolicy(t.Context(), manifest, root, policy)
 	if err != nil {
 		t.Fatalf("audit failed when policy does not require ruleset: %v\nOutput: %s", err, out)
 	}
@@ -170,15 +182,16 @@ func TestServerAuditBranchRuleset_MCP_CLI_Parity(t *testing.T) {
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(dir, "main.json"), []byte("{}\n"), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, "main.json"), []byte(fixtureRuleset(t)), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}
 
-			// CLI path (AuditBranchProtection directly)
-			cliOut, cliErr := adopt.AuditBranchProtection(tc.manifest, root)
-			// MCP path (auditBranchProtection delegates to adopt.AuditBranchProtection)
-			mcpOut, mcpErr := auditBranchProtection(tc.manifest, root)
+			// CLI path (adopt.AuditBranchProtectionWithPolicy directly)
+			policy := config.DefaultPolicy()
+			cliOut, cliErr := adopt.AuditBranchProtectionWithPolicy(t.Context(), tc.manifest, root, policy)
+			// MCP path (auditBranchProtection delegates to adopt.AuditBranchProtectionWithPolicy)
+			mcpOut, mcpErr := auditBranchProtection(t.Context(), tc.manifest, root, policy)
 
 			if tc.wantErr != "" {
 				if cliErr == nil || !strings.Contains(cliErr.Error(), tc.wantErr) {
@@ -209,4 +222,47 @@ func TestServerAuditBranchRuleset_MCP_CLI_Parity(t *testing.T) {
 			}
 		})
 	}
+}
+
+// signingFrameworkProfile is a framework archetype that contributes branch protection, as
+// every shipped archetype does: it requires signed commits, which the built-in defaults do not.
+const signingFrameworkProfile = "id: framework\nname: Framework\nbranch_protection:\n  require_signed_commits: true\n"
+
+// useSigningProfile swaps the fixture's framework archetype for signingFrameworkProfile,
+// re-pins the lockfile to it and returns the branch protection the effective policy resolves.
+// The fixture manifest carries no override, so signed commits come from the profile alone.
+func useSigningProfile(t *testing.T, root string) config.BranchProtectionPolicy {
+	t.Helper()
+	writeFixtureFile(t, root, ".config/archetypes/framework.yaml", signingFrameworkProfile)
+	writeFixtureFile(t, root, ".standards.lock", auditLockFor(t, signingFrameworkProfile))
+	effective, err := config.LoadEffectivePolicyContext(t.Context(), config.EffectiveOptions{
+		Root: root, ManifestPath: filepath.Join(root, ".standards.yaml"), Audit: true,
+	})
+	if err != nil {
+		t.Fatalf("resolve fixture effective policy: %v", err)
+	}
+	if !effective.Policy.BranchProtection.RequireSignedCommits {
+		t.Fatal("fixture precondition: the profile must contribute require_signed_commits")
+	}
+	return effective.Policy.BranchProtection
+}
+
+// TestServerAuditBranchRuleset_MCP_Positive_ProfileContributesBranchProtection pins the
+// effective policy for standards_audit: it compared against built-in defaults plus overrides,
+// so an adopter whose profile requires signed commits failed on the ruleset adopt wrote.
+func TestServerAuditBranchRuleset_MCP_Positive_ProfileContributesBranchProtection(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	writeFixtureFile(t, root, ".github/rulesets/main.json", renderFixtureRuleset(t, useSigningProfile(t, root)))
+	result := callTool(t, srv, "standards_audit", nil)
+	expectText(t, "profile ruleset", result, "[PASS] Branch protection & merge ruleset .github/rulesets/main.json verified.")
+}
+
+// TestServerAuditBranchRuleset_MCP_Negative_DefaultsRulesetUnderSigningProfile is the other
+// direction: a defaults-rendered ruleset omits the signature rule the profile demands.
+func TestServerAuditBranchRuleset_MCP_Negative_DefaultsRulesetUnderSigningProfile(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	useSigningProfile(t, root)
+	writeFixtureFile(t, root, ".github/rulesets/main.json", renderFixtureRuleset(t, config.DefaultPolicy().BranchProtection))
+	result := callTool(t, srv, "standards_audit", nil)
+	expectError(t, "defaults ruleset", result, "does not match the declared policy")
 }

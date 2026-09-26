@@ -95,6 +95,21 @@ func TestAuditBranchRuleset_CLI_Negative_MissingRulesetFailsClosed(t *testing.T)
 	mustErrContain(t, err, "Branch protection ruleset .github/rulesets/main.json is missing")
 }
 
+// TestAuditBranchRuleset_CLI_Negative_PlaceholderRulesetFails pins BUG-267 end to end: audit
+// reported "{}" verified because it checked only that the file existed.
+func TestAuditBranchRuleset_CLI_Negative_PlaceholderRulesetFails(t *testing.T) {
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, ".github/rulesets/main.json", "{}\n")
+	out, err := f.audit(t)
+	if err == nil {
+		t.Fatalf("audit must fail on a placeholder ruleset:\n%s", out)
+	}
+	mustErrContain(t, err, "does not match the declared policy")
+	if strings.Contains(out, "[PASS] Branch protection") {
+		t.Fatalf("placeholder ruleset produced pass evidence: %s", out)
+	}
+}
+
 func TestAuditBranchRuleset_CLI_Negative_MalformedDeclineFailsClosed(t *testing.T) {
 	f := newAuditFixture(t)
 	malformedManifest := `version: 1
@@ -137,7 +152,7 @@ func TestAuditBranchRuleset_CLI_Boundary_PolicyNotRequired(t *testing.T) {
 			RequireSignedCommits: false,
 		},
 	}
-	out, err := adopt.AuditBranchProtectionWithPolicy(manifest, f.dir, policy)
+	out, err := adopt.AuditBranchProtectionWithPolicy(t.Context(), manifest, f.dir, policy)
 	if err != nil {
 		t.Fatalf("audit failed when policy does not require ruleset: %v\nOutput: %s", err, out)
 	}
@@ -161,4 +176,59 @@ func TestAuditBranchRuleset_CLI_Boundary_MissingManifestFailsClosed(t *testing.T
 	if strings.Contains(out, "[PASS] Branch protection") {
 		t.Fatalf("missing manifest produced pass evidence: %s", out)
 	}
+}
+
+// signingFrameworkProfile is a framework archetype that contributes branch protection, as
+// every shipped archetype does: it requires signed commits, which the built-in defaults do not.
+const signingFrameworkProfile = "id: \"framework\"\nname: \"Framework\"\nbranch_protection:\n  require_signed_commits: true\n"
+
+// useSigningProfile swaps the fixture's framework archetype for signingFrameworkProfile,
+// re-pins the lockfile to it and returns the branch protection the effective policy resolves.
+// The manifest carries no override, so signed commits come from the profile alone.
+func useSigningProfile(t *testing.T, f *auditFixture) config.BranchProtectionPolicy {
+	t.Helper()
+	writeFixtureFile(t, f.dir, ".config/archetypes/framework.yaml", signingFrameworkProfile)
+	lf := &lockFixture{dir: f.dir}
+	lf.writeLock(t,
+		lf.digestOf(t, ".config/archetypes/framework.yaml"),
+		lf.digestOf(t, ".config/archetypes/facets/security-high.yaml"),
+		"")
+	effective, err := config.LoadEffectivePolicyContext(t.Context(), config.EffectiveOptions{
+		Root: f.dir, ManifestPath: f.manifestPath, Audit: true,
+	})
+	if err != nil {
+		t.Fatalf("resolve fixture effective policy: %v", err)
+	}
+	if !effective.Policy.BranchProtection.RequireSignedCommits {
+		t.Fatal("fixture precondition: the profile must contribute require_signed_commits")
+	}
+	return effective.Policy.BranchProtection
+}
+
+// TestAuditBranchRuleset_CLI_Positive_ProfileContributesBranchProtection pins the effective
+// policy: adopt and sync render the ruleset from profiles, facets and overrides joined, so the
+// audit must compare against the same policy. It compared against built-in defaults plus
+// overrides, so an adopter whose profile requires signed commits failed audit on the very
+// ruleset adopt wrote.
+func TestAuditBranchRuleset_CLI_Positive_ProfileContributesBranchProtection(t *testing.T) {
+	f := newAuditFixture(t)
+	writeDeclaredRuleset(t, f.dir, useSigningProfile(t, f))
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("the ruleset rendered from the effective policy must pass: %v\nOutput: %s", err, out)
+	}
+	mustContain(t, out, "[PASS] Branch protection & merge ruleset .github/rulesets/main.json verified.")
+}
+
+// TestAuditBranchRuleset_CLI_Negative_DefaultsRulesetUnderSigningProfile is the other direction:
+// a ruleset rendered from defaults plus overrides omits required_signatures the profile demands.
+func TestAuditBranchRuleset_CLI_Negative_DefaultsRulesetUnderSigningProfile(t *testing.T) {
+	f := newAuditFixture(t)
+	useSigningProfile(t, f)
+	writeDeclaredRuleset(t, f.dir, config.DefaultPolicy().BranchProtection)
+	out, err := f.audit(t)
+	if err == nil {
+		t.Fatalf("a ruleset without the profile's signature rule must fail:\n%s", out)
+	}
+	mustErrContain(t, err, "does not match the declared policy")
 }
