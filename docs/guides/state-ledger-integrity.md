@@ -196,6 +196,42 @@ A freshly initialized ledger contains **no** task rows. `OPEN.md` and
 is work somebody actually recorded. The behaviour is covered by
 `internal/state/task_select_test.go` and `internal/state/bootstrap_test.go`.
 
+## Milestones and BACKLOG.md
+
+`praetorctl milestone` keeps `.workingdir/milestones.json` and renders it into the
+delimited milestone block of `BACKLOG.md` (`internal/milestone/milestone.go`).
+
+- **Remote sync binds by forge number.** A row with a `remote_number` is matched by
+  that number, so a remote rename updates the row and a title swap between two remote
+  milestones keeps both bindings. Only an unbound row is matched by title, which binds
+  it (`internal/milestone/merge.go`). Two rows sharing one number, left behind by the
+  earlier title-keyed sync, are repaired: the row carrying the remote's current title
+  keeps the binding, the other is unbound, kept as a local-only milestone and reported
+  with a `[WARN]` line.
+- **A local close is never reverted.** `milestone close` flags an open milestone
+  `pending_remote_close`. While the forge still reports it open, `milestone sync`
+  keeps it closed and prints a `[WARN]` line naming it. `milestone close <n> --publish`
+  (same `--owner`, `--repo`, `--token` and `--endpoint` flags as `sync`) PATCHes the
+  bound remote milestone to closed, reads it back and clears the flag only when the
+  forge reports it closed. A local-only milestone has no remote to close and the
+  command reports that.
+- **BACKLOG.md writes are compare-and-swap.** The milestone block is published with
+  `contextopt.ReplaceRootSnapshot` against the bytes it was rendered from: the same
+  locked writer (`contextopt.ReplaceSnapshot`) `praetorctl state task archive` uses to
+  append discharged tasks. A write that finds the file changed fails and leaves the
+  other writer's bytes; `milestones.json` is already saved at that point and the next
+  milestone command re-renders the block. `milestones.json` itself is still written
+  without compare-and-swap: a store at its 10,000-entry bound exceeds the 1 MiB
+  snapshot bound `ReplaceSnapshot` enforces.
+- **BACKLOG.md stays confined.** The read and the compare-and-swap write both open
+  `.workingdir` through `util.InConfinedDirectory`, a pinned handle on the repository
+  root, like every other milestone ledger write. A `.workingdir` link inside the
+  repository resolves; one that escapes it, including a link swapped in after the
+  read, fails with `ErrPathEscapesRoot` and writes nothing outside (BUG-826).
+
+The behaviour is covered by `internal/milestone/remote_sync_test.go`,
+`internal/milestone/milestone_test.go` and `cmd/standardsctl/milestone_close_test.go`.
+
 ## STATE.md entries
 
 `praetorctl state sync` appends one entry per call: a `### [time]` heading with the

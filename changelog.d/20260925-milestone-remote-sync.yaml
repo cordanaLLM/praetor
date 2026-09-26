@@ -1,0 +1,3 @@
+type: fixed
+title: Bind remote milestones by forge number so renames and title swaps no longer duplicate or rebind rows, repair and report rows the title-keyed sync duplicated, keep a local milestone close through sync and publish it with milestone close --publish (PATCH plus readback), and write BACKLOG.md with the same locked compare-and-swap as the task archive so a concurrent archive is never overwritten
+breaking: false

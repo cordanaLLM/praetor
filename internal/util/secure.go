@@ -514,6 +514,31 @@ func MkdirConfined(root, rel string, perm os.FileMode) error {
 	return mkdirConfined(absRoot, inside, perm)
 }
 
+// InConfinedDirectory runs fn with a pinned handle (os.Root) on the existing directory rel
+// below root, and closes the handle afterwards. It is the confinement MkdirConfined and
+// WriteFileConfined apply, lent to a caller that publishes through its own writer: rel
+// first passes ConfinePath's check, then every component is opened through a pinned handle
+// on root, so a component swapped for an escaping link after the check is refused instead
+// of followed (BUG-826). An escape is ErrPathEscapesRoot whether the check or the pinned
+// handle refuses it; any error fn returns is passed through.
+func InConfinedDirectory(root, rel string, fn func(dir *os.Root) error) error {
+	if fn == nil {
+		return errors.New("util: a confined directory callback is required")
+	}
+	absRoot, inside, err := confineBelow(root, rel)
+	if err != nil {
+		return err
+	}
+	return inConfinedDirectory(absRoot, inside, fn)
+}
+
+// inConfinedDirectory is InConfinedDirectory after the check: inside is opened through the
+// pinned handle on absRoot, and an escape the handle refuses is classified by
+// classifyEscape.
+func inConfinedDirectory(absRoot, inside string, fn func(dir *os.Root) error) error {
+	return classifyEscape(absRoot, inside, inRoot(absRoot, inside, fn))
+}
+
 // mkdirConfined is MkdirConfined after the check: every component of inside resolves
 // through the pinned handle on absRoot, and an escape the handle refuses is classified by
 // classifyEscape.
