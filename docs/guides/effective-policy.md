@@ -104,8 +104,8 @@ to. A repository can still tighten the limit with `overrides.complexity.max_func
 loosen it.
 
 An explicitly selected external file must contain at least one owned root section:
-`complexity`, or one of the operator sections `clients`, `hooks` and `update`
-described in [Operator settings](#operator-settings-clients-hooks-and-update).
+`complexity`, or one of the operator sections `clients`, `hooks`, `update`,
+`framework`, `forge` and `topology` described in [Operator settings](#operator-settings).
 
 ```yaml
 complexity:
@@ -116,19 +116,22 @@ An empty mapping is valid and contributes nothing. Other existing sections may
 coexist, but this resolver does not activate them. A misspelled root key or an
 unsupported-only document fails instead of pretending a policy was applied.
 
-## Operator settings: clients, hooks and update
+## Operator settings
 
 The same external documents carry the operator's settings for agent clients, the
-agent-hook command policy and workstation updates. There is no second settings
+agent-hook command policy, workstation updates, and the operator data described in
+[Framework, forge and topology](#framework-forge-and-topology). There is no second settings
 file: a fleet, organization, deployment or workstation document may hold these
 sections beside `complexity`, or on their own. They go through the same loader and
 bounds, and into the same effective digest.
 
 `audit` resolves and seals these sections but does not act on them. Host commands
 select the fleet and workstation documents through `config.SelectOperatorSettings`
-and load the same schema through `config.LoadOperatorSettings`. `praetorctl hook`
-consumes `hooks`; `praetorctl clients permissions` consumes the AGY permission
-selection under `clients`. Repository policy and host activation therefore share
+and load the same schema through `config.LoadOperatorSettings` (or
+`config.SelectOperatorPolicy`, which keeps the policy for relative paths). `praetorctl
+hook` consumes `hooks`; `praetorctl clients permissions` consumes the AGY permission
+selection under `clients`; the `needs` commands consume `framework` and
+`forge.default_owner`. Repository policy and host activation therefore share
 one schema without making `audit` inspect a user's home directory.
 
 A workstation document, the layer that holds host paths:
@@ -150,7 +153,7 @@ update:
 
 ### Keys and defaults
 
-Keys inside `clients`, `hooks` and `update` are strict. A misspelled key, an
+Keys inside every operator section are strict. A misspelled key, an
 unknown client or a value of the wrong type fails the document and names the key.
 Every string passes the literal rule shared with the MCP registry
 (`internal/util/literal.go`): no control byte, `$`, backtick, `{env:` or `{file:`.
@@ -216,6 +219,65 @@ workspace and explicitly grants the reviewed repository through
 `read_file(...)`. Starting AGY inside the reviewed repository does not make that
 repository readable or read-only by policy.
 
+### Framework, forge and topology
+
+These sections carry operator data that earlier releases shipped as built-in values
+([ADR-0014](../adr/0014-operator-neutral-defaults.md)). Every key is optional and empty
+by default, and an empty value never falls back to a maintainer's value. A document
+without these sections keeps the digest it had before they existed
+(`internal/config/operator_framework_test.go`).
+
+| Key | Default | Accepted values | Read by |
+| :-- | :-- | :-- | :-- |
+| `framework.targets.<lang>` | absent | `<lang>` is `go`, `typescript`, `python`, `rust` or `native` (`config.FrameworkLanguages`) | every `needs` subcommand, the MCP `standards_needs_report` tool and the needs-miner agent |
+| `framework.targets.<lang>.module` | empty | a module path whose first element is a host, at most 256 bytes (`config.IsModulePathShaped`) | the framework the language's demands are scored against |
+| `framework.targets.<lang>.builder_kits` | `[]` | at most 8 `<owner>/<name>` coordinates, each once | the scan's builder kits; entry 0 routes `needs requests`, and its owner is the request's `target_org` |
+| `framework.targets.<lang>.contract` | empty | clean path, relative to the file that sets it, or absolute | a version-1 capability contract declaring the framework's packages |
+| `framework.targets.go.checkout` | empty | clean absolute path; workstation layer only; accepted for `go` only | the framework checkout the `needs` commands observe |
+| `framework.migration_branch` | empty, meaning `refactor/framework-adoption` | a branch name as for `update.branch` | the branch `needs migrate` reports for an admitted migration |
+| `forge.default_owner` | empty | a GitHub owner: 1 to 39 letters, digits and single hyphens | the last owner step of `config.ResolveRepositoryIdentity`, used by `needs epic --publish` |
+| `forge.reconcile_repos` | `[]` | at most 256 `<owner>/<name>` coordinates | validated and sealed; the `issue reconcile` default adopts it in a later change |
+| `forge.review_bot` | empty | a GitHub owner, optionally followed by `[bot]` | validated and sealed; reviewer assignment adopts it in a later change |
+| `topology.org_containers` | `[]` | at most 64 names of lowercase letters, digits, `.`, `_` and `-`, merged across layers | validated and sealed; the topology audit adopts it in a later change |
+
+A workstation document configuring one framework, with placeholder values:
+
+```yaml
+framework:
+  targets:
+    go:
+      module: example.com/acme/kit
+      builder_kits: [acme/kit]
+      contract: frameworks/kit.capabilities.yaml
+      checkout: /home/operator/src/kit
+forge:
+  default_owner: acme
+```
+
+How the `needs` engine reads the targets (`internal/needs/targets.go`):
+
+- **No target configured.** The engine keeps the built-in targets it shipped before
+  this section existed, so an unconfigured host sees unchanged reports. They are
+  removed once their data is exported as contracts (ADR-0014 §6).
+- **Any target configured.** Only the configured languages have a framework. A built-in
+  catalog package outside a target's module is never offered: the demand keeps its
+  capability and is a gap, unless the target's contract declares a package for it.
+- **Framework selection** for `report`, `aggregate`, `migrate`, `epic` and
+  `contract export`: `--framework`, then `$PRAETOR_FRAMEWORK_DIR`, then
+  `framework.targets.go.checkout`; without a checkout, `framework.targets.go.contract`
+  declares the framework (coverage basis `catalog-declared`); without a contract the go
+  target's module names it. Nothing selected reports
+  `Framework: not configured (set framework.targets.<lang>.module and .contract, or pass --framework)`.
+  The former default checkout under the dev root is gone.
+- **Contracts.** A contract's `ecosystem` must match its language (`go`, `npm`, `pypi`,
+  `cargo`, `system`). `praetorctl needs contract export --language=<lang> --out=<file>`
+  writes the framework a target resolves to as a contract that can be configured in its
+  place; see [needs capability evidence](needs-capability-evidence.md).
+
+Every `needs` subcommand accepts `--fleet-config`, `--workstation-config` and
+`--manifest`, the flags `clients permissions` uses; the selection order is the one
+below.
+
 ### How layers merge
 
 Layers apply in the order listed under [Sources and strictness](#sources-and-strictness):
@@ -231,13 +293,16 @@ fleet, organization, deployment, workstation.
 - `hooks.command_policy.deny` and `permissions.allow` append without duplicates.
   The bound applies to the merged list, so 40 fleet patterns plus 25 new
   workstation patterns fail.
+- `topology.org_containers` appends the same way, bounded after merging;
+  `framework.targets.<lang>.builder_kits` and `forge.reconcile_repos` are replaced
+  by a later layer.
 - Two layers giving one client different non-empty `registry` values fail.
-- Client binaries, config roots, the fork checkout, `bin_dir` and absolute
-  interpreter paths are host data. Any layer other than `workstation` that sets
-  one fails.
+- Client binaries, config roots, the fork checkout, `bin_dir`, the framework checkout
+  and absolute interpreter paths are host data. Any layer other than `workstation`
+  that sets one fails.
 
-A relative `registry`, `connection_profile` or `allowed_signers` value keeps its
-spelling in the digest, so moving the documents does not change it.
+A relative `registry`, `connection_profile`, `allowed_signers` or framework `contract`
+value keeps its spelling in the digest, so moving the documents does not change it.
 `EffectivePolicy.ResolveOperatorPath` resolves it against the directory of the
 file that set it.
 
@@ -249,8 +314,10 @@ retained plans and repair anchors; the 60-line built-in default did (see
 ### Which documents the hook, client and workstation commands use
 
 `audit` and `gate` take the explicit flags above and read nothing else. For the
-hook, client and workstation commands, `config.SelectOperatorSettings` in
-`internal/config/install_manifest.go` resolves each document in this order:
+hook, client, workstation and `needs` commands and the MCP `standards_needs_report`
+tool, `config.SelectOperatorSettings` in `internal/config/install_manifest.go`
+resolves each document in this order (hook, the needs-miner agent and the MCP tool
+take no flags, so they start at step 2):
 
 1. The command's `--fleet-config` or `--workstation-config` flag.
 2. `PRAETOR_FLEET_CONFIG` or `PRAETOR_WORKSTATION_CONFIG`.
@@ -267,7 +334,10 @@ There is no separate pointer file. The manifest reader rejects unknown and
 duplicate members and checks every field.
 
 Tests: `internal/config/operator_sections_test.go` (four-layer merge with
-contributors, loosening, host data, bounds, digest) and
+contributors, loosening, host data, bounds, digest),
+`internal/config/operator_framework_test.go` (framework, forge and topology keys,
+the digest golden and the replay of `testdata/operator/framework.yaml`),
+`internal/config/repository_identity_test.go` (owner resolution) and
 `internal/config/install_manifest_test.go` (manifest and selection order), with
 fixtures under `internal/config/testdata/operator/`.
 

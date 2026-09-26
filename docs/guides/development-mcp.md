@@ -398,6 +398,27 @@ Tests: `internal/adopt/agent_surface_preflight_test.go`.
 `standards_audit` does not run the persona and skill checks yet; see
 [the persona and skill gate](text-register.md#the-persona-and-skill-gate).
 
+### Needs reports read operator settings at call time
+
+`standards_needs_report` selects the operator settings on every call, the way
+`praetorctl hook` does: `PRAETOR_FLEET_CONFIG` and `PRAETOR_WORKSTATION_CONFIG`, then the
+install manifest (`loadNeedsRegistry` in `cmd/standards-mcp/server.go`). A settings change
+therefore reaches a running server without a restart. The tool resolves `framework.targets`
+and its `framework` argument exactly as `praetorctl needs report` does
+(`needs.SelectFrameworkSource`), prints the same header (`needs.FormatReportHeader`,
+including `Deprecated input:` lines) and never falls back to built-in data for a configured
+target. A settings document that fails validation is an error result
+(`Failed to load operator settings: ...`), not a report against defaults
+(`TestNeedsReportHonoursConfiguredTarget` in `cmd/standards-mcp/operator_settings_test.go`):
+
+```bash
+PRAETOR_WORKSTATION_CONFIG=/path/to/workstation.yaml \
+  python3 scripts/dev_mcp.py call standards_needs_report '{"path":"."}'
+```
+
+See [framework targets](needs-capability-evidence.md#framework-targets) for what a target
+changes in a report.
+
 ## Retained public dogfood loops
 
 Use the [public dogfooding guide](../dogfooding.md) for the shared CLI/MCP
