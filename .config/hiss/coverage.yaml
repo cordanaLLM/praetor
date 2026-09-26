@@ -48,13 +48,28 @@ rules:
           Only goto is reported. Recursion in native code is not decided by the line scanner
           and is held as a gap.
       - language: rust
-        state: unsupported
-        mechanism: none
-        rationale: No Rust control-flow rule exists; neither recursion nor an equivalent jump is decided.
+        state: partial
+        mechanism: internal/hiss selfcall.go rustSelfCalls, driven by scanRustLines
+        rationale: >-
+          Direct recursion is reported by the spelling that resolves to the function: a free
+          function calling its bare name, a method calling self.f or Self::f, and an associated
+          function calling Self::f. A bare call inside an impl or trait body resolves to a free
+          function, a path such as other::f names a different item, and a let, closure
+          parameter, match binding or nested fn of the same name shadows it, so none of those
+          are reported. Mutual recursion, recursion inside a nested fn, a turbofish or
+          path-qualified self-call, and any function whose header the scanner does not
+          recognise (pub(super), const, unsafe or extern fn) are held as gaps.
       - language: python
-        state: unsupported
-        mechanism: none
-        rationale: No Python control-flow rule exists.
+        state: partial
+        mechanism: internal/hiss selfcall.go selfCalls, driven by scanPythonLines
+        rationale: >-
+          Direct recursion is reported by the spelling that resolves to the function: a plain
+          function calling its bare name, including from a nested def, and a method calling
+          self.f, cls.f or Owner.f. A bare call inside a method resolves to the module-level
+          name, a call through another object is delegation, and a parameter, assignment,
+          loop target, import or nested def of the same name shadows the function, so none of
+          those are reported. Mutual and indirect recursion and recursion through a lambda
+          are held as gaps.
   - id: HISS-02
     title: Bounded Loops and I/O Timeouts
     coverage:
@@ -98,8 +113,11 @@ rules:
         state: partial
         mechanism: internal/hiss rules.go python indentation tracker
         rationale: >-
-          Function length is decided by indentation. The other three caps have no Python
-          check, and Python test files carry no length exemption.
+          Function length is decided by indentation. A line that starts inside an open bracket
+          or a triple-quoted string continues the statement above it and never ends the
+          function, so a column-0 list element or multi-line string is measured with its
+          body. The other three caps have no Python check, and Python test files carry no
+          length exemption.
       - language: c
         state: partial
         mechanism: internal/hiss rules.go braceTracker
