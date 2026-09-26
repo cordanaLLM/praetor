@@ -23,7 +23,6 @@ import (
 const (
 	maxInfractionsCap   = 10000
 	defaultTimeout      = 30 * time.Second
-	defaultMaxFuncLOC   = 60
 	maxAdoptSteps       = 32
 	maxTranspileTargets = 64
 	maxEditorFiles      = 256

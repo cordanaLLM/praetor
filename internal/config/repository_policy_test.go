@@ -96,7 +96,7 @@ func TestResolveRepositoryPolicy_Boundary_NoLockAndNoManifest(t *testing.T) {
 		t.Fatalf("no-lock policy must be defaults plus overrides, got %+v", policy.Complexity)
 	}
 	// ... but a projection states the HISS-04 ceiling tightened by the overrides, never that
-	// baseline's looser 15/20/100/75.
+	// baseline's looser cyclomatic 15, cognitive 20 and 75 statements.
 	complexity, warning, err = ResolveRepositoryComplexity(t.Context(), root)
 	want := HISSComplexityCeiling()
 	want.MaxFuncLOC = 42

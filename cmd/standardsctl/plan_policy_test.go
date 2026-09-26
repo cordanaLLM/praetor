@@ -50,9 +50,11 @@ func TestPlanEffectivePolicy_Positive_MatchesWhatAuditEnforces(t *testing.T) {
 		t.Errorf("plan and audit disagree.\n  plan:  %+v\n  audit: %+v\na dry run must preview the real run",
 			planned.Complexity, audited.Policy.Complexity)
 	}
-	if planned.Complexity.MaxFuncLOC == config.DefaultPolicy().Complexity.MaxFuncLOC {
-		t.Errorf("plan reports the built-in default %d, so it is not resolving the pinned profile",
-			planned.Complexity.MaxFuncLOC)
+	// Function length alone cannot tell: the built-in default is the audit's own length since
+	// BUG-309. The resolved cyclomatic, cognitive and statement limits still differ from it.
+	if planned.Complexity == config.DefaultPolicy().Complexity {
+		t.Errorf("plan reports the built-in defaults %+v, so it is not resolving the pinned profile",
+			planned.Complexity)
 	}
 }
 

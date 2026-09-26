@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"gopkg.in/yaml.v3"
 )
 
@@ -208,17 +209,22 @@ func TestLoadEffectivePolicyAuditCompatibilityAndCatalogRoot(t *testing.T) {
 	if _, err := LoadEffectivePolicyContext(t.Context(), EffectiveOptions{Root: root}); err == nil {
 		t.Fatal("missing materialized profile accepted")
 	}
+	// The built-in default already is the audit ceiling (BUG-309), so the looser pinned 75
+	// resolves to it either way; the audit layer adds only its provenance as a tied source.
 	for _, audit := range []bool{false, true} {
 		result, err := LoadEffectivePolicyContext(t.Context(), EffectiveOptions{Root: root, CatalogRoot: catalog, Audit: audit})
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := 75
-		if audit {
-			want = 60
+		if result.Policy.Complexity.MaxFuncLOC != hiss.DefaultMaxFuncLOC {
+			t.Fatalf("audit=%v: got %d want %d", audit, result.Policy.Complexity.MaxFuncLOC, hiss.DefaultMaxFuncLOC)
 		}
-		if result.Policy.Complexity.MaxFuncLOC != want {
-			t.Fatalf("audit=%v: got %d want %d", audit, result.Policy.Complexity.MaxFuncLOC, want)
+		want := []string{"builtin:defaults-v1"}
+		if audit {
+			want = append(want, "builtin:audit-compat-v1")
+		}
+		if got := result.Fields["max_func_loc"]; !reflect.DeepEqual(got, want) {
+			t.Fatalf("audit=%v: contributors %v want %v", audit, got, want)
 		}
 	}
 	writePolicyFile(t, catalog, ".config/archetypes/framework.yaml", "id: framework\ncomplexity:\n  max_func_loc: 10\n")
@@ -314,7 +320,7 @@ func TestResolvePolicyDefaultsAndOrderProperties(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !reflect.DeepEqual(forward.Policy, reversed.Policy) || forward.Policy.Complexity.MaxFuncLOC != min(100, limits[0], limits[1], limits[2]) {
+		if !reflect.DeepEqual(forward.Policy, reversed.Policy) || forward.Policy.Complexity.MaxFuncLOC != min(hiss.DefaultMaxFuncLOC, limits[0], limits[1], limits[2]) {
 			t.Fatalf("order changed effective constraints: %+v vs %+v", forward.Policy, reversed.Policy)
 		}
 		if forward.SHA256 == reversed.SHA256 {

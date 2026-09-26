@@ -93,9 +93,11 @@ looser than the ceiling:
 | manifest or lock that does not resolve, including the lock `praetorctl init` writes | ceiling tightened by any readable override | `[WARN] repository policy unresolved ...` (CLI output, MCP report, LSP `window/logMessage`) |
 
 The lock-less row differs from `praetorctl plan` on purpose. The plan preview
-shows built-in defaults plus overrides (15/20/100/75 before overrides), but no
-audit runs before adoption and the first one after it caps function length at
-60, so an editor told 100 would accept what that audit rejects. An unresolvable
+shows built-in defaults plus overrides (cyclomatic 15, cognitive 20, 60 lines,
+75 statements before overrides); an editor told the looser cyclomatic, cognitive
+and statement limits would accept what the HISS-04 ceiling rejects. Function
+length agrees in both: it is `hiss.DefaultMaxFuncLOC` (`internal/hiss/hiss.go`),
+the one constant every function-length default derives from. An unresolvable
 policy warns rather than failing, because these commands generated editor files
 before they read policy at all; `praetorctl audit` still fails on that state.
 Only a nil or cancelled context fails the resolution: `editors` and the MCP

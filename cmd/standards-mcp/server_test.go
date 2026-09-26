@@ -16,6 +16,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -644,6 +645,24 @@ func TestServer_Negative_InspectSymbolsUnresolvablePolicy(t *testing.T) {
 	if _, err := srv.inspectSymbolsAtPath(ctx, filepath.Join(root, "main.go")); err == nil ||
 		!strings.Contains(err.Error(), "resolve complexity policy") {
 		t.Errorf("interrupted resolution = %v, want an error", err)
+	}
+}
+
+// Both a locked repository without a length of its own and an unadopted workspace are judged
+// against the scanner's own default, hiss.DefaultMaxFuncLOC (BUG-309).
+func TestServer_Boundary_InspectSymbolsLengthIsScannerDefault(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	want := fmt.Sprintf("Func: Greet | LOC: 6 (<=%d)", hiss.DefaultMaxFuncLOC)
+	locked := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "main.go"})
+	expectText(t, "locked defaults", locked, want)
+
+	if err := os.Remove(filepath.Join(root, ".standards.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	unadopted := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "main.go"})
+	expectText(t, "no manifest", unadopted, want)
+	if strings.Contains(unadopted.Content[0].Text, "WARN") {
+		t.Errorf("an unadopted workspace is not an unresolved policy:\n%s", unadopted.Content[0].Text)
 	}
 }
 

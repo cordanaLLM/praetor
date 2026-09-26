@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 // The language server diagnoses against the ceilings the opened workspace resolves to, the
@@ -201,6 +202,36 @@ func TestLSP_Boundary_WorkspaceRootSelection(t *testing.T) {
 	} {
 		if got := fileURIPath(raw); got != want {
 			t.Errorf("fileURIPath(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+// The pre-initialize fallback is the scanner's zero-option default, hiss.DefaultMaxFuncLOC:
+// a function the editor accepts is one the audit's scanner accepts, and one line more fails
+// both (BUG-309).
+func TestLSP_Boundary_FallbackLengthMatchesScanner(t *testing.T) {
+	limit := hiss.DefaultMaxFuncLOC
+	if got := NewServer(&bytes.Buffer{}, &bytes.Buffer{}, "v1.0.0").complexityPolicy().MaxFuncLOC; got != limit {
+		t.Fatalf("fallback length %d, want hiss.DefaultMaxFuncLOC %d", got, limit)
+	}
+	for _, loc := range []int{limit, limit + 1} {
+		source := wideFunc("Wide", loc)
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "wide.go"), []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		report, err := hiss.Scan(t.Context(), root, hiss.ScanOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		scanned := report.Breakdown["HISS-04"]
+		editor := countDiagnostics(analyze(t, "file:///wide.go", source), "HISS-04", "LOC")
+		want := 0
+		if loc > limit {
+			want = 1
+		}
+		if scanned != want || editor != want {
+			t.Errorf("%d lines: scanner %d, language server %d, want %d", loc, scanned, editor, want)
 		}
 	}
 }

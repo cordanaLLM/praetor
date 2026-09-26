@@ -117,5 +117,6 @@ func TestAudit_EffectivePolicyCannotLoosenCompatibilityCeiling(t *testing.T) {
 	path := writeFixtureFile(t, f.dir, "deployment.yaml", "complexity:\n  max_func_loc: 1000\n")
 	out, err := f.audit(t, "--deployment-config="+path)
 	mustErrContain(t, err, "limit of 60 LOC")
-	mustContain(t, out, "max_func_loc=60", "contributors=builtin:audit-compat-v1")
+	// The built-in default is the compatibility ceiling's own length (BUG-309), so both hold it.
+	mustContain(t, out, "max_func_loc=60", "contributors=builtin:defaults-v1,builtin:audit-compat-v1")
 }
