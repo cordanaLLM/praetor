@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,15 +24,21 @@ type recordedRulesetRequest struct {
 	Body          map[string]any
 }
 
-// rulesetServer fakes the GitHub rulesets API on the loopback interface: GET lists the
-// configured rulesets, writes are recorded and answered with writeStatus.
+// rulesetServer fakes the GitHub rulesets API on the loopback interface: GET on the
+// collection lists the configured rulesets, GET on one ruleset returns the document last
+// written to it (or its listing entry), a POST stores a new ruleset as id 99 and a PUT
+// replaces one. A non-zero writeStatus answers every write with that status instead.
 type rulesetServer struct {
 	mu          sync.Mutex
 	existing    []map[string]any
+	stored      map[int]map[string]any
 	requests    []recordedRulesetRequest
 	writeStatus int
 	srv         *httptest.Server
 }
+
+// createdRulesetID is the id rulesetServer assigns to a created ruleset.
+const createdRulesetID = 99
 
 func newRulesetServer(t *testing.T, existing []map[string]any, writeStatus int) *rulesetServer {
 	t.Helper()
@@ -59,23 +67,67 @@ func (rs *rulesetServer) handle(w http.ResponseWriter, r *http.Request) {
 	rs.requests = append(rs.requests, recordedRulesetRequest{
 		Method: r.Method, Path: r.URL.RequestURI(), Authorization: r.Header.Get("Authorization"), Body: body,
 	})
+	rs.serve(w, r.Method, r.URL.Path, body)
+}
 
-	w.Header().Set("Content-Type", "application/json")
-	if r.Method == http.MethodGet {
-		if encErr := json.NewEncoder(w).Encode(rs.existing); encErr != nil {
-			http.Error(w, encErr.Error(), http.StatusInternalServerError)
+// serve answers one rulesets API call; callers hold rs.mu or own rs exclusively.
+func (rs *rulesetServer) serve(w http.ResponseWriter, method, path string, body map[string]any) {
+	if rs.stored == nil {
+		rs.stored = map[int]map[string]any{}
+	}
+	id := 0
+	if _, after, found := strings.Cut(path, "/rulesets/"); found {
+		if _, err := fmt.Sscanf(after, "%d", &id); err != nil {
+			writeRulesetJSON(w, http.StatusNotFound, map[string]any{"message": "Not Found"})
+			return
 		}
+	}
+	if method == http.MethodGet {
+		rs.serveRead(w, id)
 		return
 	}
 	status := rs.writeStatus
 	if status == 0 {
 		status = http.StatusOK
-		if r.Method == http.MethodPost {
-			status = http.StatusCreated
+		if method == http.MethodPost {
+			status, id = http.StatusCreated, createdRulesetID
 		}
 	}
+	if status >= http.StatusMultipleChoices {
+		writeRulesetJSON(w, status, map[string]any{"message": "rejected"})
+		return
+	}
+	doc := maps.Clone(body)
+	if doc == nil {
+		doc = map[string]any{}
+	}
+	doc["id"] = id
+	rs.stored[id] = doc
+	writeRulesetJSON(w, status, doc)
+}
+
+func (rs *rulesetServer) serveRead(w http.ResponseWriter, id int) {
+	if id == 0 {
+		writeRulesetJSON(w, http.StatusOK, rs.existing)
+		return
+	}
+	if doc, found := rs.stored[id]; found {
+		writeRulesetJSON(w, http.StatusOK, doc)
+		return
+	}
+	for _, entry := range rs.existing {
+		if fmt.Sprint(entry["id"]) == fmt.Sprint(id) {
+			writeRulesetJSON(w, http.StatusOK, entry)
+			return
+		}
+	}
+	writeRulesetJSON(w, http.StatusNotFound, map[string]any{"message": "Not Found"})
+}
+
+func writeRulesetJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if _, werr := w.Write([]byte(`{"id": 99}`)); werr != nil {
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		return
 	}
 }
@@ -117,8 +169,8 @@ func TestReconcileProtection_Positive_CreateThenUpdate(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	reqs := rs.recorded()
-	if len(reqs) != 2 {
-		t.Fatalf("expected GET + POST, got %+v", reqs)
+	if len(reqs) != 3 || reqs[2].Method != http.MethodGet || reqs[2].Path != "/repos/acme/widgets/rulesets/99" {
+		t.Fatalf("expected GET + POST + readback GET, got %+v", reqs)
 	}
 	if reqs[0].Method != http.MethodGet || reqs[0].Path != "/repos/acme/widgets/rulesets?per_page=100&page=1" {
 		t.Fatalf("unexpected listing request: %+v", reqs[0])
@@ -144,11 +196,12 @@ func TestReconcileProtection_Positive_CreateThenUpdate(t *testing.T) {
 		t.Fatalf("update: %v", err)
 	}
 	reqs2 := rs2.recorded()
-	if len(reqs2) != 2 || reqs2[1].Method != http.MethodPut || reqs2[1].Path != "/repos/acme/widgets/rulesets/7" {
-		t.Fatalf("expected PUT to ruleset 7, got %+v", reqs2)
+	if len(reqs2) != 4 || reqs2[1].Path != "/repos/acme/widgets/rulesets/7" || reqs2[2].Method != http.MethodPut ||
+		reqs2[2].Path != "/repos/acme/widgets/rulesets/7" || reqs2[3].Method != http.MethodGet {
+		t.Fatalf("expected list, live GET, PUT to ruleset 7 and readback, got %+v", reqs2)
 	}
-	if !containsString(rulesetRuleTypes(reqs2[1].Body), "required_signatures") {
-		t.Fatalf("signed policy must emit required_signatures, got %v", rulesetRuleTypes(reqs2[1].Body))
+	if !containsString(rulesetRuleTypes(reqs2[2].Body), "required_signatures") {
+		t.Fatalf("signed policy must emit required_signatures, got %v", rulesetRuleTypes(reqs2[2].Body))
 	}
 }
 
@@ -227,7 +280,7 @@ func TestReconcileProtection_Boundary(t *testing.T) {
 		t.Fatalf("env fallback: %v", err)
 	}
 	reqs := rs.recorded()
-	if len(reqs) != 2 || reqs[1].Path != "/repos/env-org/env-repo/rulesets" {
+	if len(reqs) != 3 || reqs[1].Path != "/repos/env-org/env-repo/rulesets" {
 		t.Fatalf("expected a create on env-org/env-repo, got %+v", reqs)
 	}
 	types := rulesetRuleTypes(reqs[1].Body)
@@ -246,8 +299,8 @@ func TestReconcileProtectionTokensDoNotBypassRequests(t *testing.T) {
 				t.Fatalf("reconcile: %v", err)
 			}
 			reqs := rs.recorded()
-			if len(reqs) != 2 || reqs[0].Method != http.MethodGet || reqs[1].Method != http.MethodPost {
-				t.Fatalf("every token must perform the real GET and POST, got %+v", reqs)
+			if len(reqs) != 3 || reqs[0].Method != http.MethodGet || reqs[1].Method != http.MethodPost || reqs[2].Method != http.MethodGet {
+				t.Fatalf("every token must perform the real GET, POST and readback GET, got %+v", reqs)
 			}
 			for _, req := range reqs {
 				if req.Authorization != "Bearer "+token {

@@ -25,9 +25,6 @@ const (
 	syncFilePerm os.FileMode = 0o600
 )
 
-// rulesetName is shared by the local declaration and remote reconciliation.
-const rulesetName = "praetor-main-protection"
-
 // ErrRemoteTokenMissing reports a --remote sync without any usable credential.
 var ErrRemoteTokenMissing = errors.New("--remote requires --token, GITHUB_TOKEN or GH_TOKEN")
 
@@ -214,14 +211,16 @@ func reconcileRemoteForge(ctx context.Context, rootDir string, in remoteSyncInpu
 
 	gh := forge.NewGitHubDriver(token, remote.endpoint)
 	gh.SetRepository(owner, name)
-	gh.RulesetName = rulesetName
+	// The remote ruleset is the local .github/rulesets/main.json one: same name, same refs.
+	gh.RulesetName = forge.RepositoryRulesetName
+	gh.ProtectedRefs = forge.RepositoryRulesetRefs()
 	gh.RequiredStatusChecks = append([]string(nil), in.contexts...)
 	gh.StrictStatusChecks = true
 	fmt.Printf("  [SYNC] Reconciling branch protection ruleset on GitHub for %s/%s...\n", owner, name)
 	if err := gh.ReconcileProtection(ctx, "main", in.policy); err != nil {
 		return err
 	}
-	fmt.Println("  [OK] Remote branch protection synchronized on GitHub")
+	fmt.Println("  [OK] Remote branch protection synchronized on GitHub (main and lts-*, read back; live rules praetor does not render kept)")
 	fmt.Printf("  [SYNC] Reconciling %d labels from .config/labels.yaml on GitHub...\n", len(in.labels))
 	if err := gh.ReconcileLabels(ctx, in.labels); err != nil {
 		return fmt.Errorf("reconcile labels: %w", err)
@@ -230,7 +229,15 @@ func reconcileRemoteForge(ctx context.Context, rootDir string, in remoteSyncInpu
 	return nil
 }
 
-func runSync(args []string) error {
+// syncFlags are the parsed command-line inputs of sync.
+type syncFlags struct {
+	configPath  string
+	catalogRoot string
+	remote      bool
+	remoteOpts  remoteSyncOptions
+}
+
+func parseSyncFlags(args []string) (syncFlags, error) {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
 	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml; its directory is the reconciled root")
 	remote := fs.Bool("remote", false, "Also reconcile branch protection and labels on GitHub (an explicit opt-in; nothing is pushed without it)")
@@ -240,25 +247,37 @@ func runSync(args []string) error {
 	forgeHost := fs.String("forge-host", defaultForgeHost, "Git host the origin remote must point at for --remote (GitHub Enterprise: the server's host name)")
 
 	if err := fs.Parse(args); err != nil {
-		return err
+		return syncFlags{}, err
 	}
 	if fs.NArg() > 0 {
-		return fmt.Errorf("sync accepts no positional arguments, got %q", fs.Args())
+		return syncFlags{}, fmt.Errorf("sync accepts no positional arguments, got %q", fs.Args())
 	}
-	remoteOpts := remoteSyncOptions{token: *token, endpoint: *endpoint, host: *forgeHost}
+	return syncFlags{
+		configPath:  *configPath,
+		catalogRoot: *catalogRoot,
+		remote:      *remote,
+		remoteOpts:  remoteSyncOptions{token: *token, endpoint: *endpoint, host: *forgeHost},
+	}, nil
+}
+
+func runSync(args []string) error {
+	flags, err := parseSyncFlags(args)
+	if err != nil {
+		return err
+	}
 
 	// HISS-02: local reconciliation and the forge round trips share one deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)
 	defer cancel()
 
-	manifest, err := config.LoadManifest(*configPath)
+	manifest, err := config.LoadManifest(flags.configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}
 
 	policy := config.DefaultPolicy()
 	policy.ApplyOverrides(manifest.Overrides)
-	rootDir := filepath.Dir(*configPath)
+	rootDir := filepath.Dir(flags.configPath)
 	contexts, err := forge.RequiredStatusContexts(ctx, rootDir)
 	if err != nil {
 		return fmt.Errorf("discover repository workflow checks: %w", err)
@@ -270,7 +289,7 @@ func runSync(args []string) error {
 	if err != nil {
 		return err
 	}
-	missing, err := verifySyncCompanions(ctx, rootDir, *catalogRoot, manifest)
+	missing, err := verifySyncCompanions(ctx, rootDir, flags.catalogRoot, manifest)
 	if err != nil {
 		return err
 	}
@@ -281,9 +300,9 @@ func runSync(args []string) error {
 		return fmt.Errorf("local sync verification incomplete: %d companion checks missing or unverified; generated labels and ruleset retained", missing)
 	}
 
-	if *remote {
+	if flags.remote {
 		in := remoteSyncInputs{manifest: manifest, policy: &policy.BranchProtection, contexts: contexts, labels: labels}
-		if err := reconcileRemoteForge(ctx, rootDir, in, remoteOpts); err != nil {
+		if err := reconcileRemoteForge(ctx, rootDir, in, flags.remoteOpts); err != nil {
 			return fmt.Errorf("remote forge sync failed: %w", err)
 		}
 	} else {

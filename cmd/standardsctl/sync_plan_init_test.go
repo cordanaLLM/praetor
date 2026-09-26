@@ -546,6 +546,11 @@ func TestSync_Remote_Positive(t *testing.T) {
 	if writes := stub.recorded(); len(writes) == 0 || writes[0] != "POST /repos/acme/widgets/rulesets" {
 		t.Fatalf("expected the ruleset create first, got %v", writes)
 	}
+	// The remote ruleset is the local one: same name, main and lts-*.
+	if raw := stub.storedRuleset(t, 1); !strings.Contains(raw, `"name":"praetor-main-protection"`) ||
+		!strings.Contains(raw, `"include":["refs/heads/main","refs/heads/lts-*"]`) {
+		t.Fatalf("remote ruleset does not match the local declaration: %s", raw)
+	}
 
 	// Boundary: the environment token is accepted, positional arguments are not.
 	t.Setenv("GITHUB_TOKEN", "ghp_env")
@@ -554,6 +559,47 @@ func TestSync_Remote_Positive(t *testing.T) {
 	}
 	_, err = runSyncCmd(t, "--config="+manifest, "extra")
 	mustErrContain(t, err, "no positional arguments")
+}
+
+// storedRuleset returns the JSON of the ruleset the stub holds under id.
+func (s *forgeStub) storedRuleset(t *testing.T, id int) string {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := json.Marshal(s.rulesets[id])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// TestSync_Remote_RulesetMergesLive covers BUG-761 end to end: a live ruleset that covers
+// main alone and carries an operator's extra rule is widened to lts-* and keeps the rule.
+func TestSync_Remote_RulesetMergesLive(t *testing.T) {
+	f := newSyncValidationFixture(t)
+	env := initGitFixture(t, f.dir)
+	if out, gerr := runFixtureGit(t, f.dir, env, "remote", "add", "origin", "https://github.com/acme/widgets.git"); gerr != nil {
+		t.Fatalf("remote add: %v (%s)", gerr, out)
+	}
+	stub := &forgeStub{rulesets: map[int]map[string]any{5: {
+		"id": 5, "name": "praetor-main-protection", "target": "branch", "enforcement": "active",
+		"conditions": map[string]any{"ref_name": map[string]any{"include": []any{"refs/heads/main"}, "exclude": []any{}}},
+		"rules":      []any{map[string]any{"type": "code_scanning", "parameters": map[string]any{"code_scanning_tools": []any{}}}},
+	}}}
+	srv := httptest.NewServer(stub.handler())
+	t.Cleanup(srv.Close)
+
+	out, err := runSyncCmd(t, "--config="+f.manifestPath, "--remote", "--token=ghp_x", "--endpoint="+srv.URL)
+	if err != nil {
+		t.Fatalf("remote sync: %v\n%s", err, out)
+	}
+	mustContain(t, strings.Join(stub.recorded(), "\n"), "PUT /repos/acme/widgets/rulesets/5")
+	raw := stub.storedRuleset(t, 5)
+	for _, want := range []string{`"include":["refs/heads/main","refs/heads/lts-*"]`, `"code_scanning"`, `"pull_request"`, `"required_linear_history"`} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("merged remote ruleset lacks %s: %s", want, raw)
+		}
+	}
 }
 
 // TestSync_Remote_Labels covers BUG-094: --remote writes the .config/labels.yaml taxonomy

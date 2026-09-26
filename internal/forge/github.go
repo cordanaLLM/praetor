@@ -66,6 +66,9 @@ type GitHubDriver struct {
 	HTTPClient *http.Client
 	// RulesetName overrides the remote ruleset name. Empty means "<branch>-branch-protection".
 	RulesetName string
+	// ProtectedRefs are the ref patterns the remote ruleset must include, such as
+	// RepositoryRulesetRefs(). Empty means "refs/heads/<branch>" alone.
+	ProtectedRefs []string
 	// RequiredStatusChecks are the check contexts pushed into the remote ruleset.
 	RequiredStatusChecks []string
 	// StrictStatusChecks requires branches to be up to date before merging.
@@ -269,9 +272,19 @@ func (g *GitHubDriver) findRulesetID(ctx context.Context, listPath, name string)
 	return id, nil
 }
 
+// protectedRefs returns the ref patterns the ruleset for branch must include.
+func (g *GitHubDriver) protectedRefs(branch string) []string {
+	if len(g.ProtectedRefs) > 0 {
+		return append([]string(nil), g.ProtectedRefs...)
+	}
+	return []string{"refs/heads/" + branch}
+}
+
 // ReconcileProtection converges the remote branch ruleset onto the resolved policy. It is a
-// true reconciler: an existing ruleset of the same name is updated in place, never
-// duplicated, and a non-converging remote is an error, not a warning.
+// true reconciler: an existing ruleset of the same name is read, merged and updated in
+// place, never duplicated, and a ruleset that does not read back converged is an error,
+// not a warning. The merge never narrows the live ruleset (see mergeRuleset): refs, status
+// checks, rules and parameters praetor does not render survive the update.
 func (g *GitHubDriver) ReconcileProtection(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) error {
 	if err := g.Authenticate(ctx); err != nil {
 		return err
@@ -288,7 +301,11 @@ func (g *GitHubDriver) ReconcileProtection(ctx context.Context, branch string, p
 		return fmt.Errorf("reconcile branch protection for %s: %w", branch, err)
 	}
 	name := g.rulesetName(branch)
-	payload, err := protectionRuleset(name, []string{"refs/heads/" + branch}, *policy, g.RequiredStatusChecks, g.StrictStatusChecks)
+	rendered, err := protectionRuleset(name, g.protectedRefs(branch), *policy, g.RequiredStatusChecks, g.StrictStatusChecks)
+	if err != nil {
+		return err
+	}
+	desired, err := normalizeRuleset(rendered)
 	if err != nil {
 		return err
 	}
@@ -296,19 +313,78 @@ func (g *GitHubDriver) ReconcileProtection(ctx context.Context, branch string, p
 	if err != nil {
 		return fmt.Errorf("reconcile branch protection for %s: %w", branch, err)
 	}
-
-	method, path := http.MethodPost, listPath
-	if id > 0 {
-		method, path = http.MethodPut, fmt.Sprintf("%s/%d", listPath, id)
-	}
-	body, status, err := g.sendRequest(ctx, method, path, payload)
+	id, want, err := g.writeRuleset(ctx, listPath, id, desired)
 	if err != nil {
-		return fmt.Errorf("reconcile branch protection failed for %s: %w", branch, err)
+		return fmt.Errorf("reconcile ruleset %q for %s: %w", name, branch, err)
 	}
-	if status != http.StatusOK && status != http.StatusCreated {
-		return fmt.Errorf("unexpected status %d while reconciling ruleset %q: %s", status, name, util.BodyPreview(body))
+	readback, err := g.getRuleset(ctx, listPath, id)
+	if err != nil {
+		return fmt.Errorf("read back ruleset %q: %w", name, err)
+	}
+	if err := rulesetConverged(readback, want); err != nil {
+		return fmt.Errorf("ruleset %q did not converge: %w", name, err)
 	}
 	return nil
+}
+
+// writeRuleset creates the desired ruleset when id is 0, and otherwise merges it into the
+// live ruleset id and updates that in place. It returns the ruleset id and the document
+// written, which is what the readback must match.
+func (g *GitHubDriver) writeRuleset(ctx context.Context, listPath string, id int, desired map[string]any) (int, map[string]any, error) {
+	if id == 0 {
+		body, err := g.sendRuleset(ctx, http.MethodPost, listPath, desired, http.StatusCreated)
+		if err != nil {
+			return 0, nil, err
+		}
+		var created struct {
+			ID int `json:"id"`
+		}
+		if err := json.Unmarshal(body, &created); err != nil || created.ID <= 0 {
+			return 0, nil, fmt.Errorf("created ruleset response carries no id: %s", util.BodyPreview(body))
+		}
+		return created.ID, desired, nil
+	}
+	live, err := g.getRuleset(ctx, listPath, id)
+	if err != nil {
+		return 0, nil, fmt.Errorf("read live ruleset: %w", err)
+	}
+	merged, err := mergeRuleset(live, desired)
+	if err != nil {
+		return 0, nil, fmt.Errorf("merge live ruleset: %w", err)
+	}
+	if _, err := g.sendRuleset(ctx, http.MethodPut, fmt.Sprintf("%s/%d", listPath, id), merged, http.StatusOK); err != nil {
+		return 0, nil, err
+	}
+	return id, merged, nil
+}
+
+// sendRuleset writes a ruleset document and requires the given success status.
+func (g *GitHubDriver) sendRuleset(ctx context.Context, method, path string, doc map[string]any, want int) ([]byte, error) {
+	body, status, err := g.sendRequest(ctx, method, path, doc)
+	if err != nil {
+		return nil, err
+	}
+	if status != want {
+		return nil, fmt.Errorf("unexpected status %d from %s %s: %s", status, method, path, util.BodyPreview(body))
+	}
+	return body, nil
+}
+
+// getRuleset reads one repository ruleset as a generic JSON object.
+func (g *GitHubDriver) getRuleset(ctx context.Context, listPath string, id int) (map[string]any, error) {
+	path := fmt.Sprintf("%s/%d", listPath, id)
+	body, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d from GET %s: %s", status, path, util.BodyPreview(body))
+	}
+	ruleset, err := jsonObject(body)
+	if err != nil {
+		return nil, fmt.Errorf("parse ruleset %d (raw: %q): %w", id, util.BodyPreview(body), err)
+	}
+	return ruleset, nil
 }
 
 // ReconcileLabels converges the repository label taxonomy. Every non-success status is an
