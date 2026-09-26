@@ -353,7 +353,8 @@ The High-Integrity Systems Standard (HISS) defines ` + catalogRange(rules) + `. 
 lists each one for ` + "`" + repoName + "`" + `: its enforcement, its failure action, and whether this
 repository's ` + "`AGENTS.md`" + ` gates it ([` + hissInvariantsPage + `](` + hissInvariantsPage + `.md) shows the gated rules). The rows
 come from the core HISS rule catalog, the registry the ` + "`standards_explain_rule`" + ` MCP tool serves.
-The Enforcement column describes the checks this repository runs.
+The Enforcement column describes the checks praetor's own repository runs; an adopted repository
+runs the checks its adoption generates.
 
 ` + renderHISSMatrixTable(rules, gated) + `
 

@@ -4,24 +4,25 @@ The High-Integrity Systems Standard (HISS) defines 21 invariants, HISS-01 throug
 lists each one for `cordanaLLM/praetor`: its enforcement, its failure action, and whether this
 repository's `AGENTS.md` gates it ([HISS-Invariants](HISS-Invariants.md) shows the gated rules). The rows
 come from the core HISS rule catalog, the registry the `standards_explain_rule` MCP tool serves.
-The Enforcement column describes the checks this repository runs.
+The Enforcement column describes the checks praetor's own repository runs; an adopted repository
+runs the checks its adoption generates.
 
 | Invariant | Title | Gated | Enforcement | Failure action |
 | :--- | :--- | :--- | :--- | :--- |
 | **HISS-01** | Control Flow - Acyclic DAG Control Flow | yes | AST call-graph analyzer and static linter checks. | Immediate build failure. |
 | **HISS-02** | Loops & I/O - Bounded Loops & Mandatory I/O Timeouts | yes | Semgrep rules and AST sweep. | Pre-commit and CI blocker. |
-| **HISS-03** | Zero Frame Malloc | no | Heap benchmark allocations gate. | CI failure. |
+| **HISS-03** | Zero Frame Malloc | no | NOT ENFORCED. No allocation benchmark gate exists in this repository. | None today; the rule is advisory until a check is attached. |
 | **HISS-04** | Complexity Bounds & Modular Sizing | yes | gocyclo, gocognit and funlen via golangci-lint (.golangci.yml), plus the standards_inspect_symbols AST scanner. | Build sweep blocker. |
 | **HISS-05** | Variable Scoping | no | NOT ENFORCED. No executable check exists in this repository, and no configured linter decides this rule. | None today; the rule is advisory until a check is attached. |
 | **HISS-06** | Bounded Concurrency | no | NOT ENFORCED for the axiom. The race detector cannot observe an unbounded pool: a lock-order inversion or an unbounded but race-free fan-out produces no data race. 'go test -race' runs, but it does not decide this rule. | None today; the rule is advisory until a check is attached. |
-| **HISS-07** | Checked Errors & Zero Unwrap | yes | golangci-lint, clippy. | Compiler / linter error. |
+| **HISS-07** | Checked Errors & Zero Unwrap | yes | golangci-lint (errcheck and wrapping rules) in make lint. | Compiler / linter error. |
 | **HISS-08** | Static Determinism & Banned Functions | no | Semgrep rules. | Admission rejection. |
 | **HISS-09** | Reference Safety & Mandatory Safety Proofs | no | AST check. | Immediate AST check rejection. |
-| **HISS-10** | 5-Layer Zero-Warnings Cascade | yes | Compile and linter flags (-Werror, zero-warning tolerance). | Exit code 1. |
+| **HISS-10** | 5-Layer Zero-Warnings Cascade | yes | go vet and golangci-lint in make lint; any finding fails the run. | Exit code 1. |
 | **HISS-11** | Hermetic Supply Chain | no | CI attestation gate. | Deployment rejection. |
 | **HISS-12** | Secret Leak Prevention | no | 'make secrets' runs gitleaks over repository history inside verify-all. | Verification gate rejection. |
 | **HISS-13** | Monotonic Debt Ratchet | no | 'praetorctl baseline' and the gate's HISS stage, evaluated against .standards-baseline.json. The scan feeding it refuses to certify a scope it did not fully examine. | PR status gate rejection. |
-| **HISS-14** | Append-Only ABI & Migration Footers | no | Git log and API diff analyzer. | PR blocker. |
+| **HISS-14** | Append-Only ABI & Migration Footers | no | praetorctl forge check-commits in CI (breaking-change marker and Migration: footer). | PR blocker. |
 | **HISS-15** | 3D Test Discipline | yes | CI coverage gate (go test -race -coverprofile with a minimum statement-coverage floor enforced by 'go tool cover') and PR checklist validation of the 3D test attestation. | Merge gate rejection. |
 | **HISS-16** | Canonical AGENTS.md & Server Gates | yes | Pre-commit blocker, server-side admission. | Merge blocker. |
 | **HISS-17** | State Ledger Discipline | yes | Pre-commit state-sync hook and the CI / pre-push state audit. | Pre-commit / CI gate rejection. |

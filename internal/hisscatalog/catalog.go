@@ -48,8 +48,8 @@ var catalog = []Rule{
 		ID:            "HISS-03",
 		Title:         "Zero Frame Malloc",
 		Specification: "Hot simulation and frame loops must maintain zero dynamic heap allocations: ΔHeapAlloc_tick = 0.",
-		Enforcement:   "Heap benchmark allocations gate.",
-		FailureAction: "CI failure.",
+		Enforcement:   "NOT ENFORCED. No allocation benchmark gate exists in this repository.",
+		FailureAction: "None today; the rule is advisory until a check is attached.",
 	},
 	{
 		ID:            "HISS-04",
@@ -76,7 +76,7 @@ var catalog = []Rule{
 		ID:            "HISS-07",
 		Title:         "Checked Errors & Zero Unwrap",
 		Specification: "Zero .unwrap() and .expect() in non-test code. Total ban on unchecked Go error returns. All error flows must be handled or wrapped with context.",
-		Enforcement:   "golangci-lint, clippy.",
+		Enforcement:   "golangci-lint (errcheck and wrapping rules) in make lint.",
 		FailureAction: "Compiler / linter error.",
 	},
 	{
@@ -97,7 +97,7 @@ var catalog = []Rule{
 		ID:            "HISS-10",
 		Title:         "5-Layer Zero-Warnings Cascade",
 		Specification: "Warnings are treated as fatal errors across IDE, Pre-Commit, Pre-Push, CI, and Pre-Apply layers.",
-		Enforcement:   "Compile and linter flags (-Werror, zero-warning tolerance).",
+		Enforcement:   "go vet and golangci-lint in make lint; any finding fails the run.",
 		FailureAction: "Exit code 1.",
 	},
 	{
@@ -125,7 +125,7 @@ var catalog = []Rule{
 		ID:            "HISS-14",
 		Title:         "Append-Only ABI & Migration Footers",
 		Specification: "Public APIs are append-only. Breaking changes require conventional commit breaking indicator (!) and mandatory Migration: footer.",
-		Enforcement:   "Git log and API diff analyzer.",
+		Enforcement:   "praetorctl forge check-commits in CI (breaking-change marker and Migration: footer).",
 		FailureAction: "PR blocker.",
 	},
 	{
