@@ -231,14 +231,23 @@ func TestInterruptedDistinguishesDeadlinesFromOverflow(t *testing.T) {
 // caller saw success while a worktree and a branch leaked.
 func TestCanaryReportsWorktreeCleanupFailure(t *testing.T) {
 	dir, candidate := canaryFixture(t)
-	// A locked worktree survives `git worktree remove --force`, so the test
-	// command locks its own worktree to make cleanup fail.
-	result, err := RunCanary(t.Context(), CanaryOptions{RepoPath: dir, Candidate: candidate, TestCmd: "git worktree lock ."})
+	// The test command deletes its worktree's .git file. Git then refuses
+	// `worktree remove --force --force` ("validation failed ... .git does not
+	// exist") and keeps the directory, and `branch -D` refuses the branch the
+	// surviving administrative entry still checks out. Locking the worktree no
+	// longer works as the injection: the doubled --force removes locked
+	// worktrees. The helper is a built executable so the command runs without
+	// a shell on Linux, macOS and Windows.
+	unlinker := testsupport.BuildExecutable(t, t.TempDir(), "unlink-gitfile", "package main\n\nimport \"os\"\n\nfunc main() {\n\tif os.Remove(\".git\") != nil {\n\t\tos.Exit(2)\n\t}\n}\n")
+	result, err := RunCanary(t.Context(), CanaryOptions{RepoPath: dir, Candidate: candidate, TestCmd: unlinker})
 	if result == nil || !result.Success || result.Status != CanaryPassed {
 		t.Fatalf("test outcome lost: %+v, %v", result, err)
 	}
 	if err == nil || !strings.Contains(err.Error(), "remove canary worktree") || errors.Is(err, ErrCanaryFailed) {
 		t.Fatalf("cleanup failure not returned: %v", err)
+	}
+	if !strings.Contains(result.ExecutionLog, "warning: failed removing worktree") {
+		t.Fatalf("cleanup failure missing from the execution log: %q", result.ExecutionLog)
 	}
 	if _, statErr := os.Stat(result.WorktreePath); statErr != nil {
 		t.Fatalf("fixture did not leak the worktree it reports: %v", statErr)
