@@ -12,7 +12,7 @@ import (
 // Positive: the rules written for a synthesized harness pass markdownlint's default rules,
 // and they carry no markdownlint disable at all.
 func TestRenderedRulesPassDefaultMarkdownlint(t *testing.T) {
-	repo := t.TempDir()
+	repo := identifiedRepo(t)
 	h, err := SynthesizeHarness(t.Context(), repo)
 	if err != nil {
 		t.Fatal(err)
