@@ -8,8 +8,10 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -285,12 +287,7 @@ func applyMigrationGoMod(ctx context.Context, repoPath string, plan *MigrationPl
 
 // sortedFileList flattens the changed-file set into a deterministic slice.
 func sortedFileList(files map[string]struct{}) []string {
-	out := make([]string, 0, len(files))
-	for f := range files {
-		out = append(out, f)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(files))
 }
 
 // confineToRepo verifies that a planned target file really resolves inside repoPath, so
