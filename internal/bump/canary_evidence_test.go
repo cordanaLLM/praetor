@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -68,17 +69,31 @@ func TestCanaryPropagatesManifestUpdateFailure(t *testing.T) {
 
 func canaryFixture(t *testing.T) (string, UpgradeCandidate) {
 	t.Helper()
+	dir := canaryRepo(t, "package.json", `{"dependencies":{"fixture-dep":"^1.0.0"}}`+"\n")
+	return dir, UpgradeCandidate{Package: "fixture-dep", CurrentVersion: "1.0.0", TargetVersion: "2.0.0", ManifestType: "package.json"}
+}
+
+// goCanaryFixture is canaryFixture for a Go module requiring example.com/pkg v1.0.0, with
+// the candidate that raises it to v1.2.0.
+func goCanaryFixture(t *testing.T) (string, UpgradeCandidate) {
+	t.Helper()
+	return canaryRepo(t, "go.mod", appGoMod), fallbackCandidate
+}
+
+// canaryRepo commits one manifest, next to the README and .gitignore every canary fixture
+// carries, as the first commit of a new git repository.
+func canaryRepo(t *testing.T, manifest, body string) string {
+	t.Helper()
 	dir := t.TempDir()
 	for _, args := range [][]string{{"init", "-q"}, {"config", "user.name", "Canary Fixture"}, {"config", "user.email", "fixture@example.test"}} {
 		if _, err := util.RunGit(t.Context(), dir, args...); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for name, body := range map[string]string{
-		"package.json": `{"dependencies":{"fixture-dep":"^1.0.0"}}` + "\n",
-		"README.md":    "before\n", ".gitignore": ".standards/\n.workingdir/\n",
+	for name, content := range map[string]string{
+		manifest: body, "README.md": "before\n", ".gitignore": ".standards/\n.workingdir/\n",
 	} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -88,7 +103,84 @@ func canaryFixture(t *testing.T) (string, UpgradeCandidate) {
 	if _, err := util.RunGit(t.Context(), dir, "commit", "-q", "-s", "-m", "test: initialize canary fixture"); err != nil {
 		t.Fatal(err)
 	}
-	return dir, UpgradeCandidate{Package: "fixture-dep", CurrentVersion: "1.0.0", TargetVersion: "2.0.0", ManifestType: "package.json"}
+	return dir
+}
+
+// canaryWorktrees counts the worktrees git lists for dir, its main worktree included: one
+// means no canary worktree exists.
+func canaryWorktrees(t *testing.T, dir string) int {
+	t.Helper()
+	out, err := util.RunGit(t.Context(), dir, "worktree", "list", "--porcelain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "worktree ") {
+			count++
+		}
+	}
+	return count
+}
+
+// Positive: a go.mod candidate runs end to end with no configured command. go get and go mod
+// tidy run in the canary worktree, the default `go test ./...` runs there after them and reads
+// the raised requirement, and the source checkout keeps its go.mod. Only the package.json
+// canary had ever executed before; applyGoUpdate's success path had no test at all.
+func TestCanaryRunsGoCandidatesEndToEnd(t *testing.T) {
+	dir, candidate := goCanaryFixture(t)
+	bin, log := standInToolchain(t, map[string]standInReply{
+		pkgGetCall: goGetMoves, goTidyCall: {}, goTestCall: {Show: "go.mod", Out: "ok\texample.com/app\n"},
+	}, "go")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result, err := RunCanary(testDeadline(t), CanaryOptions{RepoPath: dir, Candidate: candidate})
+	if err != nil || !result.Success || result.Status != CanaryPassed || result.CanaryCertified {
+		t.Fatalf("go candidate canary = %+v, %v", result, err)
+	}
+	calls := standInCalls(t, log)
+	if got := strings.Join(callNames(calls), "; "); got != pkgGetCall+"; "+goTidyCall+"; "+goTestCall {
+		t.Fatalf("calls = %q, want go get, go mod tidy, then the default go test", got)
+	}
+	for _, c := range calls {
+		if filepath.Base(c.Dir) != filepath.Base(result.WorktreePath) {
+			t.Fatalf("%q ran in %s, not the canary worktree %s", c.Call, c.Dir, result.WorktreePath)
+		}
+	}
+	if !strings.Contains(result.ExecutionLog, "require example.com/pkg v1.2.0") {
+		t.Fatalf("the test command did not see the raised requirement: %q", result.ExecutionLog)
+	}
+	if got := readGoMod(t, dir); got != appGoMod {
+		t.Fatalf("canary changed the source go.mod: %q", got)
+	}
+	if _, statErr := os.Stat(result.WorktreePath); !os.IsNotExist(statErr) {
+		t.Fatalf("canary worktree not removed: %v", statErr)
+	}
+}
+
+// Negative: a failed go get stops a go.mod canary at the update. The go.mod fallback edit is
+// not an applied update, so the test command never runs against a requirement no go command
+// resolved, and the failure carries the go get error.
+func TestCanaryGoGetFailureStopsBeforeTheTest(t *testing.T) {
+	dir, candidate := goCanaryFixture(t)
+	bin, log := standInToolchain(t, map[string]standInReply{
+		pkgGetCall: {Code: 1}, goTidyCall: {}, goTestCall: {},
+	}, "go")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result, err := RunCanary(testDeadline(t), CanaryOptions{RepoPath: dir, Candidate: candidate})
+	if !errors.Is(err, ErrCanaryFailed) || !errors.Is(err, errGoModFallbackEdit) {
+		t.Fatalf("err = %v, want ErrCanaryFailed wrapping the fallback edit", err)
+	}
+	if result.Success || result.Status != CanaryFailed || result.CanaryCertified {
+		t.Fatalf("failed go get misreported: %+v", result)
+	}
+	if got := callNames(standInCalls(t, log)); slices.Contains(got, goTestCall) || len(got) == 0 || got[0] != pkgGetCall {
+		t.Fatalf("calls = %q, want go get and no test command", got)
+	}
+	if !strings.Contains(result.ExecutionLog, "go get example.com/pkg@v1.2.0 failed") {
+		t.Fatalf("go get failure missing from the log: %q", result.ExecutionLog)
+	}
 }
 
 func TestCanaryCommandPassingIsNotCertification(t *testing.T) {

@@ -1,0 +1,3 @@
+type: fixed
+title: Bump tests drive the online scan, the go get success path and a go.mod canary through stand-in toolchains, and the dry-run, nil-context and empty-manifest tests now assert the branch they guard instead of only the guard line
+breaking: false
