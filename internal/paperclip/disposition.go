@@ -122,7 +122,7 @@ func (d *Disposition) verifyReceipt(pinned ed25519.PublicKey) error {
 	if len(pinned) == 0 {
 		return fmt.Errorf("cannot verify the exit-0 receipt attached to disposition: %w", lockdown.ErrNoPinnedKey)
 	}
-	if err := lockdown.VerifyPinnedReceipt(&d.Receipt.ExecutionReceipt, pinned, []byte(d.Receipt.GateOutput)); err != nil {
+	if err := lockdown.VerifyPinnedReceiptFile(d.Receipt, pinned); err != nil {
 		return fmt.Errorf("invalid exit-0 receipt attached to disposition: %w", err)
 	}
 	return nil

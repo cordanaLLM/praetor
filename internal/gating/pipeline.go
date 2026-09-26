@@ -286,7 +286,8 @@ func executeStage(ctx context.Context, s stage, cfg *stageConfig) error {
 	msg, err := s.fn(ctx, cfg)
 	res := StageResult{Name: s.name, Status: StagePassed, Message: msg}
 	if skip, ok := errors.AsType[*stageSkip](err); ok {
-		if cutErr := attributeRunCut(ctx, s.name, err); !errors.Is(cutErr, err) {
+		if cause := context.Cause(ctx); cause != nil && !errors.Is(err, cause) {
+			cutErr := attributeRunCut(ctx, s.name, err)
 			res.Status, res.Message, err = StageFailed, cutErr.Error(), cutErr
 		} else {
 			res.Status, res.Message, err = skip.status, skip.reason, nil

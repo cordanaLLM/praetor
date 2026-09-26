@@ -627,7 +627,7 @@ func TestRunReceiptStage_Positive_SignsRealStageOutput(t *testing.T) {
 	// The receipt must verify against the pinned key and the real concatenated output,
 	// which is what makes it evidence rather than decoration, and it must pass the gate
 	// output version check `gate verify` and `forge validate-pr` apply.
-	if err := lockdown.VerifyReceiptFile(rf, pub); err != nil {
+	if err := lockdown.VerifyPinnedReceiptFile(rf, pub); err != nil {
 		t.Fatalf("written receipt does not verify: %v", err)
 	}
 	if rf.GateOutput != string(cfg.rep.StageOutput()) {
@@ -795,5 +795,34 @@ func seedGoModule(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module gating.test\n\ngo 1.27\n"), 0o600); err != nil {
 		t.Fatalf("seed go.mod: %v", err)
+	}
+}
+
+func TestExecuteStage_SkipUnderExpiredCtx(t *testing.T) {
+	cfg, _ := newTestConfig(t, t.TempDir(), false)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	fn := func(context.Context, *stageConfig) (string, error) {
+		return "", skipped("dry run: nothing ran")
+	}
+
+	if err := executeStage(ctx, stage{"Skip", fn}, cfg); err == nil || !strings.Contains(err.Error(), "fired first") {
+		t.Fatalf("a skip under expired ctx must fail the stage as a cut, got %v", err)
+	}
+	got := cfg.rep.Stages[0]
+	if got.Status != StageFailed || !strings.Contains(got.Message, "fired first") {
+		t.Errorf("got %+v, want status %s and cut message", got, StageFailed)
+	}
+}
+
+func TestRunReceiptStage_CancelledContext(t *testing.T) {
+	cfg, _ := newTestConfig(t, t.TempDir(), false)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := runReceiptStage(ctx, cfg)
+	if err == nil || !strings.Contains(err.Error(), "context cancelled before receipt could be minted") {
+		t.Errorf("expected cancellation error, got %v", err)
 	}
 }

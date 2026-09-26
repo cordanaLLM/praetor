@@ -183,9 +183,15 @@ func extractReceiptBlock(lines []string) (string, error) {
 }
 
 // verifyReceiptEnvelope verifies the signature, the certified gate output and its format
-// version (lockdown.VerifyReceiptFile), and the commit binding of a receipt carried in a PR body.
+// version (lockdown.VerifyPinnedReceiptFile), and the commit binding of a receipt carried in a PR body.
 func verifyReceiptEnvelope(rf *lockdown.ReceiptFile, policy ReceiptPolicy) error {
-	if err := lockdown.VerifyReceiptFile(rf, policy.PinnedKey); err != nil {
+	var err error
+	if len(policy.PinnedKey) > 0 {
+		err = lockdown.VerifyPinnedReceiptFile(rf, policy.PinnedKey)
+	} else {
+		err = lockdown.VerifyUnpinnedReceiptFile(rf)
+	}
+	if err != nil {
 		return err
 	}
 	if policy.HeadSHA != "" && !strings.EqualFold(strings.TrimSpace(rf.CommitSHA), strings.TrimSpace(policy.HeadSHA)) {

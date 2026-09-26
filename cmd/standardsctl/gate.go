@@ -181,7 +181,7 @@ func runGateVerify(args []string) error {
 	if err != nil {
 		return fmt.Errorf("[FAIL] %w", err)
 	}
-	if err := lockdown.VerifyReceiptFile(rf, pinned); err != nil {
+	if err := lockdown.VerifyPinnedReceiptFile(rf, pinned); err != nil {
 		return fmt.Errorf("[FAIL] receipt %s is not valid: %w", resolvedReceipt, err)
 	}
 	if err := verifyReceiptCommit(*path, rf.CommitSHA); err != nil {

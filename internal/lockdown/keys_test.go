@@ -442,16 +442,16 @@ func signedEnvelope(t *testing.T, priv ed25519.PrivateKey, gateOutput string) *R
 
 // Positive: a v2 envelope verifies against the pinned key and, with no key pinned, against the
 // key it carries.
-func TestVerifyReceiptFile_Positive(t *testing.T) {
+func TestVerifyPinnedReceiptFile_Positive(t *testing.T) {
 	pub, priv, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("GenerateKeyPair: %v", err)
 	}
 	rf := signedEnvelope(t, priv, GateOutputVersion+"\nstage\tPrefetch & Lockfiles\tpassed\t\n")
-	if err := VerifyReceiptFile(rf, pub); err != nil {
+	if err := VerifyPinnedReceiptFile(rf, pub); err != nil {
 		t.Fatalf("pinned: %v", err)
 	}
-	if err := VerifyReceiptFile(rf, nil); err != nil {
+	if err := VerifyUnpinnedReceiptFile(rf); err != nil {
 		t.Fatalf("unpinned: %v", err)
 	}
 }
@@ -460,7 +460,7 @@ func TestVerifyReceiptFile_Positive(t *testing.T) {
 // signature and hash hold, but its stage lines recorded skipped stages as `true`, so accepting
 // it would certify stages that never ran. A foreign key and an altered output still fail on
 // the signature check first.
-func TestVerifyReceiptFile_Negative(t *testing.T) {
+func TestVerifyPinnedReceiptFile_Negative(t *testing.T) {
 	pub, priv, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("GenerateKeyPair: %v", err)
@@ -470,7 +470,12 @@ func TestVerifyReceiptFile_Negative(t *testing.T) {
 		t.Fatalf("the v1 fixture must be cryptographically valid: %v", err)
 	}
 	for _, pinned := range []ed25519.PublicKey{pub, nil} {
-		err := VerifyReceiptFile(v1, pinned)
+		var err error
+		if pinned != nil {
+			err = VerifyPinnedReceiptFile(v1, pinned)
+		} else {
+			err = VerifyUnpinnedReceiptFile(v1)
+		}
 		if !errors.Is(err, ErrGateOutputVersion) || !strings.Contains(err.Error(), "praetor-gate-output/v1") {
 			t.Errorf("pinned=%v: want ErrGateOutputVersion naming v1, got %v", pinned != nil, err)
 		}
@@ -481,12 +486,12 @@ func TestVerifyReceiptFile_Negative(t *testing.T) {
 		t.Fatalf("GenerateKeyPair: %v", err)
 	}
 	forged := signedEnvelope(t, foreignPriv, GateOutputVersion+"\n")
-	if err := VerifyReceiptFile(forged, pub); !errors.Is(err, ErrKeyNotPinned) {
+	if err := VerifyPinnedReceiptFile(forged, pub); !errors.Is(err, ErrKeyNotPinned) {
 		t.Errorf("want ErrKeyNotPinned, got %v", err)
 	}
 	altered := signedEnvelope(t, priv, GateOutputVersion+"\nstage\tRace-Detector Tests\tskipped\t\n")
 	altered.GateOutput = strings.Replace(altered.GateOutput, "skipped", "passed", 1)
-	if err := VerifyReceiptFile(altered, pub); !errors.Is(err, ErrOutputMismatch) {
+	if err := VerifyPinnedReceiptFile(altered, pub); !errors.Is(err, ErrOutputMismatch) {
 		t.Errorf("want ErrOutputMismatch, got %v", err)
 	}
 }
@@ -494,24 +499,24 @@ func TestVerifyReceiptFile_Negative(t *testing.T) {
 // Boundary: the header must be exactly GateOutputVersion on the first line. A header-only
 // output passes; an empty output, a lookalike version and a missing envelope fail; an
 // unterminated oversized header is echoed only up to maxVersionEcho characters.
-func TestVerifyReceiptFile_Boundary(t *testing.T) {
+func TestVerifyPinnedReceiptFile_Boundary(t *testing.T) {
 	pub, priv, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("GenerateKeyPair: %v", err)
 	}
-	if err := VerifyReceiptFile(signedEnvelope(t, priv, GateOutputVersion), pub); err != nil {
+	if err := VerifyPinnedReceiptFile(signedEnvelope(t, priv, GateOutputVersion), pub); err != nil {
 		t.Errorf("header-only output: %v", err)
 	}
 	for _, output := range []string{"", GateOutputVersion + "0\n", " " + GateOutputVersion + "\n", "stage\tx\tpassed\t\n" + GateOutputVersion + "\n"} {
-		if err := VerifyReceiptFile(signedEnvelope(t, priv, output), pub); !errors.Is(err, ErrGateOutputVersion) {
+		if err := VerifyPinnedReceiptFile(signedEnvelope(t, priv, output), pub); !errors.Is(err, ErrGateOutputVersion) {
 			t.Errorf("output %q: want ErrGateOutputVersion, got %v", output, err)
 		}
 	}
-	if err := VerifyReceiptFile(nil, pub); !errors.Is(err, ErrNilReceipt) {
+	if err := VerifyPinnedReceiptFile(nil, pub); !errors.Is(err, ErrNilReceipt) {
 		t.Errorf("nil envelope: want ErrNilReceipt, got %v", err)
 	}
 	long := strings.Repeat("x", 10*maxVersionEcho)
-	err = VerifyReceiptFile(signedEnvelope(t, priv, long), pub)
+	err = VerifyPinnedReceiptFile(signedEnvelope(t, priv, long), pub)
 	if !errors.Is(err, ErrGateOutputVersion) || strings.Contains(err.Error(), strings.Repeat("x", maxVersionEcho+1)) {
 		t.Errorf("oversized header must be refused and truncated, got %v", err)
 	}
