@@ -59,11 +59,13 @@ func (s blockSets) union(a, b string) {
 	}
 }
 
-// layout is how the merged specs render: which of them share a block, and each spec's
-// position in the merged order of its region.
+// layout is how the merged specs render: which of them share a block, each spec's
+// position in the merged order of its region, and the specs each comment written inside a
+// block renders next to (see blockCommentAnchors).
 type layout struct {
-	sets blockSets
-	rank map[string]int
+	sets    blockSets
+	rank    map[string]int
+	anchors map[string][]anchor
 }
 
 // isBlockSpec reports whether the item is a spec written inside a parenthesized block.
@@ -72,34 +74,40 @@ func isBlockSpec(item DeclItem) bool {
 }
 
 // arrange puts the specs of each merged block together, in the merged order of their
-// region, where the earliest of them stands among the merged items; every other item
-// keeps its place. Placing the block at the spec its region ranks first instead moved a
-// var block past the declarations between the two, which changed the order the
-// variables are initialized in.
-func (l layout) arrange(items []DeclItem) []DeclItem {
+// region, where the earliest of them stands among the merged items; a comment written
+// inside a block travels with the spec it is anchored to, and every other item keeps its
+// place. Placing the block at the spec its region ranks first instead moved a var block
+// past the declarations between the two, which changed the order the variables are
+// initialized in. It also returns, for each comment it moved, the spec it moved it to.
+func (l layout) arrange(items []DeclItem) ([]DeclItem, map[string]string) {
 	blocks := make(map[string][]DeclItem)
+	specBlock := make(map[string]string)
 	for _, item := range items {
 		if isBlockSpec(item) {
 			root := l.sets.find(item.Key)
 			blocks[root] = append(blocks[root], item)
+			specBlock[item.Key] = item.Block
 		}
 	}
 	for _, members := range blocks {
 		sort.SliceStable(members, func(i, j int) bool { return l.rank[members[i].Key] < l.rank[members[j].Key] })
 	}
+	comments := attachComments(items, l.anchors, specBlock)
 	out := make([]DeclItem, 0, len(items))
 	placed := make(map[string]bool, len(blocks))
 	for _, item := range items {
-		if !isBlockSpec(item) {
+		root := l.sets.find(item.Key)
+		_, attached := comments.anchorOf[item.Key]
+		switch {
+		case attached:
+		case !isBlockSpec(item):
 			out = append(out, item)
-			continue
-		}
-		if root := l.sets.find(item.Key); !placed[root] {
+		case !placed[root]:
 			placed[root] = true
-			out = append(out, blocks[root]...)
+			out = comments.place(out, blocks[root])
 		}
 	}
-	return out
+	return out, comments.anchorOf
 }
 
 // renderDecls turns merged items into source chunks. Consecutive items written inside
@@ -107,7 +115,7 @@ func (l layout) arrange(items []DeclItem) []DeclItem {
 // again, so a grouped const declaration renders once and its iota sequence stays in one
 // block.
 func renderDecls(merged []DeclItem, l layout) []string {
-	items := l.arrange(merged)
+	items, anchorOf := l.arrange(merged)
 	chunks := make([]string, 0, len(items))
 	for i := 0; i < len(items); {
 		if items[i].Block == "" {
@@ -115,7 +123,7 @@ func renderDecls(merged []DeclItem, l layout) []string {
 			i++
 			continue
 		}
-		end := blockRunEnd(items, i, l.sets)
+		end := blockRunEnd(items, i, l.sets, anchorOf)
 		chunks = append(chunks, renderBlock(items[i:end]))
 		i = end
 	}
@@ -123,19 +131,24 @@ func renderDecls(merged []DeclItem, l layout) []string {
 }
 
 // blockRunEnd returns the index after the last item of the block starting at start: the
-// run of items with the same block keyword whose specs share one linked set. Comments
-// continue the run they sit in.
-func blockRunEnd(items []DeclItem, start int, sets blockSets) int {
+// run of items with the same block keyword whose specs share one linked set. A comment
+// arrange anchored to a spec belongs to that spec's block, so a comment leading the second
+// of two adjacent blocks does not extend the first; any other comment continues the run it
+// sits in.
+func blockRunEnd(items []DeclItem, start int, sets blockSets, anchorOf map[string]string) int {
 	root := ""
 	for j := start; j < len(items); j++ {
 		item := items[j]
 		if item.Block != items[start].Block {
 			return j
 		}
+		key := item.Key
 		if item.Kind == kindComment {
-			continue
+			if key = anchorOf[item.Key]; key == "" {
+				continue
+			}
 		}
-		switch r := sets.find(item.Key); {
+		switch r := sets.find(key); {
 		case root == "":
 			root = r
 		case r != root:
@@ -161,6 +174,11 @@ func renderBlock(items []DeclItem) string {
 	b.WriteString(items[0].Block)
 	b.WriteString(" (\n")
 	for i, item := range items {
+		// A comment keeps the indentation its first line lost to the source span: gofmt
+		// leaves a comment that starts at column 1 before the closing parenthesis there.
+		if item.Kind == kindComment {
+			b.WriteString("\t")
+		}
 		b.WriteString(item.Body)
 		b.WriteString("\n")
 		// A comment the block owns was not a spec's doc, so a blank line follows it;

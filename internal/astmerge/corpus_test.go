@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // probeHeader is what the "@header" line of testdata/probe_corpus.txt stands for.
@@ -41,7 +43,13 @@ func loadCorpus(t testing.TB) []corpusCase {
 
 // parseCorpus splits the corpus into cases: a "=== <fields>" line opens a case, a
 // "--- <section>" line opens one of its sections, and "#" lines outside a case are notes.
+// One consistent CRLF style, which a Windows checkout writes when .gitattributes is not
+// honoured, reads as LF; mixed endings and lone carriage returns are an error.
 func parseCorpus(data string) ([]corpusCase, error) {
+	data, _, err := util.NormalizeLineEndingsStrict(data)
+	if err != nil {
+		return nil, fmt.Errorf("corpus line endings: %w", err)
+	}
 	lines := strings.Split(data, "\n")
 	if len(lines) > maxCorpusLines {
 		return nil, fmt.Errorf("corpus has %d lines, over the %d bound", len(lines), maxCorpusLines)
@@ -243,6 +251,31 @@ func checkCorpusCase(t *testing.T, c corpusCase) {
 	}
 }
 
+// TestParseCorpus_Positive_CRLFCheckoutParsesAlike: the recorded corpus written with CRLF,
+// as a Windows checkout that ignores .gitattributes writes it, parses to the same cases as
+// the committed LF bytes. Splitting on "\n" alone left "--- base\r" as the first header,
+// which failed the corpus test and every fuzz seed on that leg (HISS-21).
+func TestParseCorpus_Positive_CRLFCheckoutParsesAlike(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "probe_corpus.txt"))
+	if err != nil {
+		t.Fatalf("reading the probe corpus: %v", err)
+	}
+	if strings.Contains(string(data), "\r") {
+		t.Fatalf("the committed corpus must be LF, as .gitattributes pins its checkout")
+	}
+	lf, err := parseCorpus(string(data))
+	if err != nil {
+		t.Fatalf("parsing the LF corpus: %v", err)
+	}
+	crlf, err := parseCorpus(strings.ReplaceAll(string(data), "\n", "\r\n"))
+	if err != nil {
+		t.Fatalf("parsing the CRLF corpus: %v", err)
+	}
+	if len(lf) == 0 || fmt.Sprint(lf) != fmt.Sprint(crlf) {
+		t.Fatalf("expected the CRLF corpus to parse to the same %d cases, got %d", len(lf), len(crlf))
+	}
+}
+
 // TestParseCorpus_Negative_MalformedInput covers the parser's rejections.
 func TestParseCorpus_Negative_MalformedInput(t *testing.T) {
 	for name, data := range map[string]string{
@@ -250,6 +283,8 @@ func TestParseCorpus_Negative_MalformedInput(t *testing.T) {
 		"text outside a case":  "package p\n",
 		"too many lines":       strings.Repeat("\n", maxCorpusLines),
 		"text before sections": "=== seed=1\npackage p\n",
+		"mixed line endings":   "=== seed=1\r\n--- base\npackage p\n",
+		"lone carriage return": "=== seed=1\r--- base\r\npackage p\r\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := parseCorpus(data); err == nil {

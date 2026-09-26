@@ -96,20 +96,48 @@ func TestNormalizeTypeError_Boundary_ContinuationPositions(t *testing.T) {
 	}
 }
 
-func TestImportName_Boundary_PathShapes(t *testing.T) {
+// TestOfflineImporter_Boundary_PathShapes names every imported package as
+// hiss.DefaultImportName derives it from the path, the repository's one path-to-name rule
+// (HISS-19): a module major version and a gopkg.in suffix are skipped, and a name no
+// identifier can spell, such as go-git's, is kept rather than rewritten into another guess.
+func TestOfflineImporter_Boundary_PathShapes(t *testing.T) {
 	for path, want := range map[string]string{
 		"fmt":                        "fmt",
 		"gopkg.in/yaml.v3":           "yaml",
 		"github.com/org/module/v2":   "module",
-		"github.com/go-git/go-git":   "go_git",
+		"github.com/go-git/go-git":   "go-git",
+		"github.com/satori/go.uuid":  "go.uuid",
 		"v2":                         "v2",
-		"example.com/.hidden":        ".hidden",
 		"github.com/org/v10/subpath": "subpath",
 	} {
-		if got := importName(path); got != want {
-			t.Errorf("importName(%q) = %q, want %q", path, got, want)
+		pkg, err := offlineImporter{}.Import(path)
+		if err != nil || pkg.Path() != path || pkg.Name() != want || !pkg.Complete() {
+			t.Errorf("Import(%q) = %v, %v; want a complete package %q named %q", path, pkg, err, path, want)
 		}
 	}
+}
+
+// TestGuard_Positive_UnidentifiableImportNameIsConsistent: an import whose derived name is
+// no identifier leaves every version with the same errors, so an unrelated edit on each
+// side still merges clean.
+func TestGuard_Positive_UnidentifiableImportNameIsConsistent(t *testing.T) {
+	base := "package imp\n\nimport \"github.com/go-git/go-git\"\n\nvar repo = git.Open\n"
+	ours, theirs := base+"\nfunc Ours() {}\n", base+"\nfunc Theirs() {}\n"
+	merged := base + "\nfunc Ours() {}\n\nfunc Theirs() {}\n"
+	requireGuardPass(t, base, ours, theirs, merged)
+	if facts := collectFacts(merged); len(facts.errs) == 0 {
+		t.Fatalf("expected the unresolvable name to report the same errors in every version, got none")
+	}
+}
+
+// TestGuard_Negative_DroppedImportUnderTheOtherSidesUseFailsClosed: ours removes the
+// gopkg.in/yaml.v3 import with its only use while theirs adds another use, so the merged
+// file refers to yaml without importing it; the guard reports the new type error.
+func TestGuard_Negative_DroppedImportUnderTheOtherSidesUseFailsClosed(t *testing.T) {
+	base := "package imp\n\nimport \"gopkg.in/yaml.v3\"\n\nvar enc = yaml.Marshal\n"
+	ours := "package imp\n"
+	theirs := base + "\nvar dec = yaml.Unmarshal\n"
+	requireConflict(t, base, ours, theirs, "typecheck")
 }
 
 func TestExpect3_Boundary_AllStateCombinations(t *testing.T) {

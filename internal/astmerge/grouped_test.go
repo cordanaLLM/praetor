@@ -171,9 +171,9 @@ func F() {} // trailing note
 			t.Errorf("expected %q exactly once in:\n%s", want, code)
 		}
 	}
-	between := strings.Index(code, "// between specs")
-	if open, closing := strings.Index(code, "const ("), strings.Index(code, ")\n\nfunc F"); between < open || between > closing {
-		t.Errorf("the comment between specs must stay inside the block:\n%s", code)
+	between := strings.Index(code, "\t// between specs")
+	if a, b := strings.Index(code, "A = 1"), strings.Index(code, "B = 3"); between < a || between > b {
+		t.Errorf("the comment between specs must stay between them, indented:\n%s", code)
 	}
 	reparsed, err := parseSourceSafe("merged.go", code)
 	if err != nil {

@@ -8,10 +8,11 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
-	"path"
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 // kindSemantic is the Conflict kind of a merged file the post-merge guard rejects.
@@ -197,33 +198,16 @@ func initializerKey(in *types.Initializer) string {
 // them, not resolve: loading real export data would run the go command without a deadline
 // (HISS-02) and make the verdict depend on the host's toolchain and module cache (HISS-21).
 // A reference into the package then reports the same "undefined" error in every version
-// that makes it, and an import no version uses any more is still reported unused.
+// that makes it, and an import no version uses any more is still reported unused. The
+// package is named as hiss.DefaultImportName derives it from the path, the one path-to-name
+// rule the repository keeps (HISS-19); a name that is no Go identifier, such as go-git's,
+// cannot be referenced, which every version then reports alike.
 type offlineImporter struct{}
 
 func (offlineImporter) Import(importPath string) (*types.Package, error) {
-	pkg := types.NewPackage(importPath, importName(importPath))
+	pkg := types.NewPackage(importPath, hiss.DefaultImportName(importPath))
 	pkg.MarkComplete()
 	return pkg, nil
-}
-
-// importName guesses the package name an import path declares: its last element, past a
-// major-version suffix such as /v2, up to the first dot, with dashes made underscores.
-func importName(importPath string) string {
-	name := path.Base(importPath)
-	if isMajorVersion(name) && path.Dir(importPath) != "." {
-		name = path.Base(path.Dir(importPath))
-	}
-	if cut, _, found := strings.Cut(name, "."); found && cut != "" {
-		name = cut
-	}
-	return strings.ReplaceAll(name, "-", "_")
-}
-
-func isMajorVersion(element string) bool {
-	if len(element) < 2 || element[0] != 'v' {
-		return false
-	}
-	return strings.Trim(element[1:], "0123456789") == ""
 }
 
 // typeErrorConflicts reports every type error of the merged file that neither side has.

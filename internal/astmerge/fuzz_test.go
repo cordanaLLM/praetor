@@ -19,6 +19,8 @@ func FuzzASTMerge(f *testing.F) {
 	theirs := "package main\nfunc Bar() string { return \"theirs\" }\n"
 	f.Add(base, ours, theirs)
 	f.Add(orderBase, swapBC, orderBase+"\nfunc F() {}\n")
+	commented := "package p\n\n// lead\n\nconst (\n\tA = 1\n\t// note\n\n\tB = 2\n)\n"
+	f.Add(commented, commented+"\nfunc F() {}\n", "package p\n\n// lead, edited\n\nconst (\n\tA = 1\n\n\tB = 2\n\t// note\n)\n")
 	for _, c := range loadCorpus(f) {
 		f.Add(c.base, c.ours, c.theirs)
 	}

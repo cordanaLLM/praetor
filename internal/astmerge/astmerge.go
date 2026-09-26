@@ -216,6 +216,7 @@ func resolve3Way(base, ours, theirs *ParsedAST) (*MergeResult, error) {
 
 	mergedItems, resolvedCount, declConflicts := mergeDecls3Way(base, ours, theirs)
 	conflicts = append(conflicts, declConflicts...)
+	conflicts = append(conflicts, commentConflicts(base, ours, theirs)...)
 
 	blocks, blockConflicts := mergeLayout(base, ours, theirs)
 	conflicts = append(conflicts, blockConflicts...)

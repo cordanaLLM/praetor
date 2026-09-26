@@ -70,7 +70,7 @@ func mergeLayout(base, ours, theirs *ParsedAST) (layout, []Conflict) {
 			conflicts = append(conflicts, m.blockConflict(keys, "Conflicting reordering of the parenthesized declarations holding %s"))
 		}
 	}
-	return layout{sets: m.sets, rank: m.rank}, conflicts
+	return layout{sets: m.sets, rank: m.rank, anchors: blockCommentAnchors(base, ours, theirs)}, conflicts
 }
 
 // positional reports whether some input writes a spec of the region whose value follows
