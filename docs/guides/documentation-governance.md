@@ -225,3 +225,46 @@ workflow also selects the gate on documentation-only changes while skipping the
 race and security suites; state-only changes under the ignored private ledgers
 select no documentation work. Source/configuration changes reach the same gate
 through `make verify-all`.
+
+## Praetor machine-documentation catalog
+
+Praetor itself adds one repository-owned check to the adopted Markdown gate.
+`tools/docsurface/catalog.mjs` is the declarative source for the two
+machine-readable endpoints, `docs/llms.txt` and `docs/llms-full.txt`, and for
+the `README.md` and `docs/index.md` lines that describe `/llms-full.txt`. The
+`Makefile` makes `docs-lint` depend on `docs-surface`, which runs
+`node tools/docsurface/verify.mjs`; both files must equal the catalog rendering
+byte for byte after line-ending normalization, and each landing line must occur
+exactly once.
+
+`/llms-full.txt` is a compatibility and authority map, not a copied policy
+snapshot. Its catalog record names `.standards.yaml`, the checked-in ruleset,
+`go.mod`, the documentation workflow, the canonical agent harness, and reviewed
+public specifications. The rendered file deliberately omits values such as
+required status contexts, review counts, and invariant tables: their repository
+sources own those values, and the live forge remains authoritative for hosted
+enforcement. The verifier rejects a rendering with a line that opens a fenced
+code block or a Markdown table row, the two shapes a copied ruleset or
+invariant matrix takes, and exact-file parity rejects manual edits to either
+endpoint.
+
+Every catalog link names its repository source. The gate derives the published
+Pages route from that source, rejects `.md` route leakage, and requires the
+source to remain a regular file confined to the repository. It applies `lstat`
+to every path component below the canonical repository root, so an
+in-repository intermediate symlink cannot give a Pages route to a different
+source. Each source path is bounded to 64 components and each read to 1 MiB,
+with at most 1,024 read operations. Repository discovery gives
+`git rev-parse --show-toplevel` 10 seconds and 4 KiB each for standard output
+and error. Catalog arrays are capped at 16 entries, strings must be single-line
+and at most 4 KiB, and duplicate section titles, routes, authority labels, or
+authority sources fail before rendering.
+
+The catalog does not own funding, badge, or social-link state; those surfaces
+stay operator-configured in `README.md`, `mkdocs.yml`, and
+`.github/FUNDING.yml`. The `Community & Funding` links render from the catalog
+only because `docs/sponsoring.md` and `docs/monetization.md` are published
+pages. The pull-request gate performs no network requests. Run
+`make docs-lint-test` to replay the valid, drifted, copied-policy, and boundary
+fixtures, including synthetic process and file-status fixtures that need no
+host symlink support.

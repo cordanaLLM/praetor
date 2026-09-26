@@ -1,142 +1,41 @@
-# Praetor Complete Machine-Readable Specifications (llms-full.txt)
-> Autonomous Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine.
+# Praetor Source-Bound Machine Reference
 
----
+> Compatibility endpoint: current policy values stay in their authoritative repository sources and are not copied here. Checked-in desired state does not certify live hosted state.
 
-## 1. High-Integrity Systems Standard (HISS) Formal Specification
+Use `/llms.txt` for the concise public documentation index. This compatibility
+surface names the repository files that own current behavior so policy, required
+checks, and review settings cannot drift here as copied prose.
 
-| Invariant | Scope | Rule Description | Enforcement | Failure Action |
-| :--- | :--- | :--- | :--- | :--- |
-| **HISS-01** | Control Flow | Recursion strictly prohibited; call graph must be a strict Directed Acyclic Graph (DAG). | AST scanner | Immediate build failure |
-| **HISS-02** | Loops & I/O | All loops must possess static scalar upper bounds (`MaxLoopLimit`). All I/O operations require explicit `context.Context` timeout/deadline. | Semgrep / AST error | Compile-time blocker |
-| **HISS-03** | Hot-Path Allocations | Hot-path simulation and processing loops must maintain zero heap allocations ($\Delta \text{HeapAlloc} = 0$). | Allocation profiler | Benchmark regression gate |
-| **HISS-04** | Complexity Bounds | McCabe Cyclomatic Complexity $\le 10$, Cognitive Complexity $\le 15$, Func LOC $\le 75$, Statements $\le 50$. | AST static analysis | Pre-commit check failure |
-| **HISS-07** | Error Integrity | Zero `.unwrap()` / `.expect()`; zero unchecked error returns (`_ = err`). All errors must be handled or wrapped with domain context. | Linter / Compiler check | CI exit code 1 |
-| **HISS-08** | Determinism | Dynamic code evaluation (`eval()`, dynamic code loading) and banned unsafe libc calls (`gets`, `strcpy`, `sprintf`) are prohibited. | AST rule sweep | Build rejection |
-| **HISS-09** | Reference Safety | Pointer arithmetic must be bounded; all `unsafe` blocks require an explicit `// SAFETY:` rationale proof. | AST scanner | Merge blocker |
-| **HISS-10** | Warning Hygiene | Zero-warning tolerance across compiler, `go vet`, and all configured static analysis sweeps. | Compiler / Linter | Exit code 1 |
-| **HISS-11** | Hermetic Supply Chain | Pinned dependency versions, strict cryptographic hash verification (`go.sum`), SLSA Level 3 attestations, Cosign signatures. | SLSA / Syft | Release blocker |
-| **HISS-12** | Semantic Versioning | Strict SemVer 2.0.0 adherence; zero floating or unpinned dependency ranges. | SemVer analyzer | Audit check failure |
-| **HISS-13** | Monotonic Debt Ratcheting | Technical debt recorded in `.standards-baseline.json` can only decrease over time. The Touched-File Clean Rule is strictly enforced. | Ratchet engine | CI gate failure |
-| **HISS-14** | Append-Only ABI | Public API surface changes must be append-only. Any breaking change must include `!` in conventional commit and a mandatory `Migration:` footer. | ABI diff scanner | PR check failure |
-| **HISS-15** | 3D Testing Discipline | Every public interface must implement automated tests across 3 dimensions: Positive, Negative, and Boundary ($\ge 2$ checks/dim). | Coverage gate | PR merge blocker |
-| **HISS-16** | Context Integrity | Single canonical `AGENTS.md` operating harness transpiled to vendor formats (< 300 LOC budget). Manual edits to vendor files prohibited. | `standardsctl compile-context --verify` | Pre-commit blocker |
-| **HISS-17** | State Ledger Discipline | Turn start reads `praetorctl state status` and `.workingdir/OPEN.md`, never the whole `STATE.md`; tasks tracked via `standardsctl state task`; turn end runs `standardsctl state sync .`. | Pre-commit / CI state audit | Gate rejection |
-| **HISS-18** | CI Efficiency | Diff-aware gating: `standardsctl ci filter` skips heavy race and security gates on docs-only or state-only changes. | CI filter step | Optimization gate |
-| **HISS-19** | Reuse Before Writing | One behavior has exactly one implementation; an existing function, loader, parser or command is extended or called rather than reimplemented. | `praetorctl dedupe scan .` | Gate rejection |
-| **HISS-20** | Replayable Enforcement Evidence | Every rule carries fixtures replayed in both directions; a coverage claim is reproducible, never asserted. | `praetorctl hiss coverage --verify` | Gate rejection |
-| **HISS-21** | Platform Neutrality | Gates, hooks and emitted templates run on Linux, macOS and Windows, or skip with a stated reason; a gate that cannot run is not a passing gate. | Platform Neutrality matrix in CI | Gate rejection |
+## Canonical repository authorities
 
----
+- **Effective governance manifest** — source: `.standards.yaml`. Repository identity, enabled facets, policy inputs, and local governance configuration.
+- **Checked-in branch ruleset** — source: `.github/rulesets/main.json`. Declarative desired branch rules and required status contexts; query the forge for live enforcement.
+- **Go toolchain directive** — source: `go.mod`. Go language version authority for the module and its build.
+- **Documentation workflow** — source: `.github/workflows/praetor-docs.yml`. Hosted job that runs the documentation gate under the required status context.
+- **Canonical agent harness** — source: `AGENTS.md`. Agent operating rules and text-register routing compiled into vendor projections.
+- **HISS specification** — source: `docs/standards/hiss-spec.md`. Reviewed invariant definitions and enforcement expectations.
+- **Operational sync contract** — source: `docs/guides/operational-sync.md`. Boundary between checked-in desired state and live forge reconciliation.
+- **Documentation governance contract** — source: `docs/guides/documentation-governance.md`. Machine-documentation catalog ownership, deterministic parity, source binding, and local verification commands.
 
-## 2. Canonical Declarative Configurations
+## Public documentation map
 
-### `.standards.yaml` Manifest Specification
-```yaml
-version: 1
-repository:
-  owner: "cordanaLLM"
-  name: "praetor"
-  visibility: "public"
-  description: "Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine"
-  homepage: "https://standards.cordana.ai"
-  topics:
-    - "governance"
-    - "repository-as-code"
-    - "ai-agent-governance"
-    - "mcp-server"
-    - "hiss"
-    - "devcontainers"
-    - "slsa-level-3"
-    - "renovate-presets"
+### Core Governance & Invariants
 
-profiles:
-  - "framework"
+- [HISS Formal Specification](https://cordanallm.github.io/praetor/standards/hiss-spec/) — source: `docs/standards/hiss-spec.md`. Complete specification of HISS-01 through HISS-21 invariants.
+- [Model Routing & Capacity Arbiter](https://cordanallm.github.io/praetor/standards/model-routing-and-fanout/) — source: `docs/standards/model-routing-and-fanout.md`. Orchestration and fallback cascade for frontier and open models.
+- [Agent Hooks & Operating Harness](https://cordanallm.github.io/praetor/guides/agent-hooks/) — source: `docs/guides/agent-hooks.md`. Canonical operating instructions and native client hook coverage.
+- [Archetype Authoring](https://cordanallm.github.io/praetor/guides/archetype-authoring/) — source: `docs/guides/archetype-authoring.md`. Archetype authoring, lattice joins, and profile manifests.
+- [Developer Onboarding](https://cordanallm.github.io/praetor/guides/onboarding/) — source: `docs/guides/onboarding.md`. Developer setup, Git hooks, and environment bootstrapping.
+- [Architectural Decision Records](https://cordanallm.github.io/praetor/adr/) — source: `docs/adr/README.md`. ADR directory and architectural decision history.
 
-facets:
-  - "security:high"
-  - "api:public-contract"
-  - "docs:seo-portal"
-  - "agent:sandboxed"
+### CLI Reference & Tooling
 
-overrides:
-  complexity:
-    max_cyclomatic: 10
-    max_cognitive: 15
-    max_func_loc: 75
-    max_statements: 50
-  branch_protection:
-    enforce_linear_history: true
-    require_signed_commits: true
-    required_approving_reviewers: 1
-    dismiss_stale_reviews: true
-  supply_chain:
-    slsa_level: 3
-    enforce_cosign: true
-    require_sbom: true
-```
+- [Fast Repository Adoption](https://cordanallm.github.io/praetor/adoption/) — source: `docs/adoption.md`. One-step repository onboarding through the CLI, MCP, and hosted automation.
+- [Universal Dogfooding & Public Benchmarks](https://cordanallm.github.io/praetor/dogfooding/) — source: `docs/dogfooding.md`. Self-governance auditing and dry-run benchmarking against non-owned public repositories.
+- [API Reference](https://cordanallm.github.io/praetor/wiki/API-Reference/) — source: `docs/wiki/API-Reference.md`. Existing command and service reference for praetorctl and standardsctl.
+- [Operational Sync & Branch Protection](https://cordanallm.github.io/praetor/guides/operational-sync/) — source: `docs/guides/operational-sync.md`. Declarative reconciliation of hosted rules, labels, and branch protection.
 
-### Declarative Branch Protection Ruleset (`.github/rulesets/main.json`)
-```json
-{
-  "name": "praetor-main-protection",
-  "target": "branch",
-  "enforcement": "active",
-  "conditions": {
-    "ref_name": {
-      "include": ["refs/heads/main", "refs/heads/lts-*"],
-      "exclude": []
-    }
-  },
-  "rules": [
-    {"type": "deletion"},
-    {"type": "non_fast_forward"},
-    {"type": "required_linear_history"},
-    {"type": "required_signatures"},
-    {
-      "type": "pull_request",
-      "parameters": {
-        "required_approving_review_count": 1,
-        "dismiss_stale_reviews_on_push": true,
-        "require_code_owner_review": true,
-        "required_review_thread_resolution": true
-      }
-    },
-    {
-      "type": "required_status_checks",
-      "parameters": {
-        "strict_required_status_checks_policy": true,
-        "required_status_checks": [
-          {"context": "verify"},
-          {"context": "Standards & Invariant Verification Gate"},
-          {"context": "DCO 1.1 & REUSE Compliance Gate"}
-        ]
-      }
-    }
-  ]
-}
-```
+### Community & Funding
 
----
-
-## 3. Universal Multi-Agent Parity & Schema Matrix
-
-Praetor guarantees 100% co-equal parity across the frontier AI agent engineering ecosystem, supporting all major platforms without single-vendor preference:
-
-### Multi-Agent Context Transpilation Targets
-| Agent Ecosystem | Target File | Line Budget | Syntax / Directives |
-| :--- | :--- | :--- | :--- |
-| **Anthropic Claude** | `CLAUDE.md` | $\le 300$ LOC | Markdown, verified state, concise command references |
-| **Cursor** | `.cursor/rules/hiss-invariants.mdc` | $\le 300$ LOC | MDC XML metadata (`description`, `globs: *`), markdown rules |
-| **GitHub Copilot** | `.github/copilot-instructions.md` | $\le 300$ LOC | System instruction markdown, prompt directives |
-| **Windsurf** | `.windsurfrules` | $\le 300$ LOC | Plain markdown operational constraints |
-| **Gemini / Antigravity** | `.gemini/GEMINI.md` | $\le 300$ LOC | System rule directives, verification commands |
-| **OpenAI Codex** | `.codex/rules.md` | $\le 300$ LOC | System instructions, operating parameters |
-
-### MCP Tool Schema Serializers
-| Agent Platform | Wire Serializer | Wire Schema Format |
-| :--- | :--- | :--- |
-| **OpenAI / Codex** | `ToOpenAITool` / `ToOpenAITools` | `{"type": "function", "function": {"name": "...", "parameters": {...}}}` |
-| **Anthropic / Claude** | `ToAnthropicTool` / `ToAnthropicTools` | `{"name": "...", "description": "...", "input_schema": {...}}}` |
-| **Gemini / Antigravity** | `ToGeminiFunction` / `ToGeminiFunctions` | `{"name": "...", "description": "...", "parameters": {...}}}` |
-
+- [Polar.sh Issue Bounties](https://cordanallm.github.io/praetor/sponsoring/) — source: `docs/sponsoring.md`. Feature bounties and contributor rewards split via Polar.sh MoR.
+- [Monetization Strategy](https://cordanallm.github.io/praetor/monetization/) — source: `docs/monetization.md`. In-IDE passive monetization (Idlen) and enterprise licensing framework.

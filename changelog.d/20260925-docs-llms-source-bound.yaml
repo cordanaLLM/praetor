@@ -1,0 +1,3 @@
+type: fixed
+title: Render docs/llms.txt and docs/llms-full.txt from one source-bound catalog so the machine reference names its authorities instead of carrying a stale ruleset copy and a wrong HISS-12 row, and bound the documentation-drift git query so a timeout or oversized diff fails instead of passing
+breaking: false

@@ -265,7 +265,10 @@ func TestMarkdownAndGateRunnerExtensionsSelectDocumentation(t *testing.T) {
 			t.Fatalf("%s did not select the lightweight documentation gate: %+v", path, decision)
 		}
 	}
-	for _, path := range []string{"tools/markdownlint/verify.mjs", "tools/markdownlint/rule.cjs"} {
+	for _, path := range []string{
+		"tools/markdownlint/verify.mjs", "tools/markdownlint/rule.cjs",
+		"tools/docsurface/catalog.mjs", "tools/docsurface/verify.mjs",
+	} {
 		decision := cifilter.MakeDecision(cifilter.ClassifyChanges([]string{path}), false)
 		if !decision.RunDocs || !decision.RunTests || decision.SkipHeavyGates {
 			t.Fatalf("%s did not select full verification: %+v", path, decision)

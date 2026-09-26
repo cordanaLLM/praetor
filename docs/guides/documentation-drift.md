@@ -34,7 +34,7 @@ Only what an adopter reads about before using it. The map in `SURFACE_MAP` is de
 | `internal/agenthook/*.go` (tests excluded), `cmd/standardsctl/hook.go` | `docs/guides/agent-hooks.md` |
 | `.github/workflows/portability.yml`, `scripts/portability_selftest.py` | `docs/standards/hiss-21-platform-neutrality.md` |
 | `internal/workstation/`, `cmd/standardsctl/workstation.go`, `scripts/dev_install.py` | `docs/guides/workstation-update.md` |
-| `tools/markdownlint/`, its adoption emitter, CI selector, and dedicated workflow | `docs/guides/documentation-governance.md` |
+| `tools/markdownlint/`, `tools/docsurface/`, the adoption emitter, CI selector, and dedicated workflow | `docs/guides/documentation-governance.md` |
 | `scripts/docs_drift.py` | this document |
 
 Everything else is internal. A refactor that changes no listed surface is never accused, and that
@@ -63,6 +63,12 @@ BASE_SHA=origin/main HEAD_SHA=HEAD python3 scripts/docs_drift.py
 ```
 
 It runs inside `make verify-all` and as a pull-request step in `.github/workflows/ci.yml`.
+The changed-path query uses the shared bounded hook runner (`run_bounded` in
+`.config/lefthook/scripts/common.py`): `git diff` has a 10-second deadline, combined standard
+output and error are capped at 1 MiB, and the complete NUL-delimited inventory is capped at 5,000
+paths. Timeout, process-start, non-zero-exit, malformed-output, byte-limit, and path-limit failures
+stop the gate with exit status 2 as infrastructure errors; none can become an empty passing diff.
+`scripts/test_docs_drift.py` replays each failure, the exact path cap, and one path over it.
 
 ## Extending the map
 
