@@ -442,8 +442,9 @@ type mcpResultStep struct {
 }
 
 // expressionKind classifies expression by walking its wrapper chain iteratively down to the
-// leaf, then applying index and selector steps outward. The walk is bounded; an expression
-// deeper than maxGoSelectorDepth fails the census instead of being assumed harmless.
+// leaf, then applying index and selector steps outward. The walk is bounded: at most
+// maxGoSelectorDepth-1 wrappers resolve, and an expression with maxGoSelectorDepth or more
+// fails the census instead of being assumed harmless.
 func (a *mcpResultMutationAnalysis) expressionKind(expression ast.Expr) mcpResultValueKind {
 	steps := make([]mcpResultStep, 0, 4)
 	for depth := 0; depth < maxGoSelectorDepth; depth++ {

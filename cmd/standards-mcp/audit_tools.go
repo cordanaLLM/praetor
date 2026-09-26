@@ -74,7 +74,8 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 		}
 		line, err := gates[i](ctx)
 		if err != nil {
-			report.Template("[FAIL] Audit gate: %v", err)
+			// A gate error carries its own [FAIL] verdict and quotes repository paths.
+			report.External(err.Error(), mcpTextUntrusted)
 			return mcpComposedErrorResult(report.Text())
 		}
 		report.External(line+"\n", mcpTextUntrusted)

@@ -586,6 +586,10 @@ func TestServer_Negative_PlanDriftAndAuditFailures(t *testing.T) {
 	}
 	audit := callTool(t, srv, "standards_audit", nil)
 	expectError(t, "audit ruleset", audit, "[FAIL] Branch protection ruleset")
+	// A gate error carries its own [FAIL] verdict; the report adds no second prefix.
+	if text := audit.Content[0].Text; strings.Contains(text, "Audit gate") || strings.Count(text, "[FAIL]") != 1 {
+		t.Errorf("gate failure prefixed twice:\n%s", text)
+	}
 	writeFixtureFile(t, root, ".github/rulesets/main.json", fixtureRuleset(t))
 
 	// A new HISS-02 violation must trip the ratchet even though the baseline is empty.

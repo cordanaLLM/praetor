@@ -49,7 +49,7 @@ func TestMCPRuntimeOutputsHaveNoUnclassifiedCallsites(t *testing.T) {
 	for _, callsite := range callsites {
 		kinds[callsite.kind]++
 	}
-	wantKinds := map[string]int{"builder-append": 2, "builder-external": 5, "builder-template": 57,
+	wantKinds := map[string]int{"builder-append": 2, "builder-external": 6, "builder-template": 56,
 		"classified-result": 68, "governed-result": 17, "http-error": 14, "result": 46,
 		"template": 2, "wire-format": 4}
 	if len(callsites) != 215 || !equalTextCensus(kinds, wantKinds) {
