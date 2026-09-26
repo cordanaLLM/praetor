@@ -62,12 +62,27 @@ func (g *gitRunner) ancestor(ctx context.Context, dir, old, current string) erro
 }
 
 func (g *gitRunner) blob(ctx context.Context, dir, sha, path string) ([]byte, error) {
-	mode, err := g.text(ctx, dir, "ls-tree", sha, "--", path)
-	if err != nil {
-		return nil, err
-	}
-	if !strings.HasPrefix(mode, "100644 blob ") {
+	raw, present, err := g.optionalBlob(ctx, dir, sha, path)
+	if err == nil && !present {
 		return nil, fmt.Errorf("%s must be a regular tracked 0644 file", path)
 	}
-	return g.run(ctx, dir, "show", sha+":"+path)
+	return raw, err
+}
+
+// optionalBlob reads path from the commit or tree sha like blob, except that a path the tree
+// does not have is reported as absent rather than as an error. A present entry must still be
+// a regular 0644 blob.
+func (g *gitRunner) optionalBlob(ctx context.Context, dir, sha, path string) ([]byte, bool, error) {
+	mode, err := g.text(ctx, dir, "ls-tree", sha, "--", path)
+	if err != nil {
+		return nil, false, err
+	}
+	if mode == "" {
+		return nil, false, nil
+	}
+	if !strings.HasPrefix(mode, "100644 blob ") {
+		return nil, false, fmt.Errorf("%s must be a regular tracked 0644 file", path)
+	}
+	raw, err := g.run(ctx, dir, "show", sha+":"+path)
+	return raw, err == nil, err
 }

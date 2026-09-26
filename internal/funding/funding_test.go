@@ -117,6 +117,7 @@ func TestParseValidatesTheFundingDocument(t *testing.T) {
 		"github: [a, b, c, d, e]\n",
 		"polar: x\nmessage: \"two\\nlines\"\n",
 		"polar: x\nmessage: \"" + strings.Repeat("m", maxMessageBytes+1) + "\"\n",
+		"polar: x\n" + strings.Repeat("#", maxConfigBytes),
 	} {
 		if _, err := Parse([]byte(bad)); err == nil {
 			t.Errorf("accepted %q", bad)

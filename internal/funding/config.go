@@ -127,8 +127,13 @@ func Load(root, rel string) (*Config, error) {
 	return cfg, nil
 }
 
-// Parse decodes a funding document, rejecting unknown keys, and validates every value.
+// Parse decodes a funding document of at most 64 KiB, rejecting unknown keys, and validates
+// every value. The bound holds for a document read from a git object (operational sync) as
+// well as for one Load reads from disk.
 func Parse(data []byte) (*Config, error) {
+	if len(data) > maxConfigBytes {
+		return nil, fmt.Errorf("funding document exceeds %d bytes", maxConfigBytes)
+	}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	var cfg Config

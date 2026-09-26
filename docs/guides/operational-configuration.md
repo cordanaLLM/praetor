@@ -58,7 +58,7 @@ in `.gitignore`, so a local copy cannot be committed to the public engine by acc
 Because the engine ignores these paths, the fork tracks them with `git add -f`. Operational sync accepts
 operator files only under the paths in the table above, only as regular non-executable files of at most
 1 MiB, at most 256 of them, and only when the public source has no file at the same path; anything else
-outside the four identity overlay files still stops `plan` and `prepare`. The accepted files are reported as
+outside the four identity overlay files and the rendered [funding surfaces](operational-sync.md#funding-surfaces) still stops `plan` and `prepare`. The accepted files are reported as
 `owner_only_paths`. The path list is engine schema, and an engine test proves that `.gitignore` ignores every
 entry, so a prefix cannot be added that the public source could also track. See [owner-only operator paths](operational-sync.md#owner-only-operator-paths).
 
@@ -153,11 +153,10 @@ Unknown keys, malformed account names and non-https custom URLs are errors
 (`internal/funding/config.go`). A file checked out with CRLF endings, as Windows checks out
 `README.md`, is compared and rewritten with CRLF; a file with mixed endings is an error.
 
-The fork carries the document, but operational sync accepts differences only in the
-identity overlay files and the owner-only paths above. A configured rendering of
-`README.md`, `mkdocs.yml` or `.github/FUNDING.yml` committed in the fork is therefore
-refused as an unexpected owner tree difference until the overlay renders those surfaces
-itself.
+The fork carries the document at `.config/operator/funding.yaml`, tracked with
+`git add -f`. Operational sync renders the funding surfaces from it on every `prepare`,
+and `plan` accepts a fork that committed the rendering or has not rendered yet; see
+[funding surfaces](operational-sync.md#funding-surfaces).
 
 ## Related decisions
 

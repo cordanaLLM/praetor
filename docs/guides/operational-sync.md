@@ -83,8 +83,9 @@ praetorctl operational sync plan \
 ```
 
 The existing owner tree must equal the incorporated source except for the
-[owner-only operator paths](#owner-only-operator-paths) and for these four
-files and these specific identity fields:
+[owner-only operator paths](#owner-only-operator-paths), the
+[funding surfaces](#funding-surfaces), and these four files and these specific
+identity fields:
 
 | File | Allowed owner difference |
 | --- | --- |
@@ -114,6 +115,37 @@ fields and comments are retained through `yaml.Node`; the owner manifest is neve
 round-tripped through the narrower Go `config.Manifest` struct. Identity anchors
 and duplicate JSON keys are rejected. Derived JSON must retain the existing
 generator's scalar formatting; ambiguous replacements are rejected.
+
+## Funding surfaces
+
+The engine commits the unconfigured rendering of its funding surfaces
+(`funding.SurfacePaths` in `internal/funding/render.go`): `.github/FUNDING.yml`
+and the marked blocks of `README.md`, `mkdocs.yml`, `docs/sponsoring.md` and
+`docs/monetization.md`. The fork carries the operator's funding document at
+`.config/operator/funding.yaml`, an owner-only path, and the overlay renders
+those surfaces from it with the renderer behind `praetorctl docs funding`
+([funding example](operational-configuration.md#funding-example)).
+
+- `plan` reads the document from `--owner-sha`. An invalid document is an
+  error. Each owner funding surface must equal either the incorporated source's
+  file, not rendered yet, or that file rendered from the document. A hand edit,
+  or a rendering of another document, is refused as
+  `unexpected owner override in <path>`.
+- `prepare` renders every surface of `--source-sha` from the document, writes
+  and stages the rendering in the candidate, and resolves a merge conflict in a
+  surface the same way it resolves one in an identity overlay file. An
+  `up-to-date` candidate whose owner tree still carries the unrendered surfaces
+  receives the rendering, staged.
+- The candidate must then carry exactly the rendering: each surface present
+  with the rendered bytes, or absent when the rendering has no such file.
+- `changed_paths` lists the surfaces whose rendering differs from the reviewed
+  source's file after the four identity overlay files. Without a document
+  nothing differs and none is listed.
+
+`init` does not render the surfaces: a fork gets its document after `init`,
+and the next `prepare` renders it. `internal/operationalsync/funding_test.go`
+replays the rendered merge, a conflict inside a rendered block, the refused
+edits and the `up-to-date` cases.
 
 ## Owner-only operator paths
 
@@ -153,12 +185,13 @@ engine's own `.gitignore` ignores every prefix, and an engine test replays
 source could also track. Because the paths are ignored, the
 fork tracks them with `git add -f`.
 
-Everything else outside the four overlay files is still refused with
-`unexpected owner tree difference`; a fork-only GitHub workflow file is
+Everything else outside the four overlay files and the funding surfaces is
+still refused with `unexpected owner tree difference`; a fork-only GitHub workflow file is
 therefore not a legal owner path. The tree comparison runs with rename detection
 disabled, so moving an engine file under an owner-only prefix is reported as the
 deletion of that engine file and refused. A merge conflict in an owner-only path
-is not resolved by the engine; only the four overlay files are.
+is not resolved by the engine; only the four overlay files and the funding
+surfaces are.
 
 ## Prepare an ordinary merge
 
@@ -177,13 +210,14 @@ praetorctl operational sync prepare \
 
 Preparation creates a private clone and an `operational-sync-candidate` branch.
 It runs an ordinary `git merge --no-ff --no-commit`, resolves only the four owner
-configuration paths, and stages those exact paths. The candidate HEAD remains the
+configuration paths and the rendered funding surfaces, and stages those exact
+paths. The candidate HEAD remains the
 reviewed owner commit; `MERGE_HEAD` identifies the reviewed new source. A later
 normal merge commit therefore retains published owner ancestry. An already
 incorporated source produces a clean `up-to-date` candidate.
 
-The final index tree must equal the reviewed source outside the owner overlay
-and the owner-only operator paths.
+The final index tree must equal the reviewed source outside the owner overlay,
+the rendered funding surfaces and the owner-only operator paths.
 Unresolved conflicts, unstaged modifications and untracked files are errors. No
 source code, build scripts, hooks, filters, submodules or GitHub workflows are
 executed by preparation. New clones use inert Git templates and an isolated Git
