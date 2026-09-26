@@ -118,7 +118,7 @@ func (s *CadenceStatus) decide(limits CadenceLimits) {
 	case s.AddedFiles >= limits.AddedFiles:
 		s.Reason = fmt.Sprintf("%d Go source files added since the recorded sweep (threshold %d)", s.AddedFiles, limits.AddedFiles)
 	case s.Unmeasured:
-		s.Reason = "the recorded sweep commit is not in this history, so growth since it cannot be measured"
+		s.Reason = "the recorded sweep commit does not resolve to a commit in this repository, so growth since it cannot be measured"
 	}
 	s.Due = s.Reason != ""
 }

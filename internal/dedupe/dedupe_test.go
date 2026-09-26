@@ -422,8 +422,8 @@ func TestCadence_Boundary_ThresholdsAndLegacyState(t *testing.T) {
 	}
 }
 
-// A recorded commit the history no longer holds cannot anchor a growth measurement, so the
-// sweep is due rather than silently skipped. A value shaped like an option is refused as a
+// A recorded commit that does not resolve to a commit in the repository cannot anchor a growth
+// measurement, so the sweep is due rather than silently skipped. A value shaped like an option is refused as a
 // revision, never parsed as a diff option.
 func TestCadence_Negative_UnresolvableRecordedCommit(t *testing.T) {
 	dir := cadenceRepo(t)
@@ -433,7 +433,7 @@ func TestCadence_Negative_UnresolvableRecordedCommit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("recorded commit %q: %v", sha, err)
 		}
-		if !status.Due || !status.Unmeasured || !strings.Contains(status.Reason, "not in this history") {
+		if !status.Due || !status.Unmeasured || !strings.Contains(status.Reason, "does not resolve to a commit in this repository") {
 			t.Fatalf("recorded commit %q must make the sweep due as unmeasured, got %+v", sha, status)
 		}
 	}
