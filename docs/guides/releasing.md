@@ -8,7 +8,7 @@ page covers what that tag sets off, how to cut one, and how the moving flavor ta
 
 | Consumer | Trigger | Result |
 | :--- | :--- | :--- |
-| `.github/workflows/release-binaries.yml` | `push` of a tag matching `v*` | GoReleaser (`.goreleaser.yaml`) builds `praetorctl`, `standardsctl`, `standards-mcp` and `standards-lsp` for Linux, macOS and Windows on amd64 and arm64, writes a CycloneDX and an SPDX SBOM per archive, signs `checksums.txt` keyless with cosign into `checksums.txt.sigstore.json`, and uploads everything into a **draft** release; the job then signs SLSA v1.0 provenance over every checksummed file, verifies both bundles, attaches the provenance and publishes the release |
+| `.github/workflows/release-binaries.yml` | `push` of a tag matching `v*` | GoReleaser (`.goreleaser.yaml`) builds `praetorctl`, `standardsctl`, `standards-mcp` and `standards-lsp` for Linux, macOS and Windows on amd64 and arm64, writes a CycloneDX and an SPDX SBOM per archive, signs `checksums.txt` keyless with cosign into `checksums.txt.sigstore.json`, and uploads everything into a **draft** release; it also builds the container image from the Linux `praetorctl` binaries, pushes it to `ghcr.io/cordanallm/praetor:<version>` and signs the pushed digest. The job then signs SLSA v1.0 provenance over every checksummed file, verifies both bundles and the image signature, pushes and signs the Helm chart as `oci://ghcr.io/cordanallm/charts/praetor:<version>`, attaches the provenance and publishes the release. `<version>` is the tag without its `v` |
 | `go install github.com/cordanaLLM/praetor/cmd/standardsctl@latest` | any release version on the module proxy | `@latest` selects the highest release version; with no tag at all it falls back to a pseudo-version of `main` ([Go modules reference, version queries](https://go.dev/ref/mod#version-queries)) |
 | `.github/actions/praetor-adopt/action.yml` | `uses: cordanaLLM/praetor/.github/actions/praetor-adopt@<ref>` | the action builds `cmd/standardsctl` from its own checkout at that ref, so `@latest` runs the commit the moving `latest` tag points at; it never installs from the module proxy, and a local or copied action outside a praetor checkout fails instead ([docs/adoption.md](../adoption.md)) |
 | `.github/workflows/sync-flavors.yml` | next run after the tag exists | moves `latest` to the highest `v*` tag |
@@ -35,6 +35,9 @@ equals the baseline. Commented-out `uses:` lines are not scanned. Tests:
 | GoReleaser | `goreleaser/goreleaser-action@v7` | GoReleaser `~> v2`, from the step's `version` input | v7 moves the action runtime to node24 and adds only the optional `version-file` input, so the step's inputs are unchanged |
 | Syft | `anchore/sbom-action/download-syft@v0.24.2` | Syft `v1.51.1` | The `.goreleaser.yaml` `sboms` args are unchanged, but a newer Syft catalogues more packages, so SBOM content differs from that of builds made with an older pin |
 | cosign | `sigstore/cosign-installer@v4.1.2` | cosign `v3.0.6`, the installer's default | No `cosign-release` input: a version hold there is invisible to the `praetorctl bump` scanner, and `internal/forge/cosign_bundle_test.go` rejects one. The installer publishes no moving `v4` tag, so the pin is exact |
+| Helm | `azure/setup-helm@v5` | Helm `v4.1.3`, from the step's `version` input | Pinned rather than the action's `latest` default, so a Helm release cannot change the packaged chart between two tags |
+| buildx | `docker/setup-buildx-action@v4` | A `docker-container` builder | GoReleaser's `dockers_v2` pushes a multi-platform manifest list, which needs that driver. The Dockerfile only copies prebuilt binaries, so no QEMU step is needed |
+| GHCR login | `docker/login-action@v4` | Registry credentials for the job token | buildx and cosign push with the `packages: write` token through this login; `helm` logs in on its own with `helm registry login` |
 
 ### One flow, published last
 
@@ -42,24 +45,66 @@ Every asset is uploaded while the release is still a draft, and publishing is th
 last step. A repository with GitHub immutable releases locks the release at publication,
 so an upload after it fails; the flow never makes one (#43).
 
-1. `goreleaser release --clean` builds the archives, runs Syft over each archive (the
+1. `helm lint deploy/helm/praetor` runs before anything is pushed.
+2. `goreleaser release --clean` builds the archives, runs Syft over each archive (the
    `.goreleaser.yaml` `sboms` block), writes `checksums.txt` over the archives and SBOMs,
-   signs it, and uploads all of it into a draft release (`release.draft: true`).
-2. `cosign verify-blob` checks `checksums.txt.sigstore.json` against this workflow's
+   signs it, and uploads all of it into a draft release (`release.draft: true`). Its
+   `dockers_v2` block builds the root `Dockerfile` from the Linux `praetorctl` binaries,
+   pushes a `linux/amd64` and `linux/arm64` manifest list with buildx's SBOM and provenance
+   attestations, and `docker_signs` signs the pushed digest keyless.
+3. `cosign verify-blob` checks `checksums.txt.sigstore.json` against this workflow's
    identity before anything else trusts it.
-3. `praetorctl provenance -checksums dist/checksums.txt` writes one in-toto SLSA v1.0
+4. `praetorctl provenance -checksums dist/checksums.txt` writes one in-toto SLSA v1.0
    statement whose subjects are every line of `checksums.txt`, with the workflow identity
    as the builder. Each subject digest is recomputed from the file in `dist/` and must
    match its line (`internal/supplychain/slsa.go`).
-4. `cosign attest-blob --statement` signs that statement into
+5. `cosign attest-blob --statement` signs that statement into
    `provenance.intoto.json.sigstore.json`, and `cosign verify-blob-attestation` checks the
    bundle against every file `checksums.txt` names.
-5. `gh release upload` attaches the statement and its bundle, and
+6. `cosign verify` checks the image signature on the digest GoReleaser recorded in
+   `dist/artifacts.json`, never on the tag.
+7. `helm package --version <version> --app-version <version>` packages the chart,
+   `helm push` pushes it to `oci://ghcr.io/cordanallm/charts`, and cosign signs and then
+   verifies the digest `helm push` reports. The chart's default image tag is its
+   `appVersion`, so the published chart pulls the image from step 2.
+8. `gh release upload` attaches the statement and its bundle, and
    `gh release edit --draft=false` publishes.
 
 `internal/forge/release_flow_test.go` fails `go test` when the release stops being a draft,
-publishing moves ahead of signing or verification, an upload follows publication, or a step
-catalogues the checkout with `syft dir:.` again.
+publishing moves ahead of signing or verification, an upload follows publication, a step
+catalogues the checkout with `syft dir:.` again, or publication moves ahead of the image and
+chart verification. `internal/forge/workflow_guard_test.go` fails when the image name in
+`.goreleaser.yaml`, `deploy/helm/praetor/values.yaml` or the job's `IMAGE` and
+`CHART_REPOSITORY` stops being the lowercased `.standards.yaml` identity; GHCR accepts
+lowercase names only. ADR-0013 records the design.
+
+A failure in steps 3 to 7 leaves the release a draft, but the image, and after step 7 the
+chart, are already on GHCR. A rerun of the job pushes over the same tags.
+
+### First release: make the GHCR packages public
+
+GHCR creates each package private on its first push, so an anonymous `docker pull` or
+`helm install` fails until an organisation owner changes the visibility of the `praetor` and
+`charts/praetor` packages to public, once, in the organisation's package settings
+([GitHub docs, configuring a package's visibility](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility#configuring-visibility-of-packages-for-an-organization)).
+Later pushes keep the visibility.
+
+### Building the image locally
+
+The image's build context holds only the binaries GoReleaser compiled, one
+`<os>/<arch>/praetorctl` per platform, so `docker build .` in a checkout has nothing to copy.
+A snapshot build compiles the binaries and builds one image per platform without pushing:
+
+```bash
+GORELEASER_CURRENT_TAG=v0.0.0 goreleaser release --snapshot --clean --skip=sign,sbom
+docker run --rm ghcr.io/cordanallm/praetor:0.0.1-snapshot-amd64 version
+```
+
+`--snapshot` skips publishing but not signing, and keyless signing needs the workflow's OIDC
+token, so `--skip=sign` is required outside CI; `--skip=sbom` drops the Syft dependency.
+`GORELEASER_CURRENT_TAG` is needed while the newest tag is a moving flavor tag such as
+`bleeding`, which is not SemVer and fails the snapshot version template. The run leaves
+`<version>-snapshot-amd64` and `<version>-snapshot-arm64` images.
 
 Build Level 3 is not claimed. The provenance is generated and signed in the same job as
 the build steps, and SLSA Build Level 3 requires signing that the build steps cannot reach.
