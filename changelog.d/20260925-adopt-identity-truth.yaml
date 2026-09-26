@@ -1,0 +1,3 @@
+type: fixed
+title: Record repository identity only where it was observed; adoption takes the manifest owner and name from a network origin remote, never from a cordanaLLM default, the checkout path, a local-path remote or an assumed public visibility; the Paperclip harness names the identity .standards.yaml declares, else the origin remote's, so without either adoption writes no harness and praetorctl paperclip harness fails instead of naming cordanaLLM/<dir>; flavor stubs name an owner only from the origin remote; adoption follows the profile the manifest declares ahead of --profile and file markers, rejects an unparsable manifest, and reports existing scaffolds that differ from what it writes as drift instead of verified present
+breaking: true

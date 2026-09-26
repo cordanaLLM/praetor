@@ -46,6 +46,47 @@ unset flag keeps the default. The flags apply to single-repository adoption; bat
 6. **Multi-IDE Configs**: Workspace settings for every supported editor, or only the ones `editors` in `.standards.yaml` names ([editor selection](guides/editor-capabilities.md#selecting-editors)).
 7. **Makefile & LeftHook**: Automated pre-commit hooks and standard verification targets (`make verify-all`).
 
+### What Adoption Reads Before It Writes
+
+- **Repository identity.** `repository.owner` and `repository.name` come from the
+  `origin` remote only (`util.ResolveRemoteIdentity`). The checkout path is never read
+  as identity, because its parent directory names where the checkout sits, not who owns
+  the repository (`TestAdoptionManifest_CheckoutLayoutIsNotIdentity`). The remote must
+  be a network remote naming a host and `<owner>/<repo>` (`util.ReadOriginRemote`); a
+  local path or `file://` origin names where a copy sits and counts as no remote
+  (`TestReadOriginRemote_Negative_LocalRemoteIsNotIdentity`). Without such a remote,
+  both stay empty, the report warns `repository identity unresolved`, the checkpoint
+  lifecycle is not installed, and the README badge block is skipped. The Paperclip
+  harness `platform` and `rules.md` heading name the identity `.standards.yaml`
+  declares, else the origin remote's; with neither, adoption writes no harness, the
+  report records `Paperclip harness not written`, and an existing harness stays as it
+  is. `praetorctl paperclip harness` fails the same way instead of writing a guessed
+  `cordanaLLM/<dir>` (`TestSynthesizeHarness_Negative_NoIdentityIsAnError`). No `cordanaLLM/<name>` default and no `<parent>/<name>` guess
+  reaches any adopted file; flavor stubs name the checkout directory alone
+  (`TestAdopt_NoRemoteWritesNoGuessedPlatform`,
+  `TestApplyFlavor_Negative_CheckoutLayoutIsNotOwner`). A remote read git does not
+  answer, such as a cancelled run, fails adoption instead of counting as no identity.
+  `repository.visibility` is always left unset because adoption cannot observe it
+  offline (`TestAdoptionManifest_UnresolvedIdentityStaysEmpty`).
+- **Recovering an unresolved identity.** Until both fields are set, `praetorctl audit`
+  fails with `Manifest repository owner and name must not be empty`
+  (`cmd/standardsctl/audit.go`), so the audit pre-commit hook blocks commits. Adoption
+  never rewrites an existing manifest, so set `repository.owner` and `repository.name`
+  in `.standards.yaml` by hand. Add the `origin` remote too and re-run `praetorctl adopt`:
+  the re-run installs the checkpoint policy and evaluator, which need that remote,
+  writes the Paperclip harness, and reconciles the README block from the fields you
+  set. A re-run that finds the remote while the manifest still names no identity
+  installs the checkpoint lifecycle and the harness but leaves the manifest and the
+  README as they are (`TestAdopt_RerunCompletesOnceIdentityIsSet`).
+- **Profile.** The profile an existing `.standards.yaml` declares outranks `--profile`,
+  which outranks file markers. A conflicting `--profile` is reported as ignored
+  (`TestAdopt_DeclaredProfileGovernsAdoption`).
+- **Existing files.** An existing manifest must parse, or adoption fails and leaves it
+  unchanged. Every other existing scaffold is compared with what adoption would write:
+  a match is reported as verified, a difference as `differs from the scaffold` with a
+  warning, and the file is kept. `--force` regenerates only the scaffolds it owns
+  (`TestScaffoldFile_ReportsDriftInsteadOfVerified`).
+
 ---
 
 ## 🤖 AI Agent Adoption via MCP (`standards_adopt`)

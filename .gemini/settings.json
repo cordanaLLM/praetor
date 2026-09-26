@@ -20,6 +20,16 @@
             "timeout": 15000
           }
         ]
+      },
+      {
+        "matcher": "^invoke_agent$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -B .config/agent/hooks/praetor_hook.py gemini pre-dispatch",
+            "timeout": 15000
+          }
+        ]
       }
     ],
     "AfterTool": [

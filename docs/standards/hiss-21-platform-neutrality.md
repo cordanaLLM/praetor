@@ -103,6 +103,19 @@ tail is still printed when nothing parses as a block. Its internal Makefile chec
 a recorded one is the separator defect this invariant forbids, reached from inside the gate
 itself.
 
+The driver runs the same suites as the `Makefile`'s `hooks-test` target, and
+`test_suites_match_the_makefile` in `scripts/test_portability_selftest.py` fails when the two
+lists differ, so a suite added to one list only turns `make portability-test` red instead of
+leaving the other two platforms untested. Besides the Git hook and checkpoint suites, the list
+includes `scripts/test_praetor_hook.py`, the tests of the skew guard that every tracked
+agent-client hook row calls (see
+[engine skew never blocks a client](../guides/agent-hooks.md#rollout-engine-skew-never-blocks-a-client)).
+Its in-process cases run on every leg. Its `TrackedRegistrations` class runs the tracked row
+strings through `sh`, so it skips on Windows and states why: the strings are written for a POSIX
+shell, and on Windows Codex and AGY run hooks through `cmd.exe` and Gemini CLI through
+PowerShell. An `sh` run on the leg's Git Bash would pass without showing what those clients do.
+The Windows leg therefore executes fewer tests than the other two.
+
 Which external binaries this gate reaches, and which of them the job installs, is not
 enumerated on this page: each known gap is tracked as its own issue instead. Open today are
 \#339 (`python3` by name, a spelling the Windows leg is never given) and \#341 (`make` invoked

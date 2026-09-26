@@ -65,7 +65,8 @@ func newPushedRepo(t *testing.T) fixtureRepo {
 	if err != nil {
 		t.Fatalf("hermetic fixture environment: %v", err)
 	}
-	repo := fixtureRepo{ctx: ctx, dir: t.TempDir(), remote: t.TempDir()}
+	// The harness platform names a repository, so the fixture declares one (identifiedRepo).
+	repo := fixtureRepo{ctx: ctx, dir: identifiedRepo(t), remote: t.TempDir()}
 	harness, err := SynthesizeHarness(ctx, repo.dir)
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +83,7 @@ func newPushedRepo(t *testing.T) fixtureRepo {
 		t.Fatalf("enable push options on fixture remote: %v: %s", err, out)
 	}
 	repo.git(t, "init", "--quiet", "-b", "work")
-	repo.git(t, "add", ".paperclip")
+	repo.git(t, "add", ".paperclip", ".standards.yaml")
 	repo.git(t, "commit", "--quiet", "-m", "test harness")
 	repo.git(t, "remote", "add", "origin", repo.remote)
 	repo.git(t, "push", "--quiet", "-u", "origin", "HEAD")
@@ -204,7 +205,7 @@ func TestDisposition_Positive_Blocked(t *testing.T) {
 }
 
 func TestHarness_Positive_SynthesizeAndWrite(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := identifiedRepo(t)
 	h, err := SynthesizeHarness(context.Background(), tmpDir)
 	if err != nil {
 		t.Fatalf("SynthesizeHarness failed: %v", err)
@@ -478,6 +479,7 @@ func TestLoadHarness_3D(t *testing.T) {
 	}
 
 	// Positive: Synthesize and load
+	writeRepoFile(t, tmpDir, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n")
 	h, err := SynthesizeHarness(context.Background(), tmpDir)
 	if err != nil {
 		t.Fatalf("SynthesizeHarness failed: %v", err)

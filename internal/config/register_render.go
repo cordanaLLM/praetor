@@ -117,9 +117,16 @@ func renderRegisterTaskRows(p RegisterPolicy) string {
 			parts = append(parts, fmt.Sprintf("%s = %s", register, strings.Join(labels, ", ")))
 		}
 	}
-	parts = append(parts, fmt.Sprintf("every other label and any brief without one = %s.", fallback))
-	return "Task rows: " + strings.Join(parts, "; ")
+	parts = append(parts, fmt.Sprintf("every other label and any unlabeled text = %s.", fallback))
+	return "Task rows: " + strings.Join(parts, "; ") + " " + subagentBriefRule
 }
+
+// subagentBriefRule states what a subagent launch brief needs where the native dispatch hook
+// runs (`praetorctl hook <client> pre-dispatch`, internal/agenthook): it resolves the brief's
+// register from its `task:` label and denies a brief without one, so the fallback above never
+// applies to a launch brief.
+const subagentBriefRule = "Subagent launch brief: `caveman` brief shape with `task:` = routing label; " +
+	"registered dispatch hook denies brief missing `task:`."
 
 func renderEvidenceRule(e EvidenceBounds) string {
 	bounds := DefaultRegisterPolicy().Evidence

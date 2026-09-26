@@ -171,6 +171,15 @@ praetorctl caveman check --kind=brief candidate-brief.md
 praetorctl caveman check --kind=return candidate-return.md
 ```
 
+A subagent launch brief has no fallback. Text without a task label resolves to
+`surfaces.agent`, but where the native dispatch hook is registered
+(`praetorctl hook <client> pre-dispatch`), a Claude `Agent`, Codex `spawn_agent`, Gemini
+`invoke_agent` or AGY `invoke_subagent` brief without a `task:` field is denied, and so is a
+label the routing vocabulary does not declare. The hook resolves the register from that
+label ([subagent text register gate](agent-hooks.md#subagent-text-register-gate)). The
+rendered block says so on its task-row line (`subagentBriefRule` in
+`internal/config/register_render.go`).
+
 ## Caveman: the internal form
 
 Operators call the internal register "caveman", and the `caveman` skill

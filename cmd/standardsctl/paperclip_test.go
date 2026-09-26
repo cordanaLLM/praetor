@@ -18,7 +18,12 @@ import (
 // writePaperclipFixtureHarness writes a valid .paperclip harness into dir.
 func writePaperclipFixtureHarness(t *testing.T, dir string) {
 	t.Helper()
-	harness, err := paperclip.SynthesizeHarness(context.Background(), dir)
+	// The harness platform names a repository and is never guessed from the checkout path
+	// (BUG-852), so the harness is synthesized in a scratch checkout declaring acme/widget,
+	// the repository the fixture's receipts attest.
+	identified := t.TempDir()
+	writeFixtureFile(t, identified, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n")
+	harness, err := paperclip.SynthesizeHarness(context.Background(), identified)
 	if err != nil {
 		t.Fatalf("SynthesizeHarness: %v", err)
 	}

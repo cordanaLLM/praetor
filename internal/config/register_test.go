@@ -209,7 +209,7 @@ func TestRenderRegisterBlockGolden(t *testing.T) {
 		"| social | forge: issues, PR bodies, review comments, commit bodies | `social-text` skill:",
 		"| docs | docs/, README, ADR bodies | complete without bloat:",
 		"| internal | briefs, agent-to-agent traffic, research fan-outs, workflow returns | `caveman` skill:",
-		"- Task rows: social = commit_message_synthesis, waiver_signoff; docs = architecture_synthesis, function_docstrings; every other label and any brief without one = internal.",
+		"- Task rows: social = commit_message_synthesis, waiver_signoff; docs = architecture_synthesis, function_docstrings; every other label and any unlabeled text = internal. Subagent launch brief: `caveman` brief shape with `task:` = routing label; registered dispatch hook denies brief missing `task:`.",
 		"- Evidence above 58 lines or 1500 tokens leaves the message as a file",
 		"`evidence: <path> sha256:<12 hex> lines:<n>`",
 	} {

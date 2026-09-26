@@ -107,11 +107,20 @@ func printGCReport(report *gc.GCReport, asJSON bool, collectErr error) {
 	fmt.Printf("Purged Ephemeral Files:   %d\n", len(report.PurgedEphemeralFiles))
 	fmt.Printf("Cleaned Cache Artifacts:  %d\n", len(report.CleanedCacheArtifacts))
 	fmt.Printf("Actual Bytes Reclaimed:   %.2f MB\n", float64(report.ReclaimedBytes)/(1024*1024))
+	printGCFindings(report)
+}
+
+// printGCFindings prints what the collection protected, could not examine, or failed on.
+func printGCFindings(report *gc.GCReport) {
 	if len(report.SkippedWorktrees)+len(report.SkippedArtifacts) > 0 {
 		fmt.Printf("Protected Worktrees:       %d\n", len(report.SkippedWorktrees))
 		fmt.Printf("Skipped Artifacts:         %d\n", len(report.SkippedArtifacts))
 		printGCPaths("  protected worktree", report.SkippedWorktrees)
 		printGCPaths("  protected artifact", report.SkippedArtifacts)
+	}
+	if len(report.MissingPools) > 0 {
+		fmt.Printf("Missing Default Pools:     %d (absent, nothing examined)\n", len(report.MissingPools))
+		printGCPaths("  missing pool", report.MissingPools)
 	}
 	if len(report.Errors) > 0 {
 		fmt.Printf("Errors (%d):\n", len(report.Errors))

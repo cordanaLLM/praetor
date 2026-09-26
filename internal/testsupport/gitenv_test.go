@@ -11,11 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
-
-// fixtureGitTimeout bounds one fixture git command (HISS-02).
-const fixtureGitTimeout = 30 * time.Second
 
 func requireGit(t *testing.T) {
 	t.Helper()

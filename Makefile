@@ -260,6 +260,7 @@ hooks-test:
 	python3 -B .config/lefthook/scripts/test_hooks.py
 	python3 -B .config/lefthook/scripts/test_checkpoint.py
 	python3 -B scripts/test_checkpoint_hooks.py
+	python3 -B scripts/test_praetor_hook.py
 
 check-staged:
 	$(HOOK_RUNNER) pre-commit

@@ -151,6 +151,19 @@ other five as `[NOT_APPLICABLE]`; a `verify_only` call then reads only `CLAUDE.m
 unknown id fails both calls with `unknown agent client id(s)`. The rule is described in
 [editor and agent client selection](editor-capabilities.md#selecting-agent-clients).
 
+A read-only tool needs no temporary root. For example, this call lists each client's
+subagent text states:
+
+```bash
+python3 scripts/dev_mcp.py call standards_client_capabilities '{}'
+```
+
+Each client entry reports `brief_capture`, `return_capture` and `register_enforcement` as
+separate states. Each state carries its definition paths and an `activation` that stays
+`unverified` until a payload recorded from the installed native client proves it. The
+[subagent text register gate](agent-hooks.md#subagent-text-register-gate) explains which
+clients are `adapter-defined` and which are `unenforceable`.
+
 For each defect, retain the input, expected behavior, actual response, provenance,
 and filesystem evidence. Exercise positive, negative, and boundary behavior of the
 affected tool. Report placeholder results, missing operations, and blocked

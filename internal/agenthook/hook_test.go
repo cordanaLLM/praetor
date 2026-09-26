@@ -224,7 +224,7 @@ func TestRunRejectsUnsupportedArguments(t *testing.T) {
 	root := repository(t, true)
 	for _, pair := range [][2]string{
 		{"", ""}, {"claude", ""}, {"Claude", "pre-tool"}, {"claude", "pre_tool"}, {"claude", "pre-tool "},
-		{"agy", "post-tool"}, {"codex", "pre-edit"}, {"claude", "environment"}, {"lefthook", "post-tool"}, {"-h", "--help"},
+		{"agy", "post-tool"}, {"-h", "--help"}, {"claude", "pre-dispatch\n"},
 	} {
 		response := serve(t, pair[0], pair[1], root, []byte(`{"tool_input":{"command":"git status"}}`))
 		if response.ExitCode != 2 || !strings.Contains(string(response.Stderr), "usage: praetorctl hook <client> <event>") ||
@@ -262,5 +262,25 @@ func TestRunDeniesWhenStdinNeverCloses(t *testing.T) {
 	response := Run(ctx, Invocation{Client: "claude", Event: "pre-tool", Stdin: reader, Getenv: noEnvironment, WorkDir: root, Policy: policy(t)})
 	if response.ExitCode != 2 || !strings.Contains(string(response.Stderr), "not delivered in time") || time.Since(start) > 5*time.Second {
 		t.Errorf("open stdin held the hook: %+v after %s", response, time.Since(start))
+	}
+}
+
+// TestUsageListsEveryServedPairOnce pins the list the tracked launcher reads to decide
+// whether an engine serves a pair: every row's command appears exactly once, although
+// Claude's dispatch-abort and handback-abort are each reached from two native events.
+func TestUsageListsEveryServedPairOnce(t *testing.T) {
+	stderr := string(usageResponse(ErrUnsupported).Stderr)
+	for _, row := range registrationTable {
+		if count := strings.Count(stderr, "  "+row.Command()+"\n"); count != 1 {
+			t.Errorf("%s listed %d times", row.Command(), count)
+		}
+	}
+	listed := strings.Count(stderr, "\n  praetorctl hook ")
+	distinct := map[string]bool{}
+	for _, row := range registrationTable {
+		distinct[row.Command()] = true
+	}
+	if listed != len(distinct) || listed >= len(registrationTable) {
+		t.Errorf("usage lists %d pairs, want %d distinct of %d rows", listed, len(distinct), len(registrationTable))
 	}
 }

@@ -549,3 +549,139 @@ func TestCollect_Boundary_PrunesStaleTreeWithFreshUnrelatedSibling(t *testing.T)
 		t.Errorf("fresh worktree was unexpectedly removed: %v", statErr)
 	}
 }
+
+// =========================================================================
+// Pool presence, default root and the Errors channel (BUG-959, BUG-232)
+// =========================================================================
+
+// TestCollect_Negative_MistypedWorktreesDirIsAnError pins BUG-959: a configured pool that does
+// not exist fails collection instead of producing a clean, empty report.
+func TestCollect_Negative_MistypedWorktreesDirIsAnError(t *testing.T) {
+	root := t.TempDir()
+	mkdirT(t, filepath.Join(root, ".standards", "worktrees"))
+	report, err := Collect(context.Background(), Options{RootDir: root, WorktreesDir: ".standards/worktress", DryRun: true})
+	want := "configured collection pool " + filepath.Join(".standards", "worktress") + " does not exist"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("mistyped --worktrees-dir was accepted: err=%v", err)
+	}
+	if report == nil || report.Complete || len(report.Errors) != 1 || report.Errors[0] != err.Error() {
+		t.Fatalf("failure must reach report.Errors exactly once: %+v", report)
+	}
+}
+
+// TestCollect_Boundary_AbsentDefaultPoolsAreListed: default pools a repository never created
+// are named in the report rather than silently passed over, and do not fail collection.
+func TestCollect_Boundary_AbsentDefaultPoolsAreListed(t *testing.T) {
+	root := t.TempDir()
+	mkdirT(t, filepath.Join(root, ".standards", "ephemeral"))
+	report, err := Collect(context.Background(), Options{RootDir: root, DryRun: true})
+	if err != nil || !report.Complete {
+		t.Fatalf("absent default pools must not fail collection: %v %+v", err, report)
+	}
+	want := []string{filepath.Join(".standards", "worktrees"), filepath.Join(".standards", "tmp")}
+	if strings.Join(report.MissingPools, ",") != strings.Join(want, ",") {
+		t.Fatalf("missing pools = %v, want %v", report.MissingPools, want)
+	}
+}
+
+// TestCollect_Positive_ConfiguredPoolThatExistsIsCollected: an explicit pool that exists is
+// planned from and is not listed as missing.
+func TestCollect_Positive_ConfiguredPoolThatExistsIsCollected(t *testing.T) {
+	root := t.TempDir()
+	artifact := writeFileT(t, filepath.Join(mkdirT(t, filepath.Join(root, "scratch")), "run-1"), "payload")
+	ageTree(t, artifact, 48*time.Hour)
+	report, err := Collect(context.Background(), Options{RootDir: root, EphemeralDir: "scratch", DryRun: true,
+		ReleasedPaths: []string{filepath.Join("scratch", "run-1")}})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+	if len(report.PlannedArtifacts) != 1 || strings.Contains(strings.Join(report.MissingPools, ","), "scratch") {
+		t.Fatalf("configured pool was not collected from: %+v", report)
+	}
+}
+
+// TestCollect_Boundary_EmptyRootDirDefaultsToWorkingDirectory pins the RootDir "." default:
+// an empty RootDir collects from the process working directory, with root-relative paths.
+func TestCollect_Boundary_EmptyRootDirDefaultsToWorkingDirectory(t *testing.T) {
+	root := t.TempDir()
+	artifact := writeFileT(t, filepath.Join(mkdirT(t, filepath.Join(root, ".standards", "ephemeral")), "trace.log"), "trace")
+	ageTree(t, artifact, 48*time.Hour)
+	t.Chdir(root)
+	released := filepath.Join(".standards", "ephemeral", "trace.log")
+	report, err := Collect(context.Background(), Options{DryRun: true, ReleasedPaths: []string{released}})
+	if err != nil {
+		t.Fatalf("Collect with the default root failed: %v", err)
+	}
+	if len(report.PlannedArtifacts) != 1 || report.PlannedArtifacts[0] != released {
+		t.Fatalf("default root planned %v, want [%s]", report.PlannedArtifacts, released)
+	}
+}
+
+// TestNewestModification_Positive_SeesNestedEdits: the newest timestamp comes from anywhere in
+// the tree, so a nested edit keeps an otherwise old tree fresh.
+func TestNewestModification_Positive_SeesNestedEdits(t *testing.T) {
+	root := t.TempDir()
+	nested := writeFileT(t, filepath.Join(mkdirT(t, filepath.Join(root, "src", "pkg")), "main.go"), "package main")
+	ageTree(t, root, 72*time.Hour)
+	fresh := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(nested, fresh, fresh); err != nil {
+		t.Fatal(err)
+	}
+	newest, err := NewestModification(context.Background(), root, time.Time{})
+	if err != nil || newest.Before(fresh.Add(-2*time.Second)) {
+		t.Fatalf("newest = %v (err %v), want the nested edit at %v", newest, err, fresh)
+	}
+	// A cutoff stops at the first entry at or after it and still answers "not older".
+	cutoff := time.Now().Add(-24 * time.Hour)
+	early, err := NewestModification(context.Background(), root, cutoff)
+	if err != nil || early.Before(cutoff) {
+		t.Fatalf("cutoff walk = %v (err %v), want a time at or after %v", early, err, cutoff)
+	}
+}
+
+// TestNewestModification_Negative_RejectsMissingDirAndNilContext: every failure is an error,
+// never a zero or partial time.
+func TestNewestModification_Negative_RejectsMissingDirAndNilContext(t *testing.T) {
+	if _, err := NewestModification(context.Background(), filepath.Join(t.TempDir(), "absent"), time.Time{}); err == nil {
+		t.Fatal("a missing directory must be an error, not a zero time")
+	}
+	var nilCtx context.Context
+	if _, err := NewestModification(nilCtx, t.TempDir(), time.Time{}); err == nil {
+		t.Fatal("a nil context must be rejected")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := NewestModification(ctx, t.TempDir(), time.Time{}); err == nil {
+		t.Fatal("a cancelled walk must be an error, not a partial answer")
+	}
+}
+
+// TestWalkTree_Boundary_MeasuresSymlinksWithoutFollowing: a measuring walk counts a symlink as
+// one entry and never descends through it, where the collecting walk refuses it outright.
+func TestWalkTree_Boundary_MeasuresSymlinksWithoutFollowing(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	for i := 0; i < 5; i++ {
+		writeFileT(t, filepath.Join(outside, fmt.Sprintf("file-%d", i)), "outside")
+	}
+	writeFileT(t, filepath.Join(root, "kept.txt"), "kept")
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	pinned, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if closeErr := pinned.Close(); closeErr != nil {
+			t.Errorf("close pinned root: %v", closeErr)
+		}
+	})
+	stats, _, err := walkTree(context.Background(), pinned, ".", walkRules{})
+	if err != nil || stats.Entries != 3 {
+		t.Fatalf("measuring walk: entries=%d err=%v, want root, kept.txt and the link itself", stats.Entries, err)
+	}
+	if _, _, err := scanTree(context.Background(), pinned, ".", false); err == nil {
+		t.Fatal("the collecting walk must still refuse a symlink")
+	}
+}

@@ -151,7 +151,9 @@ def file_checks(directory, names):
     if yaml:
         commands.append(["yamllint", "--strict", "-d", "{extends: relaxed, rules: {line-length: disable}}", *yaml])
     if any(name in {"lefthook.yml", ".codex/hooks.json", ".claude/settings.json",
-                    ".gemini/settings.json", "scripts/test_checkpoint_hooks.py"}
+                    ".gemini/settings.json", ".agents/plugins/praetor/hooks.json",
+                    ".agents/plugins/praetor/praetor_hook.py", "scripts/test_checkpoint_hooks.py",
+                    "scripts/test_praetor_hook.py"}
            or name.startswith((".config/lefthook/", ".config/agent/")) for name in files):
         commands.append(["lefthook", "validate"])
         commands.append(["python3", "-B", ".config/lefthook/scripts/test_hooks.py"])
@@ -159,6 +161,8 @@ def file_checks(directory, names):
         commands.append(["python3", "-B", ".config/lefthook/scripts/test_checkpoint.py"])
         if (directory / "scripts/test_checkpoint_hooks.py").exists():
             commands.append(["python3", "-B", "scripts/test_checkpoint_hooks.py"])
+        if (directory / "scripts/test_praetor_hook.py").exists():
+            commands.append(["python3", "-B", "scripts/test_praetor_hook.py"])
     if context_changed(names):
         commands.append(["go", "run", "./cmd/standardsctl", "compile-context", "--verify"])
     parallel(commands, directory)

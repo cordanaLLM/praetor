@@ -1,0 +1,16 @@
+{
+  "praetor-subagent-register": {
+    "PreToolUse": [
+      {
+        "matcher": "invoke_subagent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -B praetor_hook.py agy pre-dispatch",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

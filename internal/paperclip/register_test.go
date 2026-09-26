@@ -10,7 +10,7 @@ import (
 // A Paperclip run reports to an orchestrating agent, so the contract names the internal
 // register as its last line, and the rendered rules and a reload keep it.
 func TestHarnessContractStatesTheInternalRegister(t *testing.T) {
-	repo := t.TempDir()
+	repo := identifiedRepo(t)
 	h, err := SynthesizeHarness(t.Context(), repo)
 	if err != nil {
 		t.Fatal(err)

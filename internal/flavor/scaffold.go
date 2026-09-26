@@ -56,9 +56,9 @@ func ApplyFlavor(ctx context.Context, repoPath string, targetFlavor string, forc
 		return nil, fmt.Errorf("apply flavor: %w", err)
 	}
 
-	owner, repoName, err := util.ResolveRepoIdentity(ctx, repoPath)
+	owner, repoName, err := flavorIdentity(ctx, repoPath)
 	if err != nil {
-		return nil, fmt.Errorf("resolve flavor repository identity: %w", err)
+		return nil, err
 	}
 	report := &ApplyReport{
 		Flavor: flv.Name(),
@@ -81,6 +81,26 @@ func ApplyFlavor(ctx context.Context, repoPath string, targetFlavor string, forc
 	}
 
 	return report, nil
+}
+
+// flavorIdentity returns the owner and name templates render. Both come from the origin
+// remote (util.ResolveRemoteIdentity), never from the checkout path: a parent directory names
+// wherever the checkout sits, not its owner. Without a remote the owner stays empty and the
+// name is the checkout directory's, which labels a binary or a stub comment and is never
+// written into an identity field. A remote read git did not answer is an error.
+func flavorIdentity(ctx context.Context, repoPath string) (owner, repoName string, err error) {
+	owner, repoName, err = util.ResolveRemoteIdentity(ctx, repoPath)
+	if err == nil {
+		return owner, repoName, nil
+	}
+	if !errors.Is(err, util.ErrRepoIdentityUnresolved) {
+		return "", "", fmt.Errorf("resolve flavor repository identity: %w", err)
+	}
+	abs, absErr := filepath.Abs(repoPath)
+	if absErr != nil {
+		return "", "", fmt.Errorf("resolve flavor repository path %q: %w", repoPath, absErr)
+	}
+	return "", filepath.Base(abs), nil
 }
 
 // templateDisposition decides, before any filesystem mutation, whether a template is
@@ -184,6 +204,16 @@ func defaultTemplateContent(path, repoName, owner string) string {
 	case "analysis_options.yaml":
 		return "include: package:lints/recommended.yaml\n\nlinter:\n  rules:\n    - prefer_const_constructors\n    - prefer_final_fields\n    - unawaited_futures\n"
 	default:
-		return fmt.Sprintf("# %s configuration for %s/%s\n", filepath.Base(path), owner, repoName)
+		return defaultStubContent(path, repoName, owner)
 	}
+}
+
+// defaultStubContent is the one-line comment a template with no body degrades to (#336). It
+// names owner/repo only when the origin remote supplied an owner, and the bare name otherwise.
+func defaultStubContent(path, repoName, owner string) string {
+	subject := repoName
+	if owner != "" {
+		subject = owner + "/" + repoName
+	}
+	return fmt.Sprintf("# %s configuration for %s\n", filepath.Base(path), subject)
 }

@@ -19,8 +19,13 @@ type Registration struct {
 	Timeout time.Duration
 }
 
-// Command is the complete registration string for tracked files. It is one executable
-// call that resolves through PATH or PATHEXT and is valid under `sh -c` and `cmd /c`.
+// Command is the engine call that serves the row: one executable call that resolves through
+// PATH or PATHEXT and is valid under `sh -c` and `cmd /c`. A hand-written registration can
+// carry it as is. This repository's tracked client files reach it through the skew guard
+// .config/agent/hooks/praetor_hook.py (the AGY plugin through its own copy beside hooks.json),
+// which hands the call only to an engine whose usage lists this command and otherwise skips,
+// so an engine older than the row never blocks the client (docs/guides/agent-hooks.md,
+// Rollout).
 func (r Registration) Command() string {
 	return "praetorctl hook " + r.Client + " " + string(r.Event)
 }
@@ -28,7 +33,8 @@ func (r Registration) Command() string {
 // registrationTable is the support matrix of the entrypoint. A pair without a row is
 // rejected before any input is read. The checkpoint rows (pre-edit, post-tool, stop) reach
 // the native clients only (H2); Lefthook keeps its H1 rows until its jobs are re-pointed at
-// this entrypoint (H4), so `lefthook post-tool` etc. still fall through as unsupported here.
+// this entrypoint (H4), so `lefthook post-tool` etc. reach no evaluator here: they are answered
+// as a pair this engine does not serve (unsupportedResponse).
 // Codex carries no pre-edit row: measured fact, section 1 of the rollout spec ("no pre-edit
 // event registered today").
 var registrationTable = []Registration{
@@ -36,13 +42,29 @@ var registrationTable = []Registration{
 	{Client: "claude", Event: EventPreEdit, NativeEvent: "PreToolUse", Matcher: "^(Edit|Write)$", Timeout: 15 * time.Second},
 	{Client: "claude", Event: EventPostTool, NativeEvent: "PostToolUse", Timeout: 60 * time.Second},
 	{Client: "claude", Event: EventStop, NativeEvent: "Stop", Timeout: 60 * time.Second},
+	{Client: "claude", Event: EventPreDispatch, NativeEvent: "PreToolUse", Matcher: "^Agent$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventDispatchReceipt, NativeEvent: "PostToolUse", Matcher: "^Agent$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventDispatchAbort, NativeEvent: "PostToolUseFailure", Matcher: "^Agent$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventDispatchAbort, NativeEvent: "PermissionDenied", Matcher: "^Agent$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventPreHandback, NativeEvent: "PreToolUse", Matcher: "^SubagentHandback$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventHandbackReceipt, NativeEvent: "PostToolUse", Matcher: "^SubagentHandback$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventHandbackAbort, NativeEvent: "PostToolUseFailure", Matcher: "^SubagentHandback$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventHandbackAbort, NativeEvent: "PermissionDenied", Matcher: "^SubagentHandback$", Timeout: 15 * time.Second},
+	// SubagentStop also fires for Claude Code's internal agents (prompt suggestions, /btw side
+	// questions), whose agent_type is empty unless the session runs as a named agent. The
+	// matcher selects a nonempty agent_type, so those human-facing answers never reach the
+	// gate; an internal agent under a named session agent is uncorrelated and skipped.
+	{Client: "claude", Event: EventPostReturn, NativeEvent: "SubagentStop", Matcher: "^.+$", Timeout: 60 * time.Second},
 	{Client: "codex", Event: EventPreTool, NativeEvent: "PreToolUse", Matcher: "^Bash$", Timeout: 15 * time.Second},
 	{Client: "codex", Event: EventPostTool, NativeEvent: "PostToolUse", Timeout: 60 * time.Second},
 	{Client: "codex", Event: EventStop, NativeEvent: "Stop", Timeout: 60 * time.Second},
+	{Client: "codex", Event: EventPreDispatch, NativeEvent: "PreToolUse", Matcher: "^spawn_agent$", Timeout: 15 * time.Second},
+	{Client: "codex", Event: EventPostReturn, NativeEvent: "SubagentStop", Timeout: 60 * time.Second},
 	{Client: "gemini", Event: EventPreTool, NativeEvent: "BeforeTool", Matcher: "run_shell_command", Timeout: 15 * time.Second},
 	{Client: "gemini", Event: EventPreEdit, NativeEvent: "BeforeTool", Matcher: "^(replace|write_file)$", Timeout: 15 * time.Second},
 	{Client: "gemini", Event: EventPostTool, NativeEvent: "AfterTool", Timeout: 60 * time.Second},
 	{Client: "gemini", Event: EventStop, NativeEvent: "AfterAgent", Timeout: 60 * time.Second},
+	{Client: "gemini", Event: EventPreDispatch, NativeEvent: "BeforeTool", Matcher: "^invoke_agent$", Timeout: 15 * time.Second},
 	{Client: "lefthook", Event: EventPreTool, NativeEvent: "agent-pre-tool"},
 	{Client: "lefthook", Event: EventEnvironment, NativeEvent: "pre-rebase"},
 	// agy: NativeEvent and Timeout are docs-confirmed (Hook Spec Fields; "Execution
@@ -50,6 +72,7 @@ var registrationTable = []Registration{
 	// tools" spelling: agy classifies by payload, not by registration (3.5). Stop has no
 	// matcher at all (its hooks.json group is a flat handler list, not a matcher group).
 	{Client: "agy", Event: EventPreTool, NativeEvent: "PreToolUse", Matcher: "*", Timeout: 30 * time.Second},
+	{Client: "agy", Event: EventPreDispatch, NativeEvent: "PreToolUse", Matcher: "invoke_subagent", Timeout: 30 * time.Second},
 	{Client: "agy", Event: EventStop, NativeEvent: "Stop", Timeout: 30 * time.Second},
 }
 

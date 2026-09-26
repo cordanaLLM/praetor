@@ -122,7 +122,7 @@ func TestHookProcessFailsClosed(t *testing.T) {
 	}{
 		{"no arguments", " ", allowed, "", 2}, {"one argument", "claude", allowed, "", 2},
 		{"three arguments", "claude pre-tool extra", allowed, "", 2}, {"unknown client", "cursor pre-tool", allowed, "", 2},
-		{"client without this event's row", "codex pre-edit", allowed, "", 2}, {"empty stdin", "claude pre-tool", nil, "", 2},
+		{"agy without this event's row", "agy post-tool", allowed, "", 2}, {"empty stdin", "claude pre-tool", nil, "", 2},
 		{"malformed stdin", "codex pre-tool", []byte("{"), "", 2},
 		{"disabled lefthook in the environment", "lefthook environment", nil, "LEFTHOOK=0", 1},
 		{"disabled lefthook reaches pre-tool", "claude pre-tool", allowed, "LEFTHOOK=0", 2},
@@ -134,6 +134,79 @@ func TestHookProcessFailsClosed(t *testing.T) {
 		if result, exit := hookProcess(t, root, tc.arguments, tc.stdin, extra...); exit != tc.exit || len(result.Stdout) != 0 {
 			t.Errorf("%s: exit %d stdout %q stderr %q", tc.name, exit, result.Stdout, result.Stderr)
 		}
+	}
+}
+
+func TestHookProcessAgentTextGate(t *testing.T) {
+	root := hookRepository(t, true)
+	brief := "goal: patch hook\ninputs: internal/agenthook\nreturn: diff plus tests\nevidence: focused tests\ntask: feature_implementation\n"
+	valid := []byte(`{"session_id":"session","hook_event_name":"BeforeTool","tool_name":"invoke_agent","tool_input":{"prompt":` + quoteJSON(t, brief) + `}}`)
+	invalid := []byte(`{"session_id":"session","hook_event_name":"BeforeTool","tool_name":"invoke_agent","tool_input":{}}`)
+	for _, tc := range []struct {
+		name    string
+		payload []byte
+		exit    int
+	}{
+		{"valid", valid, 0}, {"missing body", invalid, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, exit := hookProcess(t, root, "gemini pre-dispatch", tc.payload)
+			if exit != tc.exit || (exit != 0) != bytes.Contains(result.Stderr, []byte("[BLOCKED BY HISS]")) {
+				t.Fatalf("exit %d stdout %q stderr %q", exit, result.Stdout, result.Stderr)
+			}
+		})
+	}
+}
+
+func TestHookProcessClaudeHandbackGateAcrossProcesses(t *testing.T) {
+	root := hookRepository(t, true)
+	brief := "goal: patch hook\ninputs: internal/agenthook\nreturn: diff plus tests\nevidence: focused tests\ntask: feature_implementation\n"
+	validReturn := "verdict: pass\nchanged: internal/agenthook\nran: go test ./internal/agenthook\nevidence: exit 0\nopen: none\n"
+	proseReturn := "verdict: I think this is complete\nchanged: the hook\nran: tests\nevidence: output\nopen: none\n"
+	pre := []byte(`{"session_id":"session","cwd":` + quoteJSON(t, root) + `,"hook_event_name":"PreToolUse","tool_name":"Agent","tool_use_id":"tool","tool_input":{"prompt":` + quoteJSON(t, brief) + `,"run_in_background":true}}`)
+	dispatchReceipt := []byte(`{"session_id":"session","cwd":` + quoteJSON(t, root) + `,"hook_event_name":"PostToolUse","tool_name":"Agent","tool_use_id":"tool","tool_input":{"prompt":` + quoteJSON(t, brief) + `},"tool_response":{"status":"async_launched","agentId":"agent"}}`)
+	handback := func(body string) []byte {
+		return []byte(`{"session_id":"session","cwd":` + quoteJSON(t, root) + `,"hook_event_name":"PreToolUse","agent_id":"agent","agent_type":"general-purpose","tool_name":"SubagentHandback","tool_use_id":"handback","tool_input":{"message":` + quoteJSON(t, body) + `}}`)
+	}
+	handbackReceipt := func(body string) []byte {
+		return []byte(`{"session_id":"session","cwd":` + quoteJSON(t, root) + `,"hook_event_name":"PostToolUse","agent_id":"agent","agent_type":"general-purpose","tool_name":"SubagentHandback","tool_use_id":"handback","tool_input":{"message":` + quoteJSON(t, body) + `},"tool_response":{}}`)
+	}
+	closing := []byte(`{"session_id":"session","cwd":` + quoteJSON(t, root) + `,"hook_event_name":"SubagentStop","agent_id":"agent","agent_type":"general-purpose"}`)
+	for _, step := range []struct {
+		arguments string
+		payload   []byte
+		exit      int
+	}{
+		{"claude pre-dispatch", pre, 0},
+		{"claude dispatch-receipt", dispatchReceipt, 0},
+		{"claude pre-handback", handback(proseReturn), 2},
+		{"claude pre-handback", handback(validReturn), 0},
+		{"claude handback-receipt", handbackReceipt(validReturn), 0},
+		{"claude post-return", closing, 0},
+		{"claude post-return", closing, 0}, // resumed after completion: unowned, skipped, never held
+	} {
+		if result, exit := hookProcess(t, root, step.arguments, step.payload); exit != step.exit {
+			t.Fatalf("%s: exit %d, want %d; stdout %q stderr %q", step.arguments, exit, step.exit, result.Stdout, result.Stderr)
+		}
+	}
+}
+
+// TestHookProcessSkipsAnEventNewerThanTheEngine: a tracked row naming an event this binary
+// does not know is engine skew; the process answers a stated skip, not a blocking usage exit.
+func TestHookProcessSkipsAnEventNewerThanTheEngine(t *testing.T) {
+	root := hookRepository(t, true)
+	result, exit := hookProcess(t, root, "claude future-event", []byte(`{}`))
+	if exit != 0 || !bytes.Contains(result.Stderr, []byte("serves no claude future-event row")) {
+		t.Fatalf("skew: exit %d stdout %q stderr %q", exit, result.Stdout, result.Stderr)
+	}
+	// An existing event gaining a row for a client that lacks one is skew too.
+	if result, exit := hookProcess(t, root, "codex pre-edit", []byte(`{}`)); exit != 0 ||
+		!bytes.Contains(result.Stderr, []byte("serves no codex pre-edit row")) || len(result.Stdout) != 0 {
+		t.Fatalf("row skew: exit %d stdout %q stderr %q", exit, result.Stdout, result.Stderr)
+	}
+	if result, exit := hookProcess(t, root, "agy future-event", []byte(`{}`)); exit != 2 ||
+		!bytes.Contains(result.Stderr, []byte("usage: praetorctl hook")) {
+		t.Fatalf("agy skew: exit %d stdout %q stderr %q", exit, result.Stdout, result.Stderr)
 	}
 }
 
@@ -154,7 +227,7 @@ func TestHookProcessSkipsAnUngovernedWorkspace(t *testing.T) {
 
 func quoteJSON(t *testing.T, value string) string {
 	t.Helper()
-	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value) + `"`
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(value) + `"`
 }
 
 func TestWriteHookResponse(t *testing.T) {

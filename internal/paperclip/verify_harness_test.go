@@ -65,7 +65,7 @@ func TestHarnessLoadValidatesRequiredFieldsAndBounds(t *testing.T) {
 
 func TestHarnessContextAndReadBoundaries(t *testing.T) {
 	ctx := t.Context()
-	root := t.TempDir()
+	root := identifiedRepo(t)
 	h, err := SynthesizeHarness(ctx, root)
 	if err != nil {
 		t.Fatal(err)

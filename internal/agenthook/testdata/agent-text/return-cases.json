@@ -1,0 +1,26 @@
+[
+  {
+    "name": "valid-return",
+    "capture": true,
+    "enforce": true,
+    "body": "verdict: pass\nchanged: internal/agenthook\nran: go test ./internal/agenthook\nevidence: exit 0\nopen: none\n"
+  },
+  {
+    "name": "prose-return",
+    "capture": true,
+    "enforce": false,
+    "body": "verdict: I think this is complete\nchanged: the hook\nran: the tests\nevidence: the output\nopen: none\n"
+  },
+  {
+    "name": "missing-body",
+    "capture": false,
+    "enforce": false,
+    "missing": true
+  },
+  {
+    "name": "oversized-body",
+    "capture": false,
+    "enforce": false,
+    "oversized": true
+  }
+]

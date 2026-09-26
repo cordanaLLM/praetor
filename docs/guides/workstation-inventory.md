@@ -47,6 +47,16 @@ incomplete. The inventory and `sync --remote` share this parser
 (`util.ParseGitRemoteURL`, `TestInventoryRemoteForms_SharedParser`). Incomplete reports retain their observations. The CLI
 returns nonzero and MCP sets `isError`; consumers should still read the report.
 
+`stale_worktrees` lists worktrees under a recognized container in which nothing
+changed for 24 hours. Age is the newest modification anywhere in the worktree,
+measured by `gc.NewestModification`, the same bounded walk `praetorctl gc` applies
+retention with ([garbage collection](garbage-collection.md)); an edit to a nested
+file keeps the worktree off the list. A worktree whose contents cannot be read,
+or that exceeds the walk bounds, is recorded in `repository_inventory_errors` and
+leaves the report incomplete instead of being classified
+(`internal/harvester/harvester_test.go`, `TestScanWorktreeDir_*`). The list is an
+observation only: it neither releases a worktree nor makes it collectable.
+
 Git probes use an isolated environment and disable filesystem monitors and hooks.
 Dirty coverage is explicitly `checkout-excluding-submodules`: Git status cannot
 traverse submodule worktrees, whose local filters might execute commands. A known

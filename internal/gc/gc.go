@@ -57,13 +57,18 @@ type GCReport struct {
 	SkippedArtifacts      []string `json:"skipped_artifacts,omitempty"`
 	PurgedEphemeralFiles  []string `json:"purged_ephemeral_files"`
 	CleanedCacheArtifacts []string `json:"cleaned_cache_artifacts"`
-	Errors                []string `json:"errors,omitempty"`
+	// MissingPools lists default pools that do not exist, so nothing in them was examined.
+	// A pool the caller configured explicitly is an error when missing, not an entry here.
+	MissingPools []string `json:"missing_pools,omitempty"`
+	Errors       []string `json:"errors,omitempty"`
 }
 
 type pool struct {
 	path     string
 	worktree bool
 	cache    bool
+	// explicit marks a pool the caller configured rather than a default.
+	explicit bool
 }
 
 type candidate struct {
@@ -149,10 +154,7 @@ func (c *collector) collect(ctx context.Context, pools []pool) error {
 
 func (c *collector) planPool(ctx context.Context, p pool) ([]candidate, error) {
 	if err := checkPath(c.root, p.path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, err
+		return nil, c.missingPool(p, err)
 	}
 	entries, err := readEntries(ctx, c.root, p.path, MaxEntriesLimit)
 	if err != nil {
@@ -176,6 +178,21 @@ func (c *collector) planPool(ctx context.Context, p pool) ([]candidate, error) {
 		}
 	}
 	return plan, nil
+}
+
+// missingPool decides what a pool that cannot be inspected means. An absent default pool is
+// recorded, because a repository that never created it has nothing to collect there. An
+// absent configured pool is an error: a mistyped --worktrees-dir used to produce a clean,
+// empty report that read exactly like a pool with nothing to collect.
+func (c *collector) missingPool(p pool, err error) error {
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if p.explicit {
+		return fmt.Errorf("configured collection pool %s does not exist: %w", p.path, err)
+	}
+	c.report.MissingPools = append(c.report.MissingPools, p.path)
+	return nil
 }
 
 func (c *collector) inspect(ctx context.Context, p pool, path string) (candidate, bool, error) {

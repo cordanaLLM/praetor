@@ -1,0 +1,4 @@
+type: fixed
+title: Gate documented native subagent briefs and Claude handbacks without overstating unsupported return boundaries, holding internal and unowned subagents at SubagentStop, or letting leaked bindings fill the correlation store; route the tracked rows, the Antigravity plugin row included, through a skew guard so an older or missing praetorctl skips them with the reason instead of blocking every subagent launch (reinstall with make dev-install to enforce them); the compiled text-register rule now says a subagent launch brief needs its task label
+issue: "#415"
+breaking: false

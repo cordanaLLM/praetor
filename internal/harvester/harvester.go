@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/classify"
+	"github.com/cordanaLLM/praetor/internal/gc"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -179,7 +180,7 @@ func scanWorkstationEntry(ctx context.Context, devDir string, entry os.DirEntry,
 	name := entry.Name()
 	fullPath := filepath.Join(devDir, name)
 	if strings.HasSuffix(name, "-worktrees") || name == "worktrees" {
-		scanWorktreeDir(fullPath, report)
+		scanWorktreeDir(ctx, fullPath, report)
 		scanRepositoryChildren(ctx, fullPath, name, report)
 		return
 	}
@@ -491,12 +492,15 @@ func canonicalGitPath(ctx context.Context, repoPath, value string) (string, erro
 // scanWorktreeDir records the worktrees under a *-worktrees container that have not been
 // touched for DefaultStaleWorktreeAge. A worktree that is still being worked in is not
 // stale: reporting every worktree as stale invites an operator or agent to delete live
-// work, and contradicts the age criterion internal/gc uses when it actually prunes them.
+// work. Staleness is the newest modification anywhere in the worktree, measured by
+// gc.NewestModification, the walk internal/gc applies retention with (HISS-19); the
+// worktree directory's own mtime does not change when a nested file is edited.
 //
-// A container this scan cannot read, or one holding more entries than MaxWorktreeScan,
-// yields a partial StaleWorktrees list. Such a scan marks the report incomplete and
-// records why, so the partial list is never published as an exhaustive one.
-func scanWorktreeDir(path string, report *WorkstationReport) {
+// A container this scan cannot read, one holding more entries than MaxWorktreeScan, or a
+// worktree whose age cannot be measured yields a partial StaleWorktrees list. Such a scan
+// marks the report incomplete and records why, so the partial list is never published as
+// an exhaustive one.
+func scanWorktreeDir(ctx context.Context, path string, report *WorkstationReport) {
 	container := filepath.Base(path)
 	subEntries, err := readBoundedDir(path, MaxWorktreeScan)
 	if err != nil {
@@ -509,19 +513,27 @@ func scanWorktreeDir(path string, report *WorkstationReport) {
 		report.RepositoryInventoryTruncated = true
 		report.RepositoryInventoryErrors = appendBoundedError(report.RepositoryInventoryErrors, fmt.Sprintf("stale worktree scan of %s exceeds %d entries", container, MaxWorktreeScan))
 	}
+	cutoff := time.Now().Add(-DefaultStaleWorktreeAge)
 	for i := 0; i < len(subEntries) && i < MaxWorktreeScan; i++ {
-		sub := subEntries[i]
-		if !sub.IsDir() {
-			continue
+		if subEntries[i].IsDir() {
+			classifyWorktree(ctx, path, subEntries[i].Name(), cutoff, report)
 		}
-		info, infoErr := sub.Info()
-		if infoErr != nil {
-			continue
-		}
-		if time.Since(info.ModTime()) <= DefaultStaleWorktreeAge {
-			continue
-		}
-		report.StaleWorktrees = append(report.StaleWorktrees, filepath.Join(filepath.Base(path), sub.Name()))
+	}
+}
+
+// classifyWorktree lists one worktree as stale when nothing in it changed since cutoff. A
+// worktree whose age cannot be measured is recorded as an inventory error, never skipped.
+func classifyWorktree(ctx context.Context, container, name string, cutoff time.Time, report *WorkstationReport) {
+	label := filepath.Join(filepath.Base(container), name)
+	newest, err := gc.NewestModification(ctx, filepath.Join(container, name), cutoff)
+	if err != nil {
+		report.RepositoryInventoryComplete = false
+		report.RepositoryInventoryErrors = appendBoundedError(report.RepositoryInventoryErrors,
+			fmt.Sprintf("stale worktree scan of %s failed: %v", label, err))
+		return
+	}
+	if newest.Before(cutoff) {
+		report.StaleWorktrees = append(report.StaleWorktrees, label)
 	}
 }
 

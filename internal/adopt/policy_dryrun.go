@@ -10,13 +10,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func newAdoptionManifest(ctx context.Context, s *adoptSession) *config.Manifest {
+// newAdoptionManifest builds the manifest adoption writes. Identity comes from the origin
+// remote and stays empty otherwise. Visibility is a forge setting adoption cannot observe
+// offline, so it is left unset rather than declared public.
+func newAdoptionManifest(s *adoptSession) *config.Manifest {
 	return &config.Manifest{
-		Version: 1,
-		Repository: config.RepositoryMetadata{
-			Owner: resolveOwner(ctx, s.repoPath), Name: s.repoName, Visibility: "public",
-		},
-		Profiles: []string{s.arch}, Facets: s.facets,
+		Version:    1,
+		Repository: config.RepositoryMetadata{Owner: s.identity.owner, Name: s.identity.name},
+		Profiles:   []string{s.arch}, Facets: s.facets,
 	}
 }
 
@@ -76,7 +77,7 @@ func plannedManifestBytes(ctx context.Context, s *adoptSession) ([]byte, error) 
 	if exists && !s.opts.Force {
 		return data, nil
 	}
-	return yaml.Marshal(newAdoptionManifest(ctx, s))
+	return yaml.Marshal(newAdoptionManifest(s))
 }
 
 func observeAdoptionInput(ctx context.Context, s *adoptSession, name string) ([]byte, bool, error) {

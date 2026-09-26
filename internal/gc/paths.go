@@ -27,13 +27,14 @@ func normalizeOptions(opts Options) (Options, []pool, map[string]bool, error) {
 	if err := normalizeRetention(&opts); err != nil {
 		return opts, nil, nil, err
 	}
+	explicit := poolsConfigured{worktrees: opts.WorktreesDir != "", ephemeral: opts.EphemeralDir != ""}
 	if opts.WorktreesDir == "" {
 		opts.WorktreesDir = ".standards/worktrees"
 	}
 	if opts.EphemeralDir == "" {
 		opts.EphemeralDir = ".standards/ephemeral"
 	}
-	pools, err := normalizePools(opts)
+	pools, err := normalizePools(opts, explicit)
 	if err != nil {
 		return opts, nil, nil, err
 	}
@@ -54,8 +55,18 @@ func normalizeRetention(opts *Options) error {
 	return nil
 }
 
-func normalizePools(opts Options) ([]pool, error) {
-	pools := []pool{{path: opts.WorktreesDir, worktree: true}, {path: opts.EphemeralDir}, {path: ".standards/tmp", cache: true}}
+// poolsConfigured records which pools the caller named, before defaults fill the rest.
+type poolsConfigured struct {
+	worktrees bool
+	ephemeral bool
+}
+
+func normalizePools(opts Options, explicit poolsConfigured) ([]pool, error) {
+	pools := []pool{
+		{path: opts.WorktreesDir, worktree: true, explicit: explicit.worktrees},
+		{path: opts.EphemeralDir, explicit: explicit.ephemeral},
+		{path: ".standards/tmp", cache: true},
+	}
 	for i := range pools {
 		path, err := confinedPath(opts.RootDir, pools[i].path)
 		if err != nil {

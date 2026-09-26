@@ -19,11 +19,17 @@ const (
 	stateVerifyBudget    = 20 * time.Second
 	stopCheckpointBudget = 30 * time.Second
 	environmentBudget    = 5 * time.Second
+	dispatchBudget       = 10 * time.Second
+	returnBudget         = 30 * time.Second
 )
 
 // budgetFor is the outer context deadline Run applies before evaluate reads anything.
 func budgetFor(event Event) time.Duration {
 	switch event {
+	case EventPreDispatch, EventDispatchReceipt, EventDispatchAbort, EventPreHandback:
+		return dispatchBudget
+	case EventPostReturn:
+		return returnBudget
 	case EventPreEdit:
 		return preEditBudget
 	case EventPostTool:
@@ -46,16 +52,43 @@ func budgetFor(event Event) time.Duration {
 func evaluate(ctx context.Context, dialect Dialect, row Registration, in Invocation) (Canonical, Verdict) {
 	canonical, err := decodeCanonical(ctx, dialect, row.Event, in)
 	if err != nil {
-		return Canonical{Event: row.Event}, Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] Invalid hook input: " + err.Error()}
+		// Only the event and a return's stop_hook_active survive a decode failure (Decode).
+		canonical = Canonical{Event: row.Event, StopActive: canonical.StopActive}
+		return canonical, returnBoundary(row, canonical, Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] Invalid hook input: " + err.Error()})
 	}
+	return canonical, returnBoundary(row, canonical, judge(ctx, row, canonical, in))
+}
+
+// judge resolves the governed root, checks the environment and dispatches the event.
+func judge(ctx context.Context, row Registration, canonical Canonical, in Invocation) Verdict {
 	root, verdict, ok := resolveGovernedRoot(ctx, canonical, in)
 	if !ok {
-		return canonical, verdict
+		return verdict
 	}
 	if verdict := Environment(in.Getenv); verdict.Outcome != Allow {
-		return canonical, verdict
+		return verdict
 	}
-	return canonical, dispatch(ctx, row, canonical, root, in)
+	return dispatch(ctx, row, canonical, root, in)
+}
+
+// returnBoundary bounds a deny at SubagentStop. There a deny blocks nothing: Claude Code and
+// Codex keep the subagent running and hand it the reason as its next instruction. Codex
+// enforces no register at this boundary, so its failures are stated skips. Once a stop hook
+// has continued a subagent (stop_hook_active), a second deny could repeat without end, so it
+// becomes a stated skip and the subagent stops; evaluateAgentReturn has already released
+// that agent's binding.
+func returnBoundary(row Registration, canonical Canonical, verdict Verdict) Verdict {
+	if row.Event != EventPostReturn || verdict.Outcome != Deny {
+		return verdict
+	}
+	reason := strings.TrimPrefix(verdict.Reason, "[BLOCKED BY HISS] ")
+	switch {
+	case row.Client == "codex":
+		return Verdict{Outcome: Skip, Reason: "codex return not judged, its register is unenforceable: " + reason}
+	case canonical.StopActive:
+		return Verdict{Outcome: Skip, Reason: "not blocked again after a stop-hook continuation (stop_hook_active): " + reason}
+	}
+	return verdict
 }
 
 func decodeCanonical(ctx context.Context, dialect Dialect, event Event, in Invocation) (Canonical, error) {
@@ -96,6 +129,9 @@ func checkpointWired(client string) bool {
 }
 
 func dispatch(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
+	if agentTrafficEvent(row.Event) {
+		return evaluateAgentTraffic(ctx, row, canonical, root, in)
+	}
 	if !checkpointWired(row.Client) {
 		return evaluateCommand(canonical, in)
 	}

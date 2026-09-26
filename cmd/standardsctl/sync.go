@@ -161,14 +161,15 @@ func validateForgeHost(host string) error {
 // checkout's origin remote points at, so a foreign manifest cannot redirect the ruleset.
 // The host is part of the identity: acme/widgets on gitlab.com, or a local directory
 // whose path ends in acme/widgets, never authorizes a write to acme/widgets on GitHub.
+// The remote is read through util.ReadOriginRemote, the one origin-remote reader; a
+// missing remote, a non-network remote and a read git did not answer all refuse.
 func verifyOriginIdentity(ctx context.Context, rootDir, host, owner, name string) error {
-	out, err := util.RunGit(ctx, rootDir, "config", "--get", "remote.origin.url")
-	if err != nil || strings.TrimSpace(out) == "" {
-		return fmt.Errorf("cannot verify manifest repository %s/%s: no origin remote in %s", owner, name, rootDir)
-	}
-	remote, err := util.ParseGitRemote(out)
-	if err != nil {
+	remote, err := util.ReadOriginRemote(ctx, rootDir)
+	if errors.Is(err, util.ErrGitRemoteNotNetwork) {
 		return fmt.Errorf("cannot verify manifest repository %s/%s: origin is not a %s remote: %w", owner, name, host, err)
+	}
+	if err != nil {
+		return fmt.Errorf("cannot verify manifest repository %s/%s: %w", owner, name, err)
 	}
 	if !strings.EqualFold(remote.Host, host) {
 		return fmt.Errorf("manifest declares %s/%s on %s but origin points at host %s; refusing to modify a foreign repository",

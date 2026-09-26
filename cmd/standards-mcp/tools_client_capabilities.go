@@ -11,7 +11,7 @@ import (
 
 func (s *Server) createClientCapabilitiesTool() (mcp.Tool, error) {
 	return mcp.NewReadOnlyTool("standards_client_capabilities",
-		"List versioned client configuration and lifecycle adapter capabilities from the shared registry. Definitions only: no workstation discovery, installation, native trust or runtime enforcement claim.",
+		"List versioned client configuration, lifecycle, brief-capture, return-capture, and register-enforcement capabilities. Definitions remain separate from native activation evidence.",
 		mcp.ToolInputSchema{Type: "object"}, s.clientCapabilities)
 }
 
