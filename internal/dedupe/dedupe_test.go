@@ -233,7 +233,7 @@ func TestScanRepo_Positive_RenamedLocalsStillMatch(t *testing.T) {
 	}
 }
 
-// Renaming is by declaration order, so a body that reads a different local in the same place,
+// Renaming is by first use, so a body that reads a different local in the same place,
 // a different field, or a different package-level name is still distinct.
 func TestScanRepo_Negative_DistinctBodiesStayDistinct(t *testing.T) {
 	base := "package p\n\nfunc F(x S) int {\n\ta := x.count\n\tb := x.total\n\tc := a + b\n\treturn %s\n}\n"
