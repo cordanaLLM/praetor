@@ -108,7 +108,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/pip
-          key: praetor-pip-${{ runner.os }}-${{ steps.gocache.outputs.image }}-py${{ steps.python.outputs.python-version }}-${{ hashFiles('.config/semgrep/requirements.txt') }}
+          key: praetor-pip-${{ runner.os }}-${{ steps.gocache.outputs.image }}-py${{ steps.python.outputs.python-version }}-${{ hashFiles('.config/semgrep/requirements.txt', '.config/hook-lint/requirements.txt') }}
           restore-keys: |
             praetor-pip-${{ runner.os }}-${{ steps.gocache.outputs.image }}-py${{ steps.python.outputs.python-version }}-
 
@@ -118,6 +118,17 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/praetor-semgrep"
           "$RUNNER_TEMP/praetor-semgrep/bin/python" -m pip install -r .config/semgrep/requirements.txt
           echo "$RUNNER_TEMP/praetor-semgrep/bin" >> "$GITHUB_PATH"
+
+      # make hooks-lint (part of verify-all) lints the canonical hook sources with the
+      # tools from this hash-locked lock. The venv stays off PATH so its packages cannot
+      # shadow another step's python3; PRAETOR_HOOK_LINT_BIN points the gate at it and makes a
+      # missing or mismatched tool fail the gate instead of skipping it.
+      - name: Install Pinned Hook Lint Toolchain
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/praetor-hook-lint"
+          "$RUNNER_TEMP/praetor-hook-lint/bin/python" -m pip install --require-hashes -r .config/hook-lint/requirements.txt
+          echo "PRAETOR_HOOK_LINT_BIN=$RUNNER_TEMP/praetor-hook-lint/bin" >> "$GITHUB_ENV"
 
       - name: Verify Go Formatting (gofmt)
         if: steps.filter.outputs.run_linters != 'false' || github.event_name == 'push'

@@ -20,7 +20,10 @@
     "third_party/**"
   ],
   "pip-compile": {
-    "managerFilePatterns": ["/^docs/presets/mkdocs/requirements\\.txt$/"]
+    "managerFilePatterns": [
+      "/^docs/presets/mkdocs/requirements\\.txt$/",
+      "/^\\.config/hook-lint/requirements\\.txt$/"
+    ]
   },
   "packageRules": [
     {
@@ -63,6 +66,18 @@
       "matchFileNames": ["tools/figures/**"],
       "matchPackageNames": ["react", "react-dom", "@types/react", "@types/react-*"],
       "groupName": "react tools/figures"
+    },
+    {
+      "description": "Hook lint toolchain: requirements.txt is the hashed lock the pip-compile manager compiles from requirements.in, so pip_requirements must not rewrite it on its own.",
+      "matchManagers": ["pip_requirements"],
+      "matchFileNames": [".config/hook-lint/requirements.txt"],
+      "enabled": false
+    },
+    {
+      "description": "Hook lint toolchain: black, flake8 and yamllint pins move together, the hashed lock is recompiled, and CI installs it with --require-hashes for make hooks-lint.",
+      "matchManagers": ["pip-compile"],
+      "matchFileNames": [".config/hook-lint/**"],
+      "groupName": "hook lint toolchain"
     }
   ]
 }

@@ -1,6 +1,7 @@
 # Compatible with Lefthook 2.1.14. One stdin consumer per hook is intentional.
 # Print job output and failures only: the banner, summary and success lines cost
 # about 2,000 characters of agent context per run (README "Output policy").
+---
 output:
   - execution_out
   - failure
@@ -13,7 +14,9 @@ agent-pre-tool:
 agent-checkpoint-tool:
   commands:
     checkpoint:
-      run: python3 -B .config/lefthook/scripts/checkpoint.py --event tool --json --marker
+      run: >-
+        python3 -B .config/lefthook/scripts/checkpoint.py
+        --event tool --json --marker
 agent-checkpoint-pre-edit:
   commands:
     checkpoint-scope:
@@ -26,7 +29,9 @@ agent-state-stop:
 agent-checkpoint-stop:
   commands:
     checkpoint:
-      run: python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json --marker
+      run: >-
+        python3 -B .config/lefthook/scripts/checkpoint.py
+        --event stop --json --marker
 pre-commit:
   commands:
     staged-checks:
@@ -34,7 +39,9 @@ pre-commit:
 prepare-commit-msg:
   commands:
     message-help:
-      run: python3 .config/lefthook/scripts/hooks.py prepare-commit-msg "{1}" "{2}"
+      run: >-
+        python3 .config/lefthook/scripts/hooks.py
+        prepare-commit-msg "{1}" "{2}"
 commit-msg:
   commands:
     message-policy:
@@ -53,7 +60,9 @@ post-commit:
 post-checkout:
   commands:
     refresh:
-      run: python3 .config/lefthook/scripts/hooks.py post-checkout "{1}" "{2}" "{3}"
+      run: >-
+        python3 .config/lefthook/scripts/hooks.py
+        post-checkout "{1}" "{2}" "{3}"
 post-merge:
   commands:
     refresh:
