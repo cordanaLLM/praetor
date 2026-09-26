@@ -310,7 +310,9 @@ Tracked registrations call `praetorctl` through `PATH` (ADR 0011, decision 1), n
 checkout. An engine installed before a row existed answers that row with the usage and
 exit 2. For the subagent rows that blocks every Claude `Agent`, Codex `spawn_agent` and
 Gemini `invoke_agent` launch, and keeps a Claude or Codex subagent that reaches
-`SubagentStop` running. No change to the tracked files can prevent that, because the old
+`SubagentStop` running. AGY `invoke_subagent` gets the same exit 2 and no decision object.
+AGY's exit-code handling is unverified (`internal/agenthook/dialect_agy.go`), so treat that
+launch as blocked too. No change to the tracked files can prevent that, because the old
 binary answers before any new code runs. So the engine goes first. Before a change that adds
 rows lands, install the engine from that change's tip on every workstation that runs a
 client in this repository. That engine also serves every row it replaces. After pulling,
@@ -322,6 +324,18 @@ praetorctl workstation status
 ```
 
 `status` reports the installed commit ([Workstation install and status](workstation-update.md)).
+`praetorctl hook` with no arguments prints every pair the installed engine serves. After the
+reinstall, that list names `praetorctl hook claude post-return` and
+`praetorctl hook agy pre-dispatch`.
+
+Nothing stops a downgrade. `workstation install` records the prior commit in its manifest but
+never compares it with the commit it installs (`internal/workstation/install.go`).
+`make dev-install` runs the installer from the source checkout (`go run ./cmd/standardsctl`
+in `scripts/dev_install.py`), so a checkout based before these rows runs an installer that
+lacks any guard added later. Installing from such a checkout puts back an engine that neither
+serves these rows nor skips them, and the launches above block again. Rebase or update that
+checkout before installing from it, then repeat the `praetorctl hook` check.
+
 An engine built from this change on reports a later event it does not know as a stated skip
 in the client's dialect instead of blocking. The cost is that such an engine does not
 enforce a gate added after it, so the reinstall step still applies. A known event registered
