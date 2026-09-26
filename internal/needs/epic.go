@@ -147,7 +147,7 @@ func createChildTasks(repoName string, plan *MigrationPlan, maxFuncLOC int) []fo
 
 	t4 := forge.IssueSpec{
 		Title:     fmt.Sprintf("[TASK 4/5] Gated Verification & Ed25519 Receipt: %s", repoName),
-		Body:      "## Scope\n- Run diff-aware CI verification via `praetorctl ci filter`.\n- Run `" + gating.RepoRunCommand + "` in isolated worktree.\n- Verify all 5 gates (prefetch, SCA, HISS-16, tests, receipts).\n- Sign Ed25519 Exit-0 receipt and submit fast-forward PR.",
+		Body:      "## Scope\n- Run diff-aware CI verification via `praetorctl ci filter`.\n- Run `" + gating.RepoRunCommand + "` in isolated worktree.\n- Confirm all 6 gate stages (lockfiles and prefetch, HISS ratchet, security scans, flavor conformance, race tests, receipt) report passed; a skipped stage is not a pass.\n- Sign Ed25519 Exit-0 receipt and submit fast-forward PR.",
 		State:     "open",
 		Labels:    []string{"task", "verification", "gating"},
 		DependsOn: []string{taskAnchor(3)},

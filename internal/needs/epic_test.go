@@ -169,6 +169,11 @@ func TestGeneratePreMigrationEpic_GateTaskRunsTheGateCommand(t *testing.T) {
 		if strings.Contains(task.Body, "--target") {
 			t.Errorf("task %d names the undefined --target flag: %s", i+1, task.Body)
 		}
+		// The gate has six stages and its HISS stage is the invariant ratchet; the body used
+		// to list five gates and call that stage HISS-16, the context-integrity invariant.
+		if i == 3 && (strings.Contains(task.Body, "HISS-16") || !strings.Contains(task.Body, "6 gate stages")) {
+			t.Errorf("task 4 misstates the gate stages: %s", task.Body)
+		}
 	}
 }
 
