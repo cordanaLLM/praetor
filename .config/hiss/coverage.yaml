@@ -88,10 +88,12 @@ rules:
           gaps here rather than counted as scanner coverage.
       - language: rust
         state: partial
-        mechanism: internal/hiss rules.go braceTracker
+        mechanism: internal/hiss rules.go braceTracker with the rustFnHeader grammar
         rationale: >-
-          Function length is decided by brace tracking. The other three caps have no Rust
-          check at all.
+          Function length is decided by brace tracking. A header is any visibility, including
+          pub(super) and pub(in path), followed by any run of const, async, unsafe, safe,
+          default and extern qualifiers before fn, so const, unsafe and extern "C" functions
+          are measured like any other. The other three caps have no Rust check at all.
       - language: python
         state: partial
         mechanism: internal/hiss rules.go python indentation tracker
@@ -132,18 +134,39 @@ rules:
     coverage:
       - language: go
         state: partial
-        mechanism: internal/hiss go_ast.go checkBlankAssign, with errcheck in golangci-lint
+        mechanism: >-
+          internal/hiss go_ast.go checkBlankAssign and checkAbort (os.Exit resolved through
+          go_imports.go), with errcheck in golangci-lint
         rationale: >-
           A discarded call result is reported. Discarding a non-call value is not, because it
           cannot carry an error. A bare call statement that drops an error needs type
           information this syntax scanner does not build and is held as a gap; errcheck
-          decides that case with types in the same gate.
+          decides that case with types in the same gate. The abort policy (owner decision
+          Q-014) reports panic and os.Exit, including os.Exit through an alias or dot import,
+          outside test files and main.main; os.Exit passed as a value is not a call and is not
+          reported. log.Fatal and the other wrappers that exit are held as a gap.
       - language: rust
         state: partial
-        mechanism: internal/hiss rules.go rustUnwrapCall and rustExpectCall
+        mechanism: >-
+          internal/hiss rules.go rustUnwrapCall, rustExpectCall and checkRustAbort, scoped by
+          rustTestScope
         rationale: >-
-          unwrap and expect are reported in production code with arbitrary spacing. Errors
-          discarded by other means are not decided by a line scanner.
+          unwrap and expect are reported in production code with arbitrary spacing. The abort
+          policy (owner decision Q-014) reports panic!, todo!, unimplemented!, unreachable!,
+          process::exit and process::abort outside test code and the top-level fn main. Test
+          code is a Cargo test path, a file under #![cfg(test)], or exactly the item a
+          #[cfg(test)] or #[test] attribute annotates, so code after a closed test module is
+          production code again. The assert family is held as a gap, and errors discarded by
+          other means are not decided by a line scanner.
+      - language: python
+        state: partial
+        mechanism: internal/hiss rules.go pythonBareExcept and checkPythonAbort
+        rationale: >-
+          A bare except is reported. The abort policy (owner decision Q-014) reports sys.exit
+          outside test files (pytest discovery names, conftest.py, tests/ and test/), a
+          package's __main__.py, the top-level if __name__ == "__main__" block and the
+          top-level def main. raise SystemExit and an exit imported under another name are
+          held as a gap.
   - id: HISS-09
     title: Reference Safety
     coverage:
@@ -427,21 +450,24 @@ rules:
         runner: baseline
         mechanism: >-
           Same mechanism as Go: baseline.EvaluateRatchet + CheckMonotonic over hiss.Scan, which for
-          .rs implements HISS-02 (loop/while true), HISS-04 (LOC), HISS-07 (unwrap/expect) and HISS-09
-          (unsafe without SAFETY:).
+          .rs implements HISS-02 (loop/while true), HISS-04 (LOC), HISS-07 (unwrap/expect and the
+          abort forms panic!, todo!, unimplemented!, unreachable!, process::exit and process::abort)
+          and HISS-09 (unsafe without SAFETY:).
         rationale: >-
           positive/new-unwrap-debt.rs moved V_total 0 -> 1 with '[HISS-07] Legacy .unwrap() invocation
-          bypassing error propagation'; both monotonic and ratchet failed.
-          negative/clean-propagation.rs left V_total at 0. gap/panic-macro-debt.rs is real HISS-07
-          debt -- clippy-driver -W clippy::panic prints 'warning: panic should not be present in
-          production code', and the Go scanner reports the identical shape as 'Legacy panic invo
+          bypassing error propagation'; both monotonic and ratchet failed. positive/new-panic-debt.rs
+          was a gap until the abort policy (owner decision Q-014) reached Rust; hiss.Scan now reports
+          it as '[HISS-07] panic! aborts production Rust code', so it raises V_total 0 -> 1 like the
+          unwrap case. negative/clean-propagation.rs left V_total at 0. gap/assert-macro-debt.rs is
+          real HISS-07 debt under the same decision, which refuses the assert family in library code,
+          but no Rust pattern matches assert!, so V_total does not move.
       - language: python
         state: partial
         runner: baseline
         mechanism: >-
           Same mechanism: baseline.EvaluateRatchet + CheckMonotonic over hiss.Scan, which for .py
-          implements HISS-02 (while True), HISS-04 (LOC), HISS-07 (bare except) and HISS-08
-          (eval/exec).
+          implements HISS-02 (while True), HISS-04 (LOC), HISS-07 (bare except and sys.exit outside
+          tests and the entry point) and HISS-08 (eval/exec).
         rationale: >-
           positive/new-bare-except-debt.py moved V_total 0 -> 1 with '[HISS-07] Bare except catches
           and suppresses unhandled exceptions'; both checks failed. negative/clean-explicit-except.py

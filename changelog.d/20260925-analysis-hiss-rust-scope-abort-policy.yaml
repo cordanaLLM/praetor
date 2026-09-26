@@ -1,0 +1,3 @@
+type: fixed
+title: The HISS scanner scopes Rust test code to the item a test attribute annotates, measures every Rust function header (pub(super), const, unsafe, extern "C"), and enforces the HISS-07 abort policy outside tests and entry points (panic and os.Exit in Go, panic!/todo!/unimplemented!/unreachable!/process::exit in Rust, sys.exit in Python); adopters may see new HISS-07 and HISS-04 findings
+breaking: false
