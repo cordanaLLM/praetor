@@ -96,7 +96,12 @@ generated GitHub rulesets can record `adoption.decline: [branch-ruleset]` in
 `standardsctl adopt` omits `.github/rulesets/main.json`.
 
 Both `standardsctl audit` and the MCP server's `standards_audit` tool share one
-authority path (`adopt.AuditBranchProtection`) to verify branch protection:
+authority path (`adopt.AuditBranchProtectionWithPolicy`) to verify branch protection,
+against the effective policy the audit resolved: profiles, facets and overrides joined, the
+policy adopt and sync render the ruleset from. Built-in defaults plus overrides are not a
+stand-in; every shipped archetype requires signed commits, which the defaults do not
+(`TestAuditBranchRuleset_CLI_Positive_ProfileContributesBranchProtection`,
+`TestServerAuditBranchRuleset_MCP_Positive_ProfileContributesBranchProtection`):
 
 - If `branch-ruleset` is explicitly and validly declined in `adoption.decline`,
   audit reports `[PASS] Branch protection ruleset declined by adoption.decline.`

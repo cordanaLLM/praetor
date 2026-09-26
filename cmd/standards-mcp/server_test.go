@@ -124,16 +124,22 @@ func initGitRepo(t *testing.T, dir string) {
 	}
 }
 
+// renderFixtureRuleset renders the ruleset policy declares for a fixture without workflows.
+func renderFixtureRuleset(t *testing.T, policy config.BranchProtectionPolicy) string {
+	t.Helper()
+	data, err := forge.RenderRepositoryRuleset(policy, nil)
+	if err != nil {
+		t.Fatalf("render fixture ruleset: %v", err)
+	}
+	return string(data)
+}
+
 // fixtureRuleset is the ruleset the default branch protection policy renders for a repository
 // with no workflows, which is what the fixture is. The audit compares ruleset content, so a
 // "{}" placeholder no longer passes it.
 func fixtureRuleset(t *testing.T) string {
 	t.Helper()
-	data, err := forge.RenderRepositoryRuleset(config.DefaultPolicy().BranchProtection, nil)
-	if err != nil {
-		t.Fatalf("render fixture ruleset: %v", err)
-	}
-	return string(data)
+	return renderFixtureRuleset(t, config.DefaultPolicy().BranchProtection)
 }
 
 // newFixtureRepo builds a governed repository in a temporary directory: manifest,

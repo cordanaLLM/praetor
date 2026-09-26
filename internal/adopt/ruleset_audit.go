@@ -11,19 +11,13 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
-// AuditBranchProtection evaluates branch protection ruleset requirements for rootDir
-// against the declared manifest and its recorded adoption decisions.
-func AuditBranchProtection(ctx context.Context, manifest *config.Manifest, rootDir string) (string, error) {
-	if manifest == nil {
-		return "", errors.New("[FAIL] Branch protection ruleset audit failed: manifest is required")
-	}
-	policy := config.DefaultPolicy()
-	policy.ApplyOverrides(manifest.Overrides)
-	return AuditBranchProtectionWithPolicy(ctx, manifest, rootDir, policy)
-}
-
 // AuditBranchProtectionWithPolicy evaluates branch protection ruleset requirements for rootDir
 // against the given manifest, recorded adoption decisions, and resolved policy.
+//
+// policy must be the effective policy (profiles, facets and overrides joined), the one adopt
+// and sync render the ruleset from. Built-in defaults plus overrides is not a stand-in: every
+// shipped archetype requires signed commits, which the defaults do not, so a ruleset adopt
+// wrote for such a profile would be reported as not matching the declared policy.
 //
 // A present ruleset must be the one the policy renders for the repository's required status
 // checks (forge.ValidateRepositoryRuleset). The audit used to check only that the file existed,

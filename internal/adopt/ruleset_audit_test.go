@@ -18,7 +18,7 @@ func TestAuditBranchProtection_Positive(t *testing.T) {
 		writeAuditRuleset(t, root, renderAuditRuleset(t, config.DefaultPolicy().BranchProtection, nil))
 
 		manifest := &config.Manifest{}
-		summary, err := AuditBranchProtection(t.Context(), manifest, root)
+		summary, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, root, config.DefaultPolicy())
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -35,7 +35,7 @@ func TestAuditBranchProtection_Positive(t *testing.T) {
 				Decline: []string{"branch-ruleset"},
 			},
 		}
-		summary, err := AuditBranchProtection(t.Context(), manifest, root)
+		summary, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, root, config.DefaultPolicy())
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -59,7 +59,7 @@ func TestAuditBranchProtection_Positive(t *testing.T) {
 				Decline: []string{"branch-ruleset"},
 			},
 		}
-		summary, err := AuditBranchProtection(t.Context(), manifest, root)
+		summary, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, root, config.DefaultPolicy())
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -74,7 +74,7 @@ func TestAuditBranchProtection_Negative(t *testing.T) {
 	t.Run("ruleset required and missing fails closed", func(t *testing.T) {
 		root := t.TempDir()
 		manifest := &config.Manifest{}
-		_, err := AuditBranchProtection(t.Context(), manifest, root)
+		_, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, root, config.DefaultPolicy())
 		if err == nil {
 			t.Fatal("expected failure for missing ruleset without decline")
 		}
@@ -91,7 +91,7 @@ func TestAuditBranchProtection_Negative(t *testing.T) {
 				Decline: []string{"unknown-artefact-name"},
 			},
 		}
-		_, err := AuditBranchProtection(t.Context(), manifest, root)
+		_, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, root, config.DefaultPolicy())
 		if err == nil {
 			t.Fatal("expected failure for unknown decline")
 		}
@@ -108,7 +108,7 @@ func TestAuditBranchProtection_Negative(t *testing.T) {
 				Decline: []string{"manifest"},
 			},
 		}
-		_, err := AuditBranchProtection(t.Context(), manifest, root)
+		_, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, root, config.DefaultPolicy())
 		if err == nil {
 			t.Fatal("expected failure for mandatory decline")
 		}
@@ -129,7 +129,7 @@ func TestAuditBranchProtection_Negative(t *testing.T) {
 				Decline: declines,
 			},
 		}
-		_, err := AuditBranchProtection(t.Context(), manifest, root)
+		_, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, root, config.DefaultPolicy())
 		if err == nil {
 			t.Fatal("expected failure for oversized decline list")
 		}
@@ -141,7 +141,7 @@ func TestAuditBranchProtection_Negative(t *testing.T) {
 	// Case 5: Nil manifest fails closed
 	t.Run("nil manifest fails closed", func(t *testing.T) {
 		root := t.TempDir()
-		_, err := AuditBranchProtection(t.Context(), nil, root)
+		_, err := AuditBranchProtectionWithPolicy(t.Context(), nil, root, config.DefaultPolicy())
 		if err == nil {
 			t.Fatal("expected failure for nil manifest")
 		}
@@ -153,7 +153,7 @@ func TestAuditBranchProtection_Negative(t *testing.T) {
 	// Case 6: Empty root dir fails closed
 	t.Run("empty root fails closed", func(t *testing.T) {
 		manifest := &config.Manifest{}
-		_, err := AuditBranchProtection(t.Context(), manifest, "")
+		_, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, "", config.DefaultPolicy())
 		if err == nil {
 			t.Fatal("expected failure for empty root")
 		}
@@ -203,7 +203,7 @@ func TestAuditBranchProtection_Boundary(t *testing.T) {
 				Decline: []string{"  BRANCH-RULESET  "},
 			},
 		}
-		summary, err := AuditBranchProtection(t.Context(), manifest, root)
+		summary, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, root, config.DefaultPolicy())
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -220,7 +220,7 @@ func TestAuditBranchProtection_Boundary(t *testing.T) {
 				Decline: []string{},
 			},
 		}
-		_, err := AuditBranchProtection(t.Context(), manifest, root)
+		_, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, root, config.DefaultPolicy())
 		if err == nil {
 			t.Fatal("expected failure for missing ruleset with empty decline list")
 		}
@@ -235,7 +235,7 @@ func TestAuditBranchProtection_Boundary(t *testing.T) {
 		manifest := &config.Manifest{
 			Adoption: nil,
 		}
-		_, err := AuditBranchProtection(t.Context(), manifest, root)
+		_, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, root, config.DefaultPolicy())
 		if err == nil {
 			t.Fatal("expected failure for missing ruleset with nil adoption policy")
 		}

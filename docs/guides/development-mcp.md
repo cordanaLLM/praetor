@@ -282,7 +282,9 @@ the `Repository: <owner>/<name>` line from the manifest's `repository` block
 The `standards_audit` tool executes the same gates as CLI `standardsctl audit`.
 Both tools share the same authority implementations for artifact checks. When
 verifying branch protection rulesets, `standards_audit` consults
-`adopt.AuditBranchProtection`. If `.standards.yaml` records an accepted
+`adopt.AuditBranchProtectionWithPolicy` with the effective policy it resolved
+(profiles, facets and overrides joined), the policy adopt and sync render the ruleset
+from. If `.standards.yaml` records an accepted
 `adoption.decline: [branch-ruleset]`, `standards_audit` reports a verified pass
 (`[PASS] Branch protection ruleset declined by adoption.decline.`) rather than
 failing on the absent `.github/rulesets/main.json`. When not declined and required
