@@ -1453,3 +1453,100 @@ func TestDispatchCommand_HarvestFleetOutput(t *testing.T) {
 		}
 	}
 }
+
+func TestDispatchCommand_StateTaskArchive_Positive(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := util.RunGit(context.Background(), dir, "init"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := util.RunGit(context.Background(), dir, "commit", "--allow-empty", "-m", "init"); err != nil {
+		t.Fatal(err)
+	}
+	outSha, _ := util.RunGit(context.Background(), dir, "rev-parse", "HEAD")
+	sha := strings.TrimSpace(outSha)
+
+	workingdir := filepath.Join(dir, ".workingdir")
+	if err := os.Mkdir(workingdir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	openFile := filepath.Join(workingdir, "OPEN.md")
+	if err := os.WriteFile(openFile, []byte("- [x] done task 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("state", []string{"task", "archive", "--dir=" + dir})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "[PASS] Archived 1 completed tasks from OPEN.md to BACKLOG.md")
+
+	backlogFile := filepath.Join(workingdir, "BACKLOG.md")
+	b, _ := os.ReadFile(backlogFile)
+	mustContain(t, string(b), fmt.Sprintf("commit `%s`", sha), "done task 1")
+}
+
+func TestDispatchCommand_StateTaskArchive_Negative(t *testing.T) {
+	// bad selector
+	dir := t.TempDir()
+	os.Mkdir(dir+"/.workingdir", 0755)
+	os.WriteFile(dir+"/.workingdir/OPEN.md", []byte("- [ ] some task\n"), 0644)
+	_, err := captureStdout(t, func() error {
+		return dispatchCommand("state", []string{"task", "complete", "bad-selector", "--dir=" + dir})
+	})
+	if err == nil {
+		t.Fatal("expected error for bad selector")
+	}
+	mustErrContain(t, err, "no pending task matched selector")
+
+	// missing dir
+	_, err = captureStdout(t, func() error {
+		return dispatchCommand("state", []string{"task", "complete", "1", "--dir=/does/not/exist/999"})
+	})
+	if err == nil {
+		t.Fatal("expected error for missing dir")
+	}
+	mustErrContain(t, err, "no such file or directory")
+
+	// malformed flag
+	_, err = captureStdout(t, func() error {
+		return dispatchCommand("state", []string{"task", "archive", "--unknown=foo"})
+	})
+	if err == nil {
+		t.Fatal("expected error for malformed flag")
+	}
+	mustErrContain(t, err, "flag provided but not defined")
+}
+
+func TestDispatchCommand_StateTaskArchive_Boundary(t *testing.T) {
+	dir := t.TempDir()
+	workingdir := filepath.Join(dir, ".workingdir")
+	if err := os.Mkdir(workingdir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// no OPEN.md yet
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("state", []string{"task", "archive", "--dir=" + dir})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "[PASS] Archived 0 completed tasks")
+
+	// Create OPEN.md with one completed task, but no git
+	if err := os.WriteFile(filepath.Join(workingdir, "OPEN.md"), []byte("- [x] done task 2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err = captureStdout(t, func() error {
+		return dispatchCommand("state", []string{"task", "archive", "--dir=" + dir})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "[PASS] Archived 1 completed tasks")
+
+	backlogFile := filepath.Join(workingdir, "BACKLOG.md")
+	b, _ := os.ReadFile(backlogFile)
+	mustContain(t, string(b), "commit `local`", "done task 2")
+}
