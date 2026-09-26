@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # cordanaLLM/praetor Go development container base
-FROM golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125
+FROM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
 
 LABEL org.opencontainers.image.title="cordanaLLM/praetor dev container" \
       org.opencontainers.image.description="Go development environment for cordanaLLM/praetor" \
@@ -16,8 +16,8 @@ RUN apk update && \
       curl=8.22.0-r0 \
       sudo=1.9.17_p2-r1 \
       shadow=4.18.0-r1 \
-      ca-certificates=20260611-r0 \
-      tzdata=2026c-r0 \
+      ca-certificates=20260909-r0 \
+      tzdata=2026d-r0 \
       openssh-client-default=10.3_p1-r1 \
       tar=1.35-r5 \
       gcc=15.2.0-r5 \

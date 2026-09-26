@@ -45,7 +45,7 @@ jobs:
   skipped:
     name: Platform Neutrality skipped (set PRAETOR_FORK_PORTABILITY=enabled to run)
     if: "!(github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 2
     steps:
       - name: State Why The Matrix Did Not Run
@@ -66,13 +66,20 @@ jobs:
       # One platform failing must never cancel the others. Which platforms are broken is
       # the entire output of this job; cancelling the rest discards it.
       fail-fast: false
+      # Explicit image labels, not the -latest aliases, for the reason
+      # internal/config/hierarchy.go states for the Darwin tier: a floating label
+      # retargets the matrix the day GitHub promotes the next image, and a
+      # portability matrix that silently changes platform is not a measurement.
+      # macos-latest already resolves to arm64 macOS 26 and windows-latest to
+      # Windows Server 2025 (actions/runner-images README, 2026-09-19), so these
+      # name what already runs.
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-26.04
             name: Linux
-          - os: macos-latest
+          - os: macos-26
             name: macOS
-          - os: windows-latest
+          - os: windows-2025
             name: Windows
 
     steps:
@@ -97,7 +104,7 @@ jobs:
         id: python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: '3.13'
 
       # Build before test: a compile error on one OS is the cheapest portability defect to
       # find and the one most likely to be a build-constraint or path-separator mistake.

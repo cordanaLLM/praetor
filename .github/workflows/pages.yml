@@ -32,7 +32,7 @@ jobs:
     # .standards.yaml identity; internal/forge/workflow_guard_test.go holds the two equal.
     name: Build Documentation Site (canonical repository only)
     if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - name: Checkout Source Code
@@ -43,7 +43,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: '3.12'
 
       # Pinned, not floating. Two jobs build this same mkdocs.yml: this one, and the
       # "Documentation Integrity Audit" step in ci.yml. They do not resolve one tree. That
@@ -74,7 +74,7 @@ jobs:
     name: Deploy to GitHub Pages (canonical repository only)
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     environment:
       name: github-pages

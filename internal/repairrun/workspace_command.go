@@ -51,9 +51,27 @@ func runGit(ctx context.Context, dir string, limit int, args ...string) ([]byte,
 // properties: the child still gets a minimal environment it cannot escape through PATH, and the
 // binary it runs is the one the operator actually has.
 func gitBinary() (string, error) {
-	resolved, err := exec.LookPath("git")
+	return pathBinary("git")
+}
+
+// goBinary resolves the go executable once, from the caller's PATH, for the same reason
+// gitBinary does: a fixed "/usr/bin/go" is a distro assumption, not a fact. CI toolchains
+// installed by actions/setup-go live under a hosted tool cache (e.g.
+// /opt/hostedtoolcache/go/<version>/x64/bin/go), not at /usr/bin/go, and a workstation's go
+// can live anywhere the operator put it. Resolving through PATH is the one place that has to
+// know where go actually is; callers that also need to sandbox it derive GOROOT from this
+// same binary rather than guessing a second path.
+func goBinary() (string, error) {
+	return pathBinary("go")
+}
+
+// pathBinary is the one PATH resolution gitBinary and goBinary share (HISS-19): it returns
+// the absolute path handed to a child that runs with a scrubbed environment, and names the
+// missing tool when the caller's PATH has none.
+func pathBinary(name string) (string, error) {
+	resolved, err := exec.LookPath(name)
 	if err != nil {
-		return "", fmt.Errorf("repairrun requires git on PATH: %w", err)
+		return "", fmt.Errorf("repairrun requires %s on PATH: %w", name, err)
 	}
 	return resolved, nil
 }

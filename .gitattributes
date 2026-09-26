@@ -69,6 +69,15 @@ tools/markdownlint/* text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
 
+# internal/flavor's TestScaffoldedGolangciConfigEqualsTheShippedTemplate byte-compares
+# templates/go/.golangci.yml.tmpl against the LF string literal in defaultTemplateContent
+# (internal/flavor/scaffold.go), so under "* text=auto" alone a Windows checkout writes the
+# template CRLF and the equality fails on that leg only -- a gate that cannot run on a
+# covered platform is not a passing gate (HISS-21). Every file under templates/ is a text
+# body an adopter receives verbatim, so the pin covers the directory rather than the one
+# file today's gate reads. Same fix, same reason as *.go and .devcontainer/* above (#135).
+templates/** text eol=lf
+
 # The CRLF fixtures assert that the line-based matchers are not silenced by a Windows
 # checkout. Two attributes are needed and they defend different things.
 #

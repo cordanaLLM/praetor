@@ -16,8 +16,23 @@ func TestResolveRunner_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected darwin/arm64 resolution to succeed: %v", err)
 	}
-	if spec.Type != "github-hosted" || len(spec.RunsOn) == 0 || spec.RunsOn[0] != "macos-14" {
+	if spec.Type != "github-hosted" || len(spec.RunsOn) == 0 || spec.RunsOn[0] != "macos-26" {
 		t.Errorf("unexpected darwin/arm64 spec: %+v", spec)
+	}
+
+	// Darwin amd64 -> github-hosted. Asserted because the default moved from macos-13,
+	// which actions/runner-images no longer publishes at all, to macos-26-intel. The
+	// audit path (cmd/standardsctl/audit.go) only checks that Type and RunsOn are
+	// non-empty, so it would have passed on the unresolvable label too.
+	intelSpec, err := ResolveRunner(&policy, "darwin", "amd64", false)
+	if err != nil {
+		t.Fatalf("expected darwin/amd64 resolution to succeed: %v", err)
+	}
+	if intelSpec.Type != "github-hosted" || len(intelSpec.RunsOn) == 0 || intelSpec.RunsOn[0] != "macos-26-intel" {
+		t.Errorf("unexpected darwin/amd64 spec: %+v", intelSpec)
+	}
+	if !intelSpec.Ephemeral {
+		t.Errorf("darwin/amd64 runner is not ephemeral: %+v", intelSpec)
 	}
 
 	// Linux amd64 -> self-hosted-arc

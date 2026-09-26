@@ -82,7 +82,7 @@ runners:
     darwin/arm64:
       type: "github-hosted"
       runs_on:
-        - "macos-14"
+        - "macos-26"
       ephemeral: true
 ```
 
@@ -92,4 +92,9 @@ Fleet defaults merge first, then the organisation file for the organisation bein
 
 - The boundary and its class list: decision Q-031 in the private questions ledger.
 - The reverse-dogfooding topology that names the engine and the operational fork: ADR-0003.
-- The runner matrix tiers this configuration feeds: ADR-0006.
+- The runner matrix tiers this configuration feeds: ADR-0006. Its Tier 4 text still names
+  `macos-14` and `macos-13` as the Darwin defaults. Both are stale: `macos-14` carries a
+  deprecated badge in actions/runner-images and `macos-13` is no longer published, so the
+  defaults moved to `macos-26` and `macos-26-intel` (`internal/config/hierarchy.go`, which
+  cites the evidence). ADR-0006 is Accepted and therefore frozen; restating the tier needs
+  a superseding ADR, not an edit. The tiering decision itself is unaffected.

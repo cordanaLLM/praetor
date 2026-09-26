@@ -1,16 +1,39 @@
+# NOTHING READS THIS FILE. No go:embed names templates/, and the one non-test
+# reader, forge.AuditGoToolchain (internal/forge/toolchain_checks.go), opens
+# only the Dockerfile templates to check their Go pins against go.mod. The other
+# consumers are internal/forge/go_cache_checks_test.go, which lints the
+# directory, and docs/guides/ci-caching.md. Every file an
+# adopter receives comes from defaultTemplateContent in
+# internal/flavor/scaffold.go, so editing this file changes nothing for
+# anybody. That is issue #336, which owns the decision to embed templates/ or
+# delete it; do not treat this header as a claim that the decision was made.
+#
+# Until it is made, the body below must stay equal to the ".golangci.yml" case of
+# defaultTemplateContent. praetorctl dedupe scan compares Go functions and cannot
+# see a YAML/Go-string pair, so the equality is enforced instead by
+# internal/flavor's TestScaffoldedGolangciConfigEqualsTheShippedTemplate, which
+# byte-compares everything below this header block against the scaffolded file.
+#
+# The "version" key is mandatory from golangci-lint v2 on. A configuration
+# without it is rejected with "unsupported version of the configuration"
+# before any linter runs. scaffold.go has emitted version "2" since before this
+# branch, so no adopter ever received the v1 form this file used to carry.
+version: "2"
 run:
-  timeout: 5m
-  tests: true
-
+  timeout: 10m
 linters:
+  default: none
   enable:
     - govet
     - staticcheck
     - errcheck
-    - ineffassign
+    - errorlint
+    - nilerr
     - unused
-
-issues:
-  exclude-use-default: false
-  max-issues-per-linter: 0
-  max-same-issues: 0
+    - ineffassign
+    - bodyclose
+    - noctx
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 # Stage 1: Hermetic builder
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -9,7 +9,7 @@ ARG VERSION=v1.0.0
 WORKDIR /workspace
 
 # Install security certificates and git
-RUN apk add --no-cache ca-certificates=20260611-r0 git=2.54.0-r0
+RUN apk add --no-cache ca-certificates=20260909-r0 git=2.54.0-r0
 
 # Cache dependencies
 COPY go.mod go.sum ./
@@ -25,7 +25,13 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     -o /out/praetorctl ./cmd/standardsctl
 
 # Stage 2: Distroless minimal runtime (< 30MB, zero shell, non-root)
-FROM gcr.io/distroless/static-debian12:nonroot
+#
+# ADR-0005 decision 2 still reads `gcr.io/distroless/static-debian12:nonroot`; the line
+# below supersedes it. The ADR is Accepted and therefore frozen, so the contradiction is
+# recorded here rather than edited there; a reader of ADR-0005 alone would otherwise have
+# nothing telling them it is stale. Only the Debian release moved. Decision 1 already
+# derives the builder's Go version from go.mod, so the builder above is not a conflict.
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
 
 LABEL org.opencontainers.image.title="praetor" \
       org.opencontainers.image.description="Autonomous Fleet Governance & Workstation Sentinel Engine" \

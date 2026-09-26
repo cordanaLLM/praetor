@@ -59,9 +59,14 @@ reason and states where the coverage is recovered.
 
 ## Enforcement in this repository
 
-`.github/workflows/portability.yml` runs the matrix on `ubuntu-latest`, `macos-latest` and
-`windows-latest` with `fail-fast: false`, compiling, vetting and testing every package and then
+`.github/workflows/portability.yml` runs the matrix on `ubuntu-26.04`, `macos-26` and
+`windows-2025` with `fail-fast: false`, compiling, vetting and testing every package and then
 running the harness self-tests through `scripts/portability_selftest.py`.
+
+Every label is an explicit image, never a `-latest` alias. An alias retargets the matrix the day
+GitHub promotes the next image, which changes what the platform-neutrality claim was measured
+against without changing a line of this repository — the same argument
+`internal/config/hierarchy.go` makes for the Darwin runner defaults.
 
 Every leg then runs `node tools/markdownlint/verify.mjs --self-test`. That runner is a
 Go-embedded asset which adoption copies into every `docs:seo-portal` repository's `verify-all`,

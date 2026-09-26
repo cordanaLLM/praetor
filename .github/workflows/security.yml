@@ -26,7 +26,7 @@ jobs:
     # The name is a required status context and therefore carries no skip reason.
     name: Go Vulnerability & AST Security Scan
     if: github.event_name != 'schedule' || github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
 
     steps:

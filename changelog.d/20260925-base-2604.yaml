@@ -1,0 +1,4 @@
+type: changed
+title: "Move CI runners, the devcontainer base and the container images to the Ubuntu 26.04 era, and move adopted repositories with them: the emitted documentation governance workflow runs on ubuntu-26.04, scaffolded rustfmt.toml declares edition 2024, the scaffolded Dockerfile runtime is a digest-pinned distroless static-debian13, and the Darwin runner defaults become macos-26 and macos-26-intel; repair verification now resolves go from PATH, symlinked distro and Homebrew installs included, instead of assuming /usr/bin/go"
+issue: "#376"
+breaking: true

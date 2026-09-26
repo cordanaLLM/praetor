@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import sys
 import tempfile
@@ -26,8 +27,13 @@ class RepairQueueTests(unittest.TestCase):
         self.state = self.root / "state"
         self.state.mkdir(mode=0o700)
         self.config = self.root / "queue.json"
-        self.values = {"version": 1, "runner_binary": "/usr/bin/true",
-                       "runner_sha256": repair.schedule.runner_digest(Path("/usr/bin/true")),
+        # A private copy, not /usr/bin/true directly: runner_digest's O_NOFOLLOW open
+        # refuses a symlink, and some platform images ship /usr/bin/true as one.
+        self.runner_binary = self.root / "true"
+        shutil.copy("/usr/bin/true", self.runner_binary)
+        self.runner_binary.chmod(0o755)
+        self.values = {"version": 1, "runner_binary": str(self.runner_binary),
+                       "runner_sha256": repair.schedule.runner_digest(self.runner_binary),
                        "schedule_state_dir": str(self.state), "repair_config": str(self.policy),
                        "repair_config_sha256": hashlib.sha256(self.policy.read_bytes()).hexdigest()}
         self.write(self.config, self.values)

@@ -15,6 +15,14 @@ inputs:
     description: Go toolchain version, included in both keys so a toolchain bump cannot reuse objects.
     required: true
 
+outputs:
+  image:
+    description: >
+      The runner image the caches were keyed on, "unknown" where the runner exports no
+      ImageOS. Exposed so a workflow keying a non-Go cache on the runner image reads this
+      value instead of resolving ImageOS a second time.
+    value: ${{ steps.directories.outputs.image }}
+
 runs:
   using: composite
   steps:
@@ -25,6 +33,16 @@ runs:
         set -euo pipefail
         echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
         echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+        # Appended to runner.os, never substituted for it. runner.os is the literal
+        # "Linux" on every Ubuntu image, so it cannot separate 24.04 from 26.04; ImageOS
+        # ("ubuntu24", "ubuntu26", "macos26", "win25") is what the runner exports for
+        # exactly that, and it is the field upstream setup-go puts in its own key as
+        # linuxVersion (src/cache-restore.ts: platform from RUNNER_OS, then linuxVersion
+        # from ImageOS on Linux only). Without ImageOS an image bump keeps restoring
+        # objects built against the previous toolchain and C library; without runner.os a
+        # runner that exports no ImageOS collapses to the literal "unknown", and a
+        # self-hosted Linux and a self-hosted Windows box would then share one key.
+        echo "image=${ImageOS:-unknown}" >> "$GITHUB_OUTPUT"
 
     # Keyed on go.sum alone: the module set is a pure function of it, so every job wants the
     # same entry and sharing is correct. The restore-key lets a changed go.sum start from the
@@ -33,9 +51,9 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ steps.directories.outputs.modules }}
-        key: praetor-gomod-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ hashFiles('**/go.sum') }}
+        key: praetor-gomod-${{ runner.os }}-${{ steps.directories.outputs.image }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ hashFiles('**/go.sum') }}
         restore-keys: |
-          praetor-gomod-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-
+          praetor-gomod-${{ runner.os }}-${{ steps.directories.outputs.image }}-${{ runner.arch }}-go${{ inputs.go-version }}-
 
     # The commit SHA is in the key on purpose. Without it the key is stable, the restore is an
     # exact hit, and actions/cache then skips the save -- so the entry freezes at whatever the
@@ -45,7 +63,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ steps.directories.outputs.build }}
-        key: praetor-gobuild-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+        key: praetor-gobuild-${{ runner.os }}-${{ steps.directories.outputs.image }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
         restore-keys: |
-          praetor-gobuild-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-${{ hashFiles('**/go.sum') }}-
-          praetor-gobuild-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-
+          praetor-gobuild-${{ runner.os }}-${{ steps.directories.outputs.image }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-${{ hashFiles('**/go.sum') }}-
+          praetor-gobuild-${{ runner.os }}-${{ steps.directories.outputs.image }}-${{ runner.arch }}-go${{ inputs.go-version }}-${{ inputs.job }}-
