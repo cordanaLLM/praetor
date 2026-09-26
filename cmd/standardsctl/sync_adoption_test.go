@@ -29,7 +29,13 @@ func TestAdoptionAndSyncAgreeOnPolicyAndRepositoryChecks(t *testing.T) {
 				t.Fatalf("adopt: %v", err)
 			}
 			before := readFixtureFile(t, f.dir, ".github/rulesets/main.json")
-			if hasType(rulesetTypes(t, f.dir), "required_status_checks") != workflows {
+			// A repository that brings no workflow receives its flavor's CI workflow during
+			// adoption, so the ruleset must require that job too: a workflow carrying real
+			// jobs, where adoption used to scaffold a one-line comment (BUG-028).
+			if !workflows && !strings.Contains(before, `"context": "test"`) {
+				t.Fatalf("adoption ruleset omits the scaffolded CI job:\n%s", before)
+			}
+			if !hasType(rulesetTypes(t, f.dir), "required_status_checks") {
 				t.Fatalf("adoption required checks do not match repository workflows:\n%s", before)
 			}
 			if !hasType(rulesetTypes(t, f.dir), "required_signatures") || !strings.Contains(before, `"required_approving_review_count": 1`) {
