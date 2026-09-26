@@ -39,6 +39,19 @@ type CapabilityReport struct {
 	Clients         []Capability `json:"clients"`
 }
 
+// lifecycleDefinitions are the tracked files that register a client's tool guard,
+// checkpoint and stop rows. AGY has none: its plugin registers only the subagent brief row,
+// so its lifecycle stays unsupported although the engine serves agy pre-tool and stop.
+var lifecycleDefinitions = map[Client][]string{
+	Codex: {".codex/hooks.json"}, Claude: {".claude/settings.json"}, Gemini: {".gemini/settings.json"},
+}
+
+// trafficDefinitions are the tracked files that register a client's subagent text rows.
+var trafficDefinitions = map[Client][]string{
+	Codex: {".codex/hooks.json"}, Claude: {".claude/settings.json"}, Gemini: {".gemini/settings.json"},
+	AGY: {".agents/plugins/praetor/hooks.json"},
+}
+
 func Capabilities(ctx context.Context) (*CapabilityReport, error) {
 	if ctx == nil {
 		return nil, errors.New("capabilities requires context")
@@ -48,16 +61,17 @@ func Capabilities(ctx context.Context) (*CapabilityReport, error) {
 		return nil, ctx.Err()
 	default:
 	}
-	paths := map[Client][]string{Codex: {".codex/hooks.json"}, Claude: {".claude/settings.json"}, Gemini: {".gemini/settings.json"}, AGY: {".agents/plugins/praetor/hooks.json"}}
 	items := make([]Capability, 0, len(adapters))
 	for client, spec := range adapters {
 		unavailable := TrafficCapability{State: "unenforceable", DefinitionPaths: []string{}, Activation: "unverified"}
 		item := Capability{Client: client, Mode: spec.mode, RelativePath: spec.path, Documentation: spec.documentation,
 			Lifecycle:    LifecycleCapability{State: "unsupported", DefinitionPaths: []string{}, Activation: "unverified"},
 			BriefCapture: unavailable, ReturnCapture: unavailable, RegisterGate: unavailable}
-		if defined, ok := paths[client]; ok {
+		if defined, ok := lifecycleDefinitions[client]; ok {
 			item.Lifecycle.State = "adapter-defined"
 			item.Lifecycle.DefinitionPaths = slices.Clone(defined)
+		}
+		if defined, ok := trafficDefinitions[client]; ok {
 			item.BriefCapture = trafficCapability("adapter-defined", defined)
 			if client == Codex || client == Claude {
 				item.ReturnCapture = trafficCapability("adapter-defined", defined)

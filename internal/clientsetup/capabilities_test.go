@@ -23,11 +23,15 @@ func TestCapabilitiesInventory(t *testing.T) {
 			t.Fatalf("activation claimed: %+v", item)
 		}
 		if item.Client == AGY {
-			if item.Mode != "merge" || item.RelativePath != ".agents/mcp_config.json" || item.Lifecycle.State != "adapter-defined" || !slices.Equal(item.Lifecycle.DefinitionPaths, []string{".agents/plugins/praetor/hooks.json"}) {
+			if item.Mode != "merge" || item.RelativePath != ".agents/mcp_config.json" {
 				t.Fatalf("agy merge adapter not declared: %+v", item)
 			}
-			if item.BriefCapture.State != "adapter-defined" || item.ReturnCapture.State != "unenforceable" || item.RegisterGate.State != "unenforceable" {
-				t.Fatalf("agy text boundary overstated: %+v", item)
+			if item.Lifecycle.State != "unsupported" || len(item.Lifecycle.DefinitionPaths) != 0 {
+				t.Fatalf("agy lifecycle claimed, but no tracked file registers agy pre-tool or stop: %+v", item)
+			}
+			if item.BriefCapture.State != "adapter-defined" || !slices.Equal(item.BriefCapture.DefinitionPaths, []string{".agents/plugins/praetor/hooks.json"}) ||
+				item.ReturnCapture.State != "unenforceable" || item.RegisterGate.State != "unenforceable" {
+				t.Fatalf("agy text boundary misstated: %+v", item)
 			}
 		} else if item.Client == Codex {
 			if item.Lifecycle.State != "adapter-defined" || len(item.Lifecycle.DefinitionPaths) != 1 {

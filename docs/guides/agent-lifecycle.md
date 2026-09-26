@@ -33,14 +33,14 @@ lifecycle configuration and runtime qualification are separate:
 
 | Client | MCP projection | Native lifecycle definition | Events and current qualification |
 | --- | --- | --- | --- |
-| Codex | native command/export | `.codex/hooks.json` | `spawn_agent` briefs gated and `SubagentStop` bodies captured; no documented spawn-to-agent correlation key, so task-register enforcement on returns is unenforceable |
-| Claude Code | merge `.mcp.json` | `.claude/settings.json` | Background `Agent` briefs are correlated to documented `SubagentHandback` reports across isolated worktrees; delivery is committed only after tool success, failed launches and handbacks are released, legacy `SubagentStop` returns of Praetor-owned agents remain covered, internal and unowned agents are skipped rather than held, and session activation remains unverified |
-| Gemini CLI | merge `.gemini/settings.json` | `.gemini/settings.json` | `invoke_agent` briefs are gated; the exact returned-report field lacks documented or recorded proof, so return capture and register enforcement remain unenforceable |
+| Codex | native command/export | `.codex/hooks.json` | Bash `PreToolUse`, `PostToolUse`, `Stop`; configuration and process behavior tested, session activation requires trust/readback. Subagent text: `spawn_agent` briefs gated and `SubagentStop` bodies captured; no documented spawn-to-agent correlation key, so task-register enforcement on returns is unenforceable |
+| Claude Code | merge `.mcp.json` | `.claude/settings.json` | Bash command guard and `Edit`/`Write` batch-scope `PreToolUse`, all `PostToolUse`, `Stop`; configuration and process behavior tested, session activation requires approval/reload/readback. Subagent text: background `Agent` briefs are correlated to documented `SubagentHandback` reports across isolated worktrees; delivery is committed only after tool success, failed launches and handbacks are released, legacy `SubagentStop` returns of Praetor-owned agents remain covered, internal and unowned agents are skipped rather than held, and session activation remains unverified |
+| Gemini CLI | merge `.gemini/settings.json` | `.gemini/settings.json` | `run_shell_command` command guard and `replace`/`write_file` batch-scope `BeforeTool`, all `AfterTool`, `AfterAgent`; configuration and process behavior tested, session activation requires approval/reload/readback. Subagent text: `invoke_agent` briefs are gated; the exact returned-report field lacks documented or recorded proof, so return capture and register enforcement remain unenforceable |
 | OpenCode v1 | merge `opencode.json` | not implemented | Projection and conflict tests only |
 | Continue | merge `.continue/mcpServers/praetor.yaml` | not implemented | Projection and conflict tests only |
 | Cline | export JSON | not implemented | Export and conflict tests only |
 | Kilo | export JSON | not implemented | Export and conflict tests only |
-| AGY | native command/export | `.agents/plugins/praetor/hooks.json` | `invoke_subagent` briefs gated; public payload has no return body, so return capture and complete register enforcement are unenforceable |
+| AGY | native command/export | not registered | Lifecycle `unsupported`: the engine serves `agy pre-tool` and `agy stop`, but no tracked file registers them. Subagent text: `.agents/plugins/praetor/hooks.json` gates `invoke_subagent` briefs; public payload has no return body, so return capture and complete register enforcement are unenforceable |
 
 All three native adapters invoke the shared `command_guard.py` and
 `checkpoint.py`; Codex reaches the guard through its compatibility wrapper. The command
