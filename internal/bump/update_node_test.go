@@ -5,6 +5,7 @@
 package bump
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,17 +110,20 @@ func TestApplyNodeUpdate_Negative_PnpmFailureWithOutputIsAnError(t *testing.T) {
 	}
 }
 
-// A range that is not a single version, an undeclared package and a target that is not a
-// version are refused, and the manifest is left as it was.
+// A range that is not a single version, a strict comparator that would exclude its own
+// target, an undeclared package and a target that is not a version are refused, and the
+// manifest is left as it was.
 func TestUpdatePackageManifest_Negative_RefusesWhatItCannotRaise(t *testing.T) {
 	cases := map[string]struct{ body, pkg, target string }{
-		"workspace protocol": {`{"dependencies":{"lib":"workspace:^1.0.0"}}`, "lib", "2.0.0"},
-		"x-range":            {`{"dependencies":{"lib":"1.x"}}`, "lib", "2.0.0"},
-		"compound range":     {`{"dependencies":{"lib":">=1.0.0 <2.0.0"}}`, "lib", "2.0.0"},
-		"not declared":       {`{"dependencies":{"lib":"^1.0.0"}}`, "other", "2.0.0"},
-		"peer only":          {`{"peerDependencies":{"lib":"^1.0.0"}}`, "lib", "2.0.0"},
-		"target is a tag":    {`{"dependencies":{"lib":"^1.0.0"}}`, "lib", "latest"},
-		"invalid json":       {`{"dependencies":{"lib":"^1.0.0"}`, "lib", "2.0.0"},
+		"workspace protocol":  {`{"dependencies":{"lib":"workspace:^1.0.0"}}`, "lib", "2.0.0"},
+		"x-range":             {`{"dependencies":{"lib":"1.x"}}`, "lib", "2.0.0"},
+		"compound range":      {`{"dependencies":{"lib":">=1.0.0 <2.0.0"}}`, "lib", "2.0.0"},
+		"strict greater than": {`{"dependencies":{"lib":">1.0.0"}}`, "lib", "2.1.0"},
+		"strict less than":    {`{"dependencies":{"lib":"<2.0.0"}}`, "lib", "2.1.0"},
+		"not declared":        {`{"dependencies":{"lib":"^1.0.0"}}`, "other", "2.0.0"},
+		"peer only":           {`{"peerDependencies":{"lib":"^1.0.0"}}`, "lib", "2.0.0"},
+		"target is a tag":     {`{"dependencies":{"lib":"^1.0.0"}}`, "lib", "latest"},
+		"invalid json":        {`{"dependencies":{"lib":"^1.0.0"}`, "lib", "2.0.0"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -146,6 +150,46 @@ func TestUpdatePackageManifest_Boundary_DevDependencyOnly(t *testing.T) {
 	}
 }
 
+// Inclusive comparators keep their operator, and a target operator replaces a strict one,
+// so every written range still contains the version it was raised to.
+func TestUpdatePackageManifest_Boundary_InclusiveAndReplacedStrictOperators(t *testing.T) {
+	cases := map[string]struct{ spec, target, want string }{
+		"less than or equal":       {"<=1.0.0", "2.1.0", "<=2.1.0"},
+		"exact":                    {"=1.0.0", "2.1.0", "=2.1.0"},
+		"strict replaced by caret": {">1.0.0", "^2.1.0", "^2.1.0"},
+		"strict replaced by tilde": {"<2.0.0", "~2.1.0", "~2.1.0"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := writePackageJSON(t, `{"dependencies":{"lib":"`+tc.spec+`"}}`)
+			if err := ApplyUpdate(t.Context(), dir, nodeCandidate("lib", tc.target)); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := readPackageJSON(t, dir), `{"dependencies":{"lib":"`+tc.want+`"}}`; got != want {
+				t.Fatalf("package.json = %s, want %s", got, want)
+			}
+		})
+	}
+}
+
+// A target operator decides the written range, so a strict one is refused even over an
+// inclusive current range, and an inclusive one is written. ApplyUpdate already rejects
+// '<' and '>' in a target as exec-argument metacharacters; this pins raisedRange on its own.
+func TestRaisedRange_Boundary_TargetOperator(t *testing.T) {
+	for target, want := range map[string]string{">=2.1.0": `">=2.1.0"`, "<=2.1.0": `"<=2.1.0"`, "=2.1.0": `"=2.1.0"`} {
+		if got, err := raisedRange(json.RawMessage(`"^1.0.0"`), target); err != nil || got != want {
+			t.Errorf("raisedRange(^1.0.0, %s) = %s, %v; want %s", target, got, err, want)
+		}
+	}
+	for _, target := range []string{">2.1.0", "<2.1.0"} {
+		if got, err := raisedRange(json.RawMessage(`"^1.0.0"`), target); err == nil {
+			t.Errorf("raisedRange(^1.0.0, %s) = %s; want refused", target, got)
+		}
+	}
+}
+
+// splitRangeOperator only parses: it reads strict ">" and "<" so a scan can report the
+// version they name. raisedRange, not the parser, refuses to raise them.
 func TestSplitRangeOperator_Boundaries(t *testing.T) {
 	valid := map[string][2]string{
 		"1.2.3": {"", "1.2.3"}, "^1.2.3": {"^", "1.2.3"}, "~1.2.3": {"~", "1.2.3"},
