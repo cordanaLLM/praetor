@@ -44,8 +44,13 @@ To change a version, edit `requirements.in` and recompile the lock from this dir
 command recorded in the `requirements.txt` header:
 
 ```bash
-uv pip compile --universal --generate-hashes --python-version 3.10 requirements.in --output-file requirements.txt
+uv pip compile --universal --generate-hashes --python-version=3.10 requirements.in --output-file=requirements.txt
 ```
+
+Keep the `=` between each option and its argument. Renovate's `pip-compile` manager re-runs the
+command it reads from this header, and it skips the lock with only a log warning when an option
+takes its argument after a space or uses a short form such as `-o` (`extractHeaderCommand` in
+Renovate's `lib/modules/manager/pip-compile/common.ts`). The `docs-presets` job rejects both forms.
 
 Renovate runs the same command: `renovate.json` enables its `pip-compile` manager for this lock
 and groups the updates as `mkdocs docs preset`. The `docs-presets` job in

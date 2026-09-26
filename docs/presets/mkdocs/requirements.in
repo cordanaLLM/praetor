@@ -1,7 +1,9 @@
 # Direct dependencies of the MkDocs preset, one exact pin each. requirements.txt is the
 # lock compiled from this file: every package the preset installs, pinned with hashes.
 # Change a pin here, then regenerate the lock from this directory with the command
-# recorded in the requirements.txt header (Renovate runs the same command).
+# recorded in the requirements.txt header (Renovate runs the same command). Keep '='
+# between each option and its argument: Renovate skips a lock whose header separates them
+# with a space or uses a short option, and CI rejects such a header.
 mkdocs==1.6.1
 mkdocs-material==9.7.7
 mkdocs-minify-plugin==0.8.0

@@ -347,6 +347,30 @@ jobs:
         with:
           python-version: '3.14'
 
+      # Renovate's pip-compile manager re-runs the command recorded in the lock header and
+      # skips the lock, with only a log warning, when an option takes its argument after a
+      # space or uses a short form (extractHeaderCommand in Renovate's
+      # lib/modules/manager/pip-compile/common.ts). uv accepts both forms, so only this
+      # check notices a lock Renovate would never update.
+      - name: Check MkDocs Lock Header Is Renovate-Parseable
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          HEADER=$(sed -n '2s/^#    //p' docs/presets/mkdocs/requirements.txt)
+          read -r -a ARGS <<< "$HEADER"
+          if [ "${#ARGS[@]}" -eq 0 ]; then
+            echo "::error file=docs/presets/mkdocs/requirements.txt,line=2::no compile command recorded in the lock header"
+            exit 1
+          fi
+          for arg in "${ARGS[@]}"; do
+            case "$arg" in
+              --universal|--generate-hashes|--no-strip-extras|--emit-index-url|--all-extras|--*=*) ;;
+              -*)
+                echo "::error file=docs/presets/mkdocs/requirements.txt,line=2::header option '$arg' must be a bare flag or '--option=value'; recompile with the command in docs/presets/mkdocs/README.md"
+                exit 1
+                ;;
+            esac
+          done
+
       - name: Build MkDocs Preset From Its Hashed Lock
         if: steps.changed.outputs.run == 'true'
         run: |
