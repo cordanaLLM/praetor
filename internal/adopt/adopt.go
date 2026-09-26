@@ -32,8 +32,8 @@ const (
 
 // Canonical repository-relative paths written by adoption.
 const (
-	manifestFile     = ".standards.yaml"
-	lockFile         = ".standards.lock"
+	manifestFile     = config.ManifestFileName
+	lockFile         = config.LockFileName
 	baselineFile     = ".standards-baseline.json"
 	agentsFile       = "AGENTS.md"
 	devcontainerFile = ".devcontainer/devcontainer.json"

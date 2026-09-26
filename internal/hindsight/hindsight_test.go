@@ -20,7 +20,7 @@ import (
 // TestHindsight_Positive verifies workspace distillation of a clean repository and recall.
 func TestHindsight_Positive(t *testing.T) {
 	tmpDir := t.TempDir()
-	writeDistillerTestFile(t, tmpDir, "go.mod", "module fixture\n\ngo 1.23\n")
+	writeDistillerFile(t, tmpDir, "go.mod", "module fixture\n\ngo 1.23\n")
 	if err := os.MkdirAll(filepath.Join(tmpDir, "internal"), 0755); err != nil {
 		t.Fatal(err)
 	}

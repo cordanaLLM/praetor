@@ -5,7 +5,6 @@ package hindsight
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -45,7 +44,7 @@ func TestDistillBugLedgerIntegrity(t *testing.T) {
 func writeDistillerLedger(t *testing.T, content string) string {
 	t.Helper()
 	root := t.TempDir()
-	writeDistillerFile(t, filepath.Join(root, ".workingdir", "BUGS.md"), content)
+	writeDistillerFile(t, root, filepath.Join(".workingdir", "BUGS.md"), content)
 	return root
 }
 
@@ -54,8 +53,8 @@ func writeDistillerLedger(t *testing.T, content string) string {
 func TestDistillFlavorFacts(t *testing.T) {
 	t.Run("matched flavor yields one fact", func(t *testing.T) {
 		root := t.TempDir()
-		writeDistillerFile(t, filepath.Join(root, "go.mod"), "module x\n")
-		writeDistillerFile(t, filepath.Join(root, "cmd", "x", "main.go"), "package main\n")
+		writeDistillerFile(t, root, "go.mod", "module x\n")
+		writeDistillerFile(t, root, filepath.Join("cmd", "x", "main.go"), "package main\n")
 		facts, err := distillFlavorFacts(context.Background(), root)
 		if err != nil || len(facts) != 1 || facts[0].Subject != "go-service" {
 			t.Fatalf("expected one go-service fact, got %+v, %v", facts, err)
@@ -63,7 +62,7 @@ func TestDistillFlavorFacts(t *testing.T) {
 	})
 	t.Run("unmatched repository yields no fact", func(t *testing.T) {
 		root := t.TempDir()
-		writeDistillerFile(t, filepath.Join(root, "Rakefile"), "task :default\n")
+		writeDistillerFile(t, root, "Rakefile", "task :default\n")
 		facts, err := distillFlavorFacts(context.Background(), root)
 		if err != nil || len(facts) != 0 {
 			t.Fatalf("an unmatched repository must yield no flavor fact, got %+v, %v", facts, err)
@@ -75,14 +74,4 @@ func TestDistillFlavorFacts(t *testing.T) {
 			t.Fatalf("an empty directory must yield no flavor fact, got %+v, %v", facts, err)
 		}
 	})
-}
-
-func writeDistillerFile(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
 }

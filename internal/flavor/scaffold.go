@@ -27,9 +27,6 @@ import (
 // Measured 2026-09-19: crane digest gcr.io/distroless/static-debian13:nonroot.
 const distrolessRuntimeImage = "gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3"
 
-// standardsLockFile is the lockfile a flavor lists as a template without owning its content.
-const standardsLockFile = ".standards.lock"
-
 // ErrApplyIncomplete reports an apply that recorded at least one template failure.
 //
 // ApplyFlavor used to return (report, nil) whatever report.Errors held, so a caller that
@@ -134,7 +131,7 @@ func resolveApplyTarget(repoPath, targetFlavor string) (Flavor, error) {
 // so a forced refresh replaced operator data with a stub. --force refreshes scaffolds; it never
 // rewrites what the repository declared.
 func forceProtected(rel string) bool {
-	return strings.HasPrefix(rel, state.WorkingDirName+"/") || rel == config.ManifestFileName || rel == standardsLockFile
+	return strings.HasPrefix(rel, state.WorkingDirName+"/") || rel == config.ManifestFileName || rel == config.LockFileName
 }
 
 // templateDisposition decides, before any filesystem mutation, whether a template is
