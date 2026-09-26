@@ -99,7 +99,7 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	if err != nil {
 		return err
 	}
-	text, failed := renderCavemanChecks(inputs, *maxWords, *maxTokens)
+	text, failed := renderCavemanChecks(inputs, *maxWords, *maxTokens, false)
 	if _, err := io.WriteString(out, text); err != nil {
 		return fmt.Errorf("caveman check: write report: %w", err)
 	}
@@ -136,7 +136,9 @@ func prepareCavemanCheckInputs(ctx context.Context, stdin io.Reader, request cav
 	return inputs, nil
 }
 
-func renderCavemanChecks(inputs []cavemanInput, maxWords, maxTokens int) (string, int) {
+// renderCavemanChecks lints every input and returns the report and the failure count. With
+// failuresOnly the report carries only failing inputs, which is what the audit prints.
+func renderCavemanChecks(inputs []cavemanInput, maxWords, maxTokens int, failuresOnly bool) (string, int) {
 	var text strings.Builder
 	failed := 0
 	for _, input := range inputs {
@@ -145,9 +147,14 @@ func renderCavemanChecks(inputs []cavemanInput, maxWords, maxTokens int) (string
 			// The same mask the context gate applies, so positional input reproduces its verdict.
 			lintable, masked = compiler.MaskRegisterBlock(input.text)
 		}
+		var report strings.Builder
 		opts := caveman.Options{Kind: input.kind, MaxProseWords: maxWords, MaxTokens: maxTokens}
-		if !formatCavemanReport(&text, input, caveman.Check(lintable, opts), masked) {
+		passed := formatCavemanReport(&report, input, caveman.Check(lintable, opts), masked)
+		if !passed {
 			failed++
+		}
+		if !passed || !failuresOnly {
+			text.WriteString(report.String())
 		}
 	}
 	return text.String(), failed
@@ -169,13 +176,22 @@ func cavemanCheckInputs(ctx context.Context, stdin io.Reader, request cavemanChe
 		if err != nil {
 			return nil, err
 		}
-		result, err := cavemansource.ExtractDeclared(ctx, request.root, policy.Sources)
-		if err != nil {
-			return nil, err
-		}
-		return filterCavemanSources(ctx, request.root, result.Sources)
+		inputs, _, err := configuredCavemanInputs(ctx, request.root, policy)
+		return inputs, err
 	}
 	return readCavemanCheckInputs(ctx, stdin, request)
+}
+
+// configuredCavemanInputs extracts policy's register.sources contract and returns the values
+// to lint. `caveman check --configured-sources` and the audit both call it, so the two gates
+// cannot disagree about which values are checked.
+func configuredCavemanInputs(ctx context.Context, root string, policy config.RegisterPolicy) ([]cavemanInput, cavemansource.Result, error) {
+	result, err := cavemansource.ExtractDeclared(ctx, root, policy.Sources)
+	if err != nil {
+		return nil, cavemansource.Result{}, err
+	}
+	inputs, err := cavemanSourceInputs(policy, result.Sources)
+	return inputs, result, err
 }
 
 func filterCavemanSources(ctx context.Context, root string, declared []cavemansource.Source) ([]cavemanInput, error) {
@@ -183,26 +199,28 @@ func filterCavemanSources(ctx context.Context, root string, declared []cavemanso
 	if err != nil {
 		return nil, err
 	}
-	decisions := make(map[config.RegisterSurface]bool)
+	return cavemanSourceInputs(policy, declared)
+}
+
+// cavemanSourceInputs is the one mapping from extracted sources to lint inputs. A classified
+// exclusion is bound by count and digest but never linted, since its text is a runtime
+// expression rather than agent-owned prose; that skip comes first, so a surface carrying only
+// exclusions needs no verdict. Every other value's surface must resolve to a Caveman verdict.
+func cavemanSourceInputs(policy config.RegisterPolicy, declared []cavemansource.Source) ([]cavemanInput, error) {
+	verified := make(map[config.RegisterSurface]bool)
 	inputs := make([]cavemanInput, 0, len(declared))
 	for _, source := range declared {
 		if source.NotApplicable != "" {
 			continue
 		}
-		if _, ok := decisions[source.Surface]; !ok {
-			decisions[source.Surface], err = policy.LintEnforced(source.Surface)
-			if err != nil {
+		if !verified[source.Surface] {
+			if err := requireSurfaceVerdict(policy, source.Surface); err != nil {
 				return nil, err
 			}
-			if !decisions[source.Surface] {
-				resolution := policy.Resolve(source.Surface, "")
-				return nil, fmt.Errorf("caveman check: %s = %s has no Caveman verdict", resolution.Source, resolution.Register)
-			}
+			verified[source.Surface] = true
 		}
-		if decisions[source.Surface] {
-			inputs = append(inputs, cavemanInput{name: source.Path, text: source.Text, kind: source.Kind,
-				lineOffset: source.Line - 1, provenance: source.Provenance()})
-		}
+		inputs = append(inputs, cavemanInput{name: source.Path, text: source.Text, kind: source.Kind,
+			lineOffset: source.Line - 1, provenance: source.Provenance()})
 	}
 	return inputs, nil
 }
@@ -216,22 +234,9 @@ func readCavemanCheckInputs(ctx context.Context, stdin io.Reader, request cavema
 	if err != nil {
 		return nil, err
 	}
-	markdown := make([]cavemanInput, 0, len(paths))
-	sources := []config.RegisterSourceInput{}
-	for _, path := range paths {
-		if path == "-" || strings.EqualFold(filepath.Ext(path), ".md") {
-			input, readErr := readCavemanInput(ctx, path, stdin)
-			if readErr != nil {
-				return nil, readErr
-			}
-			markdown = append(markdown, input)
-			continue
-		}
-		declared, sourceErr := adHocSourceInputs(request, path)
-		if sourceErr != nil {
-			return nil, sourceErr
-		}
-		sources = append(sources, declared...)
+	markdown, sources, err := partitionCavemanPaths(ctx, stdin, request, paths)
+	if err != nil {
+		return nil, err
 	}
 	if len(sources) == 0 {
 		return markdown, nil
@@ -245,6 +250,31 @@ func readCavemanCheckInputs(ctx context.Context, stdin io.Reader, request cavema
 		return nil, err
 	}
 	return append(markdown, extracted...), nil
+}
+
+// partitionCavemanPaths reads Markdown files and stdin directly and turns every other path
+// into ad-hoc source declarations for the extractor.
+func partitionCavemanPaths(ctx context.Context, stdin io.Reader, request cavemanCheckRequest,
+	paths []string,
+) ([]cavemanInput, []config.RegisterSourceInput, error) {
+	markdown := make([]cavemanInput, 0, len(paths))
+	sources := []config.RegisterSourceInput{}
+	for _, path := range paths {
+		if path == "-" || strings.EqualFold(filepath.Ext(path), ".md") {
+			input, err := readCavemanInput(ctx, path, stdin)
+			if err != nil {
+				return nil, nil, err
+			}
+			markdown = append(markdown, input)
+			continue
+		}
+		declared, err := adHocSourceInputs(request, path)
+		if err != nil {
+			return nil, nil, err
+		}
+		sources = append(sources, declared...)
+	}
+	return markdown, sources, nil
 }
 
 func adHocSourceInputs(request cavemanCheckRequest, sourcePath string) ([]config.RegisterSourceInput, error) {
@@ -350,6 +380,12 @@ func requireCavemanSurface(ctx context.Context, root string, surface config.Regi
 	if err != nil {
 		return err
 	}
+	return requireSurfaceVerdict(policy, surface)
+}
+
+// requireSurfaceVerdict fails when surface resolves to a register the Caveman lint does not
+// judge (docs or social).
+func requireSurfaceVerdict(policy config.RegisterPolicy, surface config.RegisterSurface) error {
 	enforced, err := policy.LintEnforced(surface)
 	if err != nil {
 		return err

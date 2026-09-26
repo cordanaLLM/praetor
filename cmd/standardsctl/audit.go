@@ -12,8 +12,6 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/baseline"
-	"github.com/cordanaLLM/praetor/internal/caveman"
-	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -341,40 +339,20 @@ func auditCavemanAgentSurfaces(ctx context.Context, rootDir string) error {
 	return nil
 }
 
-// auditCavemanConfiguredSources enforces the omission-resistant register.sources inventory.
-// An omitted register or sources contract is zero verified work and fails closed.
+// auditCavemanConfiguredSources enforces the omission-resistant register.sources inventory
+// through the same checker as `caveman check --configured-sources`. An omitted register or
+// sources contract is zero verified work and fails closed.
 func auditCavemanConfiguredSources(ctx context.Context, manifest *config.Manifest, rootDir string) error {
 	if manifest == nil || manifest.Register == nil || manifest.Register.Sources == nil {
 		return errors.New("[FAIL] Caveman non-Markdown source coverage: audit requires register.sources")
 	}
-	result, err := cavemansource.ExtractDeclared(ctx, rootDir, manifest.Register.Sources)
+	inputs, result, err := configuredCavemanInputs(ctx, rootDir, manifest.EffectiveRegister())
 	if err != nil {
 		return fmt.Errorf("[FAIL] Caveman non-Markdown source coverage: %w", err)
 	}
-	policy := manifest.EffectiveRegister()
-	for index := range result.Sources {
-		source := result.Sources[index]
-		enforced, err := policy.LintEnforced(source.Surface)
-		if err != nil {
-			return fmt.Errorf("[FAIL] Caveman non-Markdown source coverage: %w", err)
-		}
-		if !enforced {
-			resolution := policy.Resolve(source.Surface, "")
-			return fmt.Errorf("[FAIL] Caveman non-Markdown source coverage: %s = %s has no Caveman verdict",
-				resolution.Source, resolution.Register)
-		}
-		if source.NotApplicable != "" {
-			// A classified exclusion is bound by count and digest, never linted: its text is
-			// the runtime expression, not agent-owned prose (same rule as caveman check).
-			continue
-		}
-		report := caveman.Check(source.Text, caveman.Options{Kind: source.Kind})
-		if !report.Passed() {
-			var detail strings.Builder
-			formatCavemanReport(&detail, cavemanInput{name: source.Path, text: source.Text,
-				kind: source.Kind, lineOffset: source.Line - 1, provenance: source.Provenance()}, report, 0)
-			return fmt.Errorf("[FAIL] Caveman non-Markdown source lint:\n%s", strings.TrimSpace(detail.String()))
-		}
+	if report, failed := renderCavemanChecks(inputs, 0, 0, true); failed > 0 {
+		return fmt.Errorf("[FAIL] Caveman non-Markdown source lint (%d of %d values):\n%s",
+			failed, len(inputs), strings.TrimSpace(report))
 	}
 	fmt.Printf("[PASS] Caveman non-Markdown source coverage verified (%d values, %s).\n",
 		len(result.Sources), result.SHA256)

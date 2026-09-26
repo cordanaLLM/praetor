@@ -229,3 +229,70 @@ register:
 %s`, len(coverage.Sources), coverage.SHA256, selector, extra)
 	writeFixtureFile(t, root, ".standards.yaml", body)
 }
+
+// writeDocsHooksSourceManifest declares hooks: docs and binds coverage over inputs.
+func writeDocsHooksSourceManifest(t *testing.T, root string, coverage cavemansource.Result) {
+	t.Helper()
+	writeFixtureFile(t, root, ".standards.yaml", fmt.Sprintf(`version: 1
+register:
+  surfaces:
+    hooks: docs
+  sources:
+    expected: %d
+    not_applicable: %d
+    sha256: %s
+    inputs:
+      - {path: prompts/agent.json, surface: prompts, kind: message, format: json, selector: 'messages.*'}
+      - {path: hooks/check.py, surface: hooks, kind: message, format: python}
+`, coverage.Applicable, coverage.NotApplicable, coverage.SHA256))
+}
+
+// TestConfiguredSourceGatesShareOneChecker: the audit and `caveman check
+// --configured-sources` reach one verdict. A hooks: docs surface that carries only classified
+// exclusions needs no Caveman verdict in either; once it carries an applicable value, both
+// refuse it. Before the shared checker the audit tested the verdict before the exclusion skip
+// and failed the first case while the CLI passed it.
+func TestConfiguredSourceGatesShareOneChecker(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureFile(t, root, "prompts/agent.json", `{"messages":["result: pass."]}`)
+	writeFixtureFile(t, root, "hooks/check.py",
+		"print(render(a, the_value))  # caveman:not-applicable untrusted-passthrough\n")
+	inputs := []config.RegisterSourceInput{
+		{Path: "prompts/agent.json", Surface: config.SurfacePrompts, Kind: "message", Format: config.SourceFormatJSON, Selector: "messages.*"},
+		{Path: "hooks/check.py", Surface: config.SurfaceHooks, Kind: "message", Format: config.SourceFormatPython},
+	}
+	coverage, err := cavemansource.ExtractInputs(context.Background(), root, inputs)
+	if err != nil || coverage.NotApplicable != 1 {
+		t.Fatalf("fixture coverage: %+v err=%v", coverage, err)
+	}
+	writeDocsHooksSourceManifest(t, root, coverage)
+	env := initGitFixture(t, root)
+	gates := func() (error, error) {
+		manifest, loadErr := config.LoadManifest(filepath.Join(root, ".standards.yaml"))
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		_, cliErr := runCavemanCLI(t, "", "check", "--root="+root, "--configured-sources")
+		return auditCavemanConfiguredSources(context.Background(), manifest, root), cliErr
+	}
+	if auditErr, cliErr := gates(); auditErr != nil || cliErr != nil {
+		t.Fatalf("exclusion-only docs surface: audit=%v cli=%v", auditErr, cliErr)
+	}
+
+	writeFixtureFile(t, root, "hooks/check.py", "print(\"result: pass.\")\n"+
+		"print(render(a, the_value))  # caveman:not-applicable untrusted-passthrough\n")
+	coverage, err = cavemansource.ExtractInputs(context.Background(), root, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeDocsHooksSourceManifest(t, root, coverage)
+	if output, gitErr := runFixtureGit(t, root, env, "add", "-A"); gitErr != nil {
+		t.Fatalf("stage fixture: %v (%s)", gitErr, output)
+	}
+	auditErr, cliErr := gates()
+	for name, gateErr := range map[string]error{"audit": auditErr, "cli": cliErr} {
+		if gateErr == nil || !strings.Contains(gateErr.Error(), "surfaces.hooks = docs has no Caveman verdict") {
+			t.Fatalf("%s accepted an applicable value on a docs surface: %v", name, gateErr)
+		}
+	}
+}
