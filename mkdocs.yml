@@ -6,8 +6,8 @@ site_author: Lusoris
 
 theme:
   name: material
-  favicon: assets/praetor-favicon.svg
-  logo: assets/praetor-mkdocs-logo.svg
+  favicon: assets/praetor-favicon.png
+  logo: assets/praetor-logo.png
   palette:
     - scheme: slate
       primary: cyan

@@ -126,7 +126,7 @@ hiss-coverage:
 topology-audit:
 	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
 
-verify-all: adr-verify semgrep-test docs-drift-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: adr-verify semgrep-test docs-drift-test docs-assets-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
 
 .PHONY: docs-drift-test
@@ -142,6 +142,10 @@ semgrep-test:
 .PHONY: notebook-test
 docs-drift-test:
 	python3 -B scripts/test_docs_drift.py
+
+.PHONY: docs-assets-test
+docs-assets-test:
+	python3 -B scripts/test_docs_assets.py
 
 # BEGIN praetor documentation gate
 .PHONY: docs-lint

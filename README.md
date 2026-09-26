@@ -1,6 +1,6 @@
 <div align="center">
 
-  <img src="docs/assets/praetor-readme-banner.svg" alt="Praetor Header Banner" width="100%" />
+  <img src="docs/assets/praetor-readme-banner.png" alt="Praetor Header Banner" width="100%" />
 
 # ⚖️ Praetor
 
@@ -18,7 +18,7 @@
 
   <br />
 
-  <img src="docs/assets/praetor-mkdocs-icons.svg" alt="Praetor Core Capabilities: Invariants, Transpilation, MCP Protocol, llms.txt Surface" width="70%" />
+  <img src="docs/assets/praetor-mkdocs-icons.png" alt="Praetor Core Capabilities: Invariants, Transpilation, MCP Protocol, llms.txt Surface" width="70%" />
 
 </div>
 
