@@ -352,11 +352,25 @@ func auditCavemanConfiguredSources(ctx context.Context, manifest *config.Manifes
 	}
 	if report, failed := renderCavemanChecks(inputs, 0, 0, true); failed > 0 {
 		return fmt.Errorf("[FAIL] Caveman non-Markdown source lint (%d of %d values):\n%s",
-			failed, len(inputs), strings.TrimSpace(report))
+			failed, len(inputs), boundedSourceReport(report))
 	}
 	fmt.Printf("[PASS] Caveman non-Markdown source coverage verified (%d values, %s).\n",
 		len(result.Sources), result.SHA256)
 	return nil
+}
+
+// maxAuditSourceReportLines bounds the lint report one audit prints; a contract may hold
+// thousands of values. `caveman check --configured-sources` prints every report.
+const maxAuditSourceReportLines = 60
+
+func boundedSourceReport(report string) string {
+	lines := strings.SplitN(strings.TrimSpace(report), "\n", maxAuditSourceReportLines+1)
+	if len(lines) <= maxAuditSourceReportLines {
+		return strings.Join(lines, "\n")
+	}
+	omitted := strings.Count(lines[maxAuditSourceReportLines], "\n") + 1
+	return strings.Join(lines[:maxAuditSourceReportLines], "\n") + fmt.Sprintf(
+		"\n... %d more lines; run `praetorctl caveman check --configured-sources` for the full report", omitted)
 }
 
 // auditBranchProtectionAndSupplyChain checks the committed ruleset against policy, the

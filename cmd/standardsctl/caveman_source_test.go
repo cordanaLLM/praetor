@@ -296,3 +296,28 @@ func TestConfiguredSourceGatesShareOneChecker(t *testing.T) {
 		}
 	}
 }
+
+func TestBoundedSourceReport(t *testing.T) {
+	lines := func(count int) string {
+		rows := make([]string, count)
+		for index := range rows {
+			rows[index] = fmt.Sprintf("value-%d: FAIL", index)
+		}
+		return strings.Join(rows, "\n") + "\n"
+	}
+	if got := boundedSourceReport(lines(3)); got != strings.TrimSpace(lines(3)) {
+		t.Fatalf("short report changed:\n%s", got)
+	}
+	if got := boundedSourceReport(lines(maxAuditSourceReportLines)); strings.Contains(got, "more lines") ||
+		strings.Count(got, "\n") != maxAuditSourceReportLines-1 {
+		t.Fatalf("report at the bound truncated:\n%s", got)
+	}
+	got := boundedSourceReport(lines(maxAuditSourceReportLines + 5))
+	if !strings.Contains(got, "... 5 more lines") || strings.Contains(got, fmt.Sprintf("value-%d:", maxAuditSourceReportLines)) ||
+		strings.Count(got, "\n") != maxAuditSourceReportLines {
+		t.Fatalf("report over the bound not capped:\n%s", got)
+	}
+	if got := boundedSourceReport(""); got != "" {
+		t.Fatalf("empty report rendered %q", got)
+	}
+}
