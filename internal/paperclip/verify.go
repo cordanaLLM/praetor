@@ -108,18 +108,21 @@ func verifyRepositoryState(ctx context.Context, repoPath string, d *Disposition,
 // `praetorctl gate run` writes that receipt for the checked-out commit, so the documented order
 // (commit, push, mint the receipt, write the disposition) leaves it untracked, or modified where
 // a repository tracks it. It is gate output, not unpushed work, and committing it would move HEAD
-// off the commit the receipt attests.
+// off the commit the receipt attests. The tree is read through util.GitWorkingTreeChanges, so
+// no repository setting (status.showUntrackedFiles, assume-unchanged, skip-worktree) hides a
+// change.
 func verifyCleanWorktree(ctx context.Context, repoPath, dispositionPath string) error {
-	args := []string{"status", "--porcelain", "--", ":(top)", literalExclude(gating.ReceiptFileName)}
+	excludes := []string{literalExclude(gating.ReceiptFileName)}
 	if exclude, ok := dispositionPathspec(repoPath, dispositionPath); ok {
-		args = append(args, exclude)
+		excludes = append(excludes, exclude)
 	}
-	uncommitted, err := util.RunGit(ctx, repoPath, args...)
+	uncommitted, err := util.GitWorkingTreeChanges(ctx, repoPath, excludes...)
 	if err != nil {
 		return fmt.Errorf("verify working tree git status: %w", err)
 	}
-	if uncommitted != "" {
-		return fmt.Errorf("contract violation: uncommitted changes exist in working tree; commit and push branch before disposition")
+	if len(uncommitted) > 0 {
+		return fmt.Errorf("contract violation: uncommitted changes exist in working tree (%s); commit and push branch before disposition",
+			strings.Join(uncommitted, ", "))
 	}
 	return nil
 }

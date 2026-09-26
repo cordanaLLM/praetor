@@ -37,6 +37,32 @@ func TestPrintGatingReport_Positive_SkippedStagesNeverPrintPass(t *testing.T) {
 	}
 }
 
+// A dry run is not refused over an unclean tree, so the report says what a real run would
+// refuse; a refused real run already names the reason on its precondition stage, and a clean
+// tree adds nothing.
+func TestPrintGatingReport_Boundary_UncleanTreeNote(t *testing.T) {
+	problem := "1 changed path(s) differ from HEAD: ?? scratch.txt"
+	cases := map[string]struct {
+		rep  *gating.PipelineReport
+		note bool
+	}{
+		"dry run over an unclean tree": {rep: &gating.PipelineReport{DryRun: true, WorktreeProblem: problem}, note: true},
+		"refused real run": {rep: &gating.PipelineReport{Status: gating.StatusRejected, WorktreeProblem: problem,
+			Stages: []gating.StageResult{{Name: gating.TreePreconditionStage, Status: gating.StageFailed, Message: problem}}}},
+		"clean dry run": {rep: &gating.PipelineReport{DryRun: true, WorktreeClean: true}},
+	}
+	for name, tc := range cases {
+		out, err := captureStdout(t, func() error { printGatingReport(tc.rep); return nil })
+		if err != nil {
+			t.Fatalf("%s: printGatingReport: %v", name, err)
+		}
+		hasNote := strings.Contains(out, "Worktree: "+problem) && strings.Contains(out, "without --dry-run refuses")
+		if hasNote != tc.note {
+			t.Errorf("%s: worktree note printed = %v, want %v:\n%s", name, hasNote, tc.note, out)
+		}
+	}
+}
+
 func TestStageLabel_Negative_FailedAndUnknownVerdicts(t *testing.T) {
 	if got := stageLabel(gating.StageFailed); got != "[FAIL]" {
 		t.Errorf("failed label = %q", got)

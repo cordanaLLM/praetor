@@ -42,7 +42,21 @@ var (
 	// ErrGateOutputVersion reports a receipt whose certified gate output does not open with
 	// GateOutputVersion.
 	ErrGateOutputVersion = errors.New("receipt certifies an unsupported gate output version")
+	// ErrWorktreeNotClean reports a receipt whose signed gate output says the scanned working
+	// tree was not clean: the scan stages read files HEAD does not carry.
+	ErrWorktreeNotClean = errors.New("receipt certifies a scan of a working tree that was not clean")
+	// ErrWorktreeUnrecorded reports gate output that does not state the scanned tree's
+	// cleanliness exactly once, so nothing binds the receipt to a scan of HEAD alone.
+	ErrWorktreeUnrecorded = errors.New("receipt gate output does not record whether the scanned working tree was clean")
 )
+
+// gateWorktreeCleanKey names the gate-output header field recording whether the scanned
+// working tree was clean.
+const gateWorktreeCleanKey = "worktree_clean"
+
+// maxGateOutputHeaderLines bounds the header scan (HISS-02). The gate writes five header lines
+// before its first stage line.
+const maxGateOutputHeaderLines = 32
 
 // ExecutionReceipt represents an Ed25519-signed verification receipt certifying an Exit-0 run.
 type ExecutionReceipt struct {
@@ -226,4 +240,36 @@ func checkGateOutputVersion(output string) error {
 	}
 	return fmt.Errorf("%w: gate output opens with %.*q, want %q; re-mint the receipt with `praetorctl gate run`",
 		ErrGateOutputVersion, maxVersionEcho, header, GateOutputVersion)
+}
+
+// WorktreeCleanLine renders the gate-output header line recording whether the scanned working
+// tree was clean. The gate writes it and RequireCleanWorktree reads it, so both share one
+// format.
+func WorktreeCleanLine(clean bool) string {
+	return fmt.Sprintf("%s\t%t", gateWorktreeCleanKey, clean)
+}
+
+// RequireCleanWorktree fails unless gateOutput's header -- the lines before the first stage
+// line -- records worktree_clean true exactly once. A receipt's signature proves only who
+// signed the output; this is what proves the scan it certifies read HEAD's tree and nothing
+// else. Call it on output the receipt's hash has already been verified against.
+func RequireCleanWorktree(gateOutput string) error {
+	lines := strings.SplitN(gateOutput, "\n", maxGateOutputHeaderLines+1)
+	values := make([]string, 0, 1)
+	for i := 0; i < len(lines) && i < maxGateOutputHeaderLines; i++ {
+		key, value, _ := strings.Cut(lines[i], "\t")
+		if key == "stage" {
+			break
+		}
+		if key == gateWorktreeCleanKey {
+			values = append(values, value)
+		}
+	}
+	if len(values) != 1 {
+		return fmt.Errorf("%w: the header holds %d %s lines, want 1", ErrWorktreeUnrecorded, len(values), gateWorktreeCleanKey)
+	}
+	if values[0] != "true" {
+		return fmt.Errorf("%w: %s is %q", ErrWorktreeNotClean, gateWorktreeCleanKey, values[0])
+	}
+	return nil
 }

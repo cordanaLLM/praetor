@@ -147,10 +147,11 @@ func runGateDeadline(args []string) error {
 
 // runGateVerify verifies an Exit-0 receipt against a public key: either the key pinned in
 // .standards.yaml, or, with --public-key, a supplied Ed25519 key that always wins over any
-// pinned key. It requires the receipt's commit_sha to equal --path's HEAD, and, when a key is
-// supplied explicitly, additionally requires the receipt's repository to equal --path's
-// resolved identity, since a supplied key has no manifest binding it to one repository. The
-// public key embedded in the receipt is never a trust anchor on its own.
+// pinned key. It requires the signed gate output to record worktree_clean true, so a receipt
+// minted over a dirty tree never verifies, and the receipt's commit_sha to equal --path's
+// HEAD. When a key is supplied explicitly, it additionally requires the receipt's repository
+// to equal --path's resolved identity, since a supplied key has no manifest binding it to one
+// repository. The public key embedded in the receipt is never a trust anchor on its own.
 func runGateVerify(args []string) error {
 	fs := flag.NewFlagSet("gate verify", flag.ContinueOnError)
 	path := fs.String("path", ".", "Path to the repository the receipt belongs to")
@@ -292,6 +293,9 @@ func runGateKeygen(args []string) error {
 func printGatingReport(rep *gating.PipelineReport) {
 	fmt.Printf("\nPipeline Result: %s (total: %v)\n", rep.Status, rep.TotalElapsed.Round(time.Millisecond))
 	fmt.Printf("Scanned: %s @ %s (worktree clean: %v)\n", rep.Repository, rep.CommitSHA, rep.WorktreeClean)
+	if rep.DryRun && rep.WorktreeProblem != "" {
+		fmt.Printf("Worktree: %s\n          (gate run without --dry-run refuses this tree)\n", rep.WorktreeProblem)
+	}
 	for idx, s := range rep.Stages {
 		fmt.Printf("  %d. %-6s %-25s (%v)\n", idx+1, stageLabel(s.Status), s.Name, s.Duration.Round(time.Millisecond))
 		if s.Message != "" {

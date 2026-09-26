@@ -278,10 +278,12 @@ Implemented Phase 3 Pillar VII.
 `
 
 // signedReceiptBlock renders a genuine Ed25519 Exit-0 receipt as the fenced block a PR body
-// is expected to carry, certifying a current-version gate output whose body is output.
+// is expected to carry, certifying a current-version gate output of a clean scanned tree whose
+// body is output.
 func signedReceiptBlock(t *testing.T, priv ed25519.PrivateKey, commitSHA, output string) string {
 	t.Helper()
-	return signedGateOutputBlock(t, priv, commitSHA, lockdown.GateOutputVersion+"\n"+output)
+	return signedGateOutputBlock(t, priv, commitSHA,
+		lockdown.GateOutputVersion+"\n"+lockdown.WorktreeCleanLine(true)+"\n"+output)
 }
 
 // signedGateOutputBlock signs gateOutput exactly as given, header included.
@@ -298,13 +300,50 @@ func signedGateOutputBlock(t *testing.T, priv ed25519.PrivateKey, commitSHA, gat
 	return "\n```receipt\n" + string(data) + "\n```\n"
 }
 
+// gateOutput renders output shaped like the gate's own: a header recording whether the scanned
+// working tree was clean, then one stage line carrying note.
+func gateOutput(clean bool, note string) string {
+	return lockdown.GateOutputVersion + "\n" + lockdown.WorktreeCleanLine(clean) +
+		"\ndry_run\tfalse\nstage\tHISS Invariant Scan\tpassed\t" + note + "\n"
+}
+
+// A genuinely signed receipt for the right commit still fails when its gate output records
+// that the scanned working tree was not clean, or does not record it at all (BUG-787).
+func TestValidatePRChecklist_Negative_ReceiptOverAnUncleanTree(t *testing.T) {
+	pub, priv, err := lockdown.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed generating keypair: %v", err)
+	}
+	head := "0f1e2d3c4b5a69788796a5b4c3d2e1f009182736"
+	cases := map[string]string{
+		"worktree_clean false": gateOutput(false, "all gates passed"),
+		"no worktree_clean":    lockdown.GateOutputVersion + "\nstage\tHISS Invariant Scan\tpassed\t\n",
+	}
+	for name, output := range cases {
+		body := prChecklistBoxes + signedGateOutputBlock(t, priv, head, output)
+		for policyName, policy := range map[string]ReceiptPolicy{
+			"pinned":   {PinnedKey: pub, HeadSHA: head},
+			"unpinned": {HeadSHA: head},
+		} {
+			res, err := ValidatePRChecklistWithPolicy(body, policy)
+			if err != nil {
+				t.Fatalf("%s/%s: unexpected error: %v", name, policyName, err)
+			}
+			if res.Valid || res.HasReceipt || len(res.Errors) != 1 || !strings.Contains(res.Errors[0], "worktree") {
+				t.Fatalf("%s/%s: a receipt over an unclean tree was not refused on its worktree record: %+v",
+					name, policyName, res)
+			}
+		}
+	}
+}
+
 func TestValidatePRChecklist_Positive(t *testing.T) {
 	pub, priv, err := lockdown.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("failed generating keypair: %v", err)
 	}
 	head := "0f1e2d3c4b5a69788796a5b4c3d2e1f009182736"
-	prBody := prChecklistBoxes + signedReceiptBlock(t, priv, head, "all gates passed")
+	prBody := prChecklistBoxes + signedGateOutputBlock(t, priv, head, gateOutput(true, "all gates passed"))
 
 	res, err := ValidatePRChecklistWithPolicy(prBody, ReceiptPolicy{PinnedKey: pub, HeadSHA: head})
 	if err != nil {

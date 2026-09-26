@@ -17,7 +17,7 @@ import (
 )
 
 // receiptOutput is the gate output every fixture receipt certifies.
-const receiptOutput = "praetor-gate-output/v2\nok\n"
+var receiptOutput = lockdown.GateOutputVersion + "\n" + lockdown.WorktreeCleanLine(true) + "\nok\n"
 
 // signedEnvelope returns a receipt envelope signed by priv that certifies receiptOutput.
 func signedEnvelope(t *testing.T, priv ed25519.PrivateKey) *lockdown.ReceiptFile {
@@ -28,11 +28,18 @@ func signedEnvelope(t *testing.T, priv ed25519.PrivateKey) *lockdown.ReceiptFile
 // signedEnvelopeFor returns a receipt envelope signed by priv that attests commit.
 func signedEnvelopeFor(t *testing.T, priv ed25519.PrivateKey, commit string) *lockdown.ReceiptFile {
 	t.Helper()
-	receipt, err := lockdown.CreateReceipt("make verify-all", 0, []byte(receiptOutput), commit, "repo1", priv)
+	return signedEnvelopeOver(t, priv, commit, receiptOutput)
+}
+
+// signedEnvelopeOver returns a receipt envelope signed by priv that attests commit and certifies
+// output.
+func signedEnvelopeOver(t *testing.T, priv ed25519.PrivateKey, commit, output string) *lockdown.ReceiptFile {
+	t.Helper()
+	receipt, err := lockdown.CreateReceipt("make verify-all", 0, []byte(output), commit, "repo1", priv)
 	if err != nil {
 		t.Fatalf("create receipt failed: %v", err)
 	}
-	return &lockdown.ReceiptFile{ExecutionReceipt: *receipt, GateOutput: receiptOutput}
+	return &lockdown.ReceiptFile{ExecutionReceipt: *receipt, GateOutput: output}
 }
 
 // keyPair returns a fresh Ed25519 key pair.
@@ -354,6 +361,40 @@ func TestDisposition_ValidateRejectsWhitespaceFields(t *testing.T) {
 	}
 }
 
+// TestDisposition_Negative_ReceiptOverADirtyTree: a genuine signature by the pinned key over gate
+// output that records worktree_clean false certifies a scan of files HEAD does not carry.
+func TestDisposition_Negative_ReceiptOverADirtyTree(t *testing.T) {
+	pub, priv := keyPair(t)
+	dirty := signedEnvelopeOver(t, priv, "commit1", lockdown.GateOutputVersion+"\n"+lockdown.WorktreeCleanLine(false)+"\n")
+	disp, err := CreateDisposition("ISSUE-1", "in_review", "note", "proof", "", "actor", dirty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := disp.Validate(t.Context(), pub); !errors.Is(err, lockdown.ErrWorktreeNotClean) {
+		t.Fatalf("a receipt minted over a dirty tree must be refused, got %v", err)
+	}
+	unrecorded := signedEnvelopeOver(t, priv, "commit1", lockdown.GateOutputVersion+"\nok\n")
+	disp.Receipt = unrecorded
+	if err := disp.Validate(t.Context(), pub); !errors.Is(err, lockdown.ErrWorktreeUnrecorded) {
+		t.Fatalf("a receipt whose output does not record the tree state must be refused, got %v", err)
+	}
+}
+
+// TestDisposition_Boundary_ReceiptWithoutGateOutput: a bare receipt signature cannot show what
+// was scanned; with its gate output missing it is refused.
+func TestDisposition_Boundary_ReceiptWithoutGateOutput(t *testing.T) {
+	pub, priv := keyPair(t)
+	receipt := signedEnvelope(t, priv)
+	receipt.GateOutput = ""
+	disp, err := CreateDisposition("ISSUE-1", "in_review", "note", "proof", "", "actor", receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := disp.Validate(t.Context(), pub); !errors.Is(err, lockdown.ErrOutputMismatch) {
+		t.Fatalf("a receipt without its gate output must be refused, got %v", err)
+	}
+}
+
 // =========================================================================
 // Boundary 3D Tests
 // =========================================================================
@@ -518,6 +559,11 @@ func TestVerifyRunInReviewWorkingTree(t *testing.T) {
 	}
 	if err := VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}); err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
 		t.Fatalf("dirty worktree must fail disposition, got %v", err)
+	}
+	// The repository's own status.showUntrackedFiles=no must not hide the file (BUG-890).
+	repo.git(t, "config", "status.showUntrackedFiles", "no")
+	if err := VerifyRun(repo.ctx, repo.dir, disposition, VerifyOptions{}); err == nil || !strings.Contains(err.Error(), "?? unfinished.txt") {
+		t.Fatalf("an untracked file hidden by status.showUntrackedFiles=no must fail disposition, got %v", err)
 	}
 	cancelled, cancel := context.WithCancel(repo.ctx)
 	cancel()

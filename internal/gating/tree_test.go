@@ -1,0 +1,192 @@
+package gating
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
+)
+
+// treeGit runs a fixture git command in dir with a fixed identity and no signing.
+func treeGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	full := append([]string{"-c", "user.name=praetor-test", "-c", "user.email=test@example.invalid",
+		"-c", "commit.gpgsign=false"}, args...)
+	if out, err := util.RunGit(t.Context(), dir, full...); err != nil {
+		t.Fatalf("git %v: %v (%s)", args, err, out)
+	}
+}
+
+// commitFile writes rel in dir and commits it.
+func commitFile(t *testing.T, dir, rel, content string) {
+	t.Helper()
+	writeFile(t, filepath.Join(dir, rel), content)
+	treeGit(t, dir, "add", "-f", "--", rel)
+	treeGit(t, dir, "commit", "-q", "-m", "add "+rel)
+}
+
+func headOf(t *testing.T, dir string) string {
+	t.Helper()
+	head, err := util.RunGit(t.Context(), dir, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	return strings.TrimSpace(head)
+}
+
+// refusedRun runs a pipeline that could mint a receipt and requires the clean-tree refusal:
+// rejected at the precondition, before any stage, with no receipt written.
+func refusedRun(t *testing.T, dir, wantInReason string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	rep, err := RunGatedPipeline(ctx, dir, false)
+	if err != nil {
+		t.Fatalf("RunGatedPipeline: %v", err)
+	}
+	if rep.Status != StatusRejected || rep.WorktreeClean {
+		t.Fatalf("status = %s, worktree clean = %v; want a rejected, unclean run", rep.Status, rep.WorktreeClean)
+	}
+	if len(rep.Stages) != 1 || rep.Stages[0].Name != TreePreconditionStage || !rep.Stages[0].Failed() {
+		t.Fatalf("want exactly the failed %q stage, got %+v", TreePreconditionStage, rep.Stages)
+	}
+	if !strings.Contains(rep.Stages[0].Message, wantInReason) || !strings.Contains(rep.WorktreeProblem, wantInReason) {
+		t.Fatalf("reason %q / problem %q does not name %q", rep.Stages[0].Message, rep.WorktreeProblem, wantInReason)
+	}
+	if rep.ReceiptSignature != "" {
+		t.Fatal("a refused run carries a receipt signature")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ReceiptFileName)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("a refused run wrote a receipt: %v", statErr)
+	}
+}
+
+// TestInspectTree_Positive_CommittedTreeIsCleanDespiteItsReceipt: a committed tree is clean at
+// HEAD, and an untracked receipt left by an earlier run does not make it dirty.
+func TestInspectTree_Positive_CommittedTreeIsCleanDespiteItsReceipt(t *testing.T) {
+	dir := newHermeticGitRepo(t)
+	commitFile(t, dir, BaselineFile, "{}\n")
+	writeFile(t, filepath.Join(dir, ReceiptFileName), "{}\n")
+
+	tree := inspectTree(t.Context(), dir)
+	if tree.problem != "" {
+		t.Fatalf("a committed tree with an untracked receipt reads as unclean: %s", tree.problem)
+	}
+	if want := headOf(t, dir); tree.commit != want {
+		t.Fatalf("commit = %q, want HEAD %q", tree.commit, want)
+	}
+}
+
+// TestRunGatedPipeline_Negative_UncleanTreeIsRefusedBeforeAnyStage: every way the working tree
+// can differ from HEAD refuses a run that could mint a receipt.
+func TestRunGatedPipeline_Negative_UncleanTreeIsRefusedBeforeAnyStage(t *testing.T) {
+	t.Run("modified file", func(t *testing.T) {
+		dir := newHermeticGitRepo(t)
+		writeFile(t, filepath.Join(dir, "README.md"), "edited\n")
+		refusedRun(t, dir, " M README.md")
+	})
+	t.Run("untracked file", func(t *testing.T) {
+		dir := newHermeticGitRepo(t)
+		if err := os.Mkdir(filepath.Join(dir, "scratch"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(dir, "scratch", "notes.txt"), "n\n")
+		refusedRun(t, dir, "?? scratch/notes.txt")
+	})
+	t.Run("untracked file hidden by status.showUntrackedFiles=no", func(t *testing.T) {
+		dir := newHermeticGitRepo(t)
+		treeGit(t, dir, "config", "status.showUntrackedFiles", "no")
+		writeFile(t, filepath.Join(dir, "hidden.go"), "package hidden\n")
+		refusedRun(t, dir, "?? hidden.go")
+	})
+	t.Run("baseline edited behind assume-unchanged", func(t *testing.T) {
+		dir := newHermeticGitRepo(t)
+		commitFile(t, dir, BaselineFile, "{}\n")
+		treeGit(t, dir, "update-index", "--assume-unchanged", BaselineFile)
+		writeFile(t, filepath.Join(dir, BaselineFile), `{"total_infractions": 999}`+"\n")
+		refusedRun(t, dir, "assume-unchanged "+BaselineFile)
+	})
+}
+
+// TestRunGatedPipeline_Negative_IgnoredSubtractiveInputIsRefused: git status never lists an
+// ignored file, so an ignored debt baseline or gosec configuration is refused on its own check.
+func TestRunGatedPipeline_Negative_IgnoredSubtractiveInputIsRefused(t *testing.T) {
+	for _, input := range subtractiveInputs {
+		t.Run(input, func(t *testing.T) {
+			dir := newHermeticGitRepo(t)
+			commitFile(t, dir, ".gitignore", input+"\n")
+			writeFile(t, filepath.Join(dir, input), "{}\n")
+			refusedRun(t, dir, input+" is ignored and untracked")
+		})
+	}
+}
+
+// TestRunGatedPipeline_Boundary_DryRunReportsButDoesNotRefuse: a dry run mints nothing, so an
+// unclean tree is reported and the stages still run.
+func TestRunGatedPipeline_Boundary_DryRunReportsButDoesNotRefuse(t *testing.T) {
+	dir := newHermeticGitRepo(t)
+	writeFile(t, filepath.Join(dir, "scratch.txt"), "s\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	rep, err := RunGatedPipeline(ctx, dir, true)
+	if err != nil {
+		t.Fatalf("RunGatedPipeline: %v", err)
+	}
+	if rep.WorktreeClean || !strings.Contains(rep.WorktreeProblem, "?? scratch.txt") {
+		t.Fatalf("a dry run must still report the unclean tree: clean=%v problem=%q", rep.WorktreeClean, rep.WorktreeProblem)
+	}
+	if len(rep.Stages) == 0 || rep.Stages[0].Name == TreePreconditionStage {
+		t.Fatalf("a dry run must not be refused at the precondition: %+v", rep.Stages)
+	}
+}
+
+// TestRunReceiptStage_Negative_TreeMustStillMatchTheStartingHead: the receipt stage re-reads
+// the tree and refuses to sign when it was unclean, changed, or moved to another commit.
+func TestRunReceiptStage_Negative_TreeMustStillMatchTheStartingHead(t *testing.T) {
+	const start = "0123456789abcdef0123456789abcdef01234567"
+	cases := map[string]struct {
+		clean bool
+		now   treeState
+		want  string
+	}{
+		"recorded unclean": {clean: false, now: treeState{commit: start}, want: "scratch.txt"},
+		"changed meanwhile": {clean: true, now: treeState{commit: start, problem: "1 changed path(s)"},
+			want: "changed while the gate ran"},
+		"HEAD moved": {clean: true, now: treeState{commit: "fedcba9876543210fedcba9876543210fedcba98"},
+			want: "HEAD moved from " + start},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			repoDir := t.TempDir()
+			cfg, _ := newTestConfig(t, repoDir, false)
+			cfg.rep.CommitSHA, cfg.rep.WorktreeClean = start, tc.clean
+			cfg.rep.WorktreeProblem = "1 changed path(s) differ from HEAD: ?? scratch.txt"
+			cfg.inspectTree = func(context.Context, string) treeState { return tc.now }
+
+			_, err := runReceiptStage(t.Context(), cfg)
+			if !errors.Is(err, ErrUncleanTree) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want ErrUncleanTree naming %q, got %v", tc.want, err)
+			}
+			if _, statErr := os.Stat(filepath.Join(repoDir, ReceiptFileName)); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("a refused receipt stage wrote a receipt: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestDescribeChanges_Boundary_NamesOnlyTheFirstFew(t *testing.T) {
+	changes := []string{"?? a", "?? b", "?? c", "?? d", "?? e", "?? f", "?? g"}
+	got := describeChanges(changes)
+	if !strings.HasPrefix(got, "7 changed path(s)") || !strings.Contains(got, "?? e") ||
+		strings.Contains(got, "?? f") || !strings.HasSuffix(got, "and 2 more") {
+		t.Fatalf("summary of seven changes = %q", got)
+	}
+	if got := describeChanges(changes[:maxReportedChanges]); strings.Contains(got, "more") {
+		t.Fatalf("exactly the bound must list every change without a remainder: %q", got)
+	}
+}

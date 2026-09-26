@@ -115,13 +115,16 @@ func notApplicable(reason string) error {
 	return &stageSkip{status: StageNotApplicable, reason: reason}
 }
 
-// PipelineReport aggregates the entire gated pre-merge verification.
+// PipelineReport aggregates the entire gated pre-merge verification. WorktreeProblem says why
+// WorktreeClean is false: the changed paths, an ignored subtractive input, or a tree whose
+// state could not be read.
 type PipelineReport struct {
 	Status           GatingStatus  `json:"status"`
 	RepoDir          string        `json:"repo_dir"`
 	Repository       string        `json:"repository,omitempty"`
 	CommitSHA        string        `json:"commit_sha,omitempty"`
 	WorktreeClean    bool          `json:"worktree_clean"`
+	WorktreeProblem  string        `json:"worktree_problem,omitempty"`
 	DryRun           bool          `json:"dry_run"`
 	ReceiptSignature string        `json:"receipt_signature,omitempty"`
 	ReceiptPath      string        `json:"receipt_path,omitempty"`
@@ -138,7 +141,7 @@ func (r *PipelineReport) StageOutput() []byte {
 		lockdown.GateOutputVersion,
 		fmt.Sprintf("repository\t%s", r.Repository),
 		fmt.Sprintf("commit_sha\t%s", r.CommitSHA),
-		fmt.Sprintf("worktree_clean\t%t", r.WorktreeClean),
+		lockdown.WorktreeCleanLine(r.WorktreeClean),
 		fmt.Sprintf("dry_run\t%t", r.DryRun),
 	)
 	for i := 0; i < len(r.Stages) && i < maxStages; i++ {
@@ -172,17 +175,21 @@ type stageConfig struct {
 	// withStageBound. Tests start the bound's clock only once their fake suite starts, so how
 	// long the real `git worktree add` before it takes cannot decide where it fires (BUG-988).
 	boundStage func(context.Context, time.Duration) (context.Context, context.CancelFunc)
+	// inspectTree reads the HEAD commit and whether the working tree matches it. Production
+	// uses inspectTree; tests substitute an answer so a stage fixture need not be a repository.
+	inspectTree func(context.Context, string) treeState
 }
 
 // newStageConfig builds a stage configuration backed by the real toolchain.
 func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConfig {
 	return &stageConfig{
-		repoDir:    repoDir,
-		dryRun:     dryRun,
-		run:        util.RunCommand,
-		lookPath:   exec.LookPath,
-		rep:        rep,
-		boundStage: withStageBound,
+		repoDir:     repoDir,
+		dryRun:      dryRun,
+		run:         util.RunCommand,
+		lookPath:    exec.LookPath,
+		rep:         rep,
+		boundStage:  withStageBound,
+		inspectTree: inspectTree,
 	}
 }
 
@@ -196,6 +203,11 @@ func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConf
 // security scanners, the race tests and the receipt as skipped. `go mod download` writes the
 // module cache, and govulncheck and `go list` can fetch modules and query the vulnerability
 // database, so a dry run that ran them was not one.
+//
+// A run that can mint a receipt first requires the working tree to match HEAD, because the
+// scan stages read the working tree while the receipt certifies the commit. A tree with
+// changes, or an untracked or ignored debt baseline or gosec configuration, is refused before
+// any stage runs (requireCleanTree); a dry run reports the same state and carries on.
 func RunGatedPipeline(ctx context.Context, repoDir string, dryRun bool) (*PipelineReport, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("pipeline: context cannot be nil")
@@ -211,9 +223,14 @@ func RunGatedPipeline(ctx context.Context, repoDir string, dryRun bool) (*Pipeli
 		DryRun:  dryRun,
 		Stages:  make([]StageResult, 0, maxStages),
 	}
-	describeTree(ctx, repoDir, rep)
-
 	cfg := newStageConfig(repoDir, dryRun, rep)
+	describeTree(ctx, cfg)
+	if err := requireCleanTree(cfg); err != nil {
+		rep.Status = StatusRejected
+		rep.TotalElapsed = time.Since(start)
+		return rep, nil //nolint:nilerr // the refusal is reported in rep.Status and its stage
+	}
+
 	if err := executeStages(ctx, cfg); err != nil {
 		rep.Status = StatusRejected
 		rep.TotalElapsed = time.Since(start)
@@ -228,15 +245,16 @@ func RunGatedPipeline(ctx context.Context, repoDir string, dryRun bool) (*Pipeli
 }
 
 // describeTree records the repository identity, the HEAD commit and whether the working
-// tree that the scan stages inspect is clean.
-func describeTree(ctx context.Context, repoDir string, rep *PipelineReport) {
+// tree that the scan stages inspect matches it, with the reason when it does not.
+func describeTree(ctx context.Context, cfg *stageConfig) {
 	gitCtx, cancel := context.WithTimeout(ctx, GitQueryTimeout)
 	defer cancel()
 
-	rep.Repository = resolveRepositoryName(gitCtx, repoDir)
-	rep.CommitSHA = getGitCommitSHA(gitCtx, repoDir)
-	status, err := util.RunGit(gitCtx, repoDir, "status", "--porcelain")
-	rep.WorktreeClean = err == nil && strings.TrimSpace(status) == ""
+	cfg.rep.Repository = resolveRepositoryName(gitCtx, cfg.repoDir)
+	tree := cfg.inspectTree(ctx, cfg.repoDir)
+	cfg.rep.CommitSHA = tree.commit
+	cfg.rep.WorktreeClean = tree.problem == ""
+	cfg.rep.WorktreeProblem = tree.problem
 }
 
 // resolveRepositoryName returns owner/name for the gated repository, falling back to the
@@ -341,7 +359,7 @@ func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
 		return "", fmt.Errorf("hiss scan error: %w: %s", hiss.ErrScanIncomplete, scanRep.CoverageEvidence())
 	}
 
-	base, err := baseline.LoadBaseline(filepath.Join(cfg.repoDir, ".standards-baseline.json"))
+	base, err := baseline.LoadBaseline(filepath.Join(cfg.repoDir, BaselineFile))
 	if err != nil {
 		return "", fmt.Errorf("load debt baseline: %w", err)
 	}
@@ -640,7 +658,8 @@ func removeWorktree(ctx context.Context, wtMgr *worktree.Manager, taskID string)
 
 // runReceiptStage signs the real concatenated stage output with the long-lived Ed25519
 // key resolved by lockdown.LoadSigningKey. It fails closed when no key is configured, and
-// it never mints a receipt for a dry run, which by definition did not run the tests.
+// it never mints a receipt for a dry run, which by definition did not run the tests. Nor does
+// it mint one unless the tree still matches the HEAD the run started on (confirmTreeUnchanged).
 func runReceiptStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("context cancelled before receipt could be minted: %w", err)
@@ -648,6 +667,9 @@ func runReceiptStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	rep := cfg.rep
 	if cfg.dryRun {
 		return "", skipped("dry run: no Exit-0 receipt minted")
+	}
+	if err := confirmTreeUnchanged(ctx, cfg); err != nil {
+		return "", err
 	}
 
 	priv, err := lockdown.LoadSigningKey()
