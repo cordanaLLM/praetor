@@ -435,11 +435,11 @@ func inspectRepositoryPrivacy(ctx context.Context, repoPath string, observation 
 		observation.ProbeErrors = append(observation.ProbeErrors, "workingdir tracked probe failed")
 	}
 	if observation.WorkingdirPresent {
-		code, ignoreErr := inventoryRunGitExit(ctx, repoPath, "check-ignore", "--no-index", "-q", "--", ".workingdir/__praetor_privacy_probe__")
-		if ignoreErr != nil || (code != 0 && code != 1) {
+		ignoredPaths, ignoreErr := util.GitIgnoredPaths(ctx, repoPath, []string{".workingdir/__praetor_privacy_probe__"}, true)
+		if ignoreErr != nil {
 			observation.ProbeErrors = append(observation.ProbeErrors, "workingdir ignore probe failed")
 		} else {
-			ignored := code == 0
+			ignored := len(ignoredPaths) == 1
 			observation.WorkingdirProbeIgnored = &ignored
 		}
 	}

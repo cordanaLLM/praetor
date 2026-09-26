@@ -2,7 +2,10 @@ package util
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"time"
 )
 
@@ -21,4 +24,24 @@ func RunGitProbe(ctx context.Context, dir string, maxBytes int, args ...string) 
 	defer cancel()
 	argv := append([]string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}, args...)
 	return RunCommandBytes(probeCtx, dir, "git", maxBytes, argv...)
+}
+
+// RunGitProbeStatus runs RunGitProbe and accepts both of git's answering statuses: 0 for a
+// match and 1 for "nothing matched", which check-ignore and config --get-regexp use. It
+// returns the output with that status. Any other status, a stream that reached maxBytes,
+// cancellation and a failure to start git are errors, because none of them is an answer.
+func RunGitProbeStatus(ctx context.Context, dir string, maxBytes int, args ...string) (CommandBytes, int, error) {
+	result, runErr := RunGitProbe(ctx, dir, maxBytes, args...)
+	if runErr == nil {
+		return result, 0, nil
+	}
+	if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) ||
+		len(result.Stdout) >= maxBytes || len(result.Stderr) >= maxBytes {
+		return result, -1, fmt.Errorf("%w: %w", errGitProbeStatus, runErr)
+	}
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) && exitErr.ExitCode() == 1 {
+		return result, 1, nil
+	}
+	return result, -1, fmt.Errorf("%w: %w", errGitProbeStatus, runErr)
 }

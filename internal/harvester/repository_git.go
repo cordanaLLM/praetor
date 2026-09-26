@@ -3,7 +3,6 @@ package harvester
 import (
 	"context"
 	"errors"
-	"os/exec"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -24,17 +23,9 @@ func inventoryRunGit(ctx context.Context, repoPath string, args ...string) (stri
 // inventoryRunGitExit accepts only Git's success or no-match statuses. Transport,
 // output-limit, cancellation and all other Git failures remain unknown.
 func inventoryRunGitExit(ctx context.Context, repoPath string, args ...string) (int, error) {
-	result, runErr := inventoryGit(ctx, repoPath, args...)
-	if runErr == nil {
-		return 0, nil
-	}
-	if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) ||
-		len(result.Stdout) >= inventoryGitOutputLimit || len(result.Stderr) >= inventoryGitOutputLimit {
+	_, status, err := util.RunGitProbeStatus(ctx, repoPath, inventoryGitOutputLimit, args...)
+	if err != nil {
 		return -1, errors.New("git probe failed")
 	}
-	var exitErr *exec.ExitError
-	if errors.As(runErr, &exitErr) && exitErr.ExitCode() == 1 {
-		return 1, nil
-	}
-	return -1, errors.New("git probe failed")
+	return status, nil
 }

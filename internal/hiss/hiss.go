@@ -389,13 +389,14 @@ func ShouldIgnorePath(rel string) bool {
 
 // ignoredDirNames are the built-in directory names skipped at any depth: generated
 // output, dependency trees, caches and tool state. They are matched per path segment,
-// never as substrings. Project-specific names belong in ScanOptions.IgnoreDirs.
+// never as substrings. Project-specific names belong in ScanOptions.IgnoreDirs. The agent and
+// ledger scratch directories (.claude, .standards, .workingdir, .workingdir2) come from
+// util.IsScratchDir, the list adopt's verification planner and dedupe share.
 var ignoredDirNames = map[string]struct{}{
-	".git": {}, ".corpus": {}, ".standards": {}, ".harvest": {},
+	".git": {}, ".corpus": {}, ".harvest": {},
 	"vendor": {}, "node_modules": {}, "third_party": {},
 	".venv": {}, "build": {}, "target": {}, "testdata": {},
-	".cache": {}, ".idea": {}, ".vscode": {}, ".claude": {},
-	".workingdir": {}, ".workingdir2": {},
+	".cache": {}, ".idea": {}, ".vscode": {},
 	".pytest_cache": {}, ".mypy_cache": {}, ".ruff_cache": {},
 }
 
@@ -405,7 +406,7 @@ var ignoredDirPrefixes = []string{"build-", "build_"}
 
 func isIgnoredDirName(name string, extra map[string]struct{}) bool {
 	norm := strings.ToLower(name)
-	if _, ok := ignoredDirNames[norm]; ok {
+	if _, ok := ignoredDirNames[norm]; ok || util.IsScratchDir(norm) {
 		return true
 	}
 	if _, ok := extra[norm]; ok {
