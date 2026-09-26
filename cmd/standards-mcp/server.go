@@ -494,7 +494,7 @@ func compiledContextText(res *compiler.CompileResult) string {
 		fmt.Fprintf(&b, "  [COMPILED] %-35s (%d lines, budget <= %d)\n", f.RelativePath, f.LineCount, compiler.MaxLineBudget)
 	}
 	for _, rel := range res.NotApplicable {
-		fmt.Fprintf(&b, "  [NOT_APPLICABLE] %-35s (not selected by agent_clients)\n", rel)
+		b.WriteString(compiler.NotApplicableLine(rel) + "\n")
 	}
 	return b.String()
 }

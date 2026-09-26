@@ -92,3 +92,31 @@ func TestCompileContext_Boundary_AbsentSelectionAndExplicitOverride(t *testing.T
 		t.Fatalf("explicit selection ignored: %v", res.Files)
 	}
 }
+
+// Positive: the not-applicable line names the path and why it was left out.
+func TestNotApplicableLine_Positive_NamesPathAndReason(t *testing.T) {
+	got := NotApplicableLine(".codex/agents")
+	if !strings.HasPrefix(got, "  [NOT_APPLICABLE] .codex/agents ") || !strings.HasSuffix(got, "(not selected by agent_clients)") {
+		t.Fatalf("NotApplicableLine = %q", got)
+	}
+}
+
+// Negative: the line carries no newline, so callers that print and callers that build a
+// message cannot double it.
+func TestNotApplicableLine_Negative_NoTrailingNewline(t *testing.T) {
+	if got := NotApplicableLine("CLAUDE.md"); strings.ContainsRune(got, '\n') {
+		t.Fatalf("NotApplicableLine = %q contains a newline", got)
+	}
+}
+
+// Boundary: a path longer than the 35-column pad is printed whole, and an empty path still
+// yields the aligned marker.
+func TestNotApplicableLine_Boundary_LongAndEmptyPaths(t *testing.T) {
+	long := strings.Repeat("d/", 30) + "GEMINI.md"
+	if got := NotApplicableLine(long); !strings.Contains(got, long+" (not selected") {
+		t.Fatalf("long path truncated or misaligned: %q", got)
+	}
+	if got := NotApplicableLine(""); got != "  [NOT_APPLICABLE] "+strings.Repeat(" ", 35)+" (not selected by agent_clients)" {
+		t.Fatalf("empty path = %q", got)
+	}
+}

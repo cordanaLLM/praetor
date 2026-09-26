@@ -6,8 +6,11 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const priorLefthookFixtures = "testdata/lefthook"
@@ -178,5 +181,114 @@ func TestClassifyLefthookConfig_Boundary_ExtendsAndSupersetEdges(t *testing.T) {
 	}
 	if reason := classifyLefthookConfig([]byte(many), current).reason; !strings.Contains(reason, "plus 7 more") || !strings.Contains(reason, ", ...") {
 		t.Errorf("a long superset is not counted and truncated: %q", reason)
+	}
+}
+
+// jobsListRendering rewrites the generated rendering's commands maps as lefthook jobs lists, in
+// sorted order, and appends extra to the pre-commit list.
+func jobsListRendering(t *testing.T, extra ...map[string]any) string {
+	t.Helper()
+	var parsed map[string]any
+	if err := yaml.Unmarshal([]byte(buildLefthookYAML()), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	for hook, body := range parsed {
+		section, ok := body.(map[string]any)
+		commands, hasCommands := section["commands"].(map[string]any)
+		if !ok || !hasCommands {
+			continue
+		}
+		names := make([]string, 0, len(commands))
+		for name := range commands {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		list := make([]any, 0, len(names)+len(extra))
+		for _, name := range names {
+			job, isMap := commands[name].(map[string]any)
+			if !isMap {
+				t.Fatalf("generated job %s/%s is not a map", hook, name)
+			}
+			job["name"] = name
+			list = append(list, job)
+		}
+		if hook == "pre-commit" {
+			for _, job := range extra {
+				list = append(list, job)
+			}
+		}
+		delete(section, "commands")
+		section["jobs"] = list
+	}
+	data, err := yaml.Marshal(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// Positive: a configuration written in lefthook's jobs-list syntax that holds every generated
+// job plus more is protected like the commands-map form, and a remotes entry whose configs
+// name the canonical policy is recognised like extends.
+func TestClassifyLefthookConfig_Positive_JobsListSupersetAndRemotes(t *testing.T) {
+	current := buildLefthookYAML()
+	superset := jobsListRendering(t, map[string]any{"name": "lint-docs", "run": "make docs-lint"})
+	got := classifyLefthookConfig([]byte(superset), current)
+	if got.canonical || !strings.Contains(got.reason, "plus 1 more (pre-commit/commands/lint-docs)") {
+		t.Fatalf("jobs-list superset not protected: %+v\n%s", got, superset)
+	}
+	remote := "remotes:\n  - git_url: https://github.com/cordanaLLM/praetor\n    ref: v1.0.0\n    configs:\n      - ./.config/lefthook/praetor.yml\n"
+	if got := classifyLefthookConfig([]byte(remote), current); !got.canonical || !strings.Contains(got.reason, canonicalLefthookPolicy) {
+		t.Fatalf("remotes entry naming the canonical policy not recognised: %+v", got)
+	}
+	if !lefthookExtendsCanonical([]byte(remote)) || !lefthookExtendsCanonical([]byte(canonicalRootLefthook)) {
+		t.Fatal("lefthookExtendsCanonical missed extends or remotes")
+	}
+}
+
+// Negative: the jobs-list form of exactly the generated jobs adds nothing to protect, and a
+// remote naming another configuration, or remotes that are not a list, are not the canonical
+// policy; both keep the --force contract.
+func TestClassifyLefthookConfig_Negative_JobsListEquivalentAndOtherRemotes(t *testing.T) {
+	current := buildLefthookYAML()
+	for _, body := range []string{
+		jobsListRendering(t),
+		"remotes:\n  - git_url: https://example.invalid/hooks\n    configs:\n      - lefthook.yml\n",
+		"remotes:\n  git_url: https://example.invalid/hooks\n  configs: [.config/lefthook/praetor.yml]\n",
+	} {
+		if got := classifyLefthookConfig([]byte(body), current); got != (lefthookIdentity{}) {
+			t.Errorf("wrongly protected: %+v\n%s", got, body)
+		}
+	}
+	if lefthookExtendsCanonical(nil) || lefthookExtendsCanonical([]byte("not: [valid yaml\n")) {
+		t.Error("an absent or unparsable lefthook.yml read as extending the canonical policy")
+	}
+}
+
+// Boundary: a user extension of the rendering without checkpoint jobs stays protected once the
+// checkpoint lifecycle is ready and the current rendering carries those jobs, and only the
+// user's job is named. Jobs-list entries are named like lefthook names them: script, name, run
+// line, then position; a group is its own kind.
+func TestClassifyLefthookConfig_Boundary_CheckpointOptionalAndListNames(t *testing.T) {
+	extended := buildLefthookYAML() + "commit-msg:\n  commands:\n    conventional:\n      run: ./scripts/check-msg {1}\n"
+	got := classifyLefthookConfig([]byte(extended), buildLefthookYAMLFor(true))
+	if !strings.Contains(got.reason, "plus 1 more (commit-msg/commands/conventional)") {
+		t.Fatalf("extension lost its protection once checkpoint jobs were generated: %+v", got)
+	}
+	cases := []struct {
+		job  map[string]any
+		want string
+	}{
+		{map[string]any{"name": "fmt", "script": "fmt.sh"}, "scripts/fmt.sh"},
+		{map[string]any{"name": "fmt", "run": "gofmt -l ."}, "commands/fmt"},
+		{map[string]any{"run": "gofmt -l ."}, "commands/gofmt -l ."},
+		{map[string]any{"name": "checks", "group": map[string]any{"jobs": []any{}}}, "jobs/checks"},
+		{map[string]any{}, "jobs/[3]"},
+		{nil, "jobs/[3]"},
+	}
+	for _, tc := range cases {
+		if got := lefthookListJob(tc.job, 3); got != tc.want {
+			t.Errorf("lefthookListJob(%v) = %q, want %q", tc.job, got, tc.want)
+		}
 	}
 }

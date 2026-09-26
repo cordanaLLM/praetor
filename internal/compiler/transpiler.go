@@ -19,6 +19,13 @@ type Transpiler agentcontext.Transpiler
 
 func NewTranspiler() *Transpiler { return &Transpiler{MaxLines: MaxLineBudget} }
 
+// NotApplicableLine is the report line, without a newline, for a context file or persona
+// directory agent_clients leaves out. compile-context and the MCP standards_compile_context
+// tool print the same line.
+func NotApplicableLine(rel string) string {
+	return fmt.Sprintf("  [NOT_APPLICABLE] %-35s (not selected by agent_clients)", rel)
+}
+
 // Compile reads the canonical AGENTS.md and synthesizes vendor-specific files.
 func (t *Transpiler) Compile(agentsMdPath string) (*CompileResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultAgentTimeout)

@@ -126,7 +126,7 @@ func printNotApplicablePersonaDirs(ctx context.Context, targetDir string) error 
 
 func printNotApplicable(rels []string) {
 	for _, rel := range rels {
-		fmt.Printf("  [NOT_APPLICABLE] %-35s (not selected by agent_clients)\n", rel)
+		fmt.Println(compiler.NotApplicableLine(rel))
 	}
 }
 

@@ -31,7 +31,7 @@ func checkpointSession(t *testing.T, source string) *adoptSession {
 
 func TestAdoptCheckpointBundleAddsJobsAndLocalPolicy(t *testing.T) {
 	session := checkpointSession(t, checkpointSourceFixture(t, true))
-	ready, err := reconcileCheckpointBundle(context.Background(), session)
+	ready, err := reconcileCheckpointBundle(context.Background(), session, false)
 	if err != nil || !ready {
 		t.Fatalf("complete source was not installed: ready=%v err=%v", ready, err)
 	}
@@ -52,7 +52,7 @@ func TestAdoptCheckpointBundleAddsJobsAndLocalPolicy(t *testing.T) {
 
 func TestAdoptCheckpointBundleMissingSourceFailsClosedWithoutJobs(t *testing.T) {
 	session := checkpointSession(t, checkpointSourceFixture(t, false))
-	ready, err := reconcileCheckpointBundle(context.Background(), session)
+	ready, err := reconcileCheckpointBundle(context.Background(), session, false)
 	if err == nil || ready {
 		t.Fatalf("incomplete source was accepted: ready=%v err=%v", ready, err)
 	}
@@ -67,7 +67,7 @@ func TestAdoptCheckpointBundleMissingSourceFailsClosedWithoutJobs(t *testing.T) 
 func TestAdoptCheckpointBundleCancellationIsRejected(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := reconcileCheckpointBundle(ctx, checkpointSession(t, checkpointSourceFixture(t, true))); err == nil {
+	if _, err := reconcileCheckpointBundle(ctx, checkpointSession(t, checkpointSourceFixture(t, true)), false); err == nil {
 		t.Fatal("cancelled checkpoint bootstrap succeeded")
 	}
 }
@@ -75,7 +75,7 @@ func TestAdoptCheckpointBundleCancellationIsRejected(t *testing.T) {
 func TestAdoptCheckpointBundlePreservesNonDefaultPolicy(t *testing.T) {
 	session := checkpointSession(t, checkpointSourceFixture(t, true))
 	mustWrite(t, filepath.Join(session.repoPath, filepath.FromSlash(checkpointPolicy)), `{"version":1,"enabled":true,"commit_after_minutes":7,"commit_after_files":3,"on_stop":true,"publish":false,"remote":"origin","base":"main","repository":"fixture/repo","branch_prefixes":["fix/"],"require_pr":false}`+"\n")
-	ready, err := reconcileCheckpointBundle(context.Background(), session)
+	ready, err := reconcileCheckpointBundle(context.Background(), session, false)
 	if err != nil || !ready {
 		t.Fatalf("non-default policy disabled lifecycle: ready=%v err=%v", ready, err)
 	}
@@ -98,7 +98,7 @@ func TestAdoptCheckpointBundleRunsActualEvaluator(t *testing.T) {
 		}
 		mustWrite(t, filepath.Join(session.opts.LockSourceRoot, filepath.FromSlash(name)), string(data))
 	}
-	ready, err := reconcileCheckpointBundle(context.Background(), session)
+	ready, err := reconcileCheckpointBundle(context.Background(), session, false)
 	if err != nil || !ready {
 		t.Fatalf("actual source was not installed: ready=%v err=%v", ready, err)
 	}
@@ -119,5 +119,63 @@ func TestAdoptCheckpointBundleRunsActualEvaluator(t *testing.T) {
 	}
 	if result["schema_version"] != float64(1) || result["publication_status"] != "not_due" || result["commit_due"] != true {
 		t.Fatalf("unexpected evaluator result: %v", result)
+	}
+}
+
+// Positive: beside a canonical hook policy, --force keeps the vendored checkpoint script that
+// differs from the source bundle, so the policy and its scripts stay one version, and still
+// installs a script the vendored bundle lacks (BUG-858).
+func TestAdoptCheckpointBundle_Positive_VendoredScriptsSurviveForce(t *testing.T) {
+	session := checkpointSession(t, checkpointSourceFixture(t, true))
+	session.opts.Force = true
+	vendored := "#!/usr/bin/env python3\nprint('vendored')\n"
+	mustWrite(t, filepath.Join(session.repoPath, filepath.FromSlash(checkpointScript)), vendored)
+	ready, err := reconcileCheckpointBundle(context.Background(), session, true)
+	if err != nil || !ready {
+		t.Fatalf("vendored bundle: ready=%v err=%v", ready, err)
+	}
+	if got := mustRead(t, filepath.Join(session.repoPath, filepath.FromSlash(checkpointScript))); got != vendored {
+		t.Fatalf("--force replaced the vendored checkpoint script:\n%s", got)
+	}
+	if got := mustRead(t, filepath.Join(session.repoPath, filepath.FromSlash(checkpointCommon))); !strings.Contains(got, "HookError") {
+		t.Fatalf("missing vendored script not installed: %q", got)
+	}
+}
+
+// Negative: without a canonical policy the --force contract is unchanged: the differing script
+// is replaced by the verified source.
+func TestAdoptCheckpointBundle_Negative_ForceReplacesUnvendoredScript(t *testing.T) {
+	session := checkpointSession(t, checkpointSourceFixture(t, true))
+	session.opts.Force = true
+	mustWrite(t, filepath.Join(session.repoPath, filepath.FromSlash(checkpointScript)), "print('stale')\n")
+	if ready, err := reconcileCheckpointBundle(context.Background(), session, false); err != nil || !ready {
+		t.Fatalf("ready=%v err=%v", ready, err)
+	}
+	if got := mustRead(t, filepath.Join(session.repoPath, filepath.FromSlash(checkpointScript))); !strings.Contains(got, "shared") {
+		t.Fatalf("--force kept a stale unvendored script: %q", got)
+	}
+}
+
+// Boundary: through a full adopt --force, a lefthook.yml reaching the canonical policy only
+// through remotes still protects the vendored checkpoint script, not just the configuration.
+func TestAdopt_Boundary_ForceKeepsCheckpointScriptBesideRemoteCanonicalPolicy(t *testing.T) {
+	repoPath := newTestRepo(t, "remote-canonical-lefthook")
+	remote := "remotes:\n  - git_url: https://github.com/cordanaLLM/praetor\n    ref: v1.0.0\n    configs: [.config/lefthook/praetor.yml]\n"
+	mustWrite(t, filepath.Join(repoPath, lefthookFile), remote)
+	vendored := "#!/usr/bin/env python3\nprint('vendored')\n"
+	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(checkpointScript)), vendored)
+	source := newAdoptLockSource(t)
+	mustWrite(t, filepath.Join(source, filepath.FromSlash(checkpointScript)), "#!/usr/bin/env python3\nprint('shared')\n")
+	mustWrite(t, filepath.Join(source, filepath.FromSlash(checkpointCommon)), "class HookError(Exception):\n    pass\n")
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: source, Path: repoPath, Force: true})
+	if err != nil {
+		t.Fatalf("Adopt --force: %v", err)
+	}
+	assertNoIssues(t, rep)
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != remote {
+		t.Fatalf("--force replaced a configuration reaching the canonical policy through remotes:\n%s", got)
+	}
+	if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(checkpointScript))); got != vendored {
+		t.Fatalf("--force replaced the vendored checkpoint script:\n%s", got)
 	}
 }

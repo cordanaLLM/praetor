@@ -26,8 +26,12 @@ type checkpointSource struct {
 
 // reconcileCheckpointBundle installs the exact shared evaluator only when the
 // explicitly selected source root contains both required files. Existing files
-// remain authoritative unless --force is explicitly selected.
-func reconcileCheckpointBundle(ctx context.Context, s *adoptSession) (bool, error) {
+// remain authoritative unless --force is explicitly selected. With vendored set, the
+// repository's lefthook.yml extends the canonical policy, whose scripts are vendored from
+// one reviewed Praetor commit with it: existing scripts stay authoritative even under
+// --force, so policy and scripts never mix versions (BUG-858), and only missing ones are
+// installed.
+func reconcileCheckpointBundle(ctx context.Context, s *adoptSession, vendored bool) (bool, error) {
 	if s.opts.LockSourceRoot == "" {
 		return false, errors.New("no explicit verified checkpoint source root")
 	}
@@ -36,7 +40,7 @@ func reconcileCheckpointBundle(ctx context.Context, s *adoptSession) (bool, erro
 		return false, err
 	}
 	for _, source := range sources {
-		if err := installCheckpointSource(s, source); err != nil {
+		if err := installCheckpointSource(s, source, vendored); err != nil {
 			return false, err
 		}
 	}
@@ -55,13 +59,13 @@ func reconcileCheckpointBundle(ctx context.Context, s *adoptSession) (bool, erro
 	return true, nil
 }
 
-func installCheckpointSource(s *adoptSession, source checkpointSource) error {
+func installCheckpointSource(s *adoptSession, source checkpointSource, vendored bool) error {
 	written, err := s.scaffoldFile(scaffold{
-		rel: source.path, perm: filePerm, content: source.data, force: true,
+		rel: source.path, perm: filePerm, content: source.data, force: !vendored,
 		created:  "Installed shared checkpoint evaluator from verified source bundle",
 		verified: "Existing shared checkpoint evaluator preserved",
 	})
-	if err != nil || written || s.opts.DryRun {
+	if err != nil || written || s.opts.DryRun || vendored {
 		return err
 	}
 	full, err := repoFile(s.repoPath, source.path)

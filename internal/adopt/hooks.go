@@ -189,17 +189,19 @@ func buildFallbackPreCommitScript() string {
 // reconcileGitHooks scaffolds lefthook.yml and the agent evasion interceptor, then
 // activates local git hooks for configurations praetor itself wrote. An earlier Praetor
 // rendering is migrated to the current one; a configuration that extends the canonical
-// policy or adds jobs to the generated ones is never replaced, --force included.
+// policy or adds jobs to the generated ones is never replaced, --force included, and neither
+// are the checkpoint scripts vendored beside such a policy.
 func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
-	checkpointReady, err := reconcileCheckpointLifecycle(ctx, s)
+	existing, err := s.readExistingLefthook()
+	if err != nil {
+		return err
+	}
+	checkpointReady, err := reconcileCheckpointLifecycle(ctx, s, lefthookExtendsCanonical(existing))
 	if err != nil {
 		return err
 	}
 	current := buildLefthookYAMLFor(checkpointReady)
-	identity, err := s.classifyExistingLefthook(current)
-	if err != nil {
-		return err
-	}
+	identity := classifyLefthookConfig(existing, current)
 	if identity.reason != "" {
 		s.report.recordSkipped(lefthookFile, identity.reason)
 		return reconcileEvasionHook(s, identity.canonical)
@@ -242,8 +244,11 @@ func (s *adoptSession) writeLefthookConfig(current string, prior bool) (bool, er
 	return true, nil
 }
 
-func reconcileCheckpointLifecycle(ctx context.Context, s *adoptSession) (bool, error) {
-	ready, err := reconcileCheckpointBundle(ctx, s)
+// reconcileCheckpointLifecycle installs the checkpoint bundle. With vendored set, the
+// repository carries the canonical hook policy, whose checkpoint scripts belong to that
+// vendored bundle (reconcileCheckpointBundle).
+func reconcileCheckpointLifecycle(ctx context.Context, s *adoptSession, vendored bool) (bool, error) {
+	ready, err := reconcileCheckpointBundle(ctx, s, vendored)
 	if err == nil {
 		return ready, nil
 	}
@@ -319,10 +324,8 @@ func (s *adoptSession) lefthookConfigIsPraetor() bool {
 	if err != nil {
 		return false
 	}
-	if bytes.Equal(data, []byte(buildLefthookYAML())) {
-		return true
-	}
-	return bytes.Equal(data, []byte(buildLefthookYAMLFor(true))) && checkpointFilesPresent(s.repoPath)
+	current, checkpoint := currentLefthookRendering(data)
+	return current && (!checkpoint || checkpointFilesPresent(s.repoPath))
 }
 
 // resolveHooksDirForInstall asks git for the hooks directory. Without git on PATH it

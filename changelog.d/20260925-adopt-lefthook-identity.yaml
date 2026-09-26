@@ -1,3 +1,4 @@
 type: fixed
-title: Adopted lefthook.yml resolves praetorctl or standardsctl the way the generated Makefile does and drops the go run ./cmd/standardsctl fallback, skips go vet and govulncheck with a stated reason where the repository root has no go.mod, migrates byte-exact earlier Praetor renderings instead of treating them as foreign, and never replaces a configuration that extends .config/lefthook/praetor.yml or adds jobs to the generated ones, --force included
+title: Adopted lefthook.yml resolves praetorctl or standardsctl the way the generated Makefile does and drops the go run ./cmd/standardsctl fallback, skips go vet and govulncheck with a stated reason where the repository root has no go.mod, migrates byte-exact earlier Praetor renderings instead of treating them as foreign, and never replaces a configuration that extends .config/lefthook/praetor.yml through extends or remotes, or adds jobs to the generated ones in commands, scripts or jobs syntax, nor the checkpoint scripts vendored beside such a policy, --force included
+issue: "#242"
 breaking: false

@@ -52,24 +52,42 @@ func isPriorLefthookConfig(data []byte) bool {
 	return known
 }
 
-// isCurrentLefthookConfig reports whether data is exactly a current Praetor rendering.
-func isCurrentLefthookConfig(data []byte) bool {
-	text := string(data)
-	return text == buildLefthookYAMLFor(false) || text == buildLefthookYAMLFor(true)
+// currentLefthookRendering reports whether data is exactly a current Praetor rendering and, when
+// it is, whether it is the one carrying the checkpoint jobs. It is the one byte comparison both
+// classification and hook activation (lefthookConfigIsPraetor) use.
+func currentLefthookRendering(data []byte) (current, checkpoint bool) {
+	switch string(data) {
+	case buildLefthookYAMLFor(false):
+		return true, false
+	case buildLefthookYAMLFor(true):
+		return true, true
+	}
+	return false, false
 }
 
-// classifyExistingLefthook reads lefthook.yml, when present, and classifies it against the
-// rendering adoption would write.
-func (s *adoptSession) classifyExistingLefthook(current string) (lefthookIdentity, error) {
+// isCurrentLefthookConfig reports whether data is exactly a current Praetor rendering.
+func isCurrentLefthookConfig(data []byte) bool {
+	current, _ := currentLefthookRendering(data)
+	return current
+}
+
+// readExistingLefthook returns the bytes of lefthook.yml, or nil when the file is absent.
+func (s *adoptSession) readExistingLefthook() ([]byte, error) {
 	full, err := repoFile(s.repoPath, lefthookFile)
 	if err != nil || !fileExists(full) {
-		return lefthookIdentity{}, err
+		return nil, err
 	}
-	data, err := readRepoFile(full)
-	if err != nil {
-		return lefthookIdentity{}, err
+	return readRepoFile(full)
+}
+
+// lefthookExtendsCanonical reports whether existing configuration bytes pull in the canonical
+// policy; adoption then leaves the policy's vendored scripts to that policy (BUG-858).
+func lefthookExtendsCanonical(existing []byte) bool {
+	var parsed map[string]any
+	if err := yaml.Unmarshal(existing, &parsed); err != nil {
+		return false
 	}
-	return classifyLefthookConfig(data, current), nil
+	return extendsCanonicalPolicy(parsed)
 }
 
 // classifyLefthookConfig decides how adoption treats existing bytes. Praetor's own renderings,
@@ -88,18 +106,18 @@ func classifyLefthookConfig(existing []byte, current string) lefthookIdentity {
 	if err := yaml.Unmarshal(existing, &parsed); err != nil {
 		return lefthookIdentity{}
 	}
-	if extendsCanonicalPolicy(parsed["extends"]) {
+	if extendsCanonicalPolicy(parsed) {
 		return lefthookIdentity{canonical: true, reason: "lefthook.yml extends the canonical Praetor hook policy " +
-			canonicalLefthookPolicy + "; adoption does not replace it with the smaller generated configuration, " +
+			canonicalLefthookPolicy + " (extends or remotes); adoption does not replace it with the smaller generated configuration, " +
 			"--force included, and does not activate it. Update the vendored policy, its scripts and " +
 			evasionHookFile + " together from one reviewed Praetor commit (" +
 			".config/lefthook/README.md), then run 'lefthook install'"}
 	}
-	var generated map[string]any
-	if err := yaml.Unmarshal([]byte(current), &generated); err != nil {
+	required, known, ok := generatedLefthookJobs(current)
+	if !ok {
 		return lefthookIdentity{}
 	}
-	if extra := extraLefthookJobs(lefthookJobs(parsed), lefthookJobs(generated)); len(extra) > 0 {
+	if extra := extraLefthookJobs(lefthookJobs(parsed), required, known); len(extra) > 0 {
 		return lefthookIdentity{reason: fmt.Sprintf("lefthook.yml defines every generated job plus %d more (%s); "+
 			"adoption does not replace it, --force included, because that would drop them, and does not activate it. "+
 			"Merge the generated jobs by hand, or remove lefthook.yml to regenerate it, then run 'lefthook install'",
@@ -116,12 +134,41 @@ func summarizeJobs(jobs []string) string {
 	return strings.Join(jobs, ", ")
 }
 
-// extendsCanonicalPolicy reports whether an extends value, a string or a list of strings,
-// names the canonical policy.
-func extendsCanonicalPolicy(extends any) bool {
-	entries, ok := extends.([]any)
+// generatedLefthookJobs returns the jobs every generated rendering holds (the one without
+// checkpoint jobs) and the jobs the current rendering holds. A configuration needs only the
+// first set to count as an extension, so jobs a user added to a rendering made before the
+// checkpoint lifecycle became available stay protected once it does; the second set is what
+// counts as generated when naming the extra jobs.
+func generatedLefthookJobs(current string) (required, known map[string]bool, ok bool) {
+	var base, rendered map[string]any
+	if yaml.Unmarshal([]byte(buildLefthookYAMLFor(false)), &base) != nil || yaml.Unmarshal([]byte(current), &rendered) != nil {
+		return nil, nil, false
+	}
+	return lefthookJobs(base), lefthookJobs(rendered), true
+}
+
+// extendsCanonicalPolicy reports whether a parsed configuration pulls in the canonical policy,
+// through extends or through the configs of a remotes entry (.config/lefthook/README.md).
+func extendsCanonicalPolicy(parsed map[string]any) bool {
+	if namesCanonicalPolicy(parsed["extends"]) {
+		return true
+	}
+	remotes, isList := parsed["remotes"].([]any)
+	for i := 0; isList && i < len(remotes) && i < maxLefthookJobs; i++ {
+		remote, isMap := remotes[i].(map[string]any)
+		if isMap && namesCanonicalPolicy(remote["configs"]) {
+			return true
+		}
+	}
+	return false
+}
+
+// namesCanonicalPolicy reports whether a path list, a string or a list of strings, names the
+// canonical policy.
+func namesCanonicalPolicy(paths any) bool {
+	entries, ok := paths.([]any)
 	if !ok {
-		entries = []any{extends}
+		entries = []any{paths}
 	}
 	for i := 0; i < len(entries) && i < maxLefthookJobs; i++ {
 		path, isString := entries[i].(string)
@@ -133,8 +180,9 @@ func extendsCanonicalPolicy(extends any) bool {
 }
 
 // lefthookJobs names every job of a parsed configuration as hook/kind/name, where kind is
-// commands or scripts. Keys that are not hooks (min_version, output, extends) hold no job map
-// and contribute nothing.
+// commands or scripts, whichever syntax declares it: the commands and scripts maps or the jobs
+// list (lefthookListJob). Keys that are not hooks (min_version, output, extends) hold no job
+// map and contribute nothing.
 func lefthookJobs(parsed map[string]any) map[string]bool {
 	jobs := make(map[string]bool)
 	for hook, body := range parsed {
@@ -145,11 +193,48 @@ func lefthookJobs(parsed map[string]any) map[string]bool {
 		for _, kind := range []string{"commands", "scripts"} {
 			addLefthookJobs(jobs, hook+"/"+kind+"/", section[kind])
 		}
+		addLefthookJobList(jobs, hook+"/", section["jobs"])
 		if len(jobs) >= maxLefthookJobs {
 			break
 		}
 	}
 	return jobs
+}
+
+// addLefthookJobList names the entries of a hook's jobs list.
+func addLefthookJobList(jobs map[string]bool, prefix string, list any) {
+	entries, ok := list.([]any)
+	if !ok {
+		return
+	}
+	for i := 0; i < len(entries) && len(jobs) < maxLefthookJobs; i++ {
+		job, isMap := entries[i].(map[string]any)
+		if !isMap {
+			job = nil
+		}
+		jobs[prefix+lefthookListJob(job, i)] = true
+	}
+}
+
+// lefthookListJob names one jobs-list entry the way the commands and scripts maps name the
+// same job, so a configuration in either syntax compares with the generated one: a script job
+// is scripts/<script>, a group jobs/<name>, any other job commands/<name>. An unnamed job takes
+// its run line, as lefthook itself names it (config.Job.PrintableName), then its position.
+func lefthookListJob(job map[string]any, index int) string {
+	if script := lefthookJobField(job, "script"); script != "" {
+		return "scripts/" + script
+	}
+	name := lefthookJobField(job, "name")
+	if name == "" {
+		name = lefthookJobField(job, "run")
+	}
+	if name == "" {
+		return fmt.Sprintf("jobs/[%d]", index)
+	}
+	if _, grouped := job["group"]; grouped {
+		return "jobs/" + name
+	}
+	return "commands/" + name
 }
 
 func addLefthookJobs(jobs map[string]bool, prefix string, group any) {
@@ -165,21 +250,31 @@ func addLefthookJobs(jobs map[string]bool, prefix string, group any) {
 	}
 }
 
-// extraLefthookJobs returns, sorted, the jobs existing defines beyond generated when existing
-// holds every generated job; otherwise nil. A configuration missing any generated job is not
-// an extension of it, and keeps the --force contract.
-func extraLefthookJobs(existing, generated map[string]bool) []string {
-	for job := range generated {
+// extraLefthookJobs returns, sorted, the jobs existing defines beyond known when existing holds
+// every required job; otherwise nil. A configuration missing any required job is not an
+// extension of the generated one, and keeps the --force contract.
+func extraLefthookJobs(existing, required, known map[string]bool) []string {
+	for job := range required {
 		if !existing[job] {
 			return nil
 		}
 	}
 	var extra []string
 	for job := range existing {
-		if !generated[job] {
+		if !known[job] && !required[job] {
 			extra = append(extra, job)
 		}
 	}
 	sort.Strings(extra)
 	return extra
+}
+
+// lefthookJobField returns a string field of a jobs-list entry, or "" when it is absent or not
+// a string.
+func lefthookJobField(job map[string]any, key string) string {
+	value, isString := job[key].(string)
+	if !isString {
+		return ""
+	}
+	return value
 }
