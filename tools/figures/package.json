@@ -1,0 +1,27 @@
+{
+  "name": "@cordanallm/praetor-figures",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Builds praetor's interactive documentation figures from the vendored interfig engine",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "node build.mjs build",
+    "bundle": "node build.mjs bundle",
+    "check": "node build.mjs check",
+    "smoke": "node smoke.mjs",
+    "test": "node --test figures.test.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "esbuild": "0.28.2",
+    "playwright": "1.63.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "typescript": "7.0.2"
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "slug": "gating-pipeline",
+  "title": "Gated pipeline",
+  "alt": "Six gate stages run in order; a failing stage rejects the change before an Exit-0 receipt is signed.",
+  "text": [
+    "Gate stages, in order: 1. Prefetch & Lockfiles (.standards.yaml, .standards.lock), 2. HISS Invariant Scan (ratchet against the debt baseline), 3. Security & SCA Scan (govulncheck, gosec), 4. Flavor Conformance (flavor audit), 5. Race-Detector Tests (go test -race in a worktree), 6. Ed25519 Exit-0 Receipt (signs the stage output).",
+    "Boxes: Candidate commit (praetorctl gate run), Signing key (PRAETOR_RECEIPT_KEY or key file), Rejected (exit 1, stage named), .standards-receipt.json (Exit-0 receipt).",
+    "Candidate commit → 1. Prefetch & Lockfiles (clean tree) → 2. HISS Invariant Scan → 3. Security & SCA Scan → 4. Flavor Conformance → 5. Race-Detector Tests → 6. Ed25519 Exit-0 Receipt.",
+    "Signing key → 6. Ed25519 Exit-0 Receipt (LoadSigningKey) → .standards-receipt.json (signed).",
+    "2. HISS Invariant Scan → Rejected (new violation).",
+    "6. Ed25519 Exit-0 Receipt → Rejected (no signing key).",
+    "Scenario 1, clean run: Every stage passes and the receipt is signed. The tree matches HEAD. Lockfiles found; modules verified. No HISS violation beyond the baseline. govulncheck and gosec pass. Flavor conformance holds. Race-detector tests pass. LoadSigningKey returns the Ed25519 key. The stage output is signed for this commit.",
+    "Scenario 2, HISS violation: A new violation fails stage 2; no later stage runs. The tree matches HEAD. Stage 1 passes. The ratchet finds a violation beyond the baseline; the gate exits 1.",
+    "Scenario 3, dry run: gate run --dry-run runs the read-only checks only. The tree may differ from HEAD. Lockfiles checked; module download skipped. The HISS scan runs. Security scan skipped. Flavor conformance runs. Race-detector tests skipped. No receipt is minted.",
+    "Scenario 4, no signing key: Stage 6 fails closed without a key. Stages 1 to 5 pass. No PRAETOR_RECEIPT_KEY and no key file: the stage fails and nothing is signed.",
+    "Only a failed stage stops the pipeline; a stage that ran nothing is skipped or not_applicable."
+  ],
+  "evidence": [
+    "internal/gating/pipeline.go:executeStages",
+    "internal/gating/tree.go:requireCleanTree",
+    "internal/gating/prefetch.go:VerifyLockfiles",
+    "internal/gating/pipeline.go:runHissStage",
+    "internal/gating/pipeline.go:runSecurityStage",
+    "internal/gating/pipeline.go:runTestStage",
+    "internal/gating/pipeline.go:runReceiptStage",
+    "internal/lockdown/keys.go:LoadSigningKey",
+    "internal/lockdown/receipts.go:GateOutputVersion"
+  ],
+  "spec_sha256": "c038f512dd11bb64a5eac3e39f03880acc5db8d9bb2944dc1fc12a8e93b12979",
+  "engine": {
+    "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
+    "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
+  },
+  "svg_sha256": "716b8a52bb35d61926a3bd8fcb3445a821b7e17531527b19ff2ec773a50cfdd9",
+  "static_sha256": "8da78e629362061b06e14c1a472de16977a8438bab214453ae7a0689cfe2d92d",
+  "width": 832,
+  "height": 581,
+  "edges": [
+    {
+      "from": "Candidate commit",
+      "to": "1. Prefetch & Lockfiles",
+      "label": "clean tree"
+    },
+    {
+      "from": "1. Prefetch & Lockfiles",
+      "to": "2. HISS Invariant Scan"
+    },
+    {
+      "from": "2. HISS Invariant Scan",
+      "to": "3. Security & SCA Scan"
+    },
+    {
+      "from": "3. Security & SCA Scan",
+      "to": "4. Flavor Conformance"
+    },
+    {
+      "from": "4. Flavor Conformance",
+      "to": "5. Race-Detector Tests"
+    },
+    {
+      "from": "5. Race-Detector Tests",
+      "to": "6. Ed25519 Exit-0 Receipt"
+    },
+    {
+      "from": "Signing key",
+      "to": "6. Ed25519 Exit-0 Receipt",
+      "label": "LoadSigningKey"
+    },
+    {
+      "from": "6. Ed25519 Exit-0 Receipt",
+      "to": ".standards-receipt.json",
+      "label": "signed"
+    },
+    {
+      "from": "2. HISS Invariant Scan",
+      "to": "Rejected",
+      "label": "new violation"
+    },
+    {
+      "from": "6. Ed25519 Exit-0 Receipt",
+      "to": "Rejected",
+      "label": "no signing key"
+    }
+  ]
+}
