@@ -80,7 +80,7 @@ and adoption does not yet write a `.gitattributes` pin for `.devcontainer/`
 ([#313](https://github.com/cordanaLLM/praetor/issues/313)). Until it does, a
 CRLF checkout of a ready bootstrap still fails verification on
 `Dockerfile.praetor`; add `.devcontainer/* text eol=lf` to the adopted
-repository's `.gitattributes`, as Praetor does for itself (`.gitattributes:47`).
+repository's `.gitattributes`, as Praetor does for itself (`.gitattributes:51`).
 Verification does not compare a re-render of what decoded, because
 Go's JSON decoder matches member names case-insensitively and keeps the last of a
 duplicate pair: `POSTCREATECOMMAND`, `RemoteUser` and a repeated
