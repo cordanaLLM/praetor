@@ -450,6 +450,11 @@ function inventorySelfTest(temporary) {
   assert.throws(() => privateScratchRoot("x".repeat(MAX_SYMLINK_TARGET_BYTES + 1)),
     /unsafe or oversized target/u);
   assert.equal(runScratchRule(fixture, temporary, allFiles, false, false), 1);
+  // The same rule reached through a symlinked ancestor, as every macOS temp directory is
+  // (/var -> /private/var). A junction needs no privilege on Windows; elsewhere the type is ignored.
+  const symlinkedTemporary = path.join(temporary, "symlinked-ancestor");
+  fs.symlinkSync(temporary, symlinkedTemporary, "junction");
+  assert.equal(runScratchRule(fixture, symlinkedTemporary, allFiles, false, false), 1);
   fs.writeFileSync(path.join(fixture, "AGENTS.md"), "#Malformed generated surface\n");
   assert.equal(runScratchRule(fixture, temporary, allFiles, false, false), 0);
   fs.writeFileSync(path.join(fixture, "docs", "page.mdx"),

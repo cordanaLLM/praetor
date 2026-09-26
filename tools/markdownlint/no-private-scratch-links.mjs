@@ -1351,6 +1351,12 @@ function selfTest() {
   assert.equal(htmlDestinations(nestedCSS, 1, MAX_EVENTS, { maxCSSDepth: 2 }).length, 1);
   assert.throws(() => htmlDestinations(nestedCSS, 1, MAX_EVENTS, { maxCSSDepth: 1 }),
     /embedded CSS depth exceeds 1/u);
+  const self = fileURLToPath(import.meta.url);
+  assert.equal(invokedAsScript(self, self), true);
+  assert.equal(invokedAsScript(path.dirname(self), self), false);
+  assert.equal(invokedAsScript(path.join(path.dirname(self), "missing-entry.mjs"), self), false);
+  assert.equal(invokedAsScript(undefined, self), false);
+  assert.equal(invokedAsScript("", self), false);
   process.stdout.write("private-scratch-link fixtures: positive, negative, boundary pass\n");
 }
 
@@ -1395,8 +1401,23 @@ function runFileList(root, inventoryPath) {
   return emitted === 0 ? 0 : 1;
 }
 
+// Node loads a main module from its real path (symlinks resolved), while process.argv[1] keeps
+// the spelling the caller used. Every macOS temp directory sits under /var -> /private/var, so
+// comparing the two strings skipped main() for verify.mjs's temporary copy of this rule, and
+// the gate exited 0 without reading one file. Both operands are compared in real form instead.
+export function invokedAsScript(scriptPath, modulePath) {
+  if (typeof scriptPath !== "string" || scriptPath === "") {
+    return false;
+  }
+  try {
+    return fs.realpathSync(scriptPath) === fs.realpathSync(modulePath);
+  } catch {
+    return false;
+  }
+}
+
 function main() {
-  if (process.argv[1] !== fileURLToPath(import.meta.url)) {
+  if (!invokedAsScript(process.argv[1], fileURLToPath(import.meta.url))) {
     return;
   }
   if (process.argv[2] === "--self-test" && process.argv.length === 3) {
