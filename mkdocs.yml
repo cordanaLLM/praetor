@@ -4,8 +4,16 @@ site_description: Enterprise Fleet Governance, Repository-as-Code & Universal AI
 site_author: Lusoris
 
 
+# The preset's override template is the live site's too, so the JSON-LD it injects into
+# every page head is one template rather than a copy that can drift from it. The template
+# sits inside docs_dir, so exclude_docs keeps MkDocs from also publishing its Jinja source
+# as a static page. `praetorctl seo audit site` checks the built result.
+exclude_docs: |
+  presets/mkdocs/overrides/
+
 theme:
   name: material
+  custom_dir: docs/presets/mkdocs/overrides
   favicon: assets/praetor-favicon.png
   logo: assets/praetor-logo.png
   palette:

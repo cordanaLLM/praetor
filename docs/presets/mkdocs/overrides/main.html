@@ -4,7 +4,10 @@
   {#- base.html already writes <link rel="canonical"> from site_url. Static templates such
       as 404.html render with page = None, so every page.* read sits behind this guard.
       site_url is operator configuration (DOCS_SITE_URL in mkdocs.yml): unset, the page has
-      no canonical_url, so the article and its author carry no URL rather than a guessed one. -#}
+      no canonical_url, so the article and its author carry no URL rather than a guessed one.
+      dateModified is page.update_date: MkDocs sets it to the build date (SOURCE_DATE_EPOCH
+      when exported) and writes the same value as the page's sitemap.xml <lastmod>.
+      `praetorctl seo audit site` validates the rendered blocks. -#}
   {% if page %}
   <!-- Pre-wired Schema.org JSON-LD structured data -->
   <script type="application/ld+json">
@@ -23,6 +26,7 @@
       "url": {{ config.site_url | tojson }}
       {%- endif %}
     },
+    "dateModified": {{ page.update_date | tojson }},
     "inLanguage": "en",
     "proficiencyLevel": "Expert"
   }

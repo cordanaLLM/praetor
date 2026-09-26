@@ -7,6 +7,11 @@
 // URL differ on every page.
 //
 // Starlight 0.32+ passes route data through Astro.locals.starlightRoute, not Astro.props.
+//
+// dateModified is required (`praetorctl seo audit dist` fails a TechArticle without it).
+// Starlight fills lastUpdated only when its `lastUpdated` option is on or the page's
+// frontmatter sets one; otherwise the build time stands in, the same fallback the MkDocs
+// preset uses (page.update_date).
 import Default from '@astrojs/starlight/components/Head.astro';
 import config from 'virtual:starlight/user-config';
 
@@ -20,7 +25,7 @@ const techArticle = {
   headline: data.title,
   description: data.description || config.description,
   ...(canonical ? { url: canonical } : {}),
-  ...(lastUpdated ? { dateModified: lastUpdated.toISOString() } : {}),
+  dateModified: (lastUpdated ?? new Date()).toISOString(),
   inLanguage: lang,
   proficiencyLevel: 'Expert',
   author: {
