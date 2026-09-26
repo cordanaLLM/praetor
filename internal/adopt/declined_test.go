@@ -1,6 +1,9 @@
 package adopt
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -110,5 +113,50 @@ func TestAdoptStepNames_Boundary_AreAllAddressable(t *testing.T) {
 		if !seen[name] {
 			t.Errorf("mandatory artefact %q names no step in the chain", name)
 		}
+	}
+}
+
+func TestLoadDeclaredManifest_Negative_UnknownKey(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, ".standards.yaml")
+	if err := os.WriteFile(path, []byte("unknown_key: true\nadoption:\n  decline: [readme]"), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+	_, err := loadDeclaredManifest(context.Background(), tempDir)
+	if err == nil {
+		t.Fatal("expected error on unknown key, got nil")
+	}
+}
+
+func TestLoadDeclaredManifest_Negative_SecondDocument(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, ".standards.yaml")
+	if err := os.WriteFile(path, []byte("adoption:\n  decline: [readme]\n---\nadoption:\n  decline: []"), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+	_, err := loadDeclaredManifest(context.Background(), tempDir)
+	if err == nil {
+		t.Fatal("expected error on second document, got nil")
+	}
+}
+
+// TestLoadDeclaredManifest_Boundary_MissingAndValid: no manifest is no decision, and a valid
+// manifest yields its declines; only an unreadable one is an error.
+func TestLoadDeclaredManifest_Boundary_MissingAndValid(t *testing.T) {
+	tempDir := t.TempDir()
+	manifest, err := loadDeclaredManifest(context.Background(), tempDir)
+	if err != nil || manifest != nil {
+		t.Fatalf("missing manifest = (%v, %v), want (nil, nil)", manifest, err)
+	}
+	path := filepath.Join(tempDir, ".standards.yaml")
+	if err := os.WriteFile(path, []byte("adoption:\n  decline: [git-ignore]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err = loadDeclaredManifest(context.Background(), tempDir)
+	if err != nil {
+		t.Fatalf("valid manifest: %v", err)
+	}
+	if got := manifestDeclines(manifest); len(got) != 1 || got[0] != "git-ignore" {
+		t.Fatalf("declines = %v, want [git-ignore]", got)
 	}
 }

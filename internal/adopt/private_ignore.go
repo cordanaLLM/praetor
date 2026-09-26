@@ -60,7 +60,11 @@ func EnsurePrivateIgnore(ctx context.Context, repoPath string) (PrivateIgnoreOut
 	if err != nil || ignored {
 		return privateIgnoreOutcome(PrivateIgnoreEffective, err)
 	}
-	declined, err := ArtifactDeclined(declaredDeclines(ctx, repoPath), "git-ignore")
+	manifest, err := loadDeclaredManifest(ctx, repoPath)
+	if err != nil {
+		return privateIgnoreOutcome(PrivateIgnoreUnknown, err)
+	}
+	declined, err := ArtifactDeclined(manifestDeclines(manifest), "git-ignore")
 	if err != nil || declined {
 		return privateIgnoreOutcome(PrivateIgnoreDeclined, err)
 	}

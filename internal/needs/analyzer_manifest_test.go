@@ -2,6 +2,9 @@ package needs
 
 import (
 	"context"
+	"path/filepath"
+	"runtime"
+	"syscall"
 	"testing"
 )
 
@@ -147,5 +150,35 @@ func TestNativeAnalyzerDeduplicatesAcrossManifests(t *testing.T) {
 	}
 	if len(repoNeeds.Dependencies) != 1 {
 		t.Fatalf("expected cuda to be counted once across both manifests, got %+v", repoNeeds.Dependencies)
+	}
+}
+
+func TestPythonAnalyzer_FIFO(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("FIFOs are not supported on Windows")
+	}
+	tempDir := t.TempDir()
+	fifoPath := filepath.Join(tempDir, "requirements.txt")
+	if err := syscall.Mkfifo(fifoPath, 0666); err != nil {
+		t.Fatalf("failed to make fifo: %v", err)
+	}
+	_, err := NewPythonAnalyzer().Analyze(context.Background(), tempDir)
+	if err == nil {
+		t.Fatal("expected error reading FIFO manifest, got nil")
+	}
+}
+
+func TestNodeAnalyzer_FIFO(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("FIFOs are not supported on Windows")
+	}
+	tempDir := t.TempDir()
+	fifoPath := filepath.Join(tempDir, "package.json")
+	if err := syscall.Mkfifo(fifoPath, 0666); err != nil {
+		t.Fatalf("failed to make fifo: %v", err)
+	}
+	_, err := NewNodeAnalyzer().Analyze(context.Background(), tempDir)
+	if err == nil {
+		t.Fatal("expected error reading FIFO manifest, got nil")
 	}
 }
