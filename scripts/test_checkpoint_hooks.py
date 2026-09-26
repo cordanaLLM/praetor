@@ -382,6 +382,11 @@ class NativeLefthook(unittest.TestCase):
         for action in gemini_actions:
             self.assertNotIn("args", action)
             self.assertRegex(action["command"], r"^python3 -B \.config/agent/hooks/[a-z_]+\.py$")
+        engine_rows = [action for groups in gemini.values() for group in groups for action in group["hooks"]
+                       if engine_row(action)]
+        self.assertTrue(engine_rows)
+        for action in engine_rows:
+            self.assertRegex(action["command"], r"^python3 -B \.config/agent/hooks/praetor_hook\.py [a-z]+ [a-z-]+$")
         self.assertFalse((ROOT / ".claude/mcp.json").exists())
         self.assertFalse((ROOT / ".gemini/mcp_config.json").exists())
         server = json.loads((ROOT / ".gemini/settings.json").read_text())["mcpServers"]["praetor-dev"]

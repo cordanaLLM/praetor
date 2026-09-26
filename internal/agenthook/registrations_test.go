@@ -208,6 +208,7 @@ func TestTrackedCommandProblemsRejectsRowsTheEngineLacks(t *testing.T) {
 		"engine from PATH, no launcher": {"praetorctl hook agy pre-dispatch", 1},
 		"checkout launcher from plugin": {checkout, 1},
 		"unquoted checkout launcher":    {strings.ReplaceAll(checkout, `"`, ""), 1},
+		"gemini form from plugin":       {relativeLaunch + "agy pre-dispatch", 1},
 		"launcher under another name":   {"python3 praetor_hook.py agy pre-dispatch", 1},
 		"typo'd event":                  {pluginLaunch + "agy pre-dispach", 1},
 		"other client's row":            {pluginLaunch + "claude pre-dispatch", 1},
@@ -216,6 +217,24 @@ func TestTrackedCommandProblemsRejectsRowsTheEngineLacks(t *testing.T) {
 		hooks := map[string][]nativeGroup{"PreToolUse": {group("invoke_subagent", tc.command, 30)}}
 		if got := trackedCommandProblems("agy", hooks, time.Second); len(got) != tc.want {
 			t.Errorf("agy %s: problems %q, want %d", name, got, tc.want)
+		}
+	}
+}
+
+// TestGeminiLauncherRowNeedsNoSubstitution: Gemini CLI runs hooks from its project directory,
+// so its tracked row names the launcher by a relative path, like its legacy adapter rows; the
+// Git-root substitution form of the Codex row is not its tracked form.
+func TestGeminiLauncherRowNeedsNoSubstitution(t *testing.T) {
+	substituted := `python3 -B "$(git rev-parse --show-toplevel)/` + launcherScript + `" gemini pre-dispatch`
+	for command, want := range map[string]int{relativeLaunch + "gemini pre-dispatch": 0, substituted: 1} {
+		var group nativeGroup
+		raw := `{"matcher":"^invoke_agent$","hooks":[{"command":` + strconv.Quote(command) + `,"timeout":15000}]}`
+		if err := json.Unmarshal([]byte(raw), &group); err != nil {
+			t.Fatal(err)
+		}
+		hooks := map[string][]nativeGroup{"BeforeTool": {group}}
+		if got := trackedCommandProblems("gemini", hooks, time.Millisecond); len(got) != want {
+			t.Errorf("%s: problems %q, want %d", command, got, want)
 		}
 	}
 }
@@ -232,26 +251,35 @@ const (
 	pluginLaunch   = "python3 -B praetor_hook.py "
 )
 
+// relativeLaunch is the Gemini CLI form of the launcher call. Gemini runs every hook from the
+// project directory it started in, so the path is relative to it, as in its legacy adapter
+// rows, and needs no quoting or substitution in bash or PowerShell.
+const relativeLaunch = "python3 -B " + launcherScript + " "
+
 // trackedRoot is how each repository-scoped client file names the checkout holding the
 // launcher: Claude Code's project directory stays the tree its settings came from even after
-// the session enters an older worktree; Codex and Gemini CLI run hooks from the session
-// directory. AGY's row uses pluginLaunch instead.
+// the session enters an older worktree; Codex runs hooks from the session directory, which
+// may be a subdirectory. An empty root is relativeLaunch. AGY's row uses pluginLaunch instead.
 var trackedRoot = map[string]string{
 	"claude": "${CLAUDE_PROJECT_DIR}",
 	"codex":  "$(git rev-parse --show-toplevel)",
-	"gemini": "$(git rev-parse --show-toplevel)",
+	"gemini": "",
 }
 
 // trackedCommand is the exact string this repository's client files carry for row.
 func trackedCommand(row Registration) string {
+	pair := row.Client + " " + string(row.Event)
 	if row.Client == "agy" {
-		return pluginLaunch + row.Client + " " + string(row.Event)
+		return pluginLaunch + pair
 	}
 	root, launched := trackedRoot[row.Client]
-	if !launched {
+	switch {
+	case !launched:
 		return row.Command()
+	case root == "":
+		return relativeLaunch + pair
 	}
-	return `python3 -B "` + root + "/" + launcherScript + `" ` + row.Client + " " + string(row.Event)
+	return `python3 -B "` + root + "/" + launcherScript + `" ` + pair
 }
 
 // trackedPair returns the client and event a tracked engine command names, direct or through
@@ -262,6 +290,9 @@ func trackedPair(command string) (client, event string, engine bool) {
 	rest, found := strings.CutPrefix(command, "praetorctl hook ")
 	if !found {
 		rest, found = strings.CutPrefix(command, pluginLaunch)
+	}
+	if !found {
+		rest, found = strings.CutPrefix(command, relativeLaunch)
 	}
 	if !found {
 		_, rest, found = strings.Cut(command, launcherScript+`" `)

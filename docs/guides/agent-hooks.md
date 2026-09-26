@@ -155,13 +155,16 @@ plugin names its own copy of the guard:
 ```text
 python3 -B "${CLAUDE_PROJECT_DIR}/.config/agent/hooks/praetor_hook.py" claude pre-dispatch
 python3 -B "$(git rev-parse --show-toplevel)/.config/agent/hooks/praetor_hook.py" codex pre-dispatch
+python3 -B .config/agent/hooks/praetor_hook.py gemini pre-dispatch
 python3 -B praetor_hook.py agy pre-dispatch
 ```
 
 Claude Code rows use `CLAUDE_PROJECT_DIR`, the tree the settings were loaded from, which
 stays fixed when the session enters a worktree that may predate the guard. Codex runs hooks
 from the session directory and its documentation recommends resolving paths from the Git
-root; the Gemini CLI row follows its legacy adapter rows, which do the same.
+root. Gemini CLI runs every hook from the project directory it started in, so its row names
+the guard relative to that directory, as its legacy adapter rows do; the path needs no
+quoting or substitution in bash or PowerShell.
 
 AGY runs a hook command through `sh -c` or `cmd /c` from the directory that holds
 `hooks.json` (the "Hook Handler Fields" section of the contract embedded in the installed
