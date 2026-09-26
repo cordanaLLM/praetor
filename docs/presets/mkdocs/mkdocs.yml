@@ -9,6 +9,16 @@ site_author: "cordanaLLM"
 repo_url: "https://github.com/cordanaLLM/praetor"
 repo_name: "cordanaLLM/praetor"
 
+# overrides/main.html reads every identity value from this file: the TechArticle author is
+# site_author (site_name when unset), and the site-wide SoftwareSourceCode block needs
+# repo_url (or source_code.repository) plus source_code.programming_language. Set them to
+# your project. Without programming_language no SoftwareSourceCode block is emitted, and
+# 404.html, which has no page and so no TechArticle, then carries no JSON-LD at all.
+extra:
+  source_code:
+    programming_language: "Go"
+    license: "https://spdx.org/licenses/EUPL-1.2.html"
+
 theme:
   name: material
   custom_dir: overrides

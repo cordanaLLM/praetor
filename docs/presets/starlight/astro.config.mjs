@@ -26,6 +26,38 @@ function basePath(url) {
   }
 }
 
+// The repository these docs describe: the GitHub social link and the site-wide Schema.org
+// SoftwareSourceCode block both read it, and neither SEOHead.astro nor the `head` entry
+// below names a project of its own. Set it to your project. With an empty `repository` or
+// `programmingLanguage` no SoftwareSourceCode block is emitted; with an empty `repository`
+// no GitHub link either. runtimePlatform and license are optional.
+const sourceCode = {
+  name: 'cordanaLLM/praetor',
+  repository: 'https://github.com/cordanaLLM/praetor',
+  programmingLanguage: 'Go',
+  runtimePlatform: '',
+  license: 'https://spdx.org/licenses/EUPL-1.2.html',
+};
+
+// Site-wide Schema.org JSON-LD, one `head` entry. The per-page TechArticle comes from
+// SEOHead.astro because its headline and URL change on every page. Optional fields are left
+// out rather than written empty.
+function sourceCodeHead({ name, repository, programmingLanguage, runtimePlatform, license }) {
+  if (!repository || !programmingLanguage) {
+    return [];
+  }
+  const jsonLD = {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareSourceCode',
+    name,
+    programmingLanguage,
+    codeRepository: repository,
+    ...(runtimePlatform ? { runtimePlatform } : {}),
+    ...(license ? { license } : {}),
+  };
+  return [{ tag: 'script', attrs: { type: 'application/ld+json' }, content: JSON.stringify(jsonLD) }];
+}
+
 // https://astro.build/config
 export default defineConfig({
   site,
@@ -34,9 +66,7 @@ export default defineConfig({
     starlight({
       title: 'cordanaLLM/praetor Documentation',
       description: 'Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine',
-      social: {
-        github: 'https://github.com/cordanaLLM/praetor',
-      },
+      social: sourceCode.repository ? { github: sourceCode.repository } : {},
       customCss: [
         './src/styles/custom.css',
       ],
@@ -44,27 +74,10 @@ export default defineConfig({
         // Wraps Starlight's default Head and adds a per-page TechArticle JSON-LD block.
         Head: './src/components/SEOHead.astro',
       },
-      head: [
-        // Site-wide Schema.org JSON-LD. The per-page TechArticle comes from SEOHead.astro
-        // because its headline and URL change on every page. No font preconnect hints: the
-        // preset renders with the system font stack (src/styles/custom.css) and fetches no
-        // remote font, so a preconnect would open a connection nothing uses.
-        {
-          tag: 'script',
-          attrs: {
-            type: 'application/ld+json',
-          },
-          content: JSON.stringify({
-            '@context': 'https://schema.org',
-            '@type': 'SoftwareSourceCode',
-            'name': 'cordanaLLM/praetor',
-            'programmingLanguage': 'Go',
-            'codeRepository': 'https://github.com/cordanaLLM/praetor',
-            'runtimePlatform': 'POSIX / Linux x86_64 / arm64',
-            'license': 'https://spdx.org/licenses/EUPL-1.2.html'
-          }),
-        },
-      ],
+      // No font preconnect hints: the preset renders with the system font stack
+      // (src/styles/custom.css) and fetches no remote font, so a preconnect would open a
+      // connection nothing uses.
+      head: sourceCodeHead(sourceCode),
       sidebar: [
         {
           label: 'Overview',
