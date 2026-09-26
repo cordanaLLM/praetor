@@ -46,7 +46,7 @@ func TestProjectPluginSkills_Positive_ShipsEveryDeclaredSkill(t *testing.T) {
 	if written != 2 {
 		t.Fatalf("expected 2 projected skills, got %d", written)
 	}
-	verified, err := VerifyPluginSkills(root)
+	verified, err := VerifyPluginSkills(context.Background(), root)
 	if err != nil || verified != 2 {
 		t.Fatalf("freshly projected skills do not verify: %d %v", verified, err)
 	}
@@ -62,7 +62,7 @@ func TestVerifyPluginSkills_Negative_RejectsAnOrphanSkill(t *testing.T) {
 	if err := os.MkdirAll(orphan, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, err := VerifyPluginSkills(root)
+	_, err := VerifyPluginSkills(context.Background(), root)
 	if err == nil {
 		t.Fatal("an undeclared skill was shipped without complaint")
 	}
@@ -81,7 +81,7 @@ func TestVerifyPluginSkills_Negative_RejectsADriftedCopy(t *testing.T) {
 	if err := os.WriteFile(shipped, []byte("drifted\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyPluginSkills(root); err == nil {
+	if _, err := VerifyPluginSkills(context.Background(), root); err == nil {
 		t.Fatal("a drifted plugin skill verified")
 	}
 }
@@ -97,7 +97,7 @@ func TestPluginSkills_Boundary_NoManifestIsNotAFailure(t *testing.T) {
 	if err != nil || written != 0 {
 		t.Errorf("projected %d skills without a plugin manifest: %v", written, err)
 	}
-	verified, err := VerifyPluginSkills(root)
+	verified, err := VerifyPluginSkills(context.Background(), root)
 	if err != nil || verified != 0 {
 		t.Errorf("verified %d skills without a plugin manifest: %v", verified, err)
 	}
@@ -121,7 +121,7 @@ func TestRegisterBlockSkills_Boundary_DeclaredAndProjected(t *testing.T) {
 		t.Fatalf("register block must name social-text and caveman, named %v:\n%s", names, block)
 	}
 	for _, name := range names {
-		data, err := readCanonicalSkill(root, name)
+		data, err := readCanonicalSkill(context.Background(), root, name)
 		if err != nil {
 			t.Fatalf("register block names %s, which the repository does not declare: %v", name, err)
 		}
@@ -129,12 +129,11 @@ func TestRegisterBlockSkills_Boundary_DeclaredAndProjected(t *testing.T) {
 		if !regexp.MustCompile(`(?m)^name: ` + regexp.QuoteMeta(name) + `\r?$`).Match(data) {
 			t.Errorf("%s/%s/%s frontmatter must name %s", CanonicalSkillsRel, name, SkillEntryName, name)
 		}
-		rel := filepath.Join(filepath.FromSlash(PluginSkillsRel), name, SkillEntryName)
-		if err := verifyProjection(root, rel, data); err != nil {
+		if err := verifyProjection(context.Background(), root, skillEntryRel(PluginSkillsRel, name), data); err != nil {
 			t.Errorf("plugin must ship %s: %v", name, err)
 		}
 	}
-	if _, err := readCanonicalSkill(root, "internal-brief"); err == nil {
+	if _, err := readCanonicalSkill(context.Background(), root, "internal-brief"); err == nil {
 		t.Error("internal-brief is forbidden by ADR-0010; caveman is the one internal skill")
 	}
 }

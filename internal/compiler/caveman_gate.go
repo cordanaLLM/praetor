@@ -1,22 +1,23 @@
 package compiler
 
 import (
+	"context"
 	"path/filepath"
 )
 
-// lintCanonicalPersonas runs the caveman lint plus AgentTextCeiling over every
+// LintCanonicalPersonas runs the caveman lint plus AgentTextCeiling over every
 // canonical persona under .agents/agents. Personas sit under config.SurfaceContext by its
 // own doc comment ("AGENTS.md, the compiled vendor files, personas and skills";
 // internal/config/register.go), so they carry the same fixed, no-opt-out rule as AGENTS.md
 // itself (ADR-0010 decision 11) rather than an emission surface a manifest can opt out of.
 // It returns the number of personas linted.
-func LintCanonicalPersonas(rootDir string) (int, error) {
+func LintCanonicalPersonas(ctx context.Context, rootDir string) (int, error) {
 	names, err := listCanonicalAgents(rootDir)
 	if err != nil {
 		return 0, err
 	}
 	for i := 0; i < len(names) && i < maxAgentProjections; i++ {
-		data, err := readCanonicalAgent(rootDir, names[i])
+		data, err := readCanonicalAgent(ctx, rootDir, names[i])
 		if err != nil {
 			return 0, err
 		}
@@ -28,16 +29,16 @@ func LintCanonicalPersonas(rootDir string) (int, error) {
 	return len(names), nil
 }
 
-// lintCanonicalSkillFiles runs the caveman lint plus AgentTextCeiling over every
+// LintCanonicalSkillFiles runs the caveman lint plus AgentTextCeiling over every
 // canonical skill's SKILL.md under .agents/skills, on the same SurfaceContext basis as
-// lintCanonicalPersonas. It returns the number of skills linted.
-func LintCanonicalSkillFiles(rootDir string) (int, error) {
+// LintCanonicalPersonas. It returns the number of skills linted.
+func LintCanonicalSkillFiles(ctx context.Context, rootDir string) (int, error) {
 	names, err := listCanonicalSkills(rootDir)
 	if err != nil {
 		return 0, err
 	}
 	for i := 0; i < len(names) && i < maxSkillProjections; i++ {
-		data, err := readCanonicalSkill(rootDir, names[i])
+		data, err := readCanonicalSkill(ctx, rootDir, names[i])
 		if err != nil {
 			return 0, err
 		}

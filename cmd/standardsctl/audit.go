@@ -142,7 +142,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		},
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
 		func() error { return auditAgentProjections(ctx, rootDir) },
-		func() error { return auditCavemanAgentSurfaces(rootDir) },
+		func() error { return auditCavemanAgentSurfaces(ctx, rootDir) },
 		func() error {
 			return auditBranchProtectionAndSupplyChain(ctx, manifest, rootDir, &opts.effective.Policy)
 		},
@@ -307,12 +307,12 @@ func auditAgentProjections(ctx context.Context, rootDir string) error {
 // config.SurfaceContext by its own doc comment, so this gate has no opt-out, the same as
 // the AGENTS.md caveman gate in auditAgentContextAndDevcontainer (ADR-0010 decision 11,
 // amended for personas and skills; Q-059).
-func auditCavemanAgentSurfaces(rootDir string) error {
-	personas, err := compiler.LintCanonicalPersonas(rootDir)
+func auditCavemanAgentSurfaces(ctx context.Context, rootDir string) error {
+	personas, err := compiler.LintCanonicalPersonas(ctx, rootDir)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Persona caveman lint: %w", err)
 	}
-	skills, err := compiler.LintCanonicalSkillFiles(rootDir)
+	skills, err := compiler.LintCanonicalSkillFiles(ctx, rootDir)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Skill caveman lint: %w", err)
 	}

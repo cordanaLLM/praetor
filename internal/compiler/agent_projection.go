@@ -21,16 +21,20 @@ const (
 	PluginManifestRel = ".agents/plugins/praetor/plugin.json"
 	// PluginAgentsRel is the plugin copy of the personas.
 	PluginAgentsRel = ".agents/plugins/praetor/agents"
-	// maxAgentProjections bounds the persona loops (HISS-02).
-	maxAgentProjections = 64
-	// projectedDirPerm and projectedFilePerm are the modes of tracked, reviewer-readable
-	// projections.
-	projectedDirPerm  os.FileMode = 0o755
-	projectedFilePerm os.FileMode = 0o644
+	// maxAgentProjections bounds the persona loops (HISS-02). It is CompileAgents' own cap, so
+	// a persona set that verify and audit accept is one compile-context can write.
+	maxAgentProjections = MaxAgentFiles
+	// projectedDirPerm is the mode of tracked, reviewer-readable projection directories.
+	projectedDirPerm os.FileMode = 0o755
 )
 
 // ErrAgentProjectionDrift reports a persona copy that no longer matches its source.
 var ErrAgentProjectionDrift = errors.New("agent persona projection differs from its canonical source")
+
+// errPersonaNotRegular refuses a persona entry, canonical or projected, that is a symlink or
+// any other non-regular file. Skipping it instead let verify pass on a persona compile-context
+// then refused to write.
+var errPersonaNotRegular = errors.New("persona must be a regular file, never a symlink or directory")
 
 // agentProjectionDirs lists every directory a persona is projected into under rootDir: the
 // persona directory of each agent client the manifest selects, resolved by
@@ -59,7 +63,8 @@ func notApplicablePersonaDirs(ctx context.Context, rootDir string) ([]string, er
 }
 
 // listCanonicalAgents returns the persona file names under .agents/agents, or nil when
-// the directory is absent.
+// the directory is absent. A directory above the cap, or a persona entry that is not a
+// regular file, is an error: skipping either would verify less than compile-context writes.
 func listCanonicalAgents(rootDir string) ([]string, error) {
 	dir := filepath.Join(rootDir, filepath.FromSlash(CanonicalAgentsRel))
 	entries, err := os.ReadDir(dir)
@@ -69,46 +74,42 @@ func listCanonicalAgents(rootDir string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("read %s: %w", dir, err)
 	}
-	names := make([]string, 0, len(entries))
 	if len(entries) > maxAgentProjections {
-		return nil, fmt.Errorf("%s holds more than %d files", dir, maxAgentProjections)
+		return nil, fmt.Errorf("%s holds more than %d files", CanonicalAgentsRel, maxAgentProjections)
 	}
-	for i := 0; i < len(entries); i++ {
-		if strings.HasSuffix(entries[i].Name(), ".md") {
-			if !entries[i].Type().IsRegular() {
-				return nil, fmt.Errorf("%s must be a regular file, not a symlink or directory", filepath.Join(dir, entries[i].Name()))
-			}
-			names = append(names, entries[i].Name())
+	return personaNames(CanonicalAgentsRel, entries)
+}
+
+// personaNames returns the .md entries of one persona directory, refusing any that is not a
+// regular file. dir is the declared slash path the error names.
+func personaNames(dir string, entries []os.DirEntry) ([]string, error) {
+	names := make([]string, 0, len(entries))
+	for i := 0; i < len(entries) && i < maxAgentProjections; i++ {
+		if !strings.HasSuffix(entries[i].Name(), ".md") {
+			continue
 		}
+		if !entries[i].Type().IsRegular() {
+			return nil, fmt.Errorf("%s/%s: %w", dir, entries[i].Name(), errPersonaNotRegular)
+		}
+		names = append(names, entries[i].Name())
 	}
 	return names, nil
 }
 
-// readCanonicalAgent reads one persona source confined to the canonical directory.
-func readCanonicalAgent(rootDir, name string) ([]byte, error) {
-	path, err := util.ConfinePath(rootDir, filepath.Join(filepath.FromSlash(CanonicalAgentsRel), name))
+// readCanonicalAgent reads one persona source without following a symlink anywhere below
+// rootDir (readConfinedText).
+func readCanonicalAgent(ctx context.Context, rootDir, name string) ([]byte, error) {
+	rel := CanonicalAgentsRel + "/" + name
+	data, err := readConfinedText(ctx, rootDir, rel)
 	if err != nil {
-		return nil, err
-	}
-
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, fmt.Errorf("stat %s: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s must be a regular file, not a symlink or directory", path)
-	}
-	// #nosec G304 -- path was confined to <root>/.agents/agents by ConfinePath.
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read persona %s: %w", path, err)
+		return nil, fmt.Errorf("read persona %s: %w", rel, err)
 	}
 	return data, nil
 }
 
-// verifyAgentProjections checks that every projection of every canonical persona exists
-// and is byte-identical to its source. It returns the number of verified copies. A persona
-// directory agent_clients leaves out is neither required nor read.
+// VerifyAgentProjections checks that every projection of every canonical persona exists
+// and matches its source up to leading and trailing whitespace. It returns the number of
+// verified copies. A persona directory agent_clients leaves out is neither required nor read.
 func VerifyAgentProjections(ctx context.Context, rootDir string) (int, error) {
 	names, err := listCanonicalAgents(rootDir)
 	if err != nil {
@@ -120,13 +121,12 @@ func VerifyAgentProjections(ctx context.Context, rootDir string) (int, error) {
 	}
 	verified := 0
 	for i := 0; i < len(names); i++ {
-		want, err := readCanonicalAgent(rootDir, names[i])
+		want, err := readCanonicalAgent(ctx, rootDir, names[i])
 		if err != nil {
 			return verified, err
 		}
 		for j := 0; j < len(dirs); j++ {
-			rel := filepath.Join(filepath.FromSlash(dirs[j]), names[i])
-			if err := verifyProjection(rootDir, rel, want); err != nil {
+			if err := verifyProjection(ctx, rootDir, dirs[j]+"/"+names[i], want); err != nil {
 				return verified, err
 			}
 			verified++
@@ -183,41 +183,30 @@ func listProjectedAgents(rootDir, dir string) (_ []string, err error) {
 	if len(entries) > maxAgentProjections {
 		return nil, fmt.Errorf("%s holds more than %d files", dir, maxAgentProjections)
 	}
-	var names []string
-	for i := 0; i < len(entries); i++ {
-		if strings.HasSuffix(entries[i].Name(), ".md") {
-			if !entries[i].Type().IsRegular() {
-				return nil, fmt.Errorf("%s must be a regular file, not a symlink or directory", filepath.Join(path, entries[i].Name()))
-			}
-			names = append(names, entries[i].Name())
-		}
+	names, err := personaNames(dir, entries)
+	if err != nil {
+		return nil, err
 	}
 	sort.Strings(names)
 	return names, nil
 }
 
-// verifyProjection compares one projection with the canonical content.
-func verifyProjection(rootDir, rel string, want []byte) error {
-	path, err := util.ConfinePath(rootDir, rel)
+// verifyProjection compares one projection with the canonical content, ignoring leading and
+// trailing whitespace as VerifyCompiled does for the vendor files. rel is the declared slash
+// path, which the error names the same way on every platform; readConfinedText maps it to the
+// host path and follows no symlink below rootDir, as the writer does not.
+func verifyProjection(ctx context.Context, rootDir, rel string, want []byte) error {
+	got, err := readConfinedText(ctx, rootDir, rel)
 	if err != nil {
-		return err
-	}
-	// rel is the host path the file system needs; the error names the projection, which is a
-	// declared identity and reads the same on every platform. Reporting rel directly printed
-	// ".github\agents\x.md" on Windows. ToSlash is a no-op on POSIX.
-	display := filepath.ToSlash(rel)
-	// #nosec G304 -- path was confined to the repository root by ConfinePath.
-	got, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("projection %s missing or unreadable (run 'praetorctl compile-context'): %w", display, err)
+		return fmt.Errorf("projection %s missing or unreadable (run 'praetorctl compile-context'): %w", rel, err)
 	}
 	if !bytes.Equal(bytes.TrimSpace(got), bytes.TrimSpace(want)) {
-		return fmt.Errorf("%w: %s (run 'praetorctl compile-context' to regenerate it)", ErrAgentProjectionDrift, display)
+		return fmt.Errorf("%w: %s (run 'praetorctl compile-context' to regenerate it)", ErrAgentProjectionDrift, rel)
 	}
 	return nil
 }
 
-// projectPluginAgents copies the canonical personas into the plugin agents directory when
+// ProjectPluginAgents copies the canonical personas into the plugin agents directory when
 // the repository ships the praetor plugin. It returns the number of files written.
 func ProjectPluginAgents(ctx context.Context, rootDir string) (int, error) {
 	if !util.FileExists(filepath.Join(rootDir, filepath.FromSlash(PluginManifestRel))) {
@@ -236,7 +225,7 @@ func ProjectPluginAgents(ctx context.Context, rootDir string) (int, error) {
 	}
 	written := 0
 	for i := 0; i < len(names); i++ {
-		data, err := readCanonicalAgent(rootDir, names[i])
+		data, err := readCanonicalAgent(ctx, rootDir, names[i])
 		if err != nil {
 			return written, err
 		}

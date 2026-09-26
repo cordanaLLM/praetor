@@ -14,7 +14,7 @@ const fixtureSkill = "---\nname: example\ndescription: Example skill.\n---\n\n# 
 
 func TestCavemanGatePersonasPositive(t *testing.T) {
 	dir := newContextFixture(t, false)
-	n, err := compiler.LintCanonicalPersonas(dir)
+	n, err := compiler.LintCanonicalPersonas(t.Context(), dir)
 	if err != nil || n != 1 {
 		t.Fatalf("compiler.LintCanonicalPersonas = %d, %v; want 1, nil", n, err)
 	}
@@ -23,7 +23,7 @@ func TestCavemanGatePersonasPositive(t *testing.T) {
 func TestCavemanGateSkillsPositive(t *testing.T) {
 	dir := newContextFixture(t, false)
 	writeFixtureFile(t, dir, ".agents/skills/example/SKILL.md", fixtureSkill)
-	n, err := compiler.LintCanonicalSkillFiles(dir)
+	n, err := compiler.LintCanonicalSkillFiles(t.Context(), dir)
 	if err != nil || n != 1 {
 		t.Fatalf("compiler.LintCanonicalSkillFiles = %d, %v; want 1, nil", n, err)
 	}
@@ -39,7 +39,7 @@ func TestCavemanGatePersonasNegative(t *testing.T) {
 	}
 	writeFixtureFile(t, dir, ".agents/agents/praetor-gatekeeper.md", cavemanProse)
 
-	if _, err := compiler.LintCanonicalPersonas(dir); !errors.Is(err, compiler.ErrAgentTextProse) {
+	if _, err := compiler.LintCanonicalPersonas(t.Context(), dir); !errors.Is(err, compiler.ErrAgentTextProse) {
 		t.Fatalf("compiler.LintCanonicalPersonas: want ErrAgentTextProse, got %v", err)
 	}
 	_, err := runCompileContextCmd(t, dir, "--verify")
@@ -47,7 +47,7 @@ func TestCavemanGatePersonasNegative(t *testing.T) {
 		t.Fatalf("compile-context --verify: want ErrAgentTextProse, got %v", err)
 	}
 	mustErrContain(t, err, filepath.Join(compiler.CanonicalAgentsRel, "praetor-gatekeeper.md"))
-	if err := auditCavemanAgentSurfaces(dir); !errors.Is(err, compiler.ErrAgentTextProse) {
+	if err := auditCavemanAgentSurfaces(t.Context(), dir); !errors.Is(err, compiler.ErrAgentTextProse) {
 		t.Fatalf("audit gate: want ErrAgentTextProse, got %v", err)
 	}
 }
@@ -62,7 +62,7 @@ func TestCavemanGateSkillsNegative(t *testing.T) {
 	}
 	writeFixtureFile(t, dir, ".agents/skills/example/SKILL.md", cavemanProse)
 
-	if _, err := compiler.LintCanonicalSkillFiles(dir); !errors.Is(err, compiler.ErrAgentTextProse) {
+	if _, err := compiler.LintCanonicalSkillFiles(t.Context(), dir); !errors.Is(err, compiler.ErrAgentTextProse) {
 		t.Fatalf("compiler.LintCanonicalSkillFiles: want ErrAgentTextProse, got %v", err)
 	}
 	_, err := runCompileContextCmd(t, dir, "--verify")
@@ -70,7 +70,7 @@ func TestCavemanGateSkillsNegative(t *testing.T) {
 		t.Fatalf("compile-context --verify: want ErrAgentTextProse, got %v", err)
 	}
 	mustErrContain(t, err, filepath.Join(compiler.CanonicalSkillsRel, "example", compiler.SkillEntryName))
-	if err := auditCavemanAgentSurfaces(dir); !errors.Is(err, compiler.ErrAgentTextProse) {
+	if err := auditCavemanAgentSurfaces(t.Context(), dir); !errors.Is(err, compiler.ErrAgentTextProse) {
 		t.Fatalf("audit gate: want ErrAgentTextProse, got %v", err)
 	}
 }
@@ -81,25 +81,25 @@ func TestCavemanGateSkillsNegative(t *testing.T) {
 // while one word over it fails on the ceiling alone.
 func TestCavemanGateBoundary(t *testing.T) {
 	empty := t.TempDir()
-	if n, err := compiler.LintCanonicalPersonas(empty); err != nil || n != 0 {
+	if n, err := compiler.LintCanonicalPersonas(t.Context(), empty); err != nil || n != 0 {
 		t.Fatalf("no .agents/agents: compiler.LintCanonicalPersonas = %d, %v; want 0, nil", n, err)
 	}
-	if n, err := compiler.LintCanonicalSkillFiles(empty); err != nil || n != 0 {
+	if n, err := compiler.LintCanonicalSkillFiles(t.Context(), empty); err != nil || n != 0 {
 		t.Fatalf("no .agents/skills: compiler.LintCanonicalSkillFiles = %d, %v; want 0, nil", n, err)
 	}
-	if err := auditCavemanAgentSurfaces(empty); err != nil {
+	if err := auditCavemanAgentSurfaces(t.Context(), empty); err != nil {
 		t.Fatalf("audit gate over an empty root must not fail: %v", err)
 	}
 
 	dir := newContextFixture(t, false)
 	at := strings.TrimSuffix(strings.Repeat("gate.\n", compiler.AgentTextCeiling), "\n")
 	writeFixtureFile(t, dir, ".agents/agents/praetor-gatekeeper.md", at)
-	if _, err := compiler.LintCanonicalPersonas(dir); err != nil {
+	if _, err := compiler.LintCanonicalPersonas(t.Context(), dir); err != nil {
 		t.Fatalf("exactly at the ceiling must pass: %v", err)
 	}
 	over := strings.TrimSuffix(strings.Repeat("gate.\n", compiler.AgentTextCeiling+1), "\n")
 	writeFixtureFile(t, dir, ".agents/agents/praetor-gatekeeper.md", over)
-	if _, err := compiler.LintCanonicalPersonas(dir); !errors.Is(err, compiler.ErrAgentTextProse) {
+	if _, err := compiler.LintCanonicalPersonas(t.Context(), dir); !errors.Is(err, compiler.ErrAgentTextProse) {
 		t.Fatalf("one word over the ceiling must fail: %v", err)
 	}
 }

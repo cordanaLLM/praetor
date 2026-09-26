@@ -20,10 +20,16 @@ const (
 	PluginSkillsRel = ".agents/plugins/praetor/skills"
 	// maxSkillProjections bounds the skill loops (HISS-02).
 	maxSkillProjections = 128
-	SkillEntryName      = "SKILL.md"
+	// SkillEntryName is the declaration file every skill directory carries.
+	SkillEntryName = "SKILL.md"
 )
 
+// errSkillDirSymlink refuses a skill directory, canonical or projected, that is a symlink.
+// IsDir is false for one, so filtering on it skipped the skill without a word.
+var errSkillDirSymlink = errors.New("skill directory must be a directory, never a symlink")
+
 // listCanonicalSkills returns the skill directories the repository declares, in name order.
+// A symlinked entry is an error, never a skipped skill.
 func listCanonicalSkills(rootDir string) (_ []string, err error) {
 	path, err := util.ConfinePath(rootDir, filepath.FromSlash(CanonicalSkillsRel))
 	if err != nil {
@@ -39,43 +45,46 @@ func listCanonicalSkills(rootDir string) (_ []string, err error) {
 	if len(entries) > maxSkillProjections {
 		return nil, fmt.Errorf("%s holds more than %d skills", CanonicalSkillsRel, maxSkillProjections)
 	}
-	var names []string
-	if len(entries) > maxSkillProjections {
-		return nil, fmt.Errorf("%s holds more than %d files", path, maxSkillProjections)
-	}
-	for i := 0; i < len(entries); i++ {
-		if entries[i].IsDir() {
-			names = append(names, entries[i].Name())
-		}
+	names, err := skillDirNames(CanonicalSkillsRel, entries)
+	if err != nil {
+		return nil, err
 	}
 	sort.Strings(names)
 	return names, nil
 }
 
-// readCanonicalSkill reads one skill's declaration.
-func readCanonicalSkill(rootDir, name string) ([]byte, error) {
-	rel := filepath.Join(filepath.FromSlash(CanonicalSkillsRel), name, SkillEntryName)
-	path, err := util.ConfinePath(rootDir, rel)
-	if err != nil {
-		return nil, err
+// skillDirNames returns the directory entries of one skills directory, refusing a symlinked
+// one. Plain files beside the skills (a README) are not skills and are skipped. dir is the
+// declared slash path the error names.
+func skillDirNames(dir string, entries []os.DirEntry) ([]string, error) {
+	var names []string
+	for i := 0; i < len(entries) && i < maxSkillProjections; i++ {
+		if entries[i].Type()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("%s/%s: %w", dir, entries[i].Name(), errSkillDirSymlink)
+		}
+		if entries[i].IsDir() {
+			names = append(names, entries[i].Name())
+		}
 	}
+	return names, nil
+}
 
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, fmt.Errorf("stat %s: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s must be a regular file, not a symlink or directory", path)
-	}
-	// #nosec G304 -- path was confined to the repository root by ConfinePath.
-	data, err := os.ReadFile(path)
+// readCanonicalSkill reads one skill's declaration without following a symlink anywhere below
+// rootDir (readConfinedText).
+func readCanonicalSkill(ctx context.Context, rootDir, name string) ([]byte, error) {
+	data, err := readConfinedText(ctx, rootDir, skillEntryRel(CanonicalSkillsRel, name))
 	if err != nil {
 		return nil, fmt.Errorf("read canonical skill %s: %w", name, err)
 	}
 	return data, nil
 }
 
-// projectPluginSkills writes every canonical skill into the plugin, so installing the plugin
+// skillEntryRel is the declared slash path of one skill's SKILL.md below dir.
+func skillEntryRel(dir, name string) string {
+	return dir + "/" + name + "/" + SkillEntryName
+}
+
+// ProjectPluginSkills writes every canonical skill into the plugin, so installing the plugin
 // delivers the skills the repository declares rather than the personas alone.
 func ProjectPluginSkills(ctx context.Context, rootDir string) (int, error) {
 	if !util.FileExists(filepath.Join(rootDir, filepath.FromSlash(PluginManifestRel))) {
@@ -87,7 +96,7 @@ func ProjectPluginSkills(ctx context.Context, rootDir string) (int, error) {
 	}
 	written := 0
 	for i := 0; i < len(names); i++ {
-		data, err := readCanonicalSkill(rootDir, names[i])
+		data, err := readCanonicalSkill(ctx, rootDir, names[i])
 		if err != nil {
 			return written, err
 		}
@@ -106,11 +115,11 @@ func ProjectPluginSkills(ctx context.Context, rootDir string) (int, error) {
 	return written, nil
 }
 
-// verifyPluginSkills checks the projection in both directions: every declared skill is shipped,
+// VerifyPluginSkills checks the projection in both directions: every declared skill is shipped,
 // and every shipped skill is one the repository declares. Checking only the first direction
 // lets a stale copy survive indefinitely, which is how six orphaned personas came to sit in
 // this plugin with one of them holding an absolute developer path.
-func VerifyPluginSkills(rootDir string) (int, error) {
+func VerifyPluginSkills(ctx context.Context, rootDir string) (int, error) {
 	if !util.FileExists(filepath.Join(rootDir, filepath.FromSlash(PluginManifestRel))) {
 		return 0, nil
 	}
@@ -120,12 +129,11 @@ func VerifyPluginSkills(rootDir string) (int, error) {
 	}
 	verified := 0
 	for i := 0; i < len(names); i++ {
-		want, err := readCanonicalSkill(rootDir, names[i])
+		want, err := readCanonicalSkill(ctx, rootDir, names[i])
 		if err != nil {
 			return verified, err
 		}
-		rel := filepath.Join(filepath.FromSlash(PluginSkillsRel), names[i], SkillEntryName)
-		if err := verifyProjection(rootDir, rel, want); err != nil {
+		if err := verifyProjection(ctx, rootDir, skillEntryRel(PluginSkillsRel, names[i]), want); err != nil {
 			return verified, err
 		}
 		verified++
@@ -153,11 +161,15 @@ func rejectOrphanSkills(rootDir string, names []string) error {
 	if len(entries) > maxSkillProjections {
 		return fmt.Errorf("%s holds more than %d skills", PluginSkillsRel, maxSkillProjections)
 	}
-	for i := 0; i < len(entries); i++ {
-		if entries[i].IsDir() && !declared[entries[i].Name()] {
+	shipped, err := skillDirNames(PluginSkillsRel, entries)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < len(shipped); i++ {
+		if !declared[shipped[i]] {
 			return fmt.Errorf("%s/%s declares no canonical skill; every directory in a projection "+
 				"is compiled output and must correspond to one in %s",
-				PluginSkillsRel, entries[i].Name(), CanonicalSkillsRel)
+				PluginSkillsRel, shipped[i], CanonicalSkillsRel)
 		}
 	}
 	return nil

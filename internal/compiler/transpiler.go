@@ -5,13 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const MaxLineBudget = agentcontext.MaxLineBudget
@@ -104,7 +102,7 @@ func (t *Transpiler) WriteOutputsContext(ctx context.Context, result *CompileRes
 	if result == nil || len(result.Files) > MaxAgentFiles {
 		return errors.New("invalid or oversized compiled outputs")
 	}
-	if err := checkOutputPaths(targetDir, result); err != nil {
+	if err := checkOutputPaths(ctx, targetDir, result); err != nil {
 		return err
 	}
 	for _, file := range result.Files {
@@ -113,24 +111,21 @@ func (t *Transpiler) WriteOutputsContext(ctx context.Context, result *CompileRes
 			return err
 		}
 		if err := writeVendorAgent(ctx, path, file.Content); err != nil {
-			return err
+			return fmt.Errorf("target %s: %w", file.RelativePath, err)
 		}
 	}
 	return nil
 }
 
-func checkOutputPaths(targetDir string, result *CompileResult) error {
+// checkOutputPaths runs the writer's path refusals (checkOutputPath) over every output before
+// the first write, so a symlinked target or directory component leaves all of them unchanged.
+func checkOutputPaths(ctx context.Context, targetDir string, result *CompileResult) error {
 	for _, file := range result.Files {
-		path, err := projectionPath(targetDir, file.RelativePath)
-		if err != nil {
-			return err
+		if _, err := projectionPath(targetDir, file.RelativePath); err != nil {
+			return fmt.Errorf("target %s: %w", file.RelativePath, err)
 		}
-		if _, err := util.ConfinePath(targetDir, file.RelativePath); err != nil {
-			return err
-		}
-		info, err := os.Lstat(path)
-		if err == nil && !info.Mode().IsRegular() {
-			return fmt.Errorf("%s must be a regular file, not a symlink or directory", path)
+		if err := checkOutputPath(ctx, targetDir, file.RelativePath); err != nil {
+			return fmt.Errorf("target %s: %w", file.RelativePath, err)
 		}
 	}
 	return nil
@@ -157,8 +152,7 @@ func (t *Transpiler) VerifyCompiled(ctx context.Context, agentsMdPath, targetDir
 	}
 
 	for _, f := range res.Files {
-		fullPath := filepath.Join(targetDir, f.RelativePath)
-		existing, err := contextopt.ReadSnapshot(ctx, fullPath)
+		existing, err := readConfinedText(ctx, targetDir, f.RelativePath)
 		if err != nil {
 			return nil, fmt.Errorf("target %s missing or unreadable: %w", f.RelativePath, err)
 		}

@@ -1,3 +1,4 @@
 type: fixed
-title: Enforce context projection parity in MCP and CLI by moving context compilation, agent projection and skill projection into internal/compiler (refusing symlinks via native Lstat no-follow, trimming whitespace on canonical projection comparisons, returning explicit errors over silent truncation, and removing duplicate verification from MCP server)
-breaking: false
+title: Make the MCP standards_compile_context tool run the CLI's compile-context code (internal/compiler), so its verify now also lints every persona and skill and fails on persona or plugin skill drift, and its write now also writes the persona and plugin copies; refuse every symlink below the target directory on write and on verify in both, including a symlinked directory component, a symlinked persona, projection or skill directory and a symlinked plugin copy, and even under -allow-outside-root, checking every vendor output before the first write; fail compile-context --verify, the audit and the MCP verify on more than 50 canonical personas instead of silently verifying the first 64; and compare persona copies up to leading and trailing whitespace like the vendor files
+issue: "#383"
+breaking: true

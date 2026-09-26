@@ -330,6 +330,39 @@ repository without `source_root` shows both: the DevContainer pillar reads
 registries, so exercise it through a real call only where network access is
 intended.
 
+### Context compilation parity
+
+`standards_compile_context` runs the code `praetorctl compile-context` runs:
+`compileContext` in `cmd/standards-mcp/server.go` calls
+`compiler.VerifyCompiledContext` for `verify_only` and
+`compiler.CompileContextProjections` for a write (`internal/compiler/projection.go`).
+A tool call and the CLI therefore check and write the same things:
+
+- A write compiles the vendor files, then copies every persona under
+  `.agents/agents` into each selected client's persona directory and, when
+  `.agents/plugins/praetor/plugin.json` exists, into the plugin's `agents/` and
+  `skills/` copies.
+- `verify_only` also runs the caveman lint over every persona and skill and
+  fails on a persona or plugin skill copy that differs from its source beyond
+  leading and trailing whitespace.
+- More than 50 files in `.agents/agents` fail both modes instead of being
+  truncated.
+- No symlink below `target_dir` is followed. A symlinked output, or a
+  symlinked directory above one, is refused on write and on verify, with or
+  without `-allow-outside-root`; so is a symlinked persona, skill or plugin
+  copy wherever the call reads or writes it. A write checks every vendor
+  output before the first one is written, so a refusal leaves all of them
+  unchanged. That flag still admits a `target_dir` outside the root; it no
+  longer lets a link redirect an output.
+
+Tests: `cmd/standards-mcp/server_projection_test.go`,
+`TestCompileContextRejectsSymlinkedOutputDescendants` and
+`TestCompileContextWritesRealOutputDescendants` in
+`cmd/standards-mcp/server_path_test.go`, and `internal/compiler/output_paths_test.go`.
+
+`standards_audit` does not run the persona and skill checks yet; see
+[the persona and skill gate](text-register.md#the-persona-and-skill-gate).
+
 ## Retained public dogfood loops
 
 Use the [public dogfooding guide](../dogfooding.md) for the shared CLI/MCP

@@ -504,50 +504,36 @@ func (s *Server) createCompileContextTool() (mcp.Tool, error) {
 		return s.compileContext(ctx, source, targetDir, verifyOnly), nil
 	}
 
-	// Writing overwrites the six vendor files in target_dir, so the tool is destructive.
+	// Writing overwrites the vendor files, persona projections and plugin copies in target_dir,
+	// so the tool is destructive.
 	return mcp.NewMutatingTool("standards_compile_context", "Compile or verify cross-agent instructions from AGENTS.md", schema, handler, true, true)
 }
 
-// compileContext verifies or (re)writes the vendor targets compiled from source.
+// compileContext verifies or (re)writes the vendor targets, persona projections and plugin
+// copies compiled from source, through the implementation the CLI's compile-context runs
+// (compiler.VerifyCompiledContext, compiler.CompileContextProjections). Both reconcile the text
+// register block themselves: a verify-only call never writes the source and reports a stale or
+// missing block as a verification failure instead.
 func (s *Server) compileContext(ctx context.Context, source, targetDir string, verifyOnly bool) *mcp.ToolResult {
-	tr := compiler.NewTranspiler()
-	source, failure := s.prepareContextSource(ctx, source, verifyOnly)
-	if failure != nil {
-		return failure
+	source, err := s.resolveContextPath(ctx, source)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Sprintf("Context source confinement failed: %v", err))
 	}
-
+	tr := compiler.NewTranspiler()
 	var b strings.Builder
 	if verifyOnly {
 		if err := compiler.VerifyCompiledContext(ctx, &b, tr, source, targetDir); err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
 		}
-	} else {
-		if err := ctx.Err(); err != nil {
-			return mcp.ErrorResult(fmt.Sprintf("compile-context cancelled before writing: %v", err))
-		}
-		if err := compiler.CompileContextProjections(ctx, &b, tr, source, targetDir); err != nil {
-			return mcp.ErrorResult(fmt.Sprintf("Context compilation failed: %v", err))
-		}
+		return mcp.TextResult(b.String())
 	}
-
+	if err := ctx.Err(); err != nil {
+		return mcp.ErrorResult(fmt.Sprintf("compile-context cancelled before writing: %v", err))
+	}
+	if err := compiler.CompileContextProjections(ctx, &b, tr, source, targetDir); err != nil {
+		return mcp.ErrorResult(fmt.Sprintf("Context compilation failed: %v", err))
+	}
 	return mcp.TextResult(b.String())
-}
-
-// prepareContextSource confines the canonical source and reconciles its text register
-// block with the manifest beside it. A verify-only call never writes the source; it reports
-// a stale or missing block as a verification failure instead.
-func (s *Server) prepareContextSource(ctx context.Context, source string, verifyOnly bool) (string, *mcp.ToolResult) {
-	source, err := s.resolveContextPath(ctx, source)
-	if err != nil {
-		return "", mcp.ErrorResult(fmt.Sprintf("Context source confinement failed: %v", err))
-	}
-	if _, err := compiler.SyncRegisterBlock(ctx, filepath.Dir(source), source, !verifyOnly); err != nil {
-		if verifyOnly {
-			return "", mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
-		}
-		return "", mcp.ErrorResult(fmt.Sprintf("Text register splice failed: %v", err))
-	}
-	return source, nil
 }
 
 func (s *Server) resolveContextPath(ctx context.Context, path string) (string, error) {

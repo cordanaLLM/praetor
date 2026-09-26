@@ -7,8 +7,7 @@ import (
 	"path/filepath"
 )
 
-// compileContextTimeout bounds the transpilation and persona projection I/O (HISS-02).
-
+// syncWriter prints progress lines and keeps the first write error, so a caller checks once.
 type syncWriter struct {
 	w   io.Writer
 	err error
@@ -28,11 +27,27 @@ func (sw *syncWriter) println(args ...any) {
 	_, sw.err = fmt.Fprintln(sw.w, args...)
 }
 
-// verifyCompiledContext checks the six transpiled vendor files and every persona
-// projection without writing anything.
+// VerifyCompiledContext checks the six transpiled vendor files, the caveman lint over AGENTS.md
+// and every canonical persona and skill, and every persona and plugin skill projection, without
+// writing anything. The CLI's compile-context --verify and the MCP standards_compile_context
+// verify_only call both run it.
 func VerifyCompiledContext(ctx context.Context, w io.Writer, tr *Transpiler, source, targetDir string) error {
 	sw := &syncWriter{w: w}
 	sw.printf("Verifying agent context synchronization against %s...\n", source)
+	if err := verifyVendorContext(ctx, sw, tr, source, targetDir); err != nil {
+		return err
+	}
+	verified, err := verifyAgentSurfaces(ctx, sw, targetDir)
+	if err != nil {
+		return err
+	}
+	sw.printf("All agent context targets are 100%% in sync with canonical AGENTS.md (%d persona projections verified).\n", verified)
+	return sw.err
+}
+
+// verifyVendorContext checks the text register block, the vendor files compiled from source and
+// the caveman lint over source.
+func verifyVendorContext(ctx context.Context, sw *syncWriter, tr *Transpiler, source, targetDir string) error {
 	if _, err := SyncRegisterBlock(ctx, filepath.Dir(source), source, false); err != nil {
 		return fmt.Errorf("context verification failed: %s: %w", source, err)
 	}
@@ -40,7 +55,7 @@ func VerifyCompiledContext(ctx context.Context, w io.Writer, tr *Transpiler, sou
 	if err != nil {
 		return fmt.Errorf("context verification failed: %w", err)
 	}
-	if err := printNotApplicableTargets(w, res); err != nil {
+	if err := printNotApplicableTargets(sw.w, res); err != nil {
 		return fmt.Errorf("context verification failed: %w", err)
 	}
 	lint, err := LintContext(ctx, source)
@@ -48,35 +63,40 @@ func VerifyCompiledContext(ctx context.Context, w io.Writer, tr *Transpiler, sou
 		return fmt.Errorf("context verification failed: %w", err)
 	}
 	sw.printf("  %s: %s.\n", source, lint.Summary())
-	personasLinted, err := LintCanonicalPersonas(targetDir)
+	return nil
+}
+
+// verifyAgentSurfaces lints every canonical persona and skill and verifies every persona and
+// plugin skill projection under targetDir. It returns the number of persona copies verified.
+func verifyAgentSurfaces(ctx context.Context, sw *syncWriter, targetDir string) (int, error) {
+	personasLinted, err := LintCanonicalPersonas(ctx, targetDir)
 	if err != nil {
-		return fmt.Errorf("context verification failed: %w", err)
+		return 0, fmt.Errorf("context verification failed: %w", err)
 	}
-	skillsLinted, err := LintCanonicalSkillFiles(targetDir)
+	skillsLinted, err := LintCanonicalSkillFiles(ctx, targetDir)
 	if err != nil {
-		return fmt.Errorf("context verification failed: %w", err)
+		return 0, fmt.Errorf("context verification failed: %w", err)
 	}
 	sw.printf("  %d personas and %d skills passed the caveman lint (<= %d prose words each).\n",
 		personasLinted, skillsLinted, AgentTextCeiling)
 	verified, err := VerifyAgentProjections(ctx, targetDir)
 	if err != nil {
-		return fmt.Errorf("agent persona verification failed: %w", err)
+		return 0, fmt.Errorf("agent persona verification failed: %w", err)
 	}
-	if err := printNotApplicablePersonaDirs(ctx, w, targetDir); err != nil {
-		return fmt.Errorf("agent persona verification failed: %w", err)
+	if err := printNotApplicablePersonaDirs(ctx, sw.w, targetDir); err != nil {
+		return 0, fmt.Errorf("agent persona verification failed: %w", err)
 	}
-	skills, err := VerifyPluginSkills(targetDir)
+	skills, err := VerifyPluginSkills(ctx, targetDir)
 	if err != nil {
-		return fmt.Errorf("plugin skill verification failed: %w", err)
+		return 0, fmt.Errorf("plugin skill verification failed: %w", err)
 	}
 	if skills > 0 {
 		sw.printf("  %d plugin skill projections verified (%s).\n", skills, PluginSkillsRel)
 	}
-	sw.printf("All agent context targets are 100%% in sync with canonical AGENTS.md (%d persona projections verified).\n", verified)
-	return sw.err
+	return verified, nil
 }
 
-// compileVendorTargets splices the text register block into the canonical source, then
+// CompileVendorTargets splices the text register block into the canonical source, then
 // compiles and writes the six vendor files. The splice comes first so that every target
 // receives the block through the unchanged renderer. The manifest that governs the block is
 // the one beside the source, wherever the targets are written.
@@ -130,8 +150,10 @@ func printNotApplicable(w io.Writer, rels []string) error {
 	return nil
 }
 
-// compileContext writes the vendor context files and every persona projection; any
-// projection failure is an error, never a silently skipped success line.
+// CompileContextProjections writes the vendor context files, every persona projection and the
+// plugin persona and skill copies; any projection failure is an error, never a silently skipped
+// success line. The CLI's compile-context and the MCP standards_compile_context write call both
+// run it.
 func CompileContextProjections(ctx context.Context, w io.Writer, tr *Transpiler, source, targetDir string) error {
 	sw := &syncWriter{w: w}
 	sw.printf("Compiling agent context from canonical %s...\n", source)

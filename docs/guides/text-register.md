@@ -366,7 +366,7 @@ compiled vendor files, personas and skills" (`internal/config/register.go`). The
 `compile-context --verify` and `audit` (`cmd/standardsctl`) therefore also run the caveman
 lint, plus a 600-prose-word ceiling (`compiler.AgentTextCeiling`), over every file under
 `.agents/agents/*.md` and every `.agents/skills/*/SKILL.md` (`compiler.LintAgentText`,
-`cmd/standardsctl/caveman_gate.go`). No opt-out, same as AGENTS.md itself: personas and
+`internal/compiler/caveman_gate.go`). No opt-out, same as AGENTS.md itself: personas and
 skills are agent-only text under `SurfaceContext`, not an emission surface a manifest can
 turn off. A pass prints:
 
@@ -374,10 +374,19 @@ turn off. A pass prints:
 6 personas and 13 skills passed the caveman lint (<= 600 prose words each).
 ```
 
-The MCP mirrors (`standards_compile_context`, `standards_audit`, `cmd/standards-mcp`) share the
-same implementation (`internal/compiler`) and verify persona/skill projection sync identically to
-the CLI, including calling `LintAgentText`. This parity ensures the agent and human developers
-face the same invariant gate.
+The MCP `standards_compile_context` tool runs the same code as the CLI: `verify_only` calls
+`compiler.VerifyCompiledContext` and a write calls `compiler.CompileContextProjections`
+(`internal/compiler/projection.go`, called from `compileContext` in
+`cmd/standards-mcp/server.go`). Its verify therefore lints every persona and skill with
+`LintAgentText` and checks every persona and plugin skill projection, and prints the same
+lines as `compile-context --verify`. `TestMCPVerifyLintsPersonasAndSkills` and
+`TestMCPVerifyFailsOnPersonaDrift` in `cmd/standards-mcp/server_projection_test.go` pin it.
+
+`standards_audit` has not caught up. Its context gate (`auditContextSync` in
+`cmd/standards-mcp/audit_tools.go`) runs `VerifyContext` over the vendor files and
+`compiler.LintContext` over AGENTS.md only: it neither verifies persona or skill projections
+nor calls `LintAgentText`. Use `praetorctl audit` or `standards_compile_context` with
+`verify_only` for the persona and skill gate until it does.
 
 600 words was chosen when the persona/skill gate was introduced: at the time it sat between
 two skills failing the lint at 532-561 prose words (`caveman`, `social-text`, since pared
