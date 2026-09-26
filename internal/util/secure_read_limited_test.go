@@ -101,6 +101,59 @@ func TestReadConfinedLimited_Boundary_OversizeIsNotAllocated(t *testing.T) {
 	}
 }
 
+func TestReadFileLimited_Positive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "receipt.key")
+	writeLimitedFixture(t, path, "seed\n")
+	data, err := ReadFileLimited(path, 4096)
+	if err != nil || string(data) != "seed\n" {
+		t.Errorf("ReadFileLimited = %q, %v; want %q, nil", data, err, "seed\n")
+	}
+}
+
+func TestReadFileLimited_Negative(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "receipt.key")
+	writeLimitedFixture(t, path, "seed\n")
+
+	if _, err := ReadFileLimited(filepath.Join(dir, "absent.key"), 4096); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("an absent file must report ErrNotExist, got %v", err)
+	}
+	if _, err := ReadFileLimited(path, 0); !errors.Is(err, ErrInvalidReadLimit) {
+		t.Errorf("a zero limit must be refused, got %v", err)
+	}
+	if _, err := ReadFileLimited(path, -1); !errors.Is(err, ErrInvalidReadLimit) {
+		t.Errorf("a negative limit must be refused, got %v", err)
+	}
+	if _, err := ReadFileLimited(dir, 4096); err == nil {
+		t.Error("a directory is not a readable file")
+	}
+}
+
+// TestReadFileLimited_Boundary pins the one-byte edge that io.LimitReader alone gets
+// wrong: a file of exactly the limit is content, one byte more is refused rather than
+// returned cut to its first limit bytes.
+func TestReadFileLimited_Boundary(t *testing.T) {
+	dir := t.TempDir()
+	exact := filepath.Join(dir, "exact.key")
+	writeLimitedFixture(t, exact, strings.Repeat("x", 4096))
+	if data, err := ReadFileLimited(exact, 4096); err != nil || len(data) != 4096 {
+		t.Errorf("a file of exactly the limit must be read: %d bytes, err %v", len(data), err)
+	}
+
+	over := filepath.Join(dir, "over.key")
+	writeLimitedFixture(t, over, strings.Repeat("x", 4097))
+	if data, err := ReadFileLimited(over, 4096); !errors.Is(err, ErrFileTooLarge) || data != nil {
+		t.Errorf("one byte past the limit must report ErrFileTooLarge and no data, got %d bytes, %v", len(data), err)
+	}
+
+	empty := filepath.Join(dir, "empty.key")
+	writeLimitedFixture(t, empty, "")
+	if data, err := ReadFileLimited(empty, 1); err != nil || len(data) != 0 {
+		t.Errorf("an empty file under the smallest limit must read as empty, got %d bytes, %v", len(data), err)
+	}
+}
+
 func writeLimitedFixture(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
