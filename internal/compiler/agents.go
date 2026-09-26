@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/cordanaLLM/praetor/internal/agentcontext"
-	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"io"
 	"os"
 	"path"
@@ -13,6 +11,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 const (

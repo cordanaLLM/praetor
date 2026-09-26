@@ -1,4 +1,4 @@
-package main
+package compiler
 
 import (
 	"os"
@@ -14,16 +14,16 @@ func skillFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	for _, name := range []string{"hiss-audit", "repo-adopt"} {
-		dir := filepath.Join(root, filepath.FromSlash(canonicalSkillsRel), name)
+		dir := filepath.Join(root, filepath.FromSlash(CanonicalSkillsRel), name)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
 		body := "---\nname: " + name + "\ndescription: fixture\n---\n\nBody.\n"
-		if err := os.WriteFile(filepath.Join(dir, skillEntryName), []byte(body), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, SkillEntryName), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	manifest := filepath.Join(root, filepath.FromSlash(pluginManifestRel))
+	manifest := filepath.Join(root, filepath.FromSlash(PluginManifestRel))
 	if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -38,14 +38,14 @@ func skillFixture(t *testing.T) string {
 // delivered six personas and not one of the eleven skills the repository declares.
 func TestProjectPluginSkills_Positive_ShipsEveryDeclaredSkill(t *testing.T) {
 	root := skillFixture(t)
-	written, err := projectPluginSkills(root)
+	written, err := ProjectPluginSkills(root)
 	if err != nil {
 		t.Fatalf("projection: %v", err)
 	}
 	if written != 2 {
 		t.Fatalf("expected 2 projected skills, got %d", written)
 	}
-	verified, err := verifyPluginSkills(root)
+	verified, err := VerifyPluginSkills(root)
 	if err != nil || verified != 2 {
 		t.Fatalf("freshly projected skills do not verify: %d %v", verified, err)
 	}
@@ -54,14 +54,14 @@ func TestProjectPluginSkills_Positive_ShipsEveryDeclaredSkill(t *testing.T) {
 // Negative: a skill the repository does not declare must not ship.
 func TestVerifyPluginSkills_Negative_RejectsAnOrphanSkill(t *testing.T) {
 	root := skillFixture(t)
-	if _, err := projectPluginSkills(root); err != nil {
+	if _, err := ProjectPluginSkills(root); err != nil {
 		t.Fatal(err)
 	}
-	orphan := filepath.Join(root, filepath.FromSlash(pluginSkillsRel), "not-declared")
+	orphan := filepath.Join(root, filepath.FromSlash(PluginSkillsRel), "not-declared")
 	if err := os.MkdirAll(orphan, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, err := verifyPluginSkills(root)
+	_, err := VerifyPluginSkills(root)
 	if err == nil {
 		t.Fatal("an undeclared skill was shipped without complaint")
 	}
@@ -73,14 +73,14 @@ func TestVerifyPluginSkills_Negative_RejectsAnOrphanSkill(t *testing.T) {
 // Negative: a shipped copy that drifts from its declaration is reported.
 func TestVerifyPluginSkills_Negative_RejectsADriftedCopy(t *testing.T) {
 	root := skillFixture(t)
-	if _, err := projectPluginSkills(root); err != nil {
+	if _, err := ProjectPluginSkills(root); err != nil {
 		t.Fatal(err)
 	}
-	shipped := filepath.Join(root, filepath.FromSlash(pluginSkillsRel), "hiss-audit", skillEntryName)
+	shipped := filepath.Join(root, filepath.FromSlash(PluginSkillsRel), "hiss-audit", SkillEntryName)
 	if err := os.WriteFile(shipped, []byte("drifted\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verifyPluginSkills(root); err == nil {
+	if _, err := VerifyPluginSkills(root); err == nil {
 		t.Fatal("a drifted plugin skill verified")
 	}
 }
@@ -89,14 +89,14 @@ func TestVerifyPluginSkills_Negative_RejectsADriftedCopy(t *testing.T) {
 // than inventing a requirement it never declared.
 func TestPluginSkills_Boundary_NoManifestIsNotAFailure(t *testing.T) {
 	root := skillFixture(t)
-	if err := os.Remove(filepath.Join(root, filepath.FromSlash(pluginManifestRel))); err != nil {
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(PluginManifestRel))); err != nil {
 		t.Fatal(err)
 	}
-	written, err := projectPluginSkills(root)
+	written, err := ProjectPluginSkills(root)
 	if err != nil || written != 0 {
 		t.Errorf("projected %d skills without a plugin manifest: %v", written, err)
 	}
-	verified, err := verifyPluginSkills(root)
+	verified, err := VerifyPluginSkills(root)
 	if err != nil || verified != 0 {
 		t.Errorf("verified %d skills without a plugin manifest: %v", verified, err)
 	}
@@ -126,9 +126,9 @@ func TestRegisterBlockSkills_Boundary_DeclaredAndProjected(t *testing.T) {
 		}
 		// \r? keeps the check true on a Windows checkout, where text=auto writes CRLF.
 		if !regexp.MustCompile(`(?m)^name: ` + regexp.QuoteMeta(name) + `\r?$`).Match(data) {
-			t.Errorf("%s/%s/%s frontmatter must name %s", canonicalSkillsRel, name, skillEntryName, name)
+			t.Errorf("%s/%s/%s frontmatter must name %s", CanonicalSkillsRel, name, SkillEntryName, name)
 		}
-		rel := filepath.Join(filepath.FromSlash(pluginSkillsRel), name, skillEntryName)
+		rel := filepath.Join(filepath.FromSlash(PluginSkillsRel), name, SkillEntryName)
 		if err := verifyProjection(root, rel, data); err != nil {
 			t.Errorf("plugin must ship %s: %v", name, err)
 		}

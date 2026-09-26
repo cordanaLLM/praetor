@@ -5,10 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"path/filepath"
 )
 
 const MaxLineBudget = agentcontext.MaxLineBudget

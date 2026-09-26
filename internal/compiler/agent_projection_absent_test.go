@@ -1,4 +1,4 @@
-package main
+package compiler
 
 import (
 	"os"
@@ -13,7 +13,7 @@ func TestListCanonicalAgentsDistinguishesAbsentFromMisplaced(t *testing.T) {
 	if names, err := listCanonicalAgents(t.TempDir()); err != nil || len(names) != 0 {
 		t.Fatalf("absent persona directory was not empty: %v %v", names, err)
 	}
-	for _, file := range []string{".agents", filepath.FromSlash(canonicalAgentsRel)} {
+	for _, file := range []string{".agents", filepath.FromSlash(CanonicalAgentsRel)} {
 		root := t.TempDir()
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, file)), 0o700); err != nil {
 			t.Fatal(err)
