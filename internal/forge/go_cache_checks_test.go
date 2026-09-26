@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/templates"
 )
 
 // theShapeThisRepositoryShipped is the workflow pair that made CI Enforcement spend 688s
@@ -203,11 +205,13 @@ func TestAuditGoBuildCaches_Guard_ShippedTemplatesAreDisciplined(t *testing.T) {
 		if !strings.HasSuffix(name, ".yml.tmpl") {
 			continue
 		}
-		body, err := os.ReadFile(filepath.Join(directory, name))
+		// Audit the body an adopter receives, not the template source: a template may open
+		// with a maintainer comment that renders to nothing and is not YAML.
+		body, err := templates.RenderFile("go/"+name, templates.Context{RepoName: "widget", Owner: "acme"})
 		if err != nil {
-			t.Fatalf("reading %s: %v", name, err)
+			t.Fatalf("rendering %s: %v", name, err)
 		}
-		findings, err := auditWorkflowGoCaches(name, body, owner)
+		findings, err := auditWorkflowGoCaches(name, []byte(body), owner)
 		if err != nil {
 			t.Fatalf("auditing %s: %v", name, err)
 		}

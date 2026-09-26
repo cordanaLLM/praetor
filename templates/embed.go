@@ -15,8 +15,19 @@ import (
 	"text/template"
 )
 
+// Directory is the repository-relative home of the shipped templates, SourceFile the Go file
+// whose go:embed directive embeds them, and Pattern that directive's pattern. The devcontainer
+// bootstrap reads all three to capture the embedded files beside the Go source, so a binary
+// built from its archive embeds the same bodies (internal/devcontainer/bootstrap_source.go).
+const (
+	Directory  = "templates"
+	SourceFile = Directory + "/embed.go"
+	Pattern    = "*/*.tmpl"
+)
+
 // shipped holds every template body. The pattern names one directory level of *.tmpl files
 // on purpose: a bare directory pattern skips dot-files, and go/.golangci.yml.tmpl is one.
+// It must stay equal to Pattern; the bootstrap refuses any other directive in SourceFile.
 //
 //go:embed */*.tmpl
 var shipped embed.FS
@@ -69,7 +80,7 @@ func RenderFile(name string, ctx Context) (string, error) {
 
 // Names returns the path of every embedded template in lexical order.
 func Names() ([]string, error) {
-	names, err := fs.Glob(shipped, "*/*.tmpl")
+	names, err := fs.Glob(shipped, Pattern)
 	if err != nil {
 		return nil, fmt.Errorf("list embedded templates: %w", err)
 	}
