@@ -195,6 +195,18 @@ failing on the absent `.github/rulesets/main.json`. When not declined and requir
 by policy, `standards_audit` fails closed if the ruleset file is missing or invalid,
 matching CLI behavior with byte-for-byte verdict parity.
 
+The lock digest gate inside `standards_audit` resolves its catalog from the same
+`catalog_root` tool argument the effective-policy gate uses
+(`p.policy.CatalogRoot` in `cmd/standards-mcp/audit_tools.go`), not the repository
+root by default. It calls `config.ValidateLockfileWithOptions` with
+`RequireSources: true`, so a lockfile with no catalog to hash against fails the
+tool call (`[FAIL] lockfile content digests are unverifiable: ...`,
+`config.ErrLockUnverifiable`) instead of reporting a pass. A catalog that exists
+but no longer defines a pinned archetype's `id:` fails the same way with
+`config.ErrLockSourceMissing`. See
+[lock verification outcomes](../adoption.md#lock-verification-outcomes) for the
+full outcome table shared with the CLI.
+
 ## Retained public dogfood loops
 
 Use the [public dogfooding guide](../dogfooding.md) for the shared CLI/MCP
