@@ -182,9 +182,9 @@ result in the job summary. It commits nothing. Four parts of the example each cl
 `standardsctl` itself still comes from the praetor ref the `uses:` line pins, not from the pull
 request (see below). That is why the example accepts a head pushed to a fork: the adoption reads
 the fork's files but never builds or executes them. A job that builds or runs the pull request's
-code has to refuse fork heads, as praetor's own bot does.
+code has to refuse fork heads, as /adopt runs in the adopter's CI.
 
-### Praetor's own adoption bot
+### Praetor's own adoption workflow
 
 `.github/workflows/adopt.yml` is the hardened form of the example, split into one job per
 entry point:

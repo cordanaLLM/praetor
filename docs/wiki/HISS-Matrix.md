@@ -64,13 +64,13 @@ flowchart TD
         HOOK --> AUDIT["3. Pre-Push / standardsctl audit"]
     end
     subgraph Remote["Remote CI & Admission"]
-        AUDIT --> CI["4. Ephemeral Isolated Sandbox"]
+        AUDIT --> CI["4. Ephemeral Isolated Runner"]
         CI --> ADMIT["5. PR Admission / standardsctl forge validate-pr"]
     end
 ```
 
 Layer 5 is the "Validate PR Governance Checklist & Exit-0 Receipts" step in
 `.github/workflows/ci.yml`, which runs `standardsctl forge validate-pr` as described under
-[Pull Request Admission](#pull-request-admission). No `cordana-standards[bot]` runs any check:
+[Pull Request Admission](#pull-request-admission). No `praetor-governance-bot` runs any check:
 `.config/github-app/manifest.json` specifies that app but nothing provisions it, and
 `internal/forge/pr.go` only requests it as a reviewer.
