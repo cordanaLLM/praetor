@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -344,10 +346,5 @@ func filtersPaths(value *yaml.Node) bool {
 // sortedJobIDs returns a workflow's job identifiers in a stable order, so every audit
 // reports the same jobs in the same sequence from the same file.
 func sortedJobIDs(jobs map[string]workflowJob) []string {
-	ids := make([]string, 0, len(jobs))
-	for id := range jobs {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
+	return slices.Sorted(maps.Keys(jobs))
 }
