@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "praetorctl hook agy pre-dispatch",
+            "command": "python3 -B praetor_hook.py agy pre-dispatch",
             "timeout": 30
           }
         ]

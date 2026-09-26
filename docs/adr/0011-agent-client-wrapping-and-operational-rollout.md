@@ -87,12 +87,13 @@ documentation fetched on 2026-09-17; host facts were measured with `agy` 1.2.5 o
   "configured, enforcement unverified" until a real session leaves a receipt.
 - Negative, found while rolling out the #415 subagent rows: an engine installed before a row
   existed answers it with exit 2, which the native clients read as a block, and no change to
-  that engine is possible. This repository's native client files therefore reach those rows
+  that engine is possible. This repository's tracked client files therefore reach those rows
   through `.config/agent/hooks/praetor_hook.py`, which hands the call only to an engine that
-  lists the pair and otherwise skips with the reason. That string carries an interpreter name
-  and a shell substitution, as the legacy adapter rows do, so decision 1 holds for the
-  engine call and for the AGY plugin row, not yet for these tracked rows
-  (`docs/guides/agent-hooks.md`, Rollout).
+  lists the pair and otherwise skips with the reason; the AGY plugin carries a byte-identical
+  copy beside its `hooks.json`, because an installed plugin runs outside any checkout. Those
+  strings carry an interpreter name, and the Codex and Gemini rows a shell substitution, as
+  the legacy adapter rows do, so decision 1 holds for the engine call, not yet for these
+  tracked rows (`docs/guides/agent-hooks.md`, Rollout).
 
 ## Checkable clauses
 

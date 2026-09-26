@@ -1,8 +1,8 @@
 # Agent hooks
 
 `praetorctl hook <client> <event>` is the one agent-hook entrypoint. The engine call takes
-no shell substitution, no interpreter name and no flags; a registration outside any checkout
-contains that call and nothing else.
+no shell substitution, no interpreter name and no flags; a hand-written registration can
+contain that call and nothing else.
 The command reads the client's payload from stdin, takes the workspace from the payload,
 judges the call in process and answers in that client's dialect.
 
@@ -11,8 +11,8 @@ the Python adapters under `.config/agent/hooks/`; moving those rows and Lefthook
 this entrypoint remains later work. The subagent text rows are tracked now.
 `.claude/settings.json`, `.codex/hooks.json` and `.gemini/settings.json` reach this
 entrypoint through the skew guard `.config/agent/hooks/praetor_hook.py`;
-`.agents/plugins/praetor/hooks.json` calls it directly. The guard exists so that an engine
-older than a row can never block a client
+`.agents/plugins/praetor/hooks.json` reaches it through the guard's copy in the plugin
+directory. The guard exists so that an engine older than a row can never block a client
 ([Rollout](#rollout-engine-skew-never-blocks-a-client)).
 
 The legacy rows in `.claude/settings.json`, `.codex/hooks.json`, `.gemini/settings.json`
@@ -150,20 +150,33 @@ change (see [Not in this change](#not-in-this-change)).
 
 The registration string in the table is the engine call: one executable call that resolves
 through `PATH` (and `PATHEXT` on Windows) and is valid under `sh -c` and under `cmd /c`.
-AGY reads its row, in exactly that form, from `.agents/plugins/praetor/hooks.json`. The
-three native client files of this repository carry the same pair behind the skew guard
-instead, in the form of their legacy adapter rows:
+The tracked client files of this repository carry the same pair behind the skew guard
+instead. The three native client files use the form of their legacy adapter rows; the AGY
+plugin names its own copy of the guard:
 
 ```text
 python3 -B "${CLAUDE_PROJECT_DIR}/.config/agent/hooks/praetor_hook.py" claude pre-dispatch
 python3 -B "$(git rev-parse --show-toplevel)/.config/agent/hooks/praetor_hook.py" codex pre-dispatch
+python3 -B praetor_hook.py agy pre-dispatch
 ```
 
 Claude Code rows use `CLAUDE_PROJECT_DIR`, the tree the settings were loaded from, which
 stays fixed when the session enters a worktree that may predate the guard. Codex runs hooks
 from the session directory and its documentation recommends resolving paths from the Git
 root; the Gemini CLI row follows its legacy adapter rows, which do the same.
-`TestRegistrationTableMatchesTheTrackedClientFiles` pins each tracked string to this form.
+
+AGY runs a hook command through `sh -c` or `cmd /c` from the directory that holds
+`hooks.json` (the "Hook Handler Fields" section of the contract embedded in the installed
+AGY binary). A plugin found in a workspace runs from `.agents/plugins/praetor/`; a plugin
+installed for a user is a copy under the AGY configuration root, outside any checkout
+(`~/.gemini/config/plugins/praetor/`, measured on a Linux host with AGY 1.2.11, whose
+changelog resolves plugin variables to "the final installation directory"). So the plugin
+carries its own copy of the guard, `.agents/plugins/praetor/praetor_hook.py`, and its row
+names that file relative to the plugin directory. Both copies sit three directories below the checkout root,
+so inside a checkout the plugin copy finds the same `bin/praetorctl`.
+`TestPluginLauncherIsTheTrackedLauncher` fails when the copy differs from the canonical
+guard by one byte. `TestRegistrationTableMatchesTheTrackedClientFiles` and
+`TestAgyDispatchRegistrationMatchesTrackedPlugin` pin each tracked string to its form.
 
 ## One invocation
 
@@ -324,22 +337,35 @@ already closed a stream.
 ## Rollout: engine skew never blocks a client
 
 An engine installed before a row existed answers that row with its usage and exit 2. Claude
-Code, Codex and Gemini CLI read exit 2 as a block; any other failure, including a missing
-command, is reported and the action proceeds. So an engine older than the subagent rows
-would stop every Claude `Agent`, Codex `spawn_agent` and Gemini `invoke_agent` launch, and
-keep a Claude or Codex subagent that reaches `SubagentStop` running, until someone
-reinstalled. Two layers keep that from happening.
+Code, Codex and Gemini CLI all document exit 2 as a block. Claude Code and Gemini CLI
+document every other exit code as a non-blocking error: they report it and the action
+proceeds ([Claude Code hook reference](https://code.claude.com/docs/en/hooks),
+[Gemini CLI hooks](https://geminicli.com/docs/hooks/), both fetched 2026-09-26), so a
+missing command, the shell's status 127, blocks nothing either. The Codex hook documentation
+([Codex hooks](https://developers.openai.com/codex/hooks), fetched 2026-09-26) describes only
+exit 0 and exit 2, so how Codex treats exit 1 or status 127 is unverified. The same page
+treats exit 0 with no output as success, yet says `SubagentStop` expects JSON on stdout when
+it exits 0, so whether Codex accepts an empty-stdout skip on the `codex post-return` row is
+unverified as well. AGY documents no exit codes at all, only the decision object on stdout;
+a report on the Google AI developer forum says a nonzero `PreToolUse` exit blocks the tool
+call.
 
-**The skew guard.** The native client files of this repository call
-`.config/agent/hooks/praetor_hook.py <client> <event>`, not `praetorctl` from `PATH`. The
-engine that is already installed cannot be changed, so the check runs before any engine sees
-the call. Every engine version prints the pairs it serves when `praetorctl hook` runs with no
-arguments. The guard asks each candidate in order and hands the call, stdin included, to the
-first that lists the pair:
+So an engine older than the subagent rows would stop every Claude `Agent`, Codex
+`spawn_agent`, Gemini `invoke_agent` and AGY `invoke_subagent` launch, and keep a Claude or
+Codex subagent that reaches `SubagentStop` running, until someone reinstalled. Two layers
+keep that from happening.
 
-1. `bin/praetorctl` of the tree the guard belongs to. `make hook-cli` builds it from that
-   tree, and the Git hooks rebuild it after a checkout or merge that changes Go sources, so
-   it serves the rows the tree registers.
+**The skew guard.** The tracked client files of this repository call
+`praetor_hook.py <client> <event>`, not `praetorctl` from `PATH`. The engine that is already
+installed cannot be changed, so the check runs before any engine sees the call. Every engine
+version prints the pairs it serves when `praetorctl hook` runs with no arguments. The guard
+asks each candidate in order and hands the call, stdin included, to the first that lists the
+pair:
+
+1. `bin/praetorctl` of the checkout the guard belongs to. `make hook-cli` builds it from
+   that tree, and the Git hooks rebuild it after a checkout or merge that changes Go sources,
+   so it serves the rows the tree registers. Outside a checkout, as in an installed AGY
+   plugin, there is no such candidate.
 2. `praetorctl` from `PATH`, the installed engine.
 
 The chosen engine's stdout, stderr and exit code reach the client unchanged, so a deny stays
@@ -350,13 +376,24 @@ exits 0 with the reason on stderr:
 praetor hook: no engine serves claude pre-dispatch (checked /home/example/.local/bin/praetorctl); the gate is not enforced until bin/praetorctl is rebuilt (make hook-cli) or the engine is reinstalled (make dev-install), skipped
 ```
 
+For AGY, the same skip also prints the answer the engine's agy encoder gives a skip:
+`{"decision":"allow"}` for `pre-tool` and `pre-dispatch`, `{}` for `stop` (`PROCEED` in the
+guard; `agyEncodePreTool` and `agyEncodeStop` in `internal/agenthook/dialect_agy.go`). An agy
+event without a known answer is a malformed argument. The drain reads the payload from file
+descriptor 0 in a daemon thread and gives up after two seconds, so a client that keeps stdin
+open still gets exit 0.
+
 An engine that starts but gives no verdict within 60 seconds, or cannot start after its
-probe, is exit 1: a fault every client reports without blocking. Malformed guard arguments
-keep exit 2, as the engine does for malformed arguments; the tracked strings are pinned, so
-that only happens on a broken edit. A host without `python3` gets the shell's
-command-not-found status, which also does not block. `scripts/test_praetor_hook.py` runs the
-tracked strings through `sh -c` against the engine built from the tree, against a stand-in
-for the engine that predates these rows (it is only ever probed), and with no engine at all.
+probe, is exit 1 for the native clients, which Claude Code and Gemini CLI document as a
+reported, non-blocking error; AGY gets its allow answer and exit 0 instead. Malformed guard
+arguments keep exit 2, as the engine does for malformed arguments; the tracked strings are
+pinned, so that only happens on a broken edit. A host without `python3` gets the shell's
+command-not-found status, which blocks nothing in Claude Code or Gemini CLI and is
+unverified for Codex and AGY. `scripts/test_praetor_hook.py` runs the tracked strings through
+`sh -c`, the AGY row from inside the checkout and from an installed copy, against the engine
+built from the tree, against a stand-in for the engine that predates these rows (it is only
+ever probed), and with no engine at all. It also checks that the guard's AGY answers equal
+the built engine's skip answers.
 
 **The engine's own skip.** An engine built from this change on answers a well-formed pair it
 has no row for as a stated skip in the client's dialect, whether the event is new or an
@@ -384,15 +421,12 @@ Nothing stops a downgrade: `workstation install` records the prior commit in its
 never compares it with the commit it installs (`internal/workstation/install.go`), and
 `make dev-install` runs the installer from the source checkout (`scripts/dev_install.py`).
 Installing from a checkout based before these rows puts back an engine that neither serves
-nor skips them. The native clients then fall through the guard to a skip, so nothing blocks,
+nor skips them. The tracked clients then fall through the guard to a skip, so nothing blocks,
 but nothing is enforced either until the next forward install.
 
-**AGY is the exception.** The AGY plugin can be installed outside any checkout, and AGY runs
-the command from the directory that holds `hooks.json`, so its row cannot name a checkout
-file and calls `praetorctl hook agy pre-dispatch` from `PATH` directly. An engine that
-predates the row answers it with exit 2 and no decision object. AGY's exit-code handling is
-unverified (`internal/agenthook/dialect_agy.go`), so treat `invoke_subagent` as blocked on
-such a host until the reinstall above.
+An AGY plugin installed before this change still carries the bare
+`praetorctl hook agy pre-dispatch` row, if it carries a `hooks.json` at all. Reinstall it from
+the checkout so that it carries the guard's copy too.
 
 ## Built-in command policy
 

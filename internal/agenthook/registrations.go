@@ -20,11 +20,12 @@ type Registration struct {
 }
 
 // Command is the engine call that serves the row: one executable call that resolves through
-// PATH or PATHEXT and is valid under `sh -c` and `cmd /c`. A registration outside any
-// checkout (the AGY plugin) carries it as is. This repository's native client files reach it
-// through .config/agent/hooks/praetor_hook.py, which hands the call only to an engine whose
-// usage lists this command and otherwise skips, so an engine older than the row never blocks
-// the client (docs/guides/agent-hooks.md, Rollout).
+// PATH or PATHEXT and is valid under `sh -c` and `cmd /c`. A hand-written registration can
+// carry it as is. This repository's tracked client files reach it through the skew guard
+// .config/agent/hooks/praetor_hook.py (the AGY plugin through its own copy beside hooks.json),
+// which hands the call only to an engine whose usage lists this command and otherwise skips,
+// so an engine older than the row never blocks the client (docs/guides/agent-hooks.md,
+// Rollout).
 func (r Registration) Command() string {
 	return "praetorctl hook " + r.Client + " " + string(r.Event)
 }

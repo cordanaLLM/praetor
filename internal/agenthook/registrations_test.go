@@ -1,6 +1,7 @@
 package agenthook
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -197,16 +198,43 @@ func TestTrackedCommandProblemsRejectsRowsTheEngineLacks(t *testing.T) {
 			t.Errorf("%s: problems %q, want %d", name, got, tc.want)
 		}
 	}
+	checkout := `python3 -B "../../../` + launcherScript + `" agy pre-dispatch`
+	for name, tc := range map[string]struct {
+		command string
+		want    int
+	}{
+		"plugin launcher":               {pluginLaunch + "agy pre-dispatch", 0},
+		"engine from PATH, no launcher": {"praetorctl hook agy pre-dispatch", 1},
+		"checkout launcher from plugin": {checkout, 1},
+		"unquoted checkout launcher":    {strings.ReplaceAll(checkout, `"`, ""), 1},
+		"launcher under another name":   {"python3 praetor_hook.py agy pre-dispatch", 1},
+		"typo'd event":                  {pluginLaunch + "agy pre-dispach", 1},
+		"other client's row":            {pluginLaunch + "claude pre-dispatch", 1},
+		"extra argument":                {pluginLaunch + "agy pre-dispatch --x", 1},
+	} {
+		hooks := map[string][]nativeGroup{"PreToolUse": {group("invoke_subagent", tc.command, 30)}}
+		if got := trackedCommandProblems("agy", hooks, time.Second); len(got) != tc.want {
+			t.Errorf("agy %s: problems %q, want %d", name, got, tc.want)
+		}
+	}
 }
 
 // launcherScript hands a tracked row to an engine that serves it and skips with the reason
 // when none does, so an engine older than the row never blocks the client.
 const launcherScript = ".config/agent/hooks/praetor_hook.py"
 
+// pluginLauncher is the AGY plugin's copy of launcherScript. AGY runs a plugin's hooks from
+// the directory holding its hooks.json, and an installed plugin directory may sit outside any
+// checkout, so the plugin carries the launcher and names it relative to that directory.
+const (
+	pluginLauncher = ".agents/plugins/praetor/praetor_hook.py"
+	pluginLaunch   = "python3 -B praetor_hook.py "
+)
+
 // trackedRoot is how each repository-scoped client file names the checkout holding the
 // launcher: Claude Code's project directory stays the tree its settings came from even after
 // the session enters an older worktree; Codex and Gemini CLI run hooks from the session
-// directory. AGY's plugin can be installed outside any checkout, so its row has no launcher.
+// directory. AGY's row uses pluginLaunch instead.
 var trackedRoot = map[string]string{
 	"claude": "${CLAUDE_PROJECT_DIR}",
 	"codex":  "$(git rev-parse --show-toplevel)",
@@ -215,6 +243,9 @@ var trackedRoot = map[string]string{
 
 // trackedCommand is the exact string this repository's client files carry for row.
 func trackedCommand(row Registration) string {
+	if row.Client == "agy" {
+		return pluginLaunch + row.Client + " " + string(row.Event)
+	}
 	root, launched := trackedRoot[row.Client]
 	if !launched {
 		return row.Command()
@@ -223,16 +254,19 @@ func trackedCommand(row Registration) string {
 }
 
 // trackedPair returns the client and event a tracked engine command names, direct or through
-// the launcher; engine is false for anything else (the legacy adapters). A command with the
-// wrong number of arguments names no client.
+// either launcher form; engine is false for anything else (the legacy adapters). A command
+// that names the launcher in another form, or has the wrong number of arguments, names no
+// client.
 func trackedPair(command string) (client, event string, engine bool) {
-	rest, direct := strings.CutPrefix(command, "praetorctl hook ")
-	if !direct {
-		_, launched, found := strings.Cut(command, launcherScript+`" `)
-		if !found {
-			return "", "", strings.HasPrefix(command, "praetorctl hook")
-		}
-		rest = launched
+	rest, found := strings.CutPrefix(command, "praetorctl hook ")
+	if !found {
+		rest, found = strings.CutPrefix(command, pluginLaunch)
+	}
+	if !found {
+		_, rest, found = strings.Cut(command, launcherScript+`" `)
+	}
+	if !found {
+		return "", "", strings.HasPrefix(command, "praetorctl hook") || strings.Contains(command, "praetor_hook.py")
 	}
 	fields := strings.Split(rest, " ")
 	if len(fields) != 2 {
@@ -299,6 +333,22 @@ func TestTrackedLauncherIsInTheTree(t *testing.T) {
 	info, err := os.Stat(filepath.Join("..", "..", filepath.FromSlash(launcherScript)))
 	if err != nil || !info.Mode().IsRegular() {
 		t.Fatalf("%s: %v", launcherScript, err)
+	}
+}
+
+// TestPluginLauncherIsTheTrackedLauncher pins the AGY plugin's launcher to the canonical one
+// byte for byte, so the two copies cannot drift into two behaviours (HISS-19).
+func TestPluginLauncherIsTheTrackedLauncher(t *testing.T) {
+	canonical, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(launcherScript)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plugin, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(pluginLauncher)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(canonical) == 0 || !bytes.Equal(plugin, canonical) {
+		t.Fatalf("%s differs from %s: copy the canonical launcher over it", pluginLauncher, launcherScript)
 	}
 }
 
