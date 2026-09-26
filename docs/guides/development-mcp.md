@@ -277,3 +277,24 @@ return different versions and a suffix match could win over an exact one
 The fact tallies printed by `standards_hindsight_optimize` and by `praetorctl hindsight
 distill|audit` are sorted by category for the same reason: two runs over an unchanged
 repository produce identical output, so a diff between them shows a real change.
+
+## Hindsight distillation names the sources it could not read
+
+`standards_hindsight_optimize` and `praetorctl hindsight distill` harvest facts from four
+sources (`workspaceSources`, `internal/hindsight/distiller.go`):
+
+| Source | On failure |
+| --- | --- |
+| bug ledger (`.workingdir/BUGS.md`) | required: the run fails and the cache is not written |
+| flavor archetype | optional: recorded as a warning |
+| dedupe scan | optional: recorded as a warning |
+| package docs (`.workingdir/docs/catalog.json`) | optional: recorded as a warning |
+
+Each optional failure lands in `DistillationReport.Warnings` with the source name, and the
+remaining sources still run. The MCP tool then heads its result `Partially distilled` instead
+of `Successfully distilled`, and both surfaces print one `Warning:` line per failed source.
+When sources failed and nothing was harvested, the run is an error, so an empty result never
+replaces a populated `.workingdir/memory/distilled.json`.
+
+Tests: `internal/hindsight/distiller_warnings_test.go`, `TestServer_HindsightOptimizeNamesFailedSources`
+(`cmd/standards-mcp/tools_test.go`) and `cmd/standardsctl/hindsight_cli_test.go`.
