@@ -12,7 +12,7 @@ thirty projections. `praetorctl docs sync` harvests *dependency* documentation f
 packages. Nothing checked whether this repository's own `docs/` still describes what its code does,
 so documentation drifted and no mechanism reported it.
 
-The design is backported from `VMAFx/vmafx`, which built it first and runs it as a blocking gate.
+The design is backported from a downstream adopter's blocking gate.
 
 ## What counts as a surface
 

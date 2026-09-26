@@ -138,7 +138,7 @@ func TestLoadBaseline_NegativeAndSaveErrors(t *testing.T) {
 // Cross-platform path separators (BUG-948)
 // =========================================================================
 
-// windowsInfraction is the record cordanaLLM/imago actually has committed, written by a scan on
+// windowsInfraction is the record an adopter's OS image forge actually has committed, written by a scan on
 // Windows. The Linux scan of the same file produces the forward-slash form below.
 func windowsInfraction() Infraction {
 	return Infraction{

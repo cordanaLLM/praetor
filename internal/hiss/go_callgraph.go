@@ -24,7 +24,7 @@ import (
 // two packages would need each to import the other, which the Go compiler rejects outright,
 // so every reachable call cycle in a buildable program is inside one package.
 //
-// Backported from golusoris/sveltesentio#252, which built the equivalent import-graph check
+// Backported from a downstream adopter, which built the equivalent import-graph check
 // for TypeScript and verified it by planting cycles rather than by watching it pass.
 
 const (

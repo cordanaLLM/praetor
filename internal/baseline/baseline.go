@@ -218,7 +218,7 @@ func Record(previous *Baseline, infractions []Infraction, opts RecordOptions) (*
 // Baseline records are committed and compared across platforms. A scan on Windows writes
 // "scripts\\tunnel_hindsight.py" while the same scan on Linux writes
 // "scripts/tunnel_hindsight.py", so the same infraction produced two different fingerprints and
-// the ratchet silently stopped recognising its own baseline. Measured in cordanaLLM/imago, whose
+// the ratchet silently stopped recognising its own baseline. Measured in an adopter's OS image forge, whose
 // committed baseline could not suppress its own recorded infraction on a Linux checkout.
 //
 // filepath.ToSlash is not enough: it rewrites nothing on Linux, so a baseline written on Windows

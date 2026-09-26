@@ -184,7 +184,7 @@ which commands are typed.
 CUDA, HIP, SYCL, Metal or Vulkan backend can be **compiled and linked** but not **executed**.
 Dropping the test step silently is precisely the third state this invariant prohibits.
 
-The shape to copy is `VMAFx/vmafx`'s `libvmaf-build-matrix.yml`, which solved this first across
+The shape to copy is a downstream adopter's build matrix, which solved this first across
 eighteen cells and states the omission in the workflow itself:
 
 > Build-only legs — no GPU on the `windows-2025` runner, so the test step is intentionally

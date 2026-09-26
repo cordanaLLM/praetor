@@ -106,8 +106,7 @@ single-node components so one defect is not reported twice.
 The check is verified by planting cycles rather than by watching it pass — the failure mode
 [#90](https://github.com/cordanaLLM/praetor/issues/90) recorded, where `dedupe scan` reported
 100% cleanliness having read no files. The approach is backported from
-[golusoris/sveltesentio#252](https://github.com/golusoris/sveltesentio/pull/252), which built the
-equivalent import-graph check for TypeScript.
+a downstream adopter, which built the equivalent import-graph check for TypeScript.
 
 ## Rust and Python: a function calling itself
 

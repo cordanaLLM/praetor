@@ -1,7 +1,7 @@
 // Package classify decides what a repository is, once.
 //
 // Four places used to answer that question independently and disagree. Measured on one copy of
-// cordanaLLM/imago on 2026-09-15, the same repository was python-ml by flavor markers,
+// an adopter's OS image forge on 2026-09-15, the same repository was python-ml by flavor markers,
 // app-service by description keywords, framework by adoption markers, and gitops-infra by its
 // own declaration -- four answers, no arbitration, and nothing reading the declaration.
 //
@@ -83,8 +83,8 @@ func rules() []rule {
 	return []rule{
 		{[]string{"harness.json"}, "framework"},
 		// An image forge is known by what it builds, and its Go, Python and shell content is
-		// the tooling that builds it. Ahead of go.mod for that reason: cordanaLLM/imago has a
-		// go.mod for its CLI and was classified framework by it, which described the tool
+		// the tooling that builds it. Ahead of go.mod for that reason: an adopter's OS image forge
+		// has a go.mod for its CLI and was classified framework by it, which described the tool
 		// rather than the product.
 		{[]string{"packer/*.pkr.hcl", "mkosi.conf", "build/mkosi.conf"}, "os-image"},
 		{[]string{"Chart.yaml", "kustomization.yaml", "helmfile.yaml"}, "container-image"},
@@ -168,7 +168,7 @@ type metadataRule struct {
 // language and description. It is deliberately the weakest evidence in the precedence chain.
 //
 // The word "kernel" is absent on purpose. It used to map to native-gpu-systems as a bare
-// substring, which classified cordanaLLM/nucleus -- a Linux kernel build forge -- as a
+// substring, which classified an adopter's Linux kernel build forge as a
 // GPU compute engine. A genuine GPU repository still matches on gpu, vulkan, cuda or sycl, so
 // the ambiguous term bought nothing and cost a wrong answer.
 func metadataRules() []metadataRule {

@@ -300,8 +300,8 @@ func TestDetect_Positive_PythonMLRequiresAnMLDependency(t *testing.T) {
 	}
 }
 
-// TestDetect_Negative_PlainPythonIsNotAnMLPipeline is the measured defect. cordanaLLM/nucleus is
-// a Linux kernel build forge and cordanaLLM/imago an OS image forge; both carried a
+// TestDetect_Negative_PlainPythonIsNotAnMLPipeline is the measured defect. An adopter's Linux kernel
+// build forge and an adopter's OS image forge both carried a
 // pyproject.toml and both were reported as PyTorch/OpenVINO pipelines, then audited against ML
 // tooling they had no reason to install.
 func TestDetect_Negative_PlainPythonIsNotAnMLPipeline(t *testing.T) {
@@ -404,7 +404,7 @@ func TestAuditFlavor_Positive_DeclaredProfileNarrowsDetection(t *testing.T) {
 }
 
 // TestAuditFlavor_Negative_ProfileWithNoFlavorIsNotApplicable pins the not-applicable
-// outcome. It used to use os-image, the profile cordanaLLM/imago declares, back when
+// outcome. It used to use os-image, the profile an adopter's OS image forge declares, back when
 // no flavor implemented it; os-image has one now, so the case moves to a profile that
 // still has none. The outcome under test is unchanged: a declared profile nothing
 // implements is not-applicable, never a marker guess.
@@ -449,7 +449,7 @@ func TestAuditFlavor_Positive_DeclaredOSImageAuditsAgainstItsFlavor(t *testing.T
 	repo := declaringRepo(t, "os-image", map[string]string{
 		"packer/ubuntu.pkr.hcl": "source \"qemu\" \"ubuntu\" {}\n",
 		"go.mod":                "module fixture\n",
-		"cmd/imago/main.go":     "package main\n",
+		"cmd/app/main.go":       "package main\n",
 	})
 	report, err := flavor.AuditFlavor(repo, "auto")
 	if err != nil {

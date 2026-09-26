@@ -1,0 +1,3 @@
+type: fixed
+title: Neutralize maintainer repository and host references across analysis fixtures, comments, workflow provenance, and documentation
+breaking: false

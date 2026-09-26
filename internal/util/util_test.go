@@ -75,16 +75,16 @@ func TestCleanGitURLAndExtract(t *testing.T) {
 			wantRepo:  "praetor",
 		},
 		{
-			url:       "https://github.com/golusoris/sveltesentio.git/",
-			wantClean: "https://github.com/golusoris/sveltesentio",
-			wantOwner: "golusoris",
-			wantRepo:  "sveltesentio",
+			url:       "https://github.com/acme/app.git/",
+			wantClean: "https://github.com/acme/app",
+			wantOwner: "acme",
+			wantRepo:  "app",
 		},
 		{
-			url:       "vmafx",
-			wantClean: "vmafx",
+			url:       "app",
+			wantClean: "app",
 			wantOwner: "",
-			wantRepo:  "vmafx",
+			wantRepo:  "app",
 		},
 		{
 			url:       "",
@@ -355,13 +355,13 @@ func TestResolveRepoIdentity_Positive_ReadsOriginRemote(t *testing.T) {
 	}
 
 	// The remote must win over the directory layout, which here is <tmp>/<random>.
-	httpsRepo := newHermeticGitRepo(t, "https://github.com/golusoris/sveltesentio.git")
+	httpsRepo := newHermeticGitRepo(t, "https://github.com/acme/app.git")
 	owner, repo, err = ResolveRepoIdentity(ctx, httpsRepo)
 	if err != nil {
 		t.Fatalf("ResolveRepoIdentity (https remote) failed: %v", err)
 	}
-	if owner != "golusoris" || repo != "sveltesentio" {
-		t.Errorf("got %s/%s, want golusoris/sveltesentio", owner, repo)
+	if owner != "acme" || repo != "app" {
+		t.Errorf("got %s/%s, want acme/app", owner, repo)
 	}
 }
 

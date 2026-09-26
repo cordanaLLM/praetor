@@ -84,7 +84,7 @@ func TestByMarkers_Boundary_MostSpecificMarkerWins(t *testing.T) {
 		markers []string
 		want    string
 	}{
-		// The shape measured on cordanaLLM/imago, where the two tables split.
+		// The shape measured on an adopter's OS image forge, where the two tables split.
 		{"go and python", []string{"go.mod", "pyproject.toml"}, "framework"},
 		// A Dockerfile says only that the repository ships in a container.
 		{"go and docker", []string{"go.mod", "Dockerfile"}, "framework"},
@@ -125,7 +125,7 @@ func TestByMetadata_Positive_LanguageAndKeywords(t *testing.T) {
 
 // TestByMetadata_Negative_LinuxKernelIsNotAGPUEngine pins the measured defect by name.
 //
-// cordanaLLM/nucleus builds the Linux kernel. The old table matched the bare substring "kernel"
+// An adopter's Linux kernel build forge builds the Linux kernel. The old table matched the bare substring "kernel"
 // to native-gpu-systems, so a kernel build forge was classified as a GPU compute engine. The word
 // is gone; a real GPU repository still matches on its own terms, which the positive test checks.
 func TestByMetadata_Negative_LinuxKernelIsNotAGPUEngine(t *testing.T) {
