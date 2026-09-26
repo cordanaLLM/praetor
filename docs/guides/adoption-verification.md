@@ -220,7 +220,7 @@ the suite. Creation now reports the bound when the deadline is what stopped it, 
 
 `gate run` has a deadline of its own, and it is derived from the race stage's bound rather than
 fixed: the resolved bound plus a five-minute allowance for every other stage
-(`OtherStagesAllowance` in [`internal/gating/deadline.go`](../../internal/gating/deadline.go)).
+(`OtherStagesAllowance` in [`internal/gating/deadline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/deadline.go)).
 The default is therefore 3 + 5 = 8 minutes, and the 30-minute ceiling gives 35. The run prints
 the value it applies on its `Run Deadline:` line, and `praetorctl gate deadline [--json]` prints
 it without running anything:
@@ -252,8 +252,8 @@ caller that does not use the gate's run deadline is reported as `its caller stop
 stage the run deadline cuts off is labelled the same way (`stage "…" did not finish: the gate run's
 deadline … fired first, so this is not a finding`), so a scanner killed mid-run does not read as a
 scanner finding. The cases are replayed in
-[`internal/gating/deadline_test.go`](../../internal/gating/deadline_test.go) and
-[`cmd/standardsctl/gate_deadline_test.go`](../../cmd/standardsctl/gate_deadline_test.go).
+[`internal/gating/deadline_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/deadline_test.go) and
+[`cmd/standardsctl/gate_deadline_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/gate_deadline_test.go).
 
 Governance profile names no longer select Go or Meson commands. A shared plan
 renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:

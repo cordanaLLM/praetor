@@ -152,7 +152,7 @@ enforced. The full gate and CI remain the final integration checks.
 
 The hook bounds the `gate run` and `gate verify` subprocesses by the gate's own run deadline,
 not by a figure of its own. `run_full_gate` in
-[`checks.py`](../../.config/lefthook/scripts/checks.py) first runs `gate deadline --json`, which
+[`checks.py`](https://github.com/cordanaLLM/praetor/blob/main/.config/lefthook/scripts/checks.py) first runs `gate deadline --json`, which
 resolves `PRAETOR_TEST_STAGE_TIMEOUT` through the pipeline's parser: the race-stage bound, clamped
 to its 30-minute ceiling, plus the allowance for the other stages. It then adds a two-minute
 launch margin (`GATE_LAUNCH_MARGIN`) for `go run` to rebuild the CLI. With the variable unset that
@@ -163,7 +163,7 @@ push rather than running the gate under a guessed bound. The deadline itself is 
 [adoption verification](adoption-verification.md#the-whole-runs-deadline).
 
 When that bound expires, or Ctrl-C interrupts the push, the hook stops the gate before it kills
-it. `stop_process_group` in [`common.py`](../../.config/lefthook/scripts/common.py) sends the
+it. `stop_process_group` in [`common.py`](https://github.com/cordanaLLM/praetor/blob/main/.config/lefthook/scripts/common.py) sends the
 child's process group SIGTERM (SIGINT for Ctrl-C), waits up to `STOP_GRACE` (10 seconds) for every
 member to exit, and only then sends SIGKILL; a second Ctrl-C during the wait kills at once. The
 CLI runs each git and go command in a process group of its own and forwards a catchable signal to
@@ -172,7 +172,7 @@ removes its index lock and nothing is left running. SIGKILL on the CLI's group c
 and misses those groups. On Linux the kernel still kills each command when the CLI dies
 (`internal/util/command_parent_death_linux.go`); the processes a command started, and every
 command on macOS, would run on. The `test_stop_*` cases in
-[`test_hooks.py`](../../.config/lefthook/scripts/test_hooks.py) replay the forwarded stop, the kill
+[`test_hooks.py`](https://github.com/cordanaLLM/praetor/blob/main/.config/lefthook/scripts/test_hooks.py) replay the forwarded stop, the kill
 after the grace, and the second Ctrl-C.
 
 Before snapshot governance checks, the disposable clone initializes its own
