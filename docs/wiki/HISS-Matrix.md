@@ -71,6 +71,6 @@ flowchart TD
 
 Layer 5 is the "Validate PR Governance Checklist & Exit-0 Receipts" step in
 `.github/workflows/ci.yml`, which runs `standardsctl forge validate-pr` as described under
-[Pull Request Admission](#pull-request-admission). No `cordana-standards[bot]` runs any check:
-`.config/github-app/manifest.json` specifies that app but nothing provisions it, and
-`internal/forge/pr.go` only requests it as a reviewer.
+[Pull Request Admission](#pull-request-admission). Adopter CI runs the checks:
+`.config/github-app/manifest.json` specifies an example app but nothing provisions it, and
+`internal/forge/pr.go` requests a review bot.
