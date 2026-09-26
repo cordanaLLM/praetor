@@ -9,6 +9,7 @@ func FuzzASTMerge(f *testing.F) {
 	ours := "package main\nfunc Foo() string { return \"ours\" }\n"
 	theirs := "package main\nfunc Bar() string { return \"theirs\" }\n"
 	f.Add(base, ours, theirs)
+	f.Add(orderBase, swapBC, orderBase+"\nfunc F() {}\n")
 
 	f.Fuzz(func(t *testing.T, b, o, th string) {
 		if len(b) > 20000 {
