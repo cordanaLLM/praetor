@@ -37,10 +37,26 @@ var surfaces = [...]surface{
 	{name: "README support section", path: "README.md", start: "<!-- praetor:funding-support:start -->", end: "<!-- praetor:funding-support:end -->", render: renderSupport},
 	{name: "MkDocs announcement", path: "mkdocs.yml", start: "# praetor:funding-announcement:start", end: "# praetor:funding-announcement:end", indent: "  ", render: renderAnnouncement},
 	{name: "MkDocs social links", path: "mkdocs.yml", start: "# praetor:funding-social:start", end: "# praetor:funding-social:end", indent: "    ", render: renderSocial},
+	{name: "bounty board", path: "docs/sponsoring.md", start: "<!-- praetor:funding-bounties:start -->", end: "<!-- praetor:funding-bounties:end -->", render: renderBountyBoard},
+	{name: "sponsoring channels", path: "docs/monetization.md", start: "<!-- praetor:funding-channels:start -->", end: "<!-- praetor:funding-channels:end -->", render: renderChannelList},
 }
 
-// Result reports one Apply run: the surfaces whose content differs from the rendering (and
-// were rewritten unless the run only checked), and the surfaces with no file or no markers.
+// SurfacePaths lists every file a funding surface renders into, once each, in surface order.
+func SurfacePaths() []string {
+	paths := make([]string, 0, len(surfaces))
+	seen := make(map[string]bool, len(surfaces))
+	for _, s := range surfaces {
+		if !seen[s.path] {
+			seen[s.path] = true
+			paths = append(paths, s.path)
+		}
+	}
+	return paths
+}
+
+// Result reports one rendering run: the surfaces whose content differs from the rendering
+// (and were rewritten unless the run only checked), and the surfaces with no file or no
+// markers.
 type Result struct {
 	Configured bool
 	Drifted    []string
@@ -51,51 +67,97 @@ type Result struct {
 // and renders nothing. With write false it only reports drift. Files are written once, after
 // every surface rendered, so a failed surface leaves the tree unchanged.
 func Apply(ctx context.Context, root string, cfg *Config, write bool) (Result, error) {
-	if ctx == nil {
-		return Result{}, errors.New("funding apply requires a context")
-	}
-	result := Result{Configured: cfg.Configured()}
-	files := map[string]*document{}
-	for _, s := range surfaces {
-		if err := ctx.Err(); err != nil {
-			return Result{}, err
+	result, files, err := render(ctx, cfg, func(rel string) (*document, error) {
+		data, err := util.ReadConfinedLimited(root, rel, maxSurfaceSize)
+		if errors.Is(err, fs.ErrNotExist) {
+			return newDocument(rel, nil, false)
 		}
-		doc, err := loadDocument(root, s.path, files)
 		if err != nil {
-			return Result{}, err
+			return nil, fmt.Errorf("read %s: %w", rel, err)
 		}
-		drifted, skipped, err := s.apply(doc, cfg)
-		if err != nil {
-			return Result{}, fmt.Errorf("%s (%s): %w", s.name, s.path, err)
-		}
-		result.Drifted = appendIf(result.Drifted, drifted, s.name+" ("+s.path+")")
-		result.Skipped = appendIf(result.Skipped, skipped, s.name+" ("+s.path+")")
-	}
-	if !write {
-		return result, nil
+		return newDocument(rel, data, true)
+	})
+	if err != nil || !write {
+		return result, err
 	}
 	return result, writeDocuments(root, files)
 }
 
-// document is one file's working copy across the surfaces that share it.
+// RenderFiles renders the funding surfaces of an in-memory tree: files maps a
+// repository-relative path to its content, and an absent key is an absent file. It returns
+// the rendered content of every surface file that exists after rendering, whether or not it
+// changed, so a caller can compare a tree it cannot write (a git object) with the rendering.
+func RenderFiles(ctx context.Context, files map[string][]byte, cfg *Config) (map[string][]byte, error) {
+	_, docs, err := render(ctx, cfg, func(rel string) (*document, error) {
+		data, ok := files[rel]
+		if len(data) > maxSurfaceSize {
+			return nil, fmt.Errorf("%s exceeds %d bytes", rel, maxSurfaceSize)
+		}
+		return newDocument(rel, data, ok)
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]byte, len(docs))
+	for rel, doc := range docs {
+		if doc.present {
+			out[rel] = doc.bytes()
+		}
+	}
+	return out, nil
+}
+
+// render applies every surface to the documents load returns, loading each file once.
+func render(ctx context.Context, cfg *Config, load func(string) (*document, error)) (Result, map[string]*document, error) {
+	if ctx == nil {
+		return Result{}, nil, errors.New("funding rendering requires a context")
+	}
+	result := Result{Configured: cfg.Configured()}
+	files := make(map[string]*document, len(surfaces))
+	for _, s := range surfaces {
+		if err := ctx.Err(); err != nil {
+			return Result{}, nil, err
+		}
+		doc, ok := files[s.path]
+		if !ok {
+			loaded, err := load(s.path)
+			if err != nil {
+				return Result{}, nil, err
+			}
+			doc, files[s.path] = loaded, loaded
+		}
+		drifted, skipped, err := s.apply(doc, cfg)
+		if err != nil {
+			return Result{}, nil, fmt.Errorf("%s (%s): %w", s.name, s.path, err)
+		}
+		result.Drifted = appendIf(result.Drifted, drifted, s.name+" ("+s.path+")")
+		result.Skipped = appendIf(result.Skipped, skipped, s.name+" ("+s.path+")")
+	}
+	return result, files, nil
+}
+
+// document is one file's working copy across the surfaces that share it. content always
+// uses LF; crlf records that the file was read with CRLF endings, so a Windows checkout of
+// an unpinned file compares equal to its rendering and is written back in its own style.
 type document struct {
 	content string
+	crlf    bool
 	present bool
 	dirty   bool
 }
 
-func loadDocument(root, rel string, files map[string]*document) (*document, error) {
-	if doc, ok := files[rel]; ok {
-		return doc, nil
+// newDocument normalizes data to LF. Mixed or lone carriage returns are refused rather than
+// guessed at, the same rule the README governance block follows.
+func newDocument(rel string, data []byte, present bool) (*document, error) {
+	content, crlf, err := util.NormalizeLineEndingsStrict(string(data))
+	if err != nil {
+		return nil, fmt.Errorf("%s line endings: %w", rel, err)
 	}
-	data, err := util.ReadConfinedLimited(root, rel, maxSurfaceSize)
-	doc := &document{content: string(data), present: err == nil}
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("read %s: %w", rel, err)
-	}
-	files[rel] = doc
-	return doc, nil
+	return &document{content: content, crlf: crlf, present: present}, nil
 }
+
+// bytes returns the working copy in the file's own line-ending style.
+func (d *document) bytes() []byte { return []byte(util.RestoreLineEndings(d.content, d.crlf)) }
 
 // apply renders s into doc and reports whether the content drifted or the surface was skipped.
 func (s surface) apply(doc *document, cfg *Config) (drifted, skipped bool, err error) {
@@ -145,7 +207,7 @@ func writeDocuments(root string, files map[string]*document) error {
 		if err := util.MkdirSecure(filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
-		if err := util.WriteFileSecure(path, []byte(doc.content), surfacePerm); err != nil {
+		if err := util.WriteFileSecure(path, doc.bytes(), surfacePerm); err != nil {
 			return fmt.Errorf("write %s: %w", rel, err)
 		}
 	}
@@ -230,6 +292,41 @@ func renderSocial(cfg *Config, indent string) []string {
 			indent+"- icon: "+l.channel.icon,
 			indent+"  link: "+l.url(),
 			indent+"  name: Support on "+l.channel.label)
+	}
+	return lines
+}
+
+// renderBountyBoard links the Polar.sh bounty board of the sponsoring page, or says that no
+// board is published.
+func renderBountyBoard(cfg *Config, _ string) []string {
+	var board *link
+	for _, l := range cfg.links() {
+		if l.channel.key == "polar" {
+			board = &l
+		}
+	}
+	if board == nil {
+		return []string{"> No Polar.sh account is configured, so this site links no bounty board. The operator names one as `polar` in `" + ConfigFile + "`."}
+	}
+	return []string{
+		`<div align="center">`,
+		`  <a href="` + board.url() + `" target="_blank" rel="noopener">`,
+		`    <img src="https://img.shields.io/badge/View_Active_Polar.sh_Bounties-000000?style=for-the-badge&logo=polar&logoColor=white" alt="Polar.sh Bounties" />`,
+		`  </a>`,
+		`</div>`,
+	}
+}
+
+// renderChannelList lists every configured account with the purpose of its platform, or
+// says that no sponsoring account is linked.
+func renderChannelList(cfg *Config, _ string) []string {
+	links := cfg.links()
+	if len(links) == 0 {
+		return []string{"No sponsoring channel is configured, so this site links no sponsoring account. The operator lists them in `" + ConfigFile + "`."}
+	}
+	lines := make([]string, 0, len(links))
+	for _, l := range links {
+		lines = append(lines, fmt.Sprintf("- **%s**: [%s](%s) (%s).", l.channel.label, strings.TrimPrefix(l.url(), "https://"), l.url(), l.channel.purpose))
 	}
 	return lines
 }

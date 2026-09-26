@@ -2,7 +2,7 @@
 
 Praetor and the CordanaLLM Ecosystem use **Polar.sh** as Merchant of Record (MoR) to link transparent feature bounties, issue funding, and contributor reward splits directly to our GitHub roadmap.
 
-> Funding accounts are operator configuration. The README badges, `.github/FUNDING.yml`, and this site's social links and bounty announcement list only the accounts named in `.config/operator/funding.yaml`; see [operational configuration](guides/operational-configuration.md#funding-example).
+> Funding accounts are operator configuration. The README badges, `.github/FUNDING.yml`, this site's social links and bounty announcement, and the bounty board at the end of this page list only the accounts named in `.config/operator/funding.yaml`; see [operational configuration](guides/operational-configuration.md#funding-example).
 
 ---
 
@@ -28,7 +28,7 @@ With Polar.sh, sponsors, enterprises, and community members can pledge funds dir
 
 Want to contribute to Praetor and get compensated for resolved issues?
 
-1. Browse the **[Active Polar.sh Bounties](https://polar.sh/CordanaLLM)**.
+1. Browse the active bounties on the [bounty board](#bounty-board).
 2. Pick an issue with active funding.
 3. Submit your PR following our [Contribution Guidelines](guides/contributing.md) (DCO `Signed-off-by:` signature & HISS Quality Gates).
 4. Upon PR merge, the bounty reward is credited directly to your Polar.sh account balance.
@@ -40,14 +40,14 @@ Want to contribute to Praetor and get compensated for resolved issues?
 Does your organization require a specific `standardsctl` context target or `standards-mcp` transport adapter?
 
 1. Open an issue or select an existing roadmap item.
-2. Click the **Polar.sh Fund Button** in the issue or visit [polar.sh/CordanaLLM](https://polar.sh/CordanaLLM).
+2. Click the **Polar.sh Fund Button** in the issue or open the [bounty board](#bounty-board).
 3. Pledge your funding target.
 4. Receive automated delivery notifications and formal enterprise invoices.
 
 ---
 
-<div align="center">
-  <a href="https://polar.sh/CordanaLLM" target="_blank" rel="noopener">
-    <img src="https://img.shields.io/badge/View_Active_Polar.sh_Bounties-000000?style=for-the-badge&logo=polar&logoColor=white" alt="Polar.sh Bounties" />
-  </a>
-</div>
+## Bounty board
+
+<!-- praetor:funding-bounties:start -->
+> No Polar.sh account is configured, so this site links no bounty board. The operator names one as `polar` in `.config/operator/funding.yaml`.
+<!-- praetor:funding-bounties:end -->

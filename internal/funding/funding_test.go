@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 const fixtureReadme = `# Project
@@ -33,6 +35,26 @@ extra:
       name: Repository
     # praetor:funding-social:start
     # praetor:funding-social:end
+`
+
+const fixtureSponsoring = `# Bounties
+
+1. Browse the [bounty board](#bounty-board).
+
+## Bounty board
+
+<!-- praetor:funding-bounties:start -->
+> No Polar.sh account is configured, so this site links no bounty board. The operator names one as ` + "`polar` in `.config/operator/funding.yaml`" + `.
+<!-- praetor:funding-bounties:end -->
+`
+
+const fixtureMonetization = `# Strategy
+
+## Community Sponsoring Channels
+
+<!-- praetor:funding-channels:start -->
+No sponsoring channel is configured, so this site links no sponsoring account. The operator lists them in ` + "`.config/operator/funding.yaml`" + `.
+<!-- praetor:funding-channels:end -->
 `
 
 const fullConfig = `github: [exampleOrg]
@@ -67,6 +89,8 @@ func fixtureRoot(t *testing.T) string {
 	root := t.TempDir()
 	writeFixture(t, root, "README.md", fixtureReadme)
 	writeFixture(t, root, "mkdocs.yml", fixtureMkdocs)
+	writeFixture(t, root, "docs/sponsoring.md", fixtureSponsoring)
+	writeFixture(t, root, "docs/monetization.md", fixtureMonetization)
 	return root
 }
 
@@ -162,6 +186,12 @@ func TestApplyRendersConfiguredSurfaces(t *testing.T) {
 			t.Errorf("mkdocs.yml lacks %q:\n%s", want, mkdocs)
 		}
 	}
+	if board := readFixture(t, root, "docs/sponsoring.md"); !strings.Contains(board, `<a href="https://polar.sh/exampleOrg" target="_blank" rel="noopener">`) || strings.Contains(board, "No Polar.sh account") {
+		t.Errorf("sponsoring page lacks the configured bounty board:\n%s", board)
+	}
+	if list := readFixture(t, root, "docs/monetization.md"); !strings.Contains(list, "- **Ko-fi**: [ko-fi.com/example](https://ko-fi.com/example) (One-time developer micro-donations).") {
+		t.Errorf("monetization page lacks the configured channel list:\n%s", list)
+	}
 	again, err := Apply(t.Context(), root, mustParse(t, fullConfig), false)
 	if err != nil || len(again.Drifted) != 0 {
 		t.Fatalf("rendering must be idempotent: %+v, %v", again, err)
@@ -182,7 +212,7 @@ func TestApplyWithoutConfigurationPublishesNoLink(t *testing.T) {
 	if result.Configured {
 		t.Fatal("nil config reported as configured")
 	}
-	for _, rel := range []string{fundingFile, "README.md", "mkdocs.yml"} {
+	for _, rel := range SurfacePaths() {
 		content := readFixture(t, root, rel)
 		for _, host := range []string{"sponsors/", "polar.sh", "ko-fi.com", "opencollective.com", "example.org/donate", "announcement: >"} {
 			if strings.Contains(content, host) {
@@ -190,8 +220,10 @@ func TestApplyWithoutConfigurationPublishesNoLink(t *testing.T) {
 			}
 		}
 	}
-	if readFixture(t, root, "README.md") != fixtureReadme || readFixture(t, root, "mkdocs.yml") != fixtureMkdocs {
-		t.Error("unconfigured rendering must restore the empty marker blocks exactly")
+	for rel, want := range map[string]string{"README.md": fixtureReadme, "mkdocs.yml": fixtureMkdocs, "docs/sponsoring.md": fixtureSponsoring, "docs/monetization.md": fixtureMonetization} {
+		if content := readFixture(t, root, rel); content != want {
+			t.Errorf("unconfigured rendering must restore %s exactly:\n%s", rel, content)
+		}
 	}
 	if funding := readFixture(t, root, fundingFile); !strings.Contains(funding, "Not configured") {
 		t.Errorf("FUNDING.yml must say it is not configured:\n%s", funding)
@@ -239,18 +271,91 @@ func TestApplyBoundaries(t *testing.T) {
 }
 
 // The engine publishes no operator's funding accounts: this repository's own surfaces must
-// be exactly the unconfigured rendering (issue #222, BUG-816). The operator's accounts live
-// in .config/operator/funding.yaml, which the engine ignores.
-func TestRepositoryFundingSurfacesAreUnconfigured(t *testing.T) {
+// be exactly the unconfigured rendering (issue #222, BUG-816). An operational fork, whose
+// manifest records the public repository.source it was overlaid from, carries the operator's
+// document under .config/operator/ and must match that document's rendering instead; a
+// document left in an engine checkout (git-ignored there) is not published and is ignored.
+func TestRepositoryFundingSurfacesMatchTheOperatorConfiguration(t *testing.T) {
 	root := filepath.Join("..", "..")
 	if _, err := os.Stat(filepath.Join(root, "README.md")); err != nil {
 		t.Skipf("repository root not present: %v", err)
 	}
-	result, err := Apply(t.Context(), root, nil, false)
+	manifest, err := config.LoadManifest(filepath.Join(root, ".standards.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg *Config
+	if manifest.Repository.Source != "" {
+		cfg, err = Load(root, ConfigFile)
+		if err != nil && !errors.Is(err, ErrNotConfigured) {
+			t.Fatal(err)
+		}
+	}
+	result, err := Apply(t.Context(), root, cfg, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(result.Drifted) != 0 || len(result.Skipped) != 0 {
-		t.Fatalf("repository funding surfaces are not the unconfigured rendering; restore them with `praetorctl docs funding` and no %s: %+v", ConfigFile, result)
+		t.Fatalf("repository funding surfaces differ from their rendering (configured=%v); rerun `praetorctl docs funding`, which in the engine must run without %s: %+v", result.Configured, ConfigFile, result)
+	}
+}
+
+// Windows checks README.md out with CRLF endings (it is not pinned in .gitattributes), so the
+// comparison ignores one consistent line-ending style and a rewrite keeps it.
+func TestApplyKeepsOneConsistentLineEndingStyle(t *testing.T) {
+	root := fixtureRoot(t)
+	crlf := strings.ReplaceAll(fixtureReadme, "\n", "\r\n")
+	writeFixture(t, root, "README.md", crlf)
+	result, err := Apply(t.Context(), root, nil, false)
+	if err != nil || len(result.Drifted) != 0 {
+		t.Fatalf("a synchronized CRLF README must not drift: %+v, %v", result, err)
+	}
+	if _, err := Apply(t.Context(), root, mustParse(t, fullConfig), true); err != nil {
+		t.Fatal(err)
+	}
+	rendered := readFixture(t, root, "README.md")
+	if strings.Count(rendered, "\n") != strings.Count(rendered, "\r\n") || !strings.Contains(rendered, "<!-- praetor:funding-badges:end -->\r\n") {
+		t.Fatalf("CRLF README rewritten with mixed endings:\n%q", rendered)
+	}
+	if mkdocs := readFixture(t, root, "mkdocs.yml"); strings.Contains(mkdocs, "\r") {
+		t.Error("an LF file must stay LF")
+	}
+	writeFixture(t, root, "README.md", "# Mixed\r\n"+fixtureReadme)
+	if _, err := Apply(t.Context(), root, nil, false); err == nil || !strings.Contains(err.Error(), "line endings") {
+		t.Fatalf("mixed line endings must be refused: %v", err)
+	}
+}
+
+// RenderFiles renders an in-memory tree the way Apply renders a directory, returns only files
+// that exist after rendering, and refuses what Apply refuses.
+func TestRenderFiles(t *testing.T) {
+	files := map[string][]byte{"README.md": []byte(fixtureReadme), "mkdocs.yml": []byte(fixtureMkdocs), "notes.md": []byte("x")}
+	rendered, err := RenderFiles(t.Context(), files, mustParse(t, fullConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rendered["README.md"]), "https://polar.sh/exampleOrg") || !strings.Contains(string(rendered[fundingFile]), "polar: exampleOrg") {
+		t.Fatalf("configured rendering: %q", rendered)
+	}
+	if _, ok := rendered["notes.md"]; ok {
+		t.Error("a file no surface owns must not be returned")
+	}
+	unconfigured, err := RenderFiles(t.Context(), files, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := unconfigured[fundingFile]; ok || string(unconfigured["README.md"]) != fixtureReadme || len(unconfigured) != 2 {
+		t.Fatalf("unconfigured rendering of an absent FUNDING.yml and absent docs pages: %q", unconfigured)
+	}
+	if _, err := RenderFiles(t.Context(), map[string][]byte{"README.md": make([]byte, maxSurfaceSize+1)}, nil); err == nil {
+		t.Error("an oversized surface file must be refused")
+	}
+	var absent context.Context
+	if _, err := RenderFiles(absent, files, nil); err == nil {
+		t.Error("a nil context must fail")
+	}
+	want := []string{fundingFile, "README.md", "mkdocs.yml", "docs/sponsoring.md", "docs/monetization.md"}
+	if got := SurfacePaths(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("SurfacePaths() = %v, want %v", got, want)
 	}
 }

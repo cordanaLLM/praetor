@@ -1,6 +1,7 @@
 // Package funding renders a repository's funding and sponsorship surfaces (the GitHub
-// FUNDING.yml file, the README badge row and support section, and the MkDocs social links)
-// from operator configuration. Funding accounts are operator data: the engine reads them, it
+// FUNDING.yml file, the README badge row and support section, the MkDocs announcement and
+// social links, and the account links of the sponsoring and monetization pages) from
+// operator configuration. Funding accounts are operator data: the engine reads them, it
 // never embeds them, and without configuration it renders nothing rather than another
 // operator's links (issue #222).
 package funding
@@ -52,20 +53,21 @@ type Config struct {
 
 // channel describes one funding platform and how each surface presents it.
 type channel struct {
-	key   string // FUNDING.yml key
-	label string // platform name
-	url   string // account URL template
-	badge string // shields.io label-message-colour segment
-	logo  string // shields.io logo name
-	icon  string // MkDocs Material icon
+	key     string // FUNDING.yml key
+	label   string // platform name
+	url     string // account URL template
+	badge   string // shields.io label-message-colour segment
+	logo    string // shields.io logo name
+	icon    string // MkDocs Material icon
+	purpose string // what the platform funds, for the documentation channel list
 }
 
 // channels is the one table of supported platforms, in rendering order.
 var channels = [...]channel{
-	{key: "github", label: "GitHub Sponsors", url: "https://github.com/sponsors/%s", badge: "Sponsor-GitHub_Sponsors-EA4AAA", logo: "githubsponsors", icon: "fontawesome/solid/heart"},
-	{key: "polar", label: "Polar.sh", url: "https://polar.sh/%s", badge: "Bounties-Polar.sh-000000", logo: "polar", icon: "fontawesome/solid/bolt"},
-	{key: "ko_fi", label: "Ko-fi", url: "https://ko-fi.com/%s", badge: "Support-Ko--fi-FF5E5B", logo: "kofi", icon: "fontawesome/solid/mug-hot"},
-	{key: "open_collective", label: "Open Collective", url: "https://opencollective.com/%s", badge: "Donate-Open_Collective-7FADF2", logo: "opencollective", icon: "fontawesome/solid/hand-holding-dollar"},
+	{key: "github", label: "GitHub Sponsors", url: "https://github.com/sponsors/%s", badge: "Sponsor-GitHub_Sponsors-EA4AAA", logo: "githubsponsors", icon: "fontawesome/solid/heart", purpose: "Corporate monthly sponsorship tiers"},
+	{key: "polar", label: "Polar.sh", url: "https://polar.sh/%s", badge: "Bounties-Polar.sh-000000", logo: "polar", icon: "fontawesome/solid/bolt", purpose: "Feature bounties and issue funding"},
+	{key: "ko_fi", label: "Ko-fi", url: "https://ko-fi.com/%s", badge: "Support-Ko--fi-FF5E5B", logo: "kofi", icon: "fontawesome/solid/mug-hot", purpose: "One-time developer micro-donations"},
+	{key: "open_collective", label: "Open Collective", url: "https://opencollective.com/%s", badge: "Donate-Open_Collective-7FADF2", logo: "opencollective", icon: "fontawesome/solid/hand-holding-dollar", purpose: "Transparent public ledger for community operations"},
 }
 
 // link is one configured account on one platform.

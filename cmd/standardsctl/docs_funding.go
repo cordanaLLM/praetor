@@ -11,8 +11,9 @@ import (
 )
 
 // runDocsFunding renders the funding surfaces (.github/FUNDING.yml, the README badge and
-// support blocks, the MkDocs announcement and social blocks) from the operator's funding
-// document. Without the document it renders nothing, so no unconfigured account is linked.
+// support blocks, the MkDocs announcement and social blocks, the sponsoring and monetization
+// page blocks) from the operator's funding document. Without the document it links no
+// account.
 func runDocsFunding(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("docs funding", flag.ContinueOnError)
 	configPath := fs.String("config", funding.ConfigFile, "Funding document, relative to the repository path")

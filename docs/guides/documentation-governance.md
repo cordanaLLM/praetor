@@ -307,8 +307,9 @@ and at most 4 KiB, and duplicate section titles, routes, authority labels, or
 authority sources fail before rendering.
 
 The catalog does not own funding, badge, or social-link state; those surfaces
-in `README.md`, `mkdocs.yml`, and `.github/FUNDING.yml` render from the
-operator's `.config/operator/funding.yaml` through `praetorctl docs funding`
+in `README.md`, `mkdocs.yml`, `.github/FUNDING.yml`, and the account blocks of
+`docs/sponsoring.md` and `docs/monetization.md` render from the operator's
+`.config/operator/funding.yaml` through `praetorctl docs funding`
 (see [operational configuration](operational-configuration.md#funding-example)).
 The `Community & Funding` links render from the catalog
 only because `docs/sponsoring.md` and `docs/monetization.md` are published

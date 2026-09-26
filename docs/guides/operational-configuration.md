@@ -42,7 +42,7 @@ Supplied locally or from the operational fork, and ignored by this repository:
 | `.config/fleet.yaml` | fleet-wide runner defaults (tier 1 of the runner matrix) |
 | `.config/orgs/<org>.yaml` | organisation runner overrides (tier 2) |
 | `.config/operator/` | operator settings the fork carries, such as fleet-wide and per-workstation settings files; explicitly selected by hook, client and workstation commands |
-| `.config/operator/funding.yaml` | funding accounts rendered into `.github/FUNDING.yml`, the README badge and support blocks and the MkDocs social links by `praetorctl docs funding` |
+| `.config/operator/funding.yaml` | funding accounts rendered into `.github/FUNDING.yml`, the README badge and support blocks, the MkDocs announcement and social links, and the account blocks of `docs/sponsoring.md` and `docs/monetization.md` by `praetorctl docs funding` |
 | `deploy/arc/` | Actions Runner Controller scale sets for the operator's cluster |
 | `deploy/k8s/` | GitOps application and kustomization targeting the operator's cluster |
 
@@ -118,10 +118,12 @@ refusal by `internal/runner/constraint_test.go`.
 ### Funding example
 
 Funding accounts are operator data. The engine ships no funding accounts: its own
-`.github/FUNDING.yml`, README blocks and MkDocs social links are the unconfigured
-rendering, and `TestRepositoryFundingSurfacesAreUnconfigured` in
+`.github/FUNDING.yml`, README blocks, MkDocs blocks and the account blocks of the
+sponsoring and monetization pages are the unconfigured rendering.
+`TestRepositoryFundingSurfacesMatchTheOperatorConfiguration` in
 `internal/funding/funding_test.go` fails if a configured rendering is committed to the
-engine.
+engine. In an operational fork, whose `.standards.yaml` records `repository.source`, the
+same test requires the rendering of the fork's own document instead.
 
 ```yaml
 github: [exampleOrg]            # GitHub Sponsors, at most four accounts
@@ -133,14 +135,23 @@ message: "Optional sentence that replaces the default README support prose."
 ```
 
 `praetorctl docs funding [path]` renders the document. It rewrites `.github/FUNDING.yml`
-and the lines between the `praetor:funding-badges`, `praetor:funding-support`,
-`praetor:funding-announcement` and `praetor:funding-social` markers in `README.md` and
-`mkdocs.yml`. A file without the markers is skipped, not appended to. `--check` reports
-drift without writing and exits non-zero when a surface differs; `--config` names another
-document. Without the document, and for a document whose lists are empty, the command
-reports `not configured` and every block renders empty, so no link to an unconfigured
-account is published. Unknown keys, malformed account names and non-https custom URLs are
-errors (`internal/funding/config.go`).
+and the lines between these markers (`internal/funding/render.go`):
+
+| Marker | File |
+| :-- | :-- |
+| `praetor:funding-badges`, `praetor:funding-support` | `README.md` |
+| `praetor:funding-announcement`, `praetor:funding-social` | `mkdocs.yml` |
+| `praetor:funding-bounties` | `docs/sponsoring.md` |
+| `praetor:funding-channels` | `docs/monetization.md` |
+
+A file without the markers is skipped, not appended to. `--check` reports drift without
+writing and exits non-zero when a surface differs; `--config` names another document.
+Without the document, and for a document whose lists are empty, the command reports
+`not configured`: the README and MkDocs blocks render empty and the two documentation
+blocks say that no account is linked, so no link to an unconfigured account is published.
+Unknown keys, malformed account names and non-https custom URLs are errors
+(`internal/funding/config.go`). A file checked out with CRLF endings, as Windows checks out
+`README.md`, is compared and rewritten with CRLF; a file with mixed endings is an error.
 
 The fork carries the document, but operational sync accepts differences only in the
 identity overlay files and the owner-only paths above. A configured rendering of
