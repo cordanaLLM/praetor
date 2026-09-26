@@ -67,7 +67,9 @@ func TestValidateJSONLD_AutoDispatch_Positive(t *testing.T) {
 		"@context": "https://schema.org",
 		"@type": "TechArticle",
 		"headline": "Title",
-		"description": "Desc"
+		"description": "Desc",
+		"author": "cordanaLLM",
+		"dateModified": "2026-09-25"
 	}`)
 	res, err := ValidateJSONLD(rawArticle)
 	if err != nil || !res.Valid {
@@ -306,6 +308,68 @@ UnknownDirective: value
 // ============================================================================
 // 3. BOUNDARY TESTS (3D Dimension 3)
 // ============================================================================
+
+// techArticleWith returns a TechArticle whose author and dateModified members are the
+// given raw JSON fragments; an empty fragment leaves the member out.
+func techArticleWith(author, dateModified string) []byte {
+	var b strings.Builder
+	b.WriteString(`{"@context":"https://schema.org","@type":"TechArticle","headline":"H","description":"D"`)
+	if author != "" {
+		b.WriteString(`,"author":` + author)
+	}
+	if dateModified != "" {
+		b.WriteString(`,"dateModified":` + dateModified)
+	}
+	b.WriteString("}")
+	return []byte(b.String())
+}
+
+func TestTechArticle_Positive_AuthorShapes(t *testing.T) {
+	// Schema.org accepts a name, an object carrying a name, or a list of either.
+	for _, author := range []string{`"cordanaLLM"`, `{"@type":"Organization","name":"cordanaLLM"}`, `["a",{"name":"b"}]`} {
+		res, err := ValidateTechArticle(techArticleWith(author, `"2026-09-25T10:00:00Z"`))
+		if err != nil || !res.Valid {
+			t.Errorf("author %s: err=%v errors=%v", author, err, res.Errors)
+		}
+	}
+}
+
+func TestTechArticle_Negative_RequiredAuthorAndDateModified(t *testing.T) {
+	// BUG-974: the seo-audit skill lists author and dateModified as required TechArticle
+	// fields, and an empty dateModified used to pass because the format check returns early
+	// on an empty value.
+	cases := map[string]struct{ author, dateModified, want string }{
+		"missing dateModified": {`"a"`, ``, "dateModified is required"},
+		"empty dateModified":   {`"a"`, `""`, "dateModified is required"},
+		"blank dateModified":   {`"a"`, `"   "`, "dateModified is required"},
+		"missing author":       {``, `"2026-09-25"`, "author is required"},
+		"blank author":         {`"  "`, `"2026-09-25"`, "author is required"},
+		"nameless object":      {`{"@type":"Person"}`, `"2026-09-25"`, "author is required"},
+		"empty author list":    {`[]`, `"2026-09-25"`, "author is required"},
+		"list with a blank":    {`["a",""]`, `"2026-09-25"`, "author is required"},
+		"numeric author":       {`42`, `"2026-09-25"`, "author is required"},
+	}
+	for name, tc := range cases {
+		res, err := ValidateTechArticle(techArticleWith(tc.author, tc.dateModified))
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", name, err)
+		}
+		if res.Valid || len(res.Errors) != 1 || !strings.Contains(res.Errors[0], tc.want) {
+			t.Errorf("%s: valid=%v errors=%v, want exactly one %q", name, res.Valid, res.Errors, tc.want)
+		}
+	}
+}
+
+func TestTechArticle_Boundary_AuthorListCap(t *testing.T) {
+	names := strings.TrimSuffix(strings.Repeat(`"a",`, maxAuthors), ",")
+	if res, err := ValidateTechArticle(techArticleWith("["+names+"]", `"2026-09-25"`)); err != nil || !res.Valid {
+		t.Fatalf("%d authors: err=%v errors=%v", maxAuthors, err, res.Errors)
+	}
+	res, err := ValidateTechArticle(techArticleWith("["+names+`,"a"]`, `"2026-09-25"`))
+	if err != nil || res.Valid {
+		t.Fatalf("%d authors reported valid (err=%v)", maxAuthors+1, err)
+	}
+}
 
 func TestTechArticle_Boundary_EmptyPayload(t *testing.T) {
 	_, err := ValidateTechArticle([]byte{})

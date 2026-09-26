@@ -138,11 +138,55 @@ func ValidateTechArticle(raw []byte) (*JSONLDValidationResult, error) {
 	if strings.TrimSpace(article.Description) == "" {
 		res.Errors = append(res.Errors, "description is required and cannot be empty")
 	}
+	if !hasAuthor(article.Author) {
+		res.Errors = append(res.Errors, "author is required: a non-empty name, an object with a non-empty name, or a non-empty list of them")
+	}
 	validateDateField(article.DatePublished, "datePublished", res)
+	// dateModified is required, so an empty value is reported here: validateDateField only
+	// checks the format of a value that is present.
+	if strings.TrimSpace(article.DateModified) == "" {
+		res.Errors = append(res.Errors, "dateModified is required and cannot be empty")
+	}
 	validateDateField(article.DateModified, "dateModified", res)
 
 	res.Valid = len(res.Errors) == 0
 	return res, nil
+}
+
+// maxAuthors bounds the author-list scan (HISS-02).
+const maxAuthors = 256
+
+// hasAuthor reports whether a TechArticle author names someone. Schema.org accepts a
+// plain name, a Person or Organization object, or a list of either; an object must carry
+// a non-empty name, and a list must hold 1 to maxAuthors entries that each name someone.
+// A longer list is refused rather than passed with entries nobody inspected.
+func hasAuthor(author interface{}) bool {
+	list, isList := author.([]interface{})
+	if !isList {
+		return namesAuthor(author)
+	}
+	if len(list) == 0 || len(list) > maxAuthors {
+		return false
+	}
+	for i := 0; i < len(list) && i < maxAuthors; i++ {
+		if !namesAuthor(list[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// namesAuthor checks one author entry: a non-empty string, or an object whose name is one.
+func namesAuthor(entry interface{}) bool {
+	switch v := entry.(type) {
+	case string:
+		return strings.TrimSpace(v) != ""
+	case map[string]interface{}:
+		name, ok := v["name"].(string)
+		return ok && strings.TrimSpace(name) != ""
+	default:
+		return false
+	}
 }
 
 // ValidateSoftwareSourceCode validates a SoftwareSourceCode struct.
