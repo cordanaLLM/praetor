@@ -370,7 +370,8 @@ func TestDisposition_Boundary_DoneMapsToInReview(t *testing.T) {
 }
 
 // TestDisposition_Boundary_StatusCaseConsistency pins that CreateDisposition and Validate
-// accept and reject exactly the same raw status spellings.
+// accept and reject exactly the same raw status spellings, and that Validate leaves an
+// accepted record holding the canonical status and a rejected one untouched.
 func TestDisposition_Boundary_StatusCaseConsistency(t *testing.T) {
 	ctx := context.Background()
 	for raw, want := range map[string]DispositionStatus{
@@ -391,6 +392,12 @@ func TestDisposition_Boundary_StatusCaseConsistency(t *testing.T) {
 			}
 			if (validateErr == nil) != (want != "") {
 				t.Fatalf("status %q: Validate err=%v, want accepted=%t", raw, validateErr, want != "")
+			}
+			if validateErr == nil && direct.Status != want {
+				t.Fatalf("status %q: Validate left Status %q, want canonical %q", raw, direct.Status, want)
+			}
+			if validateErr != nil && direct.Status != DispositionStatus(raw) {
+				t.Fatalf("status %q: rejected record Status rewritten to %q", raw, direct.Status)
 			}
 		})
 	}

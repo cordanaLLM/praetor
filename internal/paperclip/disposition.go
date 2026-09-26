@@ -78,14 +78,17 @@ func CreateDisposition(issueID, statusStr, note, proof, recoveryOwner, actor str
 // lockdown.PinnedPublicKey), and must certify the envelope's gate output; the key embedded in
 // the receipt is never a trust anchor on its own. pinned may be nil only when no receipt is
 // attached. Validate has no repository to compare against, so it does not bind the receipt to a
-// commit; VerifyRun does, and a caller that trusts a receipt must go through VerifyRun.
+// commit; VerifyRun does, and a caller that trusts a receipt must go through VerifyRun. On
+// success Validate rewrites Status to its canonical form (see ParseStatus).
 func (d *Disposition) Validate(ctx context.Context, pinned ed25519.PublicKey) error {
 	_, err := d.validate(ctx, pinned)
 	return err
 }
 
 // validate runs Validate and returns the canonical status so callers branch on the same
-// value that passed validation, never on the raw field.
+// value that passed validation, never on the raw field. On success it also writes that status
+// back to d.Status, so a record decoded with "done" or "IN_REVIEW" reads as the status it was
+// validated as, the same value CreateDisposition would have stored.
 func (d *Disposition) validate(ctx context.Context, pinned ed25519.PublicKey) (DispositionStatus, error) {
 	if d == nil {
 		return "", fmt.Errorf("disposition cannot be nil")
@@ -107,6 +110,7 @@ func (d *Disposition) validate(ctx context.Context, pinned ed25519.PublicKey) (D
 	if err := d.verifyReceipt(pinned); err != nil {
 		return "", err
 	}
+	d.Status = status
 	return status, nil
 }
 
