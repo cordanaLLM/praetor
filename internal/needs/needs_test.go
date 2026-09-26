@@ -720,11 +720,12 @@ func TestAggregateFleetReportsTotalScanFailure(t *testing.T) {
 		dir := t.TempDir()
 		writeFixture(t, dir, "go.mod", "module example.com/broken\ngo 1.24\n")
 		writeFixture(t, dir, ".needs.yaml", "capabilities: [unterminated")
-		if err := agg.scanRepoDir(context.Background(), dir); err != nil {
+		if err := agg.scanRepo(context.Background(), &fleetRepo{root: dir, subprojects: []string{dir}}); err != nil {
 			t.Fatalf("ordinary scan failure must be retained in the report: %v", err)
 		}
 	}
-	if err := agg.scanRepoDir(cancelled, t.TempDir()); !errors.Is(err, context.Canceled) {
+	cancelledDir := t.TempDir()
+	if err := agg.scanRepo(cancelled, &fleetRepo{root: cancelledDir, subprojects: []string{cancelledDir}}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancellation to stop aggregation, got %v", err)
 	}
 	compileGapsAndLeaderboard(agg.report, agg.gapPackages)

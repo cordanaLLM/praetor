@@ -43,10 +43,7 @@ func TestDiscoverFleetReposRecognisesEveryAnalyzerManifest(t *testing.T) {
 	writeFixture(t, root, filepath.Join("scratch", "trial", "go.mod"), "module example.com/trial\n")
 	writeFixture(t, root, filepath.Join(".workingdir", "go.mod"), "module example.com/ledger\n")
 
-	dirs, err := discoverFleetRepos(context.Background(), root)
-	if err != nil {
-		t.Fatalf("discoverFleetRepos() error = %v", err)
-	}
+	dirs := discoveredRoots(t, root)
 	want := map[string]bool{filepath.Join(root, "native"): true, filepath.Join(root, "pylib"): true}
 	if len(dirs) != len(want) {
 		t.Fatalf("discovered %v, want exactly %v", dirs, want)

@@ -93,6 +93,22 @@ type RepoNeeds struct {
 	StandardLibraryImports []DependencyDemand `json:"standard_library_imports,omitempty" yaml:"standard_library_imports,omitempty"`
 	Readiness              ReadinessMetrics   `json:"readiness" yaml:"readiness"`
 	UpdatedAt              time.Time          `json:"updated_at" yaml:"updated_at"`
+	// Path is the repository root a fleet aggregation scanned this row at. It is a local
+	// path and never written into a .needs.yaml manifest.
+	Path string `json:"path,omitempty" yaml:"-"`
+	// Subprojects lists, relative to the repository root, the nested project directories
+	// scanned and merged into this row.
+	Subprojects []string `json:"subprojects,omitempty" yaml:"-"`
+	// UnscannedSubprojects lists, relative to the repository root, the project directories
+	// deeper than the sub-project depth bound. They are reported, not scanned.
+	UnscannedSubprojects []string `json:"unscanned_subprojects,omitempty" yaml:"-"`
+}
+
+// FleetDuplicate names a linked worktree that fleet discovery collapsed onto the checkout
+// kept for its repository (the two share one git common directory).
+type FleetDuplicate struct {
+	Dir string `json:"dir"`
+	Of  string `json:"of"`
 }
 
 // FrameworkPackage describes an exported package in the framework.
@@ -153,6 +169,12 @@ type FleetDemandReport struct {
 	// OverallFleetCoverage carries no meaning and must not be rendered as a result.
 	CoverageKnown        bool    `json:"coverage_known"`
 	OverallFleetCoverage float64 `json:"overall_fleet_coverage"`
+	// DuplicateCheckouts lists the linked worktrees collapsed onto the checkout kept for
+	// their repository. They are not counted in TotalRepositories.
+	DuplicateCheckouts []FleetDuplicate `json:"duplicate_checkouts,omitempty"`
+	// UnscannedSubprojects lists the project directories deeper than the sub-project depth
+	// bound below their repository root, across the fleet.
+	UnscannedSubprojects []string `json:"unscanned_subprojects,omitempty"`
 }
 
 // ReplacementAction defines an import or dependency substitution.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -51,18 +50,19 @@ func AggregateFleetWithHarvest(ctx context.Context, fleetRoot, frameworkPath, ha
 		return nil, fmt.Errorf("failed to inspect framework: %w", err)
 	}
 
-	repoDirs, err := discoverFleetRepos(ctx, fleetRoot)
+	layout, err := discoverFleet(ctx, fleetRoot)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover fleet repositories: %w", err)
 	}
 
-	agg := newFleetAggregation(fleetRoot, fwIndex, len(repoDirs))
-	for _, dir := range repoDirs {
+	agg := newFleetAggregation(fleetRoot, fwIndex, len(layout.repos))
+	agg.report.DuplicateCheckouts = layout.duplicates
+	for _, repo := range layout.repos {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, fmt.Errorf("fleet scan aborted after %d of %d repositories: %w",
-				agg.report.ScannedRepositories, len(repoDirs), ctxErr)
+				agg.report.ScannedRepositories, len(layout.repos), ctxErr)
 		}
-		if err := agg.scanRepoDir(ctx, dir); err != nil {
+		if err := agg.scanRepo(ctx, repo); err != nil {
 			return nil, err
 		}
 	}
@@ -82,6 +82,8 @@ type fleetAggregation struct {
 	framework   *FrameworkIndex
 	gapPackages map[CapabilityKey]map[string]struct{}
 	seen        map[string]struct{}
+	// names maps each repository name on the leaderboard to the path of its first row.
+	names map[string]string
 }
 
 // newFleetAggregation prepares an aggregation over discovered repositories.
@@ -99,6 +101,7 @@ func newFleetAggregation(fleetRoot string, fwIndex *FrameworkIndex, discovered i
 		framework:   fwIndex,
 		gapPackages: make(map[CapabilityKey]map[string]struct{}),
 		seen:        make(map[string]struct{}),
+		names:       make(map[string]string),
 	}
 }
 
@@ -112,26 +115,33 @@ func (a *fleetAggregation) result() error {
 		strings.Join(a.report.ScanErrors, "; "))
 }
 
-// scanRepoDir scans one repository and folds it into the report, recording the failure
-// instead of dropping it silently. Cancellation aborts aggregation; unsupported
-// repositories are skipped without claiming that their dependency coverage is known.
-func (a *fleetAggregation) scanRepoDir(ctx context.Context, dir string) error {
-	repoNeeds, err := ScanRepo(ctx, dir)
+// scanRepo scans one discovered repository through scanRepository and folds it into the
+// report, recording the failure instead of dropping it silently. Cancellation aborts
+// aggregation; unsupported repositories are skipped without claiming that their
+// dependency coverage is known. Manifests beyond the sub-project depth bound are listed
+// whatever the scan's outcome.
+func (a *fleetAggregation) scanRepo(ctx context.Context, repo *fleetRepo) error {
+	a.report.UnscannedSubprojects = append(a.report.UnscannedSubprojects, repo.unscanned...)
+	repoNeeds, err := scanRepository(ctx, repo)
 	if err != nil {
 		if isContextError(err) {
-			return fmt.Errorf("fleet aggregation interrupted at %q: %w", dir, err)
+			return fmt.Errorf("fleet aggregation interrupted at %q: %w", repo.root, err)
 		}
 		if errors.Is(err, ErrNoAnalyzer) {
-			a.report.SkippedRepositories = append(a.report.SkippedRepositories, dir)
+			a.report.SkippedRepositories = append(a.report.SkippedRepositories, repo.root)
 			return nil
 		}
 		a.report.FailedRepositories++
 		if len(a.report.ScanErrors) < maxScanErrorsReported {
-			a.report.ScanErrors = append(a.report.ScanErrors, fmt.Sprintf("%s: %v", dir, err))
+			a.report.ScanErrors = append(a.report.ScanErrors, fmt.Sprintf("%s: %v", repo.root, err))
 		}
 		return nil
 	}
-	a.add(repoNeeds, false)
+	repoNeeds.Path = repo.root
+	if key := repoIdentityKey(repoNeeds.Repository); key != "" {
+		a.seen[key] = struct{}{}
+	}
+	a.add(repoNeeds)
 	return nil
 }
 
@@ -140,10 +150,10 @@ func isContextError(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// add folds one repository's needs into the report and reports whether it was new.
-// countAsDiscovered adds the repository to TotalRepositories; the on-disk scan has
-// already counted its repositories through the discovery walk.
-func (a *fleetAggregation) add(repoNeeds *RepoNeeds, countAsDiscovered bool) bool {
+// addHarvested folds one harvested repository into the report unless a repository of the
+// same identity is already on it, and reports whether it was new. A harvested repository
+// is counted as discovered; the on-disk scan counted its repositories through the walk.
+func (a *fleetAggregation) addHarvested(repoNeeds *RepoNeeds) bool {
 	key := repoIdentityKey(repoNeeds.Repository)
 	if key != "" {
 		if _, dup := a.seen[key]; dup {
@@ -151,18 +161,52 @@ func (a *fleetAggregation) add(repoNeeds *RepoNeeds, countAsDiscovered bool) boo
 		}
 		a.seen[key] = struct{}{}
 	}
+	a.report.TotalRepositories++
+	a.add(repoNeeds)
+	return true
+}
 
+// add scores one repository against the framework and puts it on the leaderboard. Rows
+// discovered on disk are distinct repositories whatever they are named, so none is ever
+// merged away; a name two rows share is qualified by location in the consumer lists.
+func (a *fleetAggregation) add(repoNeeds *RepoNeeds) {
 	applyFrameworkCoverage(a.framework, repoNeeds)
-	if countAsDiscovered {
-		a.report.TotalRepositories++
-	}
 	a.report.ScannedRepositories++
 	a.report.Leaderboard = append(a.report.Leaderboard, *repoNeeds)
 
+	consumer := a.consumerLabel(repoNeeds)
 	for _, dep := range repoNeeds.Dependencies {
-		a.recordDependency(repoNeeds.Repository, dep)
+		a.recordDependency(consumer, dep)
 	}
-	return true
+}
+
+// consumerLabel names a row in the capability consumer lists: its repository name, or,
+// when an earlier row at another location already carries that name, the name qualified
+// by the row's location below the fleet root.
+func (a *fleetAggregation) consumerLabel(repoNeeds *RepoNeeds) string {
+	name := repoNeeds.Repository
+	first, taken := a.names[name]
+	if !taken {
+		a.names[name] = repoNeeds.Path
+		return name
+	}
+	if first == repoNeeds.Path {
+		return name
+	}
+	return fmt.Sprintf("%s (%s)", name, rowLocation(a.report.FleetRoot, repoNeeds.Path))
+}
+
+// rowLocation renders a row's path relative to the fleet root, "." for the root itself
+// and "harvest" for a row that came from a harvest bundle.
+func rowLocation(fleetRoot, path string) string {
+	if path == "" {
+		return "harvest"
+	}
+	rel, err := filepath.Rel(fleetRoot, path)
+	if err != nil {
+		return path
+	}
+	return filepath.ToSlash(rel)
 }
 
 // recordDependency counts one dependency demand and files it as a gap when unmet.
@@ -203,7 +247,7 @@ func (a *fleetAggregation) mergeHarvest(ctx context.Context, harvestPath string)
 			a.skipUnsupported(harvested[i].Repository)
 			continue
 		}
-		a.add(&harvested[i], true)
+		a.addHarvested(&harvested[i])
 	}
 	return nil
 }
@@ -286,59 +330,6 @@ func reconcileDependency(idx *FrameworkIndex, dep *DependencyDemand) {
 
 func frameworkReplacement(idx *FrameworkIndex, dep DependencyDemand) (string, bool) {
 	return availableFrameworkPackage(idx, dep.Capability, dep.GolusorisReplacement)
-}
-
-// discoverFleetRepos searches up to depth 5 for repositories across all supported languages.
-func discoverFleetRepos(ctx context.Context, root string) ([]string, error) {
-	var repoDirs []string
-	seen := make(map[string]struct{})
-	maxDepth := 5
-	root = filepath.Clean(root)
-
-	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr == nil && strings.Count(rel, string(os.PathSeparator)) > maxDepth {
-			return filepath.SkipDir
-		}
-		if shouldSkipDir(info, path, root) {
-			return filepath.SkipDir
-		}
-		if isManifestFile(info) {
-			dir := filepath.Dir(path)
-			if _, exists := seen[dir]; !exists {
-				seen[dir] = struct{}{}
-				repoDirs = append(repoDirs, dir)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("walk fleet root %q: %w", root, err)
-	}
-
-	return repoDirs, nil
-}
-
-// isManifestFile reports whether info is a manifest that marks a repository directory:
-// every file a registered analyzer detects a repository by (CMakeLists.txt and setup.py
-// included, BUG-864), plus the Praetor declarations. Symlinks are excluded because their
-// targets may be outside the fleet root.
-func isManifestFile(info os.FileInfo) bool {
-	if info == nil || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return false
-	}
-	switch info.Name() {
-	case "go.mod", "package.json", "pyproject.toml", "requirements.txt", "setup.py",
-		"Cargo.toml", "meson.build", "CMakeLists.txt", ".standards.yaml", ".needs.yaml":
-		return true
-	}
-	return false
 }
 
 // compileGapsAndLeaderboard sorts leaderboard and formats gap details.
@@ -425,6 +416,7 @@ func RenderFrameworkDemandMarkdown(report *FleetDemandReport) string {
 	sb.WriteString(renderDemandTopography(report))
 	sb.WriteString(renderDemandGaps(report))
 	sb.WriteString(renderDemandLeaderboard(report))
+	sb.WriteString(renderDemandDiscovery(report))
 	return sb.String()
 }
 
@@ -434,24 +426,62 @@ func renderDemandHeader(report *FleetDemandReport) string {
 	if !report.CoverageKnown {
 		coverage = "unknown (no repository could be scanned)"
 	}
-	failed := ""
-	if report.FailedRepositories > 0 {
-		failed = fmt.Sprintf("**Repositories Failed**: %d  \n", report.FailedRepositories)
-	}
-	skipped := ""
-	if len(report.SkippedRepositories) > 0 {
-		skipped = fmt.Sprintf("**Repositories Skipped (no language analyzer matched)**: %d  \n", len(report.SkippedRepositories))
-	}
 
 	return fmt.Sprintf("# Framework Demand & Capability Report\n\n"+
 		"**Target Framework**: `%s`  \n"+
 		"**Coverage Basis**: %s; builds and tests not run  \n"+
 		"**Generated At**: %s  \n"+
 		"**Repositories Scanned**: %d / %d  \n"+
-		"%s%s"+
+		"%s"+
 		"**Overall Fleet Golusoris Coverage**: %s\n\n",
 		report.Framework, report.CoverageBasis, report.GeneratedAt.Format(time.RFC3339),
-		report.ScannedRepositories, report.TotalRepositories, failed, skipped, coverage)
+		report.ScannedRepositories, report.TotalRepositories, renderDemandHeaderCounts(report), coverage)
+}
+
+// renderDemandHeaderCounts renders the preamble lines for everything discovered but not
+// scored: failed and skipped repositories, collapsed worktrees and unscanned sub-projects.
+func renderDemandHeaderCounts(report *FleetDemandReport) string {
+	var sb strings.Builder
+	if report.FailedRepositories > 0 {
+		writef(&sb, "**Repositories Failed**: %d  \n", report.FailedRepositories)
+	}
+	if len(report.SkippedRepositories) > 0 {
+		writef(&sb, "**Repositories Skipped (no language analyzer matched)**: %d  \n", len(report.SkippedRepositories))
+	}
+	if len(report.DuplicateCheckouts) > 0 {
+		writef(&sb, "**Linked Worktrees Collapsed**: %d  \n", len(report.DuplicateCheckouts))
+	}
+	if len(report.UnscannedSubprojects) > 0 {
+		writef(&sb, "**Sub-projects Not Scanned (more than %d directories below their repository root)**: %d  \n",
+			maxSubprojectDepth, len(report.UnscannedSubprojects))
+	}
+	return sb.String()
+}
+
+// renderDemandDiscovery lists every discovered directory the leaderboard does not rank,
+// each with why, so that no repository or sub-project leaves the report without a trace.
+func renderDemandDiscovery(report *FleetDemandReport) string {
+	var sb strings.Builder
+	writeLocations := func(title string, paths []string) {
+		if len(paths) == 0 {
+			return
+		}
+		writef(&sb, "\n## %s\n\n", title)
+		for _, path := range paths {
+			writef(&sb, "- `%s`\n", rowLocation(report.FleetRoot, path))
+		}
+	}
+	writeLocations("Skipped Repositories (no language analyzer matched)", report.SkippedRepositories)
+	writeLocations(fmt.Sprintf("Sub-projects Not Scanned (more than %d directories below their repository root)",
+		maxSubprojectDepth), report.UnscannedSubprojects)
+	if len(report.DuplicateCheckouts) > 0 {
+		sb.WriteString("\n## Linked Worktrees Collapsed\n\n")
+		for _, dup := range report.DuplicateCheckouts {
+			writef(&sb, "- `%s` is a worktree of `%s`\n",
+				rowLocation(report.FleetRoot, dup.Dir), rowLocation(report.FleetRoot, dup.Of))
+		}
+	}
+	return sb.String()
 }
 
 // renderDemandTopography renders the capability demand-frequency table.
@@ -514,11 +544,12 @@ func renderDemandGaps(report *FleetDemandReport) string {
 func renderDemandLeaderboard(report *FleetDemandReport) string {
 	var sb strings.Builder
 	sb.WriteString("\n## Migration Readiness Leaderboard\n\n")
-	sb.WriteString("| Rank | Repository | Readiness Score | Covered Deps | Gaps |\n")
-	sb.WriteString("| :--- | :--- | :--- | :--- | :--- |\n")
+	sb.WriteString("| Rank | Repository | Location | Readiness Score | Covered Deps | Gaps |\n")
+	sb.WriteString("| :--- | :--- | :--- | :--- | :--- | :--- |\n")
 	for i, repo := range report.Leaderboard {
-		writef(&sb, "| #%d | `%s` | %.1f%% | %d | %d |\n",
-			i+1, repo.Repository, repo.Readiness.Score, repo.Readiness.CoveredDeps, repo.Readiness.GapDeps)
+		writef(&sb, "| #%d | `%s` | `%s` | %.1f%% | %d | %d |\n",
+			i+1, repo.Repository, rowLocation(report.FleetRoot, repo.Path),
+			repo.Readiness.Score, repo.Readiness.CoveredDeps, repo.Readiness.GapDeps)
 	}
 	return sb.String()
 }

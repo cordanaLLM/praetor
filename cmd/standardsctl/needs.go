@@ -388,7 +388,7 @@ func printFleetEpicSkips(skips []needs.FleetEpicSkip) {
 	if len(skips) == 0 {
 		return
 	}
-	fmt.Printf("\n[SKIP] %d discovered directories are not prepared repositories:\n", len(skips))
+	fmt.Printf("\n[SKIP] %d discovered directories got no epic:\n", len(skips))
 	for _, skip := range skips {
 		fmt.Printf("  - %s: %s\n", skip.RepoDir, skip.Reason)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -99,7 +100,10 @@ func (r *AnalyzerRegistry) AnalyzePolyglot(ctx context.Context, repoPath string)
 	return primaryNeeds, nil
 }
 
-// mergeRepoNeeds merges dependencies and capabilities from secondary analyzer results.
+// mergeRepoNeeds merges dependencies and capabilities from secondary analyzer results and
+// from the sub-projects of a repository. A dependency whose demandIdentity dst already
+// lists is not appended again: two sub-projects demanding one package are one demand of
+// the repository.
 func mergeRepoNeeds(dst, src *RepoNeeds) {
 	if src == nil {
 		return
@@ -111,12 +115,70 @@ func mergeRepoNeeds(dst, src *RepoNeeds) {
 	for _, bk := range src.BuilderKits {
 		dst.BuilderKits = appendUniqueStr(dst.BuilderKits, bk)
 	}
-	dst.Dependencies = append(dst.Dependencies, src.Dependencies...)
-	dst.StandardLibraryImports = append(dst.StandardLibraryImports, src.StandardLibraryImports...)
+	dst.Dependencies = appendNewDemands(dst.Dependencies, src.Dependencies)
+	dst.StandardLibraryImports = appendNewDemands(dst.StandardLibraryImports, src.StandardLibraryImports)
 	for _, capKey := range src.Capabilities.Required {
 		dst.Capabilities.Required = appendUniqueCap(dst.Capabilities.Required, capKey)
 	}
 	calculateReadiness(dst)
+}
+
+// appendNewDemands appends every demand in src whose demandIdentity neither dst nor an
+// earlier demand in src carries.
+func appendNewDemands(dst, src []DependencyDemand) []DependencyDemand {
+	seen := make(map[string]struct{}, len(dst)+len(src))
+	for _, dep := range dst {
+		seen[demandIdentity(dep)] = struct{}{}
+	}
+	for _, dep := range src {
+		key := demandIdentity(dep)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		dst = append(dst, dep)
+	}
+	return dst
+}
+
+// demandIdentity keys a dependency demand by ecosystem and normalised package name. Go
+// module paths are case-sensitive and compare exactly. PyPI names are normalised per
+// PEP 503, so typing-extensions, typing_extensions and Typing.Extensions are one package.
+// Other names compare case-insensitively: CMake spells find_package(CUDA) where Meson
+// spells dependency('cuda').
+func demandIdentity(dep DependencyDemand) string {
+	name := dep.Package
+	switch dep.Ecosystem {
+	case "go":
+	case "pypi":
+		name = normalizePyPIName(name)
+	default:
+		name = strings.ToLower(name)
+	}
+	return dep.Ecosystem + "\x00" + name
+}
+
+// normalizePyPIName applies PEP 503 name normalisation: every run of "-", "_" and "."
+// becomes a single "-", and the result is lower-cased.
+func normalizePyPIName(name string) string {
+	var sb strings.Builder
+	sb.Grow(len(name))
+	inRun := false
+	for _, r := range strings.ToLower(name) {
+		if r == '-' || r == '_' || r == '.' {
+			inRun = true
+			continue
+		}
+		if inRun {
+			sb.WriteByte('-')
+			inRun = false
+		}
+		sb.WriteRune(r)
+	}
+	if inRun {
+		sb.WriteByte('-')
+	}
+	return sb.String()
 }
 
 func appendUniqueStr(slice []string, val string) []string {

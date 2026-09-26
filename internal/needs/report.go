@@ -23,7 +23,21 @@ func FormatLibraryRelationships(report *RepoNeeds) string {
 			writeLibraryRelationship(&output, dependency)
 		}
 	}
+	writeSubprojects(&output, report)
 	return output.String()
+}
+
+// writeSubprojects lists the nested sub-projects merged into the report and those beyond
+// the depth bound that were not scanned, so a scan never presents a partial repository
+// as a complete one.
+func writeSubprojects(output *strings.Builder, report *RepoNeeds) {
+	if len(report.Subprojects) > 0 {
+		fmt.Fprintf(output, "\nNested sub-projects scanned into this report: %s\n", strings.Join(report.Subprojects, ", "))
+	}
+	if len(report.UnscannedSubprojects) > 0 {
+		fmt.Fprintf(output, "\nSub-projects NOT scanned (more than %d directories below the repository root): %s\n",
+			maxSubprojectDepth, strings.Join(report.UnscannedSubprojects, ", "))
+	}
 }
 
 func writeLibraryRelationship(output *strings.Builder, dependency DependencyDemand) {

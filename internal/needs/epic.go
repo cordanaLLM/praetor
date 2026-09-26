@@ -56,13 +56,16 @@ func GeneratePreMigrationEpic(ctx context.Context, repoPath, targetFramework str
 	if err != nil {
 		return nil, fmt.Errorf("analyze pre-migration epic: %w", err)
 	}
+	return epicFromAnalysis(ctx, repoPath, analysis)
+}
+
+// epicFromAnalysis plans the migration of an analysed repository and builds its epic.
+func epicFromAnalysis(ctx context.Context, repoPath string, analysis *migrationAnalysis) (*PreMigrationEpic, error) {
 	migrationPlan, err := planMigrationFromAnalysis(ctx, repoPath, analysis)
 	if err != nil {
 		return nil, fmt.Errorf("plan pre-migration epic: %w", err)
 	}
-	repoNeeds := analysis.report
-
-	return buildEpicStructure(repoPath, repoNeeds, migrationPlan)
+	return buildEpicStructure(repoPath, analysis.report, migrationPlan)
 }
 
 func buildEpicStructure(repoPath string, repoNeeds *RepoNeeds, plan *MigrationPlan) (*PreMigrationEpic, error) {
@@ -313,51 +316,86 @@ type FleetEpicSkip struct {
 // notPreparedReason is the skip reason for a directory without a repository marker.
 const notPreparedReason = "no repository marker: not a Git checkout with HEAD metadata, and no .standards.yaml or .needs.yaml"
 
+// noAnalyzerReason is the skip reason for an undeclared checkout in which no analyzer
+// recognises a project, such as a documentation-only repository.
+const noAnalyzerReason = "no language analyzer recognises a project in this checkout, and it declares no needs"
+
+// duplicateReasonPrefix starts the skip reason for a collapsed linked worktree.
+const duplicateReasonPrefix = "linked worktree of "
+
 // RegenerateFleetEpics discovers all prepared repositories in fleetRoot and regenerates
 // their pre-migration epics.
 //
-// Per-repository failures are collected and returned joined: a run in which nothing could
-// be generated or written reports an error instead of an empty success. Discovered
-// directories that are not prepared repositories are returned as skips with their reason.
+// Discovery is the fleet aggregation's (discoverFleet), and every epic scores its
+// repository through scanRepository, so an epic's readiness equals the repository's
+// `needs aggregate` row. Per-repository failures are collected and returned joined: a run
+// in which nothing could be generated or written reports an error instead of an empty
+// success. A repository that declares needs (.standards.yaml or .needs.yaml) but in which
+// no analyzer recognises a project is such a failure. Returned as skips, each with its
+// reason, are: discovered directories that are not prepared repositories, undeclared
+// checkouts no analyzer recognises, and linked worktrees collapsed onto their repository.
 func RegenerateFleetEpics(ctx context.Context, fleetRoot string, opts FleetEpicOptions) ([]*PreMigrationEpic, []FleetEpicSkip, error) {
 	if ctx.Err() != nil {
 		return nil, nil, ctx.Err()
 	}
 
-	repos, err := discoverFleetRepos(ctx, fleetRoot)
+	layout, err := discoverFleet(ctx, fleetRoot)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed discovering fleet repos: %w", err)
 	}
 
-	var epics []*PreMigrationEpic
-	var skips []FleetEpicSkip
-	var failures []error
-	for i := 0; i < len(repos); i++ {
+	run := &fleetEpicRun{opts: opts}
+	for _, dup := range layout.duplicates {
+		run.skips = append(run.skips, FleetEpicSkip{RepoDir: dup.Dir, Reason: duplicateReasonPrefix + dup.Of})
+	}
+	for i := 0; i < len(layout.repos); i++ {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			failures = append(failures, ctxErr)
-			return epics, skips, errors.Join(failures...)
+			run.failures = append(run.failures, ctxErr)
+			return run.epics, run.skips, errors.Join(run.failures...)
 		}
-		epic, rErr := regenerateRepoEpic(ctx, repos[i], opts)
-		switch {
-		case rErr == nil:
-			epics = append(epics, epic)
-		case errors.Is(rErr, errRepoNotPrepared):
-			skips = append(skips, FleetEpicSkip{RepoDir: repos[i], Reason: notPreparedReason})
-		default:
-			failures = append(failures, rErr)
-		}
+		run.regenerate(ctx, layout.repos[i])
 	}
 
-	return epics, skips, errors.Join(failures...)
+	return run.epics, run.skips, errors.Join(run.failures...)
+}
+
+// fleetEpicRun accumulates the outcome of one fleet epic regeneration.
+type fleetEpicRun struct {
+	opts     FleetEpicOptions
+	epics    []*PreMigrationEpic
+	skips    []FleetEpicSkip
+	failures []error
+}
+
+// regenerate records one repository's epic, skip or failure.
+func (r *fleetEpicRun) regenerate(ctx context.Context, repo *fleetRepo) {
+	epic, err := regenerateRepoEpic(ctx, repo, r.opts)
+	switch {
+	case err == nil:
+		r.epics = append(r.epics, epic)
+	case errors.Is(err, errRepoNotPrepared):
+		r.skips = append(r.skips, FleetEpicSkip{RepoDir: repo.root, Reason: notPreparedReason})
+	case errors.Is(err, ErrNoAnalyzer) && !repo.declared:
+		r.skips = append(r.skips, FleetEpicSkip{RepoDir: repo.root, Reason: noAnalyzerReason})
+	default:
+		r.failures = append(r.failures, err)
+	}
 }
 
 // regenerateRepoEpic regenerates one repository's epic, writing it unless opts.DryRun.
-func regenerateRepoEpic(ctx context.Context, repoDir string, opts FleetEpicOptions) (*PreMigrationEpic, error) {
+func regenerateRepoEpic(ctx context.Context, repo *fleetRepo, opts FleetEpicOptions) (*PreMigrationEpic, error) {
+	repoDir := repo.root
 	if !repoIsPrepared(repoDir) {
 		return nil, errRepoNotPrepared
 	}
 
-	epic, err := GeneratePreMigrationEpic(ctx, repoDir, opts.FrameworkPath)
+	analysis, err := analyzeMigrationWith(ctx, opts.FrameworkPath, func(framework *FrameworkIndex) (*RepoNeeds, error) {
+		return scanRepositoryWithFramework(ctx, repo, framework)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("generate epic for %s: %w", repoDir, err)
+	}
+	epic, err := epicFromAnalysis(ctx, repoDir, analysis)
 	if err != nil {
 		return nil, fmt.Errorf("generate epic for %s: %w", repoDir, err)
 	}
