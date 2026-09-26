@@ -588,7 +588,7 @@ class NativeLefthook(unittest.TestCase):
         (self.root / "nested").mkdir()
         (self.root / "nested/link").symlink_to(self.root)
         for relative, code, message in (("README.md", 0, ""),
-                                        ("new.go", 2, "rejects a new public file path"),
+                                        ("new.go", 2, "rejects new public file path"),
                                         ("nested/link/README.md", 2, "must not traverse a symlink")):
             with self.subTest(path=relative):
                 payload = self.scope_payload(str(aliased / relative), tool_name="Edit",
@@ -693,7 +693,7 @@ class NativeLefthook(unittest.TestCase):
                 self.state("sync", worktree)
                 new, stop = self.claude_worktree_calls(worktree, nested)
                 self.assertEqual(new.returncode, 2, new.stdout + new.stderr)
-                self.assertIn("rejects a new public file path", new.stderr)
+                self.assertIn("rejects new public file path", new.stderr)
                 self.assertIn("Praetor checkpoint due:", stop["reason"])
 
     def test_claude_hooks_started_in_a_worktree_judge_the_checkout_the_session_moved_to(self):

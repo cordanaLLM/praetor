@@ -113,6 +113,11 @@ func TestCavemanConfiguredSourcesPassAfterRealAdoption(t *testing.T) {
 	repo := t.TempDir()
 	writeFixtureFile(t, repo, "go.mod", "module example.invalid/adopted\n")
 	env := initGitFixture(t, repo)
+	// The harness platform names the repository, so adoption writes it, and binds
+	// register.sources to it, only for a resolved identity (BUG-852).
+	if output, err := runFixtureGit(t, repo, env, "remote", "add", "origin", "https://github.com/example/adopted.git"); err != nil {
+		t.Fatalf("add origin remote: %v (%s)", err, output)
+	}
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("resolve source checkout")

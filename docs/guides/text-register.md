@@ -526,9 +526,9 @@ exclusion is therefore a gate failure, not an invisible reduction in coverage.
 ```yaml
 register:
   sources:
-    expected: 249
-    not_applicable: 114
-    sha256: "sha256:e36aa3ecf2d777f6a9b69d292becb0fcdf6e855e6abd1dfcbe2f8520c28eb8e6"
+    expected: 260
+    not_applicable: 120
+    sha256: "sha256:22d48069b3c40300cad5d17fa6795699b7ab3c0f205f74d568c52682061b7839"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts
@@ -587,16 +587,32 @@ who wrote it:
   current contract text, which passes the lint, and the contract binds the
   refreshed bytes. A consistent CRLF checkout (`core.autocrlf=true` on Windows)
   counts as those bytes; mixed line endings count as an edit. A `rules.md` that
-  was removed stays removed. The recognized earlier texts are pinned in
+  was removed stays removed. The recognized earlier texts, including both push
+  protocols a release prescribed (the single AGit push, and the AGit push plus
+  the review-branch push since #458), are pinned in
   `internal/paperclip/harness.go` (`PriorGenerated`).
 - Any other harness is operator-owned. Adoption keeps its bytes and binds the
   contract to its decoded values. When those values fail the lint, edit them or
   run `praetorctl adopt --force`.
 - With `adoption.decline: [paperclip]`, adoption never writes a harness, in
   either mode. An existing one stays byte for byte and the contract binds it.
-  With no harness on disk, adoption adds no `register.sources` and reports
-  `preserved without register.sources`; declare the contract for the
-  repository's own agent-facing text, or audit keeps failing.
+  A declined step never writes, so `--force` does not refresh it: when a kept
+  harness fails the lint (a released one flags `I/O`, `is` and `must`), either
+  drop `paperclip` from `adoption.decline` and rerun `praetorctl adopt`, which
+  refreshes released output and re-binds the contract, or edit the failing
+  values by hand and set `expected`, `not_applicable` and `sha256` from
+  `praetorctl caveman check --configured-sources --root=.`. With no harness on
+  disk, adoption adds no `register.sources` and reports `preserved without
+  register.sources`; declare the contract for the repository's own agent-facing
+  text, or audit keeps failing.
+- Without a repository identity (no `repository.owner` and `repository.name`
+  in `.standards.yaml` and no origin remote), adoption cannot name the harness
+  platform, so it writes no harness, in either mode (BUG-852). An existing
+  harness stays byte for byte and the contract binds it. With none on disk,
+  adoption adds no `register.sources` and reports `repository identity is
+  unresolved`; set the identity or add the remote and rerun
+  (`TestAdoptUnresolvedIdentityBindsOnlyAnExistingHarness` in
+  `internal/adopt/harness_plan_test.go`).
 
 `praetorctl adopt --force` regenerates the harness and re-binds an existing
 contract to it. It keeps every declared input, including rows an operator

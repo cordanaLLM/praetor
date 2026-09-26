@@ -34,7 +34,7 @@ func TestMCPRuntimeDescriptionsMatchSourceCensus(t *testing.T) {
 			got[property.Description]++
 		}
 	}
-	if len(result.Sources) != 94 || !equalTextCensus(want, got) {
+	if len(result.Sources) != 95 || !equalTextCensus(want, got) {
 		t.Fatalf("runtime description census differs: extracted=%d runtime=%d", len(result.Sources), censusSize(got))
 	}
 }
@@ -49,10 +49,10 @@ func TestMCPRuntimeOutputsHaveNoUnclassifiedCallsites(t *testing.T) {
 	for _, callsite := range callsites {
 		kinds[callsite.kind]++
 	}
-	wantKinds := map[string]int{"builder-append": 2, "builder-external": 2, "builder-template": 53,
-		"classified-result": 66, "governed-result": 17, "http-error": 14, "result": 44,
+	wantKinds := map[string]int{"builder-append": 2, "builder-external": 5, "builder-template": 57,
+		"classified-result": 68, "governed-result": 17, "http-error": 14, "result": 46,
 		"template": 2, "wire-format": 4}
-	if len(callsites) != 204 || !equalTextCensus(kinds, wantKinds) {
+	if len(callsites) != 215 || !equalTextCensus(kinds, wantKinds) {
 		t.Fatalf("independent MCP output inventory drift: records=%d kinds=%v", len(callsites), kinds)
 	}
 	productionKinds, productionCount := productionOutputCensus(t, root)

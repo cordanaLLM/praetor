@@ -89,11 +89,12 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 	}, nil
 }
 
-// priorOperatingContract, priorRegisterDirectives and priorInvariants are the texts every
-// earlier release synthesized, from 5d08985f until the contract moved to Caveman. The
-// directive row was absent before the text register (#204) and changed form with the caveman
-// skill (#225). They are literals, not calls, so a later change to the current text cannot
-// silently rewrite what "earlier output" means.
+// priorOperatingContract, priorRegisterDirectives, priorAGitPushFormats and priorInvariants
+// are the texts every earlier release synthesized, from 5d08985f until the contract moved to
+// Caveman. The directive row was absent before the text register (#204) and changed form with
+// the caveman skill (#225); the review-branch push joined the AGit push in #458. They are
+// literals, not calls, so a later change to the current text cannot silently rewrite what
+// "earlier output" means.
 var (
 	priorOperatingContract = []string{
 		"Pushing a branch is NOT shipping: an open PR is required, but still not shipped work until merged.",
@@ -106,6 +107,10 @@ var (
 		"",
 		"Text register internal: telegraphic: no filler, no preamble, no restatement; facts, paths, commands, verdict.",
 		"Text register internal: `caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict.",
+	}
+	priorAGitPushFormats = []string{
+		"git push origin HEAD:refs/for/main -o topic=<issue-id>",
+		"git push origin HEAD:refs/for/main -o topic=<issue-id> && git push origin HEAD:refs/heads/paperclip/<issue-id>",
 	}
 	priorInvariants = []string{
 		"HISS-01: Acyclic DAG control flow (no recursion)",
@@ -145,8 +150,9 @@ func PriorGenerated(ctx context.Context, repoPath string, current *Harness) (Pri
 	if !ok {
 		return state, nil
 	}
-	for index := 0; index < len(priorRegisterDirectives); index++ {
-		prior := priorHarness(current, priorRegisterDirectives[index])
+	priors := priorHarnesses(current)
+	for index := 0; index < len(priors); index++ {
+		prior := priors[index]
 		rendered, err := MarshalHarness(&prior)
 		if err != nil {
 			return PriorState{}, err
@@ -170,12 +176,25 @@ func releaseText(harness, rules []byte) (string, string, bool) {
 	return harnessText, rulesText, err == nil
 }
 
-func priorHarness(current *Harness, directive string) Harness {
+// priorHarnesses is every earlier synthesis for current's identity: each register directive
+// form under each push protocol.
+func priorHarnesses(current *Harness) []Harness {
+	priors := make([]Harness, 0, len(priorRegisterDirectives)*len(priorAGitPushFormats))
+	for _, push := range priorAGitPushFormats {
+		for _, directive := range priorRegisterDirectives {
+			priors = append(priors, priorHarness(current, directive, push))
+		}
+	}
+	return priors
+}
+
+func priorHarness(current *Harness, directive, push string) Harness {
 	prior := *current
 	prior.OperatingContract = append([]string(nil), priorOperatingContract...)
 	if directive != "" {
 		prior.OperatingContract = append(prior.OperatingContract, directive)
 	}
+	prior.AGitPushFormat = push
 	prior.Invariants = priorInvariants
 	return prior
 }

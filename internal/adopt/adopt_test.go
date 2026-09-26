@@ -969,8 +969,8 @@ func findAdoptedText(t *testing.T, repo, text string) string {
 
 // TestAdopt_RerunCompletesOnceIdentityIsSet pins the recovery the unresolved-identity warning
 // names. Boundary: a re-run that finds the origin remote installs the checkpoint lifecycle,
-// which reads that remote, but never rewrites the empty identity in the existing manifest,
-// so the README block stays unreconciled. Positive: once the operator sets both fields, the
+// which reads that remote, and binds register.sources to the harness it now writes, but never
+// rewrites the empty identity in the existing manifest, so the README block stays unreconciled. Positive: once the operator sets both fields, the
 // re-run reconciles the README block from them and warns nothing about identity.
 func TestAdopt_RerunCompletesOnceIdentityIsSet(t *testing.T) {
 	requireGit(t)
@@ -1004,8 +1004,13 @@ func TestAdopt_RerunCompletesOnceIdentityIsSet(t *testing.T) {
 	if _, err := Adopt(t.Context(), opts); err != nil {
 		t.Fatalf("re-run with a remote failed: %v", err)
 	}
-	if got := mustRead(t, manifestPath); got != firstManifest {
-		t.Fatalf("re-run rewrote the existing manifest:\n%s", got)
+	// The re-run writes the harness, so it binds register.sources to it; the identity the
+	// operator has to set stays empty.
+	rerun, err := config.LoadManifest(manifestPath)
+	if err != nil || rerun.Repository.Owner != "" || rerun.Repository.Name != "" ||
+		rerun.Register == nil || rerun.Register.Sources == nil {
+		t.Fatalf("re-run must keep the empty identity and only add register.sources: %+v %v\n%s",
+			rerun, err, mustRead(t, manifestPath))
 	}
 	policy := mustRead(t, filepath.Join(repo, filepath.FromSlash(checkpointPolicy)))
 	if !strings.Contains(policy, `"repository": "acme/orphan"`) {

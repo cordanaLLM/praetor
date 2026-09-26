@@ -814,7 +814,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req JSONRPCRequest) *JSONR
 // returned as a result and passes the caller's single SanitizeResult path like any other.
 func (s *Server) runTool(ctx context.Context, tool mcp.Tool, args map[string]any) (*mcp.ToolResult, error) {
 	if err := tool.InputSchema.CheckArguments(args); err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	callCtx, cancel := context.WithTimeout(ctx, s.opts.ToolTimeout)
 	defer cancel()

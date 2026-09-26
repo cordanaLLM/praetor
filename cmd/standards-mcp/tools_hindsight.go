@@ -129,7 +129,7 @@ func (s *Server) createHindsightOptimizeTool() (mcp.Tool, error) {
 	// The distilled cache file is replaced on every run: destructive, idempotent.
 	return mcp.NewMutatingTool(
 		"standards_hindsight_optimize",
-		"Harvest and distill verified repository facts into the local memory cache, naming every fact source that failed",
+		"Harvest and distill verified repository facts into local memory cache; name every failed fact source",
 		schema,
 		handler,
 		true,

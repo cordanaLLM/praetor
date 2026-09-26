@@ -632,11 +632,11 @@ func TestServer_Positive_PlanShowsThePinnedProfilePolicy(t *testing.T) {
 
 	plan := callTool(t, srv, "standards_plan", nil)
 	for _, want := range []string{
-		"Signed Commits Required:   true",
-		"Approving Reviewers:       2",
-		"Configured Reviewer Minimum: 2",
-		"SLSA Provenance Level:     3",
-		"SBOM Generation Required:  true",
+		"- signed_commits: true.",
+		"- approving_reviewers: 2.",
+		"- configured_reviewer_minimum: 2.",
+		"- slsa_level: 3.",
+		"- sbom_generation: true.",
 		".github/workflows (no workflow generates an SBOM",
 	} {
 		expectText(t, "joined plan", plan, want)
@@ -670,7 +670,7 @@ func TestServer_Negative_PlanRejectsAnUnverifiableLock(t *testing.T) {
 
 	plan := callTool(t, srv, "standards_plan", nil)
 	expectError(t, "tampered profile", plan, "Failed to resolve plan policy")
-	if strings.Contains(plan.Content[0].Text, "Approving Reviewers") {
+	if strings.Contains(plan.Content[0].Text, "approving_reviewers") {
 		t.Errorf("a failed resolution still printed a policy:\n%s", plan.Content[0].Text)
 	}
 }
@@ -684,17 +684,17 @@ func TestServer_Boundary_PlanOverridesAfterTheJoinAndWithoutALock(t *testing.T) 
 		"overrides:\n  branch_protection:\n    required_approving_reviewers: %d\n"
 
 	writeFixtureFile(t, root, ".standards.yaml", fmt.Sprintf(manifest, 1))
-	expectText(t, "looser override", callTool(t, srv, "standards_plan", nil), "Approving Reviewers:       2")
+	expectText(t, "looser override", callTool(t, srv, "standards_plan", nil), "- approving_reviewers: 2.")
 	writeFixtureFile(t, root, ".standards.yaml", fmt.Sprintf(manifest, 3))
-	expectText(t, "stricter override", callTool(t, srv, "standards_plan", nil), "Approving Reviewers:       3")
+	expectText(t, "stricter override", callTool(t, srv, "standards_plan", nil), "- approving_reviewers: 3.")
 
 	if err := os.Remove(filepath.Join(root, ".standards.lock")); err != nil {
 		t.Fatal(err)
 	}
 	plan := callTool(t, srv, "standards_plan", nil)
 	expectText(t, "no-lock notice", plan, "[INFO] "+config.NoLockNotice)
-	expectText(t, "no-lock defaults", plan, "Signed Commits Required:   false")
-	expectText(t, "no-lock override", plan, "Approving Reviewers:       3")
+	expectText(t, "no-lock defaults", plan, "- signed_commits: false.")
+	expectText(t, "no-lock override", plan, "- approving_reviewers: 3.")
 }
 
 // A pinned catalog that is not materialized previews only through catalog_root, the same
@@ -708,8 +708,8 @@ func TestServer_Boundary_PlanResolvesThroughTheSelectedCatalog(t *testing.T) {
 	expectError(t, "blank catalog", callTool(t, srv, "standards_plan", map[string]any{"catalog_root": "  "}), "materialized profile")
 	// Positive: the selected catalog resolves the joined policy.
 	plan := callTool(t, srv, "standards_plan", map[string]any{"catalog_root": "catalog"})
-	expectText(t, "selected catalog", plan, "Signed Commits Required:   true")
-	expectText(t, "selected catalog", plan, "Approving Reviewers:       2")
+	expectText(t, "selected catalog", plan, "- signed_commits: true.")
+	expectText(t, "selected catalog", plan, "- approving_reviewers: 2.")
 	// Boundary: a catalog outside the server root is refused like any other confined path.
 	outside := callTool(t, srv, "standards_plan", map[string]any{"catalog_root": t.TempDir()})
 	expectError(t, "outside catalog", outside, ErrOutsideRoot.Error())

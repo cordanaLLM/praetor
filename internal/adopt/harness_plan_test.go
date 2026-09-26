@@ -137,8 +137,59 @@ func TestPlannedManifestUnderForceIsTheKeptManifest(t *testing.T) {
 		}
 	}
 	s := &adoptSession{repoPath: t.TempDir(), repoName: "fresh", arch: "framework", report: &AdoptReport{},
-		opts: AdoptOptions{Force: true}}
+		identity: repoIdentity{owner: "acme", name: "fresh"}, opts: AdoptOptions{Force: true}}
 	if planned, err := plannedManifestBytes(t.Context(), s); err != nil || !strings.Contains(string(planned), "name: fresh") {
 		t.Fatalf("missing manifest boundary: planned=%s err=%v", planned, err)
+	}
+}
+
+// unidentifiedManifest names no owner or name; with no origin remote either, the harness
+// platform has nothing to name (BUG-852).
+const unidentifiedManifest = "version: 1\nprofiles: [framework]\n"
+
+func unidentifiedRepo(t *testing.T) string {
+	t.Helper()
+	requireGit(t)
+	repoPath := filepath.Join(t.TempDir(), "dev", "orphan")
+	mustWrite(t, filepath.Join(repoPath, manifestFile), unidentifiedManifest)
+	initTestGit(t, repoPath)
+	return repoPath
+}
+
+// TestAdoptUnresolvedIdentityBindsOnlyAnExistingHarness: without an identity adoption writes
+// no harness, so an existing manifest keeps no register.sources and the report says why; a
+// harness already on disk stays byte for byte and the contract binds to it, --force included.
+func TestAdoptUnresolvedIdentityBindsOnlyAnExistingHarness(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		repoPath := unidentifiedRepo(t)
+		opts := sourceAdoptOptions(t, repoPath, force)
+		opts.SkipGitValidation, opts.SkipHookActivation = true, true
+		report, err := Adopt(t.Context(), opts)
+		if err != nil {
+			t.Fatalf("force=%v: %v", force, err)
+		}
+		if _, err := os.Stat(filepath.Join(repoPath, paperclipFile)); !os.IsNotExist(err) {
+			t.Fatalf("force=%v: harness written without an identity: %v", force, err)
+		}
+		if manifest := loadAdoptedManifest(t, repoPath); manifest.Register != nil && manifest.Register.Sources != nil {
+			t.Fatalf("force=%v: register.sources bound to a harness nothing writes: %+v", force, manifest.Register.Sources)
+		}
+		if got := reportDetail(report, manifestFile); !strings.Contains(got, "repository identity is unresolved") {
+			t.Fatalf("force=%v: unbound contract reason not reported: %q", force, got)
+		}
+		// Boundary: an existing harness is kept and the contract binds to its bytes.
+		harness := releasedHarness(t, "harness.json.golden")
+		mustWrite(t, filepath.Join(repoPath, paperclipFile), harness)
+		if _, err := Adopt(t.Context(), opts); err != nil {
+			t.Fatalf("force=%v: re-run with a harness on disk: %v", force, err)
+		}
+		if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got != harness {
+			t.Fatalf("force=%v: harness rewritten without an identity:\n%s", force, got)
+		}
+		stageAdoptPaths(t, repoPath, paperclipFile)
+		if _, err := cavemansource.ExtractDeclared(t.Context(), repoPath,
+			loadAdoptedManifest(t, repoPath).Register.Sources); err != nil {
+			t.Fatalf("force=%v: contract not bound to the kept harness: %v", force, err)
+		}
 	}
 }

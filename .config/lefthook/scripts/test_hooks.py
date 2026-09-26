@@ -1712,7 +1712,7 @@ class ScopeAndGuard(unittest.TestCase):
         result = subprocess.run([sys.executable, "-B", "-c", script], input=b'{"cwd":"/"}',
                                 capture_output=True, timeout=20, check=False)
         self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn(b"no answer within 0.3 s; refusing the call", result.stderr)
+        self.assertIn(b"no answer within 0.3 s; call refused", result.stderr)
         self.assertLess(time.monotonic() - started, 10)
 
     def test_reverse_dependencies_embed_testdata_module_and_docs_scope(self):

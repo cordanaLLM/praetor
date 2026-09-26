@@ -41,17 +41,37 @@ func TestPriorGeneratedRecognisesReleasedHarness(t *testing.T) {
 	if err != nil || !prior.Generated || !prior.Rules {
 		t.Fatalf("462e3f3a harness not recognised as earlier output: prior=%+v err=%v", prior, err)
 	}
+	// The same release after #458 added the review-branch push to the AGit protocol.
+	const single, withReview = "topic=<issue-id>", "topic=<issue-id> && git push origin HEAD:refs/heads/paperclip/<issue-id>"
+	const singleJSON, withReviewJSON = "topic=\\u003cissue-id\\u003e\"", "topic=\\u003cissue-id\\u003e \\u0026\\u0026 " +
+		"git push origin HEAD:refs/heads/paperclip/\\u003cissue-id\\u003e\""
+	harness := strings.Replace(priorFixture(t, "harness.json.golden"), singleJSON, withReviewJSON, 1)
+	rules := strings.Replace(priorFixture(t, "rules.md.golden"), single, withReview, 1)
+	if !strings.Contains(harness, "refs/heads/paperclip/") || !strings.Contains(rules, "refs/heads/paperclip/") {
+		t.Fatal("fixture rewrite to the #458 push protocol missed")
+	}
+	repo, current = priorRepo(t, harness, rules)
+	if prior, err = PriorGenerated(context.Background(), repo, current); err != nil || !prior.Generated {
+		t.Fatalf("#458 harness not recognised as earlier output: prior=%+v err=%v", prior, err)
+	}
 }
 
-func TestPriorGeneratedRecognisesEveryDirectiveEra(t *testing.T) {
-	for index, directive := range priorRegisterDirectives {
+// Every release era is recognised: each register directive form under each push protocol,
+// including the review-branch push #458 added.
+func TestPriorGeneratedRecognisesEveryReleaseEra(t *testing.T) {
+	_, probe := priorRepo(t, "{}", "")
+	eras := priorHarnesses(probe)
+	if len(eras) != len(priorRegisterDirectives)*len(priorAGitPushFormats) {
+		t.Fatalf("release eras = %d, want every directive under every push protocol", len(eras))
+	}
+	for index := range eras {
 		repo, current := priorRepo(t, "{}", "")
-		prior := priorHarness(current, directive)
+		prior := eras[index]
 		if err := WriteHarness(&prior, repo); err != nil {
 			t.Fatal(err)
 		}
 		if state, err := PriorGenerated(context.Background(), repo, current); err != nil || !state.Generated {
-			t.Fatalf("directive era %d not recognised: prior=%+v err=%v", index, state, err)
+			t.Fatalf("release era %d (%q) not recognised: prior=%+v err=%v", index, prior.AGitPushFormat, state, err)
 		}
 	}
 }
@@ -63,6 +83,7 @@ func TestPriorGeneratedRejectsOperatorEdits(t *testing.T) {
 		"edited contract":   {strings.Replace(harness, "NOT shipping", "not shipping", 1), rules},
 		"edited rules":      {harness, rules + "- local rule\n"},
 		"other platform":    {strings.Replace(harness, "acme/legacy", "acme/other", 1), rules},
+		"other push format": {strings.Replace(harness, "refs/for/main", "refs/for/dev", 1), rules},
 		"current synthesis": {"", ""},
 	}
 	for name, files := range cases {
