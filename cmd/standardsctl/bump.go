@@ -371,33 +371,10 @@ func runBumpAudit(ctx context.Context, args []string) error {
 	fmt.Printf("  Pending Upgrades:    %d\n", len(report.PendingUpgrades))
 	fmt.Printf("  Deprecations:        %d\n\n", len(report.Deprecations))
 
-	printActionsInventory(report.Actions)
+	fmt.Print(bump.FormatActionsInventory(report.Actions))
 	printPendingUpgrades(report.PendingUpgrades)
 	printDeprecations(report.Deprecations)
 	return nil
-}
-
-func printActionsInventory(actions []bump.ActionCandidate) {
-	if len(actions) == 0 {
-		return
-	}
-	fmt.Println("GitHub Actions Inventory:")
-	for _, a := range actions {
-		fmt.Printf("  %-12s %-32s %s -> %s (%s)\n",
-			actionDriftStatus(a), a.Action, a.CurrentVersion, a.LatestVersion, a.WorkflowFile)
-	}
-	fmt.Println()
-}
-
-func actionDriftStatus(a bump.ActionCandidate) string {
-	switch {
-	case a.Deprecated:
-		return "[DEPRECATED]"
-	case a.CurrentVersion != a.LatestVersion:
-		return "[DRIFT]"
-	default:
-		return "[UP-TO-DATE]"
-	}
 }
 
 func printPendingUpgrades(upgrades []bump.UpgradeCandidate) {

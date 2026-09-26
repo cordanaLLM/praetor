@@ -87,7 +87,7 @@ func (op *operation) allowOwnerConflicts(ctx context.Context) error {
 		return errors.New("merge failed without a resolvable owner configuration conflict")
 	}
 	for _, path := range strings.Split(out, "\n") {
-		if !allowedPath(path) {
+		if !overlayPath(path) {
 			return fmt.Errorf("non-owner merge conflict: %s", path)
 		}
 	}
@@ -99,8 +99,10 @@ func (op *operation) writeOverlay(ctx context.Context) error {
 		return err
 	}
 	args := append([]string{"add", "--"}, ownerPaths...)
-	_, err := op.git.run(ctx, op.opts.Destination, args...)
-	return err
+	if _, err := op.git.run(ctx, op.opts.Destination, args...); err != nil {
+		return err
+	}
+	return op.writeSurfaces(ctx)
 }
 
 // backfillManifestOverlay writes the current .standards.yaml overlay into an up-to-date
@@ -111,8 +113,13 @@ func (op *operation) writeOverlay(ctx context.Context) error {
 // and so already carries any such field; the up-to-date branch skips that call, so without this
 // step a fork whose manifest was overlaid before the field existed would keep failing every
 // later plan/prepare (#263) even once checkOverlay stopped refusing it. It writes and stages
-// nothing when the checked-out manifest already equals the expected overlay.
+// nothing when the checked-out manifest already equals the expected overlay. The funding
+// surfaces are rendered the same way: an owner tree that still carries the engine's unrendered
+// surfaces passes plan, so the up-to-date candidate receives the rendering here.
 func (op *operation) backfillManifestOverlay(ctx context.Context) error {
+	if err := op.writeSurfaces(ctx); err != nil {
+		return err
+	}
 	raw, err := util.ReadConfined(op.opts.Destination, ownerPaths[0])
 	if err != nil {
 		return err
@@ -165,14 +172,8 @@ func (op *operation) verifyCandidate(ctx context.Context) error {
 	if !slices.Equal(ownerOnly, op.ownerOnly) {
 		return errors.New("candidate owner-only paths differ from the reviewed owner tree")
 	}
-	for _, path := range ownerPaths {
-		raw, err := op.git.blob(ctx, dir, tree, path)
-		if err != nil {
-			return err
-		}
-		if !equivalent(path, raw, op.expected[path]) {
-			return fmt.Errorf("candidate differs from expected owner overlay: %s", path)
-		}
+	if err := op.verifyOverlayFiles(ctx, tree); err != nil {
+		return err
 	}
 	head, err := op.git.text(ctx, dir, "rev-parse", "HEAD")
 	if err != nil {
@@ -182,6 +183,21 @@ func (op *operation) verifyCandidate(ctx context.Context) error {
 		return errors.New("candidate changed reviewed owner ancestry")
 	}
 	return op.verifyWorktree(ctx)
+}
+
+// verifyOverlayFiles requires the candidate tree to carry exactly the expected identity
+// overlay and the rendered funding surfaces.
+func (op *operation) verifyOverlayFiles(ctx context.Context, tree string) error {
+	for _, path := range ownerPaths {
+		raw, err := op.git.blob(ctx, op.opts.Destination, tree, path)
+		if err != nil {
+			return err
+		}
+		if !equivalent(path, raw, op.expected[path]) {
+			return fmt.Errorf("candidate differs from expected owner overlay: %s", path)
+		}
+	}
+	return op.verifySurfaces(ctx, tree)
 }
 
 func (op *operation) verifyWorktree(ctx context.Context) error {

@@ -97,6 +97,9 @@ type AdoptReport struct {
 	DryRun         bool     `json:"dry_run"`
 	Errors         []string `json:"errors,omitempty"`
 	Warnings       []string `json:"warnings,omitempty"`
+	// Steps records each reached step of the chain; Pillars derives the governance pillar
+	// lines from it.
+	Steps []StepOutcome `json:"steps,omitempty"`
 }
 
 // adoptSession carries the resolved inputs of one adoption run through the step chain.
@@ -305,13 +308,18 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 		}
 		// A decline is recorded, not silent: the report says the artefact was refused by the
 		// manifest, so a reader can tell a declined surface from one adoption forgot.
-		if declined[steps[i].name] {
-			s.report.recordSkipped(steps[i].name, "Declined by adoption.decline in "+manifestFile)
+		name := steps[i].name
+		if declined[name] {
+			s.report.recordSkipped(name, "Declined by adoption.decline in "+manifestFile)
+			s.report.recordStep(name, StepDeclined, s.report.mark())
 			continue
 		}
+		from := s.report.mark()
 		if err := steps[i].run(ctx, s); err != nil {
+			s.report.recordStep(name, StepFailed, from)
 			return err
 		}
+		s.report.recordStep(name, StepCompleted, from)
 	}
 	return nil
 }

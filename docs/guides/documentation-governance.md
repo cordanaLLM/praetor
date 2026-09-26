@@ -231,7 +231,14 @@ The dedicated hosted workflow runs for every push and pull request. The main CI
 workflow also selects the gate on documentation-only changes while skipping the
 race and security suites; state-only changes under the ignored private ledgers
 select no documentation work. Source/configuration changes reach the same gate
-through `make verify-all`.
+through `make verify-all`. Only Markdown, images, plain-text documents and the
+files under `docs/` count as documentation: a dependency manifest ending in
+`.txt` (`requirements*.txt`, `CMakeLists.txt`) is configuration even under
+`docs/`, and a file kind the filter does not recognise runs the full targeted
+matrix rather than the documentation-only path (`internal/cifilter/filter.go`,
+`TestBuildManifestTextIsConfiguration` and
+`TestUnclassifiedFileKindsRunHeavyGates` in
+`internal/cifilter/cifilter_test.go`).
 
 ## Site build and Mermaid diagrams
 
@@ -300,8 +307,11 @@ and at most 4 KiB, and duplicate section titles, routes, authority labels, or
 authority sources fail before rendering.
 
 The catalog does not own funding, badge, or social-link state; those surfaces
-stay operator-configured in `README.md`, `mkdocs.yml`, and
-`.github/FUNDING.yml`. The `Community & Funding` links render from the catalog
+in `README.md`, `mkdocs.yml`, `.github/FUNDING.yml`, and the account blocks of
+`docs/sponsoring.md` and `docs/monetization.md` render from the operator's
+`.config/operator/funding.yaml` through `praetorctl docs funding`
+(see [operational configuration](operational-configuration.md#funding-example)).
+The `Community & Funding` links render from the catalog
 only because `docs/sponsoring.md` and `docs/monetization.md` are published
 pages. The pull-request gate performs no network requests. Run
 `make docs-lint-test` to replay the valid, drifted, copied-policy, and boundary

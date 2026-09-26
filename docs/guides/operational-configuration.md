@@ -42,6 +42,7 @@ Supplied locally or from the operational fork, and ignored by this repository:
 | `.config/fleet.yaml` | fleet-wide runner defaults (tier 1 of the runner matrix) |
 | `.config/orgs/<org>.yaml` | organisation runner overrides (tier 2) |
 | `.config/operator/` | operator settings the fork carries, such as fleet-wide and per-workstation settings files; explicitly selected by hook, client and workstation commands |
+| `.config/operator/funding.yaml` | funding accounts rendered into `.github/FUNDING.yml`, the README badge and support blocks, the MkDocs announcement and social links, and the account blocks of `docs/sponsoring.md` and `docs/monetization.md` by `praetorctl docs funding` |
 | `deploy/arc/` | Actions Runner Controller scale sets for the operator's cluster |
 | `deploy/k8s/` | GitOps application and kustomization targeting the operator's cluster |
 
@@ -57,7 +58,7 @@ in `.gitignore`, so a local copy cannot be committed to the public engine by acc
 Because the engine ignores these paths, the fork tracks them with `git add -f`. Operational sync accepts
 operator files only under the paths in the table above, only as regular non-executable files of at most
 1 MiB, at most 256 of them, and only when the public source has no file at the same path; anything else
-outside the four identity overlay files still stops `plan` and `prepare`. The accepted files are reported as
+outside the four identity overlay files and the rendered [funding surfaces](operational-sync.md#funding-surfaces) still stops `plan` and `prepare`. The accepted files are reported as
 `owner_only_paths`. The path list is engine schema, and an engine test proves that `.gitignore` ignores every
 entry, so a prefix cannot be added that the public source could also track. See [owner-only operator paths](operational-sync.md#owner-only-operator-paths).
 
@@ -113,6 +114,49 @@ whose route was removed falls back to `default`, and `praetorctl audit` fails wh
 the platform constraint, for example a removed `darwin/*` route. The merge is pinned by the
 `TestCascadingRunnerConfig_*` cases in `internal/config/hierarchy_integrity_test.go`, the darwin fallback
 refusal by `internal/runner/constraint_test.go`.
+
+### Funding example
+
+Funding accounts are operator data. The engine ships no funding accounts: its own
+`.github/FUNDING.yml`, README blocks, MkDocs blocks and the account blocks of the
+sponsoring and monetization pages are the unconfigured rendering.
+`TestRepositoryFundingSurfacesMatchTheOperatorConfiguration` in
+`internal/funding/funding_test.go` fails if a configured rendering is committed to the
+engine. In an operational fork, whose `.standards.yaml` records `repository.source`, the
+same test requires the rendering of the fork's own document instead.
+
+```yaml
+github: [exampleOrg]            # GitHub Sponsors, at most four accounts
+polar: exampleOrg               # also renders the MkDocs bounty announcement
+ko_fi: example
+open_collective: example-collective
+custom: ["https://example.org/donate"]   # FUNDING.yml only, at most four https URLs
+message: "Optional sentence that replaces the default README support prose."
+```
+
+`praetorctl docs funding [path]` renders the document. It rewrites `.github/FUNDING.yml`
+and the lines between these markers (`internal/funding/render.go`):
+
+| Marker | File |
+| :-- | :-- |
+| `praetor:funding-badges`, `praetor:funding-support` | `README.md` |
+| `praetor:funding-announcement`, `praetor:funding-social` | `mkdocs.yml` |
+| `praetor:funding-bounties` | `docs/sponsoring.md` |
+| `praetor:funding-channels` | `docs/monetization.md` |
+
+A file without the markers is skipped, not appended to. `--check` reports drift without
+writing and exits non-zero when a surface differs; `--config` names another document.
+Without the document, and for a document whose lists are empty, the command reports
+`not configured`: the README and MkDocs blocks render empty and the two documentation
+blocks say that no account is linked, so no link to an unconfigured account is published.
+Unknown keys, malformed account names and non-https custom URLs are errors
+(`internal/funding/config.go`). A file checked out with CRLF endings, as Windows checks out
+`README.md`, is compared and rewritten with CRLF; a file with mixed endings is an error.
+
+The fork carries the document at `.config/operator/funding.yaml`, tracked with
+`git add -f`. Operational sync renders the funding surfaces from it on every `prepare`,
+and `plan` accepts a fork that committed the rendering or has not rendered yet; see
+[funding surfaces](operational-sync.md#funding-surfaces).
 
 ## Related decisions
 

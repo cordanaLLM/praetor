@@ -1,0 +1,3 @@
+type: changed
+title: Bump actions/checkout, setup-go, setup-node and setup-python to v7 across the repository workflows
+breaking: false

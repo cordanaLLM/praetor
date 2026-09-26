@@ -154,6 +154,17 @@ func knownClient(name string) bool {
 	return false
 }
 
+// VendorTargetPaths returns the slash-separated repository paths compile-context writes, in
+// compile order. Callers that must recognise a compiled file (the CI filter's agent
+// classification) read this list instead of keeping their own copy of it.
+func VendorTargetPaths() []string {
+	paths := make([]string, 0, len(vendorTargets))
+	for _, target := range vendorTargets {
+		paths = append(paths, target.path)
+	}
+	return paths
+}
+
 // CompileContent synthesizes vendor-specific files directly from in-memory markdown content.
 // Each target keeps the shared body and its own `## <Vendor>` section in place; every other
 // vendor's section is removed, so guidance written for one agent never reaches another.

@@ -56,3 +56,18 @@ func TestApplyOverrides_Boundary_NilSectionsAndZeroValues(t *testing.T) {
 		t.Fatalf("equal cap must be kept, got %d", p.Complexity.MaxCyclomatic)
 	}
 }
+
+// overrides.ci feeds `ci filter` (BUG-652): an absent block keeps the HISS-18 defaults, a
+// declared block is read as written, and a key the block omits is false (the stricter side).
+func TestEffectiveCI(t *testing.T) {
+	if got := (Overrides{}).EffectiveCI(); got != DefaultCIPolicy() || !got.DiffAwareFiltering || !got.SkipHeavyGatesOnDocsOrState {
+		t.Fatalf("absent block must yield the defaults, got %+v", got)
+	}
+	declared := CIPolicy{DiffAwareFiltering: false, SkipHeavyGatesOnDocsOrState: true}
+	if got := (Overrides{CI: &declared}).EffectiveCI(); got != declared {
+		t.Fatalf("declared block must be read as written, got %+v", got)
+	}
+	if got := (Overrides{CI: &CIPolicy{}}).EffectiveCI(); got.DiffAwareFiltering || got.SkipHeavyGatesOnDocsOrState {
+		t.Fatalf("an empty declared block must be the strict policy, got %+v", got)
+	}
+}

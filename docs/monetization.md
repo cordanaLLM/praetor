@@ -52,9 +52,9 @@ Polar.sh acts as the core Merchant of Record (MoR) and feature-crowding engine f
 
 ## 3. Community Sponsoring Channels
 
-- **GitHub Sponsors**: [github.com/sponsors/CordanaLLM](https://github.com/sponsors/CordanaLLM) (Corporate monthly sponsorship tiers).
-- **Ko-fi**: [ko-fi.com/cordana](https://ko-fi.com/cordana) (One-time developer micro-donations).
-- **Open Collective**: [opencollective.com/cordanallm](https://opencollective.com/cordanallm) (Transparent public ledger for community operations).
+<!-- praetor:funding-channels:start -->
+No sponsoring channel is configured, so this site links no sponsoring account. The operator lists them in `.config/operator/funding.yaml`.
+<!-- praetor:funding-channels:end -->
 
 ---
 

@@ -1,5 +1,17 @@
 name: Praetor Fast Adoption Bot
 
+# Two entry points, one job each, each holding only the token its own steps use.
+#
+# - A dispatch is an operator with write access asking for an adoption to be committed. Only
+#   that job holds contents: write, and only its commit step is handed the token.
+# - A `/adopt` or `/dogfood` comment on a pull request asks for a report on that pull
+#   request's head. issue_comment runs this default-branch file with the base repository's
+#   token for anyone who can comment, so the job admits trusted commenters only, holds read
+#   scopes only, runs only heads pushed to this repository, and saves no Go cache.
+#
+# internal/forge/workflow_permissions.go audits the permission split on every test run, and
+# internal/forge/adopt_workflow_test.go pins the rest of this shape and executes the head
+# lookup's shell body against a stub gh.
 on:
   workflow_dispatch:
     inputs:
@@ -8,35 +20,40 @@ on:
         required: false
         default: "."
       dry_run:
-        description: "Dry run simulation"
+        description: "Dry run simulation: adopt and audit on the runner, commit nothing"
         required: false
         default: "false"
         type: boolean
   issue_comment:
     types: [created]
 
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write
+permissions: {}
 
 jobs:
   adopt:
     name: Execute Fast Adoption
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.issue.pull_request && contains(github.event.comment.body, '/adopt')) ||
-      (github.event.issue.pull_request && contains(github.event.comment.body, '/dogfood'))
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-26.04
+    # Both jobs build standardsctl and adopt one repository; a finite bound replaces GitHub's
+    # 360-minute default for a run that hangs on the network.
+    timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
+      # The adoption step builds and runs praetor from this checkout, so the checkout keeps no
+      # credential for it to find; the commit step is handed the token on its own.
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.ref || github.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
+      # Go is set up here, before the action sets it up again, so the job keeps a build cache
+      # of its own and stays inside AuditGoBuildCaches (internal/forge/go_cache_checks.go),
+      # which reads the setup-go steps of workflow jobs and not those inside an action. The
+      # action's own setup-go cache is off for the same reason.
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: '1.27'
           cache: false
@@ -48,38 +65,164 @@ jobs:
           job: adopt
           go-version: '1.27'
 
-      - name: Build Praetor CLI
-        run: |
-          go build -o /usr/local/bin/standardsctl ./cmd/standardsctl
-
-      - name: Execute Dogfood Benchmark
-        if: contains(github.event.comment.body, '/dogfood')
-        run: |
-          standardsctl dogfood --path=.
-
+      # target_path reaches standardsctl through the action's path input, which the action
+      # passes through env as one argument (.github/actions/praetor-adopt/action.yml).
       - name: Execute Fast Adoption
-        if: "!contains(github.event.comment.body, '/dogfood')"
-        run: |
-          standardsctl adopt --path=. --force --record-baseline
-          standardsctl compile-context --verify
+        id: praetor
+        uses: ./.github/actions/praetor-adopt
+        with:
+          path: ${{ inputs.target_path }}
+          mode: adopt
+          force: "true"
+          record-baseline: "true"
+          cache: "false"
 
       # HISS-13: a re-recorded baseline must not grow versus the default branch. The audit
       # fails before anything is committed when --record-baseline absorbed new debt without
       # a recorded rationale.
       - name: Enforce Monotonic Debt Ratchet
-        if: "!contains(github.event.comment.body, '/dogfood')"
+        shell: bash
         env:
           CI: "true"
-        run: |
-          standardsctl audit --base=origin/${{ github.event.repository.default_branch }}
+          PRAETOR_BIN: ${{ steps.praetor.outputs.binary }}
+          TARGET_PATH: ${{ inputs.target_path }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: >-
+          "$PRAETOR_BIN" audit
+          "--config=$TARGET_PATH/.standards.yaml"
+          "--base=origin/$DEFAULT_BRANCH"
 
+      # The token travels in the environment of the one git command that pushes, as the
+      # authorization header actions/checkout would have persisted, so it is never written to
+      # the repository config and never appears in an argument vector. The commit is signed
+      # off because the compliance gate checks DCO 1.1 on direct pushes as well.
       - name: Commit & Push Adoption Changes
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run != true
+        if: inputs.dry_run != true
+        shell: bash
+        env:
+          PUSH_TOKEN: ${{ github.token }}
         run: |
-          git config --global user.name "cordana-standards[bot]"
-          git config --global user.email "standards-bot@cordana.ai"
+          set -euo pipefail
+          git config user.name "cordana-standards[bot]"
+          git config user.email "standards-bot@cordana.ai"
           git add -A
-          if ! git diff-index --quiet HEAD; then
-            git commit -m "chore(governance): adopt repository into Praetor baseline"
-            git push
+          if git diff-index --quiet --cached HEAD; then
+            echo "adopt: the adoption changed nothing; nothing to commit"
+            exit 0
           fi
+          git commit --signoff -m "chore(governance): adopt repository into Praetor baseline"
+          auth="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$auth"
+          GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0="http.$GITHUB_SERVER_URL/.extraheader" \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git push origin "HEAD:$GITHUB_REF"
+
+  adopt-comment:
+    name: Execute Pull Request Comment Adoption
+    # The author_association conjunct keeps strangers out: OWNER, MEMBER and COLLABORATOR are
+    # the associations the repository granted, and every other value is within reach of any
+    # account (trustedAssociation in internal/forge/workflow_permissions.go).
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      (contains(github.event.comment.body, '/adopt') || contains(github.event.comment.body, '/dogfood')) &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # An issue_comment payload carries the issue, not the pull request, so the event has no
+      # pull_request object to read a head from, and a checkout without a ref takes the default
+      # branch. The head is asked for by number instead.
+      #
+      # The steps below build and run the head, and load ./.github/actions/praetor-adopt from
+      # it, inside the default branch's context. Read scopes do not make that harmless: code in
+      # the job can still save entries to the Actions cache in the default branch's scope,
+      # which the dispatch job and every other branch restore. So only a head pushed to this
+      # repository runs. Pushing here takes write access, and an account with write access can
+      # start this job by commenting anyway, so a push that lands between the comment and the
+      # lookup lets in no one the commenter gate keeps out. A fork head is refused, and so is a
+      # head whose repository was deleted. The head is read when the job starts, and the
+      # repository and the commit come from one answer, so the check covers the commit that
+      # runs, not the one the comment saw.
+      #
+      # Every payload value reaches the script through env, never spliced into it;
+      # GITHUB_REPOSITORY is the runner's own default variable.
+      - name: Resolve Pull Request Head
+        id: pr-head
+        # One API call; it answers in seconds or not at all.
+        timeout-minutes: 2
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          case "$PR_NUMBER" in
+            '' | *[!0-9]*)
+              echo "adopt: the comment names no pull request number (got '$PR_NUMBER')" >&2
+              exit 1
+              ;;
+          esac
+          query='.head.repo.full_name // "", .head.sha // ""'
+          if ! answer="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq "$query")"; then
+            echo "adopt: could not read pull request #$PR_NUMBER of $GITHUB_REPOSITORY" >&2
+            exit 1
+          fi
+          # Two lines: the head's repository, then its commit. Any further line stays in sha
+          # and fails the commit id check.
+          repo="${answer%%$'\n'*}"
+          sha="${answer#*$'\n'}"
+          if [ "$repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "adopt: pull request #$PR_NUMBER's head lives in '${repo:-a deleted repository}'," \
+              "not in $GITHUB_REPOSITORY; this job builds and runs the head, so it runs only heads" \
+              "pushed to this repository" >&2
+            exit 1
+          fi
+          if [[ ! "$sha" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+            echo "adopt: pull request #$PR_NUMBER resolved to head '$sha', which is not a commit id" >&2
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # This is the pull request's code, and the steps below build and run it, so no
+      # credential is left in the checkout for it to find.
+      - name: Checkout Pull Request Head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.pr-head.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # cache: "false" keeps setup-go from saving what this job built into the default
+      # branch's cache scope; the job restores no cache either.
+      - name: Execute Dogfood Benchmark
+        if: contains(github.event.comment.body, '/dogfood')
+        uses: ./.github/actions/praetor-adopt
+        with:
+          mode: dogfood
+          cache: "false"
+
+      - name: Execute Fast Adoption
+        id: praetor
+        if: "!contains(github.event.comment.body, '/dogfood')"
+        uses: ./.github/actions/praetor-adopt
+        with:
+          mode: adopt
+          force: "true"
+          record-baseline: "true"
+          cache: "false"
+
+      - name: Enforce Monotonic Debt Ratchet
+        if: "!contains(github.event.comment.body, '/dogfood')"
+        shell: bash
+        env:
+          CI: "true"
+          PRAETOR_BIN: ${{ steps.praetor.outputs.binary }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: >-
+          "$PRAETOR_BIN" audit
+          "--base=origin/$DEFAULT_BRANCH"

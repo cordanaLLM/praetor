@@ -24,8 +24,12 @@ const (
 	// with the base repository's token, so every audit that decides on pull_request has
 	// to decide on it too: it is the strictly more dangerous of the two.
 	pullRequestTargetEvent = "pull_request_target"
-	workflowPathsKey       = "paths"
-	workflowIgnoreKey      = "paths-ignore"
+	// issue_comment also runs in the base repository's context with the base repository's
+	// token, and anyone who can comment on a pull request starts it. A permission audit that
+	// decides on the two pull request events has to decide on it as well.
+	issueCommentEvent = "issue_comment"
+	workflowPathsKey  = "paths"
+	workflowIgnoreKey = "paths-ignore"
 )
 
 // RequiredStatusContexts selects unconditional job names from repository workflows
@@ -156,15 +160,23 @@ type workflowJob struct {
 	Steps           []workflowStep   `yaml:"steps"`
 }
 
-// workflowStep is the step subset the Go cache audit and the portability checks decide on.
-// `with:` values are not all strings -- `cache: false` is a bool, `fetch-depth: 0` an int --
-// so the map is untyped.
+// workflowStep is the step subset the Go cache audit and the portability checks decide on,
+// plus the id and env the adopt workflow's credential checks follow a value through
+// (internal/forge/adopt_workflow_test.go). `with:` values are not all strings --
+// `cache: false` is a bool, `fetch-depth: 0` an int -- so the map is untyped.
+//
+// Env is a raw node because the key has two shapes: a mapping, or one expression such as
+// `${{ fromJSON(vars.X) }}` that evaluates to one (the workflow schema gives step env a
+// context). A typed map rejects the second shape and would fail the whole document for a key
+// no production check reads.
 type workflowStep struct {
 	Name string         `yaml:"name"`
+	ID   string         `yaml:"id"`
 	If   string         `yaml:"if"`
 	Uses string         `yaml:"uses"`
 	Run  string         `yaml:"run"`
 	With map[string]any `yaml:"with"`
+	Env  yaml.Node      `yaml:"env"`
 }
 
 // workflowStrategy carries the matrix legs a job expands into. A matrix job reports one
@@ -307,12 +319,13 @@ func eventTrigger(on *yaml.Node, event string) (*yaml.Node, bool) {
 // pullRequestTriggers lists the contributor-triggered pull request events this workflow
 // declares, filtered or not: a paths filter narrows which pull requests run it, but it
 // does not stop the run being a pull request run, which is what a permission audit decides
-// on. Both events are reported because a permission a contributor can reach is the subject
-// of the audit, and pull_request_target hands that contributor the base repository's own
-// token. The order is fixed so a finding reads the same way every run.
+// on. All three events are reported because a permission a contributor can reach is the
+// subject of the audit: pull_request_target hands that contributor the base repository's
+// own token, and so does issue_comment, which any commenter starts by writing a comment.
+// The order is fixed so a finding reads the same way every run.
 func pullRequestTriggers(on *yaml.Node) []string {
 	var events []string
-	for _, event := range [...]string{pullRequestEvent, pullRequestTargetEvent} {
+	for _, event := range [...]string{pullRequestEvent, pullRequestTargetEvent, issueCommentEvent} {
 		if _, declared := eventTrigger(on, event); declared {
 			events = append(events, event)
 		}

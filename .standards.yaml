@@ -1,5 +1,5 @@
 # cordanaLLM/praetor Canonical Configuration Manifest
-# Schema: https://standards.cordana.ai/schemas/v1/standards.json
+# Schema: the Manifest type in internal/config/config.go; LoadManifest rejects unknown keys.
 version: 1
 repository:
   owner: "cordanaLLM"

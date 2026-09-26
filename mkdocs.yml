@@ -32,26 +32,14 @@ theme:
     - content.code.annotate
 
 extra:
-  announcement: >
-    🎯 <strong>Polar.sh Feature Bounties:</strong> Earn rewards for solved issues or sponsor upcoming roadmap features!
-    <a href="sponsoring/"><strong>Learn more &amp; view bounties &rarr;</strong></a>
-
+  # praetor:funding-announcement:start
+  # praetor:funding-announcement:end
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/CordanaLLM/praetor
       name: GitHub Repository
-    - icon: fontawesome/solid/bolt
-      link: https://polar.sh/CordanaLLM
-      name: Feature Bounties & Rewards on Polar.sh
-    - icon: fontawesome/solid/heart
-      link: https://github.com/sponsors/CordanaLLM
-      name: Sponsor on GitHub Sponsors
-    - icon: fontawesome/solid/mug-hot
-      link: https://ko-fi.com/cordana
-      name: Support on Ko-fi
-    - icon: fontawesome/solid/hand-holding-dollar
-      link: https://opencollective.com/cordanallm
-      name: Open Collective
+    # praetor:funding-social:start
+    # praetor:funding-social:end
 
 plugins:
   - search

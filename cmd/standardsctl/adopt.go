@@ -256,29 +256,28 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 	printAdoptedFiles(rep)
 	printAdoptIssues(rep)
 
-	if len(rep.Errors) > 0 {
-		fmt.Println("\n--- Governance Pillars Not Synchronized (incomplete adoption) ---")
-	} else if rep.DryRun {
-		fmt.Println("\n--- Governance Pillars Planned (dry-run; not written) ---")
-	} else {
-		fmt.Println("\n--- Governance Pillars Synchronized ---")
-	}
-	if len(rep.Errors) == 0 {
-		fmt.Println("  ✓ Universal Harness : Canonical AGENTS.md, caveman-linted by compile-context --verify and audit")
-		fmt.Println("  ✓ AI Context Sync   : 6 targets (Claude Code, Cursor, Copilot, Windsurf, Codex, Gemini)")
-		fmt.Println("  ✓ IDE Ecosystem     : VS Code, JetBrains (CLion/GoLand/PyCharm), Neovim")
-		fmt.Println("  ✓ DevContainer      : Containerized deterministic dev environment (.devcontainer)")
-		fmt.Println("  ✓ Verification Gate : Makefile 'verify-all' standard entrypoint")
+	// Each pillar line is derived from the step that owns it (adopt.AdoptReport.Pillars), so a
+	// warned, failed, declined or unreached step never prints a success mark (BUG-871).
+	outcome := rep.Outcome()
+	fmt.Println("\n--- Governance Pillars " + pillarHeadings[outcome] + " ---")
+	for _, pillar := range rep.Pillars() {
+		fmt.Println("  " + pillar.Line())
 	}
 
-	switch {
-	case len(rep.Errors) > 0:
+	switch outcome {
+	case adopt.OutcomeIncomplete:
 		fmt.Printf("\nAdoption finished with %d error(s); the repository is not fully governed yet.\n", len(rep.Errors))
-	case rep.DryRun:
+	case adopt.OutcomeSimulated:
 		fmt.Println("\nSimulated adoption plan completed. Run without -dry-run to apply.")
 	default:
 		fmt.Println("\nRepository successfully adopted into cordanaLLM/praetor governance!")
 	}
+}
+
+var pillarHeadings = map[adopt.AdoptOutcome]string{
+	adopt.OutcomeIncomplete: "Not Synchronized (incomplete adoption)",
+	adopt.OutcomeSimulated:  "Planned (dry-run; not written)",
+	adopt.OutcomeApplied:    "Synchronized",
 }
 
 // printDebtSummary prints the baselined legacy debt breakdown.

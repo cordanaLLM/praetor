@@ -10,11 +10,11 @@
 
   [![Go Version](https://img.shields.io/badge/Go-1.27%2B-00ADD8?style=for-the-badge&logo=go)](https://golang.org)
   [![HISS Governance](https://img.shields.io/badge/Standard-HISS_Governance-06B6D4?style=for-the-badge&logo=nasa)](https://cordanallm.github.io/praetor/standards/hiss-spec/)
-  [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub_Sponsors-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/CordanaLLM)
-  [![Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white)](https://ko-fi.com/cordana)
   [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP_Server-10B981?style=for-the-badge)](https://modelcontextprotocol.io)
   [![Dual-Surface Docs](https://img.shields.io/badge/llms.txt-Enabled-06B6D4?style=for-the-badge)](https://cordanallm.github.io/praetor/llms.txt)
   [![License: EUPL 1.2](https://img.shields.io/badge/License-EUPL_1.2-blue.svg?style=for-the-badge)](LICENSES/EUPL-1.2.txt)
+  <!-- praetor:funding-badges:start -->
+  <!-- praetor:funding-badges:end -->
 
   <br />
 
@@ -46,29 +46,8 @@ While traditional repositories suffer from configuration drift and agentic fragm
 
 ---
 
-## 💖 Support & Sponsorship
-
-Praetor and the CordanaLLM ecosystem are open-source, high-integrity infrastructure projects built to bring mathematical rigor to autonomous AI agents. If Praetor saves you engineering hours, secures your AI fleet, or powers your workflows, consider supporting further development!
-
-<div align="center">
-
-  <a href="https://github.com/sponsors/CordanaLLM">
-    <img src="https://img.shields.io/badge/Sponsor_on_GitHub_Sponsors-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Sponsor on GitHub Sponsors" />
-  </a>
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://polar.sh/CordanaLLM">
-    <img src="https://img.shields.io/badge/Bounties_on_Polar.sh-000000?style=for-the-badge&logo=polar&logoColor=white" alt="Feature Bounties on Polar.sh" />
-  </a>
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://opencollective.com/cordanallm">
-    <img src="https://img.shields.io/badge/Donate_on_Open_Collective-7FADF2?style=for-the-badge&logo=opencollective&logoColor=white" alt="Donate on Open Collective" />
-  </a>
-
-</div>
-
-*Every contribution directly fuels independent AI safety research, Go toolchain development, and HISS verification engines.*
-
----
+<!-- praetor:funding-support:start -->
+<!-- praetor:funding-support:end -->
 
 ## 📐 Architecture & Transpilation Flow
 

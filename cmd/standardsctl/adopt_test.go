@@ -98,6 +98,40 @@ func TestPrintAdoptReportDoesNotClaimUnobservedBaselineOrPillars(t *testing.T) {
 	}
 }
 
+// BUG-871: the pillar lines follow the report. A DevContainer step that warned no longer
+// prints a success mark, a step that never ran says so, and a clean step keeps its mark.
+func TestPrintAdoptReportDerivesPillarLinesFromSteps(t *testing.T) {
+	rep := &adopt.AdoptReport{
+		BaselineStatus: "scanned",
+		Warnings:       []string{"DevContainer bootstrap unavailable: no runtime"},
+		Steps: []adopt.StepOutcome{
+			{Name: "agent-harness", Status: adopt.StepCompleted},
+			{Name: "dev-container", Status: adopt.StepCompleted, Warnings: []string{"DevContainer bootstrap unavailable: no runtime"}},
+			{Name: "editors", Status: adopt.StepCompleted},
+		},
+	}
+	out, err := captureStdout(t, func() error { printAdoptReport(rep); return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "Governance Pillars Synchronized", "✓ Universal Harness", "✓ IDE Ecosystem",
+		"⚠ DevContainer", "[warned: 1 warning(s)]", "Verification Gate", "[not-run]")
+	if strings.Contains(out, "✓ DevContainer") || strings.Contains(out, "✓ Verification Gate") {
+		t.Fatalf("a warned or unreached pillar printed a success mark:\n%s", out)
+	}
+
+	// Boundary: a dry run with errors reads incomplete, never planned.
+	rep.DryRun, rep.Errors = true, []string{"makefile failed"}
+	out, err = captureStdout(t, func() error { printAdoptReport(rep); return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "Governance Pillars Not Synchronized", "finished with 1 error(s)")
+	if strings.Contains(out, "Pillars Planned") || strings.Contains(out, "Simulated adoption plan completed") {
+		t.Fatalf("a failed dry run was reported as a plan:\n%s", out)
+	}
+}
+
 // reorderTestAdoptArgs supplies the adoption flag fixtures to the shared parser.
 func reorderTestAdoptArgs(args []string) []string {
 	return reorderArgs(args, map[string]bool{

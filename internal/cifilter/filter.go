@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -25,6 +28,10 @@ type FilterOptions struct {
 	BaseRef  string `json:"base_ref"`
 	HeadRef  string `json:"head_ref"`
 	ForceAll bool   `json:"force_all"`
+	// ManifestPath names the .standards.yaml whose overrides.ci block governs the decision.
+	// Empty, or a path with no file, keeps config.DefaultCIPolicy; a manifest that cannot be
+	// read or parsed selects the full matrix.
+	ManifestPath string `json:"manifest_path,omitempty"`
 }
 
 // ChangeSet summarizes categorized file modifications.
@@ -36,8 +43,11 @@ type ChangeSet struct {
 	DocsChanged   bool     `json:"docs_changed"`
 	ConfigChanged bool     `json:"config_changed"`
 	AgentChanged  bool     `json:"agent_changed"`
-	StateOnly     bool     `json:"state_only"`
-	DocsOnly      bool     `json:"docs_only"`
+	// UnclassifiedChanged records a path no classifier recognised. Such a path also sets
+	// ConfigChanged, so an unknown file kind runs tests, linters and security (fail closed).
+	UnclassifiedChanged bool `json:"unclassified_changed"`
+	StateOnly           bool `json:"state_only"`
+	DocsOnly            bool `json:"docs_only"`
 }
 
 // FilterDecision details the execution plan for CI checks and test suites.
@@ -70,29 +80,40 @@ func AnalyzeChanges(ctx context.Context, opts FilterOptions) (*FilterDecision, e
 		repoDir = "."
 	}
 
+	// Every failure below fails closed: the full matrix runs rather than a guessed subset.
+	unknown := &ChangeSet{CodeChanged: true, ConfigChanged: true}
+	policy, err := loadCIPolicy(opts.ManifestPath)
+	if err != nil {
+		return makeFullMatrixDecision(unknown, fmt.Sprintf("CI policy unavailable (%v); running full verification", err)), nil
+	}
 	files, err := GetChangedFiles(ctx, repoDir, opts.BaseRef, opts.HeadRef)
 	if err != nil {
-		// Fallback safely to executing full test battery on diff error
-		cs := &ChangeSet{CodeChanged: true, ConfigChanged: true}
-		return &FilterDecision{
-			RunTests:       true,
-			RunLinters:     true,
-			RunSecurity:    true,
-			RunAudit:       true,
-			RunContextSync: true,
-			RunDocs:        true,
-			SkipHeavyGates: false,
-			Reason:         fmt.Sprintf("git diff unavailable (%v); running full verification", err),
-			ChangeSet:      cs,
-		}, nil
+		return makeFullMatrixDecision(unknown, fmt.Sprintf("git diff unavailable (%v); running full verification", err)), nil
 	}
 
 	cs := ClassifyChanges(files)
-	decision := MakeDecision(cs, opts.ForceAll)
-	return decision, nil
+	return MakePolicyDecision(cs, opts.ForceAll, policy), nil
 }
 
-// GetChangedFiles extracts modified files between two git refs.
+// loadCIPolicy reads overrides.ci from the manifest at path through config.LoadManifest. No
+// path and no file both mean the repository declares no CI policy, so the defaults apply.
+func loadCIPolicy(path string) (config.CIPolicy, error) {
+	if path == "" {
+		return config.DefaultCIPolicy(), nil
+	}
+	manifest, err := config.LoadManifest(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return config.DefaultCIPolicy(), nil
+	}
+	if err != nil {
+		return config.CIPolicy{}, err
+	}
+	return manifest.Overrides.EffectiveCI(), nil
+}
+
+// GetChangedFiles extracts modified files between two git refs. Both refs must resolve: a
+// diff of the working tree against HEAD describes uncommitted edits, not the commits under
+// review, so an unresolvable ref is an error rather than a fallback to it (BUG-891).
 func GetChangedFiles(ctx context.Context, dir, baseRef, headRef string) ([]string, error) {
 	if baseRef == "" {
 		baseRef = "origin/main"
@@ -108,11 +129,7 @@ func GetChangedFiles(ctx context.Context, dir, baseRef, headRef string) ([]strin
 		// Fallback to two-dot direct diff
 		out, err = util.RunGit(ctx, dir, "diff", "--name-only", baseRef, headRef)
 		if err != nil {
-			// Fallback to diff against HEAD~1 or uncommitted changes
-			out, err = util.RunGit(ctx, dir, "diff", "--name-only", "HEAD")
-			if err != nil {
-				return nil, fmt.Errorf("git diff failed: %w", err)
-			}
+			return nil, fmt.Errorf("git diff %s %s failed: %w", baseRef, headRef, err)
 		}
 	}
 
@@ -161,17 +178,11 @@ func ClassifyChanges(files []string) *ChangeSet {
 		}
 		nonStateCount++
 
-		// Agent instruction files (AGENTS.md, CLAUDE.md, .agents/**, .paperclip/**) are
-		// classified before documentation: a docs-only decision skips the HISS-16
-		// compile-context --verify gate, and an agent-only change set must never
-		// take that path even though the files end in .md.
-		if isAgent(p) {
-			nonDocsCount++
-			cs.classifySource(p)
-			continue
-		}
-
-		if isDocumentation(p) {
+		// Agent instruction files (AGENTS.md, compiled vendor files, .agents/**,
+		// .paperclip/**) are classified before documentation: a docs-only decision skips
+		// the HISS-16 compile-context --verify gate, and an agent-only change set must
+		// never take that path even though most of those files end in .md.
+		if !isAgent(p) && isDocumentation(p) {
 			cs.DocsChanged = true
 			continue
 		}
@@ -185,20 +196,32 @@ func ClassifyChanges(files []string) *ChangeSet {
 	return cs
 }
 
+// classifySource records the domains a non-documentation path belongs to. A path none of
+// them recognises (a shell script, a Dockerfile, a template, an unknown manifest) fails
+// closed as configuration, so it selects tests, linters and security (BUG-236).
 func (cs *ChangeSet) classifySource(path string) {
-	cs.TestsChanged = cs.TestsChanged || isTest(path)
-	cs.CodeChanged = cs.CodeChanged || isCode(path)
-	cs.ConfigChanged = cs.ConfigChanged || isConfig(path)
-	cs.AgentChanged = cs.AgentChanged || isAgent(path)
+	test, code, conf, agent := isTest(path), isCode(path), isConfig(path), isAgent(path)
+	cs.TestsChanged = cs.TestsChanged || test
+	cs.CodeChanged = cs.CodeChanged || code
+	cs.ConfigChanged = cs.ConfigChanged || conf
+	cs.AgentChanged = cs.AgentChanged || agent
+	if !test && !code && !conf && !agent {
+		cs.UnclassifiedChanged = true
+		cs.ConfigChanged = true
+	}
 }
 
-// MakeDecision maps categorized changes to CI execution decisions.
+// MakeDecision maps categorized changes to CI execution decisions under
+// config.DefaultCIPolicy.
 func MakeDecision(cs *ChangeSet, forceAll bool) *FilterDecision {
-	if cs == nil || cs.TotalFiles == 0 {
-		return makeFullMatrixDecision(cs, "no file diff detected; running full verification matrix")
-	}
-	if forceAll {
-		return makeFullMatrixDecision(cs, "force execution flag set; running full verification matrix")
+	return MakePolicyDecision(cs, forceAll, config.DefaultCIPolicy())
+}
+
+// MakePolicyDecision maps categorized changes to CI execution decisions under policy, the
+// repository's overrides.ci block. A switch set to false only ever adds gates.
+func MakePolicyDecision(cs *ChangeSet, forceAll bool, policy config.CIPolicy) *FilterDecision {
+	if reason := fullMatrixReason(cs, forceAll, policy); reason != "" {
+		return makeFullMatrixDecision(cs, reason)
 	}
 	if cs.StateOnly {
 		return &FilterDecision{
@@ -220,6 +243,21 @@ func MakeDecision(cs *ChangeSet, forceAll bool) *FilterDecision {
 	return makeTargetedDecision(cs)
 }
 
+// fullMatrixReason names why no selective decision applies, or returns "" when one may.
+func fullMatrixReason(cs *ChangeSet, forceAll bool, policy config.CIPolicy) string {
+	switch {
+	case cs == nil || cs.TotalFiles == 0:
+		return "no file diff detected; running full verification matrix"
+	case forceAll:
+		return "force execution flag set; running full verification matrix"
+	case !policy.DiffAwareFiltering:
+		return "overrides.ci.diff_aware_filtering is false; running full verification matrix"
+	case (cs.StateOnly || cs.DocsOnly) && !policy.SkipHeavyGatesOnDocsOrState:
+		return "overrides.ci.skip_heavy_gates_on_docs_or_state is false; running full verification matrix for a docs-only or state-only change"
+	}
+	return ""
+}
+
 func makeFullMatrixDecision(cs *ChangeSet, reason string) *FilterDecision {
 	return &FilterDecision{
 		RunTests:       true,
@@ -239,6 +277,10 @@ func makeTargetedDecision(cs *ChangeSet) *FilterDecision {
 	needsLinters := cs.CodeChanged || cs.ConfigChanged
 	needsSecurity := cs.CodeChanged || cs.ConfigChanged
 	needsContextSync := cs.AgentChanged || cs.ConfigChanged
+	reason := "source code or configuration modified; running targeted CI matrix"
+	if cs.UnclassifiedChanged {
+		reason = "unclassified file kind modified; failing closed to tests, linters and security in the targeted CI matrix"
+	}
 
 	return &FilterDecision{
 		RunTests:       needsTests,
@@ -249,7 +291,7 @@ func makeTargetedDecision(cs *ChangeSet) *FilterDecision {
 		RunDocs:        cs.DocsChanged || needsTests,
 		RunDocsOnly:    false,
 		SkipHeavyGates: !needsTests,
-		Reason:         "source code or configuration modified; running targeted CI matrix",
+		Reason:         reason,
 		ChangeSet:      cs,
 	}
 }
@@ -283,6 +325,9 @@ func (d *FilterDecision) ToJSON() ([]byte, error) {
 }
 
 func isDocumentation(p string) bool {
+	if isBuildManifestText(p) {
+		return false
+	}
 	base := filepath.Base(p)
 	lower := strings.ToLower(p)
 	for _, suffix := range []string{
@@ -312,9 +357,21 @@ func isTest(p string) bool {
 		strings.HasPrefix(p, "tests/")
 }
 
+// isBuildManifestText reports whether a .txt path is a dependency or build manifest
+// (requirements*.txt, constraints*.txt, CMakeLists.txt). It changes what CI installs or
+// builds, so it is configuration even under docs/, never documentation (BUG-562).
+func isBuildManifestText(p string) bool {
+	base := strings.ToLower(filepath.Base(p))
+	if !strings.HasSuffix(base, ".txt") {
+		return false
+	}
+	return strings.HasPrefix(base, "requirements") || strings.HasPrefix(base, "constraints") ||
+		base == "cmakelists.txt"
+}
+
 func isConfig(p string) bool {
 	base := filepath.Base(p)
-	if strings.HasPrefix(p, ".github/") ||
+	if isBuildManifestText(p) || strings.HasPrefix(p, ".github/") ||
 		strings.HasSuffix(p, ".yaml") ||
 		strings.HasSuffix(p, ".yml") ||
 		slices.Contains([]string{
@@ -325,10 +382,18 @@ func isConfig(p string) bool {
 	return strings.HasPrefix(strings.ToLower(base), "tsconfig") && strings.HasSuffix(strings.ToLower(base), ".json")
 }
 
+// compiledAgentPaths is every file compile-context writes, read from its own target list
+// (HISS-19) so a new vendor target is classified as an agent file without a second edit.
+var compiledAgentPaths = agentcontext.VendorTargetPaths()
+
+// isAgent reports whether p is agent instruction text: the canonical AGENTS.md, any
+// CLAUDE.md, a compiled vendor file (.cursor/rules/*.mdc, .windsurfrules,
+// .github/copilot-instructions.md, ... - BUG-242), or a file under .agents/ or .paperclip/.
 func isAgent(p string) bool {
 	base := filepath.Base(p)
 	return strings.EqualFold(base, "AGENTS.md") ||
 		strings.EqualFold(base, "CLAUDE.md") ||
+		slices.Contains(compiledAgentPaths, p) ||
 		strings.HasPrefix(p, ".paperclip/") ||
 		strings.HasPrefix(p, ".agents/")
 }

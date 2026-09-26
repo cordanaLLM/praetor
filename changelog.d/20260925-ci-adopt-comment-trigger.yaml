@@ -1,0 +1,3 @@
+type: fixed
+title: Admit only trusted commenters to the /adopt comment trigger, run it read-only and cache-free against a pull request head pushed to this repository (fork heads are refused), wire target_path through to the adoption, add a cache input to the praetor-adopt action, and audit issue_comment jobs for reachable write scopes
+breaking: false

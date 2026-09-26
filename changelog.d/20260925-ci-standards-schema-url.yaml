@@ -1,0 +1,3 @@
+type: fixed
+title: "The .standards.yaml header names the Manifest type in internal/config/config.go as its schema instead of an unpublished schema URL that nothing validated against"
+breaking: false

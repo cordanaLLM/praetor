@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,8 @@ const (
 
 // adoptStubSource stands in for the executables the steps call: it records the argument vector it
 // was handed, so a test asserts what the script passed rather than what the script looks like,
-// prints a line the report output must carry, and exits with a code the test chooses. Each name
+// prints a line the report output must carry (or PRAETOR_STUB_STDOUT verbatim when the test sets
+// it, which is how a stub gh answers an API query), and exits with a code the test chooses. Each name
 // listed in PRAETOR_STUB_ENV is recorded after the arguments as NAME=value, so a caller can assert
 // on the environment a step exported as well as on its argv.
 const adoptStubSource = `package main
@@ -61,7 +63,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "stub:", err)
 		os.Exit(70)
 	}
-	fmt.Println("standardsctl-stub:", strings.Join(os.Args[1:], " "))
+	if out, set := os.LookupEnv("PRAETOR_STUB_STDOUT"); set {
+		fmt.Println(out)
+	} else {
+		fmt.Println("standardsctl-stub:", strings.Join(os.Args[1:], " "))
+	}
 	code, err := strconv.Atoi(os.Getenv("PRAETOR_STUB_EXIT"))
 	if err != nil {
 		code = 0
@@ -88,6 +94,8 @@ type compositeAction struct {
 type compositeStep struct {
 	Name string            `yaml:"name"`
 	ID   string            `yaml:"id"`
+	Uses string            `yaml:"uses"`
+	With map[string]string `yaml:"with"`
 	Env  map[string]string `yaml:"env"`
 	Run  string            `yaml:"run"`
 }
@@ -143,7 +151,7 @@ func TestPraetorAdoptAction_Negative_NoRunBodyCarriesAnExpression(t *testing.T) 
 func TestPraetorAdoptAction_Positive_EveryRuntimeInputArrivesThroughEnv(t *testing.T) {
 	run := adoptStep(t, loadAdoptAction(t), adoptRunStepID)
 	for _, name := range []string{"path", "mode", "dry-run", "force", "record-baseline"} {
-		variable := envVariableFor(run, "${{ inputs."+name+" }}")
+		variable := envVariableFor(run.Env, "${{ inputs."+name+" }}")
 		if variable == "" {
 			t.Errorf("input %q reaches no environment variable of the run step: %v", name, run.Env)
 			continue
@@ -152,7 +160,7 @@ func TestPraetorAdoptAction_Positive_EveryRuntimeInputArrivesThroughEnv(t *testi
 			t.Errorf("environment variable %q is declared but never read by the run step", variable)
 		}
 	}
-	if envVariableFor(run, "${{ steps."+adoptBuildStepID+".outputs.binary }}") == "" {
+	if envVariableFor(run.Env, "${{ steps."+adoptBuildStepID+".outputs.binary }}") == "" {
 		t.Errorf("the run step does not take its binary from the build step: %v", run.Env)
 	}
 }
@@ -175,12 +183,20 @@ func TestPraetorAdoptAction_Positive_DeclaredOutputNamesAStepThatWritesIt(t *tes
 	if !strings.Contains(adoptStep(t, action, adoptBuildStepID).Run, "binary=") {
 		t.Error("the build step never writes the binary output the run step consumes")
 	}
+	// adopt.yml's debt ratchet runs the binary the action built, through this output, rather
+	// than compiling a second standardsctl of its own.
+	binary, ok := action.Outputs["binary"]
+	if !ok || binary.Value != "${{ steps."+adoptBuildStepID+".outputs.binary }}" {
+		t.Errorf("the binary output does not read the build step's binary: %+v (declared %v)", binary, ok)
+	}
 }
 
-// envVariableFor returns the name of the step variable carrying expression, or "".
-func envVariableFor(step compositeStep, expression string) string {
-	for key := range step.Env {
-		if step.Env[key] == expression {
+// envVariableFor returns the name of the variable in a step's env block that carries
+// expression, or "". Action steps and workflow steps (adopt_workflow_test.go) both pass their
+// env block here.
+func envVariableFor(env map[string]string, expression string) string {
+	for key := range env {
+		if env[key] == expression {
 			return key
 		}
 	}
@@ -216,8 +232,15 @@ func adoptShell(t *testing.T) string {
 // the shipped script rather than about a copy of it.
 func executeAdoptBody(t *testing.T, stepID, stub string, extra func(binDir, temp string) []string) stepOutcome {
 	t.Helper()
+	return executeShellBody(t, adoptStep(t, loadAdoptAction(t), stepID).Run, stub, extra)
+}
+
+// executeShellBody runs a shell body read out of a shipped action or workflow file the way
+// executeAdoptBody describes. It is the one runner for both, so a workflow step's script is
+// exercised under exactly the stub, PATH and GITHUB_OUTPUT the action's steps are.
+func executeShellBody(t *testing.T, body, stub string, extra func(binDir, temp string) []string) stepOutcome {
+	t.Helper()
 	shell := adoptShell(t)
-	body := adoptStep(t, loadAdoptAction(t), stepID).Run
 	work, binDir, temp := t.TempDir(), t.TempDir(), t.TempDir()
 	log := filepath.Join(t.TempDir(), "calls.log")
 	outputFile := filepath.Join(t.TempDir(), "github_output")
@@ -731,6 +754,69 @@ func TestPraetorAdoptAction_Boundary_GoVersionDefaultBuildsThisModule(t *testing
 	if declared.Default != want {
 		t.Errorf("go-version defaults to %q, but the module it builds declares go %q",
 			declared.Default, want)
+	}
+}
+
+// setupGoCacheGap names why the action's setup-go step would not follow the cache input, or
+// returns "". setup-go caches unless its own cache input says false, so a step that does not
+// pass the action's input through keeps caching whatever a caller asks for.
+func setupGoCacheGap(action compositeAction) string {
+	declared, ok := action.Inputs["cache"]
+	if !ok {
+		return "the action declares no cache input"
+	}
+	if declared.Default != "true" {
+		return "the cache input defaults to " + strconv.Quote(declared.Default) + ", not setup-go's own true"
+	}
+	for i := 0; i < len(action.Runs.Steps) && i < maxJobsPerFile; i++ {
+		step := action.Runs.Steps[i]
+		if strings.HasPrefix(step.Uses, setupGoPrefix) && step.With["cache"] != "${{ inputs.cache }}" {
+			return "setup-go takes cache " + strconv.Quote(step.With["cache"]) + ", not the cache input"
+		}
+	}
+	return ""
+}
+
+// The comment path of adopt.yml turns the action's Go cache off (adopt_workflow_test.go), which
+// only works while the action hands that input to setup-go. Positive: the shipped action does,
+// and keeps setup-go's default for every other caller. Negative: the pass-through dropped or
+// hard-coded, or the input undeclared. Boundary: a default that flips caching off for adopters
+// who never asked.
+func TestPraetorAdoptAction_Positive_CacheInputReachesSetupGo(t *testing.T) {
+	if gap := setupGoCacheGap(loadAdoptAction(t)); gap != "" {
+		t.Fatal(gap)
+	}
+	setupGo := func(action compositeAction) *compositeStep {
+		for i := range action.Runs.Steps {
+			if strings.HasPrefix(action.Runs.Steps[i].Uses, setupGoPrefix) {
+				return &action.Runs.Steps[i]
+			}
+		}
+		t.Fatal("praetor-adopt has no setup-go step")
+		return nil
+	}
+	cases := []struct {
+		name   string
+		mutate func(action compositeAction)
+		want   string
+	}{
+		{"negative: the pass-through dropped", func(action compositeAction) { delete(setupGo(action).With, "cache") }, `setup-go takes cache ""`},
+		{"negative: cache hard-coded", func(action compositeAction) { setupGo(action).With["cache"] = "true" }, `setup-go takes cache "true"`},
+		{"negative: the input undeclared", func(action compositeAction) { delete(action.Inputs, "cache") }, "declares no cache input"},
+		{"boundary: caching off by default", func(action compositeAction) {
+			action.Inputs["cache"] = struct {
+				Default string `yaml:"default"`
+			}{Default: "false"}
+		}, `defaults to "false"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			action := loadAdoptAction(t)
+			tc.mutate(action)
+			if gap := setupGoCacheGap(action); !strings.Contains(gap, tc.want) {
+				t.Fatalf("gap = %q, want containing %q", gap, tc.want)
+			}
+		})
 	}
 }
 

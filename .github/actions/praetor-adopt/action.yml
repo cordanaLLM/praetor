@@ -27,19 +27,31 @@ inputs:
     description: "Go toolchain the step builds standardsctl with; the default mirrors the go directive in praetor's go.mod"
     required: false
     default: "1.27"
+  cache:
+    description: "Let actions/setup-go restore and save the Go module and build caches. Set false in a job a pull request or its comment starts, where the entry saved would be restored by later trusted runs, and in a job that keeps its own Go cache"
+    required: false
+    default: "true"
 
 outputs:
   report:
     description: "Combined output of the adoption / dogfooding run, written by the run step"
     value: ${{ steps.run-praetor.outputs.report }}
+  binary:
+    description: "Absolute path of the standardsctl the build step compiled, for a later step of the same job that has to run that same binary"
+    value: ${{ steps.build-standardsctl.outputs.binary }}
 
 runs:
   using: "composite"
   steps:
+    # setup-go restores and saves the Go caches unless told not to (its cache input defaults to
+    # true), and a save lands in the scope of the ref the run belongs to. A job an issue_comment
+    # starts belongs to the default branch, whose entries every branch restores, so that caller
+    # turns this off.
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v7
       with:
         go-version: ${{ inputs.go-version }}
+        cache: ${{ inputs.cache }}
         check-latest: true
 
     # This step owns the question "which binary runs the command" and answers it once, as a step

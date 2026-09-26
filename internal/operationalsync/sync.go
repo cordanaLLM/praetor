@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/funding"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -52,6 +53,12 @@ type operation struct {
 	origin, upstream string
 	expected         map[string][]byte
 	ownerOnly        []string
+	// funding is the owner's funding document, nil when the owner commit carries none;
+	// surfaces holds the funding surfaces rendered from it for the reviewed source, and
+	// fundingChanged the surfaces whose rendering differs from the reviewed source's file.
+	funding        *funding.Config
+	surfaces       map[string][]byte
+	fundingChanged []string
 }
 
 var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -84,8 +91,8 @@ func runSync(ctx context.Context, g *gitRunner, stage string, opts Options) (*Re
 		return nil, err
 	}
 	report := &Report{Version: 1, Stage: stage, Status: "planned", Options: opts, Owner: op.origin, Source: op.upstream,
-		ChangedPaths: append([]string(nil), ownerPaths...), OwnerOnlyPaths: append([]string{}, op.ownerOnly...),
-		Scope: "Identity, reviewed ancestry, exact engine tree, owner-only configuration overlay and owner-only operator paths; no tests, publication or bot activation"}
+		ChangedPaths: append(append([]string(nil), ownerPaths...), op.fundingChanged...), OwnerOnlyPaths: append([]string{}, op.ownerOnly...),
+		Scope: "Identity, reviewed ancestry, exact engine tree, owner-only configuration overlay, funding surfaces rendered from the owner's funding document and owner-only operator paths; no tests, publication or bot activation"}
 	if stage == "plan" {
 		return report, nil
 	}
@@ -227,8 +234,7 @@ func (op *operation) validate(ctx context.Context) error {
 	if nextID != source {
 		return errors.New("reviewed upstream repository identity changed")
 	}
-	op.expected, err = overlay(next, op.owner)
-	return err
+	return op.renderOverlay(ctx, next)
 }
 
 // inputDirs names the checkouts a stage reads: init has no source checkout.
@@ -280,6 +286,9 @@ func (op *operation) validateExisting(ctx context.Context, base map[string][]byt
 		return identity{}, err
 	}
 	if err := op.checkOverlay(ctx, base, current); err != nil {
+		return identity{}, err
+	}
+	if err := op.checkFundingOverlay(ctx); err != nil {
 		return identity{}, err
 	}
 	op.ownerOnly, err = op.checkPaths(ctx, o.OwnerPath, o.BaseSHA, o.OwnerSHA)
@@ -343,7 +352,7 @@ func (op *operation) checkPaths(ctx context.Context, dir, base, current string) 
 	ownerOnly := make([]string, 0)
 	for _, path := range strings.Split(string(out), "\x00") {
 		switch {
-		case path == "" || allowedPath(path):
+		case path == "" || overlayPath(path):
 		case ownerOnlyPath(path):
 			ownerOnly = append(ownerOnly, path)
 		default:

@@ -199,3 +199,38 @@ func TestWorkflowContextsKeepsExplicitlyBindingJobs(t *testing.T) {
 		t.Fatalf("got %v, want the binding job", contexts)
 	}
 }
+
+// A step's env is a mapping or one expression that evaluates to one (GitHub's workflow schema
+// gives step env a context), and neither the context inventory nor the Go cache audit reads it,
+// so every shape must parse. Positive: a mapping. Boundary: a whole-block fromJSON expression,
+// which a typed map rejects. Negative: a document that is not YAML still fails to parse.
+func TestWorkflowContextsAcceptEveryStepEnvShape(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     string
+		wantErr bool
+	}{
+		{"positive: a mapping", "{GOFLAGS: -mod=mod}", false},
+		{"boundary: one expression for the whole block", "${{ fromJSON(vars.TEST_ENV) }}", false},
+		{"negative: not YAML", "[unterminated", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			workflow := []byte("on: pull_request\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n" +
+				"      - run: make test\n        env: " + tc.env + "\n")
+			contexts, err := workflowPullRequestContexts(workflow)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("contexts = %v, want a parse error", contexts)
+				}
+				return
+			}
+			if err != nil || len(contexts) != 1 || contexts[0] != "test" {
+				t.Fatalf("contexts = %v, err = %v, want [test]", contexts, err)
+			}
+			if _, err := auditWorkflowGoCaches("test.yml", workflow, map[string]string{}); err != nil {
+				t.Fatalf("go cache audit: %v", err)
+			}
+		})
+	}
+}
