@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -176,97 +177,168 @@ func newHermeticGateRepo(t *testing.T) string {
 	return dir
 }
 
-// TestGateRun_Positive_InterruptCleansUpWorktreeAndBranch asserts that when gate run is
-// interrupted by SIGINT or SIGTERM while running race tests in an isolated worktree, the
-// cancellation propagates and removeWorktree cleans up both the worktree directory and git
-// branch without being blocked by TerminateCommandsOnSignal (BUG-791).
-func TestGateRun_Positive_InterruptCleansUpWorktreeAndBranch(t *testing.T) {
-	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
+// gateRunHelper is a praetorctl `gate run` subprocess held inside its race stage.
+type gateRunHelper struct {
+	cmd   *exec.Cmd
+	repo  string
+	ready string // holds the pid of the stub `go test` once the race stage runs it
+	out   strings.Builder
+	done  chan struct{}
+	err   error // how cmd ended; read only after done is closed
+}
+
+// startGateRunHelper starts `gate run` against a hermetic repository with stubbed tools, as the
+// leader of its own process group the way a shell starts a foreground job, and returns once the
+// race stage's stub `go test` runs in the isolated worktree. ignoreHangup starts it with SIGHUP
+// ignored through an empty shell trap, the disposition nohup hands the program it execs.
+func startGateRunHelper(t *testing.T, ignoreHangup bool) *gateRunHelper {
+	t.Helper()
+	stubs := t.TempDir()
+	for name, script := range map[string]string{
+		"go": stubGo, "govulncheck": stubScanner, "gosec": stubScanner, "cc": stubScanner, "gcc": stubScanner,
+	} {
+		if err := os.WriteFile(filepath.Join(stubs, name), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &gateRunHelper{repo: newHermeticGateRepo(t), ready: filepath.Join(t.TempDir(), "ready"), done: make(chan struct{})}
+	h.cmd = exec.Command(binary, signalProcessRun)
+	if ignoreHangup {
+		h.cmd = exec.Command("sh", "-c", `trap '' HUP; exec "$0" "$@"`, binary, signalProcessRun)
+	}
+	h.cmd.Env = append(os.Environ(),
+		"PATH="+stubs+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"PRAETOR_SIGNAL_PROCESS_TEST=gate run --path="+h.repo,
+		"PRAETOR_TEST_READY="+h.ready, "PRAETOR_TEST_REPO="+h.repo, "GOCOVERDIR="+t.TempDir())
+	h.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	h.cmd.Stdout, h.cmd.Stderr = &h.out, &h.out
+	if err := h.cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		h.err = h.cmd.Wait()
+		close(h.done)
+	}()
+	t.Cleanup(func() { h.reap(t) })
+	waitForStubStart(t, h.ready)
+	return h
+}
+
+// reap kills the helper's group if it is still running, waits for it, and logs its output
+// when the test failed.
+func (h *gateRunHelper) reap(t *testing.T) {
+	select {
+	case <-h.done:
+	default:
+		if err := syscall.Kill(-h.cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			t.Errorf("kill helper group: %v", err)
+		}
+		<-h.done
+	}
+	if t.Failed() {
+		t.Logf("helper output:\n%s", h.out.String())
+	}
+}
+
+// signalGroup sends sig to the helper's whole group, as a terminal does to its foreground job.
+func (h *gateRunHelper) signalGroup(t *testing.T, sig syscall.Signal) {
+	t.Helper()
+	if err := syscall.Kill(-h.cmd.Process.Pid, sig); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// awaitExit waits, within a bound, for the helper to exit and asserts the shell's 128+sig status,
+// which tells an interrupted gate run from a rejected one (exit 1).
+func (h *gateRunHelper) awaitExit(t *testing.T, sig syscall.Signal) {
+	t.Helper()
+	select {
+	case <-h.done:
+	case <-time.After(2 * time.Minute):
+		t.Fatalf("praetorctl never exited after %v", sig)
+	}
+	var exit *exec.ExitError
+	if !errors.As(h.err, &exit) {
+		t.Fatalf("praetorctl must exit non-zero after %v: %v", sig, h.err)
+	}
+	if want := 128 + int(sig); exit.ExitCode() != want {
+		t.Fatalf("praetorctl exited %d after %v, want %d", exit.ExitCode(), sig, want)
+	}
+}
+
+// isolatedWorktrees lists the worktree directories and wt/* branches gate run left in the repository.
+func (h *gateRunHelper) isolatedWorktrees(t *testing.T) (dirs []os.DirEntry, branches string) {
+	t.Helper()
+	dirs, err := os.ReadDir(filepath.Join(h.repo, ".standards", "worktrees"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("git", "-C", h.repo, "branch", "--list", "wt/*").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git branch --list: %v\n%s", err, out)
+	}
+	return dirs, strings.TrimSpace(string(out))
+}
+
+// requireIsolatedWorktree fails unless the race stage's worktree and branch exist.
+func (h *gateRunHelper) requireIsolatedWorktree(t *testing.T, when string) {
+	t.Helper()
+	if dirs, branches := h.isolatedWorktrees(t); len(dirs) == 0 || branches == "" {
+		t.Fatalf("expected the isolated worktree and its wt/* branch %s: dirs %v, branches %q", when, dirs, branches)
+	}
+}
+
+// requireCleanedUp fails unless gate run removed its isolated worktree and branch.
+func (h *gateRunHelper) requireCleanedUp(t *testing.T, sig syscall.Signal) {
+	t.Helper()
+	if dirs, branches := h.isolatedWorktrees(t); len(dirs) != 0 || branches != "" {
+		t.Fatalf("gate run left its isolated worktree after %v: dirs %v, branches %q", sig, dirs, branches)
+	}
+}
+
+// A terminal's Ctrl-C, kill's default and a hangup (terminal closed, ssh dropped) each cancel a
+// running gate run, reach the race stage's command group, and still let it remove its isolated
+// worktree and branch: util.TerminateCommandsOnSignal's registry lock would block that cleanup,
+// and a SIGHUP left to its default action killed praetorctl before it (BUG-791).
+func TestGateRun_Positive_TerminatingSignalCleansUpWorktreeAndBranch(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP} {
 		t.Run(sig.String(), func(t *testing.T) {
-			stubs := t.TempDir()
-			repo := newHermeticGateRepo(t)
-			readyPath := filepath.Join(t.TempDir(), "ready")
-
-			writeStub := func(name, script string) {
-				if err := os.WriteFile(filepath.Join(stubs, name), []byte(script), 0o700); err != nil {
-					t.Fatal(err)
-				}
-			}
-			writeStub("go", stubGo)
-			writeStub("govulncheck", stubScanner)
-			writeStub("gosec", stubScanner)
-			writeStub("cc", stubScanner)
-			writeStub("gcc", stubScanner)
-
-			binary, err := os.Executable()
-			if err != nil {
-				t.Fatal(err)
-			}
-			helper := exec.Command(binary, signalProcessRun)
-			helper.Env = append(os.Environ(),
-				"PATH="+stubs+string(os.PathListSeparator)+os.Getenv("PATH"),
-				"PRAETOR_SIGNAL_PROCESS_TEST=gate run --path="+repo,
-				"PRAETOR_TEST_READY="+readyPath,
-				"PRAETOR_TEST_REPO="+repo,
-				"GOCOVERDIR="+t.TempDir(),
-			)
-			helper.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-			var helperOut strings.Builder
-			helper.Stdout = &helperOut
-			helper.Stderr = &helperOut
-			if err := helper.Start(); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if helper.ProcessState == nil {
-					if err := syscall.Kill(-helper.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-						t.Errorf("kill helper group: %v", err)
-					}
-					var exit *exec.ExitError
-					if err := helper.Wait(); err != nil && !errors.As(err, &exit) {
-						t.Errorf("reap helper: %v", err)
-					}
-				}
-				if t.Failed() {
-					t.Logf("helper output:\n%s", helperOut.String())
-				}
-			})
-
-			waitForStubStart(t, readyPath)
-
-			wtDir := filepath.Join(repo, ".standards", "worktrees")
-			entries, err := os.ReadDir(wtDir)
-			if err != nil || len(entries) == 0 {
-				t.Fatalf("expected worktree to exist in %s before interrupt: %v", wtDir, err)
-			}
-			branchOut, err := exec.Command("git", "-C", repo, "branch", "--list", "wt/*").CombinedOutput()
-			if err != nil {
-				t.Fatalf("git branch --list: %v", err)
-			}
-			if strings.TrimSpace(string(branchOut)) == "" {
-				t.Fatal("expected wt/* branch to exist before interrupt")
-			}
-
-			if err := syscall.Kill(-helper.Process.Pid, sig); err != nil {
-				t.Fatal(err)
-			}
-
-			var exit *exec.ExitError
-			if err := helper.Wait(); !errors.As(err, &exit) {
-				t.Fatalf("praetorctl must exit on interrupt: %v", err)
-			}
-
-			if remaining, err := os.ReadDir(wtDir); err == nil && len(remaining) != 0 {
-				t.Fatalf("worktree directory was not cleaned up after %v: found %v", sig, remaining)
-			}
-
-			afterBranches, err := exec.Command("git", "-C", repo, "branch", "--list", "wt/*").CombinedOutput()
-			if err != nil {
-				t.Fatalf("git branch --list: %v", err)
-			}
-			if trimmed := strings.TrimSpace(string(afterBranches)); trimmed != "" {
-				t.Fatalf("git branch was not deleted after %v: %q", sig, trimmed)
-			}
+			h := startGateRunHelper(t, false)
+			h.requireIsolatedWorktree(t, "before the signal")
+			h.signalGroup(t, sig)
+			h.awaitExit(t, sig)
+			h.requireCleanedUp(t, sig)
 		})
 	}
+}
+
+// A gate run started with SIGHUP ignored (nohup, a background job) keeps ignoring it: the run,
+// its race-stage command and its worktree survive the hangup, and a later Ctrl-C still cleans up.
+func TestGateRun_Negative_IgnoredHangupKeepsTheRunGoing(t *testing.T) {
+	h := startGateRunHelper(t, true)
+	h.signalGroup(t, syscall.SIGHUP)
+	select {
+	case <-h.done:
+		t.Fatalf("an ignored SIGHUP ended gate run: %v", h.err)
+	case <-time.After(1500 * time.Millisecond):
+	}
+	pid, err := os.ReadFile(h.ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub, err := strconv.Atoi(strings.TrimSpace(string(pid)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Kill(stub, 0); err != nil {
+		t.Fatalf("an ignored SIGHUP stopped the race stage's go test: %v", err)
+	}
+	h.requireIsolatedWorktree(t, "after an ignored SIGHUP")
+	h.signalGroup(t, syscall.SIGINT)
+	h.awaitExit(t, syscall.SIGINT)
+	h.requireCleanedUp(t, syscall.SIGINT)
 }

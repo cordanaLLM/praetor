@@ -2,7 +2,16 @@
 
 package util
 
-import "os/exec"
+import (
+	"os"
+	"os/exec"
+	"syscall"
+)
+
+// terminatingSignals are the signals that end a console program by default: Ctrl-C or
+// Ctrl-Break, which Go delivers as os.Interrupt, and a console close, logoff or shutdown,
+// which it delivers as SIGTERM.
+var terminatingSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
 // Other systems retain exec.CommandContext's direct-child cancellation and WaitDelay. Windows
 // has no SIGTERM to ask a console program to stop, so cancellation terminates the direct child
@@ -15,3 +24,7 @@ func commandBytesCleanup(cmd *exec.Cmd) (start func() error, cleanup func() erro
 // TerminateCommandsOnSignal is a no-op here and never calls the exit it is given: commands are
 // not moved to a group of their own, so a console interrupt already reaches them without help.
 func TerminateCommandsOnSignal(func(code int)) {}
+
+// forwardToCommands forwards nothing here: the console's own signal already reaches every
+// command, which stays in the console's group, and the cancellation that follows ends them.
+func forwardToCommands(os.Signal) error { return nil }

@@ -5,13 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adr"
 )
-
-// adrTimeout bounds decision record verification (HISS-02, BUG-060).
-const adrTimeout = 60 * time.Second
 
 // runADR verifies that the repository does not contradict the decisions it records.
 //
@@ -27,9 +23,8 @@ func runADR(args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	ctx, cancel := commandContext(adrTimeout)
-	defer cancel()
-	report, err := adr.Verify(ctx, *repoPath)
+	// adr.Verify bounds itself; a second bound here would silently cap a raised inner one.
+	report, err := adr.Verify(rootContext(), *repoPath)
 	if err != nil {
 		return err
 	}

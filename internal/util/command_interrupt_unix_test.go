@@ -62,22 +62,49 @@ func TestCommandInterruptHelper(t *testing.T) {
 	if os.Getenv("PRAETOR_COMMAND_PARENT_DEATH") == "" {
 		runningCommandGroups.parentDeath = 0
 	}
+	dir := os.Getenv("PRAETOR_COMMAND_INTERRUPT_DIR")
+	script := os.Getenv("PRAETOR_COMMAND_INTERRUPT_SCRIPT")
 	switch mode {
 	case "handled":
 		TerminateCommandsOnSignal(os.Exit)
 	case "ignored":
 		signal.Ignore(syscall.SIGINT)
 		TerminateCommandsOnSignal(os.Exit)
+	case "cancel":
+		os.Exit(cancelledCommandStatus(dir, script))
+	case "cancel-ignored":
+		signal.Ignore(syscall.SIGHUP)
+		os.Exit(cancelledCommandStatus(dir, script))
 	case "unhandled":
 	default:
 		os.Exit(3)
 	}
-	dir := os.Getenv("PRAETOR_COMMAND_INTERRUPT_DIR")
-	script := os.Getenv("PRAETOR_COMMAND_INTERRUPT_SCRIPT")
 	if _, err := RunCommand(context.Background(), dir, "sh", "-c", script); err != nil {
 		os.Exit(9)
 	}
 	os.Exit(0)
+}
+
+// cancelledCommandStatus runs script under CancelCommandsOnSignal, then, as gate run's deferred
+// worktree removal does, one more command under context.WithoutCancel, which leaves
+// after-cancel in dir as evidence that a cancelled run can still start its cleanup. It returns
+// the shell's status for the signal that cancelled the run, 8 if the cleanup command failed, 9
+// if script failed without a signal, and 0 otherwise.
+func cancelledCommandStatus(dir, script string) int {
+	ctx, stop := CancelCommandsOnSignal(context.Background())
+	defer stop()
+	_, runErr := RunCommand(ctx, dir, "sh", "-c", script)
+	if _, err := RunCommand(context.WithoutCancel(ctx), dir, "sh", "-c", "touch after-cancel"); err != nil {
+		return 8
+	}
+	var interrupted *SignalError
+	if errors.As(context.Cause(ctx), &interrupted) {
+		return interrupted.ExitCode()
+	}
+	if runErr != nil {
+		return 9
+	}
+	return 0
 }
 
 // startInterruptHelper starts the helper in mode, running script, as the leader of its own
@@ -488,4 +515,108 @@ func TestCommandReturned_3D(t *testing.T) {
 			t.Fatalf("draw %d reported a returned command as running", i)
 		}
 	}
+}
+
+// hangupChildScript holds lock like cleanupChildScript but cleans up only on SIGHUP and ignores
+// SIGTERM, so cleaned proves the hangup itself was forwarded: the SIGTERM a cancelled command
+// gets next cannot produce it, and without the hangup the command would be killed after its
+// grace with the lock left behind.
+const hangupChildScript = "trap 'rm -f lock; touch cleaned; exit 129' HUP; trap '' TERM; : > lock; " +
+	readyStep + "; sleep 30 >/dev/null 2>&1 & wait $!"
+
+// A hangup reaches the running command as the hangup it would have received in the parent's
+// group, cancels the parent's work instead of ending it, and leaves later commands free to
+// start, so the deferred cleanup still runs; the parent then exits with the shell's 129.
+func TestCancelCommandsOnSignal_Positive_HangupForwardedAndCleanupStillRuns(t *testing.T) {
+	t.Parallel()
+	helper, dir, _ := startInterruptHelper(t, "cancel", hangupChildScript)
+	if err := syscall.Kill(-helper.Process.Pid, syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	if status := helperStatus(t, helper); !status.Exited() || status.ExitStatus() != 129 {
+		t.Fatalf("the cancelled helper did not exit with the hangup status: %v", status)
+	}
+	assertCleanedUp(t, dir)
+	if _, err := os.Stat(filepath.Join(dir, "after-cancel")); err != nil {
+		t.Fatalf("the cleanup command after the cancellation never started: %v", err)
+	}
+}
+
+// A process started with SIGHUP ignored (nohup) keeps ignoring it: the hangup neither cancels
+// the work nor reaches the command, which runs to completion.
+func TestCancelCommandsOnSignal_Negative_IgnoredHangupStaysIgnored(t *testing.T) {
+	t.Parallel()
+	helper, dir, _ := startInterruptHelper(t, "cancel-ignored", interruptChildScript)
+	if err := syscall.Kill(-helper.Process.Pid, syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	if status := helperStatus(t, helper); !status.Exited() || status.ExitStatus() != 0 {
+		t.Fatalf("an ignored SIGHUP cancelled the helper: %v", status)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "marker")); err != nil {
+		t.Fatalf("the command did not run to completion: %v", err)
+	}
+}
+
+// Boundary: the first signal restores the default action, so a second one ends the process at
+// once instead of waiting out the grace of a command that ignores the first.
+func TestCancelCommandsOnSignal_Boundary_SecondSignalEndsTheProcess(t *testing.T) {
+	t.Parallel()
+	// The pause stays short: without a parent-death signal the command outlives the helper.
+	script := "trap '' INT TERM HUP; " + readyStep + "; sleep 3"
+	helper, _, _ := startInterruptHelper(t, "cancel", script)
+	if err := syscall.Kill(-helper.Process.Pid, syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond) // the first signal is handled well within this
+	if took := signalHelper(t, helper, syscall.SIGINT, true); took >= CommandWaitDelay {
+		t.Fatalf("the second interrupt took %v, the whole %v grace", took, CommandWaitDelay)
+	}
+}
+
+// forward signals every recorded group but, unlike terminate, refuses no later start: the
+// command that received the signal cleans up, and a new command still starts afterwards.
+func TestCommandGroupRegistry_Positive_ForwardLeavesLaterStartsOpen(t *testing.T) {
+	r := newCommandGroupRegistry()
+	dir := t.TempDir()
+	_, ended, err := startTracked(t, r, dir, hangupChildScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForReady(t, filepath.Join(dir, "ready"))
+	if err := forwardSignal(r, syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	if status := endedStatus(t, ended); !status.Exited() || status.ExitStatus() != 129 {
+		t.Fatalf("the command did not end through its hangup handler: %v", status)
+	}
+	assertCleanedUp(t, dir)
+	_, later, err := startTracked(t, r, t.TempDir(), "exit 0")
+	if err != nil {
+		t.Fatalf("a command started after forward was refused: %v", err)
+	}
+	endedStatus(t, later)
+}
+
+// Boundary: a signal without a number is not forwarded; the running command keeps running.
+func TestForwardSignal_Boundary_UnnumberedSignalIsNotForwarded(t *testing.T) {
+	r := newCommandGroupRegistry()
+	dir := t.TempDir()
+	cmd, ended, err := startTracked(t, r, dir, hangupChildScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForReady(t, filepath.Join(dir, "ready"))
+	if err := forwardSignal(r, foreignSignal{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case status := <-ended:
+		t.Fatalf("an unnumbered signal ended the command: %v", status)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err := signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	endedStatus(t, ended)
 }

@@ -43,9 +43,8 @@ type cavemanInput struct {
 // runCaveman lints agent-facing text (check), proves a rewrite lost nothing (floor) or
 // measures its token cost (estimate).
 func runCaveman(args []string) error {
-	ctx, cancel := commandContext(contextopt.MaxDuration)
-	defer cancel()
-	return cavemanCommand(ctx, args, os.Stdin, os.Stdout)
+	// cavemanCommand bounds itself by contextopt.MaxDuration.
+	return cavemanCommand(rootContext(), args, os.Stdin, os.Stdout)
 }
 
 func cavemanCommand(ctx context.Context, args []string, stdin io.Reader, out io.Writer) error {

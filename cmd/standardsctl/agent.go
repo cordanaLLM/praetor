@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -108,15 +109,20 @@ func runAuditorAgent(ctx context.Context) error {
 	return nil
 }
 
+// runGatekeeperAgent runs the full gate the way `gate run` does and fails the same way: a
+// REJECTED pipeline is an error, so the helper exits 1 instead of reporting the rejection
+// under exit 0. The stage report prints first, so the failing stage and its reason stay
+// visible.
 func runGatekeeperAgent(ctx context.Context) error {
 	rep, err := gatedPipeline(ctx, ".", false)
 	if err != nil {
 		return fmt.Errorf("gatekeeper execution error: %w", err)
 	}
-	if rep.Status == gating.StatusRejected {
-		return fmt.Errorf("gatekeeper rejection: repository rejected by gating pipeline")
-	}
+	printGatingReport(rep)
 	fmt.Printf("[praetor-gatekeeper] Gated pipeline completed: %s\n", rep.Status)
+	if rep.Status == gating.StatusRejected {
+		return errors.New("gatekeeper rejection: repository rejected by gating pipeline")
+	}
 	return nil
 }
 
