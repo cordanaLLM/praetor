@@ -1,0 +1,4 @@
+type: fixed
+title: Make state task numbering and selectors exact and fence-aware, refuse an OPEN.md with an unterminated code fence instead of silently dropping every row after it, seed a ledger without fabricated rows into a directory another command created, report what state init --if-absent actually did, publish each seeded ledger file atomically, and make standalone state init, and every command that writes into the ledger (state sync, state task add, state bug add and resolve, state question add, flavor apply), add the private-artifact block to .gitignore when Git does not already ignore .workingdir, refusing the command before it writes when that block cannot be merged
+issue: "#286"
+breaking: true

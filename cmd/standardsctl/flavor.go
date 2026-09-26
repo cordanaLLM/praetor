@@ -161,7 +161,13 @@ func runFlavorApply(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	report, err := flavor.ApplyFlavor(ctx, dir, *targetFlv, *force)
+	// ApplyFlavor seeds the private ledger, so Git must be made to ignore what it wrote.
+	return withLedgerIgnore(ctx, dir, func() error { return applyFlavor(ctx, dir, *targetFlv, *force) })
+}
+
+// applyFlavor scaffolds one flavor and prints what it created, skipped and failed.
+func applyFlavor(ctx context.Context, dir, targetFlv string, force bool) error {
+	report, err := flavor.ApplyFlavor(ctx, dir, targetFlv, force)
 	if err != nil {
 		return fmt.Errorf("flavor apply failed: %w", err)
 	}

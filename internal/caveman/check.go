@@ -249,8 +249,9 @@ func checkOpenRegions(found *findings, s scanner) {
 	if s.off {
 		found.add(s.offOpen, RuleUnclosedOff, OffMarker+" without "+OnMarker)
 	}
-	if s.fence != "" {
-		found.add(s.fenceOpen, RuleUnclosedFence, s.fence+" fence without a closing "+s.fence)
+	if s.fence.Open() {
+		marker := s.fence.Marker()
+		found.add(s.fenceOpen, RuleUnclosedFence, marker+" fence without a closing "+marker)
 	}
 }
 

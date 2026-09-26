@@ -32,7 +32,7 @@ type ledgerFiles struct {
 
 // Reads reuse the same bounded, no-symlink snapshot contract as ingestion.
 func readBugFiles(ctx context.Context, rootPath string) (files ledgerFiles, err error) {
-	root, absent, err := openBugReadRoot(ctx, rootPath)
+	root, absent, err := openWorkingDirReadRoot(ctx, rootPath)
 	if err != nil {
 		return files, fmt.Errorf("open bug ledger directory: %w", err)
 	}
@@ -71,7 +71,15 @@ func parseBugFiles(files ledgerFiles) (*bugDocument, error) {
 	return parseBugDocument(string(files.ledger), index)
 }
 
-func openBugReadRoot(ctx context.Context, rootPath string) (child *os.Root, absent bool, err error) {
+// errWorkingDirNotDirectory reports a path under the working directory's name that is a
+// symlink or a special file, which no state command reads or writes through.
+var errWorkingDirNotDirectory = errors.New("working directory must not be a symlink or special file")
+
+// openWorkingDirReadRoot opens rootPath's private working directory for reading without
+// following a symlink, and checks that the directory opened is the one inspected. absent
+// reports that no working directory exists; a path under its name that is not a directory
+// is errWorkingDirNotDirectory.
+func openWorkingDirReadRoot(ctx context.Context, rootPath string) (child *os.Root, absent bool, err error) {
 	repo, err := contextopt.OpenDirectory(ctx, rootPath)
 	if err != nil {
 		return nil, false, err
@@ -85,7 +93,7 @@ func openBugReadRoot(ctx context.Context, rootPath string) (child *os.Root, abse
 		return nil, false, err
 	}
 	if !before.IsDir() {
-		return nil, false, fmt.Errorf("working directory must not be a symlink or special file")
+		return nil, false, errWorkingDirNotDirectory
 	}
 	child, err = repo.OpenRoot(WorkingDirName)
 	if err != nil {

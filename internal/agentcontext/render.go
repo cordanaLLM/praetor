@@ -3,6 +3,8 @@ package agentcontext
 import (
 	"fmt"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const MaxLineBudget = 300
@@ -89,12 +91,14 @@ func ownVendorLines(content string) ([]string, []string, error) {
 		return nil, nil, fmt.Errorf("canonical AGENTS.md has %d lines; the vendor line budget admits at most %d", len(lines), maxCanonicalLines)
 	}
 	owners := make([]string, len(lines))
-	owner, fenced := "", false
+	owner := ""
+	// util.MarkdownFence is the repository's one fence tracker (HISS-19). A toggle here
+	// could not tell a ``` line inside a ```` block from a real close, and reopened the
+	// scan in the middle of an example.
+	var fence util.MarkdownFence
 	for i := range lines {
 		trimmed := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			fenced = !fenced
-		} else if !fenced && isTopHeading(trimmed) {
+		if !fence.Inside(trimmed) && isTopHeading(trimmed) {
 			owner = vendorFor(trimmed)
 		}
 		owners[i] = owner

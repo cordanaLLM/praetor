@@ -23,7 +23,9 @@ type ReplaceOptions struct {
 // Cooperative writers serialize on that directory; replacement checks the prior
 // snapshot again before rename. External writers can still race the final check.
 // Creation uses an exclusive hard link and never replaces an existing name.
-// A failed staged write is retained under its reported private .pending name.
+// Any failure once the staging entry exists retains the staged bytes under the
+// private .pending name the error reports, so the partial write can be found and
+// recovered; only a decided publish drops them.
 func ReplaceSnapshot(ctx context.Context, path string, data []byte, options ReplaceOptions) (err error) {
 	if err := validateReplacement(ctx, data, options); err != nil {
 		return err
@@ -55,14 +57,57 @@ func ReplaceSnapshot(ctx context.Context, path string, data []byte, options Repl
 	stage := ".praetor-" + rand.Text() + ".pending"
 	file, err := stageSnapshot(ctx, root, stage, data)
 	if err != nil {
-		return fmt.Errorf("stage snapshot (inspect %s): %w", filepath.Join(filepath.Dir(abs), stage), err)
+		return fmt.Errorf("stage snapshot (inspect %s): %w", stagedPath(root, stage), err)
 	}
 	defer func() { err = errors.Join(err, file.Close()) }()
 	if err := publishSnapshot(ctx, root, name, stage, file, mode, options); err != nil {
 		err = errors.Join(err, file.Chmod(0o600))
-		return fmt.Errorf("publish snapshot (inspect %s): %w", filepath.Join(filepath.Dir(abs), stage), err)
+		return fmt.Errorf("publish snapshot (inspect %s): %w", stagedPath(root, stage), err)
 	}
 	return SyncDirectory(ctx, root)
+}
+
+// stagedPath names the staging entry the way the operator has to look for it. Every
+// publisher reports a retained partial write through this one form (HISS-19); an error
+// that names the target ledger instead leaves an orphan nothing can identify, because the
+// staging name is random and the audit only knows the five ledger names.
+func stagedPath(root *os.Root, stage string) string {
+	return filepath.Join(root.Name(), stage)
+}
+
+// CreateRootSnapshot writes bounded UTF-8 text under name inside an already pinned
+// directory, and only when that name is still free. The content is staged under a private
+// random name, written and synced there, and published with an exclusive hard link, so no
+// reader and no concurrent creator ever observes name holding a half-written file: it is
+// either absent or complete. It reports whether this call published it; losing the race to
+// another creator is not an error, because the file that won is the file this call would
+// have written. An existing name is left byte-for-byte alone.
+func CreateRootSnapshot(ctx context.Context, root *os.Root, name string, data []byte, mode os.FileMode) (created bool, err error) {
+	if err := validateReplacement(ctx, data, ReplaceOptions{Mode: mode}); err != nil {
+		return false, err
+	}
+	if root == nil || !filepath.IsLocal(name) || filepath.Base(name) != name || name == "." {
+		return false, errors.New("snapshot creation requires a pinned directory and a flat filename")
+	}
+	if err := validatePath(name); err != nil {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, MaxDuration)
+	defer cancel()
+	stage := ".praetor-" + rand.Text() + ".pending"
+	file, err := stageSnapshot(ctx, root, stage, data)
+	if err != nil {
+		return false, fmt.Errorf("stage snapshot %s (inspect %s): %w", name, stagedPath(root, stage), err)
+	}
+	defer func() { err = errors.Join(err, file.Close()) }()
+	if err := sealStage(ctx, file, mode); err != nil {
+		return false, fmt.Errorf("publish snapshot %s (inspect %s): %w", name, stagedPath(root, stage), err)
+	}
+	created, err = linkStagedSnapshot(root, name, stage)
+	if err != nil {
+		return false, fmt.Errorf("publish snapshot %s (inspect %s): %w", name, stagedPath(root, stage), err)
+	}
+	return created, SyncDirectory(ctx, root)
 }
 
 // LockDirectory serializes cooperating operations on an already pinned
@@ -136,19 +181,43 @@ func publishSnapshot(ctx context.Context, root *os.Root, name, stage string, fil
 	if _, err := verifyReplacement(ctx, root, name, options); err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := errors.Join(file.Chmod(mode), file.Sync()); err != nil {
+	if err := sealStage(ctx, file, mode); err != nil {
 		return err
 	}
 	if options.Exists {
 		return root.Rename(stage, name)
 	}
-	if err := root.Link(stage, name); err != nil {
+	created, err := linkStagedSnapshot(root, name, stage)
+	if err != nil {
 		return err
 	}
-	return root.Remove(stage)
+	if !created {
+		return fmt.Errorf("snapshot already exists: %s", name)
+	}
+	return nil
+}
+
+// sealStage makes the staged bytes and their published mode durable while the file still
+// has no name a reader can reach, so every publish links a file that is already complete.
+func sealStage(ctx context.Context, file *os.File, mode os.FileMode) error {
+	return errors.Join(ctx.Err(), file.Chmod(mode), file.Sync())
+}
+
+// linkStagedSnapshot publishes the staged entry under name with an exclusive hard link.
+// It is the one create path ReplaceSnapshot and CreateRootSnapshot both take (HISS-19);
+// two copies of it drifted apart on exactly the two questions below.
+//
+// It reports whether this call published name. os.ErrExist is not a failure: another
+// creator won the race, and the file that won is the file this call would have written.
+// A decided outcome, published or lost, drops the staging entry; a link that failed for
+// any other reason leaves it, because the staged bytes are then the only complete copy
+// and the caller names them in its error.
+func linkStagedSnapshot(root *os.Root, name, stage string) (bool, error) {
+	linkErr := root.Link(stage, name)
+	if linkErr != nil && !errors.Is(linkErr, os.ErrExist) {
+		return false, fmt.Errorf("link snapshot %s: %w", name, linkErr)
+	}
+	return linkErr == nil, root.Remove(stage)
 }
 
 // SyncDirectory persists directory entry changes through an already pinned root.

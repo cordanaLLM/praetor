@@ -1,7 +1,6 @@
 package state
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // maxScannedLines is the scalar upper bound (HISS-02) on the number of lines a single
@@ -43,36 +43,26 @@ func ListTasksContext(ctx context.Context, rootPath string) ([]TaskItem, error) 
 		return nil, fmt.Errorf("read OPEN.md: %w", err)
 	}
 
-	var items []TaskItem
-	scanner := bufio.NewScanner(strings.NewReader(string(content)))
-	idx := 1
-
-	for lines := 0; lines < maxScannedLines && scanner.Scan(); lines++ {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "- [ ] ") {
-			desc := strings.TrimPrefix(line, "- [ ] ")
-			items = append(items, TaskItem{
-				Index:       idx,
-				Description: desc,
-				Completed:   false,
-			})
-			idx++
-		} else if strings.HasPrefix(line, "- [x] ") || strings.HasPrefix(line, "- [X] ") {
-			desc := strings.TrimPrefix(line, "- [x] ")
-			desc = strings.TrimPrefix(desc, "- [X] ")
-			items = append(items, TaskItem{
-				Index:       idx,
-				Description: desc,
-				Completed:   true,
-			})
-			idx++
-		}
+	parsed, err := parseTaskLines(strings.Split(string(content), "\n"))
+	if err != nil {
+		return nil, err
 	}
-
-	return items, scanner.Err()
+	items := make([]TaskItem, 0, len(parsed))
+	for _, task := range parsed {
+		items = append(items, TaskItem{
+			Index:       task.index,
+			Description: task.description,
+			Completed:   task.completed,
+		})
+	}
+	return items, nil
 }
 
-// AddTask appends a new pending task item to OPEN.md.
+// AddTask appends a new pending task item to OPEN.md. The file is parsed through
+// parseTaskLines first, exactly as listing and completion parse it, so a ledger
+// the other commands refuse is not appended to: a row written under an
+// unterminated code fence lands inside the fence, reads as an example to every
+// later scan, and reports success while doing it.
 func AddTask(rootPath, description string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -91,6 +81,10 @@ func AddTask(rootPath, description string) error {
 		return fmt.Errorf("read OPEN.md: %w", err)
 	}
 
+	if _, err := parseTaskLines(strings.Split(string(content), "\n")); err != nil {
+		return err
+	}
+
 	newEntry := fmt.Sprintf("- [ ] %s\n", trimmed)
 	updated := string(content)
 	if !strings.HasSuffix(updated, "\n") {
@@ -101,7 +95,10 @@ func AddTask(rootPath, description string) error {
 	return contextopt.ReplaceSnapshot(ctx, openFile, []byte(updated), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: 0o600})
 }
 
-// CompleteTask marks a task as done in OPEN.md by 1-based index or substring match.
+// CompleteTask marks exactly one pending task done in OPEN.md. The selector is
+// either a task number as ListTasks reports it, or a substring that matches a
+// single pending description; anything ambiguous or unmatched is an error and
+// leaves the file untouched.
 func CompleteTask(rootPath, selector string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -117,34 +114,16 @@ func CompleteTask(rootPath, selector string) error {
 	}
 
 	lines := strings.Split(string(content), "\n")
-	targetIndex, errParse := strconv.Atoi(target)
-	currentTaskIdx := 0
-	found := false
+	parsed, err := parseTaskLines(lines)
+	if err != nil {
+		return err
+	}
+	task, err := selectTask(parsed, target)
+	if err != nil {
+		return err
+	}
 	today := time.Now().UTC().Format("2006-01-02")
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "- [ ] ") {
-			currentTaskIdx++
-			matches := false
-			if errParse == nil && currentTaskIdx == targetIndex {
-				matches = true
-			} else if strings.Contains(strings.ToLower(trimmed), strings.ToLower(target)) {
-				matches = true
-			}
-
-			if matches {
-				desc := strings.TrimPrefix(trimmed, "- [ ] ")
-				lines[i] = fmt.Sprintf("- [x] %s (completed: %s)", desc, today)
-				found = true
-				break
-			}
-		}
-	}
-
-	if !found {
-		return fmt.Errorf("no pending task matched selector '%s'", selector)
-	}
+	lines[task.line] = fmt.Sprintf("- [x] %s (completed: %s)", task.description, today)
 
 	return contextopt.ReplaceSnapshot(ctx, openFile, []byte(strings.Join(lines, "\n")), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: 0o600})
 }
@@ -162,7 +141,10 @@ func ArchiveCompletedTasks(rootPath, commitSHA string) (int, error) {
 		return 0, fmt.Errorf("read OPEN.md: %w", err)
 	}
 
-	remainingLines, completedTasks := splitCompletedTasks(string(content))
+	remainingLines, completedTasks, err := splitCompletedTasks(string(content))
+	if err != nil {
+		return 0, err
+	}
 
 	if len(completedTasks) == 0 {
 		return 0, nil
@@ -179,16 +161,29 @@ func ArchiveCompletedTasks(rootPath, commitSHA string) (int, error) {
 	return len(completedTasks), nil
 }
 
-func splitCompletedTasks(content string) (remaining, completed []string) {
-	for _, line := range strings.Split(content, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "- [x] ") || strings.HasPrefix(trimmed, "- [X] ") {
-			completed = append(completed, trimmed)
-		} else {
-			remaining = append(remaining, line)
+// splitCompletedTasks separates archivable rows from the rest of OPEN.md. It
+// resolves rows through the shared numbering authority, so a completed checkbox
+// inside a fenced code block stays where it is instead of being archived.
+func splitCompletedTasks(content string) (remaining, completed []string, err error) {
+	lines := strings.Split(content, "\n")
+	parsed, err := parseTaskLines(lines)
+	if err != nil {
+		return nil, nil, err
+	}
+	archive := make(map[int]bool, len(lines))
+	for _, task := range parsed {
+		if task.completed {
+			archive[task.line] = true
 		}
 	}
-	return remaining, completed
+	for i, line := range lines {
+		if archive[i] {
+			completed = append(completed, strings.TrimSpace(line))
+			continue
+		}
+		remaining = append(remaining, line)
+	}
+	return remaining, completed, nil
 }
 
 func appendCompletedTasks(ctx context.Context, rootPath, commitSHA string, completedTasks []string) error {
@@ -218,4 +213,128 @@ func appendCompletedTasks(ctx context.Context, rootPath, commitSHA string, compl
 		return fmt.Errorf("write BACKLOG.md: %w", err)
 	}
 	return nil
+}
+
+// maxSelectorCandidates bounds how many ambiguous matches an error message
+// enumerates (HISS-02); further matches are reported as an ellipsis.
+const maxSelectorCandidates = 8
+
+// maxTaskLineBytes is the scalar upper bound (HISS-02) on a single OPEN.md
+// line. It is bufio.MaxScanTokenSize, the bound the task scanner enforced
+// before listing and completion were merged onto one parser: a line that fills
+// the whole scan buffer leaves no room for its terminator, so a line of this
+// size or larger is a corrupt ledger and is reported rather than truncated.
+const maxTaskLineBytes = 64 * 1024
+
+// taskLine is one checkbox row of OPEN.md, carrying the number every command
+// reports for it and the line it occupies in the file.
+type taskLine struct {
+	index       int
+	line        int
+	description string
+	completed   bool
+}
+
+// parseTaskLines is the single numbering authority for OPEN.md. Listing and
+// completion both resolve rows through it, so the number `state task list`
+// prints is the number `state task complete` acts on. Pending and completed
+// rows are numbered alike, and checkbox lines inside a fenced code block are
+// examples, never tasks.
+func parseTaskLines(lines []string) ([]taskLine, error) {
+	if len(lines) > maxScannedLines {
+		return nil, fmt.Errorf("OPEN.md exceeds the %d line scan bound", maxScannedLines)
+	}
+	tasks := make([]taskLine, 0, len(lines))
+	var fence util.MarkdownFence
+	opened := 0
+	for i := 0; i < len(lines); i++ {
+		if len(lines[i]) >= maxTaskLineBytes {
+			return nil, fmt.Errorf("OPEN.md line %d reaches the %d byte line bound", i+1, maxTaskLineBytes)
+		}
+		trimmed := strings.TrimSpace(lines[i])
+		if !fence.Open() {
+			opened = i + 1
+		}
+		if fence.Inside(trimmed) {
+			continue
+		}
+		description, completed, ok := taskCheckbox(trimmed)
+		if !ok {
+			continue
+		}
+		tasks = append(tasks, taskLine{index: len(tasks) + 1, line: i, description: description, completed: completed})
+	}
+	if fence.Open() {
+		return nil, fmt.Errorf("OPEN.md has an unterminated code fence opened at line %d; every row after it would be read as an example", opened)
+	}
+	return tasks, nil
+}
+
+// taskCheckbox splits a trimmed line into its checkbox state and description,
+// reporting whether the line is a checkbox row at all.
+func taskCheckbox(trimmed string) (description string, completed, ok bool) {
+	switch {
+	case strings.HasPrefix(trimmed, "- [ ] "):
+		return strings.TrimPrefix(trimmed, "- [ ] "), false, true
+	case strings.HasPrefix(trimmed, "- [x] "):
+		return strings.TrimPrefix(trimmed, "- [x] "), true, true
+	case strings.HasPrefix(trimmed, "- [X] "):
+		return strings.TrimPrefix(trimmed, "- [X] "), true, true
+	}
+	return "", false, false
+}
+
+// selectTask resolves a selector to exactly one pending task. A numeric
+// selector resolves only by task number and never falls back to matching a
+// digit inside a description; a text selector matching more than one pending
+// row is an error naming the candidates, as internal/milestone.selectMilestone
+// does for milestones.
+func selectTask(tasks []taskLine, target string) (taskLine, error) {
+	if number, err := strconv.Atoi(target); err == nil {
+		return taskByNumber(tasks, number)
+	}
+	matches := make([]taskLine, 0, 2)
+	needle := strings.ToLower(target)
+	for _, task := range tasks {
+		if !task.completed && strings.Contains(strings.ToLower(task.description), needle) {
+			matches = append(matches, task)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return taskLine{}, fmt.Errorf("no pending task matched selector '%s'", target)
+	case 1:
+		return matches[0], nil
+	default:
+		return taskLine{}, fmt.Errorf("selector '%s' matches %d pending tasks (%s); use the task number", target, len(matches), taskCandidates(matches))
+	}
+}
+
+// taskByNumber resolves a task number against the shared numbering. A number
+// naming an already completed row is refused rather than silently retargeted.
+func taskByNumber(tasks []taskLine, number int) (taskLine, error) {
+	for _, task := range tasks {
+		if task.index != number {
+			continue
+		}
+		if task.completed {
+			return taskLine{}, fmt.Errorf("task %d is already completed", number)
+		}
+		return task, nil
+	}
+	return taskLine{}, fmt.Errorf("no task numbered %d; %d tasks are listed", number, len(tasks))
+}
+
+// taskCandidates renders a bounded, numbered list of ambiguous matches so the
+// operator can rerun the command with an exact number.
+func taskCandidates(matches []taskLine) string {
+	labels := make([]string, 0, len(matches))
+	for i, task := range matches {
+		if i >= maxSelectorCandidates {
+			labels = append(labels, "...")
+			break
+		}
+		labels = append(labels, fmt.Sprintf("%d: %s", task.index, task.description))
+	}
+	return strings.Join(labels, "; ")
 }

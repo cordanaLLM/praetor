@@ -55,20 +55,35 @@ func initializeWorkingFiles(ctx context.Context, working *os.Root) error {
 	if !info.IsDir() {
 		return fmt.Errorf("evidence directory must not be a symlink or file")
 	}
-	files := [5]struct{ name, content string }{
-		{"STATE.md", defaultStateMD()}, {"OPEN.md", defaultOpenMD()},
-		{"BACKLOG.md", defaultBacklogMD()}, {"BUGS.md", defaultBugsMD()},
-		{"QUESTIONS.md", defaultQuestionsMD()},
-	}
-	for _, file := range files {
+	for _, file := range ledgerTemplates() {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := initializeLedgerFile(working, file.name, file.content); err != nil {
+		if err := initializeLedgerFile(ctx, working, file.name, file.content); err != nil {
 			return fmt.Errorf("initialize %s: %w", file.name, err)
 		}
 	}
 	return nil
+}
+
+// ledgerTemplates is the one definition of which files an initialized ledger
+// holds and what an empty one contains. Initialization, the audit and the
+// ledgerless check all read this list rather than restating it (HISS-19).
+func ledgerTemplates() [5]struct{ name, content string } {
+	return [5]struct{ name, content string }{
+		{"STATE.md", defaultStateMD()}, {"OPEN.md", defaultOpenMD()},
+		{"BACKLOG.md", defaultBacklogMD()}, {"BUGS.md", defaultBugsMD()},
+		{"QUESTIONS.md", defaultQuestionsMD()},
+	}
+}
+
+// ledgerFileNames is ledgerTemplates for callers that need only the names.
+func ledgerFileNames() [5]string {
+	var names [5]string
+	for i, file := range ledgerTemplates() {
+		names[i] = file.name
+	}
+	return names
 }
 
 func openWorkingDirectory(project *os.Root) (*os.Root, error) {
@@ -113,16 +128,24 @@ func regularLedgerFile(name string, info os.FileInfo, err error) (bool, error) {
 	return true, nil
 }
 
-func initializeLedgerFile(root *os.Root, name, content string) error {
+// initializeLedgerFile writes the default content for one ledger file, and only
+// when that file is absent. An existing regular file is left byte-for-byte
+// alone, and a concurrent initializer winning the publish is not an error: the
+// file it wrote is the file this call would have written.
+//
+// The write goes through contextopt.CreateRootSnapshot, which stages the content
+// privately and publishes it with an exclusive hard link. Seeding is no longer
+// arbitrated by a single Mkdir winner - every process that observes a ledgerless
+// directory writes the five files - so an exclusive create alone would let a
+// loser see the winner's empty, not-yet-written file, report success, and leave
+// the audit that must run next reading a zero-byte ledger. Staged publication
+// makes each name either absent or complete, never partial.
+func initializeLedgerFile(ctx context.Context, root *os.Root, name, content string) error {
 	info, err := root.Lstat(name)
 	exists, err := regularLedgerFile(name, info, err)
 	if err != nil || exists {
 		return err
 	}
-	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return err
-	}
-	_, writeErr := file.WriteString(content)
-	return errors.Join(writeErr, file.Sync(), file.Close())
+	_, err = contextopt.CreateRootSnapshot(ctx, root, name, []byte(content), 0600)
+	return err
 }

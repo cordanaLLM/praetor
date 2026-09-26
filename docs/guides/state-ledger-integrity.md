@@ -3,9 +3,89 @@
 The entire `.workingdir/` directory is private, Git-ignored workstation state.
 Keep cluster connection guides, backend notes and raw evidence there; publish
 only reviewed, sanitized documents under `docs/`. Run `make state-audit` in a fresh
-checkout to initialize an absent ledger and audit it. Existing incomplete or
-invalid ledgers still fail and require explicit repair; initialization never
-imports another workstation's private state.
+checkout to initialize an absent ledger and audit it. Initialization is keyed on
+the ledger files, not on the directory: `.workingdir` is routinely created first
+by another command (milestone, forge, docdistill, dedupe, hindsight), and such a
+directory is seeded with the five ledger files rather than left empty. A
+directory that already holds some of them is a *partial* ledger — a file was
+removed or corrupted — and is left exactly as it stands, so the audit and
+`state sync` still fail on it and it requires explicit repair. Initialization
+never imports another workstation's private state.
+
+`praetorctl state init --if-absent` reports which of five things it did, because
+three of them write nothing and an operator told a ledger was seeded stops
+looking:
+
+| Report | What happened |
+| :--- | :--- |
+| `Initialized private .workingdir/ in <dir>` | the directory was absent; this call made it and wrote the five ledger files |
+| `Seeded a ledger into the existing .workingdir/ in <dir>` | the directory existed and held no ledger file; this call wrote the five |
+| `Existing .workingdir/ in <dir> already holds ledger files and was left untouched` | a complete or partial ledger; nothing was written, and a partial one needs explicit repair |
+| `Existing .workingdir/ in <dir> is another Git repository's working tree and holds no ledger` | the directory holds its own `.git` and no ledger file; nothing was written, so that repository stays clean; run `state init` to seed it deliberately |
+| `.workingdir in <dir> is not a directory; nothing was written` | the path is a symlink or a regular file; remove it before initializing |
+
+The nested-repository refusal keeps a clone staged as a private gitlink
+unchanged until the commit hook's privacy check reports it
+(`test_private_gitlinks_block_commit_before_snapshot_export` in
+[`.config/lefthook/scripts/test_hooks.py`](https://github.com/cordanaLLM/praetor/blob/main/.config/lefthook/scripts/test_hooks.py));
+`TestBootstrapLeavesANestedRepositoryUntouched` in
+[`internal/state/bootstrap_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/bootstrap_test.go)
+pins the outcome.
+
+Every ledger file is published atomically: its content is staged under a private
+`.praetor-*.pending` name, synced there, and linked into place. Seeding is no
+longer arbitrated by one directory creator, so several processes may initialize
+the same ledgerless directory at once; staged publication means each name is
+either absent or holds its whole template, never a zero-byte file an audit would
+read as a corrupt ledger.
+
+Both forms of `praetorctl state init` then make Git ignore the directory, unless
+the path is not a directory at all. Every other command that writes into the
+ledger, and seeds it on first use, does the same: `state sync`, `state task add`,
+`state bug add`, `state bug resolve` (which seeds the ledger before it reports an
+unknown ID), `state question add` and `praetorctl flavor apply`
+([`cmd/standardsctl/state.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/state.go),
+`withLedgerIgnore`).
+
+- **Existing ledger:** the command reconciles the rule before it writes
+  anything. That covers a ledger an older binary created, one seeded before
+  `git init`, and one whose first ignore step failed. If `.gitignore` cannot be
+  merged, the command is refused and nothing is written, so running it again
+  never records the same change twice.
+- **Ledger created by this run:** the rule follows the run. If that ignore step
+  fails, the error says the change was recorded and must not be repeated; the
+  next ledger command reconciles before it writes.
+- **`adoption.decline` warning:** printed only by the run that seeded the
+  ledger, not by every later command.
+
+`state sync` takes this step before it records the working tree, so the snapshot
+it writes already includes the new `.gitignore` and the commit-msg hook's
+`state sync --verify` accepts it.
+
+Git is asked whether its own ignore rules exclude `.workingdir` itself: the
+repository's `.gitignore` files and `.git/info/exclude` count, while a global
+`core.excludesFile` does not, because it belongs to one host and not to the
+repository. A directory
+excluded as a whole keeps every file under it private, whatever negations
+follow; a rule such as `.workingdir/*` followed by `!.workingdir/STATE.md` does
+not. The command acts on the answer:
+
+| Git's answer | What the command does |
+| :--- | :--- |
+| the directory is in no Git work tree | nothing; no commit can publish it |
+| the directory is already excluded, in any spelling | nothing; `.gitignore` stays byte for byte |
+| not excluded, and `adoption.decline` names `git-ignore` | prints a warning; `.gitignore` belongs to the operator |
+| not excluded | appends the private-artifact block `praetorctl adopt` maintains, reports it, and asks Git again |
+
+The block is written by the same function adoption uses, `writeManagedGitIgnore`
+in [`internal/adopt/gitignore.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/gitignore.go),
+so a later `praetorctl adopt` recognizes it as its own. A `.gitignore` that
+cannot be merged, such as one with an unterminated managed block, fails the
+command. The behaviour is covered by
+[`internal/adopt/private_ignore_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/private_ignore_test.go),
+[`internal/state/ledger_present_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/ledger_present_test.go)
+and
+[`cmd/standardsctl/state_ignore_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/state_ignore_test.go).
 
 Bug mutations validate the entire `.workingdir/BUGS.md` before changing it. A
 malformed row, duplicate or noncanonical ID, invalid severity/status, unreadable
@@ -77,6 +157,43 @@ invalid UTF-8 or more than 16 KiB are errors, never skipped rows
 ([`internal/state/questions_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/questions_test.go)).
 `ListQuestionsContext` reads the table together with its sidecar;
 `ParseQuestionsMarkdownStrict` reads the table alone and returns no context or timestamps.
+
+## Task rows and selectors
+
+`OPEN.md` holds one Markdown checkbox per task. `praetorctl state task list`,
+`complete` and `archive` all resolve rows through `parseTaskLines` in
+`internal/state/tasks.go`, which is the single numbering authority: the number
+`list` prints for a row is the number `complete` acts on.
+
+| Rule | Behaviour |
+| :--- | :--- |
+| numbering | pending and completed rows are numbered together, from 1, in file order |
+| numeric selector | resolves only by that number; it never falls back to matching a digit inside a description, and a number naming an already completed row is refused |
+| text selector | must match exactly one pending description; more than one match is an error listing the candidates, as `selectMilestone` does for milestones |
+| code fences | a checkbox inside a ``` or `~~~` fence is an example, never a task: it is not listed, completed or archived |
+| unterminated fence | a fence opened and never closed is a ledger error naming the line it was opened on; `list`, `complete`, `archive`, `add` and `state sync` all refuse the file rather than silently dropping the rows after it, and `add` refuses rather than appending a row inside the open fence |
+
+A refused selector writes nothing, so `OPEN.md` stays byte-identical. The
+fence tracker is `util.MarkdownFence` in `internal/util/marked_block.go`, the one
+implementation every scanner that follows fences across a whole document drives
+(HISS-19): the task parser, the bug-ledger parser, the marked-block finder, the
+`BACKLOG.md` milestone section remover (`RemoveMarkdownSection`), the
+caveman line scanner (`internal/caveman/scan.go`) and the `AGENTS.md` vendor
+splitter (`internal/agentcontext/render.go`). Readers that extract a single
+labelled block, such as the PR receipt fence, match their own label and keep no
+fence state. A line closes a fence when it repeats the
+delimiter run that opened it and carries nothing further but that delimiter
+character, spaces and tabs; a shorter run never closes a longer one. A backtick
+line whose info string holds another backtick, such as `` ```make``` must pass ``,
+is an inline code span as CommonMark defines it and opens nothing; a `~~~` fence's
+info string may carry backticks. Lines are
+bounded at `maxTaskLineBytes`; a ledger line reaching that bound is reported
+rather than truncated.
+
+A freshly initialized ledger contains **no** task rows. `OPEN.md` and
+`BACKLOG.md` are seeded with headings only, so every count `state sync` reports
+is work somebody actually recorded. The behaviour is covered by
+`internal/state/task_select_test.go` and `internal/state/bootstrap_test.go`.
 
 ## STATE.md entries
 
