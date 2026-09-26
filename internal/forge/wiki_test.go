@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -414,5 +415,73 @@ func TestResolveWikiRepoName_Boundary_NoOwner(t *testing.T) {
 	got, err := resolveWikiRepoName(t.Context(), "/")
 	if err == nil {
 		t.Errorf("resolveWikiRepoName(/) = %q, want error", got)
+	}
+}
+
+// gateOutputVersionRef matches every gate output version a page names, enforced or stale.
+var gateOutputVersionRef = regexp.MustCompile(`praetor-gate-output/v\d+`)
+
+// admissionSection returns the matrix page's "Pull Request Admission" section with its line
+// wrapping collapsed to single spaces, or "" when the page has no such heading.
+func admissionSection(matrix string) string {
+	_, tail, ok := strings.Cut(matrix, "## Pull Request Admission\n")
+	if !ok {
+		return ""
+	}
+	section, _, _ := strings.Cut(tail, "\n---\n")
+	return strings.Join(strings.Fields(section), " ")
+}
+
+// TestHISSMatrixAdmission_Positive_StatesEnforcedGateOutputVersion pins the receipt rule on
+// the generated matrix: forge validate-pr refuses a receipt whose gate output does not open
+// with lockdown.GateOutputVersion, and so refuses every receipt minted before v2. The page
+// is generated, so a hand edit of docs/wiki/HISS-Matrix.md cannot carry this; before this
+// test the generator's copy silently lacked it.
+func TestHISSMatrixAdmission_Positive_StatesEnforcedGateOutputVersion(t *testing.T) {
+	pages := generatedPages(t, wikiRepoRoot(t, filepath.Join("cordanaLLM", "praetor"), canonicalAgentsMD(t)))
+	section := admissionSection(pages[hissMatrixPage+".md"].Content)
+	for _, want := range []string{
+		"that gate output must open with `" + lockdown.GateOutputVersion + "`",
+		"A receipt minted before v2 is refused, because its stage lines recorded skipped stages as passed.",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("matrix admission section lacks %q:\n%s", want, section)
+		}
+	}
+}
+
+// TestHISSMatrixAdmission_Negative_NamesNoStaleGateOutputVersion rejects a matrix that names
+// no gate output version or a version the verifier does not enforce, and checks that the
+// section helper finds nothing on a page without the admission heading.
+func TestHISSMatrixAdmission_Negative_NamesNoStaleGateOutputVersion(t *testing.T) {
+	pages := generatedPages(t, wikiRepoRoot(t, filepath.Join("cordanaLLM", "praetor"), canonicalAgentsMD(t)))
+	matrix := pages[hissMatrixPage+".md"].Content
+	refs := gateOutputVersionRef.FindAllString(matrix, -1)
+	if len(refs) == 0 {
+		t.Errorf("matrix names no gate output version; want %s", lockdown.GateOutputVersion)
+	}
+	for _, ref := range refs {
+		if ref != lockdown.GateOutputVersion {
+			t.Errorf("matrix names gate output version %s, verifier enforces %s", ref, lockdown.GateOutputVersion)
+		}
+	}
+	if got := admissionSection("# HISS Compliance Matrix\n\nno admission heading\n"); got != "" {
+		t.Errorf("admissionSection without the heading = %q, want empty", got)
+	}
+}
+
+// TestHISSMatrixAdmission_Boundary_SameTailForSmallestTable drives the single-row table under
+// a different repository name: the admission section does not depend on the catalog or the
+// repository, is identical to the canonical one, and names the version exactly once.
+func TestHISSMatrixAdmission_Boundary_SameTailForSmallestTable(t *testing.T) {
+	agents := "# Harness\n\n" + hisscatalog.GatedInvariantsHeading + "\n\n| Invariant | Rule | Enforcement | On fail |\n" +
+		"| :--- | :--- | :--- | :--- |\n| **HISS-16** context integrity | one source | pre-commit | blocker |\n"
+	small := admissionSection(generatedPages(t, wikiRepoRoot(t, "repo", agents))[hissMatrixPage+".md"].Content)
+	full := admissionSection(generatedPages(t, wikiRepoRoot(t, filepath.Join("cordanaLLM", "praetor"), canonicalAgentsMD(t)))[hissMatrixPage+".md"].Content)
+	if small == "" || small != full {
+		t.Errorf("admission section differs for the smallest table:\nsmall: %s\nfull:  %s", small, full)
+	}
+	if got := strings.Count(small, lockdown.GateOutputVersion); got != 1 {
+		t.Errorf("admission section names %s %d times, want 1", lockdown.GateOutputVersion, got)
 	}
 }

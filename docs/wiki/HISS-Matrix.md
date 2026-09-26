@@ -43,9 +43,10 @@ of the following in the PR description:
 3. A fenced ` ```receipt ` (or ` ~~~receipt `) block carrying the `.standards-receipt.json`
    envelope produced by `praetorctl gate run`. The block is parsed as JSON, its Ed25519
    signature is verified against `receipt.public_key` pinned in `.standards.yaml`, its
-   recorded output hash is checked against the gate output it carries, and its `commit_sha`
-   must equal the pull request head. Prose, a bare code block, or the words "Exit-0 Receipt"
-   satisfy nothing.
+   recorded output hash is checked against the gate output it carries, that gate output must
+   open with `praetor-gate-output/v2`, and its `commit_sha` must equal the pull request head.
+   Prose, a bare code block, or the words "Exit-0 Receipt" satisfy nothing. A receipt minted
+   before v2 is refused, because its stage lines recorded skipped stages as passed.
 
 A checked box is a task-list item (`- [x]`, `* [x]`, `1. [x]`); a `[x]` quoted mid-sentence
 or inside a code fence is not counted. A description that ends inside an unclosed fence is
