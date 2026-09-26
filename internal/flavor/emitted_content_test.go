@@ -26,7 +26,26 @@ import (
 // naming the stage.
 var digestPinned = regexp.MustCompile(`^FROM \S+:[^@\s]+@sha256:[0-9a-f]{64}(?: AS \S+)?$`)
 
-// scaffoldInto applies a flavor to an empty repository and returns the file bodies.
+// npmProject is the smallest repository the scaffolded Node CI job passes in: npm installs
+// from package-lock.json and `npm test` has a script to run.
+var npmProject = map[string]string{
+	"package.json":      "{\"name\": \"widget\", \"scripts\": {\"test\": \"node --test\"}}\n",
+	"package-lock.json": "{\"name\": \"widget\", \"lockfileVersion\": 3, \"requires\": true, \"packages\": {\"\": {\"name\": \"widget\"}}}\n",
+}
+
+// flavorPrerequisites holds, per flavor, the files a repository needs before flavor apply
+// writes every template (TemplateItem.Requires). A flavor absent here scaffolds everything
+// into an empty repository.
+var flavorPrerequisites = map[string]map[string]string{"typescript-node": npmProject}
+
+// flavorRepo returns a fresh repository holding the flavor's prerequisites.
+func flavorRepo(t *testing.T, flavorName string) string {
+	t.Helper()
+	return repoWithFiles(t, flavorPrerequisites[flavorName])
+}
+
+// scaffoldInto applies a flavor to a repository holding only its prerequisites and returns
+// the file bodies.
 //
 // The report is read, not discarded: ApplyFlavor returns (report, nil) even when
 // applySingleTemplate recorded a mkdir or write failure in report.Errors, so a helper that
@@ -34,7 +53,7 @@ var digestPinned = regexp.MustCompile(`^FROM \S+:[^@\s]+@sha256:[0-9a-f]{64}(?: 
 // recorded cause.
 func scaffoldInto(t *testing.T, flavorName string, want ...string) map[string]string {
 	t.Helper()
-	root := t.TempDir()
+	root := flavorRepo(t, flavorName)
 	report, err := flavor.ApplyFlavor(t.Context(), root, flavorName, false)
 	if err != nil {
 		t.Fatalf("apply %s: %v", flavorName, err)
@@ -46,7 +65,7 @@ func scaffoldInto(t *testing.T, flavorName string, want ...string) map[string]st
 	for _, rel := range want {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
-			t.Fatalf("%s scaffolded no %s (created: %v, skipped: %v): %v", flavorName, rel, report.CreatedTemplates, report.SkippedTemplates, err)
+			t.Fatalf("%s scaffolded no %s (created: %v, skipped: %v, unmet: %v): %v", flavorName, rel, report.CreatedTemplates, report.SkippedTemplates, report.UnmetTemplates, err)
 		}
 		bodies[rel] = string(data)
 	}
@@ -122,10 +141,10 @@ func TestScaffoldedGolangciConfigCarriesTheV2Schema(t *testing.T) {
 func TestScaffoldedBodiesAreTheShippedTemplates(t *testing.T) {
 	sourced := 0
 	for _, flv := range flavor.List() {
-		root := t.TempDir()
+		root := flavorRepo(t, flv.Name())
 		report, err := flavor.ApplyFlavor(t.Context(), root, flv.Name(), false)
-		if err != nil || len(report.Errors) > 0 {
-			t.Fatalf("apply %s: err %v, recorded %v", flv.Name(), err, report.Errors)
+		if err != nil || len(report.Errors) > 0 || len(report.UnmetTemplates) > 0 {
+			t.Fatalf("apply %s: err %v, recorded %v, unmet %v", flv.Name(), err, report.Errors, report.UnmetTemplates)
 		}
 		for _, tmpl := range flv.RequiredTemplates() {
 			if tmpl.Source == "" {

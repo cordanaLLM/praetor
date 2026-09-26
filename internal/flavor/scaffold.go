@@ -24,6 +24,11 @@ type ApplyReport struct {
 	// another command produces it, as "<path> (<producer>)". The flavor audit still
 	// requires these files, so a deferred template is work left for the named command.
 	DeferredTemplates []string `json:"deferred_templates,omitempty"`
+	// UnmetTemplates names each required template flavor apply does not write because the
+	// repository lacks what its body needs to work as written (TemplateItem.Requires), as
+	// "<path>: <what is missing>". The audit still requires these files: supply what is
+	// missing and apply again, or write a file that fits the repository.
+	UnmetTemplates    []string `json:"unmet_templates,omitempty"`
 	WorkingDirCreated bool     `json:"working_dir_created"`
 	Errors            []string `json:"errors,omitempty"`
 }
@@ -139,50 +144,71 @@ const (
 	templateCreated templateOutcome = iota
 	templateSkipped
 	templateDeferred
+	templateUnmet
 )
 
 func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool, report *ApplyReport) {
-	outcome, err := scaffoldTemplate(ctx, repoPath, tmpl, repoName, owner, force)
+	outcome, note, err := scaffoldTemplate(ctx, repoPath, tmpl, repoName, owner, force)
 	switch {
 	case err != nil:
 		report.Errors = append(report.Errors, err.Error())
 	case outcome == templateSkipped:
 		report.SkippedTemplates = append(report.SkippedTemplates, tmpl.Path)
 	case outcome == templateDeferred:
-		report.DeferredTemplates = append(report.DeferredTemplates, fmt.Sprintf("%s (%s)", tmpl.Path, tmpl.Producer))
+		report.DeferredTemplates = append(report.DeferredTemplates, fmt.Sprintf("%s (%s)", tmpl.Path, note))
+	case outcome == templateUnmet:
+		report.UnmetTemplates = append(report.UnmetTemplates, fmt.Sprintf("%s: %s", tmpl.Path, note))
 	default:
 		report.CreatedTemplates = append(report.CreatedTemplates, tmpl.Path)
 	}
 }
 
-// scaffoldTemplate writes one template unless it is covered, owned by another command, or
-// already present without --force. A producer-owned template is never written, --force
-// included: flavor apply has no body for it, only a placeholder to lose the real file to.
-func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool) (templateOutcome, error) {
+// scaffoldTemplate writes one template unless it is covered, owned by another command,
+// unable to work in this repository, or already present without --force. The note names the
+// producer of a deferred template and what an unmet one lacks.
+func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool) (templateOutcome, string, error) {
 	skip, err := templateDisposition(repoPath, tmpl, force)
 	if err != nil || skip {
-		return templateSkipped, err
+		return templateSkipped, "", err
 	}
-	if tmpl.Producer != "" {
-		return templateDeferred, nil
+	if outcome, note := templateWithheld(repoPath, tmpl); outcome != templateCreated {
+		return outcome, note, nil
 	}
 	destPath := filepath.Join(repoPath, tmpl.Path)
 	target, err := readTemplateTarget(ctx, destPath, tmpl.Path, force)
 	if err != nil || target.keep {
-		return templateSkipped, err
+		return templateSkipped, "", err
 	}
 	content, err := templateContent(tmpl, repoName, owner)
 	if err != nil {
-		return templateSkipped, err
+		return templateSkipped, "", err
 	}
 	if err := contextopt.EnsureDirectory(ctx, filepath.Dir(destPath), 0o755); err != nil {
-		return templateSkipped, fmt.Errorf("mkdir %s: %w", tmpl.Path, err)
+		return templateSkipped, "", fmt.Errorf("mkdir %s: %w", tmpl.Path, err)
 	}
 	options := contextopt.ReplaceOptions{Expected: target.before, Exists: target.exists, Mode: 0o644}
 	if err := contextopt.ReplaceSnapshot(ctx, destPath, []byte(content), options); err != nil {
-		return templateSkipped, fmt.Errorf("write %s: %w", tmpl.Path, err)
+		return templateSkipped, "", fmt.Errorf("write %s: %w", tmpl.Path, err)
 	}
-	return templateCreated, nil
+	return templateCreated, "", nil
+}
+
+// templateWithheld reports why flavor apply writes no body for a template whatever --force
+// says, or templateCreated when nothing withholds it. A producer-owned template has no body
+// here, only a placeholder to lose the real file to. A template whose requirement the
+// repository does not meet has a body that cannot work there, and writing it over an existing
+// file would replace one that might.
+func templateWithheld(repoPath string, tmpl TemplateItem) (templateOutcome, string) {
+	if tmpl.Producer != "" {
+		return templateDeferred, tmpl.Producer
+	}
+	if tmpl.Requires == nil {
+		return templateCreated, ""
+	}
+	if missing := tmpl.Requires(repoPath); missing != "" {
+		return templateUnmet, missing
+	}
+	return templateCreated, ""
 }
 
 // templateTarget is the file already at a template's destination.

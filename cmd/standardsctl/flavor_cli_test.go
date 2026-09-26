@@ -48,3 +48,18 @@ func TestFlavorInspect_Boundary_NamesTheProducer(t *testing.T) {
 		t.Fatalf("go-service templates are scaffolded, not produced elsewhere: %v\n%s", err, scaffolded)
 	}
 }
+
+// Boundary: a template whose body cannot work in the repository is named with what the
+// repository lacks, one per line, instead of being written or silently dropped.
+func TestFlavorApply_Boundary_ReportsTemplatesWithAnUnmetRequirement(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("flavor", []string{"apply", t.TempDir(), "--flavor=typescript-node"})
+	})
+	if err != nil {
+		t.Fatalf("flavor apply: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Unmet Requirement (1):\n    - .github/workflows/ci.yml: no package-lock.json for `npm ci`")
+	if strings.Contains(out, "Created Templates (3)") {
+		t.Fatalf("the CI job was reported created:\n%s", out)
+	}
+}

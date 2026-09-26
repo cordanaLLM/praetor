@@ -40,6 +40,11 @@ Every template a flavor requires states where its content comes from, in
 | `Source` | a body under `templates/`, compiled into the binary and rendered by `praetorctl flavor apply` | `go/ci-go.yml.tmpl` for `.github/workflows/ci.yml` |
 | `Producer` | the command that writes the file; `flavor apply` never writes it, `--force` included, and lists it under *Left to Producer* | `praetorctl adopt` for `.standards.yaml`, `praetorctl compile-context` for `CLAUDE.md` |
 
+A `Source` template may also carry `Requires`, a check of what the repository must hold for the body
+to work as written. Where it reports something missing, `flavor apply` writes nothing, `--force`
+included, and lists the path and what is missing under *Unmet Requirement*; `praetorctl adopt` turns
+each into a warning. The audit still requires the file.
+
 A template with neither is an apply error, not a placeholder. `flavor apply` used to write a one-line
 `# <file> configuration for <owner>/<repo>` comment for every template it had no body for, which
 disabled every built-in gitleaks rule (#410) and scaffolded workflows that ran nothing.
@@ -73,7 +78,8 @@ reader. Each validator checks what its format makes checkable and no more:
 while any `AltPaths` file exists, even one the audit rejects (a comment-only `tsconfig.base.json`, or a
 link to a config outside the repository): that file is the one the toolchain reads, and a scaffolded
 rival beside it would contradict it. The audit keeps reporting the template missing until the
-alternative's content passes.
+alternative's content passes. `--force` is the exception: it writes the canonical file beside the
+alternative, so use it only when you mean to replace the alternative, and then delete the old file.
 
 **Scaffolded workflows and images must run as written.** A workflow step may call only what the job
 installs: the Go CI job runs `go vet ./...` and `go test -race ./...`, not `make verify-all`, whose
@@ -83,6 +89,17 @@ fails on a step naming the praetor binary. The Go `Dockerfile` builds the module
 wherever it lives; with none or several, `docker build` stops and names them, and
 `--build-arg MAIN_PACKAGE=./cmd/<name>` picks one. `TestScaffoldedDockerfileBuilderCompilesTheModulesMainPackage`
 (`internal/flavor/dockerfile_build_test.go`) executes the builder instruction against each layout.
+
+A body that only works in some repositories declares `Requires`. The Node CI job runs `npm ci` and
+`npm test`, and `typescript-node` detects any `package.json` — a pnpm, Yarn or Bun project, or a Go
+repository whose `package.json` only holds commit tooling. So `flavor apply` writes the job only when
+the root holds `package-lock.json` (npm 12 reads no `npm-shrinkwrap.json`), `packageManager` names npm
+or nothing, and the `test` script is neither missing, blank nor the placeholder `npm init` writes
+(`internal/flavor/node_ci.go`). Elsewhere adoption requires no Node check, and you write the CI job
+your package manager needs. The package-manager and test-script decisions are the ones adoption's
+verification plan makes (`internal/nodemanifest/scripts.go`).
+`TestNodeCIJobIsScaffoldedOnlyWhereItRunsAsWritten` (`internal/flavor/node_ci_test.go`) checks every
+action, lockfile and script the scaffolded body names against each fixture.
 
 **Adoption scaffolds a detected flavor only.** `praetorctl adopt` applies the flavor detection names,
 before it derives the branch ruleset, so the scaffolded CI job is a required check from the first run.

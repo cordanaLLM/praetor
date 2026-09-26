@@ -78,3 +78,41 @@ func TestReconcileWorkingDirAndFlavor_Boundary_DryRunWritesNothing(t *testing.T)
 		t.Fatal("a dry run scaffolded the CI workflow")
 	}
 }
+
+// Negative: a detected flavor holds back a template whose body cannot work here, and adoption
+// says which. The review's probe: a Go service whose package.json only carries commit tooling,
+// locked by pnpm, detects typescript-node, whose CI job runs `npm ci` and `npm test`.
+func TestReconcileWorkingDirAndFlavor_Negative_UnrunnableNodeJobIsWithheldAndWarned(t *testing.T) {
+	s := flavorSession(t, false, map[string]string{
+		"go.mod": "module example.com/widget\n\ngo 1.27\n", "cmd/widget/main.go": "package main\n\nfunc main() {}\n",
+		"internal/w/w.go": "package w\n", "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+		"package.json": `{"private": true, "devDependencies": {"@commitlint/cli": "^20.0.0"}}`,
+	})
+	if err := reconcileWorkingDirAndFlavor(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	if scaffoldedCI(t, s) {
+		t.Fatal("adoption scaffolded an npm CI job into a repository with no package-lock.json")
+	}
+	if len(s.report.Warnings) != 1 || !strings.Contains(s.report.Warnings[0], "typescript-node did not scaffold .github/workflows/ci.yml") ||
+		!strings.Contains(s.report.Warnings[0], "package-lock.json") {
+		t.Fatalf("want one warning naming the withheld CI job and its missing lockfile, got %v", s.report.Warnings)
+	}
+}
+
+// Boundary: an npm project that meets the job's requirements gets it, and no warning.
+func TestReconcileWorkingDirAndFlavor_Boundary_NpmProjectGetsTheNodeJob(t *testing.T) {
+	s := flavorSession(t, false, map[string]string{
+		"package.json":      `{"name": "widget", "scripts": {"test": "node --test"}}`,
+		"package-lock.json": `{"name": "widget", "lockfileVersion": 3, "requires": true, "packages": {"": {"name": "widget"}}}`,
+	})
+	if err := reconcileWorkingDirAndFlavor(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	if !scaffoldedCI(t, s) {
+		t.Fatalf("an npm project received no CI job; report %+v", s.report)
+	}
+	if len(s.report.Warnings) != 0 || len(s.report.Errors) != 0 {
+		t.Fatalf("unexpected warnings %v errors %v", s.report.Warnings, s.report.Errors)
+	}
+}

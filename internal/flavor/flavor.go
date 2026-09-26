@@ -37,6 +37,15 @@ type TemplateItem struct {
 
 	ContentFunc func(repoName string, owner string) string `json:"-"`
 
+	// Requires reports what the repository lacks for the scaffolded body to work as written,
+	// or "" when it lacks nothing. flavor apply writes no body whose requirement is unmet,
+	// --force included, and lists it under ApplyReport.UnmetTemplates; the audit still
+	// requires the file. A body is fixed text, so a workflow that runs `npm ci` can only pass
+	// in a repository holding package-lock.json, and adoption makes every job of a scaffolded
+	// workflow a required status check: scaffolding it anywhere else hands the repository a
+	// check no pull request can pass.
+	Requires func(repoPath string) string `json:"-"`
+
 	// AltPaths lists equally valid alternatives to Path. A repository satisfies the
 	// template when Path or any AltPath is present, and scaffolding is skipped in that
 	// case. This exists because ecosystems rename their configuration without changing

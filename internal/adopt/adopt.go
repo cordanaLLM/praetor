@@ -582,14 +582,24 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 // repository was left with a required check no pull request could pass. flavor audit refuses
 // the same repository (ErrNoFlavorMatched) instead of auditing it as go-library, so the two
 // now agree that no flavor applies.
+//
+// A detected flavor can still hold back a template whose body cannot work in this repository
+// (flavor.ApplyReport.UnmetTemplates), such as typescript-node's npm CI job in a pnpm project.
+// Each is a warning: the ruleset derived next requires no check for it, and the operator learns
+// what the flavor audit will report missing.
 func applyDetectedFlavor(ctx context.Context, s *adoptSession) {
 	detected, ok := flavor.Detect(s.repoPath)
 	if !ok {
 		s.report.addWarning("no flavor matched %s; flavor templates not scaffolded (run praetorctl flavor apply --flavor=<name> to choose one)", s.repoPath)
 		return
 	}
-	if _, err := flavor.ApplyFlavor(ctx, s.repoPath, detected, false); err != nil {
+	applied, err := flavor.ApplyFlavor(ctx, s.repoPath, detected, false)
+	if err != nil {
 		s.report.addError("apply flavor %s: %v", detected, err)
+		return
+	}
+	for _, unmet := range applied.UnmetTemplates {
+		s.report.addWarning("flavor %s did not scaffold %s", detected, unmet)
 	}
 }
 

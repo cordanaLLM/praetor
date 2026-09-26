@@ -259,8 +259,11 @@ Governance profile names no longer select Go or Meson commands. A shared plan
 renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
 
 - Go modules: build and race tests; Cargo projects: locked build and tests.
-- Root npm scripts: a declared build, optional check, and a nonempty test script.
-  Another declared package manager requires an explicit project contract.
+- Root npm scripts: a declared build, optional check, and a test script that can
+  pass: not blank, and not the `echo "Error: no test specified" && exit 1`
+  placeholder `npm init` writes. Another declared package manager requires an
+  explicit project contract. `internal/nodemanifest/scripts.go` holds both
+  decisions, and the `typescript-node` CI scaffold uses the same ones.
 - C# project files: locked restore and Release build with warnings as errors;
   explicit unconditional test projects receive `dotnet test`. Conditional,
   contradictory, or disabled test markers cannot establish a test gate.

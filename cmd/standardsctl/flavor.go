@@ -183,15 +183,25 @@ func applyFlavor(ctx context.Context, dir, targetFlv string, force bool) error {
 	if len(report.DeferredTemplates) > 0 {
 		fmt.Printf("  Left to Producer  (%d): %s\n", len(report.DeferredTemplates), strings.Join(report.DeferredTemplates, ", "))
 	}
+	// One per line: each entry names a path and what the repository lacks for its body.
+	printApplyEntries("Unmet Requirement", report.UnmetTemplates)
 	fmt.Printf("  WorkingDir State:     %v\n", report.WorkingDirCreated)
 
 	if len(report.Errors) > 0 {
-		fmt.Printf("  Errors (%d):\n", len(report.Errors))
-		for _, e := range report.Errors {
-			fmt.Printf("    - %s\n", e)
-		}
+		printApplyEntries("Errors", report.Errors)
 		return fmt.Errorf("flavor apply completed with %d error(s): %s",
 			len(report.Errors), strings.Join(report.Errors, "; "))
 	}
 	return nil
+}
+
+// printApplyEntries prints a labelled count and one entry per line, and nothing when empty.
+func printApplyEntries(label string, entries []string) {
+	if len(entries) == 0 {
+		return
+	}
+	fmt.Printf("  %s (%d):\n", label, len(entries))
+	for _, entry := range entries {
+		fmt.Printf("    - %s\n", entry)
+	}
 }
