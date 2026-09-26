@@ -84,6 +84,12 @@ What this means in practice:
   so a memory or scratch file outside the repository, or a session cwd outside it, passes.
   Once a checkpoint is due, the cwd and the path must both sit inside this repository.
   Anything else denies that one call, and the next call is judged on its own.
+  "Inside" is decided by filesystem identity, not by spelling: a path the client spells
+  through macOS's `/var` symlink or a Windows 8.3 short name still names the checkout, while
+  a symlink below the checkout is refused (`unresolved_relative_to` in
+  `.config/lefthook/scripts/common.py`; covered by
+  `test_registered_file_guard_matches_the_checkout_by_identity_not_spelling` in
+  `scripts/test_checkpoint_hooks.py`).
 
 ## Command line and support matrix
 
