@@ -18,6 +18,10 @@ const (
 	maxPermissionScopes = 32
 	maxConditionLength  = 4096
 	maxGroupNesting     = 8
+	// authorAssociationExpression is the commenter's standing in the repository, the one
+	// payload field an issue_comment job can gate on to keep strangers out.
+	authorAssociationExpression = "github.event.comment.author_association"
+	maxListedAssociations       = 16
 )
 
 // PullRequestPermissionFinding names one job a pull request run can reach while a write
@@ -48,6 +52,13 @@ func (f PullRequestPermissionFinding) String() string {
 // pull_request_target is audited beside pull_request. It runs a contributor's branch in
 // the base repository's context with the base repository's token, so it is the strictly
 // worse form of the same defect and must not be the one event the guard cannot see.
+//
+// issue_comment is audited for the same reason. Any account that can comment on a pull
+// request starts it, and it runs the default branch's workflow with the base repository's
+// token: adopt.yml carried contents, pull-requests and issues: write for a job any commenter
+// started by writing /adopt. A job that admits only trusted commenters, through a conjunct
+// restricting github.event.comment.author_association to OWNER, MEMBER or COLLABORATOR, is
+// not started on a stranger's say-so and is not reported (admitsOnlyTrustedCommenters).
 //
 // A job that no pull request can start may declare whatever it needs, which is why the
 // audit decides reachability rather than reporting every write scope in the file. Only a
@@ -170,11 +181,123 @@ func startsJob(condition, event string) bool {
 	}
 	conjuncts := topLevelParts(condition, "&&")
 	for i := 0; i < len(conjuncts) && i < maxPermissionScopes; i++ {
-		if excludesEvent(conjuncts[i], event) {
+		if excludesEvent(conjuncts[i], event) || admitsOnlyTrustedCommenters(conjuncts[i], event) {
 			return false
 		}
 	}
 	return true
+}
+
+// admitsOnlyTrustedCommenters reports whether one conjunct keeps an issue_comment run from
+// starting the job unless the commenter is trusted (trustedAssociation). Two spellings are
+// recognised: contains(fromJSON('[...]'), github.event.comment.author_association) over a
+// list of trusted values, and an equality test of that field against a trusted value, or a
+// disjunction of such tests. Every other spelling, a reversed comparison or a denylist such
+// as `!= 'NONE'` included, is not recognised and leaves the job reported: an audit that
+// guessed a gate into existence would hide exactly the credential it looks for.
+//
+// The gate decides issue_comment alone. Whether a pull_request or pull_request_target run
+// reaches the job stays excludesEvent's business, whatever the conjunct says about comments.
+func admitsOnlyTrustedCommenters(conjunct, event string) bool {
+	if event != issueCommentEvent {
+		return false
+	}
+	conjunct = unwrapGroup(conjunct)
+	if trustedAssociationList(conjunct) {
+		return true
+	}
+	parts := topLevelParts(conjunct, "||")
+	for i := 0; i < len(parts) && i < maxPermissionScopes; i++ {
+		if !trustedAssociationEquality(parts[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// trustedAssociationEquality reports whether a comparison tests the commenter's
+// association for equality with a trusted value.
+func trustedAssociationEquality(comparison string) bool {
+	rest, named := strings.CutPrefix(unwrapGroup(comparison), authorAssociationExpression)
+	if !named {
+		return false
+	}
+	value, equal := strings.CutPrefix(strings.TrimSpace(rest), "==")
+	if !equal {
+		return false
+	}
+	name, literal := comparedLiteral(value)
+	return literal && trustedAssociation(name)
+}
+
+// trustedAssociationList reports whether a conjunct is one contains() call asking whether
+// the commenter's association is in a fromJSON list that holds trusted values only. The
+// search subject has to be the association field itself, and the list has to be a JSON
+// array: contains() over a plain string is a substring test.
+func trustedAssociationList(conjunct string) bool {
+	arguments, called := wholeCall(conjunct, "contains")
+	if !called {
+		return false
+	}
+	split := strings.LastIndex(arguments, ",")
+	if split < 0 || strings.TrimSpace(arguments[split+1:]) != authorAssociationExpression {
+		return false
+	}
+	list, parsed := wholeCall(strings.TrimSpace(arguments[:split]), "fromJSON")
+	return parsed && trustedAssociationArray(list)
+}
+
+// wholeCall returns the argument text of a call to the named function when that call is the
+// whole text. GitHub matches function names without regard to case, so fromJson and fromJSON
+// are one function. The arguments have to balance on their own, which is what tells
+// `f(a) || f(b)`, two calls, apart from one call whose last argument ends in a parenthesis.
+func wholeCall(text, function string) (string, bool) {
+	prefix := function + "("
+	if len(text) <= len(prefix) || !strings.EqualFold(text[:len(prefix)], prefix) {
+		return "", false
+	}
+	arguments := text[len(prefix):]
+	closing := strings.LastIndex(arguments, ")")
+	if closing != len(arguments)-1 || !balancedGroups(arguments[:closing]) {
+		return "", false
+	}
+	return arguments[:closing], true
+}
+
+// trustedAssociationArray reports whether a quoted JSON array literal lists at least one
+// value and trusted values only. reachingEvents has already turned every double quote into
+// a single one, so the elements arrive as 'OWNER' rather than "OWNER".
+func trustedAssociationArray(literal string) bool {
+	body, quoted := strings.CutPrefix(strings.TrimSpace(literal), "'[")
+	body, closed := strings.CutSuffix(body, "]'")
+	if !quoted || !closed || strings.TrimSpace(body) == "" {
+		return false
+	}
+	values := strings.Split(body, ",")
+	if len(values) > maxListedAssociations {
+		return false
+	}
+	for i := 0; i < len(values) && i < maxListedAssociations; i++ {
+		if !trustedAssociation(strings.Trim(strings.TrimSpace(values[i]), "'")) {
+			return false
+		}
+	}
+	return true
+}
+
+// trustedAssociation reports whether an author_association value names someone the
+// repository granted access: its owner, a member of the owning organization, or an invited
+// collaborator. The other values GitHub defines (CONTRIBUTOR, FIRST_TIMER,
+// FIRST_TIME_CONTRIBUTOR, MANNEQUIN and NONE, per the author-association schema in GitHub's
+// REST API description) are all within a stranger's reach. GitHub compares strings without
+// regard to case, so 'owner' admits exactly whom 'OWNER' does.
+func trustedAssociation(value string) bool {
+	switch strings.ToUpper(value) {
+	case "OWNER", "MEMBER", "COLLABORATOR":
+		return true
+	default:
+		return false
+	}
 }
 
 // topLevelParts splits a condition on one operator, ignoring the occurrences inside
@@ -292,23 +415,24 @@ func comparisonExcludes(comparison, event string) bool {
 	}
 	rest = strings.TrimSpace(rest)
 	if value, negated := strings.CutPrefix(rest, "!="); negated {
-		name, literal := namedEvent(value)
+		name, literal := comparedLiteral(value)
 		return literal && strings.EqualFold(event, name)
 	}
 	if value, equal := strings.CutPrefix(rest, "=="); equal {
-		name, literal := namedEvent(value)
+		name, literal := comparedLiteral(value)
 		return literal && !strings.EqualFold(event, name)
 	}
 	return false
 }
 
-// namedEvent returns the event name a comparison's right-hand side spells, and whether it
-// spells exactly one quoted literal. Parentheses around the literal are trimmed: a condition
-// may spell the comparison `!= ('pull_request')`, and an unbalanced one survives the split
-// that produced this conjunct. Inside the literal a quote is escaped by doubling it, so a
-// lone one ends the literal early and whatever follows it is more expression, not more name.
-// The comparison is case-insensitive at the caller because GitHub compares strings that way.
-func namedEvent(value string) (string, bool) {
+// comparedLiteral returns the literal a comparison's right-hand side spells, and whether it
+// spells exactly one quoted literal: an event name for an event test, an association for a
+// commenter gate. Parentheses around the literal are trimmed: a condition may spell the
+// comparison `!= ('pull_request')`, and an unbalanced one survives the split that produced
+// this conjunct. Inside the literal a quote is escaped by doubling it, so a lone one ends the
+// literal early and whatever follows it is more expression, not more literal. Callers compare
+// the result without regard to case because GitHub compares strings that way.
+func comparedLiteral(value string) (string, bool) {
 	value = strings.Trim(strings.TrimSpace(value), "() \t")
 	if len(value) < 2 || value[0] != '\'' || value[len(value)-1] != '\'' {
 		return "", false

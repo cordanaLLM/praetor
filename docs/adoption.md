@@ -84,19 +84,80 @@ on:
   issue_comment:
     types: [created]
 
+permissions: {}
+
 jobs:
   adopt:
-    if: github.event.issue.pull_request && contains(github.event.comment.body, '/adopt')
+    if: >-
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/adopt') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - id: pr-head
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "no head for #$PR_NUMBER: '$sha'" >&2; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.pr-head.outputs.sha }}
+          persist-credentials: false
       - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@main
         with:
           mode: adopt
           force: true
 ```
 
-Comment `/adopt` on any PR to have `cordana-standards[bot]` automatically scaffold Praetor governance and commit the baseline.
+A `/adopt` comment on a pull request, written by the repository's owner, a member of its
+organization or a collaborator, runs the adoption against that pull request's head and leaves the
+result in the job summary. It commits nothing. Three parts of the example each close a hole:
+
+- **The `author_association` conjunct.** `issue_comment` runs the default branch's workflow with
+  the base repository's token for any account that can comment. `OWNER`, `MEMBER` and
+  `COLLABORATOR` are the associations the repository granted; the other values GitHub defines
+  (`CONTRIBUTOR`, `FIRST_TIMER`, `FIRST_TIME_CONTRIBUTOR`, `MANNEQUIN`, `NONE`) are within any
+  account's reach.
+- **The head lookup.** An `issue_comment` payload carries the issue, not the pull request, so a
+  checkout without a `ref` takes the default branch and the adoption never sees the pull
+  request. The step asks the pulls API for the head by number and fails rather than publishing
+  anything that is not a commit id.
+- **Read scopes and `persist-credentials: false`.** The checked-out tree is the pull request's
+  content; the job holds no write scope and leaves no credential in the checkout.
+
+`standardsctl` itself still comes from the praetor ref the `uses:` line pins, not from the pull
+request (see below).
+
+### Praetor's own adoption bot
+
+`.github/workflows/adopt.yml` is the hardened form of the example, split into one job per
+entry point:
+
+| Job | Trigger | Token | What it does |
+| :-- | :-- | :-- | :-- |
+| `adopt` | `workflow_dispatch` | `contents: write`, handed only to the commit step | adopts `target_path` (default `.`), runs the HISS-13 debt ratchet on it, then commits with a DCO sign-off and pushes unless `dry_run` is set |
+| `adopt-comment` | `/adopt` or `/dogfood` comment from a trusted commenter | `contents: read`, `pull-requests: read` | resolves the pull request head, checks it out without credentials, and runs the adoption and ratchet, or the dogfood benchmark, against it |
+
+Inside praetor the action builds the checked-out tree's own `cmd/standardsctl`, so the comment
+job builds and runs the pull request's code. That is the point of `/dogfood` and the reason for
+the gate: only a trusted commenter can ask for it, and the run holds read scopes only. The head
+is read when the job starts, so a push that lands after the comment is what runs.
+
+Two checks keep the split honest. `AuditPullRequestPermissions` in
+`internal/forge/workflow_permissions.go` reports any job that `pull_request`,
+`pull_request_target` or an ungated `issue_comment` can start while it holds a write scope, and
+`TestAuditPullRequestPermissions_Guard_ThisRepositoryIsDisciplined` runs it over this repository.
+`internal/forge/adopt_workflow_test.go` pins the rest: only the dispatch job writes and pushes,
+every checkout drops its credential, the comment job checks out the head it resolved,
+`target_path` reaches both the adoption and the ratchet through env, and the head lookup's own
+shell body is executed against a stub `gh`.
 
 ### Inputs, the binary, and the `report` output
 
@@ -139,6 +200,10 @@ anything runs when it does not:
   none of which the caller pinned.
 
 The error names the `uses:` form to switch to.
+
+The `binary` output is the absolute path of the `standardsctl` the build step compiled. A later
+step of the same job that has to run praetor again, such as `adopt.yml`'s debt ratchet, runs that
+binary instead of compiling a second one.
 
 The `report` output carries the combined output of the run. The step writes it — and, when the
 runner provides `GITHUB_STEP_SUMMARY`, appends it to the job summary — before re-raising the

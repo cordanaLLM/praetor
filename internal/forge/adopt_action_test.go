@@ -29,7 +29,8 @@ const (
 
 // adoptStubSource stands in for the executables the steps call: it records the argument vector it
 // was handed, so a test asserts what the script passed rather than what the script looks like,
-// prints a line the report output must carry, and exits with a code the test chooses. Each name
+// prints a line the report output must carry (or PRAETOR_STUB_STDOUT verbatim when the test sets
+// it, which is how a stub gh answers an API query), and exits with a code the test chooses. Each name
 // listed in PRAETOR_STUB_ENV is recorded after the arguments as NAME=value, so a caller can assert
 // on the environment a step exported as well as on its argv.
 const adoptStubSource = `package main
@@ -61,7 +62,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "stub:", err)
 		os.Exit(70)
 	}
-	fmt.Println("standardsctl-stub:", strings.Join(os.Args[1:], " "))
+	if out, set := os.LookupEnv("PRAETOR_STUB_STDOUT"); set {
+		fmt.Println(out)
+	} else {
+		fmt.Println("standardsctl-stub:", strings.Join(os.Args[1:], " "))
+	}
 	code, err := strconv.Atoi(os.Getenv("PRAETOR_STUB_EXIT"))
 	if err != nil {
 		code = 0
@@ -143,7 +148,7 @@ func TestPraetorAdoptAction_Negative_NoRunBodyCarriesAnExpression(t *testing.T) 
 func TestPraetorAdoptAction_Positive_EveryRuntimeInputArrivesThroughEnv(t *testing.T) {
 	run := adoptStep(t, loadAdoptAction(t), adoptRunStepID)
 	for _, name := range []string{"path", "mode", "dry-run", "force", "record-baseline"} {
-		variable := envVariableFor(run, "${{ inputs."+name+" }}")
+		variable := envVariableFor(run.Env, "${{ inputs."+name+" }}")
 		if variable == "" {
 			t.Errorf("input %q reaches no environment variable of the run step: %v", name, run.Env)
 			continue
@@ -152,7 +157,7 @@ func TestPraetorAdoptAction_Positive_EveryRuntimeInputArrivesThroughEnv(t *testi
 			t.Errorf("environment variable %q is declared but never read by the run step", variable)
 		}
 	}
-	if envVariableFor(run, "${{ steps."+adoptBuildStepID+".outputs.binary }}") == "" {
+	if envVariableFor(run.Env, "${{ steps."+adoptBuildStepID+".outputs.binary }}") == "" {
 		t.Errorf("the run step does not take its binary from the build step: %v", run.Env)
 	}
 }
@@ -175,12 +180,20 @@ func TestPraetorAdoptAction_Positive_DeclaredOutputNamesAStepThatWritesIt(t *tes
 	if !strings.Contains(adoptStep(t, action, adoptBuildStepID).Run, "binary=") {
 		t.Error("the build step never writes the binary output the run step consumes")
 	}
+	// adopt.yml's debt ratchet runs the binary the action built, through this output, rather
+	// than compiling a second standardsctl of its own.
+	binary, ok := action.Outputs["binary"]
+	if !ok || binary.Value != "${{ steps."+adoptBuildStepID+".outputs.binary }}" {
+		t.Errorf("the binary output does not read the build step's binary: %+v (declared %v)", binary, ok)
+	}
 }
 
-// envVariableFor returns the name of the step variable carrying expression, or "".
-func envVariableFor(step compositeStep, expression string) string {
-	for key := range step.Env {
-		if step.Env[key] == expression {
+// envVariableFor returns the name of the variable in a step's env block that carries
+// expression, or "". Action steps and workflow steps (adopt_workflow_test.go) both pass their
+// env block here.
+func envVariableFor(env map[string]string, expression string) string {
+	for key := range env {
+		if env[key] == expression {
 			return key
 		}
 	}
@@ -216,8 +229,15 @@ func adoptShell(t *testing.T) string {
 // the shipped script rather than about a copy of it.
 func executeAdoptBody(t *testing.T, stepID, stub string, extra func(binDir, temp string) []string) stepOutcome {
 	t.Helper()
+	return executeShellBody(t, adoptStep(t, loadAdoptAction(t), stepID).Run, stub, extra)
+}
+
+// executeShellBody runs a shell body read out of a shipped action or workflow file the way
+// executeAdoptBody describes. It is the one runner for both, so a workflow step's script is
+// exercised under exactly the stub, PATH and GITHUB_OUTPUT the action's steps are.
+func executeShellBody(t *testing.T, body, stub string, extra func(binDir, temp string) []string) stepOutcome {
+	t.Helper()
 	shell := adoptShell(t)
-	body := adoptStep(t, loadAdoptAction(t), stepID).Run
 	work, binDir, temp := t.TempDir(), t.TempDir(), t.TempDir()
 	log := filepath.Join(t.TempDir(), "calls.log")
 	outputFile := filepath.Join(t.TempDir(), "github_output")

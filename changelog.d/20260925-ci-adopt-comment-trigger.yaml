@@ -1,0 +1,3 @@
+type: fixed
+title: Admit only trusted commenters to the /adopt comment trigger, run it read-only against the pull request head, wire target_path through to the adoption, and audit issue_comment jobs for reachable write scopes
+breaking: false

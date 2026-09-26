@@ -32,6 +32,9 @@ outputs:
   report:
     description: "Combined output of the adoption / dogfooding run, written by the run step"
     value: ${{ steps.run-praetor.outputs.report }}
+  binary:
+    description: "Absolute path of the standardsctl the build step compiled, for a later step of the same job that has to run that same binary"
+    value: ${{ steps.build-standardsctl.outputs.binary }}
 
 runs:
   using: "composite"

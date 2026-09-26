@@ -247,6 +247,52 @@ func TestAuditPullRequestPermissions_Positive_ReportsTheWriteAllShorthand(t *tes
 	}
 }
 
+// theShapeAdoptShipped is adopt.yml before its comment trigger was gated: a workflow-level
+// write grant and a job any commenter starts by writing /adopt on a pull request.
+const theShapeAdoptShipped = `
+name: Praetor Fast Adoption Bot
+on:
+  workflow_dispatch:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+jobs:
+  adopt:
+    if: github.event.issue.pull_request && contains(github.event.comment.body, '/adopt')
+    runs-on: ubuntu-latest
+    steps:
+      - run: standardsctl adopt --path=.
+`
+
+// trustedCommenterGate is the conjunct adopt.yml's comment job carries now.
+const trustedCommenterGate = `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)`
+
+func TestAuditPullRequestPermissions_Positive_ReportsAnUngatedCommentJob(t *testing.T) {
+	findings := auditPermissionsDocument(t, "adopt.yml", theShapeAdoptShipped)
+
+	if len(findings) != 3 {
+		t.Fatalf("expected one finding per write scope, got %d: %v", len(findings), findings)
+	}
+	for _, finding := range findings {
+		if finding.Trigger != issueCommentEvent || finding.Job != "adopt" {
+			t.Errorf("a finding must name the comment trigger that reaches the job: %s", finding)
+		}
+	}
+}
+
+// Negative: the same job behind a trusted-commenter gate is not started on a stranger's
+// say-so, so its write scopes are not reported.
+func TestAuditPullRequestPermissions_Negative_AcceptsAGatedCommentJob(t *testing.T) {
+	gated := strings.Replace(theShapeAdoptShipped, "'/adopt')", "'/adopt') && "+trustedCommenterGate, 1)
+
+	if findings := auditPermissionsDocument(t, "adopt.yml", gated); len(findings) != 0 {
+		t.Fatalf("a gated comment job may write; got %v", findings)
+	}
+}
+
 // Negative: the fixed shape is clean, a job that pull requests cannot reach may write, and
 // a workflow no pull request starts is not audited at all.
 
@@ -343,6 +389,63 @@ func TestAuditPullRequestPermissions_Boundary_JobConditionsDecideReachability(t 
 		{"a differently cased event name still names the event", "github.event_name == 'Pull_Request'", onlyPullRequest, onlyPullRequest},
 		{"a differently cased exclusion still excludes", "github.event_name != 'PULL_REQUEST'", onlyPullRequest, none},
 		{"an empty literal names no event", "github.event_name == ''", onlyPullRequest, none},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := reachingEvents(testCase.condition, testCase.events)
+			if strings.Join(got, ",") != strings.Join(testCase.reaching, ",") {
+				t.Errorf("reachingEvents(%q, %v) = %v, want %v",
+					testCase.condition, testCase.events, got, testCase.reaching)
+			}
+		})
+	}
+}
+
+// The commenter gate is recognised in the two spellings admitsOnlyTrustedCommenters names and
+// in no other: every row that is not one of them, or that admits one untrusted association,
+// stays reachable, because an audit that guessed a gate into existence hides the credential.
+func TestAuditPullRequestPermissions_Boundary_CommenterGatesDecideIssueCommentReachability(t *testing.T) {
+	comment := []string{issueCommentEvent}
+	withPullRequest := []string{pullRequestEvent, issueCommentEvent}
+	onlyPullRequest := []string{pullRequestEvent}
+	none := []string(nil)
+	association := authorAssociationExpression
+	owners := func(count int) string {
+		return "contains(fromJSON('[" + strings.TrimSuffix(strings.Repeat(`"OWNER",`, count), ",") + "]'), " + association + ")"
+	}
+	cases := []struct {
+		name      string
+		condition string
+		events    []string
+		reaching  []string
+	}{
+		{"unconditional", "", comment, comment},
+		{"a body test decides nothing about who wrote it", "contains(github.event.comment.body, '/adopt')", comment, comment},
+		{"the trusted list", trustedCommenterGate, comment, none},
+		{"the trusted list behind other conjuncts", "github.event.issue.pull_request && " + trustedCommenterGate, comment, none},
+		{"the list in a group", "(" + trustedCommenterGate + ")", comment, none},
+		{"fromJson spelled in another case", "contains(fromJson('[\"MEMBER\"]'), " + association + ")", comment, none},
+		{"a list admitting a contributor", "contains(fromJSON('[\"OWNER\",\"CONTRIBUTOR\"]'), " + association + ")", comment, comment},
+		{"an empty list is not recognised", "contains(fromJSON('[]'), " + association + ")", comment, comment},
+		{"a list over another field", "contains(fromJSON('[\"OWNER\"]'), github.event.comment.user.login)", comment, comment},
+		{"contains over a string is a substring test", "contains('OWNER,MEMBER', " + association + ")", comment, comment},
+		{"a negated list", "!" + trustedCommenterGate, comment, comment},
+		{"two lists joined inside one group", "(contains(fromJSON('[\"OWNER\"]'), " + association + ") || contains(fromJSON('[\"NONE\"]'), " + association + "))", comment, comment},
+		{"sixteen listed values", owners(maxListedAssociations), comment, none},
+		{"seventeen listed values", owners(maxListedAssociations + 1), comment, comment},
+		{"one trusted equality", association + " == 'OWNER'", comment, none},
+		{"an equality in another case", association + " == 'member'", comment, none},
+		{"an untrusted equality", association + " == 'NONE'", comment, comment},
+		{"a disjunction of trusted equalities", "(" + association + " == 'OWNER' || " + association + " == 'COLLABORATOR')", comment, none},
+		{"a disjunction admitting one stranger", "(" + association + " == 'OWNER' || " + association + " == 'FIRST_TIMER')", comment, comment},
+		{"a denylist admits every other value", association + " != 'NONE'", comment, comment},
+		{"a reversed comparison is not recognised", "'OWNER' == " + association, comment, comment},
+		{"a top-level disjunction stays undecided", "github.event_name == 'workflow_dispatch' || " + trustedCommenterGate, comment, comment},
+		{"an event test still fences the comment off", "github.event_name != 'issue_comment'", comment, none},
+		{"the dispatch-only job", "github.event_name == 'workflow_dispatch'", comment, none},
+		// The gate says who may start a comment run; a pull request run carries no comment,
+		// and whether it reaches the job is the event test's business alone.
+		{"the gate leaves pull_request reachable", trustedCommenterGate, withPullRequest, onlyPullRequest},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
