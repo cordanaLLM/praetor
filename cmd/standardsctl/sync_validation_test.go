@@ -25,6 +25,36 @@ func newSyncValidationFixture(t *testing.T) *auditFixture {
 	return f
 }
 
+// sync checks the ruleset against the branch protection adopt renders, which joins the
+// pinned profile's requirements, instead of against the built-in defaults.
+func TestSyncRulesetFollowsTheJoinedProfileBranchProtection(t *testing.T) {
+	f := newSyncValidationFixture(t)
+	writeFixtureFile(t, f.dir, ".config/archetypes/framework.yaml",
+		"id: \"framework\"\nname: \"Framework\"\nbranch_protection:\n  require_signed_commits: true\n  required_approving_reviewers: 2\n")
+	lf := &lockFixture{dir: f.dir}
+	lf.writeLock(t, lf.digestOf(t, ".config/archetypes/framework.yaml"), lf.digestOf(t, ".config/archetypes/facets/security-high.yaml"), "")
+	// Negative: the defaults-rendered ruleset no longer matches the declared policy.
+	_, err := runSyncCmd(t, "--config="+f.manifestPath)
+	mustErrContain(t, err, "ruleset differs from declared branch protection policy")
+	// Positive: the ruleset rendered from the joined policy verifies.
+	joined := config.DefaultPolicy().BranchProtection
+	joined.RequireSignedCommits, joined.RequiredApprovingReviewers = true, 2
+	if err := synthesizeRuleset(filepath.Join(f.dir, ".github/rulesets/main.json"), joined, nil); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runSyncCmd(t, "--config="+f.manifestPath)
+	if err != nil {
+		t.Fatalf("joined ruleset rejected: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Branch protection ruleset verified", "0 companion checks missing")
+	// Boundary: an archetype the resolver refuses leaves sync incomplete, never finished.
+	writeFixtureFile(t, f.dir, ".config/archetypes/other.yaml", "id: other\nlinter: [semgrep]\n")
+	out, err = runSyncCmd(t, "--config="+f.manifestPath)
+	if err == nil || strings.Contains(out, "Local sync checks finished") {
+		t.Fatalf("unresolvable catalog finished sync: %v\n%s", err, out)
+	}
+}
+
 func TestSyncRejectsInvalidExistingArtifacts(t *testing.T) {
 	tests := []struct{ name, path, content string }{
 		{"malformed labels", ".config/labels.yaml", "labels: ["},

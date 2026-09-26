@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,7 +19,7 @@ import (
 func TestAuditDocumentationGatePositive(t *testing.T) {
 	root := documentationAuditFixture(t)
 	manifest := &config.Manifest{Facets: []string{"docs:seo-portal"}}
-	if err := auditDocumentationGate(t.Context(), manifest, root); err != nil {
+	if err := docGate(t.Context(), manifest, root); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -35,7 +36,7 @@ func TestAuditDocumentationGateCRLF(t *testing.T) {
 		writeFixtureFile(t, root, rel, strings.ReplaceAll(string(data), "\n", "\r\n"))
 	}
 	manifest := &config.Manifest{Facets: []string{"docs:seo-portal"}}
-	if err := auditDocumentationGate(t.Context(), manifest, root); err != nil {
+	if err := docGate(t.Context(), manifest, root); err != nil {
 		t.Fatalf("consistent CRLF documentation surfaces failed audit: %v", err)
 	}
 }
@@ -97,7 +98,7 @@ func TestAuditDocumentationGateNegative(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			root := documentationAuditFixture(t)
 			mutate(t, root)
-			err := auditDocumentationGate(t.Context(), &config.Manifest{Facets: []string{"docs:seo-portal"}}, root)
+			err := docGate(t.Context(), &config.Manifest{Facets: []string{"docs:seo-portal"}}, root)
 			if err == nil {
 				t.Fatal("documentation drift passed audit")
 			}
@@ -106,7 +107,7 @@ func TestAuditDocumentationGateNegative(t *testing.T) {
 }
 
 func TestAuditDocumentationGateBoundary(t *testing.T) {
-	if err := auditDocumentationGate(t.Context(), &config.Manifest{}, t.TempDir()); err != nil {
+	if err := docGate(t.Context(), &config.Manifest{}, t.TempDir()); err != nil {
 		t.Fatalf("repository without documentation facet was gated: %v", err)
 	}
 }
@@ -141,7 +142,7 @@ func TestAuditDocumentationGateDisabledRejectsStaleSurfaces(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			seed(t, root)
-			if err := auditDocumentationGate(t.Context(), &config.Manifest{}, root); err == nil {
+			if err := docGate(t.Context(), &config.Manifest{}, root); err == nil {
 				t.Fatal("disabled documentation facet accepted a stale Praetor surface")
 			}
 		})
@@ -157,7 +158,7 @@ func TestAuditDocumentationGateDisabledAllowsOperatorLookalikes(t *testing.T) {
 		"# prose mentions "+"# BEGIN praetor documentation gate"+" but owns no marker line\noperator:\n\t@true\n")
 	writeFixtureFile(t, root, ".github/rulesets/main.json",
 		`{"metadata":{"example":"`+adopt.DocumentationStatusContext+`"},"rules":[]}`)
-	if err := auditDocumentationGate(t.Context(), &config.Manifest{}, root); err != nil {
+	if err := docGate(t.Context(), &config.Manifest{}, root); err != nil {
 		t.Fatalf("disabled facet rejected operator-owned lookalikes: %v", err)
 	}
 }
@@ -223,7 +224,7 @@ func TestAuditDocumentationGateHonorsOperatorOwnedDeclines(t *testing.T) {
 		t.Run(step.name, func(t *testing.T) {
 			root, facets := step.fixture(t)
 			manifest := declinedDocumentationManifest([]string{step.step}, facets...)
-			if err := auditDocumentationGate(t.Context(), manifest, root); err != nil {
+			if err := docGate(t.Context(), manifest, root); err != nil {
 				t.Fatalf("declined %s surface failed audit: %v", step.step, err)
 			}
 		})
@@ -238,7 +239,7 @@ func TestAuditDocumentationGateUndeclinedStepsStayFailClosed(t *testing.T) {
 			root, facets := step.fixture(t)
 			for _, declines := range [][]string{nil, {"readme"}} {
 				manifest := declinedDocumentationManifest(declines, facets...)
-				if err := auditDocumentationGate(t.Context(), manifest, root); err == nil {
+				if err := docGate(t.Context(), manifest, root); err == nil {
 					t.Fatalf("stale %s surface passed audit with declines %v", step.step, declines)
 				}
 			}
@@ -254,7 +255,7 @@ func TestAuditDocumentationGateDeclineBoundary(t *testing.T) {
 		t.Run(step.name, func(t *testing.T) {
 			root, facets := step.fixture(t)
 			spelled := declinedDocumentationManifest([]string{"  " + strings.ToUpper(step.step) + " "}, facets...)
-			if err := auditDocumentationGate(t.Context(), spelled, root); err != nil {
+			if err := docGate(t.Context(), spelled, root); err != nil {
 				t.Fatalf("canonicalised %s decline was not honored: %v", step.step, err)
 			}
 			for _, declines := range [][]string{
@@ -263,7 +264,7 @@ func TestAuditDocumentationGateDeclineBoundary(t *testing.T) {
 				slices.Repeat([]string{step.step}, 65),
 			} {
 				manifest := declinedDocumentationManifest(declines, facets...)
-				if err := auditDocumentationGate(t.Context(), manifest, root); err == nil {
+				if err := docGate(t.Context(), manifest, root); err == nil {
 					t.Fatalf("malformed decline list %v did not fail closed", declines[:2])
 				}
 			}
@@ -289,7 +290,7 @@ func TestAuditDocumentationGateGitIgnoreDeclineKeepsScratchPrivacy(t *testing.T)
 				writeFixtureFile(t, root, ".gitignore", ignore)
 			}
 			manifest := declinedDocumentationManifest([]string{"git-ignore"}, "docs:seo-portal")
-			err := auditDocumentationGate(t.Context(), manifest, root)
+			err := docGate(t.Context(), manifest, root)
 			if err == nil || !strings.Contains(err.Error(), "effectively exclude") {
 				t.Fatalf("declined git-ignore excused unignored private scratch: %v", err)
 			}
@@ -320,10 +321,10 @@ func TestAuditDocumentationGateHonorsBranchRulesetDecline(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, ".github", "rulesets", "main.json")); err != nil {
 		t.Fatal(err)
 	}
-	if err := auditDocumentationGate(t.Context(), declinedBranchRulesetManifest("docs:seo-portal"), root); err != nil {
+	if err := docGate(t.Context(), declinedBranchRulesetManifest("docs:seo-portal"), root); err != nil {
 		t.Fatalf("declined branch ruleset still required the documentation context: %v", err)
 	}
-	err := auditDocumentationGate(t.Context(), &config.Manifest{Facets: []string{"docs:seo-portal"}}, root)
+	err := docGate(t.Context(), &config.Manifest{Facets: []string{"docs:seo-portal"}}, root)
 	if err == nil || !strings.Contains(err.Error(), "branch ruleset") {
 		t.Fatalf("missing ruleset without a decline passed or failed for another reason: %v", err)
 	}
@@ -333,7 +334,7 @@ func TestAuditDocumentationGateBranchRulesetDeclineKeepsWorkflowContext(t *testi
 	root := documentationAuditFixture(t)
 	writeFixtureFile(t, root, adopt.DocumentationWorkflowFile,
 		strings.Replace(adopt.DocumentationWorkflow(), "name: "+adopt.DocumentationStatusContext, "name: Other", 1))
-	if err := auditDocumentationGate(t.Context(), declinedBranchRulesetManifest("docs:seo-portal"), root); err == nil {
+	if err := docGate(t.Context(), declinedBranchRulesetManifest("docs:seo-portal"), root); err == nil {
 		t.Fatal("branch-ruleset decline excused a workflow that no longer reports the documentation context")
 	}
 }
@@ -343,12 +344,12 @@ func TestAuditDocumentationGateBranchRulesetDeclineBoundary(t *testing.T) {
 	writeFixtureFile(t, root, ".github/rulesets/main.json",
 		`{"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"`+
 			adopt.DocumentationStatusContext+`"}]}}]}`)
-	if err := auditDocumentationGate(t.Context(), declinedBranchRulesetManifest(), root); err != nil {
+	if err := docGate(t.Context(), declinedBranchRulesetManifest(), root); err != nil {
 		t.Fatalf("disabled facet claimed an operator-owned declined ruleset: %v", err)
 	}
 	for _, decline := range []string{"not-an-artifact", "documentation-gate"} {
 		invalid := &config.Manifest{Adoption: &config.AdoptionPolicy{Decline: []string{decline}}}
-		if err := auditDocumentationGate(t.Context(), invalid, root); err == nil {
+		if err := docGate(t.Context(), invalid, root); err == nil {
 			t.Fatalf("invalid decline %q did not fail closed", decline)
 		}
 	}
@@ -393,6 +394,40 @@ func TestAuditReadmeDocumentationContract(t *testing.T) {
 				t.Fatal("stale documentation README passed audit")
 			}
 		})
+	}
+}
+
+// docGate runs the gate under the branch protection an unlocked fixture resolves to:
+// built-in defaults plus the manifest's overrides.
+func docGate(ctx context.Context, manifest *config.Manifest, root string) error {
+	policy := config.DefaultPolicy()
+	policy.ApplyOverrides(manifest.Overrides)
+	return auditDocumentationGate(ctx, manifest, root, policy.BranchProtection)
+}
+
+// The gate compares the ruleset with the branch protection the audit resolved, which now
+// includes what the pinned profiles and facets require, not with the built-in defaults.
+func TestAuditDocumentationGateUsesTheEffectiveBranchProtection(t *testing.T) {
+	root := documentationAuditFixture(t)
+	manifest := &config.Manifest{Facets: []string{"docs:seo-portal"}}
+	joined := config.DefaultPolicy().BranchProtection
+	joined.RequireSignedCommits, joined.RequiredApprovingReviewers = true, 2
+	// Negative: a ruleset rendered from the defaults does not satisfy the joined policy.
+	if err := auditDocumentationGate(t.Context(), manifest, root, joined); err == nil {
+		t.Fatal("ruleset rendered from the defaults satisfied a stricter effective policy")
+	}
+	// Positive: the ruleset adopt renders from the joined policy passes.
+	ruleset, err := forge.RenderRepositoryRuleset(joined, []string{adopt.DocumentationStatusContext})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, root, ".github/rulesets/main.json", string(ruleset))
+	if err := auditDocumentationGate(t.Context(), manifest, root, joined); err != nil {
+		t.Fatalf("ruleset rendered from the effective policy failed: %v", err)
+	}
+	// Boundary: the defaults no longer match once the ruleset follows the joined policy.
+	if err := docGate(t.Context(), manifest, root); err == nil {
+		t.Fatal("defaults matched a ruleset rendered from a stricter policy")
 	}
 }
 

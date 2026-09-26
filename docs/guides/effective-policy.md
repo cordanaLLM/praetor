@@ -9,9 +9,19 @@ policy digest, applied limit and baseline evidence.
 
 The first migration covers audit function length. Cyclomatic complexity, cognitive
 complexity and statement limits are resolved and retained in the typed policy;
-this change does not inject them into separate linters or the LSP. Branch and
-supply-chain checks retain their existing defaults plus repository overrides.
+this change does not inject them into separate linters or the LSP.
 Routing, budgets, credentials and deployment activation are separate consumers.
+
+Pinned profiles and facets contribute every lattice dimension, not only
+complexity: branch protection, supply chain, memory, error unwraps, linters and
+DevContainer features. [The strictness lattice](archetype-authoring.md#3-the-strictness-lattice-highest-standard-wins)
+lists each dimension's join rule. `praetorctl adopt` renders
+`.github/rulesets/main.json` from the resolved branch protection, and
+`praetorctl sync` and the audit's locked documentation gate check the ruleset
+against that same policy (`TestSyncRulesetFollowsTheJoinedProfileBranchProtection`,
+`TestAuditDocumentationGateUsesTheEffectiveBranchProtection`). Linters, memory
+and error unwraps are resolved and sealed into the digest; no gate executes the
+linter list yet.
 
 Public adoption loops resolve their policy during the dry run, then independently
 scan the original source under that policy before applying changes. Applied
@@ -35,9 +45,16 @@ Resolution uses these sources in a fixed order:
 4. Repository `overrides.complexity` from `.standards.yaml`.
 5. The audit compatibility constraint: `max_func_loc: 60`.
 
+Repository `overrides.branch_protection` and `overrides.supply_chain` apply after
+the join. They only tighten, except `review_mode: single_maintainer`, the one
+explicit relaxation; a profile or facet cannot set `review_mode`.
+
 Every complexity constraint can only tighten an earlier limit. A later limit of
-`90` cannot override an existing `50`. Omitted fields do not contribute. Explicit
-zero, negative, null, noninteger and unknown complexity fields are errors.
+`90` cannot override an existing `50`. Omitted fields do not contribute. In
+external files and repository overrides, explicit zero, negative, null,
+noninteger and unknown complexity fields are errors. A profile or facet may
+state `0` for "no bound", as `upstream-fork` does; that limit contributes
+nothing, like an omitted one (`TestLoadEffectivePolicyLooserFacetNeverLoosens`).
 
 Both `60`s are one constant. `hiss.DefaultMaxFuncLOC` in `internal/hiss/hiss.go`
 is the scanner's default; the built-in default, the compatibility constraint
@@ -296,6 +313,10 @@ policy values and field contributors. Diagnostic filesystem paths are excluded,
 so relocating an identical catalog or mounting the same configuration elsewhere
 does not change its identity. CLI/MCP text includes at most 16 source hashes and
 an explicit omitted count. The typed result retains every source and contributor.
+Memory and error unwraps are omitted from the encoding while unset, so a plan or
+repair anchor retained before those dimensions existed still verifies
+(`TestResolvedPolicyOmitsUnsetDimensionsFromItsEncoding`); a freshly resolved
+policy carries both, so its digest differs from the one an older release reported.
 
 The built-in function length changed from 100 to 60 (BUG-309). The
 `builtin:defaults-v1` source hash encodes the default values, so every effective

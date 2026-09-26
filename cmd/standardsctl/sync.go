@@ -275,8 +275,6 @@ func runSync(args []string) error {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	policy := config.DefaultPolicy()
-	policy.ApplyOverrides(manifest.Overrides)
 	rootDir := filepath.Dir(flags.configPath)
 	contexts, err := forge.RequiredStatusContexts(ctx, rootDir)
 	if err != nil {
@@ -293,6 +291,8 @@ func runSync(args []string) error {
 	if err != nil {
 		return err
 	}
+	policy, unresolved := syncPolicy(ctx, flags.configPath, flags.catalogRoot, manifest)
+	missing += unresolved
 	if err := reconcileRuleset(ctx, rootDir, policy.BranchProtection, contexts); err != nil {
 		return err
 	}
@@ -311,6 +311,22 @@ func runSync(args []string) error {
 
 	fmt.Printf("Local sync checks finished: labels and ruleset verified; %d companion checks missing.\n", missing)
 	return nil
+}
+
+// syncPolicy resolves the branch protection adopt renders into the ruleset, through the
+// resolver plan uses, so sync never checks the ruleset against a policy adopt did not write.
+// A lock that does not resolve yet falls back to built-in defaults plus the repository's
+// overrides and counts as one unverified check: sync then stays incomplete, and nothing
+// reaches the forge under a policy that is not the declared one.
+func syncPolicy(ctx context.Context, configPath, catalogRoot string, manifest *config.Manifest) (*config.ResolvedPolicy, int) {
+	policy, _, err := config.ResolveRepositoryPolicyFromCatalog(ctx, configPath, catalogRoot, manifest)
+	if err == nil && policy != nil {
+		return policy, 0
+	}
+	fmt.Printf("  [UNVERIFIED] Effective policy unresolved (%v); ruleset checked against built-in defaults and repository overrides; verification incomplete.\n", err)
+	fallback := config.DefaultPolicy()
+	fallback.ApplyOverrides(manifest.Overrides)
+	return fallback, 1
 }
 
 func synthesizeRuleset(targetPath string, bp config.BranchProtectionPolicy, contexts []string) error {
