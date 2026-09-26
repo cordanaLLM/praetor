@@ -113,6 +113,64 @@ func TestAuditWorkstationTopology_Positive(t *testing.T) {
 	if !containsStrayBase(report.StrayFiles, ".standards-baseline.json") {
 		t.Error("expected stray .standards-baseline.json to be detected")
 	}
+	assertStringSet(t, "OrgContainers", report.OrgContainers, []string{"golusoris", "vmafx"})
+	assertStringSet(t, "Violations", report.Violations,
+		[]string{"DEV-02: root compatibility symlink pelorus violates canonical path invariant"})
+}
+
+func assertStringSet(t *testing.T, field string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s = %v, want %v", field, got, want)
+	}
+	seen := make(map[string]bool, len(got))
+	for _, value := range got {
+		seen[value] = true
+	}
+	for _, value := range want {
+		if !seen[value] {
+			t.Fatalf("%s = %v, want %v", field, got, want)
+		}
+	}
+}
+
+// TestAuditWorkstationTopology_DEV01RootRepositories pins the DEV-01 branch: a repository
+// directly in the dev root is a violation whether its .git is a directory or a gitlink,
+// a plain directory is not, and organization containers match case-insensitively.
+func TestAuditWorkstationTopology_DEV01RootRepositories(t *testing.T) {
+	devRoot := t.TempDir()
+	initTestGit(t, filepath.Join(devRoot, "rogue"))
+	writeGitlink(t, filepath.Join(devRoot, "linked"), "gitdir: /elsewhere/.git\n")
+	if err := os.MkdirAll(filepath.Join(devRoot, "plain", "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initTestGit(t, filepath.Join(devRoot, "cordanaLLM", "praetor"))
+
+	report, err := AuditWorkstationTopology(context.Background(), devRoot)
+	if err != nil {
+		t.Fatalf("AuditWorkstationTopology: %v", err)
+	}
+	assertStringSet(t, "Violations", report.Violations, []string{
+		"DEV-01: repository linked is located directly in dev root instead of an org folder",
+		"DEV-01: repository rogue is located directly in dev root instead of an org folder",
+	})
+	assertStringSet(t, "OrgContainers", report.OrgContainers, []string{"cordanaLLM"})
+	assertStringSet(t, "ValidRepos", report.ValidRepos, []string{filepath.Join("cordanaLLM", "praetor")})
+	if len(report.StrayFiles) != 0 || report.Truncated {
+		t.Fatalf("DEV-01 fixture produced strays %v or truncation %v", report.StrayFiles, report.TruncationReasons)
+	}
+}
+
+func TestAuditWorkstationTopology_Boundary_EmptyDevRootHasNoFindings(t *testing.T) {
+	report, err := AuditWorkstationTopology(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatalf("AuditWorkstationTopology: %v", err)
+	}
+	assertStringSet(t, "Violations", report.Violations, nil)
+	assertStringSet(t, "OrgContainers", report.OrgContainers, nil)
+	if report.Violations == nil || report.OrgContainers == nil {
+		t.Fatal("empty report must carry empty, non-nil slices")
+	}
 }
 
 func containsStrayBase(files []StrayFile, name string) bool {
