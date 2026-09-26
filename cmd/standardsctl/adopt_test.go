@@ -65,6 +65,29 @@ func TestPrintBatchResult_ReportsErrorsAsFailure(t *testing.T) {
 	}
 }
 
+func TestPrintBatchResult_ShowsTheRepositoryNameInSlashForm(t *testing.T) {
+	// Positive: a Windows scan's backslash name renders in slash form on success and failure.
+	out, err := captureStdout(t, func() error {
+		printBatchResult(`acme\widgets`, true, &adopt.AdoptReport{}, nil)
+		printBatchResult(`acme\gadgets`, true, nil, errors.New("no lock source"))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "[ADOPTED] acme/widgets ", "[FAIL] acme/gadgets: no lock source")
+	// Negative and boundary: a name without separators, and the empty name, pass through.
+	out, err = captureStdout(t, func() error {
+		printBatchResult("solo", true, &adopt.AdoptReport{}, nil)
+		printBatchResult("", true, nil, errors.New("empty"))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "[ADOPTED] solo ", "[FAIL] : empty")
+}
+
 func TestPrintAdoptReportDoesNotClaimUnobservedBaselineOrPillars(t *testing.T) {
 	out, err := captureStdout(t, func() error {
 		printAdoptReport(&adopt.AdoptReport{State: adopt.StatePartial, BaselineStatus: "not_run", Errors: []string{"pre-baseline failure"}})
