@@ -563,10 +563,7 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 		if err := state.InitWorkingDirContext(ctx, s.repoPath); err != nil {
 			s.report.addError("workingdir init: %v", err)
 		}
-		detectedFlv := flavor.DetectFlavor(s.repoPath)
-		if _, err := flavor.ApplyFlavor(ctx, s.repoPath, detectedFlv, false); err != nil {
-			s.report.addError("apply flavor %s: %v", detectedFlv, err)
-		}
+		applyDetectedFlavor(ctx, s)
 	}
 	s.report.ActionDetails = append(s.report.ActionDetails, ActionDetail{
 		Path:    workingDirPath,
@@ -574,6 +571,26 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 		Details: "Initialized canonical session state ledger and bug/question journals",
 	})
 	return nil
+}
+
+// applyDetectedFlavor scaffolds the flavor detection names, and nothing when detection names
+// none.
+//
+// It used to apply flavor.FallbackFlavor (go-library) there. That flavor's CI workflow runs
+// setup-go against a go.mod the repository does not have, and branch-ruleset, which runs after
+// this step, makes every job of a scaffolded workflow a required check: a docs or shell
+// repository was left with a required check no pull request could pass. flavor audit refuses
+// the same repository (ErrNoFlavorMatched) instead of auditing it as go-library, so the two
+// now agree that no flavor applies.
+func applyDetectedFlavor(ctx context.Context, s *adoptSession) {
+	detected, ok := flavor.Detect(s.repoPath)
+	if !ok {
+		s.report.addWarning("no flavor matched %s; flavor templates not scaffolded (run praetorctl flavor apply --flavor=<name> to choose one)", s.repoPath)
+		return
+	}
+	if _, err := flavor.ApplyFlavor(ctx, s.repoPath, detected, false); err != nil {
+		s.report.addError("apply flavor %s: %v", detected, err)
+	}
 }
 
 // lowerFirst lower-cases the first byte of an ASCII detail string.
