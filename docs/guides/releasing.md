@@ -196,7 +196,9 @@ A flavor whose source ref resolves to no commit is **pending**. That is the norm
 `lts-*` branch. `sync` prints it as `Pending <flavor>`, leaves its tag exactly where it is,
 and still moves every other flavor. It never falls back to `HEAD`, so a stable channel is
 never aliased to `main`. The workflow runs `flavors sync --push`, so the tags published are
-the flavors declared in the config, not a list of names kept in YAML.
+the flavors declared in the config, not a list of names kept in YAML. A scheduled or push run
+holds `edge`; dispatching `.github/workflows/sync-flavors.yml` with the `flavor` input (for
+example `edge`) passes `--flavor` and moves only the flavors named.
 
 Moving tags are lightweight tags created with `git tag --no-sign`. A workstation with
 `tag.gpgSign=true` would otherwise turn them into signed annotated tags that need a
