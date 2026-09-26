@@ -3,6 +3,7 @@ package repairrun
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,18 +83,31 @@ func verificationArguments(ctx context.Context, cfg Config, candidate string) ([
 // can bind the toolchain that is actually installed instead of assuming /usr/bin/go. It
 // returns the binary's path exactly as bwrap must see it (goPath lives under root, since
 // GOROOT/bin/go is go's own layout contract) plus root for the --ro-bind call.
+//
+// Both are compared and returned in their symlink-resolved form. PATH usually reaches go
+// through a link -- /usr/bin/go -> /usr/lib/go/bin/go on Arch, Debian's golang-go
+// alternatives, Homebrew's /opt/homebrew/bin/go -- while go reports GOROOT from its own
+// resolved executable. Comparing the link against GOROOT refused every such host, and the
+// failure hid under `go test`, which puts GOROOT/bin first on PATH so LookPath found the
+// real binary there and nowhere else.
 func goToolchainRoot(ctx context.Context) (goPath, root string, err error) {
-	goPath, err = goBinary()
+	linked, err := goBinary()
 	if err != nil {
 		return "", "", err
 	}
-	data, err := command(ctx, "", []string{"PATH=" + filepath.Dir(goPath)}, 4096, goPath, "env", "GOROOT")
+	data, err := command(ctx, "", []string{"PATH=" + filepath.Dir(linked)}, 4096, linked, "env", "GOROOT")
 	if err != nil {
 		return "", "", errors.New("cannot discover installed Go toolchain root")
 	}
-	root = strings.TrimSpace(string(data))
-	if !cleanAbsolute(root) {
+	reported := strings.TrimSpace(string(data))
+	if !cleanAbsolute(reported) {
 		return "", "", errors.New("invalid installed Go toolchain root")
+	}
+	if goPath, err = filepath.EvalSymlinks(linked); err != nil {
+		return "", "", fmt.Errorf("resolve installed go binary: %w", err)
+	}
+	if root, err = filepath.EvalSymlinks(reported); err != nil {
+		return "", "", fmt.Errorf("resolve installed Go toolchain root: %w", err)
 	}
 	if !strings.HasPrefix(goPath, root+string(filepath.Separator)) {
 		return "", "", errors.New("installed go binary is not under its own GOROOT")
