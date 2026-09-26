@@ -53,6 +53,22 @@ Test code and function bodies are both brace-delimited items, and one tracker (`
 
 `internal/hiss/rust_scope_test.go` and `internal/hiss/abort_policy_test.go` pin each case.
 
+## Python: the entry point follows logical lines
+
+The abort policy allows `sys.exit` inside the top-level `if __name__ == "__main__":` block and the
+top-level `def main`. The scope (`pythonAbortScope` in `internal/hiss/rules.go`) opens on the
+column-zero line that starts either one and closes on the next column-zero code line.
+
+Python ignores indentation inside open brackets and after a trailing backslash, so a column-zero
+line there continues the line above it. black wraps a long signature and puts its closing
+`) -> int:` at column zero. `pythonLineJoiner` counts brackets in the literal-stripped code and
+treats such a line as a continuation, which neither closes nor opens the scope. An unbalanced
+closer leaves the count at zero rather than below it.
+
+`TestAbortPolicy_Boundary_PythonWrappedSignatureKeepsTheEntryOpen` in
+`internal/hiss/abort_policy_test.go` and the fixture
+`.config/hiss/testdata/HISS-07/python/negative/wrapped-entry-signature.py` pin the wrapped case.
+
 ## Go: one pass reads a package, not a file
 
 Most matchers decide a line. HISS-01 cannot be decided that way in full: a function that calls

@@ -191,3 +191,56 @@ func TestAbortPolicy_Boundary_PythonEntryEndsAtTheNextTopLevelLine(t *testing.T)
 	rep := scanFixture(t, root, ScanOptions{})
 	assertViolations(t, rep, []expectedViolation{{"HISS-07", "tool.py", 5}, {"HISS-07", "tool.py", 8}})
 }
+
+func TestAbortPolicy_Boundary_PythonWrappedSignatureKeepsTheEntryOpen(t *testing.T) {
+	root := t.TempDir()
+	// black puts the closing `) -> int:` of a wrapped signature at column zero. Python
+	// ignores indentation inside brackets and after a backslash, so such a line continues the
+	// def header or the statement above it and neither ends nor opens the entry point.
+	writeFixture(t, root, "tool.py", strings.Join([]string{
+		"import sys",             // 1
+		"",                       // 2
+		"def main(",              // 3
+		"    argv=None,",         // 4
+		") -> int:",              // 5 continues the header
+		"    run(",               // 6
+		"        argv,",          // 7
+		")",                      // 8 continues the call
+		"    if not argv:",       // 9
+		"        sys.exit(2)",    // 10 still the entry point
+		"    return 0",           // 11
+		"",                       // 12
+		"def helper(",            // 13
+		"    x,",                 // 14
+		"):",                     // 15
+		"    sys.exit(1)",        // 16 library code
+		"",                       // 17
+		"def main(argv=None) \\", // 18
+		"-> int:",                // 19 continues after a backslash
+		"    sys.exit(0)",        // 20 the entry point again
+		"",
+	}, "\n"))
+
+	rep := scanFixture(t, root, ScanOptions{})
+	assertViolations(t, rep, []expectedViolation{{"HISS-07", "tool.py", 16}})
+}
+
+func TestAbortPolicy_Negative_PythonStrayCloserDoesNotHideAWrappedEntry(t *testing.T) {
+	root := t.TempDir()
+	// An unbalanced closer must not leave the bracket count below zero, or the next wrapped
+	// header would balance to zero on its opening line and its column-zero closer would end
+	// the entry point again.
+	writeFixture(t, root, "tool.py", strings.Join([]string{
+		"import sys",      // 1
+		")",               // 2 unbalanced
+		"def main(",       // 3
+		"    argv=None,",  // 4
+		") -> int:",       // 5
+		"    sys.exit(2)", // 6 the entry point
+		"",
+	}, "\n"))
+
+	if rep := scanFixture(t, root, ScanOptions{}); len(rep.Violations) != 0 {
+		t.Fatalf("a wrapped def main after a stray closer is still the entry point: %+v", rep.Violations)
+	}
+}

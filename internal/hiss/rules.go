@@ -440,11 +440,12 @@ func scanPythonLines(lines []string, rel string, rep *ScanReport, opts ScanOptio
 	lastCode := 0
 	stripper := &literalStripper{syn: pythonSyntax}
 	abort := pythonAbortScope{file: isPythonTestPath(rel) || isPythonEntryFile(rel)}
+	var joiner pythonLineJoiner
 	for idx, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		code := stripper.strip(line)
 		scanPythonLineInvariants(code, rel, idx+1, rep)
-		if !abort.observe(line, code) {
+		if !abort.observe(line, code, joiner.continues(code)) {
 			checkPythonAbort(code, rel, idx+1, rep)
 		}
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
@@ -476,15 +477,43 @@ type pythonAbortScope struct {
 
 // observe feeds one raw line with its stripped code and reports whether that line may
 // abort. A code line at column zero opens the entry point when it is one and closes it
-// otherwise; indented, blank, comment and docstring lines keep the current state.
-func (s *pythonAbortScope) observe(line, code string) bool {
+// otherwise; indented, blank, comment and docstring lines keep the current state, and so
+// does a continuation line (continued), which Python lets start at any column.
+func (s *pythonAbortScope) observe(line, code string, continued bool) bool {
 	if s.file {
 		return true
 	}
-	if strings.TrimSpace(code) != "" && lineIndent(line) == 0 {
+	if !continued && strings.TrimSpace(code) != "" && lineIndent(line) == 0 {
 		s.entry = pythonEntry.MatchString(strings.TrimSpace(line))
 	}
 	return s.entry
+}
+
+// pythonLineJoiner joins physical lines into Python's logical lines. A line continues the
+// one before it while a bracket opened earlier is still open or the line before ended with
+// a backslash; Python ignores the indentation of such a line, so black's closing
+// `) -> int:` of a wrapped def header sits at column zero without ending the def.
+type pythonLineJoiner struct {
+	depth     int
+	backslash bool
+}
+
+// continues feeds one line's code, already stripped of literals and comments so brackets
+// inside strings never count, and reports whether that line continues the one before it.
+// Each line must be passed exactly once and in order. An unbalanced closer leaves the depth
+// at zero, never below it, so malformed code cannot hide the next bracket that opens.
+func (j *pythonLineJoiner) continues(code string) bool {
+	continued := j.depth > 0 || j.backslash
+	for i := 0; i < len(code); i++ {
+		switch code[i] {
+		case '(', '[', '{':
+			j.depth++
+		case ')', ']', '}':
+			j.depth = max(j.depth-1, 0)
+		}
+	}
+	j.backslash = strings.HasSuffix(strings.TrimRight(code, " \t"), `\`)
+	return continued
 }
 
 // checkPythonAbort reports sys.exit outside the places the abort policy allows it.
