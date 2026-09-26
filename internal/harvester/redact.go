@@ -96,11 +96,11 @@ func redactJSONSecrets(data []byte) ([]byte, int, error) {
 	}
 	r := &jsonRedactor{dec: json.NewDecoder(bytes.NewReader(data)), data: data}
 	r.dec.UseNumber()
-	for {
+	for r.tokens <= maxRedactTokens {
 		start := r.dec.InputOffset()
 		tok, err := r.next()
 		if errors.Is(err, io.EOF) {
-			break
+			return spliceRedactions(data, r.spans), len(r.spans), nil
 		}
 		if err != nil {
 			return nil, 0, fmt.Errorf("walk JSON for redaction: %w", err)
@@ -109,7 +109,7 @@ func redactJSONSecrets(data []byte) ([]byte, int, error) {
 			return nil, 0, err
 		}
 	}
-	return spliceRedactions(data, r.spans), len(r.spans), nil
+	return nil, 0, fmt.Errorf("JSON document exceeds %d tokens", maxRedactTokens)
 }
 
 func (r *jsonRedactor) next() (json.Token, error) {
