@@ -29,11 +29,11 @@ func TestBumpUnifyApplyRaisesOnlyDependenciesBehindTheCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unify --apply: %v\n%s", err, text)
 	}
-	if !strings.Contains(after, `"typescript": "`+bump.FleetCatalog["typescript"].Version+`"`) {
-		t.Fatalf("typescript not raised to the catalog pin:\n%s", after)
-	}
-	if !strings.Contains(after, `"eslint": "^99.0.0"`) {
-		t.Fatalf("eslint ahead of the catalog was downgraded:\n%s", after)
+	// The package.json rewrite splices only the raised value, so the compact fixture stays
+	// compact and eslint, ahead of the catalog, keeps its bytes.
+	want := `{"dependencies":{"typescript":"` + bump.FleetCatalog["typescript"].Version + `","eslint":"^99.0.0"}}`
+	if after != want {
+		t.Fatalf("unify --apply wrote\n%s\nwant typescript raised to the catalog pin and eslint unchanged:\n%s", after, want)
 	}
 	if !strings.Contains(text, "[AHEAD OF CATALOG, left unchanged] (1):") || !strings.Contains(text, "Successfully unified 1 dependencies") {
 		t.Fatalf("unify output = %q", text)

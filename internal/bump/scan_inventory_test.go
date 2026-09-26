@@ -147,8 +147,6 @@ func TestScanInventory_Positive_AuditMatchesOnlineAndOffline(t *testing.T) {
 	}
 }
 
-// A complete upstream report with nothing outdated is an answer: it never pivots to the
-// manifest-only result, and no dependency becomes a candidate.
 // Only total_scanned is independent of the network. An offline audit knows no upgrade
 // target, so an outdated repository's score still differs: one of four dependencies
 // outdated scores 75 online and 100 offline, over the same four scanned.
@@ -178,6 +176,8 @@ func TestScanInventory_Boundary_OfflineAuditCannotSeeUpgrades(t *testing.T) {
 	}
 }
 
+// A complete upstream report with nothing outdated is an answer: it never pivots to the
+// manifest-only result, and no dependency becomes a candidate.
 func TestScanInventory_Negative_ZeroOutdatedIsNotAFallback(t *testing.T) {
 	repo := inventoryRepo(t)
 	t.Setenv("PATH", reportBin(t, currentGoReport, "{}", 0))
@@ -204,20 +204,30 @@ func TestScanInventory_Negative_OfflineHasNoPhantomCandidates(t *testing.T) {
 }
 
 // The catalog compares the whole inventory: a dependency with no upstream update still
-// drifts from the fleet catalog.
+// drifts from the fleet catalog. Behind its pin it is an upgrade; ahead of its pin it is
+// reported and never turned into a downgrade.
 func TestScanInventory_Positive_CatalogSeesUpToDateDependencies(t *testing.T) {
 	repo := t.TempDir()
-	writeGoMod(t, repo, "module example.com/app\n\nrequire (\n\tgithub.com/google/uuid v1.3.0\n\texample.com/stale v1.0.0\n)\n")
+	writeGoMod(t, repo, "module example.com/app\n\nrequire (\n\tgithub.com/google/uuid v1.3.0\n\tgolang.org/x/sync v0.99.0\n\texample.com/stale v1.0.0\n)\n")
 	report := `{"Path":"github.com/google/uuid","Version":"v1.3.0"}
+{"Path":"golang.org/x/sync","Version":"v0.99.0"}
 {"Path":"example.com/stale","Version":"v1.0.0","Update":{"Version":"v1.1.0"}}
 `
 	t.Setenv("PATH", reportBin(t, report, "{}", 0))
-	unified, err := ReconcileCatalog(t.Context(), repo)
+	drift, err := ReconcileCatalogReport(t.Context(), repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(unified) != 1 || unified[0].Package != "github.com/google/uuid" || unified[0].TargetVersion != "v1.6.0" {
-		t.Fatalf("catalog drift = %+v, want uuid v1.3.0 -> v1.6.0", unified)
+	pin := FleetCatalog["github.com/google/uuid"].Version
+	if len(drift.Upgrades) != 1 || drift.Upgrades[0].Package != "github.com/google/uuid" || drift.Upgrades[0].TargetVersion != pin {
+		t.Fatalf("catalog upgrades = %+v, want uuid v1.3.0 -> %s", drift.Upgrades, pin)
+	}
+	if len(drift.Ahead) != 1 || drift.Ahead[0].Package != "golang.org/x/sync" {
+		t.Fatalf("catalog ahead = %+v, want golang.org/x/sync reported ahead", drift.Ahead)
+	}
+	unified, err := ReconcileCatalog(t.Context(), repo)
+	if err != nil || len(unified) != 1 || unified[0].Package != "github.com/google/uuid" {
+		t.Fatalf("ReconcileCatalog = %+v, %v; want the uuid upgrade only", unified, err)
 	}
 }
 
