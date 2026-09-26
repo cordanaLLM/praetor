@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"runtime/debug"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -304,7 +308,36 @@ func fleetCommandTable() map[string]commandFunc {
 	}
 }
 
+var rootCtx context.Context
+
+// rootContext returns the root context for commands, defaulting to context.Background()
+// when no root context has been installed.
+func rootContext() context.Context {
+	if rootCtx != nil {
+		return rootCtx
+	}
+	return context.Background()
+}
+
+// commandContext derives a context with a timeout from the root context. If timeout <= 0,
+// it returns a cancellable context derived from the root context.
+func commandContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	parent := rootContext()
+	if timeout <= 0 {
+		return context.WithCancel(parent)
+	}
+	return context.WithTimeout(parent, timeout)
+}
+
 func dispatchCommand(cmd string, args []string) error {
+	if rootCtx == nil {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		rootCtx = ctx
+		defer func() {
+			rootCtx = nil
+		}()
+	}
 	if handler, ok := commandTable()[cmd]; ok {
 		return handler(args)
 	}

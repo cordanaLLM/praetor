@@ -1,0 +1,3 @@
+type: fixed
+title: Require explicit gate run subcommand, omit banner and target lines when --json is requested so output is parseable JSON, install signal.NotifyContext root in main dispatch so SIGINT/SIGTERM cancellation propagates and defer-based cleanup removes worktrees, and wrap previously deadline-free CLI contexts in adr, bugs, caveman, hook, lockdigest, and operational commands with bounded timeouts
+breaking: true

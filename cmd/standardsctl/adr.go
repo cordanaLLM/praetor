@@ -1,14 +1,17 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adr"
 )
+
+// adrTimeout bounds decision record verification (HISS-02, BUG-060).
+const adrTimeout = 60 * time.Second
 
 // runADR verifies that the repository does not contradict the decisions it records.
 //
@@ -24,7 +27,9 @@ func runADR(args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	report, err := adr.Verify(context.Background(), *repoPath)
+	ctx, cancel := commandContext(adrTimeout)
+	defer cancel()
+	report, err := adr.Verify(ctx, *repoPath)
 	if err != nil {
 		return err
 	}

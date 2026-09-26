@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/internal/worktree"
 )
 
 // goFuncOfLOC returns a Go file holding one function the HISS scanner measures at exactly
@@ -143,5 +146,31 @@ func TestRunHissStage_ComplexityIsReportedUnderResolvedLimits(t *testing.T) {
 		if tc.measured > 0 && rep.Complexity.Measurements[0].Value != tc.cyclomatic {
 			t.Errorf("%s: measured %+v", tc.name, rep.Complexity.Measurements[0])
 		}
+	}
+}
+
+// Boundary: a cancelled context does not prevent removeWorktree from tearing down the
+// test worktree via context.WithoutCancel.
+func TestRemoveWorktree_Boundary_WithoutCancelUnderCancelledContext(t *testing.T) {
+	repoDir := newHermeticGitRepo(t)
+	wtMgr := worktree.NewManager(repoDir)
+	taskID := "boundary-cancel-wt"
+	ctx := context.Background()
+	wt, err := wtMgr.Create(ctx, taskID, "HEAD")
+	if err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+	if !util.DirExists(wt.Path) {
+		t.Fatalf("expected worktree %s to exist", wt.Path)
+	}
+
+	cancelledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	if cleanErr := removeWorktree(cancelledCtx, wtMgr, taskID); cleanErr != nil {
+		t.Fatalf("removeWorktree failed under cancelled context: %v", cleanErr)
+	}
+	if util.DirExists(wt.Path) {
+		t.Errorf("worktree %s must be removed even when context is cancelled", wt.Path)
 	}
 }

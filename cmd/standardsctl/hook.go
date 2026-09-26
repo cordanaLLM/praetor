@@ -1,11 +1,11 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
 )
@@ -30,6 +30,9 @@ func commandExitCode(stderr io.Writer, err error) int {
 	return 1
 }
 
+// hookTimeout bounds hook dispatch including settings resolution (HISS-02, BUG-060).
+const hookTimeout = 2 * time.Minute
+
 // runHook is `praetorctl hook <client> <event>`: the one string a client registration
 // contains. It takes no flags, so the registration needs no shell features; the operator's
 // hooks section (command policy deny patterns, scope, interpreter candidates) is instead
@@ -44,7 +47,8 @@ func runHook(args []string) error {
 	if len(args) == 2 {
 		client, event = args[0], args[1]
 	}
-	ctx := context.Background()
+	ctx, cancel := commandContext(hookTimeout)
+	defer cancel()
 	settings, err := defaultOperatorSettingsFlags().load(ctx)
 	if err != nil {
 		return err

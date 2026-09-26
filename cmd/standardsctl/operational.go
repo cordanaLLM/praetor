@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/operationalsync"
 )
@@ -14,11 +15,16 @@ import (
 const operationalUsage = "usage: operational sync init --owner-path PATH --owner OWNER | " +
 	"operational sync plan|prepare --owner-path PATH --source-path PATH --owner-sha SHA --base-sha SHA --source-sha SHA [--destination NEW_PATH]"
 
+// operationalTimeout bounds operational sync dispatch (HISS-02, BUG-060).
+const operationalTimeout = 2 * time.Minute
+
 func runOperational(args []string) error {
 	if len(args) < 2 || args[0] != "sync" {
 		return errors.New(operationalUsage)
 	}
-	return runOperationalSync(context.Background(), args[1], args[2:])
+	ctx, cancel := commandContext(operationalTimeout)
+	defer cancel()
+	return runOperationalSync(ctx, args[1], args[2:])
 }
 
 func runOperationalSync(ctx context.Context, stage string, args []string) error {

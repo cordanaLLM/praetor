@@ -1,14 +1,17 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/bugledger"
 )
+
+// bugsTimeout bounds bug ledger audits (HISS-02, BUG-060).
+const bugsTimeout = 30 * time.Second
 
 // runBugs audits the bug ledger's recorded locations.
 //
@@ -26,7 +29,9 @@ func runBugs(args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	report, err := bugledger.Audit(context.Background(), *repoPath)
+	ctx, cancel := commandContext(bugsTimeout)
+	defer cancel()
+	report, err := bugledger.Audit(ctx, *repoPath)
 	if err != nil {
 		return err
 	}

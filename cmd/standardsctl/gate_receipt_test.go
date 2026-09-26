@@ -390,10 +390,10 @@ func TestSplitGateSubcommand_3D(t *testing.T) {
 		{[]string{"verify", "--path", "."}, "verify", 2},
 		{[]string{"keygen"}, "keygen", 0},
 		{[]string{"run", "--dry-run"}, "run", 1},
-		// Backwards compatibility: flags with no subcommand still mean "run".
-		{[]string{"--path=."}, "run", 1},
+		// Flag with no subcommand is returned as the leading token; runGate refuses it (BUG-790).
+		{[]string{"--path=."}, "--path=.", 0},
 		// Boundary: no arguments at all.
-		{nil, "run", 0},
+		{nil, "", 0},
 	}
 	for _, tc := range cases {
 		sub, rest := splitGateSubcommand(tc.args)
@@ -402,8 +402,14 @@ func TestSplitGateSubcommand_3D(t *testing.T) {
 		}
 	}
 
-	// Negative: an unknown subcommand is refused rather than silently treated as a run.
+	// Negative: an unknown subcommand or missing subcommand is refused rather than silently treated as a run.
 	if err := runGate([]string{"frobnicate"}); err == nil {
 		t.Error("expected an error for an unknown gate subcommand")
+	}
+	if err := runGate(nil); err == nil {
+		t.Error("expected an error for missing gate subcommand")
+	}
+	if err := runGate([]string{"--path=."}); err == nil {
+		t.Error("expected an error when flag is provided without subcommand")
 	}
 }

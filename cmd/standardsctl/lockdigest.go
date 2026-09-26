@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 )
@@ -15,8 +16,13 @@ var (
 	ErrLockDigestMismatch    = config.ErrLockDigestMismatch
 )
 
+// lockDigestTimeout bounds lock digest audits (HISS-02, BUG-060).
+const lockDigestTimeout = 30 * time.Second
+
 func auditLockDigests(manifest *config.Manifest, rootDir string) error {
-	return auditLockDigestsContext(context.Background(), manifest, rootDir, "")
+	ctx, cancel := commandContext(lockDigestTimeout)
+	defer cancel()
+	return auditLockDigestsContext(ctx, manifest, rootDir, "")
 }
 
 // auditLockDigestsContext hashes the pins against the same catalog the effective policy

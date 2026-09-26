@@ -87,9 +87,9 @@ const agentTimeout = 5 * time.Minute
 // the gate run's own deadline: a fixed five minutes cut its race stage short (#314).
 func agentContext(agentName string) (context.Context, context.CancelFunc) {
 	if agentName == "praetor-gatekeeper" || agentName == "praetor_gatekeeper" {
-		return gating.WithRunDeadline(context.Background(), gating.EnvRunBudget())
+		return gating.WithRunDeadline(rootContext(), gating.EnvRunBudget())
 	}
-	return context.WithTimeout(context.Background(), agentTimeout)
+	return commandContext(agentTimeout)
 }
 
 func runAuditorAgent(ctx context.Context) error {
@@ -112,6 +112,9 @@ func runGatekeeperAgent(ctx context.Context) error {
 	rep, err := gatedPipeline(ctx, ".", false)
 	if err != nil {
 		return fmt.Errorf("gatekeeper execution error: %w", err)
+	}
+	if rep.Status == gating.StatusRejected {
+		return fmt.Errorf("gatekeeper rejection: repository rejected by gating pipeline")
 	}
 	fmt.Printf("[praetor-gatekeeper] Gated pipeline completed: %s\n", rep.Status)
 	return nil
