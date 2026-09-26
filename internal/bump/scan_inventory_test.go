@@ -304,6 +304,33 @@ func TestScanInventory_Boundary_NodeManifestEntries(t *testing.T) {
 	}
 }
 
+// The offline package.json scan reduces a bare, caret or tilde range to its version and
+// carries every other spec verbatim, so a comparator's version is never ranked as if the
+// range resolved to it.
+func TestScanInventory_Boundary_NodeRangeForms(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	repo := t.TempDir()
+	body := `{"dependencies":{"a":"1.0.0","b":"^2.0.0","c":"~3.0.0","d":"=4.0.0","e":">=5.0.0","f":"<6.0.0","g":"<=7.0.0","h":">8.0.0","i":"workspace:*"}}`
+	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := ScanNodeDependencies(t.Context(), repo, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(inventory))
+	for _, c := range inventory {
+		if c.CurrentVersion != c.TargetVersion {
+			t.Fatalf("offline entry %+v has an upgrade target", c)
+		}
+		got = append(got, c.Package+"="+c.CurrentVersion)
+	}
+	want := "a=1.0.0 b=2.0.0 c=3.0.0 d==4.0.0 e=>=5.0.0 f=<6.0.0 g=<=7.0.0 h=>8.0.0 i=workspace:*"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("inventory = %s\nwant        %s", strings.Join(got, " "), want)
+	}
+}
+
 func TestCalculateAuditScore_Boundaries(t *testing.T) {
 	cases := []struct {
 		total, pending, deps, unexamined, upToDate int

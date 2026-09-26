@@ -188,8 +188,9 @@ func TestRaisedRange_Boundary_TargetOperator(t *testing.T) {
 	}
 }
 
-// splitRangeOperator only parses: it reads strict ">" and "<" so a scan can report the
-// version they name. raisedRange, not the parser, refuses to raise them.
+// splitRangeOperator only parses: it reads every comparator, strict ">" and "<" included.
+// raisedRange refuses to raise a strict one, and rankedVersion admits only the bare, caret
+// and tilde forms for catalog ranking; neither decision belongs to the parser.
 func TestSplitRangeOperator_Boundaries(t *testing.T) {
 	valid := map[string][2]string{
 		"1.2.3": {"", "1.2.3"}, "^1.2.3": {"^", "1.2.3"}, "~1.2.3": {"~", "1.2.3"},

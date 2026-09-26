@@ -73,6 +73,13 @@ func TestReconcileWithCatalogBoundaries(t *testing.T) {
 		{"one patch ahead", "example.org/lib", "v1.6.1", 0, 1, 0},
 		{"workspace protocol", "node-lib", "workspace:*", 0, 0, 1},
 		{"compound range", "node-lib", ">=7.0.0", 0, 0, 1},
+		{"upper cap below the pin", "node-lib", "<7.0.0", 0, 0, 1},
+		{"upper cap above the pin", "node-lib", "<9.0.0", 0, 0, 1},
+		{"inclusive upper cap", "node-lib", "<=5.0.0", 0, 0, 1},
+		{"strict lower bound", "node-lib", ">5.0.0", 0, 0, 1},
+		{"exact comparator", "node-lib", "=5.0.0", 0, 0, 1},
+		{"bare version behind the pin", "node-lib", "5.0.0", 1, 0, 0},
+		{"surrounding space", "node-lib", " ^5.0.0", 0, 0, 1},
 		{"dist-tag", "node-lib", "latest", 0, 0, 1},
 		{"doubled operator", "node-lib", "^^7.0.2", 0, 0, 1},
 		{"empty version", "node-lib", "", 0, 0, 1},
@@ -154,6 +161,30 @@ func TestReconcileCatalogReportPropagatesCancellation(t *testing.T) {
 	}
 	if candidates, err := ReconcileCatalog(ctx, repo); err == nil || candidates != nil {
 		t.Fatalf("cancelled ReconcileCatalog = %+v, %v", candidates, err)
+	}
+}
+
+func TestReconcileCatalogReportRejectsNilContext(t *testing.T) {
+	if report, err := ReconcileCatalogReport(nilTestContext(), t.TempDir()); err == nil || report != nil {
+		t.Fatalf("nil-context reconcile = %+v, %v; want an error and no report", report, err)
+	}
+	if candidates, err := ReconcileCatalog(nilTestContext(), t.TempDir()); err == nil || candidates != nil {
+		t.Fatalf("nil-context ReconcileCatalog = %+v, %v; want an error and no candidates", candidates, err)
+	}
+}
+
+// rankedVersion admits exactly the bare, caret and tilde forms of splitRangeOperator; every
+// other comparator splitRangeOperator reads is refused, as is what it refuses itself.
+func TestRankedVersion_Boundaries(t *testing.T) {
+	for spec, want := range map[string]string{"1.2.3": "1.2.3", "^1.2.3": "1.2.3", "~1.2.3": "1.2.3", "v1.6.0": "v1.6.0", "^2.0.0-rc.1": "2.0.0-rc.1"} {
+		if got, ok := rankedVersion(spec); !ok || got != want {
+			t.Errorf("rankedVersion(%q) = %q, %v; want %q", spec, got, ok, want)
+		}
+	}
+	for _, spec := range []string{">=1.2.3", "<=1.2.3", ">1.2.3", "<2.0.0", "=1.2.3", "", "latest", "1.x", "^^1.2.3", " ^1.2.3", "workspace:^1.2.3"} {
+		if got, ok := rankedVersion(spec); ok {
+			t.Errorf("rankedVersion(%q) = %q, true; want refused", spec, got)
+		}
 	}
 }
 

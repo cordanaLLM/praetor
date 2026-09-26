@@ -171,13 +171,15 @@ func scanPackageJSONStatic(ctx context.Context, repoPath, dirRel string) ([]Upgr
 	return declared, nil
 }
 
-// declaredNodeDependency is one declared dependency with no known upgrade. A single-version
-// range contributes its version; any other spec (a workspace: or file: reference, a tag, a
-// compound range) is carried verbatim.
+// declaredNodeDependency is one declared dependency with no known upgrade. A bare, caret or
+// tilde range contributes the version it names (rankedVersion); any other spec (a comparator
+// such as "<9.0.0" or ">=5.0.0", a workspace: or file: reference, a tag, a compound range) is
+// carried verbatim, so catalog ranking leaves it unranked instead of ordering a version the
+// range does not resolve to.
 func declaredNodeDependency(pkg, spec, dirRel string) UpgradeCandidate {
 	version := spec
-	if _, bare, ok := splitRangeOperator(spec); ok {
-		version = bare
+	if ranked, ok := rankedVersion(spec); ok {
+		version = ranked
 	}
 	return UpgradeCandidate{
 		Package:        pkg,

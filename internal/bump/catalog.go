@@ -3,7 +3,6 @@ package bump
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/semver"
@@ -89,7 +88,9 @@ func ReconcileCatalog(ctx context.Context, repoPath string) ([]UpgradeCandidate,
 //
 // Its input is the whole declared inventory (scanInventory), not only the dependencies with
 // an upstream upgrade: a dependency already at upstream latest can still be behind or ahead
-// of its pin, and the set compared is the same online and offline.
+// of its pin. The set of dependencies compared is the same online and offline; the versions
+// are not: online, a dependency the package manager reports carries its resolved current
+// version (go list, pnpm outdated), offline the version its manifest declares.
 func ReconcileCatalogReport(ctx context.Context, repoPath string) (*CatalogReport, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("reconcile catalog: context cannot be nil")
@@ -138,15 +139,34 @@ func reconcileWithCatalog(discovered []UpgradeCandidate, catalog map[string]Cata
 	return report
 }
 
-// catalogVersion parses a catalog pin or a discovered version for ordering. One leading caret
-// or tilde is a range operator whose floor is the version itself; any other range form
-// (">=1.0.0", "1.x", "workspace:*") is not ranked.
+// catalogVersion parses a catalog pin or a discovered version for ordering. It ranks exactly
+// what rankedVersion admits; any other form (">=1.0.0", "<9.0.0", "1.x", "workspace:*") is
+// not ranked.
 func catalogVersion(raw string) (semver.Version, bool) {
-	trimmed := strings.TrimSpace(raw)
-	if strings.HasPrefix(trimmed, "^") || strings.HasPrefix(trimmed, "~") {
-		trimmed = trimmed[1:]
+	version, ok := rankedVersion(raw)
+	if !ok {
+		return semver.Version{}, false
 	}
-	return semver.Parse(trimmed)
+	return semver.Parse(version)
+}
+
+// rankedRangeOperators are the single-version range operators whose version catalog ranking
+// may order: a bare version names the version itself, and a caret or tilde range has it as
+// its floor. Every other comparator bounds the range differently ("<9.0.0" caps it, ">=5.0.0"
+// leaves it open, "=5.0.0" pins it), so ordering its version against a pin could raise a
+// capped range past its cap or report an allowed range as ahead.
+var rankedRangeOperators = map[string]bool{"": true, "^": true, "~": true}
+
+// rankedVersion returns the SemVer version a bare, caret or tilde range names. ok is false for
+// every other spec: a comparator, a compound or x-range, a tag, a protocol reference, or a
+// spec with surrounding space. It parses through splitRangeOperator, the one npm range
+// parser, so the catalog ranks exactly the ranges the package.json scan reduces to a version.
+func rankedVersion(spec string) (string, bool) {
+	operator, version, ok := splitRangeOperator(spec)
+	if !ok || !rankedRangeOperators[operator] {
+		return "", false
+	}
+	return version, true
 }
 
 // verifiedWithin reports an error when verified (YYYY-MM-DD) is not a date, lies after now, or

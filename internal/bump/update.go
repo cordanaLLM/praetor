@@ -320,8 +320,9 @@ func rewriteRanges(data []byte, ranges []objectMember, target string) ([]byte, e
 // raisedRange returns the JSON string literal for current raised to target. A target
 // that names its own operator (a fleet catalog pin such as "^5.7.3") sets it; otherwise
 // current's operator is kept. A strict comparator is refused: ">2.1.0" or "<2.1.0" would
-// exclude the very version it was raised to, and ">latest" matches nothing. Operators and
-// SemVer versions contain no character JSON escapes, so the literal is the quoted text.
+// exclude the very version it was raised to. A target that is not a SemVer version (a
+// dist-tag such as "latest") is refused before any operator is chosen. Operators and SemVer
+// versions contain no character JSON escapes, so the literal is the quoted text.
 func raisedRange(current json.RawMessage, target string) (string, error) {
 	var spec string
 	if err := json.Unmarshal(current, &spec); err != nil {
