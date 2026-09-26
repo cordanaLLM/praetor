@@ -79,7 +79,7 @@ func buildAgentHarness(repoName, arch string, plan *VerificationPlan) (string, e
 	if err != nil {
 		return "", err
 	}
-	return header + buildAgentHarnessDirectives() + register + footer + "\n" + harnessLintScopeEnd + harnessEndMarker + "\n", nil
+	return header + BuildAgentHarnessDirectives() + register + footer + "\n" + harnessLintScopeEnd + harnessEndMarker + "\n", nil
 }
 
 // harnessRegisterSection renders the default text register section. Adoption needs neither
@@ -124,7 +124,7 @@ func foreignInstructions(existing string) string {
 	return existing
 }
 
-func buildAgentHarnessDirectives() string {
+func BuildAgentHarnessDirectives() string {
 	return `## Core Directives & Invariants
 
 | Invariant | Rule | Enforcement | On fail |
@@ -152,7 +152,7 @@ func buildAgentHarnessDirectives() string {
 
 4. **SARIF diagnostic distillation.** Compiler/linter errors -> distill to $\le 1,500$ tokens ($< 60$ lines): top 3 root-cause failures with file/line pointers; full SARIF logs -> ephemeral storage.
 
-5. **No evasion.** Never attempt ` + "`--no-verify`" + `, ` + "`LEFTHOOK=0`" + `, or modifying ` + "`.git/hooks`" + `. ` + "`cordana-standards[bot]`" + ` re-checks every pull request in ephemeral isolated sandbox.
+5. **No evasion.** Never attempt ` + "`--no-verify`" + `, ` + "`LEFTHOOK=0`" + `, or modifying ` + "`.git/hooks`" + `. CI re-checks every pull request in an isolated runner.
 
 6. **Anti-loop interception.** Same AST diff + error category repeats $\ge 3$ times -> halt immediately. Re-evaluate design; no micro-textual retries.
 
