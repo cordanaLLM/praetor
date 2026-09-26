@@ -64,10 +64,10 @@ func TestCommandInterruptHelper(t *testing.T) {
 	}
 	switch mode {
 	case "handled":
-		TerminateCommandsOnSignal()
+		TerminateCommandsOnSignal(os.Exit)
 	case "ignored":
 		signal.Ignore(syscall.SIGINT)
-		TerminateCommandsOnSignal()
+		TerminateCommandsOnSignal(os.Exit)
 	case "unhandled":
 	default:
 		os.Exit(3)

@@ -36,7 +36,11 @@ var installSignalTermination sync.Once
 // get CommandWaitDelay to exit; groups still running then are killed. Call it early in main,
 // in a program that does not handle these signals itself. A signal the process already
 // ignores stays ignored, as nohup and background jobs expect. Repeated calls are no-ops.
-func TerminateCommandsOnSignal() {
+//
+// exit ends the process with a status when the re-raised signal did not end it. The entry
+// point passes os.Exit: ending the process is the entry point's decision, never library
+// code's (HISS-07 abort policy). A nil exit skips that last resort.
+func TerminateCommandsOnSignal(exit func(code int)) {
 	installSignalTermination.Do(func() {
 		watched := make([]os.Signal, 0, len(terminatingSignals))
 		for _, sig := range terminatingSignals {
@@ -49,15 +53,16 @@ func TerminateCommandsOnSignal() {
 		}
 		received := make(chan os.Signal, 1)
 		signal.Notify(received, watched...)
-		go func() { endOnSignal(runningCommandGroups, <-received) }()
+		go func() { endOnSignal(runningCommandGroups, <-received, exit) }()
 	})
 }
 
 // endOnSignal forwards sig to every running command group, waits up to CommandWaitDelay for
 // the commands to exit, kills the groups still running, then re-raises sig with its default
-// action so the exit status still reads as killed by sig. It returns only if the process
-// survives that, which it should not.
-func endOnSignal(groups *commandGroupRegistry, sig os.Signal) {
+// action so the exit status still reads as killed by sig. If the process survives that,
+// which it should not, exit ends it with the shell's 128+signal status; endOnSignal returns
+// only when exit is nil or returns.
+func endOnSignal(groups *commandGroupRegistry, sig os.Signal, exit func(code int)) {
 	number, ok := sig.(syscall.Signal)
 	if !ok {
 		// Unreachable on Unix, where signal.Notify delivers syscall.Signal values; kill's
@@ -72,12 +77,20 @@ func endOnSignal(groups *commandGroupRegistry, sig os.Signal) {
 		fmt.Fprintf(os.Stderr, "praetor: %v\n", err)
 	}
 	if !ok {
-		os.Exit(1)
+		exitWith(exit, 1)
+		return
 	}
 	signal.Reset(sig)
 	if err := syscall.Kill(os.Getpid(), number); err != nil {
 		fmt.Fprintf(os.Stderr, "praetor: re-raise %v: %v\n", sig, err)
 	}
 	time.Sleep(signalExitGrace)
-	os.Exit(128 + int(number))
+	exitWith(exit, 128+int(number))
+}
+
+// exitWith calls exit with code unless exit is nil.
+func exitWith(exit func(code int), code int) {
+	if exit != nil {
+		exit(code)
+	}
 }

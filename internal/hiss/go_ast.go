@@ -43,6 +43,7 @@ func scanGoSource(data []byte, rel string, rep *ScanReport, opts ScanOptions) {
 		isTest:  strings.HasSuffix(rel, "_test.go"),
 		safety:  safetyCommentLines(fset, file),
 		imports: FileImports(file),
+		pkg:     file.Name.Name,
 	}
 	g.walk(file)
 }
@@ -55,7 +56,9 @@ type goScanner struct {
 	isTest  bool
 	safety  map[int]struct{}
 	imports GoImports
-	stack   []ast.Node
+	// pkg is the file's package name; main.main is an entry point only in package main.
+	pkg   string
+	stack []ast.Node
 }
 
 // walk visits every node once with an explicit ancestor stack; the traversal itself is
@@ -244,7 +247,7 @@ func (g *goScanner) inspect(n ast.Node) {
 			g.record("HISS-01", node.Pos(), "", "Legacy non-DAG control flow jump (goto)")
 		}
 	case *ast.CallExpr:
-		g.checkPanic(node)
+		g.checkAbort(node)
 		g.checkSelfRecursion(node)
 		g.checkDotUnsafeCall(node)
 	case *ast.AssignStmt:
@@ -278,13 +281,59 @@ func (g *goScanner) checkFuncLOC(fn *ast.FuncDecl) {
 	}
 }
 
-func (g *goScanner) checkPanic(call *ast.CallExpr) {
-	if g.isTest {
+// checkAbort enforces the HISS-07 abort policy (owner decision Q-014): panic and os.Exit end
+// the process instead of returning an error, which library code must not do. Test files and
+// the binary entry point main.main are the places allowed to abort.
+//
+// os.Exit is resolved through the file's imports, so an aliased or dot import is the same
+// call and a local that shadows the package name is not; os.Exit passed as a value is not a
+// call and stays allowed, which is how an entry point hands its exit to a library.
+func (g *goScanner) checkAbort(call *ast.CallExpr) {
+	if g.isTest || g.inEntryPoint() {
 		return
 	}
-	if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == "panic" {
+	fun := ast.Unparen(call.Fun)
+	if ident, ok := fun.(*ast.Ident); ok && ident.Name == "panic" {
 		g.record("HISS-07", call.Pos(), "", "Legacy panic invocation in production code path")
+		return
 	}
+	if local, ok := g.osExitCallee(fun); ok && !g.shadowed(local) {
+		g.record("HISS-07", call.Pos(), "", "os.Exit ends the process from library code; return an error to main.main instead")
+	}
+}
+
+// osExitCallee reports whether fun names os.Exit, and returns the identifier that reached
+// package os: the package name of a selector, or Exit itself under a dot import.
+func (g *goScanner) osExitCallee(fun ast.Expr) (string, bool) {
+	switch f := fun.(type) {
+	case *ast.SelectorExpr:
+		pkg, ok := f.X.(*ast.Ident)
+		if ok && f.Sel.Name == "Exit" && g.imports.Binds(pkg.Name, "os") {
+			return pkg.Name, true
+		}
+	case *ast.Ident:
+		if f.Name == "Exit" && g.imports.DotImports("os") {
+			return f.Name, true
+		}
+	}
+	return "", false
+}
+
+// shadowed reports whether the enclosing function declares a local named name, which then
+// hides the package-level binding of the same name.
+func (g *goScanner) shadowed(name string) bool {
+	fn := g.enclosingFunc()
+	return fn != nil && declaresLocal(fn.Body, name)
+}
+
+// inEntryPoint reports whether the walk is inside main.main, the binary entry point, which
+// includes every closure it declares.
+func (g *goScanner) inEntryPoint() bool {
+	if g.pkg != "main" {
+		return false
+	}
+	fn := g.enclosingFunc()
+	return fn != nil && fn.Recv == nil && fn.Name != nil && fn.Name.Name == "main"
 }
 
 // checkBlankAssign flags an assignment that discards every result (`_ = f()`), the
@@ -392,7 +441,7 @@ func (g *goScanner) checkUnsafeUse(local string, pos token.Pos, what string) {
 	// A local of the same name shadows the package, so the expression reaches that value
 	// and no unsafe operation occurs: `var unsafe shim; return unsafe.Pointer` reads a
 	// plain struct field.
-	if fn := g.enclosingFunc(); fn != nil && declaresLocal(fn.Body, local) {
+	if g.shadowed(local) {
 		return
 	}
 	useLine := g.line(pos)

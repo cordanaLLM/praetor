@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -21,6 +22,27 @@ var (
 	rustUnsafeBlock     = regexp.MustCompile(`(?:^|[^\w])unsafe\s*\{`)
 	pythonWhileTrue     = regexp.MustCompile(`^\s*while\s+True\s*:`)
 	pythonBareExcept    = regexp.MustCompile(`^\s*except\s*:`)
+
+	// rustFnHeader is the Rust function-header grammar, matched against a line with literals
+	// stripped: an optional visibility (pub, pub(crate), pub(super), pub(in path)), any run of
+	// qualifiers (const, async, unsafe, safe, default, extern with or without its ABI string),
+	// then fn and the name. A fixed prefix list silently skipped every header it did not
+	// spell out, so const, unsafe, extern "C" and pub(super) functions were never measured.
+	rustFnHeader = regexp.MustCompile(`^(?:pub\s*(?:\([^)]*\))?\s+)?(?:(?:const|async|unsafe|safe|default|extern)\s+)*fn\s+(?:r#)?([A-Za-z_]\w*)`)
+	// rustTestAttr opens an item compiled only for tests: #[cfg(test)], #[test] and a
+	// path-qualified test attribute such as #[tokio::test].
+	rustTestAttr = regexp.MustCompile(`^#\s*\[\s*(?:cfg\s*\(\s*test\s*\)|(?:[A-Za-z_]\w*\s*::\s*)*test\s*[\](])`)
+	// rustInnerTestAttr is #![cfg(test)], which makes the whole file test code.
+	rustInnerTestAttr = regexp.MustCompile(`^#\s*!\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]`)
+	// rustAbortMacro and rustProcessExit are the Rust abort forms of the HISS-07 abort policy.
+	rustAbortMacro  = regexp.MustCompile(`\b(panic|todo|unimplemented|unreachable)\s*!`)
+	rustProcessExit = regexp.MustCompile(`\bprocess\s*::\s*(exit|abort)\s*\(`)
+	// pythonSysExit is the Python abort form of the HISS-07 abort policy.
+	pythonSysExit = regexp.MustCompile(`\bsys\s*\.\s*exit\s*\(`)
+	// pythonEntry opens a script's entry point: the `if __name__ == "__main__":` block, or a
+	// top-level def main, the function a console-script entry point names. It is matched on
+	// the raw line because the literal stripper removes the __main__ string.
+	pythonEntry = regexp.MustCompile(`^(?:if\s+(?:__name__\s*==\s*['"]__main__['"]|['"]__main__['"]\s*==\s*__name__)\s*:|(?:async\s+)?def\s+main\s*\()`)
 )
 
 const (
@@ -40,6 +62,9 @@ type braceTracker struct {
 	rel    string
 	rep    *ScanReport
 	maxLOC int
+	// scopeOnly follows a brace-delimited item without measuring it, for callers that only
+	// need to know whether a line lies inside the item (the Rust test scope).
+	scopeOnly bool
 
 	inFunc     bool
 	pending    bool
@@ -110,6 +135,9 @@ func (t *braceTracker) enter(idx, level int) {
 
 func (t *braceTracker) finish(endLine int) {
 	t.inFunc = false
+	if t.scopeOnly {
+		return
+	}
 	funcLen := endLine - t.start + 1
 	if funcLen > t.maxLOC {
 		recordViolation(t.rep, "HISS-04", t.rel, t.start, t.name,
@@ -411,13 +439,18 @@ func scanPythonLines(lines []string, rel string, rep *ScanReport, opts ScanOptio
 	var open []pythonFunc
 	lastCode := 0
 	stripper := &literalStripper{syn: pythonSyntax}
+	abort := pythonAbortScope{file: isPythonTestPath(rel) || isPythonEntryFile(rel)}
 	for idx, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		scanPythonLineInvariants(stripper.strip(line), rel, idx+1, rep)
+		code := stripper.strip(line)
+		scanPythonLineInvariants(code, rel, idx+1, rep)
+		if !abort.observe(line, code) {
+			checkPythonAbort(code, rel, idx+1, rep)
+		}
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		indent := lineIndent(line)
 		open = closePythonFuncs(open, indent, lastCode, rel, rep, opts.MaxFuncLOC)
 		lastCode = idx + 1
 		if isPythonDef(trimmed) && len(open) < maxPythonNesting {
@@ -425,6 +458,53 @@ func scanPythonLines(lines []string, rel string, rep *ScanReport, opts ScanOptio
 		}
 	}
 	closePythonFuncs(open, -1, lastCode, rel, rep, opts.MaxFuncLOC)
+}
+
+// lineIndent returns the width of line's leading spaces and tabs.
+func lineIndent(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " \t"))
+}
+
+// pythonAbortScope decides where the Python abort form is allowed under the HISS-07 abort
+// policy (owner decision Q-014): anywhere in a test file or a package's __main__.py, and
+// inside the entry point of any other file, which is the top-level
+// `if __name__ == "__main__":` block or the top-level def main.
+type pythonAbortScope struct {
+	file  bool
+	entry bool
+}
+
+// observe feeds one raw line with its stripped code and reports whether that line may
+// abort. A code line at column zero opens the entry point when it is one and closes it
+// otherwise; indented, blank, comment and docstring lines keep the current state.
+func (s *pythonAbortScope) observe(line, code string) bool {
+	if s.file {
+		return true
+	}
+	if strings.TrimSpace(code) != "" && lineIndent(line) == 0 {
+		s.entry = pythonEntry.MatchString(strings.TrimSpace(line))
+	}
+	return s.entry
+}
+
+// checkPythonAbort reports sys.exit outside the places the abort policy allows it.
+func checkPythonAbort(code, rel string, lineNum int, rep *ScanReport) {
+	if pythonSysExit.MatchString(code) {
+		recordViolation(rep, "HISS-07", rel, lineNum, "",
+			"sys.exit ends the process from library code; return an error to the __main__ entry point instead")
+	}
+}
+
+// isPythonTestPath follows pytest's default discovery: test_*.py and *_test.py modules,
+// conftest.py, and anything under a tests/ or test/ directory.
+func isPythonTestPath(rel string) bool {
+	base, inTestDir := testPathParts(rel, "tests", "test")
+	return inTestDir || strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py") || base == "conftest.py"
+}
+
+// isPythonEntryFile reports a package's __main__.py, which is the entry point as a whole.
+func isPythonEntryFile(rel string) bool {
+	return filepath.Base(rel) == "__main__.py"
 }
 
 func isPythonDef(trimmed string) bool {
@@ -484,63 +564,139 @@ func checkPythonFuncLen(start, end int, name, rel string, rep *ScanReport, maxLO
 // Rust
 // ---------------------------------------------------------------------------
 
+// rustScanner carries the state the Rust line scanner needs across lines: the HISS-04
+// function tracker, the test scope and the literal stripper, which must all see one view.
+type rustScanner struct {
+	rel   string
+	rep   *ScanReport
+	fn    braceTracker
+	test  rustTestScope
+	strip literalStripper
+	// entry reports that fn follows the top-level fn main, the binary entry point.
+	entry bool
+}
+
 func scanRustLines(lines []string, rel string, rep *ScanReport, opts ScanOptions) {
-	t := &braceTracker{rel: rel, rep: rep, maxLOC: opts.MaxFuncLOC}
-	testCode := isRustTestPath(rel)
-	stripper := &literalStripper{syn: cLikeSyntax}
-	for idx, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		code := stripper.strip(line)
-		if strings.HasPrefix(trimmed, "#[cfg(test)]") {
-			testCode = true
-		}
-		scanRustLineInvariants(code, lines, idx, rel, rep, testCode)
-		isHeader := !t.inFunc && !t.pending && isRustFnHeader(trimmed)
-		name := ""
-		if isHeader {
-			name = extractRustFuncName(trimmed)
-		}
-		t.observe(code, trimmed, idx, isHeader, name)
+	s := &rustScanner{
+		rel:   rel,
+		rep:   rep,
+		fn:    braceTracker{rel: rel, rep: rep, maxLOC: opts.MaxFuncLOC},
+		test:  rustTestScope{file: isRustTestPath(rel), block: braceTracker{scopeOnly: true}},
+		strip: literalStripper{syn: cLikeSyntax},
+	}
+	for idx := range lines {
+		s.scanLine(lines, idx)
 	}
 }
 
-func isRustFnHeader(trimmed string) bool {
-	for _, p := range []string{"fn ", "pub fn ", "pub(crate) fn ", "async fn ", "pub async fn ", "pub(crate) async fn "} {
-		if strings.HasPrefix(trimmed, p) {
-			return true
+// scanLine feeds lines[idx] to every tracker and then checks its invariants. A line belongs
+// to the entry point or a test item when it does before or after the trackers see it, so the
+// header and closing lines of both count as inside.
+func (s *rustScanner) scanLine(lines []string, idx int) {
+	line := lines[idx]
+	code := s.strip.strip(line)
+	codeTrimmed := strings.TrimSpace(code)
+	scope := rustLineScope{test: s.test.observe(code, codeTrimmed, idx), entry: s.inEntry()}
+	name, isHeader := "", false
+	if !s.fn.inFunc && !s.fn.pending {
+		name, isHeader = rustFnHeaderName(codeTrimmed)
+	}
+	if isHeader {
+		// Only an unindented fn main is the entry point; rustfmt indents a method of the
+		// same name inside its impl block.
+		s.entry = name == "main" && lineIndent(line) == 0
+	}
+	s.fn.observe(code, strings.TrimSpace(line), idx, isHeader, name)
+	scope.entry = scope.entry || s.inEntry()
+	scanRustLineInvariants(code, lines, idx, s.rel, s.rep, scope)
+}
+
+func (s *rustScanner) inEntry() bool {
+	return s.entry && (s.fn.inFunc || s.fn.pending)
+}
+
+// rustFnHeaderName reports whether code, a trimmed line with literals stripped, opens a
+// function header, and returns the function's name.
+func rustFnHeaderName(code string) (string, bool) {
+	m := rustFnHeader.FindStringSubmatch(code)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+// rustTestScope decides which lines are test code. A Cargo test path or an inner
+// #![cfg(test)] makes the whole file test code; otherwise a test attribute makes test code of
+// exactly the item it annotates, up to the brace that closes it.
+//
+// A flat flag set at the first #[cfg(test)] and never cleared hid every production .unwrap()
+// and .expect() written below a test module, which is where Rust files commonly keep helpers
+// added after the tests.
+type rustTestScope struct {
+	file  bool
+	block braceTracker
+}
+
+// observe feeds one line, already stripped, and reports whether it is test code.
+func (s *rustTestScope) observe(code, codeTrimmed string, idx int) bool {
+	if !s.file && rustInnerTestAttr.MatchString(codeTrimmed) {
+		s.file = true
+	}
+	if s.file {
+		return true
+	}
+	before := s.block.inFunc || s.block.pending
+	isAttr := !before && rustTestAttr.MatchString(codeTrimmed)
+	s.block.observe(code, codeTrimmed, idx, isAttr, "")
+	return before || isAttr || s.block.inFunc || s.block.pending
+}
+
+// testPathParts splits rel into its base name and whether any directory segment is one of
+// testDirs.
+func testPathParts(rel string, testDirs ...string) (string, bool) {
+	segments := strings.Split(filepath.ToSlash(rel), "/")
+	base := segments[len(segments)-1]
+	for i := 0; i < len(segments)-1 && i < maxPathSegments; i++ {
+		if slices.Contains(testDirs, segments[i]) {
+			return base, true
 		}
 	}
-	return false
+	return base, false
 }
 
 // isRustTestPath follows Cargo conventions: integration tests and benches live in
 // tests/ and benches/ directories, unit test files end in _test.rs or are named tests.rs.
 func isRustTestPath(rel string) bool {
-	norm := filepath.ToSlash(rel)
-	segments := strings.Split(norm, "/")
-	for i := 0; i < len(segments)-1 && i < maxPathSegments; i++ {
-		if segments[i] == "tests" || segments[i] == "benches" {
-			return true
-		}
-	}
-	base := segments[len(segments)-1]
-	return strings.HasSuffix(base, "_test.rs") || base == "tests.rs" || base == "test.rs"
+	base, inTestDir := testPathParts(rel, "tests", "benches")
+	return inTestDir || strings.HasSuffix(base, "_test.rs") || base == "tests.rs" || base == "test.rs"
+}
+
+// rustLineScope says which HISS-07 exemptions apply to one line.
+type rustLineScope struct {
+	// test marks test code, where unwrap, expect and the abort forms are all allowed.
+	test bool
+	// entry marks the body of the binary entry point fn main, where only the abort forms are
+	// allowed (owner decision Q-014); unwrap and expect stay refused there.
+	entry bool
 }
 
 // scanRustLineInvariants inspects code, which is lines[idx] already stripped by the caller
 // so that block-comment state carries across lines; the raw surrounding lines are consulted
 // only for the SAFETY: proof comment.
-func scanRustLineInvariants(code string, lines []string, idx int, rel string, rep *ScanReport, testCode bool) {
+func scanRustLineInvariants(code string, lines []string, idx int, rel string, rep *ScanReport, scope rustLineScope) {
 	trimmed := strings.TrimSpace(code)
 	lineNum := idx + 1
 	if rustUnboundedLoop.MatchString(code) {
 		recordViolation(rep, "HISS-02", rel, lineNum, "", "Legacy unbounded loop {} in Rust without explicit scalar bound")
 	}
-	if !testCode && rustUnwrapCall.MatchString(code) {
+	if !scope.test && rustUnwrapCall.MatchString(code) {
 		recordViolation(rep, "HISS-07", rel, lineNum, "", "Legacy .unwrap() invocation bypassing error propagation")
 	}
-	if !testCode && rustExpectCall.MatchString(code) {
+	if !scope.test && rustExpectCall.MatchString(code) {
 		recordViolation(rep, "HISS-07", rel, lineNum, "", "Legacy .expect() invocation in production Rust code")
+	}
+	if !scope.test && !scope.entry {
+		checkRustAbort(code, rel, lineNum, rep)
 	}
 	isUnsafe := rustUnsafeBlock.MatchString(code) || strings.HasPrefix(trimmed, "unsafe fn")
 	if isUnsafe && !hasSafetyComment(lines, idx) {
@@ -548,17 +704,16 @@ func scanRustLineInvariants(code string, lines []string, idx int, rel string, re
 	}
 }
 
-func extractRustFuncName(trimmed string) string {
-	name := trimmed
-	for _, p := range []string{"pub(crate) ", "pub ", "async "} {
-		name = strings.TrimPrefix(name, p)
+// checkRustAbort enforces the HISS-07 abort policy (owner decision Q-014) on one line of
+// production code: panic!, todo!, unimplemented!, unreachable! and process::exit or
+// process::abort end the program instead of returning an error to the caller.
+func checkRustAbort(code, rel string, lineNum int, rep *ScanReport) {
+	if m := rustAbortMacro.FindStringSubmatch(code); m != nil {
+		recordViolation(rep, "HISS-07", rel, lineNum, "",
+			m[1]+"! aborts production Rust code; return an error to the caller instead")
 	}
-	name = strings.TrimPrefix(name, "fn ")
-	if idx := strings.Index(name, "("); idx > 0 {
-		name = strings.TrimSpace(name[:idx])
+	if m := rustProcessExit.FindStringSubmatch(code); m != nil {
+		recordViolation(rep, "HISS-07", rel, lineNum, "",
+			"process::"+m[1]+" ends the process from library code; return an error to fn main instead")
 	}
-	if idx := strings.Index(name, "<"); idx > 0 {
-		name = strings.TrimSpace(name[:idx])
-	}
-	return name
 }

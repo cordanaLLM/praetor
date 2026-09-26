@@ -1,7 +1,5 @@
-// A 76-line `const fn`. isRustFnHeader only accepts fn / pub fn / pub(crate) fn /
-// async fn / pub async fn / pub(crate) async fn, so `const fn` is never a header and the
-// function is never measured.
-const fn long_const(mut count: i32) -> i32 {
+// `pub(super) fn`, measured since the header grammar accepts any pub(...) visibility.
+pub(super) fn long_pub_super(mut count: i32) -> i32 {
     count += 1;
     count += 1;
     count += 1;
