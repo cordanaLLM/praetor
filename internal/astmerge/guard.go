@@ -37,10 +37,12 @@ const (
 var guardPosition = regexp.MustCompile(regexp.QuoteMeta(guardFile) + `:\d+:\d+: `)
 
 // semanticFacts is what the guard compares across base, ours, theirs and the merged file:
-// the value and type of every package-level constant, the order the package-level variable
-// initializers run in, and the type errors.
+// the value and type of every package-level constant, the kind of every other
+// package-level declaration and method, the order the package-level variable initializers
+// run in, and the type errors.
 type semanticFacts struct {
 	consts map[string]string
+	decls  map[string]string
 	init   []string
 	errs   map[string]bool
 }
@@ -71,6 +73,7 @@ func guardConflicts(baseSrc, oursSrc, theirsSrc, merged string) []Conflict {
 	got := collectFacts(merged)
 	conflicts := typeErrorConflicts(ours, theirs, got)
 	conflicts = append(conflicts, constConflicts(base, ours, theirs, got)...)
+	conflicts = append(conflicts, declConflicts(base, ours, theirs, got)...)
 	return append(conflicts, initOrderConflicts(base, ours, theirs, got)...)
 }
 
@@ -79,7 +82,7 @@ func guardConflicts(baseSrc, oursSrc, theirsSrc, merged string) []Conflict {
 // input that fails to type-check is normal, and what matters is whether the merge adds an
 // error neither side has.
 func collectFacts(src string) semanticFacts {
-	facts := semanticFacts{consts: make(map[string]string), errs: make(map[string]bool)}
+	facts := semanticFacts{consts: make(map[string]string), decls: make(map[string]string), errs: make(map[string]bool)}
 	if strings.TrimSpace(src) == "" {
 		return facts
 	}
@@ -103,12 +106,32 @@ func collectFacts(src string) semanticFacts {
 	}
 	scope := pkg.Scope()
 	for _, name := range scope.Names() {
-		if c, ok := scope.Lookup(name).(*types.Const); ok {
-			facts.consts[name] = constFact(c)
-		}
+		facts.record(scope.Lookup(name))
 	}
 	facts.init = initializerKeys(info.InitOrder)
 	return facts
+}
+
+// record files one package-level object: a constant under its value, anything else under
+// its kind, and each method of a declared type under "T.M".
+func (facts semanticFacts) record(obj types.Object) {
+	switch o := obj.(type) {
+	case *types.Const:
+		facts.consts[o.Name()] = constFact(o)
+	case *types.Var:
+		facts.decls[o.Name()] = "var"
+	case *types.Func:
+		facts.decls[o.Name()] = "func"
+	case *types.TypeName:
+		facts.decls[o.Name()] = "type"
+		named, ok := o.Type().(*types.Named)
+		if !ok {
+			return
+		}
+		for i := 0; i < named.NumMethods(); i++ {
+			facts.decls[o.Name()+"."+named.Method(i).Name()] = "method"
+		}
+	}
 }
 
 // normalizeTypeError returns an error's message without the file positions go/types puts in
@@ -259,18 +282,31 @@ func constConflicts(base, ours, theirs, got semanticFacts) []Conflict {
 }
 
 func constState(facts semanticFacts, name string) string {
-	if value, ok := facts.consts[name]; ok {
-		return value
+	return stateOf(facts.consts, name)
+}
+
+func stateOf(states map[string]string, name string) string {
+	if state, ok := states[name]; ok {
+		return state
 	}
 	return absentValue
 }
 
 // constNames returns the sorted union of the constant names the versions declare.
 func constNames(all ...semanticFacts) []string {
+	maps := make([]map[string]string, 0, len(all))
+	for _, facts := range all {
+		maps = append(maps, facts.consts)
+	}
+	return unionKeys(maps...)
+}
+
+// unionKeys returns the sorted union of the maps' keys.
+func unionKeys(all ...map[string]string) []string {
 	seen := make(map[string]bool)
 	var names []string
-	for _, facts := range all {
-		for name := range facts.consts {
+	for _, states := range all {
+		for name := range states {
 			if !seen[name] {
 				seen[name] = true
 				names = append(names, name)
@@ -279,6 +315,31 @@ func constNames(all ...semanticFacts) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// declConflicts reports every package-level variable, function, type or method the merged
+// file declares, or lacks, against the 3-way expectation: a declaration one side added
+// must be there, one a side deleted while the other kept it must be gone. It is the
+// backstop for a structural merge that drops or duplicates a declaration nothing refers to,
+// which no type error would reveal.
+func declConflicts(base, ours, theirs, got semanticFacts) []Conflict {
+	var conflicts []Conflict
+	for _, name := range unionKeys(base.decls, ours.decls, theirs.decls, got.decls) {
+		b, o, t, m := stateOf(base.decls, name), stateOf(ours.decls, name), stateOf(theirs.decls, name), stateOf(got.decls, name)
+		want, decided := expect3(b, o, t)
+		if !decided || m == want {
+			continue
+		}
+		conflicts = append(conflicts, Conflict{
+			Symbol: "decl:" + name,
+			Kind:   kindSemantic,
+			Reason: fmt.Sprintf("the merged file has %s as %s, but the three-way expectation is %s", name, m, want),
+			Ours:   o,
+			Theirs: t,
+			Base:   b,
+		})
+	}
+	return conflicts
 }
 
 // initOrderConflicts reports the first pair of initializers the merged file runs in an

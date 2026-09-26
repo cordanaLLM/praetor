@@ -11,6 +11,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -82,7 +83,9 @@ type ParsedAST struct {
 	positional map[string]bool
 }
 
-// Merge executes a 3-way semantic AST merge between Base, Ours, and Theirs Go code.
+// Merge executes a 3-way semantic AST merge between Base, Ours, and Theirs Go code. A
+// result is Clean only once the merged file passes the post-merge guard (guardResult):
+// anything it cannot verify is reported as a Conflict rather than merged.
 func Merge(baseSrc, oursSrc, theirsSrc string) (*MergeResult, error) {
 	if oursSrc == theirsSrc {
 		// The shortcut still has to confirm the identical text is valid Go; otherwise two
@@ -430,15 +433,15 @@ func newDeclMerge(base, ours, theirs *ParsedAST) declMerge {
 	}
 }
 
-// placesOf maps each spec key of a to where it sits there, seen from b: "top" for a spec
-// at top level, or the keys of its parenthesized block that b also holds, itself included,
-// in a's order. Two versions of a spec with the same place share their block-mates and
-// their rank among them; a neighbour one version adds or drops does not move the spec, but
-// moving it to another block, or past a block-mate, does.
+// placesOf maps the spec keys of a to where they sit in a: "top" for a spec at top level,
+// or, for a spec in a parenthesized block that b also holds, the block-mates b also holds
+// and the spec's rank among them in a's order. Two versions of a spec with the same place
+// share their block and their index in it; a neighbour one version adds or drops does not
+// move the spec, but moving it to another block, or past a block-mate, does.
 func placesOf(a, b *ParsedAST) map[string]string {
 	places := make(map[string]string, len(a.DeclOrder))
 	for _, key := range a.DeclOrder {
-		if item := a.Decls[key]; item.Block == "" && item.Kind != kindComment {
+		if item := a.Decls[key]; item.Block == "" && isSpecKind(item.Kind) {
 			places[key] = "top"
 		}
 	}
@@ -449,14 +452,17 @@ func placesOf(a, b *ParsedAST) map[string]string {
 				mates = append(mates, key)
 			}
 		}
-		place := "block\x00" + strings.Join(mates, "\x00")
-		for _, key := range keys {
-			if !isCommentKey(key) {
-				places[key] = place
-			}
+		members := strings.Join(slices.Sorted(slices.Values(mates)), "\x00")
+		for rank, key := range mates {
+			places[key] = "block\x00" + members + "\x00#" + strconv.Itoa(rank)
 		}
 	}
 	return places
+}
+
+// isSpecKind reports whether an item kind is a const, var or type spec.
+func isSpecKind(kind string) bool {
+	return kind == token.CONST.String() || kind == token.VAR.String() || kind == token.TYPE.String()
 }
 
 // sameItem reports whether two versions of an item are the same: the same text under the

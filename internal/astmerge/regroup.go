@@ -323,8 +323,9 @@ func (m groupMerge) joinsBlocks(keys []string, lead partition) bool {
 	return false
 }
 
-// blockConflict reports a region whose grouping or order the sides change incompatibly,
-// with each input's blocks in that input's order.
+// blockConflict reports a region whose grouping, order or positional values the sides
+// change incompatibly, with each input's blocks in that input's order; reason is a format
+// that names the region's first spec.
 func (m groupMerge) blockConflict(keys []string, reason string) Conflict {
 	return Conflict{
 		Symbol: kindBlock + ":" + keys[0],

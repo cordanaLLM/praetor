@@ -206,6 +206,57 @@ func TestMerge_Negative_DivergentHeaderEditsConflict(t *testing.T) {
 		"leading-comments")
 }
 
+// TestMerge_Negative_Issue392FixtureReportsBothHeaderConflicts replays #392's fixture: both
+// sides rewrite both the build constraint and the package doc. Each field conflicts on its
+// own and carries the base, ours and theirs text for resolution.
+func TestMerge_Negative_Issue392FixtureReportsBothHeaderConflicts(t *testing.T) {
+	const template = "//go:build %s\n\n// Package demo is the %s package.\npackage demo\n\nfunc Keep() {}\n"
+	res, err := Merge(fmt.Sprintf(template, "linux", "base"), fmt.Sprintf(template, "darwin", "ours"), fmt.Sprintf(template, "windows", "theirs"))
+	if err != nil {
+		t.Fatalf("Merge failed: %v", err)
+	}
+	if res.Clean || len(res.Conflicts) != 2 {
+		t.Fatalf("expected two header conflicts, got clean=%v %+v", res.Clean, res.Conflicts)
+	}
+	want := map[string][3]string{
+		"build-constraints": {"//go:build linux", "//go:build darwin", "//go:build windows"},
+		"package-doc":       {"// Package demo is the base package.", "// Package demo is the ours package.", "// Package demo is the theirs package."},
+	}
+	for _, c := range res.Conflicts {
+		if texts, ok := want[c.Symbol]; !ok || c.Base != texts[0] || c.Ours != texts[1] || c.Theirs != texts[2] {
+			t.Errorf("unexpected conflict %+v", c)
+		}
+	}
+}
+
+// TestMerge_Positive_EqualAndOneSidedHeaderEditsMergeClean is #392's clean half: for the
+// build constraint, the package doc and a license header alike, an edit both sides make
+// alike and an edit only one side makes carry through; base's text does not survive.
+func TestMerge_Positive_EqualAndOneSidedHeaderEditsMergeClean(t *testing.T) {
+	const template = "%s\n\n//go:build %s\n\n// Package aux is %s.\npackage aux\n\nfunc F() {}\n"
+	base := fmt.Sprintf(template, "// License A.", "linux", "the base")
+	fields := map[string][2]string{
+		"build-constraints": {"//go:build linux", "//go:build darwin"},
+		"package-doc":       {"// Package aux is the base.", "// Package aux is changed."},
+		"leading-comments":  {"// License A.", "// License B."},
+	}
+	for field, texts := range fields {
+		changed := strings.Replace(base, texts[0], texts[1], 1)
+		for name, sides := range map[string][2]string{
+			"equal":       {changed, changed + "\nfunc G() {}\n"},
+			"ours only":   {changed, base + "\nfunc G() {}\n"},
+			"theirs only": {base + "\nfunc G() {}\n", changed},
+		} {
+			t.Run(field+"/"+name, func(t *testing.T) {
+				code, _ := mergeClean(t, base, sides[0], sides[1])
+				if !strings.Contains(code, texts[1]) || strings.Contains(code, texts[0]) {
+					t.Errorf("expected %q to replace %q:\n%s", texts[1], texts[0], code)
+				}
+			})
+		}
+	}
+}
+
 // TestMerge_Negative_SameSpecEditedTwiceConflictsAlone keeps real conflicts: both sides
 // editing one spec conflict on that spec only, not on the untouched names of its block.
 func TestMerge_Negative_SameSpecEditedTwiceConflictsAlone(t *testing.T) {
