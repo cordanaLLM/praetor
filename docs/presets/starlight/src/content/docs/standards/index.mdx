@@ -1,0 +1,17 @@
+---
+title: Standards and invariants
+description: Where the HISS invariants Praetor enforces are specified and how a repository checks itself against them.
+---
+
+Praetor enforces the High-Integrity Systems Standard (HISS): numbered invariants such as an
+acyclic call graph (HISS-01), bounded loops and I/O timeouts (HISS-02) and complexity ceilings
+(HISS-04). A repository declares which profiles and facets apply in `.standards.yaml`, and
+`praetorctl audit` reports each executed check against that declaration.
+
+- [HISS specification](https://github.com/cordanaLLM/praetor/blob/main/docs/standards/hiss-spec.md)
+  defines every invariant and its enforcement.
+- [Effective policy](https://github.com/cordanaLLM/praetor/blob/main/docs/guides/effective-policy.md)
+  explains how profiles and facets combine into the policy a repository is held to.
+
+Add a page to this directory for each standard your project documents; the sidebar group
+**Standards & Invariants** lists every page here automatically.

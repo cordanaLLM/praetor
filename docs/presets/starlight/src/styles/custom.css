@@ -1,35 +1,24 @@
 /* Core Web Vitals (CWV) and Performance Stylesheet */
 
+/* Fonts: system stacks only, so no web font is fetched and no text waits on one (no FOIT).
+   Starlight appends its own system stack after these (--__sl-font in its props.css). */
 :root {
   --sl-font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   --sl-font-mono: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace;
 }
 
-/* 1. Largest Contentful Paint (LCP) Optimization */
+/* 1. Largest Contentful Paint (LCP): media never overflows its column. */
 img, svg, video {
   max-width: 100%;
   height: auto;
-  font-display: swap;
 }
 
-/* 2. Cumulative Layout Shift (CLS) Prevention */
-.hero-image, .diagram-container {
-  aspect-ratio: 16 / 9;
-  min-height: 200px;
-  contain: layout;
-}
+/* 2. Cumulative Layout Shift (CLS): no rule needed here. Starlight's Hero renders the hero
+   image with width and height attributes, so the browser reserves its box before it loads,
+   and Markdown images go through astro:assets, which writes their intrinsic dimensions. */
 
 /* 3. Interaction to Next Paint (INP) & Rendering Performance */
 article, section {
   content-visibility: auto;
   contain-intrinsic-size: 1px 500px;
-}
-
-/* Font Display Swap for zero FOIT (Flash of Invisible Text) */
-@font-face {
-  font-family: 'Inter';
-  font-style: normal;
-  font-weight: 400 700;
-  font-display: swap;
-  src: local('Inter');
 }

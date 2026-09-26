@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — 2026-09-17; amended 2026-09-18 (decisions 9 and 10, the caveman module; decision 11, the context gate); amended 2026-09-21 (decision 12, checker contract parity; decision 13, runtime repair enforcement).
+Accepted — 2026-09-26. Proposed 2026-09-17; amended 2026-09-18 (decisions 9 and 10, the caveman module; decision 11, the context gate); amended 2026-09-21 (decision 12, checker contract parity; decision 13, runtime repair enforcement).
 
 ## Context
 

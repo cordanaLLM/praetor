@@ -91,10 +91,9 @@ Fleet defaults merge first, then the organisation file for the organisation bein
 ## Related decisions
 
 - The boundary and its class list: decision Q-031 in the private questions ledger.
-- The reverse-dogfooding topology that names the engine and the operational fork: ADR-0003.
-- The runner matrix tiers this configuration feeds: ADR-0006. Its Tier 4 text still names
-  `macos-14` and `macos-13` as the Darwin defaults. Both are stale: `macos-14` carries a
-  deprecated badge in actions/runner-images and `macos-13` is no longer published, so the
-  defaults moved to `macos-26` and `macos-26-intel` (`internal/config/hierarchy.go`, which
-  cites the evidence). ADR-0006 is Accepted and therefore frozen; restating the tier needs
-  a superseding ADR, not an edit. The tiering decision itself is unaffected.
+- The engine and operational fork topology, and the runner tiers this configuration feeds:
+  [ADR-0012](../adr/0012-current-delivery-runner-and-pipeline-state.md), decisions 2 and 5.
+  It supersedes ADR-0003 and ADR-0006. Decision 5 restates the Darwin defaults as `macos-26`
+  and `macos-26-intel`. ADR-0006's frozen Tier 4 text still names `macos-14`, which carries
+  a deprecated badge in actions/runner-images, and `macos-13`, which is no longer published
+  (`internal/config/hierarchy.go` cites the evidence). The tiering itself is unchanged.

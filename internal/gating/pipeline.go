@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
@@ -114,7 +115,8 @@ type stageConfig struct {
 	rep      *PipelineReport
 	// scanOpts overrides the HISS scan bounds. Production leaves it zero so the package
 	// defaults apply and the gate sees exactly the scope `praetorctl audit` sees; tests set
-	// it to reach the truncation path without synthesizing a repository of that size.
+	// it to reach the truncation path without synthesizing a repository of that size. Its
+	// MaxFuncLOC is always replaced by the repository's resolved policy (hissScanOptions).
 	scanOpts hiss.ScanOptions
 	// boundStage derives the race stage's context under its resolved bound. Production uses
 	// withStageBound. Tests start the bound's clock only once their fake suite starts, so how
@@ -258,7 +260,11 @@ func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	// `praetorctl audit` uses made the gate truncate on a report audit completes, so a
 	// repository could pass audit and fail the gate for a reason unrelated to its
 	// compliance (BUG-829).
-	scanRep, err := hiss.Scan(ctx, cfg.repoDir, cfg.scanOpts)
+	scanOpts, policyWarning, err := hissScanOptions(ctx, cfg)
+	if err != nil {
+		return "", err
+	}
+	scanRep, err := hiss.Scan(ctx, cfg.repoDir, scanOpts)
 	if err != nil {
 		return "", fmt.Errorf("hiss scan error: %w", err)
 	}
@@ -283,8 +289,29 @@ func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
 		return "", fmt.Errorf("hiss ratchet failed: %d infractions (%d new, baseline %d)",
 			ratchet.CurrentCount, len(ratchet.NewViolations), base.TotalInfractions)
 	}
-	return fmt.Sprintf("%d infractions within the %d baselined limit",
-		ratchet.CurrentCount, base.TotalInfractions), nil
+	msg := fmt.Sprintf("%d infractions within the %d baselined limit (function length limit %d)",
+		ratchet.CurrentCount, base.TotalInfractions, scanOpts.MaxFuncLOC)
+	if policyWarning != "" {
+		msg += "; " + policyWarning
+	}
+	return msg, nil
+}
+
+// hissScanOptions returns the scan options with the function-length limit the repository's
+// policy imposes, resolved by config.ResolveRepositoryComplexity: a locked repository gets
+// exactly the limit `praetorctl audit` scans with, a manifest without a lock gets the HISS-04
+// ceiling tightened by its overrides, and an unadopted tree gets the ceiling. Scanning with
+// the package default instead let a repository whose manifest sets a stricter limit pass the
+// gate with functions its audit rejects (BUG-638). A policy that does not resolve still scans
+// with the ceiling, and the returned warning names the cause so the stage message shows it.
+func hissScanOptions(ctx context.Context, cfg *stageConfig) (hiss.ScanOptions, string, error) {
+	opts := cfg.scanOpts
+	complexity, warning, err := config.ResolveRepositoryComplexity(ctx, cfg.repoDir)
+	if err != nil {
+		return opts, "", fmt.Errorf("resolve repository complexity policy: %w", err)
+	}
+	opts.MaxFuncLOC = complexity.MaxFuncLOC
+	return opts, warning, nil
 }
 
 // runSecurityStage runs govulncheck and gosec. A missing scanner fails the stage: a

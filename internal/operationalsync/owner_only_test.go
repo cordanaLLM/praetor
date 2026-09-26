@@ -304,10 +304,7 @@ func TestOwnerOnlyPrefixesAreIgnoredByTheEngine(t *testing.T) {
 	testGit(t, f.git, "", "init", "--template=", repo)
 	testWrite(t, repo, ".gitignore", string(raw))
 	for _, prefix := range ownerOnlyPrefixes {
-		probe := prefix
-		if strings.HasSuffix(prefix, "/") {
-			probe = prefix + "nested/operator.yaml"
-		}
+		probe := ownerOnlyProbe(prefix)
 		if got, err := f.git.text(f.git.ctx, repo, "check-ignore", "--", probe); err != nil || got != probe {
 			t.Errorf("engine .gitignore does not ignore owner-only prefix %s: %q %v", prefix, got, err)
 		}

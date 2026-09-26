@@ -146,21 +146,16 @@ func runBumpUnify(ctx context.Context, args []string) error {
 		return err
 	}
 
-	candidates, err := bump.ReconcileCatalog(ctx, *path)
+	report, err := bump.ReconcileCatalogReport(ctx, *path)
 	if err != nil {
 		return fmt.Errorf("reconcile catalog: %w", err)
 	}
+	printCatalogDrift(report)
 
+	candidates := report.Upgrades
 	if len(candidates) == 0 {
-		fmt.Println("All repository dependencies are unified with the fleet catalog.")
 		return nil
 	}
-
-	fmt.Printf("=== Fleet Catalog Dependency Drift (%d packages) ===\n", len(candidates))
-	for _, c := range candidates {
-		fmt.Printf("  - %s: %s -> %s (%s)\n", c.Package, c.CurrentVersion, c.TargetVersion, c.ManifestType)
-	}
-
 	if *apply {
 		n, err := bump.UpdateAll(ctx, *path, candidates)
 		if err != nil {
@@ -172,6 +167,35 @@ func runBumpUnify(ctx context.Context, args []string) error {
 	}
 
 	return nil
+}
+
+// printCatalogDrift prints the catalog report: upgrades first, then the dependencies unify
+// leaves unchanged because they are ahead of the catalog or cannot be ordered.
+func printCatalogDrift(report *bump.CatalogReport) {
+	if len(report.Upgrades) == 0 && len(report.Ahead) == 0 && len(report.Unranked) == 0 {
+		fmt.Println("All repository dependencies are unified with the fleet catalog.")
+		return
+	}
+	if len(report.Upgrades) == 0 {
+		fmt.Println("No repository dependency is behind the fleet catalog.")
+	} else {
+		fmt.Printf("=== Fleet Catalog Dependency Drift (%d packages) ===\n", len(report.Upgrades))
+		for _, c := range report.Upgrades {
+			fmt.Printf("  - %s: %s -> %s (%s)\n", c.Package, c.CurrentVersion, c.TargetVersion, c.ManifestType)
+		}
+	}
+	printCatalogHeld("AHEAD OF CATALOG, left unchanged", report.Ahead)
+	printCatalogHeld("NOT SEMVER-COMPARABLE, left unchanged", report.Unranked)
+}
+
+func printCatalogHeld(label string, held []bump.CatalogDrift) {
+	if len(held) == 0 {
+		return
+	}
+	fmt.Printf("\n[%s] (%d):\n", label, len(held))
+	for _, d := range held {
+		fmt.Printf("  - %s: %s (catalog %s, %s)\n", d.Package, d.CurrentVersion, d.CatalogVersion, d.ManifestType)
+	}
 }
 
 func runBumpCanary(ctx context.Context, args []string) error {

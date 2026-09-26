@@ -1,0 +1,3 @@
+type: fixed
+title: Stop bump unify from downgrading dependencies that are ahead of the fleet catalog; rank catalog drift by SemVer, report ahead and non-SemVer dependencies as left unchanged, refresh every FleetCatalog pin against upstream, and fail the test gate once a pin goes unverified for more than 90 days
+breaking: false

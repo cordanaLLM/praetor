@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-0012](0012-current-delivery-runner-and-pipeline-state.md) — 2026-09-26 (previously Accepted).
 
 ## Context
 

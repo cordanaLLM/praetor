@@ -1,52 +1,35 @@
 ---
-interface Props {
-  title?: string;
-  description?: string;
-  canonicalUrl?: string;
-  image?: string;
-  type?: 'TechArticle' | 'SoftwareSourceCode';
-}
+// Starlight `Head` override, registered as `components.Head` in astro.config.mjs.
+// It renders Starlight's default head first, so the title, description, canonical link,
+// OpenGraph and Twitter tags, sitemap link and every `head` entry from the config and
+// frontmatter stay exactly as Starlight emits them. It then adds one per-page Schema.org
+// TechArticle, which the site-wide `head` config cannot express because its headline and
+// URL differ on every page.
+//
+// Starlight 0.32+ passes route data through Astro.locals.starlightRoute, not Astro.props.
+import Default from '@astrojs/starlight/components/Head.astro';
+import config from 'virtual:starlight/user-config';
 
-const {
-  title = 'cordanaLLM/praetor Documentation',
-  description = 'Universal High-Integrity Repository Governance and Autonomous Agent Harnesses.',
-  canonicalUrl = Astro.url.href,
-  image = '/og-image.png',
-  type = 'TechArticle'
-} = Astro.props;
+const { entry, lang, lastUpdated } = Astro.locals.starlightRoute;
+const { data } = entry;
+const canonical = Astro.site ? new URL(Astro.url.pathname, Astro.site).href : undefined;
 
-const jsonLd = type === 'TechArticle' ? {
+const techArticle = {
   '@context': 'https://schema.org',
   '@type': 'TechArticle',
-  'headline': title,
-  'description': description,
-  'url': canonicalUrl,
-  'image': image,
-  'author': {
+  headline: data.title,
+  description: data.description || config.description,
+  ...(canonical ? { url: canonical } : {}),
+  ...(lastUpdated ? { dateModified: lastUpdated.toISOString() } : {}),
+  inLanguage: lang,
+  proficiencyLevel: 'Expert',
+  author: {
     '@type': 'Organization',
-    'name': 'cordanaLLM',
-    'url': 'https://standards.cordana.ai'
+    name: 'cordanaLLM',
+    url: 'https://standards.cordana.ai',
   },
-  'dateModified': new Date().toISOString(),
-  'inLanguage': 'en'
-} : {
-  '@context': 'https://schema.org',
-  '@type': 'SoftwareSourceCode',
-  'name': title,
-  'description': description,
-  'codeRepository': 'https://github.com/cordanaLLM/praetor',
-  'programmingLanguage': 'Go'
 };
 ---
 
-<!-- Canonical & OpenGraph -->
-<link rel="canonical" href={canonicalUrl} />
-<meta property="og:title" content={title} />
-<meta property="og:description" content={description} />
-<meta property="og:url" content={canonicalUrl} />
-<meta property="og:image" content={image} />
-<meta property="og:type" content="article" />
-<meta name="twitter:card" content="summary_large_image" />
-
-<!-- Schema.org JSON-LD Structured Data Injection -->
-<script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
+<Default />
+<script type="application/ld+json" set:html={JSON.stringify(techArticle)} />

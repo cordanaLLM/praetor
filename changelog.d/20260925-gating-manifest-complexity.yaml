@@ -1,0 +1,3 @@
+type: fixed
+title: Scan the gate's HISS stage with the function-length limit the repository's policy resolves to (the limit praetorctl audit enforces for a locked repository, the HISS-04 ceiling tightened by manifest overrides otherwise) instead of the scanner's 60-line default, print that limit on the stage line, and append the resolver's warning when the policy does not resolve
+breaking: false

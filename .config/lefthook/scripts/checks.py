@@ -11,9 +11,34 @@ from privacy import PRIVATE_STATE_ERROR
 
 GO_CONFIG = {"go.mod", "go.sum", "go.work", "go.work.sum", "Makefile",
              ".golangci.yml", ".gosec.json"}
-GO_EXTENSIONS = {".go", ".s", ".c", ".h", ".cc", ".cpp", ".syso"}
+# Every suffix `go build` compiles or links into a package: go/build's fileListForExt, which
+# sorts cgo, assembler, Fortran, SWIG and .syso inputs into a Package's file lists.
+GO_EXTENSIONS = {".go", ".c", ".cc", ".cpp", ".cxx", ".m", ".h", ".hh", ".hpp", ".hxx",
+                 ".f", ".F", ".for", ".f90", ".s", ".S", ".sx", ".swig", ".swigcxx", ".syso"}
+# What `compile-context --verify` reads or checks: canonical AGENTS.md and .agents/ (personas,
+# skills, plugin copies), the six vendor files (internal/agentcontext/render.go
+# vendorTargets) and the vendor persona directories (compiler.CompileAgents).
+# test_context_changed_covers_every_compile_context_path runs the real compile-context and
+# fails if it writes a path these do not match.
 CONTEXT = {"AGENTS.md", "CLAUDE.md", ".windsurfrules",
            ".github/copilot-instructions.md", ".gemini/GEMINI.md", ".codex/rules.md"}
+CONTEXT_PREFIXES = (".agents/", ".cursor/rules/", ".claude/agents/", ".codex/agents/",
+                    ".gemini/agents/", ".github/agents/")
+# The extensions semgrep assigns each language a rule can target, from semgrep's language
+# table (semgrep_interfaces/lang.json, "exts", semgrep 1.177.0). Keyed by the names
+# .config/semgrep/hiss-invariants.yml uses; test_semgrep_suffixes_cover_every_rule_language
+# fails when a rule names a language missing here.
+SEMGREP_LANGUAGE_EXTENSIONS = {
+    "go": {".go"},
+    "python": {".py", ".pyi"},
+    "rust": {".rs"},
+    "c": {".c", ".h"},
+    "cpp": {".cc", ".cpp", ".cxx", ".c++", ".pcc", ".tpp", ".C", ".h", ".hh", ".hpp", ".hxx",
+            ".inl", ".ipp"},
+    "javascript": {".cjs", ".js", ".jsx", ".mjs"},
+    "typescript": {".ts", ".tsx"},
+}
+SEMGREP_SUFFIXES = frozenset().union(*SEMGREP_LANGUAGE_EXTENSIONS.values())
 # `go run` rebuilds the CLI before the gate starts its own clock. The gate enforces its run
 # deadline itself; this margin only keeps the hook from killing it before it can report
 # which deadline fired.
@@ -23,7 +48,7 @@ GATE_QUERY_TIMEOUT = 300
 
 
 def context_changed(names):
-    return any(name in CONTEXT or name.startswith(".cursor/rules/") for name in names)
+    return any(name in CONTEXT or name.startswith(CONTEXT_PREFIXES) for name in names)
 
 
 def parallel(commands, directory):
@@ -154,6 +179,18 @@ def decode_packages(raw):
     raise HookError("Go package listing exceeded its input bound")
 
 
+def package_relative(path, directory):
+    """Return a Go package directory relative to the snapshot as a slash path.
+
+    A directory outside the snapshot is a HookError naming it, never an uncaught ValueError
+    traceback. go_packages and local_package_patterns both confine `go list` output this way.
+    """
+    try:
+        return resolved_relative_to(path, directory).as_posix()
+    except ValueError as error:
+        raise HookError(f"Go package directory is outside the checked snapshot: {path}") from error
+
+
 def go_packages(directory, names, reverse=False):
     if not (directory / "go.mod").exists():
         return []
@@ -168,7 +205,7 @@ def go_packages(directory, names, reverse=False):
                                    env=clean_env()))
     selected = set()
     for pkg in packages:
-        relative = resolved_relative_to(pkg["Dir"], directory).as_posix()
+        relative = package_relative(pkg["Dir"], directory)
         prefix = "" if relative == "." else relative + "/"
         embedded = [prefix + item for field in ("EmbedFiles", "TestEmbedFiles", "XTestEmbedFiles")
                     for item in pkg.get(field, [])]
@@ -199,10 +236,7 @@ def local_package_patterns(directory, packages):
     patterns = {}
     for package in listed:
         path = Path(package["Dir"])
-        try:
-            relative = resolved_relative_to(path, directory).as_posix()
-        except ValueError as error:
-            raise HookError(f"Go package directory is outside the checked snapshot: {path}") from error
+        relative = package_relative(path, directory)
         if not path.is_dir():
             raise HookError(f"Go package directory does not exist: {path}")
         patterns[package["ImportPath"]] = "." if relative == "." else "./" + relative
@@ -292,8 +326,7 @@ def semgrep_commands(directory, names):
     # fixtures exist precisely because they violate an invariant, so scanning them blocks
     # every push that touches the corpus. The HISS scanner skips it for the same reason.
     source = [name for name in present_files(directory, names)
-              if Path(name).suffix in {".go", ".py", ".rs", ".c", ".cpp", ".js", ".ts"}
-              and not is_fixture(name)]
+              if Path(name).suffix in SEMGREP_SUFFIXES and not is_fixture(name)]
     if any(name.startswith(".config/semgrep/") for name in names):
         # A changed rule is judged against the whole tree, and the corpus stays out of that
         # scan too. Naming "." alone dropped the filter above, so every push whose range

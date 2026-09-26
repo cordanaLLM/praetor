@@ -391,6 +391,22 @@ from its file list. When a pushed range touches `.config/semgrep/`, the scan wid
 tree and passes `--exclude testdata` to semgrep instead, because a bare `.` would walk into the
 corpus. Both forms read the directory name from `FIXTURE_DIRECTORY`, so they cannot disagree.
 
+## Which changed files select which checks
+
+`.config/lefthook/scripts/checks.py` classifies each changed path once, and each set is held to its
+real source by a test in `.config/lefthook/scripts/test_hooks.py`:
+
+| Set | Selects | Matches | Held in step by |
+| :--- | :--- | :--- | :--- |
+| `CONTEXT`, `CONTEXT_PREFIXES` | `compile-context --verify` | `AGENTS.md`, `.agents/**`, the six vendor files and the `.claude/`, `.codex/`, `.gemini/`, `.github/` `agents/` persona directories | `test_context_changed_covers_every_compile_context_path` runs the real `compile-context` and requires every file it reads or writes to match |
+| `GO_EXTENSIONS` | the Go packages to build, test, lint and scan | every suffix `go/build` compiles into a package: `.go`, cgo C/C++/Objective-C sources and headers, assembler (`.s`, `.S`, `.sx`), Fortran, SWIG and `.syso` | `test_go_packages_selects_cgo_and_assembler_inputs` |
+| `SEMGREP_SUFFIXES` | the per-file semgrep scan | the extensions semgrep assigns each language in `.config/semgrep/hiss-invariants.yml`, including `.h`, `.hpp`, `.cc`, `.jsx` and `.tsx` | `test_semgrep_suffixes_cover_every_rule_language` fails when a rule names a language the table lacks |
+
+Before these sets were widened, a commit touching only a persona or skill skipped
+`compile-context --verify`, and headers, C++ and JSX/TSX sources never reached the semgrep rules
+written for them. A Go package directory `go list` reports outside the snapshot is a hook error
+naming it, not a Python traceback.
+
 ## Running the gate on Windows
 
 Four platform assumptions previously made `git commit` impossible on a Windows checkout. Each one

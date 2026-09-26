@@ -90,6 +90,7 @@ nav:
           - ADR-0009 Structural Unification: adr/0009-structural-unification.md
           - ADR-0010 Text Register per Task: adr/0010-text-register-per-task.md
           - ADR-0011 Agent Client Wrapping & Operational Rollout: adr/0011-agent-client-wrapping-and-operational-rollout.md
+          - ADR-0012 Current Delivery, Runner & Pipeline State: adr/0012-current-delivery-runner-and-pipeline-state.md
   - Tribunus:
       - Data Sync: tribunus/data-sync.md
   - Guides & Adoption:

@@ -160,7 +160,7 @@ func printFleetCommands() {
 	fmt.Println("  paperclip          Paperclip agent harness synthesis and Rule 0 terminal disposition")
 	fmt.Println("  changelog          Manage Keep-a-Changelog fragments and release sections")
 	fmt.Println("  release            Execute release verification gates and render changelog")
-	fmt.Println("  gate               Execute 4-stage anti-direct-merge gating pipeline")
+	fmt.Println("  gate               Execute 6-stage anti-direct-merge gating pipeline")
 	fmt.Println("  agent              Manage and dispatch autonomous Praetor agent helpers (list, run)")
 	fmt.Println("  serve              Run cloud-native container daemon with HTTP health probes")
 	fmt.Println("  sbom               Generate CycloneDX 1.5 Software Bill of Materials")

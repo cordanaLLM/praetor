@@ -1,0 +1,25 @@
+---
+title: Onboarding
+description: Bring an existing or new repository under Praetor governance with init, compile-context, baseline and audit.
+---
+
+Run these commands from the root of the repository you are onboarding. Each one is a
+`praetorctl` subcommand (`praetorctl help` lists them; `standardsctl` is an alias).
+
+```bash
+# 1. Scaffold .standards.yaml with the profile and facets you declare
+praetorctl init --profile framework --facets security:high,api:public-contract
+
+# 2. Project the canonical AGENTS.md into each vendor agent file
+praetorctl compile-context
+
+# 3. Record existing debt so only new or touched code has to be clean
+praetorctl baseline --record
+
+# 4. Check the repository against the declared policy
+praetorctl audit
+```
+
+The full walkthrough, including brownfield ratcheting and planning-only adoption through MCP,
+is the repository's
+[onboarding guide](https://github.com/cordanaLLM/praetor/blob/main/docs/guides/onboarding.md).
