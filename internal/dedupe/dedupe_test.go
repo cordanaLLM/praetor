@@ -129,6 +129,80 @@ func CallGit(ctx context.Context, tool string) {
 	}
 }
 
+// utilCommandGitSource runs git through util's generic command entry points, next to calls
+// the sprawl rule must leave alone.
+const utilCommandGitSource = `package sample
+
+import (
+	"context"
+
+	"github.com/cordanaLLM/praetor/internal/util"
+)
+
+func CallGit(ctx context.Context, dir, tool string) {
+	_, _ = util.RunCommand(ctx, dir, "git", "status")
+	_, _ = util.RunCommandBytes(ctx, dir, "git", 4096, "ls-files", "-z")
+	// Negative: the git helpers themselves, a non-git binary, a name that is not a literal
+	// "git", and calls too short to carry a name must stay unreported.
+	_, _ = util.RunGit(ctx, dir, "status")
+	_, _ = util.RunGitBytes(ctx, dir, 4096, "status")
+	_, _ = util.RunCommand(ctx, dir, "go", "build")
+	_, _ = util.RunCommandBytes(ctx, dir, tool, 4096, "status")
+	_, _ = util.RunCommand(ctx, dir)
+	_, _ = util.RunCommandBytes(ctx, "git")
+}
+`
+
+// TestScanRepo_Positive_UtilCommandGitIsReported is the regression for the util arm of the
+// sprawl rule (BUG-818).
+//
+// Measured before the fix: the rule matched the exec package only, so git run through
+// util.RunCommand or util.RunCommandBytes was never reported, and four production call sites
+// ran git outside the git helpers with a clean scan.
+func TestScanRepo_Positive_UtilCommandGitIsReported(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, tmp, "cmd/sample/git.go", utilCommandGitSource)
+
+	report, err := dedupe.ScanRepo(tmp)
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	want := map[int]string{
+		10: `util.RunCommand(ctx, dir, "git", ...)`,
+		11: `util.RunCommandBytes(ctx, dir, "git", maxBytes, ...)`,
+	}
+	if len(report.SprawlItems) != len(want) {
+		t.Fatalf("SprawlItems = %+v, want exactly the two util git calls", report.SprawlItems)
+	}
+	for _, item := range report.SprawlItems {
+		if item.File != "cmd/sample/git.go" || want[item.Line] != item.Pattern {
+			t.Errorf("sprawl item %+v, want one of %v in cmd/sample/git.go", item, want)
+		}
+		if !strings.Contains(item.Replacement, "util.RunGitBytes(") {
+			t.Errorf("replacement %q does not name the bounded-output git helper", item.Replacement)
+		}
+	}
+	if report.Passed {
+		t.Error("a repository with an unresolved sprawl finding must not pass")
+	}
+}
+
+// TestScanRepo_Boundary_UtilPackageIsExempt pins the edge of the util arm: the same source
+// that fails under cmd/ passes inside internal/util, which implements the git helpers on top
+// of these entry points.
+func TestScanRepo_Boundary_UtilPackageIsExempt(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, tmp, "internal/util/git.go", utilCommandGitSource)
+
+	report, err := dedupe.ScanRepo(tmp)
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if len(report.SprawlItems) != 0 || !report.Passed {
+		t.Fatalf("internal/util reported %+v (passed %v), want it exempt", report.SprawlItems, report.Passed)
+	}
+}
+
 // TestScanRepoGitScope_Negative_HostileFsmonitorNeverRuns is the regression for the scan
 // running under the scanned repository's control.
 //

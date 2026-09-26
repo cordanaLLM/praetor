@@ -56,12 +56,17 @@ var (
 	ErrExecArgMeta = errors.New("util: exec argument contains a forbidden character")
 	// ErrExecArgTooLong is returned when an exec argument exceeds MaxExecArgLen.
 	ErrExecArgTooLong = errors.New("util: exec argument exceeds the maximum length")
-	// ErrFileTooLarge is returned by ReadConfinedLimited when the file carries more
-	// than the caller's limit.
+	// ErrFileTooLarge is returned by ReadFileLimited and ReadConfinedLimited when the file
+	// carries more than the caller's limit.
 	ErrFileTooLarge = errors.New("util: file exceeds the read limit")
-	// ErrInvalidReadLimit is returned by ReadConfinedLimited for a non-positive limit.
+	// ErrInvalidReadLimit is returned by ReadFileLimited and ReadConfinedLimited for a
+	// non-positive limit.
 	ErrInvalidReadLimit = errors.New("util: read limit must be positive")
 )
+
+// linkFile is os.Root.Link behind a seam, so a test can stand in for a filesystem without
+// hard links and exercise WriteFileExclusive's fallback without mounting one.
+var linkFile = func(dir *os.Root, oldname, newname string) error { return dir.Link(oldname, newname) }
 
 // ReadConfined reads rel below root after confining it with ConfinePath, so a
 // caller-supplied repository path or a workspace glob can never read outside
@@ -87,15 +92,31 @@ func ReadConfined(root, rel string) ([]byte, error) {
 // so a multi-GB blob sitting at a configuration path is allocated in full before any
 // caller-side length check can reject it, which on a memory-capped runner is an OOM rather
 // than a finding.
-func ReadConfinedLimited(root, rel string, limit int64) (data []byte, resultErr error) {
-	if limit <= 0 {
-		return nil, fmt.Errorf("%w: %d", ErrInvalidReadLimit, limit)
+func ReadConfinedLimited(root, rel string, limit int64) ([]byte, error) {
+	if err := checkReadLimit(limit); err != nil {
+		return nil, err
 	}
 	path, err := ConfinePath(root, rel)
 	if err != nil {
 		return nil, err
 	}
-	// #nosec G304 -- path is confined to root by ConfinePath above.
+	return ReadFileLimited(path, limit)
+}
+
+// ReadFileLimited reads path but never allocates more than limit+1 bytes: a file that
+// carries more is refused with ErrFileTooLarge rather than read in full or silently cut to
+// its first limit bytes (HISS-02). A plain io.LimitReader(file, limit) cannot tell a file
+// of exactly limit bytes from a longer one, so the prefix of an oversized file reads as if
+// it were the whole file; the one extra byte read here is what tells them apart.
+//
+// It does not confine path: the caller must already have resolved it from a trusted
+// location, such as os.UserConfigDir. A path below a caller-chosen root goes through
+// ReadConfinedLimited instead.
+func ReadFileLimited(path string, limit int64) (data []byte, resultErr error) {
+	if err := checkReadLimit(limit); err != nil {
+		return nil, err
+	}
+	// #nosec G304 -- callers pass a resolved, trusted path; ReadConfinedLimited confines first.
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -109,6 +130,15 @@ func ReadConfinedLimited(root, rel string, limit int64) (data []byte, resultErr 
 		return nil, fmt.Errorf("%w: %q carries more than %d bytes", ErrFileTooLarge, path, limit)
 	}
 	return data, nil
+}
+
+// checkReadLimit refuses a non-positive read limit, which would read nothing and report
+// every non-empty file as oversized.
+func checkReadLimit(limit int64) error {
+	if limit <= 0 {
+		return fmt.Errorf("%w: %d", ErrInvalidReadLimit, limit)
+	}
+	return nil
 }
 
 // ConfinePath joins rel onto root and returns the cleaned, absolute result, guaranteeing
@@ -347,6 +377,77 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	})
 }
 
+// WriteFileExclusive creates path holding data and fails with an error matching
+// os.ErrExist when anything -- a file, a directory, a dangling symbolic link -- is
+// already there. It never truncates, replaces or writes through an existing entry.
+//
+// Two writers racing for one path cannot both succeed, and a crash never leaves a
+// truncated file at path: data is staged and fsynced in a sibling temporary file first
+// (WriteFileAtomic's staging), then hard-linked onto path, and link(2) refuses an existing
+// destination atomically. path's directory is pinned (os.Root) for the whole write, as
+// WriteFileAtomic pins it. This is the writer for a file that must be created once and
+// never silently replaced, such as a signing key. WriteFileSecure truncates in place and
+// WriteFileAtomic renames over the target; both overwrite, so neither can guarantee
+// create-once.
+//
+// On a filesystem without hard links the link fails with something other than
+// os.ErrExist, and the write falls back to an O_EXCL create of path itself: still
+// exclusive, but a crash mid-write there can leave a partial file. perm is the same
+// ceiling WriteFileAtomic enforces: zero selects SecureFilePerm; world-writable or
+// non-permission bits are refused.
+func WriteFileExclusive(path string, data []byte, perm os.FileMode) error {
+	perm, err := effectivePerm(perm, SecureFilePerm)
+	if err != nil {
+		return err
+	}
+	return inParentDirectory(path, func(dir *os.Root, name string) error {
+		return createExclusively(dir, name, data, filePermission{mode: perm, exact: true})
+	})
+}
+
+// createExclusively is WriteFileExclusive inside the pinned directory: it stages data in a
+// fresh sibling of name, fsyncs it, and links the stage onto name.
+func createExclusively(dir *os.Root, name string, data []byte, perm filePermission) error {
+	stage, tmp, err := createStage(dir, name, perm.mode)
+	if err != nil {
+		return err
+	}
+	// The stage name is always removed: after a successful link, name holds its own link
+	// to the same data, so dropping the stage leaves exactly one entry behind.
+	//nolint:errcheck // best-effort; a leftover owner-only temp file must not mask the write's own result
+	defer dir.Remove(stage) // #nosec G104 -- best-effort cleanup of the stage name
+	if writeErr := writeAndSyncTemp(tmp, data, perm); writeErr != nil {
+		return writeErr
+	}
+	linkErr := linkFile(dir, stage, name)
+	if linkErr == nil {
+		return nil
+	}
+	if errors.Is(linkErr, os.ErrExist) {
+		return fmt.Errorf("util: %q already exists in %q: %w", name, dir.Name(), linkErr)
+	}
+	if fallbackErr := writeNewFile(dir, name, data, perm); fallbackErr != nil {
+		return errors.Join(fmt.Errorf("util: link %q to %q in %q: %w", stage, name, dir.Name(), linkErr), fallbackErr)
+	}
+	return nil
+}
+
+// writeNewFile is WriteFileExclusive's fallback for a filesystem without hard links: an
+// O_EXCL create through the pinned directory that refuses any existing entry at name. A
+// failed write removes the file it just created, which O_EXCL guarantees is this call's own.
+func writeNewFile(dir *os.Root, name string, data []byte, perm filePermission) error {
+	file, err := dir.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm.mode)
+	if err != nil {
+		return fmt.Errorf("util: create %q in %q exclusively: %w", name, dir.Name(), err)
+	}
+	if writeErr := writeAndSyncTemp(file, data, perm); writeErr != nil {
+		// #nosec G104 -- best-effort; the partial file is this call's own O_EXCL creation.
+		dir.Remove(name) //nolint:errcheck // best-effort; removing the partial file must not mask writeErr
+		return writeErr
+	}
+	return nil
+}
+
 // filePermission is the mode replaceAtomically gives the staged file before the rename.
 // exact sets mode outright; otherwise mode is a ceiling that only tightens the creation
 // mode, which already carries the process umask.
@@ -447,7 +548,9 @@ func createStage(dir *os.Root, name string, perm os.FileMode) (string, *os.File,
 
 // writeAndSyncTemp applies perm to, writes and fsyncs an already-created temporary file,
 // always closing it exactly once. It is replaceAtomically's only path back to the caller
-// before the rename, so every failure it returns leaves the rename unattempted.
+// before the rename, and createExclusively's before the link, so every failure it returns
+// leaves that final step unattempted. writeNewFile reuses it for the file it creates in
+// place when hard links are unavailable.
 func writeAndSyncTemp(tmp *os.File, data []byte, perm filePermission) (err error) {
 	defer func() {
 		if cerr := tmp.Close(); cerr != nil && err == nil {

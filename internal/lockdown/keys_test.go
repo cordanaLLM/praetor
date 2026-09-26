@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -164,10 +165,15 @@ func TestSaveSigningKey_Boundary(t *testing.T) {
 	if err := SaveSigningKey(path, priv); err != nil {
 		t.Fatalf("SaveSigningKey: %v", err)
 	}
-	// Boundary: a second save never silently replaces an existing key.
-	if err := SaveSigningKey(path, priv); err == nil {
-		t.Error("expected SaveSigningKey to refuse overwriting an existing key")
+	// Boundary: a second save, even of a different key, never replaces an existing key.
+	_, other, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
 	}
+	if err := SaveSigningKey(path, other); !errors.Is(err, ErrSigningKeyExists) {
+		t.Errorf("expected ErrSigningKeyExists overwriting an existing key, got %v", err)
+	}
+	assertStoredSeed(t, path, priv)
 
 	// Boundary: the key directory is owner-only.
 	info, err := os.Stat(filepath.Dir(path))
@@ -176,6 +182,144 @@ func TestSaveSigningKey_Boundary(t *testing.T) {
 	}
 	if util.ModeIsProtection() && info.Mode().Perm() != SigningKeyDirPerm {
 		t.Errorf("key dir mode = %#o, want %#o", info.Mode().Perm(), SigningKeyDirPerm)
+	}
+}
+
+// assertStoredSeed fails unless the key file at path holds exactly want's seed.
+func assertStoredSeed(t *testing.T, path string, want ed25519.PrivateKey) {
+	t.Helper()
+	data, err := os.ReadFile(path) // #nosec G304 -- sandboxed test path under t.TempDir
+	if err != nil {
+		t.Fatalf("read key: %v", err)
+	}
+	if got := string(data); got != hex.EncodeToString(want.Seed())+"\n" {
+		t.Errorf("stored key = %q, want the seed of the key that won", got)
+	}
+}
+
+// TestSaveSigningKey_Negative_ConcurrentKeygen runs keygens for different keys against
+// one path at once. The existence check before the write cannot arbitrate between them;
+// only an exclusive create can, so exactly one save succeeds and the stored key is the
+// winner's -- never a later writer's overwrite of a key already handed out.
+func TestSaveSigningKey_Negative_ConcurrentKeygen(t *testing.T) {
+	sandboxConfigDir(t)
+	path, err := DefaultSigningKeyPath()
+	if err != nil {
+		t.Fatalf("DefaultSigningKeyPath: %v", err)
+	}
+	const writers = 16
+	keys := make([]ed25519.PrivateKey, writers)
+	for i := range keys {
+		if _, keys[i], err = GenerateKeyPair(); err != nil {
+			t.Fatalf("GenerateKeyPair: %v", err)
+		}
+	}
+
+	start := make(chan struct{})
+	results := make([]error, writers)
+	var wg sync.WaitGroup
+	for i := range keys {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i] = SaveSigningKey(path, keys[i])
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	winner := -1
+	for i, err := range results {
+		switch {
+		case err == nil && winner >= 0:
+			t.Errorf("writers %d and %d both saved a key: the second overwrote the first", winner, i)
+		case err == nil:
+			winner = i
+		case !errors.Is(err, ErrSigningKeyExists):
+			t.Errorf("writer %d: expected ErrSigningKeyExists, got %v", i, err)
+		}
+	}
+	if winner < 0 {
+		t.Fatal("exactly one concurrent keygen must succeed, none did")
+	}
+	assertStoredSeed(t, path, keys[winner])
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("expected only %s in the key directory, got %v", SigningKeyFileName, entries)
+	}
+}
+
+// TestSaveSigningKey_Negative_DanglingSymlink proves a link at the key path is refused
+// rather than followed: the old write opened the path with O_CREATE and would have
+// created the key wherever the link pointed.
+func TestSaveSigningKey_Negative_DanglingSymlink(t *testing.T) {
+	sandboxConfigDir(t)
+	path, err := DefaultSigningKeyPath()
+	if err != nil {
+		t.Fatalf("DefaultSigningKeyPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	target := filepath.Join(filepath.Dir(path), "elsewhere.key")
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("this platform cannot create a symbolic link without privilege: %v", err)
+	}
+	_, priv, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+	if err := SaveSigningKey(path, priv); !errors.Is(err, ErrSigningKeyExists) {
+		t.Errorf("expected ErrSigningKeyExists for a link at the key path, got %v", err)
+	}
+	if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the save must never create the link's target, got %v", err)
+	}
+}
+
+// TestLoadSigningKey_Boundary pins the read bound at maxKeyFileBytes: a key file of
+// exactly that size loads, one byte more is refused. The padding is whitespace that
+// ParseSigningKey trims, so a reader that silently cut the file to its first
+// maxKeyFileBytes bytes would accept the oversized file as the same valid key.
+func TestLoadSigningKey_Boundary(t *testing.T) {
+	sandboxConfigDir(t)
+	path, err := DefaultSigningKeyPath()
+	if err != nil {
+		t.Fatalf("DefaultSigningKeyPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	_, priv, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+	seed := hex.EncodeToString(priv.Seed()) + "\n"
+	padded := func(size int) []byte {
+		return []byte(seed + strings.Repeat(" ", size-len(seed)))
+	}
+
+	if err := os.WriteFile(path, padded(maxKeyFileBytes), SigningKeyPerm); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+	loaded, err := LoadSigningKey()
+	if err != nil {
+		t.Fatalf("a %d-byte key file must load: %v", maxKeyFileBytes, err)
+	}
+	if !loaded.Equal(priv) {
+		t.Error("the key loaded from a padded file does not match the generated key")
+	}
+
+	if err := os.WriteFile(path, padded(maxKeyFileBytes+1), SigningKeyPerm); err != nil {
+		t.Fatalf("write oversized key: %v", err)
+	}
+	_, err = LoadSigningKey()
+	if !errors.Is(err, ErrMalformedSigningKey) || !errors.Is(err, util.ErrFileTooLarge) {
+		t.Errorf("a %d-byte key file must be refused as oversized, got %v", maxKeyFileBytes+1, err)
 	}
 }
 
