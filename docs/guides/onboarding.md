@@ -76,9 +76,9 @@ Legacy infractions recorded in `.standards-baseline.json` will not fail CI statu
 - **Waivers**: For an unavoidable architectural exception that raises the recorded
   count, use the HISS-13 exception path: `praetorctl baseline --record
   --allow-increase --reason "<rationale>"`. The reason is stored in the baseline
-  alongside the raised count. Separately, the `hiss-waiver` repository label marks
-  a pull request as requiring signed-off approval before its ruleset status check
-  passes; there is no CLI command or file that mints a standalone signed waiver.
+  alongside the raised count; there is no CLI command or file that mints a standalone
+  signed waiver. The `hiss-waiver` repository label is a scaffolded taxonomy entry
+  with no enforcement attached.
 
 ---
 
