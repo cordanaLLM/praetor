@@ -74,11 +74,6 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 		"HISS-15: 3D testing mandatory (Positive, Negative, Boundary >= 2 checks/dim)",
 		"HISS-16: Canonical AGENTS.md compiled to vendor harnesses",
 	}
-
-	platform, err := resolvePlatform(ctx, repoPath)
-	if err != nil {
-		return nil, err
-	}
 	return &Harness{
 		Version:           1,
 		Platform:          platform,

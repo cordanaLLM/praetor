@@ -8,7 +8,6 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"gopkg.in/yaml.v3"
 )
 
 // maxDeclinedArtifacts bounds the declared list so a malformed manifest cannot make
@@ -129,11 +128,11 @@ func declaredManifest(ctx context.Context, repoPath string) *config.Manifest {
 	if err != nil || !exists {
 		return nil
 	}
-	var manifest config.Manifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
+	manifest, err := config.DecodeManifest(data)
+	if err != nil {
 		return nil
 	}
-	return &manifest
+	return manifest
 }
 
 // adoptStepNames returns the name of every step in the adoption chain, so tests and error

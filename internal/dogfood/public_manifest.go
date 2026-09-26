@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/cordanaLLM/praetor/internal/config"
-	"gopkg.in/yaml.v3"
 )
 
 // publicManifest is also used to validate the explicitly selected source bundle
@@ -24,9 +23,5 @@ func publicManifest(ctx context.Context, dir string) (result *config.Manifest, e
 	if err != nil {
 		return nil, err
 	}
-	var manifest config.Manifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return nil, err
-	}
-	return &manifest, nil
+	return config.DecodeManifest(data)
 }

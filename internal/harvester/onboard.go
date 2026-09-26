@@ -327,11 +327,11 @@ func verifyOnboardLock(ctx context.Context, repoPath string) (*config.LockValida
 	if err != nil {
 		return nil, err
 	}
-	var manifest config.Manifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
+	manifest, err := config.DecodeManifest(data)
+	if err != nil {
 		return nil, fmt.Errorf("parse onboarding manifest: %w", err)
 	}
-	return config.ValidateLockfile(ctx, repoPath, &manifest)
+	return config.ValidateLockfile(ctx, repoPath, manifest)
 }
 
 // readOnboardDocument bounds existing scaffold inputs and refuses special files before
