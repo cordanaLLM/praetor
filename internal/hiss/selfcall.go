@@ -701,13 +701,20 @@ func pythonAssignTarget(trimmed string) string {
 			depth++
 		case strings.IndexByte(")]}", c) >= 0 && depth > 0:
 			depth--
-		case c == '=' && depth == 0:
-			next := i+1 < len(trimmed) && trimmed[i+1] == '='
-			prev := i > 0 && strings.IndexByte("=!<>", trimmed[i-1]) >= 0
-			if !next && !prev {
-				return trimmed[:i]
-			}
+		case depth == 0 && pythonAssignsAt(trimmed, i):
+			return trimmed[:i]
 		}
 	}
 	return ""
+}
+
+// pythonAssignsAt reports whether byte i is an assigning =: neither half of == nor the end of
+// !=, <= or >=.
+func pythonAssignsAt(trimmed string, i int) bool {
+	if trimmed[i] != '=' {
+		return false
+	}
+	next := i+1 < len(trimmed) && trimmed[i+1] == '='
+	prev := i > 0 && strings.IndexByte("=!<>", trimmed[i-1]) >= 0
+	return !next && !prev
 }

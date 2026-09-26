@@ -188,23 +188,27 @@ func TestRustSelfRecursionShadowsLexically(t *testing.T) {
 		src  string
 		want []int
 	}{
-		"call before let":      {"fn f(n: u32) {\n    if n > 0 {\n        f(n - 1);\n    }\n    let f = 1;\n}\n", []int{3}},
-		"one-line body":        {"fn f(n: u32) -> u32 { if n > 0 { return f(n - 1); } let f = 3; f }\n", []int{1}},
-		"let initializer":      {"fn f(n: u32) -> u32 {\n    let f = f(n - 1);\n    f\n}\n", []int{2}},
-		"after closure param":  {"fn f(n: u32) -> u32 {\n    let g = |f: u32| f + 1;\n    f(n - 1)\n}\n", []int{3}},
-		"after closure block":  {"fn f(n: u32) -> u32 {\n    let g = |f: u32| {\n        f + 1\n    };\n    f(n - 1)\n}\n", []int{5}},
-		"after inner block":    {"fn f(n: u32) -> u32 {\n    {\n        let f = 1;\n    }\n    f(n - 1)\n}\n", []int{5}},
-		"after match arm":      {"fn f(n: u32) -> u32 {\n    match n {\n        f => f + 1,\n    };\n    f(n - 1)\n}\n", []int{5}},
-		"after for loop":       {"fn f(n: u32) -> u32 {\n    for f in 0..n {\n        let _ = f;\n    }\n    f(n - 1)\n}\n", []int{5}},
-		"after if let":         {"fn f(n: u32) -> u32 {\n    if let Some(f) = g(n) {\n        return f;\n    }\n    f(n - 1)\n}\n", []int{5}},
-		"else of if let":       {"fn f(o: Option<u32>) -> u32 {\n    if let Some(f) = o {\n        f\n    } else {\n        f(None)\n    }\n}\n", []int{5}},
-		"for iterator":         {"fn f(n: u32) -> u32 {\n    for f in f(n - 1) {\n    }\n    0\n}\n", []int{2}},
-		"match scrutinee":      {"fn f(n: u32) -> u32 {\n    let r = match f(n - 1) { 0 => 1, _ => 2 };\n    r\n}\n", []int{2}},
-		"between pipes":        {"fn f(n: u32) -> u32 {\n    1 | f(n - 1) | 2\n}\n", []int{2}},
-		"closure then call":    {"fn f(n: u32) {\n    f(n - 1);\n    let f = |x: u32| x;\n    f(n);\n}\n", []int{2}},
-		"guard and arm body":   {"fn f(t: &T) -> bool {\n    match t {\n        T::A(x) if f(x) => true,\n        T::B(x) => f(x),\n        _ => false,\n    }\n}\n", []int{3, 4}},
-		"std expression macro": {"fn f(n: u32) -> u32 {\n    assert!(f(n - 1) > 0);\n    println!(\"{}\", f(n - 2));\n    vec![f(n - 3)].len() as u32\n}\n", []int{2, 3, 4}},
-		"after macro input":    {"fn f(n: u32) -> u32 {\n    let r = check!(n);\n    r + f(n - 1)\n}\n", []int{3}},
+		"call before let":         {"fn f(n: u32) {\n    if n > 0 {\n        f(n - 1);\n    }\n    let f = 1;\n}\n", []int{3}},
+		"one-line body":           {"fn f(n: u32) -> u32 { if n > 0 { return f(n - 1); } let f = 3; f }\n", []int{1}},
+		"let initializer":         {"fn f(n: u32) -> u32 {\n    let f = f(n - 1);\n    f\n}\n", []int{2}},
+		"after closure param":     {"fn f(n: u32) -> u32 {\n    let g = |f: u32| f + 1;\n    f(n - 1)\n}\n", []int{3}},
+		"after closure block":     {"fn f(n: u32) -> u32 {\n    let g = |f: u32| {\n        f + 1\n    };\n    f(n - 1)\n}\n", []int{5}},
+		"after inner block":       {"fn f(n: u32) -> u32 {\n    {\n        let f = 1;\n    }\n    f(n - 1)\n}\n", []int{5}},
+		"after match arm":         {"fn f(n: u32) -> u32 {\n    match n {\n        f => f + 1,\n    };\n    f(n - 1)\n}\n", []int{5}},
+		"after for loop":          {"fn f(n: u32) -> u32 {\n    for f in 0..n {\n        let _ = f;\n    }\n    f(n - 1)\n}\n", []int{5}},
+		"after if let":            {"fn f(n: u32) -> u32 {\n    if let Some(f) = g(n) {\n        return f;\n    }\n    f(n - 1)\n}\n", []int{5}},
+		"else of if let":          {"fn f(o: Option<u32>) -> u32 {\n    if let Some(f) = o {\n        f\n    } else {\n        f(None)\n    }\n}\n", []int{5}},
+		"for iterator":            {"fn f(n: u32) -> u32 {\n    for f in f(n - 1) {\n    }\n    0\n}\n", []int{2}},
+		"match scrutinee":         {"fn f(n: u32) -> u32 {\n    let r = match f(n - 1) { 0 => 1, _ => 2 };\n    r\n}\n", []int{2}},
+		"between pipes":           {"fn f(n: u32) -> u32 {\n    1 | f(n - 1) | 2\n}\n", []int{2}},
+		"closure then call":       {"fn f(n: u32) {\n    f(n - 1);\n    let f = |x: u32| x;\n    f(n);\n}\n", []int{2}},
+		"guard and arm body":      {"fn f(t: &T) -> bool {\n    match t {\n        T::A(x) if f(x) => true,\n        T::B(x) => f(x),\n        _ => false,\n    }\n}\n", []int{3, 4}},
+		"std expression macro":    {"fn f(n: u32) -> u32 {\n    assert!(f(n - 1) > 0);\n    println!(\"{}\", f(n - 2));\n    vec![f(n - 3)].len() as u32\n}\n", []int{2, 3, 4}},
+		"after macro input":       {"fn f(n: u32) -> u32 {\n    let r = check!(n);\n    r + f(n - 1)\n}\n", []int{3}},
+		"after comma-less if arm": {"fn f(o: Option<fn() -> u8>, c: bool) -> u8 {\n    match o {\n        Some(f) => if c { 1 } else { f() }\n        None => f(None, c),\n    }\n}\n", []int{4}},
+		"after block arm":         {"fn f(o: Option<fn() -> u8>) -> u8 {\n    match (o, 1) {\n        (Some(f), _) => { f() }\n        (None, _) => f(None),\n    }\n}\n", []int{4}},
+		"after block arm blank":   {"fn f(o: Option<fn() -> u8>) -> u8 {\n    match o {\n        Some(f) => {\n            f()\n        }\n\n        None => f(None),\n    }\n}\n", []int{7}},
+		"after operator in arm":   {"fn f(o: Option<fn() -> u8>) -> u8 {\n    match o {\n        Some(g) => 1 + match 1 { _ => 2 } + f(None),\n        None => 0,\n    }\n}\n", []int{3}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assertSelfCalls(t, "src/lib.rs", tc.src, tc.want...)
@@ -217,22 +221,34 @@ func TestRustSelfRecursionShadowsLexically(t *testing.T) {
 // it, and a closure or arm pattern that binds the name inside brackets still shadows it.
 func TestRustScopedBindingsShadow(t *testing.T) {
 	for name, src := range map[string]string{
-		"use above":         "fn f() {\n    f();\n    use other::f;\n}\n",
-		"let closure":       "fn f(n: u32) -> u32 {\n    let f = |x: u32| x;\n    f(n)\n}\n",
-		"let tuple":         "fn f(p: (u32, fn(u32) -> u32)) -> u32 {\n    let (n, f) = p;\n    f(n)\n}\n",
-		"let array length":  "fn f(n: u32) -> u32 {\n    let [f, _] = [g; 2];\n    f(n)\n}\n",
-		"closure tuple":     "fn f(v: &[(u32, fn(u32) -> u32)]) -> u32 {\n    v.iter().map(|(n, f)| f(*n)).sum()\n}\n",
-		"closure block":     "fn f(v: &[fn()]) {\n    v.iter().for_each(|f| {\n        f();\n    });\n}\n",
-		"for body":          "fn f(fs: &[fn()]) {\n    for f in fs {\n        f();\n    }\n}\n",
-		"if let body":       "fn f(o: Option<fn()>) {\n    if let Some(f) = o {\n        f();\n    }\n}\n",
-		"while let body":    "fn f(v: &mut Vec<fn()>) {\n    while let Some(f) = v.pop() {\n        f();\n    }\n}\n",
-		"let chain":         "fn f(a: bool, o: Option<fn()>) {\n    if a && let Some(f) = o {\n        f();\n    }\n}\n",
-		"arm block":         "fn f(o: Option<fn()>) {\n    match o {\n        Some(f) => {\n            f();\n        }\n        None => {}\n    }\n}\n",
-		"arm on its line":   "fn f(o: Option<fn() -> u8>) -> u8 {\n    match o { Some(f) => f(), None => 0 }\n}\n",
-		"let else":          "fn f(o: Option<fn()>) {\n    let Some(f) = o else { return; };\n    f();\n}\n",
-		"shadow until end":  "fn f(n: u32) -> u32 {\n    let f = |x: u32| x;\n    {\n        f(n);\n    }\n    f(n)\n}\n",
-		"iterator closure":  "fn f(fs: &[fn()]) {\n    for f in fs.iter().map(|x| { x }) {\n        f();\n    }\n}\n",
-		"arm pattern macro": "fn recv() {\n    select! {\n        recv(r) -> v => assert_eq!(v, Ok(7)),\n    }\n}\n",
+		"use above":           "fn f() {\n    f();\n    use other::f;\n}\n",
+		"let closure":         "fn f(n: u32) -> u32 {\n    let f = |x: u32| x;\n    f(n)\n}\n",
+		"let tuple":           "fn f(p: (u32, fn(u32) -> u32)) -> u32 {\n    let (n, f) = p;\n    f(n)\n}\n",
+		"let array length":    "fn f(n: u32) -> u32 {\n    let [f, _] = [g; 2];\n    f(n)\n}\n",
+		"closure tuple":       "fn f(v: &[(u32, fn(u32) -> u32)]) -> u32 {\n    v.iter().map(|(n, f)| f(*n)).sum()\n}\n",
+		"closure block":       "fn f(v: &[fn()]) {\n    v.iter().for_each(|f| {\n        f();\n    });\n}\n",
+		"for body":            "fn f(fs: &[fn()]) {\n    for f in fs {\n        f();\n    }\n}\n",
+		"if let body":         "fn f(o: Option<fn()>) {\n    if let Some(f) = o {\n        f();\n    }\n}\n",
+		"while let body":      "fn f(v: &mut Vec<fn()>) {\n    while let Some(f) = v.pop() {\n        f();\n    }\n}\n",
+		"let chain":           "fn f(a: bool, o: Option<fn()>) {\n    if a && let Some(f) = o {\n        f();\n    }\n}\n",
+		"arm block":           "fn f(o: Option<fn()>) {\n    match o {\n        Some(f) => {\n            f();\n        }\n        None => {}\n    }\n}\n",
+		"arm on its line":     "fn f(o: Option<fn() -> u8>) -> u8 {\n    match o { Some(f) => f(), None => 0 }\n}\n",
+		"let else":            "fn f(o: Option<fn()>) {\n    let Some(f) = o else { return; };\n    f();\n}\n",
+		"shadow until end":    "fn f(n: u32) -> u32 {\n    let f = |x: u32| x;\n    {\n        f(n);\n    }\n    f(n)\n}\n",
+		"iterator closure":    "fn f(fs: &[fn()]) {\n    for f in fs.iter().map(|x| { x }) {\n        f();\n    }\n}\n",
+		"arm pattern macro":   "fn recv() {\n    select! {\n        recv(r) -> v => assert_eq!(v, Ok(7)),\n    }\n}\n",
+		"arm if else":         "fn f(o: Option<fn() -> u8>, c: bool) -> u8 {\n    match o {\n        Some(f) => if c { 1 } else { f() },\n        None => 0,\n    }\n}\n",
+		"arm if else wrapped": "fn f(o: Option<fn() -> u8>, c: bool) -> u8 {\n    match o {\n        Some(f) => if c {\n            1\n        } else {\n            f()\n        },\n        None => 0,\n    }\n}\n",
+		"arm else next line":  "fn f(o: Option<fn() -> u8>, c: bool) -> u8 {\n    match o {\n        Some(f) => if c { 1 }\n        else { f() }\n        None => 0,\n    }\n}\n",
+		"arm else if chain":   "fn f(o: Option<fn() -> u8>, c: u8) -> u8 {\n    match o {\n        Some(f) => if c == 0 { 1 } else if c == 1 { 2 } else { f() }\n        None => 0,\n    }\n}\n",
+		"arm method on block": "fn f(o: Option<fn() -> u8>) -> u8 {\n    match o {\n        Some(f) => match 1 { _ => 2u8 }.max(f()),\n        None => 0,\n    }\n}\n",
+		"arm operator after":  "fn f(o: Option<fn() -> u8>) -> u8 {\n    match o {\n        Some(f) => match 1 { _ => 2 } + f(),\n        None => 0,\n    }\n}\n",
+		"arm if let struct":   "fn f(o: Option<fn() -> u8>, s: S) -> u8 {\n    match o {\n        Some(f) => if let S { a } = s { a() + f() } else { 0 },\n        None => 0,\n    }\n}\n",
+		"arm for struct":      "fn f(o: Option<fn()>, v: Vec<S>) {\n    match o {\n        Some(f) => for S { a } in v { a(); f(); }\n        None => {}\n    }\n}\n",
+		"closure if else":     "fn f(v: &[fn() -> u8], c: bool) -> u8 {\n    v.iter().map(|f| if c { 0 } else { f() }).sum()\n}\n",
+		"closure block op":    "fn f(v: &[fn() -> u8]) -> u8 {\n    v.iter().map(|f| { 0 } + f()).sum()\n}\n",
+		"closure after or":    "fn f(k: K, v: &[fn() -> u8]) -> u8 {\n    match k {\n        K::A | K::B => v.iter().map(|f| f()).sum(),\n    }\n}\n",
+		"closure after bitor": "fn f(a: u8, b: u8, v: &[fn() -> u8]) -> u8 {\n    (a | b) + v.iter().map(|f| f()).sum::<u8>()\n}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			assertSelfCalls(t, "src/lib.rs", src)
@@ -264,9 +280,11 @@ func TestRustMacroInputIsUndecided(t *testing.T) {
 	assertSelfCalls(t, "src/std.rs", "fn f(n: u32) -> u32 {\n    std::assert_eq!(f(n - 1), 0);\n    0\n}\n", 2)
 }
 
-// TestRustTraitImplHeaderForms covers impl and trait headers the line-anchored match used to
-// misread: an attribute on the header's line, a brace in a const generic argument, a
-// semicolon in an array type, and a trait alias that ends in a semicolon and opens no body.
+// TestRustTraitImplHeaderForms covers impl and trait headers of a trait impl: an attribute on
+// the header's line, a brace in a const generic argument, a semicolon in an array type, a trait
+// alias that ends in a semicolon and opens no body, and a header wrapped across lines. The
+// line-anchored match misread four of them; the one-line array form already passed and guards
+// the semicolon rule, which must not drop a header whose semicolon sits inside its brackets.
 func TestRustTraitImplHeaderForms(t *testing.T) {
 	for name, src := range map[string]string{
 		"attribute":       "#[allow(unused)] impl Ones for W {\n    fn count(&self) -> u32 {\n        self.count()\n    }\n}\n",
@@ -315,6 +333,39 @@ func TestRustBindingAt(t *testing.T) {
 		kind, keyword := rustBindingAt(code, at)
 		if kind != want.kind || keyword != want.keyword {
 			t.Errorf("rustBindingAt(%q) = %d, %d; want %d, %d", code, kind, keyword, want.kind, want.keyword)
+		}
+	}
+}
+
+// TestRustArmAndClosureEdges pins the tokens that decide where an arm or a closure scope
+// ends: which arm bodies are block-like, which token after such a body ends the arm, and which
+// pipe opens a closure's parameters.
+func TestRustArmAndClosureEdges(t *testing.T) {
+	for text, want := range map[string]bool{
+		" { f() }": true, "if c { 1 }": true, "\tmatch x {": true, "unsafe { f() }": true,
+		"f() + 1": false, "iffy()": false, "S { a: 1 }": false, "": false, "   ": false,
+	} {
+		if got := rustBlockLed(text); got != want {
+			t.Errorf("rustBlockLed(%q) = %v, want %v", text, got, want)
+		}
+	}
+	for text, want := range map[string]bool{
+		",": true, "}": true, "None => 0,": true, "(a, b) =>": true, "[x] =>": true, "_ =>": true,
+		"1 =>": true, "#[cfg(x)]": true, "..=9 =>": true, "::a::B =>": true, "'x' =>": true,
+		"else { f() }": false, "elsewhere =>": true, "in v {": false, ".max(f())": false,
+		"?": false, "= s {": false, "{ 1 }": false, "+ f()": false, "-1 =>": false, "": false,
+	} {
+		if got := rustArmEnds(text); got != want {
+			t.Errorf("rustArmEnds(%q) = %v, want %v", text, got, want)
+		}
+	}
+	for before, want := range map[string]bool{
+		"v.map(|": true, "let g = |a, ": true, "|": true, "  |": true, "x => |": true,
+		"v.map(move |": true, "return |": true, "S { cb: |": true,
+		"K::A | K::": false, "(a | ": false, "|x| x + ": false, "a || ": false, "": false,
+	} {
+		if got := rustInClosureParams(before); got != want {
+			t.Errorf("rustInClosureParams(%q) = %v, want %v", before, got, want)
 		}
 	}
 }
@@ -598,6 +649,31 @@ func TestPythonContinuationLinesStayInTheirFunction(t *testing.T) {
 // TestIdentifierHelpersBoundaries pins the position-level helpers the Rust walk places calls
 // and bindings with: a call at an exact byte, a whole identifier at a byte, the last and
 // trailing identifier, and a word ending a text.
+// TestPythonAssignsAt pins which = assigns: comparisons do not, an augmented assignment does,
+// and a keyword argument is left to pythonAssignTarget's bracket depth.
+func TestPythonAssignsAt(t *testing.T) {
+	for code, want := range map[string]int{
+		"f = 1": 2, "x += f": 3, "a == f": -1, "a != f": -1, "a <= f": -1, "a >= f": -1,
+		"=": 0, "": -1, "d[k] = f": 5, "a ==": -1,
+	} {
+		got := -1
+		for i := 0; i < len(code) && got < 0; i++ {
+			if pythonAssignsAt(code, i) {
+				got = i
+			}
+		}
+		if got != want {
+			t.Errorf("first assigning = in %q at %d, want %d", code, got, want)
+		}
+	}
+	if got := pythonAssignTarget("f(a=1)"); got != "" {
+		t.Errorf("a keyword argument is not an assignment, got target %q", got)
+	}
+	if got := pythonAssignTarget("f, g = h"); got != "f, g " {
+		t.Errorf("pythonAssignTarget(%q) = %q", "f, g = h", got)
+	}
+}
+
 func TestIdentifierHelpersBoundaries(t *testing.T) {
 	for at, want := range map[int]bool{0: true, 5: false, 11: false, 16: false, 17: true} {
 		if got := callAt("f(1) ff(2) f_x() f (3)", at, "f", isPathByte); got != want {
