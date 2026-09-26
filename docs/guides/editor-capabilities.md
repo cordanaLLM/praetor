@@ -2,8 +2,8 @@
 
 `praetorctl editors generate --path PATH` and `praetorctl editors verify --path PATH`
 resolve the same repository capabilities before generating or checking editor
-files. A repository without Go sources or a selected Go profile no longer receives
-unconditional Go settings, Go inspections or a Go problem matcher.
+files. A repository without Go sources or a selected Go profile receives no Go
+settings, Go inspections or Go problem matcher.
 
 ## Selecting editors
 
@@ -183,8 +183,8 @@ match a generated template.
 
 Known legacy Go, unavailable LSP, unpublished extension and invented build-task
 settings are reported as conflicts when they are no longer supported by the
-resolved plan. They are retained for review; this release does not automatically
-migrate legacy generated files. Resolve each reported conflict using the actual
+resolved plan. They are retained for review; automatic migration of legacy
+generated files is not supported. Resolve each reported conflict using the actual
 repository's languages and commands, then generate and verify again.
 
 Non-JSON formats do not yet have semantic merge adapters. Existing files are

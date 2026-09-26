@@ -2,7 +2,7 @@
 
 The verification timer produces retained suite reports. A separate user timer
 can consume failed reports and run one bounded patch attempt per tick. Configure
-the [repair executor](dogfood-repairs.md) first and verify a direct invocation
+the [repair executor](dogfood-repair-execution.md) first and verify a direct invocation
 against its reviewed source commit, provider, file allowlist, and test packages.
 
 Create a private version 1 queue configuration outside the repository:
@@ -45,10 +45,11 @@ the same source, input and policy identity. The queue never deletes evidence.
 Exceeding inventory bounds requires explicit archival or selection of a new
 queue directory; it does not silently omit older failures.
 
-The service allows 12 minutes including inspection and shutdown, with a 4 GiB
-memory limit, no swap, 128 tasks and two CPUs of aggregate quota. It starts
-checking after two minutes and checks again
-15 minutes after the previous service stops. The executor separately enforces
+The service allows 12 minutes to run, including its own inspection step, plus
+up to 15 more seconds to shut down if it has to be killed on timeout. It is
+capped at a 4 GiB memory limit, no swap, 128 tasks and two CPUs of aggregate
+quota. The timer starts checking two minutes after it is activated and checks
+again 15 minutes after the previous service run stops. The executor separately enforces
 request, patch, source, test, and sandbox limits. Public source snippets and
 bounded failure metadata go to the configured model; original transcript bodies
 are not opened by the repair executor. Gateway cost readback is evidence of the

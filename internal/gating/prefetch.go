@@ -30,6 +30,13 @@ type PrefetchReport struct {
 // context timeout. Repositories without a go.mod are not Go repositories: the stage is
 // reported as skipped instead of rejecting a conforming polyglot repository.
 func PrefetchDependencies(ctx context.Context, repoDir string) (*PrefetchReport, error) {
+	return prefetchDependencies(ctx, repoDir, util.RunCommand)
+}
+
+// prefetchDependencies is PrefetchDependencies with the command runner injected, so the gate
+// stage runs the go commands through the same seam as every other stage and a test can prove
+// which of them ran.
+func prefetchDependencies(ctx context.Context, repoDir string, run commandRunner) (*PrefetchReport, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("prefetch: context cannot be nil")
 	}
@@ -45,10 +52,10 @@ func PrefetchDependencies(ctx context.Context, repoDir string) (*PrefetchReport,
 	pCtx, cancel := context.WithTimeout(ctx, DefaultPrefetchTimeout)
 	defer cancel()
 
-	if out, err := util.RunCommand(pCtx, repoDir, "go", "mod", "verify"); err != nil {
+	if out, err := run(pCtx, repoDir, "go", "mod", "verify"); err != nil {
 		return nil, fmt.Errorf("dependency verification failed: %s (%w)", out, err)
 	}
-	if out, err := util.RunCommand(pCtx, repoDir, "go", "mod", "download"); err != nil {
+	if out, err := run(pCtx, repoDir, "go", "mod", "download"); err != nil {
 		return nil, fmt.Errorf("dependency download failed: %s (%w)", out, err)
 	}
 

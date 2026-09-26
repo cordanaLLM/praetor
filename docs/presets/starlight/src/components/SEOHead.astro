@@ -26,7 +26,9 @@ const techArticle = {
   author: {
     '@type': 'Organization',
     name: 'cordanaLLM',
-    url: 'https://standards.cordana.ai',
+    // Astro.site is operator configuration (DOCS_SITE_URL in astro.config.mjs); unset, the
+    // author carries no URL rather than a guessed one.
+    ...(Astro.site ? { url: Astro.site.href } : {}),
   },
 };
 ---

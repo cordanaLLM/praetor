@@ -1,5 +1,9 @@
 site_name: "cordanaLLM/praetor"
-site_url: "https://standards.cordana.ai"
+# Operator configuration, not a shipped value: the URL the built site is served from.
+# Set DOCS_SITE_URL at build time (for example https://<owner>.github.io/<repo>/). Unset
+# or empty, the build writes no canonical links, no JSON-LD URLs and an empty sitemap.xml,
+# so Material's navigation.instant, which reads that sitemap, falls back to full page loads.
+site_url: !ENV DOCS_SITE_URL
 site_description: "Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine"
 site_author: "cordanaLLM"
 repo_url: "https://github.com/cordanaLLM/praetor"

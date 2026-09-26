@@ -129,18 +129,46 @@ standardsctl sync --remote --forge-host=ghe.example.com \
 
 ### Stages that do not apply are skipped, not failed
 
-`praetorctl gate run` reports a stage it cannot meaningfully run as skipped, with the reason, rather
-than failing the repository for it:
+`praetorctl gate run` records one of four verdicts per stage (`StageStatus` in
+[`internal/gating/pipeline.go`](../../internal/gating/pipeline.go)), and a stage that ran nothing is
+never recorded as passed:
 
-- The module prefetch, Go security scanners and race-detector stages skip where there is no
-  `go.mod`. Without this a TypeScript or Python repository failed its own pre-push gate at
-  `FAIL ./... [setup failed]`, which reads as a broken repository rather than an inapplicable stage.
-- Flavor conformance reports **not applicable** where the repository's declared profile has no
+| Verdict | Report tag | Meaning |
+| :--- | :--- | :--- |
+| `passed` | `[PASS]` | the stage ran its checks and they held |
+| `failed` | `[FAIL]` | the stage rejected the repository or could not run; the pipeline stops |
+| `skipped` | `[SKIP]` | the stage applies here but deliberately ran nothing: a dry run, or no race detector |
+| `not_applicable` | `[N/A]` | the repository has nothing this stage checks |
+
+`--json` carries the verdict as `stages[].status`, and the stage output the Exit-0 receipt signs
+(`praetor-gate-output/v2`) carries it on every stage line. The previous `passed` bool rendered a
+skipped stage and a passed one identically, so the CLI printed `[PASS]` and the receipt certified
+security scans and prefetches that had never executed.
+
+`praetorctl gate verify`, `praetorctl forge validate-pr` and `praetorctl paperclip verify` refuse a
+receipt whose gate output does not open with `praetor-gate-output/v2`, after checking its signature
+and output hash (`lockdown.VerifyPinnedReceiptFile` and `lockdown.VerifyUnpinnedReceiptFile` in
+[`internal/lockdown/keys.go`](../../internal/lockdown/keys.go)). A
+v1 receipt still carries a valid signature, but its stage lines cannot tell a skipped stage from a
+passed one, so it is rejected with `receipt certifies an unsupported gate output version`. Re-mint
+it with `praetorctl gate run` on the current release. `TestVerifyPinnedReceiptFile_Negative`,
+`TestRunGateVerify_Negative`, `TestValidatePRChecklist_Negative_V1GateOutput` and
+`TestDisposition_VerifyReceipt_V1Refused` sign a real v1 receipt and require each verifier to
+refuse it.
+
+A skipped or not-applicable stage names its reason and does not fail the repository:
+
+- The module prefetch, Go security scanners and race-detector stages are **not applicable** where
+  there is no `go.mod`. Without this a TypeScript or Python repository failed its own pre-push gate
+  at `FAIL ./... [setup failed]`, which reads as a broken repository rather than an inapplicable
+  stage.
+- Flavor conformance is **not applicable** where the repository's declared profile has no
   flavor implementing it -- an OS image forge is not a Go service and should not be measured as one.
-- The race-detector stage skips where the race detector cannot build, naming what is missing:
+- The race-detector stage is **skipped** where the race detector cannot build, naming what is
+  missing:
 
   ```text
-  5. [PASS] Race-Detector Tests  (62ms)
+  5. [SKIP] Race-Detector Tests       (62ms)
      Reason: race detector unavailable (the C compiler "gcc" named by go env is not on PATH):
              race-detector tests skipped; CI runs this leg on Linux with cgo
   ```
@@ -157,7 +185,44 @@ than failing the repository for it:
   `CGO_ENABLED=0` to skip the stage deliberately; install a C toolchain to run it.
 
 A skipped stage prints its reason. That distinction matters: a skipped stage that reads as a pass is
-how a gate comes to certify what it never examined.
+how a gate comes to certify what it never examined. The verdicts are pinned by
+`TestExecuteStage_SkipVerdicts` and `TestStageOutput_3D` in
+[`internal/gating/gating_test.go`](../../internal/gating/gating_test.go).
+
+### A dry run changes nothing
+
+`praetorctl gate run --dry-run` runs only the read-only stages: lockfile verification, the HISS
+scan and flavor conformance. It records the module prefetch (`go mod verify`, `go mod download`),
+the security scanners (`go list`, govulncheck, gosec), the race-detector tests and the receipt as
+**skipped**, and mints no receipt. `go mod download` writes the module cache and the scanners can
+fetch modules and query the vulnerability database, so a dry run that started them was not one.
+`TestExecuteStages_DryRunInvokesNoCommand` in
+[`internal/gating/gating_test.go`](../../internal/gating/gating_test.go) runs a whole dry run
+through a recording command runner and fails if any command starts through the stage runner.
+
+The gatekeeper persona that adoption writes (`.agents/agents/repo-gatekeeper.md`) and the
+pre-migration epic's verification task both run the full gate, `praetorctl gate run --path=.`,
+derived from `gating.RepoRunCommand`
+([`internal/gating/pipeline.go`](../../internal/gating/pipeline.go)). The persona names `--dry-run`
+only as a read-only preflight: its mission is the prefetch, security scans and receipt that a dry
+run skips. Praetor's own `praetor-gatekeeper` persona runs the same full gate that
+`praetorctl agent run praetor-gatekeeper` runs, then `gate verify`, and lists the dry run as a
+preflight. All three previously passed `--target=.`, which `gate run` rejects as an undefined flag
+before any stage runs.
+[`cmd/standardsctl/gate_command_test.go`](../../cmd/standardsctl/gate_command_test.go) parses the
+constant and every `gate run` line in `.agents/agents/*.md` against the real flag set;
+[`internal/adopt/persona_command_test.go`](../../internal/adopt/persona_command_test.go) and
+`TestGeneratePreMigrationEpic_GateTaskRunsTheGateCommand` in
+[`internal/needs/epic_test.go`](../../internal/needs/epic_test.go) pin the generated text to it.
+
+### A HISS rejection names the violations
+
+The gate's HISS stage rejects on the same ratchet as `praetorctl audit`, and both render the
+rejection with `baseline.RatchetResult.Describe`
+([`internal/baseline/baseline.go`](../../internal/baseline/baseline.go)): the counts, then up to
+three new and three touched-file violations as `[rule] file:line - message`. The stage previously
+reported only `hiss ratchet failed: N infractions (M new, baseline B)`, so a blocked push named no
+file to open.
 
 ### The HISS stage scans with the audit's function-length limit
 

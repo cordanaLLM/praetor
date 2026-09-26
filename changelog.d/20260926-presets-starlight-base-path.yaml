@@ -1,0 +1,3 @@
+type: fixed
+title: The Starlight preset now derives Astro's base from the path of DOCS_SITE_URL, so a project-page URL such as https://<owner>.github.io/<repo>/ keeps /<repo>/ in canonical links, TechArticle URLs, sitemap entries, asset URLs and the hero link, and the docs-presets CI job builds both presets under a path and fails on any site URL or root-absolute link outside it and on any site URL an unset build writes
+breaking: false

@@ -1,0 +1,48 @@
+name: "Detect Changed Paths"
+description: "Determines the base reference for git diffs and checks if specific paths changed"
+
+inputs:
+  paths:
+    description: "Paths to check for changes (space separated). If empty, just outputs base_ref."
+    required: false
+    default: ""
+
+outputs:
+  base_ref:
+    description: "The base reference used"
+    value: ${{ steps.detect.outputs.base_ref }}
+  run:
+    description: "true if any of the provided paths changed"
+    value: ${{ steps.detect.outputs.run }}
+  changed:
+    description: "The list of changed paths"
+    value: ${{ steps.detect.outputs.changed }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Detect Changes
+      id: detect
+      shell: bash
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          BASE_REF="origin/${{ github.base_ref }}"
+        else
+          BASE_REF="HEAD~1"
+        fi
+        echo "base_ref=$BASE_REF" >> "$GITHUB_OUTPUT"
+
+        if [ -n "${{ inputs.paths }}" ]; then
+          CHANGED=$(git diff --name-only "$BASE_REF"...HEAD -- ${{ inputs.paths }})
+          if [ -n "$CHANGED" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+            echo "changed<<$EOF" >> "$GITHUB_OUTPUT"
+            echo "$CHANGED" >> "$GITHUB_OUTPUT"
+            echo "$EOF" >> "$GITHUB_OUTPUT"
+            echo "Changes detected in: $CHANGED"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No changes detected in ${{ inputs.paths }}"
+          fi
+        fi

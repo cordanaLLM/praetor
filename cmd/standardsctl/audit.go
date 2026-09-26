@@ -223,31 +223,13 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		return missingBaselineFailure(opts.baselinePath, len(current))
 	}
 	if !ratchet.Passed {
-		return describeRatchetFailure(ratchet)
+		return fmt.Errorf("[FAIL] %s", ratchet.Describe())
 	}
 	fmt.Printf("[PASS] HISS invariant scan verified: %d active violations within %d baselined limit (%d touched files clean) (skipped: %d ignored directories, %d symlinks, %d oversize files, %d non-regular files).\n",
 		ratchet.CurrentCount, base.TotalInfractions, len(touched), scanRep.Skips.DirCount,
 		scanRep.Skips.Symlinks, scanRep.Skips.Oversize, scanRep.Skips.Irregular)
 
 	return auditBaselineGrowth(ctx, opts, base)
-}
-
-// describeRatchetFailure renders the first few new and touched-file violations.
-func describeRatchetFailure(ratchet *baseline.RatchetResult) error {
-	var msgs []string
-	for i := 0; i < len(ratchet.NewViolations) && i < maxRatchetExamples; i++ {
-		v := ratchet.NewViolations[i]
-		msgs = append(msgs, fmt.Sprintf("  [%s] %s:%d - %s (new)", v.RuleID, v.FilePath, v.LineNumber, v.Message))
-	}
-	for i := 0; i < len(ratchet.TouchedCleanViolations) && i < maxRatchetExamples; i++ {
-		v := ratchet.TouchedCleanViolations[i]
-		msgs = append(msgs, fmt.Sprintf("  [%s] %s:%d - %s (touched file must be clean)", v.RuleID, v.FilePath, v.LineNumber, v.Message))
-	}
-	if ratchet.CurrentCount > ratchet.PreviousCount {
-		msgs = append(msgs, fmt.Sprintf("  total infractions rose from %d to %d", ratchet.PreviousCount, ratchet.CurrentCount))
-	}
-	return fmt.Errorf("[FAIL] HISS invariant violations introduced (%d total infractions, %d new unbaselined, %d in touched files):\n%s",
-		ratchet.CurrentCount, len(ratchet.NewViolations), len(ratchet.TouchedCleanViolations), strings.Join(msgs, "\n"))
 }
 
 // verifiedTargetList names the projections one verification read, and any agent_clients left

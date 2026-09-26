@@ -2,7 +2,9 @@
 
 {% block extrahead %}
   {#- base.html already writes <link rel="canonical"> from site_url. Static templates such
-      as 404.html render with page = None, so every page.* read sits behind this guard. -#}
+      as 404.html render with page = None, so every page.* read sits behind this guard.
+      site_url is operator configuration (DOCS_SITE_URL in mkdocs.yml): unset, the page has
+      no canonical_url, so the article and its author carry no URL rather than a guessed one. -#}
   {% if page %}
   <!-- Pre-wired Schema.org JSON-LD structured data -->
   <script type="application/ld+json">
@@ -11,11 +13,15 @@
     "@type": "TechArticle",
     "headline": {{ (page.title or config.site_name) | tojson }},
     "description": {{ ((page.meta and page.meta.description) or config.site_description) | tojson }},
-    "url": {{ (page.canonical_url or config.site_url ~ '/' ~ page.url) | tojson }},
+    {%- if page.canonical_url %}
+    "url": {{ page.canonical_url | tojson }},
+    {%- endif %}
     "author": {
       "@type": "Organization",
-      "name": "cordanaLLM",
-      "url": "https://standards.cordana.ai"
+      "name": "cordanaLLM"
+      {%- if config.site_url %},
+      "url": {{ config.site_url | tojson }}
+      {%- endif %}
     },
     "inLanguage": "en",
     "proficiencyLevel": "Expert"

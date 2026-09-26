@@ -30,6 +30,11 @@ const (
 	ReceiptFileName = ".standards-receipt.json"
 	// ReceiptCommand is the canonical command string recorded in every gate receipt.
 	ReceiptCommand = "praetorctl gate run"
+	// RepoRunCommand is the `gate run` invocation praetor writes into generated personas and
+	// task bodies: ReceiptCommand aimed at the repository in the working directory. Every
+	// generated copy derives from it, so a flag rename breaks one test instead of shipping an
+	// undefined flag to every adopted repository.
+	RepoRunCommand = ReceiptCommand + " --path=."
 	// GosecConfigFile is the gosec configuration the security stage must use. It carries
 	// an empty exclusion list: every finding is fixed or annotated per line.
 	GosecConfigFile = ".gosec.json"
@@ -57,12 +62,57 @@ const (
 // the security stage instead of silently passing it.
 var ErrMissingScanner = errors.New("required security scanner is not installed")
 
+// StageStatus is the verdict one pipeline stage reached.
+//
+// A single passed/failed bool recorded a stage that never ran as passed, so the signed gate
+// output certified security scans and prefetches that had not executed. Skipped and not
+// applicable are therefore verdicts of their own, never folded into passed.
+type StageStatus string
+
+const (
+	// StagePassed means the stage ran its checks and they held.
+	StagePassed StageStatus = "passed"
+	// StageFailed means the stage ran and rejected the repository, or could not run at all.
+	StageFailed StageStatus = "failed"
+	// StageSkipped means the stage applies to this repository but deliberately did not run
+	// its checks here: a dry run, or a host that cannot build the race detector.
+	StageSkipped StageStatus = "skipped"
+	// StageNotApplicable means the repository has nothing this stage checks: no go.mod for
+	// the Go stages, or a declared profile no flavor implements.
+	StageNotApplicable StageStatus = "not_applicable"
+)
+
 // StageResult captures the outcome of a single gating pipeline stage.
 type StageResult struct {
 	Name     string        `json:"name"`
-	Passed   bool          `json:"passed"`
+	Status   StageStatus   `json:"status"`
 	Duration time.Duration `json:"duration"`
 	Message  string        `json:"message,omitempty"`
+}
+
+// Failed reports whether the stage rejected the repository.
+func (s StageResult) Failed() bool {
+	return s.Status == StageFailed
+}
+
+// stageSkip is how a stage reports that it did not run its checks. It travels as the
+// stage's error so an early return reads like any other, and executeStage turns it into a
+// skipped or not-applicable verdict instead of a failure.
+type stageSkip struct {
+	status StageStatus
+	reason string
+}
+
+func (s *stageSkip) Error() string { return s.reason }
+
+// skipped reports a stage that applies here but deliberately ran nothing.
+func skipped(reason string) error {
+	return &stageSkip{status: StageSkipped, reason: reason}
+}
+
+// notApplicable reports a stage the repository gives nothing to check.
+func notApplicable(reason string) error {
+	return &stageSkip{status: StageNotApplicable, reason: reason}
 }
 
 // PipelineReport aggregates the entire gated pre-merge verification.
@@ -85,7 +135,7 @@ type PipelineReport struct {
 func (r *PipelineReport) StageOutput() []byte {
 	lines := make([]string, 0, len(r.Stages)+5)
 	lines = append(lines,
-		"praetor-gate-output/v1",
+		lockdown.GateOutputVersion,
 		fmt.Sprintf("repository\t%s", r.Repository),
 		fmt.Sprintf("commit_sha\t%s", r.CommitSHA),
 		fmt.Sprintf("worktree_clean\t%t", r.WorktreeClean),
@@ -93,8 +143,8 @@ func (r *PipelineReport) StageOutput() []byte {
 	)
 	for i := 0; i < len(r.Stages) && i < maxStages; i++ {
 		s := r.Stages[i]
-		lines = append(lines, fmt.Sprintf("stage\t%s\t%t\t%s",
-			s.Name, s.Passed, strings.ReplaceAll(s.Message, "\n", " ")))
+		lines = append(lines, fmt.Sprintf("stage\t%s\t%s\t%s",
+			s.Name, s.Status, strings.ReplaceAll(s.Message, "\n", " ")))
 	}
 	return []byte(strings.Join(lines, "\n") + "\n")
 }
@@ -139,7 +189,13 @@ func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConf
 // RunGatedPipeline executes the six-stage anti-direct-merge gating pipeline: prefetch and
 // lockfiles, HISS invariants against the debt baseline, security and SCA scanning, flavor
 // conformance, race-detector tests in an isolated worktree, and the Ed25519 Exit-0
-// receipt. A dry run skips the test stage and therefore mints no receipt.
+// receipt.
+//
+// A dry run changes nothing and reaches no network: it runs only the read-only checks --
+// lockfiles, the HISS scan and flavor conformance -- and records the module prefetch, the
+// security scanners, the race tests and the receipt as skipped. `go mod download` writes the
+// module cache, and govulncheck and `go list` can fetch modules and query the vulnerability
+// database, so a dry run that ran them was not one.
 func RunGatedPipeline(ctx context.Context, repoDir string, dryRun bool) (*PipelineReport, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("pipeline: context cannot be nil")
@@ -197,7 +253,8 @@ func resolveRepositoryName(ctx context.Context, repoDir string) string {
 }
 
 // stage pairs a stage name with its implementation. A stage may return a message that is
-// recorded even when it passes, which is how skipped work stays visible.
+// recorded even when it passes; a stage that runs nothing returns skipped or notApplicable,
+// so the verdict itself says the work did not happen.
 type stage struct {
 	name string
 	fn   func(context.Context, *stageConfig) (string, error)
@@ -221,19 +278,24 @@ func executeStages(ctx context.Context, cfg *stageConfig) error {
 	return nil
 }
 
+// executeStage runs one stage and records its verdict. A stage that reports a skip is
+// recorded as skipped or not applicable and lets the pipeline continue; only a real error
+// fails the stage and stops the pipeline.
 func executeStage(ctx context.Context, s stage, cfg *stageConfig) error {
 	sStart := time.Now()
 	msg, err := s.fn(ctx, cfg)
-	err = attributeRunCut(ctx, s.name, err)
-	res := StageResult{
-		Name:     s.name,
-		Passed:   err == nil,
-		Duration: time.Since(sStart),
-		Message:  msg,
+	res := StageResult{Name: s.name, Status: StagePassed, Message: msg}
+	if skip, ok := errors.AsType[*stageSkip](err); ok {
+		if cause := context.Cause(ctx); cause != nil && !errors.Is(err, cause) {
+			cutErr := attributeRunCut(ctx, s.name, err)
+			res.Status, res.Message, err = StageFailed, cutErr.Error(), cutErr
+		} else {
+			res.Status, res.Message, err = skip.status, skip.reason, nil
+		}
+	} else if err = attributeRunCut(ctx, s.name, err); err != nil {
+		res.Status, res.Message = StageFailed, err.Error()
 	}
-	if err != nil {
-		res.Message = err.Error()
-	}
+	res.Duration = time.Since(sStart)
 	cfg.rep.Stages = append(cfg.rep.Stages, res)
 	return err
 }
@@ -242,12 +304,17 @@ func runPrefetchStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err := VerifyLockfiles(cfg.repoDir); err != nil {
 		return "", err
 	}
-	rep, err := PrefetchDependencies(ctx, cfg.repoDir)
+	// Without a go.mod the prefetch below runs nothing and reports not applicable, which is
+	// the truer verdict for a dry run of a non-Go repository too.
+	if cfg.dryRun && util.FileExists(filepath.Join(cfg.repoDir, "go.mod")) {
+		return "", skipped("dry run: lockfiles verified; go mod verify and go mod download not run")
+	}
+	rep, err := prefetchDependencies(ctx, cfg.repoDir, cfg.run)
 	if err != nil {
 		return "", err
 	}
 	if rep.Skipped {
-		return "no go.mod: module prefetch skipped", nil
+		return "", notApplicable("lockfiles verified; no go.mod: module prefetch skipped")
 	}
 	return "", nil
 }
@@ -286,8 +353,10 @@ func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
 
 	ratchet := baseline.EvaluateRatchet(base, current, nil)
 	if !ratchet.Passed {
-		return "", fmt.Errorf("hiss ratchet failed: %d infractions (%d new, baseline %d)",
-			ratchet.CurrentCount, len(ratchet.NewViolations), base.TotalInfractions)
+		// The same rendering `praetorctl audit` prints, so the rejection names each new
+		// violation's file, line and rule rather than only how many there are (BUG-792).
+		return "", fmt.Errorf("hiss ratchet failed against a baseline of %d: %s",
+			base.TotalInfractions, ratchet.Describe())
 	}
 	msg := fmt.Sprintf("%d infractions within the %d baselined limit (function length limit %d)",
 		ratchet.CurrentCount, base.TotalInfractions, scanOpts.MaxFuncLOC)
@@ -318,7 +387,10 @@ func hissScanOptions(ctx context.Context, cfg *stageConfig) (hiss.ScanOptions, s
 // security gate that certifies a run in which nothing executed is worse than no gate.
 func runSecurityStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if !util.FileExists(filepath.Join(cfg.repoDir, "go.mod")) {
-		return "no go.mod: Go security scanners skipped", nil
+		return "", notApplicable("no go.mod: Go security scanners skipped")
+	}
+	if cfg.dryRun {
+		return "", skipped("dry run: govulncheck and gosec not run")
 	}
 
 	if err := requireScanner(cfg, "govulncheck", "go install golang.org/x/vuln/cmd/govulncheck@latest"); err != nil {
@@ -359,16 +431,18 @@ func requireScanner(cfg *stageConfig, binary, installHint string) error {
 	return nil
 }
 
+// runFlavorStage audits flavor conformance under the run's context, bounded by
+// flavor.DefaultAuditTimeout. The audit checks the context before every file read and
+// toolchain lookup, so a run deadline that fires mid-audit stops it (BUG-464).
 func runFlavorStage(ctx context.Context, cfg *stageConfig) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("flavor audit cancelled: %w", err)
-	}
-	rep, err := flavor.AuditFlavor(cfg.repoDir, "auto")
+	fCtx, cancel := context.WithTimeout(ctx, flavor.DefaultAuditTimeout)
+	defer cancel()
+	rep, err := flavor.AuditFlavorContext(fCtx, cfg.repoDir, "auto")
 	if errors.Is(err, flavor.ErrFlavorNotApplicable) {
 		// Not a pass and not a failure: this repository's declared profile has no flavor, so
 		// there is nothing for this stage to check. Reporting it is the point -- a skipped
 		// stage that reads as a pass is how a gate comes to certify what it never examined.
-		return "skipped: " + err.Error(), nil
+		return "", notApplicable(err.Error())
 	}
 	if err != nil {
 		return "", fmt.Errorf("flavor audit failed: %w", err)
@@ -403,7 +477,7 @@ func invalidSettingsClause(rep *flavor.FlavorAuditReport) string {
 // and cleanup failures are surfaced instead of dropped.
 func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error) {
 	if cfg.dryRun {
-		return "dry run: race-detector tests skipped", nil
+		return "", skipped("dry run: race-detector tests skipped")
 	}
 	// `go test -race ./...` cannot run where there is no module, exactly as the prefetch
 	// and security stages already recognise. Without this the stage failed every adopted
@@ -411,7 +485,7 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 	// reads as a broken repository rather than an inapplicable stage. Those repositories
 	// are gated on their own suites by the verification contract, not here.
 	if !util.FileExists(filepath.Join(cfg.repoDir, "go.mod")) {
-		return "no go.mod: Go race-detector tests skipped", nil
+		return "", notApplicable("no go.mod: Go race-detector tests skipped")
 	}
 	// The race detector needs cgo and a host C toolchain. Without this check the stage
 	// does not report "no C compiler", it reports `# runtime/cgo` followed by every
@@ -421,9 +495,9 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 	// was broken on. `.config/lefthook/scripts/test_hooks.py` already reasons exactly
 	// this way for the harness self-tests; this is the same rule for the Go gate.
 	if available, absent := raceDetectorAvailable(ctx, cfg); !available {
-		return fmt.Sprintf(
+		return "", skipped(fmt.Sprintf(
 			"race detector unavailable (%s): race-detector tests skipped; "+
-				"CI runs this leg on Linux with cgo", absent), nil
+				"CI runs this leg on Linux with cgo", absent))
 	}
 
 	budget := EnvRunBudget()
@@ -567,10 +641,13 @@ func removeWorktree(ctx context.Context, wtMgr *worktree.Manager, taskID string)
 // runReceiptStage signs the real concatenated stage output with the long-lived Ed25519
 // key resolved by lockdown.LoadSigningKey. It fails closed when no key is configured, and
 // it never mints a receipt for a dry run, which by definition did not run the tests.
-func runReceiptStage(_ context.Context, cfg *stageConfig) (string, error) {
+func runReceiptStage(ctx context.Context, cfg *stageConfig) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("context cancelled before receipt could be minted: %w", err)
+	}
 	rep := cfg.rep
 	if cfg.dryRun {
-		return "dry run: no Exit-0 receipt minted", nil
+		return "", skipped("dry run: no Exit-0 receipt minted")
 	}
 
 	priv, err := lockdown.LoadSigningKey()

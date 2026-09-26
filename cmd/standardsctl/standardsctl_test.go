@@ -203,13 +203,14 @@ func writeSignedPRFixture(t *testing.T, dir string) (manifestPath, prPath string
 		t.Fatal(err)
 	}
 
-	receipt, err := lockdown.CreateReceipt(gating.ReceiptCommand, 0, []byte("gates passed"),
+	gateOutput := lockdown.GateOutputVersion + "\nstage\tPrefetch & Lockfiles\tpassed\t\n"
+	receipt, err := lockdown.CreateReceipt(gating.ReceiptCommand, 0, []byte(gateOutput),
 		prFixtureHeadSHA, "acme/widget", priv)
 	if err != nil {
 		t.Fatalf("failed creating receipt: %v", err)
 	}
 	receiptJSON, err := json.MarshalIndent(
-		lockdown.ReceiptFile{ExecutionReceipt: *receipt, GateOutput: "gates passed"}, "", "  ")
+		lockdown.ReceiptFile{ExecutionReceipt: *receipt, GateOutput: gateOutput}, "", "  ")
 	if err != nil {
 		t.Fatalf("failed encoding receipt: %v", err)
 	}

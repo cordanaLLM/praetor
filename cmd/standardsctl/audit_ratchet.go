@@ -14,8 +14,6 @@ import (
 const (
 	// maxTouchedFiles bounds the change set considered by the touched-file clean rule.
 	maxTouchedFiles = 10000
-	// maxRatchetExamples bounds how many violations a ratchet failure lists per class.
-	maxRatchetExamples = 3
 )
 
 // fingerprintViolations converts scanner violations into baseline infractions carrying

@@ -13,21 +13,35 @@ import (
 	"github.com/cordanaLLM/praetor/internal/gating"
 )
 
-// stubPipeline replaces the gating pipeline for one test and records the deadline it was handed.
-func stubPipeline(t *testing.T) *time.Time {
+// pipelineCall is what a stubbed gating pipeline was handed.
+type pipelineCall struct {
+	called   bool
+	deadline time.Time
+	repoDir  string
+	dryRun   bool
+}
+
+// recordPipeline replaces the gating pipeline for one test and records the call it receives.
+func recordPipeline(t *testing.T) *pipelineCall {
 	t.Helper()
-	var seen time.Time
+	call := &pipelineCall{}
 	original := gatedPipeline
 	gatedPipeline = func(ctx context.Context, repoDir string, dryRun bool) (*gating.PipelineReport, error) {
 		deadline, ok := ctx.Deadline()
 		if !ok {
 			t.Error("the pipeline must be handed a bounded context (HISS-02)")
 		}
-		seen = deadline
+		*call = pipelineCall{called: true, deadline: deadline, repoDir: repoDir, dryRun: dryRun}
 		return &gating.PipelineReport{Status: gating.StatusAdmitted, RepoDir: repoDir, DryRun: dryRun}, nil
 	}
 	t.Cleanup(func() { gatedPipeline = original })
-	return &seen
+	return call
+}
+
+// stubPipeline replaces the gating pipeline for one test and records the deadline it was handed.
+func stubPipeline(t *testing.T) *time.Time {
+	t.Helper()
+	return &recordPipeline(t).deadline
 }
 
 // mustLeave fails unless deadline lies within a minute below want from now.

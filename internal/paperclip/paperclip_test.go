@@ -17,7 +17,7 @@ import (
 )
 
 // receiptOutput is the gate output every fixture receipt certifies.
-const receiptOutput = "praetor-gate-output/v1\nok\n"
+const receiptOutput = "praetor-gate-output/v2\nok\n"
 
 // signedEnvelope returns a receipt envelope signed by priv that certifies receiptOutput.
 func signedEnvelope(t *testing.T, priv ed25519.PrivateKey) *lockdown.ReceiptFile {
@@ -308,7 +308,7 @@ func TestDisposition_ReceiptVerifiedAgainstPinnedKey(t *testing.T) {
 	}
 
 	// Negative: gate output that no longer matches the signed hash.
-	pinned.Receipt.GateOutput = "praetor-gate-output/v1\nforged\n"
+	pinned.Receipt.GateOutput = "praetor-gate-output/v2\nforged\n"
 	if err := pinned.Validate(ctx, pub); !errors.Is(err, lockdown.ErrOutputMismatch) {
 		t.Fatalf("mismatched gate output must fail with ErrOutputMismatch, got %v", err)
 	}
@@ -830,5 +830,26 @@ func TestVerifyRun_ReceiptBoundToHead(t *testing.T) {
 	}
 	if err := VerifyRun(repo.ctx, t.TempDir(), disposition, opts); err == nil || !strings.Contains(err.Error(), "cannot resolve HEAD") {
 		t.Fatalf("a receipt outside a repository must fail to bind, got %v", err)
+	}
+}
+
+func TestDisposition_VerifyReceipt_V1Refused(t *testing.T) {
+	ctx := context.Background()
+	pub, priv := keyPair(t)
+
+	output := []byte("praetor-gate-output/v1\nok\n")
+	receipt, err := lockdown.CreateReceipt("make verify-all", 0, output, "commit1", "repo1", priv)
+	if err != nil {
+		t.Fatalf("create receipt failed: %v", err)
+	}
+	rf := &lockdown.ReceiptFile{ExecutionReceipt: *receipt, GateOutput: string(output)}
+
+	v1Disp, err := CreateDisposition("ISSUE-1", "blocked", "note", "", "owner", "actor", rf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := v1Disp.Validate(ctx, pub); err == nil || !errors.Is(err, lockdown.ErrGateOutputVersion) {
+		t.Fatalf("v1 receipt must be refused, got %v", err)
 	}
 }

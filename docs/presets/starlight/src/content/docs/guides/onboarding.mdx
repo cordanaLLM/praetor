@@ -13,8 +13,9 @@ praetorctl init --profile framework --facets security:high,api:public-contract
 # 2. Project the canonical AGENTS.md into each vendor agent file
 praetorctl compile-context
 
-# 3. Record existing debt so only new or touched code has to be clean
-praetorctl baseline --record
+# 3. Record existing debt so only new or touched code has to be clean. The first record
+#    raises the count from zero, which --record refuses without an explicit reason.
+praetorctl baseline --record --allow-increase --reason="initial debt inventory"
 
 # 4. Check the repository against the declared policy
 praetorctl audit

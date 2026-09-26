@@ -62,6 +62,35 @@ type RatchetResult struct {
 	Passed                 bool
 }
 
+// maxDescribedViolations bounds how many violations Describe lists per class (HISS-02).
+const maxDescribedViolations = 3
+
+// Describe renders why the ratchet failed: the counts, then the first few new and
+// touched-file violations as [rule] file:line - message, and whether the total rose.
+//
+// It is a shared renderer for a ratchet rejection. `praetorctl audit` and the gate's HISS stage
+// both reject on this result, and the gate used to report only the counts, so the push it had
+// just blocked named no file to open.
+func (r *RatchetResult) Describe() string {
+	if r == nil {
+		return "no ratchet result"
+	}
+	var msgs []string
+	for i := 0; i < len(r.NewViolations) && i < maxDescribedViolations; i++ {
+		v := r.NewViolations[i]
+		msgs = append(msgs, fmt.Sprintf("  [%s] %s:%d - %s (new)", v.RuleID, v.FilePath, v.LineNumber, v.Message))
+	}
+	for i := 0; i < len(r.TouchedCleanViolations) && i < maxDescribedViolations; i++ {
+		v := r.TouchedCleanViolations[i]
+		msgs = append(msgs, fmt.Sprintf("  [%s] %s:%d - %s (touched file must be clean)", v.RuleID, v.FilePath, v.LineNumber, v.Message))
+	}
+	if r.CurrentCount > r.PreviousCount {
+		msgs = append(msgs, fmt.Sprintf("  total infractions rose from %d to %d", r.PreviousCount, r.CurrentCount))
+	}
+	return fmt.Sprintf("HISS invariant violations introduced (%d total infractions, %d new unbaselined, %d in touched files):\n%s",
+		r.CurrentCount, len(r.NewViolations), len(r.TouchedCleanViolations), strings.Join(msgs, "\n"))
+}
+
 // RecordOptions controls how Record treats a snapshot that would raise the count.
 type RecordOptions struct {
 	// AllowIncrease permits the count to rise; Rationale must then be non-empty.

@@ -10,12 +10,24 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const ReceiptVersion = "v1"
+
+const (
+	// GateOutputVersion heads the gate output an Exit-0 receipt certifies: the first line of
+	// gating.PipelineReport.StageOutput. v2 records each stage's verdict (passed, failed,
+	// skipped or not_applicable) where v1 recorded a passed bool that read a skipped stage as
+	// passed.
+	GateOutputVersion = "praetor-gate-output/v2"
+	// maxVersionEcho bounds how much of an unrecognised gate output header an error repeats.
+	// The output can come from a pull request body, so it is untrusted and unbounded.
+	maxVersionEcho = 64
+)
 
 var (
 	ErrNonZeroExit     = errors.New("cannot generate Exit-0 receipt: execution exit code is non-zero")
@@ -27,6 +39,9 @@ var (
 	ErrOutputMismatch  = errors.New("execution output hash does not match receipt output hash")
 	// ErrCommitMismatch is returned when a receipt attests a commit other than the checked-out HEAD.
 	ErrCommitMismatch = errors.New("receipt commit does not match HEAD")
+	// ErrGateOutputVersion reports a receipt whose certified gate output does not open with
+	// GateOutputVersion.
+	ErrGateOutputVersion = errors.New("receipt certifies an unsupported gate output version")
 )
 
 // ExecutionReceipt represents an Ed25519-signed verification receipt certifying an Exit-0 run.
@@ -201,4 +216,14 @@ func VerifyReceiptCommit(ctx context.Context, repoPath, receiptSHA string) error
 		return fmt.Errorf("%w: receipt attests commit %s but HEAD is %s", ErrCommitMismatch, receiptSHA, head)
 	}
 	return nil
+}
+
+// checkGateOutputVersion fails closed unless output opens with the GateOutputVersion line.
+func checkGateOutputVersion(output string) error {
+	header, _, _ := strings.Cut(output, "\n")
+	if header == GateOutputVersion {
+		return nil
+	}
+	return fmt.Errorf("%w: gate output opens with %.*q, want %q; re-mint the receipt with `praetorctl gate run`",
+		ErrGateOutputVersion, maxVersionEcho, header, GateOutputVersion)
 }
