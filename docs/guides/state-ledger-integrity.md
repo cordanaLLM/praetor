@@ -282,6 +282,13 @@ one logical text state across platforms without rewriting the worktree, while a 
 marked `-text` remains byte-sensitive. This also prevents an ordinary Windows Git
 command using `core.autocrlf=true` from changing the marker merely by refreshing index
 stat metadata; staged changes, untracked bytes, and changed text content still stale it.
+Every state observation runs through `util.RunGitTreeProbe`
+([`internal/util/git_status.go`](../../internal/util/git_status.go)), the same probe the gate's
+clean-tree check uses, so the two cannot drift to different line-ending models. State inspection
+refuses a repository whose own configuration names a clean or process filter through
+`util.RefuseGitStatusFilters`, and refuses assume-unchanged and skip-worktree index entries as
+`util.GitHiddenIndexReason` classifies them; the refusals are replayed in
+`internal/state/sync_binding_test.go`.
 
 The path is canonicalised before it is bound, so one repository reached under two
 spellings of its directory binds to one state. Two callers rarely hold the same

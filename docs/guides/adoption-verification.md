@@ -235,7 +235,11 @@ differs from HEAD:
 - an index entry flagged assume-unchanged or skip-worktree, which `git status` never compares;
 - an ignored `.standards-baseline.json` or `.gosec.json`. Both relax what the gate enforces --
   the baseline raises the HISS limit, the gosec configuration selects the rules -- and
-  `git status` does not list an ignored file, so each is checked against the ignore rules.
+  `git status` does not list an ignored file, so each is checked against the ignore rules;
+- a `.standards-baseline.json` or `.gosec.json` that is a symbolic link or any other non-regular
+  file. `git status` compares a tracked link by its target path, not the content behind it, while
+  the stages follow the link, so a committed link to an ignored file or to one outside the
+  repository would read as clean. Replace the link with the file itself.
 
 The refusal is recorded as a failed `Clean Tree Precondition` stage naming the first changed paths:
 
@@ -254,19 +258,28 @@ certify a commit whose scan had read uncommitted files (BUG-787) or an untracked
 
 Verification enforces the same rule on the receipt side: `gate verify`, `forge validate-pr` and a
 paperclip disposition carrying a receipt all reject one whose signed gate output does not record
-`worktree_clean true` exactly once in its header (`lockdown.RequireCleanWorktree` in
-[`internal/lockdown/receipts.go`](../../internal/lockdown/receipts.go)). A paperclip disposition
-now carries the whole `.standards-receipt.json` envelope, gate output included; a bare receipt
-signature no longer verifies.
+`worktree_clean true` exactly once in its header. The check (`lockdown.RequireCleanWorktree` in
+[`internal/lockdown/receipts.go`](../../internal/lockdown/receipts.go)) runs inside
+`lockdown.VerifyPinnedReceiptFile` and `lockdown.VerifyUnpinnedReceiptFile`
+([`internal/lockdown/keys.go`](../../internal/lockdown/keys.go)), right after the format-version
+check, so all three callers get it from the verifier they already share.
+
+`praetorctl paperclip verify` still leaves the gate receipt and the disposition file out of its
+own clean-tree check, so the documented order -- commit, push, mint the receipt, write the
+disposition -- verifies unchanged.
 
 Cleanliness is read through `util.GitWorkingTreeChanges`
 ([`internal/util/git_status.go`](../../internal/util/git_status.go)), which the gate,
 `praetorctl paperclip verify` and release preparation share. It overrides the repository settings
 that could hide a change (`status.showUntrackedFiles`, submodule ignore settings, `core.fsmonitor`,
 hooks), takes no optional index locks, and refuses a repository whose own configuration names a
-clean or process filter rather than executing it during a read-only probe. The cases are replayed
-in [`internal/util/git_status_test.go`](../../internal/util/git_status_test.go) and
-[`internal/gating/tree_test.go`](../../internal/gating/tree_test.go).
+clean or process filter rather than executing it during a read-only probe. Each caller bounds the
+whole walk: the gate with `gating.GitQueryTimeout`, paperclip verify and release preparation with
+`util.GitTreeProbeTimeout`; a probe that runs out of time is a refusal, never a clean answer. The
+cases are replayed in [`internal/util/git_status_test.go`](../../internal/util/git_status_test.go) and
+[`internal/gating/tree_test.go`](../../internal/gating/tree_test.go); the receipt-side checks in
+[`internal/lockdown/keys_test.go`](../../internal/lockdown/keys_test.go) and
+[`internal/paperclip/paperclip_test.go`](../../internal/paperclip/paperclip_test.go).
 
 ### A HISS rejection names the violations
 
