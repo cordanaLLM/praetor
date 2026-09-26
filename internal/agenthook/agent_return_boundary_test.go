@@ -2,9 +2,13 @@ package agenthook
 
 import (
 	"bytes"
+	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // stopPayload is a Claude SubagentStop payload with the documented agent_type and
@@ -77,8 +81,8 @@ func TestClaudeUnownedHandbackIsSkipped(t *testing.T) {
 }
 
 // TestClaudeReturnStopHookActiveEscape: the first register violation keeps the subagent
-// running with the reason; once a stop hook continued it, the next violation is a stated
-// skip and the binding stays for a later resume.
+// running with the reason and keeps its binding; once a stop hook continued it, the next
+// violation is a stated skip that releases the binding, so it cannot outlive the agent.
 func TestClaudeReturnStopHookActiveEscape(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	prepareClaudeCorrelation(t, root, state, "session-loop", "tool-loop", "agent-loop", validBrief)
@@ -86,7 +90,7 @@ func TestClaudeReturnStopHookActiveEscape(t *testing.T) {
 	requireOutcome(t, "first violation", runAgentHook(t, root, state, "claude", EventPostReturn, first), 2,
 		"[BLOCKED BY HISS]")
 	null := stopPayload(t, "session-loop", "agent-loop", "general-purpose", nil, proseReturn)
-	requireOutcome(t, "absent stop_hook_active", runAgentHook(t, root, state, "claude", EventPostReturn, null), 2,
+	requireOutcome(t, "absent stop_hook_active keeps the binding", runAgentHook(t, root, state, "claude", EventPostReturn, null), 2,
 		"[BLOCKED BY HISS]")
 	continued := stopPayload(t, "session-loop", "agent-loop", "general-purpose", true, proseReturn)
 	response := runAgentHook(t, root, state, "claude", EventPostReturn, continued)
@@ -94,15 +98,57 @@ func TestClaudeReturnStopHookActiveEscape(t *testing.T) {
 	if bytes.Contains(response.Stderr, []byte("[BLOCKED BY HISS]")) {
 		t.Fatalf("skip reason still claims a block: %q", response.Stderr)
 	}
+	requireStoreRows(t, state, 0)
 	valid := stopPayload(t, "session-loop", "agent-loop", "general-purpose", false, validReturn)
-	requireOutcome(t, "resumed valid return", runAgentHook(t, root, state, "claude", EventPostReturn, valid), 0, "")
-	if response := runAgentHook(t, root, state, "claude", EventPostReturn, valid); !strings.Contains(string(response.Stderr),
-		"no Praetor-owned dispatch") {
-		t.Fatalf("valid return did not release the binding: %+v", response)
-	}
+	requireOutcome(t, "resumed agent after the escape", runAgentHook(t, root, state, "claude", EventPostReturn, valid), 0,
+		"no Praetor-owned dispatch binds this agent")
+	prepareClaudeCorrelation(t, root, state, "session-ok", "tool-ok", "agent-ok", validBrief)
+	passing := stopPayload(t, "session-ok", "agent-ok", "general-purpose", true, validReturn)
+	requireOutcome(t, "continued valid return", runAgentHook(t, root, state, "claude", EventPostReturn, passing), 0, "")
+	requireStoreRows(t, state, 0)
 	wrongType := stopPayload(t, "session-loop", "agent-loop", "general-purpose", "yes", proseReturn)
 	requireOutcome(t, "non-boolean stop_hook_active", runAgentHook(t, root, state, "claude", EventPostReturn, wrongType), 2,
 		"stop_hook_active must be boolean")
+}
+
+// TestClaudeDispatchSurvivesAFullStoreOfLeakedBindings: agents killed before SubagentStop
+// leave active rows behind for up to correlationActiveTTL. A store full of them must not
+// deny every later launch: the launch evicts the oldest row and is gated as usual.
+func TestClaudeDispatchSurvivesAFullStoreOfLeakedBindings(t *testing.T) {
+	root, state := repository(t, true), t.TempDir()
+	store, err := newCorrelationStore(t.Context(), root, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
+	for index := 0; index < MaxCorrelationEntries; index++ {
+		tool, agent := fmt.Sprintf("leak-tool-%03d", index), fmt.Sprintf("leak-agent-%03d", index)
+		if err := store.reserve(t.Context(), "claude", "session-leak", tool, resolution); err != nil {
+			t.Fatalf("reserve %d: %v", index, err)
+		}
+		if err := store.promote(t.Context(), "claude", "session-leak", tool, agent); err != nil {
+			t.Fatalf("promote %d: %v", index, err)
+		}
+	}
+	requireStoreRows(t, state, MaxCorrelationEntries)
+	prepareClaudeCorrelation(t, root, state, "session-new", "tool-new", "agent-new", validBrief)
+	requireStoreRows(t, state, MaxCorrelationEntries)
+	owned := stopPayload(t, "session-new", "agent-new", "general-purpose", false, proseReturn)
+	requireOutcome(t, "new launch stays gated", runAgentHook(t, root, state, "claude", EventPostReturn, owned), 2,
+		"[BLOCKED BY HISS] subagent text register")
+	undeclared := nativePayload(t, "PreToolUse", "session-new", "Agent", "tool-bad",
+		map[string]any{"prompt": proseReturn, "run_in_background": true}, nil)
+	requireOutcome(t, "full store still refuses an invalid brief", runAgentHook(t, root, state, "claude", EventPreDispatch, undeclared), 2,
+		"[BLOCKED BY HISS] subagent text register")
+}
+
+// requireStoreRows counts the correlation rows (JSON files) in the store directory.
+func requireStoreRows(t *testing.T, dir string, want int) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil || len(matches) != want {
+		t.Fatalf("correlation rows = %d (%v), want %d", len(matches), err, want)
+	}
 }
 
 // TestReturnStoreFailureIsNotAHold: a store the subagent cannot repair is a stated skip at

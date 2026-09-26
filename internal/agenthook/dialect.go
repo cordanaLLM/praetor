@@ -78,16 +78,19 @@ func (d Dialect) Decode(event Event, payload []byte) (Canonical, error) {
 	if agentTrafficEvent(event) {
 		return decodeNativeAgentTraffic(d.Client, event, object)
 	}
+	return d.decodeNativeTool(event, object)
+}
+
+// decodeNativeTool reads the tool-hook shape the native clients share: tool name,
+// workspace, and the command of a command tool's pre-tool call.
+func (d Dialect) decodeNativeTool(event Event, object map[string]json.RawMessage) (Canonical, error) {
 	canonical := Canonical{Event: event}
+	var err error
 	if canonical.Tool, err = optionalString(object, "tool_name"); err != nil {
 		return Canonical{}, err
 	}
-	workspace, err := optionalString(object, "cwd")
-	if err != nil {
+	if err = fillWorkspace(&canonical, object); err != nil {
 		return Canonical{}, err
-	}
-	if workspace != "" {
-		canonical.Workspaces = []string{workspace}
 	}
 	if event == EventPreTool && d.isCommandTool(canonical.Tool) {
 		if canonical.Command, err = commandOf(object); err != nil {
@@ -170,13 +173,13 @@ func optionalString(object map[string]json.RawMessage, key string) (string, erro
 }
 
 func commandOf(object map[string]json.RawMessage) (string, error) {
-	var input map[string]json.RawMessage
-	if err := json.Unmarshal(object["tool_input"], &input); err != nil || input == nil {
-		return "", errors.New("tool_input must be an object")
+	input, err := requiredObject(object, "tool_input")
+	if err != nil {
+		return "", err
 	}
-	command, err := optionalString(input, "command")
-	if err != nil || strings.TrimFunc(command, isPythonSpace) == "" {
-		return "", errors.New("tool_input.command must be nonempty text")
+	command, err := requiredString(input, "command")
+	if err != nil {
+		return "", fmt.Errorf("tool_input.%w", err)
 	}
 	return command, nil
 }

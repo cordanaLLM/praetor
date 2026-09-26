@@ -74,6 +74,11 @@ func fillAgentCommon(canonical *Canonical, object map[string]json.RawMessage) er
 	if err != nil {
 		return err
 	}
+	return fillWorkspace(canonical, object)
+}
+
+// fillWorkspace reads the native payload's optional cwd as the one workspace candidate.
+func fillWorkspace(canonical *Canonical, object map[string]json.RawMessage) error {
 	workspace, err := optionalString(object, "cwd")
 	if err != nil {
 		return err

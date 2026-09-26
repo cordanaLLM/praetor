@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ const (
 	correlationActiveTTL    = 24 * time.Hour
 	correlationDirRel       = "praetor/agenthook-correlations"
 	correlationDirOverhead  = 3
+	correlationDirLimit     = MaxCorrelationEntries + correlationDirOverhead
 )
 
 // errNoCorrelation reports an agent without a Praetor-owned dispatch binding: launched
@@ -68,23 +70,25 @@ func newCorrelationStore(ctx context.Context, root, override string) (correlatio
 	return correlationStore{dir: dir}, nil
 }
 
+// reserve stores the pending row of one gated dispatch. At MaxCorrelationEntries it evicts
+// the oldest rows instead of refusing: a leaked binding (an agent killed before SubagentStop)
+// must not shut off every later launch until its TTL runs out. An evicted agent's text is
+// then unowned, a stated skip, never a hold.
 func (s correlationStore) reserve(ctx context.Context, client, session, toolID string, resolution config.Resolution) error {
 	name, err := correlationName("pending", client, session, toolID)
 	if err != nil {
 		return err
 	}
 	return s.withLock(ctx, func() error {
-		count, cleanupErr := s.cleanup()
+		live, cleanupErr := s.cleanup()
 		if cleanupErr != nil {
 			return cleanupErr
 		}
-		if count >= MaxCorrelationEntries {
-			return fmt.Errorf("correlation store reached %d entries", MaxCorrelationEntries)
+		if absentErr := s.requireAbsent(name, "dispatch correlation already exists"); absentErr != nil {
+			return absentErr
 		}
-		if _, statErr := os.Lstat(filepath.Join(s.dir, name)); statErr == nil {
-			return errors.New("dispatch correlation already exists")
-		} else if !errors.Is(statErr, os.ErrNotExist) {
-			return statErr
+		if evictErr := s.evictOldest(live); evictErr != nil {
+			return evictErr
 		}
 		return s.write(name, correlationEntry{Resolution: resolution, CreatedAt: time.Now().UTC().Unix()})
 	})
@@ -103,19 +107,13 @@ func (s correlationStore) promote(ctx context.Context, client, session, toolID, 
 		if _, cleanupErr := s.cleanup(); cleanupErr != nil {
 			return cleanupErr
 		}
-		_, readErr := s.read(pending)
-		if readErr != nil {
+		if _, readErr := s.read(pending); readErr != nil {
 			return fmt.Errorf("dispatch correlation missing: %w", readErr)
 		}
-		if _, statErr := os.Lstat(filepath.Join(s.dir, active)); statErr == nil {
-			return errors.New("agent correlation already exists")
-		} else if !errors.Is(statErr, os.ErrNotExist) {
-			return statErr
+		if absentErr := s.requireAbsent(active, "agent correlation already exists"); absentErr != nil {
+			return absentErr
 		}
-		if renameErr := os.Rename(filepath.Join(s.dir, pending), filepath.Join(s.dir, active)); renameErr != nil {
-			return fmt.Errorf("bind dispatch correlation: %w", renameErr)
-		}
-		return nil
+		return s.rename(pending, active, "bind dispatch correlation")
 	})
 }
 
@@ -176,10 +174,8 @@ func (s correlationStore) markHandbackValidated(ctx context.Context, client, ses
 		return err
 	}
 	return s.withLock(ctx, func() error {
-		if _, readErr := s.read(delivered); readErr == nil {
-			return errors.New("subagent handback already delivered")
-		} else if !errors.Is(readErr, os.ErrNotExist) {
-			return fmt.Errorf("read delivered correlation: %w", readErr)
+		if deliveredErr := s.requireUndelivered(delivered); deliveredErr != nil {
+			return deliveredErr
 		}
 		entry, readErr := s.readActive(active)
 		if readErr != nil {
@@ -200,30 +196,17 @@ func (s correlationStore) markHandbackDelivered(ctx context.Context, client, ses
 		return err
 	}
 	return s.withLock(ctx, func() error {
-		if _, readErr := s.read(delivered); readErr == nil {
-			return errors.New("subagent handback already delivered")
-		} else if !errors.Is(readErr, os.ErrNotExist) {
-			return fmt.Errorf("read delivered correlation: %w", readErr)
+		if deliveredErr := s.requireUndelivered(delivered); deliveredErr != nil {
+			return deliveredErr
 		}
 		entry, readErr := s.readActive(active)
 		if readErr != nil {
 			return readErr
 		}
-		if entry.HandbackDigest == "" || entry.HandbackDigest != correlationHandbackDigest(toolID, text) {
+		if !entry.handbackMatches(toolID, text) {
 			return errors.New("handback receipt does not match a validated report")
 		}
-		activePath, pathErr := util.ConfinePath(s.dir, active)
-		if pathErr != nil {
-			return pathErr
-		}
-		deliveredPath, pathErr := util.ConfinePath(s.dir, delivered)
-		if pathErr != nil {
-			return pathErr
-		}
-		if renameErr := os.Rename(activePath, deliveredPath); renameErr != nil {
-			return fmt.Errorf("mark handback delivered: %w", renameErr)
-		}
-		return nil
+		return s.rename(active, delivered, "mark handback delivered")
 	})
 }
 
@@ -237,12 +220,59 @@ func (s correlationStore) cancelHandback(ctx context.Context, client, session, a
 		if readErr != nil {
 			return readErr
 		}
-		if entry.HandbackDigest == "" || entry.HandbackDigest != correlationHandbackDigest(toolID, text) {
+		if !entry.handbackMatches(toolID, text) {
 			return errors.New("handback abort does not match a validated report")
 		}
 		entry.HandbackDigest = ""
 		return s.write(active, entry)
 	})
+}
+
+// handbackMatches reports whether entry holds the provisional digest of exactly this
+// validated report and tool use.
+func (e correlationEntry) handbackMatches(toolID, text string) bool {
+	return e.HandbackDigest != "" && e.HandbackDigest == correlationHandbackDigest(toolID, text)
+}
+
+// requireAbsent fails when the named row exists; exists names that conflict.
+func (s correlationStore) requireAbsent(name, exists string) error {
+	_, err := os.Lstat(filepath.Join(s.dir, name))
+	if err == nil {
+		return errors.New(exists)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect correlation: %w", err)
+	}
+	return nil
+}
+
+// requireUndelivered fails when the agent's handback was already delivered, or when the
+// delivered row cannot be read.
+func (s correlationStore) requireUndelivered(delivered string) error {
+	_, err := s.read(delivered)
+	if err == nil {
+		return errors.New("subagent handback already delivered")
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read delivered correlation: %w", err)
+	}
+	return nil
+}
+
+// rename moves one row to another name inside the store; action names the step in errors.
+func (s correlationStore) rename(from, to, action string) error {
+	fromPath, err := util.ConfinePath(s.dir, from)
+	if err != nil {
+		return fmt.Errorf("%s: %w", action, err)
+	}
+	toPath, err := util.ConfinePath(s.dir, to)
+	if err != nil {
+		return fmt.Errorf("%s: %w", action, err)
+	}
+	if err := os.Rename(fromPath, toPath); err != nil {
+		return fmt.Errorf("%s: %w", action, err)
+	}
+	return nil
 }
 
 func (s correlationStore) complete(ctx context.Context, client, session, agentID string) error {
@@ -324,38 +354,104 @@ func removeStaleCorrelationLock(root *os.Root, name string, now time.Time) error
 	return nil
 }
 
-func (s correlationStore) cleanup() (int, error) {
+// correlationFile is one live row the sweep kept, with its last write time.
+type correlationFile struct {
+	name     string
+	modified time.Time
+}
+
+// correlationFileState classifies one directory entry for the sweep.
+type correlationFileState int
+
+const (
+	correlationOther correlationFileState = iota // the lock, a fresh temporary file, or a foreign file: left alone
+	correlationLive
+	correlationStale
+)
+
+// cleanup removes expired rows and abandoned temporary files, and returns the live rows.
+// The directory read is bounded: more entries than the store can legitimately hold fail
+// closed instead of being listed.
+func (s correlationStore) cleanup() ([]correlationFile, error) {
+	entries, err := s.list()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	live := make([]correlationFile, 0, len(entries))
+	for index := 0; index < len(entries) && index < correlationDirLimit; index++ {
+		entry := entries[index]
+		switch correlationFileStateOf(entry, now) {
+		case correlationLive:
+			live = append(live, correlationFile{name: entry.Name(), modified: entry.ModTime()})
+		case correlationStale:
+			if err := os.Remove(filepath.Join(s.dir, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("remove stale correlation: %w", err)
+			}
+		case correlationOther:
+		}
+	}
+	return live, nil
+}
+
+// list reads at most correlationDirLimit entries of the store directory.
+func (s correlationStore) list() ([]os.FileInfo, error) {
 	dir, err := os.Open(s.dir)
 	if err != nil {
-		return 0, err
+		return nil, fmt.Errorf("open correlation store: %w", err)
 	}
-	limit := MaxCorrelationEntries + correlationDirOverhead
-	entries, readErr := dir.Readdir(limit + 1)
+	entries, readErr := dir.Readdir(correlationDirLimit + 1)
 	closeErr := dir.Close()
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
-		return 0, errors.Join(readErr, closeErr)
+		return nil, errors.Join(fmt.Errorf("read correlation store: %w", readErr), closeErr)
 	}
-	if len(entries) > limit {
-		return 0, errors.Join(fmt.Errorf("correlation store exceeds %d directory entries", limit), closeErr)
+	if closeErr != nil {
+		return nil, fmt.Errorf("close correlation store: %w", closeErr)
 	}
-	now, count := time.Now().UTC(), 0
-	for index := 0; index < len(entries) && index < limit; index++ {
-		entry := entries[index]
-		if filepath.Ext(entry.Name()) != ".json" {
-			continue
+	if len(entries) > correlationDirLimit {
+		return nil, fmt.Errorf("correlation store exceeds %d directory entries", correlationDirLimit)
+	}
+	return entries, nil
+}
+
+// evictOldest removes the least recently written rows until one more row fits under
+// MaxCorrelationEntries. Ties break by name, so the choice does not depend on the
+// directory order or the file system's timestamp resolution.
+func (s correlationStore) evictOldest(live []correlationFile) error {
+	excess := len(live) - MaxCorrelationEntries + 1
+	if excess <= 0 {
+		return nil
+	}
+	slices.SortFunc(live, func(a, b correlationFile) int {
+		if order := a.modified.Compare(b.modified); order != 0 {
+			return order
 		}
-		if correlationExpired(entry, now) {
-			if err := os.Remove(filepath.Join(s.dir, entry.Name())); err != nil {
-				return 0, errors.Join(err, closeErr)
-			}
-			continue
+		return strings.Compare(a.name, b.name)
+	})
+	for index := 0; index < excess && index < len(live); index++ {
+		if err := os.Remove(filepath.Join(s.dir, live[index].name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("evict correlation: %w", err)
 		}
-		count++
 	}
-	if count > MaxCorrelationEntries {
-		return count, errors.Join(fmt.Errorf("correlation store exceeds %d entries", MaxCorrelationEntries), closeErr)
+	return nil
+}
+
+// correlationFileStateOf classifies entry. A temporary file older than the lock lease was
+// left by a writer killed mid-write: no live writer outlives the lease.
+func correlationFileStateOf(entry os.FileInfo, now time.Time) correlationFileState {
+	name := entry.Name()
+	switch {
+	case strings.HasPrefix(name, util.AtomicTempPrefix):
+		if entry.ModTime().Before(now.Add(-correlationLockTTL)) {
+			return correlationStale
+		}
+		return correlationOther
+	case filepath.Ext(name) != ".json":
+		return correlationOther
+	case correlationExpired(entry, now):
+		return correlationStale
 	}
-	return count, closeErr
+	return correlationLive
 }
 
 func correlationExpired(entry os.FileInfo, now time.Time) bool {
@@ -373,9 +469,12 @@ func (s correlationStore) write(name string, entry correlationEntry) error {
 	}
 	path, err := util.ConfinePath(s.dir, name)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve correlation row: %w", err)
 	}
-	return util.WriteFileAtomic(path, append(data, '\n'), util.SecureFilePerm)
+	if err := util.WriteFileAtomic(path, append(data, '\n'), util.SecureFilePerm); err != nil {
+		return fmt.Errorf("write correlation row: %w", err)
+	}
+	return nil
 }
 
 // readActive reads one active agent row. A missing row is errNoCorrelation; any other

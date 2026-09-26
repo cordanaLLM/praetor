@@ -87,47 +87,62 @@ func agyDecode(d Dialect, event Event, payload []byte) (Canonical, error) {
 }
 
 func agyDecodePreDispatch(payload []byte) (Canonical, error) {
-	if _, err := decodeObject(payload); err != nil {
+	doc, canonical, err := agyDecodeToolPayload(EventPreDispatch, payload)
+	if err != nil {
 		return Canonical{}, err
 	}
-	var doc agyPreToolPayload
-	if err := json.Unmarshal(payload, &doc); err != nil {
-		return Canonical{}, fmt.Errorf("agy pre-dispatch payload: %w", err)
-	}
-	canonical := Canonical{Event: EventPreDispatch}
-	agyFillCommon(&canonical, doc.agyCommon)
 	if doc.ToolCall == nil || doc.ToolCall.Name != "invoke_subagent" {
 		return Canonical{}, errors.New("toolCall.name must be invoke_subagent")
 	}
-	var args agyDispatchArgs
-	if err := json.Unmarshal(doc.ToolCall.Args, &args); err != nil {
-		return Canonical{}, errors.New("toolCall.args.Subagents must be an array")
+	briefs, err := agyDispatchBriefs(doc.ToolCall.Args)
+	if err != nil {
+		return Canonical{}, err
 	}
-	if len(args.Subagents) == 0 || len(args.Subagents) > MaxDispatchBriefs {
-		return Canonical{}, fmt.Errorf("toolCall.args.Subagents must contain 1..%d entries", MaxDispatchBriefs)
-	}
-	canonical.Tool = doc.ToolCall.Name
-	canonical.Briefs = make([]string, 0, len(args.Subagents))
-	for index := 0; index < len(args.Subagents) && index < MaxDispatchBriefs; index++ {
-		prompt := args.Subagents[index].Prompt
-		if strings.TrimFunc(prompt, isPythonSpace) == "" {
-			return Canonical{}, fmt.Errorf("toolCall.args.Subagents[%d].Prompt must be nonempty text", index)
-		}
-		canonical.Briefs = append(canonical.Briefs, prompt)
-	}
+	canonical.Tool, canonical.Briefs = doc.ToolCall.Name, briefs
 	return canonical, nil
 }
 
-func agyDecodePreTool(d Dialect, payload []byte) (Canonical, error) {
+// agyDispatchBriefs reads the documented 1..MaxDispatchBriefs Subagents[].Prompt values of
+// an invoke_subagent call; each must be nonempty text.
+func agyDispatchBriefs(raw json.RawMessage) ([]string, error) {
+	var args agyDispatchArgs
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return nil, errors.New("toolCall.args.Subagents must be an array")
+	}
+	if len(args.Subagents) == 0 || len(args.Subagents) > MaxDispatchBriefs {
+		return nil, fmt.Errorf("toolCall.args.Subagents must contain 1..%d entries", MaxDispatchBriefs)
+	}
+	briefs := make([]string, 0, len(args.Subagents))
+	for index := 0; index < len(args.Subagents) && index < MaxDispatchBriefs; index++ {
+		prompt := args.Subagents[index].Prompt
+		if strings.TrimFunc(prompt, isPythonSpace) == "" {
+			return nil, fmt.Errorf("toolCall.args.Subagents[%d].Prompt must be nonempty text", index)
+		}
+		briefs = append(briefs, prompt)
+	}
+	return briefs, nil
+}
+
+// agyDecodeToolPayload is the prologue agy's PreToolUse-shaped events share: one JSON
+// object, the documented payload shape, and the common fields.
+func agyDecodeToolPayload(event Event, payload []byte) (agyPreToolPayload, Canonical, error) {
 	if _, err := decodeObject(payload); err != nil {
-		return Canonical{}, err
+		return agyPreToolPayload{}, Canonical{}, err
 	}
 	var doc agyPreToolPayload
 	if err := json.Unmarshal(payload, &doc); err != nil {
-		return Canonical{}, fmt.Errorf("agy pre-tool payload: %w", err)
+		return agyPreToolPayload{}, Canonical{}, fmt.Errorf("agy %s payload: %w", event, err)
 	}
-	canonical := Canonical{Event: EventPreTool}
+	canonical := Canonical{Event: event}
 	agyFillCommon(&canonical, doc.agyCommon)
+	return doc, canonical, nil
+}
+
+func agyDecodePreTool(d Dialect, payload []byte) (Canonical, error) {
+	doc, canonical, err := agyDecodeToolPayload(EventPreTool, payload)
+	if err != nil {
+		return Canonical{}, err
+	}
 	if doc.StepIdx != nil {
 		canonical.Step = *doc.StepIdx
 	}

@@ -199,6 +199,17 @@ same correlation as its parent without adding working-tree state. Failed and aut
 denied launches remove their pending row. A pending row otherwise expires after five
 minutes; an active agent row expires after 24 hours.
 
+The store holds at most 128 rows (`MaxCorrelationEntries`,
+`internal/agenthook/correlation.go`). A launch at that cap evicts the least recently
+written row instead of refusing, so bindings leaked by agents killed before `SubagentStop`
+never shut off later launches. An evicted agent is unowned, so its return is a stated skip.
+Each sweep also removes an atomic-write temporary file older than the two-minute lock lease,
+which a writer killed mid-write leaves behind. To reset the store by hand, delete the
+`praetor/agenthook-correlations` directory under the path `git rev-parse --git-common-dir`
+prints. Every bound agent then reports as unowned, and the next launch creates the directory
+again (`TestCorrelationStoreEvictsOldestAtCapacity`,
+`TestClaudeDispatchSurvivesAFullStoreOfLeakedBindings`).
+
 Claude Code 2.1.271 and later can deliver an auto-mode report through the documented
 `SubagentHandback.tool_input.message` field. The `pre-handback` hook checks that message
 before delivery, using the `session_id`, `agent_id`, and `tool_use_id` supplied to subagent
@@ -212,7 +223,12 @@ remains the checked fallback when delivery did not complete. After a confirmed h
 
 Claude rejects an explicitly foreground `Agent` call because its return can precede the
 dispatch receipt needed for correlation. An omitted background flag keeps the client's
-documented background default.
+documented background default, which is background only from Claude Code v2.1.198
+(`tool_response.status` under the
+[Agent tool input](https://code.claude.com/docs/en/hooks#agent) of the hook reference). On an
+older client, an omitted flag runs the agent in the foreground. Its receipt then reports
+`completed`, which the receipt hook refuses, the pending row expires after five minutes, and
+the agent's return is an unowned skip. Set `run_in_background: true` on those clients.
 
 A deny at `SubagentStop` blocks nothing: Claude Code and Codex keep the subagent running
 and hand it the reason as its next instruction (exit 2 table and `SubagentStop` decision
@@ -232,8 +248,9 @@ the subagent can rewrite:
 - A correlation store failure at `SubagentStop` is a skip that names the fault
   (`subagent return not judged: …`). The pre-launch gate still fails closed on the same fault.
 - `stop_hook_active` bounds the retry: once a stop hook has continued the subagent, a second
-  deny becomes a skip and the binding stays for a later resume (`returnBoundary`,
-  `internal/agenthook/evaluate.go`).
+  deny becomes a skip and the binding is released, so it cannot outlive the agent. A later
+  resume of that agent is unowned, like any completed agent (`evaluateAgentReturn`,
+  `internal/agenthook/agent_traffic.go`; `returnBoundary`, `internal/agenthook/evaluate.go`).
 - Codex enforces no register at this boundary, so every Codex `SubagentStop` result is a
   skip, including a null `last_assistant_message`.
 
@@ -293,8 +310,11 @@ Tracked registrations call `praetorctl` through `PATH` (ADR 0011, decision 1), n
 checkout. An engine installed before a row existed answers that row with the usage and
 exit 2. For the subagent rows that blocks every Claude `Agent`, Codex `spawn_agent` and
 Gemini `invoke_agent` launch, and keeps a Claude or Codex subagent that reaches
-`SubagentStop` running. After pulling a change that adds rows, reinstall before starting a
-client session:
+`SubagentStop` running. No change to the tracked files can prevent that, because the old
+binary answers before any new code runs. So the engine goes first. Before a change that adds
+rows lands, install the engine from that change's tip on every workstation that runs a
+client in this repository. That engine also serves every row it replaces. After pulling,
+reinstall before starting a client session:
 
 ```bash
 make dev-install            # or: praetorctl workstation install --source <checkout>
@@ -303,13 +323,15 @@ praetorctl workstation status
 
 `status` reports the installed commit ([Workstation install and status](workstation-update.md)).
 An engine built from this change on reports a later event it does not know as a stated skip
-in the client's dialect instead of blocking. A known event registered for a client without
-that row, an unknown client, malformed arguments and an unknown `agy` event keep the usage
-and exit 2: the agy encoder has no response shape for an event it does not know. Tracked
-registration strings are pinned to the table by
-`TestRegistrationTableMatchesTheTrackedClientFiles`, so a runtime event this engine does not
-know means skew, not a typo (`TestRunSkipsAnEventNewerThanTheEngine`,
-`TestHookProcessSkipsAnEventNewerThanTheEngine`).
+in the client's dialect instead of blocking. The cost is that such an engine does not
+enforce a gate added after it, so the reinstall step still applies. A known event registered
+for a client without that row, an unknown client, malformed arguments and an unknown `agy`
+event keep the usage and exit 2: the agy encoder has no response shape for an event it does
+not know. Tracked registration strings are pinned to the table in both directions:
+`TestRegistrationTableMatchesTheTrackedClientFiles` checks every row against the files, and
+`TestTrackedRegistrationsNameOnlyEngineRows` checks that every tracked `praetorctl hook`
+command is a row. So a runtime event this engine does not know means skew, not a typo
+(`TestRunSkipsAnEventNewerThanTheEngine`, `TestHookProcessSkipsAnEventNewerThanTheEngine`).
 
 ## Built-in command policy
 

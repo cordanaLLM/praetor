@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -126,6 +127,123 @@ func TestRegistrationTableMatchesTheTrackedClientFiles(t *testing.T) {
 				t.Errorf("%s: no %s group with matcher %q and %s", file.path, row.NativeEvent, row.Matcher, row.Timeout)
 			}
 		}
+	}
+}
+
+// TestTrackedRegistrationsNameOnlyEngineRows is the reverse of the table-to-file check: every
+// `praetorctl hook` command a tracked client file carries must parse to an engine row of
+// that client, under that row's native event, matcher and timeout. Engine skew is a stated
+// skip at runtime (unsupportedResponse), so a typo'd or extra tracked row must fail here.
+func TestTrackedRegistrationsNameOnlyEngineRows(t *testing.T) {
+	for client, file := range map[string]struct {
+		path string
+		unit time.Duration
+	}{
+		"claude": {".claude/settings.json", time.Second}, "codex": {".codex/hooks.json", time.Second},
+		"gemini": {".gemini/settings.json", time.Millisecond},
+	} {
+		var document struct {
+			Hooks map[string][]nativeGroup `json:"hooks"`
+		}
+		readTrackedJSON(t, file.path, &document)
+		if problems := trackedCommandProblems(client, document.Hooks, file.unit); len(problems) != 0 {
+			t.Errorf("%s names commands no engine row carries: %q", file.path, problems)
+		}
+	}
+	var plugins map[string]map[string][]nativeGroup
+	readTrackedJSON(t, ".agents/plugins/praetor/hooks.json", &plugins)
+	for name, hooks := range plugins {
+		if problems := trackedCommandProblems("agy", hooks, time.Second); len(problems) != 0 {
+			t.Errorf("agy plugin %s names commands no engine row carries: %q", name, problems)
+		}
+	}
+}
+
+func TestTrackedCommandProblemsRejectsRowsTheEngineLacks(t *testing.T) {
+	group := func(matcher, command string, timeout int64) nativeGroup {
+		var built nativeGroup
+		raw := `{"matcher":` + strconv.Quote(matcher) + `,"hooks":[{"command":` + strconv.Quote(command) +
+			`,"timeout":` + strconv.FormatInt(timeout, 10) + `}]}`
+		if err := json.Unmarshal([]byte(raw), &built); err != nil {
+			t.Fatal(err)
+		}
+		return built
+	}
+	valid := group("^Agent$", "praetorctl hook claude pre-dispatch", 15)
+	for name, tc := range map[string]struct {
+		native string
+		group  nativeGroup
+		want   int
+	}{
+		"engine row":                   {"PreToolUse", valid, 0},
+		"second row of one event":      {"PermissionDenied", group("^Agent$", "praetorctl hook claude dispatch-abort", 15), 0},
+		"legacy adapter is not a row":  {"PreToolUse", group("^Bash$", "python3 -B guard.py", 15), 0},
+		"legacy engine pair untracked": {"PreToolUse", group("^Bash$", "praetorctl hook claude pre-tool", 15), 0},
+		"event of another native":      {"Stop", group("^Agent$", "praetorctl hook claude dispatch-abort", 15), 1},
+		"typo'd event":                 {"PreToolUse", group("^Agent$", "praetorctl hook claude pre-dispach", 15), 1},
+		"other client's row":           {"PreToolUse", group("^Agent$", "praetorctl hook codex pre-dispatch", 15), 1},
+		"wrong native event":           {"PostToolUse", valid, 1},
+		"wrong matcher":                {"PreToolUse", group("^Task$", "praetorctl hook claude pre-dispatch", 15), 1},
+		"wrong timeout":                {"PreToolUse", group("^Agent$", "praetorctl hook claude pre-dispatch", 16), 1},
+		"extra argument":               {"PreToolUse", group("^Agent$", "praetorctl hook claude pre-dispatch --x", 15), 1},
+		"missing event":                {"PreToolUse", group("^Agent$", "praetorctl hook claude", 15), 1},
+	} {
+		got := trackedCommandProblems("claude", map[string][]nativeGroup{tc.native: {tc.group}}, time.Second)
+		if len(got) != tc.want {
+			t.Errorf("%s: problems %q, want %d", name, got, tc.want)
+		}
+	}
+}
+
+// trackedCommandProblems lists every `praetorctl hook` command in hooks (native event to
+// groups) that no engine row of client carries with that native event, matcher and timeout.
+func trackedCommandProblems(client string, hooks map[string][]nativeGroup, unit time.Duration) []string {
+	var problems []string
+	for native, groups := range hooks {
+		for _, group := range groups {
+			for index := range group.Hooks {
+				single := group
+				single.Hooks = group.Hooks[index : index+1]
+				if !trackedCommandHeld(client, native, single, unit) {
+					problems = append(problems, native+": "+group.Hooks[index].Command)
+				}
+			}
+		}
+	}
+	return problems
+}
+
+// trackedCommandHeld reports whether a one-hook group is either not a praetorctl hook call or
+// exactly an engine row of client under native. One event may have several rows (Claude's
+// dispatch-abort serves PostToolUseFailure and PermissionDenied), so every row is tried.
+func trackedCommandHeld(client, native string, group nativeGroup, unit time.Duration) bool {
+	command := group.Hooks[0].Command
+	if !strings.HasPrefix(command, "praetorctl hook") {
+		return true
+	}
+	fields := strings.Split(command, " ")
+	if len(fields) != 4 || fields[2] != client {
+		return false
+	}
+	if _, err := ParseArguments(fields[2], fields[3]); err != nil {
+		return false
+	}
+	for _, row := range Registrations(client) {
+		if string(row.Event) == fields[3] && row.NativeEvent == native && groupsHold([]nativeGroup{group}, row, unit) {
+			return true
+		}
+	}
+	return false
+}
+
+func readTrackedJSON(t *testing.T, rel string, target any) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, target); err != nil {
+		t.Fatalf("%s: %v", rel, err)
 	}
 }
 

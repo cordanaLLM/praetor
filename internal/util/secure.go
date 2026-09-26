@@ -20,6 +20,8 @@ const (
 	// ownerWriteBit is the permission bit whose absence marks an existing file as
 	// write-protected for the no-follow writers.
 	ownerWriteBit os.FileMode = 0o200
+	// AtomicTempPrefix starts the name of every temporary file the atomic writers stage.
+	AtomicTempPrefix = ".tmp-"
 	// MaxExecArgLen bounds the length of a single externally supplied exec argument.
 	MaxExecArgLen = 4096
 	// maxPathAncestorWalk bounds the ancestor walk in ConfinePath (HISS-02: every loop
@@ -367,6 +369,9 @@ func tightenMode(name string, info os.FileInfo, perm os.FileMode, chmod func(os.
 // rename replaces that file outright, so its historical permission bits do not carry
 // forward, matching every other atomic-rename writer. WriteFileNoFollow is the variant
 // that refuses a symbolic-link destination and keeps WriteFileSecure's ceiling.
+//
+// The temporary file sits next to path and its name starts with AtomicTempPrefix, so a
+// directory owner can recognise one a killed writer left behind.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	perm, err := effectivePerm(perm, SecureFilePerm)
 	if err != nil {
@@ -532,7 +537,7 @@ func replaceAtomically(dir *os.Root, name string, data []byte, perm filePermissi
 func createStage(dir *os.Root, name string, perm os.FileMode) (string, *os.File, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxStageAttempts; attempt++ {
-		stage := ".tmp-" + name + "-" + rand.Text()[:stageSuffixLen]
+		stage := AtomicTempPrefix + name + "-" + rand.Text()[:stageSuffixLen]
 		file, err := dir.OpenFile(stage, os.O_RDWR|os.O_CREATE|os.O_EXCL, perm)
 		if err == nil {
 			return stage, file, nil

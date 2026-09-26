@@ -143,8 +143,12 @@ func evaluateDispatchReceipt(ctx context.Context, row Registration, canonical Ca
 // evaluateAgentReturn judges a subagent's final text at SubagentStop. A deny there does not
 // block anything: Claude Code and Codex both keep the subagent running and hand it the
 // reason as its next instruction. So only a register violation in a Praetor-owned return,
-// which the subagent can rewrite, denies; everything it cannot repair is a stated skip, and
-// evaluate's stop_hook_active escape (returnBoundary) bounds the retry to one pass.
+// which the subagent can rewrite, denies; everything it cannot repair is a stated skip.
+// A first violation keeps the binding, so the continued subagent's next return is checked
+// again. Once a stop hook continued it (stop_hook_active), the binding is released and the
+// deny comes back for evaluate's returnBoundary to turn into a stated skip: a kept binding
+// would outlive the agent until correlationActiveTTL, and a later resume of a released
+// agent is unowned, like any completed one.
 func evaluateAgentReturn(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	if row.Client == "codex" {
 		return codexReturn(canonical)
@@ -160,15 +164,17 @@ func evaluateAgentReturn(ctx context.Context, row Registration, canonical Canoni
 	if err != nil {
 		return returnNotJudged(err)
 	}
+	verdict := Verdict{Outcome: Allow}
 	if !entry.HandbackDelivered {
-		if verdict := validateAgentReturn(entry.Resolution, canonical.Return); verdict.Outcome != Allow {
-			return verdict // keep correlation: a continued subagent must be checked again
-		}
+		verdict = validateAgentReturn(entry.Resolution, canonical.Return)
+	}
+	if verdict.Outcome != Allow && !canonical.StopActive {
+		return verdict
 	}
 	if err := store.complete(ctx, row.Client, canonical.ConversationID, canonical.AgentID); err != nil {
 		return returnNotJudged(fmt.Errorf("release agent correlation: %w", err))
 	}
-	return Verdict{Outcome: Allow}
+	return verdict
 }
 
 // codexReturn reports the Codex return boundary: its spawn receipt carries no documented

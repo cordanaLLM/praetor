@@ -1,4 +1,4 @@
 type: fixed
-title: Gate documented native subagent briefs and Claude handbacks without overstating unsupported return boundaries or holding internal and unowned subagents at SubagentStop; reinstall praetorctl (make dev-install) after pulling, since an older engine blocks the new rows
+title: Gate documented native subagent briefs and Claude handbacks without overstating unsupported return boundaries, holding internal and unowned subagents at SubagentStop, or letting leaked bindings fill the correlation store; install praetorctl from this change (make dev-install) before it lands and after pulling, since an older engine blocks the new rows
 issue: "#415"
 breaking: false

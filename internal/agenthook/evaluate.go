@@ -74,7 +74,8 @@ func judge(ctx context.Context, row Registration, canonical Canonical, in Invoca
 // Codex keep the subagent running and hand it the reason as its next instruction. Codex
 // enforces no register at this boundary, so its failures are stated skips. Once a stop hook
 // has continued a subagent (stop_hook_active), a second deny could repeat without end, so it
-// becomes a stated skip and the subagent stops.
+// becomes a stated skip and the subagent stops; evaluateAgentReturn has already released
+// that agent's binding.
 func returnBoundary(row Registration, canonical Canonical, verdict Verdict) Verdict {
 	if row.Event != EventPostReturn || verdict.Outcome != Deny {
 		return verdict
