@@ -1596,6 +1596,27 @@ class ScopeAndGuard(unittest.TestCase):
                 contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(adapter.check(payload), 2)
 
+    def test_command_guard_runs_the_shared_job_in_the_payload_session_checkout(self):
+        self.load_codex_adapter()
+        guard = sys.modules["command_guard"]
+        self.assertEqual(guard.payload_cwd(b'{"cwd":"/session/tree"}'), "/session/tree")
+        self.assertEqual(guard.payload_cwd(b'{"cwd":7}'), 7)
+        for raw in (b'{"tool_input":{}}', b"[]", b"null", b"{", b"\xff", b"[" * 100000):
+            with self.subTest(raw=raw[:8]):
+                self.assertIsNone(guard.payload_cwd(raw))
+        seen = []
+        def shared_job(*_args, **kwargs):
+            seen.append(kwargs["cwd"])
+            kwargs["stdout"].write(b"MARKER\n")
+            return subprocess.CompletedProcess(["lefthook"], 0)
+        with mock.patch.object(guard, "session_root", return_value=Path("/session/tree")) as select, \
+                mock.patch.object(guard.subprocess, "run", side_effect=shared_job):
+            self.assertEqual(guard.check_job(b'{"cwd":"/session/tree/sub"}', "job", b"MARKER"), 0)
+            self.assertEqual(guard.check_job(b"{", "job", b"MARKER"), 0)
+        self.assertEqual(select.call_args_list, [mock.call(guard.ROOT, "/session/tree/sub"),
+                                                 mock.call(guard.ROOT, None)])
+        self.assertEqual(seen, [Path("/session/tree")] * 2)
+
     def test_reverse_dependencies_embed_testdata_module_and_docs_scope(self):
         with tempfile.TemporaryDirectory(prefix="praetor-scope-") as temp:
             root = Path(temp)
