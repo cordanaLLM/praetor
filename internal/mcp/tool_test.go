@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -19,16 +18,6 @@ func echoHandler(ctx context.Context, args map[string]any) (*ToolResult, error) 
 		return ErrorResult("rule_id must be a string"), nil
 	}
 	return TextResult("Rule: " + ruleID), nil
-}
-
-// specOnlyTool builds a tool description without an executable body, the shape the
-// bridge converters accept for vendor translation.
-func specOnlyTool(name string) Tool {
-	return Tool{
-		Name:        name,
-		Description: "desc " + name,
-		InputSchema: ToolInputSchema{Type: "object"},
-	}
 }
 
 // Positive Tests
@@ -129,86 +118,6 @@ func TestTool_Positive_ResultConstructors(t *testing.T) {
 	}
 }
 
-func TestBridge_Positive_SchemaTranslations(t *testing.T) {
-	schema := ToolInputSchema{
-		Type: "object",
-		Properties: map[string]PropertySchema{
-			"path": {
-				Type:        "string",
-				Description: "Target file path",
-			},
-		},
-		Required: []string{"path"},
-	}
-
-	tool, err := NewReadOnlyTool("standards_audit", "Audit repository", schema, echoHandler)
-	if err != nil {
-		t.Fatalf("tool creation failed: %v", err)
-	}
-
-	verifyOpenAITranslation(t, tool)
-	verifyAnthropicTranslation(t, tool)
-	verifyGeminiTranslation(t, tool)
-}
-
-func verifyOpenAITranslation(t *testing.T, tool Tool) {
-	t.Helper()
-	openAITool, err := ToOpenAITool(tool)
-	if err != nil || openAITool.Type != "function" || openAITool.Function.Name != "standards_audit" {
-		t.Fatalf("OpenAI translation error or unexpected format: err=%v tool=%+v", err, openAITool)
-	}
-	if len(openAITool.Function.Parameters.Required) != 1 {
-		t.Errorf("OpenAI translation dropped required list: %+v", openAITool.Function.Parameters)
-	}
-	openAIBytes, err := json.Marshal(openAITool)
-	if err != nil || !strings.Contains(string(openAIBytes), `"type":"function"`) {
-		t.Errorf("OpenAI JSON serialization invalid: %v", err)
-	}
-}
-
-func verifyAnthropicTranslation(t *testing.T, tool Tool) {
-	t.Helper()
-	anthropicTool, err := ToAnthropicTool(tool)
-	if err != nil || anthropicTool.Name != "standards_audit" || anthropicTool.InputSchema.Type != "object" {
-		t.Fatalf("Anthropic translation error or unexpected format: err=%v tool=%+v", err, anthropicTool)
-	}
-	anthropicBytes, err := json.Marshal(anthropicTool)
-	if err != nil || !strings.Contains(string(anthropicBytes), `"input_schema"`) {
-		t.Errorf("Anthropic JSON serialization invalid: %v", err)
-	}
-}
-
-func verifyGeminiTranslation(t *testing.T, tool Tool) {
-	t.Helper()
-	geminiFunc, err := ToGeminiFunction(tool)
-	if err != nil || geminiFunc.Name != "standards_audit" || geminiFunc.Parameters.Type != "object" {
-		t.Fatalf("Gemini translation error or unexpected format: err=%v func=%+v", err, geminiFunc)
-	}
-	geminiBytes, err := json.Marshal(geminiFunc)
-	if err != nil || !strings.Contains(string(geminiBytes), `"parameters"`) {
-		t.Errorf("Gemini JSON serialization invalid: %v", err)
-	}
-}
-
-func TestBridge_Positive_BatchConversions(t *testing.T) {
-	tools := []Tool{specOnlyTool("tool1"), specOnlyTool("tool2")}
-
-	openaiList, err := ToOpenAITools(tools)
-	if err != nil || len(openaiList) != 2 {
-		t.Fatalf("expected 2 openai tools, got %d, err: %v", len(openaiList), err)
-	}
-
-	anthropicList, err := ToAnthropicTools(tools)
-	if err != nil || len(anthropicList) != 2 {
-		t.Fatalf("expected 2 anthropic tools, got %d, err: %v", len(anthropicList), err)
-	}
-
-	geminiList, err := ToGeminiFunctions(tools)
-	if err != nil || len(geminiList) != 2 {
-		t.Fatalf("expected 2 gemini functions, got %d, err: %v", len(geminiList), err)
-	}
-}
-
 // Negative Tests
 
 func TestTool_Negative_EmptyNameOrType(t *testing.T) {
@@ -230,15 +139,6 @@ func TestTool_Negative_EmptyNameOrType(t *testing.T) {
 		t.Errorf("expected error validating tool with empty schema type")
 	}
 
-	if _, err := ToOpenAITool(invalidTool); err == nil {
-		t.Errorf("expected error converting invalid tool to OpenAI format")
-	}
-	if _, err := ToAnthropicTool(invalidTool); err == nil {
-		t.Errorf("expected error converting invalid tool to Anthropic format")
-	}
-	if _, err := ToGeminiFunction(invalidTool); err == nil {
-		t.Errorf("expected error converting invalid tool to Gemini format")
-	}
 }
 
 func TestTool_Negative_NilHandler(t *testing.T) {
@@ -253,80 +153,7 @@ func TestTool_Negative_NilHandler(t *testing.T) {
 	}
 }
 
-func TestBridge_Negative_BatchLimitExceeded(t *testing.T) {
-	tools := make([]Tool, MaxToolsBatchLimit+1)
-	for i := 0; i < len(tools); i++ {
-		tools[i] = specOnlyTool(fmt.Sprintf("tool%d", i))
-	}
-
-	if _, err := ToOpenAITools(tools); !errors.Is(err, ErrBatchTooLarge) {
-		t.Errorf("OpenAI batch of 501: got %v, want ErrBatchTooLarge", err)
-	}
-	if _, err := ToAnthropicTools(tools); !errors.Is(err, ErrBatchTooLarge) {
-		t.Errorf("Anthropic batch of 501: got %v, want ErrBatchTooLarge", err)
-	}
-	if _, err := ToGeminiFunctions(tools); !errors.Is(err, ErrBatchTooLarge) {
-		t.Errorf("Gemini batch of 501: got %v, want ErrBatchTooLarge", err)
-	}
-}
-
-func TestBridge_Negative_InvalidToolInsideBatch(t *testing.T) {
-	tools := []Tool{specOnlyTool("ok0"), specOnlyTool("ok1"), {Name: "", InputSchema: ToolInputSchema{Type: "object"}}, specOnlyTool("ok3")}
-
-	_, err := ToOpenAITools(tools)
-	if err == nil || !strings.Contains(err.Error(), "index 2") {
-		t.Errorf("OpenAI batch with invalid tool: got %v, want error naming index 2", err)
-	}
-	_, err = ToAnthropicTools(tools)
-	if err == nil || !strings.Contains(err.Error(), "index 2") {
-		t.Errorf("Anthropic batch with invalid tool: got %v, want error naming index 2", err)
-	}
-	_, err = ToGeminiFunctions(tools)
-	if err == nil || !strings.Contains(err.Error(), "index 2") {
-		t.Errorf("Gemini batch with invalid tool: got %v, want error naming index 2", err)
-	}
-}
-
 // Boundary Tests
-
-func TestTool_Boundary_EmptyBatch(t *testing.T) {
-	emptyTools := []Tool{}
-
-	openai, err := ToOpenAITools(emptyTools)
-	if err != nil || len(openai) != 0 {
-		t.Errorf("expected empty OpenAI slice without error, got %v, err: %v", openai, err)
-	}
-
-	anthropic, err := ToAnthropicTools(emptyTools)
-	if err != nil || len(anthropic) != 0 {
-		t.Errorf("expected empty Anthropic slice without error, got %v, err: %v", anthropic, err)
-	}
-
-	gemini, err := ToGeminiFunctions(emptyTools)
-	if err != nil || len(gemini) != 0 {
-		t.Errorf("expected empty Gemini slice without error, got %v, err: %v", gemini, err)
-	}
-}
-
-func TestBridge_Boundary_ExactBatchLimit(t *testing.T) {
-	tools := make([]Tool, MaxToolsBatchLimit)
-	for i := 0; i < len(tools); i++ {
-		tools[i] = specOnlyTool(fmt.Sprintf("tool%d", i))
-	}
-
-	openai, err := ToOpenAITools(tools)
-	if err != nil || len(openai) != MaxToolsBatchLimit {
-		t.Errorf("OpenAI batch of exactly %d: len=%d err=%v", MaxToolsBatchLimit, len(openai), err)
-	}
-	anthropic, err := ToAnthropicTools(tools)
-	if err != nil || len(anthropic) != MaxToolsBatchLimit {
-		t.Errorf("Anthropic batch of exactly %d: len=%d err=%v", MaxToolsBatchLimit, len(anthropic), err)
-	}
-	gemini, err := ToGeminiFunctions(tools)
-	if err != nil || len(gemini) != MaxToolsBatchLimit {
-		t.Errorf("Gemini batch of exactly %d: len=%d err=%v", MaxToolsBatchLimit, len(gemini), err)
-	}
-}
 
 func TestTool_Boundary_SchemaDefaults(t *testing.T) {
 	// Boundary: an empty schema is normalised to an object with an empty property map by
@@ -358,10 +185,6 @@ func TestTool_Boundary_SchemaDefaults(t *testing.T) {
 	if err := spec.Validate(); err != nil || spec.InputSchema.Properties == nil {
 		t.Errorf("Validate did not normalise nil properties: err=%v schema=%+v", err, spec.InputSchema)
 	}
-	converted, err := ToOpenAITool(spec)
-	if err != nil || converted.Function.Parameters.Properties == nil {
-		t.Errorf("converted spec-only tool lacks properties map: err=%v tool=%+v", err, converted)
-	}
 }
 
 func TestTool_Boundary_MaxPropertiesAndDescriptions(t *testing.T) {
@@ -383,11 +206,7 @@ func TestTool_Boundary_MaxPropertiesAndDescriptions(t *testing.T) {
 		t.Fatalf("boundary tool creation failed: %v", err)
 	}
 
-	converted, err := ToOpenAITool(tool)
-	if err != nil {
-		t.Fatalf("OpenAI conversion of boundary tool failed: %v", err)
-	}
-	if len(converted.Function.Parameters.Properties) != 50 {
-		t.Errorf("expected 50 properties, got %d", len(converted.Function.Parameters.Properties))
+	if len(tool.InputSchema.Properties) != 50 || tool.Description != longDesc {
+		t.Errorf("constructor altered the boundary tool: %d properties", len(tool.InputSchema.Properties))
 	}
 }

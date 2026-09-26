@@ -8,7 +8,7 @@
 # failure message prints the expected digest.
 version: 1
 pinned_version: "v1.0.0"
-digest: "sha256:fc29c31cb9bac5ef8be0902340eabd652ddddc8c0bd530af32d544dfa6484d04"
+digest: "sha256:ca4ae5fb110eda5ff2aa3c8e3cdebad58ee1af2e88ad1d32011a3048a45c2023"
 generated_at: "2026-09-12T00:00:00Z"
 profiles:
   - id: "framework"
@@ -26,7 +26,7 @@ facets:
     digest: "sha256:3381e1b7ab5cfb1029fa1b96cd84c7d3d5a890bc2d1f340a7b4e8b5bf61e2256"
   - id: "agent:sandboxed"
     version: "v1.0.0"
-    digest: "sha256:53d33961b3e668416065a218cfa15b3e8e9e0192ca50fa848e208ea1331ea493"
+    digest: "sha256:0ef3ebf5423873d200e12ba405ca93b3064c57eedf9091852f2d69316dfb7c63"
   - id: "tooling:vscode-extension"
     version: "v1.0.0"
     digest: "sha256:c6c06e4f951b2c6d72df15f7d4c095892db3d64a1d616b5cfdae462d6ba9c26d"

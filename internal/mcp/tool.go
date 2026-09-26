@@ -68,9 +68,9 @@ type Tool struct {
 // name and a typed input schema with at most MaxToolProperties entries. A nil
 // Properties map is normalised to an empty one for JSON object serialization.
 //
-// Validate deliberately does not require a Handler: the bridge converters translate
-// spec-only tool descriptions (no executable body) into vendor formats. Executable tools
-// are built through the constructors, which do enforce a handler.
+// Validate checks shape only. It does not require a Handler (tools/call reports a
+// missing one per call) and does not scan for prompt injection; executable tools are built
+// through the constructors, which enforce both.
 func (t *Tool) Validate() error {
 	if t.Name == "" {
 		return errors.New("tool name cannot be empty")
@@ -107,6 +107,11 @@ func newTool(kind, name, description string, schema ToolInputSchema, handler Too
 	}
 	if err := tool.Validate(); err != nil {
 		return Tool{}, fmt.Errorf("failed to construct %s tool %s: %w", kind, name, err)
+	}
+	// A descriptor is model-facing text served by tools/list; refuse one that reads as an
+	// instruction override rather than serve it.
+	if HasToolInjection(tool) {
+		return Tool{}, fmt.Errorf("failed to construct %s tool %s: %w", kind, name, ErrToolInjection)
 	}
 	return tool, nil
 }
