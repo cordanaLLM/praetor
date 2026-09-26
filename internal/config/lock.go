@@ -14,11 +14,42 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// LockValidation reports the contents verified by ValidateLockfile. Source-less
-// consumers verify pins and the aggregate digest; local sources are also hashed.
+// LockStatus names the outcome of a lockfile validation that found no defect. An
+// invalid lock is an error, never a status.
+type LockStatus string
+
+const (
+	// LockStatusVerified means every declared profile and facet was hashed against its
+	// catalog source and matched its pin.
+	LockStatusVerified LockStatus = "verified"
+	// LockStatusUnverifiable means the pins and the aggregate digest are well formed,
+	// but the selected catalog has no .config/archetypes directory to hash against.
+	LockStatusUnverifiable LockStatus = "unverifiable"
+)
+
+// LockValidation reports what ValidateLockfile established about a valid lock.
 type LockValidation struct {
 	Profiles int
 	Facets   int
+	Status   LockStatus
+}
+
+// Verified reports whether every declared entry was hashed against its catalog source.
+func (v *LockValidation) Verified() bool {
+	return v != nil && v.Status == LockStatusVerified
+}
+
+// LockValidationOptions selects the lockfile and the catalog its content digests are
+// recomputed from.
+type LockValidationOptions struct {
+	// Root holds .standards.lock; the lock read is confined to it.
+	Root string
+	// CatalogRoot holds the pinned .config/archetypes. Empty selects Root, as
+	// EffectiveOptions resolves its CatalogRoot; callers authorize an explicit path.
+	CatalogRoot string
+	// RequireSources fails with ErrLockUnverifiable instead of returning
+	// LockStatusUnverifiable. Gates that certify content digests set it.
+	RequireSources bool
 }
 
 // ErrLockVersionInvalid reports an unsupported schema version or an unpinned version.
@@ -27,22 +58,29 @@ var ErrLockVersionInvalid = errors.New("lockfile requires version 1 and exact Se
 // Accept the same optional v prefix and SemVer grammar as release preparation.
 var lockVersionPattern = regexp.MustCompile(`^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
 
-// ValidateLockfile validates the repository's YAML or JSON .standards.lock against
-// its manifest without modifying files. It checks exact version pins, every entry
-// digest, the aggregate digest, and available local archetype contents. All reads
-// are bounded and confined to root; missing local source directories are allowed.
+// ValidateLockfile validates root's .standards.lock against the catalog in root; it
+// is ValidateLockfileWithOptions with only Root set.
 func ValidateLockfile(ctx context.Context, root string, manifest *Manifest) (*LockValidation, error) {
+	return ValidateLockfileWithOptions(ctx, LockValidationOptions{Root: root}, manifest)
+}
+
+// ValidateLockfileWithOptions validates a YAML or JSON .standards.lock against its
+// manifest without modifying files. It checks exact version pins, every entry digest,
+// the aggregate digest, and the content of every declared archetype in the catalog.
+// A catalog with .config/archetypes must define every declared id. A catalog without
+// one yields LockStatusUnverifiable, or ErrLockUnverifiable under RequireSources. All
+// reads are bounded; the lock read is confined to Root and catalog reads to CatalogRoot.
+func ValidateLockfileWithOptions(ctx context.Context, opts LockValidationOptions, manifest *Manifest) (*LockValidation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if manifest == nil {
 		return nil, errors.New("lock validation requires a manifest")
 	}
-	path, err := util.ConfinePath(root, ".standards.lock")
+	path, err := util.ConfinePath(opts.Root, ".standards.lock")
 	if err != nil {
 		return nil, fmt.Errorf(".standards.lock escapes the repository root: %w", err)
 	}
-	root = filepath.Dir(path)
 	lock, err := loadStandardsLock(ctx, path)
 	if err != nil {
 		return nil, err
@@ -50,25 +88,48 @@ func ValidateLockfile(ctx context.Context, root string, manifest *Manifest) (*Lo
 	if err := validateLockMetadata(lock, manifest); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	profiles, facets, err := archetypeSources(ctx, root)
-	if err != nil {
-		return nil, err
+	catalog := opts.CatalogRoot
+	if catalog == "" {
+		catalog = filepath.Dir(path)
 	}
-	if err := verifyLockEntries(ctx, manifest.Profiles, lock.Profiles, profiles, "profile"); err != nil {
+	unverified, err := verifyLockSources(ctx, catalog, lock, manifest)
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	if err := verifyLockEntries(ctx, manifest.Facets, lock.Facets, facets, "facet"); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+	if err := verifyAggregateDigest(lock); err != nil {
+		return nil, fmt.Errorf("%s %w", path, err)
 	}
-	topLevel, err := normalizeDigest(lock.Digest)
+	return lockValidationResult(path, lock, unverified, opts.RequireSources)
+}
+
+// verifyLockSources hashes the declared profiles and facets in catalog and returns how
+// many had no catalog to hash against.
+func verifyLockSources(ctx context.Context, catalog string, lock *standardsLock, manifest *Manifest) (int, error) {
+	profiles, facets, err := archetypeSources(ctx, catalog)
 	if err != nil {
-		return nil, fmt.Errorf("%s top-level digest: %w", path, err)
+		return 0, err
 	}
-	if expected := canonicalLockDigest(lock); topLevel != expected {
-		return nil, fmt.Errorf("%s top-level digest is %s%s but the pinned entries hash to %s%s: %w",
-			path, digestPrefix, topLevel, digestPrefix, expected, ErrLockDigestMismatch)
+	unverifiedProfiles, err := verifyLockEntries(ctx, manifest.Profiles, lock.Profiles, profiles, "profile")
+	if err != nil {
+		return 0, err
 	}
-	return &LockValidation{Profiles: len(lock.Profiles), Facets: len(lock.Facets)}, nil
+	unverifiedFacets, err := verifyLockEntries(ctx, manifest.Facets, lock.Facets, facets, "facet")
+	if err != nil {
+		return 0, err
+	}
+	return unverifiedProfiles + unverifiedFacets, nil
+}
+
+func lockValidationResult(path string, lock *standardsLock, unverified int, requireSources bool) (*LockValidation, error) {
+	result := &LockValidation{Profiles: len(lock.Profiles), Facets: len(lock.Facets), Status: LockStatusVerified}
+	if unverified == 0 {
+		return result, nil
+	}
+	if requireSources {
+		return nil, fmt.Errorf("%s: %d declared profiles and facets: %w", path, unverified, ErrLockUnverifiable)
+	}
+	result.Status = LockStatusUnverifiable
+	return result, nil
 }
 
 func validateLockMetadata(lock *standardsLock, manifest *Manifest) error {

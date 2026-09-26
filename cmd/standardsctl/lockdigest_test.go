@@ -171,15 +171,24 @@ func TestAuditLockDigests_Boundary(t *testing.T) {
 		t.Errorf("expected a top-level digest mismatch, got %v", err)
 	}
 
-	// Boundary: a repository consuming remote archetypes has no sources to recompute
-	// against, so well-formed non-placeholder digests are accepted.
+	// Boundary: a repository consuming remote archetypes has no local sources. The gate
+	// fails closed instead of certifying digests it never hashed, and verifies once the
+	// same catalog the effective policy gate resolved is selected.
 	remote := newLockFixture(t)
 	remote.writeLock(t, remote.digestOf(t, profile), remote.digestOf(t, facet), "")
-	if err := os.RemoveAll(filepath.Join(remote.dir, ".config", "archetypes")); err != nil {
-		t.Fatalf("remove archetypes: %v", err)
+	catalog := t.TempDir()
+	if err := os.Mkdir(filepath.Join(catalog, ".config"), 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if err := auditLockDigests(remote.manifest, remote.dir); err != nil {
-		t.Errorf("expected a source-less repository to pass shape validation, got %v", err)
+	if err := os.Rename(filepath.Join(remote.dir, ".config", "archetypes"), filepath.Join(catalog, ".config", "archetypes")); err != nil {
+		t.Fatalf("move archetypes: %v", err)
+	}
+	out, err := captureStdout(t, func() error { return auditLockDigests(remote.manifest, remote.dir) })
+	if !errors.Is(err, config.ErrLockUnverifiable) || strings.Contains(out, "[PASS]") {
+		t.Errorf("expected a source-less repository to fail closed, got %v\n%s", err, out)
+	}
+	if err := auditLockDigestsContext(t.Context(), remote.manifest, remote.dir, catalog); err != nil {
+		t.Errorf("expected the selected catalog to verify, got %v", err)
 	}
 
 	// Boundary: a missing lockfile is an error, not a silent pass.
@@ -188,6 +197,20 @@ func TestAuditLockDigests_Boundary(t *testing.T) {
 	}
 	if err := auditLockDigests(remote.manifest, remote.dir); err == nil {
 		t.Error("expected an error for a missing lockfile")
+	}
+}
+
+// An archetype whose content-declared id no longer matches its pin must not bypass
+// the digest comparison while the catalog directory is present.
+func TestAuditLockDigests_RenamedArchetypeIDFails(t *testing.T) {
+	f := newLockFixture(t)
+	profile := ".config/archetypes/framework.yaml"
+	f.writeLock(t, f.digestOf(t, profile), f.digestOf(t, ".config/archetypes/facets/security-high.yaml"), "")
+	if err := os.WriteFile(filepath.Join(f.dir, filepath.FromSlash(profile)), []byte("id: \"tampered\"\nname: \"Framework\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := auditLockDigests(f.manifest, f.dir); !errors.Is(err, config.ErrLockSourceMissing) {
+		t.Fatalf("expected the renamed archetype to fail, got %v", err)
 	}
 }
 

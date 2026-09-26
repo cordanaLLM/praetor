@@ -50,6 +50,19 @@ func TestBuildLockfileRealContentAndDeterministicReplay(t *testing.T) {
 	if !strings.Contains(string(first), lockTestDigest("id: test:extra\nname: Extra\n")) {
 		t.Fatal("facet pin does not hash actual source")
 	}
+	if strings.Contains(string(first), "generated_at") {
+		t.Fatalf("deterministic lock must not declare an always-empty generated_at:\n%s", first)
+	}
+}
+
+func TestBuildLockfileRequiresVerifiableSourceBundle(t *testing.T) {
+	root, manifest := lockBuildSource(t)
+	if err := os.RemoveAll(filepath.Join(root, ".config")); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := BuildLockfile(context.Background(), root, manifest); !errors.Is(err, ErrLockUnverifiable) || data != nil {
+		t.Fatalf("source bundle without a catalog returned pins: %q / %v", data, err)
+	}
 }
 
 func TestBuildLockfileRefusesUnverifiableSources(t *testing.T) {

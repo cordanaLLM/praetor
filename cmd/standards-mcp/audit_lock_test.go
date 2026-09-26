@@ -70,12 +70,33 @@ func TestAuditLockfileChecksLocalSourceDigest(t *testing.T) {
 	writeFixtureFile(t, root, ".standards.lock", validAuditLock(t))
 	writeFixtureFile(t, root, ".config/archetypes/framework.yaml", auditLockSource)
 	manifest := &config.Manifest{Version: 1, Profiles: []string{"framework"}}
-	if line, err := auditLockfile(context.Background(), root, manifest); err != nil || !strings.Contains(line, "digests verified") {
+	if line, err := auditLockfile(context.Background(), root, "", manifest); err != nil || !strings.Contains(line, "digests verified") {
 		t.Fatalf("valid source failed: %q %v", line, err)
 	}
 	writeFixtureFile(t, root, ".config/archetypes/framework.yaml", auditLockSource+"description: changed\n")
-	if _, err := auditLockfile(context.Background(), root, manifest); !errors.Is(err, config.ErrLockDigestMismatch) {
+	if _, err := auditLockfile(context.Background(), root, "", manifest); !errors.Is(err, config.ErrLockDigestMismatch) {
 		t.Fatalf("expected the shared digest mismatch error, got %v", err)
+	}
+}
+
+func TestAuditLockfileUsesSelectedCatalogAndFailsClosedWithoutOne(t *testing.T) {
+	root, catalog := t.TempDir(), t.TempDir()
+	writeFixtureFile(t, root, ".standards.lock", validAuditLock(t))
+	writeFixtureFile(t, catalog, ".config/archetypes/framework.yaml", auditLockSource)
+	manifest := &config.Manifest{Version: 1, Profiles: []string{"framework"}}
+	// Positive: a remote-catalog adopter verifies against the selected catalog.
+	if line, err := auditLockfile(context.Background(), root, catalog, manifest); err != nil || !strings.Contains(line, "digests verified") {
+		t.Fatalf("selected catalog failed: %q %v", line, err)
+	}
+	// Negative: no catalog to hash against is a failure, not a verification claim.
+	line, err := auditLockfile(context.Background(), root, "", manifest)
+	if !errors.Is(err, config.ErrLockUnverifiable) || strings.Contains(line, "verified") {
+		t.Fatalf("source-less lock must fail closed: %q %v", line, err)
+	}
+	// Boundary: a catalog whose archetype declares another id cannot skip the digest.
+	writeFixtureFile(t, catalog, ".config/archetypes/framework.yaml", "id: renamed\nname: Framework\n")
+	if _, err := auditLockfile(context.Background(), root, catalog, manifest); !errors.Is(err, config.ErrLockSourceMissing) {
+		t.Fatalf("renamed archetype id must fail, got %v", err)
 	}
 }
 
@@ -89,12 +110,12 @@ func TestAuditLockfileRejectsOutsideSymlinkAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := &config.Manifest{Version: 1, Profiles: []string{"framework"}}
-	if _, err := auditLockfile(context.Background(), root, manifest); err == nil {
+	if _, err := auditLockfile(context.Background(), root, "", manifest); err == nil {
 		t.Fatal("outside lock symlink passed validation")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := auditLockfile(ctx, root, manifest); !errors.Is(err, context.Canceled) {
+	if _, err := auditLockfile(ctx, root, "", manifest); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancellation, got %v", err)
 	}
 }

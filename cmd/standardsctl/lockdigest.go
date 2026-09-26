@@ -16,11 +16,15 @@ var (
 )
 
 func auditLockDigests(manifest *config.Manifest, rootDir string) error {
-	return auditLockDigestsContext(context.Background(), manifest, rootDir)
+	return auditLockDigestsContext(context.Background(), manifest, rootDir, "")
 }
 
-func auditLockDigestsContext(ctx context.Context, manifest *config.Manifest, rootDir string) error {
-	result, err := config.ValidateLockfile(ctx, rootDir, manifest)
+// auditLockDigestsContext hashes the pins against the same catalog the effective policy
+// gate resolved (catalogRoot, default rootDir) and fails closed when none is materialized.
+func auditLockDigestsContext(ctx context.Context, manifest *config.Manifest, rootDir, catalogRoot string) error {
+	result, err := config.ValidateLockfileWithOptions(ctx, config.LockValidationOptions{
+		Root: rootDir, CatalogRoot: catalogRoot, RequireSources: true,
+	}, manifest)
 	if err != nil {
 		return fmt.Errorf("[FAIL] %w", err)
 	}

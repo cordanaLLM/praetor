@@ -20,8 +20,9 @@ import (
 // ErrNotADirectory is returned when an onboarding target exists but is not a directory.
 var ErrNotADirectory = errors.New("harvester: onboarding target is not a directory")
 
-// ErrOnboardingIncomplete identifies a scaffold whose dependency lock is not verified.
-var ErrOnboardingIncomplete = errors.New("harvester: onboarding scaffold requires a verified dependency lock")
+// ErrOnboardingIncomplete identifies a scaffold whose dependency lock is missing or
+// invalid. A valid lock without a local catalog is reported through LockStatus instead.
+var ErrOnboardingIncomplete = errors.New("harvester: onboarding scaffold requires a valid dependency lock")
 
 // onboardFilePerm is the mode of every file onboarding scaffolds into a repository.
 const (
@@ -31,13 +32,16 @@ const (
 )
 
 // OnboardPlan captures planned or applied onboarding actions for a repository.
+// LockVerified is true only when every pinned content digest was hashed against the
+// repository's catalog; LockStatus names the outcome of a live run.
 type OnboardPlan struct {
-	RepoPath     string   `json:"repo_path"`
-	Archetype    string   `json:"archetype"`
-	Facets       []string `json:"facets"`
-	Actions      []string `json:"actions"`
-	DryRun       bool     `json:"dry_run"`
-	LockVerified bool     `json:"lock_verified"`
+	RepoPath     string            `json:"repo_path"`
+	Archetype    string            `json:"archetype"`
+	Facets       []string          `json:"facets"`
+	Actions      []string          `json:"actions"`
+	DryRun       bool              `json:"dry_run"`
+	LockVerified bool              `json:"lock_verified"`
+	LockStatus   config.LockStatus `json:"lock_status,omitempty"`
 }
 
 // OnboardRepository scaffolds standards governance and agent harnesses into a repo.
@@ -79,10 +83,11 @@ func OnboardRepository(ctx context.Context, repoPath string, dryRun bool) (*Onbo
 	if err := executeOnboarding(ctx, repoPath, repoName, arch, facets); err != nil {
 		return plan, err
 	}
-	if err := verifyOnboardLock(ctx, repoPath); err != nil {
+	lock, err := verifyOnboardLock(ctx, repoPath)
+	if err != nil {
 		return plan, fmt.Errorf("%w; scaffold files have been written: %w", ErrOnboardingIncomplete, err)
 	}
-	plan.LockVerified = true
+	plan.LockStatus, plan.LockVerified = lock.Status, lock.Verified()
 	return plan, nil
 }
 
@@ -307,22 +312,21 @@ func ensureOnboardingManifest(ctx context.Context, repoPath, repoName, arch stri
 }
 
 // verifyOnboardLock verifies real pins; onboarding has no source pin resolver and must
-// never invent a lockfile or report an unverified scaffold as complete.
-func verifyOnboardLock(ctx context.Context, repoPath string) error {
+// never invent a lockfile or report unhashed content digests as verified.
+func verifyOnboardLock(ctx context.Context, repoPath string) (*config.LockValidation, error) {
 	path, err := util.ConfinePath(repoPath, ".standards.yaml")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	data, err := readOnboardDocument(ctx, path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var manifest config.Manifest
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return fmt.Errorf("parse onboarding manifest: %w", err)
+		return nil, fmt.Errorf("parse onboarding manifest: %w", err)
 	}
-	_, err = config.ValidateLockfile(ctx, repoPath, &manifest)
-	return err
+	return config.ValidateLockfile(ctx, repoPath, &manifest)
 }
 
 // readOnboardDocument bounds existing scaffold inputs and refuses special files before

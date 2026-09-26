@@ -85,35 +85,52 @@ func validateSyncRuleset(data []byte, policy config.BranchProtectionPolicy, cont
 	return nil
 }
 
-func verifySyncCompanions(ctx context.Context, root string, manifest *config.Manifest) (int, error) {
+// verifySyncCompanions returns how many companion checks are missing or unverified. A
+// verify function returns a non-empty reason for a valid file it could not verify.
+func verifySyncCompanions(ctx context.Context, root, catalogRoot string, manifest *config.Manifest) (int, error) {
 	checks := []struct {
 		name   string
 		label  string
-		verify func() error
+		verify func() (string, error)
 	}{
-		{".standards.lock", "Lockfile", func() error {
-			_, err := config.ValidateLockfile(ctx, root, manifest)
-			return err
+		{".standards.lock", "Lockfile", func() (string, error) {
+			return verifySyncLockfile(ctx, root, catalogRoot, manifest)
 		}},
-		{"AGENTS.md", "Context harness and six compiled projections", func() error {
-			return compiler.NewTranspiler().VerifyContext(ctx, filepath.Join(root, "AGENTS.md"), root)
+		{"AGENTS.md", "Context harness and six compiled projections", func() (string, error) {
+			return "", compiler.NewTranspiler().VerifyContext(ctx, filepath.Join(root, "AGENTS.md"), root)
 		}},
 	}
-	missing := 0
+	incomplete := 0
 	for _, check := range checks {
 		_, exists, err := contextopt.ObserveSnapshot(ctx, filepath.Join(root, check.name))
 		if err != nil {
-			return missing, fmt.Errorf("%s observation failed: %w", check.name, err)
+			return incomplete, fmt.Errorf("%s observation failed: %w", check.name, err)
 		}
 		if !exists {
 			fmt.Printf("  [MISSING] %s %s missing; verification incomplete.\n", check.label, check.name)
-			missing++
+			incomplete++
 			continue
 		}
-		if err := check.verify(); err != nil {
-			return missing, fmt.Errorf("%s validation failed: %w", check.name, err)
+		reason, err := check.verify()
+		if err != nil {
+			return incomplete, fmt.Errorf("%s validation failed: %w", check.name, err)
+		}
+		if reason != "" {
+			fmt.Printf("  [UNVERIFIED] %s %s: %s; verification incomplete.\n", check.label, check.name, reason)
+			incomplete++
+			continue
 		}
 		fmt.Printf("  [OK] %s %s verified\n", check.label, check.name)
 	}
-	return missing, nil
+	return incomplete, nil
+}
+
+// verifySyncLockfile reports a well-formed lock whose content digests cannot be hashed
+// as unverified instead of verified.
+func verifySyncLockfile(ctx context.Context, root, catalogRoot string, manifest *config.Manifest) (string, error) {
+	result, err := config.ValidateLockfileWithOptions(ctx, config.LockValidationOptions{Root: root, CatalogRoot: catalogRoot}, manifest)
+	if err != nil || result.Verified() {
+		return "", err
+	}
+	return fmt.Sprintf("pins and aggregate digest are valid, but %v; materialize it or pass --catalog-root", config.ErrLockUnverifiable), nil
 }

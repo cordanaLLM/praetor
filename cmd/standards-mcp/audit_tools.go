@@ -53,7 +53,9 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 	fmt.Fprintf(&report, "[PASS] %s\n", effective.Evidence())
 
 	gates := []auditGate{
-		func(ctx context.Context) (string, error) { return auditLockfile(ctx, s.rootDir, manifest) },
+		func(ctx context.Context) (string, error) {
+			return auditLockfile(ctx, s.rootDir, p.policy.CatalogRoot, manifest)
+		},
 		func(ctx context.Context) (string, error) {
 			return auditBaselineRatchetWithPolicy(ctx, s.rootDir, p.baseline, effective.Policy.Complexity.MaxFuncLOC)
 		},
@@ -83,9 +85,12 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 	return mcp.TextResult(report.String())
 }
 
-// auditLockfile uses the same version, entry, source and aggregate checks as the CLI.
-func auditLockfile(ctx context.Context, root string, manifest *config.Manifest) (string, error) {
-	result, err := config.ValidateLockfile(ctx, root, manifest)
+// auditLockfile uses the same version, entry, source and aggregate checks as the CLI,
+// against the catalog the effective policy gate resolved, and fails closed without one.
+func auditLockfile(ctx context.Context, root, catalogRoot string, manifest *config.Manifest) (string, error) {
+	result, err := config.ValidateLockfileWithOptions(ctx, config.LockValidationOptions{
+		Root: root, CatalogRoot: catalogRoot, RequireSources: true,
+	}, manifest)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] %w", err)
 	}
