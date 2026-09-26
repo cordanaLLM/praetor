@@ -38,9 +38,9 @@ const (
 	milestoneHeading      = "## Active Milestones"
 
 	// workingDirPerm is the mode applied to the working directory holding the ledger.
-	workingDirPerm = util.PrivateDirMode
+	workingDirPerm = util.SecureDirPerm
 	// ledgerFilePerm is the mode applied to milestones.json and BACKLOG.md.
-	ledgerFilePerm = util.PrivateFileMode
+	ledgerFilePerm = util.SecureFilePerm
 )
 
 // Milestone represents an epic goal or version deliverable.

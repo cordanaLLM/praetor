@@ -10,8 +10,8 @@ import (
 const (
 	// Fleet artifacts can contain private repository and dependency inventories.
 	// New files and output directories remain accessible only to their owner.
-	manifestFilePerm os.FileMode = util.PrivateFileMode
-	outputDirPerm    os.FileMode = 0o700
+	manifestFilePerm os.FileMode = util.SecureFilePerm
+	outputDirPerm    os.FileMode = util.SecureDirPerm
 )
 
 // LanguageUnsupported is the language of a repository no signal identified. Such a

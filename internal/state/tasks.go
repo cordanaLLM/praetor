@@ -92,7 +92,7 @@ func AddTask(rootPath, description string) error {
 	}
 	updated += newEntry
 
-	return contextopt.ReplaceSnapshot(ctx, openFile, []byte(updated), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: util.PrivateFileMode})
+	return contextopt.ReplaceSnapshot(ctx, openFile, []byte(updated), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: util.SecureFilePerm})
 }
 
 // CompleteTask marks exactly one pending task done in OPEN.md. The selector is
@@ -125,7 +125,7 @@ func CompleteTask(rootPath, selector string) error {
 	today := time.Now().UTC().Format("2006-01-02")
 	lines[task.line] = fmt.Sprintf("- [x] %s (completed: %s)", task.description, today)
 
-	return contextopt.ReplaceSnapshot(ctx, openFile, []byte(strings.Join(lines, "\n")), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: util.PrivateFileMode})
+	return contextopt.ReplaceSnapshot(ctx, openFile, []byte(strings.Join(lines, "\n")), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: util.SecureFilePerm})
 }
 
 // ArchiveCompletedTasks moves all completed tasks from OPEN.md to BACKLOG.md.
@@ -155,7 +155,7 @@ func ArchiveCompletedTasks(rootPath, commitSHA string) (int, error) {
 	if err := appendCompletedTasks(ctx, rootPath, commitSHA, completedTasks); err != nil {
 		return 0, err
 	}
-	if err := contextopt.ReplaceSnapshot(ctx, openFile, []byte(strings.Join(remainingLines, "\n")), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: util.PrivateFileMode}); err != nil {
+	if err := contextopt.ReplaceSnapshot(ctx, openFile, []byte(strings.Join(remainingLines, "\n")), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: util.SecureFilePerm}); err != nil {
 		return 0, fmt.Errorf("write OPEN.md: %w", err)
 	}
 	return len(completedTasks), nil
@@ -209,7 +209,7 @@ func appendCompletedTasks(ctx context.Context, rootPath, commitSHA string, compl
 	}
 
 	updatedBacklog := string(backlogContent) + archiveHeader
-	if err := contextopt.ReplaceSnapshot(ctx, backlogFile, []byte(updatedBacklog), contextopt.ReplaceOptions{Expected: expected, Exists: exists, Mode: util.PrivateFileMode}); err != nil {
+	if err := contextopt.ReplaceSnapshot(ctx, backlogFile, []byte(updatedBacklog), contextopt.ReplaceOptions{Expected: expected, Exists: exists, Mode: util.SecureFilePerm}); err != nil {
 		return fmt.Errorf("write BACKLOG.md: %w", err)
 	}
 	return nil

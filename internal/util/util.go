@@ -26,11 +26,6 @@ const (
 	// the grace a command asked to stop gets before it is killed: SIGTERM when its context
 	// ends, or the signal that is ending this process (TerminateCommandsOnSignal).
 	CommandWaitDelay = 5 * time.Second
-
-	// PrivateFileMode and PrivateDirMode are the standard owner-only permissions
-	// for files and directories inside the private .workingdir ledger.
-	PrivateFileMode = 0o600
-	PrivateDirMode  = 0o700
 )
 
 // ErrRepoIdentityUnresolved is returned by ResolveRepoIdentity when neither the git

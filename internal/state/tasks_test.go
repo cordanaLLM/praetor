@@ -48,7 +48,7 @@ func TestArchiveCompletedTasksPreservesOpenWhenBacklogUnreadable(t *testing.T) {
 	if err := os.Remove(backlog); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(backlog, util.PrivateDirMode); err != nil {
+	if err := os.Mkdir(backlog, util.SecureDirPerm); err != nil {
 		t.Fatal(err)
 	}
 	if count, err := ArchiveCompletedTasks(dir, "fixture"); err == nil || count != 0 {
@@ -164,11 +164,11 @@ func TestTasks_PreservesFileMode(t *testing.T) {
 	testsupport.SkipIfFileModeUnenforced(t)
 	dir := t.TempDir()
 	workingdir := filepath.Join(dir, ".workingdir")
-	if err := os.Mkdir(workingdir, util.PrivateDirMode); err != nil {
+	if err := os.Mkdir(workingdir, util.SecureDirPerm); err != nil {
 		t.Fatal(err)
 	}
 	openFile := filepath.Join(workingdir, "OPEN.md")
-	if err := os.WriteFile(openFile, []byte("- [ ] task 1\n"), util.PrivateFileMode); err != nil {
+	if err := os.WriteFile(openFile, []byte("- [ ] task 1\n"), util.SecureFilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -180,7 +180,7 @@ func TestTasks_PreservesFileMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != util.PrivateFileMode {
+	if info.Mode().Perm() != util.SecureFilePerm {
 		t.Errorf("expected mode 0600, got %o", info.Mode().Perm())
 	}
 }

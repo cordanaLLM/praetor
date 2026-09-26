@@ -23,9 +23,9 @@ const (
 	// (HISS-02).
 	MaxProjectItemsLimit = 10000
 	// projectCacheFilePerm is the mode applied to the local project cache.
-	projectCacheFilePerm = util.PrivateFileMode
+	projectCacheFilePerm = util.SecureFilePerm
 	// projectCacheDirPerm is the mode applied to the working directory holding the cache.
-	projectCacheDirPerm = util.PrivateDirMode
+	projectCacheDirPerm = util.SecureDirPerm
 	// projectsPerPage is the Projects v2 connection page size; GitHub caps first at 100.
 	projectsPerPage = 100
 	// maxProjectPages bounds board pagination (HISS-02): MaxProjectsLimit boards at most.
