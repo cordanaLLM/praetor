@@ -171,7 +171,7 @@ func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, r
 	if err != nil || skip {
 		return templateSkipped, "", err
 	}
-	if outcome, note := templateWithheld(repoPath, tmpl); outcome != templateCreated {
+	if outcome, note := templateWithheld(ctx, repoPath, tmpl); outcome != templateCreated {
 		return outcome, note, nil
 	}
 	destPath := filepath.Join(repoPath, tmpl.Path)
@@ -198,14 +198,14 @@ func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, r
 // here, only a placeholder to lose the real file to. A template whose requirement the
 // repository does not meet has a body that cannot work there, and writing it over an existing
 // file would replace one that might.
-func templateWithheld(repoPath string, tmpl TemplateItem) (templateOutcome, string) {
+func templateWithheld(ctx context.Context, repoPath string, tmpl TemplateItem) (templateOutcome, string) {
 	if tmpl.Producer != "" {
 		return templateDeferred, tmpl.Producer
 	}
 	if tmpl.Requires == nil {
 		return templateCreated, ""
 	}
-	if missing := tmpl.Requires(repoPath); missing != "" {
+	if missing := tmpl.Requires(ctx, repoPath); missing != "" {
 		return templateUnmet, missing
 	}
 	return templateCreated, ""

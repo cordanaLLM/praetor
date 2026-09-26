@@ -1,6 +1,7 @@
 package flavor
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -41,10 +42,11 @@ type TemplateItem struct {
 	// or "" when it lacks nothing. flavor apply writes no body whose requirement is unmet,
 	// --force included, and lists it under ApplyReport.UnmetTemplates; the audit still
 	// requires the file. A body is fixed text, so a workflow that runs `npm ci` can only pass
-	// in a repository holding package-lock.json, and adoption makes every job of a scaffolded
-	// workflow a required status check: scaffolding it anywhere else hands the repository a
-	// check no pull request can pass.
-	Requires func(repoPath string) string `json:"-"`
+	// where CI's checkout holds package-lock.json, and adoption makes every job of a
+	// scaffolded workflow a required status check: scaffolding it anywhere else hands the
+	// repository a check no pull request can pass. The context bounds any probe the check
+	// runs, such as asking Git whether a file it needs is committed.
+	Requires func(ctx context.Context, repoPath string) string `json:"-"`
 
 	// AltPaths lists equally valid alternatives to Path. A repository satisfies the
 	// template when Path or any AltPath is present, and scaffolding is skipped in that

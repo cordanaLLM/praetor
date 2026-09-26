@@ -24,6 +24,16 @@ func flavorSession(t *testing.T, dryRun bool, files map[string]string) *adoptSes
 	return &adoptSession{repoPath: root, opts: AdoptOptions{DryRun: dryRun}, report: &AdoptReport{}}
 }
 
+// gitFlavorSession is flavorSession in a Git work tree, for a flavor whose requirement asks Git
+// what the repository commits.
+func gitFlavorSession(t *testing.T, files map[string]string) *adoptSession {
+	t.Helper()
+	requireGit(t)
+	s := flavorSession(t, false, files)
+	initTestGit(t, s.repoPath)
+	return s
+}
+
 func scaffoldedCI(t *testing.T, s *adoptSession) bool {
 	t.Helper()
 	_, err := os.Stat(filepath.Join(s.repoPath, ".github", "workflows", "ci.yml"))
@@ -100,12 +110,35 @@ func TestReconcileWorkingDirAndFlavor_Negative_UnrunnableNodeJobIsWithheldAndWar
 	}
 }
 
-// Boundary: an npm project that meets the job's requirements gets it, and no warning.
-func TestReconcileWorkingDirAndFlavor_Boundary_NpmProjectGetsTheNodeJob(t *testing.T) {
-	s := flavorSession(t, false, map[string]string{
+// npmProjectFiles is an npm project whose CI job can pass once Git commits its lockfile.
+func npmProjectFiles() map[string]string {
+	return map[string]string{
 		"package.json":      `{"name": "widget", "scripts": {"test": "node --test"}}`,
 		"package-lock.json": `{"name": "widget", "lockfileVersion": 3, "requires": true, "packages": {"": {"name": "widget"}}}`,
-	})
+	}
+}
+
+// Negative: a library that git-ignores package-lock.json, while a local `npm install` has
+// written one, gets no npm CI job: CI's checkout holds no lockfile, so the required check would
+// fail on every pull request. Adoption warns instead.
+func TestReconcileWorkingDirAndFlavor_Negative_IgnoredLockfileWithholdsTheNodeJob(t *testing.T) {
+	files := npmProjectFiles()
+	files[".gitignore"] = "node_modules/\npackage-lock.json\n"
+	s := gitFlavorSession(t, files)
+	if err := reconcileWorkingDirAndFlavor(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	if scaffoldedCI(t, s) {
+		t.Fatal("adoption scaffolded an npm CI job whose lockfile Git never commits")
+	}
+	if len(s.report.Warnings) != 1 || !strings.Contains(s.report.Warnings[0], "package-lock.json is untracked and git-ignored") {
+		t.Fatalf("want one warning naming the ignored lockfile, got %v", s.report.Warnings)
+	}
+}
+
+// Boundary: an npm project that meets the job's requirements gets it, and no warning.
+func TestReconcileWorkingDirAndFlavor_Boundary_NpmProjectGetsTheNodeJob(t *testing.T) {
+	s := gitFlavorSession(t, npmProjectFiles())
 	if err := reconcileWorkingDirAndFlavor(t.Context(), s); err != nil {
 		t.Fatal(err)
 	}

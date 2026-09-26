@@ -1,6 +1,7 @@
 package flavor
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -32,10 +33,10 @@ type nodeManifest struct {
 // there handed each of them a required check no pull request could pass. Which manager installs
 // is decided the way adoption's verification plan decides it (nodemanifest.NpmRuns), so the
 // Makefile and the CI job never disagree.
-func npmCIRequirement(repoPath string) string {
+func npmCIRequirement(ctx context.Context, repoPath string) string {
 	var missing []string
-	if !util.FileExists(filepath.Join(repoPath, npmLockfile)) {
-		missing = append(missing, "no "+npmLockfile+" for `npm ci` and setup-node's npm cache")
+	if lockfile := npmLockfileRequirement(ctx, repoPath); lockfile != "" {
+		missing = append(missing, lockfile)
 	}
 	manifest, err := readNodeManifest(repoPath)
 	switch {
@@ -47,6 +48,31 @@ func npmCIRequirement(repoPath string) string {
 		missing = append(missing, "package.json has no test script `npm test` can pass (it is missing, blank, or the placeholder npm init writes)")
 	}
 	return strings.Join(missing, "; ")
+}
+
+// npmLockfileRequirement reports why CI's checkout will hold no package-lock.json, or "" when
+// it will.
+//
+// CI checks out what Git commits, not the working tree. A library commonly lists
+// package-lock.json in .gitignore while a local `npm install` still writes one, so the file
+// being present proves nothing: the job would install from it here and fail on every pull
+// request there. The lockfile counts when Git tracks it or would commit it; one the
+// repository's own ignore rules exclude, untracked, does not. The index is consulted
+// (util.GitIgnoredPaths with noIndex false), so a lockfile force-added past such a rule still
+// counts, because the checkout carries it. When Git cannot answer, outside a work tree or
+// without git, nothing proves the checkout holds the file, so the job is withheld.
+func npmLockfileRequirement(ctx context.Context, repoPath string) string {
+	if !util.FileExists(filepath.Join(repoPath, npmLockfile)) {
+		return "no " + npmLockfile + " for `npm ci` and setup-node's npm cache"
+	}
+	ignored, err := util.GitIgnoredPaths(ctx, repoPath, []string{npmLockfile}, false)
+	if err != nil {
+		return fmt.Sprintf("cannot tell whether Git commits %s, so CI's checkout may lack it: %v", npmLockfile, err)
+	}
+	if len(ignored) > 0 {
+		return npmLockfile + " is untracked and git-ignored, so CI's checkout has none for `npm ci` and setup-node's npm cache"
+	}
+	return ""
 }
 
 // readNodeManifest reads the repository's root package.json, bounded like a setting read.
