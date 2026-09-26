@@ -1,0 +1,3 @@
+type: fixed
+title: lockdown prompt-injection neutralization now matches against a folded view of the input, so Cyrillic and Greek homoglyphs, zero-width and other format characters, combining marks, Unicode spaces, fullwidth forms and angle-bracket look-alikes no longer slip role delimiters and override phrases past it, while text outside a finding (non-Latin prose included) is returned unchanged; no new dependency
+breaking: false
