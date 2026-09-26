@@ -232,7 +232,7 @@ func TestValidateLockfileRelativeCatalogRoot(t *testing.T) {
 		}
 	}
 	// Negative: a relative catalog is still hashed, so tampering is a mismatch.
-	writeLockTestCatalog(t, catalog, "framework.yaml", lockTestSource+"changed: true\n")
+	writeLockTestCatalog(t, catalog, "framework.yaml", lockTestSource+"description: changed\n")
 	opts := LockValidationOptions{Root: root, CatalogRoot: filepath.Join("..", filepath.Base(catalog)), RequireSources: true}
 	if _, err := ValidateLockfileWithOptions(context.Background(), opts, manifest); !errors.Is(err, ErrLockDigestMismatch) {
 		t.Fatalf("tampered relative catalog must fail: %v", err)
