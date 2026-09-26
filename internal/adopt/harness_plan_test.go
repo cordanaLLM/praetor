@@ -176,6 +176,38 @@ func unidentifiedRepo(t *testing.T) string {
 	return repoPath
 }
 
+// TestAdoptFreshManifestReportsUnboundSources: a first adoption without an identity writes a
+// manifest without register.sources, and the created note says why, as the existing-manifest
+// path does. With an identity the contract is bound and the note carries no such reason.
+func TestAdoptFreshManifestReportsUnboundSources(t *testing.T) {
+	repoPath := unidentifiedRepo(t)
+	if err := os.Remove(filepath.Join(repoPath, manifestFile)); err != nil {
+		t.Fatal(err)
+	}
+	opts := sourceAdoptOptions(t, repoPath, false)
+	opts.SkipGitValidation, opts.SkipHookActivation = true, true
+	report, err := Adopt(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest := loadAdoptedManifest(t, repoPath); manifest.Register != nil {
+		t.Fatalf("register bound without a harness: %+v", manifest.Register)
+	}
+	if got := reportDetail(report, manifestFile); !strings.Contains(got,
+		"register.sources not added: repository identity is unresolved") {
+		t.Fatalf("fresh manifest note hides the missing contract: %q", got)
+	}
+	identified := newTestRepo(t, "fresh")
+	report, err = Adopt(t.Context(), sourceAdoptOptions(t, identified, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reportDetail(report, manifestFile); strings.Contains(got, "register.sources not added") {
+		t.Fatalf("bound contract reported as missing: %q", got)
+	}
+	requirePassingSourceGate(t, identified, paperclipFile)
+}
+
 // TestAdoptUnresolvedIdentityBindsOnlyAnExistingHarness: without an identity adoption writes
 // no harness, so an existing manifest keeps no register.sources and the report says why; a
 // harness already on disk stays byte for byte and the contract binds to it, --force included.

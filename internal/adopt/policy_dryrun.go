@@ -14,23 +14,29 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// newAdoptionManifest builds the manifest adoption writes. Identity comes from the origin
-// remote and stays empty otherwise. Visibility is a forge setting adoption cannot observe
-// offline, so it is left unset rather than declared public.
-func newAdoptionManifest(ctx context.Context, s *adoptSession) (*config.Manifest, error) {
-	sources, err := adoptionRegisterSources(ctx, s)
+// newAdoptionManifest builds the manifest adoption writes, plus the harness plan its
+// register.sources came from. Identity comes from the origin remote and stays empty
+// otherwise. Visibility is a forge setting adoption cannot observe offline, so it is left
+// unset rather than declared public.
+func newAdoptionManifest(ctx context.Context, s *adoptSession) (*config.Manifest, harnessPlan, error) {
+	plan, err := planHarness(ctx, s)
 	if err != nil {
-		return nil, err
+		return nil, harnessPlan{}, err
 	}
 	manifest := &config.Manifest{
 		Version:    1,
 		Repository: config.RepositoryMetadata{Owner: s.identity.owner, Name: s.identity.name},
 		Profiles:   []string{s.arch}, Facets: s.facets,
 	}
-	if sources != nil {
-		manifest.Register = &config.RegisterPolicy{Sources: sources}
+	if plan.absent() {
+		return manifest, plan, nil
 	}
-	return manifest, nil
+	sources, err := managedRegisterSources(ctx, plan.data)
+	if err != nil {
+		return nil, harnessPlan{}, err
+	}
+	manifest.Register = &config.RegisterPolicy{Sources: sources}
+	return manifest, plan, nil
 }
 
 // managedHarnessInputs are the register.sources rows adoption declares for the Paperclip
@@ -40,15 +46,6 @@ func managedHarnessInputs() []config.RegisterSourceInput {
 		{Path: paperclipFile, Surface: config.SurfacePrompts, Kind: "message", Format: config.SourceFormatJSON, Selector: "operating_contract.*"},
 		{Path: paperclipFile, Surface: config.SurfacePrompts, Kind: "message", Format: config.SourceFormatJSON, Selector: "invariants.*"},
 	}
-}
-
-// adoptionRegisterSources returns nil when no harness will exist to bind to.
-func adoptionRegisterSources(ctx context.Context, s *adoptSession) (*config.RegisterSources, error) {
-	plan, err := planHarness(ctx, s)
-	if err != nil || plan.absent() {
-		return nil, err
-	}
-	return managedRegisterSources(ctx, plan.data)
 }
 
 func managedRegisterSources(ctx context.Context, harness []byte) (*config.RegisterSources, error) {
@@ -227,7 +224,7 @@ func plannedManifestBytes(ctx context.Context, s *adoptSession) ([]byte, error) 
 		planned, _, err := planExistingManifest(ctx, s, path, data)
 		return planned.data, err
 	}
-	manifest, err := newAdoptionManifest(ctx, s)
+	manifest, _, err := newAdoptionManifest(ctx, s)
 	if err != nil {
 		return nil, err
 	}

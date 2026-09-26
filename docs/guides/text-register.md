@@ -580,8 +580,14 @@ the generated Makefile. Both `audit` and the dedicated command fail closed when
 
 Run `praetorctl adopt`. It adds `register.sources` to an existing manifest
 without replacing operator fields, and changes only the lines of that block:
-comments, blank lines and indentation elsewhere stay as written. A flow-style
-root or `register` mapping is re-encoded instead, with every value kept
+comments, blank lines and indentation elsewhere stay as written, including an
+indented comment right above the next `register` key on a re-bind. A null
+`register` (`register:` with no children, only commented-out children, or
+`register: ~`) and a null `sources` value load as undeclared, so adoption fills
+them in place instead of failing
+(`TestAdoptBindsSourcesUnderNullRegister`,
+`TestSetManifestSourcesFillsNullRegisterAndSources`). A flow-style root or
+`register` mapping is re-encoded instead, with every value kept
 (`internal/adopt/manifest_text.go`). The Paperclip harness it binds depends on
 who wrote it:
 
@@ -613,8 +619,10 @@ who wrote it:
   platform, so it writes no harness, in either mode (BUG-852). An existing
   harness stays byte for byte and the contract binds it. With none on disk,
   adoption adds no `register.sources` and reports `repository identity is
-  unresolved`; set the identity or add the remote and rerun
-  (`TestAdoptUnresolvedIdentityBindsOnlyAnExistingHarness` in
+  unresolved`, both for an existing manifest and for the one a first adoption
+  scaffolds; set the identity or add the remote and rerun
+  (`TestAdoptUnresolvedIdentityBindsOnlyAnExistingHarness` and
+  `TestAdoptFreshManifestReportsUnboundSources` in
   `internal/adopt/harness_plan_test.go`).
 
 `praetorctl adopt --force` regenerates the harness and re-binds an existing

@@ -224,6 +224,34 @@ func TestAdoptForceLeavesCurrentContractUntouched(t *testing.T) {
 	requirePassingSourceGate(t, repoPath, paperclipFile)
 }
 
+// TestAdoptBindsSourcesUnderNullRegister: `register:` with no children, or with every child
+// commented out, loads as no register policy. Adoption binds register.sources there instead
+// of refusing a manifest the loader accepts, and keeps the operator's commented lines.
+func TestAdoptBindsSourcesUnderNullRegister(t *testing.T) {
+	for name, tail := range map[string]string{
+		"empty register":     "register:\n",
+		"commented children": "register:\n  # evidence:\n  #   inline_max_lines: 58\n",
+		"explicit null":      "register: ~\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			repoPath := newTestRepo(t, "legacy")
+			mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest+tail)
+			if _, err := config.LoadManifest(filepath.Join(repoPath, manifestFile)); err != nil {
+				t.Fatalf("fixture precondition: the loader must accept the manifest: %v", err)
+			}
+			if _, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, false)); err != nil {
+				t.Fatalf("adopt refused a null register: %v", err)
+			}
+			got := mustRead(t, filepath.Join(repoPath, manifestFile))
+			if !strings.HasPrefix(got, legacyManifest+"register:\n  sources:\n") ||
+				strings.Contains(tail, "#") && !strings.HasSuffix(got, "  # evidence:\n  #   inline_max_lines: 58\n") {
+				t.Fatalf("sources not bound under the null register as text:\n%s", got)
+			}
+			requirePassingSourceGate(t, repoPath, paperclipFile)
+		})
+	}
+}
+
 func manifestSourcesYAML(t *testing.T, sources *config.RegisterSources) string {
 	t.Helper()
 	data, err := yaml.Marshal(map[string]any{"register": map[string]any{"sources": sources}})

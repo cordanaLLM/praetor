@@ -46,23 +46,27 @@ func planExistingManifest(ctx context.Context, s *adoptSession, full string, dat
 	}
 	replacement, changed, err := setManifestSources(ctx, data, sources, replace)
 	if err != nil {
-		return manifestPlan{}, false, err
+		return manifestPlan{}, false, fmt.Errorf("existing %s: %w", manifestFile, err)
 	}
 	return manifestPlan{data: replacement, note: manifestSourcesNote(declared, sources, changed, s.opts.Force)}, changed, nil
 }
 
-// unboundSourcesNote reports a manifest left without register.sources: no harness exists and
+// unboundSourcesNote reports an existing manifest left without register.sources.
+func unboundSourcesNote(harness harnessPlan) string {
+	return "Existing standards manifest preserved without register.sources: " + unboundSourcesReason(harness)
+}
+
+// unboundSourcesReason says why a manifest has no register.sources: no harness exists and
 // this run writes none, because the paperclip step is declined or the repository identity is
 // unresolved, so adoption has no managed text to bind and the audit stays red until the
 // operator resolves the identity and re-runs, or declares the repository's own sources.
-func unboundSourcesNote(harness harnessPlan) string {
+func unboundSourcesReason(harness harnessPlan) string {
 	reason, remedy := "paperclip is declined", ""
 	if harness.unresolved {
 		reason = "repository identity is unresolved"
 		remedy = "set repository.owner and repository.name or add an origin remote and re-run, or "
 	}
-	return "Existing standards manifest preserved without register.sources: " + reason +
-		" and .paperclip/harness.json does not exist, so adoption has no managed text to bind; " + remedy +
+	return reason + " and .paperclip/harness.json does not exist, so adoption has no managed text to bind; " + remedy +
 		"declare register.sources for this repository's agent-facing text before audit passes"
 }
 
@@ -144,8 +148,9 @@ func equalRegisterSources(left, right *config.RegisterSources) bool {
 }
 
 // setManifestSources writes sources under register.sources. An existing value is replaced
-// only when replace is set. Every other line stays as the operator wrote it; a layout the
-// text patch cannot address is re-encoded with every node, comment and key order kept.
+// only when replace is set; a null one (`sources:` or `sources: ~`) declares nothing, so it
+// is always replaced. Every other line stays as the operator wrote it; a layout the text
+// patch cannot address is re-encoded with every node, comment and key order kept.
 func setManifestSources(ctx context.Context, data []byte, sources *config.RegisterSources, replace bool) ([]byte, bool, error) {
 	document, err := decodeAdoptManifestNode(ctx, data)
 	if err != nil {
@@ -161,7 +166,7 @@ func setManifestSources(ctx context.Context, data []byte, sources *config.Regist
 		return nil, false, err
 	}
 	current, found, err := adoptYAMLMappingValue(register, "sources")
-	if err != nil || (found && !replace) {
+	if err != nil || (found && !replace && !nullYAMLNode(current)) {
 		return data, false, err
 	}
 	encoded, err := encodeRegisterSourcesNode(sources)
@@ -190,19 +195,32 @@ func manifestOutput(ctx context.Context, document *yaml.Node, patched []byte, pa
 	return output, nil
 }
 
+// manifestRegisterMapping returns the register mapping of root, adding one when register is
+// absent. A null register (`register:` with no children, or only commented-out ones) loads
+// as no register policy, so it is replaced by an empty mapping that keeps its comments.
 func manifestRegisterMapping(root *yaml.Node) (*yaml.Node, error) {
 	register, found, err := adoptYAMLMappingValue(root, "register")
 	if err != nil {
 		return nil, err
 	}
-	if !found {
+	switch {
+	case !found:
 		register = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 		appendAdoptYAMLMapping(root, "register", register)
+	case nullYAMLNode(register):
+		*register = yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", HeadComment: register.HeadComment,
+			LineComment: register.LineComment, FootComment: register.FootComment}
 	}
 	if register.Kind != yaml.MappingNode {
-		return nil, errors.New("manifest register must be a mapping")
+		return nil, fmt.Errorf("manifest register must be a mapping or null, found %s at line %d",
+			register.ShortTag(), register.Line)
 	}
 	return register, nil
+}
+
+// nullYAMLNode reports a YAML null scalar: an empty value, ~ or null.
+func nullYAMLNode(node *yaml.Node) bool {
+	return node.Kind == yaml.ScalarNode && node.ShortTag() == "!!null"
 }
 
 func encodeRegisterSourcesNode(sources *config.RegisterSources) (*yaml.Node, error) {

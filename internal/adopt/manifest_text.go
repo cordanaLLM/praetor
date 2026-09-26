@@ -37,13 +37,13 @@ func newManifestText(data []byte) manifestText {
 }
 
 // blockEnd returns the index one past the last content line before boundary, a 1-based line
-// number (len(lines)+1 for the end of the file). Blank lines and top-level comments right
-// before boundary belong to what follows it.
+// number (len(lines)+1 for the end of the file). Blank lines and comments at any indentation
+// right before boundary belong to what follows it, so a replaced block never takes them.
 func (m manifestText) blockEnd(boundary int) int {
 	end := min(boundary-1, len(m.lines))
 	for scanned := 0; end > 0 && scanned < maxManifestTextLines; scanned++ {
-		line := strings.TrimRight(m.lines[end-1], "\r\n")
-		if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "#") {
+		line := strings.TrimSpace(m.lines[end-1])
+		if line != "" && !strings.HasPrefix(line, "#") {
 			break
 		}
 		end--
@@ -84,8 +84,49 @@ func patchManifestSources(data []byte, root *yaml.Node, sources *config.Register
 		}
 		return text.splice(len(text.lines), len(text.lines), "register:"+text.eol+block), true, nil
 	}
+	if nullYAMLNode(root.Content[registerAt+1]) {
+		return patchNullRegister(text, root.Content[registerAt:registerAt+2], sources, unit)
+	}
 	boundary := nextKeyLine(root, registerAt, len(text.lines)+1)
 	return patchRegisterSources(text, root.Content[registerAt:registerAt+2], boundary, sources, unit)
+}
+
+// patchNullRegister turns a null register value (`register:`, `register: ~`) into a block
+// mapping holding sources, inserted right below the key line. The key keeps its line comment,
+// and commented-out children below it stay as written. entry is the register key and value.
+func patchNullRegister(text manifestText, entry []*yaml.Node, sources *config.RegisterSources, unit int,
+) ([]byte, bool, error) {
+	key, value := entry[0], entry[1]
+	at := key.Line - 1
+	if value.Line != key.Line || at < 0 || at >= len(text.lines) {
+		return nil, false, nil
+	}
+	keyLine, ok := nullRegisterKeyLine(strings.TrimRight(text.lines[at], "\r\n"), value)
+	if !ok {
+		return nil, false, nil
+	}
+	block, err := sourcesBlock(sources, unit, strings.Repeat(" ", key.Column-1+unit), text.eol)
+	if err != nil {
+		return nil, false, err
+	}
+	return text.splice(at, at+1, keyLine+text.eol+block), true, nil
+}
+
+// nullRegisterKeyLine drops an explicit null token (~, null) from the register key line and
+// keeps its comment. ok is false when the token is not where the decoder placed it.
+func nullRegisterKeyLine(line string, value *yaml.Node) (string, bool) {
+	if value.Value == "" {
+		return line, true
+	}
+	start := value.Column - 1
+	if start < 0 || start > len(line) || !strings.HasPrefix(line[start:], value.Value) {
+		return "", false
+	}
+	line = strings.TrimRight(line[:start], " \t")
+	if value.LineComment != "" {
+		line += " " + value.LineComment
+	}
+	return line, true
 }
 
 // patchRegisterSources inserts sources at the end of the register mapping, or replaces the

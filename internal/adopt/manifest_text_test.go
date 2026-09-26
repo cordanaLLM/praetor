@@ -95,3 +95,51 @@ func TestSetManifestSourcesTextBoundaries(t *testing.T) {
 		t.Fatalf("flow root patched as text: ok=%v err=%v", ok, err)
 	}
 }
+
+// TestSetManifestSourcesFillsNullRegisterAndSources: a null register or a null sources value
+// declares nothing, so the block replaces it even without replace, as text where the layout
+// allows and through the re-encode otherwise.
+func TestSetManifestSourcesFillsNullRegisterAndSources(t *testing.T) {
+	surfaces := "version: 1\nregister:\n  surfaces:\n    hooks: internal\n"
+	evidence := "  evidence:\n    inline_max_lines: 58\n"
+	for name, tc := range map[string]struct{ manifest, prefix, suffix string }{
+		"empty register at end": {"version: 1\nregister:\n", "version: 1\nregister:\n  sources:\n    expected: 13\n", ""},
+		"commented children": {"version: 1\nregister:\n  # sources:\n  #   expected: 1\nprofiles: [framework]\n",
+			"version: 1\nregister:\n  sources:\n", "  # sources:\n  #   expected: 1\nprofiles: [framework]\n"},
+		"explicit null with comment": {"version: 1\nregister: ~ # later\nprofiles: [framework]\n",
+			"version: 1\nregister: # later\n  sources:\n", "profiles: [framework]\n"},
+		"null sources at end":        {surfaces + "  sources:\n", surfaces + "  sources:\n    expected: 13\n", ""},
+		"tilde sources before a key": {surfaces + "  sources: ~\n" + evidence, surfaces + "  sources:\n    expected: 13\n", evidence},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := writeSources(t, tc.manifest, false)
+			if !strings.HasPrefix(got, tc.prefix) || !strings.HasSuffix(got, tc.suffix) {
+				t.Fatalf("null value not filled as text:\n%s", got)
+			}
+			if sources := requireSources(t, got); !equalRegisterSources(sources, textPatchSources()) {
+				t.Fatalf("patched sources = %+v", sources)
+			}
+		})
+	}
+	// Boundary: a flow root skips the text patch, so the re-encode fills the null register.
+	if sources := requireSources(t, writeSources(t, "{version: 1, register: null}\n", false)); sources.Expected != 13 {
+		t.Fatalf("re-encode did not fill the null register: %+v", sources)
+	}
+	// Negative: a register that is neither a mapping nor null still fails, naming what it found.
+	if _, _, err := setManifestSources(t.Context(), []byte("version: 1\nregister: 5\n"), textPatchSources(), false); err == nil ||
+		!strings.Contains(err.Error(), "must be a mapping or null, found !!int at line 2") {
+		t.Fatalf("scalar register accepted: %v", err)
+	}
+}
+
+// TestSetManifestSourcesReplaceKeepsIndentedComments: comments right before the next register
+// key belong to that key, so a re-bind replaces only the sources lines and keeps them.
+func TestSetManifestSourcesReplaceKeepsIndentedComments(t *testing.T) {
+	head := "version: 1\nregister:\n  sources:\n    expected: 1\n    sha256: stale\n"
+	tail := "  # evidence bounds stay as written\n\n  evidence:\n    inline_max_lines: 58\n"
+	got := writeSources(t, head+tail, true)
+	if !strings.HasSuffix(got, tail) || strings.Contains(got, "stale") {
+		t.Fatalf("re-bind dropped the comment above evidence:\n%s", got)
+	}
+	requireSources(t, got)
+}

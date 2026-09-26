@@ -792,7 +792,7 @@ func writeOriginRemote(t *testing.T, repo, url string) {
 // adoptionManifest builds the adoption manifest for s or fails the test.
 func adoptionManifest(t *testing.T, s *adoptSession) *config.Manifest {
 	t.Helper()
-	manifest, err := newAdoptionManifest(t.Context(), s)
+	manifest, _, err := newAdoptionManifest(t.Context(), s)
 	if err != nil {
 		t.Fatalf("build adoption manifest: %v", err)
 	}

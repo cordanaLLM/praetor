@@ -436,7 +436,7 @@ func reconcileManifest(ctx context.Context, s *adoptSession) error {
 }
 
 func createAdoptionManifest(ctx context.Context, s *adoptSession, full string) error {
-	manifest, err := newAdoptionManifest(ctx, s)
+	manifest, harness, err := newAdoptionManifest(ctx, s)
 	if err != nil {
 		return err
 	}
@@ -451,8 +451,12 @@ func createAdoptionManifest(ctx context.Context, s *adoptSession, full string) e
 	if repository == "" {
 		repository = "unresolved"
 	}
-	s.report.recordCreated(manifestFile, fmt.Sprintf("Scaffolded standards manifest (Repository: %s, Profile: %s; "+
-		"visibility left unset, adoption cannot observe it)", repository, s.arch))
+	note := fmt.Sprintf("Scaffolded standards manifest (Repository: %s, Profile: %s; "+
+		"visibility left unset, adoption cannot observe it)", repository, s.arch)
+	if manifest.Register == nil {
+		note += "; register.sources not added: " + unboundSourcesReason(harness)
+	}
+	s.report.recordCreated(manifestFile, note)
 	return nil
 }
 
