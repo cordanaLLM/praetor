@@ -183,6 +183,10 @@ dialect encoder as command hooks. `pre-dispatch` extracts the brief's `task:` fi
 the Caveman scanner, verifies that routing declares the label, resolves
 `register.tasks.<label>`, and calls the shared runtime validator with kind `brief`. An
 internal result must pass Caveman; docs and social results remain full prose by policy.
+The label and the manifest resolve through `compiler.LoadRegisterTaskAuthority`, the same
+digest-bound `config.RegisterAuthority` snapshot that `compile-context` renders, so every
+resolution names the manifest SHA-256 that `config.ValidateEmission` requires
+(`internal/agenthook/agent_brief_authority_test.go`).
 
 Claude's pre-tool hook stores only the resolved register row, never the prompt. Its
 post-tool receipt atomically binds that row to the native agent id. The private bounded

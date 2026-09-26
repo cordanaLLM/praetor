@@ -4,15 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"slices"
 
 	"github.com/cordanaLLM/praetor/internal/caveman"
+	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/router"
 )
-
-const routingConfigRel = ".config/models/routing.yaml"
 
 func evaluateAgentTraffic(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	switch row.Event {
@@ -160,6 +158,10 @@ func evaluateAgentReturn(ctx context.Context, row Registration, canonical Canoni
 	return verdict
 }
 
+// validateAgentBrief resolves the brief's task through the digest-bound register
+// authority, so the resolution carries the manifest SHA-256 that ValidateEmission and the
+// stored return contract require. The label must be declared by the routing vocabulary
+// that governs root; compile-context validates manifest task rows against the same set.
 func validateAgentBrief(ctx context.Context, root, text string) (config.Resolution, error) {
 	task, err := caveman.ExtractBriefTask(text)
 	if err != nil {
@@ -168,14 +170,17 @@ func validateAgentBrief(ctx context.Context, root, text string) (config.Resoluti
 	if !router.ValidTaskLabel(task) {
 		return config.Resolution{}, fmt.Errorf("invalid task label %q", task)
 	}
-	manifest, err := loadTrafficManifest(ctx, root)
+	authority, labels, err := compiler.LoadRegisterTaskAuthority(ctx, root)
 	if err != nil {
-		return config.Resolution{}, err
+		return config.Resolution{}, fmt.Errorf("load register policy: %w", err)
 	}
-	if err := requireDeclaredTask(ctx, root, task); err != nil {
-		return config.Resolution{}, err
+	if !slices.Contains(labels, task) {
+		return config.Resolution{}, fmt.Errorf("task %q is not declared by routing", task)
 	}
-	resolution := manifest.EffectiveRegister().Resolve(config.SurfaceAgent, task)
+	resolution, err := authority.Resolve(config.SurfaceAgent, task)
+	if err != nil {
+		return config.Resolution{}, fmt.Errorf("resolve register: %w", err)
+	}
 	if _, err := config.ValidateEmission(resolution, config.SurfaceAgent, caveman.KindBrief, text); err != nil {
 		return config.Resolution{}, err
 	}
@@ -187,40 +192,6 @@ func validateAgentReturn(resolution config.Resolution, text string) Verdict {
 		return trafficDenied(err)
 	}
 	return Verdict{Outcome: Allow}
-}
-
-func loadTrafficManifest(ctx context.Context, root string) (*config.Manifest, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	manifest, err := config.LoadManifest(filepath.Join(root, ".standards.yaml"))
-	if err != nil {
-		return nil, fmt.Errorf("load register policy: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return manifest, nil
-}
-
-func requireDeclaredTask(ctx context.Context, root, task string) error {
-	path := filepath.Join(root, filepath.FromSlash(routingConfigRel))
-	labels := router.DefaultTaskLabels()
-	if _, err := os.Lstat(path); err == nil {
-		cfg, loadErr := router.LoadRoutingConfigContext(ctx, path)
-		if loadErr != nil {
-			return fmt.Errorf("load routing labels: %w", loadErr)
-		}
-		labels = router.DeclaredTaskLabels(cfg)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect routing labels: %w", err)
-	}
-	for index := 0; index < len(labels) && index < router.MaxTaskLabels; index++ {
-		if labels[index] == task {
-			return nil
-		}
-	}
-	return fmt.Errorf("task %q is not declared by routing", task)
 }
 
 func trafficDenied(err error) Verdict {
