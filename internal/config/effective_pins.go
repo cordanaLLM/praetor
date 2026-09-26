@@ -1,11 +1,9 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"path"
 	"path/filepath"
-	"strings"
 )
 
 func (l *effectiveLoader) pinnedLayers(opts EffectiveOptions, manifest *Manifest) ([]PolicyLayer, error) {
@@ -77,11 +75,7 @@ func (l *effectiveLoader) pinnedLayer(path, kind string, pin lockEntry) (PolicyL
 	if err != nil {
 		return PolicyLayer{}, err
 	}
-	node, err := decodePolicyDocument(l.ctx, data)
 	layer := PolicyLayer{Source: PolicySource{ID: kind + ":" + pin.ID, Path: path, SHA256: policyDigest(data)}}
-	if err != nil {
-		return layer, err
-	}
 	digest, err := normalizeDigest(pin.Digest)
 	if err != nil {
 		return layer, err
@@ -89,21 +83,17 @@ func (l *effectiveLoader) pinnedLayer(path, kind string, pin lockEntry) (PolicyL
 	if layer.Source.SHA256 != digest {
 		return layer, fmt.Errorf("%w: %s", ErrLockDigestMismatch, layer.Source.ID)
 	}
-	id := strings.TrimSuffix(filepath.Base(path), ".yaml")
-	if value := policyMember(node, "id"); value != nil {
-		if err := value.Decode(&id); err != nil {
-			return layer, errors.New("archetype ID must be a string")
-		}
-		id = strings.TrimSpace(id)
+	archetype, err := decodeArchetype(l.ctx, path, data)
+	if err != nil {
+		return layer, err
 	}
-	if id != pin.ID {
+	if archetype.ID != pin.ID {
 		return layer, fmt.Errorf("pinned %s identity changed", kind)
 	}
-	layer.Complexity, err = decodeComplexity(policyMember(node, "complexity"))
-	if err == nil {
-		l.retainArtifact(path, kind, data, layer.Source.SHA256)
-	}
-	return layer, err
+	layer.Complexity = archetype.Complexity
+	layer.Controls = archetype.Controls
+	l.retainArtifact(path, kind, data, layer.Source.SHA256)
+	return layer, nil
 }
 
 func (l *effectiveLoader) retainArtifact(source, kind string, data []byte, digest string) {

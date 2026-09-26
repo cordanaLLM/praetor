@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"unicode"
 )
@@ -44,7 +45,7 @@ func (p *EffectivePolicy) verifyDigestMetadata() error {
 	if err := verifyOperatorFields(p.Operator, p.OperatorFields, seen); err != nil {
 		return err
 	}
-	return errors.Join(verifyDigestNames(p.Policy.Linters), verifyDigestNames(p.Policy.DevFeatures))
+	return p.Policy.validateJoined()
 }
 
 // verifyOperatorFields checks that operator settings and their contributors appear together,
@@ -95,13 +96,30 @@ func verifyDigestSource(source PolicySource, seen map[string]bool) error {
 	return nil
 }
 
-func verifyDigestNames(names []string) error {
-	if len(names) > maxPolicyLayers+1 {
+// validateJoined checks what a join can produce beyond the complexity limits: the
+// error-unwrap mode and the linter and DevContainer feature unions. It runs after every
+// layer and again when a retained snapshot is verified.
+func (p *ResolvedPolicy) validateJoined() error {
+	if !p.ErrorUnwraps.known() {
+		return fmt.Errorf("unsupported error_unwraps mode %q", p.ErrorUnwraps)
+	}
+	return errors.Join(validatePolicyNames(p.Linters), validatePolicyNames(p.DevFeatures))
+}
+
+// validatePolicyNames is the one bound for linter and feature names, both per archetype
+// and for their union: at most maxPolicyNames non-empty, trimmed names without control
+// characters, each at most 512 bytes.
+func validatePolicyNames(names []string) error {
+	if len(names) > maxPolicyNames {
 		return errors.New("effective policy names exceed their count bound")
 	}
-	for i := 0; i < len(names) && i <= maxPolicyLayers; i++ {
-		if len(names[i]) > 512 {
+	for i := 0; i < len(names) && i < maxPolicyNames; i++ {
+		name := names[i]
+		if len(name) > 512 {
 			return errors.New("effective policy name exceeds its byte bound")
+		}
+		if name == "" || strings.TrimSpace(name) != name || strings.ContainsFunc(name, unicode.IsControl) {
+			return fmt.Errorf("effective policy name %q must be non-empty, trimmed and free of control characters", name)
 		}
 	}
 	return nil

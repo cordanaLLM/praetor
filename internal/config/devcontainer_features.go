@@ -63,29 +63,34 @@ func mergeDevContainerFeatures(features map[string]DevContainerFeature, addition
 }
 
 func decodeArtifactFeatures(ctx context.Context, artifact PolicyArtifact) ([]DevContainerFeature, int, error) {
-	document, err := decodePolicyDocument(ctx, artifact.Content)
+	archetype, err := decodeArchetype(ctx, artifact.RelativePath, artifact.Content)
 	if err != nil {
 		return nil, 0, fmt.Errorf("decode selected catalog feature source %s: %w", artifact.RelativePath, err)
 	}
-	member := policyMember(document, "devcontainer_features")
+	features := archetype.Controls.DevFeatures
+	return features, len(features), nil
+}
+
+// decodeFeatureSequence decodes an archetype's devcontainer_features; nil is an omitted key.
+func decodeFeatureSequence(member *yaml.Node) ([]DevContainerFeature, error) {
 	if member == nil {
-		return nil, 0, nil
+		return nil, nil
 	}
 	if member.Kind != yaml.SequenceNode {
-		return nil, 0, fmt.Errorf("%s devcontainer_features must be a sequence", artifact.RelativePath)
+		return nil, errors.New("devcontainer_features must be a sequence")
 	}
 	if len(member.Content) > maxDevContainerFeatures {
-		return nil, 0, fmt.Errorf("%s devcontainer_features exceeds bounds", artifact.RelativePath)
+		return nil, errors.New("devcontainer_features exceeds bounds")
 	}
 	features := make([]DevContainerFeature, 0, len(member.Content))
 	for i, node := range member.Content {
 		feature, err := decodeDevContainerFeature(node)
 		if err != nil {
-			return nil, 0, fmt.Errorf("%s devcontainer_features[%d]: %w", artifact.RelativePath, i, err)
+			return nil, fmt.Errorf("devcontainer_features[%d]: %w", i, err)
 		}
 		features = append(features, feature)
 	}
-	return features, len(features), nil
+	return features, nil
 }
 
 func mergeDevContainerFeature(features map[string]DevContainerFeature, feature DevContainerFeature) error {

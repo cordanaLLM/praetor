@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 )
@@ -90,9 +91,30 @@ func policyMember(node *yaml.Node, key string) *yaml.Node {
 	return nil
 }
 
-// Only the complexity subsection is owned here. Unrelated existing manifest,
-// fleet and archetype settings remain valid; misspelled complexity keys do not.
+// requireKnownKeys rejects a mapping key outside allowed. It serves sections whose custom
+// unmarshaler decodes through yaml.Node.Decode, which drops the caller's KnownFields.
+func requireKnownKeys(node *yaml.Node, section string, allowed []string) error {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content) && i < maxPolicyNodes; i += 2 {
+		if key := node.Content[i].Value; !slices.Contains(allowed, key) {
+			return fmt.Errorf("%s: unknown key %q", section, key)
+		}
+	}
+	return nil
+}
+
+// Only the complexity subsection is owned here. Unrelated existing manifest and
+// fleet settings remain valid; misspelled complexity keys do not.
 func decodeComplexity(node *yaml.Node) (ComplexityOverride, error) {
+	return decodeComplexityLimits(node, false)
+}
+
+// decodeComplexityLimits decodes a complexity mapping. zeroUnbounded lets a catalog
+// archetype state "no bound" with 0, as upstream-fork does: that limit then contributes
+// nothing, exactly like an omitted one. Everywhere else an explicit zero is an error.
+func decodeComplexityLimits(node *yaml.Node, zeroUnbounded bool) (ComplexityOverride, error) {
 	var result ComplexityOverride
 	if node == nil {
 		return result, nil
@@ -107,14 +129,28 @@ func decodeComplexity(node *yaml.Node) (ComplexityOverride, error) {
 	for i := 0; i+1 < len(node.Content) && i < maxPolicyNodes; i += 2 {
 		key, value := node.Content[i].Value, node.Content[i+1]
 		field, ok := fields[key]
-		if !ok || value.Kind != yaml.ScalarNode || value.Tag != "!!int" {
+		if !ok {
 			return ComplexityOverride{}, fmt.Errorf("complexity %q must be a known integer limit", key)
 		}
-		var number int
-		if err := value.Decode(&number); err != nil || number <= 0 {
-			return ComplexityOverride{}, fmt.Errorf("complexity %q must be a positive integer", key)
+		number, err := complexityLimit(key, value, zeroUnbounded)
+		if err != nil {
+			return ComplexityOverride{}, err
 		}
-		*field = &number
+		if number > 0 {
+			*field = &number
+		}
 	}
 	return result, nil
+}
+
+// complexityLimit decodes one integer limit; zero passes only when zeroUnbounded.
+func complexityLimit(key string, value *yaml.Node, zeroUnbounded bool) (int, error) {
+	if value.Kind != yaml.ScalarNode || value.Tag != "!!int" {
+		return 0, fmt.Errorf("complexity %q must be a known integer limit", key)
+	}
+	var number int
+	if err := value.Decode(&number); err != nil || number < 0 || (number == 0 && !zeroUnbounded) {
+		return 0, fmt.Errorf("complexity %q must be a positive integer", key)
+	}
+	return number, nil
 }

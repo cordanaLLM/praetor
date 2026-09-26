@@ -133,7 +133,7 @@ func TestValidateLockfileWithOptionsCatalogAndRequireSources(t *testing.T) {
 		t.Fatalf("selected catalog must verify: %+v / %v", result, err)
 	}
 	// Negative: tampered catalog content is a mismatch, whichever root holds it.
-	writeLockTestCatalog(t, catalog, "framework.yaml", lockTestSource+"changed: true\n")
+	writeLockTestCatalog(t, catalog, "framework.yaml", lockTestSource+"description: changed\n")
 	if _, err := ValidateLockfileWithOptions(context.Background(), opts, manifest); !errors.Is(err, ErrLockDigestMismatch) {
 		t.Fatalf("tampered catalog must fail: %v", err)
 	}

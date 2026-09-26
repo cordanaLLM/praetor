@@ -77,7 +77,7 @@ func TestBuildLockfileRefusesUnverifiableSources(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "changed":
-				if err := os.WriteFile(filepath.Join(root, ".config/archetypes/framework.yaml"), []byte(lockTestSource+"changed: true\n"), 0o600); err != nil {
+				if err := os.WriteFile(filepath.Join(root, ".config/archetypes/framework.yaml"), []byte(lockTestSource+"description: changed\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			case "duplicate":

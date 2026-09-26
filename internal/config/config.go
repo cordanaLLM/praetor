@@ -73,9 +73,20 @@ type BranchProtectionPolicy struct {
 	ReviewMode                 BranchReviewMode `yaml:"review_mode,omitempty"`
 }
 
+// branchProtectionKeys is the closed key set of a branch_protection section.
+var branchProtectionKeys = []string{
+	"enforce_linear_history", "require_signed_commits", "required_approving_reviewers",
+	"dismiss_stale_reviews", "review_mode",
+}
+
 // UnmarshalYAML distinguishes an omitted review mode from an explicitly null
-// value before decoding the remaining branch-protection fields normally.
+// value before decoding the remaining branch-protection fields normally. Keys are
+// checked here because yaml.Node.Decode drops the caller's KnownFields setting, so a
+// misspelled key would otherwise be discarded while the section reads as configured.
 func (b *BranchProtectionPolicy) UnmarshalYAML(node *yaml.Node) error {
+	if err := requireKnownKeys(node, "branch_protection", branchProtectionKeys); err != nil {
+		return err
+	}
 	reviewMode := policyMember(node, "review_mode")
 	if reviewMode != nil && (reviewMode.Kind != yaml.ScalarNode || reviewMode.Tag != "!!str") {
 		return errors.New("branch protection review_mode must be a string enum")
@@ -103,6 +114,39 @@ func (b BranchProtectionPolicy) EffectiveReviewRequirements() (int, bool, error)
 	default:
 		return 0, false, fmt.Errorf("unsupported branch protection review mode %q", b.ReviewMode)
 	}
+}
+
+// MemoryPolicy is the ADR-0002 memory-allocation dimension. Each control is a ban, so true
+// is the stricter value on both: ZeroFrameMalloc joins over StandardHeap.
+type MemoryPolicy struct {
+	ZeroFrameMalloc    bool `yaml:"zero_frame_malloc"`
+	BannedAllocInTicks bool `yaml:"banned_alloc_in_ticks"`
+}
+
+// ErrorUnwrapMode is the ADR-0002 error-unwrap dimension. StrictBan joins over
+// AllowWithComment; the empty value means no layer declared the dimension.
+type ErrorUnwrapMode string
+
+const (
+	ErrorUnwrapsAllowWithComment ErrorUnwrapMode = "allow_with_comment"
+	ErrorUnwrapsStrictBan        ErrorUnwrapMode = "strict_ban"
+)
+
+// UnmarshalYAML rejects unknown, empty, and non-string modes at the source boundary.
+func (m *ErrorUnwrapMode) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
+		return errors.New("error_unwraps must be a string enum")
+	}
+	mode := ErrorUnwrapMode(node.Value)
+	if mode == "" || !mode.known() {
+		return fmt.Errorf("unsupported error_unwraps mode %q", mode)
+	}
+	*m = mode
+	return nil
+}
+
+func (m ErrorUnwrapMode) known() bool {
+	return m == "" || m == ErrorUnwrapsAllowWithComment || m == ErrorUnwrapsStrictBan
 }
 
 // SupplyChainPolicy defines supply chain provenance requirements.
@@ -196,12 +240,16 @@ type AdoptionPolicy struct {
 }
 
 // ResolvedPolicy is the composite unbypassable policy produced by lattice join (supremum).
+// Memory and ErrorUnwraps are omitted from JSON while unset, so a snapshot retained before
+// those dimensions existed still re-seals to the digest it recorded.
 type ResolvedPolicy struct {
 	Complexity       ComplexityPolicy
 	BranchProtection BranchProtectionPolicy
 	SupplyChain      SupplyChainPolicy
 	Linters          []string
 	DevFeatures      []string
+	Memory           MemoryPolicy    `json:",omitzero"`
+	ErrorUnwraps     ErrorUnwrapMode `json:",omitempty"`
 }
 
 // LoadManifest reads and parses a .standards.yaml file.
@@ -297,8 +345,9 @@ func DefaultPolicy() *ResolvedPolicy {
 			EnforceCosign: false,
 			RequireSBOM:   false,
 		},
-		Linters:     []string{"govet"},
-		DevFeatures: []string{"common-utils"},
+		Linters:      []string{"govet"},
+		DevFeatures:  []string{"common-utils"},
+		ErrorUnwraps: ErrorUnwrapsAllowWithComment,
 	}
 }
 
@@ -315,31 +364,72 @@ func Join(a, b *ResolvedPolicy) *ResolvedPolicy {
 		return clonePolicy(a)
 	}
 
-	res := &ResolvedPolicy{}
+	return &ResolvedPolicy{
+		Complexity:       joinComplexity(a.Complexity, b.Complexity),
+		BranchProtection: joinBranchProtection(a.BranchProtection, b.BranchProtection),
+		SupplyChain:      joinSupplyChain(a.SupplyChain, b.SupplyChain),
+		// Linters and DevFeatures: cumulative deduplicated union.
+		Linters:      unionStrings(a.Linters, b.Linters),
+		DevFeatures:  unionStrings(a.DevFeatures, b.DevFeatures),
+		Memory:       joinMemory(a.Memory, b.Memory),
+		ErrorUnwraps: joinErrorUnwraps(a.ErrorUnwraps, b.ErrorUnwraps),
+	}
+}
 
-	// Complexity: Strictest is lower bounds (greatest lower bound / min)
-	res.Complexity.MaxCyclomatic = minPositive(a.Complexity.MaxCyclomatic, b.Complexity.MaxCyclomatic)
-	res.Complexity.MaxCognitive = minPositive(a.Complexity.MaxCognitive, b.Complexity.MaxCognitive)
-	res.Complexity.MaxFuncLOC = minPositive(a.Complexity.MaxFuncLOC, b.Complexity.MaxFuncLOC)
-	res.Complexity.MaxStatements = minPositive(a.Complexity.MaxStatements, b.Complexity.MaxStatements)
+// joinComplexity keeps the lower positive cap (greatest lower bound); zero is no bound.
+func joinComplexity(a, b ComplexityPolicy) ComplexityPolicy {
+	return ComplexityPolicy{
+		MaxCyclomatic: minPositive(a.MaxCyclomatic, b.MaxCyclomatic),
+		MaxCognitive:  minPositive(a.MaxCognitive, b.MaxCognitive),
+		MaxFuncLOC:    minPositive(a.MaxFuncLOC, b.MaxFuncLOC),
+		MaxStatements: minPositive(a.MaxStatements, b.MaxStatements),
+	}
+}
 
-	// Branch Protection: Strictest is true or higher count (least upper bound / max)
-	res.BranchProtection.EnforceLinearHistory = a.BranchProtection.EnforceLinearHistory || b.BranchProtection.EnforceLinearHistory
-	res.BranchProtection.RequireSignedCommits = a.BranchProtection.RequireSignedCommits || b.BranchProtection.RequireSignedCommits
-	res.BranchProtection.DismissStaleReviews = a.BranchProtection.DismissStaleReviews || b.BranchProtection.DismissStaleReviews
-	res.BranchProtection.RequiredApprovingReviewers = max(a.BranchProtection.RequiredApprovingReviewers, b.BranchProtection.RequiredApprovingReviewers)
-	res.BranchProtection.ReviewMode = joinReviewMode(a.BranchProtection.ReviewMode, b.BranchProtection.ReviewMode)
+// joinBranchProtection keeps every enabled control and the higher reviewer count. A
+// policy-layer join never enables the repository-only review relaxation.
+func joinBranchProtection(a, b BranchProtectionPolicy) BranchProtectionPolicy {
+	return BranchProtectionPolicy{
+		EnforceLinearHistory:       a.EnforceLinearHistory || b.EnforceLinearHistory,
+		RequireSignedCommits:       a.RequireSignedCommits || b.RequireSignedCommits,
+		DismissStaleReviews:        a.DismissStaleReviews || b.DismissStaleReviews,
+		RequiredApprovingReviewers: max(a.RequiredApprovingReviewers, b.RequiredApprovingReviewers),
+		ReviewMode:                 joinReviewMode(a.ReviewMode, b.ReviewMode),
+	}
+}
 
-	// Supply Chain: Strictest is higher SLSA level and mandatory signing
-	res.SupplyChain.SLSALevel = max(a.SupplyChain.SLSALevel, b.SupplyChain.SLSALevel)
-	res.SupplyChain.EnforceCosign = a.SupplyChain.EnforceCosign || b.SupplyChain.EnforceCosign
-	res.SupplyChain.RequireSBOM = a.SupplyChain.RequireSBOM || b.SupplyChain.RequireSBOM
+// joinSupplyChain keeps the higher SLSA level and every mandatory attestation.
+func joinSupplyChain(a, b SupplyChainPolicy) SupplyChainPolicy {
+	return SupplyChainPolicy{
+		SLSALevel:     max(a.SLSALevel, b.SLSALevel),
+		EnforceCosign: a.EnforceCosign || b.EnforceCosign,
+		RequireSBOM:   a.RequireSBOM || b.RequireSBOM,
+	}
+}
 
-	// Linters and DevFeatures: Cumulative union
-	res.Linters = unionStrings(a.Linters, b.Linters)
-	res.DevFeatures = unionStrings(a.DevFeatures, b.DevFeatures)
+// joinMemory keeps every allocation ban: ZeroFrameMalloc joins over StandardHeap.
+func joinMemory(a, b MemoryPolicy) MemoryPolicy {
+	return MemoryPolicy{
+		ZeroFrameMalloc:    a.ZeroFrameMalloc || b.ZeroFrameMalloc,
+		BannedAllocInTicks: a.BannedAllocInTicks || b.BannedAllocInTicks,
+	}
+}
 
-	return res
+// joinErrorUnwraps: StrictBan joins over AllowWithComment, and a declared mode over an
+// undeclared one. An unknown mode is preserved so digest verification can reject it.
+func joinErrorUnwraps(a, b ErrorUnwrapMode) ErrorUnwrapMode {
+	switch {
+	case !a.known():
+		return a
+	case !b.known():
+		return b
+	case a == ErrorUnwrapsStrictBan || b == ErrorUnwrapsStrictBan:
+		return ErrorUnwrapsStrictBan
+	case a == "":
+		return b
+	default:
+		return a
+	}
 }
 
 func clonePolicy(p *ResolvedPolicy) *ResolvedPolicy {
@@ -380,13 +470,12 @@ func (c *ComplexityPolicy) applyOverride(o *ComplexityPolicy) {
 
 // applyOverride keeps stricter branch settings while allowing the explicit review mode.
 func (b *BranchProtectionPolicy) applyOverride(o *BranchProtectionPolicy) {
-	b.EnforceLinearHistory = b.EnforceLinearHistory || o.EnforceLinearHistory
-	b.RequireSignedCommits = b.RequireSignedCommits || o.RequireSignedCommits
-	b.DismissStaleReviews = b.DismissStaleReviews || o.DismissStaleReviews
-	b.RequiredApprovingReviewers = max(b.RequiredApprovingReviewers, o.RequiredApprovingReviewers)
+	mode := b.ReviewMode
 	if o.ReviewMode != "" {
-		b.ReviewMode = o.ReviewMode
+		mode = o.ReviewMode
 	}
+	*b = joinBranchProtection(*b, *o)
+	b.ReviewMode = mode
 }
 
 // joinReviewMode preserves invalid input for downstream rejection while ensuring
@@ -407,9 +496,7 @@ func knownBranchReviewMode(mode BranchReviewMode) bool {
 
 // applyOverride keeps the stricter supply-chain settings.
 func (s *SupplyChainPolicy) applyOverride(o *SupplyChainPolicy) {
-	s.SLSALevel = max(s.SLSALevel, o.SLSALevel)
-	s.EnforceCosign = s.EnforceCosign || o.EnforceCosign
-	s.RequireSBOM = s.RequireSBOM || o.RequireSBOM
+	*s = joinSupplyChain(*s, *o)
 }
 
 func minPositive(a, b int) int {

@@ -185,3 +185,40 @@ $$\mathcal{P}_{\text{resolved}} = \mathcal{P}_1 \sqcup \mathcal{P}_2 \sqcup \dot
 - Lower complexity limits win ($\min$).
 - Greater security reviews and higher SLSA levels win ($\max$).
 - Linters and container features form a deduplicated set union ($\cup$).
+
+Built-in defaults are the first operand, so a profile or facet can only tighten them. Every
+dimension below reaches the resolved policy (`config.Join` in `internal/config/config.go`,
+tested by `TestLoadEffectivePolicyJoinsEveryProfileDimension` in
+`internal/config/archetype_test.go`):
+
+| Key | Join | Default |
+| :-- | :-- | :-- |
+| `complexity.*` | lowest positive limit; `0` means no bound | 15 / 20 / 100 / 75 |
+| `branch_protection.enforce_linear_history`, `require_signed_commits`, `dismiss_stale_reviews` | `true` wins | `true`, `false`, `true` |
+| `branch_protection.required_approving_reviewers` | maximum | 1 |
+| `supply_chain.slsa_level` | maximum | 1 |
+| `supply_chain.enforce_cosign`, `require_sbom` | `true` wins | `false` |
+| `memory.zero_frame_malloc`, `banned_alloc_in_ticks` | `true` wins (ZeroFrameMalloc over StandardHeap) | `false` |
+| `error_unwraps` | `strict_ban` wins over `allow_with_comment` | `allow_with_comment` |
+| `linters`, `devcontainer_features` | deduplicated union, first occurrence order | `govet`, `common-utils` |
+
+Two archetypes that declare the same value tie on it; the result is that value whichever is
+pinned first (`TestResolvePolicyTiedArchetypesOnMemoryAndErrorUnwraps`).
+
+### The schema is closed
+
+An archetype accepts exactly the keys `id`, `name`, `description`, `runtime`, `complexity`,
+`memory`, `error_unwraps`, `branch_protection`, `supply_chain`, `linters` and
+`devcontainer_features`, and inside each section only its documented keys. A misspelled or
+unknown key fails the file instead of contributing nothing. The catalog index decodes every
+file in `.config/archetypes`, selected or not, so one bad file fails lock verification, `plan`,
+`audit`, `sync` and `adopt` until it is fixed
+(`TestCatalogIndexRejectsUnknownKeyInAnUnselectedArchetype`). Also rejected:
+
+- `branch_protection.review_mode`: single-maintainer review is a repository-only relaxation, set
+  in `.standards.yaml` overrides;
+- negative `required_approving_reviewers` or `slsa_level`;
+- an `error_unwraps` value other than `strict_ban` or `allow_with_comment`;
+- an empty linter name, or one with surrounding whitespace or control characters.
+
+A blank or missing `id` defaults to the file name without `.yaml`.
