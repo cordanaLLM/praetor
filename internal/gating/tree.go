@@ -27,8 +27,8 @@ var ErrUncleanTree = errors.New("the gate certifies only a working tree that mat
 
 // subtractiveInputs are the files that relax what the gate enforces: the debt baseline raises
 // the HISS limit and the gosec configuration selects the scanner's rules. git status does not
-// list an ignored file, so each is also checked against the repository's ignore rules, and it
-// does not look behind a symbolic link, so each must be a regular file.
+// list an ignored file, so each must also be tracked in the index, and it does not look behind
+// a symbolic link, so each must be a regular file.
 var subtractiveInputs = [...]string{BaselineFile, GosecConfigFile}
 
 // treeState is what one inspection saw of the tree the scan stages read.
@@ -58,19 +58,23 @@ func treeProblem(ctx context.Context, repoDir string) string {
 }
 
 // untrackedInputProblem names a subtractive input the stages would read from somewhere other
-// than HEAD: one that is not a regular file, or one the repository ignores.
+// than HEAD: one that is not a regular file, or one the index does not hold. It runs after the
+// status probe found no change, so an untracked input here is one an ignore rule hides. The
+// check asks the index rather than the ignore rules, so it cannot drift from whichever
+// excludes files the status probe honours -- the repository's, .git/info/exclude or the
+// user's global one (BUG-788).
 func untrackedInputProblem(ctx context.Context, repoDir string) string {
 	present, problem := presentSubtractiveInputs(repoDir)
 	if problem != "" {
 		return problem
 	}
-	ignored, err := util.GitIgnoredPaths(ctx, repoDir, present, false)
+	untracked, err := util.GitUntrackedPaths(ctx, repoDir, present)
 	if err != nil {
 		return fmt.Sprintf("whether %s is tracked could not be read: %v", strings.Join(present, " and "), err)
 	}
-	if len(ignored) > 0 {
-		return fmt.Sprintf("%s is ignored and untracked, so HEAD does not carry it; "+
-			"the gate reads it to relax its checks and refuses one that is not committed", strings.Join(ignored, " and "))
+	if len(untracked) > 0 {
+		return fmt.Sprintf("%s is not tracked, so HEAD does not carry it, and an ignore rule hides it from git status; "+
+			"the gate reads it to relax its checks and refuses one that is not committed", strings.Join(untracked, " and "))
 	}
 	return ""
 }

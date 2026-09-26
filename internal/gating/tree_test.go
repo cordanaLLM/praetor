@@ -121,9 +121,56 @@ func TestRunGatedPipeline_Negative_IgnoredSubtractiveInputIsRefused(t *testing.T
 			dir := newHermeticGitRepo(t)
 			commitFile(t, dir, ".gitignore", input+"\n")
 			writeFile(t, filepath.Join(dir, input), "{}\n")
-			refusedRun(t, dir, input+" is ignored and untracked")
+			refusedRun(t, dir, input+" is not tracked")
 		})
 	}
+}
+
+// TestRunGatedPipeline_Negative_GloballyIgnoredSubtractiveInputIsRefused: the status probe
+// honours the user's global excludes file, so an input only that file ignores is missing from
+// git status as well; it is still refused, because the check asks whether HEAD's index holds
+// the input rather than which ignore rules the sealed probe happens to read.
+func TestRunGatedPipeline_Negative_GloballyIgnoredSubtractiveInputIsRefused(t *testing.T) {
+	for _, input := range subtractiveInputs {
+		t.Run(input, func(t *testing.T) {
+			dir := newHermeticGitRepo(t)
+			withGlobalIgnore(t, input+"\n")
+			writeFile(t, filepath.Join(dir, input), `{"total_infractions": 999}`+"\n")
+			changes, err := util.GitWorkingTreeChanges(t.Context(), dir, util.GitTreeProbeTimeout)
+			if err != nil || len(changes) != 0 {
+				t.Fatalf("the global ignore must hide %s from the status probe: changes = %v, err = %v", input, changes, err)
+			}
+			refusedRun(t, dir, input+" is not tracked")
+		})
+	}
+}
+
+// TestInspectTree_Boundary_TrackedInputAnIgnoreRuleMatchesIsClean: a committed input stays
+// trusted when an ignore rule, repository or global, also matches it, because git tracks a
+// file in the index whatever its patterns say.
+func TestInspectTree_Boundary_TrackedInputAnIgnoreRuleMatchesIsClean(t *testing.T) {
+	dir := newHermeticGitRepo(t)
+	withGlobalIgnore(t, GosecConfigFile+"\n")
+	commitFile(t, dir, ".gitignore", BaselineFile+"\n")
+	commitFile(t, dir, BaselineFile, "{}\n")
+	commitFile(t, dir, GosecConfigFile, "{}\n")
+	if tree := inspectTree(t.Context(), dir); tree.problem != "" {
+		t.Fatalf("committed inputs an ignore rule matches read as unclean: %s", tree.problem)
+	}
+}
+
+// withGlobalIgnore points this test's home directory at a global excludes file holding
+// patterns, with no global git config, so the status probe's default lookup finds it.
+func withGlobalIgnore(t *testing.T, patterns string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, "no-such-gitconfig"))
+	if err := os.MkdirAll(filepath.Join(home, ".config", "git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(home, ".config", "git", "ignore"), patterns)
 }
 
 // TestRunGatedPipeline_Negative_SymlinkedSubtractiveInputIsRefused: a tracked symlink reads as

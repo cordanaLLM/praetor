@@ -236,9 +236,12 @@ differs from HEAD:
   your global excludes file (`core.excludesFile`, else `~/.config/git/ignore`) all apply, so
   editor and OS files you ignore globally do not block the gate;
 - an index entry flagged assume-unchanged or skip-worktree, which `git status` never compares;
-- an ignored `.standards-baseline.json` or `.gosec.json`. Both relax what the gate enforces --
-  the baseline raises the HISS limit, the gosec configuration selects the rules -- and
-  `git status` does not list an ignored file, so each is checked against the ignore rules;
+- an untracked `.standards-baseline.json` or `.gosec.json`, hidden from `git status` by any
+  ignore rule, your global excludes file included. Both relax what the gate enforces -- the
+  baseline raises the HISS limit, the gosec configuration selects the rules -- and `git status`
+  does not list an ignored file, so each present one must be tracked in the index
+  (`util.GitUntrackedPaths` in [`internal/util/git_ignore.go`](../../internal/util/git_ignore.go));
+  a committed one stays trusted even when an ignore pattern also matches it;
 - a `.standards-baseline.json` or `.gosec.json` that is a symbolic link or any other non-regular
   file. `git status` compares a tracked link by its target path, not the content behind it, while
   the stages follow the link, so a committed link to an ignored file or to one outside the
