@@ -194,6 +194,13 @@ disabled facet. A `.prettierignore` inventory written before this gate existed
 differs from the current one only in its comment line and still passes while
 the facet is disabled; the next `praetorctl adopt` rewrites the comment.
 
+The hosted workflow (this repository's own `.github/workflows/praetor-docs.yml`)
+and the template `adopt.DocumentationWorkflow()` emits to adopters both pin
+`runs-on: ubuntu-26.04`. `DocumentationAssetIsCanonical` compares an adopted
+repository's workflow file byte-for-byte, line-ending normalized, against that
+template, so a workflow generated before this runner pin changed now fails the
+exact-content check; `praetorctl adopt` regenerates it onto `ubuntu-26.04`.
+
 `adoption.decline: [branch-ruleset]` leaves `.github/rulesets/main.json`
 operator-owned, as described in the
 [adoption verification guide](adoption-verification.md). Adoption then never
