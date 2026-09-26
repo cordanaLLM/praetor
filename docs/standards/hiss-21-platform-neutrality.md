@@ -111,9 +111,10 @@ includes `scripts/test_praetor_hook.py`, the tests of the skew guard that every 
 agent-client hook row calls (see
 [engine skew never blocks a client](../guides/agent-hooks.md#rollout-engine-skew-never-blocks-a-client)).
 Its in-process cases run on every leg. Its `TrackedRegistrations` class runs the tracked row
-strings through `sh`, so it skips on Windows and states why: the strings use POSIX substitution,
-and the runner has no Git Bash to run them. The Windows leg therefore executes fewer tests than
-the other two.
+strings through `sh`, so it skips on Windows and states why: the strings are written for a POSIX
+shell, and on Windows Codex and AGY run hooks through `cmd.exe` and Gemini CLI through
+PowerShell. An `sh` run on the leg's Git Bash would pass without showing what those clients do.
+The Windows leg therefore executes fewer tests than the other two.
 
 Which external binaries this gate reaches, and which of them the job installs, is not
 enumerated on this page: each known gap is tracked as its own issue instead. Open today are

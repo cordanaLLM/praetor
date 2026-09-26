@@ -276,8 +276,9 @@ class TrackedRegistrations(unittest.TestCase):
     def setUpClass(cls):
         cls.shell = shutil.which("sh")
         if os.name == "nt" or cls.shell is None:
-            raise unittest.SkipTest("the tracked strings use POSIX substitution; Windows clients run "
-                                    "them through Git Bash, which this runner does not provide")
+            raise unittest.SkipTest("the tracked strings are written for a POSIX shell; on Windows "
+                                    "Codex and AGY run hooks through cmd.exe and Gemini CLI through "
+                                    "PowerShell, so an sh run here would not show what they do")
         cls.build = tempfile.TemporaryDirectory(prefix="praetor-launcher-cli-")
         cls.addClassCleanup(cls.build.cleanup)
         cls.engine = Path(cls.build.name) / ("praetorctl" + EXE)
