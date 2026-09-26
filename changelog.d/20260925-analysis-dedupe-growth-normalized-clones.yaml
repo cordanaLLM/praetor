@@ -1,0 +1,3 @@
+type: fixed
+title: praetorctl dedupe cadence now makes a sweep due on Go source growth (1,000 added production lines or 10 added production files, --added-lines / --added-files) as well as on the commit delta, and the clone detector renames parameters and locals before hashing so a copy with renamed locals is still reported; the two clone groups this surfaced in the repository were unified
+breaking: false
