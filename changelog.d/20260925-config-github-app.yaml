@@ -1,0 +1,3 @@
+type: fixed
+title: The GitHub App permission matrix documents the issues and statuses write scopes the manifest requests, states that nothing provisions the App today, and is linked from the operational configuration guide; make github-app-test (part of verify-all) fails when the matrix and the manifest's default_permissions disagree
+breaking: false

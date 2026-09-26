@@ -23,6 +23,15 @@ Everything needed to govern a repository without knowing whose repository it is:
 - the default label taxonomy, rulesets and GitHub App manifest;
 - schemas, templates and anonymised fixtures.
 
+### GitHub App manifest
+
+`.config/github-app/manifest.json` describes the `cordana-standards` GitHub App, and
+`.config/github-app/permissions.md` explains each permission it requests and how to create
+the App from the manifest. Nothing provisions, installs or authenticates as that App today:
+no workflow or command reads the manifest, and `internal/forge/pr.go` only names
+`cordana-standards[bot]` as a requested reviewer. `make github-app-test` fails when the
+permission matrix and the manifest's `default_permissions` disagree.
+
 ## What the operator owns
 
 Supplied locally or from the operational fork, and ignored by this repository:

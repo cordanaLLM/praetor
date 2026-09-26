@@ -148,19 +148,16 @@ class _WithoutProcessGroup:
 # executable suffix. The fixture used to link an extensionless bin/praetorctl, which the hooks
 # never found on Windows.
 PRAETORCTL = "bin/praetorctl" + (".exe" if os.name == "nt" else "")
-# Registered client hooks are shell commands. POSIX has sh at /bin/sh; Windows has none there, and
-# the clients run hooks through the sh on PATH (Git for Windows ships one).
-POSIX_SHELL = "/bin/sh" if os.name != "nt" else shutil.which("sh")
+# Codex runs a command hook through the login shell on Linux and macOS and through %COMSPEC% /C
+# on Windows (codex-rs/hooks/src/engine/command_runner.rs; see docs/guides/agent-hooks.md). The
+# tracked registration resolves the Git root with $( ), which cmd.exe does not have, so on Windows
+# the registration itself cannot run: a stated gap, never a Git Bash sh standing in for cmd.exe.
+CODEX_WINDOWS_GAP = ("Codex runs hooks through cmd.exe on Windows, which has no $( ) for the "
+                     "registration's Git-root lookup; see docs/guides/agent-hooks.md")
 # The policy prints job output and failures only, so a passing job is evidenced by what it
 # printed, never by Lefthook's success line naming it. commit-msg and pre-push print this after
 # verifying the live ledger.
 STATE_VERIFIED = b'PRAETOR_STATE_RESULT={"schema_version":1,"verified":true}'
-
-
-def require_posix_shell(test):
-    """Skip a registered-command case, naming why, where no sh exists to run it."""
-    if POSIX_SHELL is None:
-        test.skipTest("no sh on PATH; registered client hooks are shell commands")
 
 
 def cli_path(repo):
@@ -807,13 +804,14 @@ print("fixture hook self-tests passed")
         self.assertNotRegex("Write", registration["matcher"])
         action = registration["hooks"][0]
         self.assertEqual(action["type"], "command")
-        require_posix_shell(self)
+        if os.name == "nt":
+            self.skipTest(CODEX_WINDOWS_GAP)
         nested = self.repo / "nested directory"
         nested.mkdir()
         for command_text, expected in (("git status", 0), ("git commit --no-verify", 2)):
             payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
                                   "tool_input": {"command": command_text}}).encode()
-            result = command(nested, POSIX_SHELL, "-c", action["command"],
+            result = command(nested, "/bin/sh", "-c", action["command"],
                              data=payload, ok=False)
             self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
 
@@ -1598,6 +1596,72 @@ class ScopeAndGuard(unittest.TestCase):
                 contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(adapter.check(payload), 2)
 
+    def test_command_guard_runs_the_shared_job_in_the_payload_session_checkout(self):
+        self.load_codex_adapter()
+        guard = sys.modules["command_guard"]
+        self.assertEqual(guard.payload_cwd(b'{"cwd":"/session/tree"}'), "/session/tree")
+        self.assertEqual(guard.payload_cwd(b'{"cwd":7}'), 7)
+        for raw in (b'{"tool_input":{}}', b"[]", b"null", b"{", b"\xff", b"[" * 100000):
+            with self.subTest(raw=raw[:8]):
+                self.assertIsNone(guard.payload_cwd(raw))
+        seen = []
+        def shared_job(*_args, **kwargs):
+            seen.append(kwargs["cwd"])
+            kwargs["stdout"].write(b"MARKER\n")
+            return subprocess.CompletedProcess(["lefthook"], 0)
+        with mock.patch.object(guard, "session_root", return_value=Path("/session/tree")) as select, \
+                mock.patch.object(guard.subprocess, "run", side_effect=shared_job):
+            self.assertEqual(guard.check_job(b'{"cwd":"/session/tree/sub"}', "job", b"MARKER"), 0)
+            self.assertEqual(guard.check_job(b"{", "job", b"MARKER"), 0)
+        self.assertEqual(select.call_args_list, [mock.call(guard.ROOT, "/session/tree/sub", mock.ANY),
+                                                 mock.call(guard.ROOT, None, mock.ANY)])
+        self.assertEqual(seen, [Path("/session/tree")] * 2)
+
+    def test_command_guard_draws_every_step_from_one_budget_and_refuses_once_it_is_spent(self):
+        """The checkout lookup and the shared job share one budget below the client timeout.
+
+        A client lets a call through once the guard outlives its registered timeout, so a
+        lookup that cannot answer, or a budget spent before the job starts, must deny.
+        """
+        self.load_codex_adapter()
+        guard = sys.modules["command_guard"]
+        timeouts = []
+        def shared_job(*_args, **kwargs):
+            timeouts.append(kwargs["timeout"])
+            kwargs["stdout"].write(b"MARKER\n")
+            return subprocess.CompletedProcess(["lefthook"], 0)
+        with mock.patch.object(guard, "session_root", return_value=Path("/session/tree")), \
+                mock.patch.object(guard.subprocess, "run", side_effect=shared_job):
+            self.assertEqual(guard.check_job(b"{}", "job", b"MARKER"), 0)
+        self.assertEqual(len(timeouts), 1)
+        self.assertTrue(0 < timeouts[0] <= guard.GUARD_JOB_TIMEOUT)
+        failures = {"git timed out": {"session_root": mock.Mock(side_effect=HookError("git timed out"))},
+                    "budget spent": {"GUARD_BUDGET": 0}}
+        for reason, patches in failures.items():
+            with self.subTest(reason=reason), mock.patch.multiple(guard, **patches), \
+                    mock.patch.object(guard.subprocess, "run", side_effect=shared_job) as job, \
+                    contextlib.redirect_stderr(io.StringIO()) as diagnostic:
+                self.assertEqual(guard.check_job(b"{}", "job", b"MARKER"), 2)
+                self.assertIn("policy unavailable", diagnostic.getvalue())
+                self.assertIn(reason, diagnostic.getvalue())
+                job.assert_not_called()
+
+    def test_command_guard_refuses_when_it_is_still_blocked_at_its_limit(self):
+        """A wait no process bound reaches still ends in a denial before the client gives up."""
+        hooks = GUARD.parent
+        script = ("import sys, time\n"
+                  f"sys.path.insert(0, {str(hooks)!r})\n"
+                  "import command_guard as guard\n"
+                  "guard.GUARD_LIMIT = 0.3\n"
+                  "guard.session_root = lambda *_args: time.sleep(30)\n"
+                  "sys.exit(guard.main())\n")
+        started = time.monotonic()
+        result = subprocess.run([sys.executable, "-B", "-c", script], input=b'{"cwd":"/"}',
+                                capture_output=True, timeout=20, check=False)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(b"no answer within 0.3 s; refusing the call", result.stderr)
+        self.assertLess(time.monotonic() - started, 10)
+
     def test_reverse_dependencies_embed_testdata_module_and_docs_scope(self):
         with tempfile.TemporaryDirectory(prefix="praetor-scope-") as temp:
             root = Path(temp)
@@ -1945,6 +2009,51 @@ class ScopeAndGuard(unittest.TestCase):
                 with self.assertRaises(KeyboardInterrupt):
                     run(["python3", "-c", "import time; time.sleep(10)"])
             self.assertEqual(stop.call_args.args[1], signal.SIGINT)
+
+    def test_hook_budget_hands_out_what_is_left_and_refuses_once_spent(self):
+        with mock.patch.object(common.time, "monotonic", side_effect=[100.0, 101.0, 109.5, 110.0]):
+            budget = common.HookBudget(10)
+            self.assertEqual(budget.timeout(2), 2)
+            self.assertEqual(budget.timeout(2), 0.5)
+            with self.assertRaisesRegex(HookError, "budget spent"):
+                budget.timeout(2)
+
+    def test_bounded_stop_takes_at_most_twice_its_grace(self):
+        """A native hook reserves 2 * grace for stopping the step that overran its timeout.
+
+        The default grace is STOP_GRACE (10 s) for the group plus 5 s to reap, which alone
+        outlasts a 15 s client timeout.
+        """
+        with tempfile.TemporaryDirectory(prefix="praetor-grace-") as temp:
+            started = time.monotonic()
+            with self.assertRaisesRegex(HookError, "timed out"):
+                common.run_bounded([sys.executable, "-c", STUBBORN_CLI, temp],
+                                   timeout=0.5, grace=0.3)
+            self.assertLess(time.monotonic() - started, 0.5 + 2 * 0.3 + 1.5)
+        with mock.patch("common.os", _WithoutProcessGroup()), \
+                mock.patch("common.subprocess.run") as tree:
+            with self.assertRaises(HookError):
+                common.run_bounded([sys.executable, "-c", "import time; time.sleep(10)"],
+                                   timeout=0.05, grace=0.3)
+        self.assertEqual(tree.call_args.kwargs["timeout"], 0.3)
+
+    def test_refuse_after_answers_for_a_blocked_hook_unless_cancelled_or_answered(self):
+        scripts = Path(common.__file__).parent
+        cases = (("2 if True else None", "time.sleep(30)", 2),
+                 ("None", "time.sleep(0.6)", 0),
+                 ("2", "timer.cancel(); time.sleep(0.6)", 0))
+        for refuse, rest, expected in cases:
+            with self.subTest(refuse=refuse, rest=rest):
+                script = ("import sys, time\n"
+                          f"sys.path.insert(0, {str(scripts)!r})\n"
+                          "import common\n"
+                          f"timer = common.refuse_after(0.3, lambda: {refuse})\n"
+                          f"{rest}\n")
+                started = time.monotonic()
+                result = subprocess.run([sys.executable, "-B", "-c", script],
+                                        capture_output=True, timeout=20, check=False)
+                self.assertEqual(result.returncode, expected, result.stderr)
+                self.assertLess(time.monotonic() - started, 10)
 
     def test_sandbox_failure_removes_only_owned_container(self):
         calls = []

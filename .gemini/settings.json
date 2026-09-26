@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/command_guard.py\"",
+            "command": "python3 -B .config/agent/hooks/command_guard.py",
             "timeout": 15000
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/checkpoint_scope.py\"",
+            "command": "python3 -B .config/agent/hooks/checkpoint_scope.py",
             "timeout": 15000
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/checkpoint.py\"",
+            "command": "python3 -B .config/agent/hooks/checkpoint.py",
             "timeout": 60000
           }
         ]
@@ -39,11 +39,21 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/checkpoint.py\"",
+            "command": "python3 -B .config/agent/hooks/checkpoint.py",
             "timeout": 60000
           }
         ]
       }
     ]
+  },
+  "mcpServers": {
+    "praetor-dev": {
+      "command": "python3",
+      "args": [
+        "scripts/dev_mcp.py",
+        "serve"
+      ],
+      "timeout": 120000
+    }
   }
 }
