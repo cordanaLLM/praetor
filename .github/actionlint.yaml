@@ -15,7 +15,7 @@
 # names self-hosted-runner.labels itself; actionlint offers no other way to teach it a
 # label, and the declaration suppresses nothing else.
 #
-# .config/lefthook/scripts/checks.py:88 invokes whatever actionlint is on PATH, so the
+# .config/lefthook/scripts/checks.py invokes whatever actionlint is on PATH, so the
 # version above is a measurement, not a pin, and nothing in this repository enforces
 # the premise this file rests on. That gap is issue #343, which covers all four
 # unpinned hook linters (actionlint, shellcheck, hadolint, yamllint); it is not fixed

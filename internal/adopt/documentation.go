@@ -46,7 +46,7 @@ permissions:
 jobs:
   documentation:
     name: Documentation Governance
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Checkout source

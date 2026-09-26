@@ -639,3 +639,17 @@ func assertDocumentationAssets(t *testing.T, root string) {
 		t.Fatalf("workflow differs: err=%v", err)
 	}
 }
+
+// The emitted documentation gate names an explicit runner image, like every workflow in this
+// repository: ubuntu-latest retargets an adopter's job the day GitHub promotes the next image.
+// The repository's own .github/workflows/praetor-docs.yml is audited byte-equal to this text,
+// so internal/forge's TestEngineWorkflowsNameExplicitRunnerImages covers the same bytes there.
+func TestDocumentationWorkflowNamesAnExplicitRunnerImage(t *testing.T) {
+	workflow := DocumentationWorkflow()
+	if strings.Count(workflow, "runs-on: ubuntu-26.04\n") != 1 {
+		t.Errorf("the documentation gate must run on exactly one explicit ubuntu-26.04 job:\n%s", workflow)
+	}
+	if strings.Contains(workflow, "-latest") {
+		t.Errorf("the documentation gate names a floating runner alias:\n%s", workflow)
+	}
+}

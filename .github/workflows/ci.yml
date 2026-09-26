@@ -244,7 +244,7 @@ jobs:
   # behaviour, so there is nothing for a macOS or Windows runner to prove (HISS-21).
   config-validation:
     name: Release & Bot Configuration Validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
 
     steps:
